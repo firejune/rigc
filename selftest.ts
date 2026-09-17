@@ -7270,11 +7270,34 @@ function runConstraintAndDeformSuite(): number {
   const ik0 = ikAt(0);
   const ikHalf = ikAt(0.5);
   const ik1 = ikAt(1);
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). The verdict makes
+  // six readings and the sentence carried four: the pair at t=0 reached it as a
+  // TYPED `0` — the number the verdict requires, written out as the answer it
+  // wanted. Planted with the t=0 key restated at its sibling's own spec values,
+  // it printed `mix 0 -> 1.0000 -> 1.0000, softness 0 -> 8.0000 -> 8.0000`. Six
+  // pairs of figures is the scale a list is for: binding one of them would
+  // leave the other five to be compared by eye.
+  const ikWanted: ReadonlyArray<readonly [string, number, number]> = [
+    ['mix at 0s', ik0.mix, 0],
+    ['mix at 0.5s', ikHalf.mix, 0.5],
+    ['mix at 1s', ik1.mix, 1],
+    ['softness at 0s', ik0.softness, 0],
+    ['softness at 0.5s', ikHalf.softness, 4],
+    ['softness at 1s', ik1.softness, 8],
+  ];
+  const ikProbes = ikWanted.flatMap(([said, got, want]) =>
+    near(got, want) ? [] : [`${said} poses ${got.toFixed(4)} where the timeline keys ${want}`],
+  );
+  const ikHeld = ikProbes.length === 0;
   say(
     'T01_an_ik_timeline_mixes_the_constraint_in_at_the_runtime',
-    near(ik0.mix, 0) && near(ikHalf.mix, 0.5) && near(ik1.mix, 1) &&
-      near(ik0.softness, 0) && near(ikHalf.softness, 4) && near(ik1.softness, 8),
-    `mix 0 -> ${ikHalf.mix.toFixed(4)} -> ${ik1.mix.toFixed(4)}, softness 0 -> ${ikHalf.softness.toFixed(4)} -> ${ik1.softness.toFixed(4)}`,
+    ikHeld,
+    probeDetail(
+      ikHeld,
+      ikProbes,
+      `mix ${ik0.mix.toFixed(4)} -> ${ikHalf.mix.toFixed(4)} -> ${ik1.mix.toFixed(4)}, ` +
+        `softness ${ik0.softness.toFixed(4)} -> ${ikHalf.softness.toFixed(4)} -> ${ik1.softness.toFixed(4)}`,
+    ),
     'the setup constraint is mix 0, so every number here came from the timeline — a wrong field name would leave it at 0',
   );
   say(
@@ -19011,26 +19034,51 @@ function runDeformReportSuite(): number {
   const declaredGate = gateTurn(declared);
   const declaredBlock = turnDeformBlock(declared);
   const declaredKept = /winding\s+(\d+) of (\d+) kept/.exec(declaredBlock.find((l) => l.includes('winding')) ?? '');
-  const reportsAnyway =
-    declaredKept !== null &&
-    Number(declaredKept[2]) - Number(declaredKept[1]) === gateCount &&
-    declaredBlock.some((l) => l.includes('A39 is exempt on "head"')) &&
-    declaredBlock.some((l) => l.includes('<- a fold, and A39 does not gate it'));
+  const declaredReversed = declaredKept === null ? NaN : Number(declaredKept[2]) - Number(declaredKept[1]);
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Two of the six
+  // terms went unread and both are asserted as prose by the clean sentence.
+  // Planted with the key's pointer reworded in `cli.ts`, it printed
+  // *"…and the key carries the pointer at A39 by name"* — two clauses after
+  // quoting the block line that does not, inside the same sentence. The four
+  // readings behind `reportsAnyway` become four rows for the same reason: no
+  // single figure can say which half of it fell.
+  const foldProbes = [
+    ...(Number.isFinite(gateCount)
+      ? []
+      : [`A39 did not fire on the folded build, so there is nothing to agree with: ${foldedDetail || '(no detail)'}`]),
+    ...(blockReversed === gateCount
+      ? []
+      : [`the block's winding line reverses ${blockReversed} where A39 refuses ${gateCount}`]),
+    ...(rollup === gateCount ? [] : [`the rollup reverses ${rollup} where A39 refuses ${gateCount}`]),
+    ...(namesA39 ? [] : ['no key line carries "<- a fold: A39 refuses this key by name", so the block points at nothing']),
+    ...(declaredGate.passed.includes(A39)
+      ? ['under invariants.deformMayFold A39 PASSED rather than skipping, which is the vacuous pass SKIP exists for']
+      : []),
+    ...(declaredKept === null ? ['the declared build printed no winding line at all — the report went quiet with the gate'] : []),
+    ...(declaredKept !== null && declaredReversed !== gateCount
+      ? [`the declared build's winding line reverses ${declaredReversed} where A39 refuses ${gateCount}`]
+      : []),
+    ...(declaredBlock.some((l) => l.includes('A39 is exempt on "head"'))
+      ? []
+      : ['the declared block does not say A39 is exempt on "head"']),
+    ...(declaredBlock.some((l) => l.includes('<- a fold, and A39 does not gate it'))
+      ? []
+      : ['the declared block does not mark the key as a fold the gate leaves alone']),
+  ];
+  const foldHeld = foldProbes.length === 0;
   say(
     'DR02_THE_BLOCKS_REVERSAL_COUNT_IS_THE_ONE_A39_REFUSES_ON',
-    Number.isFinite(gateCount) &&
-      blockReversed === gateCount &&
-      rollup === gateCount &&
-      namesA39 &&
-      !declaredGate.passed.includes(A39) &&
-      reportsAnyway,
-    Number.isFinite(gateCount)
-      ? `40° past a ${foldAngleDegrees(TURN_COLUMNS, TURN_R).toFixed(3)}° fold: A39 refuses ${gateCount} of 32 ` +
-          `triangles, the block prints "${(foldedBlock.find((l) => l.includes('winding')) ?? '').trim()}" and the ` +
-          `rollup ${rollup} — and the key carries the pointer at A39 by name. Under ` +
-          `invariants.deformMayFold the gate SKIPs ("${declaredGate.skipped.find((s) => s.assertion === A39)?.reason ?? ''}") ` +
-          `and the block still prints "${(declaredBlock.find((l) => l.includes('winding')) ?? '').trim()}"`
-      : `A39 did not fire on the folded build, so there is nothing to agree with: ${foldedDetail || '(no detail)'}`,
+    foldHeld,
+    probeDetail(
+      foldHeld,
+      foldProbes,
+      `40° past a ${foldAngleDegrees(TURN_COLUMNS, TURN_R).toFixed(3)}° fold: A39 refuses ${gateCount} of 32 ` +
+        `triangles, the block prints "${(foldedBlock.find((l) => l.includes('winding')) ?? '').trim()}" and the ` +
+        `rollup ${rollup} — and the key carries the pointer at A39 by name. Under ` +
+        `invariants.deformMayFold the gate SKIPs ("${declaredGate.skipped.find((s) => s.assertion === A39)?.reason ?? ''}") ` +
+        `and the block still prints "${(declaredBlock.find((l) => l.includes('winding')) ?? '').trim()}"`,
+      (count) => `${count} of the two derivations' readings did not agree:`,
+    ),
     'the report and the assertion are the two halves of #296 and share one survey in src/deformmeasure.ts — two ' +
       'derivations of one count drift, and the one that drifts silently is the report',
   );
@@ -22885,15 +22933,29 @@ function runAtlasReaderSuite(): number | null {
       }
     }
   }
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). `mismatches` IS
+  // the list whose emptiness is the verdict, which is the shape the helper was
+  // lifted for — and the sentence over it asserted the comparison it had just
+  // lost. Planted with the reader reading `index` one off, it printed `10 atlas
+  // file(s), 132 region(s) (3 rotated), every field compared against the
+  // runtime's own parse` under the FAIL raised by ten fields that disagreed.
+  // The rows also come INSIDE the case line: the `console.log` that used to
+  // carry them printed outside `reportCase`, so the one line a reader is
+  // promised carried the claim and not the evidence.
+  const readerHeld = mismatches.length === 0;
   say(
     'PKR01_THE_READER_AGREES_WITH_SPINE_CORE_ON_EVERY_CORPUS_ATLAS',
-    mismatches.length === 0,
-    `${atlases.length} atlas file(s), ${regionCount} region(s) (${rotated} rotated), every field compared against ` +
-      "the runtime's own parse",
+    readerHeld,
+    probeDetail(
+      readerHeld,
+      firstFew(mismatches, 'field(s) the two parses read differently'),
+      `${atlases.length} atlas file(s), ${regionCount} region(s) (${rotated} rotated), every field compared against ` +
+        "the runtime's own parse",
+      (count) => `${count} field(s) read differently by rigc's parser and spine-core's:`,
+    ),
     'the importer reads geometry off a file and hands it to the compiler; if this reader and the runtime that will ' +
       'load the result disagree by one field, rigc measures one atlas and the player draws another',
   );
-  if (mismatches.length > 0) console.log(`          ${mismatches.slice(0, 5).join('; ')}`);
 
   // A rotated region used to be the one shape `extractRegion` refused to read,
   // and this control used to assert the refusal (issue #570). What replaces it
@@ -24994,7 +25056,14 @@ function runLauncherSuite(): number | null {
     say(
       'BIN03_MISSING_BUN_EXPLAINS_ITSELF_AT_THE_FAILURE_POINT',
       status !== 0 && status !== null && stdout === '' && stderr.includes('https://bun.sh'),
-      `exit=${String(status)} stderr=${JSON.stringify(stderr.trim())}`,
+      // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). Exactly one of
+      // the four terms went unread and its three siblings are already on the
+      // line: the message has to reach the FAILURE point, which means stderr
+      // and an empty stdout, and planted with the hint written to BOTH streams
+      // this printed `exit=1 stderr="rigc runs on Bun…"` and said nothing at
+      // all about the stream that had just gained it.
+      `exit=${String(status)} stdout=${JSON.stringify(stdout)} (the launcher writes none of this to stdout) ` +
+        `stderr=${JSON.stringify(stderr.trim())}`,
       'installing on a Bun-less machine used to fail as a bare `env: bun: No such file or directory` with no ' +
         'hint why — issue #220',
     );
@@ -27931,63 +28000,108 @@ function runCurrencySuite(): number {
   const thinForms = tallySites.filter(([, n]) => n === 0);
   const marked = docs.filter((doc) => doc.dated);
   const misdeclared = docs.filter((doc) => doc.misdeclared !== null);
+  // 🔸 `floorProbes` inside `probeDetail` rather than `RD02`'s line (issue
+  // #498). Nine of the twenty-four terms are the derivation floors and the
+  // detail's selector read none of them, and the shape of the miss is the one
+  // this control exists for: `sitesOf` reads a Map, so a limb that matched
+  // NOTHING has no entry to print and drops out of `Sites read:` altogether.
+  // Planted with the installed-path form spelled `spine-rigd`, the old sentence
+  // printed a full, true-looking report with `installed path` simply absent —
+  // silent about the only failure the control is built to catch. Nine floors is
+  // exactly what `floorProbes` is for, and the branches that already existed
+  // become rows rather than a chain in which only the first one prints.
+  //
+  // ⚠️ `> 0` is written `>= 1` in the table: these are counts off a Map, so the
+  // two are the same condition and `floorProbes` states a floor.
+  const currencyProbes = [
+    ...(misdeclared.length > 0
+      ? [
+          `a header line opens with the dated-record marker's lead and is then not the marker: ` +
+            `${misdeclared.map((doc) => `${doc.path} reads "${doc.misdeclared}"`).join('; ')}. It is ` +
+            `"${DATED_RECORD_MARKER}" and nothing else, so a near miss is an escape hatch an author meant to take ` +
+            'and did not — which is worse than a file that never asked for one',
+        ]
+      : []),
+    ...(marked.length === 0
+      ? [
+          'not one document carries the dated-record marker and one is supposed to: either the sentence moved ' +
+            'in the tree and not here, or the escape hatch has stopped being taken and a page whose figures are ' +
+            'known to be stale is now being read as current',
+        ]
+      : []),
+    ...(unreadable.length > 0 ? [`\`files\` entries this scan could not expand: ${unreadable.join('; ')}`] : []),
+    ...(markedWithoutDate.length > 0
+      ? [
+          `dated-record marker with no ISO date in its first ${CURRENCY_HEADER_LINES} lines: ` +
+            `${markedWithoutDate.map((doc) => doc.path).join(', ')} — a marker is an as-of annotation, so it has ` +
+            'to say as of when',
+        ]
+      : []),
+    ...(markedReadme.length > 0
+      ? ['README.md carries the dated-record marker, which would take the landing page itself out of the scan']
+      : []),
+    ...(truth.reached !== truth.total
+      ? [
+          `the live report reached ${truth.reached} of ${truth.total} assertions, so its profile split is not ` +
+            "the registry's split and no tally below can be trusted",
+        ]
+      : []),
+    ...(thinForms.length > 0
+      ? [`these tally forms matched nothing at all: ${thinForms.map(([limb]) => limb).join(', ')}`]
+      : []),
+    ...(docs.some((doc) => doc.path === 'README.md') ? [] : ['README.md is not among the documents this scan read']),
+    ...(docs.filter((doc) => doc.tier === 'shipped').length >= allowlist.filter((e) => e.endsWith('.md')).length
+      ? []
+      : [
+          `${docs.filter((doc) => doc.tier === 'shipped').length} shipped doc(s) read against ` +
+            `${allowlist.filter((e) => e.endsWith('.md')).length} \`.md\` entr(ies) in \`files\` — the scan is short of the allowlist`,
+        ]),
+    ...(docs.filter((doc) => doc.tier === 'landing').length > 0
+      ? []
+      : ['no document one hop off README was reached, so the landing tier read nothing']),
+    ...(truth.total > 0 ? [] : ['the assertion registry answered 0 assertions, so every tally below compares against nothing']),
+    ...(truth.spine > 0 ? [] : ['the `spine` profile answered 0 assertions']),
+    ...(truth.excluded === truth.rendererNames.length + truth.archetypeNames.length
+      ? []
+      : [
+          `the profile excludes ${truth.excluded} where the roster names ` +
+            `${truth.rendererNames.length} renderer + ${truth.archetypeNames.length} archetype`,
+        ]),
+    ...(truth.gateVersion !== null ? [] : ['docs/GATE.md gave up no gate version, so CUR03 compares against nothing']),
+    ...(truth.galleryKinds.size > 0 ? [] : ['the gallery answered 0 worked kinds']),
+    ...floorProbes(
+      [
+        [tallySites.length, 5, `${tallySites.length} tally form(s) are being scanned for`],
+        [sitesOf('profile row'), 1, `${sitesOf('profile row')} profile row(s) were read`],
+        [sitesOf('roster:renderer'), 1, `${sitesOf('roster:renderer')} renderer roster(s) were read`],
+        [sitesOf('roster:archetype'), 1, `${sitesOf('roster:archetype')} archetype roster(s) were read`],
+        [sitesOf('report summary'), 1, `${sitesOf('report summary')} report summary/summaries were read`],
+        [sitesOf('gate version'), 2, `${sitesOf('gate version')} gate-version site(s) were read`],
+        [sitesOf('worked case'), 5, `${sitesOf('worked case')} worked case(s) were read`],
+        [sitesOf('assertion name'), 100, `${sitesOf('assertion name')} assertion name(s) were read`],
+        [sitesOf('installed path'), 3, `${sitesOf('installed path')} installed path(s) were read`],
+      ],
+      'and a form that has stopped matching its own phrasing leaves the case it feeds printing PASS over zero sites',
+    ),
+  ];
+  const currencyHeld = currencyProbes.length === 0;
   say(
     'CUR01_THE_CURRENCY_SCAN_READ_THE_DOCS_THE_TOOL_AND_THE_GALLERY',
-    unreadable.length === 0 &&
-      docs.some((doc) => doc.path === 'README.md') &&
-      docs.filter((doc) => doc.tier === 'shipped').length >= allowlist.filter((e) => e.endsWith('.md')).length &&
-      docs.filter((doc) => doc.tier === 'landing').length > 0 &&
-      markedWithoutDate.length === 0 &&
-      markedReadme.length === 0 &&
-      truth.reached === truth.total &&
-      truth.total > 0 &&
-      truth.spine > 0 &&
-      truth.excluded === truth.rendererNames.length + truth.archetypeNames.length &&
-      truth.gateVersion !== null &&
-      truth.galleryKinds.size > 0 &&
-      thinForms.length === 0 &&
-      tallySites.length >= 5 &&
-      sitesOf('profile row') > 0 &&
-      sitesOf('roster:renderer') > 0 &&
-      sitesOf('roster:archetype') > 0 &&
-      sitesOf('report summary') > 0 &&
-      sitesOf('gate version') >= 2 &&
-      sitesOf('worked case') >= 5 &&
-      sitesOf('assertion name') >= 100 &&
-      sitesOf('installed path') >= 3 &&
-      misdeclared.length === 0 &&
-      marked.length >= 1,
-    misdeclared.length > 0
-      ? `a header line opens with the dated-record marker's lead and is then not the marker: ` +
-        `${misdeclared.map((doc) => `${doc.path} reads "${doc.misdeclared}"`).join('; ')}. It is "${DATED_RECORD_MARKER}" ` +
-        'and nothing else, so a near miss is an escape hatch an author meant to take and did not — which is ' +
-        'worse than a file that never asked for one'
-      : marked.length === 0
-        ? 'not one document carries the dated-record marker and one is supposed to: either the sentence moved ' +
-          'in the tree and not here, or the escape hatch has stopped being taken and a page whose figures are ' +
-          'known to be stale is now being read as current'
-        : unreadable.length > 0
-            ? `\`files\` entries this scan could not expand: ${unreadable.join('; ')}`
-            : markedWithoutDate.length > 0
-              ? `dated-record marker with no ISO date in its first ${CURRENCY_HEADER_LINES} lines: ` +
-                `${markedWithoutDate.map((doc) => doc.path).join(', ')} — a marker is an as-of annotation, so it has to ` +
-                'say as of when'
-              : markedReadme.length > 0
-                ? 'README.md carries the dated-record marker, which would take the landing page itself out of the scan'
-                : truth.reached !== truth.total
-                  ? `the live report reached ${truth.reached} of ${truth.total} assertions, so its profile split is not ` +
-                    'the registry\'s split and no tally below can be trusted'
-                  : thinForms.length > 0
-                    ? `these tally forms matched nothing at all: ${thinForms.map(([limb]) => limb).join(', ')}`
-                    : `${docs.length} doc(s) read — ${docs.filter((d) => d.tier === 'shipped').length} shipped, ` +
-                      `${docs.filter((d) => d.tier === 'landing').length} one hop off README; ` +
-                      `${marked.length} declared a dated record (${marked.map((d) => `${d.path} @ ${d.headerDate}`).join(', ') || 'none'}). ` +
-                      `The tool answers: registry ${truth.total}, \`spine\` ${truth.spine}, excluded ${truth.excluded} ` +
-                      `(${truth.rendererNames.length} renderer + ${truth.archetypeNames.length} archetype, off a live ` +
-                      `report that reached all ${truth.reached}), gate ${truth.gateVersion} from docs/GATE.md, ` +
-                      `${truth.galleryKinds.size} gallery-worked kind(s) ` +
-                      `(${[...truth.galleryKinds].map(([k, v]) => `${k}→${v.join('+')}`).join(', ')}). Sites read: ` +
-                      `${[...scan.sites].map(([limb, n]) => `${limb} ${n}`).join(', ')}`,
+    currencyHeld,
+    probeDetail(
+      currencyHeld,
+      currencyProbes,
+      `${docs.length} doc(s) read — ${docs.filter((d) => d.tier === 'shipped').length} shipped, ` +
+        `${docs.filter((d) => d.tier === 'landing').length} one hop off README; ` +
+        `${marked.length} declared a dated record (${marked.map((d) => `${d.path} @ ${d.headerDate}`).join(', ') || 'none'}). ` +
+        `The tool answers: registry ${truth.total}, \`spine\` ${truth.spine}, excluded ${truth.excluded} ` +
+        `(${truth.rendererNames.length} renderer + ${truth.archetypeNames.length} archetype, off a live ` +
+        `report that reached all ${truth.reached}), gate ${truth.gateVersion} from docs/GATE.md, ` +
+        `${truth.galleryKinds.size} gallery-worked kind(s) ` +
+        `(${[...truth.galleryKinds].map(([k, v]) => `${k}→${v.join('+')}`).join(', ')}). Sites read: ` +
+        `${[...scan.sites].map(([limb, n]) => `${limb} ${n}`).join(', ')}`,
+      (count) => `${count} step(s) of the derivation did not hold:`,
+    ),
     'every value this suite compares against is derived and every site is found by a scan, so both ends can come ' +
       'back empty. A form that stops matching its own phrasing is the quiet one: the case it feeds goes on ' +
       'printing PASS over zero sites. The floors are what make that loud — the marker is one of them, because a ' +
@@ -32868,17 +32982,33 @@ function runSeeItSuite(): number {
   const renderHelp = runCli(['render', '--help']);
   const previewHelp = runCli(['preview', '--help']);
   const topLevel = runCli([]);
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Seven terms and
+  // the sentence carried two exit codes and then a claim — *"both named in the
+  // bare-invocation usage"* — which IS one of the terms, with the two phrases
+  // each `--help` is read for named nowhere at all. Planted with the bare
+  // invocation writing its usage to stdout instead of stderr, it printed
+  // `render --help ok, preview --help ok, both named in the bare-invocation
+  // usage` on a run where NEITHER was named there.
+  const discoverable = [
+    ...(renderHelp.status === 0 ? [] : [`\`render --help\` exited ${String(renderHelp.status)}, not 0`]),
+    ...(renderHelp.stdout.includes('--animation') ? [] : ['`render --help` does not spell `--animation`']),
+    ...(renderHelp.stdout.includes('frame series') ? [] : ['`render --help` does not say what it writes — no "frame series" in it']),
+    ...(previewHelp.status === 0 ? [] : [`\`preview --help\` exited ${String(previewHelp.status)}, not 0`]),
+    ...(previewHelp.stdout.includes('.html') ? [] : ['`preview --help` does not name the `.html` it writes']),
+    ...(topLevel.stderr.includes('rigc render') ? [] : ['the bare-invocation usage does not name `rigc render`']),
+    ...(topLevel.stderr.includes('rigc preview') ? [] : ['the bare-invocation usage does not name `rigc preview`']),
+  ];
+  const discoverableHeld = discoverable.length === 0;
   say(
     'P04_BOTH_COMMANDS_ARE_IN_THE_HELP',
-    renderHelp.status === 0 &&
-      renderHelp.stdout.includes('--animation') &&
-      renderHelp.stdout.includes('frame series') &&
-      previewHelp.status === 0 &&
-      previewHelp.stdout.includes('.html') &&
-      topLevel.stderr.includes('rigc render') &&
-      topLevel.stderr.includes('rigc preview'),
-    `render --help ${renderHelp.status === 0 ? 'ok' : 'FAILED'}, preview --help ${previewHelp.status === 0 ? 'ok' : 'FAILED'}, ` +
-      'both named in the bare-invocation usage',
+    discoverableHeld,
+    probeDetail(
+      discoverableHeld,
+      discoverable,
+      `render --help ${renderHelp.status === 0 ? 'ok' : 'FAILED'}, preview --help ${previewHelp.status === 0 ? 'ok' : 'FAILED'}, ` +
+        'both named in the bare-invocation usage',
+      (count) => `${count} way(s) the two commands are not discoverable:`,
+    ),
     'issue #216 is a discoverability failure as much as a capability one — the renderer already existed and no command exposed it',
   );
 
@@ -34462,9 +34592,18 @@ function runChainFitSuite(): number {
     say(
       'CF07_THE_VISIBILITY_FLOOR_IS_WHAT_REFUSES_AND_IT_IS_A_REPORTED_FIELD',
       floorHeld && floorLifted && stated,
-      `default floor ${posed.search.minVisible}: buried refusal ${closed.refusal?.reason ?? 'none'} at ` +
-        `${((closed.placement?.visibleShare ?? 0) * 100).toFixed(1)}% visible; --min-visible 0: refusal ` +
-        `${opened.refusal?.reason ?? 'none'}`,
+      // ⚠️ `RD02`'s line rather than `probeDetail` (issue #498). Of the three
+      // bound terms the sentence already carries the readings behind two, and
+      // exactly one value went unread: `open.search.minVisible`, which reached
+      // the line as the TYPED `0` of the flag that was asked for rather than
+      // the floor the report says it searched at. Planted with `??` written as
+      // `||` — the falsy-zero bug that swallows `--min-visible 0` — it printed
+      // `--min-visible 0: refusal occluded` on a run that had searched at the
+      // default. One missing value with correct siblings is a line, not a list.
+      `default floor ${posed.search.minVisible} (shipped default ${DEFAULT_MIN_VISIBLE}): buried refusal ` +
+        `${closed.refusal?.reason ?? 'none'} at ` +
+        `${((closed.placement?.visibleShare ?? 0) * 100).toFixed(1)}% visible; asked for --min-visible 0 and the ` +
+        `report states ${open.search.minVisible}: refusal ${opened.refusal?.reason ?? 'none'}`,
       'a floor nobody has seen lift is not a floor, and a caller who wants the sliver has to be able to ask for it',
     );
   }
@@ -36438,18 +36577,43 @@ function runIngestSuite(): number {
   const refused = withoutStage.findings.filter((f) => f.code === 'NO_STAGE' && f.kind === 'blocker');
   const judged = withStage.findings.filter((f) => f.code === 'NO_STAGE' && f.kind === 'judgement');
   const wrote = withStage.rig.skeleton as Record<string, unknown> | undefined;
+  const wroteWithout = (withoutStage.rig.skeleton as Record<string, unknown> | undefined)?.width;
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Two of the seven
+  // terms went unread, and the sharper of them reaches the reader as the flat
+  // prose *"and no width written"* — which is the claim, not a reading of it.
+  // Planted by stripping only `height` from the header, so the blocker still
+  // fires and `width` survives into the rig, it printed `no --stage: 1 NO_STAGE
+  // blocker and no width written` on the run where one was.
+  const stageProbes = [
+    ...(refused.length === 1 ? [] : [`no --stage raised ${refused.length} NO_STAGE blocker(s), and this skeleton wants exactly 1`]),
+    ...(wroteWithout === undefined
+      ? []
+      : [`no --stage still wrote a stage into the rig: width ${JSON.stringify(wroteWithout)} — a refusal writes nothing plausible`]),
+    ...(judged.length === 1 ? [] : [`--stage raised ${judged.length} NO_STAGE judgement(s), and this skeleton wants exactly 1`]),
+    ...(withStage.findings.every((f) => f.kind !== 'blocker')
+      ? []
+      : [`--stage still left ${withStage.findings.filter((f) => f.kind === 'blocker').length} blocker(s): ` +
+          `${withStage.findings.filter((f) => f.kind === 'blocker').map((f) => f.code).join(', ')}`]),
+    ...(wrote?.width === supplied.width
+      ? []
+      : [`--stage width ${supplied.width} reached the header as ${JSON.stringify(wrote?.width)}`]),
+    ...(wrote?.x === supplied.x ? [] : [`--stage x ${supplied.x} reached the header as ${JSON.stringify(wrote?.x)}`]),
+    ...(blockerless.length === 0
+      ? []
+      : [`a skeleton that HAS a stage raised ${blockerless.length} NO_STAGE finding(s), and it is owed none`]),
+  ];
+  const stageHeld = stageProbes.length === 0;
   say(
     'IG06_A_SKELETON_WITH_NO_STAGE_IS_A_BLOCKER_AND_A_SUPPLIED_ONE_IS_A_JUDGEMENT',
-    refused.length === 1 &&
-      (withoutStage.rig.skeleton as Record<string, unknown> | undefined)?.width === undefined &&
-      judged.length === 1 &&
-      withStage.findings.every((f) => f.kind !== 'blocker') &&
-      wrote?.width === supplied.width &&
-      wrote?.x === supplied.x &&
-      blockerless.length === 0,
-    `no --stage: ${refused.length} NO_STAGE blocker and no width written. --stage ${JSON.stringify(supplied)}: ` +
-      `${judged.length} NO_STAGE judgement, header ${JSON.stringify(wrote)}. A skeleton that HAS a stage: ` +
-      `${blockerless.length} NO_STAGE finding(s)`,
+    stageHeld,
+    probeDetail(
+      stageHeld,
+      stageProbes,
+      `no --stage: ${refused.length} NO_STAGE blocker and no width written. --stage ${JSON.stringify(supplied)}: ` +
+        `${judged.length} NO_STAGE judgement, header ${JSON.stringify(wrote)}. A skeleton that HAS a stage: ` +
+        `${blockerless.length} NO_STAGE finding(s)`,
+      (count) => `${count} of the three states the stage is read in did not hold:`,
+    ),
     'the one value a decompiler cannot read out of a skeleton, and the one that costs least to get wrong — ' +
       'this sentence said `diff` has no skeleton-header measure at all until #594 read the report: since #578 it ' +
       'carries `stage_present` and `stage_box`, and they are `(reported)`, so nothing on the ladder consults them ' +
@@ -36488,16 +36652,39 @@ function runIngestSuite(): number {
   const noPathRig = trips.get('articulated_probe')!;
   const reportsLengths = pathRig.findings.some((f) => f.code === 'PATH_LENGTHS');
   const staysQuiet = noPathRig.findings.every((f) => f.code !== 'PATH_LENGTHS');
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Two of the five
+  // terms went unread and the clean sentence asserts both outright — *"all
+  // equal to the largest key time"* and *"PATH_LENGTHS reported on a rig with a
+  // path attachment"*. Planted with the finding's code misspelled in
+  // `src/ingest.ts`, it printed that second clause on the run where the report
+  // carried no such finding at all.
+  const ingestJudgements = [
+    ...(durations.length === probeAnimations.length
+      ? []
+      : [`${durations.length} DURATION judgement(s) over ${probeAnimations.length} animation(s) — one each is what a transcription owes`]),
+    ...(durations.every((f) => f.kind === 'judgement')
+      ? []
+      : [`${durations.filter((f) => f.kind !== 'judgement').length} DURATION finding(s) are not judgements: ` +
+          `${[...new Set(durations.map((f) => f.kind))].join(', ')}`]),
+    ...(wrongDuration.length === 0
+      ? []
+      : [`${wrongDuration.length} declared duration(s) are not the largest key time: ` +
+          `${wrongDuration.map(([name, animation]) => `${name} states ${animation.duration}, largest key ${largestKeyTime(sourceAnimations[name])}`).join('; ')}`]),
+    ...(reportsLengths ? [] : ['no PATH_LENGTHS finding on a rig that HAS a path attachment, so the re-measure went unreported']),
+    ...(staysQuiet ? [] : ['a PATH_LENGTHS finding on a rig with no path attachment, so the report fires on everything']),
+  ];
+  const ingestJudged = ingestJudgements.length === 0;
   say(
     'IG07_THE_DURATION_IS_THE_LARGEST_KEY_TIME_AND_SAYS_SO_AND_A_PATHS_LENGTHS_ARE_RE_MEASURED',
-    durations.length === probeAnimations.length &&
-      durations.every((f) => f.kind === 'judgement') &&
-      wrongDuration.length === 0 &&
-      reportsLengths &&
-      staysQuiet,
-    `${durations.length} DURATION judgement(s) over ${probeAnimations.length} animation(s), all equal to the ` +
-      `largest key time; PATH_LENGTHS reported on a rig with a path attachment and on ${staysQuiet ? 'no' : 'the wrong'} ` +
-      'rig without one',
+    ingestJudged,
+    probeDetail(
+      ingestJudged,
+      ingestJudgements,
+      `${durations.length} DURATION judgement(s) over ${probeAnimations.length} animation(s), all equal to the ` +
+        `largest key time; PATH_LENGTHS reported on a rig with a path attachment and on ${staysQuiet ? 'no' : 'the wrong'} ` +
+        'rig without one',
+      (count) => `${count} of the two judgements did not read as the tool states them:`,
+    ),
     'skeleton JSON has no duration field at all, so the largest key time is the only derivable answer AND it is ' +
       'wrong for an animation that holds past its last key — which is exactly the shape of thing that has to be ' +
       'reported rather than chosen. `lengths` is the mirror image: the file HAS it and rigc drops it on purpose, ' +
