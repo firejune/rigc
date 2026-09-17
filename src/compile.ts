@@ -6519,13 +6519,41 @@ function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string
   if (track.bone) return [track.bone];
   if (track.slot) return [track.slot];
   if (track.group) {
-    // A group's members are bones or slots depending on the property, which is
-    // what lets `stagger` express the ring lag: four grips, one track, a few
-    // frames apart. Plan 02 section 4-2 calls that lag the real detail of the
-    // stroke, and it is the difference between a ring following the part and two
-    // objects moving together (which reads as a composite).
+    // A group's members are bones, slots or physics constraints depending on the
+    // property, which is what lets `stagger` express a lag across them: four
+    // members, one track, a few frames apart — the difference between a ring
+    // following the part and two objects moving together, which reads as a
+    // composite.
     const members = motion.groups?.[track.group];
     if (!members) throw new CompileError(`animation "${animName}": unknown group "${track.group}"`);
+    // 🚨 The group is the one target shape whose FAMILY is decided by the
+    // property, and three tables decide it: `constraintFamilyOf` asks
+    // `property in PHYSICS_TRACKS`, this function asks `property in BONE_TRACKS`,
+    // and what neither claims falls through to the slot branch. So a property in
+    // no table left the dispatch with no family at all and the track was read as
+    // a slot track — the first member was then refused for not being a slot
+    // (`animation "A" targets unknown slot "rim_grip_a"` on a group of bones and
+    // a misspelled bone property), or, when the members really were slots, with
+    // the slot table alone on a family nothing had determined (issue #661).
+    //
+    // Raised AFTER the group's own existence check, because "group G has no
+    // timeline P" would otherwise assert a group the file does not declare, and
+    // BEFORE the members are resolved against the rig or any key is shaped: the
+    // property is what the dispatch reads first, so it is what the refusal is
+    // about. All three lists come from the objects the dispatch reads, so none
+    // of them can drift from the emitter that owns it. A property that IS in
+    // `PHYSICS_TRACKS` never reaches this line — `constraintFamilyOf` returns
+    // `physics` for a group track that names one, and the family branch above
+    // has already returned — and a path or slider property is refused further up
+    // with the field its constraint's name goes in.
+    if (!(track.property in BONE_TRACKS) && !(track.property in SLOT_TRACKS)) {
+      throw new CompileError(
+        `animation "${animName}" group "${track.group}" has no timeline "${track.property}" ` +
+          `(a bone group has: ${Object.keys(BONE_TRACKS).join(', ')}; ` +
+          `a slot group has: ${Object.keys(SLOT_TRACKS).join(', ')}; ` +
+          `a ${CONSTRAINT_TRACK_FAMILIES.physics.label} group has: ${Object.keys(PHYSICS_TRACKS).join(', ')})`,
+      );
+    }
     return members;
   }
   throw new CompileError(`animation "${animName}": a track targets neither slot nor group`);
