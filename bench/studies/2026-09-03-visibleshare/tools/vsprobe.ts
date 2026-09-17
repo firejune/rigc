@@ -42,7 +42,7 @@
  *    step `d` has only established that no probe at `d` improved; the answer sits
  *    within about one step of the local optimum rather than on it.
  *  - `readback-floor` — ±0.16 px, ±0.27°, ±3.1 % scale: the worst known-answer
- *    readback error the `PS01`/`PS02` controls measure, as re-baselined in
+ *    readback error the `PO01`/`PO02` controls measure, as re-baselined in
  *    [#306](https://github.com/firejune/rigc/issues/306). Wider than the
  *    convergence band and a different quantity — accuracy against a constructed
  *    truth rather than the fitter's own resolution — and reported as the band
@@ -198,7 +198,7 @@ const RUNGS: Rung[] = [
     px: 0.16,
     deg: 0.27,
     scale: 0.031,
-    basis: "PS01/PS02's worst known-answer readback error, re-baselined in #306 (0.16 px / 0.27° / 3.1% scale)",
+    basis: "PO01/PO02's worst known-answer readback error, re-baselined in #306 (0.16 px / 0.27° / 3.1% scale)",
   },
   {
     name: 'control-1px',

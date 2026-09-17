@@ -16,7 +16,7 @@ seed                       20260903
   polish-floor      0.05 px /  0.1 deg / 0.10%  — src/pose.ts's level-0 polish floor — the step at which the pattern search stops halving and returns
   polish-floor-2x    0.1 px /  0.2 deg / 0.20%  — twice the polish floor — a pattern search that terminated at step d sits within about one step of its optimum
   pr322-scale        0.2 px /  0.4 deg / 0.40%  — sized from the band sweep so the induced anchor-residual change brackets #322's own 0.0008 — outside the convergence band, and there so the comparison against the observed 0.36 → 0.89 is direct rather than extrapolated
-  readback-floor    0.16 px / 0.27 deg / 3.10%  — PS01/PS02's worst known-answer readback error, re-baselined in #306 (0.16 px / 0.27° / 3.1% scale)
+  readback-floor    0.16 px / 0.27 deg / 3.10%  — PO01/PO02's worst known-answer readback error, re-baselined in #306 (0.16 px / 0.27° / 3.1% scale)
   control-1px          1 px /    1 deg / 1.00%  — outside every band, on purpose — the positive control that the quantity moves at all under this knob
 
 ## the objective hand copy, verified rather than trusted

@@ -856,7 +856,7 @@ const MUTANTS: Mutant[] = [
     }),
   },
   {
-    name: 'M24_physics_drives_a_component_the_editor_discards',
+    name: 'M49_physics_drives_a_component_the_editor_discards',
     origin:
       'the editor imports it, exports it, and the component is simply gone — the returned constraint drives nothing and says nothing (issue #540)',
     expect: 'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP',
@@ -872,7 +872,7 @@ const MUTANTS: Mutant[] = [
     }),
   },
   {
-    name: 'M25_physics_driving_only_x_is_accepted',
+    name: 'M50_physics_driving_only_x_is_accepted',
     origin:
       'the rule is membership, not arity: `x` and `y` together both came back, so a check that fired on a second component would refuse correct data (issue #540)',
     expect: null,
@@ -1886,33 +1886,33 @@ function runDiffSuite(tally: RunTally): number | null {
 // So the four controls below are one positive and three negatives, and every
 // negative names the quantities it may move AND the ones it must leave at zero:
 //
-//   B01  the same skeleton on both sides            all four exactly 0
-//   B02  one leaf bone translated in setup          position only
-//   B03  the same bone rotated in setup             rotation and linear only
-//   B04  the same bone renamed                      unmatched under `identity`,
+//   BD01  the same skeleton on both sides            all four exactly 0
+//   BD02  one leaf bone translated in setup          position only
+//   BD03  the same bone rotated in setup             rotation and linear only
+//   BD04  the same bone renamed                      unmatched under `identity`,
 //                                                   and back to 0 under a map
 //
-// ⭐ B03 is what stops B02 being a measure of one thing wearing four hats: a
+// ⭐ BD03 is what stops BD02 being a measure of one thing wearing four hats: a
 // translation that moved the rotation figure, or a rotation that moved the
-// scale figure, would mean the decomposition is not a decomposition. And B04 is
+// scale figure, would mean the decomposition is not a decomposition. And BD04 is
 // the control for the *input* — a correspondence that is quietly ignored would
-// leave B01–B03 all passing, because they use the identity mapping.
+// leave BD01–BD03 all passing, because they use the identity mapping.
 //
 // The fixture is `6-arcs-pro`: 14 bones, four transform constraints, one deform
 // timeline. The two negatives move two DIFFERENT bones, and each choice is
 // load-bearing rather than arbitrary — writing down why is most of what the
 // suite teaches about the conventions.
 //
-// ⚠️ **B03 needs an identity parent.** Under a parent carrying **non-uniform
+// ⚠️ **BD03 needs an identity parent.** Under a parent carrying **non-uniform
 // scale** a local rotation changes the child's world scale and shear as well as
-// its rotation — correctly; that is what a world matrix does — so B03 measured
+// its rotation — correctly; that is what a world matrix does — so BD03 measured
 // on a bone down the `tail` chain (which an animation scales) reads 30.263° and
 // a scale difference of 0.023, and the control would be asserting the fixture's
 // arithmetic rather than the instrument's. `platform` hangs off `root`, which
 // is unrotated and unscaled, and has no children: the one place a 30° local
 // turn is a 30° world turn and nothing else.
 //
-// ⚠️ **B02 must not move the bone that sets the SIZE.** Positions are divided by
+// ⚠️ **BD02 must not move the bone that sets the SIZE.** Positions are divided by
 // each skeleton's own size (greatest root-to-bone distance in the setup pose),
 // and `platform` sits at x≈1068 — it *is* 6-arcs' size. Translating it moves
 // the normaliser, so every bone's normalised position shifts and the worst
@@ -1926,15 +1926,15 @@ function runDiffSuite(tally: RunTally): number | null {
 
 const BONEDIST_FIXTURE = resolve(import.meta.dir, 'examples/6-arcs/export/6-arcs-pro.json');
 const BONEDIST_ATLAS = resolve(import.meta.dir, 'examples/6-arcs/export/6-arcs.atlas');
-/** B02's bone: a leaf off the scaled `tail` chain, and NOT the size-setter. */
+/** BD02's bone: a leaf off the scaled `tail` chain, and NOT the size-setter. */
 const BONEDIST_MOVED = 'arc-tracker';
-/** B03's and B04's bone: a childless leaf off the identity `root`. */
+/** BD03's and BD04's bone: a childless leaf off the identity `root`. */
 const BONEDIST_PROBE = 'platform';
-/** What B04 renames it to. */
+/** What BD04 renames it to. */
 const BONEDIST_RENAMED = 'probe-platform';
-/** How far B02 translates its bone, in the rig's own units. */
+/** How far BD02 translates its bone, in the rig's own units. */
 const BONEDIST_NUDGE = 50;
-/** How far B03 rotates its bone, in degrees. */
+/** How far BD03 rotates its bone, in degrees. */
 const BONEDIST_TURN = 30;
 /**
  * Floating-point slack for the *"must stay at zero"* halves of the negatives.
@@ -1996,18 +1996,18 @@ function runBoneDistSuite(): number | null {
       moved.includes(q) ? report.worst[q].value > BONEDIST_EPSILON : report.worst[q].value <= BONEDIST_EPSILON,
     );
 
-  // --- B01, the positive control -------------------------------------------
+  // --- BD01, the positive control -------------------------------------------
   const identity = run(BONEDIST_FIXTURE, IDENTITY_CORRESPONDENCE);
   const frames = identity.animations.reduce((n, a) => n + a.compared, 0);
   bad += reportCase(
-    'B01_CONTROL_THE_SAME_SKELETON_IS_EXACTLY_ZERO',
+    'BD01_CONTROL_THE_SAME_SKELETON_IS_EXACTLY_ZERO',
     BONE_QUANTITIES.every((q) => identity.worst[q].value === 0) && frames > 0 && identity.correspondence.pairs === 14,
     `${frames} frame(s) × ${identity.correspondence.pairs} bone pair(s): ${worstLine(identity)}`,
     'a pose distance that is not exactly zero on one file against itself is measuring its own arithmetic, and that ' +
       'noise looks exactly like a small honest gap',
   );
 
-  // --- B02, translation ----------------------------------------------------
+  // --- BD02, translation ----------------------------------------------------
   const nudged = run(
     variant('nudged', (j) => {
       const bone = boneOf(j, BONEDIST_MOVED);
@@ -2016,7 +2016,7 @@ function runBoneDistSuite(): number | null {
     IDENTITY_CORRESPONDENCE,
   );
   bad += reportCase(
-    'B02_A_TRANSLATED_BONE_MOVES_POSITION_AND_NOTHING_ELSE',
+    'BD02_A_TRANSLATED_BONE_MOVES_POSITION_AND_NOTHING_ELSE',
     zeroExcept(nudged, ['position']) && nudged.worst.position.bone === BONEDIST_MOVED,
     `\`${BONEDIST_MOVED}\` moved ${BONEDIST_NUDGE} units in setup: ${worstLine(nudged)}; worst position is bone ` +
       `\`${nudged.worst.position.bone}\``,
@@ -2025,7 +2025,7 @@ function runBoneDistSuite(): number | null {
       'which is what makes the per-bone table a diagnosis rather than an alarm',
   );
 
-  // --- B03, rotation -------------------------------------------------------
+  // --- BD03, rotation -------------------------------------------------------
   const turned = run(
     variant('turned', (j) => {
       const bone = boneOf(j, BONEDIST_PROBE);
@@ -2034,20 +2034,20 @@ function runBoneDistSuite(): number | null {
     IDENTITY_CORRESPONDENCE,
   );
   bad += reportCase(
-    'B03_A_ROTATED_BONE_MOVES_ROTATION_AND_THE_MATRIX',
+    'BD03_A_ROTATED_BONE_MOVES_ROTATION_AND_THE_MATRIX',
     zeroExcept(turned, ['rotation', 'linear']) &&
       turned.worst.rotation.bone === BONEDIST_PROBE &&
       Math.abs(turned.worst.rotation.value - BONEDIST_TURN) < BONEDIST_EPSILON,
     `\`${BONEDIST_PROBE}\` turned ${BONEDIST_TURN}° in setup: ${worstLine(turned)}; the rotation figure reads ` +
       `${turned.worst.rotation.value.toFixed(6)}° on bone \`${turned.worst.rotation.bone}\``,
-    'the negative control for B02, and the one that pins the UNIT: a leaf bone off an identity root turned 30° must ' +
+    'the negative control for BD02, and the one that pins the UNIT: a leaf bone off an identity root turned 30° must ' +
       'read 30°, or the figure is an angle in some scale nobody stated. Its world position is unchanged because a ' +
       'rotation about its own origin moves no origin and it has no children, and its scale is unchanged because a ' +
       'rotation is not a scale — but `linear` MUST move, since rotation lives in the matrix it reports, and it ' +
       'reads 0.5 because that is sin(30°)',
   );
 
-  // --- B04, the correspondence is an input, and it is honoured -------------
+  // --- BD04, the correspondence is an input, and it is honoured -------------
   // A real candidate renaming a bone renames every reference to it too, so the
   // mutant does the same — otherwise the skeleton does not parse and the case
   // would be testing the parser.
@@ -2077,7 +2077,7 @@ function runBoneDistSuite(): number | null {
   );
   const mapped = run(renamedPath, mapPath);
   bad += reportCase(
-    'B04_A_SUPPLIED_CORRESPONDENCE_IS_USED_AND_A_MISSING_ONE_IS_NAMED',
+    'BD04_A_SUPPLIED_CORRESPONDENCE_IS_USED_AND_A_MISSING_ONE_IS_NAMED',
     unmapped.correspondence.pairs === 13 &&
       unmapped.correspondence.candidateUnmatched.length === 1 &&
       unmapped.correspondence.candidateUnmatched[0].startsWith(BONEDIST_RENAMED) &&
@@ -2090,7 +2090,7 @@ function runBoneDistSuite(): number | null {
       `[${unmapped.correspondence.referenceUnpaired.join(', ')}] unpaired; under the supplied map ` +
       `${mapped.correspondence.pairs} pair(s) and ${worstLine(mapped)}`,
     'the mapping is an INPUT (a candidate is entitled to its own vocabulary), so a correspondence that were quietly ' +
-      'ignored would leave B01–B03 all green — they use the identity mapping — while every real run read a renamed ' +
+      'ignored would leave BD01–BD03 all green — they use the identity mapping — while every real run read a renamed ' +
       'rig as a rig that poses wrongly',
   );
 
@@ -3803,7 +3803,7 @@ function runSlotSuite(): number {
     wideTrack.ambiguity.includes('"small"');
   if (mergedOk) {
     console.log(
-      `  PASS  T01_A_BLOB_ITS_OWN_SLOT_DOMINATES_IS_STILL_A_BLOB  ` +
+      `  PASS  SA01_A_BLOB_ITS_OWN_SLOT_DOMINATES_IS_STILL_A_BLOB  ` +
         `(${blob.pixels} px blob against the part's own ${Math.round(wide.pixels)} px — ` +
         `${(blob.pixels / wide.pixels).toFixed(2)}x, under the size test, and no wider than its box: reported as ` +
         `ambiguous rather than as the ${lie.toFixed(1)} px the centroids are apart)`,
@@ -3815,7 +3815,7 @@ function runSlotSuite(): number {
   } else {
     bad++;
     console.log(
-      `  FAIL  T01_A_BLOB_ITS_OWN_SLOT_DOMINATES_IS_STILL_A_BLOB: ${merged.components.length} component(s), ` +
+      `  FAIL  SA01_A_BLOB_ITS_OWN_SLOT_DOMINATES_IS_STILL_A_BLOB: ${merged.components.length} component(s), ` +
         `centroids ${lie.toFixed(2)} px apart (needs > ${SLOT_LIE_PIXELS}), track ${JSON.stringify(wideTrack)}`,
     );
   }
@@ -3835,14 +3835,14 @@ function runSlotSuite(): number {
     );
   if (separateOk) {
     console.log(
-      `  PASS  T02_TWO_PARTS_THAT_ARE_TWO_BLOBS_STILL_GET_A_DRIFT  ` +
+      `  PASS  SA02_TWO_PARTS_THAT_ARE_TWO_BLOBS_STILL_GET_A_DRIFT  ` +
         `(both matched by component at ${separateTracks.map((t) => (t.drift ?? 0).toFixed(2)).join(' / ')} px)`,
     );
     console.log('          origin: a matcher that answers "ambiguous" to everything is not a matcher');
   } else {
     bad++;
     console.log(
-      `  FAIL  T02_TWO_PARTS_THAT_ARE_TWO_BLOBS_STILL_GET_A_DRIFT: ${separate.components.length} component(s), ` +
+      `  FAIL  SA02_TWO_PARTS_THAT_ARE_TWO_BLOBS_STILL_GET_A_DRIFT: ${separate.components.length} component(s), ` +
         `tracks ${JSON.stringify(separateTracks.map((t) => ({ slot: t.slot, method: t.method, drift: t.drift })))}`,
     );
   }
@@ -3886,7 +3886,7 @@ interface RigMutant {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const RIG_MUTANTS: RigMutant[] = [
   {
-    name: 'R01_bone_names_a_parent_declared_after_it',
+    name: 'RF01_bone_names_a_parent_declared_after_it',
     origin: 'SkeletonJson.ts:90-118 — `parent` resolves against the bones already read, so a forward reference loads as a second root',
     expect: 'is not declared before it',
     mutate: (rig) => {
@@ -3894,7 +3894,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R02_two_bones_share_one_name',
+    name: 'RF02_two_bones_share_one_name',
     origin: 'bone names are the join key for slots, meshes and every timeline; a duplicate makes the join ambiguous with no error',
     expect: 'two bones are called',
     mutate: (rig) => {
@@ -3902,7 +3902,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R03_slot_names_a_bone_the_rig_does_not_have',
+    name: 'RF03_slot_names_a_bone_the_rig_does_not_have',
     origin: "SkeletonJson.ts:127 — the parser throws `Couldn't find bone … for slot …`, but in the consumer's process",
     expect: 'which this rig does not declare',
     mutate: (rig) => {
@@ -3910,7 +3910,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R04_attachment_image_is_not_on_disk',
+    name: 'RF04_attachment_image_is_not_on_disk',
     origin: 'a rig-declared attachment naming a missing PNG used to surface as a raw ENOENT from readFileSync',
     expect: 'is not on disk at',
     mutate: (rig) => {
@@ -3920,7 +3920,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R05_ik_constraint_targets_an_unknown_bone',
+    name: 'RF05_ik_constraint_targets_an_unknown_bone',
     origin: 'SkeletonJson.ts:149-176 — ik `bones`/`target` resolve by name and throw on a miss, again in the consumer',
     expect: 'which the rig does not declare as a bone',
     mutate: (rig) => {
@@ -3928,10 +3928,10 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R08_authored_mesh_binds_a_bone_the_rig_does_not_have',
+    name: 'RF08_authored_mesh_binds_a_bone_the_rig_does_not_have',
     origin:
       'issue #45 — an authored mesh used to bind bones by INDEX into the emitted bone array, ' +
-      'so a wrong binding had no name to be wrong and nothing could refuse it; by name it joins R01/R03/R05',
+      'so a wrong binding had no name to be wrong and nothing could refuse it; by name it joins RF01/RF03/RF05',
     expect: 'which the rig does not declare as a bone',
     mutate: (rig) => {
       (rig as any).slots.find((sl: any) => sl.name === 'near').attachment = 'probe_mesh';
@@ -3958,7 +3958,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R09_authored_mesh_uses_raw_bone_indices_without_saying_so',
+    name: 'RF09_authored_mesh_uses_raw_bone_indices_without_saying_so',
     origin:
       'issue #45 — the index form is still reachable, deliberately, but it costs silence: ' +
       'inserting a bone rebinds every vertex. It has to be asked for by name.',
@@ -3984,7 +3984,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R10_bounding_box_without_a_vertex_count',
+    name: 'RF10_bounding_box_without_a_vertex_count',
     origin:
       'SkeletonJson.ts:552 — the parser reads `map.vertexCount << 1`, and `undefined << 1` is 0, ' +
       'so the coordinate array is decoded as a weight run and the box ends up with no vertices at all',
@@ -3997,7 +3997,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R11_bounding_box_vertices_disagree_with_its_vertex_count',
+    name: 'RF11_bounding_box_vertices_disagree_with_its_vertex_count',
     origin:
       'the same length comparison that decides a mesh’s encoding (A04), minus the uvs that would have caught it: ' +
       'a count that does not match makes readVertices take the weighted branch and read coordinates as weights',
@@ -4010,7 +4010,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R12_clipping_ends_at_a_slot_the_rig_does_not_have',
+    name: 'RF12_clipping_ends_at_a_slot_the_rig_does_not_have',
     origin:
       'SkeletonJson.ts:626-627 — `findSlot` returns null on a miss and the parser assigns it, so the clip ' +
       'never ends: it runs to the bottom of the draw order and takes every slot below it out of the frame',
@@ -4032,7 +4032,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R13_attachment_type_the_emitter_cannot_write',
+    name: 'RF13_attachment_type_the_emitter_cannot_write',
     origin: 'SkeletonJson.ts:653 — an unknown attachment `type` returns null and the attachment disappears with no error',
     expect: 'rigc does not emit it yet',
     mutate: (rig) => {
@@ -4041,7 +4041,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R06_wrong_spec_version_field',
+    name: 'RF06_wrong_spec_version_field',
     origin: 'the envelope is the only thing standing between a v1 reader and a v2 file',
     expect: 'unknown rig spec version',
     mutate: (rig) => {
@@ -4049,7 +4049,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R07_constraint_type_the_format_does_not_have',
+    name: 'RF07_constraint_type_the_format_does_not_have',
     origin: 'SkeletonJson.ts:148-367 — an entry whose `type` matches no case is dropped with no error and no default branch',
     // The five types are all emitted now (issue #2 closed the last two), so what
     // this mutant proves is what it always proved: the parser has no `default:`
@@ -4075,7 +4075,7 @@ const RIG_MUTANTS: RigMutant[] = [
   // walk that reached only the shallow ones would pass a single case aimed at
   // the root.
   {
-    name: 'R14_a_root_key_nothing_reads',
+    name: 'RF14_a_root_key_nothing_reads',
     origin: 'the shallowest case and the one a hand-written spec hits first — `"bone"` for `"bones"` is a rig with no bones and a stray key, and the second of those was invisible',
     expect: 'this rig spec has a key this compiler does not read: "wobble"',
     mutate: (rig) => {
@@ -4083,7 +4083,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R15_a_bone_key_nothing_reads_is_named_with_its_near_miss',
+    name: 'RF15_a_bone_key_nothing_reads_is_named_with_its_near_miss',
     origin: 'a bone carries eight numeric fields whose names differ by one character, so a typo lands on a plausible-looking key rather than an obvious one',
     expect: 'bone "cam" has a key this compiler does not read: "scaleZ" (did you mean "scaleX", "scaleY"?)',
     mutate: (rig) => {
@@ -4091,7 +4091,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R16_a_bone_from_key_nothing_reads',
+    name: 'RF16_a_bone_from_key_nothing_reads',
     origin: 'a nested block is where a key check that only walked the top level of each object would stop, and `from` is the rigc extension an author is least likely to have memorised',
     expect: 'bone "cam"\'s "from" has a key this compiler does not read: "rotaton"',
     mutate: (rig) => {
@@ -4099,7 +4099,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R17_a_slot_key_nothing_reads',
+    name: 'RF17_a_slot_key_nothing_reads',
     origin: '`blendMode` is what the editor calls this field and `blend` is what the format calls it, so the wrong one is a reasonable guess rather than a slip',
     expect: 'slot "near" has a key this compiler does not read: "blendMode" (did you mean "blend"?)',
     mutate: (rig) => {
@@ -4107,7 +4107,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R18_the_physics_key_this_file_documented_and_nothing_ever_read',
+    name: 'RF18_the_physics_key_this_file_documented_and_nothing_ever_read',
     origin:
       'issue #545 itself. `src/rig.ts` declared `scaleYMode` and `SkeletonJson.js:299` reads `scaleY`, so the ' +
       'interface errored on the key that works and was silent on the key that does nothing — and `scaleYMode` ' +
@@ -4118,7 +4118,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R19_a_real_key_in_the_wrong_case_is_named_with_the_case_that_works',
+    name: 'RF19_a_real_key_in_the_wrong_case_is_named_with_the_case_that_works',
     origin:
       'the near-miss search lower-cases both sides, so a key that is right but for its case comes back at ' +
       'distance 0 and leads the suggestions. It is the one an author is least likely to spot by re-reading, ' +
@@ -4129,7 +4129,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R20_an_attachment_key_nothing_reads',
+    name: 'RF20_an_attachment_key_nothing_reads',
     origin:
       'the emitter reaches an attachment only through a slot it is going to draw, so a check riding along with ' +
       'it would inherit that blind spot — the shape #293 was lost in. This walk visits the skin table itself',
@@ -4140,7 +4140,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R21_a_mesh_generator_key_nothing_reads',
+    name: 'RF21_a_mesh_generator_key_nothing_reads',
     origin:
       'two levels below the skin table, and dispatched on `kind` rather than on `type`: a `grid` takes `cols` ' +
       'and a `ring` takes `controls`, so one flattened key set over the four kinds would accept either on both',
@@ -4161,7 +4161,7 @@ const RIG_MUTANTS: RigMutant[] = [
     },
   },
   {
-    name: 'R22_an_invariants_key_nothing_reads',
+    name: 'RF22_an_invariants_key_nothing_reads',
     origin:
       'the block that turns assertions on and off, where a key nothing reads is a check nobody asked for and ' +
       'nobody notices the absence of — the same failure mode `deformMayFold`\'s own name check was written for',
@@ -6235,7 +6235,7 @@ function runPngTransparencySuite(): number {
 
   const indexedTrns = gatePartImage((p) => writeTypedPng(p, 12, 8, { colourType: 3, trns: true }));
   say(
-    'T01_INDEXED_WITH_TRNS_IS_TRANSPARENT_ART',
+    'PT01_INDEXED_WITH_TRNS_IS_TRANSPARENT_ART',
     indexedTrns.passed.includes(A19),
     verdict(indexedTrns),
     'colour type 3 + tRNS is what ImageMagick, PNG-8 export, GIMP indexed and pngquant produce; the art is transparent (#215)',
@@ -6243,7 +6243,7 @@ function runPngTransparencySuite(): number {
 
   const greyTrns = gatePartImage((p) => writeTypedPng(p, 12, 8, { colourType: 0, trns: true }));
   say(
-    'T02_GREYSCALE_WITH_TRNS_IS_TRANSPARENT_ART',
+    'PT02_GREYSCALE_WITH_TRNS_IS_TRANSPARENT_ART',
     greyTrns.passed.includes(A19),
     verdict(greyTrns),
     'tRNS on a greyscale file names one invisible shade; the rule is transparency, not the channel it is stored in',
@@ -6251,7 +6251,7 @@ function runPngTransparencySuite(): number {
 
   const rgbTrns = gatePartImage((p) => writeTypedPng(p, 12, 8, { colourType: 2, trns: true }));
   say(
-    'T03_TRUECOLOUR_WITH_TRNS_IS_TRANSPARENT_ART',
+    'PT03_TRUECOLOUR_WITH_TRNS_IS_TRANSPARENT_ART',
     rgbTrns.passed.includes(A19),
     verdict(rgbTrns),
     'same chunk, third colour type — a rule keyed on tRNS must not be keyed on "indexed" by accident',
@@ -6259,7 +6259,7 @@ function runPngTransparencySuite(): number {
 
   const greyAlpha = gatePartImage((p) => writeGreyAlphaPng(p, 12, 8));
   say(
-    'T04_GREYSCALE_ALPHA_STILL_PASSES',
+    'PT04_GREYSCALE_ALPHA_STILL_PASSES',
     greyAlpha.passed.includes(A19),
     verdict(greyAlpha),
     'the other half of the #215 audit: two of nine parts came out type 4 from the same command and passed',
@@ -6270,7 +6270,7 @@ function runPngTransparencySuite(): number {
   const opaque = gatePartImage((p) => writeTypedPng(p, 12, 8, { colourType: 3, trns: false }));
   const refusal = opaque.failures.find((f) => f.assertion === A19);
   say(
-    'T05_INDEXED_WITHOUT_TRNS_IS_STILL_REFUSED',
+    'PT05_INDEXED_WITHOUT_TRNS_IS_STILL_REFUSED',
     refusal !== undefined,
     verdict(opaque),
     'the assertion still has to fire, or the fix has replaced a false alarm with a blind spot',
@@ -6296,7 +6296,7 @@ function runPngTransparencySuite(): number {
     /no alpha channel/i.test(detail) ? 'DROP the old untrue "no alpha channel" phrasing' : null,
   ].filter((m): m is string => m !== null);
   say(
-    'T06_THE_REFUSAL_NAMES_A_REMEDY_AND_BOTH_PROFILES',
+    'PT06_THE_REFUSAL_NAMES_A_REMEDY_AND_BOTH_PROFILES',
     refusal !== undefined && missing.length === 0,
     missing.length === 0 ? detail : `message is missing: ${missing.join(', ')} — got: ${detail}`,
     'every other error in the audit named a fix; the one a stranger meets first did not',
@@ -6310,7 +6310,7 @@ function runPngTransparencySuite(): number {
   const withTrns = readPngInfo(join(probe, 'with.png'));
   const withoutTrns = readPngInfo(join(probe, 'without.png'));
   say(
-    'T07_READ_PNG_INFO_WALKS_PAST_THE_HEADER',
+    'PT07_READ_PNG_INFO_WALKS_PAST_THE_HEADER',
     withTrns.colourType === 3 &&
       withTrns.hasTrns &&
       withTrns.hasTransparency &&
@@ -12627,7 +12627,7 @@ function runPolygonSuite(): number {
     profile: 'spine-html',
   });
   say(
-    'P01_the_same_rig_is_refused_by_the_renderer_profile',
+    'PG01_the_same_rig_is_refused_by_the_renderer_profile',
     policy.failures.some((f) => f.assertion === 'A11_NO_CLIPPING_ATTACHMENTS'),
     policy.failures.find((f) => f.assertion === 'A11_NO_CLIPPING_ATTACHMENTS')?.detail ??
       'A11 accepted a clipping attachment under the profile whose renderer skips them',
@@ -12638,7 +12638,7 @@ function runPolygonSuite(): number {
   const skin = posable.data.findSkin('default');
   const box = skin?.getAttachment(posable.data.findSlot('marker')!.index, 'marker_bb');
   say(
-    'P02_the_bounding_box_loads_back_with_its_polygon',
+    'PG02_the_bounding_box_loads_back_with_its_polygon',
     box instanceof BoundingBoxAttachment &&
       box.worldVerticesLength === 8 &&
       !box.bones &&
@@ -12651,7 +12651,7 @@ function runPolygonSuite(): number {
 
   const clip = skin?.getAttachment(posable.data.findSlot('marker')!.index, 'marker_clip');
   say(
-    'P03_the_clip_loads_back_pointing_at_its_end_slot',
+    'PG03_the_clip_loads_back_pointing_at_its_end_slot',
     clip instanceof ClippingAttachment && clip.endSlot?.name === 'marker' && clip.worldVerticesLength === 6,
     clip instanceof ClippingAttachment
       ? `endSlot ${clip.endSlot ? `"${clip.endSlot.name}"` : 'null'}, worldVerticesLength ${clip.worldVerticesLength}`
@@ -12681,7 +12681,7 @@ function runPolygonSuite(): number {
   });
   const unknownBone = refusal(weighted, POLYGON_MOTION);
   say(
-    'P04_a_weighted_box_binding_an_unknown_bone_is_refused',
+    'PG04_a_weighted_box_binding_an_unknown_bone_is_refused',
     unknownBone !== null && unknownBone.includes('which the rig does not declare as a bone'),
     unknownBone === null ? 'the compile went through' : `refused with: ${unknownBone}`,
     'the polygon shares the mesh’s by-name encoder, so it inherits the refusal issue #45 was filed for',
@@ -12697,7 +12697,7 @@ function runPolygonSuite(): number {
   });
   const notImplemented = refusal(deferred, POLYGON_MOTION);
   say(
-    'P05_a_deferred_attachment_type_says_why_it_is_deferred',
+    'PG05_a_deferred_attachment_type_says_why_it_is_deferred',
     notImplemented !== null &&
       notImplemented.includes('rigc does not emit it yet') &&
       notImplemented.includes('benchmark corpus'),
@@ -32054,7 +32054,7 @@ function runGalleryTranscriptSuite(): number {
 //
 // 🚨 The load-bearing case is R04, and it is a REGRESSION control rather than a
 // feature one. `A19` learned in #215 that indexed and greyscale art carrying a
-// `tRNS` chunk is ordinary transparent art (T01–T07 above), so such a part builds
+// `tRNS` chunk is ordinary transparent art (PT01–PT07 above), so such a part builds
 // and validates green — while `decodePng` still refused colour types 0 and 3, and
 // `src/render.ts` reads its pages through exactly that decoder. Shipping a "see
 // what you built" command on top of it would have rebuilt #215's wall one step
@@ -32936,7 +32936,7 @@ function runPoseSuite(): number {
     });
     const ok = rows.every((r) => r.ok && r.delta !== null && poseWithin(r.delta));
     say(
-      'PS01_KNOWN_PLACEMENTS_ARE_READ_BACK_OUT_OF_THE_PICTURE',
+      'PO01_KNOWN_PLACEMENTS_ARE_READ_BACK_OUT_OF_THE_PICTURE',
       ok,
       rows.map((r) => `${r.file}: ${r.delta ? poseSay(r.delta) : 'no placement'}`).join('  ·  '),
       'the whole command is this claim; a `pose` that cannot recover a placement it was shown is a plausible-number generator',
@@ -32967,7 +32967,7 @@ function runPoseSuite(): number {
       poseWithin(left) &&
       poseWithin(right);
     say(
-      'PS02_TWO_IDENTICAL_LIMBS_COME_BACK_AS_TWO_PLACEMENTS',
+      'PO02_TWO_IDENTICAL_LIMBS_COME_BACK_AS_TWO_PLACEMENTS',
       ok,
       arm === undefined
         ? 'arm.png is not in the report'
@@ -32987,7 +32987,7 @@ function runPoseSuite(): number {
       ball.rotationSelfSimilarity <= ROTATION_FREE_TOLERANCE &&
       others.every((p) => !p.rotationFree);
     say(
-      'PS03_A_ROUND_PART_REPORTS_ROTATION_AS_FREE_AND_NOTHING_ELSE_DOES',
+      'PO03_A_ROUND_PART_REPORTS_ROTATION_AS_FREE_AND_NOTHING_ELSE_DOES',
       ok,
       `ball self-residual ${ball?.rotationSelfSimilarity ?? 'n/a'} (tolerance ${ROTATION_FREE_TOLERANCE}); ` +
         `others: ${others.map((p) => `${p.part} ${p.rotationSelfSimilarity}`).join(', ')}`,
@@ -33007,7 +33007,7 @@ function runPoseSuite(): number {
       foreign.placement !== null &&
       foreign.placement.residual > DEFAULT_MAX_RESIDUAL;
     say(
-      'PS04_A_PART_THAT_IS_IN_NO_PICTURE_IS_REFUSED_BY_NAME',
+      'PO04_A_PART_THAT_IS_IN_NO_PICTURE_IS_REFUSED_BY_NAME',
       ok,
       foreign === undefined
         ? 'foreign.png is not in the report'
@@ -33024,7 +33024,7 @@ function runPoseSuite(): number {
       big.placement === null &&
       big.refusal.detail.includes('700x700');
     say(
-      'PS05_A_PART_THE_CANVAS_CANNOT_HOLD_IS_REFUSED_BY_NAME',
+      'PO05_A_PART_THE_CANVAS_CANNOT_HOLD_IS_REFUSED_BY_NAME',
       ok,
       big === undefined ? 'toobig.png is not in the report' : `${big.refusal?.reason ?? 'accepted'}: ${big.refusal?.detail ?? ''}`,
       'nothing was searched, so a placement here would be arithmetic about a case that does not exist',
@@ -33035,7 +33035,7 @@ function runPoseSuite(): number {
     const blank = byName.get('blank.png');
     const ok = blank !== undefined && blank.refusal?.reason === 'empty-part' && blank.placement === null;
     say(
-      'PS06_A_PART_WITH_NO_MATERIAL_IS_REFUSED_BY_NAME',
+      'PO06_A_PART_WITH_NO_MATERIAL_IS_REFUSED_BY_NAME',
       ok,
       blank === undefined ? 'blank.png is not in the report' : `${blank.refusal?.reason ?? 'accepted'}: ${blank.refusal?.detail ?? ''}`,
       'an all-transparent PNG divides by a zero footprint; the honest answer names the file',
@@ -33055,7 +33055,7 @@ function runPoseSuite(): number {
       torso.placement.unexplained > arm.placement.unexplained * 3 &&
       torso.placement.residual > arm.placement.residual * 2;
     say(
-      'PS07_OCCLUSION_RAISES_THE_RESIDUAL_WITHOUT_MOVING_THE_PLACEMENT',
+      'PO07_OCCLUSION_RAISES_THE_RESIDUAL_WITHOUT_MOVING_THE_PLACEMENT',
       ok,
       torso?.placement == null || arm?.placement == null
         ? 'torso.png or arm.png has no placement'
@@ -33076,7 +33076,7 @@ function runPoseSuite(): number {
     });
     const ok = clear.frame.background.kind === 'transparent' && report.frame.background.kind === 'colour' && same;
     say(
-      'PS08_A_TRANSPARENT_GROUND_AND_A_FLAT_ONE_READ_THE_SAME',
+      'PO08_A_TRANSPARENT_GROUND_AND_A_FLAT_ONE_READ_THE_SAME',
       ok,
       `flat ground: ${report.frame.background.kind} ${JSON.stringify(report.frame.background.colour)}; ` +
         `knocked out: ${clear.frame.background.kind}; placements agree: ${same}`,
@@ -33106,7 +33106,7 @@ function runPoseSuite(): number {
     });
     const recovered = rows.every((r) => r.delta !== null && poseWithin(r.delta));
     say(
-      'PS09_THE_SEARCH_WINDOW_IS_A_PROMISE_THE_REPORT_KEEPS',
+      'PO09_THE_SEARCH_WINDOW_IS_A_PROMISE_THE_REPORT_KEEPS',
       inside && stated && recovered,
       `--scale 0.2,0.4: every reported scale inside it = ${inside}, report states it = ${stated}; ` +
         `--scale 1.1,1.25: ${rows.map((r) => `${r.file} ${r.delta ? poseSay(r.delta) : 'no placement'}`).join('  ·  ')}`,
@@ -33134,7 +33134,7 @@ function runPoseSuite(): number {
       missing.status === 2 &&
       missing.stderr.includes('no parts directory at');
     say(
-      'PS10_THE_COMMAND_WRITES_ITS_REPORT_AND_REFUSES_A_BAD_PATH',
+      'PO10_THE_COMMAND_WRITES_ITS_REPORT_AND_REFUSES_A_BAD_PATH',
       ok,
       `pose exit=${String(run.status)} spec=${written?.spec ?? 'none'} parts=${written?.parts?.length ?? 0}; ` +
         `--help exit=${String(help.status)}; missing dir exit=${String(missing.status)} ` +
@@ -33154,7 +33154,7 @@ function runPoseSuite(): number {
     const first = JSON.stringify(report.parts);
     const second = JSON.stringify(twice.parts);
     say(
-      'PS11_THE_SAME_PICTURE_READ_TWICE_REPORTS_THE_SAME_NUMBERS',
+      'PO11_THE_SAME_PICTURE_READ_TWICE_REPORTS_THE_SAME_NUMBERS',
       first === second,
       `${report.parts.length} part(s) re-read from the same frame: ` +
         `${first === second ? 'byte-identical' : `DIFFERENT (${first.length} vs ${second.length} chars)`}`,
@@ -36704,6 +36704,138 @@ function gutterWord(line: string): string | null {
   return match === null ? null : match[1];
 }
 
+/**
+ * The control a case line names, or null where the line names none — a `SKIP`
+ * whose gutter is followed by a sentence rather than a name.
+ *
+ * Read off the same line `gutterWord` reads, and for the same reason: the name
+ * a reader greps for is the one the run PRINTED, so anything holding codes to
+ * each other has to take them from there rather than from a table of them.
+ */
+function caseName(line: string): string | null {
+  const match = /^ {2}[A-Z]+ {2}(\S+)/.exec(line);
+  return match === null ? null : match[1].replace(/:$/, '');
+}
+
+/**
+ * The CODE at the head of a control's name — its leading letters and the digits
+ * after them — or null for a name that carries none.
+ *
+ * `CONTROL_PRISTINE_IS_GREEN` and `GALLERY_EXAMPLE_IS_GREEN` carry none on
+ * purpose: they are roles rather than codes, several suites print them, and a
+ * reader chasing one of those reads the suite heading above it. A code is the
+ * thing a reader greps for ON ITS OWN, which is why it is the thing that has to
+ * be unique.
+ */
+function codeOf(name: string): string | null {
+  const match = /^([A-Za-z]+\d[A-Za-z0-9]*)_/.exec(name);
+  return match === null ? null : match[1];
+}
+
+/**
+ * One control's name, with the SUBJECT a parameterised suite appends removed.
+ *
+ * `IG00_THE_REBUILT_SKELETON_IS_THE_FILE_IT_WAS_READ_FROM[flex]` is ONE control
+ * measured on one of twelve data, not twelve controls sharing a code, and the
+ * bracket is how this file already says so. Reading it as part of the name would
+ * make `IG00` a collision with itself, which is the shape a checker that agrees
+ * with its own convention has: it would then need a list of suites to except,
+ * and the list is the defect.
+ */
+function controlOf(name: string): string {
+  return name.replace(/\[[^\]]*\]$/, '');
+}
+
+/** The letters a code opens with, folded, and the number after them. */
+function splitCode(code: string): { prefix: string; number: number } | null {
+  const match = /^([A-Za-z]+)(\d+)/.exec(code);
+  return match === null ? null : { prefix: match[1].toLowerCase(), number: Number(match[2]) };
+}
+
+/**
+ * Codes that more than one control answers to, each named with both controls
+ * and the suites that print them (issue #584).
+ *
+ * The join is on the code because that is what a red line gives a reader and
+ * what every document that cites one of these writes down. Nothing in this file
+ * asserted it until #584: the tally counts case lines per suite and never looks
+ * at what they are called, so `R01`, `P01`, `B01`, `PS01`, `T01`, `M24` and
+ * thirty-two more named two controls each through a green run and an unmoved
+ * summary.
+ */
+function codeCollisions(blocks: readonly SuiteBlock[]): string[] {
+  const byCode = new Map<string, Map<string, Set<string>>>();
+  for (const block of blocks) {
+    for (const name of block.names) {
+      const code = codeOf(name);
+      if (code === null) continue;
+      if (!byCode.has(code)) byCode.set(code, new Map());
+      const controls = byCode.get(code)!;
+      const control = controlOf(name);
+      if (!controls.has(control)) controls.set(control, new Set());
+      controls.get(control)!.add(block.key);
+    }
+  }
+  const faults: string[] = [];
+  for (const [code, controls] of [...byCode].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    if (controls.size < 2) continue;
+    faults.push(
+      `${code} is the code of ${controls.size} controls: ` +
+        [...controls].map(([control, keys]) => `"${control}" in ${[...keys].sort().join('/')}`).join(' and '),
+    );
+  }
+  return faults;
+}
+
+/**
+ * Prefixes whose LOWEST number is minted by more than one suite (issue #584).
+ *
+ * ⭐ This is deliberately not *"one prefix, one suite"*, which the card asked
+ * for and which this tree refuses for a correct reason: `M` spans three fixture
+ * profiles and `MR` three mesh suites as ONE numbering authority, with the
+ * numbers running on across the brackets rather than restarting. Splitting those
+ * would be renaming a namespace that is not broken, and the rule would need a
+ * table of exceptions to leave them alone — the table this file exists to refuse.
+ *
+ * 🔒 What separates the two shapes is where the numbering STARTS. One authority
+ * opens a prefix once and everything after it continues; two authorities each
+ * open at 01, which is why every collision #584 found is a pair of suites that
+ * both minted the first number. So this asks the precondition rather than the
+ * symptom: it fires the moment a second suite opens a prefix somebody already
+ * opened, which is BEFORE the two namespaces have grown far enough to clash and
+ * before any document has cited the ambiguous code.
+ *
+ * ⚠️ It is not a weaker `codeCollisions` and neither implies the other. A second
+ * authority starting at 20 under a prefix that opens at 01 passes here and is
+ * caught there as soon as it overlaps; two suites opening at 01 and staying
+ * disjoint — 01-05 against 01 alone — is caught here and nowhere else.
+ */
+function prefixOpeningCollisions(blocks: readonly SuiteBlock[]): string[] {
+  const byPrefix = new Map<string, Map<number, Set<string>>>();
+  for (const block of blocks) {
+    for (const name of block.names) {
+      const code = codeOf(name);
+      const split = code === null ? null : splitCode(code);
+      if (split === null) continue;
+      if (!byPrefix.has(split.prefix)) byPrefix.set(split.prefix, new Map());
+      const numbers = byPrefix.get(split.prefix)!;
+      if (!numbers.has(split.number)) numbers.set(split.number, new Set());
+      numbers.get(split.number)!.add(block.key);
+    }
+  }
+  const faults: string[] = [];
+  for (const [prefix, numbers] of [...byPrefix].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const opening = Math.min(...numbers.keys());
+    const keys = [...numbers.get(opening)!].sort();
+    if (keys.length < 2) continue;
+    faults.push(
+      `prefix "${prefix.toUpperCase()}" is opened at ${String(opening).padStart(2, '0')} by ${keys.length} suites ` +
+        `(${keys.join(', ')}), so each is numbering it from the start and they collide as soon as both grow`,
+    );
+  }
+  return faults;
+}
+
 /** True for the section header every suite opens with. */
 function isSectionHeader(line: string): boolean {
   return /^\n?── .+ ──$/.test(line);
@@ -36731,6 +36863,16 @@ interface SuiteBlock {
    * of them to the log.
    */
   returned: number | null;
+  /**
+   * The control names this suite printed, read off its own case lines (#584).
+   *
+   * Held rather than counted because a count cannot answer the question `TY17`
+   * asks: not *how many* cases ran, but whether the CODE at the head of each
+   * name points at one control. Everything else on this block is a number, and
+   * that is exactly why no number here could have seen `R10` name a refusal in
+   * one suite and a skin comparison in another.
+   */
+  names: readonly string[];
 }
 
 /**
@@ -36947,6 +37089,8 @@ class RunTally {
   readonly parts: SuitePart[] = [];
   /** Every gutter word this run has printed, and how often. Read by the floor. */
   readonly gutter = new Map<string, number>();
+  /** Every control name this run has printed, in order. Sliced into each block. */
+  private readonly named: string[] = [];
   private controlLines = 0;
   private failLines = 0;
   private quietLines = 0;
@@ -36963,6 +37107,8 @@ class RunTally {
     this.gutter.set(word, (this.gutter.get(word) ?? 0) + 1);
     if (VERDICT_GUTTER.includes(word)) {
       this.controlLines++;
+      const name = caseName(line);
+      if (name !== null) this.named.push(name);
       if (word === FAIL_GUTTER) this.failLines++;
     } else if (QUIET_GUTTER.includes(word)) this.quietLines++;
   }
@@ -36989,6 +37135,7 @@ class RunTally {
     const quiet = this.quietLines;
     const headers = this.headerLines;
     const fails = this.failLines;
+    const named = this.named.length;
     const value = suite();
     this.blocks.push({
       key,
@@ -36998,6 +37145,7 @@ class RunTally {
       headers: this.headerLines - headers,
       fails: this.failLines - fails,
       returned: reads.failures === undefined ? statedFailures(value) : reads.failures(value),
+      names: this.named.slice(named),
     });
     return value;
   }
@@ -37410,6 +37558,7 @@ function runRunTallySuite(live: RunTally): number {
     headers: 1,
     fails: 0,
     returned: 0,
+    names: [],
     ...over,
   });
   const gutterOf = (...words: string[]): Map<string, number> => {
@@ -37967,6 +38116,123 @@ function runRunTallySuite(live: RunTally): number {
       'itself: a floor that faulted on every record would refuse the four suites that legitimately carry one',
   );
 
+  // --- TY17: a code names one control, over the run so far ------------------
+  //
+  // 🚨 The hole this closes is the oldest kind in this file: a fact nothing
+  // joined. Every number on a `SuiteBlock` is a COUNT, and no count can see that
+  // `R10` was a rig-spec refusal in one suite and a skin comparison in another —
+  // the tally was right about how many lines each suite printed while the names
+  // on those lines pointed two ways. Measured on the tree #584 was raised
+  // against: 38 codes named two controls each, through a green run, an unmoved
+  // summary and a `CONTROL_PRISTINE_IS_GREEN` in every section.
+  const codedSoFar = live.blocks.reduce((total, one) => total + one.names.filter((name) => codeOf(name) !== null).length, 0);
+  const ty17Probes = codeCollisions(live.blocks);
+  const ty17Held = ty17Probes.length === 0;
+  say(
+    'TY17_EVERY_CODE_THIS_RUN_HAS_PRINTED_NAMES_ONE_CONTROL',
+    ty17Held,
+    probeDetail(
+      ty17Held,
+      ty17Probes,
+      `${codedSoFar} coded case line(s) across the ${live.blocks.length} suite(s) tallied so far, and each code is ` +
+        'the name of exactly one control',
+      (count) => `${count} code(s) name more than one control:`,
+    ),
+    'a code is what a red line hands a reader and what every document citing one of these writes down, so a code ' +
+      'that answers to two controls sends that reader to the wrong file with nothing to tell them so. The live ' +
+      'clause is the whole of it and it is not vacuous: this is the only assertion in this file that reads what a ' +
+      'case line is CALLED rather than how many there were',
+  );
+
+  // --- TY18: a prefix is opened by one suite -------------------------------
+  const ty18Probes = prefixOpeningCollisions(live.blocks);
+  const ty18Held = ty18Probes.length === 0;
+  say(
+    'TY18_EVERY_PREFIX_THIS_RUN_HAS_PRINTED_IS_OPENED_BY_ONE_SUITE',
+    ty18Held,
+    probeDetail(
+      ty18Held,
+      ty18Probes,
+      `every prefix across the ${live.blocks.length} suite(s) tallied so far has its lowest number minted by a ` +
+        'single suite, so each namespace has one numbering authority',
+      (count) => `${count} prefix(es) are opened by more than one suite:`,
+    ),
+    "the card #584 came from asked for *one prefix per suite*, and this tree refuses that for a correct reason: `M` " +
+      'runs across three fixture profiles and `MR` across three mesh suites as ONE authority, numbering straight ' +
+      'through the brackets. Excepting them needs a table of suite names, which is the thing this file exists not ' +
+      'to have. Where the numbering STARTS separates the two shapes instead — one authority opens a prefix once, ' +
+      'two authorities each open at 01 — and that is the precondition rather than the symptom, so it fires before ' +
+      'the two namespaces have grown far enough for TY17 to see a clash',
+  );
+
+  // --- TY19: both halves, planted, and the four things they must NOT fault --
+  //
+  // 🔒 Driven through a real `RunTally` for `TY15`'s reason: a table of blocks
+  // cannot see the wiring, and the wiring is new here — `names` is filled by
+  // `observe` off the printed line, so a block built by hand would prove the two
+  // helpers work over data nothing produces.
+  const minted = (key: string, ...names: readonly string[]): SuiteBlock => {
+    const wired = new RunTally();
+    wired.of(key, () => {
+      for (const name of names) wired.observe(`  PASS  ${name}`);
+      return 0;
+    });
+    return wired.blocks[0];
+  };
+  const twoAuthorities = [minted('alpha', 'ZZ01_A_PLANTED_CONTROL', 'ZZ02_A_SECOND'), minted('beta', 'ZZ01_A_DIFFERENT_CONTROL', 'ZZ02_ANOTHER')];
+  const oneAuthority = [minted('alpha', 'ZZ01_A_PLANTED_CONTROL', 'ZZ02_A_SECOND'), minted('beta', 'ZZ20_A_LATER_ONE', 'ZZ21_AND_ANOTHER')];
+  const clashLater = [minted('alpha', 'ZZ01_A_PLANTED_CONTROL', 'ZZ20_ONE_NAME'), minted('beta', 'ZZ20_A_DIFFERENT_NAME')];
+  const openedTwice = [minted('alpha', 'ZZ01_THE_VERY_SAME_CONTROL'), minted('beta', 'ZZ01_THE_VERY_SAME_CONTROL')];
+  const oneControlManyData = [minted('alpha', 'ZZ01_ONE_CONTROL[first]', 'ZZ01_ONE_CONTROL[second]')];
+  const roles = [minted('alpha', 'CONTROL_A_PLANTED_ROLE'), minted('beta', 'CONTROL_A_PLANTED_ROLE')];
+  const plantedCodes = codeCollisions(twoAuthorities);
+  const ty19Probes = [
+    ...(twoAuthorities[0].names.length === 2 && twoAuthorities[0].names[0] === 'ZZ01_A_PLANTED_CONTROL'
+      ? []
+      : [`the plant did not reach the tally: the first probe recorded [${twoAuthorities[0].names.join(', ')}] rather than the two names it printed`]),
+    ...(plantedCodes.length === 2 &&
+    plantedCodes[0].includes('"ZZ01_A_PLANTED_CONTROL" in alpha') &&
+    plantedCodes[0].includes('"ZZ01_A_DIFFERENT_CONTROL" in beta')
+      ? []
+      : [`two suites minting ZZ01 and ZZ02 under different names are not named with BOTH sides: ${plantedCodes.join('; ') || 'nothing'}`]),
+    ...(prefixOpeningCollisions(twoAuthorities).length === 1 && prefixOpeningCollisions(twoAuthorities)[0].includes('(alpha, beta)')
+      ? []
+      : [`the same pair is not reported as one prefix opened twice: ${prefixOpeningCollisions(twoAuthorities).join('; ') || 'nothing'}`]),
+    ...(codeCollisions(oneAuthority).length === 0 && prefixOpeningCollisions(oneAuthority).length === 0
+      ? []
+      : ['a prefix one suite opens and a second continues at 20 faulted, which is the shape `M` and `MR` legitimately have']),
+    ...(codeCollisions(clashLater).length === 1 && prefixOpeningCollisions(clashLater).length === 0
+      ? []
+      : ['a clash away from the opening number is not TY17-only, so the two halves are not independent in that direction']),
+    ...(codeCollisions(openedTwice).length === 0 && prefixOpeningCollisions(openedTwice).length === 1
+      ? []
+      : ['one control printed by two suites is not TY18-only, so the two halves are not independent in the other direction']),
+    ...(codeCollisions(oneControlManyData).length === 0
+      ? []
+      : ['one control measured on two subjects was read as two controls sharing a code, which would make every parameterised suite a collision with itself']),
+    ...(codeCollisions(roles).length === 0 && prefixOpeningCollisions(roles).length === 0
+      ? []
+      : ['a role name carrying no code faulted, and roles are printed by a dozen suites on purpose']),
+  ];
+  const ty19Held = ty19Probes.length === 0;
+  say(
+    'TY19_A_PLANTED_DUPLICATE_AND_A_PLANTED_SECOND_AUTHORITY_EACH_FAULT_WHILE_FOUR_LEGITIMATE_SHAPES_DO_NOT',
+    ty19Held,
+    probeDetail(
+      ty19Held,
+      ty19Probes,
+      `the planted pair faults in both ways — ${plantedCodes.length} duplicate code(s) and ` +
+        `${prefixOpeningCollisions(twoAuthorities).length} prefix(es) opened twice — while a continued namespace, a ` +
+        'clash away from the opening, one control printed twice, a subject-parameterised control and a role name ' +
+        'fault only where they should',
+    ),
+    'the negatives are the load-bearing half and each is a real shape in this tree rather than an invented one: `M` ' +
+      'and `MR` continue a namespace across brackets, `IG00` prints one control over twelve data with the subject ' +
+      'in brackets, and `CONTROL_…` is a role a dozen suites answer to. A rule that faulted on any of them would ' +
+      'need a list of suites to excuse, and the list is the defect being gated for. The two independence clauses ' +
+      'are why both halves are landed together: either one alone reports a tree the other would refuse',
+  );
+
   return bad;
 }
 
@@ -38356,7 +38622,7 @@ function main(): void {
   // control" is a ROLE, not a token on a line. Measured on the run this file
   // makes, 20 case names carry the word CONTROL and two of those — `M16` and
   // `M19` — are mutants that carry it because a *control bone* is a rig
-  // concept, while `T04_GREYSCALE_ALPHA_STILL_PASSES` and `PS25` are genuine
+  // concept, while `PT04_GREYSCALE_ALPHA_STILL_PASSES` and `PS25` are genuine
   // positive controls whose names say nothing at all. A derived-looking number
   // over that set would be worse than the hand-written one, so the clause is
   // gone and the last line of the summary points at where the controls are
