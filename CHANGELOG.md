@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.24.0](https://github.com/firejune/rigc/compare/v0.23.0...v0.24.0) (2026-09-17)
+
+
+### Features
+
+* **compile:** the motion spec can key a physics constraint's own tuning, so the corpus export that keys five of those timelines transcribes ([#593](https://github.com/firejune/rigc/issues/593)) ([#611](https://github.com/firejune/rigc/issues/611)) ([11aec8d](https://github.com/firejune/rigc/commit/11aec8db864e07a2534b0ad3f224d7c3fb131560))
+* **ingest:** --images &lt;dir&gt; writes the rig spec's images path so a loose decompiled spec rebuilds with no flag on build ([#595](https://github.com/firejune/rigc/issues/595)) ([#606](https://github.com/firejune/rigc/issues/606)) ([99558ca](https://github.com/firejune/rigc/commit/99558cab5d3cf3a568936812580af2d125fb5d17))
+
+
+### Bug Fixes
+
+* **atlas:** no pages is the empty file, and every rule whose subject is a page skips rather than passing over an empty array ([#608](https://github.com/firejune/rigc/issues/608)) ([#613](https://github.com/firejune/rigc/issues/613)) ([9bde8a8](https://github.com/firejune/rigc/commit/9bde8a80726de30811ae36375f64dfc1320db22c))
+* **deformmeasure:** pose every deform key in the skin its timeline is keyed on, so a mesh in a named skin is measured instead of reported as undrawn ([#583](https://github.com/firejune/rigc/issues/583)) ([#603](https://github.com/firejune/rigc/issues/603)) ([d7b68e8](https://github.com/firejune/rigc/commit/d7b68e82a662397ec7d3f00cac1a9741bb7f06f0))
+* **tools:** the round-trip summary reads every block of diff's report, not the sections alone; ROADMAP's confirmation condition admits the outcome where it was not taken ([#597](https://github.com/firejune/rigc/issues/597), [#582](https://github.com/firejune/rigc/issues/582)) ([#604](https://github.com/firejune/rigc/issues/604)) ([ffd0b4f](https://github.com/firejune/rigc/commit/ffd0b4f05bfb93bd640a661caea8a82239e40cd9))
+* **validate:** a keyed physics value is held to the criterion the setup pose is, at compile for a spec and by A23 for a file rigc did not write ([#610](https://github.com/firejune/rigc/issues/610)) ([#619](https://github.com/firejune/rigc/issues/619)) ([8e9248c](https://github.com/firejune/rigc/commit/8e9248cb402df03ab8d9a7d90e84d7830c645128))
+* **validate:** a loop that ran zero times reports SKIP, and the criterion deciding that is written down once ([#580](https://github.com/firejune/rigc/issues/580)) ([#612](https://github.com/firejune/rigc/issues/612)) ([92f5e83](https://github.com/firejune/rigc/commit/92f5e8388dafae2c2c2dac747807c02d508f94e3))
+* **validate:** A08 performs the attachment-to-region join on the raw skeleton JSON, so a path naming no region is refused by the assertion whose subject it is ([#589](https://github.com/firejune/rigc/issues/589)) ([#607](https://github.com/firejune/rigc/issues/607)) ([571e115](https://github.com/firejune/rigc/commit/571e115b5e528eaf59610e030c3b8accb611d739))
+* **validate:** the page rectangle of a turned region is one reader's, and it transposes at 270 as well as at 90 ([#579](https://github.com/firejune/rigc/issues/579)) ([#601](https://github.com/firejune/rigc/issues/601)) ([89aa89e](https://github.com/firejune/rigc/commit/89aa89e9ad05aaf45735272ce35fbc7e1ec57732))
+
+
+### Instrument
+
+* **docs:** the gallery READMEs quote the run's own closing lines instead of hand-kept assertion counts, and the overrides comment states its criterion ([#609](https://github.com/firejune/rigc/issues/609), [#605](https://github.com/firejune/rigc/issues/605)) ([#614](https://github.com/firejune/rigc/issues/614)) ([e38daac](https://github.com/firejune/rigc/commit/e38daac1ff1a4c0abcbb1a5b17c9e6cb3e93eae8))
+* **ingest:** the IG suite gates all twelve editor exports through ingest, rebuild and diff, so the corpus round trip is a measurement the tree holds rather than one a pull request body remembered ([#594](https://github.com/firejune/rigc/issues/594)) ([#618](https://github.com/firejune/rigc/issues/618)) ([0abd7eb](https://github.com/firejune/rigc/commit/0abd7eb5afb9a5cd993b8a906b1ef2af75954433))
+
 ## [0.23.0](https://github.com/firejune/rigc/compare/v0.22.2...v0.23.0) (2026-09-16)
 
 
