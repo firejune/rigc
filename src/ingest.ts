@@ -576,17 +576,23 @@ type Note = (kind: IngestFindingKind, code: string, where: string, detail: strin
 /**
  * The rig spec's `skeleton` block — and the one judgement in this module.
  *
- * 🚨 **The stage is not in a skeleton JSON that an editor wrote.** rigc always
- * emits `x`/`y`/`width`/`height`, so a rigc build round-trips with nothing to
- * decide; an editor export's `skeleton` block is `hash`, `spine`, `images`,
- * `audio` and no box at all. `compile` refuses without one, and there is no
- * derivation: posing the rig gives the ANIMATED extent, which is a different
- * number from the editor's setup box. So with no `--stage` this records a
- * blocker naming the field and writes nothing plausible.
+ * 🚨 **A skeleton JSON need not carry the stage, and it cannot be derived.** rigc
+ * always emits `x`/`y`/`width`/`height`, so a rigc build round-trips with nothing
+ * to decide. `compile` refuses without one, and there is no derivation: posing
+ * the rig gives the ANIMATED extent, which is a different number from the
+ * editor's setup box. So with no `--stage` this records a blocker naming the
+ * field and writes nothing plausible.
  *
- * ⭐ It is also the judgement that costs nothing to get wrong, which is the worst
- * property a field can have: `diff` has no skeleton-header measure, so a
- * deliberately absurd unit box reads 1.000 on every measure there is.
+ * ⚠️ This said an editor export's `skeleton` block is `hash`, `spine`, `images`,
+ * `audio` **and no box at all** until issue #594 measured the corpus: all twelve
+ * exports under `examples/` carry `x`/`y`/`width`/`height`, and the early return
+ * below is the branch they take. The blocker is for a file that really has none,
+ * and this module has no example of one.
+ *
+ * ⭐ It is still the judgement that costs least to get wrong. `diff` does report
+ * the box — `stage_present` and `stage_box`, since issue #578 — but they sit in
+ * the `(reported)` block that no rung consults, so a deliberately absurd unit box
+ * is green everywhere a candidate is scored.
  */
 function ingestHeader(head: JsonObject, opts: IngestOptions, note: Note): JsonObject {
   const out: JsonObject = {};
