@@ -2014,30 +2014,42 @@ it, on every frame, with the gate green — the second reason to write
 later one. `PS130` in `selftest.ts` poses both models rather than quoting the
 runtime, and [`docs/FACE.md`](FACE.md) §8 is the same rule on a face's two axes.
 
-⚠️ **And `"additive": true` is not always available.** The list `Timeline.additive`
-declares is the closed one: bone, deform, transform-constraint, path `position`,
-physics `wind`/`gravity`, and a slider's own `mix`. Most of the rest ignore the
-flag — a slot colour, an attachment swap, a draw order and a sequence, and also an
-**ik constraint's mix**, a path's `spacing`, and every physics timeline except
-those two — so two sliders sharing one of those overwrite each other whatever you
+⚠️ **And `"additive": true` is not always available.** What composes is bone,
+deform, transform-constraint, path `position` and path `mix`, physics
+`wind`/`gravity`, and a slider's own `mix` and `time`. The rest ignore the flag —
+a slot colour, an attachment swap, a draw order and a sequence, and also an **ik
+constraint's mix**, a path's `spacing`, and every physics timeline except those
+two — so two sliders sharing one of those overwrite each other whatever you
 write. ⚠️ The four spelled out here used to read as the whole of the complement
-and they are examples of it; `A40` was never reading a list, it reads the
-runtime's own `Timeline.additive`, which is why it refuses the ik case this
-sentence did not name.
+and they are examples of it; `A40` was never reading a list, which is why it
+refuses the ik case this sentence did not name.
 
-🚨 **That flag is what `A40` reads, and on two timelines it is not what the
-runtime does.** `PathConstraintMixTimeline` and `SliderTimeline` declare
-themselves non-additive and their `apply` passes the `add` argument straight
-through anyway — every other non-additive timeline either hardcodes `false` in
-the call, zeroes `add` first, or never reads it — so two additive sliders keying
-one path constraint's `mix`, or one slider's `time`, **do** compose, and they
-compose as the same sum as everything else on this list. `A40` refuses both
-today, with a message stating that `"additive": true` would not compose them,
-which for these two is false. [measured] `PS143` in `selftest.ts` poses all
-thirty spellings of the motion vocabulary under two additive sliders and prints
-the flag beside the behaviour; `PS140` holds the `time` case to the sum. ⇒ until
-that is repaired, key such a property from one slider — not because the runtime
-cannot compose it, but because the build will not pass.
+🚨 **That list is not `Timeline.additive`, and this is what it cost to learn.**
+The runtime's own flag says a class "supports being applied additively", and on
+two classes it is not what the class does: `PathConstraintMixTimeline` and
+`SliderTimeline` declare themselves non-additive and their `apply` passes the
+`add` argument straight through anyway — every other non-additive timeline either
+hardcodes `false` in the call, zeroes `add` first, or never reads it. So two
+additive sliders keying one path constraint's `mix`, or one slider's `time`,
+**do** compose, as the same sum as everything else above, and `A40` refused both
+by name with a message saying `"additive": true` would not compose them. ✅ **It
+no longer reads the flag: it poses each shared timeline twice with `add` set and
+reads whether the second application accumulated**
+([#655](https://github.com/firejune/rigc/issues/655)), so the two rigs above pass
+and the message names what the class was measured to do. [measured] `PS143` in
+`selftest.ts` poses all thirty spellings of the motion vocabulary under two
+additive sliders and prints the flag beside the behaviour; `PS145` holds the
+probe's verdict to that same pose on every one of them; `PS140` holds the `time`
+case to a grid.
+
+⭐ **The same measurement retired a refusal nothing could have distinguished.**
+Two sliders whose animations both fire **events** were refused as sharing a
+property — and a slider fires no event at all: it applies its animation with
+`firedEvents` null, and `EventTimeline.apply` returns on that. The probe's third
+answer is *this timeline moved no pose at all*, so an events pair, and a physics
+`reset` pair with it, are simply not findings. Nothing else changed: a shared
+slot colour, attachment, draw order, ik mix, path `spacing` or physics property
+is refused exactly as before.
 
 ⇒ **And the `constraints` array decides twice, for two different reasons.**
 *Overwriting* has a direction: the slider **later in the array** puts its own
@@ -4215,7 +4227,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` (§3.5.2). **SKIP** when the skeleton declares no slider |
 | `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates that is not `skinRequired` (the list changes nothing), or one that is `skinRequired` and no skin activates (it is never active). Two keys in two places, and only together do they mean "this belongs to that skin" (§3.4.1). **SKIP** when no skin activates anything and nothing is `skinRequired` |
 | `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is refused as before. ⚠️ And the **spans between** consecutive keys are scanned too (§4.11.3, issue #403): the runtime interpolates, so a deform inside its fold angle at every key can be past it in between. That refusal is its own sentence — `BETWEEN key 0 (t=0s) and key 1 (t=0.5s), at t=…` — with the time solved for in closed form and then posed and measured like any key, alpha read at that same moment. `deformSpansScanned` says on every green build that the scan ran. ⚠️ And the **frame** it poses in is the one the animation is reached in (§4.11.4, issue #407): on a track when nothing applies it, and otherwise once per **slider**, with that slider's mapping inverted and its bone driven until the runtime selects the key's own time — because a slider picks the time, so the two are one number and posing them independently is a frame that never occurs. The frame is on every `DEFORM` line, on the stats line as `deformFrames`, and in the refusal itself when it is not the track. A key at a time **no dial value selects** is measured in the frame the runtime does land on, left out of `deformKeysMeasured` and named as `deformKeysUnreachable`/`deformUnreachable` — never refused and never silent. ⚠️ And the **skin** it poses in is the one the timeline is keyed on (§4.11.5, issue #583), since a deform's address is a `skin / slot / attachment` triple: the pose wears that skin, which also switches on any `skin: true` bone or constraint it activates, and the "nothing is drawn" sentence names the skin it was read under. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels or is unreachable *and no span between them folds where anything is drawn*, or when there is no rig info at all |
-| `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where a later one is not `additive` — it writes that property outright at `mix: 1` and every earlier slider on it is dead (§3.5.2). Also fires when the shared timeline **cannot** be additive (a slot colour, an attachment swap, a draw order, a sequence), where `"additive": true` is not the fix and one of the two has to go. The detail names the bone or slot and the property, every slider keying it in `constraints` order with its flag, and which one wins today. Three shapes are deliberately not findings: a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, not an overwrite), two `skinRequired` sliders no skin activates together, and two sliders on different properties. **SKIP** when fewer than two sliders are at full authority; a PASS means two were compared |
+| `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where a later one is not `additive` — it writes that property outright at `mix: 1` and every earlier slider on it is dead (§3.5.2). Also fires when the shared timeline **cannot** be applied additively (a slot colour, an attachment swap, a draw order, an ik mix, a path's `spacing`, most physics properties), where `"additive": true` is not the fix and one of the two has to go. ⭐ Which of the two it is, is **posed rather than read off `Timeline.additive`**: the shared timeline is applied twice with `add` set and the detail says what it did ([#655](https://github.com/firejune/rigc/issues/655) — two classes declare that flag falsely about themselves, so a path constraint's `mix` and a slider's `time` were refused although they compose). The detail names the bone or slot and the property, every slider keying it in `constraints` order with its flag, which one wins today, and the class that was posed. Four shapes are deliberately not findings: a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, not an overwrite), two `skinRequired` sliders no skin activates together, two sliders on different properties, and a shared timeline that writes **nothing a pose holds** — an `events` timeline fires no event under a slider (`firedEvents` is null), so neither slider has anything there for the other to erase. **SKIP** when fewer than two sliders are at full authority; a PASS means two were compared |
 | `A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP` | both | a physics constraint driving a component the **Spine editor** cannot hold, on a rig that declared `invariants.editorRoundTrip` (§3.7). The editor's physics model holds `x` and `y` only, with no cap on how many at once, so a constraint driving `rotate`, `scaleX` or `shearX` is imported, exported and handed back driving **nothing** — measured over three rigs and twelve constraints with the predictions written first ([#540](https://github.com/firejune/rigc/issues/540)). The detail names the constraint and each component. ⚠️ rigc's own output is correct — every runtime plays a rotation jiggle — so this is opt-in and the default is *not* silence: on a rig that declares nothing it **SKIPs**, and the SKIP names the constraint and the component anyway, so an author learns without having asked. Fix by driving the constraint in `x`/`y`, or by dropping the declaration if the rig never goes near the editor. Disjoint from `A23_PHYSICS_CONSTRAINT_EFFECTIVE` by construction: A23 refuses an **empty** driven set, which is what comes back from the editor, and this refuses a non-empty one that will not survive going in. **SKIP** also when the rig declares the editor and carries no physics constraint at all |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy

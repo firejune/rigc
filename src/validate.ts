@@ -27,6 +27,7 @@ import {
   isConstraintTimeline,
   isSlotTimeline,
   MeshAttachment,
+  MixFrom,
   PathAttachment,
   PathConstraintData,
   Physics,
@@ -660,6 +661,176 @@ function deformArrayLength(att: Json): number | null {
     if (i > vertices.length) return null;
   }
   return influences * 2;
+}
+
+/**
+ * What one timeline's own `apply` does with the `add` argument.
+ *
+ * - `accumulates` — a second application adds to the first, so two sliders both
+ *   `additive` compose on it.
+ * - `overwrites` — it writes its value whatever `add` says, so the later slider
+ *   owns the property and `"additive": true` is not the repair.
+ * - `inert` — applied with the arguments a slider passes it changes nothing a
+ *   pose holds, so there is nothing for a second slider to erase.
+ */
+export type TimelineAddBehaviour = 'accumulates' | 'overwrites' | 'inert';
+
+/**
+ * The displacement the second start state carries, chosen to be exact in binary
+ * floating point so the probe adds no rounding of its own.
+ */
+const PROBE_DISPLACEMENT = 0.375;
+
+/** Every own value of a pose object a timeline could have written, as text. */
+function poseReading(pose: object): string {
+  const parts: string[] = [];
+  for (const key of Object.keys(pose).sort()) {
+    const value = (pose as Record<string, unknown>)[key];
+    if (value === null || value === undefined || typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') {
+      parts.push(`${key}=${String(value)}`);
+      continue;
+    }
+    if (Array.isArray(value)) {
+      const entries: unknown[] = value;
+      if (entries.every((one) => typeof one === 'number')) parts.push(`${key}=[${entries.join(',')}]`);
+      continue;
+    }
+    if (typeof value !== 'object') continue;
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    // A colour, or anything else built only of numbers. Everything with a
+    // structure — a bone back-reference, a slot's data — is either an identity
+    // (read by name below) or something no timeline writes.
+    if (keys.length > 0 && keys.every((one) => typeof record[one] === 'number')) {
+      parts.push(`${key}={${keys.map((one) => `${one}:${String(record[one])}`).join(',')}}`);
+    } else if (typeof record.name === 'string') {
+      parts.push(`${key}=@${record.name}`);
+    }
+  }
+  return parts.join(',');
+}
+
+/** The whole of what a timeline could have changed, in one comparable string. */
+function skeletonReading(skeleton: Skeleton): string {
+  const parts: string[] = [];
+  for (const bone of skeleton.bones) parts.push(poseReading(bone.appliedPose));
+  for (const slot of skeleton.slots) parts.push(poseReading(slot.appliedPose));
+  for (const constraint of skeleton.constraints) parts.push(poseReading(constraint.appliedPose as object));
+  parts.push(skeleton.drawOrder.appliedPose.map((slot) => slot.data.name).join('>'));
+  return parts.join('|');
+}
+
+/**
+ * The two start states a probe is taken from, in order: the setup pose, and the
+ * setup pose displaced.
+ *
+ * ⚠️ Both are needed and neither is redundant. From the **setup** pose a
+ * `DeformTimeline` is live, because its `apply` is gated on the slot still
+ * holding the attachment the timeline names. From the **displaced** pose a
+ * timeline whose every key states its target's own setup value is still seen to
+ * write, which from the setup pose alone would read as `inert` — a later slider
+ * keying a slot's colour to exactly the colour it already has erases an earlier
+ * one just the same.
+ */
+function probeStartStates(skeleton: Skeleton): Array<() => void> {
+  return [
+    () => undefined,
+    () => {
+      for (const bone of skeleton.bones) displacePose(bone.appliedPose);
+      for (const slot of skeleton.slots) {
+        displacePose(slot.appliedPose);
+        slot.appliedPose.setAttachment(null);
+      }
+      for (const constraint of skeleton.constraints) displacePose(constraint.appliedPose as object);
+      skeleton.drawOrder.appliedPose.push(...skeleton.drawOrder.appliedPose.splice(0, 1));
+    },
+  ];
+}
+
+/** Move every number a pose holds, so "it wrote nothing" cannot mean "it wrote what was there". */
+function displacePose(pose: object): void {
+  for (const key of Object.keys(pose)) {
+    const value = (pose as Record<string, unknown>)[key];
+    if (typeof value === 'number') {
+      (pose as Record<string, number>)[key] = value + PROBE_DISPLACEMENT;
+      continue;
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record);
+    if (keys.length > 0 && keys.every((one) => typeof record[one] === 'number')) {
+      for (const one of keys) (record as Record<string, number>)[one] += PROBE_DISPLACEMENT;
+    }
+  }
+}
+
+/** Every time the timeline's own frames name, the midpoints between them, and one past the end. */
+function probeTimes(timeline: Timeline): number[] {
+  const stride = timeline.getFrameEntries();
+  const frames = timeline.frames;
+  const at: number[] = [];
+  for (let i = 0; i < frames.length; i += stride) at.push(frames[i]);
+  const between: number[] = [];
+  for (let i = 1; i < at.length; i++) between.push((at[i - 1] + at[i]) / 2);
+  return [...at, ...between, (at.length ? at[at.length - 1] : 0) + 1];
+}
+
+/**
+ * 🚨 **What `apply` does with `add`, posed rather than read off a flag.**
+ *
+ * `Timeline.additive` is the runtime's own declaration that a class "supports
+ * being applied additively", and for two classes it is not what the class does:
+ * `PathConstraintMixTimeline` and `SliderTimeline` declare `false` and pass the
+ * `add` argument straight through anyway. A40 read the flag, so it refused two
+ * correct rigs with a sentence about the runtime the runtime does not perform
+ * (issue #655, measured by `PS143` over all thirty spellings of the motion
+ * vocabulary).
+ *
+ * So the answer is taken from the object instead. The timeline is applied with
+ * exactly the arguments `Slider.update` passes — `firedEvents` null, `alpha` 1,
+ * `MixFrom.current`, `appliedPose` true — **twice**, at every time its own
+ * frames name. A second application that moves the pose again is a class that
+ * honours `add`; one that lands on the same value is a class that writes
+ * outright; one that never moves the pose at all writes nothing a second slider
+ * could erase, which is what an events timeline under a slider *is*.
+ *
+ * ⛔ Rejected: reading the source of `apply` (not a measurement of anything, and
+ * a class whose body changes under a runtime bump would still read the old
+ * answer), and a table of the two disagreeing classes written here (the same
+ * hand-kept list this repository has a judgment about — it would have been
+ * written after the census found two and been wrong at the third).
+ *
+ * ⚠️ **The skeleton wears every skin in turn, and that is not thoroughness.**
+ * `Skeleton.updateCache` leaves a `skinRequired` constraint inactive under the
+ * skins that do not list it, and an inactive target makes ANY timeline read
+ * `inert` — a fact about that skin, not about the class. Reading one skin would
+ * put a whole class in the third state and quietly stop refusing pairs that
+ * share it, which is this repository's worst failure shape: a gate that looks
+ * kept while checking nothing. The strongest verdict any skin produces wins.
+ */
+export function timelineAddBehaviour(data: ReturnType<SkeletonJson['readSkeletonData']>, timeline: Timeline): TimelineAddBehaviour {
+  let wrote = false;
+  for (const skin of [null, ...data.skins]) {
+    const skeleton = new Skeleton(data);
+    if (skin !== null) skeleton.setSkin(skin);
+    for (const displace of probeStartStates(skeleton)) {
+      for (const time of probeTimes(timeline)) {
+        skeleton.setupPose();
+        for (const bone of skeleton.bones) bone.resetConstrained();
+        for (const slot of skeleton.slots) slot.resetConstrained();
+        for (const constraint of skeleton.constraints) constraint.resetConstrained();
+        skeleton.drawOrder.resetConstrained();
+        displace();
+        const before = skeletonReading(skeleton);
+        timeline.apply(skeleton, time, time, null, 1, MixFrom.current, true, false, true);
+        const once = skeletonReading(skeleton);
+        timeline.apply(skeleton, time, time, null, 1, MixFrom.current, true, false, true);
+        if (skeletonReading(skeleton) !== once) return 'accumulates';
+        if (once !== before) wrote = true;
+      }
+    }
+  }
+  return wrote ? 'overwrites' : 'inert';
 }
 
 export function validate(input: ValidateInput): ValidateReport {
@@ -2855,17 +3026,43 @@ export function validate(input: ValidateInput): ValidateReport {
     //
     // ## The second clause: `additive: true` is not always available
     //
-    // `Timeline.additive` is the runtime's own flag for "supports being applied
-    // additively", and it is true for only some of them — bone timelines,
-    // deform, transform-constraint, path position, physics wind and gravity, and
-    // a slider's own mix. A slot colour, an attachment swap, a draw order or a
-    // sequence IGNORES the `add` argument entirely (`RGBATimeline.apply1` takes
-    // it and never reads it), so two sliders sharing one of those overwrite each
+    // A slot colour, an attachment swap, a draw order, an ik mix and a path's
+    // spacing IGNORE the `add` argument entirely (`RGBATimeline.apply1` takes it
+    // and never reads it), so two sliders sharing one of those overwrite each
     // other whatever the flags say. Refusing that case too is what keeps this
     // message from teaching a fix that does not work: an author told to set
     // `additive: true` on a shared rgba would get a green gate over the same
-    // dead axis. Reading the runtime's flag rather than a list written here is
-    // also what keeps the rule from drifting when that list changes.
+    // dead axis.
+    //
+    // 🚨 **Which class is which is MEASURED, and reading the flag was wrong.**
+    // This clause used to ask `Timeline.additive`, the runtime's own declaration
+    // that a class supports additive application — and two classes declare
+    // `false` and honour `add` anyway. `PathConstraintMixTimeline` and
+    // `SliderTimeline` pass the argument straight through, so two additive
+    // sliders keying one path constraint's `mix`, or one bone-less slider's
+    // `time`, **do** compose as the plain sum, and this assertion refused them
+    // by name with a sentence about the runtime the runtime does not perform
+    // (issue #655; `PS143` poses all thirty spellings of the motion vocabulary
+    // and `PS140` holds the `time` case to a grid). `timelineAddBehaviour`
+    // above poses each shared timeline instead, so what is compared is what the
+    // class does rather than what it says about itself.
+    //
+    // ## The events clause, removed rather than narrowed
+    //
+    // The same reading refused two sliders whose animations both fire events,
+    // and that refusal was over a property no pose can distinguish: `Slider`
+    // applies its animation with `firedEvents` **null**
+    // (`Slider.js`: `animation.apply(skeleton, p.time, p.time, data.loop, null,
+    // …)`), and `EventTimeline.apply` opens with `if (!firedEvents) return`, so
+    // a slider fires no event at all. Neither slider has anything on that
+    // property for the other to erase. The same is true of a physics `reset`
+    // under a slider, where `lastTime === time` leaves its window empty.
+    //
+    // ⭐ Neither is named here, and that is the point: the probe's third state
+    // is **a timeline that writes nothing at all**, so both fall out of one
+    // measurement instead of two exceptions. A list of unobservable spellings
+    // written into this file would have been the hand-kept table that produced
+    // the defect above.
     check('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET', () => {
       const sliders = data.constraints.filter((c) => c instanceof SliderData);
       if (sliders.length < 2) {
@@ -2931,6 +3128,15 @@ export function validate(input: ValidateInput): ValidateReport {
           }
         }
       }
+      /** Posed once per timeline, because the answer is the class's and the rigs that reach here share timelines. */
+      const behaviour = new Map<Timeline, TimelineAddBehaviour>();
+      const addBehaviourOf = (timeline: Timeline): TimelineAddBehaviour => {
+        const known = behaviour.get(timeline);
+        if (known !== undefined) return known;
+        const measured = timelineAddBehaviour(data, timeline);
+        behaviour.set(timeline, measured);
+        return measured;
+      };
       let shared = 0;
       for (const [id, users] of byProperty) {
         if (users.length < 2) continue;
@@ -2940,21 +3146,27 @@ export function validate(input: ValidateInput): ValidateReport {
         const chain = users.map((u) => at(u.slider)).join(', ');
         for (let j = 1; j < users.length; j++) {
           const later = users[j];
-          const composes = later.timeline.additive;
-          if (composes && later.slider.additive) continue;
+          const composes = addBehaviourOf(later.timeline);
+          if (composes === 'accumulates' && later.slider.additive) continue;
+          // Nothing a second slider could take away: applied with the arguments
+          // a slider passes — `firedEvents` null among them — this timeline
+          // moves no pose at all.
+          if (composes === 'inert') continue;
           const erased = users.slice(0, j).filter((e) => canOverlap(e.slider, later.slider));
           if (!erased.length) continue;
           const erasedNames = `${erased.map((e) => `"${e.slider.name}"`).join(', ')} contribute${erased.length === 1 ? 's' : ''}`;
-          const why = composes
-            ? `slider "${later.slider.name}" applies animation "${later.slider.animation?.name}" with additive false, and at ` +
-              'mix 1 a non-additive apply writes the value outright (`getRelativeValue` returns `setup + value`, ' +
-              '`getAbsoluteValue` returns `value`) rather than adding to the pose it found. Set `"additive": true` on ' +
-              `slider "${later.slider.name}" in the rig spec — rigc will not choose that flag for you — or key this ` +
-              'property from one slider only'
-            : `the ${Property[Number(id.split('|')[0])] ?? id} timeline they share does not support additive application at all ` +
-              '(`Timeline.additive` is false for it and its `apply` ignores the `add` argument), so `"additive": true` ' +
-              `would NOT compose these — slider "${later.slider.name}" overwrites whatever the flags say. Key this ` +
-              'property from one slider only, or move both edits into the one animation a single slider applies';
+          const why =
+            composes === 'accumulates'
+              ? `slider "${later.slider.name}" applies animation "${later.slider.animation?.name}" with additive false, and at ` +
+                'mix 1 a non-additive apply writes the value outright (`getRelativeValue` returns `setup + value`, ' +
+                '`getAbsoluteValue` returns `value`) rather than adding to the pose it found. Set `"additive": true` on ' +
+                `slider "${later.slider.name}" in the rig spec — rigc will not choose that flag for you — or key this ` +
+                `property from one slider only. [measured] \`${later.timeline.constructor.name}.apply\` posed twice with ` +
+                '`add` set accumulates, so that flag is the repair here'
+              : `the ${Property[Number(id.split('|')[0])] ?? id} timeline they share writes its value outright whatever the ` +
+                `flags say — [measured] \`${later.timeline.constructor.name}.apply\` posed twice with \`add\` set left the ` +
+                'same value there rather than adding to it — so `"additive": true` would NOT compose these. Key this ' +
+                'property from one slider only, or move both edits into the one animation a single slider applies';
           fail(
             'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET',
             `${describe(later.timeline, id)} is keyed by the animations of ${users.length} sliders — ${chain} — and every ` +

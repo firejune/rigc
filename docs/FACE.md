@@ -1211,12 +1211,23 @@ repair and writing it on both changes nothing: the slider **later in the
 `constraints` array** owns that property outright and the earlier one contributes
 nothing, at every position of its dial. An **ik constraint's mix** behaves the
 same way. What does compose is the rest of what a face keys — a bone transform, a
-mesh deform, a transform constraint's mix, a physics `wind` — and those are the
-same sum as the two axes above, over each target's own setup value. ⇒ if a blink
-fades a slot and the yaw dial also fades it, one of the two has to stop: key that
-property from **one** slider, or move both edits into the animation a single
-slider applies. `A40` refuses the rest by name, and AUTHORING §3.5.2 is the
-mechanism.
+mesh deform, a transform constraint's mix, a physics `wind`, a path constraint's
+`mix`, and another slider's own `mix` or `time` — and those are the same sum as
+the two axes above, over each target's own setup value. ⇒ if a blink fades a slot
+and the yaw dial also fades it, one of the two has to stop: key that property
+from **one** slider, or move both edits into the animation a single slider
+applies. `A40` refuses the rest by name, and AUTHORING §3.5.2 is the mechanism.
+
+✅ **And which of the two a timeline is, the gate now poses rather than asks.**
+It read `Timeline.additive`, the runtime's own declaration, which two classes
+state falsely about themselves — so a path constraint's `mix` and a slider's
+`time`, both in the composing list above, were refused by name with a message
+saying the flag would not compose them
+([#655](https://github.com/firejune/rigc/issues/655)). `A40` applies the shared
+timeline twice with `add` set instead and reads whether the second application
+accumulated. The same measurement retired a refusal no pose could have told
+apart: two dials whose animations both fire **events** were refused, and a slider
+fires no event at all — it applies its animation with `firedEvents` null.
 
 ⭐ **Three dials are the same sum as two — as long as every one of them is
 additive.** The case worth knowing is a non-additive dial in the *middle* of
@@ -1270,7 +1281,9 @@ all leaves `A40`'s comparison, so nothing in the tool is looking at that pair.
 🔸 **The bone-less slider is the same story one field over.** A slider with no
 `bone` takes its time from `slider.<name>.time`, which any animation can key — and
 two dials keying it *add*, so a time-driven axis composes like everything else
-here. The same array rule applies, for the same reason. ⚠️ Two things the bone
+here, and since [#655](https://github.com/firejune/rigc/issues/655) the gate
+agrees: it used to refuse exactly this rig. The same array rule applies, for the
+same reason. ⚠️ Two things the bone
 form does and this one does not: there is no `Math.max(0, time)` and no wrap, so a
 driven time below zero does not pose the first frame — it leaves the pose exactly
 as it found it, which is a different picture whenever the animation's first frame

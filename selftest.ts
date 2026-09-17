@@ -263,6 +263,7 @@ import {
   SKIP_NO_SKELETON,
   SKIP_NO_TIMELINE,
   skeletonValues,
+  timelineAddBehaviour,
   validate,
   VALIDATE_PROFILES,
   type ValidateProfile,
@@ -9913,11 +9914,14 @@ function runPathAndSliderSuite(): number {
     colourDetails.length === 2 &&
       colourDetails.some((d) => d.includes('slot "marker" rgb')) &&
       colourDetails.some((d) => d.includes('slot "marker" alpha')) &&
-      colourDetails.every((d) => d.includes('does not support additive application at all')),
+      colourDetails.every((d) => d.includes('writes its value outright whatever the flags say')) &&
+      colourDetails.every((d) => d.includes('`RGBATimeline.apply` posed twice with `add` set')),
     colourDetails.join(' | ') || 'A40 accepted two additive sliders sharing one slot colour',
-    'both sliders say `additive: true` and it buys them nothing: `Timeline.additive` is false for a colour timeline and ' +
-      '`RGBATimeline.apply1` never reads the flag, so the later one still overwrites — a message that told this author to ' +
-      'set the flag they already set would be a gate teaching a fix that does not work',
+    'both sliders say `additive: true` and it buys them nothing: `RGBATimeline.apply1` never reads the flag, so the later ' +
+      'one still overwrites — a message that told this author to set the flag they already set would be a gate teaching a ' +
+      'fix that does not work. ⭐ Since #655 the message names what was MEASURED rather than what the class declares: ' +
+      '`Timeline.additive` said the same thing here and said the wrong thing about two other classes, so this control ' +
+      'pins the posed sentence and not the flag\'s',
   );
 
   const weighted = pairGate([yawSlider({ mix: 0.5 }), pitchSlider({ mix: 0.5 })]);
@@ -14994,10 +14998,11 @@ function runPathAndSliderSuite(): number {
   // (`PhysicsConstraintTimeline`) or never read it at all
   // (`IkConstraintTimeline`, `RGBATimeline`); this one passes the argument
   // straight through to `getAbsoluteValue`. So two additive sliders keying one
-  // slider's `time` SUM — measured below — while `A40` reads
-  // `Timeline.additive`, refuses the rig, and says in so many words that
-  // `"additive": true` *would NOT compose these*. The refusal is a false
-  // positive and the sentence is false.
+  // slider's `time` SUM — measured below — while `A40` read
+  // `Timeline.additive`, refused the rig, and said in so many words that
+  // `"additive": true` *would NOT compose these*. The refusal was a false
+  // positive and the sentence was false; issue #655 replaced the flag with a
+  // posed probe, and the verdict this control PRINTS is what changed with it.
   // ⚠️ **It is not the only one, and this comment claimed it was until the
   // census measured otherwise.** `PathConstraintMixTimeline` honours `add` the
   // same way (`PS143`), so the count belongs to a run rather than to a sentence
@@ -15182,8 +15187,11 @@ function runPathAndSliderSuite(): number {
         `animation posed at it, worst ${Math.max(...timeAsSum.map((cell) => Math.max(Math.abs(cell.rotate - cell.wantRotate), Math.abs(cell.x - cell.wantX)))).toExponential(3)} ` +
         `against a float32-frame floor of ${SUM_FLOOR.toExponential(3)}. "The later slider alone" — which is what A40 ` +
         `predicts — differs on ${timeDrivenOff(timeAsLater, SUM_FLOOR).length} of ${timeAsLater.length} cells. ⚠️ A40 ` +
-        `${timeDrivenRefusal ? 'REFUSES this rig anyway' : 'does not refuse this rig'}, reading \`Timeline.additive\`, which is false for ` +
-        '`SliderTimeline` although its `apply` passes `add` through to `getAbsoluteValue` — reported and not gated, so a ' +
+        `${
+          timeDrivenRefusal
+            ? 'REFUSES this rig anyway, reading `Timeline.additive`, which is false for `SliderTimeline` although its `apply` passes `add` through to `getAbsoluteValue`'
+            : 'ACCEPTS this rig, having posed what the `apply` does with `add` instead of reading `Timeline.additive`, which is false for `SliderTimeline` although its `apply` passes the argument through to `getAbsoluteValue`'
+        } — reported and not gated, so a ` +
         `repair cannot turn this red. With the carried slider FIRST in the array every cell is the setup pose while its ` +
         `stored time still shows the sum. ⭐ ${unclampedNegative.length} cell(s) of a second fixture drive the time BELOW zero, where ` +
         `the bone-less branch has no \`Math.max(0, time)\`: the animation is not applied at all, which is ` +
@@ -15192,11 +15200,12 @@ function runPathAndSliderSuite(): number {
     ),
     'issue #652 item 3: the bone-less slider is a branch of the format no card had posed, and it turned out to carry ' +
       'one of the two measured contradictions in this card. The guide\'s closed list of what supports additive ' +
-      'application, and A40\'s message about it, both come from `Timeline.additive`; `SliderTimeline` is one of the ' +
-      'classes where that flag and the `apply` disagree (`PS143` counts them), so a correct rig is refused with a ' +
-      'sentence about the runtime that the runtime does not do. The clause that matters for an author is the other ' +
-      'one: on this branch there is no clamp and no wrap, so a driven time below zero leaves the pose exactly as it ' +
-      'found it',
+      'application, and A40\'s message about it, both came from `Timeline.additive`; `SliderTimeline` is one of the ' +
+      'classes where that flag and the `apply` disagree (`PS143` counts them), so a correct rig was refused with a ' +
+      'sentence about the runtime that the runtime does not do — until #655 replaced the flag with a pose (`PS145`). ' +
+      'The verdict above is printed rather than asserted, which is what let that repair land without touching this ' +
+      'control. The clause that matters for an author is the other one: on this branch there is no clamp and no wrap, ' +
+      'so a driven time below zero leaves the pose exactly as it found it',
   );
 
   // =========================================================================
@@ -15428,10 +15437,12 @@ function runPathAndSliderSuite(): number {
   // the skeleton, so the column beside the flag is a measurement and the two can
   // be compared.
   //
-  // 🚨 They do not agree, and the disagreement is the finding. `A40` decides by
+  // 🚨 They do not agree, and the disagreement is the finding. `A40` decided by
   // `Timeline.additive`, and a class whose `apply` passes `add` through while
-  // that flag is false composes anyway — so the rig is refused with a sentence
-  // about the runtime that the runtime does not do. ⭐ The first draft of this
+  // that flag is false composes anyway — so the rig was refused with a sentence
+  // about the runtime that the runtime does not do (repaired by #655, which
+  // poses the `apply` instead; `PS145` holds that probe to this census's own
+  // answers, and the verdict column below is what moved). ⭐ The first draft of this
   // comment named ONE such class; the run named two, which is the whole reason
   // the column is measured rather than transcribed. The count is PRINTED and
   // not gated, so a repaired `A40` cannot turn this control red; `PS140` holds
@@ -15941,6 +15952,94 @@ function runPathAndSliderSuite(): number {
       'subtraction. The clause that keeps the subtraction honest is the reverse one — a family that is missing from the ' +
       'census because nobody wrote its spelling would show up here as unreached AND compile, which is a different fault ' +
       'from a family the format has and rigc does not emit',
+  );
+
+  // =========================================================================
+  // 8. what `apply` does with `add`, and A40 reading that instead (#655)
+  // =========================================================================
+  //
+  // ⭐ `PS143` above measures the RULE two additive sliders land on and prints
+  // the flag beside it, which is how the two disagreeing classes were found.
+  // This measures the INSTRUMENT the repaired `A40` replaced the flag with:
+  // `timelineAddBehaviour` poses each timeline twice with `add` set and reports
+  // `accumulates` / `overwrites` / `inert`, and every one of those has to be the
+  // same answer the census's own pose gives — `accumulates` where the pair is
+  // the sum, `overwrites` where it is the later slider alone, `inert` exactly
+  // where nothing a pose can read moved.
+  //
+  // 🔒 The third state is what retires the events clause, and it is measured
+  // rather than excepted. A slider applies its animation with `firedEvents`
+  // null, so an events timeline under one fires nothing and neither slider has
+  // anything on that property for the other to erase; the same holds for a
+  // physics `reset`, whose window is empty when `lastTime === time`. Neither is
+  // named anywhere — they fall out of "this timeline moved no pose at all",
+  // which is the same clause that would catch a third one nobody has thought of.
+  //
+  // 🚨 The plant is the one shape that keeps `inert` from becoming an amnesty:
+  // with the later slider at the format default EVERY spelling that is not inert
+  // has to be refused by name, and every inert one still must not be — so a
+  // probe stuck at `inert` reddens this, and so does one stuck at `accumulates`.
+  const probedRows: string[] = [];
+  const probedTable: string[] = [];
+  const probedFlagApart: string[] = [];
+  const RULE_BEHAVIOUR: Record<string, string> = { 'the sum': 'accumulates', 'the later slider alone': 'overwrites' };
+  for (const kind of SPELLING_CENSUS) {
+    const { data, report } = spellingRun(kind);
+    const animation = data.animations.find((one) => one.name === `${SLIDER_KIND_DIALS[1].name}-pose`);
+    const timelines = animation === undefined ? [] : animation.timelines;
+    if (timelines.length !== 1) {
+      probedRows.push(`${kind.spelling}: the second dial's animation carries ${timelines.length} timeline(s), so there is no one class to probe`);
+      continue;
+    }
+    const timeline = timelines[0];
+    const probed = timelineAddBehaviour(data, timeline);
+    const posed = kind.observable ? (RULE_BEHAVIOUR[ruleOf(kind, data).rule] ?? 'NEITHER closed form') : 'inert';
+    if (probed !== posed) {
+      probedRows.push(`${kind.spelling}: the probe says \`${probed}\` and the pose says \`${posed}\` — the instrument and the skeleton disagree`);
+    }
+    const refused = report.failures.some((one) => one.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET');
+    if (refused !== (probed === 'overwrites')) {
+      probedRows.push(
+        `${kind.spelling}: two ADDITIVE sliders on it are ${refused ? 'refused' : 'accepted'} by A40 while the probe says ` +
+          `\`${probed}\`, so the refusal is not the one the probe decides`,
+      );
+    }
+    // The plant, data: the later slider left at the format's own default.
+    const planted = spellingRun(kind, [{}, { additive: false }]).report;
+    const plantedRefused = planted.failures.some((one) => one.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET');
+    if (plantedRefused !== (probed !== 'inert')) {
+      probedRows.push(
+        `${kind.spelling}: with the later slider at the format default A40 ${plantedRefused ? 'refuses' : 'accepts'} it, and ` +
+          `the probe says \`${probed}\` — a non-inert spelling must be named there and an inert one must not`,
+      );
+    }
+    if (timeline.additive !== (probed === 'accumulates')) {
+      probedFlagApart.push(`${timeline.constructor.name} declares additive ${String(timeline.additive)} and probes \`${probed}\``);
+    }
+    probedTable.push(`${kind.spelling} (${timeline.constructor.name}) — ${probed}`);
+  }
+  const probedHeld = probedRows.length === 0;
+  say(
+    'PS145_WHAT_APPLY_DOES_WITH_ADD_IS_POSED_PER_CLASS_AND_IS_THE_SAME_ANSWER_THE_SKELETON_GIVES',
+    probedHeld,
+    probeDetail(
+      probedHeld,
+      probedRows,
+      `${SPELLING_CENSUS.length} spellings, each probed by applying its own timeline twice with \`add\` set and compared ` +
+        `against the rule the same fixture poses: ${probedTable.join('; ')}. ⇒ every spelling the census poses as the sum ` +
+        'probes `accumulates`, every one it poses as the later slider alone probes `overwrites`, and the ones with nothing ' +
+        'a pose can read probe `inert`; A40 refuses exactly the `overwrites` ones with both sliders additive, and with the ' +
+        `later slider at the format default it refuses exactly the ones that are not inert. ${probedFlagApart.length} class(es) ` +
+        `disagree with their own \`Timeline.additive\`${probedFlagApart.length === 0 ? '' : `: ${probedFlagApart.join('; ')}`}`,
+      (count) => `${count} clause(s) of the probe-against-pose comparison did not hold:`,
+    ),
+    'issue #655: `A40` decided this by reading `Timeline.additive`, which two classes declare falsely about themselves, so ' +
+      'two correct rigs were refused with a sentence about the runtime the runtime does not perform. The repair could have ' +
+      'been a table of those two written into the validator — the hand-kept list this repository has a judgment about, and ' +
+      'one that would have been right until the third class. It poses each class instead, and this is where that instrument ' +
+      'answers to something other than itself: the verdict it produces has to be the verdict the census\'s own skeleton ' +
+      'gives, on all thirty spellings, in both directions. The disagreement count is PRINTED rather than gated, because a ' +
+      'runtime that repaired its own flags would otherwise turn this red for improving',
   );
   return bad;
 }
