@@ -8565,7 +8565,14 @@ function runHoldCurveSuite(): number {
   say(
     'HC09_THE_NAMED_EASING_ON_A_HOLD_AND_AN_EXPLICIT_STEPPED_EMIT_ONE_FILE',
     rotate.skeletonText === explicit.skeletonText,
-    `${rotate.skeletonText.length} bytes, byte-identical`,
+    // ⚠️ The clause is conditioned on the two lengths already beside it (issue
+    // #638). It read `N bytes, byte-identical` unconditionally, so the run where
+    // the two spellings emitted two files printed the sentence saying they had
+    // not — over the length of one of them.
+    rotate.skeletonText === explicit.skeletonText
+      ? `${rotate.skeletonText.length} bytes, byte-identical`
+      : `${rotate.skeletonText.length} bytes against the explicitly-stepped spelling's ${explicit.skeletonText.length} — ` +
+        'NOT byte-identical, so the two spellings are two files',
     'two spellings of one animation must not emit two different files — the rule an authored `offset: 0` and an ' +
       'absent one already follow',
   );
@@ -14165,7 +14172,11 @@ function runContourMeshSuite(): number {
       'SF01_A_PAINTED_MASK_CARRIES_ITS_REGION_AND_LEAVES_THE_REST_PINNED',
       closed === perVertex.length && stranger === 0 && carried > 0 && still > 0 && report?.bone === 'wobble',
       `${perVertex.length} vertices: ${carried} carried by "wobble", ${still} still on the slot bone, ` +
-        `${perVertex.length - carried - still} in the painted falloff; all ${closed} close at 1, ` +
+        `${perVertex.length - carried - still} in the painted falloff; ` +
+        // ⚠️ `all ${closed}` was printed whatever `closed` was (issue #638), so a
+        // run where some vertex did not close at 1 said `all` over the count that
+        // refuted it — with the total four words earlier on the same line.
+        `${closed === perVertex.length ? `all ${closed}` : `only ${closed} of ${perVertex.length}`} close at 1, ` +
         `${stranger} stranger bones; the report says bone=${report?.bone} carried=${report?.carried} ` +
         `ramped=${report?.ramped} mask=${report?.mask}`,
       'both ends have to be measured, not the total: a mask that carried every vertex, or none, still produces a mesh that loads and gates',
@@ -14426,6 +14437,19 @@ function runContourMeshSuite(): number {
     // report ever prints is really an unmeasured one.
     const flat = ceilingRig('dome', sheet).result.meshes[0].depth?.ceiling;
     const flatCeiling = ceilingRig('flat', sheet).result.meshes[0].depth?.ceiling;
+    // ⚠️ The clause said `all four ceilings` and alternated on ONE of them
+    // (issue #638) — `CF17`'s shape: a branch the term selects, over a sentence
+    // a different term decides. Planted with the flat sheet given a gradient in
+    // y alone, the pitch ceilings appeared, `yaw.positive` stayed null, and the
+    // line printed `all four ceilings null` on the run where two were not.
+    const CEILING_SIDES = [
+      ['yaw', 'positive'],
+      ['yaw', 'negative'],
+      ['pitch', 'positive'],
+      ['pitch', 'negative'],
+    ] as const;
+    const flatFolded =
+      flatCeiling === undefined ? [] : CEILING_SIDES.filter(([axis, side]) => flatCeiling[axis][side] !== null);
     say(
       'TC02_A_SHEET_WITH_NO_GRADIENT_REPORTS_NO_CEILING_RATHER_THAN_A_LARGE_ONE',
       flatCeiling !== undefined &&
@@ -14435,8 +14459,9 @@ function runContourMeshSuite(): number {
         flatCeiling.pitch.negative === null &&
         flatCeiling.measured > 0 &&
         flat?.yaw.positive != null,
-      `a flat sheet: ${flatCeiling?.measured} triangle(s) measured, all four ceilings ` +
-        `${flatCeiling && flatCeiling.yaw.positive === null ? 'null' : 'NOT null'}; the dome beside it reports ` +
+      `a flat sheet: ${flatCeiling?.measured} triangle(s) measured, ` +
+        `${flatFolded.length === 0 ? 'all four ceilings null' : `${4 - flatFolded.length} of four ceilings null — ${flatFolded.map(([axis, side]) => `${axis}.${side}`).join(', ')} folded`}` +
+        `; the dome beside it reports ` +
         `yaw +${flat?.yaw.positive?.degrees.toFixed(2)}°, so the null is the sheet and not the reader`,
       'an assertion with nothing to measure reports SKIP and never a pass — the same rule for a figure: a sheet that ' +
         'cannot fold anything must say so, and printing 90° would be quoting a limit nothing measured',
@@ -19644,7 +19669,13 @@ function runGroupMemberSuite(): number {
     'GM02_STAGGER_MOVES_THE_TIMES_AND_NOT_THE_VALUES',
     staggeredValues.every((v, i) => v === gotShift[i]) && staggeredTimes.every((t, i) => Math.abs(t - wantTimes[i]) < 1e-9),
     `stagger 0.02 s over ${MEMBER_GROUP.length} members: times [${staggeredTimes.join(', ')}] against ` +
-      `[${wantTimes.join(', ')}], values [${staggeredValues.join(', ')}] — identical to the unstaggered build`,
+      `[${wantTimes.join(', ')}], values [${staggeredValues.join(', ')}] ` +
+      // ⚠️ `— identical to the unstaggered build` was appended whatever the
+      // values were (issue #638): the run where stagger DID move them printed
+      // them and then said they had not moved.
+      (staggeredValues.every((v, i) => v === gotShift[i])
+        ? '— identical to the unstaggered build'
+        : `— NOT identical to the unstaggered build's [${gotShift.join(', ')}]`),
     'a second phase mechanism inside the model would mean two places to look for one lag, so the construct takes no ' +
       'phase, index or delay and this is what says so',
   );
@@ -21937,13 +21968,57 @@ function runPackerSuite(): number {
         return `${p.name}:${readFileSync(path).length}:${Buffer.from(readFileSync(path)).toString('base64').slice(-32)}`;
       })
       .join('|');
+  // ⚠️ The clause asserted the identity while the figures beside it were the
+  // PLACEMENT and PAGE counts — not a reading of anything compared (issue #638).
+  // Planted with the second pack given one more pixel of gutter, the line printed
+  // `atlas text and every page's pixels identical across two independent
+  // compiles` over two layouts that were not. Each half is bound so it can be
+  // named, which is also what puts a reading of the compared thing on the line.
+  //
+  // 🔸 The reading is the byte the two part at — `PK09`'s, one control below,
+  // for the same claim. A length against a length is not a reading of an
+  // identity, which this repair's own first run demonstrated by printing
+  // `atlas text (394 B against 394 B)` over two different files.
+  const partingByte = (a: string, b: string): number => {
+    const shared = Math.min(a.length, b.length);
+    for (let i = 0; i < shared; i++) if (a[i] !== b[i]) return i;
+    return a.length === b.length ? -1 : shared;
+  };
+  const texelsOff = packA.pages.reduce((total, p, i) => {
+    const other = packB.pages[i];
+    if (other === undefined) return total + p.plate.data.length;
+    return total + p.plate.data.reduce((n, v, k) => (v === other.plate.data[k] ? n : n + 1), 0);
+  }, 0);
+  // Bound once each: `pngHash` writes a PNG to read its length back, so naming
+  // it in both the verdict and the reading would write four files to answer one
+  // question.
+  const bytesA = pageBytes(packA);
+  const bytesB = pageBytes(packB);
+  const hashA = pngHash(packA);
+  const hashB = pngHash(packB);
+  const packSame = [
+    [
+      'atlas text',
+      packA.atlasText === packB.atlasText,
+      `parting at byte ${partingByte(packA.atlasText, packB.atlasText)} of ${packA.atlasText.length}`,
+    ],
+    ['page bytes', bytesA === bytesB, `${bytesA} against ${bytesB}`],
+    ['page PNGs', hashA === hashB, `${hashA} against ${hashB}`],
+    [
+      'page pixels',
+      packA.pages.length === packB.pages.length &&
+        packA.pages.every((p, i) => p.plate.data.every((v, k) => v === packB.pages[i].plate.data[k])),
+      `${texelsOff} channel byte(s) differ over ${packA.pages.length} page(s) against ${packB.pages.length}`,
+    ],
+  ] as const;
+  const packMoved = packSame.filter(([, same]) => !same);
   say(
     'PK03_TWO_PACKS_OF_THE_SAME_PARTS_ARE_BYTE_IDENTICAL',
-    packA.atlasText === packB.atlasText &&
-      pageBytes(packA) === pageBytes(packB) &&
-      pngHash(packA) === pngHash(packB) &&
-      packA.pages.every((p, i) => p.plate.data.every((v, k) => v === packB.pages[i].plate.data[k])),
-    `atlas text and every page's pixels identical across two independent compiles, the second handed to the ` +
+    packMoved.length === 0,
+    (packMoved.length === 0
+      ? `atlas text and every page's pixels identical across two independent compiles`
+      : `two independent compiles DIFFER in ${packMoved.map(([what, , reading]) => `${what} (${reading})`).join('; ')}`) +
+      `, the second handed to the ` +
       `packer in reverse order (${packA.placements.length} placements, ${packA.pages.length} page(s))`,
     'a packer whose layout depended on the order it happened to receive its inputs would make every rebuild a ' +
       'different artifact, and A18 would be checking one arbitrary run against another',
@@ -22201,8 +22276,16 @@ function runPackerSuite(): number {
     imported.images.length === packedForImport.result.images.length &&
       imported.images.every((img) => img.atlas !== undefined) &&
       imported.skeletonText === packedForImport.result.skeletonText,
+    // ⚠️ `CPI08`'s own sentence, which cites this control by name and has always
+    // been two-sided; this half said `byte-identical to the loose build`
+    // unconditionally (issue #638). On the plant that moved `skeleton.images`,
+    // `CPI08` and `PK17` printed `DIFFERENT from` / `DIFFERS from` on the same
+    // run this line printed `byte-identical`.
     `${imported.images.length} part(s) resolved to regions of ${packedForImport.pages.join(', ')}; the skeleton is ` +
-      'byte-identical to the loose build',
+      (imported.skeletonText === packedForImport.result.skeletonText
+        ? 'byte-identical to the loose build'
+        : `DIFFERENT from the loose build — ${imported.skeletonText.length} B against ` +
+          `${packedForImport.result.skeletonText.length} B`),
     'R5: sizes are still the drawings\' own (the region\'s originalWidth/Height), so how the pixels were delivered ' +
       'cannot change the skeleton — and it is the skeleton that every downstream measurement is taken from',
   );
@@ -35926,12 +36009,20 @@ function runBallotSuite(): number {
 
   // ⚖️ The licence line for the new surface, as a machine check: same posture as
   // the preview, so NOTICE.md needs no new sentence and this is what keeps that true.
+  // ⚠️ The three clauses were printed unconditionally over the page's SIZE
+  // (issue #638): the one reading on the line was `page.length`, and the run
+  // where the licence line was spelled the other way printed `and it names the
+  // Spine Runtimes licence` beside it. Bound apart so each clause reads its own
+  // term, which is also what puts all three in the detail.
+  const referenced = /<script src="https:\/\/unpkg\.com\/@esotericsoftware\/spine-player@[^"]+"><\/script>/.test(page);
+  const vendored = page.includes('SpinePlayer = class');
+  const licensed = page.includes('spine-runtimes-license');
   say(
     'B13_THE_PLAYER_IS_REFERENCED_AND_NEVER_VENDORED',
-    /<script src="https:\/\/unpkg\.com\/@esotericsoftware\/spine-player@[^"]+"><\/script>/.test(page) &&
-      !page.includes('SpinePlayer = class') &&
-      page.includes('spine-runtimes-license'),
-    `player loaded by <script src>, page is ${(page.length / 1024).toFixed(1)} KiB, and it names the Spine Runtimes licence`,
+    referenced && !vendored && licensed,
+    `player ${referenced ? 'loaded by <script src>' : 'NOT loaded by <script src>'}` +
+      `${vendored ? ' and VENDORED into the page' : ''}, page is ${(page.length / 1024).toFixed(1)} KiB, ` +
+      `and it ${licensed ? 'names' : 'does NOT name'} the Spine Runtimes licence`,
     'NOTICE.md: the Spine Runtimes are Esoteric Software\'s and rigc redistributes none of them — a second surface must not be the exception',
   );
 
@@ -36017,7 +36108,12 @@ function runLoopSeamSuite(): number {
     // false sentence.
     `3.2 reduces to ${reduced?.numerator}/${reduced?.denominator}; 2.4 lands on multiples of ${wave?.every} ` +
       `(first at or above 12 fps: ${wave?.nextAtOrAbove}), 1.5 on multiples of ${gaze?.every} ` +
-      `(first at or above 25 fps: ${gaze?.nextAtOrAbove}), 4 on every integer rate (${whole?.every}); ` +
+      // ⚠️ `on every integer rate` was printed whatever the multiple in its own
+      // parentheses said (issue #638) — the operand refuting the clause four
+      // words after it, which is `PS58`'s shape.
+      `(first at or above 25 fps: ${gaze?.nextAtOrAbove}), 4 on ` +
+      `${whole?.every === 1 ? 'every integer rate' : `multiples of ${String(whole?.every)} and NOT every integer rate`} ` +
+      `(${whole?.every}); ` +
       `samplingOf lands=${String(samplingOf(2.4, 15).lands)} at 2.4/15 and lands=${String(samplingOf(1.5, 26).lands)} at 1.5/26`,
     'a refusal that only said "this rate does not work" would leave the reader searching. The two rates it ' +
       'names here are the ones the gallery now measures `wave` and `gaze` at, and samplingOf confirms both land',
@@ -39344,6 +39440,9 @@ function runRunTallySuite(live: RunTally): number {
   const spokenOf = scanMiniature(
     miniature('const PLANTED_FIGURE = 6;', '0', "${n('a-suite')} controls (PLANTED_FIGURE was retired)"),
   );
+  /** `in no way`, or the constants it did fault on — the clause read off its own term. */
+  const faultsIn = (scan: ConstantScan): string =>
+    scan.written.length === 0 ? 'in no way' : `on ${scan.written.join(', ')}`;
   say(
     'TY14_A_CONSTANT_ONLY_THE_SUMMARY_READS_FAULTS_WHILE_A_SHARED_ONE_A_TABLE_AND_A_MENTION_DO_NOT',
     lonely.written.join() === 'PLANTED_FIGURE' &&
@@ -39357,10 +39456,16 @@ function runRunTallySuite(live: RunTally): number {
       spokenOf.referenced.length === 0,
     `a miniature whose only reader of \`PLANTED_FIGURE\` is its summary faults on [${lonely.written.join(', ')}], and ` +
       `so does the same file with the name in a COMMENT beside a suite [${noted.written.join(', ')}]; the same ` +
-      `constant read by the suite as well faults in no way (${shared.written.length} figure(s)), a TABLE the ` +
-      `summary takes a length off faults in no way while still being seen (${table.referenced.join(', ')}), a ` +
-      `constant the summary never names faults in no way (${elsewhere.referenced.length} referenced), and a ` +
-      `constant merely NAMED IN THE PROSE faults in no way (${spokenOf.referenced.length} referenced)`,
+      // ⚠️ Four `faults in no way` clauses, each printed whatever its own term
+      // said (issue #638). The first is the sharpest specimen in this file: the
+      // figure refuting the clause sat in the clause's OWN parentheses, and the
+      // plant printed `faults in no way (1 figure(s))`. The last two state a
+      // `referenced` count while a `written` term decides the clause, so their
+      // parentheses were not even the operand.
+      `constant read by the suite as well faults ${faultsIn(shared)} (${shared.written.length} figure(s)), a TABLE the ` +
+      `summary takes a length off faults ${faultsIn(table)} while still being seen (${table.referenced.join(', ')}), a ` +
+      `constant the summary never names faults ${faultsIn(elsewhere)} (${elsewhere.referenced.length} referenced), and a ` +
+      `constant merely NAMED IN THE PROSE faults ${faultsIn(spokenOf)} (${spokenOf.referenced.length} referenced)`,
     'the prose case is the sharpest of the negatives and the reason the scan blanks string bodies: that miniature ' +
       'has a numeric constant nothing outside the summary reads, and the ONLY thing keeping it green is that the ' +
       'mention is text rather than code. A scan that read the summary as characters would fault on it, need an ' +
