@@ -128,7 +128,20 @@ import {
   type BoneDistReport,
   type BoneQuantity,
 } from './src/bonedist.ts';
-import { diffLines, diffSkeletons, movedAgnosticMeasures, movedMeasures, movedReportedMeasures, type DiffReport } from './src/diff.ts';
+import {
+  diffLines,
+  diffSkeletons,
+  diffSkeletonValues,
+  movedAgnosticMeasures,
+  movedMeasures,
+  movedReportedMeasures,
+  movedValueMeasures,
+  VALUE_EMITTED_GRID,
+  valueFigures,
+  valueTolerance,
+  type DiffMeasure,
+  type DiffReport,
+} from './src/diff.ts';
 import { copyAtlasImages } from './src/emit.ts';
 import {
   DEFAULT_PADDING,
@@ -232,6 +245,7 @@ import {
   SKIP_NO_REGION_ATTACHMENT,
   SKIP_NO_SKELETON,
   SKIP_NO_TIMELINE,
+  skeletonValues,
   validate,
   VALIDATE_PROFILES,
   type ValidateProfile,
@@ -36563,7 +36577,7 @@ function runIngestSuite(): number {
     );
   }
 
-  // --- IG16–IG18: the corpus half — twelve skeletons nobody here wrote -------
+  // --- IG16–IG21: the corpus half — twelve skeletons nobody here wrote -------
   //
   // ⭐ The strongest reference this file has, and the one every case above is
   // structurally unable to reach. `IG00` holds every rig THIS REPOSITORY builds
@@ -36601,7 +36615,7 @@ function runIngestSuite(): number {
   // and nothing here changes that.
   const corpus = corpusExports();
   if (corpus.length === 0) {
-    console.log(`  SKIP  IG16–IG18 did not run: no editor export under ${INGEST_CORPUS_ROOT}.`);
+    console.log(`  SKIP  IG16–IG21 did not run: no editor export under ${INGEST_CORPUS_ROOT}.`);
     console.log('          run `bun run fetch-examples` and re-run this suite.');
     console.log(
       '          ⚠️ This is a HOLE in this run, not a pass — not one skeleton written outside this repository ' +
@@ -36618,8 +36632,21 @@ function runIngestSuite(): number {
     const reportedIds: string[] = [];
     /** How much each export actually gave the ratio-bearing measures to compare. IG18's spread. */
     const density: Array<{ label: string; over: number; of: number }> = [];
+    /** Value measure id → how many exports compared something under it, and over how many values. `IG19`. */
+    const valueCoverage = new Map<string, { exports: number; values: number }>();
+    /** Every value measure id, in the order `diffSkeletonValues` defines them. */
+    const valueIds: string[] = [];
+    /**
+     * One rebuilt export kept whole, for the three mutants below to plant into.
+     * The FIRST one whose rebuild carries a bone with a non-zero `rotation` and
+     * a bone with none — both of which IG20 and IG21 need — so that which export
+     * they run on is decided by what the corpus contains rather than by a name
+     * written here (`fixtures/public.ts`'s rule, on somebody else's art).
+     */
+    let plant: { label: string; skeletonText: string; atlasText: string; sourceText: string; packText: string } | null = null;
     for (const entry of corpus) {
-      const source = JSON.parse(readFileSync(entry.path, 'utf8')) as Record<string, unknown>;
+      const sourceText = readFileSync(entry.path, 'utf8');
+      const source = JSON.parse(sourceText) as Record<string, unknown>;
       const decompiled = ingest(source, {
         name: entry.name,
         art: 'none',
@@ -36644,6 +36671,8 @@ function runIngestSuite(): number {
       // said instead of the last one.
       let built: CompileResult | null = null;
       let pack = '';
+      /** The pack that resolved, by path: the value walk parses the SOURCE against it. */
+      let packPath = '';
       const refusals: string[] = [];
       for (const [index, candidate] of entry.packs.entries()) {
         const outDir = join(root, `B${index}`);
@@ -36651,6 +36680,7 @@ function runIngestSuite(): number {
         try {
           built = compile({ rigPath, motionPath, outDir, atlasInPath: candidate });
           pack = basename(candidate);
+          packPath = candidate;
           // The gate the by-hand loop ran as `rigc build`: compiled twice, so
           // A18's determinism claim is made over floats nobody in this
           // repository chose, and judged under `spine` — the profile for foreign
@@ -36678,6 +36708,7 @@ function runIngestSuite(): number {
             );
             built = null;
             pack = '';
+            packPath = '';
             continue;
           }
           break;
@@ -36689,6 +36720,45 @@ function runIngestSuite(): number {
       const declined = refusals.map((line) => line.slice(0, line.indexOf(':')));
 
       const report = built === null ? null : diffSkeletons(JSON.parse(built.skeletonText), source);
+      // The value level (issue #615). `diff` above compares structure over raw
+      // JSON; this compares the numbers inside it, with the format's defaults
+      // taken from the parser rather than from a table here — `skeletonValues`
+      // reads both sides through spine-core and `diffSkeletonValues` compares
+      // what it returns, under a tolerance derived from rigc's own 1e-6 grid and
+      // the runtime's float32 storage.
+      //
+      // 🚨 It GATES here, and nowhere else. `docs/GATE.md`'s *What never gates*
+      // keeps it out of a ladder verdict, because no reading of a rung's frames
+      // could decide a bone `length` or a constraint `mix` at rest. The corpus
+      // is the case that rule does not cover, for the reason IG16 already gives
+      // about `mesh_edges`: the reference IS the file the specs were read from,
+      // so a value that moved is a decompiler loss and there is nothing for a
+      // candidate to be entitled to.
+      const valueMeasures =
+        built === null
+          ? []
+          : diffSkeletonValues(
+              skeletonValues(built.skeletonText, built.atlasText),
+              skeletonValues(sourceText, readFileSync(packPath, 'utf8')),
+            );
+      const movedValues = movedValueMeasures(valueMeasures);
+      const valuesCompared = valueMeasures.reduce((n, m) => n + m.total, 0);
+      for (const m of valueMeasures) {
+        if (!valueIds.includes(m.id)) valueIds.push(m.id);
+        const held = valueCoverage.get(m.id) ?? { exports: 0, values: 0 };
+        if (m.total > 0) held.exports++;
+        held.values += m.total;
+        valueCoverage.set(m.id, held);
+      }
+      if (built !== null && plant === null && plantable(built.skeletonText)) {
+        plant = {
+          label: entry.label,
+          skeletonText: built.skeletonText,
+          atlasText: built.atlasText,
+          sourceText,
+          packText: readFileSync(packPath, 'utf8'),
+        };
+      }
       const gating = report === null ? [] : report.sections.flatMap((s) => [...s.measures, ...(s.nameAgnostic?.measures ?? [])]);
       const moved = report === null ? [] : [...movedMeasures(report), ...movedAgnosticMeasures(report)];
       const movedReported = report === null ? [] : movedReportedMeasures(report);
@@ -36704,7 +36774,7 @@ function runIngestSuite(): number {
       const figures = report === null ? '' : report.sections.map((s) => `${s.name} ${s.ratio.toFixed(3)}`).join(' · ');
       say(
         `IG16_AN_EDITOR_EXPORT_REBUILDS_FROM_ITS_DECOMPILED_SPECS_AT_1_000_ON_EVERY_MEASURE[${entry.label}]`,
-        blockers.length === 0 && built !== null && moved.length === 0 && movedReported.length === 0,
+        blockers.length === 0 && built !== null && moved.length === 0 && movedReported.length === 0 && movedValues.length === 0,
         built === null
           ? `${decompiled.findings.length} finding(s), ${blockers.length} blocker(s)` +
               (blockers.length === 0 ? '' : `: ${blockers.map((f) => `${f.code} at ${f.where}`).join('; ')}`) +
@@ -36717,15 +36787,26 @@ function runIngestSuite(): number {
               `${gating.length - moved.length}/${gating.length} ratio-bearing measure(s) at 1.000, ` +
               `${substantive.length} of them over something; ${reported.length - movedReported.length}/${reported.length} ` +
               `reported measure(s) at 1.000; ${figures}` +
+              `\n          values: ${valueMeasures.length - movedValues.length}/${valueMeasures.length} measure(s) at ` +
+              `1.000 over ${valuesCompared} compared value(s); ${valueFigures(valueMeasures)}` +
               (moved.length === 0 ? '' : `\n          MOVED: ${moved.join(', ')}`) +
-              (movedReported.length === 0 ? '' : `\n          MOVED (reported): ${movedReported.join(', ')}`),
+              (movedReported.length === 0 ? '' : `\n          MOVED (reported): ${movedReported.join(', ')}`) +
+              (movedValues.length === 0
+                ? ''
+                : `\n          MOVED (values): ${valueMeasures
+                    .filter((m) => m.ratio < 1)
+                    .map((m) => `${m.id} ${m.matched}/${m.total} — ${m.note ?? 'no note'}`)
+                    .join('\n          ')}`),
         'the measurement issue #594 was opened to write down, which until now lived in a pull request body and so, ' +
           'by this repository\'s own rule about a decision nobody wrote into the tree, had not happened. One line ' +
           'per export, naming the pack it resolved through and any blocker by code, so that a file the decompiler ' +
           'cannot yet carry reads as known-by-name rather than as noise. The count of measures that compared ' +
           'SOMETHING is printed beside the total because `diff` scores an empty comparison 1.000 by definition: on ' +
           'a rig with no mesh and no constraint a third of this line is vacuous, and IG18 is what holds the corpus ' +
-          'as a whole to putting something in front of every measure',
+          'as a whole to putting something in front of every measure. ⭐ The `values:` line is the half none of ' +
+          'that reaches (issue #615): 1.000 on all 49 structural measures is silent about the numbers inside the ' +
+          'structure, so a decompiler that halved every rotation or mirrored every vertex read green here until ' +
+          'this line existed',
       );
       readExports.push(entry.label);
     }
@@ -36783,9 +36864,168 @@ function runIngestSuite(): number {
         'printed rather than described so that nobody has to keep it in step: this goes red the day the corpus ' +
         'stops carrying a construct, which is a different day from any measure breaking',
     );
+
+    // --- IG19–IG21: the value level, and the three things it needs to be a gate
+    //
+    // ⭐ The card these three answer (issue #615) is what IG16's green did NOT
+    // say. `diff` compares structure, so a decompiler that halved every
+    // rotation, dropped every bone's `length` or mirrored every vertex read
+    // **1.000 on all 49 measures** — and on an editor export nothing else was
+    // watching, because `IG00`'s byte identity only holds for rigs rigc emitted.
+    //
+    // Three cases, because a value comparison can be wrong in three ways and
+    // each of them looks like green:
+    //
+    //   IG19  it compared nothing            coverage, and a second parse of one file
+    //   IG20  it cannot see a moved value    a planted loss, with the structure held at 1.000
+    //   IG21  its tolerance admits anything  the two sides of the line, one grid step apart
+    //
+    // 🔒 IG21 is the one that keeps the other two honest. A tolerance is a claim
+    // about what a gate will refuse, and a bound nobody has seen refuse
+    // anything is a bound that could be a mile wide.
+    const identity =
+      plant === null
+        ? []
+        : diffSkeletonValues(skeletonValues(plant.sourceText, plant.packText), skeletonValues(plant.sourceText, plant.packText));
+    const identityMoved = movedValueMeasures(identity);
+    const identityOver = identity.reduce((n, m) => n + m.total, 0);
+    const coveredNever = valueIds.filter((id) => (valueCoverage.get(id)?.exports ?? 0) === 0);
+    const coveredThin = valueIds.filter((id) => (valueCoverage.get(id)?.exports ?? 0) < corpus.length);
+    say(
+      'IG19_EVERY_VALUE_MEASURE_COMPARED_SOMETHING_AND_A_SECOND_PARSE_OF_ONE_FILE_MOVES_NOTHING',
+      valueIds.length > 0 && plant !== null && coveredNever.length === 0 && identityMoved.length === 0 && identityOver > 0,
+      `${valueIds.length - coveredNever.length}/${valueIds.length} value measure(s) compared something on at least ` +
+        `one export, ${coveredThin.length} of them vacuous on at least one; over the corpus ` +
+        `${valueIds.map((id) => `${id.slice(id.indexOf('.') + 1)} ${valueCoverage.get(id)?.values ?? 0}`).join(' · ')}` +
+        (plant === null
+          ? '; NO EXPORT WAS PLANTABLE, so the identity control did not run'
+          : `; and ${plant.label} parsed twice, independently, compares ${identityOver} value(s) at 1.000`) +
+        (coveredNever.length === 0 ? '' : `; VACUOUS ON EVERY EXPORT: ${coveredNever.join(', ')}`) +
+        (identityMoved.length === 0 ? '' : `; A SECOND PARSE MOVED: ${identityMoved.join(', ')}`),
+      'IG18\'s argument, one level down, plus the control only this half needs. The coverage clause is the same ' +
+        'one: a measure nothing put a value in front of is a 1.000 nobody earned. The identity clause is for the ' +
+        'walk itself — two independent parses of ONE file must read the same values, which is what refuses a path ' +
+        'built from anything the runtime numbers per process. `VertexAttachment.id` is exactly that, and it reaches ' +
+        '`DeformTimeline.getPropertyIds()`, so a walk keyed on property ids leaves every deform timeline of the ' +
+        'second parse unpaired — measured, before the key was changed to the resolved owner',
+    );
+
+    // IG20 — the plant the card asked for, made permanent. The mutation is
+    // DERIVED from the rebuild (the first bone carrying a non-zero rotation),
+    // never a name or a number written here: the corpus is somebody else's art
+    // and a literal in it is what made this file unrunnable elsewhere once.
+    const halved = plant === null ? null : halveFirstBoneRotation(plant.skeletonText);
+    const halvedStructure = plant === null || halved === null ? null : diffSkeletons(JSON.parse(halved.text), JSON.parse(plant.sourceText));
+    const halvedValues =
+      plant === null || halved === null
+        ? []
+        : diffSkeletonValues(skeletonValues(halved.text, plant.atlasText), skeletonValues(plant.sourceText, plant.packText));
+    const halvedStructureMoved =
+      halvedStructure === null
+        ? []
+        : [...movedMeasures(halvedStructure), ...movedAgnosticMeasures(halvedStructure), ...movedReportedMeasures(halvedStructure)];
+    const halvedValuesMoved = movedValueMeasures(halvedValues);
+    const bonesNote = halvedValues.find((m) => m.id === 'values.bones')?.note ?? '(no note)';
+    say(
+      'IG20_A_DECOMPILER_THAT_HALVES_A_ROTATION_IS_CAUGHT_BY_NAME_WHILE_THE_STRUCTURE_STAYS_AT_1_000',
+      halved !== null &&
+        halvedStructureMoved.length === 0 &&
+        halvedValuesMoved.join(',') === 'values.bones' &&
+        bonesNote.includes(halved.bone),
+      halved === null
+        ? 'no export in this corpus rebuilt into a skeleton with a bone rotation to halve'
+        : `${plant?.label}: bone "${halved.bone}" rotation ${halved.was} → ${halved.now}; structure moved ` +
+          `[${halvedStructureMoved.join(', ')}], values moved [${halvedValuesMoved.join(', ')}]\n          ${bonesNote}`,
+      'the whole of issue #615 in one case. The edit is invisible to every structural measure — same bones, same ' +
+        'parents, same order, same timelines — so before this the twelve stayed green through it, and the report ' +
+        'said 1.000 on all 49 measures over a rig posed differently from the one it was read from. ⚠️ The pair ' +
+        'with `length` is worth knowing: DROPPING a length moves `bones.length_present`, because presence is ' +
+        'structural — it is the MAGNITUDE that nothing was reading, which is why the plant moves a number rather ' +
+        'than removing one',
+    );
+
+    // IG21 — the tolerance, from both sides, on a value the file does not state
+    // at all. The edit is `k` steps of rigc's own 1e-6 grid, where `k` is the
+    // smallest count the tolerance cannot admit at that magnitude: derived from
+    // the two exported constants, so a wider tolerance moves the control with it
+    // rather than leaving it asserting yesterday's bound.
+    const admitted = Math.floor(valueTolerance(0) / VALUE_EMITTED_GRID);
+    const refused = admitted + 1;
+    const grid = plant === null ? null : boneWithNoRotation(plant.skeletonText);
+    const measuredAt = (steps: number): { moved: string[]; note: string } => {
+      if (plant === null || grid === null) return { moved: [], note: '(not run)' };
+      const text = writeBoneRotation(plant.skeletonText, grid, steps * VALUE_EMITTED_GRID);
+      const values = diffSkeletonValues(skeletonValues(text, plant.atlasText), skeletonValues(plant.sourceText, plant.packText));
+      return { moved: movedValueMeasures(values), note: values.find((m) => m.id === 'values.bones')?.note ?? '(no note)' };
+    };
+    const under = measuredAt(admitted);
+    const over = measuredAt(refused);
+    say(
+      'IG21_THE_TOLERANCE_ADMITS_THE_EMITTED_GRID_AND_REFUSES_THE_SMALLEST_STEP_ABOVE_IT',
+      grid !== null && under.moved.length === 0 && over.moved.join(',') === 'values.bones' && over.note.includes(grid),
+      grid === null
+        ? 'no export in this corpus rebuilt into a skeleton with a bone that states no rotation'
+        : `${plant?.label}: bone "${grid}" states no rotation, so the parser's own default is what it is compared ` +
+          `against. ${admitted} grid step(s) of ${VALUE_EMITTED_GRID} moved [${under.moved.join(', ')}]; ` +
+          `${refused} moved [${over.moved.join(', ')}]\n          ${over.note}`,
+      'a tolerance is a claim about what a gate REFUSES, and one nobody has watched refuse anything could be a ' +
+        'mile wide. Both terms of it are derived — rigc quantises every emitted number onto a 1e-6 grid (`r6`, ' +
+        'and `keyTime`, which rounds DOWN over the same step) and spine-core holds frames, curves and vertices in ' +
+        'a Float32Array — so the step that must be admitted is the grid itself and the smallest one that must not ' +
+        'be is the next. ⭐ It plants on a bone the file gives no rotation at all, which makes the case say a ' +
+        'second thing: the value it is compared against is the parser\'s default, and no table here states it',
+    );
   }
 
   return bad;
+}
+
+/**
+ * Whether a rebuilt export can carry IG20's and IG21's plants: one bone with a
+ * non-zero `rotation` to halve, and one with none, so that the tolerance case
+ * lands on a field the file does not state.
+ */
+function plantable(skeletonText: string): boolean {
+  const bones = boneList(skeletonText);
+  return bones.some((b) => typeof b.rotation === 'number' && b.rotation !== 0) && bones.some((b) => b.rotation === undefined);
+}
+
+/** The `bones` array of a skeleton file, as plain records. */
+function boneList(skeletonText: string): Array<Record<string, unknown>> {
+  const parsed = JSON.parse(skeletonText) as Record<string, unknown>;
+  const bones = parsed.bones;
+  return Array.isArray(bones) ? (bones.filter((b) => typeof b === 'object' && b !== null) as Array<Record<string, unknown>>) : [];
+}
+
+/** IG20's edit: the first bone with a non-zero rotation, halved. `null` when there is none. */
+function halveFirstBoneRotation(skeletonText: string): { text: string; bone: string; was: number; now: number } | null {
+  const parsed = JSON.parse(skeletonText) as Record<string, unknown>;
+  const bones = Array.isArray(parsed.bones) ? (parsed.bones as Array<Record<string, unknown>>) : [];
+  for (const bone of bones) {
+    const was = bone.rotation;
+    if (typeof was !== 'number' || was === 0) continue;
+    bone.rotation = was / 2;
+    return { text: JSON.stringify(parsed), bone: String(bone.name), was, now: was / 2 };
+  }
+  return null;
+}
+
+/** IG21's bone: the first that states no rotation, so the parser's default is the reference. */
+function boneWithNoRotation(skeletonText: string): string | null {
+  for (const bone of boneList(skeletonText)) if (bone.rotation === undefined) return String(bone.name);
+  return null;
+}
+
+/** IG21's edit: state a rotation on a bone that had none. */
+function writeBoneRotation(skeletonText: string, boneName: string, rotation: number): string {
+  const parsed = JSON.parse(skeletonText) as Record<string, unknown>;
+  const bones = Array.isArray(parsed.bones) ? (parsed.bones as Array<Record<string, unknown>>) : [];
+  for (const bone of bones) {
+    if (bone.name !== boneName) continue;
+    bone.rotation = rotation;
+    return JSON.stringify(parsed);
+  }
+  throw new Error(`internal: no bone named ${boneName}`);
 }
 
 /** The fetched example corpus, which is the only art in this file rigc did not make. */
