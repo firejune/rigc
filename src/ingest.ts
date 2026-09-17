@@ -26,7 +26,8 @@
  * log. Exactly two values are not in a skeleton at all (the stage and an
  * animation's duration) and both are `judgement` findings; every construct the
  * spec format cannot hold is a `blocker`; everything rigc re-derives rather than
- * carries is `lossy`.
+ * carries is `lossy`. The one thing it refuses outright rather than recording is
+ * an OPTION that contradicts the file — see `IngestError`.
  *
  * ## What it does not read
  *
@@ -48,6 +49,24 @@ import { MOTION_SPEC_VERSION, parseMotionSpec } from './motion.ts';
 import { parseRigSpec, RIG_KEYS, RIG_SPEC_VERSION, type RigSpec } from './rig.ts';
 import type { MotionSpec } from './types.ts';
 
+/**
+ * The invocation this module refuses outright, rather than recording.
+ *
+ * ⚠️ **A finding is about the FILE; this is about the call.** Everything below
+ * that a skeleton cannot answer is a `finding` and the specs are still written,
+ * because a spec plus a list of what is missing from it beats no spec. An
+ * `IngestError` is the other thing: an option that contradicts the file it was
+ * given, where writing anything at all would be writing something the caller did
+ * not ask for. It is one re-run away from everything, which is what makes
+ * refusing cheaper than recording here (issue #626).
+ */
+export class IngestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'IngestError';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // findings
 // ---------------------------------------------------------------------------
@@ -59,8 +78,12 @@ import type { MotionSpec } from './types.ts';
  *   NOT be the one that was read. Non-zero exit.
  * - `judgement` — the skeleton does not carry it and somebody has to decide.
  *   There are exactly two: the stage, and an animation's duration.
- * - `lossy` — the skeleton carries it and rigc re-derives it rather than taking
- *   it, which is correct and is said out loud (`lengths`, the `spine` version).
+ * - `lossy` — the skeleton's spelling and rigc's differ, on purpose, and the
+ *   difference is named: a value rigc re-derives rather than takes (`lengths`,
+ *   the `spine` version), a field the spec has no home for (`hash`, `audio`), or
+ *   a default the source left to the format and the rebuild writes out
+ *   (`HEADER_ORIGIN`, issue #622). The rebuilt file is a different file in that
+ *   field; it is not a different rig.
  */
 export type IngestFindingKind = 'blocker' | 'judgement' | 'lossy';
 
@@ -112,7 +135,17 @@ export interface IngestOptions {
    * `cli.ts` refuses that pair rather than writing a field nothing reads.
    */
   images?: string;
-  /** Supplied stage. Used ONLY when the skeleton carries no width/height. */
+  /**
+   * Supplied stage, for a skeleton that declares none.
+   *
+   * ⛔ **Beside a skeleton that declares one this is an `IngestError`, not an
+   * override** (issue #626). It used to be read only after the early return in
+   * `ingestHeader`, so a caller who passed it alongside a declared box got the
+   * file's box, no finding and exit 0 — and the sharper case is the caller who
+   * meant to correct a wrong box and believed they had. The file is the record
+   * of what was measured; two sources for one value is a question, and rigc
+   * refuses it rather than answering it quietly.
+   */
   stage?: IngestStage;
   /** The source file's basename, for the provenance note. No path: no leak. */
   source: string;
@@ -574,6 +607,32 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
 type Note = (kind: IngestFindingKind, code: string, where: string, detail: string) => void;
 
 /**
+ * Does this header declare a stage?
+ *
+ * 🔒 One reading, three callers below — the refusal, the origin default and the
+ * early return — because they are three statements about the same header and two
+ * spellings of "declares a stage" would be two things that have to agree. The
+ * EXTENT is what declares one: an origin for a box that is not there is a shape
+ * no export carries, which is how `diff`'s `stageFacts` and `compile`'s stage
+ * guard already read it.
+ */
+function declaresStage(head: JsonObject): boolean {
+  return head.width !== undefined && head.height !== undefined;
+}
+
+/**
+ * A stage as one string, for a message that has to put two of them side by side.
+ *
+ * The origin is spelled `0` where it is absent, for the reason `HEADER_ORIGIN`
+ * writes it: inside a declared extent that is what the omission means, so a
+ * refusal that printed the file's box as `undefined,undefined,…` would be
+ * quoting the file against the reading every other part of this tree holds.
+ */
+function spellStage(x: unknown, y: unknown, width: unknown, height: unknown): string {
+  return [x ?? 0, y ?? 0, width, height].map((value) => String(value)).join(',');
+}
+
+/**
  * The rig spec's `skeleton` block — and the one judgement in this module.
  *
  * 🚨 **A skeleton JSON need not carry the stage, and it cannot be derived.** rigc
@@ -585,16 +644,35 @@ type Note = (kind: IngestFindingKind, code: string, where: string, detail: strin
  *
  * ⚠️ This said an editor export's `skeleton` block is `hash`, `spine`, `images`,
  * `audio` **and no box at all** until issue #594 measured the corpus: all twelve
- * exports under `examples/` carry `x`/`y`/`width`/`height`, and the early return
- * below is the branch they take. The blocker is for a file that really has none,
- * and this module has no example of one.
+ * exports under `examples/` carry `x`/`y`/`width`/`height`, and the declared-stage
+ * branch below is the one they take. The blocker is for a file that really has
+ * none, and this module has no example of one.
  *
  * ⭐ It is still the judgement that costs least to get wrong. `diff` does report
  * the box — `stage_present` and `stage_box`, since issue #578 — but they sit in
  * the `(reported)` block that no rung consults, so a deliberately absurd unit box
  * is green everywhere a candidate is scored.
+ *
+ * 🔇 **Both of its silences were here, and both were around the DECLARED branch
+ * rather than the missing one.** That branch used to be a bare early return, so
+ * an origin the source omitted left no trace at all (issue #622) and a `--stage`
+ * given beside a declared box was read after it and therefore never (issue #626).
+ * Neither was wrong — the rebuild carried the right numbers both times — which is
+ * exactly the shape this whole module exists to convert into something named:
+ * a decompiler that is right for a reason it never states is a decompiler nobody
+ * can check.
  */
 function ingestHeader(head: JsonObject, opts: IngestOptions, note: Note): JsonObject {
+  // 🚨 Before a line of transcription, because a header the caller contradicted
+  // is not a header to start writing a spec from (issue #626).
+  if (declaresStage(head) && opts.stage !== undefined) {
+    throw new IngestError(
+      `the skeleton declares a stage of ${spellStage(head.x, head.y, head.width, head.height)} and --stage supplied ` +
+        `${spellStage(opts.stage.x, opts.stage.y, opts.stage.width, opts.stage.height)}: two sources for one value. ` +
+        'rigc will not overwrite a box the file states — the file is the record of what was measured, and the flag ' +
+        'is for a skeleton that declares none. Drop --stage, or correct `skeleton` in the source if its box is wrong',
+    );
+  }
   const out: JsonObject = {};
   for (const field of RIG_KEYS.RigSkeletonHeader) if (head[field] !== undefined) out[field] = head[field];
   for (const key of Object.keys(head)) {
@@ -621,7 +699,33 @@ function ingestHeader(head: JsonObject, opts: IngestOptions, note: Note): JsonOb
       `the editor writes "${key}" and the rig spec has no field for it; it is dropped and nothing reads it back`,
     );
   }
-  if (out.width !== undefined && out.height !== undefined) return out;
+  if (declaresStage(head)) {
+    // ⭐ **Inside a declared extent, an omitted origin IS `0`** (issue #620),
+    // which is a reading of the format rather than a value invented for a gap:
+    // `compile` assembles `header.x = rig.skeleton?.x ?? 0` under this same
+    // guard, `diff`'s `stageFacts` reads the omission the same way, and
+    // `stageFacts`'s own comment carries the four measurements behind it. So the
+    // spec states what the file meant instead of leaving the rebuild to a
+    // default in another module — and the half that has to be said out loud is
+    // the other one: the rebuilt header SPELLS a field the source omitted
+    // (issue #622).
+    const omitted = ['x', 'y'].filter((field) => head[field] === undefined);
+    if (omitted.length > 0) {
+      out.x = head.x ?? 0;
+      out.y = head.y ?? 0;
+      note(
+        'lossy',
+        'HEADER_ORIGIN',
+        `skeleton.${omitted.join('/')}`,
+        `the source declares a ${String(head.width)}x${String(head.height)} stage and omits ` +
+          `${omitted.map((field) => `"${field}"`).join(' and ')}; inside a declared extent an omitted origin is 0, ` +
+          'which is what `compile` emits and what `diff` compares (#620), so the rig spec states x=' +
+          `${String(out.x)}, y=${String(out.y)} rather than leaving the rebuild to a default in another module. ` +
+          `⚠️ The rebuild WILL spell ${omitted.length > 1 ? 'those fields' : 'that field'}: same box, different bytes`,
+      );
+    }
+    return out;
+  }
   if (opts.stage === undefined) {
     note(
       'blocker',

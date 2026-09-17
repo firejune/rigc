@@ -67,7 +67,7 @@ import {
   type DeformSpan,
 } from './src/deformmeasure.ts';
 import { diffLines, diffSkeletons, reportedFigures, sectionFigures, type DiffReport } from './src/diff.ts';
-import { ingest, type IngestFindingKind, type IngestStage } from './src/ingest.ts';
+import { ingest, IngestError, type IngestFindingKind, type IngestStage } from './src/ingest.ts';
 import { copyAtlasImages } from './src/emit.ts';
 import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas } from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
@@ -2965,7 +2965,9 @@ const FLAG_MEANINGS: Record<string, string> = {
     'derived: posing the rig gives the ANIMATED extent, which is a different number from the setup box, so this ' +
     "is the caller's value, and without it the missing stage is reported as a blocker. ⚠️ An editor export MAY " +
     'carry none; every editor export measured for this project carries one and ingest reads it straight through, ' +
-    'so the flag is for a file that really has none rather than for editor exports as a class',
+    'so the flag is for a file that really has none rather than for editor exports as a class. ⛔ Beside a ' +
+    'skeleton that already declares a box it is REFUSED rather than ignored: two sources for one value, and the ' +
+    'file is the record of what was measured',
   help: "show this command's flags and exit",
 };
 
@@ -3310,11 +3312,12 @@ const USAGE = [
   'ingest runs build backwards: it reads a Spine 4.3 skeleton.json and writes the rig',
   'spec and motion spec that rebuild it, so an existing skeleton becomes a starting',
   'point instead of something to retype:',
-  '  rigc ingest hero.json --out specs/ --stage 0,0,1024,768   rig.json + motion.json',
+  '  rigc ingest hero.json --out specs/ --images parts/         rig.json + motion.json',
   'The contract is an equality, not a rulebook: build(ingest(x)) is x, byte for byte.',
   'It reads the skeleton and nothing else — no .spine project, no binary .skel, no',
   'atlas — so two things are the caller\'s and are refused rather than guessed: the',
-  'setup stage (--stage, only when the skeleton itself declares none) and how the spec',
+  'setup stage (--stage, only when the skeleton itself declares none — beside a box the',
+  'file states, the flag is refused rather than ignored) and how the spec',
   'reaches the art (--art). --images <dir> is the third and the only optional one: it',
   'WRITES the rig spec\'s own images directory, relative to --out, so the rebuild needs',
   'no flag.',
@@ -3429,6 +3432,16 @@ try {
   // usage under them buries the one line that says what to change.
   if (err instanceof ChainFitError) {
     console.error(`rigc chainfit: ${err.message}`);
+    process.exit(2);
+  }
+  // A usage error in kind — an option that contradicts the file it was given —
+  // and exit 2 for that reason rather than 1: nothing was compiled and nothing
+  // was written, so it is the invocation that has to change (issue #626). It is
+  // raised in `src/ingest.ts` rather than here because the library caller who
+  // passes the same contradiction deserves the same refusal, and one rule in one
+  // place is what stops the two from drifting apart.
+  if (err instanceof IngestError) {
+    console.error(`rigc ingest: ${err.message}`);
     process.exit(2);
   }
   throw err;

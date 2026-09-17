@@ -122,7 +122,7 @@ import {
   type FramingSource,
 } from './src/check.ts';
 import { buildAtlasText, compile, CompileError, relativeImagesPath } from './src/compile.ts';
-import { ingest, INGEST_VOCABULARY, type IngestFinding } from './src/ingest.ts';
+import { ingest, IngestError, INGEST_VOCABULARY, type IngestFinding } from './src/ingest.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
 import { RIG_KEYS, parseRigSpec } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
@@ -37237,6 +37237,203 @@ function runIngestSuite(): number {
         'a Float32Array — so the step that must be admitted is the grid itself and the smallest one that must not ' +
         'be is the next. ⭐ It plants on a bone the file gives no rotation at all, which makes the case say a ' +
         'second thing: the value it is compared against is the parser\'s default, and no table here states it',
+    );
+  }
+
+  // --- IG22–IG24: the two silences around the stage (issues #622, #626) ------
+  //
+  // Both live in `ingestHeader` and neither was WRONG — the rebuild carried the
+  // right numbers both times. What was missing was the record, which is the only
+  // thing an agent that cannot see the rig has:
+  //
+  //   IG22  an origin the source omitted     written as 0, with the note that says so
+  //   IG23  a --stage beside a declared box  refused by name, both boxes in the message
+  //   IG24  the stage-less case              still IG06's, read here rather than restated
+  //
+  // ⭐ Neither needs a planted defect: the unrepaired tree IS the red state for
+  // both, and both were quoted failing before the repair. What IG23 does plant is
+  // the OTHER side — the same flag on a header with no extent, which must still
+  // reach `ingest` rather than be refused, because that is the one file the flag
+  // is for (`FLAG_MEANINGS.stage`, issue #616).
+  {
+    // A round trip of the probe, built here so that the atlas the rebuild
+    // resolves against sits where its page paths say it does — `ingestRoundTrip`
+    // mutates the SPEC and this mutates the SOURCE, which is the one thing it
+    // cannot be asked for.
+    const probeCandidate = candidates.find((c) => c.name === 'ingest_probe')!;
+    const originRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-origin-'));
+    const originA = join(originRoot, 'A');
+    const originB = join(originRoot, 'B');
+    for (const dir of [originA, originB]) mkdirSync(dir, { recursive: true });
+    const originBuild = compile({
+      rigPath: probeCandidate.rigPath,
+      motionPath: probeCandidate.motionPath,
+      outDir: originA,
+      manifestPath: probeCandidate.manifestPath,
+      imagesDir: probeCandidate.imagesDir,
+    });
+    writeFileSync(join(originA, 'skeleton.atlas'), originBuild.atlasText);
+
+    const omittedSource = JSON.parse(originBuild.skeletonText) as Record<string, unknown>;
+    const omittedHeader = omittedSource.skeleton as Record<string, unknown>;
+    const sourceBox = { x: omittedHeader.x, y: omittedHeader.y, width: omittedHeader.width, height: omittedHeader.height };
+    // Half the case: a source that never stated an origin would make every
+    // clause below vacuous, which is IG04's lesson about a plant with nothing
+    // to delete.
+    const statedOrigin = typeof omittedHeader.x === 'number' && typeof omittedHeader.y === 'number';
+    delete omittedHeader.x;
+    delete omittedHeader.y;
+    const omitted = ingest(omittedSource, { name: 'p', art: 'none', source: 's.json', version: '0' });
+    const originFindings = omitted.findings.filter((f) => f.code === 'HEADER_ORIGIN');
+    const originSpec = omitted.rig.skeleton as Record<string, unknown> | undefined;
+    writeFileSync(join(originRoot, 'rig.json'), `${JSON.stringify(omitted.rig, null, 2)}\n`);
+    writeFileSync(join(originRoot, 'motion.json'), `${JSON.stringify(omitted.motion, null, 2)}\n`);
+    const originRebuild = compile({
+      rigPath: join(originRoot, 'rig.json'),
+      motionPath: join(originRoot, 'motion.json'),
+      outDir: originB,
+      atlasInPath: join(originA, 'skeleton.atlas'),
+    });
+    const rebuiltHeader = ((JSON.parse(originRebuild.skeletonText) as Record<string, unknown>).skeleton ?? {}) as Record<
+      string,
+      unknown
+    >;
+    const rebuiltBox = { x: rebuiltHeader.x, y: rebuiltHeader.y, width: rebuiltHeader.width, height: rebuiltHeader.height };
+    const originProbes = [
+      ...(statedOrigin ? [] : ['the probe\'s own build states no origin to omit, so this case cannot conclude anything']),
+      ...(originFindings.length === 1 ? [] : [`${originFindings.length} HEADER_ORIGIN finding(s), not 1`]),
+      ...(originFindings.every((f) => f.kind === 'lossy') ? [] : ['a HEADER_ORIGIN finding is not `lossy`']),
+      ...(originFindings.every((f) => f.where.includes('x') && f.where.includes('y'))
+        ? []
+        : ['the finding does not name `skeleton.x`/`skeleton.y`']),
+      ...(originSpec?.x === 0 && originSpec?.y === 0 ? [] : [`the rig spec states x=${originSpec?.x}, y=${originSpec?.y}, not 0,0`]),
+      ...(JSON.stringify(rebuiltBox) === JSON.stringify({ ...sourceBox, x: 0, y: 0 })
+        ? []
+        : [`the rebuilt header is ${JSON.stringify(rebuiltBox)}, not the source's box at an origin of 0,0`]),
+      // The half the box comparison cannot see, and the one the finding is
+      // about: the KEYS moved even though the numbers did not.
+      ...('x' in rebuiltHeader && 'y' in rebuiltHeader && !('x' in omittedHeader) && !('y' in omittedHeader)
+        ? []
+        : ['the rebuild does not spell an origin the source omitted, so there is nothing for the finding to warn about']),
+    ];
+    say(
+      'IG22_AN_OMITTED_ORIGIN_INSIDE_A_DECLARED_EXTENT_IS_WRITTEN_AS_ZERO_AND_SAID_OUT_LOUD',
+      originProbes.length === 0,
+      probeDetail(
+        originProbes.length === 0,
+        originProbes,
+        `source header ${JSON.stringify(sourceBox)} with x/y deleted: ${originFindings.length} HEADER_ORIGIN ` +
+          `finding, rig spec skeleton ${JSON.stringify(originSpec)}, rebuilt header ${JSON.stringify(rebuiltBox)}` +
+          `\n          ${originFindings[0]?.detail ?? '(no detail)'}`,
+        (count) => `${count} thing(s) the omitted origin did not do:`,
+      ),
+      'issue #622. The rebuild was already right and that was the problem: `compile` writes `rig.skeleton?.x ?? 0` ' +
+        'under the extent guard and `diff`\'s `stage_box` reads the same omission the same way (issue #620), so the ' +
+        'numbers agreed and no finding said where the 0 came from — the one header field whose journey left no ' +
+        'trace. Writing it into the spec is a reading of the format rather than an invention, and the four ' +
+        'measurements for that reading are in `stageFacts`; what the finding adds is the other half, which is ' +
+        'measured right here: the rebuilt file SPELLS two fields the source omitted, so a foreign export with a ' +
+        'stage at the origin is not byte-identical through the round trip and now says so',
+    );
+
+    // IG23 — two sources for one value. The refusal, and the boundary that keeps
+    // it from swallowing the file the flag exists for.
+    const declaredSource = JSON.parse(originBuild.skeletonText) as Record<string, unknown>;
+    const declaredHeader = declaredSource.skeleton as Record<string, unknown>;
+    const fileBox = { x: declaredHeader.x, y: declaredHeader.y, width: declaredHeader.width, height: declaredHeader.height };
+    const flagBox = { x: 1, y: 2, width: 64, height: 48 };
+    let refusal: unknown = null;
+    try {
+      ingest(declaredSource, { name: 'p', art: 'none', source: 's.json', version: '0', stage: flagBox });
+    } catch (err) {
+      refusal = err;
+    }
+    const refusalMessage = refusal instanceof Error ? refusal.message : '';
+    // The whole box in one spelling, rather than four numbers that could each
+    // have come from anywhere in the sentence: `0` is in every message.
+    const spell = (box: Record<string, unknown>): string => [box.x, box.y, box.width, box.height].join(',');
+    const namesBox = (box: Record<string, unknown>): boolean => refusalMessage.includes(spell(box));
+    // The other side: a header with no extent is the file `--stage` is for, and
+    // the refusal must not reach it. WHAT it records there is IG06's, not this
+    // case's — see IG24.
+    const statelessSource = JSON.parse(originBuild.skeletonText) as Record<string, unknown>;
+    const statelessHeader = statelessSource.skeleton as Record<string, unknown>;
+    delete statelessHeader.width;
+    delete statelessHeader.height;
+    let boundary: unknown = null;
+    try {
+      ingest(statelessSource, { name: 'p', art: 'none', source: 's.json', version: '0', stage: flagBox });
+    } catch (err) {
+      boundary = err;
+    }
+    const flagProbes = [
+      ...(refusal instanceof IngestError ? [] : [`a --stage beside a declared box was not refused (${String(refusal)})`]),
+      ...(namesBox(fileBox) ? [] : [`the refusal does not name the file's box as ${spell(fileBox)}`]),
+      ...(namesBox(flagBox) ? [] : [`the refusal does not name the flag's box as ${spell(flagBox)}`]),
+      ...(boundary === null ? [] : [`the same flag on a header with no extent was refused too: ${String(boundary)}`]),
+    ];
+    say(
+      'IG23_A_SUPPLIED_STAGE_BESIDE_A_DECLARED_ONE_IS_REFUSED_BY_NAME_AND_NOWHERE_ELSE',
+      flagProbes.length === 0,
+      probeDetail(
+        flagProbes.length === 0,
+        flagProbes,
+        `file box ${JSON.stringify(fileBox)} + --stage ${JSON.stringify(flagBox)}: refused, both boxes named; the ` +
+          'same flag on a header with no extent is not refused\n          ' +
+          refusalMessage,
+        (count) => `${count} thing(s) the two boxes did not do:`,
+      ),
+      'issue #626. `ingestHeader` returned on a declared extent BEFORE it read `opts.stage`, so `--stage` on any of ' +
+        'the twelve corpus exports wrote the file\'s box, said nothing and exited 0 — and a caller who meant to ' +
+        'override a wrong box got the file\'s and believed they got theirs. Refused rather than recorded, for the ' +
+        'reason ten lines above it in `cmdIngest` refuses `--images` with `--art none`: a flag that silently does ' +
+        'nothing is worse than one that says why it cannot. The flag\'s own meaning is what makes this a ' +
+        'contradiction rather than a preference — it is for a skeleton that declares none (#616) — so the second ' +
+        'clause is the load-bearing one: the refusal must stop exactly at the extent',
+    );
+
+    // IG24 — the third state is IG06's, and this says so by reading it rather
+    // than by taking the same measurement twice. The negative clause is the one
+    // worth having: a second restatement of the stage-less contract anywhere in
+    // this file is two gates that have to agree.
+    const suiteSource = readFileSync(join(import.meta.dir, 'selftest.ts'), 'utf8');
+    const IG06_NAME = 'IG06_A_SKELETON_WITH_NO_STAGE_IS_A_BLOCKER_AND_A_SUPPLIED_ONE_IS_A_JUDGEMENT';
+    const ig06At = suiteSource.indexOf(`// --- IG06:`);
+    const ig07At = suiteSource.indexOf(`// --- IG07:`);
+    const ig06Block = ig06At >= 0 && ig07At > ig06At ? suiteSource.slice(ig06At, ig07At) : '';
+    // ⚠️ Built rather than written as a literal, because a scan of this file for
+    // a pattern matches the pattern: the literal form found its own source and
+    // reported IG24 as the second gate it exists to refuse.
+    const NO_STAGE_READ = new RegExp(`code === ${"'NO_STAGE'"}`, 'g');
+    const stageReads = [...suiteSource.matchAll(NO_STAGE_READ)].map((m) => m.index ?? -1);
+    const outside = stageReads.filter((at) => at < ig06At || at >= ig07At);
+    const IG06_CLAUSES: ReadonlyArray<{ what: string; test: RegExp }> = [
+      { what: 'the blocker with no --stage', test: /kind === 'blocker'/ },
+      { what: 'the judgement with one', test: /kind === 'judgement'/ },
+      { what: 'a rig that HAS a stage recording neither', test: /blockerless/ },
+    ];
+    const ig06Probes = [
+      ...(ig06Block === '' ? ['IG06\'s block could not be located, so this case cannot conclude anything'] : []),
+      ...(ig06Block.includes(IG06_NAME) ? [] : ['IG06\'s block no longer holds the case name it prints']),
+      ...(ig06Block === '' ? [] : IG06_CLAUSES.filter(({ test }) => !test.test(ig06Block)).map(({ what }) => `IG06 no longer reads ${what}`)),
+      ...(outside.length === 0 ? [] : [`${outside.length} reading(s) of a NO_STAGE finding outside IG06, which is a second gate on the same fact`]),
+    ];
+    say(
+      'IG24_THE_STAGE_LESS_CASE_IS_STILL_IG06S_AND_IS_STATED_ONCE',
+      ig06Probes.length === 0,
+      probeDetail(
+        ig06Probes.length === 0,
+        ig06Probes,
+        `IG06's block (${ig06Block.length} characters) still reads all ${IG06_CLAUSES.length} of: ` +
+          `${IG06_CLAUSES.map(({ what }) => what).join(', ')}; and all ${stageReads.length} reading(s) of a ` +
+          'NO_STAGE finding in this file are inside it',
+        (count) => `${count} thing(s) about where the stage-less contract lives:`,
+      ),
+      'the third state of the stage was already gated and issues #622 and #626 must not have moved it. Read rather ' +
+        'than repeated, for this file\'s own reason: a second copy of a three-sided measurement is two gates that ' +
+        'have to agree, and the one that goes stale is the copy. The negative clause is what makes it a gate — ' +
+        'IG23 deliberately measures only that the refusal does NOT reach a stage-less header, and says nothing ' +
+        'about what is recorded there',
     );
   }
 

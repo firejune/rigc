@@ -467,8 +467,10 @@ resolved rather than guessed, for §0.2's reason: `spineboy/export` holds two, a
 
 **What it will not do is invent.** Everything the spec format cannot hold is a
 finding with a code — `BLOCK` for a construct the rebuild will be missing, `JUDGE`
-for the two values a skeleton does not carry, `LOSS` for the one number rigc
-re-derives on purpose. A blocker exits non-zero and still writes both files.
+for the two values a skeleton does not carry, `LOSS` wherever the source's spelling and
+rigc's differ on purpose (a number rigc re-derives, a field the spec has no home for, or
+a default the source left to the format and the rebuild writes out). A blocker exits
+non-zero and still writes both files.
 
 **Two values are not in a skeleton**, so `ingest` asks rather than guesses:
 
@@ -483,7 +485,11 @@ re-derives on purpose. A blocker exits non-zero and still writes both files.
   reports it as two measures of its own (`stage_present`, `stage_box`, since
   [#578](https://github.com/firejune/rigc/issues/578)) and they are `(reported)`, so
   nothing on the ladder reads them and an absurd box is green nearly everywhere. The
-  corpus half of the selftest's `IG` suite is the one gate that does read them;
+  corpus half of the selftest's `IG` suite is the one gate that does read them. ⛔ **The
+  flag is refused beside a box the file states** — two sources for one value, both named,
+  and the file is the record of what was measured
+  ([#626](https://github.com/firejune/rigc/issues/626)). It used to be read only *after*
+  the file's box, so `--stage` at any of the twelve did nothing and said nothing;
 - **each animation's duration** — the format has no such field. The largest key time
   is used, stated in the motion spec's `note`, and recorded as a finding per
   animation. Edit it if you know the real number.
@@ -620,7 +626,7 @@ rebuild against its source produces differences of exactly three kinds, in every
 | Kind | Example, candidate vs reference | Why |
 | --- | --- | --- |
 | **header bookkeeping**, 3 per file | `skeleton.hash: undefined vs "VFWbaK2UoCM"`, `skeleton.audio: undefined vs null`, `skeleton.spine: "4.3.13" vs "4.3.75-beta"` | the rig spec has no field for `hash` or `audio`, and the version is the runtime rigc links. `ingest` reports all three as findings — `HEADER_BOOKKEEPING` and `HEADER_REDERIVED` |
-| **an omitted default written out** | `…rotate[0].time: 0 vs undefined` | the editor omits a zero `time`; rigc writes it. AUTHORING §10.5's *do not imitate the exporter's omissions*, from the other side |
+| **an omitted default written out** | `…rotate[0].time: 0 vs undefined` | the editor omits a zero `time`; rigc writes it. AUTHORING §10.5's *do not imitate the exporter's omissions*, from the other side. The header has one of these too and it is the one `ingest` now names: a stage at the origin is written `width`/`height` with no `x`/`y`, and the rebuild spells both — `LOSS HEADER_ORIGIN`, with the box unchanged ([#622](https://github.com/firejune/rigc/issues/622)). No file in this corpus takes that branch: all twelve declare an origin away from 0 |
 | **the emitted precision** | `…curve[0]: 0.066667 vs 0.06666667`, `uvs[0]: 0 vs 2.554152e-7` | rigc emits six decimals |
 
 ⇒ **So the corpus gate is `diff` at 1.000 rather than a byte comparison**, and it is

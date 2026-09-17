@@ -29,14 +29,15 @@ not do for you.
 ## Start here: `rigc ingest`
 
 ```bash
-rigc ingest hero.json --out specs/ --stage 0,0,1024,768
+rigc ingest hero.json --out specs/
 rigc build --rig specs/rig.json --motion specs/motion.json --images parts/ --out build/
 ```
 
 It reads the skeleton — **only** the skeleton — and writes the rig spec and motion
 spec that rebuild it, byte for byte. Two values it refuses rather than guessing: the
 **stage** (`--stage`, for a skeleton that declares none — an editor export *may* be
-one, though every one in the example corpus carries a box) and each animation's
+one, though every one in the example corpus carries a box, and passing the flag at a
+file that declares a box is refused rather than ignored) and each animation's
 **duration** (the largest key time, recorded as a finding).
 Read `findings.json`: a `BLOCK` line means the rebuild will be missing something and
 the command exits non-zero. Keep the `note` both specs carry. INGEST §2.0.

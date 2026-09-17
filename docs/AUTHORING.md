@@ -362,7 +362,7 @@ Everything above starts from two spec files you wrote. `rigc ingest` starts from
 an existing rig is a starting point instead of 250 KB of arrays to retype.
 
 ```bash
-bun cli.ts ingest hero.json --out specs/ --stage 0,0,1024,768 --images parts/
+bun cli.ts ingest hero.json --out specs/ --images parts/
 #   ..    out  /abs/path/specs
 #   ..    art  loose
 #   ..    images ../parts/  (the rig spec's own, from /abs/path/specs)
@@ -397,7 +397,7 @@ repository builds on every run.
 | `--art loose` (default) | name an `image` per attachment — `<path or placeholder>.png` — so the rebuild resolves loose PNGs and rigc measures them |
 | `--art none` | state `width`/`height` only, so the rebuild is `build --atlas-in <pack.atlas>` and every part resolves out of the pack |
 | `--images <dir>` | **write** the rig spec's own `images` directory, spelled relative to `--out`, so the rebuild is a plain `build --rig … --motion … --out …`. Without it the field is left out and every `image` resolves against `--out` itself, which holds the specs and no art — so every rebuild has to repeat `build --images <dir>`. Refused together with `--art none`, which writes no `image` for it to be the base of |
-| `--stage x,y,w,h` | the setup bounding box, **for a skeleton that declares none**. An editor export *may* be one; every export under `examples/` carries a box and `ingest` reads it straight through |
+| `--stage x,y,w,h` | the setup bounding box, **for a skeleton that declares none**. An editor export *may* be one; every export under `examples/` carries a box and `ingest` reads it straight through — so passing the flag at one of them is **refused**, naming both boxes, rather than silently doing nothing ([#626](https://github.com/firejune/rigc/issues/626)) |
 | `--name <n>` | the rig spec's `name`, which the motion spec's `archetype` must equal (default: the file's basename) |
 
 ⚠️ **`ingest --images` and `build --images` point opposite ways.** `build --images`
@@ -413,6 +413,16 @@ one — posing the rig gives the *animated* extent, which is a different number 
 editor's setup box. So a file that declares none is a **blocker**, named, unless
 `--stage x,y,w,h` supplies it; supply it from the project the file came from, or from
 the editor's own canvas.
+
+⛔ **The flag is refused beside a box the file states.** Two sources for one value, and
+the file is the one that was measured — so `ingest` names both boxes and stops rather
+than writing one of them and saying nothing. Drop the flag, or correct `skeleton` in the
+source if its box is wrong ([#626](https://github.com/firejune/rigc/issues/626)). What
+it does **not** do is refuse an *omitted origin*: inside a declared extent an omitted
+`x`/`y` is `0` — the reading `build` emits and `diff` compares
+([#620](https://github.com/firejune/rigc/issues/620)) — so the written spec states it
+and a `LOSS HEADER_ORIGIN` line says the source omitted it and that the rebuild will
+spell it ([#622](https://github.com/firejune/rigc/issues/622)).
 
 ⚠️ **This said an editor export "never" carries one until
 [#594](https://github.com/firejune/rigc/issues/594) measured the corpus.** All twelve
@@ -443,7 +453,7 @@ the first:
 | --- | --- |
 | `BLOCK` | the spec format cannot say it, so the rebuild will **not** be the file that was read — `linkedmesh`, `point`, an attachment `sequence`, an unknown field on a bone, slot or constraint, a timeline family the motion spec has no track for. The command exits non-zero **and still writes both specs**, because a spec plus a list of what is missing from it beats no spec |
 | `JUDGE` | the skeleton cannot answer and somebody has to: the stage, and each animation's duration |
-| `LOSS` | the skeleton says it and rigc re-derives it, on purpose. A path attachment's `lengths` is the one that matters — it is `PathConstraint`'s own four-sample measurement rather than an arc length (#560), so a transcribed one would freeze whatever produced the source |
+| `LOSS` | the skeleton's spelling and rigc's differ, on purpose, and the line says how. A path attachment's `lengths` is the one that matters — it is `PathConstraint`'s own four-sample measurement rather than an arc length (#560), so a transcribed one would freeze whatever produced the source. The header ones are cheaper: `HEADER_BOOKKEEPING` for a field the spec has no home for, `HEADER_REDERIVED` for the version string, `HEADER_ORIGIN` for an origin the source left to the format and the rebuild writes out (#622) |
 
 📝 **Do not delete the `note`.** Both written specs carry one saying the file is
 decompiled and naming the skeleton it came from. A decompiled spec is
