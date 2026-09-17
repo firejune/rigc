@@ -1240,7 +1240,53 @@ from its position reads *identically*, so the dial cannot tell the two apart. Th
 composition is unchanged — two world dials add exactly as two local ones do — but
 `local: true` is what makes the number on the dial the number the rig reads, which
 is the same repair §3.5.2's circle already asks for. Every one of the six
-`property` readings composes by that one arithmetic under `local: true`.
+`property` readings composes by that one arithmetic under `local: true`, and so
+does every one of them read through the world — the composition is the same sum
+on both sides of the flag, and what the flag changes is what the dial can say.
+
+🚨 **A `local: false` scale axis folds at zero: the negative half is the positive
+half again.** A world scale reading is a square root, so a dial at −2 and a dial
+at +2 are not two positions — they read the same, select the same frame and pose
+the same face. Nothing at compile or at runtime says so, and a squash axis
+authored through negative scale therefore gets the mirror of the dial you wrote,
+symmetric about the point where it should have passed through. A world `shearY`
+axis folds the same way at a whole turn, and its seam is not at a fixed value —
+it moves with wherever the bone is pointing. ⇒ for a scale or a shear axis, write
+`local: true`; for a scale axis you cannot, keep the whole range on one side of
+zero, because the reader has no other half to give you.
+
+⭐ **A dial can drive another dial's authority, and that composes as a product.**
+A slider's own `mix` is a keyable property, so one axis can scale another axis'
+whole contribution — a "strength" dial over an expression, which is the one shape
+on this page that multiplies rather than adds. ⚠️ **It only works downward through
+the `constraints` array.** A slider reads its own authority when its turn comes
+and the array is the update order, so a dial that keys the `mix` of a slider
+*earlier* than itself writes a number that slider has already read past: the
+driven axis is dead at every position, every frame, with a green gate over it. And
+the gate is green for a reason worth knowing — a slider whose `mix` is keyed at
+all leaves `A40`'s comparison, so nothing in the tool is looking at that pair.
+⇒ put the driving slider **first**.
+
+🔸 **The bone-less slider is the same story one field over.** A slider with no
+`bone` takes its time from `slider.<name>.time`, which any animation can key — and
+two dials keying it *add*, so a time-driven axis composes like everything else
+here. The same array rule applies, for the same reason. ⚠️ Two things the bone
+form does and this one does not: there is no `Math.max(0, time)` and no wrap, so a
+driven time below zero does not pose the first frame — it leaves the pose exactly
+as it found it, which is a different picture whenever the animation's first frame
+is not the rest pose.
+
+⚠️ **Two `skinRequired` sliders are three states, not two.** Under a skin that
+lists one of them the face is that dial alone; under a skin that lists the other
+it is the other alone; and under a skin that lists **neither** — the default skin
+is usually one — every dial is dead and the face holds its rest pose with both
+dials turned to their extremes. That last state is indistinguishable, from the
+outside, from a rig whose sliders do not work, and the gate is right to be silent
+about it because the pair genuinely never meets.
+
+⭐ **Four dials are the same sum as three.** Nothing new arrives with the fourth
+axis: the arithmetic, the flag, and the non-additive-in-the-middle case all read
+exactly as they do above. Write `"additive": true` on all of them.
 
 ✅ **The editor half, measured.** This paragraph said *unknown* until the round
 trip was taken with `tools/editor_roundtrip.ts` on a licensed editor (data
