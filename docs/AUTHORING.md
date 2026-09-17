@@ -397,7 +397,7 @@ repository builds on every run.
 | `--art loose` (default) | name an `image` per attachment — `<path or placeholder>.png` — so the rebuild resolves loose PNGs and rigc measures them |
 | `--art none` | state `width`/`height` only, so the rebuild is `build --atlas-in <pack.atlas>` and every part resolves out of the pack |
 | `--images <dir>` | **write** the rig spec's own `images` directory, spelled relative to `--out`, so the rebuild is a plain `build --rig … --motion … --out …`. Without it the field is left out and every `image` resolves against `--out` itself, which holds the specs and no art — so every rebuild has to repeat `build --images <dir>`. Refused together with `--art none`, which writes no `image` for it to be the base of |
-| `--stage x,y,w,h` | the setup bounding box. **Required for an editor export**, which carries none |
+| `--stage x,y,w,h` | the setup bounding box, **for a skeleton that declares none**. An editor export *may* be one; every export under `examples/` carries a box and `ingest` reads it straight through |
 | `--name <n>` | the rig spec's `name`, which the motion spec's `archetype` must equal (default: the file's basename) |
 
 ⚠️ **`ingest --images` and `build --images` point opposite ways.** `build --images`
@@ -407,13 +407,26 @@ they name the same field — and `ingest` spells the value with the same functio
 `build` spells `skeleton.images` with, so a spec and the skeleton it came from say
 where the parts are in one convention.
 
-🚨 **The stage is the one value `ingest` will not guess.** rigc always emits
-`skeleton.width`/`height` and an editor export never does, so a foreign file needs
-`--stage`; without it the missing box is a **blocker**, named. It is not derivable —
-posing the rig gives the *animated* extent, which is a different number from the
-editor's setup box — and it is the value that costs least to get wrong, because no
-measure `diff` reports reads the skeleton header at all. Supply it from the project
-the file came from, or from the editor's own canvas.
+🚨 **The stage is one of the two values `ingest` will not guess.** A skeleton JSON
+*need not* carry `skeleton.width`/`height`, and when it does not rigc cannot derive
+one — posing the rig gives the *animated* extent, which is a different number from the
+editor's setup box. So a file that declares none is a **blocker**, named, unless
+`--stage x,y,w,h` supplies it; supply it from the project the file came from, or from
+the editor's own canvas.
+
+⚠️ **This said an editor export "never" carries one until
+[#594](https://github.com/firejune/rigc/issues/594) measured the corpus.** All twelve
+exports under `examples/` declare `x`, `y`, `width` and `height`, `ingest` takes the
+early return on every one of them, and not one needs the flag. What an editor export
+*may* do is carry none: a rigc build that declares no stage
+([#578](https://github.com/firejune/rigc/issues/578)) came back from a Spine 4.3.26
+round trip with a header of `hash`, `spine`, `images`, `audio` and **no box at all** —
+the editor preserves the absence rather than inventing a stage
+([#616](https://github.com/firejune/rigc/issues/616)). So `--stage` is for a file that
+really has none, and this repository's corpus holds no example of one. It is still the
+value that costs least to get wrong: `diff` reports the box as `stage_present` and
+`stage_box` ([#578](https://github.com/firejune/rigc/issues/578)) and both are
+`(reported)`, so nothing on the ladder consults them.
 
 ⚠️ **The duration is a convention, and it is recorded as one.** Skeleton JSON has no
 duration field. The largest key time is the only derivable answer and it is what a
