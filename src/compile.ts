@@ -761,6 +761,20 @@ interface ValueTrackShape {
  * The defaults matter more than they look: Spine omits a field that equals the
  * setup value, and `scale` defaults to 1 while `translate` defaults to 0. Emit
  * `x: 0` on a scale key and the bone collapses to nothing, silently.
+ *
+ * ⭐ **The table IS the dispatch**, the same way `SLOT_TRACKS` is: `resolveTargets`
+ * asks `property in BONE_TRACKS` to decide the family, `compileValueTrack` writes
+ * a key out of the shape it finds here, and the refusal for a property that is not
+ * in it prints `Object.keys` of the same object — so the ten an author is handed
+ * cannot disagree with the ten the emitter has, because there is only one list.
+ *
+ * 🚨 It printed nothing until issue #656. The dispatch was already this table, but
+ * a bone track whose property missed it was refused as *"bone X cannot take slot
+ * property Y"* — the wrong family for a spelling that usually belongs to none, and
+ * the one target family whose refusal offered no way forward. That is also why the
+ * selftest's spelling census had to STATE these ten (`PS143`, `PS144`): four
+ * families printed their own vocabulary in their refusals and the bone family
+ * printed nothing, so there was nothing to read it off.
  */
 const BONE_TRACKS: Record<string, ValueTrackShape> = {
   translate: { fields: ['x', 'y'], identity: [0, 0] },
@@ -6403,7 +6417,20 @@ function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string
     throw new CompileError(`animation "${animName}": "${track.property}" is a bone track but no bone is named`);
   }
   if (!isBoneTrack && track.bone) {
-    throw new CompileError(`animation "${animName}": bone "${track.bone}" cannot take slot property "${track.property}"`);
+    // The bone family's sibling of `compileTrack`'s slot refusal, raised here for
+    // the same reason it is raised there: before any key is shaped, and printed
+    // from the dispatch table itself. What it replaces named the SLOT family for
+    // a property that is usually in no family at all, and enumerated nothing
+    // (issue #656). The tail clause is the one case where the old sentence was
+    // true — `rgba` and `attachment` really are slot timelines — so the redirect
+    // survives as a clause instead of as the whole message, and it is read off
+    // `SLOT_TRACKS` rather than spelled again. A constraint property never
+    // reaches here: `owning` above refuses it with the field that carries it.
+    throw new CompileError(
+      `animation "${animName}" bone "${track.bone}" has no timeline "${track.property}" ` +
+        `(it has: ${Object.keys(BONE_TRACKS).join(', ')})` +
+        (track.property in SLOT_TRACKS ? `. "${track.property}" is a slot timeline — put the name in "slot"` : ''),
+    );
   }
   if (track.bone) return [track.bone];
   if (track.slot) return [track.slot];

@@ -2469,6 +2469,37 @@ a deform). Folding them in would make `v` mean four different things depending o
 Translate values are **relative to the bone's setup position**; scale values are
 multipliers where `1` is setup; rotation is in degrees.
 
+⚠️ **A `bone` track's `property` is one of the ten above, and anything else is a
+compile error** — `animation "A" bone "B" has no timeline "P" (it has: translate,
+translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate)`,
+§5.1's row. The ten are the two rows above read as one list, in the order the
+message prints them, and they are the emitter's own dispatch table (`BONE_TRACKS`
+in `src/compile.ts`): `resolveTargets` asks that table which family a track
+belongs to, `compileValueTrack` writes a key out of the shape it finds there, and
+the refusal prints `Object.keys` of the same object — so what you are told a bone
+accepts is what it accepts.
+
+- Until [#656](https://github.com/firejune/rigc/issues/656) it printed no list at
+  all: the refusal read `bone "B" cannot take slot property "P"`, which named the
+  **slot** family for whatever you had written — `wobble`, `translateX`, `rgb` —
+  and told you nothing about what a bone does take. Nothing wrong reached disk
+  then either, because the dispatch was already this table; what was missing was
+  the way forward.
+- `rgba` and `attachment` are the only two names that sentence was ever right
+  about, and for those the redirect survives as a clause beside the list:
+  `. "rgba" is a slot timeline — put the name in "slot"`. It is read off
+  `SLOT_TRACKS`, so the two halves of the message cannot drift apart. A
+  **constraint** property written on a bone track (`mix`, `inertia`, `position`,
+  …) never reaches this refusal at all — it is refused first, by the row that
+  names the field its constraint's name belongs in (§4.12).
+- **Nothing derives this page's copy of the ten from the table.** What keeps the
+  two in step is the control that quotes the message — `RF26` in `selftest.ts` —
+  which goes red if the list ever widens without this page moving with it, and
+  `RF27` holds the slot clause the same way. The selftest's spelling census
+  (`PS144`) reads the ten off the same message and compares them against the ten
+  it actually poses, both ways, which is what makes the list checkable at all: it
+  was stated there too until the refusal had something to state.
+
 ⚠️ **A `slot` track's `property` is one of the two above, and anything else is a
 compile error** — `animation "A" slot "X" has no timeline "P" (it has:
 attachment, rgba)`, §5.1's row. Until
@@ -4077,6 +4108,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `animation "A" keys "X" as a path constraint, but the rig declares it as a "slider"` | §4.12 — a timeline group resolves by name AND type; use the field named after the constraint's own type |
 | `animation "A": "position" is a path constraint timeline, and this track names no constraint` | §4.12 — put the name in `"path"` |
 | `rgba value needs 4 channels, got 3` | §4.4 — an `rgba` key is `[r, g, b, a]`. It names no animation, slot or key time, and the only input that reaches it is a slot `rgba` key: the setup pose's `color` is refused earlier, by its own row, with the slot named |
+| `animation "A" bone "B" has no timeline "P" (it has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate)` | §4.4 — a bone has exactly ten timelines and `P` is none of them. Fix the spelling — the single-axis ones are lower-case (`translatex`, not `translateX`). A **constraint** property is refused first, by its own row, naming the field its constraint's name goes in. When `P` is a slot timeline the message says so and where to put the name: `. "rgba" is a slot timeline — put the name in "slot"`. Before [#656](https://github.com/firejune/rigc/issues/656) all of them read `bone "B" cannot take slot property "P"`, which named the slot family whatever you had written and listed nothing |
 | `animation "A" slot "X" has no timeline "P" (it has: attachment, rgba)` | §4.4 — a slot has exactly two timelines and `P` is neither. Fix the spelling; a bone or constraint property written on a slot track is refused by its own row instead. Before [#650](https://github.com/firejune/rigc/issues/650) every other name compiled as an **rgba** timeline called `P`, and what you saw was `A00_ROUNDTRIP_PARSE` on the emitted file — or, for the one-channel spelling, `rgba value needs 4 channels, got 1` |
 | `N pair(s) of animation names have no one order: … "turn" / "Turn" (case) — they are one name in two cases, and which of them the editor puts first is not measured; rename one of them so they differ by more than letter case` | **R10** — rename until no pair is left. The kind in brackets says which of the editor comparator's four UNMEASURED choices decides the pair: `case` (a pure case tie), `number` (one number written two ways, or a run of digits against a word) or `separator` (make the first character that differs a letter or a digit). rigc keys `animations` in the editor's own comparator — natural and case-insensitive ([#539](https://github.com/firejune/rigc/issues/539), [#543](https://github.com/firejune/rigc/issues/543)) — so a pair that comparator settles is emitted rather than refused, and only the four choices nobody has measured are a compile error; on those, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
 | `N pair(s) of skin names have no one order: … "Zulu" / "mike" (case) — folded to one case "Zulu" and "mike" order the other way round, so whether the editor folds SKIN names decides this pair` | **R11** — rename until no pair is left. The same shape as the row above with a **wider** family: #539 measured the editor's comparator for animation names and thereby ruled codepoint out, and nothing has ruled anything out for skin names, so a pair the candidates could disagree about is refused even where the animation rule would emit it. `Zulu`/`mike` and `mike10`/`mike2` build as animation names and are refused as skin names ([#541](https://github.com/firejune/rigc/issues/541)) |
