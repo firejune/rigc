@@ -854,6 +854,38 @@ const SLIDER_TRACKS: Record<string, ValueTrackShape> = {
 };
 
 /**
+ * Slot timelines (`animations.<a>.slots.<slot>.<timeline>`): the two
+ * `compileTrack` writes, and which key shape each one is written with.
+ *
+ * ⭐ **The table IS the dispatch.** `compileTrack` reads the shape out of here
+ * to pick its branch, and the refusal for a property that is not in it prints
+ * `Object.keys` of the same object — so the list an author is given cannot
+ * disagree with the list the emitter has, because there is only one.
+ *
+ * 🚨 It exists because the dispatch used to be one `if` on `attachment` and a
+ * fall-through to rgba, which made **every** other property name a legal
+ * spelling of an rgba timeline: `{"slot": "x", "property": "sequence", "v": [0,
+ * 0, 0, 0]}` compiled and wrote `slots.x.sequence` with rgba-shaped keys. The
+ * gate caught the file (`A00_ROUNDTRIP_PARSE: threw: Invalid timeline type for
+ * a slot`, and `A05_CURVE_ARRAY_LENGTH`) and the one-channel spelling of the
+ * same mistake was refused at compile as *"rgba value needs 4 channels, got
+ * 1"* — a message about a key nobody wrote. It is the shape `A21`'s
+ * `meshKinds[slot] || 'ring'` had (issue #44): a default that turns "nothing to
+ * emit" into an emission of the wrong thing (issue #650).
+ *
+ * ⚠️ The KEY is the timeline name as the file carries it, and the VALUE names
+ * the branch below that writes its keys — so an entry added here without a
+ * branch to write it is an entry emitted in some other timeline's shape, which
+ * is the defect this table closed rather than a new affordance. The format has
+ * four more (`rgb`, `alpha`, `rgba2`, `rgb2`); rigc emits none of them, and
+ * `A12_NO_DARK_COLOR` refuses the last two outright.
+ */
+export const SLOT_TRACKS: Record<string, 'attachment' | 'rgba'> = {
+  attachment: 'attachment',
+  rgba: 'rgba',
+};
+
+/**
  * The three constraint families a `MotionTrack` can target, and the table of
  * timelines each one accepts.
  *
@@ -6601,6 +6633,16 @@ function compileTrack(
   skinAttachments: Record<string, Record<string, SpineAttachment>>,
 ): SpineTimelineKey[] {
   const where = `animation "${animName}" slot "${target}" ${track.property}`;
+  // Before any key is shaped, and before the empty-track refusal: a property
+  // the emitter has no branch for is the fault, and a track that names one has
+  // no shape to be missing keys from (issue #650).
+  const shape = SLOT_TRACKS[track.property];
+  if (shape === undefined) {
+    throw new CompileError(
+      `animation "${animName}" slot "${target}" has no timeline "${track.property}" ` +
+        `(it has: ${Object.keys(SLOT_TRACKS).join(', ')})`,
+    );
+  }
   if (!track.keys.length) throw new CompileError(`${where}: no keys`);
 
   const out: SpineTimelineKey[] = [];
@@ -6613,7 +6655,7 @@ function compileTrack(
     }
     checkKeyTime(where, time, key.t, duration);
 
-    if (track.property === 'attachment') {
+    if (shape === 'attachment') {
       if (key.v !== null && typeof key.v !== 'string') {
         throw new CompileError(`${where}: attachment key value must be a string or null`);
       }
@@ -6626,7 +6668,8 @@ function compileTrack(
       continue;
     }
 
-    // rgba
+    // rgba — the other shape `SLOT_TRACKS` names, and now the only way to reach
+    // this branch: a property the table does not carry was refused above.
     if (!Array.isArray(key.v)) throw new CompileError(`${where}: rgba key value must be [r,g,b,a]`);
     const entry: SpineTimelineKey = { time, color: rgbaHex(key.v) };
     if (key.ease !== undefined && key.curve !== undefined) {

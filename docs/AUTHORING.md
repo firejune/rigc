@@ -2438,6 +2438,33 @@ a deform). Folding them in would make `v` mean four different things depending o
 Translate values are **relative to the bone's setup position**; scale values are
 multipliers where `1` is setup; rotation is in degrees.
 
+⚠️ **A `slot` track's `property` is one of the two above, and anything else is a
+compile error** — `animation "A" slot "X" has no timeline "P" (it has:
+attachment, rgba)`, §5.1's row. Until
+[#650](https://github.com/firejune/rigc/issues/650) it was not: the emitter had a
+branch for `attachment` and wrote **everything else** as an rgba timeline under
+the name you gave it, so a track spelled `sequence` compiled, emitted
+`slots.X.sequence` with rgba keys, and was refused one stage later by the gate
+(`A00_ROUNDTRIP_PARSE: threw: Invalid timeline type for a slot`) — while the
+one-channel spelling of the same mistake was refused at compile as `rgba value
+needs 4 channels, got 1`, a message about a key you had not written.
+
+- The pair is the emitter's own dispatch table (`SLOT_TRACKS` in
+  `src/compile.ts`): `compileTrack` reads it to pick its branch, and the refusal
+  prints `Object.keys` of the same object, so what you are told a slot accepts
+  is what it accepts.
+- **Nothing derives this page's copy of that pair from the table**, and the list
+  is two names long: no `DQ*`/`RD*`/`CUR*` control reads §4.4 (the only gated
+  table on this page is §3.5.2.1's, held by `RD01`–`RD06`). What keeps the two
+  in step is the control that quotes the message — `RF23` in `selftest.ts` —
+  which goes red if the accepted pair ever widens without this page moving with
+  it.
+- The format has four more slot timelines (`rgb`, `alpha`, `rgba2`, `rgb2`) and
+  rigc emits none of them, so their names are refused here too; `A12_NO_DARK_COLOR`
+  refuses the last two in a file rigc did not write (SPEC_COVERAGE §2.1).
+  `sequence` is a timeline on an **attachment**, not on a slot, and rigc does
+  not emit that either.
+
 **A physics constraint's six tuning timelines override §4.6's table for the
 length of an animation.** `{ "physics": "hair", "property": "wind", "keys": […] }`
 is a wind that rises and falls; `damping` is how fast the jiggle settles,
@@ -4018,6 +4045,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `skin "S": uses the long form … and also has a key "X"` | §3.4.1 — move the slot inside `attachments` |
 | `animation "A" keys "X" as a path constraint, but the rig declares it as a "slider"` | §4.12 — a timeline group resolves by name AND type; use the field named after the constraint's own type |
 | `animation "A": "position" is a path constraint timeline, and this track names no constraint` | §4.12 — put the name in `"path"` |
+| `rgba value needs 4 channels, got 3` | §4.4 — an `rgba` key is `[r, g, b, a]`. It names no animation, slot or key time, and the only input that reaches it is a slot `rgba` key: the setup pose's `color` is refused earlier, by its own row, with the slot named |
+| `animation "A" slot "X" has no timeline "P" (it has: attachment, rgba)` | §4.4 — a slot has exactly two timelines and `P` is neither. Fix the spelling; a bone or constraint property written on a slot track is refused by its own row instead. Before [#650](https://github.com/firejune/rigc/issues/650) every other name compiled as an **rgba** timeline called `P`, and what you saw was `A00_ROUNDTRIP_PARSE` on the emitted file — or, for the one-channel spelling, `rgba value needs 4 channels, got 1` |
 | `N pair(s) of animation names have no one order: … "turn" / "Turn" (case) — they are one name in two cases, and which of them the editor puts first is not measured; rename one of them so they differ by more than letter case` | **R10** — rename until no pair is left. The kind in brackets says which of the editor comparator's four UNMEASURED choices decides the pair: `case` (a pure case tie), `number` (one number written two ways, or a run of digits against a word) or `separator` (make the first character that differs a letter or a digit). rigc keys `animations` in the editor's own comparator — natural and case-insensitive ([#539](https://github.com/firejune/rigc/issues/539), [#543](https://github.com/firejune/rigc/issues/543)) — so a pair that comparator settles is emitted rather than refused, and only the four choices nobody has measured are a compile error; on those, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
 | `N pair(s) of skin names have no one order: … "Zulu" / "mike" (case) — folded to one case "Zulu" and "mike" order the other way round, so whether the editor folds SKIN names decides this pair` | **R11** — rename until no pair is left. The same shape as the row above with a **wider** family: #539 measured the editor's comparator for animation names and thereby ruled codepoint out, and nothing has ruled anything out for skin names, so a pair the candidates could disagree about is refused even where the animation rule would emit it. `Zulu`/`mike` and `mike10`/`mike2` build as animation names and are refused as skin names ([#541](https://github.com/firejune/rigc/issues/541)) |
 | `slot "patch": placeholder "patch" is filled by the "default" skin AND by skins "zulu", "mike", and the Spine editor has no way to hold that … Move the default skin's entry for this slot into a named skin — call it "base"` | **R12** — do what it says: move that entry out of `default` into a named skin. The editor has no representation for a placeholder the default skin shares with a named one, in either spelling, and §3.4.2 has both measurements. Renaming the placeholder does not help; the shape is what is refused |
