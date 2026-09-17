@@ -605,14 +605,34 @@ feature.
 
 | Check | Result |
 | --- | --- |
-| `build --profile spine` | green, 17 assertions ran, 10 skipped, 2 animations |
-| `build --profile spine-html` | green, 26 assertions ran, 16 skipped — including `A39_DEFORM_KEEPS_TRIANGLE_WINDING` and `A15_IDLE_NO_MESH_BONE_KEYS`, both PASS |
+| `build --profile spine` | green — the run's own verdict is quoted below the table; 2 animations |
+| `build --profile spine-html` | green — same, including `A39_DEFORM_KEEPS_TRIANGLE_WINDING` and `A15_IDLE_NO_MESH_BONE_KEYS`, both PASS |
 | `A18_DETERMINISTIC_EMIT` | green on a second independent compile; the selftest's gallery suite compiles it three times |
 | mesh coverage | **100.00 %** on all three meshes: nothing of any drawing is outside its triangles |
 | `render --fps 12 --max 640` | 25 + 23 frames, looked at as contact sheets three times, plus 1:1 frames at the nod extreme, the anticipation and both ripple phases |
 | `loop_seam.ts` | **0 / 255** on both animations, `idle` at 12 fps and `bow` at the 15 the tool named, at six `--max` sizes — the whole section below |
 | `preview` | boots, 406.7 KiB with ten pages embedded |
-| `bun run selftest` | green, **405 PASS / 0 FAIL**, of which the two new rows are `GALLERY_EXAMPLE_IS_GREEN[nod/spine]` and `[nod/spine-html]`. Its summary reads *every one of the 6 gallery example(s) compiled three times and gated green under BOTH profiles* |
+| `bun run selftest` | green, with the two rows for this example being `GALLERY_EXAMPLE_IS_GREEN[nod/spine]` and `[nod/spine-html]`. Its summary says every gallery example compiled three times and gated green under **both** profiles |
+
+**The two verdicts, verbatim** — the report's last rule line and the summary under
+it. Quoted rather than paraphrased, so the selftest's transcript gate re-runs both
+commands and compares them line for line: the figures here are read off the run
+instead of being kept by hand
+([#609](https://github.com/firejune/rigc/issues/609)).
+
+`rigc build`:
+
+```
+PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
+..    42 assertions: 17 measured (17 passed, 0 failed), 10 skipped, 15 not in profile "spine"
+```
+
+`rigc build --profile spine-html`:
+
+```
+SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling
+..    42 assertions: 26 measured (26 passed, 0 failed), 16 skipped, 0 not in profile "spine-html"
+```
 
 **Mesh overshoot is large and is not a defect.** `head` reports
 `reaching 67.88px past it` and each ear `33.12px`, because a rectangular grid over

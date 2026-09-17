@@ -3024,15 +3024,25 @@ interface CommandDoc {
    * Per-command wording for a flag whose value or meaning genuinely differs here.
    *
    * ⚠️ The default above it — one meaning per flag name, everywhere — is the rule
-   * and this is the named exception to it, not a second table. Three flags earn it:
-   * `--out` is a directory of artifacts to `build`, a directory of specs to
-   * `ingest`, a directory of pictures to
+   * and this is the named exception to it, not a second table. What earns an entry
+   * is the criterion rather than a headcount: the flag is **shared with another
+   * command**, and it means something different in this one. Examples, and not an
+   * inventory: `--out` is a directory of artifacts to `build`, a directory of specs
+   * to `ingest`, a directory of pictures to
    * `render` and one file to `preview` and `vote`; `--fps` is the rate a frame set
    * was RECORDED at to `check`, which reads it off a sidecar, and the rate to
    * SAMPLE at to `render`, which is choosing it; `--candidate` is one artifact
    * everywhere except `vote`, which is the one command that takes several and is
    * the reason there is a ballot at all. Writing any of them as one sentence
    * covering every command would leave every command's own help less true.
+   *
+   * ⛔ The other side of the criterion, which is the one that keeps this from
+   * becoming the second table it says it is not: a flag no other command takes has
+   * nothing to differ FROM, so its wording belongs in `FLAG_MEANINGS` /
+   * `FLAG_VALUES` above and an entry here for it buys only a second place to look.
+   * Both halves are read off `--help` by `CLI71` in `selftest.ts`, which is why
+   * this sentence no longer counts anything: it said *"three"* where #605 counted
+   * nine, and nothing had ever compared the two.
    */
   overrides?: Record<string, { value?: string; meaning?: string }>;
 }

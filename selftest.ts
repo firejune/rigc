@@ -24125,6 +24125,258 @@ function runCliSuite(): number {
     );
   }
 
+  // --- CLI71-CLI73: what earns a per-command flag override ------------------
+  //
+  // `cli.ts` keeps one meaning per flag name and a table of per-command
+  // exceptions to it. The comment over that table said *"Three flags earn it"*
+  // while nine flag names carried one (issue #605) — a count in a comment, which
+  // nothing reads and nothing compares, so it was wrong by six and had been for
+  // long enough that nobody could say when.
+  //
+  // ⭐ The repair is not a re-count. A count is the wrong thing for that sentence
+  // to carry: it tells an author how many exceptions exist and not whether the
+  // one they are about to add is allowed. So the sentence states the CRITERION,
+  // and these cases hold it — which is only possible because half of it turned
+  // out to be mechanical.
+  //
+  // 🔒 **The mechanical half is the one that bites.** A flag only one command
+  // takes has nothing to differ FROM, so an override for it is the second table
+  // the comment forbids, with its wording in the wrong file. And an override
+  // whose printed row is the row every other taker prints bought nothing at all.
+  // Both are read off `--help` — what a reader actually sees — rather than off
+  // the strings in the source, so a wording that stops reaching the page fails
+  // here even while the table still carries it.
+  {
+    const source = readFileSync(join(import.meta.dir, 'cli.ts'), 'utf8');
+
+    /** The text between one bracket and the one that closes it, brackets excluded. */
+    const balanced = (text: string, from: number, open: string, close: string): string => {
+      let depth = 0;
+      for (let i = from; i < text.length; i++) {
+        if (text[i] === open) depth++;
+        else if (text[i] === close && --depth === 0) return text.slice(from + 1, i);
+      }
+      return '';
+    };
+    /** The top-level `{…}` members of a `[…]` region, in order. */
+    const objectsOf = (region: string): string[] => {
+      const out: string[] = [];
+      let depth = 0;
+      let opened = -1;
+      for (let i = 0; i < region.length; i++) {
+        const c = region[i];
+        if (c === '{' || c === '[') {
+          if (depth === 0 && c === '{') opened = i;
+          depth++;
+        } else if ((c === '}' || c === ']') && --depth === 0 && c === '}') out.push(region.slice(opened, i + 1));
+      }
+      return out;
+    };
+    /** The quoted entries of `<field>: [ … ]`. */
+    const listField = (body: string, field: string): string[] => {
+      const at = body.indexOf(`${field}: [`);
+      return at < 0 ? [] : [...balanced(body, body.indexOf('[', at), '[', ']').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    };
+    /** The top-level keys of `<field>: { … }`. */
+    const keyField = (body: string, field: string): string[] => {
+      const at = body.indexOf(`${field}: {`);
+      if (at < 0) return [];
+      const inner = balanced(body, body.indexOf('{', at), '{', '}');
+      const parts: string[] = [];
+      let depth = 0;
+      let from = 0;
+      for (let i = 0; i < inner.length; i++) {
+        if (inner[i] === '{' || inner[i] === '[') depth++;
+        else if (inner[i] === '}' || inner[i] === ']') depth--;
+        else if (inner[i] === ',' && depth === 0) {
+          parts.push(inner.slice(from, i));
+          from = i + 1;
+        }
+      }
+      parts.push(inner.slice(from));
+      return parts.map((part) => /^\s*'?([A-Za-z-]+)'?\s*:/.exec(part)?.[1] ?? '').filter((key) => key !== '');
+    };
+
+    const declaration = source.indexOf('const COMMANDS: CommandDoc[] = [');
+    const table =
+      declaration < 0 ? [] : objectsOf(balanced(source, source.indexOf('[', source.indexOf('= [', declaration)), '[', ']'));
+    const commands = table.map((body) => ({
+      name: /name: '([^']+)'/.exec(body)?.[1] ?? '',
+      flags: listField(body, 'flags'),
+      overrides: keyField(body, 'overrides'),
+    }));
+
+    /** Every command that documents a flag, from the tables the source carries. */
+    const takers = new Map<string, string[]>();
+    for (const command of commands) {
+      for (const flag of command.flags) takers.set(flag, [...(takers.get(flag) ?? []), command.name]);
+    }
+
+    /**
+     * One command's help, as `flag -> "<value>|<meaning>"`.
+     *
+     * The row is `  --flag <value>` then a column gap then the meaning — CLI10's
+     * parse, kept to the same shape. The gap itself is normalised away because
+     * the column each command aligns to is its own longest flag, which is a fact
+     * about that command's table and not about this flag's wording.
+     */
+    const helpRows = (command: string): Map<string, string> => {
+      const rows = new Map<string, string>();
+      for (const line of runCli([command, '--help']).stdout.split('\n')) {
+        const row = /^ {2}(--[a-z][a-z-]*)((?: \S+)?) {2,}(\S.*)$/.exec(line.replace(/\s+$/, ''));
+        if (row !== null) rows.set(row[1].slice(2), `${row[2].trim()}|${row[3].replace(/\s+/g, ' ')}`);
+      }
+      return rows;
+    };
+    const rows = new Map(commands.filter((c) => c.name !== '').map((c) => [c.name, helpRows(c.name)] as const));
+
+    /**
+     * The criterion, as a function of the two derived tables, so the plants below
+     * can hand it a doctored one. Returns a fault per override that fails it.
+     */
+    const audit = (
+      model: Array<{ name: string; flags: string[]; overrides: string[] }>,
+      printed: Map<string, Map<string, string>>,
+    ): string[] => {
+      const by = new Map<string, string[]>();
+      for (const command of model) for (const flag of command.flags) by.set(flag, [...(by.get(flag) ?? []), command.name]);
+      const faults: string[] = [];
+      for (const command of model) {
+        for (const flag of command.overrides) {
+          const shared = by.get(flag) ?? [];
+          if (shared.length < 2) {
+            faults.push(
+              `\`${command.name}\` overrides \`--${flag}\`, and ${shared.length === 0 ? 'no command' : `only \`${shared[0]}\``} ` +
+                'takes it — a flag one command takes has nothing to differ from, so its wording belongs in ' +
+                'FLAG_MEANINGS/FLAG_VALUES rather than in a second table',
+            );
+            continue;
+          }
+          const wordings = new Set(shared.map((name) => printed.get(name)?.get(flag) ?? `<${name} prints no row>`));
+          if (wordings.size < 2) {
+            faults.push(
+              `\`${command.name}\` overrides \`--${flag}\`, and all ${shared.length} command(s) that take it ` +
+                `(${shared.join(', ')}) print the same row "${[...wordings][0]}" — the override restates the default`,
+            );
+          }
+        }
+      }
+      return faults;
+    };
+
+    const faults = audit(commands, rows);
+    const entries = commands.reduce((n, command) => n + command.overrides.length, 0);
+    const names = new Set(commands.flatMap((command) => command.overrides));
+    const unparsed = commands.flatMap((command) =>
+      command.flags.filter((flag) => !rows.get(command.name)?.has(flag)).map((flag) => `${command.name} --${flag}`),
+    );
+
+    say(
+      'CLI71_EVERY_PER_COMMAND_FLAG_OVERRIDE_NAMES_A_SHARED_FLAG_AND_CHANGES_WHAT_IT_PRINTS',
+      faults.length === 0 && commands.length >= 2 && entries >= 2 && names.size >= 2 && unparsed.length === 0,
+      commands.length < 2 || entries < 2 || unparsed.length > 0
+        ? `the source parse found ${commands.length} command(s) and ${entries} override entry(ies), and ` +
+          `${unparsed.length} documented flag(s) had no help row${unparsed.length > 0 ? ` (${unparsed.join(', ')})` : ''} ` +
+          '— this case cannot conclude anything'
+        : faults.length === 0
+          ? `${entries} override entry(ies) over ${names.size} flag name(s) (${[...names].sort().join(', ')}): each ` +
+            'names a flag at least two commands take, and each prints a row at least one other taker does not'
+          : faults.join('\n          '),
+      'issue #605: the comment over this table counted the exceptions instead of saying what earns one, so it told ' +
+        'an author a number that was wrong by six and nothing about the question they had. The criterion is the ' +
+        'half of that sentence worth keeping, and it is checkable, so it is checked',
+    );
+
+    // The positive control. Both halves of the criterion are stated as a bound
+    // on something that could be widened by accident, so each is planted by
+    // widening it — a fabricated override on a flag nobody shares, and a real
+    // one whose printed row is flattened onto its neighbours'.
+    const single = commands.find((command) => command.flags.some((flag) => (takers.get(flag) ?? []).length === 1));
+    const soleFlag = single?.flags.find((flag) => (takers.get(flag) ?? []).length === 1);
+    const shared = commands.find((command) => command.overrides.length > 0);
+    const sharedFlag = shared?.overrides[0];
+    const flattened = new Map([...rows].map(([name, table]) => [name, new Map(table)] as const));
+    if (sharedFlag !== undefined) {
+      for (const name of takers.get(sharedFlag) ?? []) flattened.get(name)?.set(sharedFlag, 'one wording|for all of them');
+    }
+    const plants = [
+      ...(single === undefined || soleFlag === undefined
+        ? ['no command documents a flag no other command takes, so the first half could not be planted']
+        : audit(
+            commands.map((command) =>
+              command === single ? { ...command, overrides: [...command.overrides, soleFlag] } : command,
+            ),
+            rows,
+          ).some((fault) => fault.includes(`--${soleFlag}`))
+          ? []
+          : [`an override fabricated on \`--${soleFlag}\`, which only \`${single.name}\` takes, was not faulted`]),
+      ...(sharedFlag === undefined
+        ? ['no command carries an override, so the second half could not be planted']
+        : audit(commands, flattened).some((fault) => fault.includes(`--${sharedFlag}`))
+          ? []
+          : [`\`--${sharedFlag}\` flattened onto one wording for every taker was not faulted`]),
+    ];
+    say(
+      'CLI72_THE_OVERRIDE_CRITERION_FAULTS_A_FABRICATED_ENTRY_AND_A_FLATTENED_WORDING',
+      plants.length === 0,
+      plants.length === 0
+        ? `\`--${String(soleFlag)}\` is taken by \`${String(single?.name)}\` alone and an override fabricated on it ` +
+          `faults; \`--${String(sharedFlag)}\` faults once every command that takes it prints the same row, and ` +
+          'neither plant is in the tree'
+        : plants.join('\n          '),
+      'CLI71 passing means nothing until it has been seen to fail: an audit that returned an empty list whatever it ' +
+        'was handed would print the same PASS, and so would one that only ever checked the half the tree happens ' +
+        'to satisfy more comfortably',
+    );
+
+    // --- CLI73: and the sentence itself --------------------------------------
+    //
+    // ⚠️ A count and a criterion are not two wordings of one thing: a count
+    // answers a question nobody asks of this table, and it is the only half that
+    // can go stale. So the check is one-directional on purpose — the comment may
+    // say whatever it likes about what earns an entry, and may not put a number
+    // in front of the flags.
+    //
+    // ⛔ The number words are written down, and they are the one literal here
+    // that cannot be derived from anything: they are a fact about English rather
+    // than a measurement of this tree, and a scan keyed only on digits would have
+    // read straight past the word *"Three"* this case exists because of.
+    const NUMBER_BEFORE_FLAGS =
+      /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:\*\*)?flags?\b/i;
+    const shape = source.indexOf('interface CommandDoc {');
+    const members = shape < 0 ? '' : balanced(source, source.indexOf('{', shape), '{', '}');
+    const upToOverrides = members.slice(0, members.indexOf('overrides?:'));
+    const opened = upToOverrides.lastIndexOf('/**');
+    const comment = opened < 0 ? '' : upToOverrides.slice(opened);
+    const counted = NUMBER_BEFORE_FLAGS.exec(comment);
+    const probes = [
+      ...(NUMBER_BEFORE_FLAGS.test(`${comment} Three flags earn it.`)
+        ? []
+        : ['the sentence this case was written against was not caught when planted back into the comment']),
+      ...(NUMBER_BEFORE_FLAGS.test(`${comment} Several flags earn it.`)
+        ? ['a comment naming no count at all was caught, so the rule reads more than the number']
+        : []),
+    ];
+    say(
+      'CLI73_THE_OVERRIDE_COMMENT_SAYS_WHAT_EARNS_AN_ENTRY_AND_DOES_NOT_COUNT_THEM',
+      counted === null && comment.length > 200 && probes.length === 0,
+      comment.length <= 200
+        ? `the doc comment over \`overrides\` was located as ${comment.length} character(s) — this case cannot ` +
+          'conclude anything'
+        : counted === null && probes.length === 0
+          ? `${comment.length} character(s) of comment over \`overrides\`, naming no count of the flags it covers; ` +
+            'a planted count is caught and a countless sentence beside it is not'
+          : [
+              ...(counted === null ? [] : [`the comment states "${counted[0]}", a count of a table nothing compares it to`]),
+              ...probes,
+            ].join('\n          '),
+      'the defect in #605 was not that the number was wrong, it was that a number was there at all: it answers ' +
+        '"how many exceptions exist", which no author needs, instead of "may I add this one", which is the ' +
+        'question the table raises. CLAUDE.md *The selftest and its fixtures* — a hand-kept figure with no gate ' +
+        'under it drifts, and this one drifted by six',
+    );
+  }
+
   return bad;
 }
 
@@ -30446,6 +30698,63 @@ function reportTagsNamedIn(text: string): { paragraphs: number; tags: string[] }
   return { paragraphs: paragraphs.length, tags: [...tags].sort() };
 }
 
+/**
+ * The line a report closes on — `  ..    <N> assertions: …` (issue #568).
+ *
+ * A LOCATOR and not a claim: what it picks out of the run is read for its words,
+ * never for its figures, so the vocabulary GT64 scans with follows whatever the
+ * summary comes to say.
+ */
+const REPORT_SUMMARY_LINE = /^ {2}\.{2} {2,}\d+ assertions: /;
+
+/**
+ * The two count words the gallery pages used that no `build` run prints.
+ *
+ * ⛔ Written down because they cannot be derived, and that is the point rather
+ * than the exception: a figure spelled in a word the tool never produces is a
+ * figure with nothing to compare it against, which is how all ten of #609's
+ * sentences went stale while the run one line away printed the truth. The rest
+ * of the vocabulary comes off `REPORT_SUMMARY_LINE`, so it follows the tool.
+ */
+const PROSE_ONLY_COUNT_WORDS = ['ran', 'excluded'];
+
+/** One page's figures stated in prose, and the same pairings that stand inside a fence. */
+interface ProseFigureScan {
+  /** `page:line  …` for every figure outside a fenced block — the fault list, and the message. */
+  outside: string[];
+  /** The same pairings inside a fence. The floor reads this: a pattern that stopped matching zeroes both. */
+  inside: number;
+  /** Lines outside a fence that were looked at, so a scan that read nothing cannot report clean. */
+  lines: number;
+}
+
+function scanProseFigures(pages: Array<[string, string]>, figure: RegExp): ProseFigureScan {
+  const scan: ProseFigureScan = { outside: [], inside: 0, lines: 0 };
+  for (const [where, text] of pages) {
+    let fence: string | null = null;
+    text.split('\n').forEach((line, i) => {
+      const marker = /^ {0,3}(```+|~~~+)/.exec(line);
+      if (marker !== null) {
+        if (fence === null) fence = marker[1][0];
+        else if (marker[1][0] === fence) fence = null;
+        return;
+      }
+      const hits = [...line.matchAll(figure)].map((m) => m[0]);
+      if (fence !== null) {
+        scan.inside += hits.length;
+        return;
+      }
+      scan.lines++;
+      if (hits.length === 0) return;
+      scan.outside.push(
+        `${where}:${i + 1}  states ${hits.map((hit) => `"${hit}"`).join(', ')} in prose, where nothing re-runs the ` +
+          `command: ${line.trim().slice(0, 90)}`,
+      );
+    });
+  }
+  return scan;
+}
+
 /** Splice an edited block body back into the README text it came from. */
 function plantIntoReadme(readme: string, block: GalleryBlock, edited: string[]): string {
   const raw = readme.split('\n');
@@ -31322,6 +31631,123 @@ function runGalleryTranscriptSuite(): number {
         'spellings of one edit drift apart and the ungated one is the one a reader copies. #442 made both of them ' +
         'visible and that is how this became legible at all: before it, the recipe was an HTML comment and only ' +
         'the `sed` line was on the page, so there was nothing for a reader to compare',
+    );
+  }
+
+  // --- GT64/GT65: the same figures, said in PROSE instead of quoted ---------
+  //
+  // Everything above holds what a README QUOTES. It reaches nothing a README
+  // merely SAYS — and five pages said their verdict rather than quoting it:
+  // *"20 assertions ran, 6 skipped"* in a table cell, with the run one line away
+  // printing seven (issue #609). Every one of those ten figures was stale, and
+  // none of them was stale by much, which is the shape that survives a reader.
+  //
+  // ⭐ The repair is the quoted block those pages now carry, and this is the
+  // clause that keeps the repair from being undone by an author who finds a
+  // sentence tidier than a fence. It is the pair to GT02: that one says a quoted
+  // figure has to reproduce, this one says a figure has to be quoted.
+  //
+  // 🔒 Two-sided, because "no page states it" is satisfied for free by a scanner
+  // that matches nothing. The same words appear INSIDE the quoted blocks on every
+  // one of those pages, so the run reports that count too — a pattern that had
+  // stopped matching would take both sides to zero at once, and the floor reads
+  // the inside one.
+  //
+  // ⚠️ What it cannot do is name a synonym nobody has used yet. The report's own
+  // half of the vocabulary is derived from the summary line the runs print, so it
+  // follows the tool; the two words beside it are prose the tool never printed,
+  // which is why they cannot be derived and exactly why the sentences drifted —
+  // a figure written in a word no run produces has nothing to be compared with.
+  {
+    const summaryLines = [...pools.values()]
+      .flatMap((runs) => runs.flatMap((run) => run.lines))
+      .filter((line) => REPORT_SUMMARY_LINE.test(line));
+    const derived = new Set(
+      summaryLines.flatMap((line) => [...line.matchAll(/\b\d+\s+([a-z][a-z-]*)/g)].map((m) => m[1])),
+    );
+    const words = [...new Set([...derived, ...PROSE_ONLY_COUNT_WORDS])].sort();
+    const figure = new RegExp(`\\b\\d+\\s+(?:\\*\\*)?(?:${words.join('|')})\\b`, 'g');
+
+    const index = join(galleryRoot, 'README.md');
+    const pages: Array<[string, string]> = [
+      ...(existsSync(index) ? ([['gallery/README.md', readFileSync(index, 'utf8')]] as Array<[string, string]>) : []),
+      ...[...readmes].map(([example, text]) => [`gallery/${example}/README.md`, text] as [string, string]),
+    ];
+    const scan = scanProseFigures(pages, figure);
+
+    say(
+      'GT64_NO_GALLERY_README_STATES_A_RUN_FIGURE_IN_PROSE',
+      scan.outside.length === 0 && pages.length >= 2 && derived.size >= 4 && summaryLines.length > 0 && scan.inside > 0,
+      summaryLines.length === 0 || derived.size < 4
+        ? `the count vocabulary was read off ${summaryLines.length} summary line(s) and came back as ` +
+          `{${[...derived].sort().join(' ')}} — this case cannot conclude anything`
+        : scan.outside.length === 0
+          ? `${pages.length} page(s), ${scan.lines} line(s) outside a fence: none pairs a figure with any of ` +
+            `{${words.join(' ')}}, while ${scan.inside} such pairing(s) stand inside quoted blocks, which is where ` +
+            'the transcript gate above re-runs the command and compares them'
+          : scan.outside.join('\n          '),
+      'issue #609: the five pages that stated their verdict in a sentence had all ten figures wrong, and the ' +
+        'selftest printed the right ones one line away from them every run. A count a page keeps by hand is a ' +
+        'claim nothing measures — CLAUDE.md *The selftest and its fixtures*, and the reason the repair is a quoted ' +
+        'block rather than a re-taken sentence',
+    );
+
+    // The positive control, and the two ways this rule could be wrong rather
+    // than merely unfired: it could fault a figure that IS quoted, and it could
+    // fault any figure at all rather than the report's own words.
+    //
+    // ⚠️ The sentence carries TWO pairings, not one, and the quoted plant is
+    // counted rather than incremented for that reason — this case failed on its
+    // first run asserting `inside + 1` against an inside count that had moved by
+    // two. The figure is read off the plant with the same pattern the scan uses,
+    // so a plant reworded later still reconciles.
+    const PLANTED = '18 assertions ran, 7 skipped';
+    const FOREIGN = ' 18 widgets ran, 7 sprockets';
+    const plantedPairs = [...PLANTED.matchAll(figure)].length;
+    const victim = pages[pages.length - 1];
+    const plantedProse = scanProseFigures(
+      [...pages.slice(0, -1), [victim[0], `${victim[1]}\n\n| a claim | ${PLANTED} |\n`]],
+      figure,
+    );
+    const plantedQuoted = scanProseFigures(
+      [...pages.slice(0, -1), [victim[0], `${victim[1]}\n\n\`\`\`\n${PLANTED}\n\`\`\`\n`]],
+      figure,
+    );
+    const plantedForeign = scanProseFigures(
+      [...pages.slice(0, -1), [victim[0], `${victim[1]}\n\n| a claim |${FOREIGN} |\n`]],
+      figure,
+    );
+    const plants = [
+      ...(plantedPairs > 0 ? [] : [`the planted sentence "${PLANTED}" pairs no figure with any of the scanned words`]),
+      ...(plantedProse.outside.length === scan.outside.length + 1
+        ? []
+        : [`a prose figure planted in ${victim[0]} moved the fault count from ${scan.outside.length} to ${plantedProse.outside.length}`]),
+      ...(plantedProse.outside.some((fault) => fault.startsWith(`${victim[0]}:`))
+        ? []
+        : ['the planted fault was not reported against the page it was planted in']),
+      ...(plantedQuoted.outside.length === scan.outside.length
+        ? []
+        : ['the same sentence inside a fence was faulted, so the rule does not mean what it says']),
+      ...(plantedQuoted.inside === scan.inside + plantedPairs
+        ? []
+        : [
+            `the same sentence inside a fence moved the quoted count from ${scan.inside} to ${plantedQuoted.inside}, ` +
+              `where its own ${plantedPairs} pairing(s) say it should read ${scan.inside + plantedPairs}`,
+          ]),
+      ...(plantedForeign.outside.length === scan.outside.length
+        ? []
+        : ['a figure paired with words no report prints was faulted, so the rule keys on digits rather than on the report']),
+    ];
+    say(
+      'GT65_THE_PROSE_FIGURE_SCAN_FAULTS_A_PLANT_AND_LEAVES_A_QUOTED_ONE_ALONE',
+      plants.length === 0 && pages.length >= 2,
+      plants.length === 0
+        ? `on ${victim[0]}: "${PLANTED}" faults in prose by page and line, the same sentence inside a fence does ` +
+          `not and joins the ${plantedQuoted.inside} quoted pairing(s) instead, and "${FOREIGN.trim()}" faults nowhere`
+        : plants.join('\n          '),
+      'a scan that faults everything and a scan that faults nothing both leave GT64 printing PASS. The middle ' +
+        'plant is the load-bearing one: the repair for #609 is to move these figures INTO quoted blocks, so a rule ' +
+        'that faulted them there would forbid the fix it exists to protect',
     );
   }
 
