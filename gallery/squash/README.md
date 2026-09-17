@@ -244,8 +244,8 @@ At `0.4` the blink would have missed frame 10, which is the impact frame.
 
 | | |
 | --- | --- |
-| `rigc build --profile spine` | green — **17 assertions ran, 10 skipped**, `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` among the 17 |
-| `rigc build --profile spine-html` | green as well — 25 ran, 17 skipped, including `A13_MESH_BUDGET` against this rig's declared `invariants.meshTriangles: 8` |
+| `rigc build --profile spine` | green — the run's own verdict is quoted below the table, and `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` is among the rules it measured |
+| `rigc build --profile spine-html` | green as well — same, including `A13_MESH_BUDGET` against this rig's declared `invariants.meshTriangles: 8` |
 | the deformed geometry, measured | the mesh's rim box is **220.0 × 220.0** at the apex and **264.0 × 162.8** at the impact — exactly `1.20 × 220` and `0.74 × 220`, so the affine transform in the spec is the one that reaches the screen |
 | the transform against the table it replaced | all **54** emitted deform numbers of the three keyed shapes compared against the hand-written run this example shipped: worst difference **0.0004 px**, i.e. identical at three decimals ([#294](https://github.com/firejune/rigc/issues/294)) |
 | the contact point | rim vertex 6 sits at world y **44.0** at the impact and 44.0 in the setup pose — unmoved, as its `(0, 0)` offset says |
@@ -256,6 +256,26 @@ At `0.4` the blink would have missed frame 10, which is the impact frame.
 | `bun run selftest` | includes `GALLERY_EXAMPLE_IS_GREEN[squash]` |
 | part determinism | `make_parts.ts` twice ⇒ identical bytes for all 16 PNGs |
 | `bun run typecheck` / `lint` | green |
+
+**The two verdicts, verbatim** — the report's last rule line and the summary under
+it. Quoted rather than paraphrased, so the selftest's transcript gate re-runs both
+commands and compares them line for line: the figures here are read off the run
+instead of being kept by hand
+([#609](https://github.com/firejune/rigc/issues/609)).
+
+`rigc build`:
+
+```
+PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
+..    42 assertions: 17 measured (17 passed, 0 failed), 10 skipped, 15 not in profile "spine"
+```
+
+`rigc build --profile spine-html`:
+
+```
+SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling
+..    42 assertions: 25 measured (25 passed, 0 failed), 17 skipped, 0 not in profile "spine-html"
+```
 
 ---
 

@@ -527,7 +527,7 @@ which is the frame the gate now measures too.
 ⚠️ **One cost, stated:** removing the two `slider.<name>.mix` tracks left this rig
 with **no constraint timeline at all**, so `A34_CONSTRAINT_TIMELINE_TARGETS` now
 reports SKIP here (*"no animation carries a constraint timeline"*) where it used to
-pass. It is the same 41 assertions either way; a rig that keys one is what exercises
+pass. It is the same assertion list either way; a rig that keys one is what exercises
 that rule, and six other gallery examples do.
 
 ---
@@ -630,8 +630,8 @@ gauge read backwards while both files stayed self-consistent.
 
 | Claim | How | Reading |
 | --- | --- | --- |
-| builds green under the default `spine` profile | `rigc build` | 20 assertions ran, 7 skipped |
-| builds green under `spine-html` too | `--profile spine-html` | 29 ran, 13 skipped — `A13`, `A14`, `A15`, `A21`, `A39` among them |
+| builds green under the default `spine` profile | `rigc build` | the run's own verdict, quoted below the table |
+| builds green under `spine-html` too | `--profile spine-html` | the same, and `A13`, `A14`, `A15`, `A21`, `A39` are among the rules only that profile runs |
 | the selftest's gallery suite gates it under **both** | `bun run selftest` | `GALLERY_EXAMPLE_IS_GREEN[look/spine]`, `[look/spine-html]` |
 | deterministic | `A18`, plus the suite compiling it three times | byte-identical |
 | the far lock folds and draws nothing when it does | `A39` + the stats line | 4 keys not drawn, 8 reversed triangles among them, 17 keys still measured |
@@ -642,6 +642,26 @@ gauge read backwards while both files stayed self-consistent.
 | …with the spring inert | the same, on a control build with `inertia: 0` | **1 / 255**, 1 px |
 | the cowlick's spring does something | the same control, tracking the tip | 7.24 px of lag at `f0059` |
 | it looks like a turn and not a slide | looking at `f0000` / `f0020` / `f0060` at 1:1, twice, plus both contact sheets | the far socket narrows to 0.778 while the near one widens, the mesh's own bands run ×0.017 to ×1.87 across the plate, the back hair swings the **other** way, and the far lock leaves |
+
+**The two verdicts, verbatim** — the report's last rule line and the summary under
+it. Quoted rather than paraphrased, so the selftest's transcript gate re-runs both
+commands and compares them line for line: the figures here are read off the run
+instead of being kept by hand
+([#609](https://github.com/firejune/rigc/issues/609)).
+
+`rigc build`:
+
+```
+PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
+..    42 assertions: 20 measured (20 passed, 0 failed), 7 skipped, 15 not in profile "spine"
+```
+
+`rigc build --profile spine-html`:
+
+```
+SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling
+..    42 assertions: 29 measured (29 passed, 0 failed), 13 skipped, 0 not in profile "spine-html"
+```
 
 🚨 **The loop does not close, and the reason is the spring, not the timeline.**
 `loop_seam.ts` reads **169 / 255** over 941 pixels, worst at `(311, 41)` — the

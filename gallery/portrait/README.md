@@ -538,8 +538,8 @@ of the two profiles the gallery bar asks for.
 
 | | |
 | --- | --- |
-| `rigc build --profile spine` | green — **17 assertions ran, 10 skipped**, 15 excluded by profile |
-| `rigc build --profile spine-html` | green — **26 ran, 16 skipped**, including `A13_MESH_BUDGET` against `invariants.meshTriangles: 32` and `A15_IDLE_NO_MESH_BONE_KEYS` against an `idle` that keys `headroll` rather than `head` |
+| `rigc build --profile spine` | green — the run's own verdict, quoted below the table, says how many rules measured anything and how many the profile left out |
+| `rigc build --profile spine-html` | green — same, including `A13_MESH_BUDGET` against `invariants.meshTriangles: 32` and `A15_IDLE_NO_MESH_BONE_KEYS` against an `idle` that keys `headroll` rather than `head` |
 | mesh coverage | **100.00%** on both meshes, measured against the PNGs they name (`head` reaching 95.90px past the art at its grid corners, `hair_bang` 55.22px) |
 | **the yaw model, on the artifact** | every mesh column, every feature bone and every `scalex` posed by `spine-core` at `t = 1.0` and compared against `dx = x(cos t − 1) − z sin t` composed with the 1.6° roll: **agreement to under 0.001 px** on all 10 mesh columns and all 6 feature bones, and to 4 decimal places on all 6 scale values |
 | the parallax | fringe centre travels **5.406px** further than the face centre; predicted `(196 − 170)·sin 12° = 5.406` |
@@ -551,11 +551,31 @@ of the two profiles the gallery bar asks for.
 | **the loop-seam figure does not survive a change of `--max`** | same build, same `--fps 25`, `idle` f0000 against f0080, one column per render scale: **320** → 5 px at 1/255 · **640** → **0 px at 0/255** · **1024** → 1 px at 1/255 · **1440** → 46 px at 1/255 · **1782** → **1974 px at 57/255**, worst pixel at (549,673), a sliver at one eye's lower lash. `turn` behaves the same way — 0 px at 640, **135 px at 57/255** at 1782 ([#336](https://github.com/firejune/rigc/issues/336)) |
 | what that column is, and is not | ⚠️ Three of the five scales read **1/255**, which is rounding. **1782** is `scale = 1.875` **exactly** — `loop_seam.ts` prints it — the one sampled scale at which the plates' integer art coordinates land on whole pixel boundaries, so this is an *amplification at a boundary-aligned scale* rather than a growing error. And the residual behind it has a measured bound: strip `idle` to the one track the issue isolates (`chest.translatey`, three keys, the middle one moving) and f0080 reads **353 px at 57/255** at `--max 1782`; add **one redundant key** so the final segment is *constant*, changing nothing else, and every frame from **f0075 (t = 3.00) through f0080 (t = 3.20)** is **0 pixels, 0/255** from f0000 — against 78 403 / 73 553 / 68 516 / 60 474 / 46 522 / 353 px for the same six frames of the moving version. ⇒ the rasteriser is exact for a pose it has already drawn, and what the column shows is a sub-quantisation curve residual crossing a pixel boundary. ⇒ **quote the `--max` beside any seam figure**; `loop_seam.ts` now prints it and says outright that the reading is scale-relative |
 | `rigc preview` | boots in the official Spine Web Player 4.3 and draws all 3 animations — headless chromium over CDP, **0 console errors, 0 page exceptions, 0 log-level errors** |
-| `bun run selftest` | includes `GALLERY_EXAMPLE_IS_GREEN[portrait]` (18 assertions, 3 animations), green with the example corpus fetched |
+| `bun run selftest` | includes `GALLERY_EXAMPLE_IS_GREEN[portrait]`, green with the example corpus fetched |
 | part determinism | `make_parts.ts` twice ⇒ identical bytes for all 22 PNGs |
 | **the re-authoring onto #295, against the artifact it replaced** | the 20-track spelling and this one are **structurally identical** — same timelines, same key counts, same curve shapes — and 102 emitted numbers moved, all of them the transcription's own rounding: worst **0.000385** on `eye_r.translatex` (`2.803` written by hand, `2.803385` derived). Posed and compared bone by bone at 60 fps over all three animations, `rigc bonedist --bones identity` reports a worst world-position drift of **6.90e-7 skeleton sizes = 0.00058 px** (`spark_r`, frame 38) and a worst world-scale drift of **4.80e-5** (`nose`, frame 38). ⚠️ Byte identity was **not** available and could not be: the hand-written values were rounded to 3–4 decimals and the model emits 6 |
 | the same re-authoring, spelled as a `v` map | **byte-identical** to the pre-#295 artifact — 16 tracks collapsed to 2 with the numbers relocated and not recomputed, which is what makes the map form a pure relocation |
 | `bun run typecheck` / `lint` | green |
+
+**The two verdicts, verbatim** — the report's last rule line and the summary under
+it. Quoted rather than paraphrased, so the selftest's transcript gate re-runs both
+commands and compares them line for line: the figures here are read off the run
+instead of being kept by hand
+([#609](https://github.com/firejune/rigc/issues/609)).
+
+`rigc build`:
+
+```
+PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
+..    42 assertions: 17 measured (17 passed, 0 failed), 10 skipped, 15 not in profile "spine"
+```
+
+`rigc build --profile spine-html`:
+
+```
+SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling
+..    42 assertions: 26 measured (26 passed, 0 failed), 16 skipped, 0 not in profile "spine-html"
+```
 
 ---
 
