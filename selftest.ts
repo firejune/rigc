@@ -21294,12 +21294,49 @@ function runMeshCheckSuite(): number | null {
   return bad;
 }
 
+/** One frame of one set, and the two figures read off that frame — see `runMeshRungSuite`. */
+interface RungFrame {
+  /** The animation the frame belongs to, or `SETUP_POSE_DIR` for a skeleton with none. */
+  set: string;
+  /** The lane's own index, counted from 0 — the frame written as `f0000.png`. */
+  index: number;
+  /** How many frames that set sampled to. */
+  of: number;
+  /** Mesh attachments posed on this frame. */
+  meshes: number;
+  /** Pixels this frame's coverage mask holds — every piece's, not the meshes' alone. */
+  drawn: number;
+}
+
 /**
  * Rung 6's own export, drawn — the rung the refusal used to stop dead.
  *
  * In process rather than by running `bench/render_reference.ts`: the refusal was
  * never in that script, it was in `sampleAll` -> `piecesOf`, and these three calls
  * are the ones the script makes. Shelling out would test the argument parser.
+ *
+ * ⭐ **Both figures come off ONE frame, and the line names which** (issue #647).
+ * The frame kept is the one that came closest to holding: most terms held, and
+ * among those the least coverage — so a PASS names the thinnest frame that both
+ * posed a mesh and reached the plate, and a FAIL names the best the run managed.
+ *
+ * ⚖️ **Universal about the machinery, existential about the rig, and the split is
+ * the origin line's own.** That line is about the LANE, and the lane renders
+ * every frame of every animation — so every frame is sampled *and rasterised*
+ * here, and a refusal that arrives at frame 40 is a failure rather than a frame
+ * nobody drew. The branch point rasterised one frame per set, so this is the
+ * strengthening the repair buys. What the control does not claim is that every
+ * frame CARRIES a mesh: an export whose meshes are keyed in and out is a correct
+ * export, and "a rung with meshes renders" is answered by the frames that have
+ * them. Requiring all of them would fail a fine rung by name — #647's defect
+ * pointed the other way. The count that posed one is printed instead, so the
+ * shape is visible without being the verdict.
+ *
+ * 🔸 Rejected: attributing the pixels to the meshes the way `MR01` does, off
+ * `frameGeometry`'s per-slot footprints. It would make `meshes === 0 && drawn >
+ * 0` unreachable and cost #638's clause a limb it was written for, and `MR01`
+ * already measures a posed mesh's own coverage on the generated fixture. Here
+ * `drawn` is the plate — every piece's pixels, meshes and regions alike.
  */
 function runMeshRungSuite(): number | null {
   const dir = resolve(import.meta.dir, 'examples/6-arcs/export');
@@ -21313,37 +21350,57 @@ function runMeshRungSuite(): number | null {
   }
   const posable = loadPosable(join(dir, '6-arcs-pro.json'), join(dir, '6-arcs.atlas'), dir);
   const viewport = framingViewport(posable.data, 256);
-  let meshes = 0;
-  let drawn = 0;
   let detail = '';
   let ok = false;
   try {
     const sets = sampleAll(posable.data, PROTOCOL_FPS);
-    for (const frames of sets.values()) {
-      for (const piece of frames[0].pieces) if (piece.kind === 'mesh') meshes++;
-    }
-    if (viewport) {
-      for (const frames of sets.values()) {
-        const geometry = frameGeometry(frames[Math.floor(frames.length / 2)], posable.pages, viewport);
-        for (const bit of geometry.coverage) drawn += bit;
+    const held = (frame: RungFrame): number => (frame.meshes > 0 ? 1 : 0) + (frame.drawn > 0 ? 1 : 0);
+    let named: RungFrame | null = null;
+    let sampled = 0;
+    let posed = 0;
+    for (const [set, frames] of sets) {
+      for (let index = 0; index < frames.length; index++) {
+        let meshes = 0;
+        for (const piece of frames[index].pieces) if (piece.kind === 'mesh') meshes++;
+        let drawn = 0;
+        if (viewport) {
+          const geometry = frameGeometry(frames[index], posable.pages, viewport);
+          for (const bit of geometry.coverage) drawn += bit;
+        }
+        const here: RungFrame = { set, index, of: frames.length, meshes, drawn };
+        sampled++;
+        if (meshes > 0) posed++;
+        if (named === null || held(here) > held(named) || (held(here) === held(named) && here.drawn < named.drawn)) {
+          named = here;
+        }
       }
     }
-    ok = meshes > 0 && drawn > 0;
-    // ⚠️ The red branch reads BOTH of its terms (issue #638). It said "the export
-    // loaded but nothing reached the plate" whichever term fell, and the two are
-    // measured on different frames — `meshes` off frame 0, `drawn` off the
-    // mid-shot — so the run where nothing posed AS A MESH and the plate was
-    // covered anyway printed that sentence beside its own refutation: `posed 0
-    // mesh(es) and drew 1523 px — … nothing reached the plate`.
+    // 🔒 A throw rather than a branch nothing reaches (#529, and `MR01`'s null
+    // viewport above it): `sampleAll` gives a setup-pose set when a skeleton has
+    // no animation and every sampler emits at least one frame, so a run with no
+    // frame to name is a refusal to be reported as one — never a measurement.
+    if (named === null) throw new Error('the export sampled to no frame at all, so there was nothing to measure');
+    ok = named.meshes > 0 && named.drawn > 0;
+    const where = `"${named.set}" f${named.index} of ${named.of}`;
+    // ⚠️ The red branch reads BOTH of its terms (issue #638), and since #647
+    // both terms are one frame's. They used to be measured on different frames —
+    // `meshes` off frame 0, `drawn` off the mid-shot — which is how the run where
+    // nothing posed AS A MESH and the plate was covered anyway printed that
+    // sentence beside its own refutation (`posed 0 mesh(es) and drew 1523 px — …
+    // nothing reached the plate`), and how an export whose meshes key in after
+    // t = 0 printed `posed 0 mesh(es) and drew 2902 px` about a rung that poses
+    // two of them on 57 of its 69 frames.
     detail = ok
-      ? `posed ${meshes} mesh attachment(s) and drew ${drawn} px of a mid-shot frame at ${viewport?.width}x${viewport?.height}`
-      : `posed ${meshes} mesh(es) and drew ${drawn} px — the export loaded and ${
-          meshes === 0
-            ? drawn === 0
+      ? `posed ${named.meshes} mesh attachment(s) and drew ${named.drawn} px on ${where} at ` +
+        `${viewport?.width}x${viewport?.height} — the least-covered frame that did both, over ${sampled} sampled ` +
+        `and rasterised, ${posed} of which posed a mesh`
+      : `posed ${named.meshes} mesh(es) and drew ${named.drawn} px on ${where} — the export loaded and ${
+          named.meshes === 0
+            ? named.drawn === 0
               ? 'neither posed as a mesh nor reached the plate'
               : 'reached the plate, but nothing in it posed as a mesh'
             : 'posed meshes, but nothing reached the plate'
-        }`;
+        }; ${posed} of ${sampled} frame(s) posed a mesh`;
   } catch (err) {
     detail = `it still refuses: ${(err as Error).message}`;
   }
