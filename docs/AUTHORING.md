@@ -160,7 +160,7 @@ What the flags mean:
 | `--rig` | the rig spec — skeleton structure |
 | `--motion` | the motion spec — time |
 | `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths and `skeleton.images` are written relative to it |
-| `--copy-images` | `build` only: also copies every referenced page PNG into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own, and points `skeleton.images` at `--out` itself so the editor's import finds the parts beside the skeleton (issue #370; §3.1 says why it is spelled `../<out>/` and not `./`). Default is unchanged — page paths still point at the source art (issue #217) |
+| `--copy-images` | `build` only: also copies every page **the emitted atlas names** into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own, and points `skeleton.images` at `--out` itself so the editor's import finds the parts beside the skeleton (issue #370; §3.1 says why it is spelled `../<out>/` and not `./`). Under `--atlas-in` those pages are the pack's, not one per part (issue #693 — **§0.2**). Default is unchanged — page paths still point at the source art (issue #217) |
 | `--pack` | `build` only: arrange every part onto **shared** atlas page(s), written into `--out` as real PNGs, instead of one page per part. Lossless — nothing is resampled, trimmed or rotated. Default is unchanged (issue #4) — **§0.1** |
 | `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1** |
 | `--padding` | `build --pack` only: the gutter each region reserves on every side (default `2`), filled by extending the region's own edge pixels outwards. `0` is not a legal-but-tight choice, it is bleed — **§0.1** |
@@ -318,6 +318,17 @@ texel count beside it so both numbers are visible:
 ⇒ **If the size has to be exact, supply the loose art** — the default route
 measures the PNG. Reach for `--atlas-in` when the pack is what you were handed, or
 when drawing through the pack's own texels is the point.
+
+**What `--out` holds afterwards:** `skeleton.json` and a `skeleton.atlas` that is
+the pack, page paths pointing back at the pack's own PNGs — so `rigc validate
+<that directory>` reads it green with no flags, exactly as it reads a loose
+build's. Add `--copy-images` and the pack's page PNGs are copied in beside the
+skeleton and the page names become their basenames, which is the same directory
+with nothing outside it left to resolve. ⚠️ Until
+[#693](https://github.com/firejune/rigc/issues/693) that flag rebuilt the atlas
+from the parts the rig declared instead of from the pack, and a rebuild through
+`ingest --art none` declares none: the file written was **zero bytes**, on a build
+that printed `PASS` for all four atlas assertions.
 
 The emitted `skeleton.atlas` **is** the imported one, verbatim except for its page
 name lines, which are paths and have to be re-anchored to `--out`. Fields rigc
