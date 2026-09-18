@@ -4930,6 +4930,243 @@ function runRigSuite(): number {
     );
   }
 
+  // --- a manifest state whose art is not where the manifest says (#671) ------
+  //
+  // 🚨 What was wrong: the slot the setup pose named WAS filled by a manifest
+  // part. The part's art was not on disk, so every state of it was dropped,
+  // `names` came back empty, and the refusal said `which no skin and no
+  // manifest part fills` — a true sentence about a different object. Measured
+  // on the branch point, deleting `parts/lens_l_shut.png` and misspelling its
+  // path in the manifest printed the SAME sentence, word for word, and it named
+  // neither the state nor either path. Applying its documented remedy — state
+  // the setup pose as `null` — rebuilt at exit 0 with 18 of 18 measured
+  // assertions green and `regionAttachments` 3 → 2: the art gone, the gate
+  // green, the guide's own advice.
+  //
+  // 🔑 The `DROP` line that held the whole truth was printed from the compile
+  // RESULT, which a throw never returns, so the one output naming the file was
+  // suppressed exactly on the run that failed because of it.
+  //
+  // These cases break the MANIFEST and the art directory rather than the rig
+  // spec, and they are cases at the end of this suite rather than rows in
+  // `RIG_MUTANTS` for the reason the block above gives: the summary prints that
+  // array's length as *"broken rig specs the compiler refused by name"*.
+  {
+    /** A self-contained copy of the overlay fixture's inputs, minus the art named. */
+    const artWithout = (name: string, missing: string[]): string => {
+      const art = join(dir, name);
+      mkdirSync(art, { recursive: true });
+      for (const file of ['overlay_probe.rig.json', 'overlay_probe.motion.json', 'manifest.json']) {
+        copyFileSync(join(OVERLAY.dir, file), join(art, file));
+      }
+      // Only the two art directories, rather than the fixture directory whole:
+      // by the time this suite runs, other suites have written builds and packs
+      // into it, and a copy that carried them would make these probes depend on
+      // the order the suites happen to run in.
+      for (const sub of ['parts', 'plates']) cpSync(join(OVERLAY.dir, sub), join(art, sub), { recursive: true });
+      for (const png of missing) rmSync(join(art, png));
+      return art;
+    };
+    const buildOf = (art: string, motion = 'overlay_probe.motion.json', manifest = 'manifest.json'): Options => ({
+      rigPath: join(art, 'overlay_probe.rig.json'),
+      motionPath: join(art, motion),
+      manifestPath: join(art, manifest),
+      outDir: join(art, `spine_${motion.split('.')[0]}`),
+    });
+    /** A copy of the fixture's motion spec with the setup pose edited, beside the art it poses. */
+    const withSetup = (art: string, name: string, edit: (setup: Record<string, unknown>) => void): string => {
+      const motion = JSON.parse(readFileSync(join(art, 'overlay_probe.motion.json'), 'utf8')) as {
+        setup: Record<string, unknown>;
+      };
+      edit(motion.setup);
+      writeFileSync(join(art, name), `${JSON.stringify(motion, null, 2)}\n`);
+      return name;
+    };
+    /** What the emitted default skin hangs on one slot. */
+    const attachmentsOn = (skeletonText: string | null, slot: string): string[] => {
+      if (skeletonText === null) return [];
+      const skeleton = JSON.parse(skeletonText) as {
+        skins?: Array<{ name: string; attachments?: Record<string, Record<string, unknown>> }>;
+      };
+      return Object.keys(skeleton.skins?.find((skin) => skin.name === 'default')?.attachments?.[slot] ?? {});
+    };
+
+    const LENS_PNG = 'parts/lens_l_shut.png';
+    const IRIS_PNGS = ['parts/iris_open.png', 'parts/iris_wide.png'];
+    const MISSPELT_PNG = 'parts/lens_l_shutt.png';
+    const intact = artWithout('state_art_intact', []);
+    const oneGone = artWithout('state_art_one_missing', [LENS_PNG]);
+    const pairGone = artWithout('state_art_pair_missing', IRIS_PNGS);
+
+    let intactText: string | null = null;
+    let intactImages: CompiledImage[] = [];
+    let intactDrops = -1;
+    const intactRefusal = refusalOf(() => {
+      const built = compile(buildOf(intact));
+      intactText = built.skeletonText;
+      intactImages = built.images;
+      intactDrops = built.droppedStates.length;
+    });
+    bad += reportCase(
+      'CONTROL_A_MANIFEST_STATE_WHOSE_ART_IS_THERE_STILL_REACHES_THE_SLOT',
+      intactRefusal === null && intactDrops === 0 && attachmentsOn(intactText, 'lens_l').includes('lens_l_shut'),
+      intactRefusal === null
+        ? `the copy compiled with ${intactDrops} dropped state(s) and slot "lens_l" carries [${attachmentsOn(intactText, 'lens_l').join(', ')}]`
+        : `the copy did not compile at all: ${intactRefusal}`,
+      'the five cases below are measured on copies of this same fixture, so a harness that refused every spec it ' +
+        'wrote — a bad copy, an art directory that did not come with it — would make all five pass for reasons ' +
+        'that have nothing to do with a missing file. The attachment is named rather than counted because the ' +
+        'defect being fixed is a build that came back GREEN with this exact attachment gone',
+    );
+
+    const oneRefusal = refusalOf(() => compile(buildOf(oneGone)));
+    const pairMotion = withSetup(pairGone, 'poses_the_dropped_mesh.motion.json', (setup) => {
+      setup.iris = { attachment: 'iris_open' };
+    });
+    const pairRefusal = refusalOf(() => compile(buildOf(pairGone, pairMotion)));
+    bad += reportCase(
+      'RF35_a_setup_pose_on_a_slot_whose_art_is_missing_names_the_state_and_the_path_it_tried',
+      oneRefusal !== null &&
+        oneRefusal.includes(`"shut" (no PNG at ${LENS_PNG})`) &&
+        oneRefusal.includes('the one manifest state that fills it') &&
+        !oneRefusal.includes('no skin and no manifest part fills') &&
+        pairRefusal !== null &&
+        pairRefusal.includes(`all ${IRIS_PNGS.length} manifest states that fill it`) &&
+        IRIS_PNGS.every((png) => pairRefusal.includes(`(no PNG at ${png})`)),
+      `one state gone: ${oneRefusal ?? 'compiled'}\n          ${IRIS_PNGS.length} states gone: ${pairRefusal ?? 'compiled'}`,
+      'the card\'s own reproduction, and the second half is why the sentence quantifies rather than hedging: a ' +
+        'state whose art IS found puts a region in `names`, so a slot that reaches this refusal has had all of ' +
+        'them dropped and the message may say so. The negative clause is the defect itself — `no skin and no ' +
+        'manifest part fills` was a sentence about a slot a manifest part does fill',
+    );
+
+    const misspeltManifest = (() => {
+      const manifest = JSON.parse(readFileSync(join(intact, 'manifest.json'), 'utf8')) as {
+        parts: Array<{ slot: string; states?: Record<string, string | null> }>;
+      };
+      manifest.parts.find((part) => part.slot === 'lens_l')!.states!.shut = MISSPELT_PNG;
+      const name = 'misspelt.manifest.json';
+      writeFileSync(join(intact, name), `${JSON.stringify(manifest, null, 2)}\n`);
+      return name;
+    })();
+    const misspeltRefusal = refusalOf(() =>
+      compile({ ...buildOf(intact), manifestPath: join(intact, misspeltManifest), outDir: join(intact, 'spine_misspelt') }),
+    );
+    bad += reportCase(
+      'RF36_a_state_whose_path_is_misspelt_is_told_apart_from_one_whose_file_is_gone',
+      misspeltRefusal !== null &&
+        misspeltRefusal.includes(`"shut" (no PNG at ${MISSPELT_PNG})`) &&
+        oneRefusal !== null &&
+        misspeltRefusal !== oneRefusal,
+      `misspelt: ${misspeltRefusal ?? 'compiled'}`,
+      'the art is on disk here and the manifest points one character past it, which is the other cause of the ' +
+        'same emptiness. Two causes may share one sentence only if the sentence prints the path it TRIED — that ' +
+        'is the whole of what makes them distinguishable, and it is why this case asserts the two messages differ ' +
+        'rather than only that this one is right. On the branch point they were identical strings',
+    );
+
+    const unfilledMotion = join(dir, 'unfilled_slot.motion.json');
+    const unfilled = JSON.parse(readFileSync(opts.motionPath, 'utf8')) as { setup: Record<string, unknown> };
+    // `near` is declared by the articulated rig and filled by no manifest part
+    // and no skin — the shape the original sentence is true of.
+    unfilled.setup.near = { attachment: 'near_plate' };
+    writeFileSync(unfilledMotion, `${JSON.stringify(unfilled, null, 2)}\n`);
+    const unfilledRefusal = refusalOf(() => compile({ ...opts, motionPath: unfilledMotion }));
+    const otherSlotMotion = withSetup(oneGone, 'poses_a_filled_slot_wrong.motion.json', (setup) => {
+      setup.lens_l = { attachment: null };
+      setup.lens_r = { attachment: 'lens_r_open' };
+    });
+    const otherSlotRefusal = refusalOf(() => compile(buildOf(oneGone, otherSlotMotion)));
+    bad += reportCase(
+      'RF37_a_slot_nothing_fills_and_a_slot_filled_by_art_that_is_there_keep_their_own_messages',
+      unfilledRefusal !== null &&
+        unfilledRefusal.includes('which no skin and no manifest part fills') &&
+        !unfilledRefusal.includes('no PNG at') &&
+        otherSlotRefusal !== null &&
+        otherSlotRefusal.includes('is not one of [lens_r_shut]') &&
+        !otherSlotRefusal.includes('no PNG at'),
+      `no part and no skin: ${unfilledRefusal ?? 'compiled'}\n          a filled slot, on a build that DID drop a state: ${
+        otherSlotRefusal ?? 'compiled'
+      }`,
+      'both negative sides of the repair, and the second is the one that keeps it from being "any build with a ' +
+        'drop in it blames the drop": that compile has a dropped state recorded and refuses on a DIFFERENT slot, ' +
+        'whose art is on disk, so the drop must not reach its message. The first is the sentence the branch point ' +
+        'printed for everything — it is still right here, where a manifest part really does not fill the slot',
+    );
+
+    const dropNullMotion = withSetup(oneGone, 'setup_null.motion.json', (setup) => {
+      setup.lens_l = { attachment: null };
+    });
+    const cliArgs = (motion: string, out: string): string[] => [
+      'build',
+      '--rig',
+      join(oneGone, 'overlay_probe.rig.json'),
+      '--motion',
+      join(oneGone, motion),
+      '--manifest',
+      join(oneGone, 'manifest.json'),
+      '--out',
+      join(oneGone, out),
+    ];
+    const greenRun = runCli(cliArgs(dropNullMotion, 'spine_cli_green'));
+    const redRun = runCli(cliArgs('overlay_probe.motion.json', 'spine_cli_red'));
+    const dropLineIn = (text: string): string | undefined => text.split('\n').find((line) => line.startsWith('  DROP '));
+    const greenDrop = dropLineIn(greenRun.stdout);
+    bad += reportCase(
+      'RF38_the_drop_a_refused_compile_recorded_reaches_the_console_as_the_line_the_green_build_prints',
+      greenRun.status === 0 &&
+        greenDrop !== undefined &&
+        greenDrop.includes('lens_l/shut') &&
+        greenDrop.includes(`no PNG at ${LENS_PNG}`) &&
+        redRun.status !== 0 &&
+        dropLineIn(redRun.stderr) === greenDrop,
+      `green exit=${String(greenRun.status)} printed ${JSON.stringify(greenDrop)}; refused exit=${String(redRun.status)} printed ${JSON.stringify(
+        dropLineIn(redRun.stderr),
+      )}`,
+      'the same two builds of the same art, one posed `null` and one posing the state: on the branch point the ' +
+        'green one printed this line and the refused one printed nothing, because `DROP` is reported from the ' +
+        'compile RESULT and a throw returns none. The green run is what the expected text comes from rather than ' +
+        'a literal — a control that typed the line would agree with a printer that had stopped saying anything ' +
+        'true — and equality between the two is the claim: one fact, one sentence, both outcomes',
+    );
+
+    const packDir = join(dir, 'state_art_packed');
+    mkdirSync(packDir, { recursive: true });
+    const packedAtlas = join(packDir, 'skeleton.atlas');
+    // Building the pack is inside the probe rather than beside it: the images
+    // come from the control above, and a control that has gone red leaves this
+    // with nothing to pack. Thrown, that ends the RUN — the case below never
+    // prints and the summary never comes — so the throw becomes this case's own
+    // FAIL, which is what a suite whose probe could not be built should say.
+    const packBuild = refusalOf(() => {
+      const packedArt = packAtlas(packInputsOf(intactImages), { padding: DEFAULT_PADDING });
+      for (const page of packedArt.pages) page.plate.writePng(join(packDir, page.name));
+      // One region name struck out of the pack — the `--atlas-in` spelling of
+      // the same absence, structural rather than a measured number: the name is
+      // the one the manifest's own `states:` path spells.
+      writeFileSync(packedAtlas, packedArt.atlasText.replace(/^lens_l_shut$/m, 'lens_l_shuut'));
+    });
+    const packRefusal =
+      packBuild === null
+        ? refusalOf(() =>
+            compile({ ...buildOf(intact), outDir: join(intact, 'spine_from_pack'), atlasInPath: packedAtlas }),
+          )
+        : null;
+    bad += reportCase(
+      'RF39_a_state_the_pack_is_short_offers_the_packs_remedy_and_never_names_a_file',
+      packRefusal !== null &&
+        packRefusal.includes('"shut" (no region "lens_l_shut" in') &&
+        packRefusal.includes('add the region to the pack') &&
+        !packRefusal.includes('no PNG at') &&
+        !packRefusal.includes('restore the file'),
+      packRefusal ?? (packBuild ?? 'compiled against a pack with the region struck out'),
+      'the remedy is read off the DELIVERY and this is what stops it being read off the defect: a build that ' +
+        'resolved its parts against a pack opened no file, so `restore the file` would send an author to a ' +
+        'directory nobody consulted — the same wrong subject the message just stopped having, one step further ' +
+        'on. `PK13B` holds the identical line for the `DROP` output; this holds it for the refusal',
+    );
+  }
+
   return bad;
 }
 
