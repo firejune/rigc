@@ -6,10 +6,10 @@ Guidance for AI-assisted sessions working on this repository.
 
 rigc compiles a **rig spec** plus a motion spec — and, for a cut with measured art
 behind it, a cut manifest — into Spine 4.3 skeleton data and a one-part-per-page
-atlas, then round-trips the result through `@esotericsoftware/spine-core` and 43
-named assertions before anything is written. Read [README.md](README.md) for the
-formats, the CLI and the assertion list; [`src/rig.ts`](src/rig.ts) is the rig
-spec's own documentation.
+atlas, then round-trips the result through `@esotericsoftware/spine-core` and
+43 named assertions before anything is written. Read [README.md](README.md) for
+the formats, the CLI and the assertion list; [`src/rig.ts`](src/rig.ts) is the
+rig spec's own documentation.
 
 [docs/AUTHORING.md](docs/AUTHORING.md) is the guide an agent authors *from* — the
 two input files field by field, the emission rules, the CLI loop, and the map from
@@ -106,10 +106,12 @@ sincere about it. rigc exists to convert that silence into a named failure.
   ⚠️ The failure mode is vocabulary, not code. `films/three-scene` states the
   boundary exactly right in its own text — *"that is a property of the rig
   rather than of the assembler"*, measured at 0 differing pixels across the
-  hand-offs — and then the README caption over it calls the same thing "scene
-  direction". Prefer the honest claim, which is also the stronger one and the
-  only measurable one: **rigc makes an object that can be directed. It
-  guarantees the seams; the consumer does the composing.**
+  hand-offs — and the README caption over it once called the same thing "scene
+  direction". The caption now says the rig guarantees the seams and the
+  composing is the consumer's, so the phrase survives only as the film's own
+  title, which the clause below sanctions. Prefer the honest claim, which is
+  also the stronger one and the only measurable one: **rigc makes an object that
+  can be directed. It guarantees the seams; the consumer does the composing.**
 
   🎬 **A demo is the one place a scene belongs, because there we are the
   consumer.** Showing what an object can do means putting it in time, and
@@ -289,8 +291,8 @@ Three rules hold that together and none of them is optional:
   none of them was the number. Whether every suite *has* one is an invariant rather
   than a figure, and nothing enforces it yet.
 - **A suite may be stated in halves, provided the halves are counted and sum to
-  the suite** (issue #453). The `diff` clause states 6 identity controls and 9
-  measures over one suite that prints 15, and no whole-suite count reproduces
+  the suite** (issue #453). The `diff` clause states its identity controls and
+  its measures as two figures over one suite, and no whole-suite count reproduces
   either half — which is how the last hand-written figure survived #452: it
   reached the summary through an interpolation, so the scanner that refuses a
   typed digit read it as derived. Raising it to 99 produced a **green run, exit

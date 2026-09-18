@@ -1278,7 +1278,7 @@ dependency *can* read it and rigc *does not*:
 
 - `@esotericsoftware/spine-core@4.3.13` exports `SkeletonBinary`, whose
   `readSkeletonData` is the binary reader.
-- **rigc's own source references it zero times.** Every read path goes through
+- **rigc's own source names it only in comments — no import, no call.** Every read path goes through
   `JSON.parse` and `SkeletonJson`, and the path resolver requires a `.json` extension —
   so a `.skel` is refused by the same sentence a `.spine` is, one layer before any
   format question arises.

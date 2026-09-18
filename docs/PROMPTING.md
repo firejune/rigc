@@ -31,7 +31,7 @@ improvise a prompt at all — hand the agent
 carries the honesty rule, and an improvised summary of that rule is how a run
 stops being scorable.
 
-## Five clauses the pilot paid for
+## Six clauses the pilot paid for
 
 **1. Any search loop must print progress and carry a time-box.**
 The pilot wrote a pose-fitting script with no output and no bound, and its
@@ -97,7 +97,7 @@ the whole thing without a human answer for three hours; it killed its own
 stray processes; it recorded its model name honestly; and under the benchmark
 protocol it ran the scored diff exactly once, at the end, editing nothing
 after. The tool's own error surface carries that part of the conversation —
-prompt for the five clauses above and then let the agent work.
+prompt for the six clauses above and then let the agent work.
 
 ## If you are scoring the run
 

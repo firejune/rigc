@@ -763,7 +763,7 @@ the pose-B block is unchanged to the last digit. ⚠️ A residual from before t
 date and one from after are not the same measurement; do not put them in one
 column.
 
-🖼️ **For the same recipe on art that ships, the four
+🖼️ **For the same recipe on art that ships, the
 [`gallery/`](https://github.com/firejune/rigc/tree/main/gallery) examples are worked
 in-betweening material** — `walk` is §3.5's arcs and §3.7's phase offsets on two leg
 chains, `ride` puts the same offsets in `groups` + `stagger`, and `squash` is §3.9's

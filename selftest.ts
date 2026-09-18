@@ -32895,8 +32895,12 @@ function runSkillSurfaceSuite(): number {
 /** One doc on the reader's path, with its prose separated from its markup. */
 interface CurrencyDoc {
   path: string;
-  /** How it reaches a reader: inside the npm package, or one hop off the landing page. */
-  tier: 'shipped' | 'landing';
+  /**
+   * How it reaches a reader: inside the npm package, one hop off the landing
+   * page, or the doctrine — which neither of those reaches and which is named
+   * here instead (`CURRENCY_DOCTRINE`).
+   */
+  tier: 'shipped' | 'landing' | 'doctrine';
   /** Every line, verbatim. Transcripts and code live here and only here. */
   raw: string[];
   /**
@@ -33017,7 +33021,26 @@ function readCurrencyDoc(path: string, tier: CurrencyDoc['tier'], text: string):
 }
 
 /**
- * The documents a reader actually reads, derived in two tiers.
+ * The one document neither derived tier can reach, and the one this scan most
+ * needs (issue #677).
+ *
+ * `CLAUDE.md` is not in `files` and the README linked it nowhere, so for the whole
+ * life of this gate the document that most insists a claim be derived was the one
+ * document whose own figures were kept by hand — and one of them had gone stale
+ * (`CLAUDE.md`'s halves clause, stating 6 identity controls and 9 measures over a
+ * suite the run prints 22 case lines for).
+ *
+ * 🔑 **Named here rather than reached through a link.** README now carries one, so
+ * the landing tier would find it — and that is exactly why the name is written
+ * here as well: a tier that depends on a link puts the doctrine back out of the
+ * scan the day somebody rearranges the front page, silently, which is the shape
+ * of failure this whole suite exists to refuse. The tier is set before the README
+ * pass so the link can be added or dropped without moving what this scan reads.
+ */
+const CURRENCY_DOCTRINE = 'CLAUDE.md';
+
+/**
+ * The documents a reader actually reads, derived in two tiers plus one name.
  *
  * **shipped** is what npm installs — the `files` allowlist expanded, plus the
  * three files npm ships whatever the allowlist says. **landing** is what the
@@ -33026,11 +33049,14 @@ function readCurrencyDoc(path: string, tier: CurrencyDoc['tier'], text: string):
  * package. Both halves are derived: the second reads README's own links, absolute
  * `github.com/firejune/rigc/blob/main/…` ones included, because #332 established
  * that a link OUT of the package to repository material is spelled absolute — so
- * a scan that read only relative links would find none of the landing set.
+ * a scan that read only relative links would find none of the landing set. The
+ * third is **doctrine**, one file, spelled at `CURRENCY_DOCTRINE` above; a run in
+ * which it is missing is a `CUR01` fault rather than a throw.
  */
 function currencyDocs(root: string, shipped: Set<string>): CurrencyDoc[] {
   const found = new Map<string, CurrencyDoc['tier']>();
   for (const file of shipped) if (file.endsWith('.md')) found.set(file, 'shipped');
+  if (existsSync(join(root, CURRENCY_DOCTRINE))) found.set(CURRENCY_DOCTRINE, 'doctrine');
   const readme = readFileSync(join(root, 'README.md'), 'utf8');
   const targets = [
     ...[...readme.matchAll(/https:\/\/github\.com\/firejune\/rigc\/(?:blob|tree)\/main\/([A-Za-z\d_./-]+)/g)].map(
@@ -33277,6 +33303,54 @@ function currencyTallies(truth: CurrencyTruth): CurrencyTally[] {
   ];
 }
 
+/**
+ * The other shape a document states one of those quantities in: **`X` is N**,
+ * where `X` is the expression a module exports and N the value it answers with
+ * (issue #677).
+ *
+ * ⭐ **Why this form and not another phrasing of the same tally.** Every form in
+ * `currencyTallies` reads a number beside a NOUN — "43 assertions", "28 validity
+ * rules" — and this one reads a number beside the SYMBOL that produces it. That
+ * is not a synonym: `docs/BENCHMARK.md` wrote *"`ASSERTION_NAMES.length` is 40
+ * and `assertionCountForProfile('spine')` is 25"* in the paragraph explaining why
+ * these two numbers are exported rather than written in prose, four lines under a
+ * table that had them right, and the scan read eighteen tallies on that page and
+ * stayed green one line away. A sentence that names the code it could have run is
+ * the *last* place a stale figure should be able to sit.
+ *
+ * 🔒 **`identifier` is checked against the module, so "an exported symbol" is a
+ * measurement rather than a spelling.** `CUR01` requires each one to be exported
+ * by `src/validate.ts`; rename either export and this table goes red instead of
+ * going quiet, which is the failure mode a table of strings otherwise has.
+ *
+ * ⚠️ Read off the RAW line, not off `prose`: the expression is written as inline
+ * code and the prose pass blanks code spans, so the subject would be gone before
+ * the number was reached. That is limb 2's and limb 3's argument — the subject is
+ * markup, and only the number has to be running text.
+ */
+const CURRENCY_EXPORTED_SYMBOLS: ReadonlyArray<{
+  /** The name `src/validate.ts` has to export for the row below to mean anything. */
+  identifier: string;
+  /** How a document spells the expression whose value it is stating. */
+  spelling: string;
+  /** The same quantity name `currencyTallies` uses, so a fault reads identically whichever limb caught it. */
+  quantity: string;
+  of: (truth: CurrencyTruth) => number;
+}> = [
+  {
+    identifier: 'ASSERTION_NAMES',
+    spelling: 'ASSERTION_NAMES.length',
+    quantity: 'the assertion registry',
+    of: (truth) => truth.total,
+  },
+  {
+    identifier: 'assertionCountForProfile',
+    spelling: "assertionCountForProfile('spine')",
+    quantity: 'the `spine` profile',
+    of: (truth) => truth.spine,
+  },
+];
+
 /** What one document's currency scan found: the faults, and how many sites each limb read. */
 interface CurrencyScan {
   faults: string[];
@@ -33405,6 +33479,31 @@ function scanAssertionTallies(doc: CurrencyDoc, truth: CurrencyTruth): CurrencyS
       );
     }
   });
+
+  // --- limb 5: an exported symbol stated as a number -------------------------
+  // The number is read where the symbol is: `` `X` is N ``, bold or plain,
+  // because that is how the one site in the tree writes it. Nothing looser —
+  // "is" with no backticked expression in front of it is a sentence about
+  // anything at all, and the whole safety of reading a raw line here comes from
+  // requiring the expression itself.
+  if (!doc.dated) {
+    doc.raw.forEach((line, i) => {
+      for (const symbol of CURRENCY_EXPORTED_SYMBOLS) {
+        const form = new RegExp(`\`${literalPattern(symbol.spelling)}\`\\s+is\\s+\\*{0,2}(\\d+)\\*{0,2}`, 'g');
+        for (const found of line.matchAll(form)) {
+          count('exported symbol');
+          const stated = Number(found[1]);
+          const truthOfIt = symbol.of(truth);
+          if (stated !== truthOfIt) {
+            scan.faults.push(
+              `${doc.path}:${i + 1}  "${found[0].trim()}" states ${stated}, and ${symbol.quantity} holds ` +
+                `${truthOfIt}`,
+            );
+          }
+        }
+      }
+    });
+  }
 
   return scan;
 }
@@ -33909,6 +34008,22 @@ function runCurrencySuite(): number {
       ? [`these tally forms matched nothing at all: ${thinForms.map(([limb]) => limb).join(', ')}`]
       : []),
     ...(docs.some((doc) => doc.path === 'README.md') ? [] : ['README.md is not among the documents this scan read']),
+    ...(docs.some((doc) => doc.path === CURRENCY_DOCTRINE)
+      ? []
+      : [
+          `${CURRENCY_DOCTRINE} is not among the documents this scan read — the doctrine is reached by name rather ` +
+            'than by a tier, so its absence here is a file that moved and a scan that went on printing a count',
+        ]),
+    ...CURRENCY_EXPORTED_SYMBOLS.filter(
+      (symbol) =>
+        !new RegExp(`export\\s+(?:async\\s+)?(?:const|let|function|class)\\s+${literalPattern(symbol.identifier)}\\b`).test(
+          readFileSync(join(root, 'src/validate.ts'), 'utf8'),
+        ),
+    ).map(
+      (symbol) =>
+        `\`${symbol.spelling}\` is read as a statement of ${symbol.quantity} and src/validate.ts exports no ` +
+        `\`${symbol.identifier}\` — the form would go on matching a spelling nothing produces`,
+    ),
     ...(docs.filter((doc) => doc.tier === 'shipped').length >= allowlist.filter((e) => e.endsWith('.md')).length
       ? []
       : [
@@ -33939,6 +34054,7 @@ function runCurrencySuite(): number {
         [sitesOf('worked case'), 5, `${sitesOf('worked case')} worked case(s) were read`],
         [sitesOf('assertion name'), 100, `${sitesOf('assertion name')} assertion name(s) were read`],
         [sitesOf('installed path'), 3, `${sitesOf('installed path')} installed path(s) were read`],
+        [sitesOf('exported symbol'), 2, `${sitesOf('exported symbol')} exported-symbol claim(s) were read`],
       ],
       'and a form that has stopped matching its own phrasing leaves the case it feeds printing PASS over zero sites',
     ),
@@ -33951,7 +34067,8 @@ function runCurrencySuite(): number {
       currencyHeld,
       currencyProbes,
       `${docs.length} doc(s) read — ${docs.filter((d) => d.tier === 'shipped').length} shipped, ` +
-        `${docs.filter((d) => d.tier === 'landing').length} one hop off README; ` +
+        `${docs.filter((d) => d.tier === 'landing').length} one hop off README, ` +
+        `${docs.filter((d) => d.tier === 'doctrine').length} doctrine; ` +
         `${marked.length} declared a dated record (${marked.map((d) => `${d.path} @ ${d.headerDate}`).join(', ') || 'none'}). ` +
         `The tool answers: registry ${truth.total}, \`spine\` ${truth.spine}, excluded ${truth.excluded} ` +
         `(${truth.rendererNames.length} renderer + ${truth.archetypeNames.length} archetype, off a live ` +
@@ -36508,6 +36625,208 @@ function runCurrencySuite(): number {
         'the reader is the whole of what `CUR37` measures, and every way it can go wrong is silent: a heading rule ' +
           'that widens swallows report-field tables that were never spec keys, one that narrows leaves the ' +
           'generator sections unread, and either way the verdict above still prints green',
+      );
+    }
+  }
+
+  // --- CUR39–CUR41: the doctrine, and a symbol stated as a number (#677) -----
+  //
+  // ⭐ **Both plants are a live document's own sentence, put back the way this
+  // landing found it**, which is `CUR34`'s bar: a control whose victim is
+  // invented proves the form matches the control's imagination. The line is
+  // located by asking the SCANNER where it reads a site, never by a second copy
+  // of its forms or by a path written here — so a form that stops matching takes
+  // the plant's own line away and these go red rather than quiet.
+  //
+  // 🔑 The two cases are separate because they answer different questions. The
+  // doctrine's is *is this document in the scanned set at all* — it is in neither
+  // derived tier, and for the whole life of this gate it was outside. The
+  // symbol's is *does the vocabulary reach this shape* — `docs/BENCHMARK.md`
+  // stated `ASSERTION_NAMES.length` as 40 and `assertionCountForProfile('spine')`
+  // as 25 while the scan read eighteen tallies on the same page and stayed green.
+  {
+    const scanOf = (doc: CurrencyDoc): CurrencyScan => scanAssertionTallies(doc, truth);
+    /** The first line of a document at which a named limb reads a site, asked of the scanner itself. */
+    const firstSiteAt = (doc: CurrencyDoc, limb: string): number =>
+      doc.raw.findIndex((line) => (scanOf(readCurrencyDoc(doc.path, doc.tier, line)).sites.get(limb) ?? 0) > 0);
+    /** The same document with one line rewritten, read back through the same reader the scan uses. */
+    const rewritten = (doc: CurrencyDoc, at: number, line: string): CurrencyDoc =>
+      readCurrencyDoc(doc.path, doc.tier, doc.raw.map((was, i) => (i === at ? line : was)).join('\n'));
+
+    // --- CUR39: the doctrine is one of the documents this scan reads ---------
+    {
+      const faults: string[] = [];
+      let note = '';
+      const doctrine = docs.find((doc) => doc.path === CURRENCY_DOCTRINE);
+      if (doctrine === undefined) {
+        faults.push(`${CURRENCY_DOCTRINE} is not in the scanned set, so there was nothing here to plant on`);
+      } else {
+        const at = firstSiteAt(doctrine, 'tally:the assertion registry');
+        if (at < 0) {
+          faults.push(
+            `${CURRENCY_DOCTRINE} states the registry's size on no single line, so this plant has nothing to aim ` +
+              'at — the sentence used to wrap between the number and its noun, and a limb that reads one line at a ' +
+              'time saw nothing there',
+          );
+        } else {
+          const standing = scanOf(doctrine).faults;
+          if (standing.length > 0) {
+            faults.push(`${CURRENCY_DOCTRINE} as it stands is faulted by this scan: ${standing.join('; ')}`);
+          }
+          const planted = rewritten(
+            doctrine,
+            at,
+            doctrine.raw[at].replace(String(truth.total), String(truth.total + 1)),
+          );
+          const raised = raisedBy(scanOf(planted).faults, {
+            was: standing,
+            at: `${CURRENCY_DOCTRINE}:${at + 1}`,
+          });
+          if (raised.length !== 1) {
+            faults.push(
+              `the stale registry figure planted at ${CURRENCY_DOCTRINE}:${at + 1} was not faulted — this scan ` +
+                `raised ${raised.length} fault(s) there` +
+                (raised.length === 0 ? '' : `: ${raised.join('; ')}`),
+            );
+          }
+          note =
+            `${CURRENCY_DOCTRINE} is read as \`${doctrine.tier}\` and reads clean; its own registry sentence, at ` +
+            `line ${at + 1}, with ${truth.total} put back as ${truth.total + 1}, is reported once — ` +
+            `"${raised.join('; ')}"`;
+        }
+      }
+      const held = faults.length === 0;
+      say(
+        'CUR39_THE_DOCTRINE_IS_ONE_OF_THE_DOCUMENTS_THIS_SCAN_READS',
+        held,
+        probeDetail(held, faults, note),
+        'the document that most insists a claim be derived was the one document whose own figures were kept by ' +
+          'hand: `CLAUDE.md` is not in `files` and the README linked it nowhere, so neither derived tier reached ' +
+          'it, and its halves clause stated figures the run had not printed for weeks. Membership is the whole of ' +
+          'what this asks, and it asks it by planting rather than by naming the set, because a tier that lists a ' +
+          'path and reads nothing under it looks exactly like this passing',
+      );
+    }
+
+    // --- CUR40: an exported symbol stated as a number ------------------------
+    {
+      const faults: string[] = [];
+      const notes: string[] = [];
+      const host = docs.find((doc) => firstSiteAt(doc, 'exported symbol') >= 0);
+      if (host === undefined) {
+        faults.push('no document in the scanned set states an exported symbol as a number, so nothing was planted');
+      } else {
+        const standing = scanOf(host).faults;
+        if (standing.length > 0) {
+          faults.push(`${host.path} as it stands is faulted by this scan: ${standing.join('; ')}`);
+        }
+        for (const symbol of CURRENCY_EXPORTED_SYMBOLS) {
+          const said = `\`${symbol.spelling}\` is ${symbol.of(truth)}`;
+          const at = host.raw.findIndex((line) => line.includes(said));
+          if (at < 0) {
+            faults.push(
+              `${host.path} does not state \`${symbol.spelling}\` as ${symbol.of(truth)} on any line, so the ` +
+                'plant for it could not be derived from the page',
+            );
+            continue;
+          }
+          const planted = rewritten(
+            host,
+            at,
+            host.raw[at].replace(said, `\`${symbol.spelling}\` is ${symbol.of(truth) + 1}`),
+          );
+          const raised = raisedBy(scanOf(planted).faults, { was: standing, at: `${host.path}:${at + 1}` });
+          if (raised.length !== 1) {
+            faults.push(
+              `\`${symbol.spelling}\` stated one too high at ${host.path}:${at + 1} was not faulted — this scan ` +
+                `raised ${raised.length} fault(s) there` +
+                (raised.length === 0 ? '' : `: ${raised.join('; ')}`),
+            );
+            continue;
+          }
+          if (!raised[0].includes(symbol.quantity)) {
+            faults.push(
+              `the fault raised at ${host.path}:${at + 1} does not name ${symbol.quantity}, so the message sends a ` +
+                `reader to the wrong quantity: ${raised[0]}`,
+            );
+          }
+          notes.push(`"${raised[0]}"`);
+        }
+      }
+      const held = faults.length === 0;
+      say(
+        'CUR40_AN_EXPORTED_SYMBOL_A_DOC_STATES_A_VALUE_FOR_IS_THE_VALUE_THE_MODULE_ANSWERS_WITH',
+        held,
+        probeDetail(
+          held,
+          faults,
+          `${host === undefined ? 'no page' : host.path} states ${CURRENCY_EXPORTED_SYMBOLS.length} exported ` +
+            `symbol(s) as numbers and reads clean; each one put back one too high is reported on its own line and ` +
+            `against its own quantity — ${notes.join(', ')}`,
+        ),
+        'the page that went stale is the one explaining why these two numbers are exported rather than written in ' +
+          'prose, four lines under a table that has them right. Every other form in this suite reads a number ' +
+          'beside a NOUN, and a sentence naming the code it could have run matched none of them',
+      );
+    }
+
+    // --- CUR41: the symbol form against the shapes it must not read ----------
+    //
+    // 🔒 `CUR34`'s other half, on this form. A form loose enough to read any
+    // sentence with a number in it would fault on prose nobody can rewrite, and
+    // one narrow enough to read only the live spelling would go quiet the day
+    // somebody bolds the figure — which is how the tree writes half its tallies.
+    {
+      const faults: string[] = [];
+      const registry = CURRENCY_EXPORTED_SYMBOLS[0];
+      const profile = CURRENCY_EXPORTED_SYMBOLS[1];
+      const one = (name: string, text: string, wantSites: number, wantFaults: number): void => {
+        const found = scanOf(readCurrencyDoc('probe.md', 'landing', text));
+        const sites = found.sites.get('exported symbol') ?? 0;
+        if (sites !== wantSites || found.faults.length !== wantFaults) {
+          faults.push(
+            `the ${name} probe was read at ${sites} site(s) and faulted ${found.faults.length} time(s), and this ` +
+              `control requires ${wantSites} and ${wantFaults}` +
+              (found.faults.length === 0 ? '' : ` — it said: ${found.faults.join('; ')}`),
+          );
+        }
+      };
+      one('value the module answers with', `\`${registry.spelling}\` is ${truth.total}.`, 1, 0);
+      one('stale value', `\`${registry.spelling}\` is ${truth.total + 1}.`, 1, 1);
+      one('same sentence in bold', `\`${registry.spelling}\` is **${truth.total + 1}**.`, 1, 1);
+      // Each symbol against its OWN quantity: the registry's number under the
+      // profile's symbol is a number the page holds somewhere, and a form with
+      // one truth behind it would pass it.
+      one("profile symbol carrying the registry's number", `\`${profile.spelling}\` is ${truth.total}.`, 1, 1);
+      one('profile symbol carrying its own', `\`${profile.spelling}\` is ${truth.spine}.`, 1, 0);
+      one('symbol this table does not know', `\`${registry.identifier}.size\` is ${truth.total + 1}.`, 0, 0);
+      one('number with no symbol in front of it', `the registry is ${truth.total + 1}.`, 0, 0);
+      one('symbol stated without a value', `\`${registry.spelling}\` is the registry's own count.`, 0, 0);
+      one('symbol and a number further along the line', `\`${registry.spelling}\` — the table says ${truth.total + 1}.`, 0, 0);
+      // The escape hatch reaches this limb exactly as it reaches limbs 1–3: a
+      // page that declares itself a dated record states figures as of its date.
+      one(
+        'stale value on a page that declared a dated record',
+        `# Probe\n\n${DATED_RECORD_MARKER}\n\nMeasured 2026-08-22.\n\n\`${registry.spelling}\` is ${truth.total + 1}.`,
+        0,
+        0,
+      );
+      const held = faults.length === 0;
+      say(
+        'CUR41_THE_SYMBOL_FORM_FIRES_ON_THE_DEFECT_AND_ON_NOTHING_THAT_MERELY_LOOKS_LIKE_IT',
+        held,
+        probeDetail(
+          held,
+          faults,
+          `the true value and the bare symbol are read and pass, one too high is reported bold or plain, and each ` +
+            `symbol is compared against its own quantity — \`${profile.spelling}\` stating ${truth.total} is a ` +
+            `fault. A symbol this table does not carry, a number with no symbol in front of it, the symbol with no ` +
+            `number after it, a number further along the line, and the stale sentence on a page that declared a ` +
+            `dated record are each read at no site at all`,
+        ),
+        'a form that reads a raw line is reading markup, and both directions fail silently there: narrowed to one ' +
+          'spelling it goes quiet on the next author who bolds the figure, and loosened to "a number near a code ' +
+          'span" it faults on prose and earns itself an exception table, which is the defect this suite gates for',
       );
     }
   }

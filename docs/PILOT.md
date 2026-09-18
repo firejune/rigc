@@ -216,7 +216,7 @@ them in a table. A prompt that wants the run to know the bar points at the claus
 **2. The bar is quoted; the baselines never are.** Those are two different things and the
 ruling of 2026-08-29 separates them.
 
-- ✅ **[GATE.md](GATE.md) — the clause statements — is allowed reading**, and it is item 10
+- ✅ **[GATE.md](GATE.md) — the clause statements — is allowed reading**, and it is item 11
   of the runner prompt's quoted list. It carries the measure, the comparator, the number and
   the SKIP semantics, and no recorded figure at all.
 - 🚫 **Baseline scores never appear in the runner's prompt.** LADDER.md's status

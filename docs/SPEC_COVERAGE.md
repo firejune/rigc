@@ -60,6 +60,25 @@ Reproduce the measurements with `bun run fetch-examples && bun run bench:usage`
 >   fired on **0** attachments in this corpus, because no export in `examples/` carries a
 >   `path` field at all. The executive summary's item 8 is the one A08 line here that was
 >   already right and has only got more so: A08 is a Spine-validity rule.
+> - **The executive summary's item 6 is superseded where it lists what rigc does
+>   not emit** — *"No IK, no transform constraint, no path, no slider, no deform,
+>   no drawOrder, no events"*. The first four are covered by the bullets above;
+>   the last three emit too, and each has an assertion over it
+>   (`A31_DRAW_ORDER_OFFSETS_RESOLVE`, `A32_EVENT_KEYS_RESOLVE`,
+>   `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT`). What survives of that item is that the
+>   emitter covers a slice of the format, not which slice it covers.
+> - **Part 4's *"Three of its items have been built since"* undercounts** — the
+>   bullets above already name more than three between them, and most of the
+>   requirement list under it has landed. Read it as *some*, and take which from
+>   these bullets and [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md);
+>   the requirement text itself is still left exactly as surveyed, which is what
+>   a dated record is for.
+> - **"Things I could not verify" item 5 — whether the Spine editor itself would
+>   round-trip a rigc file — has been answered by measurement since.**
+>   `tools/editor_roundtrip.ts` ships inside the package, the registry carries
+>   `A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP`, and [AUTHORING.md](https://github.com/firejune/rigc/blob/main/docs/AUTHORING.md)
+>   records the trips by number. *"The round-trip proof in this project is
+>   spine-core-only"* was true on the date above and is not the state now.
 >
 > **The measurements of the CORPUS (Part 3) have not moved and stay as written.**
 >

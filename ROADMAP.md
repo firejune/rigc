@@ -191,6 +191,14 @@ re-run until it is, because a confirmation nobody took says nothing about the
 package either way ([RELEASING.md](RELEASING.md), *Whether the tarball runs*,
 has the wait, the exit codes and how a re-run is dispatched).
 
+✅ **That check landed.** `release.yml` runs `bun run smoke -- --source registry
+--version <version> --wait 15 --case clean` on a cut, in both of the jobs that
+can confirm one, and a version the registry has not served yet comes back **3**
+— a confirmation not taken rather than a package that failed — so the re-run is
+a dispatch and not a judgement. What the goal still asks for is the half no
+workflow holds: that the wait stays a measured figure rather than an assumed
+one.
+
 ## Not in 1.0
 
 - **A second oracle, and the backend behind it.** Not because Spine is the
