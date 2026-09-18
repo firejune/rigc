@@ -56,14 +56,18 @@ provenance for a reader of record — the loop that hit a trap, the issue that c
 and following one can arrive at a stored candidate's own spec, at the corpus inventory,
 or at the **derivation** of the gate a verdict is read against, none of which a run may
 open. ⭐ The gate's **clause statements** are a different matter and a run may read them:
-they are in `docs/GATE.md`, item 11 of the allowed list (owner ruling 2026-08-29) — the
+they are in
+[GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md), which is
+repository material and not in the published package — item 11 of the allowed list (owner ruling 2026-08-29) — the
 measure, the comparator, the number and the SKIP semantics, with no recorded figure in it.
 So: read the
 document, take its numbered sections as the input, and leave its footprints to whoever
 is maintaining it. The rule this states is that an **allowed-reading surface has to be
 closed under reading**; the criterion behind it is under *The honesty rule* in
 [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md), and the enumerated allowed and forbidden lists are in
-`bench/runs/README.md`, *What a run may read* — the prompt that starts a run quotes them
+[bench/runs/README.md](https://github.com/firejune/rigc/blob/main/bench/runs/README.md),
+which is also repository material and not in the published package,
+*What a run may read* — the prompt that starts a run quotes them
 outright, which is the copy that binds.
 
 ## The vocabulary is Spine's
@@ -163,6 +167,8 @@ What the flags mean:
 | `--atlas-in` | `build` only: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; the atlas is re-emitted into `--out`, re-anchored — **§0.2** |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order. For `chainfit` it is only where each attachment's image name **resolves**: the candidate decides what the parts are, so extra PNGs are unused and a missing name is refused by name (§12.3) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
+| `--cut` | `build`, `explain` and `validate`: look up a named cut in `--cuts <cuts.json>`, **instead of** `--rig`/`--motion`/`--out` — the two spellings are one build stated two ways and are refused together. A `cuts.json` is `{ "<name>": { "rig": …, "motion": …, "out": …, "manifest"?: … } }`, every path in it relative to the table's own file, so the table lives with the project that owns the art |
+| `--cuts` | the `cuts.json` `--cut` names. Required beside it — `--cut` alone is refused, with no guess at where the table lives |
 | `--profile` | `spine` = the 28 validity rules (**the default**) · `spine-html` = all 43, opt-in |
 | `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview`, and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote`, so is a name that only *some* candidates have |
@@ -231,7 +237,8 @@ a gap:
 
 - **no resampling, no scaling.** A region's pixels are the loose PNG's pixels.
   rigc writes no `scale:` line, so a pack cannot be coarser than its drawings the
-  way the shipped examples' packs are (§9.4).
+  way the shipped examples' packs are — what a `scale:` costs on the way back in
+  is §0.2.
 - **no trimming.** `offsets:` always states a zero inset and the drawing's full
   size. Stripping transparent border would shrink pages, and it would also make
   every region attachment's quad depend on the packer — measure it yourself if you
@@ -1153,6 +1160,101 @@ placed with its centre on the bone the slot names — which is also exactly wher
 plain region attachment with no `x`/`y` would have drawn it. Measured on a ring, a
 ribbon and a moved bone by `CT05` in the selftest (issue #1).
 
+#### `ring` — an aperture that opens inside a pinned seam
+
+**When you need one:** a part with a hole in it that a bone opens and closes — an
+eye, a mouth, an iris. The silhouette stays exactly where the art put it and only
+the inside moves, which is the one thing a `contour` cannot do and authored
+`weights` can only do a vertex at a time.
+
+Three rings and a hub, and every one of them is geometry rigc builds: the part
+window edge and the seam contour are pinned to the slot bone at weight 1, and the
+inner ring is shared with the control bone by a smoothstep falloff — flat at both
+ends, so the deformation dies into the pinned rim instead of creasing against it
+([`src/mesh.ts`](../src/mesh.ts)).
+
+```json
+"generator": {
+  "kind": "ring",
+  "hull": [[24, 8], [40, 8], [56, 24], [56, 40], [40, 56], [24, 56], [8, 40], [8, 24]],
+  "center": [32, 32],
+  "inner": 0.45,
+  "size": [64, 64],
+  "controls": ["iris_aperture"]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `hull` | **required.** The seam contour, in part-local pixels, y down — the closed outline the aperture sits inside. At least 6 points, every one inside the window, and star-shaped about `center` |
+| `center` | **required.** The aperture centre, part-local pixels, y down |
+| `inner` | **required.** Where the moving ring sits between the centre (`0`) and the hull (`1`), strictly inside that interval. No default: a ring with no number here is refused, not centred |
+| `size` | **required.** The part window, `[w, h]` in pixels, which the UVs and the emitted `width`/`height` are taken from |
+| `bias` | optional; absent means authority is radial only. `{ "axis_deg": <screen degrees, y down>, "ramp": [d0, d1] }` — a line through `center` at that angle, with control authority 0 on its negative side and 1 on its positive side, smoothstepped across the signed distances `d0 < d1`. It is what lets a mouth open downward with the upper lip left pinned |
+| `controls` | **required.** The control bones, by name, at least one. Each must be a bone the rig declares |
+
+⚠️ **`size` is stated here, not measured.** A `contour` and a `grid` take the
+window off the attachment's own `image`; a `ring` and a `ribbon` are built from
+the numbers in this block and rigc compares neither to the PNG. The emitted
+`width`/`height` are this `size`, so a `size` that is not the art's own scales the
+drawing — measured: a 240x240 part declared `"size": [64, 64]` builds green under
+`--profile spine-html`. That is R1 rather than a gap: the compiler emits the
+number the spec states and does not re-measure a plate to overrule it.
+
+🚨 **On this route the FIRST control bone is the only one that moves the mesh.**
+Splitting a ring's authority between several grips needs each bone's angle about
+the aperture centre, and rigc measures that from where the rig put the bone — on
+the **manifest** route, which is the one that has a crop to measure in. A rig spec
+that lists two gets the single-bone geometry instead: `controls[0]` takes the
+whole of the control authority, the second name is still printed on the `MESH`
+line, and the gate is green. Measured on a two-control ring — 25 vertices, 40
+triangles, report line `bones=[box, grip_a, grip_b]`, and the emitted weighted run
+binds two bone indices, the slot bone and `grip_a`. Until that is closed, write
+one `controls` entry on this route and reach for the manifest when a ring needs
+several grips.
+
+**Stated limits, each a named refusal rather than a mesh that loads wrong:**
+
+| The input | What you get |
+| --- | --- |
+| fewer than 6 hull points | `hull needs at least 6 points, got 4` |
+| `inner` at either end | `inner must be in (0,1), got 1` — at the hull it is the seam, at the centre it is a point |
+| a hull point outside the window | `hull point (99,8) is outside the 64x64 part window` |
+| a hull the centre cannot see all of | `hull is not star-shaped about the aperture centre; the inner ring would fold` — the inner ring is the hull scaled toward `center`, so an edge hidden from it crosses the rim and renders as folded meat |
+| a `bias` ramp that does not increase | `bias ramp must increase, got [16, 4]` |
+| a control bone the rig does not declare | `mesh bone "nobody" is not in the rig's bone list` |
+
+#### `ribbon` — a strip of cross rows riding a bone chain
+
+**When you need one:** a part that hangs and swings off a chain — a tail, a
+strap, a lock of hair, a drip. The strip spans the part window and each cross row
+blends linearly between the two chain knots it falls between, so the whole part
+follows the chain with no weight written by hand.
+
+The entry row is pinned to the slot bone at weight 1, which is what keeps the
+strip's origin where it was authored while the rest of it falls; that is the
+branch `A21_MESH_RIM_PINNED` measures on a ribbon, and
+`A28_RIBBON_ROWS_SHARE_WEIGHTS` is what holds both vertices of a row to the same
+blend.
+
+```json
+"generator": { "kind": "ribbon", "size": [24, 180], "rows": 7, "chain": ["strap_a", "strap_b", "strap_c"] }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `size` | **required.** The part window, `[w, h]` in pixels; the strip spans it, entry row at the top. Stated rather than measured, exactly as a `ring`'s is |
+| `rows` | **required.** How many cross rows, entry row first. A whole number, at least 3; the strip is `2 * (rows - 1)` triangles and `2 * rows` vertices, all of them on the outline |
+| `chain` | **required.** The bone chain the strip rides, **root first**, at least one name. The knots sit evenly along the strip, so the chain's order is the order the part falls in |
+
+**Stated limits:**
+
+| The input | What you get |
+| --- | --- |
+| fewer than 3 rows | `ribbon needs at least 3 rows, got 2` — two rows is one quad and has nothing to bend |
+| an empty `chain` | `ribbon needs at least one chain bone, got 0` |
+| a chain bone the rig does not declare | `mesh bone "nobody" is not in the rig's bone list` |
+
 #### `contour` — the mesh is the art's own silhouette
 
 **When you need one:** the part's outline is the interesting thing and a
@@ -1804,7 +1906,7 @@ rigc emits all five: `ik`
 ([transform constraints](http://esotericsoftware.com/spine-transform-constraints)),
 `path` ([path constraints](http://esotericsoftware.com/spine-path-constraints)),
 `physics` ([physics constraints](http://esotericsoftware.com/spine-physics-constraints))
-and `slider`. Field lists are in [`src/rig.ts`](../src/rig.ts); three traps worth
+and `slider`. Field lists are in [`src/rig.ts`](../src/rig.ts); the traps worth
 carrying here:
 
 - A transform constraint's `properties` names come from a fixed six — `rotate`,
@@ -1819,7 +1921,25 @@ carrying here:
   `scaleY`, spelled `"none"`, `"uniform"` or `"volume"`. It is an enum resolved by
   `Utils.enumValue`, so only the first letter's case is free and an unrecognised
   name is assigned as `undefined` with no error; rigc checks it, like the three
-  path modes below. ⚠️ `src/rig.ts` called the physics one **`scaleYMode`** until
+  path modes below.
+- A physics constraint carries seven **`*Global`** booleans —
+  `inertiaGlobal`, `strengthGlobal`, `dampingGlobal`, `massGlobal`, `windGlobal`,
+  `gravityGlobal` and `mixGlobal` — and "global" is not a scale or a space. Spine
+  4.3 lets a physics timeline name **no** constraint (`animations.<a>.physics[""]`,
+  which the parser reads as constraint index `-1`, `SkeletonJson.js:1048-1053`);
+  such a timeline drives every active physics constraint whose matching flag is
+  `true` and leaves the rest alone (`Animation.js:2066-2072`). So the flag is one
+  constraint's **opt-in to being driven in bulk**, per tuning value, and it does
+  nothing on its own. The parser's default for all seven is `false`.
+  ⚠️ **rigc emits them and cannot emit the timeline that reads them.** Every
+  physics track in a motion spec names its constraint and that name is resolved
+  against the rig — the empty name is refused, `animation "A" keys unknown physics
+  constraint "" (the rig declares: …)` — so the flags are for a player, or a
+  later hand-edit, that supplies one. What rigc does with them is **pass them
+  through**, `false` included: measured, a constraint stating none emits none, and
+  one stating `"windGlobal": false` emits `"windGlobal": false` rather than
+  dropping it the way the motion spec's `physics` table drops a default (§4.6).
+- ⚠️ `src/rig.ts` called the physics `ScaleYMode` key **`scaleYMode`** until
   issue #545 — the runtime's field name rather than the format's key — and nothing
   read it, so a spec that wrote `scaleYMode` set no mode and said nothing. A rig
   that still writes it is now refused by name, with `scaleY` beside it.
@@ -2383,13 +2503,27 @@ that SKIP, because the profile excludes an archetype assertion before its body
 could notice the missing field (§5.2).
 
 🚨 **The exception: `meshSlots` is required by a rig that invokes a mesh
-generator** (`ring`, `ribbon`, `contour` — §3.4), and it is a **compile-time**
+generator** (`ring`, `ribbon`, `contour`, `grid` — §3.4), and it is a **compile-time**
 refusal rather than an assertion. Undeclared means a budget of zero, so the build
 stops before the gate with `N mesh slot(s) emitted but the rig "X" allows 0`.
 Geometry rigc built is geometry rigc will not ship unmeasured; geometry the author
 drew is exempt, because rigc did not draw it. So `A13`'s **SKIP** means *this rig
 is unmeasured*, not *this budget is inert* — those are two code paths with one
 name, and reading the SKIP as the whole story is what issue #274 was.
+
+🔗 **`detached` is a list of forbidden parentages**, and its shape is
+`[{ "bone": …, "notUnder": …, "why"?: … }]`. `A25_DETACHED_BONE_PARENTAGE` walks
+`bone`'s parent chain and fails if `notUnder` is anywhere on it — an **ancestor**
+rule, not a direct-parent one, because a bone dragged by its grandparent is
+dragged just the same. A `bone` the rig does not declare is its own failure
+(`the rig declares "X" detached from "Y" but has no such bone`), so a rename that
+leaves this block behind is loud rather than quietly vacuous. `why` is optional
+here — unlike `deformMayFold`'s, which is required, and the difference is what
+each field does: this one turns a check ON for a pair, so an empty reason costs
+nothing but a reader's time. What it is for is a bone whose wrong parentage still
+loads and still animates and merely lies — something released into the world that
+must not ride the part that released it. [RIGGING.md](RIGGING.md) §10.3 has a
+worked one.
 
 🚨 **`deformMayFold` is the one field here that turns a check OFF**, so it is the
 one field whose own shape is refused rather than skipped. It is
@@ -4227,10 +4361,14 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `hull vertices must come first; vertex i is on the boundary and vertex j is not. The triangles' outline runs …: list those K vertices first, in that order, then the M interior vertices` | §3.4 — renumber the vertices: the printed walk first, then the interior |
 | `hull vertices must trace the outline in order; the triangles' outline runs …, so vertex a has to follow vertex b in the list, and vertex c does` | §3.4 — renumber along the printed walk |
 | `the triangles do not tile the outline: …` / `the triangles' outline is not one closed loop: …` | §3.4 — a doubled triangle, an unused vertex, a pinch or a hole in `triangles` |
+| `vertex N binds bone "X", which the rig does not declare as a bone` | §3.4 — an authored mesh's `weights` bind by NAME, like everything else in a rig spec. Fix the spelling, or declare the bone. The message names the skin, the slot, the placeholder and the vertex, because an index would name none of them |
 | `image "X.png" is not on disk at …` | fix the name, or point `--images` at the right directory |
+| `parts/iris_open.png is 96x64 but slot "iris" declares 96x60` | R5 — a manifest `states:` entry whose art is not the window the part declares. Re-export the PNG, or fix the part's `size`; a quad sized against art of another size is the silence `A06` exists for, and the window is what the quad is built from |
+| `plates/00_stage.png is 256x256 but the manifest window for "stage" is 250x256` | R5 — the same check on the part's unconditional `image`, against the window the crop gives it |
+| `region "00_stage" of <pack>.atlas (declared 256x256 by its offsets) is 256x256 but the manifest window for "stage" is 250x256` | R5 — the row above under `--atlas-in`, and the prefix is the whole point: it says which of the two rigc **measured**, because the remedy differs. A bare path is a loose PNG it opened and you re-export; a `region … of <pack>` was read out of the pack, and you repack or aim the part at another region. This is the size row of §0.2's four, with the message it actually prints |
 | `duplicate region name "X"` | two PNGs share a basename; one part, one page, one name |
 | `"b/X.png" and the art already atlased as region "X" are two different files — … Rename one of the PNGs.` | R5 — the region name is the basename, so only one of the two can hold it. Rename a file (not a placeholder: the placeholder is free to repeat) |
-| `the image "X.png" was never added to the atlas, so there is no region "X" …` | nothing in the spec — every image an attachment names is measured, so this says rigc skipped one. Report it ([#555](https://github.com/firejune/rigc/issues/555)) |
+| `the image "X.png" was never added to the atlas, so there is no region "X" …` | nothing in the spec — every image an attachment names is measured and atlased, one per file whichever skin names it, so this says rigc skipped one. Report it on [the tracker](https://github.com/firejune/rigc/issues). The `#555` the message itself cites is the change that made one-per-file an invariant, not a place to file against |
 | `motion spec names archetype "A" but the rig spec at … is called "B"` | make `archetype` equal the rig's `name` |
 | `animation "A" declares duration Ns but its last key is at Ms` | R7 — fix whichever of the two you meant |
 | `animation "A" slot "X" attachment: key at Ns is Ms past the declared duration Ds` | §4.5 — the key is past the end of the animation and nothing will sample it. Move the key onto `duration`, or raise `duration` |

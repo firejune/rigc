@@ -35984,6 +35984,297 @@ function runCurrencySuite(): number {
     }
   }
 
+  // --- CUR35-38: the authoring guide against the keys the parsers accept ----
+  //
+  // ⭐ `CUR17` derives the key TABLES from the interfaces and `CUR18` requires
+  // something outside the declaration to name each key. Neither asks the
+  // question `CLAUDE.md` asks — the guide and the validator's messages "are the
+  // only interface an agent that cannot see the rig actually has" — which is
+  // whether the guide names the key at all. Issue #676 measured it and found
+  // eleven that it did not: a `ring` generator's `center`, `inner` and
+  // `controls`, its `bias`'s `axis_deg`, a detached rule's `notUnder`, and six
+  // of a physics constraint's seven `*Global` flags. Every one of them parses,
+  // emits, and could only be learnt by reading `src/rig.ts`.
+  //
+  // 🔒 **Both directions, because they fail differently.** A key the guide never
+  // names is an affordance nobody can reach. A field the guide lists that no
+  // shape declares is the opposite and worse: an author who writes it gets the
+  // unknown-key refusal from the file the guide told them to write it in.
+  //
+  // ⚠️ **What this cannot see, stated rather than implied.** The question is
+  // "does the word occur", so:
+  //
+  //  - a key named ANYWHERE counts — in prose, in a fenced example, in a quoted
+  //    error message, in a sentence about something else entirely. `bias` and
+  //    `ramp` were named on the day #676 was filed only by the depth map's own
+  //    `bias` row and by prose about falloff ramps, neither of which is about a
+  //    ring's `bias` at all, and both read as named here.
+  //  - a key named in the WRONG section is invisible for the same reason.
+  //  - the second direction resolves a field against the union of every shape's
+  //    keys rather than against the shape its own `####` section documents, so a
+  //    field listed under the wrong generator passes. Resolving per section would
+  //    need a heading-to-shape map, which is a second copy of `GENERATOR_SHAPE`
+  //    kept by hand — the antipattern this file exists to refuse.
+  //  - the one-letter keys (`x`, `y`, `t`, `v`) are named by almost any English
+  //    sentence, so the first direction is weakest exactly where the key is
+  //    shortest. It is a floor under the guide, not a proof of it.
+  {
+    /** The guide `CLAUDE.md` calls the interface an authoring agent has. */
+    const GUIDE = 'docs/AUTHORING.md';
+    const guideDoc = docs.find((doc) => doc.path === GUIDE);
+    const guideText = guideDoc === undefined ? '' : guideDoc.raw.join('\n');
+    const sets: Array<[string, readonly string[]]> = [...Object.entries(RIG_KEYS), ...Object.entries(MOTION_KEYS)];
+    const shapesOf = (key: string): string[] => sets.filter(([, keys]) => keys.includes(key)).map(([shape]) => shape);
+
+    /** Does this text name this key at all — any section, prose or example? */
+    const names = (text: string, key: string): boolean => new RegExp(`\\b${literalPattern(key)}\\b`).test(text);
+
+    /** The distinct keys of a key table that a text never names, sorted. */
+    const unnamedIn = (text: string, table: ReadonlyArray<readonly [string, readonly string[]]>): string[] =>
+      [...new Set(table.flatMap(([, keys]) => keys))].sort().filter((key) => !names(text, key));
+
+    /**
+     * Every field a `| Field | …` table under a `####` heading names, with the
+     * heading it sits under and the line it is on.
+     *
+     * Only the FIRST column is read — the second is prose and routinely spells
+     * another key — and a cell may name several (`us` / `vs`), so the row is the
+     * backticked identifier rather than the line. Fenced lines are dropped
+     * through `linesOutsideFences`, so a `####` inside a transcript is not a
+     * heading and a table inside one is not a field list.
+     */
+    const fieldRows = (text: string): Array<{ heading: string; line: number; field: string }> => {
+      const out: Array<{ heading: string; line: number; field: string }> = [];
+      let heading: string | null = null;
+      let inTable = false;
+      for (const [i, line] of linesOutsideFences(text.split('\n')).entries()) {
+        if (line === null) continue;
+        const head = /^(#{1,6}) (.*)$/.exec(line);
+        if (head !== null) {
+          heading = head[1].length === 4 ? head[2] : null;
+          inTable = false;
+          continue;
+        }
+        if (heading === null) continue;
+        if (/^\| *Field *\|/.test(line)) {
+          inTable = true;
+          continue;
+        }
+        if (!inTable) continue;
+        if (!line.startsWith('|')) {
+          inTable = false;
+          continue;
+        }
+        if (/^\| *-+/.test(line)) continue;
+        for (const found of (line.split('|')[1] ?? '').matchAll(/`([^`]+)`/g)) {
+          if (/^[A-Za-z_][A-Za-z\d_]*$/.test(found[1])) out.push({ heading, line: i + 1, field: found[1] });
+        }
+      }
+      return out;
+    };
+
+    const unnamed = unnamedIn(guideText, sets);
+    const everyKey = [...new Set(sets.flatMap(([, keys]) => keys))];
+    const rows = fieldRows(guideText);
+    const headings = [...new Set(rows.map((row) => row.heading))];
+    const known = new Set(everyKey);
+    const strayRows = rows.filter((row) => !known.has(row.field));
+    const missing =
+      guideDoc === undefined
+        ? [`${GUIDE} is not one of the ${docs.length} document(s) this scan reads, so nothing below compared anything`]
+        : [];
+
+    // --- CUR35: every key the parser accepts is named in the guide ----------
+    {
+      const probes = [
+        ...missing,
+        ...floorProbes(
+          [
+            [sets.length, 1, `${sets.length} key set(s) were read off the two parsers' own tables`],
+            [everyKey.length, 1, `${everyKey.length} distinct key(s) across them`],
+            [guideDoc?.raw.length ?? 0, 1, `${guideDoc?.raw.length ?? 0} line(s) of ${GUIDE} were read`],
+          ],
+          'a step that comes back empty makes this read a complete guide off nothing',
+        ),
+        ...firstFew(
+          unnamed.map(
+            (key) =>
+              `\`${key}\` (${shapesOf(key).join(', ')}) is a key the parser accepts and ${GUIDE} never names it — ` +
+              'an author reading the guide has no way to learn the field exists, and writing anything else in its ' +
+              'place is refused as an unknown key',
+          ),
+          'key(s)',
+        ),
+      ];
+      const held = probes.length === 0;
+      say(
+        'CUR35_EVERY_SPEC_KEY_THE_PARSER_ACCEPTS_IS_NAMED_BY_THE_AUTHORING_GUIDE',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `all ${everyKey.length} distinct key(s) of the ${sets.length} shape(s) the two formats declare — ` +
+            `${Object.keys(RIG_KEYS).length} rig, ${Object.keys(MOTION_KEYS).length} motion — are named somewhere ` +
+            `in the ${guideDoc?.raw.length ?? 0} line(s) of ${GUIDE}`,
+        ),
+        'the guide and the refusals are the whole interface an agent that cannot see the rig has, so a field only ' +
+          '`src/rig.ts` names is a field only a reader of the source can use. #676 found eleven, and the one that ' +
+          'shows what the silence costs is `RigDetachedRule.notUnder`: the field that says what the parentage may ' +
+          'not be, in the block whose whole purpose is to say it',
+      );
+    }
+
+    // --- CUR36: the first direction, planted both ways ----------------------
+    //
+    // 🌱 The plant goes into a COPY of the key table rather than into
+    // `src/rig.ts`, so nothing on disk moves and the run stays deterministic;
+    // what it breaks is the data the verdict reads, which is the same edit an
+    // author makes when a field is added.
+    {
+      const planted: Array<[string, readonly string[]]> = [...sets, ['ProbeShape', ['zzPlantedSpecKey']]];
+      const raised = raisedBy(unnamedIn(guideText, planted), { was: unnamed });
+      const anchor = rows.length > 0 ? rows[0].field : null;
+      const faults = [
+        ...missing,
+        ...(raised.length === 0
+          ? [
+              'a key planted into a copy of the parser key table was not faulted as unnamed, so a shape could grow ' +
+                'a field the guide never mentions and this stays green',
+            ]
+          : []),
+        ...(names(guideText, 'zzNoSuchSpecKey')
+          ? ['a name no line of the guide carries was reported as named, so this search matches anything']
+          : []),
+        ...(anchor === null
+          ? ['the guide gave up no field row, so there was no key known to be named to drive the other direction']
+          : names(guideText, anchor)
+            ? []
+            : [`\`${anchor}\` is a field the guide's own table names and the search reported it unnamed`]),
+        ...(names('the tolerances are generous', 'tolerance')
+          ? ['a key was reported named by a longer word that merely starts with it, so the match is not on words']
+          : []),
+        ...(names('```json\n"zzFencedOnly": 1\n```', 'zzFencedOnly')
+          ? []
+          : [
+              'a key named only inside a fenced example was reported unnamed, so this control no longer measures ' +
+                'the scope the clean verdict is stated at',
+            ]),
+      ];
+      const held = faults.length === 0;
+      say(
+        'CUR36_THE_KEY_SCAN_FAULTS_A_KEY_THE_GUIDE_LACKS_AND_PASSES_ONE_IT_CARRIES',
+        held,
+        probeDetail(
+          held,
+          faults,
+          `a key added to a copy of the ${sets.length}-shape table is reported unnamed and nothing else is; a name ` +
+            `no line of the guide carries reads unnamed; \`${anchor ?? '—'}\`, which the guide's own field table ` +
+            'names, reads named; a longer word that merely starts with a key does not name it; and a key written ' +
+            'only inside a fenced example does — which is the scope the clean run above claims and no more',
+      ),
+        'a scan whose matcher is too loose reports every key named and goes quiet for good, and one too tight ' +
+          'reports a guide that is complete as full of holes; the two are told apart only by driving it over an ' +
+          'answer that is known',
+      );
+    }
+
+    // --- CUR37: every field the guide lists is a key the parser accepts -----
+    {
+      const probes = [
+        ...missing,
+        ...floorProbes(
+          [
+            [headings.length, 1, `${headings.length} \`####\` section(s) of ${GUIDE} carry a field table`],
+            [rows.length, 1, `${rows.length} field row(s) were read out of them`],
+          ],
+          'a reader that stops matching the guide\'s own tables checks nothing and says so nowhere',
+        ),
+        ...firstFew(
+          strayRows.map(
+            (row) =>
+              `${GUIDE} line ${row.line} lists \`${row.field}\` as a field under "${row.heading}" and no shape of ` +
+              'either format declares it — an author who writes it gets `has N keys this compiler does not read`, ' +
+              'from the guide that told them to',
+          ),
+          'row(s)',
+        ),
+      ];
+      const held = probes.length === 0;
+      say(
+        'CUR37_EVERY_FIELD_THE_GUIDE_LISTS_IS_A_KEY_ONE_OF_THE_TWO_FORMATS_DECLARES',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `all ${rows.length} field row(s) under the ${headings.length} \`####\` section(s) of ${GUIDE} that carry ` +
+            `a field table name keys the parsers accept (${headings.join('; ')})`,
+        ),
+        'the direction that costs an author a loop rather than an affordance: a field list is what a spec gets ' +
+          'written from, so a row nothing declares is a refusal the guide walked the author into. It resolves ' +
+          'against the union of every shape\'s keys and not against the section\'s own shape, so a field in the ' +
+          'wrong `####` section passes — that blind spot is the price of not keeping a heading-to-shape map by hand',
+      );
+    }
+
+    // --- CUR38: the field reader, planted on text this case writes ----------
+    {
+      const table = (heading: string, cell: string): string =>
+        `${heading}\n\n| Field | Meaning |\n| --- | --- |\n| ${cell} | planted by this control |\n`;
+      const fieldsOf = (text: string): string[] => fieldRows(text).map((row) => row.field);
+      const plantedGuide = `${guideText}\n${table('#### `probe`', '`zzPlantedGuideField`')}`;
+      const raised = raisedBy(
+        fieldRows(plantedGuide)
+          .filter((row) => !known.has(row.field))
+          .map((row) => `${row.field}@${row.heading}`),
+        { was: strayRows.map((row) => `${row.field}@${row.heading}`) },
+      );
+      const fenced = `\`\`\`\n${table('#### `probe`', '`zzFencedField`')}\`\`\`\n`;
+      const faults = [
+        ...missing,
+        ...(raised.length === 0
+          ? [
+              'a field row planted into a copy of the guide was not faulted as a key no shape declares, so the ' +
+                'guide could grow a row for a field that does not exist and this stays green',
+            ]
+          : []),
+        ...(fieldsOf(table('### `probe`', '`zzThirdLevel`')).includes('zzThirdLevel')
+          ? ['a field table under a `###` heading was read, and the population this case states is `####` sections']
+          : []),
+        ...(fieldsOf(fenced).includes('zzFencedField')
+          ? ['a field table inside a fence was read, so a transcript of a guide would be scanned as the guide']
+          : []),
+        ...(fieldsOf(table('#### `probe`', '`alpha` | `zzMeaningColumn`')).includes('zzMeaningColumn')
+          ? ['the Meaning column was read as a field list, and it is prose that routinely spells another key']
+          : []),
+        ...(fieldsOf(table('#### `probe`', '`us` / `vs`')).join(',') === 'us,vs'
+          ? []
+          : [
+              `a cell naming two fields was read as ${JSON.stringify(fieldsOf(table('#### \`probe\`', '`us` / `vs`')))}` +
+                ' — the guide writes `us` / `vs` and `cols` / `rows` in one cell each, so a reader that takes one ' +
+                'per row misses half of them',
+            ]),
+        ...(fieldsOf(table('#### `probe`', '`alpha`')).includes('alpha')
+          ? []
+          : ['a one-field table this control wrote was not read at all, so every negative result above is vacuous']),
+      ];
+      const held = faults.length === 0;
+      say(
+        'CUR38_THE_FIELD_READER_TAKES_THE_GUIDES_OWN_TABLES_AND_NOTHING_THAT_LOOKS_LIKE_ONE',
+        held,
+        probeDetail(
+          held,
+          faults,
+          'a row planted into a copy of the guide is reported and nothing else is; a one-field table is read; and ' +
+            'a table under a `###` heading, a table inside a fence and a key spelled in the Meaning column are ' +
+            'each read in no way, while a cell naming two fields is read as two',
+        ),
+        'the reader is the whole of what `CUR37` measures, and every way it can go wrong is silent: a heading rule ' +
+          'that widens swallows report-field tables that were never spec keys, one that narrows leaves the ' +
+          'generator sections unread, and either way the verdict above still prints green',
+      );
+    }
+  }
+
   return bad;
 }
 
