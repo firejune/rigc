@@ -146,15 +146,17 @@ because they are written from a clone of this repository (`bun install`, then ru
 the CLI in place); the two are interchangeable — `rigc build …` is
 `bun cli.ts build …`.
 
-Two commands are repository workflows rather than package ones: `bench` and
-`check` measure against Spine's official example projects — fetched, never
-committed — and against reference frames this project renders from them, which
-**are** committed, each example's own `license.txt` beside them under the
-redistribution grant those files carry; the images stay **non-commercial only**.
-The reasoning is in
+One command is a repository workflow rather than a package one: `bench` measures
+against Spine's official example projects — fetched, never committed — and against
+reference frames this project renders from them, which **are** committed, each
+example's own `license.txt` beside them under the redistribution grant those files
+carry; the images stay **non-commercial only**. The reasoning is in
 [`bench/reference/README.md`](https://github.com/firejune/rigc/blob/main/bench/reference/README.md)
-and the terms in [NOTICE.md](NOTICE.md). Both commands need a clone and `bun run
-fetch-examples`, and say so by name when the corpus is absent.
+and the terms in [NOTICE.md](NOTICE.md). It needs a clone and `bun run
+fetch-examples`, and says so by name when the corpus is absent. `check` is not one
+of them: it reads whatever frames you point it at, so it runs from the installed
+package on pictures of your own — which is what *Where to go next* below tells you
+to do with it, and it is the one instrument here that can see a wrong animation.
 
 ### Install it into your agent
 
@@ -522,8 +524,12 @@ and `bun run fetch-examples`. The reasoning behind all three is in
 `build` and `validate` both default to `--profile spine` — the 28 validity rules, which
 ask *is this valid Spine 4.3 that any runtime plays correctly?* `--profile spine-html`
 adds all 43: the other 15 are one renderer's policy and one canvas budget's, and they
-fire on perfectly correct editor-produced Spine data, so reach for that profile when
-you are shipping into *that* project rather than to be thorough. A report always names
+fire on perfectly correct editor-produced Spine data, which is why they are opt-in.
+⇒ **That reason is about foreign data and does not carry to a rig you are authoring
+yourself: author under `--profile spine-html` and read the extra 15 as findings, and
+gate the release under `--profile spine`.** A `deform` key that folds a mesh inside
+out is written out under the default and refused by name under `spine-html`, which
+is the shape of what that split buys you. A report always names
 the profile it ran and lists what that profile left out.
 
 Several cuts can also be registered in a `cuts.json` and built by name
