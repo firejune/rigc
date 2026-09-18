@@ -6050,22 +6050,40 @@ function deformGeometryOf(
   let worldVerticesLength: number;
   if (type === 'mesh') {
     worldVerticesLength = (att as SpineMeshAttachment).uvs.length;
-  } else if (type === 'boundingbox' || type === 'clipping') {
-    worldVerticesLength = (att as SpineBoundingBoxAttachment).vertexCount * 2;
-  } else if (type === 'path') {
-    // The one type that HAS a vertex array and is still refused here. Deforming
-    // a path is a real idiom — an animated track — but it also invalidates the
-    // measured `lengths` that a `constantSpeed: false` traversal reads, so it is
-    // a feature with a rule attached rather than one line of plumbing.
-    throw new NotImplementedError(
-      `${where}: a path attachment does have a vertex array, and rigc does not key it yet — a deformed path ` +
-        'changes the arc lengths its `lengths` array records, which only `constantSpeed: false` reads. ' +
-        'Move the curve by posing the bones its vertices are bound to.',
-    );
+  } else if (type === 'boundingbox' || type === 'clipping' || type === 'path') {
+    // ⭐ A `path` reaches this line as of issue #696, and it is the SAME line the
+    // other two vertex-and-no-triangles types take: the array the parser sizes
+    // is `vertexCount * 2`, the two encodings below are the mesh's own, and a
+    // path's vertices are its control points.
+    //
+    // ⚠️ What stood here was a `NotImplementedError` — *a path attachment does
+    // have a vertex array, and rigc does not key it yet* — whose stated reason
+    // was that a deformed path invalidates the `lengths` the attachment carries.
+    // The reason is measured and it does not belong to rigc:
+    //
+    //   - `lengths` is a field of the ATTACHMENT. The format has nowhere to put
+    //     a per-key length, so no export of any tool carries a re-measured one;
+    //     the editor's own is the setup measurement, which is what
+    //     `pathCurveLengths` reproduces digit for digit.
+    //   - `PathConstraint.computeWorldPositions` reads that field only under
+    //     `constantSpeed: false` (`PathConstraint.js:205`). Under the parser's
+    //     default, `true`, it re-measures the curve from the posed world
+    //     vertices every frame — and those come through
+    //     `VertexAttachment.computeWorldVertices`, which uses
+    //     `slot.appliedPose.deform` when the array is non-empty
+    //     (`attachments/Attachment.js:97-115`). So the constraint follows the
+    //     DEFORMED spline, and the stale field is not read at all.
+    //
+    // ⇒ refusing it was refusing correct data for behaviour the format has and
+    // every runtime shares — the shape issues #44 and #262 already cost this
+    // file twice. `docs/AUTHORING.md` §4.11 states the `constantSpeed: false`
+    // reading instead, which is the honest home for it: a fact about the format
+    // the author is choosing, not a fault rigc can measure.
+    worldVerticesLength = (att as SpineBoundingBoxAttachment | SpinePathAttachment).vertexCount * 2;
   } else {
     throw new CompileError(
       `${where}: a deform timeline keys the vertices of an attachment, and this one is a "${type}" — ` +
-        'it has no vertex array to deform. Deformable types: mesh, boundingbox, clipping.',
+        'it has no vertex array to deform. Deformable types: mesh, boundingbox, clipping, path.',
     );
   }
   const vertices = (att as SpineMeshAttachment).vertices ?? [];

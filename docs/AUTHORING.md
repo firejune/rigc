@@ -3513,6 +3513,35 @@ Per key:
 | `offset` | the same start as a raw index into the deform array. Never with `fromVertex` |
 | `ease` / `curve` | one channel, and it eases the **blend**, not a coordinate |
 
+**The target is any attachment that has a vertex array** — a mesh, a bounding
+box, a clipping polygon, or a **path**. The array a key edits is that
+attachment's own, so everything below about runs, start indices and the two
+encodings reads the same whichever it is. A region attachment has no vertex array
+and is refused by name.
+
+⭐ **A path's vertices are its control points** — knots and their Bezier handles
+alike, in the order §3.5.1 lists them — so a run covers them in that order and a
+`fromVertex` counts them the same way. Its deform array is `vertexCount * 2` long
+unweighted, and one pair per influence weighted, exactly as a mesh's is. What is
+and is not measured on one:
+
+- `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` measures the run against that length, as
+  it does for every other target.
+- `A39_DEFORM_KEEPS_TRIANGLE_WINDING` reports **SKIP**, naming the slot and
+  saying the attachment has no triangles. A path is knots and handles; there is
+  no winding to keep, and reporting a pass for a measurement that did not happen
+  is the one thing an assertion here may not do.
+- **`lengths` is not re-measured, and cannot be.** It is a field of the
+  attachment (§3.5.1) and the format has nowhere to put a per-key one, so the
+  array every exporter writes — rigc's included — is the **setup** measurement.
+  `PathConstraint.computeWorldPositions` reads it only when `constantSpeed` is
+  `false`; under the parser's default, `true`, it re-measures the curve from the
+  posed vertices every frame. So a path constraint follows the deformed curve as
+  written, and under `constantSpeed: false` it traverses the deformed curve at
+  the **setup** spacing. That is the format's behaviour rather than rigc's
+  choice, which is why it is stated here instead of refused: an editor export of
+  the same rig does the same thing.
+
 Four things are worth having straight before you write one.
 
 **A key is a sparse edit, and a key with no `vertices` is the setup pose.** The
@@ -3566,6 +3595,7 @@ half of the format:
 | `fromVertex` on a multi-bone vertex | `"fromVertex" counts VERTICES, and this attachment is weighted … vertex 2 has 2 of them` |
 | an attachment that is not there | `slot "flat" in skin "default" has no attachment "flatt" (it has: flat)` |
 | a deform on a region attachment | `a deform timeline keys the vertices of an attachment, and this one is a "region"` |
+| a run past a path's control points | `this attachment's deform array is 18 long (9 vertices)` — the same bound as any other target, counted in the control points §3.5.1 declares |
 | `transform` beside a `vertices` run | `the key carries both a "transform" and a "vertices" run, and they are two answers to one question` |
 | `transform` with `fromVertex` or `offset` | `A transform is a model of the whole attachment and is evaluated over all 25 of its vertices, so it always starts at deform index 0` |
 | a `transform` on an attachment whose weights do not close at 1 | `this one has a vertex the arithmetic cannot place — vertex 1's 2 weights sum to 0.9000 rather than 1` |
@@ -4503,7 +4533,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `animation "A" keys "X" as an ik constraint, but the rig declares it as a "transform" constraint` | §4.9 — a timeline's target resolves by name AND type; put the entry under the right group |
 | `ik constraint "X": key 0 names "softness" and key 1 (t=…) does not` | §4.9 — every key is read with its own default, so state the field on every key or on none |
 | `ik constraint "X" (t=…): mix is 1.5, outside 0..1` | §4.9 — an IK mix is a percentage; a transform mix is unbounded |
-| `deform …: the run starts at deform index 4 and is 6 long, which ends at 10; this attachment's deform array is 8 long` | §4.11 — shorten the run or move its start; the parser would drop the tail in silence |
+| `deform …: the run starts at deform index 4 and is 6 long, which ends at 10; this attachment's deform array is 8 long (4 vertices)` | §4.11 — shorten the run or move its start; the parser would drop the tail in silence. The count in brackets is the **target's own**: a mesh's or a path's vertices, or a weighted attachment's bone influences |
 | `deform …: "fromVertex" counts VERTICES, and this attachment is weighted … vertex 2 has 2 of them` | §4.11 — key the control bone, or write bind-space pairs and start with `offset` |
 | `deform …: slot "X" in skin "default" has no attachment "Y" (it has: …)` | §4.11 — fix the placeholder name |
 | `deform … (t=…): the key carries both a "transform" and a "vertices" run` | §4.11.1 — a model and a table are two answers to one question; drop one |
@@ -4704,7 +4734,6 @@ are `CompileError`s, and they name what the format actually defines
 | `"type": null` | `"type" is null, which is not a name. … PRESENT-and-null is not absent: getValue(map, "type", "region") takes the default only when the key is missing, so this map matches no case, readAttachment returns null, and the attachment is dropped from the skeleton without a word. Remove the key, or name a type.` Leaving the key **out** is legal and reads as `region`; writing it as `null` is not the same thing ([#577](https://github.com/firejune/rigc/issues/577)) |
 | constraint `type` of anything else | `constraint type "X" is not one Spine 4.3 knows. The five are: ik, transform, path, physics, slider.` — all five are emitted, so this is a typo, and a typo is what the parser drops in silence |
 | a path attachment's `lengths` | `"lengths" is not authored — rigc measures the setup arc length of each curve off the geometry` (§3.4). Not a deferral: a second copy of a number the vertices already fix |
-| a `deform` timeline on a path attachment | `a path attachment does have a vertex array, and rigc does not key it yet` — the format allows it and an animated track is a real idiom, but a deformed path invalidates the `lengths` a `constantSpeed: false` traversal reads. Move the curve by posing the bones its vertices are bound to |
 | any key neither format has, anywhere in either file | `<object> has a key this compiler does not read: "x" (did you mean "y"?) … Known here: …` (§5.1). Not a deferral either: a key nothing reads is a value you wrote and the emitted skeleton does not contain |
 
 Two more limits that are not errors but will shape what you can attempt:
