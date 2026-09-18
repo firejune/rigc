@@ -1274,7 +1274,7 @@ the `constraints` array.** A slider reads its own authority when its turn comes
 and the array is the update order, so a dial that keys the `mix` of a slider
 *earlier* than itself writes a number that slider has already read past: the
 driven axis is dead at every position, every frame. ✅ **The gate names that pair
-now** — `A42_DRIVEN_SLIDERS_UPDATE_AFTER_THEIR_DRIVER` refuses it with both
+now** — `A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER` refuses it with both
 sliders, the property and both array indices, and says which way to move them
 ([#658](https://github.com/firejune/rigc/issues/658)). Until then it was green,
 for a reason worth knowing: a slider whose `mix` is keyed at all leaves `A40`'s
@@ -1289,6 +1289,24 @@ muted at setup that means to raise itself: it never applies anything at all,
 because `update` returns on `mix` 0 before reaching the key that would raise it,
 and `A37` reports green because it asks whether *an* animation keys the mix and
 never which one.
+
+🚨 **And it is not only another dial: a face axis that drives a jiggle or a
+path is the same rule.** `physics.<name>.wind`, `path.<name>.position`, an ik or
+transform mix — every property a dial can key belongs to a constraint that reads
+it when its own turn comes, and that turn is its place in `constraints`. A
+"wind strength" dial declared after the physics constraint it drives poses the
+number in that constraint's pose and moves nothing at all: [measured] the bone a
+physics constraint drives travels `0.000e+0` across the dial with the constraint
+declared first and `4.256e+2` with it declared last, and a path constraint's
+rider `0.000e+0` against `1.620e+2`
+([#665](https://github.com/firejune/rigc/issues/665)). ✅ `A42` names those pairs
+too, with the constraint's kind and both array indices. ⇒ **every constraint a
+dial drives goes after that dial in `constraints`** — which, for a face, means
+the dials come first and the jiggles, paths and aim constraints they scale come
+after. 🔸 One key is outside the rule because no order repairs it: a `physics`
+`reset` from a dial fires on a crossed frame time and a slider applies its
+animation at a single instant, so it never fires at all — the gate says that in
+its SKIP rather than asking you to move anything.
 
 🔸 **The bone-less slider is the same story one field over.** A slider with no
 `bone` takes its time from `slider.<name>.time`, which any animation can key — and

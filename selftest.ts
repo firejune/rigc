@@ -14219,8 +14219,18 @@ function runPathAndSliderSuite(): number {
     kind: string;
     /** Extra rig blocks — slots, skins — merged over the probe rig. */
     rig: Record<string, unknown>;
-    /** Constraints that are not the sliders, which go first in the array. */
-    before: Array<Record<string, unknown>>;
+    /**
+     * The constraints a kind's animations key, which sit AFTER the dials.
+     *
+     * 🔒 That is the only order in which the constraint READS what the dials
+     * wrote: the `constraints` array is the update order, so a constraint
+     * declared before them updates with the pose it had and the composed value
+     * is a write nothing reads (`A42`, issue #665). These fixtures sat that way
+     * until then and measured the same numbers — the composition is in the
+     * apply, and a pose holds it either way — so what moved is that the value
+     * they read is now also the value the constraint runs on.
+     */
+    after: Array<Record<string, unknown>>;
     /** The animation slider `which` applies. */
     animation: (which: number) => Record<string, unknown>;
     /** The target's setup value, read off the rig spec and never off a pose. */
@@ -14267,7 +14277,7 @@ function runPathAndSliderSuite(): number {
     {
       kind: 'slot "marker" rgb',
       rig: {},
-      before: [],
+      after: [],
       animation: (which) => ({
         duration: GRID_DURATION,
         loop: false,
@@ -14284,7 +14294,7 @@ function runPathAndSliderSuite(): number {
     {
       kind: 'slot "marker" attachment',
       rig: {},
-      before: [],
+      after: [],
       animation: (which) => ({
         duration: GRID_DURATION,
         loop: false,
@@ -14304,7 +14314,7 @@ function runPathAndSliderSuite(): number {
     {
       kind: "the skeleton's drawOrder",
       rig: {},
-      before: [],
+      after: [],
       animation: (which) => ({
         duration: GRID_DURATION,
         loop: false,
@@ -14322,7 +14332,7 @@ function runPathAndSliderSuite(): number {
     {
       kind: 'constraint "leg-ik" ikConstraint',
       rig: {},
-      before: [{ name: 'leg-ik', type: 'ik', bones: ['thigh', 'shin'], target: 'foot-target', mix: 0 }],
+      after: [{ name: 'leg-ik', type: 'ik', bones: ['thigh', 'shin'], target: 'foot-target', mix: 0 }],
       animation: (which) => ({
         duration: GRID_DURATION,
         loop: false,
@@ -14345,7 +14355,7 @@ function runPathAndSliderSuite(): number {
         ],
         skins: { default: { block: { block: { image: 'block.png' } }, flat: { flat: SLIDER_MESH } } },
       },
-      before: [],
+      after: [],
       animation: (which) => ({
         duration: GRID_DURATION,
         loop: false,
@@ -14374,7 +14384,7 @@ function runPathAndSliderSuite(): number {
     {
       kind: 'constraint "jiggle" physicsWind',
       rig: {},
-      before: [
+      after: [
         { name: 'jiggle', type: 'physics', bone: 'tip', x: 1, y: 1, inertia: 0.5, strength: 100, damping: 0.85, mass: 1, wind: 0, gravity: 0, mix: 1 },
       ],
       animation: (which) => ({
@@ -14390,7 +14400,7 @@ function runPathAndSliderSuite(): number {
     {
       kind: 'constraint "aim-shin" transformConstraintRotate',
       rig: {},
-      before: [
+      after: [
         { name: 'aim-shin', type: 'transform', bones: ['shin'], source: 'aim', properties: { rotate: { to: { rotate: {} } } }, mixRotate: 0 },
       ],
       animation: (which) => ({
@@ -14420,8 +14430,8 @@ function runPathAndSliderSuite(): number {
       bones: SLIDER_KIND_BONES,
       ...kind.rig,
       constraints: [
-        ...kind.before,
         ...order.map((which, seat) => s644Slider(SLIDER_KIND_DIALS[which], patches[seat] ?? {})),
+        ...kind.after,
       ],
     });
     const motionPath = join(dirs.dir, 'probe.motion.json');
@@ -14589,7 +14599,9 @@ function runPathAndSliderSuite(): number {
         `\`"additive": true\`, read at ${s644KindRows.length} cells of the two dials and then again with the ` +
         `\`constraints\` array order swapped: ${ignoreSays.join('; ')}. At every cell the target is what the LAST slider ` +
         'in the array puts there, the earlier dial moves it by nothing at all, and the winner follows the array rather ' +
-        `than the flags or the animation names. A40 refuses every one of them by name. ⚠️ NAMED ABSENCE — \`sequence\`: ` +
+        'than the flags or the animation names. A40 refuses every one of them by name. ⭐ The ik constraint among them is ' +
+        'declared AFTER both dials since #665, so the mix they fight over is the mix that constraint updates on rather ' +
+        `than a write nothing reads — the readings are unchanged either way. ⚠️ NAMED ABSENCE — \`sequence\`: ` +
         `no rig spec reaches a sequence timeline, and the nearest spelling ${sequenceSaid}`,
       (count) => `${count} reading(s) of a shared non-bone target are not the rule:`,
     ),
@@ -14658,7 +14670,10 @@ function runPathAndSliderSuite(): number {
       addRows,
       `${SLIDER_SUPPORTS_ADD.length} kinds of shared target that support \`add\` — a mesh deform, a physics wind and a ` +
         `transform constraint's rotate mix — under two additive sliders at ${s644KindRows.length} cells each: ` +
-        `${addSays.join('; ')}. Every one of them gates green, which is the other half of A40's own claim`,
+        `${addSays.join('; ')}. Every one of them gates green, which is the other half of A40's own claim — and since #665 that ` +
+        'includes A42: the physics and transform constraints are declared AFTER the two dials, so the value the pair composes ' +
+        'is the value the constraint runs on. The arithmetic is the same in the order these fixtures used to sit in, which is ' +
+        'exactly why nothing caught it',
       (count) => `${count} reading(s) of a shared additive target are not the sum:`,
     ),
     'the same card item, from the side where an arithmetic exists. `A40` names four kinds it refuses and passes ' +
@@ -15638,6 +15653,9 @@ function runPathAndSliderSuite(): number {
       'being an assertion about a rig where every flag is already right',
   );
 
+  /** The update-order rule, named once: four controls below and the census read it. */
+  const DRIVEN_RULE = 'A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER';
+
   // =========================================================================
   // 6. every spelling of the vocabulary, posed (#652 item 4)
   // =========================================================================
@@ -15672,8 +15690,6 @@ function runPathAndSliderSuite(): number {
     spelling: string;
     /** False when a slider-applied timeline leaves nothing a pose can read back. */
     observable: boolean;
-    /** Constraints that must sit AFTER the two dials, which is the only place a driven slider can read what they wrote. */
-    after?: Array<Record<string, unknown>>;
     /** Animations beside the two the dials apply. */
     extra?: Record<string, unknown>;
     /** Every number this fixture writes into a key, where the ends of the ramp are not the values `alone` reports. */
@@ -15710,7 +15726,7 @@ function runPathAndSliderSuite(): number {
     observable: true,
     kind: `bone "vane" ${property}`,
     rig: { bones: RESIDUAL_BONES },
-    before: [],
+    after: [],
     animation: (which) => ({
       duration: GRID_DURATION,
       loop: false,
@@ -15738,7 +15754,7 @@ function runPathAndSliderSuite(): number {
     observable: true,
     kind: kindName,
     rig: { bones: RESIDUAL_BONES },
-    before: [],
+    after: [],
     animation: (which) => ({
       duration: GRID_DURATION,
       loop: false,
@@ -15756,7 +15772,7 @@ function runPathAndSliderSuite(): number {
     ...constraintCase(spelling, `constraint "jiggle" physics ${property}`, property, 'physics', 'jiggle', setup, to, (skeleton) =>
       read(skeleton.findConstraint('jiggle', PhysicsConstraint)!.appliedPose),
     ),
-    before: [JIGGLE],
+    after: [JIGGLE],
   });
   const PATH_SPINE = { type: 'path', vertexCount: 9, vertices: [-30, 0, 0, 0, 30, 0, 60, 0, 90, 0, 120, 0, 150, 0, 180, 0, 210, 0] };
   const RIDE = {
@@ -15776,7 +15792,7 @@ function runPathAndSliderSuite(): number {
       ],
       skins: { default: { ...PROBE_DEFAULT_SKIN, track: { track: PATH_SPINE } } },
     },
-    before: [RIDE],
+    after: [RIDE],
   });
   /** The third slider a driven-slider spelling writes into — and it sits AFTER the dials, which is the only order in which it reads what they wrote (`PS139`, `PS140`). */
   const carriedFor = (patch: Record<string, unknown>): Array<Record<string, unknown>> => [
@@ -15815,7 +15831,7 @@ function runPathAndSliderSuite(): number {
       observable: false,
       kind: "the skeleton's events",
       rig: { bones: RESIDUAL_BONES, events: { ping: {}, pong: {} } },
-      before: [],
+      after: [],
       animation: (which) => ({
         duration: GRID_DURATION,
         loop: false,
@@ -15843,7 +15859,7 @@ function runPathAndSliderSuite(): number {
       observable: false,
       kind: 'constraint "jiggle" physics reset',
       rig: { bones: RESIDUAL_BONES },
-      before: [JIGGLE],
+      after: [JIGGLE],
       animation: () => ({
         duration: GRID_DURATION,
         loop: false,
@@ -15882,9 +15898,8 @@ function runPathAndSliderSuite(): number {
       bones: SLIDER_KIND_BONES,
       ...kind.rig,
       constraints: [
-        ...kind.before,
         ...SLIDER_KIND_DIALS.map((dial, seat) => s644Slider(dial, patches[seat] ?? {})),
-        ...(kind.after ?? []),
+        ...kind.after,
       ],
     });
     const motionPath = join(dirs.dir, 'probe.motion.json');
@@ -15957,6 +15972,12 @@ function runPathAndSliderSuite(): number {
       censusTable.push(`${kind.spelling} (${timeline.constructor.name}, additive ${String(declares)}) — nothing a pose can read`);
       continue;
     }
+    if (report.failures.some((one) => one.assertion === DRIVEN_RULE)) {
+      censusRows.push(
+        `${kind.spelling}: this fixture's own constraint is declared where the dials have already run, so what it measures is a ` +
+          `write nothing reads — ${report.failures.find((one) => one.assertion === DRIVEN_RULE)!.detail}`,
+      );
+    }
     const measured = ruleOf(kind, data);
     if (measured.rule === 'NEITHER closed form') {
       censusRows.push(`${kind.spelling}: two additive sliders put it ${measured.worst.toExponential(3)} from the nearer of the two closed forms`);
@@ -15987,7 +16008,12 @@ function runPathAndSliderSuite(): number {
       censusHeld,
       censusRows,
       `${SPELLING_CENSUS.length} spellings, each compiled under two additive sliders keying it to two different values and read at ` +
-        `${s644KindRows.length} cells of the two dials: ${censusTable.join('; ')}. ⇒ every observable one is exactly the sum or exactly ` +
+        `${s644KindRows.length} cells of the two dials — and every constraint one of them declares is declared AFTER the dials, which ` +
+        `is the only order in which that constraint READS what they wrote (#665: ` +
+        `${SPELLING_CENSUS.filter((one) => one.after.length > 0).length} rows declare a constraint of their own, and the ` +
+        `${SPELLING_CENSUS.filter((one) => one.after.some((entry) => String(entry.type) !== 'slider')).length} whose constraint is not ` +
+        `the driven slider sat the other way round until then, measuring these same numbers over a value nothing read): ` +
+        `${censusTable.join('; ')}. ⇒ every observable one is exactly the sum or exactly ` +
         `the later slider in the array, never something between; every spelling whose timeline declares itself additive is the sum; ` +
         `${censusDisagree} spelling(s) that declare themselves NON-additive are the sum anyway, which is what A40 cannot see; and with ` +
         'the later slider left at the format default every observable one collapses to that slider alone',
@@ -16634,7 +16660,6 @@ function runPathAndSliderSuite(): number {
   // rule that reports green where it has nothing to compare: the downward pair
   // is a measured PASS, the upward pair a FAIL by name, and a pair with no
   // driving key at all a SKIP that names the absence.
-  const DRIVEN_RULE = 'A42_DRIVEN_SLIDERS_UPDATE_AFTER_THEIR_DRIVER';
   const drivenRefusal = (report: ReturnType<typeof validate>): string | null =>
     report.failures.find((one) => one.assertion === DRIVEN_RULE)?.detail ?? null;
   /** How far the DRIVEN dial moves the shared bone, per reading of the driving dial — the axis the card calls dead. */
@@ -16676,7 +16701,7 @@ function runPathAndSliderSuite(): number {
     ...(unkeyedSkip === undefined
       ? [`two dials that key no slider at all left A42 ${unkeyedPair.passed.includes(DRIVEN_RULE) ? 'PASSING over nothing' : 'with no row of its own'}`]
       : []),
-    ...(unkeyedSkip !== undefined && !unkeyedSkip.reason.includes('drives another') ? [`the empty-population skip does not say what is absent: ${unkeyedSkip.reason}`] : []),
+    ...(unkeyedSkip !== undefined && !unkeyedSkip.reason.includes('drives a constraint') ? [`the empty-population skip does not say what is absent: ${unkeyedSkip.reason}`] : []),
   ];
   const orderHeld = orderProbes.length === 0;
   say(
@@ -16857,6 +16882,534 @@ function runPathAndSliderSuite(): number {
       "slider's own `mix` are both required, because a dead axis with a live `mix` would mean the key IS read and this " +
       'refusal is wrong',
   );
+
+  // =========================================================================
+  // 8. every OTHER constraint a dial can key, in both array orders (#665)
+  // =========================================================================
+  //
+  // 🚨 #658 named the slider→slider shape and its own landing measured that the
+  // same dead write reaches ANY earlier constraint. The `constraints` array is
+  // the update order for every kind — `Skeleton.updateCache` walks it and each
+  // constraint's `sort` pushes itself as it is reached, while `sortBone` pushes
+  // bones and never a constraint — and every kind opens its `update` by reading
+  // its own applied pose. So a dial keying an ik mix, a path `position`, a
+  // physics `wind` or another slider's `mix` is read only when the constraint
+  // comes LATER in the array.
+  //
+  // ⭐ What made that a card rather than a paragraph is that the constraint's
+  // own pose holds the composed number EITHER way: the census above sat in the
+  // dead order and measured the right arithmetic over a value nothing read.
+  // Both halves are required below — the pose identical in both orders, and
+  // what the constraint drives dead in one of them.
+  //
+  // 🔒 The plant is the data, as `PS156`'s is: the refused rig and the accepted
+  // one are the same constraint, the same dial, the same animation and the same
+  // keys, in the other array order. A rule reading the kind, the flags, the
+  // animation names or the arithmetic would be green on both or red on both.
+  const DRIVEN_TOP = 1;
+  const DRIVEN_WIND = 400;
+  const DRIVEN_PATH_TO = 0.9;
+  const DRIVEN_DIAL: ComposedDial = { name: 'dial', bone: 'yaw-dial', property: 'rotate', dial: GRID_YAW, rotate: 0, x: 0, steps: 5 };
+  const drivenReadings = dialSamples(DRIVEN_DIAL.dial, DRIVEN_DIAL.steps);
+  /** One constraint a dial's animation can key, and the two readings that tell the orders apart. */
+  interface DrivenKind {
+    /** The word `A42`'s message uses for the kind, and the runtime class it names. */
+    word: string;
+    runtime: string;
+    /** The property as the motion spec spells it — which the message has to carry. */
+    property: string;
+    constraint: Record<string, unknown>;
+    /** Rig blocks this constraint needs beside the bones. */
+    rig?: Record<string, unknown>;
+    /** The animation the dial applies. */
+    animation: Record<string, unknown>;
+    /** The constraint's own pose value: written in BOTH orders, which is the clause that separates a dead write from an absent one. */
+    pose: (skeleton: Skeleton) => number;
+    /** What the constraint drives — the only reading the array order changes. */
+    drives: (skeleton: Skeleton) => number;
+    /** Frames of simulation before a reading. Physics is the one kind with state of its own, and 30 frames is what lets it show. */
+    frames: number;
+  }
+  const worldAngleOf = (skeleton: Skeleton, bone: string): number => {
+    const pose = skeleton.bones.find((one) => one.data.name === bone)!.appliedPose;
+    return (Math.atan2(pose.c, pose.a) * 180) / Math.PI;
+  };
+  const worldXOf = (skeleton: Skeleton, bone: string): number => skeleton.bones.find((one) => one.data.name === bone)!.appliedPose.worldX;
+  const DRIVEN_KINDS: DrivenKind[] = [
+    {
+      word: 'ik',
+      runtime: 'IkConstraint',
+      property: 'ik',
+      constraint: { name: 'leg-ik', type: 'ik', bones: ['thigh', 'shin'], target: 'foot-target', mix: 0 },
+      animation: {
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [],
+        ik: [{ constraint: 'leg-ik', keys: [{ t: 0, mix: 0 }, { t: GRID_DURATION, mix: DRIVEN_TOP }] }],
+      },
+      pose: (skeleton) => skeleton.findConstraint('leg-ik', IkConstraint)!.appliedPose.mix,
+      drives: (skeleton) => skeleton.bones.find((one) => one.data.name === 'shin')!.appliedPose.worldY,
+      frames: 1,
+    },
+    {
+      word: 'transform',
+      runtime: 'TransformConstraint',
+      property: 'transform',
+      constraint: { name: 'aim-shin', type: 'transform', bones: ['shin'], source: 'aim', properties: { rotate: { to: { rotate: {} } } }, mixRotate: 0 },
+      animation: {
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [],
+        transform: [{ constraint: 'aim-shin', keys: [{ t: 0, mixRotate: 0 }, { t: GRID_DURATION, mixRotate: DRIVEN_TOP }] }],
+      },
+      pose: (skeleton) => skeleton.findConstraint('aim-shin', TransformConstraint)!.appliedPose.mixRotate,
+      drives: (skeleton) => worldAngleOf(skeleton, 'shin'),
+      frames: 1,
+    },
+    {
+      word: 'path',
+      runtime: 'PathConstraint',
+      property: 'position',
+      constraint: RIDE,
+      rig: {
+        slots: [
+          { name: 'block', bone: 'block', attachment: 'block' },
+          { name: 'marker', bone: 'block', attachment: 'marker' },
+          { name: 'track', bone: 'root', attachment: 'track' },
+        ],
+        skins: { default: { ...PROBE_DEFAULT_SKIN, track: { track: PATH_SPINE } } },
+      },
+      animation: {
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [
+          { path: 'ride', property: 'position', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [DRIVEN_PATH_TO] }] },
+          { path: 'ride', property: 'mix', keys: [{ t: 0, v: [0, 0, 0] }, { t: GRID_DURATION, v: [DRIVEN_TOP, DRIVEN_TOP, DRIVEN_TOP] }] },
+        ],
+      },
+      pose: (skeleton) => skeleton.findConstraint('ride', PathConstraint)!.appliedPose.position,
+      drives: (skeleton) => worldXOf(skeleton, 'rider'),
+      frames: 1,
+    },
+    {
+      word: 'physics',
+      runtime: 'PhysicsConstraint',
+      property: 'wind',
+      constraint: JIGGLE,
+      animation: {
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [{ physics: 'jiggle', property: 'wind', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [DRIVEN_WIND] }] }],
+      },
+      pose: (skeleton) => skeleton.findConstraint('jiggle', PhysicsConstraint)!.appliedPose.wind,
+      drives: (skeleton) => worldXOf(skeleton, 'tip'),
+      frames: 30,
+    },
+  ];
+  /** The two array orders, by the only thing that differs between them. */
+  const drivenRun = (
+    kind: DrivenKind,
+    constraintFirst: boolean,
+    constraintPatch: Record<string, unknown> = {},
+  ): { data: SkeletonData; report: ReturnType<typeof validate> } => {
+    const constraint = { ...kind.constraint, ...constraintPatch };
+    const dirs = writeProbeRig({
+      bones: RESIDUAL_BONES,
+      ...(kind.rig ?? {}),
+      constraints: constraintFirst ? [constraint, s644Slider(DRIVEN_DIAL)] : [s644Slider(DRIVEN_DIAL), constraint],
+    });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        { spec: 'rigc-motion/1', archetype: 'static_probe', cut: 'static_probe', easings: {}, animations: { [`${DRIVEN_DIAL.name}-pose`]: kind.animation } },
+        null,
+        2,
+      )}\n`,
+    );
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return {
+      data: posableFromText(built.skeletonText, built.atlasText, dirs.outDir).data,
+      report: validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: dirs.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile: 'spine',
+      }),
+    };
+  };
+  const drivenSweep = (kind: DrivenKind, data: SkeletonData): Array<{ at: number; pose: number; drives: number }> =>
+    drivenReadings.map((at) => {
+      const skeleton = new Skeleton(data);
+      skeleton.setupPose();
+      s644SetDial(skeleton, DRIVEN_DIAL.bone, DRIVEN_DIAL.property, at);
+      for (let frame = 0; frame < kind.frames; frame++) {
+        skeleton.update(1 / 60);
+        skeleton.updateWorldTransform(Physics.update);
+      }
+      return { at, pose: kind.pose(skeleton), drives: kind.drives(skeleton) };
+    });
+  const drivenSpan = (values: number[]): number => Math.max(...values) - Math.min(...values);
+  /** `s644KindFloor`'s own derivation, taken off the readings a sweep produced rather than off a dial's amplitudes. */
+  const drivenFloorOf = (values: number[]): number => Math.max(1, ...values.map((one) => Math.abs(one))) * Number.EPSILON * GRID_FLOAT_OPS;
+  const drivenRows: string[] = [];
+  const drivenSays: string[] = [];
+  for (const kind of DRIVEN_KINDS) {
+    const name = String(kind.constraint.name);
+    const dead = drivenRun(kind, true);
+    const live = drivenRun(kind, false);
+    const deadCells = drivenSweep(kind, dead.data);
+    const liveCells = drivenSweep(kind, live.data);
+    const deadDrives = deadCells.map((cell) => cell.drives);
+    const liveDrives = liveCells.map((cell) => cell.drives);
+    const floor = drivenFloorOf([...deadDrives, ...liveDrives]);
+    const poseFloor = drivenFloorOf(deadCells.map((cell) => cell.pose));
+    const refusal = drivenRefusal(dead.report);
+    const poseApart = Math.max(...deadCells.map((cell, i) => Math.abs(cell.pose - liveCells[i].pose)));
+    drivenRows.push(
+      ...(refusal === null
+        ? [`${kind.word} constraint "${name}" declared BEFORE the dial is not refused by A42 — the gate said: ${dead.report.failures.map((one) => one.assertion).join(', ') || 'nothing at all'}`]
+        : [`constraints[0]`, `constraints[1]`, name, DRIVEN_DIAL.name, `\`${kind.property}\``, `${kind.word} constraint`, `\`${kind.runtime}.update\``].flatMap((term) =>
+            refusal.includes(term) ? [] : [`the ${kind.word} refusal does not name ${term}`],
+          )),
+      ...(live.report.failures.length === 0 ? [] : [`${kind.word} constraint "${name}" declared AFTER the dial does not gate green: ${live.report.failures.map((one) => `${one.assertion}: ${one.detail}`).join('; ')}`]),
+      ...(live.report.passed.includes(DRIVEN_RULE) ? [] : [`A42 did not MEASURE the ${kind.word} pair in the order that works — a rule that only ever refuses or skips has no positive control on this kind`]),
+      ...(drivenSpan(deadDrives) > floor
+        ? [`with the ${kind.word} constraint first the dial still moves what it drives by ${drivenSpan(deadDrives).toExponential(3)}, so "dead" is not what this fixture poses`]
+        : []),
+      ...(drivenSpan(liveDrives) > floor
+        ? []
+        : [`with the ${kind.word} constraint last the dial moves what it drives by nothing either, so the comparison cannot see which order the refusal is about`]),
+      ...(poseApart > poseFloor
+        ? [`the ${kind.word} constraint's own pose is not the same in both orders (${poseApart.toExponential(3)} apart), so the refused rig fails to write rather than failing to be read`]
+        : []),
+      ...(drivenSpan(deadCells.map((cell) => cell.pose)) > poseFloor
+        ? []
+        : [`the ${kind.word} constraint's own pose never moves in the refused order, so this fixture cannot tell a value written and unread from one never written`]),
+    );
+    drivenSays.push(
+      `${kind.word} "${name}" — \`${kind.property}\` posed ${deadCells[0].pose.toFixed(6)}..${deadCells[deadCells.length - 1].pose.toFixed(6)} in BOTH orders ` +
+        `(${poseApart.toExponential(3)} apart), what it drives ${drivenSpan(deadDrives).toExponential(3)} with the constraint first against ` +
+        `${drivenSpan(liveDrives).toExponential(3)} with it last`,
+    );
+  }
+  const drivenHeld = drivenRows.length === 0;
+  say(
+    'PS158_A_DIAL_THAT_DRIVES_AN_IK_TRANSFORM_PATH_OR_PHYSICS_CONSTRAINT_THE_ARRAY_HAS_ALREADY_RUN_IS_REFUSED_TOO',
+    drivenHeld,
+    probeDetail(
+      drivenHeld,
+      drivenRows,
+      `${DRIVEN_KINDS.length} kinds of constraint a dial's animation can key, each compiled twice — once declared before the ` +
+        `dial and once after it, with nothing else changed — and read at ${drivenReadings.length} positions of the dial: ` +
+        `${drivenSays.join('; ')}. ⇒ the constraint's own pose holds the same ramp whichever way round the array is written, ` +
+        `and what the constraint DRIVES is dead in one of them: A42 refuses every upward pair by name, naming both array ` +
+        `indices, the property, the kind and the runtime class whose \`update\` does the reading, and MEASURES every ` +
+        `downward one, which gates green. The float64 floor is derived per kind from the readings themselves`,
+      (count) => `${count} clause(s) of the update-order rule did not hold on a constraint that is not a slider:`,
+    ),
+    'issue #665: #658 stated the rule for a slider driving a slider and its own landing measured that the hole is the ' +
+      'whole `constraints` array — an ik mix, a path `position`, a physics `wind` keyed from a dial that updates after ' +
+      'them is a write nothing reads, and the tree\'s own census fixtures sat in exactly that order. The two-sided pose ' +
+      'is what makes the refusal a measurement rather than a reading of the runtime\'s source: the same rig, the same ' +
+      'keys, the two array orders, and one of them poses a dead axis. The pose clause is the other half — the value IS ' +
+      'written in both orders, so a rule that fired on "the key did nothing" would be describing a different defect',
+  );
+
+  // =========================================================================
+  // 9. the one spelling the card asked for that a reorder does not repair
+  // =========================================================================
+  //
+  // 🚨 `physics` `reset` is in the card's population and is refuted here.
+  // `PhysicsConstraintResetTimeline` writes no pose at all — `constraint.reset()`
+  // sets fields on the constraint object, which `resetConstrained` never touches
+  // — and it fires only when a frame time is CROSSED. A slider applies its
+  // animation with its own `p.time` as both `lastTime` and `time`, so nothing is
+  // ever crossed and the key does nothing in EITHER array order. Refusing it
+  // with A42's sentence would name a reorder that repairs nothing, so the rule
+  // leaves it out and the SKIP says what it found instead.
+  //
+  // 🔒 The measurement is the pose and not a counter: the fixture lags a physics
+  // constraint behind a bone the same animation turns, which is exactly what a
+  // reset destroys — and posing the same skeleton under `Physics.reset` shows
+  // that reading go to zero, so a reset that HAD fired would be visible here.
+  // ⚠️ What A42 says about the rig is printed rather than gated, because a later
+  // rule that refuses this spelling for what it really is would be an
+  // improvement and a clause requiring today's silence would go red on it.
+  const RESET_FRAMES = 3;
+  const RESET_TURN = 60;
+  const resetAnimation = (keyed: boolean): Record<string, unknown> => ({
+    duration: GRID_DURATION,
+    loop: false,
+    tracks: [
+      { bone: 'block', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [RESET_TURN] }] },
+      ...(keyed ? [{ physics: 'jiggle', property: 'reset', keys: [{ t: 0, v: null }, { t: GRID_DURATION, v: null }] }] : []),
+    ],
+  });
+  const resetRun = (keyed: boolean, constraintFirst: boolean): { data: SkeletonData; report: ReturnType<typeof validate> } => {
+    const dirs = writeProbeRig({
+      bones: RESIDUAL_BONES,
+      constraints: constraintFirst ? [JIGGLE, s644Slider(DRIVEN_DIAL)] : [s644Slider(DRIVEN_DIAL), JIGGLE],
+    });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        { spec: 'rigc-motion/1', archetype: 'static_probe', cut: 'static_probe', easings: {}, animations: { [`${DRIVEN_DIAL.name}-pose`]: resetAnimation(keyed) } },
+        null,
+        2,
+      )}\n`,
+    );
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return {
+      data: posableFromText(built.skeletonText, built.atlasText, dirs.outDir).data,
+      report: validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: dirs.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile: 'spine',
+      }),
+    };
+  };
+  /**
+   * How far the physics constraint has pulled the bone away from where the same
+   * frames put it with no physics at all.
+   *
+   * 🔒 The dial is TURNED across the frames rather than held at a reading:
+   * physics reacts to movement, so a held pose settles and lags by nothing —
+   * and a fixture that lags by nothing is one a reset could not be seen in.
+   */
+  const resetLag = (data: SkeletonData, at: number, physics: Physics): number => {
+    const tipAt = (mode: Physics): { x: number; y: number } => {
+      const skeleton = new Skeleton(data);
+      skeleton.setupPose();
+      for (let frame = 0; frame < RESET_FRAMES; frame++) {
+        s644SetDial(skeleton, DRIVEN_DIAL.bone, DRIVEN_DIAL.property, (at * (frame + 1)) / RESET_FRAMES);
+        skeleton.update(1 / 60);
+        skeleton.updateWorldTransform(mode);
+      }
+      const tip = skeleton.bones.find((one) => one.data.name === 'tip')!.appliedPose;
+      return { x: tip.worldX, y: tip.worldY };
+    };
+    const held = tipAt(physics);
+    const free = tipAt(Physics.none);
+    return Math.hypot(held.x - free.x, held.y - free.y);
+  };
+  const resetKeyedFirst = resetRun(true, true);
+  const resetKeyedLast = resetRun(true, false);
+  const resetPlainFirst = resetRun(false, true);
+  const resetPlainLast = resetRun(false, false);
+  const resetLags = (data: SkeletonData, physics: Physics = Physics.update): number[] => drivenReadings.map((at) => resetLag(data, at, physics));
+  const resetPlain = resetLags(resetPlainLast.data);
+  const resetFirstLags = resetLags(resetKeyedFirst.data);
+  const resetLastLags = resetLags(resetKeyedLast.data);
+  const resetPlainFirstLags = resetLags(resetPlainFirst.data);
+  const resetForced = resetLags(resetKeyedLast.data, Physics.reset);
+  const resetFloor = drivenFloorOf([...resetPlain, ...resetFirstLags, ...resetLastLags]);
+  const resetApart = (a: number[], b: number[]): number => Math.max(...a.map((one, i) => Math.abs(one - b[i])));
+  const resetSkip = (report: ReturnType<typeof validate>): string | null =>
+    report.skipped.find((one) => one.assertion === DRIVEN_RULE)?.reason ?? null;
+  const resetProbes: string[] = [
+    ...(Math.max(...resetPlain) > resetFloor
+      ? []
+      : ['the physics constraint lags the bone by nothing at all on this fixture, so a reset would have nothing to destroy and this control measures nothing']),
+    ...(resetApart(resetFirstLags, resetPlainFirstLags) > resetFloor
+      ? [`with the constraint FIRST the reset key changes the pose by ${resetApart(resetFirstLags, resetPlainFirstLags).toExponential(3)}, so it is not the dead key this rule leaves out`]
+      : []),
+    ...(resetApart(resetLastLags, resetPlain) > resetFloor
+      ? [`with the constraint LAST the reset key changes the pose by ${resetApart(resetLastLags, resetPlain).toExponential(3)}, so the reorder A42 would advise IS the repair after all and the spelling belongs in the rule`]
+      : []),
+    ...(Math.max(...resetForced) > resetFloor
+      ? [`posing the same skeleton under Physics.reset still lags by ${Math.max(...resetForced).toExponential(3)}, so this reading cannot see a reset that did happen`]
+      : []),
+    ...(resetSkip(resetKeyedFirst.report) !== null && !resetSkip(resetKeyedFirst.report)!.includes('reset')
+      ? [`A42 skips the reset rig without naming the key it found: ${resetSkip(resetKeyedFirst.report)}`]
+      : []),
+    // ⭐ What is gated about the rule's own behaviour is the REPAIR it names,
+    // not its silence. A later assertion that refuses this spelling for what it
+    // is would be an improvement and must be able to land; one that refuses it
+    // with A42's own sentence would be telling an author to reorder an array
+    // this control has just measured a reorder to do nothing to.
+    ...((drivenRefusal(resetKeyedFirst.report) ?? '').includes('Move ') || (drivenRefusal(resetKeyedLast.report) ?? '').includes('Move ')
+      ? [`A42 tells an author to move the array entries for a reset key, and this control has just measured both orders to pose the same thing: ${drivenRefusal(resetKeyedFirst.report) ?? drivenRefusal(resetKeyedLast.report)}`]
+      : []),
+    ...(resetKeyedFirst.report.failures.length === 0
+      ? []
+      : [`the reset rig does not gate green: ${resetKeyedFirst.report.failures.map((one) => `${one.assertion}: ${one.detail}`).join('; ')}`]),
+  ];
+  const resetHeld = resetProbes.length === 0;
+  say(
+    'PS159_A_PHYSICS_RESET_KEYED_FROM_A_DIAL_FIRES_IN_NEITHER_ARRAY_ORDER_SO_THE_UPDATE_ORDER_RULE_LEAVES_IT_OUT',
+    resetHeld,
+    probeDetail(
+      resetHeld,
+      resetProbes,
+      `a physics constraint lagging a bone the dial's own animation turns ${RESET_TURN}°, read at ${drivenReadings.length} positions of ` +
+        `the dial turned over ${RESET_FRAMES} frames each: with the constraint declared AFTER the dial the lag reaches ` +
+        `${Math.max(...resetPlain).toFixed(6)} without a reset key on the animation, and adding one moves it by ` +
+        `${resetApart(resetLastLags, resetPlain).toExponential(3)}; with the constraint declared BEFORE the dial the same key moves it by ` +
+        `${resetApart(resetFirstLags, resetPlainFirstLags).toExponential(3)} — against a floor of ${resetFloor.toExponential(3)}. ` +
+        `⭐ That earlier order lags by ${Math.max(...resetPlainFirstLags).toExponential(3)} to begin with, reset key or not: the ` +
+        `constraint runs before the slider poses the bone it watches, so it never sees the bone move at all. ` +
+        `Posing the same skeleton under \`Physics.reset\` puts that lag at ${Math.max(...resetForced).toExponential(3)}, which is what a ` +
+        `reset that HAD fired would read as. ⇒ the key is dead in BOTH orders, so the reorder A42 advises would repair nothing and ` +
+        `the spelling is out of its population. A42 says: ${
+          drivenRefusal(resetKeyedFirst.report) === null
+            ? `${resetSkip(resetKeyedFirst.report) === null ? 'nothing at all' : `SKIP — "${resetSkip(resetKeyedFirst.report)}"`}`
+            : `FAIL — "${drivenRefusal(resetKeyedFirst.report)}"`
+        }`,
+      (count) => `${count} clause(s) of the reset exclusion did not hold:`,
+    ),
+    'issue #665 asks for "every constraint a slider\'s animation keys" and this is the one spelling that refutes: ' +
+      '`PhysicsConstraintResetTimeline` fires on a CROSSED frame time and a slider applies its animation at one instant ' +
+      '(`p.time` as both ends), so the key never fires at all — reordering the array repairs nothing, and a refusal ' +
+      'whose remedy is the reorder would be wrong about what to do. The measurement is a pose rather than a call ' +
+      'counter, and the `Physics.reset` reading is what makes it two-sided: it shows the same number this control ' +
+      'requires to be unmoved going to zero when a reset really does happen. What A42 says is printed, not gated, so a ' +
+      'later rule that names this spelling for what it is can land without reddening this control',
+  );
+
+  // =========================================================================
+  // 10. the physics timeline that names no constraint (#665)
+  // =========================================================================
+  //
+  // ⚠️ `SkeletonJson` reads a physics timeline whose animation names the empty
+  // string as `constraintIndex -1`, and `PhysicsConstraintTimeline.apply` writes
+  // that value into EVERY active physics constraint whose own data declares the
+  // property global. No rig spec reaches it — the compiler refuses a track that
+  // names a physics constraint the rig does not declare, the empty name among
+  // them — but `rigc validate` gates files rigc did not write, and this is the
+  // one shape where the rule has to look past the timeline's own index.
+  //
+  // 🔒 The negative control is the flag rather than the order: the same forged
+  // file with `windGlobal` absent reaches no constraint at all, and A42 has to
+  // stay quiet about it. Without that half the rule could be reading the index
+  // alone and would refuse a foreign file whose timeline writes nothing.
+  const globalForge = (windGlobal: boolean, constraintFirst: boolean): { report: ReturnType<typeof validate>; forged: string } => {
+    const jiggle = { ...JIGGLE, ...(windGlobal ? { windGlobal: true } : {}) };
+    const dirs = writeProbeRig({
+      bones: RESIDUAL_BONES,
+      constraints: constraintFirst ? [jiggle, s644Slider(DRIVEN_DIAL)] : [s644Slider(DRIVEN_DIAL), jiggle],
+    });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-motion/1',
+          archetype: 'static_probe',
+          cut: 'static_probe',
+          easings: {},
+          animations: {
+            [`${DRIVEN_DIAL.name}-pose`]: {
+              duration: GRID_DURATION,
+              loop: false,
+              tracks: [{ physics: 'jiggle', property: 'wind', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [DRIVEN_WIND] }] }],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    // The forge, structural: the animation's physics table is re-keyed from the
+    // constraint's name to the empty one, which is the spelling the parser reads
+    // as -1. Nothing else in the file moves.
+    const parsed = JSON.parse(built.skeletonText) as { animations: Record<string, { physics?: Record<string, unknown> }> };
+    const table = parsed.animations[`${DRIVEN_DIAL.name}-pose`].physics!;
+    table[''] = table[String(JIGGLE.name)];
+    delete table[String(JIGGLE.name)];
+    const forged = `${JSON.stringify(parsed, null, 2)}\n`;
+    return {
+      report: validate({
+        skeletonText: forged,
+        atlasText: built.atlasText,
+        atlasDir: dirs.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile: 'spine',
+      }),
+      forged,
+    };
+  };
+  const globalFirst = globalForge(true, true);
+  const globalLast = globalForge(true, false);
+  const globalUnflagged = globalForge(false, true);
+  const globalRefusal = drivenRefusal(globalFirst.report);
+  const globalProbes: string[] = [
+    ...(globalRefusal === null
+      ? [`a global physics timeline keyed from a dial the array has already run is not refused — the gate said: ${globalFirst.report.failures.map((one) => one.assertion).join(', ') || 'nothing at all'}`]
+      : [String(JIGGLE.name), 'constraints[0]', 'constraints[1]', '`wind`', 'names no constraint'].flatMap((term) =>
+          globalRefusal.includes(term) ? [] : [`the global refusal does not name ${term}`],
+        )),
+    ...(drivenRefusal(globalLast.report) === null ? [] : ['A42 refuses the global timeline in the order that works, where every physics constraint it reaches updates after the dial']),
+    ...(globalLast.report.passed.includes(DRIVEN_RULE) ? [] : ['A42 did not MEASURE the global timeline in the order that works']),
+    ...(drivenRefusal(globalUnflagged.report) === null
+      ? []
+      : [`A42 refuses the same forged file with \`windGlobal\` absent, where the timeline reaches no constraint at all: ${drivenRefusal(globalUnflagged.report)}`]),
+  ];
+  const globalHeld = globalProbes.length === 0;
+  const globalSpelling = (() => {
+    try {
+      drivenRun(DRIVEN_KINDS[3], true, { name: 'jiggle' });
+      const dirs = writeProbeRig({ bones: RESIDUAL_BONES, constraints: [JIGGLE, s644Slider(DRIVEN_DIAL)] });
+      const motionPath = join(dirs.dir, 'probe.motion.json');
+      writeFileSync(
+        motionPath,
+        `${JSON.stringify(
+          {
+            spec: 'rigc-motion/1',
+            archetype: 'static_probe',
+            cut: 'static_probe',
+            easings: {},
+            animations: {
+              [`${DRIVEN_DIAL.name}-pose`]: {
+                duration: GRID_DURATION,
+                loop: false,
+                tracks: [{ physics: '', property: 'wind', keys: [{ t: 0, v: [0] }, { t: GRID_DURATION, v: [DRIVEN_WIND] }] }],
+              },
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+      return 'compiled, so a rig spec DOES reach the global spelling';
+    } catch (error) {
+      return `refused at compile: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`;
+    }
+  })();
+  say(
+    'PS160_A_PHYSICS_TIMELINE_NAMING_NO_CONSTRAINT_IS_EVERY_GLOBAL_ONE_AND_THE_SAME_RULE_REACHES_THE_ONES_ALREADY_RUN',
+    globalHeld,
+    probeDetail(
+      globalHeld,
+      globalProbes,
+      `a file rigc did not write: the emitted skeleton's own \`wind\` timeline re-keyed from "${JIGGLE.name}" to the empty name, which ` +
+        `\`SkeletonJson\` reads as \`constraintIndex -1\` and \`PhysicsConstraintTimeline.apply\` writes into every active physics ` +
+        `constraint declaring that property global. With the constraint declared before the dial A42 refuses it by name and names ` +
+        `the constraint the timeline reaches; with it declared after, A42 MEASURES the same forged file and passes; and with ` +
+        `\`windGlobal\` absent from the rig spec — so the timeline reaches nothing — A42 is ${
+          drivenRefusal(globalUnflagged.report) === null ? 'silent' : 'NOT silent'
+        }. ⚠️ No rig spec reaches this spelling: a motion track naming the empty physics constraint is ${globalSpelling}. The forged ` +
+        `file is not otherwise green and is not meant to be — the rest of the gate says ${
+          globalFirst.report.failures.filter((one) => one.assertion !== DRIVEN_RULE).map((one) => one.assertion).join(', ') || 'nothing'
+        } about a constraint timeline naming nothing`,
+      (count) => `${count} clause(s) of the global-timeline rule did not hold:`,
+    ),
+    'issue #665: the rule is keyed on two array indices, and this is the one timeline shape that has no index of its ' +
+      'own — the population it drives is a property of the SKELETON rather than of the timeline. Leaving it out would ' +
+      'have been a silent hole on exactly the input `rigc validate` exists for, a file somebody else emitted. The ' +
+      '`windGlobal` half is the control that keeps the rule honest: it reads the flag the runtime reads, so a foreign ' +
+      'file whose global timeline writes into nothing at all is not refused for an order that cannot hurt it',
+  );
+
   return bad;
 }
 
