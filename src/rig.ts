@@ -638,6 +638,85 @@ export interface RigMeshAttachment {
 }
 
 /**
+ * A mesh that borrows another mesh's geometry — Spine's `linkedmesh`, the type
+ * a skin variant uses to draw its own art over one triangulation.
+ *
+ * 🔑 **`source` is the source attachment's PLACEHOLDER — the key it is filed
+ * under in its skin — and not its `name`.** The resolution is
+ * `skin.getAttachment(sourceSlotIndex, source)` (`SkeletonJson.js:433`), and a
+ * skin's table is keyed by the JSON key `readSkin` iterated (`:415-418`), so a
+ * contested placeholder rigc gives an attachment `name` of `<skin>/<placeholder>`
+ * is still found under the placeholder alone.
+ *
+ * 🚨 **A linked mesh states no geometry of its own, and the parser is silent
+ * about one that does.** The `source` branch returns before `readVertices`
+ * (`:582-586`), so `uvs`, `triangles`, `vertices`, `weights`, `hull` and `edges`
+ * on a link are read by nothing at all. Measured on a forged skeleton: a link
+ * declaring 5 uvs, 3 triangles, `hull: 5` and `edges: [0, 2]` beside a 4-vertex
+ * source loaded with the SOURCE's 8-long `worldVerticesLength`, 6 triangles,
+ * `hullLength` 8 and 10 edges — the numbers the author wrote reached nothing and
+ * nothing said so. rigc refuses them by name.
+ *
+ * ⚠️ `width`/`height` are the link's own art, and the RUNTIME overwrites both
+ * with the source's at resolution time (`MeshAttachment.setSourceMesh`,
+ * `:102-103`; measured: a link stating 99x77 beside a 32x32 source loads as
+ * 32x32). They are emitted because the editor reads them off the file and
+ * because the spec stated them, and the gate cannot see them — which is the
+ * reason this note exists rather than an assertion.
+ */
+export interface RigLinkedMeshAttachment {
+  type: 'linkedmesh';
+  /** The art this link draws, exactly as a mesh's: its own region. */
+  path?: string;
+  image?: string;
+  /**
+   * The placeholder of the mesh whose geometry this one borrows. Required — and
+   * required in the strong sense: `getValue(map, "source", null)` is FALSY-tested
+   * (`:582`), so an absent or empty `source` is not a link at all and the parser
+   * falls through to `map.uvs`, which a link does not have, and throws.
+   */
+  source: string;
+  /**
+   * The slot the source lives in. Default: **the link's own slot**
+   * (`sourceIndex = slotIndex`, `:571-580`). Resolved by name; a slot the rig
+   * does not declare is refused.
+   */
+  slot?: string;
+  /**
+   * The skin the source lives in. Default: **the default skin**
+   * (`!linkedMesh.skin ? skeletonData.defaultSkin : findSkin(...)`, `:429`).
+   * Resolved by name; a skin the rig does not declare is refused.
+   */
+  skin?: string;
+  /**
+   * Whether the link plays the source's deform keys. Default **true**, which
+   * also sets `timelineAttachment` to the source and adds this link's slot to
+   * the source's `timelineSlots` when the two differ (`:437-448`). `false` makes
+   * the link its own `timelineAttachment`, so only keys written against the link
+   * itself move it.
+   */
+  timelines?: boolean;
+  width?: number;
+  height?: number;
+  color?: string;
+  /**
+   * 🚫 Every geometry field a mesh may state, refused by name on a link. They
+   * are declared for the reason `RigPathAttachment.lengths` is: a key the shape
+   * does not hold at all comes back as *keys this compiler does not read … fix
+   * the spelling or remove it*, and the remedy sentence is wrong here — the
+   * fault is not a typo, it is that the parser reads none of them on a link.
+   */
+  uvs?: number[];
+  triangles?: number[];
+  vertices?: number[];
+  weights?: RigMeshBinding[][];
+  boneIndexing?: 'name' | 'raw';
+  hull?: number;
+  edges?: number[];
+  generator?: RigMeshGenerator;
+}
+
+/**
  * The geometry every non-region attachment shares: a polygon, either pinned to
  * one bone or weighted across several.
  *
@@ -768,17 +847,19 @@ export interface RigPathAttachment extends RigVertexGeometry {
  * an unknown `type` and drop the attachment without a word
  * (`SkeletonJson.ts:653`).
  *
- * 🚧 Neither appears anywhere in the benchmark corpus (SPEC_COVERAGE parts 3-1
- * and 4-2), so neither is on the ladder's critical path — which is the reason
- * they are deferred rather than an oversight.
+ * 🚧 It appears nowhere in the benchmark corpus (SPEC_COVERAGE parts 3-1 and
+ * 4-2), so it is not on the ladder's critical path — which is the reason it is
+ * deferred rather than an oversight. `linkedmesh` stood here beside it until
+ * issue #691; `RigLinkedMeshAttachment` is the shape that replaced it.
  */
 export interface RigUnimplementedAttachment {
-  type: 'point' | 'linkedmesh';
+  type: 'point';
   [field: string]: unknown;
 }
 
 export type RigAttachment =
   | RigRegionAttachment
+  | RigLinkedMeshAttachment
   | RigMeshAttachment
   | RigBoundingBoxAttachment
   | RigClippingAttachment
@@ -1465,6 +1546,11 @@ export const RIG_KEYS = {
     'type', 'path', 'image', 'uvs', 'triangles', 'vertices', 'weights', 'boneIndexing', 'hull', 'edges',
     'width', 'height', 'color', 'generator',
   ],
+  RigLinkedMeshAttachment: [
+    'type', 'path', 'image', 'source', 'slot', 'skin', 'timelines', 'width', 'height', 'color',
+    // Declared so the refusal can name them — see `RigLinkedMeshAttachment`.
+    'uvs', 'triangles', 'vertices', 'weights', 'boneIndexing', 'hull', 'edges', 'generator',
+  ],
   RigMeshBinding: ['bone', 'x', 'y', 'weight'],
   RigBoundingBoxAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type'],
   RigClippingAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type', 'end', 'convex', 'inverse'],
@@ -1497,6 +1583,7 @@ const CONSTRAINT_SHAPE: Record<string, keyof typeof RIG_KEYS> = {
 const ATTACHMENT_SHAPE: Record<string, keyof typeof RIG_KEYS> = {
   region: 'RigRegionAttachment',
   mesh: 'RigMeshAttachment',
+  linkedmesh: 'RigLinkedMeshAttachment',
   boundingbox: 'RigBoundingBoxAttachment',
   clipping: 'RigClippingAttachment',
   path: 'RigPathAttachment',
@@ -1587,18 +1674,19 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
         if (!isObj(att)) continue;
         const who = `skin "${skinName}" slot "${slot}" attachment "${placeholder}"`;
         // `type` absent means `region` — the parser's own default (`:539`).
-        const type = att.type === undefined ? 'region' : String(att.type);
-        const shape = ATTACHMENT_SHAPE[type];
-        if (shape === undefined) continue;
         // A mesh carrying `source` is a LINKED mesh — `type: "mesh"` and
         // `type: "linkedmesh"` share one parser branch and the `source` key is
-        // what decides (`:568-569`, `:582`; SPEC_COVERAGE part 1-6). It has no
-        // key set here because `RigUnimplementedAttachment` deliberately has
-        // none, and checking it against a MESH's keys named the wrong fault:
-        // *2 keys this compiler does not read: "source", "skin" … fix the
-        // spelling or remove it*, where removing `source` is what unmakes the
-        // linked mesh. `buildRigAttachment` refuses it as the construct it is.
-        if (type === 'mesh' && att.source !== undefined) continue;
+        // what decides (`:568-569`, `:582`; SPEC_COVERAGE part 1-6). So its keys
+        // are checked against the LINK's shape whichever of the two spellings it
+        // used: against a mesh's the fault came out as *2 keys this compiler does
+        // not read: "source", "skin" … fix the spelling or remove it*, where
+        // removing `source` is what unmakes the linked mesh. Until issue #691
+        // this branch skipped the check entirely, because the construct had no
+        // key set of its own to check against.
+        const stated = att.type === undefined ? 'region' : String(att.type);
+        const type = stated === 'mesh' && att.source !== undefined ? 'linkedmesh' : stated;
+        const shape = ATTACHMENT_SHAPE[type];
+        if (shape === undefined) continue;
         at(att, shape, `${who} (${type})`);
         for (const [i, vertex] of (Array.isArray(att.weights) ? att.weights : []).entries()) {
           for (const [j, binding] of (Array.isArray(vertex) ? vertex : []).entries()) {

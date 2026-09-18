@@ -402,7 +402,7 @@ const ANIMATION_GROUPS = ['bones', 'slots', 'ik', 'transform', 'path', 'physics'
 const HEADER_REDERIVED = ['spine'];
 
 /** The attachment types this module inverts. Everything else is refused by name. */
-const ATTACHMENT_TYPES = ['region', 'mesh', 'boundingbox', 'clipping', 'path'];
+const ATTACHMENT_TYPES = ['region', 'mesh', 'linkedmesh', 'boundingbox', 'clipping', 'path'];
 
 /**
  * The slot timelines the motion spec carries — `compileTrack`'s own table,
@@ -921,7 +921,25 @@ function ingestAttachment(
 
   const vertexCount = typeof att.vertexCount === 'number' ? att.vertexCount : undefined;
 
-  if (type === 'region') {
+  // A LINKED mesh, in either of the format's two spellings. The test is the
+  // parser's own — one branch for `mesh` and `linkedmesh`, and a truthy `source`
+  // decides (`SkeletonJson.js:568-569`, `:582`) — so `type: "mesh"` carrying
+  // `source` inverts to a link, and a `linkedmesh` with none does NOT: that map
+  // is read as an ordinary mesh, whose `uvs` it does not have, and the parser
+  // throws on it. Reading the second as a link would be this module inventing a
+  // construct the file does not contain (issue #691).
+  const linked = (type === 'mesh' || type === 'linkedmesh') && typeof att.source === 'string' && att.source.length > 0;
+
+  if (linked) {
+    out.type = 'linkedmesh';
+    carryArt();
+    out.source = att.source;
+    // Only what the file states. `slot`, `skin` and `timelines` each have a
+    // parser default (this attachment's slot, the default skin, true), and
+    // writing one the source omitted would be a rebuild that says more than the
+    // file did — and `buildRigLinkedMesh` drops it again on the way back out.
+    for (const field of ['slot', 'skin', 'timelines', 'color']) if (att[field] !== undefined) out[field] = att[field];
+  } else if (type === 'region') {
     carryArt();
     for (const field of ['x', 'y', 'rotation', 'scaleX', 'scaleY', 'color']) {
       if (att[field] !== undefined) out[field] = att[field];
@@ -968,8 +986,8 @@ function ingestAttachment(
       `ATTACHMENT_${type.toUpperCase()}`,
       at.where,
       `attachment type ${JSON.stringify(type)} is in the Spine 4.3 format and rigc does not emit it (it emits ` +
-        `${ATTACHMENT_TYPES.join(', ')}; point and linkedmesh are deferred — docs/SPEC_COVERAGE.md part 1-6 says ` +
-        'what each would carry). The rebuild will not have this attachment',
+        `${ATTACHMENT_TYPES.join(', ')}; point is the one deferred type left — docs/SPEC_COVERAGE.md part 1-6 says ` +
+        'what it would carry). The rebuild will not have this attachment',
     );
     return out;
   }

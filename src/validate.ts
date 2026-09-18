@@ -617,6 +617,37 @@ export function attachmentRegionJoins(raw: unknown): AttachmentRegionJoin[] {
 }
 
 /**
+ * `"<skin>\0<slot>\0<placeholder>" -> source` for every linked mesh the raw
+ * skeleton declares (issue #691).
+ *
+ * 🔑 The test is the parser's own and it is not `type`: `type: "mesh"` and
+ * `type: "linkedmesh"` share one branch and a truthy `source` is what decides
+ * between them (`SkeletonJson.js:568-569`, `:582`). An empty `source` is falsy
+ * there, so it is not a link here either — that map is read as an ordinary mesh,
+ * which is exactly what the runtime does with it.
+ */
+function rawLinkedMeshSources(raw: unknown): Map<string, string> {
+  const links = new Map<string, string>();
+  if (!isObj(raw) || !Array.isArray(raw.skins)) return links;
+  for (const skin of raw.skins as unknown[]) {
+    if (!isObj(skin) || !isObj(skin.attachments)) continue;
+    const skinName = typeof skin.name === 'string' ? skin.name : '(unnamed)';
+    for (const [slot, entries] of Object.entries(skin.attachments)) {
+      if (!isObj(entries)) continue;
+      for (const [placeholder, entry] of Object.entries(entries)) {
+        if (!isObj(entry)) continue;
+        const type = entry.type === undefined ? 'region' : entry.type;
+        if (type !== 'mesh' && type !== 'linkedmesh') continue;
+        const source = entry.source;
+        if (typeof source !== 'string' || source.length === 0) continue;
+        links.set(`${skinName}\u0000${slot}\u0000${placeholder}`, source);
+      }
+    }
+  }
+  return links;
+}
+
+/**
  * How long the array a deform key edits is, read off one raw attachment — or
  * `null` when the file does not say.
  *
@@ -1657,9 +1688,26 @@ export function validate(input: ValidateInput): ValidateReport {
   const meshAttachments: MeshAttachment[] = [];
   let clippingCount = 0;
   const meshSlots = new Set<number>();
+  /**
+   * The loaded mesh of every attachment the FILE spells as a link, to the
+   * `source` it names (issue #691).
+   *
+   * 🔑 Read off the raw JSON and joined by (skin, slot, placeholder) rather than
+   * asked of the loaded object, because `MeshAttachment.sourceMesh` is **private
+   * with no accessor** (`MeshAttachment.d.ts:50`) and `as any` is not available
+   * in `src/`. The join is the parser's own: `readSkin` keys a skin's table by
+   * the JSON key (`SkeletonJson.js:415-418`) and `SkinEntry.placeholder` is that
+   * same key, so the two sides cannot drift.
+   *
+   * ⚠️ It is a Map of the LOADED object and not a set of names, because a
+   * placeholder is unique only within one skin's slot and several skins fill
+   * one — and every assertion downstream holds the attachment, not its address.
+   */
+  const linkedMeshes = new Map<MeshAttachment, string>();
 
   if (skeletonData) {
     const data = skeletonData as NonNullable<typeof skeletonData>;
+    const rawLinks = rawLinkedMeshSources(raw);
     for (const skin of data.skins) {
       for (const entry of skin.getAttachments()) {
         const att = entry.attachment;
@@ -1667,6 +1715,8 @@ export function validate(input: ValidateInput): ValidateReport {
         else if (att instanceof MeshAttachment) {
           meshAttachments.push(att);
           meshSlots.add(entry.slotIndex);
+          const source = rawLinks.get(`${skin.name}\u0000${data.slots[entry.slotIndex].name}\u0000${entry.placeholder}`);
+          if (source !== undefined) linkedMeshes.set(att, source);
         } else if (att instanceof ClippingAttachment) clippingCount++;
       }
     }
@@ -2015,12 +2065,41 @@ export function validate(input: ValidateInput): ValidateReport {
      * that was never a ring — 40 failures on correct data (issue #44).
      */
     const kindOf = (target: MeshAttachment): RigInfo['meshKinds'][string] => {
+      // 🔗 A LINKED mesh borrows another attachment's geometry, so no generator
+      // topology is a claim about THIS attachment — and the ARTIFACT says which
+      // ones they are (`linkedMeshes`, read off the file's own `source` keys).
+      // It is read from there rather than off `meshKinds` for two reasons, and
+      // the second is the load-bearing one.
+      //
+      //   1. `meshKinds` is keyed by SLOT, and a link's slot is not its
+      //      geometry's: a link to a `ring` in another slot looked up the LINK's
+      //      slot, found nothing, and took the `|| 'ring'` fallback — issue #44's
+      //      own default, reached by a new route. Measured before this clause on
+      //      a correct rig (a ring on slot "sa", a link to it on slot "sb"):
+      //      **8 A21 failures**, `mesh "sb" rim vertex 0 is pinned to "a", not
+      //      the slot bone "b"`, one per hull vertex. The rim is pinned exactly
+      //      where the ring's own slot put it, which is the only place it could
+      //      be.
+      //   2. Writing the link into `meshKinds` instead would have overwritten
+      //      the source's kind wherever the two share a slot, which is the
+      //      commonest linked mesh there is — silencing A21 on the mesh rigc
+      //      DID build. A gate turned off by a feature is worse than a gate
+      //      that skips something it cannot measure.
+      if (linkedMeshes.has(target)) return 'authored';
       const slot = slotOfAttachment(target);
       return (slot && input.rig?.meshKinds[slot]) || 'ring';
     };
-    /** Meshes rigc did not build, by name — the reason string several skips need. */
+    /**
+     * Meshes whose topology is not rigc's to have an opinion about, by name and
+     * with the reason each one is on the list — the string several skips need.
+     */
     const authoredMeshNames = (list: MeshAttachment[]): string[] =>
-      list.filter((m) => kindOf(m) === 'authored').map((m) => `"${m.name}"`);
+      list
+        .filter((m) => kindOf(m) === 'authored')
+        .map((m) => {
+          const source = linkedMeshes.get(m);
+          return source === undefined ? `"${m.name}"` : `"${m.name}" (linked to "${source}")`;
+        });
 
     check('A20_MESH_WEIGHTS_COHERENT', () => {
       if (meshAttachments.length === 0) return skip('A20_MESH_WEIGHTS_COHERENT', SKIP_NO_MESH_ATTACHMENT);
@@ -2131,16 +2210,17 @@ export function validate(input: ValidateInput): ValidateReport {
       if (!meshAttachments.some((m) => m.bones)) {
         return skip('A21_MESH_RIM_PINNED', 'the skeleton has no weighted mesh attachment, so there is no rim to find unpinned');
       }
-      // An authored mesh has no rim rigc drew and no entry row rigc placed, so
-      // there is nothing here to measure against. Nothing to measure is a SKIP —
-      // never a pass, and never a failure on somebody else's correct geometry.
+      // An authored mesh has no rim rigc drew and no entry row rigc placed, and
+      // a linked mesh has no rim of its OWN at all — the one it draws belongs to
+      // its source, and is measured there. Nothing to measure is a SKIP — never
+      // a pass, and never a failure on somebody else's correct geometry.
       const measurable = meshAttachments.filter((m) => m.bones && kindOf(m) !== 'authored');
       if (measurable.length === 0) {
         const authored = authoredMeshNames(meshAttachments.filter((m) => m.bones));
         return skip(
           'A21_MESH_RIM_PINNED',
-          `every weighted mesh here is authored geometry (${authored.join(', ')}), not a rigc ring or ribbon — ` +
-            'rigc did not place its rim, so it has no rim of its own to find unpinned',
+          `every weighted mesh here is authored or linked geometry (${authored.join(', ')}), not a rigc ring or ` +
+            'ribbon — rigc did not place its rim, so it has no rim of its own to find unpinned',
         );
       }
       for (const mesh of measurable) {
@@ -4326,6 +4406,13 @@ export function validate(input: ValidateInput): ValidateReport {
       for (const entry of skin.getAttachments()) {
         const mesh = entry.attachment;
         if (!(mesh instanceof MeshAttachment) || !mesh.bones) continue;
+        // 🔗 A LINKED mesh's rows are its source's and are paired there. Skipped
+        // for A21's reason and with A21's failure mode behind it: this reads
+        // `meshKinds` at the LINK's slot, which says nothing about the geometry
+        // the link borrowed, so a link sitting in a ribbon's slot from another
+        // skin would be measured twice and a link to a NON-ribbon in a ribbon's
+        // slot would be measured as a strip it was never built as (issue #691).
+        if (linkedMeshes.has(mesh)) continue;
         if (input.rig.meshKinds[data.slots[entry.slotIndex].name] !== 'ribbon') continue;
         const perVertex = meshWeightsOf(mesh);
         if (perVertex.length % 2 !== 0) {

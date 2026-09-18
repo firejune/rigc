@@ -496,7 +496,7 @@ the first:
 
 | gutter | meaning |
 | --- | --- |
-| `BLOCK` | the spec format cannot say it, so the rebuild will **not** be the file that was read — `linkedmesh`, `point`, an attachment `sequence`, an unknown field on a bone, slot or constraint, a timeline family the motion spec has no track for. The command exits non-zero **and still writes both specs**, because a spec plus a list of what is missing from it beats no spec |
+| `BLOCK` | the spec format cannot say it, so the rebuild will **not** be the file that was read — `point`, an attachment `sequence`, an unknown field on a bone, slot or constraint, a timeline family the motion spec has no track for. The command exits non-zero **and still writes both specs**, because a spec plus a list of what is missing from it beats no spec |
 | `JUDGE` | the skeleton cannot answer and somebody has to: the stage, and each animation's duration |
 | `LOSS` | the skeleton's spelling and rigc's differ, on purpose, and the line says how. A path attachment's `lengths` is the one that matters — it is `PathConstraint`'s own four-sample measurement rather than an arc length (#560), so a transcribed one would freeze whatever produced the source. The header ones are cheaper: `HEADER_BOOKKEEPING` for a field the spec has no home for, `HEADER_REDERIVED` for the version string, `HEADER_ORIGIN` for an origin the source left to the format and the rebuild writes out (#622) |
 
@@ -1190,6 +1190,60 @@ rather than the figure it was filed over:
 [`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash)'s
 README carries the inradius arithmetic, both coverage readings, and the rim move
 that settled it.
+
+**Linked mesh** ([Spine: linked meshes](http://esotericsoftware.com/spine-meshes)) —
+a mesh that draws **another mesh's geometry** with **its own art**. It is the type
+a skin variant uses: one triangulation and one set of weights, several outfits over
+it. Say `type: "linkedmesh"`, or put `source` on a `type: "mesh"` — the format has
+both spellings, they share one parser branch, and `source` is what decides between
+them (`SkeletonJson.ts:568-569`, `:582`), so rigc reads them the same way.
+
+| Field | Meaning |
+| --- | --- |
+| `source` | **required.** The **placeholder** of the mesh whose geometry this one draws — the key it is filed under in its skin, not its `name`. A miss is refused naming the skin, the slot and what that slot holds |
+| `slot` | the slot the source lives in. Default: **this attachment's own slot**. Resolved by name against the rig's slots |
+| `skin` | the skin the source lives in. Default: **`default`** — the default skin, *not* the skin this link is written in. Resolved by name |
+| `timelines` | default **`true`**: the link plays the source's `deform` keys. `false` makes it its own timeline target, so only keys written against the link move it |
+| `image`, `path`, `width`, `height`, `color` | exactly as on a mesh — the link resolves **its own** region, which is the point of the type |
+
+```json
+"skins": {
+  "base": { "cloak": { "cloak": { "type": "mesh", "image": "cloak_red.png", "uvs": [], "triangles": [], "weights": [] } } },
+  "winter": { "cloak": { "cloak": { "type": "linkedmesh", "image": "cloak_blue.png", "source": "cloak", "skin": "base" } } }
+}
+```
+
+🚨 **A linked mesh states no geometry of its own, and every geometry key on one is
+refused by name.** `uvs`, `triangles`, `vertices`, `weights`, `boneIndexing`,
+`hull`, `edges` and `generator` are read by **nothing**: the parser returns from
+the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`). Measured on
+a forged skeleton — a link declaring 5 uvs, 3 triangles, `hull: 5` and
+`edges: [0, 2]` beside a 4-vertex source loaded with the **source's** 8-long
+`worldVerticesLength`, 6 triangles, `hullLength` 8 and 10 edges. Nothing the author
+wrote reached anything and nothing said so.
+
+🚫 **A chain is refused, and so is a link to itself.** A `source` that names
+another linked mesh resolves in the order the file was read: measured through
+spine-core, the chained link loaded the full geometry with the source declared
+first, and `worldVerticesLength` **0**, 0 triangles and a 0x0 size with the two
+keys swapped in the same file — silently, both ways. A construct whose meaning
+depends on JSON key order is one rigc will not write. Point `source` at the mesh.
+
+⚠️ **`width`/`height` are emitted and the gate cannot see them.** The runtime
+overwrites both with the source's when it resolves the link
+(`MeshAttachment.setSourceMesh`; measured: a link stating `99x77` beside a 32x32
+source loads as 32x32). They are written because the editor reads them off the
+file and because the spec stated them — R1 — and no assertion can check them.
+
+🔸 **`A21_MESH_RIM_PINNED` and `A28_RIBBON_ROWS_SHARE_WEIGHTS` leave a link out**,
+for the same reason they leave authored geometry out: the rim and the rows it draws
+are its source's and are measured there. `A21` drops it from the set it measures and
+**SKIPs by name** — naming the link and its source — when that leaves nothing;
+`A28` passes over it. `A04`, `A20` and `A22` read a link exactly as they read any
+other mesh, because after the round trip it **is** the source's triangles, weights
+and uvs. `A13_MESH_BUDGET` counts it as a mesh of its own: the runtime draws it as
+one, so a link in a second slot is a second mesh slot against
+`invariants.meshSlots`.
 
 The generators are `ring`, `ribbon`, `contour` and `grid` (see
 [`src/mesh.ts`](../src/mesh.ts)); the first two encode a deformation model rather
@@ -4511,7 +4565,14 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG` | §3.4 — the same rule for a mesh |
 | `"type" is null, which is not a name. An attachment's type is one of region, mesh, linkedmesh, … or the key is absent and reads as "region"` | §6 — **remove the key**. Absent is the format's own default; present-and-null matches no parser case and the attachment is dropped in silence |
 | `attachment type "X" is not one of the 7 the Spine 4.3 format defines (…)` | §6 — a name the format does not have. Not a deferral, and not something rigc will grow: fix the spelling (`sequence` is a key on a region or a mesh, not a type) |
-| `this attachment is a "linkedmesh"` / `"point"` … `rigc does not emit it yet` | §6 — a construct the format has and rigc does not write. The message says what it would carry; SPEC_COVERAGE part 1-6 is the row it reads from |
+| `this attachment is a "point" … rigc does not emit it yet` | §6 — a construct the format has and rigc does not write. The message says what it would carry; SPEC_COVERAGE part 1-6 is the row it reads from |
+| `a linked mesh needs "source" — the PLACEHOLDER of the mesh whose geometry it draws …` | §3.4 — `source` is what MAKES a mesh linked, and the parser falsy-tests it, so an absent or empty one is read as an ordinary mesh and throws on the `uvs` a link has not got |
+| `a linked mesh states "uvs", "triangles", …, and a linked mesh has no geometry of its own` | §3.4 — remove them, or remove `source` and author this as a mesh. The parser returns before `readVertices`, so those keys are read by nothing at all |
+| `"source" is "X", and skin "S" … slot "L" … holds 2: "a", "b"` | §3.4 — `source` is the PLACEHOLDER the source is filed under, not its `name`. A clause after the skin and after the slot says whether each was stated or taken from the parser's default — **the default skin** and **this attachment's own slot**, which is the pair that surprises |
+| `"slot" is "X", which the rig does not declare as a slot` / `"skin" is "X", … the rig declares no such skin` | §3.4 — a link resolves both by name. Left to the round trip these are the runtime's `Source mesh slot not found` and `Skin not found`, which name neither the attachment nor where it looked |
+| `"source" is "X", which is itself a linked mesh, and a chain of them is refused` | §3.4 — point `source` at the mesh. A chain resolves in file order and loads nothing at all in one of the two orders, silently |
+| `"source" is "X", which is a "region" attachment and not a mesh` | §3.4 — a link takes another MESH's geometry; off any other type the runtime reads `undefined` and says nothing |
+| `a linked mesh needs width and height — give them, or give an "image" and rigc will measure the PNG` | §3.4 — the mesh rule, on a link. Its art is its own |
 | `hull N disagrees with the triangles, whose outline has K vertices (0 → …)` | §3.4 — delete `hull`, or state K |
 | `hull vertices must come first; vertex i is on the boundary and vertex j is not. The triangles' outline runs …: list those K vertices first, in that order, then the M interior vertices` | §3.4 — renumber the vertices: the printed walk first, then the interior |
 | `hull vertices must trace the outline in order; the triangles' outline runs …, so vertex a has to follow vertex b in the list, and vertex c does` | §3.4 — renumber along the printed walk |
@@ -4747,10 +4808,12 @@ own behaviour is worse: an unknown attachment `type` returns `null` and the
 attachment disappears, and a constraint entry with an unrecognised `type` matches no
 case and vanishes.
 
-A deferral carries its reason, and the reason is the same one in every deferred row:
-**neither of those types appears anywhere in the benchmark corpus** (SPEC_COVERAGE
-parts 3-1 and 4-2), so neither is on the ladder's critical path. The message
-says so, because a deferral without its reason is a wall rather than a work item.
+A deferral carries its reason, and there is one deferred attachment type left:
+**`point` appears nowhere in the benchmark corpus** (SPEC_COVERAGE parts 3-1 and
+4-2), so it is not on the ladder's critical path. The message says so, because a
+deferral without its reason is a wall rather than a work item. `linkedmesh` stood
+beside it until [#691](https://github.com/firejune/rigc/issues/691) and is now
+emitted — §3.4 has its fields.
 
 ⚠️ **A spelling the format does not have is a different refusal and says so.**
 `sequence` is not an attachment type, and a `"type"` that is `null` is not an absent
@@ -4761,8 +4824,8 @@ are `CompileError`s, and they name what the format actually defines
 
 | You wrote | You get |
 | --- | --- |
-| attachment `type` of `point` or `linkedmesh` | `this attachment is a "linkedmesh" — a mesh that takes its geometry from another mesh instead of stating any — a region/mesh head, then "source" …. rigc does not emit it yet, deliberately: it emits region, mesh, boundingbox, clipping, path, and neither a point nor a linked mesh appears anywhere in the benchmark corpus …` — the message names the **construct**, not just its type string, and part 1-6 is where the sentence comes from |
-| a mesh carrying `source` (`type: "mesh"` **or** `type: "linkedmesh"`) | the same refusal, prefixed `(a mesh carrying "source" is one)`. The two spellings share one parser branch and `source` is what decides between them (SPEC_COVERAGE part 1-6), so `source` on a mesh is a linked mesh whatever `type` says. It used to be refused as *2 keys this compiler does not read: "source", "skin" … fix the spelling or remove it*, whose remedy destroys the construct ([#577](https://github.com/firejune/rigc/issues/577)) |
+| attachment `type` of `point` | `this attachment is a "point" — a position and an angle with no geometry at all — "x", "y", "rotation" and "color" …. rigc does not emit it yet, deliberately: it emits region, mesh, linkedmesh, boundingbox, clipping, path, and a point appears nowhere in the benchmark corpus …` — the message names the **construct**, not just its type string, and part 1-6 is where the sentence comes from |
+| a mesh carrying `source` (`type: "mesh"` **or** `type: "linkedmesh"`) | **not a refusal any more** — both spellings compile to a linked mesh (§3.4, [#691](https://github.com/firejune/rigc/issues/691)). They share one parser branch and `source` is what decides between them (SPEC_COVERAGE part 1-6), so `source` on a mesh is a linked mesh whatever `type` says. It was once refused as *2 keys this compiler does not read: "source", "skin" … fix the spelling or remove it*, whose remedy destroys the construct ([#577](https://github.com/firejune/rigc/issues/577)) |
 | attachment `type` of anything else — `sequence`, a typo | `attachment type "X" is not one of the 7 the Spine 4.3 format defines (region, mesh, linkedmesh, boundingbox, path, point, clipping). … the attachment is dropped from the skeleton without a word` — a **`CompileError`**, not a deferral: rigc is not going to implement a name the format does not have. (`sequence` is a key on a region or a mesh, not a type of its own.) |
 | `"type": null` | `"type" is null, which is not a name. … PRESENT-and-null is not absent: getValue(map, "type", "region") takes the default only when the key is missing, so this map matches no case, readAttachment returns null, and the attachment is dropped from the skeleton without a word. Remove the key, or name a type.` Leaving the key **out** is legal and reads as `region`; writing it as `null` is not the same thing ([#577](https://github.com/firejune/rigc/issues/577)) |
 | constraint `type` of anything else | `constraint type "X" is not one Spine 4.3 knows. The five are: ik, transform, path, physics, slider.` — all five are emitted, so this is a typo, and a typo is what the parser drops in silence |
