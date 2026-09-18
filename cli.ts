@@ -57,7 +57,7 @@ import {
   type BoneDistReport,
 } from './src/bonedist.ts';
 import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type CheckReport } from './src/check.ts';
-import { compile, CompileError, relativeImagesPath, type CompileOptions } from './src/compile.ts';
+import { compile, CompileError, droppedStateReason, relativeImagesPath, type CompileOptions } from './src/compile.ts';
 import {
   skeletonDataFromText,
   surveyDeformKeys,
@@ -125,7 +125,7 @@ import {
 } from './src/validate.ts';
 import { parseMotionSpec } from './src/motion.ts';
 import { depthStepLevels, type FoldLimit, type TurnCeiling } from './src/depth.ts';
-import type { CompileResult } from './src/types.ts';
+import type { CompileResult, DroppedState } from './src/types.ts';
 
 /**
  * One entry of a cuts.json, every path relative to the cuts.json file.
@@ -1133,6 +1133,19 @@ function readIntFlag(flags: Record<string, string>, name: string, fallback: numb
   return Number(raw);
 }
 
+/**
+ * One `DROP` line, written once because two outcomes print it.
+ *
+ * A build that succeeds prints it in its report; a build that REFUSES prints it
+ * under the refusal (issue #671), and the two have to be the same line or the
+ * failing run would be quoting a different fact from the one the green run
+ * shows. What it names — a file or a region — is `droppedStateReason`'s, in the
+ * compiler, beside the code that decided which of the two was consulted.
+ */
+function dropLine(dropped: DroppedState): string {
+  return `  DROP  ${dropped.slot}/${dropped.state}: ${droppedStateReason(dropped)} (state not emitted)`;
+}
+
 function cmdBuild(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
   const profile = readProfile(flags);
@@ -1195,9 +1208,7 @@ function cmdBuild(flags: Record<string, string>): void {
             : ` scale ${img.atlasScale} (${img.atlas.originalWidth}x${img.atlas.originalHeight} texels)`);
     console.log(`  ..      ${img.region.padEnd(24)} ${img.width}x${img.height}  <- ${where}`);
   }
-  for (const d of result.droppedStates) {
-    console.log(`  DROP  ${d.slot}/${d.state}: ${d.why ?? `no PNG at ${d.path}`} (state not emitted)`);
-  }
+  for (const d of result.droppedStates) console.log(dropLine(d));
   // "The optional slots are optional" is a claim about this code path, so this
   // code path says which ones it left out rather than being silently right.
   for (const a of result.absentParts) {
@@ -2720,8 +2731,12 @@ function cmdExplain(flags: Record<string, string>): void {
   }
 
   if (result.droppedStates.length) {
-    console.log('\ndropped states (listed in the manifest, no PNG on disk)');
-    for (const d of result.droppedStates) console.log(`  ${d.slot}/${d.state}  ${d.path}`);
+    // The heading said "no PNG on disk" and the line printed the path, on a
+    // command that takes `--atlas-in` like `build` does — so an explain of a
+    // pack build named a file it never opened. Same renderer as the other two
+    // printers now, for the same reason they share one (issue #671).
+    console.log('\ndropped states (listed in the manifest, no art behind them)');
+    for (const d of result.droppedStates) console.log(`  ${d.slot}/${d.state}  ${droppedStateReason(d)}`);
   }
 
   console.log('\nmix table (player config, not skeleton JSON)');
@@ -3413,6 +3428,13 @@ try {
   }
   if (err instanceof CompileError) {
     console.error(`rigc compile error: ${err.message}`);
+    // The drops the compile recorded before it stopped, in the same line the
+    // green build prints (issue #671). They were reported from the compile
+    // RESULT alone, so the run that failed BECAUSE a file was missing was the
+    // one run that never named the file. On stderr with the refusal rather than
+    // on stdout, so redirecting one stream does not separate a fact from the
+    // sentence it explains.
+    for (const dropped of err.droppedStates ?? []) console.error(dropLine(dropped));
     process.exit(1);
   }
   if (err instanceof CheckError) {

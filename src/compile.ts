@@ -109,6 +109,7 @@ import {
 import type {
   CompileResult,
   CompiledImage,
+  DroppedState,
   EasingHandles,
   FaceManifest,
   FaceManifestPart,
@@ -1523,7 +1524,42 @@ function plateAlpha(plate: Plate): Uint8Array {
   return alpha;
 }
 
+/**
+ * What a dropped state says was consulted and came up empty.
+ *
+ * ⭐ One renderer, because two printers and a refusal all say this same fact and
+ * they used to be three separate expressions. The `--atlas-in` half is the
+ * reason it matters: a build that resolved parts against a pack opened no PNG,
+ * so "no PNG at parts/x.png" would be a false statement about it and would send
+ * the reader to a directory instead of to the pack that is short a region.
+ */
+export function droppedStateReason(dropped: DroppedState): string {
+  return dropped.why ?? `no PNG at ${dropped.path}`;
+}
+
+/**
+ * Compile a rig spec and a motion spec into Spine 4.3 skeleton data.
+ *
+ * The body is `compileInto`; this wrapper exists for one reason, and it is the
+ * whole of issue #671's second half: the states a manifest listed and the art
+ * was missing for are reported from the compile RESULT, which a throw never
+ * returns. So the run whose refusal was CAUSED by a missing file was the one
+ * run that never named the file. Annotating whatever was thrown — rather than
+ * re-wrapping it, which would cost a `NotImplementedError` its class — carries
+ * those facts out of every refusal raised after the drop was recorded, not only
+ * out of the one that consults them.
+ */
 export function compile(opts: CompileOptions): CompileResult {
+  const droppedStates: DroppedState[] = [];
+  try {
+    return compileInto(opts, droppedStates);
+  } catch (err) {
+    if (err instanceof CompileError && droppedStates.length > 0) err.droppedStates = [...droppedStates];
+    throw err;
+  }
+}
+
+function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): CompileResult {
   const rigPath = resolve(opts.rigPath);
   const motionPath = resolve(opts.motionPath);
   const outDir = resolve(opts.outDir);
@@ -1605,7 +1641,8 @@ export function compile(opts: CompileOptions): CompileResult {
   // -- 1. gather images ------------------------------------------------------
   // Region name = attachment name = PNG basename.
   const images: CompiledImage[] = [];
-  const droppedStates: CompileResult['droppedStates'] = [];
+  // `droppedStates` is the caller's array rather than a local one, so a refusal
+  // raised further down still leaves the drops somewhere `compile` can read.
   const seenRegions = new Set<string>();
   /**
    * Region name -> the absolute path of the file whose pixels that region holds.
@@ -2006,13 +2043,52 @@ export function compile(opts: CompileOptions): CompileResult {
       );
     }
     if (setupAttachment !== null && !names.includes(setupAttachment)) {
-      throw new CompileError(
-        empty
-          ? `the setup pose shows attachment "${setupAttachment}" on slot "${rigSlot.name}", which no skin and no ` +
-            'manifest part fills — the slot is emitted empty, so there is no such attachment to show. Give the ' +
-            'slot an attachment, or state the setup pose as null'
-          : `setup attachment "${setupAttachment}" for slot "${rigSlot.name}" is not one of [${names.join(', ')}]`,
-      );
+      // 🚨 The slot can be empty for two different reasons and the sentence
+      // below used to state only one of them (issue #671). "no skin and no
+      // manifest part fills it" is FALSE when a manifest part does fill it and
+      // its art was not found: every art-bearing state of that part was
+      // dropped, which is why `names` came back empty, and the drop record is
+      // the only place the path lives. An author handed the old sentence
+      // applied its remedy — setup pose `null` — and shipped a rig with the
+      // part missing, green, because the compiler had described the wrong
+      // object. `empty` with no drops keeps that sentence: there the claim is
+      // true.
+      const dropped = droppedStates.filter((d) => d.slot === rigSlot.name);
+      let message: string;
+      if (!empty) {
+        message = `setup attachment "${setupAttachment}" for slot "${rigSlot.name}" is not one of [${names.join(', ')}]`;
+      } else if (dropped.length === 0) {
+        message =
+          `the setup pose shows attachment "${setupAttachment}" on slot "${rigSlot.name}", which no skin and no ` +
+          'manifest part fills — the slot is emitted empty, so there is no such attachment to show. Give the ' +
+          'slot an attachment, or state the setup pose as null';
+      } else {
+        // Every state listed here has no art AND the slot is empty, which is
+        // not a coincidence: a state whose art WAS found puts a region in
+        // `names`, so a slot reaching this branch has had all of them dropped.
+        // That is what lets the sentence quantify rather than hedge.
+        const many = dropped.length > 1;
+        const found = dropped.map((d) => `"${d.state}" (${droppedStateReason(d)})`).join(', ');
+        // ⚠️ The remedy is read off the DELIVERY, not off the shape of the
+        // message: an `--atlas-in` build opened no file, so "restore the file"
+        // would be advice about a directory nobody consulted — the same wrong
+        // subject one step further on. It is `atlasIn` that decides, because
+        // `atlasIn` is also what decided the `why` above.
+        const supply =
+          atlasIn === null
+            ? many
+              ? 'restore the files'
+              : 'restore the file'
+            : many
+              ? 'add the regions to the pack'
+              : 'add the region to the pack';
+        message =
+          `the setup pose shows attachment "${setupAttachment}" on slot "${rigSlot.name}", and the slot is emitted ` +
+          `empty because ${many ? `all ${dropped.length} manifest states that fill it have` : 'the one manifest state that fills it has'} ` +
+          `no art: ${found} — ${supply}, ${many ? 'fix the paths' : 'fix the path'} in the manifest, or state the ` +
+          'setup pose as null';
+      }
+      throw new CompileError(message);
     }
     if (setup?.color && rigSlot.color !== undefined) {
       throw new CompileError(`slot "${rigSlot.name}" has a setup colour in the rig spec AND in the motion spec`);

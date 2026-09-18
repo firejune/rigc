@@ -342,6 +342,28 @@ One limit, stated rather than discovered:
   pack is a `DROP`, not a refusal — the same documented absence a missing PNG has
   always been, and the line names the atlas rather than a file nobody opened.
 
+⭐ **The missing PNG it is the same rule as, spelled out**, because it was left
+implicit here and the two halves are read together. A `states:` entry whose PNG is
+not on disk is a `DROP` too, and the line names the file rather than the pack:
+
+```bash
+# --atlas-in:  DROP  lens_l/shut: no region "lens_l_shut" in export/atlas.atlas (state not emitted)
+# loose PNGs:  DROP  lens_l/shut: no PNG at parts/lens_l_shut.png (state not emitted)
+```
+
+Either way the slot is emitted **empty** and the build is green — which is right
+while nothing poses that state, and wrong the moment something does. So when the
+setup pose names it, the build is refused, and the refusal names the state and
+what was consulted for it rather than the slot alone (§5.1). ⚠️ Its remedy is
+**not** the `null` the neighbouring message offers: posing `null` builds a rig
+with that part missing, at exit 0 and a green gate. Restore the art, or fix the
+path the manifest states.
+
+🔑 **A refused build prints its `DROP` lines too**, under the refusal on stderr,
+and did not before [#671](https://github.com/firejune/rigc/issues/671): they were
+reported from the compile result and a refusal returns none, so the one output
+naming the file was missing from exactly the run that failed over it.
+
 A **turned** region is not one of them, and used to be (issue #570). A pack made
 by somebody else routinely rotates a region to save space — `rotate: 90`,
 `rotate: 180`, `rotate: 270`, or the format's older `rotate: true` — and rigc
@@ -4351,7 +4373,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `two bones are called "X"` | bone names are the join key; rename one |
 | `slot "X" names bone "Y", which this rig does not declare` | add the bone, or fix the slot's `bone` |
 | `no setup pose for slot "X": give the motion spec a \`setup\` entry or the rig slot an \`attachment\`` | R3 — pick one file and declare it there. A slot **nothing** fills is exempt: its setup pose can only be "show nothing" and is not asked for |
-| `the setup pose shows attachment "A" on slot "X", which no skin and no manifest part fills` | §3.3 — the slot is emitted empty, so `A` resolves to nothing. Give the slot an attachment (a skin entry or a manifest part), or state the setup pose as `null` |
+| `the setup pose shows attachment "A" on slot "X", which no skin and no manifest part fills` | §3.3 — the slot is emitted empty and nothing was ever going to fill it, so `A` resolves to nothing. Give the slot an attachment (a skin entry or a manifest part), or state the setup pose as `null` |
+| `the setup pose shows attachment "A" on slot "X", and the slot is emitted empty because the one manifest state that fills it has no art: "s" (no PNG at p)` | §0.2 — a **different** fault with a similar shape: a manifest part does fill this slot and its art was not where the manifest pointed, so every state of it was dropped. **Restore the file or fix the path** — posing `null` compiles, but it ships the rig with that part missing and the gate green. The path printed is the one rigc tried, which is what tells a deleted file from a misspelt `states:` entry; `all N manifest states that fill it have no art` is the same message where the part has more than one. Under `--atlas-in` the same sentence reads `no region "R" in <atlas>` and asks you to add the region to the pack — no file was opened ([#671](https://github.com/firejune/rigc/issues/671)) |
 | `a region needs width and height — give them, or give an "image" and rigc will measure the PNG` | add `image`, or both sizes |
 | `a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG` | §3.4 — the same rule for a mesh |
 | `"type" is null, which is not a name. An attachment's type is one of region, mesh, linkedmesh, … or the key is absent and reads as "region"` | §6 — **remove the key**. Absent is the format's own default; present-and-null matches no parser case and the attachment is dropped in silence |

@@ -1271,26 +1271,37 @@ export interface RigInfo {
   inwardUnit: [number, number] | null;
 }
 
+/**
+ * A state the manifest lists whose art was not where the manifest said.
+ *
+ * Named rather than written inline in `CompileResult` because it outlives the
+ * result: a compile that REFUSES returns nothing, and the drops it recorded on
+ * the way to that refusal are facts about the inputs the caller still has to be
+ * told (issue #671). `CompileError.droppedStates` carries them, and it can only
+ * do that if the shape has a name.
+ */
+export interface DroppedState {
+  slot: string;
+  state: string;
+  path: string;
+  /**
+   * What was consulted and came up empty, when it was not a file on disk.
+   *
+   * Absent on the ordinary path, where "no PNG at <path>" says everything. An
+   * `--atlas-in` build opened no such file — it looked for a REGION — so
+   * reporting the path would send the reader to a directory instead of to the
+   * pack that is missing it.
+   */
+  why?: string;
+}
+
 export interface CompileResult {
   skeleton: SpineSkeletonJson;
   skeletonText: string;
   atlasText: string;
   images: CompiledImage[];
   /** States listed in the manifest whose PNG is not on disk. */
-  droppedStates: Array<{
-    slot: string;
-    state: string;
-    path: string;
-    /**
-     * What was consulted and came up empty, when it was not a file on disk.
-     *
-     * Absent on the ordinary path, where "no PNG at <path>" says everything. An
-     * `--atlas-in` build opened no such file — it looked for a REGION — so
-     * reporting the path would send the reader to a directory instead of to the
-     * pack that is missing it.
-     */
-    why?: string;
-  }>;
+  droppedStates: DroppedState[];
   /**
    * Parts the manifest declares and the cut does not carry (`image: null`, no
    * states). Reported rather than swallowed: "the optional slots are optional" is
