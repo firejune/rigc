@@ -4112,6 +4112,40 @@ a real key in the wrong case leads the list), and the shape's whole key set is
 printed after. What it will *not* do is guess — a key four edits from anything gets
 no suggestion, only the set.
 
+⭐ **The scan runs before the required keys are asked for, in both files**, and
+that is what decides which message a *misspelled* required key gets. Misspelling
+one is the commonest way to lose it, so it is refused as the typo it is rather than
+as the thing it lost:
+
+```
+rigc compile error: rig.json: this rig spec has a key this compiler does not read:
+"slot" (did you mean "slots"?). Nothing reads such a key, so it would be dropped
+from the emitted skeleton in silence — fix the spelling or remove it. Known here:
+bones, constraints, events, images, invariants, name, note, skeleton, skins, slots,
+spec.
+```
+
+A key that is **genuinely** absent has no near miss to name, so the scan finds
+nothing and the required-key message below it is what arrives — `a rig spec needs a
+"slots" array (it may be empty; its ORDER is the draw order)` here, and
+`` `animations` is absent; … `` in a motion spec. Read the two apart by that:
+**"does not read"** means the key *is* in your file, spelt some other way, and
+**"needs a …"** / **"is absent"** means it is not in the file at all. Where both
+are true at once — a typo beside a key that really is missing — the typo is named
+first, because it is the one you can fix without re-reading the file. Until
+[#672](https://github.com/firejune/rigc/issues/672) the rig spec's required-key
+checks ran *above* its scan, so `"slot"` for `"slots"` printed the sentence asking
+for an array the file already had, one character off, and never named the stray
+key; the motion spec has always had this order.
+
+⚠️ One check stays above the scan in both parsers: the `spec` version tag. The
+version is what decides *which* key set applies, so a file declaring a version this
+compiler does not know is refused as that — `unknown rig spec version "rigc-rig/2",
+expected "rigc-rig/1"` — rather than key by key against a set it never claimed. The
+price is paid by one spelling: a misspelt `spec` key itself reads as `unknown rig
+spec version undefined, expected "rigc-rig/1"`, which is true and one line short of
+naming the typo.
+
 ⚠️ There is **no forward-compatibility escape**, and no `note` field except where
 one is listed: a rig spec's root, a motion spec's root, an animation, and a
 `physics` tuning entry. Prose anywhere else has to go in a document, because a key
@@ -4163,6 +4197,9 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 
 | Message | What to change |
 | --- | --- |
+| `a rig spec needs a "name" — a motion spec names it to pick this rig` | §3 — name the rig, and make the motion spec's `archetype` equal it |
+| `a rig spec needs a non-empty "bones" array` | §3.2 — a rig with no bones has nothing to hang a slot on; every one has at least a root |
+| `a rig spec needs a "slots" array (it may be empty; its ORDER is the draw order)` | §3.3 — write `[]` for a rig that draws nothing. ⚠️ These three arrive only when the key is really absent: **misspelt**, it is the unknown-key refusal above, naming what you wrote |
 | `bone "X" names parent "Y", which is not declared before it` | move `Y` earlier in `bones` |
 | `two bones are called "X"` | bone names are the join key; rename one |
 | `slot "X" names bone "Y", which this rig does not declare` | add the bone, or fix the slot's `bone` |
