@@ -90,11 +90,14 @@ import {
   DeformTimeline,
   EventTimeline,
   IkConstraint,
+  IkConstraintData,
   MeshAttachment,
   PathAttachment,
   PathConstraint,
+  PathConstraintData,
   Physics,
   PhysicsConstraint,
+  PhysicsConstraintData,
   PhysicsConstraintPose,
   PhysicsConstraintTimeline,
   Property,
@@ -105,6 +108,7 @@ import {
   TextureAtlas,
   type TextureAtlasRegion,
   TransformConstraint,
+  TransformConstraintData,
   type SkeletonData,
 } from '@esotericsoftware/spine-core';
 import {
@@ -126,7 +130,7 @@ import {
   type SlotTrack,
 } from './src/check.ts';
 import { buildAtlasText, compile, CompileError, relativeImagesPath } from './src/compile.ts';
-import { ingest, IngestError, INGEST_GUTTERS, INGEST_VOCABULARY, type IngestFinding } from './src/ingest.ts';
+import { ingest, IngestError, IngestSpecRefused, INGEST_GUTTERS, INGEST_VOCABULARY, type IngestFinding } from './src/ingest.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
 import { RIG_KEYS, parseRigSpec } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
@@ -6323,6 +6327,273 @@ function runRigSuite(): number {
       'spine-core is the oracle for the sentence the widening is derived from — `Skeleton.getAttachment` checks ' +
         'the worn skin before `defaultSkin`. Reading it off the runtime rather than off the emitted JSON is what ' +
         'makes this a measurement of the claim and not a second copy of `RF47`',
+    );
+  }
+
+  // --- RF52–RF56: one name under four kinds, which is Spine's namespace -----
+  //
+  // 🚨 The rig spec kept ONE namespace over the `constraints` array and the
+  // format keeps one PER KIND: `SkeletonData.findConstraint(name, type)` tests
+  // `constraint instanceof type` before it compares the name, and every
+  // resolution in the file goes through it. So a skeleton the editor exports and
+  // the runtime plays — an IK chain and the transform constraint that follows it,
+  // both carrying the chain's name — was refused at `two constraints are called
+  // "leg"`, and `ingest` could not write a spec for it (issue #692).
+  //
+  // The rig below carries one name under all four kinds a motion spec can key,
+  // which is what makes the five cases separable: the namespace (RF52), the
+  // resolution of each track (RF53), the refusal that has to survive (RF54), the
+  // runtime's own answer (RF55) and the shape the change must leave alone
+  // (RF56). It needs no art at all — a path attachment is geometry — so nothing
+  // here depends on a plate, and the atlas it emits is 0 bytes.
+  {
+    const kindRoot = mkdtempSync(join(tmpdir(), 'rigc-kindnames-'));
+    /** The four kinds, named by the caller, so one rig serves the shared and the distinct case. */
+    const kindRig = (named: Record<string, string>): Record<string, unknown> => ({
+      spec: 'rigc-rig/1',
+      name: 'kindnames',
+      skeleton: { width: 128, height: 128 },
+      bones: [
+        { name: 'root' },
+        { name: 'thigh', parent: 'root', length: 20 },
+        { name: 'shin', parent: 'thigh', x: 20, length: 20 },
+        { name: 'foot', parent: 'root', x: 40 },
+        { name: 'aim', parent: 'root', y: 20 },
+        { name: 'cart', parent: 'root' },
+        { name: 'spring', parent: 'root', y: -20 },
+      ],
+      slots: [{ name: 'track', bone: 'root', attachment: 'track' }],
+      skins: {
+        default: { track: { track: { type: 'path', vertexCount: 6, vertices: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10] } } },
+      },
+      constraints: [
+        { name: named.ik, type: 'ik', bones: ['thigh', 'shin'], target: 'foot', mix: 1, softness: 0 },
+        {
+          name: named.transform,
+          type: 'transform',
+          bones: ['foot'],
+          source: 'aim',
+          properties: { rotate: { to: { rotate: {} } } },
+          mixRotate: 1,
+        },
+        {
+          name: named.path,
+          type: 'path',
+          bones: ['cart'],
+          slot: 'track',
+          positionMode: 'percent',
+          spacingMode: 'percent',
+          rotateMode: 'tangent',
+          position: 0,
+          spacing: 0,
+          mixRotate: 1,
+          mixX: 1,
+          mixY: 1,
+        },
+      ],
+    });
+    // One animation keying all four, each through the field its own kind takes:
+    // the two named groups beside `tracks`, and two `tracks` entries whose
+    // property is `mix` on BOTH — the pair a claim keyed on `<name>.<property>`
+    // alone cannot tell apart.
+    const kindMotion = (named: Record<string, string>): Record<string, unknown> => ({
+      spec: 'rigc-motion/1',
+      archetype: 'kindnames',
+      cut: 'kindnames',
+      easings: {},
+      physics: { [named.physics]: { bone: 'spring', rotate: 1, mix: 1 } },
+      animations: {
+        dial: {
+          duration: 1,
+          tracks: [
+            { path: named.path, property: 'mix', keys: [{ t: 0, v: [1, 1, 1] }, { t: 1, v: [0.5, 1, 1] }] },
+            { physics: named.physics, property: 'mix', keys: [{ t: 0, v: [1] }, { t: 1, v: [0.25] }] },
+          ],
+          ik: [{ constraint: named.ik, keys: [{ t: 0, mix: 1 }, { t: 1, mix: 0.25 }] }],
+          transform: [{ constraint: named.transform, keys: [{ t: 0, mixRotate: 1 }, { t: 1, mixRotate: 0.5 }] }],
+        },
+      },
+    });
+    const kindOpts = (leaf: string, named: Record<string, string>, edit?: (rig: Record<string, unknown>) => void): Options => {
+      const at = join(kindRoot, leaf);
+      mkdirSync(at, { recursive: true });
+      const rig = kindRig(named);
+      edit?.(rig);
+      writeFileSync(join(at, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+      writeFileSync(join(at, 'motion.json'), `${JSON.stringify(kindMotion(named), null, 2)}\n`);
+      return { rigPath: join(at, 'rig.json'), motionPath: join(at, 'motion.json'), outDir: join(at, 'build') };
+    };
+    const oneName = { ik: 'leg', transform: 'leg', path: 'leg', physics: 'leg' };
+    const perKind = { ik: 'leg_ik', transform: 'leg_transform', path: 'leg_path', physics: 'leg_physics' };
+
+    let sharedText: string | null = null;
+    let sharedAtlas: string | null = null;
+    const sharedOpts = kindOpts('shared', oneName);
+    const sharedRefusal = refusalOf(() => {
+      const built = compile(sharedOpts);
+      sharedText = built.skeletonText;
+      sharedAtlas = built.atlasText;
+    });
+    /** `[name, type]` for every constraint the build emitted, in array order. */
+    const emittedConstraints = (text: string | null): string[] => {
+      if (text === null) return [];
+      const skeleton = JSON.parse(text) as { constraints?: Array<{ name?: string; type?: string }> };
+      return (skeleton.constraints ?? []).map((c) => `${c.type ?? '?'} "${c.name ?? '?'}"`);
+    };
+    /** The emitted animation's four groups, as `<group>.<name>` -> the values it carries. */
+    const emittedTracks = (text: string | null): Record<string, string> => {
+      if (text === null) return {};
+      const skeleton = JSON.parse(text) as { animations?: Record<string, Record<string, unknown>> };
+      const anim = skeleton.animations?.dial ?? {};
+      const out: Record<string, string> = {};
+      for (const group of ['ik', 'transform', 'path', 'physics']) {
+        for (const [name, keys] of Object.entries((anim[group] ?? {}) as Record<string, unknown>)) {
+          out[`${group}.${name}`] = JSON.stringify(keys);
+        }
+      }
+      return out;
+    };
+    const sharedConstraints = emittedConstraints(sharedText);
+    bad += reportCase(
+      'RF52_one_name_under_four_kinds_compiles_and_emits_four_constraints',
+      sharedRefusal === null && sharedConstraints.join(', ') === 'ik "leg", transform "leg", path "leg", physics "leg"',
+      sharedRefusal === null
+        ? `the emitted constraints array is [${sharedConstraints.join(', ')}]`
+        : `refused: ${sharedRefusal}`,
+      'the card\'s own reproduction, and the branch point refused it at `rig.json: two constraints are called ' +
+        '"leg"`. The array is read rather than the exit code because a compiler that accepted the spec and ' +
+        'dropped one of the pair would pass an exit-code check and ship a rig missing a constraint',
+    );
+
+    const sharedTracks = emittedTracks(sharedText);
+    /**
+     * The four timelines this motion spec states, under whatever the rig calls
+     * each kind: the keys as the emitter writes them, typed rather than read off
+     * a build, so a control that compares against this is comparing with the
+     * interface and not with the tool's current opinion of it.
+     */
+    const wantTracks = (named: Record<string, string>): Record<string, string> => ({
+      [`ik.${named.ik}`]: JSON.stringify([{ time: 0, mix: 1 }, { time: 1, mix: 0.25 }]),
+      [`transform.${named.transform}`]: JSON.stringify([{ time: 0, mixRotate: 1 }, { time: 1, mixRotate: 0.5 }]),
+      [`path.${named.path}`]: JSON.stringify({
+        mix: [{ time: 0, mixRotate: 1, mixX: 1, mixY: 1 }, { time: 1, mixRotate: 0.5, mixX: 1, mixY: 1 }],
+      }),
+      [`physics.${named.physics}`]: JSON.stringify({ mix: [{ time: 0, value: 1 }, { time: 1, value: 0.25 }] }),
+    });
+    const sharedWanted = wantTracks(oneName);
+    const trackProbes = [
+      ...(sharedRefusal === null ? [] : [`the rig did not compile: ${sharedRefusal}`]),
+      ...Object.entries(sharedWanted).flatMap(([at, want]) =>
+        sharedTracks[at] === want ? [] : [`${at} carries ${sharedTracks[at] ?? '(nothing)'}, not ${want}`],
+      ),
+      ...Object.keys(sharedTracks).filter((at) => sharedWanted[at] === undefined).map((at) => `${at} was emitted and nothing keyed it`),
+    ];
+    const tracksHeld = trackProbes.length === 0;
+    bad += reportCase(
+      'RF53_each_track_resolves_within_the_kind_it_names_and_keeps_its_own_values',
+      tracksHeld,
+      probeDetail(
+        tracksHeld,
+        trackProbes,
+        `4 group(s) on one name, each with its own keys: ${Object.keys(sharedTracks).join(', ')}`,
+        (count) => `${count} timeline(s) that did not land where the motion spec aimed them:`,
+      ),
+      'the resolution half, and the values are compared rather than the presence: the four kinds are told apart ' +
+        'by WHICH constraint each group found, so a lookup that fell through to another kind would still emit ' +
+        'four groups. `path` and `physics` both key `mix` here, which is the pair a claim keyed on ' +
+        '`<name>.<property>` alone reads as one track twice',
+    );
+
+    const withinKind = refusalOf(() =>
+      compile(
+        kindOpts('within', oneName, (rig) => {
+          const list = rig.constraints as Array<Record<string, unknown>>;
+          // A second constraint OF THE SAME KIND, which is the pair no timeline
+          // could aim at: `findConstraint` returns the first and the second is
+          // unreachable. Built off the first so nothing else about it differs.
+          list.push({ ...list[0], target: 'aim' });
+        }),
+      ),
+    );
+    bad += reportCase(
+      'RF54_two_constraints_of_one_kind_with_one_name_are_still_refused_by_name',
+      withinKind !== null &&
+        withinKind.includes('two ik constraints are called "leg"') &&
+        withinKind.includes('names are unique PER KIND'),
+      withinKind ?? 'compiled — two ik constraints of one name went through',
+      'the half that must NOT be widened, and the reason it reads by kind: `findConstraint` returns the FIRST ' +
+        'match, so a second ik constraint called "leg" is a constraint no timeline, no skin list and no slider ' +
+        'can ever name. The message says which kind the pair is, because "two constraints are called" was true ' +
+        'of the correct rig above',
+    );
+
+    let resolved = 'nothing was parsed';
+    let distinct = 0;
+    if (sharedText !== null && sharedAtlas !== null) {
+      const data = posableFromText(sharedText, sharedAtlas, sharedOpts.outDir).data;
+      // One call per kind, spelled out: `findConstraint` is generic in the type
+      // it is handed, so a loop over the four constructors is a union the
+      // signature cannot resolve — and the four calls ARE the claim.
+      const found = [
+        ['ik', data.findConstraint('leg', IkConstraintData)],
+        ['transform', data.findConstraint('leg', TransformConstraintData)],
+        ['path', data.findConstraint('leg', PathConstraintData)],
+        ['physics', data.findConstraint('leg', PhysicsConstraintData)],
+      ] as const;
+      resolved = found
+        .map(([word, one]) => `${word} -> ${one === null ? 'null' : `${one.constructor.name} at constraints[${data.constraints.indexOf(one)}]`}`)
+        .join(', ');
+      distinct = new Set(found.map(([, one]) => one).filter((one) => one !== null)).size;
+    }
+    bad += reportCase(
+      'RF55_the_runtime_finds_each_of_them_by_its_own_lookup_on_the_emitted_file',
+      distinct === 4 &&
+        resolved.includes('ik -> IkConstraintData') &&
+        resolved.includes('transform -> TransformConstraintData') &&
+        resolved.includes('path -> PathConstraintData') &&
+        resolved.includes('physics -> PhysicsConstraintData'),
+      `${distinct} distinct object(s) for the one name: ${resolved}`,
+      'spine-core is the oracle for the rule the whole change is derived from, and reading it off the runtime ' +
+        'rather than off the emitted JSON is what makes this a measurement: `findConstraint(name, type)` filters ' +
+        'by `instanceof type` first, so four lookups of one name return four objects — the claim the rig spec ' +
+        'now makes writable',
+    );
+
+    let distinctText: string | null = null;
+    const distinctRefusal = refusalOf(() => {
+      distinctText = compile(kindOpts('distinct', perKind)).skeletonText;
+    });
+    const distinctTracks = emittedTracks(distinctText);
+    // Against the same typed table, under this rig's own names — NOT against the
+    // shared-name build. A positive control has to hold when the widening is
+    // taken away, and the first draft of this one compared the two builds: with
+    // the per-kind namespace removed the shared build does not compile, so the
+    // control went red over a rig that was never in question. The window found
+    // that, which is what a window is for.
+    const distinctWanted = wantTracks(perKind);
+    const distinctProbes = [
+      ...(distinctRefusal === null ? [] : [`the four-name rig did not compile: ${distinctRefusal}`]),
+      ...Object.entries(distinctWanted).flatMap(([at, want]) =>
+        distinctTracks[at] === want ? [] : [`${at} carries ${distinctTracks[at] ?? '(nothing)'}, not ${want}`],
+      ),
+      ...Object.keys(distinctTracks).filter((at) => distinctWanted[at] === undefined).map((at) => `${at} was emitted and nothing keyed it`),
+    ];
+    const distinctHeld = distinctProbes.length === 0;
+    bad += reportCase(
+      'RF56_four_names_under_four_kinds_emit_the_same_four_timelines',
+      distinctHeld,
+      probeDetail(
+        distinctHeld,
+        distinctProbes,
+        `${Object.keys(distinctTracks).length} group(s) [${Object.keys(distinctTracks).join(', ')}] carrying the ` +
+          'keys the motion spec states, each under its own kind\'s name',
+        (count) => `${count} timeline(s) the four-name build does not carry as the motion spec states them:`,
+      ),
+      'this suite\'s positive control for the widening: every rig in this repository and all twelve editor ' +
+        'exports name their constraints uniquely across the array, so this is the shape the change must leave ' +
+        'exactly where it was. Held to the same typed table `RF53` is held to rather than to the shared-name ' +
+        'build, because a control that reads the other build goes red when the widening is removed — over a rig ' +
+        'the widening never touched',
     );
   }
 
@@ -46827,6 +47098,169 @@ function runIngestSuite(): number {
         'builds a `DrawOrderFolderTimeline` from it, so on the one group an export can realistically carry the ' +
         'sentence told an author the runtime ignores something it plays. The claim that survives is the one about ' +
         'the spec, and the clause refusing the old wording is what keeps it from coming back',
+    );
+  }
+
+  // --- IG29–IG31: a name under two kinds, and the refusal that was silent ----
+  //
+  // Two halves of issue #692, both measured on the probe's own emitted skeleton
+  // so neither needs the corpus:
+  //
+  //   IG29  a name under two kinds       carried, because Spine's namespace is per kind
+  //   IG30  a spec the parser refuses    a coded BLOCK finding and a findings.json on disk
+  //   IG31  what the refusal carries     the specs it was given, and the page that names the code
+  //
+  // 🚨 The second is the sharper one. `parseRigSpec` threw out through `ingest()`
+  // itself, so the run exited 1 with no line, no code and **no `findings.json`
+  // written at all** — the one exit in this command whose reason the finding
+  // codes could not count, and the four production skeletons that took it were
+  // read by a census as refused for no stated reason.
+  {
+    const forgedKinds = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+    const kindList = forgedKinds.constraints as Array<Record<string, unknown>>;
+    // The probe's transform constraint, given an IK chain of the same name — the
+    // studio naming behind the card, where the chain and the transform
+    // constraint that follows it are one name. Valid Spine: `findConstraint`
+    // resolves by name AND type.
+    const sharedName = String(kindList.find((c) => c.type === 'transform')?.name ?? '');
+    kindList.push({ name: sharedName, type: 'ik', bones: ['spring'], target: 'aim' });
+    const kindsRefusal = refusalOf(() => ingest(forgedKinds, { name: 'p', art: 'none', source: 's.json', version: '0' }));
+    const kindsResult = kindsRefusal === null ? ingest(forgedKinds, { name: 'p', art: 'none', source: 's.json', version: '0' }) : null;
+    const carried = (kindsResult?.rig.constraints ?? [])
+      .filter((c) => c.name === sharedName)
+      .map((c) => `${c.type} "${c.name}"`)
+      .sort();
+    const newBlockers = (kindsResult?.findings ?? [])
+      .filter((f) => f.kind === 'blocker' && !probeTrip.findings.some((had) => had.code === f.code && had.where === f.where))
+      .map((f) => `${f.code}: ${f.where}`);
+    const kindsProbes = [
+      ...(sharedName === '' ? ['the probe declares no transform constraint, so there is no name to share'] : []),
+      ...(kindsRefusal === null ? [] : [`ingest refused the forged skeleton: ${kindsRefusal}`]),
+      ...(carried.join(', ') === `ik "${sharedName}", transform "${sharedName}"`
+        ? []
+        : [`the written rig spec carries [${carried.join(', ')}] under that name, not one constraint of each kind`]),
+      ...(newBlockers.length === 0 ? [] : [`the forgery raised ${newBlockers.length} new blocker(s): ${newBlockers.join('; ')}`]),
+    ];
+    const kindsHeld = kindsProbes.length === 0;
+    say(
+      'IG29_A_SKELETON_THAT_CARRIES_ONE_NAME_UNDER_TWO_KINDS_INGESTS_AND_THE_SPEC_HOLDS_BOTH',
+      kindsHeld,
+      probeDetail(
+        kindsHeld,
+        kindsProbes,
+        `an ik constraint named "${sharedName}" planted beside the transform constraint of that name: the rig ` +
+          `spec carries [${carried.join(', ')}] and the run raises no blocker it did not raise before`,
+        (count) => `${count} thing(s) the decompiler did not do:`,
+      ),
+      'the shape that made the card, from the direction `ingest` meets it: the rig spec kept one namespace over ' +
+        'the whole constraints array and the format keeps one per kind, so a skeleton the runtime plays had no ' +
+        'spec at all — and the refusal arrived as a `CompileError` from the parser rather than as a finding. ' +
+        'What is read is the WRITTEN spec, because a decompiler that carried one of the pair and dropped the ' +
+        'other would exit 0 just as quietly',
+    );
+
+    // A shape the format holds and the rig spec cannot say: a constraint that is
+    // `skinRequired` and that no skin lists. The runtime loads it — it is simply
+    // inactive under every skin — and `parseRigSpec` refuses it by name, so it
+    // is the plant this pair needs and it is not invented for the occasion.
+    const forgedRefusal = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+    const refusedConstraint = (forgedRefusal.constraints as Array<Record<string, unknown>>)[0];
+    refusedConstraint.skin = true;
+    let refusedFindings: IngestFinding[] = [];
+    let refusedSpecs: { rig: unknown; motion: unknown } | null = null;
+    let refusedThrown = 'nothing was thrown';
+    try {
+      ingest(forgedRefusal, { name: 'p', art: 'none', source: 's.json', version: '0' });
+    } catch (err) {
+      refusedThrown = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      if (err instanceof IngestSpecRefused) {
+        refusedFindings = err.findings;
+        refusedSpecs = { rig: err.rig, motion: err.motion };
+      }
+    }
+    const refusedCoded = refusedFindings.filter((f) => f.code === 'SPEC_REFUSED');
+    // The same run through the CLI, because the file on disk is the half a
+    // library call cannot reach and the half the census reads.
+    const cliRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-refused-'));
+    const cliSkeleton = join(cliRoot, 'skeleton.json');
+    writeFileSync(cliSkeleton, JSON.stringify(forgedRefusal));
+    const cliOut = join(cliRoot, 'specs');
+    const cliRun = runCli(['ingest', cliSkeleton, '--out', cliOut, '--art', 'none']);
+    const writtenFindings = existsSync(join(cliOut, 'findings.json'))
+      ? (JSON.parse(readFileSync(join(cliOut, 'findings.json'), 'utf8')) as IngestFinding[])
+      : null;
+    const refusedProbes = [
+      ...(refusedCoded.length === 1 ? [] : [`${refusedCoded.length} SPEC_REFUSED finding(s) from the library call, not 1`]),
+      ...(refusedCoded.every((f) => f.kind === 'blocker') ? [] : ['the SPEC_REFUSED finding is not a `blocker`']),
+      ...(refusedCoded.some((f) => f.detail.includes(String(refusedConstraint.name)) && f.detail.includes('"skin": true'))
+        ? []
+        : [`the detail does not carry the parser's own sentence: ${JSON.stringify(refusedCoded[0]?.detail ?? refusedThrown)}`]),
+      ...(cliRun.status === 1 ? [] : [`the CLI exited ${String(cliRun.status)}, not 1`]),
+      ...(cliRun.stdout.includes(`${INGEST_GUTTERS.blocker} SPEC_REFUSED`) ? [] : ['the run printed no `BLOCK SPEC_REFUSED` line']),
+      ...(writtenFindings === null
+        ? ['no findings.json was written at all']
+        : writtenFindings.some((f) => f.code === 'SPEC_REFUSED')
+          ? []
+          : ['findings.json was written and does not carry the code']),
+      ...(probeTrip.findings.some((f) => f.code === 'SPEC_REFUSED')
+        ? ['the unplanted probe raises a SPEC_REFUSED of its own, so this plant proves nothing']
+        : []),
+    ];
+    const refusedHeld = refusedProbes.length === 0;
+    say(
+      'IG30_A_SPEC_THE_PARSERS_REFUSE_IS_A_CODED_BLOCKER_AND_A_FINDINGS_FILE_ON_DISK',
+      refusedHeld,
+      probeDetail(
+        refusedHeld,
+        refusedProbes,
+        `\`"skin": true\` planted on constraint "${String(refusedConstraint.name)}": ${refusedCoded.length} ` +
+          `SPEC_REFUSED blocker, CLI exit ${String(cliRun.status)}, ${writtenFindings?.length ?? 0} finding(s) in ` +
+          `findings.json\n          ${refusedCoded[0]?.detail ?? refusedThrown}`,
+        (count) => `${count} thing(s) the refusal did not do:`,
+      ),
+      'the branch point exited 1 here with no line, no code and no findings.json — the parser\'s `CompileError` ' +
+        'was the run\'s last word, which is the one exit whose reason a census of finding codes cannot see. The ' +
+        'CLI half is measured as well as the library one because the file on disk is what such a census reads, ' +
+        'and a code raised in memory and never written would satisfy the library clause alone',
+    );
+
+    const rigWritten = existsSync(join(cliOut, 'rig.json'))
+      ? (JSON.parse(readFileSync(join(cliOut, 'rig.json'), 'utf8')) as { constraints?: Array<Record<string, unknown>> })
+      : null;
+    const pageRow = findingCodeRows(readFileSync(resolve(import.meta.dir, INGEST_PAGE), 'utf8'))?.rows.get('SPEC_REFUSED');
+    const carriedProbes = [
+      ...(refusedSpecs === null ? [`the refusal was not an IngestSpecRefused: ${refusedThrown}`] : []),
+      ...(refusedFindings.length > 1 ? [] : ['the refusal carries only its own finding, so the run\'s earlier ones were lost']),
+      ...(refusedFindings.at(-1)?.code === 'SPEC_REFUSED' ? [] : ['the coded finding is not the last thing the run recorded']),
+      ...(rigWritten === null
+        ? ['no rig.json was written beside the finding']
+        : rigWritten.constraints?.some((c) => c.name === refusedConstraint.name && c.skin === true)
+          ? []
+          : ['the written rig spec is not the one the parser refused — it does not carry the planted flag']),
+      ...(existsSync(join(cliOut, 'motion.json')) ? [] : ['no motion.json was written beside it']),
+      ...(pageRow === undefined
+        ? [`${INGEST_PAGE} has no SPEC_REFUSED row`]
+        : pageRow.gutters.includes(INGEST_GUTTERS.blocker)
+          ? []
+          : [`${INGEST_PAGE}'s SPEC_REFUSED row names gutter(s) ${pageRow.gutters.join('/')} rather than BLOCK`]),
+    ];
+    const carriedHeld = carriedProbes.length === 0;
+    say(
+      'IG31_THE_REFUSAL_CARRIES_THE_SPECS_IT_WAS_GIVEN_AND_EVERYTHING_THE_RUN_HAD_FOUND',
+      carriedHeld,
+      probeDetail(
+        carriedHeld,
+        carriedProbes,
+        `${refusedFindings.length} finding(s) came back with the refusal, SPEC_REFUSED last; rig.json and ` +
+          `motion.json are on disk and rig.json is the file the parser refused; ${INGEST_PAGE} carries the row ` +
+          `under ${pageRow?.gutters.join('/') ?? '(no row)'}`,
+        (count) => `${count} thing(s) missing from the refused run:`,
+      ),
+      'what makes the page\'s sentence true — *"both specs are on disk either way"* — and what makes the finding ' +
+        'readable: a code with no file beside it sends a reader back to a console line that has scrolled away. ' +
+        'The earlier findings are checked because a refusal that carried only its own would throw away the ' +
+        'LOSS and JUDGE lines the run had already earned. `IG25` compares the page and the module as sets; this ' +
+        'reads the one row, because a gutter cell is what a reader believes about the exit code',
     );
   }
 

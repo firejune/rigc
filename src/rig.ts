@@ -917,6 +917,23 @@ export function splitRigSkin(skin: RigSkin, where: string): RigSkinParts {
 // ---------------------------------------------------------------------------
 
 /**
+ * A constraint's identity in this format: its KIND and its name, never the name
+ * alone (issue #692).
+ *
+ * `SkeletonData.findConstraint(name, type)` tests `constraint instanceof type`
+ * before it compares the name, so `ik` `leg` and `transform` `leg` are two
+ * objects and every resolution in the format — a timeline group, a skin's member
+ * list, a slider's animation pass — reaches exactly one of them. It doubles as
+ * the phrase a refusal uses, so the key a lookup misses on and the words the
+ * message says it missed on cannot drift apart.
+ *
+ * @internal
+ */
+export function constraintAt(type: string, name: string): string {
+  return `${type} constraint "${name}"`;
+}
+
+/**
  * 4.3 folds every constraint into ONE array with a `type` discriminator. The
  * 4.1/4.2 shape — top-level `ik`/`transform`/`path`/`physics` arrays — still
  * loads clean and the constraints simply vanish, which is `A01`.
@@ -1791,16 +1808,35 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
     );
   }
 
-  const constraintNames = new Set<string>();
-  /** name -> [type, skinRequired], for the skin lists below. */
-  const constraintFacts = new Map<string, [string, boolean]>();
+  // A constraint's namespace is its KIND, not the array (issue #692).
+  // `SkeletonData.findConstraint(name, type)` tests `constraint instanceof type`
+  // BEFORE it compares the name, and every resolution in the format goes through
+  // it: a timeline group, a skin's member list, a slider's own second pass. So an
+  // ik constraint and a transform constraint called `leg` are two objects nothing
+  // can confuse, and the rig spec refusing them was stricter than the file it
+  // emits — a shape four skeletons of a production corpus have, where the chain
+  // and the transform constraint that follows it carry the chain's name.
+  /** Every constraint, in declaration order, so the refusals below read in file order. */
+  const constraintsDeclared: Array<{ type: string; name: string; skinRequired: boolean }> = [];
+  /** `<kind> constraint "<name>"` -> that constraint. The key IS the namespace. */
+  const constraintFacts = new Map<string, { type: string; name: string; skinRequired: boolean }>();
+  /** name -> the kinds that declare it, for the message that has to say which. */
+  const constraintKinds = new Map<string, string[]>();
   for (const constraint of spec.constraints ?? []) {
     if (!isObj(constraint) || typeof constraint.name !== 'string' || constraint.name.length === 0) {
       throw new CompileError(`${where}: every constraint needs a "name"`);
     }
-    if (constraintNames.has(constraint.name)) throw new CompileError(`${where}: two constraints are called "${constraint.name}"`);
-    constraintNames.add(constraint.name);
-    constraintFacts.set(constraint.name, [String(constraint.type), constraint.skin === true]);
+    const declared = { type: String(constraint.type), name: constraint.name, skinRequired: constraint.skin === true };
+    if (constraintFacts.has(constraintAt(declared.type, declared.name))) {
+      throw new CompileError(
+        `${where}: two ${declared.type} constraints are called "${declared.name}" — a constraint resolves by name ` +
+          'AND type (`SkeletonData.findConstraint`), so names are unique PER KIND: an ik and a transform constraint ' +
+          'may share one, two of a kind may not',
+      );
+    }
+    constraintsDeclared.push(declared);
+    constraintFacts.set(constraintAt(declared.type, declared.name), declared);
+    constraintKinds.set(declared.name, [...(constraintKinds.get(declared.name) ?? []), declared.type]);
   }
 
   // --- skins: the attachment table, and what the skin ACTIVATES --------------
@@ -1854,26 +1890,30 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
       }
       for (const type of RIG_SKIN_CONSTRAINT_KEYS) {
         for (const name of parts.constraints[type]) {
-          const facts = constraintFacts.get(name);
+          const facts = constraintFacts.get(constraintAt(type, name));
           if (facts === undefined) {
-            throw new CompileError(`${at} activates ${type} constraint "${name}", which this rig does not declare`);
-          }
-          if (facts[0] !== type) {
+            // The lookup is by name AND type here for the same reason the parser's
+            // is, so "no constraint of this kind" and "no constraint at all" are
+            // two different misses and say so.
+            const kinds = constraintKinds.get(name) ?? [];
+            if (kinds.length === 0) {
+              throw new CompileError(`${at} activates ${type} constraint "${name}", which this rig does not declare`);
+            }
             // `findConstraint(name, IkConstraintData)` resolves by name AND type,
             // and the parser throws on the miss.
             throw new CompileError(
-              `${at} lists "${name}" under "${type}", but the rig declares it as a "${facts[0]}" constraint — ` +
+              `${at} lists "${name}" under "${type}", but the rig declares it as a "${kinds.join('", "')}" constraint — ` +
                 'a skin looks its constraints up by name AND type, so this one is a miss and the loader throws',
             );
           }
-          const previous = skinConstraintUse.get(name);
+          const previous = skinConstraintUse.get(constraintAt(type, name));
           if (previous !== undefined && previous !== skinName) {
             throw new CompileError(
-              `${at} activates constraint "${name}", which skin "${previous}" already activates; a constraint belongs to one skin`,
+              `${at} activates ${type} constraint "${name}", which skin "${previous}" already activates; a constraint belongs to one skin`,
             );
           }
-          skinConstraintUse.set(name, skinName);
-          if (!facts[1]) {
+          skinConstraintUse.set(constraintAt(type, name), skinName);
+          if (!facts.skinRequired) {
             throw new CompileError(
               `${at} activates ${type} constraint "${name}", but that constraint does not declare \`"skin": true\`. ` +
                 'A constraint is active unless it is skinRequired, so this list changes nothing.',
@@ -1901,8 +1941,8 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
       );
     }
   }
-  for (const [name, [type, skinRequired]] of constraintFacts) {
-    if (skinRequired && !skinConstraintUse.has(name)) {
+  for (const { type, name, skinRequired } of constraintsDeclared) {
+    if (skinRequired && !skinConstraintUse.has(constraintAt(type, name))) {
       throw new CompileError(
         `${where}: ${type} constraint "${name}" declares \`"skin": true\` but no skin activates it, so it never runs — ` +
           `list it in that skin's "${type}" array, or drop the flag`,

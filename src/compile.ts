@@ -41,6 +41,7 @@ import { parseJsonWithPosition } from './json-position.ts';
 import { nearMisses } from './keys.ts';
 import { parseMotionSpec } from './motion.ts';
 import {
+  constraintAt,
   declaresNoStage,
   parseRigSpec,
   RIG_FROM_PROPERTIES,
@@ -2215,12 +2216,22 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   const deformTransforms: CompileResult['deformTransforms'] = [];
   /** Group-track keys whose per-member values were stated or derived (issue #295). */
   const trackDerivations: CompileResult['trackDerivations'] = [];
-  const constraintNames = new Set<string>();
   // `ik` and `transform` timelines resolve their target by name AND by type —
   // `findConstraint(name, IkConstraintData)` returns null for a transform
-  // constraint of the same name and the parser then throws. Keeping the type
-  // beside the name is what lets the refusal say which of the two it is.
-  const constraintTypes = new Map<string, string>();
+  // constraint of the same name and the parser then throws. So the table this
+  // compiler resolves against is keyed by BOTH (issue #692): a name alone is not
+  // a constraint in this format, and a rig may declare `leg` once per kind.
+  /** `<kind> constraint "<name>"` -> declared. The key is the format's namespace. */
+  const constraintDeclared = new Set<string>();
+  /** name -> the kinds that declare it, for the refusal that has to say which. */
+  const constraintKinds = new Map<string, string[]>();
+  /** kind -> the names it declares, for the "the rig declares: …" half of one. */
+  const constraintNamesOfKind = new Map<string, string[]>();
+  const declareConstraint = (name: string, type: string): void => {
+    constraintDeclared.add(constraintAt(type, name));
+    constraintKinds.set(name, [...(constraintKinds.get(name) ?? []), type]);
+    constraintNamesOfKind.set(type, [...(constraintNamesOfKind.get(type) ?? []), name]);
+  };
   /**
    * ik constraint -> the booleans it declares that the timeline format would
    * otherwise take away from it. Issue #273.
@@ -2262,8 +2273,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // wrote in it and the union above is a claim about a correct one.
   for (const spec of (rig.constraints ?? []) as unknown as RigConstraintInput[]) {
     constraints.push(buildRigConstraint(spec, constraintCtx));
-    constraintNames.add(spec.name);
-    constraintTypes.set(spec.name, spec.type);
+    declareConstraint(spec.name, spec.type);
     if (spec.type === 'ik') {
       const carried: Record<string, boolean> = {};
       for (const flag of CONSTRAINT_TIMELINES.ik.flags) {
@@ -2275,11 +2285,16 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   }
   withMotionSource(() => {
     for (const [name, spec] of Object.entries(motion.physics ?? {})) {
-      if (constraintNames.has(name)) {
-        throw new CompileError(`constraint "${name}" is declared in both the rig spec and the motion spec's physics table`);
+      // Per kind, like everything else about a constraint name: a rig-declared
+      // `ik` and a tuned `physics` constraint of one name are two objects, and
+      // two PHYSICS constraints of one name are the pair no timeline can tell
+      // apart.
+      if (constraintDeclared.has(constraintAt('physics', name))) {
+        throw new CompileError(
+          `physics constraint "${name}" is declared in both the rig spec and the motion spec's physics table`,
+        );
       }
-      constraintNames.add(name);
-      constraintTypes.set(name, 'physics');
+      declareConstraint(name, 'physics');
       if (!boneNames.has(spec.bone)) {
         throw new CompileError(`physics constraint "${name}" targets unknown bone "${spec.bone}"`);
       }
@@ -2382,22 +2397,24 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           const resolved = perMember.get(target)!;
           if (family !== null) {
             const label = CONSTRAINT_TRACK_FAMILIES[family].label;
-            if (!constraintNames.has(target)) {
-              const known = [...constraintTypes.entries()].filter(([, t]) => t === family).map(([n]) => n);
-              throw new CompileError(
-                `animation "${animName}" keys unknown ${label} "${target}"` +
-                  (known.length ? ` (the rig declares: ${known.join(', ')})` : `, and the rig declares no ${family} constraint at all`),
-              );
-            }
             // Resolved by name AND by type in the parser
             // (`findConstraint(name, PathConstraintData)`), which returns null on
             // a type mismatch and makes `readAnimation` throw in the consumer's
-            // process. Named here instead, where the motion file can be named too.
-            const declared = constraintTypes.get(target);
-            if (declared !== family) {
+            // process. Named here instead, where the motion file can be named too
+            // — and looked up the same way, so a rig that declares `leg` under two
+            // kinds sends each track to its own constraint.
+            if (!constraintDeclared.has(constraintAt(family, target))) {
+              const kinds = constraintKinds.get(target) ?? [];
+              if (kinds.length > 0) {
+                throw new CompileError(
+                  `animation "${animName}" keys "${target}" as a ${label}, but the rig declares it as a "${kinds.join('"/"')}" ` +
+                    'constraint — a timeline group resolves its target by name AND type, misses, and the loader throws',
+                );
+              }
+              const known = constraintNamesOfKind.get(family) ?? [];
               throw new CompileError(
-                `animation "${animName}" keys "${target}" as a ${label}, but the rig declares it as a "${declared}" ` +
-                  'constraint — a timeline group resolves its target by name AND type, misses, and the loader throws',
+                `animation "${animName}" keys unknown ${label} "${target}"` +
+                  (known.length ? ` (the rig declares: ${known.join(', ')})` : `, and the rig declares no ${family} constraint at all`),
               );
             }
           } else if (isBoneTrack) {
@@ -2407,10 +2424,14 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           } else if (!slotNames.has(target)) {
             throw new CompileError(`animation "${animName}" targets unknown slot "${target}"`);
           }
-          const claim = `${target}.${track.property}`;
+          // A timeline is a kind, a name and a property — `physics.leg.mix` and
+          // `path.leg.mix` are two timelines on two constraints, so the claim
+          // carries the family the target was resolved in (issue #692). The
+          // sentence still names the pair the author wrote.
+          const claim = `${family ?? (isBoneTrack ? 'bone' : 'slot')} ${target}.${track.property}`;
           if (claimed.has(claim)) {
             throw new CompileError(
-              `animation "${animName}" has two tracks on ${claim}; merge them into one track`,
+              `animation "${animName}" has two tracks on ${target}.${track.property}; merge them into one track`,
             );
           }
           claimed.add(claim);
@@ -2456,20 +2477,20 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         const tracks: Array<MotionIkTrack | MotionTransformTrack> = anim[group] ?? [];
         for (const track of tracks) {
           const name = track.constraint;
-          const type = constraintTypes.get(name);
-          if (type === undefined) {
-            const known = [...constraintTypes.entries()].filter(([, t]) => t === group).map(([n]) => n);
+          if (!constraintDeclared.has(constraintAt(group, name))) {
+            const kinds = constraintKinds.get(name) ?? [];
+            if (kinds.length > 0) {
+              throw new CompileError(
+                `animation "${animName}" keys "${name}" as ${group === 'ik' ? 'an' : 'a'} ${group} constraint, but the rig declares it as a ` +
+                  `"${kinds.join('"/"')}" constraint — the parser looks a timeline's target up by name AND type, misses, and throws`,
+              );
+            }
+            const known = constraintNamesOfKind.get(group) ?? [];
             throw new CompileError(
               `animation "${animName}" keys unknown ${group} constraint "${name}"; ` +
                 (known.length
                   ? `the rig declares ${group} constraint(s): ${known.join(', ')}`
                   : `the rig declares no ${group} constraint at all`),
-            );
-          }
-          if (type !== group) {
-            throw new CompileError(
-              `animation "${animName}" keys "${name}" as ${group === 'ik' ? 'an' : 'a'} ${group} constraint, but the rig declares it as a ` +
-                `"${type}" constraint — the parser looks a timeline's target up by name AND type, misses, and throws`,
             );
           }
           if (constraintTimelines[group][name]) {
@@ -2484,7 +2505,10 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
             motion,
             animName,
             anim.duration,
-            ikRigFlags.get(name) ?? {},
+            // The ik table, asked only by the ik group: `leg` may also be a
+            // transform constraint, and a transform key set carries no flag for
+            // the rig's booleans to be stamped onto (issue #692).
+            group === 'ik' ? (ikRigFlags.get(name) ?? {}) : {},
           );
           for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
           constraintTimelines[group][name] = keys;

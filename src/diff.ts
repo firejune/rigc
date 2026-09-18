@@ -65,6 +65,7 @@
  * The per-frame pose comparison that DOES need spine-core is a separate
  * instrument — [`bonedist.ts`](bonedist.ts), the ladder's stage 3.
  */
+import { constraintAt } from './rig.ts';
 import { walkTimelines } from './timelines.ts';
 // Type only, and erased: the values themselves are read by `skeletonValues` in
 // `src/validate.ts`, which is one of the three modules CLAUDE.md allows to link
@@ -779,11 +780,23 @@ interface ConstraintFact {
   refs: string;
 }
 
+/**
+ * Every constraint, keyed the way the format resolves one: by KIND and name.
+ *
+ * ⚠️ Keyed by the name alone, a skeleton that carries `leg` as an ik constraint
+ * and as a transform one — valid Spine, and what `findConstraint(name, type)`
+ * exists to tell apart — lost one of the pair out of all five measures below
+ * (issue #692). It was invisible rather than wrong: both sides collapse the same
+ * way, so the report read 1.000 while its own header line counted one constraint
+ * more than `constraints.count` did, measured at 14/14 against 13/13 on the
+ * export that made the card.
+ */
 function constraintFacts(root: Json): Map<string, ConstraintFact> {
   const out = new Map<string, ConstraintFact>();
   for (const con of objs(root.constraints)) {
     const name = str(con.name);
     if (name === null) continue;
+    const at = constraintAt(str(con.type) ?? '(none)', name);
     const refs = new Set<string>();
     for (const b of arr(con.bones)) {
       const s = str(b);
@@ -793,7 +806,7 @@ function constraintFacts(root: Json): Map<string, ConstraintFact> {
       const s = str(con[key]);
       if (s !== null) refs.add(`${key}:${s}`);
     }
-    out.set(name, { type: str(con.type) ?? '(none)', refs: [...refs].sort().join(' ') });
+    out.set(at, { type: str(con.type) ?? '(none)', refs: [...refs].sort().join(' ') });
   }
   return out;
 }

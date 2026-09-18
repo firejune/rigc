@@ -67,7 +67,7 @@ import {
   type DeformSpan,
 } from './src/deformmeasure.ts';
 import { diffLines, diffSkeletons, reportedFigures, sectionFigures, type DiffReport } from './src/diff.ts';
-import { ingest, IngestError, INGEST_GUTTERS, type IngestStage } from './src/ingest.ts';
+import { ingest, IngestError, IngestSpecRefused, INGEST_GUTTERS, type IngestFinding, type IngestStage } from './src/ingest.ts';
 import { copyAtlasPages } from './src/emit.ts';
 import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas, parseAtlasText } from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
@@ -2923,14 +2923,30 @@ function cmdIngest(flags: Record<string, string>, positional: string[]): void {
   console.log(`  ..    art  ${art}`);
   if (specImages !== undefined) console.log(`  ..    images ${specImages}  (the rig spec's own, from ${outDir})`);
 
-  const result = ingest(readJsonFile(skeletonPath), {
-    name: flags.name ?? basename(skeletonPath, '.json'),
-    art,
-    images: specImages,
-    stage,
-    source: basename(skeletonPath),
-    version: readVersion(),
-  });
+  /**
+   * What the run has to report, however the parse went.
+   *
+   * 🔒 A spec the tree's own parser refuses is a **finding**, not an escape
+   * (issue #692): the three files are written, the coded `BLOCK` line is
+   * printed, and the exit code comes off the findings like every other run's.
+   * The two specs are read as `unknown` because that is all this function does
+   * with them — `JSON.stringify` — and a cast to `RigSpec` here would be this
+   * file claiming a parse that did not happen.
+   */
+  let result: { rig: unknown; motion: unknown; findings: IngestFinding[] };
+  try {
+    result = ingest(readJsonFile(skeletonPath), {
+      name: flags.name ?? basename(skeletonPath, '.json'),
+      art,
+      images: specImages,
+      stage,
+      source: basename(skeletonPath),
+      version: readVersion(),
+    });
+  } catch (err) {
+    if (!(err instanceof IngestSpecRefused)) throw err;
+    result = { rig: err.rig, motion: err.motion, findings: err.findings };
+  }
 
   mkdirSync(outDir, { recursive: true });
   // Indent 2, which is what `compile` writes the skeleton with. One emitter
