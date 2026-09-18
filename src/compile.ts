@@ -2319,6 +2319,37 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   });
 
   // -- 5. animations ---------------------------------------------------------
+  //
+  // 🔑 What an attachment key is allowed to name, per slot: the UNION of every
+  // emitted skin's placeholders for it. An attachment timeline is not keyed on a
+  // skin — the format gives it a slot and a name, and `Skeleton.getAttachment`
+  // resolves that name through the skin the skeleton is WEARING and then through
+  // `defaultSkin` (spine-core 4.3.13 `Skeleton.js:335-346`). So the set a key can
+  // legally draw from is every skin's, and which of them is showing is the
+  // consumer's to decide by dressing the skeleton.
+  //
+  // ⚠️ A name some skins hold and others do not is therefore ACCEPTED, and that
+  // is the format's own semantics rather than a gap in the check: under a skin
+  // that lacks it the slot shows nothing, which is the same thing a `null` key
+  // says and a thing a rig may well mean.
+  //
+  // Derived from `skinTables` rather than re-read off the rig spec, because what
+  // a key can resolve to at runtime is what was EMITTED — a manifest state whose
+  // art was dropped is in the spec and in no skin, and a key naming it has to
+  // stay refused (issue #695).
+  const attachmentsBySlot = new Map<string, Set<string>>();
+  for (const table of skinTables.values()) {
+    for (const [slotName, perSlot] of Object.entries(table)) {
+      let known = attachmentsBySlot.get(slotName);
+      if (!known) attachmentsBySlot.set(slotName, (known = new Set<string>()));
+      for (const placeholder of Object.keys(perSlot)) known.add(placeholder);
+    }
+  }
+  // `default` first, then the rig's own order — `skinTables`' insertion order,
+  // which is the order the tables were made in (`:1990` and `:1994`). It is what
+  // the refusal below reports as the skins it looked in, so it is read from the
+  // map rather than restated.
+  const attachmentIndex: SlotAttachmentIndex = { bySlot: attachmentsBySlot, searched: [...skinTables.keys()] };
   const animations: SpineSkeletonJson['animations'] = {};
   const declaredDurations: Record<string, number> = {};
   const slotNames = new Set(slots.map((s) => s.name));
@@ -2399,7 +2430,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
                 )
               : isBoneTrack
                 ? compileValueTrack(resolved, motion, animName, anim.duration, target, shift, BONE_TRACKS, 'bone')
-                : compileTrack(resolved, motion, animName, anim.duration, target, shift, tableFor('default'));
+                : compileTrack(resolved, motion, animName, anim.duration, target, shift, attachmentIndex);
           for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
           if (family !== null) (familyTimelines[family][target] ??= {})[track.property] = keys;
           else if (isBoneTrack) (boneTimelines[target] ??= {})[track.property] = keys;
@@ -6855,6 +6886,22 @@ function resolveMemberTrack(
   return out;
 }
 
+/**
+ * What an attachment key may name, per slot, and where the compiler looked.
+ *
+ * An attachment timeline names a slot and a placeholder and no skin — the skin
+ * is the consumer's, applied at run time — so the names a key may draw from are
+ * every emitted skin's placeholders for that slot, `default` included. Built in
+ * `compileInto` off `skinTables`, under the `-- 5. animations` banner; see the
+ * comment there for why it is the emitted tables rather than the spec that decides.
+ */
+interface SlotAttachmentIndex {
+  /** slot -> every placeholder any emitted skin fills it with. */
+  bySlot: Map<string, Set<string>>;
+  /** The skins consulted, in emit order (`default` first), for the refusal to name. */
+  searched: string[];
+}
+
 function compileTrack(
   track: MotionValueTrack,
   motion: MotionSpec,
@@ -6862,7 +6909,7 @@ function compileTrack(
   duration: number,
   target: string,
   shift: number,
-  skinAttachments: Record<string, Record<string, SpineAttachment>>,
+  attachments: SlotAttachmentIndex,
 ): SpineTimelineKey[] {
   const where = `animation "${animName}" slot "${target}" ${track.property}`;
   // Before any key is shaped, and before the empty-track refusal: a property
@@ -6891,8 +6938,21 @@ function compileTrack(
       if (key.v !== null && typeof key.v !== 'string') {
         throw new CompileError(`${where}: attachment key value must be a string or null`);
       }
-      if (key.v !== null && !(key.v in (skinAttachments[target] ?? {}))) {
-        throw new CompileError(`${where}: attachment "${key.v}" is not in slot "${target}"`);
+      // Resolved against every skin, not just `default` — see `SlotAttachmentIndex`.
+      const known = attachments.bySlot.get(target);
+      if (key.v !== null && !(known?.has(key.v) === true)) {
+        // Both halves are the message's work. "searched" answers *where did you
+        // look*, which is the question a four-skin rig's author actually has and
+        // the one a bare "is not in slot" left them guessing at; the list of
+        // placeholders is the value REQUIRED, which the doctrine asks of every
+        // failure detail and which the deform refusal above already prints.
+        throw new CompileError(
+          `${where}: attachment "${key.v}" is not in slot "${target}" under any skin ` +
+            `(searched: ${attachments.searched.join(', ')}) — ` +
+            (known === undefined || known.size === 0
+              ? 'the slot has no attachments at all'
+              : `the slot has: ${[...known].join(', ')}`),
+        );
       }
       if (key.ease) throw new CompileError(`${where}: attachment keys cannot carry an easing`);
       // Attachment timelines are inherently stepped — exactly what lip-sync wants.
