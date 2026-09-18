@@ -69,7 +69,7 @@ import {
 import { diffLines, diffSkeletons, reportedFigures, sectionFigures, type DiffReport } from './src/diff.ts';
 import { ingest, IngestError, INGEST_GUTTERS, type IngestStage } from './src/ingest.ts';
 import { copyAtlasPages } from './src/emit.ts';
-import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas } from './src/atlas.ts';
+import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas, parseAtlasText } from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
 import { KEY_TIME_EPSILON } from './src/timelines.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
@@ -117,6 +117,7 @@ import {
 } from './src/render.ts';
 import {
   assertionCountForProfile,
+  attachmentRegionJoins,
   CLI_DEFAULT_PROFILE,
   reportLines,
   validate,
@@ -147,6 +148,14 @@ export interface CutEntry {
 export type CutTable = Record<string, CutEntry>;
 
 class UsageError extends Error {}
+
+/**
+ * `explain` refusing a pair it cannot pose — a usage error in kind, printed
+ * without the usage block for `PoseError`'s and `IngestError`'s reason: the
+ * message names an attachment, a region and two flags, and reprinting every
+ * command's usage under it buries the one line that says what to change.
+ */
+class ExplainError extends Error {}
 
 // ---------------------------------------------------------------------------
 // package metadata — the installed version and repository, for `--version`
@@ -2441,6 +2450,81 @@ function cmdBoneDist(flags: Record<string, string>): void {
   if (flags.json !== undefined) writeJson(flags.json, report);
 }
 
+/**
+ * Refuse a compiled pair whose art `explain` cannot pose through, by name.
+ *
+ * 🚨 `explain` poses the rig — `deformReportLines` loads the emitted pair through
+ * `spine-core` to measure what each deform key did — and a pose resolves EVERY
+ * attachment against the atlas, whether or not anything deforms it. On the specs
+ * `ingest --art none` writes there is nothing to resolve against: the entries
+ * state a size and name no `image`, so the compile atlases nothing, and the load
+ * threw the runtime's own `Region not found in atlas: rear-upper-arm (attachment:
+ * rear-upper-arm)` with a spine-core stack trace under it and exit 1 (measured on
+ * `examples/spineboy/export/spineboy-ess.json`, issue #697). That is the tool
+ * telling an agent about its own internals instead of about the rig, on the one
+ * input `docs/INGEST.md` §2.0 documents as the route through a foreign skeleton.
+ *
+ * ⭐ Both halves of the join are rigc's own readers rather than a second opinion
+ * on somebody else's format: the walk is `attachmentRegionJoins`, which `PS127`
+ * measures against the loader's own `findRegion` calls, and the region names come
+ * from `parseAtlasText`, which is what `--atlas-in` already resolves against.
+ * Names are compared EXACTLY — as `A08` compares them and as `findRegion`
+ * matches them — so a padded region name is a miss on both sides.
+ *
+ * ⚠️ What it deliberately does not do is catch the pose. A blanket `try` around
+ * `skeletonDataFromText` would convert any exception the runtime raises into a
+ * sentence claiming the cause is missing art, and a rigc defect reported under
+ * somebody else's name is the doctrine's second bullet inverted. This refuses
+ * the case it can NAME, before a line of the report is printed, and leaves
+ * anything else to arrive as itself.
+ */
+function refuseUnposableArt(result: CompileResult, opts: CompileOptions): void {
+  const regionNames = parseAtlasText(result.atlasText).pages.flatMap((page) => page.regions.map((region) => region.name));
+  const have = new Set(regionNames);
+  const misses: Array<{ at: string; attachment: string; lookup: string }> = [];
+  let lookups = 0;
+  for (const join of attachmentRegionJoins(JSON.parse(result.skeletonText))) {
+    // A `sequence` this walk will not guess at names no region it can check, and
+    // `A08` passes over it for the same reason.
+    if (join.lookups === null) continue;
+    for (const lookup of join.lookups) {
+      lookups++;
+      if (!have.has(lookup)) {
+        misses.push({
+          at: `skin "${join.skin}" slot "${join.slot}" placeholder "${join.placeholder}"`,
+          attachment: join.name,
+          lookup,
+        });
+      }
+    }
+  }
+  if (misses.length === 0) return;
+  const first = misses[0];
+  // Reported because it was measured, and absent where there is none — `A08`'s
+  // own near-miss clause, in `A08`'s own words.
+  const near = regionNames.find((region) => region.trim().toLowerCase() === first.lookup.toLowerCase());
+  const has =
+    regionNames.length === 0
+      ? 'it declares no region at all'
+      : `it declares ${regionNames.length} region(s) and none of them is that${
+          near === undefined ? '' : `, though it does have ${JSON.stringify(near)}`
+        }`;
+  const remedy =
+    opts.atlasInPath === undefined
+      ? 'Art reaches a compile two ways and this run took neither: `--atlas-in <pack.atlas>` resolves the parts ' +
+        'against a pack somebody already made, and an "image" per attachment resolves them as loose PNGs under ' +
+        '`--images <dir>` — a spec that states a size and names no image is what `ingest --art none` writes, and ' +
+        '`--atlas-in` is what reads it'
+      : `Either the spec's region name or ${opts.atlasInPath} is the one that moved: fix the name, or point ` +
+        '`--atlas-in` at the pack that has it';
+  throw new ExplainError(
+    `${first.at}: attachment ${JSON.stringify(first.attachment)} wants region ${JSON.stringify(first.lookup)}, ` +
+      `which this build's atlas does not have (${has}). \`explain\` poses the rig to measure its deform keys and a ` +
+      `pose resolves every attachment against the atlas, so there is nothing to pose it against. ${remedy}. ` +
+      `${misses.length} of ${lookups} attachment lookup(s) here resolve to no region.`,
+  );
+}
+
 function cmdExplain(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
   console.log(`rigc explain ${label}`);
@@ -2449,6 +2533,13 @@ function cmdExplain(flags: Record<string, string>): void {
   console.log(`  ..    rig    ${opts.rigPath}`);
   console.log(`  ..    motion ${opts.motionPath}`);
   const result = compile(opts);
+  // Before a line of the report, rather than at the pose two hundred lines in:
+  // the blocks that need the art — DEFORM, meshes, dropped states — all sit
+  // BELOW the pose, so a run that printed the bone and timeline dump and then
+  // refused would be a report missing everything the missing art decides, with
+  // the sentence saying so scrolled off the top. It is the invocation that has
+  // to change, so it is refused before the report it cannot finish (issue #697).
+  refuseUnposableArt(result, opts);
   // `compile` has already parsed this file, so the read below cannot fail — but
   // it goes through the same parser rather than a cast, because the cast was the
   // last one in the repository and issue #307 was about exactly that.
@@ -3115,8 +3206,20 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'explain',
-    usage: ['rigc explain  (same arguments as build, minus --profile — it never gates)'],
-    flags: ['rig', 'motion', 'out', 'manifest', 'images', 'cut', 'cuts'],
+    usage: [
+      'rigc explain --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>]   (it never gates, and writes nothing)',
+      'rigc explain … --atlas-in <skeleton.atlas>                  (resolve the parts against a pack somebody already made, as build does)',
+      'rigc explain --cut <name> --cuts <cuts.json>',
+    ],
+    flags: ['rig', 'motion', 'out', 'manifest', 'images', 'atlas-in', 'cut', 'cuts'],
+    notes: [
+      'this line said "the same arguments as build, minus --profile" and was false in both',
+      'directions (issue #697): --atlas-in was not listed here, so the one flag that lets this',
+      'command read what `ingest --art none` writes was reachable and undocumented, while',
+      '--pack, --page-size, --padding and --copy-images are build\'s and do nothing here —',
+      'they decide what is WRITTEN, and this command writes nothing. What it takes is listed',
+      'above, and that is now the whole of it.',
+    ],
   },
   {
     name: 'validate',
@@ -3487,6 +3590,13 @@ try {
   // them buries that.
   if (err instanceof PoseError) {
     console.error(`rigc pose: ${err.message}`);
+    process.exit(2);
+  }
+  // A refusal of the invocation, like the two below it, and exit 2 for the same
+  // reason: nothing was posed and nothing was written, so it is the command line
+  // that has to change (issue #697).
+  if (err instanceof ExplainError) {
+    console.error(`rigc explain: ${err.message}`);
     process.exit(2);
   }
   // Same kind as a PoseError, and printed the same way for the same reason: the

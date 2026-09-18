@@ -164,7 +164,7 @@ What the flags mean:
 | `--pack` | `build` only: arrange every part onto **shared** atlas page(s), written into `--out` as real PNGs, instead of one page per part. Lossless — nothing is resampled, trimmed or rotated. Default is unchanged (issue #4) — **§0.1** |
 | `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1** |
 | `--padding` | `build --pack` only: the gutter each region reserves on every side (default `2`), filled by extending the region's own edge pixels outwards. `0` is not a legal-but-tight choice, it is bleed — **§0.1** |
-| `--atlas-in` | `build` only: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; the atlas is re-emitted into `--out`, re-anchored — **§0.2** |
+| `--atlas-in` | `build` and `explain`: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; `build` re-emits the atlas into `--out`, re-anchored, and `explain` writes nothing and poses through it — **§0.2**. On `explain` it is the flag that makes a **size-only** spec readable at all (`ingest --art none`), because posing resolves every attachment against an atlas; without it that pair is refused by name rather than thrown through ([#697](https://github.com/firejune/rigc/issues/697), §5.1) |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order. For `chainfit` it is only where each attachment's image name **resolves**: the candidate decides what the parts are, so extra PNGs are unused and a missing name is refused by name (§12.3) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--cut` | `build`, `explain` and `validate`: look up a named cut in `--cuts <cuts.json>`, **instead of** `--rig`/`--motion`/`--out` — the two spellings are one build stated two ways and are refused together. A `cuts.json` is `{ "<name>": { "rig": …, "motion": …, "out": …, "manifest"?: … } }`, every path in it relative to the table's own file, so the table lives with the project that owns the art |
@@ -529,6 +529,17 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   extremes, how far each vertex moved and whether the winding survived
   (**§4.11.2**). It takes no `--profile`, it never gates, and it does not write
   anything — so the figures are readable on a build the gate is refusing.
+
+  ⭐ **It reads what `ingest` writes, given the pack** — `--atlas-in <pack.atlas>`,
+  with `build`'s meaning (§0.2). That matters more here than it looks: printing the
+  `DEFORM` block means **posing** the rig, a pose resolves *every* attachment
+  against the atlas whether or not anything deforms it, and a spec written by
+  `ingest --art none` states sizes and names no image. So the size-only pair
+  `build --atlas-in` gates green is readable here through the same flag, and
+  without it the pair is refused by name at exit 2 rather than posed
+  ([#697](https://github.com/firejune/rigc/issues/697), §5.1). ⚠️ `--profile`,
+  `--pack`, `--page-size`, `--padding` and `--copy-images` are `build`'s and are
+  not here: four of them decide what is *written*, and this command writes nothing.
 - **`diff`** compares two skeletons and reports **a ratio per measure** in six
   sections (bones, slots, attachments, constraints, animations, events). It
   deliberately does not combine them into a score: a rig with the right skeleton
@@ -4484,6 +4495,35 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `N pair(s) of skin names have no one order: … "Zulu" / "mike" (case) — folded to one case "Zulu" and "mike" order the other way round, so whether the editor folds SKIN names decides this pair` | **R11** — rename until no pair is left. The same shape as the row above with a **wider** family: #539 measured the editor's comparator for animation names and thereby ruled codepoint out, and nothing has ruled anything out for skin names, so a pair the candidates could disagree about is refused even where the animation rule would emit it. `Zulu`/`mike` and `mike10`/`mike2` build as animation names and are refused as skin names ([#541](https://github.com/firejune/rigc/issues/541)) |
 | `slot "patch": placeholder "patch" is filled by the "default" skin AND by skins "zulu", "mike", and the Spine editor has no way to hold that … Move the default skin's entry for this slot into a named skin — call it "base"` | **R12** — do what it says: move that entry out of `default` into a named skin. The editor has no representation for a placeholder the default skin shares with a named one, in either spelling, and §3.4.2 has both measurements. Renaming the placeholder does not help; the shape is what is refused |
 | `N attachment name collision(s): a placeholder that more than one skin fills is emitted with the name "<skin>/<placeholder>" … slot "patch": skin "base" placeholder "zulu/patch" and skin "zulu" placeholder "patch" would both be named "zulu/patch"` | **R12** — rename the placeholder or the skin. rigc composes an attachment name for every placeholder more than one skin fills (§3.4.2), and this fires when a composed name is one another entry in the same slot already answers to — including a plain name in the default skin, which composed nothing. Both sites are named; either rename ends it |
+
+⚠️ **One refusal in this section is not a `CompileError`, and it is `explain`'s.**
+`explain` prints the `DEFORM` block by **posing** the rig, and a pose resolves every
+attachment against the atlas — so it needs the art `build` needs, reached the same
+two ways (§0.2). A pair whose art it cannot resolve is refused **before a line of
+the report**, at **exit 2**, in rigc's own sentence:
+
+```
+rigc explain: skin "default" slot "lamp" placeholder "shade": attachment "shade"
+wants region "shade", which this build's atlas does not have (it declares no region
+at all). `explain` poses the rig to measure its deform keys and a pose resolves
+every attachment against the atlas, so there is nothing to pose it against. Art
+reaches a compile two ways and this run took neither: `--atlas-in <pack.atlas>`
+resolves the parts against a pack somebody already made, and an "image" per
+attachment resolves them as loose PNGs under `--images <dir>` — a spec that states
+a size and names no image is what `ingest --art none` writes, and `--atlas-in` is
+what reads it. 1 of 1 attachment lookup(s) here resolve to no region.
+```
+
+Both halves of it are measured rather than fixed text: the count is this pair's, and
+where the atlas has a **near miss** the sentence prints that too, in `A08`'s own
+clause and `A08`'s own words. When `--atlas-in` **was** given and the region is still
+absent, the second half names the pack instead and asks you to fix the spec's region
+name or point the flag at the pack that has it. Until
+[#697](https://github.com/firejune/rigc/issues/697) there was no rigc sentence at
+all: the report printed in full and the run then died inside `AtlasAttachmentLoader`
+with `Region not found in atlas: shade (attachment: shade)` and a spine-core stack
+trace, at exit 1 — the runtime's message about rigc's internals standing in for
+rigc's message about your two files.
 
 ### 5.2 Assertions — the gate
 

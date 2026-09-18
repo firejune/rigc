@@ -394,7 +394,10 @@ rigc explain examples/spineboy/export/spineboy-pro.json
 rigc: give either --cut <name> --cuts <cuts.json>, or --rig/--motion/--out
 ```
 
-It takes the same arguments as `build` minus `--profile`, prints the resolved account
+It takes `--rig`, `--motion`, `--out`, and optionally `--manifest`, `--images` and
+`--atlas-in` — `build`'s spec-reading flags, and not the ones that decide what `build`
+*writes* (`--pack`, `--page-size`, `--padding`, `--copy-images`) or the one that gates
+(`--profile`). It prints the resolved account
 of **your** two spec files, and never gates. Which makes it a §2 instrument rather
 than a §1 one — the thing you run to compare what you transcribed against the export
 you transcribed it from, by eye:
@@ -497,7 +500,12 @@ of this section**, with its gutter, its effect on the exit code and what to do.
 
 And two flags for what the skeleton also does not encode: `--art loose` (the default)
 names an `image` per attachment resolved against loose PNGs, `--art none` states
-`width`/`height` for `build --atlas-in`; and under `loose`, `--images <dir>` writes
+`width`/`height` for `build --atlas-in` — and for `explain --atlas-in`, which is the
+same pack read for a report rather than for an artifact: `explain` **poses** the rig
+to print its `DEFORM` block, a pose resolves every attachment against an atlas, and a
+size-only spec carries none of its own, so without the flag that pair is refused by
+name rather than posed ([#697](https://github.com/firejune/rigc/issues/697)); and
+under `loose`, `--images <dir>` writes
 the rig spec's own images directory relative to `--out`, so the rebuild is a plain
 `build --rig … --motion … --out …` rather than one carrying `--images` forever. It is
 refused together with `--art none`, which writes no `image` for a directory to be the
