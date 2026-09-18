@@ -19,6 +19,9 @@ hold its results.
 
 - The `deform` timeline, field by field, and the six things rigc refuses in it:
   **AUTHORING §4.11**
+- Named failures, and the file each one points at: **AUTHORING §5–§6** — the
+  refusals this page names are read there, and §4.2 quotes the one that points
+  back at this page
 - Timing, easing, arcs, anticipation, follow-through, the per-bone offset table:
   **MOTION §3** — a blink and a gaze are ordinary MOTION.md work
 - Candidate spreading and the ballot: **MOTION §4–§5**. Nothing on this page
@@ -292,6 +295,8 @@ PIXEL by its own depth; a mesh displaces vertices and interpolates across
 triangles. On a dome (a ramp would prove nothing — linear interpolation is exact
 on a linear field) at 18°, the two evaluations converge as the lattice refines:
 
+**No run reproduces this:** the 2026-09-05 density study's figures, printed by `bench/studies/2026-09-05-density/tools/densprobe.ts` and kept in its `evidence/`; no command this page states re-takes them, and `CS01`–`CS03` in `selftest.ts` hold the claim rather than the cells
+
 | lattice | 3×3 | 5×5 | 9×9 | 17×17 | 33×33 |
 | --- | --- | --- | --- | --- | --- |
 | mean disagreement, px | 6.4141 | 1.8452 | 0.5887 | 0.2276 | **0.0926** |
@@ -338,6 +343,8 @@ angle you name.
 and an even lattice over it folds at `tan t = √h·√(R/2)/Z` for spacing
 `h = W/(side−1)` — a **√h** that goes to zero. Measured against that closed form
 over a 1,300× range of vertex counts, agreeing to ≤ 1.2°:
+
+**No run reproduces this:** the same 2026-09-05 density study, its `evidence/` and its harness; the closed-form rows are arithmetic and the measured rows are that run's
 
 | lattice | 5×5 | 17×17 | 33×33 | 65×65 | 129×129 | 181×181 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -430,6 +437,8 @@ saturates at 868 vertices however fine the tolerance, its vertices all sit on th
 silhouette so it samples **2 %** of the depth range, and its ear-clipped interior
 holds triangles three orders of magnitude apart in area, the smallest of which
 reverse under a fraction of a pixel.
+
+**No run reproduces this:** the ladder in the paragraph below is the 2026-09-05 noise study's, taken with `bench/studies/2026-09-05-noise/tools/noiseprobe.ts` against the repository at `7ebebc97`, one evidence file per experiment; no command this page states re-takes it
 
 🚨 **The sheet's grain is a slope too, and the ceiling reads it.** Because
 `max|dz/du|` is a maximum over sampled gradients, there is no averaging anywhere
@@ -697,6 +706,29 @@ above the 16° §8 calls the instrument's ceiling. ⇒ **Then let the last band 
 single wide one** — that is the direction that buys safety, and it is the
 opposite of refining.
 
+🔁 **And this is the section read from the other end: the refusal you get for
+picking the ceiling wrong sends you back here by name.** A build whose key
+evaluates past the fold angle above is refused by
+`A39_DEFORM_KEEPS_TRIANGLE_WINDING` — AUTHORING §5–§6 is the failure map and its
+`A39` row reads this message field by field — and the message carries the
+triangles, the signed areas, the fix and this section:
+
+**No run reproduces this:** abridged and re-wrapped — the three further triangles it names and its `and 4 more` are cut at the ellipsis, and the run prints the whole refusal on one line; §9.2's build (b) is what prints it
+
+```
+FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "turn" deform head/head key 1
+      (t=0.6200000047683716s): 8 of 32 triangle(s) reverse winding — triangle 0
+      [0,15,16] 1890.000 -> -544.548px²; … The mesh has turned inside out there
+      and draws its texture backwards. Fix the key's offsets in the motion
+      spec's deform timeline (a projection past its fold angle is the usual
+      cause — docs/FACE.md §4.2 has the closed form), or, if this slot folds on
+      purpose, declare it in the rig spec as invariants.deformMayFold:
+      [{ "slot": "head", "why": … }]
+```
+
+⇒ The table above is what *"a projection past its fold angle"* means, and the
+outermost-column identity is how you stop meeting the message at all.
+
 🎭 **The fourth way out, and the one a Live2D-style face actually takes: stop
 drawing the part.** The ceiling only binds while the part is on screen, so a turn
 that has to go past it fades the far cheek or ear out — `rgba` to alpha 0 — or
@@ -832,6 +864,8 @@ translation, so the highlight at local `(−11, +11)` under the far socket's 0.8
 lands at `−9.81` — it slides 1.19 units inward, toward the surface it reflects
 off (**derived**). Only the *shape* is held.
 
+**No run reproduces this:** a person's judgement over seven renders, kept in the `gallery/portrait` record that landed 2026-09-03 (`FINDINGS.md`, *The measured sweep*); no instrument in this repository grades a turn, so nothing re-takes it and nothing can
+
 📊 **Measured effect on the cliff, by the worked example's own sweep — a
 looked-at judgement over seven renders, not a computed figure:** without the
 counter-scale the turn stops reading at about **18°**; with it, about **26°**.
@@ -907,9 +941,11 @@ hanging off a driver, and two lids are not that — they are one event.
 
 ## 7. Channel allocation, before the first key
 
-🚨 **Scene direction wants to layer — an idle that keeps running under a
-triggered gaze, under a turn — and two animations keying the same bone property
-are BLENDED, not summed.** So the animations have to divide the rig up front. The
+🚨 **Whoever composes with this face will layer — an idle that keeps running
+under a triggered gaze, under a turn — and two animations keying the same bone
+property are BLENDED, not summed.** The rig cannot decide when those play, and it
+is the only thing that can decide whether they collide when they do. So the
+animations have to divide the rig up front. The
 worked example's table, which is the shape of thing to write before authoring
 anything:
 
@@ -969,14 +1005,19 @@ face-specific part is which bone leads. The worked example's ordering
 | `lock_l` / `lock_r` / `ahoge` rotate | 0.72 / 0.76 / 0.82 s | **+21% / +24% / +28% after the head**, each with one overshoot crossing of opposite sign |
 
 🩹 **The head's follow there is a rigid slide plus a roll, not a small yaw, and
-that is the transcription cost showing through.** A head following a gaze really
-does yaw a few degrees; three degrees of yaw would be a third pair of `deform`
-keys — 80 more hand-written numbers — for a motion a viewer reads as *"her head
-moved a little"*. It is the right call at a draft budget and the wrong one at a
-scene-direction budget. Same trade in the turn's anticipation: MOTION §3.6 asks
+that was the transcription cost showing through.** A head following a gaze really
+does yaw a few degrees; when this was authored, three degrees of yaw meant a
+third pair of `deform` keys — 80 more hand-written numbers — for a motion a
+viewer reads as *"her head moved a little"*. ✅ **§1.1 took that price away**: it
+is one `transform` key with a smaller `degrees`, the same edit §8's seven-angle
+sweep is now made of. ⇒ What is left to weigh is not the typing, it is §7's
+table — a yaw on the `gaze` channel is a second animation keying the head mesh's
+deform, which `turn` already owns, and that collision is the thing the format
+cannot express. Same trade in the turn's anticipation: MOTION §3.6 asks
 for a counter-move, and the worked example's is a **−0.9° counter-roll on the
-neck bone rather than a counter-yaw**, because a yaw anticipation is another
-50-float head key plus 30 on the fringe for a tenth of a second.
+neck bone rather than a counter-yaw**, priced at the 50-float head key plus 30 on
+the fringe it cost then and at one more `transform` key now. ⚠️ Neither has been
+re-authored, so what this page measures is still the motion the example ships.
 
 ⭐ **A roll channel is worth having for a second reason: it is where a turn's arc
 comes from.** A yaw shift is a straight horizontal line and `translatex` draws
@@ -995,6 +1036,8 @@ expensive thing to change.
 **The sweep** — the worked example's `turn` re-derived at seven angles, built,
 rendered and looked at. The geometry columns are **derived**; the last column is
 the record's looked-at judgement:
+
+**No run reproduces this:** the geometry columns are §1's line evaluated by hand and the last column is a person's, from the sweep in the 2026-09-03 `gallery/portrait` record; since §1.1 the seven builds are `"degrees": <n>` and a rebuild, but no command this page states takes them
 
 | yaw | centre shift | far band 42 → | ratio | 9-unit ink → | reads as a turn? |
 | --- | --- | --- | --- | --- | --- |
@@ -1015,7 +1058,8 @@ fixable.** The eye *socket* goes next. A real eye at 26° does not narrow
 uniformly: its far corner disappears behind the nose bridge, its lash line
 rotates, its lid wraps. `scalex` does exactly one of those things, so the far eye
 becomes *a thin version of a front-facing eye* and the near eye's lash stretches
-into a wide flat slab (**derived** socket scales: 0.892/1.064 at 12°, 0.745/1.082
+into a wide flat slab (**derived** socket scales, from §1's line at the sweep's
+own angles and re-derivable from it alone: 0.892/1.064 at 12°, 0.745/1.082
 at 24°, 0.629/1.067 at 32° — note the near side barely moves past 20°, which is
 why the stretch stops looking like foreshortening). ⇒ **Past roughly 26° the eyes
 need their own deform meshes** — socket, lash and lid as a 3–4 column grid each —
@@ -1373,9 +1417,22 @@ which declares no constraints at all and so can carry no slider. What it found:
   silent harness failure could not read as a finding
   ([#540](https://github.com/firejune/rigc/issues/540)). ⇒ **A rotation-driven
   jiggle does not survive the editor, and no `scaleY` mode substitutes for it.**
-  ⚠️ Still open on #536: whether the loss happens at import or at export. The
-  project file's bytes cannot settle it — it carries derived float32s that no
-  input declares — and the answer is invisible to an author either way.
+
+  ✅ **And the locus is measured: the loss is at EXPORT** — #536 closed
+  2026-09-17 on round trip 10, against Spine 4.3.26 and without decoding the
+  project format. `gallery/look`'s build and three variants of its
+  `skeleton.json` were each imported with the documented CLI, the project files
+  inflated, and compared byte by byte. **Two imports of the same file differ
+  only at bytes 13–28** — a timestamp or a hash — so that is the noise floor,
+  and reading the bytes works because everything below byte 1914 is stable
+  across imports. Against that floor the **only** stable difference between the
+  `rotate`-driving file and the `rotate`-less one is the float32 at byte 248:
+  `3f 80 00 00` = **1.0** where the source said `rotate: 1`, `7f c0 00 00` =
+  **NaN** — the editor's own unset — where it did not, while an `x: 1` variant
+  leaves 248 at NaN and moves a slot 66 bytes on, which is the component that
+  survives. ⇒ The importer read `rotate` and kept it as a **non-default** value;
+  the exporter wrote nothing for it. It is the editor's **writer**, not its
+  reader, and not rigc's emitter.
 
   ✅ **And the gate now says so before the trip, not after.** A face rig that is
   authored to come back out of the editor declares
@@ -1389,12 +1446,17 @@ which declares no constraints at all and so can carry no slider. What it found:
   everybody would be refusing correct data on behalf of one consumer. ⇒ A23 and
   A41 are the same loss from opposite sides of the trip: A41 fires on what goes
   in, A23 on what comes back.
-- 🔸 Unexplained: `diff` reports `animations.curve_kinds` moved on **196 of 200**
-  keys in every round trip taken, the clean one included. Visually small once the
-  ordering is fixed — but it is 98% of the keys, and *small* is not *explained*.
+- 🔸 Unexplained, and **unreproduced by anything in this tree**: `diff` reports
+  `animations.curve_kinds` moved on **196 of 200** keys in every round trip taken,
+  the clean one included. Visually small once the ordering is fixed — but it is
+  98% of the keys, and *small* is not *explained*. ⚠️ **[measured] by
+  `tools/editor_roundtrip.ts` on the trips this subsection records, and no
+  command this page states re-takes it** — the trips reached ten by 2026-09-17
+  (#536's measurement above is the tenth), so read the figure as those runs' and
+  not as a property the gate holds.
 
 ✅ **The two things this paragraph said it still did not measure have since been
-measured, and they came out opposite ways** — [#544](https://github.com/firejune/rigc/issues/544)
+measured, and both came back safe** — [#544](https://github.com/firejune/rigc/issues/544)
 is the card for having left the sentence standing:
 
 - **More than one event is safe.** The editor re-keys `events` the way it re-keys
@@ -1402,14 +1464,22 @@ is the card for having left the sentence standing:
   firing resolved **by name**, `0.3 -> mike` and `0.6 -> alpha`, payloads intact
   ([#539](https://github.com/firejune/rigc/issues/539)). The ordinal shape does
   *not* bite here, and rigc emits events in the order you declare them.
-- **More than one skin is worse than unmeasured.** A four-skin rig builds green,
-  parses in `spine-core`, and the editor **refuses to import it** — no project
-  file, no message ([#541](https://github.com/firejune/rigc/issues/541)). So there
-  is no export to read, and every figure on this page was taken on a rig carrying
-  exactly one skin (AUTHORING §10.1).
+- **More than one skin imports**, and this bullet reported a harness defect as an
+  editor behaviour until [#541](https://github.com/firejune/rigc/issues/541)
+  closed on **2026-09-14**. The four-skin rig this page was written against
+  imports in **both build modes** — default and `--copy-images` — **exit 0,
+  project written**, with `default, alpha, mike, zulu` emitted and
+  `default/patch`, `alpha/patch`, `mike/patch`, `zulu/patch` as the attachment
+  names. ⚠️ **The editor was never silent**: it named the section, the attachment
+  and the rule, and `tools/editor_roundtrip.ts` had discarded its stdout and
+  stderr. What changed is [#552](https://github.com/firejune/rigc/issues/552) —
+  the composed `<skin>/<placeholder>` name, with `default` pinned first — and what
+  still binds is [#567](https://github.com/firejune/rigc/issues/567): a
+  `CompileError` when the default skin shares a placeholder with a named one. ⇒
+  Skins are not the reason to stay at one, and every figure on this page was
+  still taken on a rig carrying exactly one (AUTHORING §10.1).
 
-The runtime half was never in doubt: every figure above came back through
-`spine-core`.
+Every figure above was read back through `spine-core`.
 
 ---
 
@@ -1478,10 +1548,14 @@ bun cli.ts render --candidate gallery/portrait/build --fps 25 --max 640 \
 
 ```
   MESH  head         authored 25 vertices / 32 triangles  (budget 32)  bones=[head]  attachments=[head]  covers 100.00% of the art, reaching 95.90px past it
+  MESH  hair_bang    authored 15 vertices / 16 triangles  (budget 32)  bones=[bang]  attachments=[hair_bang]  covers 100.00% of the art, reaching 55.22px past it
+  ..    validate (spine-core round trip + machine assertions, profile spine-html)
+  ..    profile spine-html — every assertion applies
 ```
 
-Green, and the tally is left to the tool: `bun run selftest` prints this build's
-live assertion and skip counts on its `GALLERY_EXAMPLE_IS_GREEN[portrait/spine-html]`
+Green — the profile line above says so in the tool's own words — and the tally is
+left to the tool: `bun run selftest` prints this build's live assertion and skip
+counts on its `GALLERY_EXAMPLE_IS_GREEN[portrait/spine-html]`
 line. One written here would be a figure nothing in the tree compares against a
 run, sitting inside a fence that reads as a transcript — and rigc prints no tally
 line, so it never was one.
@@ -1761,11 +1835,21 @@ bun cli.ts check --candidate /tmp/swapped           --frames gallery/portrait/re
 bun cli.ts check --candidate /tmp/folded            --frames gallery/portrait/render/turn@25fps
 ```
 
+⚠️ **The third of those needs a build §9.2's own command will not write.** Since
+`A39` shipped, build (b) under `--profile spine-html` is refused and nothing
+lands in `/tmp/folded` — which is the row above it in §9.2's table, working. Take
+that candidate from the **default** profile, where `A39` reads `PROF` and the
+artifact is written — a profile selects which assertions apply and not what is
+emitted, and on this rig the two profiles write a `skeleton.json` and a
+`skeleton.atlas` that are identical byte for byte.
+
+**No run reproduces this:** the three commands above read a build directory and two `/tmp` paths this repository does not track, so no gate reaches them; re-taken by hand on 2026-09-18 against a render of the good build made the same day
+
 | Candidate | MAE mean | worst | at |
 | --- | --- | --- | --- |
 | the build the frames came from | **0.00** | 0.00 | — |
 | (a) one band inverted | **0.20** | 0.38 | **f0016** |
-| (b) mesh folded | **2.07** | 3.67 | **f0016** |
+| (b) mesh folded | **2.07** | 3.66 | **f0016** |
 
 ⭐ **Both defects land on `f0016`, which is the frame the turn arrives on** — the
 `worst at` column points straight at the moment, which is what makes this worth
@@ -1871,16 +1955,30 @@ are, and those commands regenerate the rest. **The frames to look at:**
 | `render/gaze@25fps/f0015.png` | the gaze, held |
 
 **What those commands print** — re-run verbatim for this page, from a checkout
-with no `build/`, `render/` or `preview.html` in that directory:
+with no `build/`, `render/` or `preview.html` in that directory. The `build`
+says it in its own words, and these are the four lines this page's claims about
+it come off:
+
+```
+  MESH  head         authored 25 vertices / 32 triangles  (budget 32)  bones=[head]  attachments=[head]  covers 100.00% of the art, reaching 95.90px past it
+  MESH  hair_bang    authored 15 vertices / 16 triangles  (budget 32)  bones=[bang]  attachments=[hair_bang]  covers 100.00% of the art, reaching 55.22px past it
+  ..    validate (spine-core round trip + machine assertions, profile spine)
+  ..    profile spine — 7 renderer-policy and 8 archetype assertion(s) do not apply
+```
+
+`spine` is the default, so that is the `build` above with no `--profile` on it —
+the report names what the profile leaves out rather than this page counting it.
+§9.2 runs the same rig under `--profile spine-html` and quotes what comes back
+there; `A13_MESH_BUDGET` and `A15_IDLE_NO_MESH_BONE_KEYS` are among the rules
+the default profile excludes.
+
+**No run reproduces this:** the three rows below come from commands that read the build directory this repository does not track, so no gate reaches them; re-taken by hand on 2026-09-18 from a clean `gallery/portrait`
 
 | Command | What came back |
 | --- | --- |
-| `build --profile spine` | green, and the report names what the profile leaves out rather than this page counting it: `profile spine — 7 renderer-policy and 8 archetype assertion(s) do not apply` |
-| `build --profile spine-html` | green — `profile spine-html — every assertion applies`, `A13_MESH_BUDGET` and `A15_IDLE_NO_MESH_BONE_KEYS` among the ones the row above excludes |
-| both `MESH` lines | `head` **100.00%** covered, reaching 95.90px past the art; `hair_bang` 100.00%, 55.22px |
 | `render --fps 25 --max 640` | **81 + 39 + 56 frames**, 478×640, three contact sheets |
 | `loop_seam.ts` ×3 | **0 / 255**, **0 of 305 920 pixels** differing, for all three |
-| `preview` | one 415 KiB HTML file, 22 pages embedded as data URIs |
+| `preview` | one **414.5 KiB** HTML file, 22 pages embedded as data URIs — the figure the tool prints, where this row used to round it to 415 |
 
 📊 **Figures this page took from the record rather than re-deriving**, because
 they need the artifact's own pixels: the blink's occlusion (hiding the whole eye
@@ -1888,9 +1986,27 @@ assembly at the shut hold changes **0 of 305 920** pixels; positive control at
 rest moves **8 183**), the per-edge narrowing displacements, the `spine-core`
 agreement of every posed column and scale with §1's line to **under 0.001 px**,
 and the Web Player interop pass (**0 console errors, 0 page exceptions**). Note
-what the first of those cost: hiding one slot at a time needs a throwaway script,
-because `setup: { "slot": null }` crashes with a raw `TypeError`
-([#293](https://github.com/firejune/rigc/issues/293)).
+what the first of those cost, and what it costs now:
+[#293](https://github.com/firejune/rigc/issues/293) closed **2026-09-03**, so
+`setup: { "slot": null }` no longer crashes with a raw `TypeError` — it is a
+named `rigc compile error` that gives the spelling. Measured on a copy of this
+example's `motion.json` carrying one such entry, with the path the run echoes
+shortened and the line wrapped:
+
+```
+rigc compile error: motion.json: `setup."eye_l"` is null; a setup entry is an
+object of `{ attachment?: string | null, color?: [r, g, b, a] }` — to show
+nothing there write `"eye_l": { "attachment": null }`, and to show an attachment
+write `"eye_l": { "attachment": "<name>" }`
+```
+
+⚠️ **The throwaway script did not become unnecessary here, and the second
+refusal says why.** Writing the spelling that message names on a slot this rig
+gives an attachment to is refused in turn — `slot "eye_l" has a setup attachment
+in the rig spec AND in the motion spec; the setup pose has one author` — so on
+the worked example hiding one slot is still an edit to the **rig** spec rather
+than a line in the motion spec. What changed is that both of those are now
+refusals with a name and a fix in them, where one used to be a stack trace.
 
 ⭐ **Vela is a second cast member and that was deliberate**, against the gallery's
 own rule that its examples share one drawing. A 2.5D turn reads off four things: a
