@@ -413,8 +413,11 @@ that does not belong to it. See
   against frames of itself — is the floor the rest are read against, because
   `check` grades nothing and has no pass mark. It is the same instrument and the
   same commands; what changes is that the reference is a build of yours you have
-  already looked at, so what it measures is **what your edit did**. AUTHORING.md
-  §9.2 says what that floor reads and why it is not zero.
+  already looked at, so what it measures is **what your edit did**. Every drift
+  the report prints carries the bound its own match gives it on the line under
+  it, so a figure is read against that rather than against a number from a page;
+  AUTHORING.md §9.2 says what the two halves of that bound are and why the floor
+  is not zero.
 - [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) is the benchmark: the same job, from a brief
   and rendered frames, scored. [docs/PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) is how to run an
   agent through it and score what comes back.
