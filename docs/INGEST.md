@@ -81,7 +81,7 @@ an upstream `license.txt` (Appendix, and [NOTICE.md](../NOTICE.md)).
 | **`vote --candidate <a> --candidate <b>`** | ✅ **yes, on either side** | a ballot page. Pairing a foreign export against your own transcription is a legitimate ballot, and the panes carry no paths |
 | **`check --candidate <skeleton.json> --frames <dir>`** | ✅ **yes** | ⭐ it reads **frames and never a reference skeleton**, so a foreign export enters this one *twice over*: as the candidate, or — via `render` — as the source of the frames. §1.4 |
 | **`diff <candidate.json> <reference.json>`** | ✅ **yes, both sides** | 49 structural measures over bones, slots, attachments, constraints, animations and events. ⛔ **Blind to every coordinate** — §1.3 |
-| **`ingest <skeleton.json> --out <dir>`** | ✅ **yes — and it is the only reader that WRITES specs** | the `.json` alone; no atlas, no art, no project file. Out come `rig.json`, `motion.json` and a findings report, such that `build`ing them reproduces the skeleton it read **byte for byte**. The seventh reader, and the one that ends §2's hand work — §2.0 and §5 |
+| **`ingest <skeleton.json> --out <dir>`** | ✅ **yes — and it is the only reader that WRITES specs** | the `.json` alone; no atlas, no art, no project file. Out come `rig.json`, `motion.json` and a findings report, such that `build`ing them reproduces the skeleton it read **byte for byte — for a skeleton rigc emitted**. ⚠️ For an editor export the claim is weaker and measured: `diff` at 1.000 with three kinds of benign difference left, which §2.3 states in full. The seventh reader, and the one that ends §2's hand work — §2.0 and §5 |
 | **`pose --images <dir> --frame <png>`** | ⛔ **not the skeleton** | loose part PNGs and one picture. A packed atlas page is not loose parts, and pointing it at one produces a confident answer about nothing — §5 |
 | **`explain --rig … --motion … --out …`** | ⛔ **no** | rig spec + motion spec. It explains **what you wrote**, which makes it a transcription instrument rather than a reading one — §1.5 |
 | **`build --rig … --motion … --images …`** | ⛔ **no** | specs in, skeleton out. The only writer in the toolchain, and the reason §2 exists |
@@ -470,7 +470,8 @@ finding with a code — `BLOCK` for a construct the rebuild will be missing, `JU
 for the two values a skeleton does not carry, `LOSS` wherever the source's spelling and
 rigc's differ on purpose (a number rigc re-derives, a field the spec has no home for, or
 a default the source left to the format and the rebuild writes out). A blocker exits
-non-zero and still writes both files.
+non-zero and still writes both files. **Every code it can print has a row at the end
+of this section**, with its gutter, its effect on the exit code and what to do.
 
 **Two values are not in a skeleton**, so `ingest` asks rather than guesses:
 
@@ -504,6 +505,56 @@ base of. [AUTHORING §0.3](AUTHORING.md) is the loop in full.
 
 📝 Both written specs carry a `note` saying they are decompiled and naming the file
 they came from. Leave it there — §2.4 is why.
+
+#### Every finding code, and what to do about it
+
+A finding line reads `<gutter> <CODE>: <where> — <detail>`, and the code is the part
+that is the same on every run. This table is the whole set: which gutter it prints
+under, whether it changes the exit code, what it means, and what to do about it.
+**Nothing here refuses the file** — a construct the spec format cannot hold is recorded
+rather than rejected — so an exit of 1 means *a blocker was recorded*, and both specs
+are on disk either way. (The one thing `ingest` does refuse outright is an option that
+contradicts the file, which is not a finding: `--stage` beside a box the skeleton
+declares.)
+
+🔒 **Derived, not kept by hand.** The ingest suite of `bun run selftest` (`IG25`)
+reads the codes out of [`src/ingest.ts`](../src/ingest.ts) and refuses a row this
+table lacks, a row naming a code nothing emits, and a gutter cell that is not the
+kind the source records — with `IG26` as its red-first, which removes a row, invents
+one and flips a gutter in turn and requires each to be named. Six of these codes are
+**composed** in the source rather than written out: five over a union of three or two
+names, which the scan expands, and `ATTACHMENT_<TYPE>` from the file's own text, which
+it cannot — so that one is a row about a family and says so. The scan counts the
+`note(` calls in the file against the sites it resolved, because a code it cannot read
+is the one failure a comparison of two sets cannot show you.
+
+| code | gutter | exit | what it means | what to do |
+| --- | --- | --- | --- | --- |
+| `ANIMATION_GROUP` | `BLOCK` | 1 | the animation carries a group the motion spec has no home for. The detail names the ten it does carry. `drawOrderFolder` is the group to know about: the runtime reads it and builds a timeline from it, and no export in this corpus carries one | transcribe that group by hand (§2), or accept that the rebuild does not carry it |
+| `ATTACHMENT_<TYPE>` | `BLOCK` | 1 | an attachment of a type rigc does not emit; the code is composed from the type, so it reads `ATTACHMENT_POINT` or `ATTACHMENT_LINKEDMESH`. rigc emits region, mesh, boundingbox, clipping and path | the rebuild will not have that attachment at all. `docs/SPEC_COVERAGE.md` part 1-6 says what each deferred type would carry |
+| `ATTACHMENT_NAME` | `LOSS` | 0 | the attachment states a `name` and only **one** skin fills the placeholder, so rigc writes none — it composes `<skin>/<placeholder>` exactly where a placeholder is contested | nothing, unless something downstream looks that attachment up by the name the source gave it |
+| `ATTACHMENT_SEQUENCE` | `BLOCK` | 1 | the attachment carries a `sequence` block — a numbered image series — which the rig spec cannot say | the rebuild draws the single region the attachment names; the frames have to be driven some other way |
+| `ATTACHMENT_TIMELINE` | `BLOCK` | 1 | an attachment timeline other than `deform`, which is the only one the motion spec carries | transcribe it, or accept that the rebuild does not play it |
+| `BONE_FIELD` | `BLOCK` | 1 | a bone field with no rig-spec field, so it is dropped. A 4.0/4.1 export spelling `transform` where 4.3 spells `inherit` lands here; so does a misspelling | check the name against AUTHORING §3 first — a typo and an unsupported field read exactly the same |
+| `BONE_TIMELINE` | `BLOCK` | 1 | a bone timeline the motion spec has no track for. The detail names the ten it has. `inherit` is the eleventh case of the runtime's own bone switch and the one this corpus has no example of | transcribe it, or accept that the rebuild plays nothing there |
+| `CONSTRAINT_FIELD` | `BLOCK` | 1 | as `BONE_FIELD`, on a constraint, with its type named beside it | as `BONE_FIELD` |
+| `CONSTRAINT_KEY_RESTATED` | `LOSS` | 0 | an `ik` or `transform` track whose keys do not all state the same fields. The motion spec takes one field set per track, so a field **any** key states is written on **every** key at the value the parser would have read there | nothing. Same values, larger file — the rebuild plays what the source plays |
+| `CONSTRAINT_TYPE` | `BLOCK` | 1 | a constraint whose `type` is none rigc knows, so the whole constraint is dropped rather than approximated | the rebuild has no such constraint; check the spelling before assuming the type is unsupported |
+| `DURATION` | `JUDGE` | 0 | skeleton JSON has no duration field at all. The largest key time is used, which is what a runtime plays to — and wrong for an animation that holds its last pose past its last key | if you know the real number, edit `duration` in the motion spec. It costs nothing: the declared duration is checked against the compiled keys |
+| `HEADER_BOOKKEEPING` | `LOSS` | 0 | a header field the editor writes and the rig spec has no home for — `hash`, `audio`. Dropped, and nothing reads it back | nothing. It is one of the three differences §2.3 measures on every editor export |
+| `HEADER_ORIGIN` | `LOSS` | 0 | the source declares an extent and omits `x`/`y`. Inside a declared extent an omitted origin **is** 0, so the spec states it — and the rebuild then spells two fields the source did not | nothing. Same box, different bytes — which is why byte identity is not the claim for an export that takes this branch |
+| `HEADER_REDERIVED` | `LOSS` | 0 | `skeleton.spine`: the rebuild writes the version of the runtime rigc links. The line says whether that is the same string the source states | nothing — but read the line: a 4.2 export rebuilds as 4.3 in that one field |
+| `IK_KEY_FIELD` | `BLOCK` | 1 | a key field on an `ik` timeline that is not part of its shape | check the spelling; an unknown field is dropped from the rebuilt track |
+| `NO_STAGE` | `BLOCK` `JUDGE` | 1 | the skeleton declares no stage. It is a blocker with no `--stage`, and a **judgement** — exit 0 — when `--stage x,y,w,h` supplies one, because nothing measured the box you gave it | supply the box from the project the file came from. It cannot be derived: posing the rig gives the animated extent, which is a different number |
+| `PATH_LENGTHS` | `LOSS` | 0 | the source states a path attachment's `lengths` and rigc re-measures it as `PathConstraint` does | nothing. Dropping it is the correct reading: the field is the runtime's own four-sample forward difference, not an arc length |
+| `PATH_TIMELINE` | `BLOCK` | 1 | a path-constraint timeline the motion spec has no track for — it carries position, spacing and mix | transcribe it, or accept that the rebuild plays nothing there |
+| `PHYSICS_TIMELINE` | `BLOCK` | 1 | the same for a physics constraint, whose eight the motion spec carries in full — so this is reachable only for a name the **parser** falls through too | as `PATH_TIMELINE` |
+| `SLIDER_TIMELINE` | `BLOCK` | 1 | the same for a slider, which carries time and mix | as `PATH_TIMELINE` |
+| `SLOT_FIELD` | `BLOCK` | 1 | as `BONE_FIELD`, on a slot | as `BONE_FIELD` |
+| `SLOT_TIMELINE` | `BLOCK` | 1 | a slot timeline that is not `attachment` or `rgba`. The format also has `rgb`, `alpha`, `rgba2` and `rgb2`, and the motion spec has no track for any of them | transcribe it, or accept that the rebuild plays nothing there |
+| `TIMELINE_FIELD` | `BLOCK` | 1 | a key field on a bone, path, physics or slider timeline that is not part of that timeline's shape | check the spelling; the field is dropped from the rebuilt key |
+| `TIMELINE_KEY_RESTATED` | `LOSS` | 0 | **the commonest line in a real run.** An editor omits a channel that equals the parser's default; the motion spec's `v` is positional, so the omission is written out at that default | nothing. The same values the runtime reads, spelled out — a larger file and the same animation |
+| `TRANSFORM_KEY_FIELD` | `BLOCK` | 1 | as `IK_KEY_FIELD`, on a `transform` timeline | as `IK_KEY_FIELD` |
 
 ### Transcription — the route that made a foreign skeleton yours
 

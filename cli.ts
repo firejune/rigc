@@ -67,7 +67,7 @@ import {
   type DeformSpan,
 } from './src/deformmeasure.ts';
 import { diffLines, diffSkeletons, reportedFigures, sectionFigures, type DiffReport } from './src/diff.ts';
-import { ingest, IngestError, type IngestFindingKind, type IngestStage } from './src/ingest.ts';
+import { ingest, IngestError, INGEST_GUTTERS, type IngestStage } from './src/ingest.ts';
 import { copyAtlasImages } from './src/emit.ts';
 import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas } from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
@@ -2829,10 +2829,13 @@ function cmdIngest(flags: Record<string, string>, positional: string[]): void {
   // Grouped by kind rather than printed in discovery order: a blocker is what
   // decides the exit code, and a reader scanning for one should not have to
   // read past a hundred DURATION lines to find it.
-  const GUTTER: Record<IngestFindingKind, string> = { blocker: 'BLOCK', judgement: 'JUDGE', lossy: 'LOSS ' };
+  // The gutter words are `INGEST_GUTTERS`, which is also the column
+  // `docs/INGEST.md` §2.0's finding-code table is keyed on (issue #675); the
+  // pad to one width is this printer's, so the codes line up.
+  const width = Math.max(...Object.values(INGEST_GUTTERS).map((gutter) => gutter.length));
   for (const kind of ['blocker', 'judgement', 'lossy'] as const) {
     for (const finding of result.findings.filter((f) => f.kind === kind)) {
-      console.log(`  ${GUTTER[kind]} ${finding.code}: ${finding.where} — ${finding.detail}`);
+      console.log(`  ${INGEST_GUTTERS[kind].padEnd(width)} ${finding.code}: ${finding.where} — ${finding.detail}`);
     }
   }
   console.log(`rigc: wrote ${join(outDir, 'rig.json')}`);
