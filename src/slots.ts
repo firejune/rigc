@@ -598,6 +598,37 @@ function scoreAt(template: Template, source: SlotSource, dx: number, dy: number)
 }
 
 /**
+ * The offsets one axis of the coarse sweep visits, in ascending order.
+ *
+ * ⭐ Anchored on **zero** and symmetric about it, and both halves of that are
+ * correctness rather than taste. Zero is the offset that says *the part landed
+ * where the candidate drew it*, which is the answer on every frame of a correct
+ * rig — so a lattice that does not carry it cannot report a correct rig as
+ * correct. And the window this searches is `±radius`, so a lattice reaching one
+ * stride further one way than the other is searching a different window from the
+ * one the radius names.
+ *
+ * 🚨 The sweep used to run `for (dx = -radius; dx <= radius; dx += coarse)`,
+ * which puts the origin on the lattice only when `coarse` divides `radius`.
+ * Issue #678: `gallery/squash` checked against frames rendered from **itself**
+ * reported `slot drift worst 3.7 px "ear_r"`. The ear's radius is 26 and its
+ * stride 3, so the lattice ran `-26, -23, … -2, 1, 4 …` — the origin missing,
+ * and the nearest lattice point below it two whole pixels out. The coarse winner
+ * landed at `(1, -2)` scoring 37.33, the halving refinement walked it to
+ * `(2, -3)` at 37.28, and the exhaustive field over the same radius has its
+ * minimum at `(0, 0)` scoring **35.88**. The refinement cannot recover it: it
+ * searches `±1` around the coarse winner, and `dy = -2` is two away from zero.
+ */
+function sweepOffsets(radius: number, coarse: number): number[] {
+  const out = [0];
+  for (let d = coarse; d <= radius; d += coarse) {
+    out.unshift(-d);
+    out.push(d);
+  }
+  return out;
+}
+
+/**
  * Correlate one slot against the reference inside its own search radius.
  *
  * Multi-resolution: a full sweep at a coarse stride, then halving steps around the
@@ -605,6 +636,13 @@ function scoreAt(template: Template, source: SlotSource, dx: number, dy: number)
  * near-constant in the radius — a big part gets a big window without paying its
  * square — and the coarse sweep doubles as the rival field the confidence is read
  * from.
+ *
+ * ⚠️ What is left over on an identity run is the **sub-pixel step**, and it
+ * cannot be zero: the template is the slot drawn *alone* and the reference is the
+ * composite, so wherever a neighbour covers part of the slot the residual surface
+ * around the true minimum is asymmetric and the parabola's vertex sits off it.
+ * `parabolic` clamps that to `SUBPIXEL_CLAMP` on each axis, which is what bounds
+ * the whole instrument's identity floor — see `docs/AUTHORING.md` §9.2.
  */
 function applyTemplateMatch(track: SlotTrack, foot: Footprint, source: SlotSource): void {
   if (!track.candidate || track.searchRadius === null) return;
@@ -626,8 +664,9 @@ function applyTemplateMatch(track: SlotTrack, foot: Footprint, source: SlotSourc
   let bestY = 0;
   let best = Infinity;
   const sweep: Array<{ dx: number; dy: number; s: number }> = [];
-  for (let dy = -radius; dy <= radius; dy += coarse) {
-    for (let dx = -radius; dx <= radius; dx += coarse) {
+  const axis = sweepOffsets(radius, coarse);
+  for (const dy of axis) {
+    for (const dx of axis) {
       const s = score(dx, dy);
       sweep.push({ dx, dy, s });
       if (s < best) {
@@ -688,11 +727,21 @@ function applyTemplateMatch(track: SlotTrack, foot: Footprint, source: SlotSourc
   track.ambiguity = null;
 }
 
+/**
+ * How far off the whole-pixel winner the sub-pixel step may place the answer.
+ *
+ * Half a pixel on each axis, because past that the neighbouring whole pixel is
+ * the better winner and the search would have found it. It is what bounds the
+ * instrument's identity floor at `hypot(0.5, 0.5)` px, which `docs/AUTHORING.md`
+ * §9.2 states as the floor an author reads a drift against.
+ */
+export const SUBPIXEL_CLAMP = 0.5;
+
 /** Sub-pixel minimum of the parabola through three samples one pixel apart. */
 function parabolic(before: number, at: number, after: number): number {
   const denominator = before - 2 * at + after;
   if (!Number.isFinite(denominator) || Math.abs(denominator) < 1e-9) return 0;
-  return Math.max(-0.5, Math.min(0.5, (before - after) / (2 * denominator)));
+  return Math.max(-SUBPIXEL_CLAMP, Math.min(SUBPIXEL_CLAMP, (before - after) / (2 * denominator)));
 }
 
 /** Is this track's drift a measurement of this slot? */

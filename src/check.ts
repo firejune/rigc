@@ -127,6 +127,7 @@ export {
   componentsOf,
   matchSlots,
   searchRadius,
+  SUBPIXEL_CLAMP,
   type Component,
   type ComponentField,
   type MatchMethod,
@@ -3113,7 +3114,7 @@ function sheetLines(sheet: SheetCheck | null): string[] {
   return [
     `     sheet      ${sheet.compared} of ${sheet.tiles} tile(s) of ${basename(sheet.file)} at ` +
       `${sheet.tileWidth}x${sheet.tileHeight}px in ${sheet.columns} column(s)   MAE mean ${f2(sheet.meanMae)}  ` +
-      `worst ${f2(sheet.worstMae)} at f${String(sheet.worstTile).padStart(4, '0')}   ` +
+      `worst ${f2(sheet.worstMae)} ${worstAt(sheet.worstTile, sheet.compared, 'tile(s)')}   ` +
       `(over the reference's own pixels, mean ${f2(sheet.meanMaeReference)})`,
     '                ⤷ the frames this set does not commit as files. The candidate is sampled at the set\'s own ' +
       "rate and rendered into the same box the frames above were, at the sheet's scale. Read the " +
@@ -3282,7 +3283,7 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
       continue;
     }
     lines.push(
-      `     MAE        mean ${f2(anim.meanMae)}  worst ${f2(anim.worstMae)} at f${String(anim.worstMaeFrame).padStart(4, '0')}` +
+      `     MAE        mean ${f2(anim.meanMae)}  worst ${f2(anim.worstMae)} ${worstAt(anim.worstMaeFrame, anim.compared, 'frame(s)')}` +
         `   (0..255 over the union alpha; over the whole frame, mean ${f2(anim.meanMaeFrame)})`,
     );
     lines.push(
@@ -3393,6 +3394,26 @@ function textureFloorLines(anim: AnimationCheck): string[] {
       `${f2(t.floor)} — |MAE − above| ≤ floor, because absolute errors bound rather than add. A floor near zero ` +
       'is proof the texture is not the story here. 🚫 The figure of record is the MAE above, not this.',
   ];
+}
+
+/**
+ * Which frame carried the worst MAE — or that none did.
+ *
+ * `AnimationCheck.worstMaeFrame` and `SheetCheck.worstTile` are `-1` when **no
+ * compared frame differs from the reference at all**, because each worst is
+ * tracked with a strict `>` from zero. That is the identity run, which is the run
+ * an author calibrates on, and until issue #678 the sentinel went straight
+ * through `padStart(4, '0')` and printed as `at f00-1` — a frame index that
+ * cannot exist, on the two reports that are supposed to read as *nothing to
+ * report*.
+ *
+ * ⚠️ The same sentinel is carried by `worstDriftFrame` and `worstChangeFrame`,
+ * and both of those were already guarded where they print. Two of the four sites
+ * had the idiom and two did not, which is the whole defect.
+ */
+function worstAt(frame: number, compared: number, unit: string): string {
+  if (frame >= 0) return `at f${String(frame).padStart(4, '0')}`;
+  return `(exact: none of the ${compared} compared ${unit} differs from the reference)`;
 }
 
 /** One drift, as the table says it: distance, slot, frame. */
