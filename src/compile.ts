@@ -56,6 +56,7 @@ import {
   type RigBoundingBoxAttachment,
   type RigClippingAttachment,
   type RigEvent,
+  type RigLinkedMeshAttachment,
   type RigMeshAttachment,
   type RigMeshBinding,
   type RigPathAttachment,
@@ -132,6 +133,7 @@ import type {
   SpineClippingAttachment,
   SpineConstraint,
   SpineEvent,
+  SpineLinkedMeshAttachment,
   SpineMeshAttachment,
   SpinePathAttachment,
   SpineRegionAttachment,
@@ -2018,6 +2020,8 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     }
     return table;
   };
+  /** Linked meshes to resolve once every skin exists — see `resolveLinkedMeshes`. */
+  const pendingLinks: PendingLink[] = [];
   tableFor('default'); // rigc always emits a default skin, even when it is empty
   // ...and every skin the rig declares, for the same reason: a skin can now carry
   // `bones`/constraint lists with no attachments at all, and a skin that only
@@ -2188,6 +2192,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           imagesDir,
           depths: attachmentDepths,
           slotNames: new Set(rig.slots.map((s) => s.name)),
+          links: pendingLinks,
         });
         // The name is put on AFTER the builder rather than inside it: five
         // builders write five shapes, the rule is one rule, and a rule that has
@@ -2202,6 +2207,10 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       tableFor(skinName)[rigSlot.name] = perSlot;
     }
   }
+  // Every skin is built, so every `source` can now be looked up — and until this
+  // line a linked mesh is the one construct in a rig spec whose name has not been
+  // resolved yet.
+  resolveLinkedMeshes(pendingLinks, skinTables);
   // 📐 The implicit budget of 0 is a statement about rigc's own GENERATORS:
   // geometry rigc built is geometry rigc will not ship unmeasured, and
   // `A13_MESH_BUDGET` has nothing to measure a generated mesh against until the
@@ -3114,8 +3123,14 @@ function nameSkinAttachment(att: SpineAttachment, name: string, placeholder: str
   // Key order is the parser's reading order — `name`, then `path`, then the rest
   // as the builder wrote it — for the same reason every other emitted object
   // follows it: the file is read by people and diffed against references.
-  if (kind !== 'region' && kind !== 'mesh') return { name, ...att };
-  const { path, ...rest } = att as SpineRegionAttachment | SpineMeshAttachment;
+  //
+  // ⚠️ The three kinds here are the three the parser gives a texture `path` to,
+  // and `linkedmesh` is one of them (`SkeletonJson.ts:541`, `:570` — the mesh
+  // branch is shared). Leaving it out would write a `name` and no `path`, and
+  // `path` defaults to `name`, so a contested link would resolve the region
+  // "<skin>/<placeholder>", which no atlas holds.
+  if (kind !== 'region' && kind !== 'mesh' && kind !== 'linkedmesh') return { name, ...att };
+  const { path, ...rest } = att as SpineRegionAttachment | SpineMeshAttachment | SpineLinkedMeshAttachment;
   return { name, path: path ?? placeholder, ...rest } as SpineAttachment;
 }
 
@@ -3152,11 +3167,37 @@ interface AttachmentContext {
   depths: Map<string, number[]>;
   /** Every slot the rig declares — a clipping attachment's `end` resolves here. */
   slotNames: Set<string>;
+  /**
+   * Linked meshes whose `source` is still unresolved — `resolveLinkedMeshes`
+   * empties it once every skin has been built.
+   *
+   * ⭐ Deferred for the reason spine-core defers its own (`this.linkedMeshes`,
+   * `SkeletonJson.js:56` filled at `:581` and drained at `:427-449`): a link may
+   * name a source in a skin or a slot this loop has not reached yet, so resolving
+   * it in place would refuse a correct rig on nothing but declaration order.
+   */
+  links: PendingLink[];
+}
+
+/** One linked mesh, with everything a refusal has to name once the skins exist. */
+interface PendingLink {
+  where: string;
+  /** What it asked for, the parser's defaults already applied. */
+  skin: string;
+  slot: string;
+  source: string;
+  /**
+   * Whether the author wrote `skin`/`slot` or is taking the parser's default —
+   * which is the half of the refusal that says where a name came from, and the
+   * one an author who wrote neither key needs most.
+   */
+  skinStated: boolean;
+  slotStated: boolean;
 }
 
 /**
  * The seven `type` values `readAttachment` has a branch for (`:540-651`), and
- * the five rigc emits.
+ * the six rigc emits.
  *
  * ⚠️ The lists are separate because the refusals are separate. A `point` is a
  * name the format HAS and rigc has not built; `sequence` is not a type at all —
@@ -3166,22 +3207,24 @@ interface AttachmentContext {
  * One message said exactly that about every string it did not recognise.
  */
 const SPINE_ATTACHMENT_TYPES = ['region', 'mesh', 'linkedmesh', 'boundingbox', 'path', 'point', 'clipping'] as const;
-const EMITTED_ATTACHMENT_TYPES = ['region', 'mesh', 'boundingbox', 'clipping', 'path'] as const;
+const EMITTED_ATTACHMENT_TYPES = ['region', 'mesh', 'linkedmesh', 'boundingbox', 'clipping', 'path'] as const;
 
 /**
  * What each deferred type is and what it would carry — `docs/SPEC_COVERAGE.md`
- * part 1-6's two rows, restated where the refusal can print them.
+ * part 1-6's row, restated where the refusal can print it.
  *
  * ⭐ The construct, not just its name. "attachment type X is in the Spine 4.3
  * format and rigc does not emit it yet" tells an author who already knows what a
- * linked mesh is that rigc will not do it, and tells an author who does not know
+ * point is that rigc will not do it, and tells an author who does not know
  * nothing at all — and the second is the reader this repository writes for.
+ *
+ * ⚠️ `linkedmesh` was the other entry until issue #691 emitted it. The sentence
+ * below no longer says *"neither a point nor a linked mesh appears anywhere in
+ * the benchmark corpus"*, because half of that is now a statement about a type
+ * rigc writes, and a refusal that argues from a construct it has since built is
+ * a refusal nobody can act on.
  */
 const DEFERRED_ATTACHMENTS: Record<string, string> = {
-  linkedmesh:
-    'a mesh that takes its geometry from another mesh instead of stating any — a region/mesh head, then ' +
-    '"source" (the attachment it links to, and the key that MAKES it linked), "slot" and "skin" naming where ' +
-    'that source lives, and "timelines" (default true) for whether it follows the source\'s deform keys',
   point:
     'a position and an angle with no geometry at all — "x", "y", "rotation" and "color", posed by its bone and ' +
     'drawn by nothing; what reads it is game code asking where a muzzle or a hand is',
@@ -3230,9 +3273,10 @@ function buildRigAttachment(
   // them (`:568-569`, `:582`; SPEC_COVERAGE part 1-6) — so a mesh carrying
   // `source` is a linked mesh whatever its `type` says, and refusing it as "two
   // keys this compiler does not read: source, skin" sent the author to delete
-  // the one key that made it linked.
-  if (type === 'mesh' && (att as { source?: unknown }).source !== undefined) {
-    throw new NotImplementedError(deferredAttachmentRefusal('linkedmesh', where, ' (a mesh carrying "source" is one)'));
+  // the one key that made it linked. Both spellings reach one builder for the
+  // same reason they reach one parser branch.
+  if (type === 'linkedmesh' || (type === 'mesh' && (att as { source?: unknown }).source !== undefined)) {
+    return buildRigLinkedMesh(att as RigLinkedMeshAttachment, placeholder, where, ctx);
   }
   if (type === 'region') return buildRigRegion(att as RigRegionAttachment, placeholder, where, ctx);
   if (type === 'mesh') return buildRigMesh(att as RigMeshAttachment, placeholder, where, ctx);
@@ -3259,9 +3303,9 @@ function buildRigAttachment(
 function deferredAttachmentRefusal(type: string, where: string, how: string): string {
   return (
     `${where}: this attachment is a "${type}"${how} — ${DEFERRED_ATTACHMENTS[type]}. ` +
-    `rigc does not emit it yet, deliberately: it emits ${EMITTED_ATTACHMENT_TYPES.join(', ')}, and neither a ` +
-    'point nor a linked mesh appears anywhere in the benchmark corpus (docs/SPEC_COVERAGE.md parts 3-1 and 4-2), ' +
-    'so neither is on the ladder\'s critical path. docs/SPEC_COVERAGE.md part 1-6 is the row this sentence reads ' +
+    `rigc does not emit it yet, deliberately: it emits ${EMITTED_ATTACHMENT_TYPES.join(', ')}, and a point ` +
+    'appears nowhere in the benchmark corpus (docs/SPEC_COVERAGE.md parts 3-1 and 4-2), so it is not on the ' +
+    "ladder's critical path. docs/SPEC_COVERAGE.md part 1-6 is the row this sentence reads " +
     'from, and it is what an implementation would have to carry.'
   );
 }
@@ -3974,6 +4018,178 @@ function buildRigMesh(
     overshoot: fit?.overshoot,
   });
   return out;
+}
+
+/**
+ * A mesh that borrows another mesh's geometry. `type: "linkedmesh"`, or
+ * `type: "mesh"` carrying `source` — one parser branch, one builder.
+ *
+ * 🚨 **Everything this refuses, the parser reads in silence**, which is the whole
+ * reason the refusals exist. Measured on forged skeletons through spine-core
+ * 4.3.13:
+ *
+ *   - Geometry beside `source`: the branch returns at `:586`, BEFORE
+ *     `readVertices`. A link declaring 5 uvs, 3 triangles, `hull: 5` and
+ *     `edges: [0, 2]` beside a 4-vertex source loaded with the source's 8-long
+ *     `worldVerticesLength`, 6 triangles, `hullLength` 8 and 10 edges. Nothing
+ *     the author wrote was read and nothing said so.
+ *   - A chain — a link whose source is itself a link — resolves in the order
+ *     `linkedMeshes` was FILLED, which is the order the skins' JSON keys are
+ *     iterated in. Source-first, the chained link loaded the full geometry; with
+ *     the two keys swapped in the same file it loaded `worldVerticesLength` 0,
+ *     0 triangles, 0 bones and a 0x0 size, silently. A construct whose meaning
+ *     depends on key order is a construct rigc will not write.
+ *   - A link to itself is that chain at length one, and loads the same nothing.
+ *
+ * What is NOT refused here is `source` naming something in a skin or a slot this
+ * builder has not reached yet: that is `resolveLinkedMeshes`' job, and doing it
+ * here would refuse a correct rig on declaration order — the very thing the
+ * chain measurement above condemns.
+ */
+function buildRigLinkedMesh(
+  att: RigLinkedMeshAttachment,
+  placeholder: string,
+  where: string,
+  ctx: AttachmentContext,
+): SpineLinkedMeshAttachment {
+  // The mesh keys the parser does not reach on this branch. Named one by one,
+  // because "remove what does not belong" is not an instruction an author can
+  // act on and the remedy for each of these is the same single sentence.
+  const geometry = (['uvs', 'triangles', 'vertices', 'weights', 'boneIndexing', 'hull', 'edges', 'generator'] as const)
+    .filter((key) => att[key] !== undefined);
+  if (geometry.length > 0) {
+    throw new CompileError(
+      `${where}: a linked mesh states ${geometry.map((k) => JSON.stringify(k)).join(', ')}, and a linked mesh has ` +
+        'no geometry of its own — it draws the geometry of the attachment "source" names. The parser returns from ' +
+        'the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`), so these keys are read by nothing ' +
+        "at all: a link declaring 5 uvs beside a 4-vertex source loads the SOURCE's 4 vertices and says nothing. " +
+        `Remove ${geometry.length === 1 ? 'it' : 'them'}, or remove "source" and author this as a mesh of its own.`,
+    );
+  }
+  const source = att.source;
+  if (typeof source !== 'string' || source.length === 0) {
+    throw new CompileError(
+      `${where}: a linked mesh needs "source" — the PLACEHOLDER of the mesh whose geometry it draws (the key that ` +
+        `attachment is filed under in its skin, not its "name"), and this one states ${JSON.stringify(source) ?? String(source)}. ` +
+        '"source" is what MAKES a mesh linked: `getValue(map, "source", null)` is falsy-tested ' +
+        '(`SkeletonJson.ts:582`), so an absent or empty one is read as an ordinary mesh, whose `uvs` this ' +
+        'attachment does not have — the parser dereferences `map.uvs.length` and throws.',
+    );
+  }
+  if (att.slot !== undefined && !ctx.slotNames.has(att.slot)) {
+    throw new CompileError(
+      `${where}: "slot" is ${JSON.stringify(att.slot)}, which the rig does not declare as a slot. It names where ` +
+        'the source lives and is resolved through `skeletonData.findSlot` (`SkeletonJson.ts:575`), which throws ' +
+        `\`Source mesh slot not found\` on a miss. The rig's slots are ${[...ctx.slotNames].sort().map((s) => JSON.stringify(s)).join(', ')}. ` +
+        "Leave it out and the source is looked for in this attachment's own slot, which is the parser's default.",
+    );
+  }
+  ctx.links.push({
+    where,
+    skin: att.skin ?? 'default',
+    slot: att.slot ?? ctx.slotName,
+    source,
+    skinStated: att.skin !== undefined,
+    slotStated: att.slot !== undefined,
+  });
+  // The art side is a mesh's, unchanged: a link draws its OWN region, which is
+  // the reason the type exists — one triangulation, one outfit's pixels each.
+  const img = att.image === undefined ? undefined : atlasedImage(att.image, where, ctx);
+  const width = att.width ?? img?.width;
+  const height = att.height ?? img?.height;
+  if (width === undefined || height === undefined) {
+    throw new CompileError(
+      `${where}: a linked mesh needs width and height — give them, or give an "image" and rigc will measure the PNG`,
+    );
+  }
+  const out: SpineLinkedMeshAttachment = { type: 'linkedmesh', source, width: r6(width), height: r6(height) };
+  const path = attachmentPath(att, placeholder);
+  if (path !== undefined) out.path = path;
+  // Only where they differ from the parser's own defaults. Writing `timelines:
+  // true`, or a `skin` of "default", would be a byte the editor's own export
+  // does not carry.
+  if (att.slot !== undefined && att.slot !== ctx.slotName) out.slot = att.slot;
+  if (att.skin !== undefined && att.skin !== 'default') out.skin = att.skin;
+  if (att.timelines === false) out.timelines = false;
+  if (att.color !== undefined) out.color = att.color;
+  // 🚫 NOT registered in `ctx.meshes`, and that is a decision rather than an
+  // omission. `meshKinds` is keyed by SLOT and the commonest linked mesh shares
+  // its source's slot from another skin, so an entry here would overwrite the
+  // source's own `ring`/`ribbon`/`contour` kind and silence `A21_MESH_RIM_PINNED`
+  // on the mesh rigc actually built — a gate turned off by a feature, which is
+  // the failure mode issue #44 is about, pointed the other way. The validator
+  // tells a link apart from the ARTIFACT instead — off the file's own `source`
+  // keys, joined to the loaded attachment by (skin, slot, placeholder) — which
+  // is the archetype rule's own words: an assertion reads the rig, never a name.
+  return out;
+}
+
+/**
+ * Resolve every `source` against the skins that were built, and refuse a miss by
+ * name.
+ *
+ * Three of the four refusals are one per throw the runtime would have made
+ * (`SkeletonJson.js:427-436`) — `Skin not found`, `Source mesh slot not found`,
+ * `Source mesh not found`. Those are thrown `Error`s, so left to the round trip
+ * they arrive as `A00_ROUNDTRIP_PARSE`'s report of the runtime's sentence, which
+ * names neither the attachment that asked nor the skin and slot it searched. The
+ * fourth has no runtime throw behind it at all: a source that is not a mesh is
+ * read field by field off whatever was found, and `undefined` is not an error.
+ */
+function resolveLinkedMeshes(
+  links: readonly PendingLink[],
+  tables: Map<string, Record<string, Record<string, SpineAttachment>>>,
+): void {
+  const skinNames = [...tables.keys()];
+  for (const link of links) {
+    // ⚠️ Only a STATED `skin` can miss here, and it is worth saying why rather
+    // than leaving the other half to look like a branch nothing reaches: rigc
+    // always emits a `default` skin, empty if it has to (`tableFor('default')`),
+    // so the parser's own default always resolves to a table. An omitted `skin`
+    // therefore fails one line down, at the source, and the sentence there is
+    // what names the trap.
+    const table = tables.get(link.skin);
+    if (table === undefined) {
+      throw new CompileError(
+        `${link.where}: "skin" is ${JSON.stringify(link.skin)}, and the rig declares no such skin. The rig's skins ` +
+          `are ${skinNames.map((s) => JSON.stringify(s)).join(', ')}. ` +
+          "Left to the round trip this is the runtime's `Skin not found`, which names neither this attachment nor " +
+          'where it was looking.',
+      );
+    }
+    const slot = table[link.slot];
+    const held = slot === undefined ? [] : Object.keys(slot).sort();
+    const found = slot?.[link.source];
+    if (found === undefined) {
+      throw new CompileError(
+        `${link.where}: "source" is ${JSON.stringify(link.source)}, and skin ${JSON.stringify(link.skin)}` +
+          `${link.skinStated ? '' : ' (the default skin, because no "skin" was stated — never the skin this attachment is written in)'}` +
+          ` slot ${JSON.stringify(link.slot)}${link.slotStated ? '' : ' (this attachment\'s own slot, because no "slot" was stated)'} ` +
+          `holds ${held.length === 0 ? 'no attachment at all' : `${held.length}: ${held.map((k) => JSON.stringify(k)).join(', ')}`}. ` +
+          '"source" is the PLACEHOLDER the source is filed under — `skin.getAttachment(slotIndex, source)` ' +
+          "(`SkeletonJson.ts:433`), whose table is keyed by the JSON key, not by the attachment's `name`. " +
+          "Left to the round trip this is the runtime's `Source mesh not found`.",
+      );
+    }
+    const type = (found as { type?: string }).type ?? 'region';
+    if (type === 'linkedmesh') {
+      throw new CompileError(
+        `${link.where}: "source" is ${JSON.stringify(link.source)}, which is itself a linked mesh, and a chain of ` +
+          'them is refused. Measured through spine-core: the runtime resolves links in the order they were read, ' +
+          "so a link whose source is a link loads the source's geometry when the source comes first in the file " +
+          'and loads NOTHING — `worldVerticesLength` 0, 0 triangles, a 0x0 size — when the two are swapped, in ' +
+          'silence either way. Point "source" at the mesh itself.',
+      );
+    }
+    if (type !== 'mesh') {
+      throw new CompileError(
+        `${link.where}: "source" is ${JSON.stringify(link.source)}, which is a ${JSON.stringify(type)} attachment ` +
+          "and not a mesh. A linked mesh takes another MESH's `uvs`, `triangles`, `vertices`, `hull` and `edges` " +
+          '(`MeshAttachment.setSourceMesh`); the runtime casts whatever it finds and reads those fields off it, ' +
+          'which on any other type is `undefined` and no error.',
+      );
+    }
+  }
 }
 
 /**

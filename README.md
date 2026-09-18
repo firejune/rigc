@@ -587,7 +587,7 @@ what each is worth.
 **What it reads is skeleton JSON and nothing else** — no `.spine` project, no binary
 `.skel`, no atlas, no art. So it never invents, and the things it cannot get out of
 the file are **findings** with codes rather than plausible values: a construct the
-spec format cannot hold (`linkedmesh`, `point`, a `sequence` block, an unknown field
+spec format cannot hold (`point`, a `sequence` block, an unknown field
 on a bone, slot or constraint) is a blocker, the command exits non-zero, and both
 specs are still written — a spec plus a list of what is missing from it beats no spec.
 One thing it drops on purpose and says so: a path attachment's `lengths`, which is

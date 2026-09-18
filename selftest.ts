@@ -6821,6 +6821,157 @@ function runRigSuite(): number {
     );
   }
 
+  // --- RF62–RF66: the linked mesh's own fields (issue #691) ------------------
+  //
+  // 🔑 The key check is the half that had no coverage at all, because it had
+  // nothing to check against: `linkedmesh` was in no `ATTACHMENT_SHAPE` entry
+  // and `checkRigSpecKeys` skipped a `type: "mesh"` carrying `source` outright,
+  // so on the branch point EVERY key of a link went unread in both spellings.
+  {
+    /** One rig, one slot, one attachment — the smallest thing `parseRigSpec` takes. */
+    const parseFault = (att: Record<string, unknown>): string | null => {
+      try {
+        parseRigSpec(
+          {
+            spec: 'rigc-rig/1',
+            name: 'link_keys',
+            skeleton: { width: 64, height: 64 },
+            bones: [{ name: 'root' }],
+            slots: [{ name: 'panel', bone: 'root' }],
+            skins: { default: { panel: { panel: att } } },
+          },
+          'link_keys.rig.json',
+        );
+        return null;
+      } catch (err) {
+        return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+      }
+    };
+    const wellFormed = { type: 'linkedmesh', source: 'other', width: 8, height: 8 };
+    const misspelt = parseFault({ ...wellFormed, timeline: false });
+    const clean = parseFault(wellFormed);
+    bad += reportCase(
+      'RF62_a_misspelt_key_on_a_linked_mesh_is_refused_and_the_correct_spelling_is_not',
+      misspelt !== null && misspelt.includes('"timeline"') && misspelt.includes('timelines') && clean === null,
+      misspelt === null
+        ? 'a key no shape declares went through on a linked mesh — every key of one was unread on the branch point'
+        : `${misspelt}; the same attachment spelling \`timelines\` ${clean === null ? 'parses clean' : `was ALSO refused: ${clean}`}`,
+      'a key nothing reads is a value the author wrote and the emitted skeleton does not contain, and on a link ' +
+        'the likeliest one is a near-miss of `source`, `slot`, `skin` or `timelines` — the four fields that are ' +
+        'the whole construct. The second half is the positive control, or this is a rule against links',
+    );
+
+    const otherSpelling = parseFault({ type: 'mesh', source: 'other', width: 8, height: 8, timeline: false });
+    const otherClean = parseFault({ type: 'mesh', source: 'other', width: 8, height: 8 });
+    bad += reportCase(
+      'RF63_the_mesh_spelling_of_a_link_is_checked_against_the_links_keys_and_not_a_meshs',
+      otherSpelling !== null && otherSpelling.includes('"timeline"') && otherClean === null,
+      otherSpelling === null
+        ? 'a `type: "mesh"` carrying `source` skipped the key check entirely, which is the branch point\'s own `continue`'
+        : `${otherSpelling}; the same map without the typo ${otherClean === null ? 'parses clean' : `was ALSO refused: ${otherClean}`}`,
+      '`type: "mesh"` and `type: "linkedmesh"` share one parser branch and `source` decides between them ' +
+        '(`SkeletonJson.ts:568-569`, `:582`), so the keys a link may carry are the same set under both spellings. ' +
+        'Checked against a MESH\'s set the fault came out as *2 keys this compiler does not read: "source", ' +
+        '"skin" … fix the spelling or remove it*, whose remedy deletes the key that makes it a link (#577) — ' +
+        'which is why the branch point skipped the check rather than running the wrong one',
+    );
+
+    const geometryKey = parseFault({ ...wellFormed, uvs: [0, 0, 1, 1] });
+    const nonsenseKey = parseFault({ ...wellFormed, uvz: [0, 0, 1, 1] });
+    bad += reportCase(
+      'RF64_a_geometry_key_reaches_the_builders_sentence_and_a_key_no_shape_has_reaches_the_typo_one',
+      geometryKey === null && nonsenseKey !== null && nonsenseKey.includes('"uvz"'),
+      `\`uvs\` on a link ${geometryKey === null ? 'passes the key check, so the refusal is the builder\'s own' : `was refused HERE: ${geometryKey}`}; ` +
+        `\`uvz\` ${nonsenseKey === null ? 'went through' : `is the typo refusal: ${nonsenseKey}`}`,
+      'the geometry fields are declared ON the link shape so the refusal can name the construct — the same move ' +
+        '`RigPathAttachment.lengths` makes. Left out of the shape they come back as *keys this compiler does not ' +
+        'read … fix the spelling or remove it*, and the fault is not a typo: the parser reads none of them on a ' +
+        'link, which is a sentence about linked meshes and not about spelling',
+    );
+
+    const twoSkinRig = (linkFields: Record<string, unknown>): Options => {
+      const probe = writeProbeRig({
+        slots: [
+          { name: 'block', bone: 'block', attachment: 'block' },
+          { name: 'marker', bone: 'block', attachment: 'marker' },
+        ],
+        skins: {
+          base: {
+            block: {
+              block: {
+                type: 'mesh',
+                image: 'block.png',
+                uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+                triangles: [0, 1, 2, 0, 2, 3],
+                weights: [
+                  [{ bone: 'block', x: -6, y: 4, weight: 1 }],
+                  [{ bone: 'block', x: 6, y: 4, weight: 1 }],
+                  [{ bone: 'block', x: 6, y: -4, weight: 1 }],
+                  [{ bone: 'block', x: -6, y: -4, weight: 1 }],
+                ],
+                hull: 4,
+              },
+            },
+          },
+          alt: { marker: { marker: { type: 'linkedmesh', image: 'marker.png', source: 'block', slot: 'block', ...linkFields } } },
+        },
+      });
+      const motionPath = join(probe.dir, 'probe.motion.json');
+      writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+      return { rigPath: probe.rigPath, motionPath, outDir: probe.outDir, imagesDir: probe.dir };
+    };
+    const defaulted = refusalOf(() => compile(twoSkinRig({})));
+    const stated = refusalOf(() => compile(twoSkinRig({ skin: 'base' })));
+    bad += reportCase(
+      'RF65_an_omitted_skin_on_a_link_is_the_default_skin_and_not_the_skin_the_link_is_written_in',
+      defaulted !== null &&
+        defaulted.includes('skin "default" (the default skin, because no "skin" was stated') &&
+        defaulted.includes('holds no attachment at all') &&
+        stated === null,
+      defaulted === null
+        ? 'a link in skin "alt" found its source in skin "base" with no `skin` key, which is not where the runtime looks'
+        : `${defaulted}; the same link stating \`"skin": "base"\` ${stated === null ? 'compiles' : `was ALSO refused: ${stated}`}`,
+      'the parser reads `!linkedMesh.skin ? skeletonData.defaultSkin : findSkin(...)` (`SkeletonJson.ts:429`), so ' +
+        'an omitted `skin` means the DEFAULT skin and never the one the link is written in. ⚠️ rigc always ' +
+        'emits a `default` skin, empty if it has to, so the miss lands on the SOURCE rather than on the skin — ' +
+        'which is why the sentence naming the trap is the source one, and why a clause reading "the rig declares ' +
+        'no such skin" here would have been a branch this rig cannot reach. Both halves are read: the two differ ' +
+        'by the one key',
+    );
+
+    const spellings = ['linkedmesh', 'mesh'].map((type) => {
+      const probe = writeProbeRig({
+        slots: [
+          { name: 'block', bone: 'block', attachment: 'block' },
+          { name: 'marker', bone: 'block', attachment: 'marker' },
+        ],
+        skins: {
+          default: {
+            block: { block: { type: 'mesh', image: 'block.png', uvs: [0, 0, 1, 0, 1, 1, 0, 1], triangles: [0, 1, 2, 0, 2, 3], vertices: [0, 0, 12, 0, 12, 8, 0, 8], hull: 4 } },
+            marker: { marker: { type, image: 'marker.png', source: 'block', slot: 'block' } },
+          },
+        },
+      });
+      const motionPath = join(probe.dir, 'probe.motion.json');
+      writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+      try {
+        return compile({ rigPath: probe.rigPath, motionPath, outDir: probe.outDir, imagesDir: probe.dir }).skeletonText;
+      } catch (err) {
+        return `REFUSED: ${(err as Error).message}`;
+      }
+    });
+    bad += reportCase(
+      'RF66_both_spellings_of_one_link_compile_to_the_same_bytes',
+      spellings[0] === spellings[1] && !spellings[0].startsWith('REFUSED:'),
+      spellings[0].startsWith('REFUSED:') || spellings[1].startsWith('REFUSED:')
+        ? `linkedmesh: ${spellings[0].slice(0, 120)}; mesh+source: ${spellings[1].slice(0, 120)}`
+        : `${spellings[0].length} B out of both, ${spellings[0] === spellings[1] ? 'byte for byte identical' : 'and they DIFFER'}`,
+      'this suite\'s positive control for the construct, and it is the claim the whole design rests on: the two ' +
+        'spellings are one thing, so they take one builder and emit one file. Two builders that agreed today ' +
+        'would be two builders to keep agreeing, and the format has no third spelling to catch the drift',
+    );
+  }
+
   return bad;
 }
 
@@ -8804,6 +8955,116 @@ function runStaticRigSuite(): number {
         '`--profile spine`, where it never executes. The third probe is the load-bearing one: if A12 were ' +
         '`validity` this landing would have made every two-colour rig unbuildable, and the first two clauses ' +
         'would look exactly the same',
+    );
+  }
+
+  // --- S71–S75: a linked mesh forged into the artifact (issue #691) ----------
+  //
+  // 🔗 These are the states the COMPILER now refuses by name, measured from the
+  // other side: what the gate does when such a skeleton reaches it anyway —
+  // which is what a foreign file does. Three of them are thrown `Error`s inside
+  // `readSkeletonData`, so they arrive as `A00_ROUNDTRIP_PARSE` reporting the
+  // runtime's own sentence, naming neither the attachment that asked nor where
+  // it looked. The fourth is the one the runtime is silent about.
+  {
+    const meshDirs = writeProbeRig({
+      slots: [
+        { name: 'block', bone: 'block', attachment: 'block' },
+        { name: 'marker', bone: 'block', attachment: 'marker' },
+      ],
+      skins: {
+        default: {
+          block: {
+            block: {
+              type: 'mesh',
+              image: 'block.png',
+              uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+              triangles: [0, 1, 2, 0, 2, 3],
+              vertices: [0, 0, 12, 0, 12, 8, 0, 8],
+              hull: 4,
+            },
+          },
+          marker: { marker: { image: 'marker.png' } },
+        },
+      },
+    });
+    /** Replace slot "marker"'s only attachment with the forged map. */
+    const forge = (link: Record<string, unknown>): ReturnType<typeof validate> =>
+      gateProbeArtifacts(meshDirs, STATIC_MOTION, (skeleton) => {
+        const skins = skeleton.skins as Array<{ name: string; attachments: Record<string, Record<string, unknown>> }>;
+        const table = skins.find((s) => s.name === 'default')!.attachments;
+        table.marker = { marker: link };
+      });
+    const parseDetail = (report: ReturnType<typeof validate>): string =>
+      report.failures.find((f) => f.assertion === 'A00_ROUNDTRIP_PARSE')?.detail ?? '(A00 did not fail)';
+    const base = { type: 'linkedmesh', path: 'marker', source: 'block', slot: 'block', width: 6, height: 6 };
+
+    const sourceGone = forge({ ...base, source: 'nowhere' });
+    say(
+      'S71_A_FORGED_LINK_WHOSE_SOURCE_IS_ABSENT_IS_THE_RUNTIMES_OWN_SENTENCE_AND_NOTHING_MORE',
+      parseDetail(sourceGone).includes('Source mesh not found: nowhere'),
+      `${parseDetail(sourceGone)} — and the sentence names no attachment, no skin and no slot, which is the whole ` +
+        'reason `buildRigLinkedMesh` resolves the name before the gate sees it',
+      'a thrown Error inside `readSkeletonData` is reported by A00 verbatim (`SkeletonJson.ts:434`), so the gate ' +
+        'is red and an author is told which string was not found and nothing about where it was looked for',
+    );
+
+    const slotGone = forge({ ...base, slot: 'nowhere' });
+    say(
+      'S72_A_FORGED_LINK_WHOSE_SLOT_NAMES_NO_SLOT_IS_A_DIFFERENT_SENTENCE',
+      parseDetail(slotGone).includes('Source mesh slot not found: nowhere'),
+      parseDetail(slotGone),
+      'the two misses are two throws at two sites (`:578` and `:434`), so a compiler that refused them under one ' +
+        'message would be telling an author to look in the wrong place half the time',
+    );
+
+    const skinGone = forge({ ...base, skin: 'nowhere' });
+    say(
+      'S73_A_FORGED_LINK_WHOSE_SKIN_NAMES_NO_SKIN_IS_THE_THIRD',
+      parseDetail(skinGone).includes('Skin not found: nowhere'),
+      parseDetail(skinGone),
+      'the third throw (`:431`), and the one whose default is the trap: an omitted `skin` is the DEFAULT skin ' +
+        'rather than the skin the link is written in, so this is the sentence a rig with no default skin gets',
+    );
+
+    const withGeometry = forge({
+      ...base,
+      uvs: [0, 0, 1, 0, 1, 1, 0, 1, 0.5, 0.5],
+      triangles: [0, 1, 2, 0, 2, 3, 0, 3, 4],
+      vertices: [0, 0, 6, 0, 6, 6, 0, 6, 3, 3],
+      hull: 5,
+      edges: [0, 2],
+    });
+    say(
+      'S74_A_FORGED_LINK_CARRYING_ITS_OWN_GEOMETRY_IS_GREEN_AND_DRAWS_THE_SOURCES',
+      withGeometry.failures.length === 0 && withGeometry.passed.includes('A04_MESH_TRIANGLES_AND_ENCODING'),
+      withGeometry.failures.length === 0
+        ? 'a link declaring 5 uvs, 3 triangles, hull 5 and edges [0, 2] beside a 4-vertex source gated GREEN: ' +
+            `${withGeometry.passed.length} assertion(s) ran, 0 failures, and A04 measured the SOURCE's geometry ` +
+            'because that is the only geometry the loaded attachment has'
+        : `the forged link was refused: ${withGeometry.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`,
+      'the silence this feature\'s refusal exists for, and it is a fact about the FORMAT rather than about rigc: ' +
+        'the parser returns from the `source` branch before `readVertices` (`:582-586`), so no assertion here can ' +
+        'see those keys and none should pretend to. The compiler is the only place it can be caught, which is ' +
+        'why it is caught there and this case records the gate NOT catching it',
+    );
+
+    const wellFormed = forge(base);
+    const clean = gateProbe(meshDirs, STATIC_MOTION);
+    const meshRules = ['A04_MESH_TRIANGLES_AND_ENCODING', 'A22_MESH_UVS_IN_UNIT_RANGE'];
+    say(
+      'S75_A_WELL_FORMED_FORGED_LINK_IS_GREEN_AND_THE_MESH_RULES_MEASURED_IT',
+      wellFormed.failures.length === 0 &&
+        meshRules.every((rule) => wellFormed.passed.includes(rule) && clean.passed.includes(rule)) &&
+        clean.failures.length === 0,
+      wellFormed.failures.length === 0
+        ? `the forged link gated green with ${wellFormed.passed.length} assertion(s), including ` +
+            `${meshRules.filter((r) => wellFormed.passed.includes(r)).join(' and ')}; the same probe with no link ` +
+            `runs ${meshRules.filter((r) => clean.passed.includes(r)).join(' and ')} and has ${clean.failures.length} failure(s)`
+        : `a correct link was refused: ${wellFormed.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`,
+      'the positive control for the four above, and the half that keeps them from being a rule against links at ' +
+        'all — the plants differ from this one by a single key each. Both sides are read, because a mesh rule ' +
+        'that skipped on the probe would make the green above green over nothing',
     );
   }
   return bad;
@@ -15297,6 +15558,11 @@ function runPathAndSliderSuite(): number {
     return body.length > 160 ? `${body.slice(0, 160)}…` : body;
   };
 
+  // ⚠️ `linkedmesh` is no longer a DEFERRED type (issue #691), so the map below
+  // — which states no `source` — is refused as the construct it is trying to be
+  // rather than as one rigc will not write. That is the transition this clause
+  // records: the type string is still refused by its own name, and the sentence
+  // it is refused with is now actionable.
   const linkedByType = typeRefusal('linkedmesh');
   const pointByType = typeRefusal('point');
   const notAType = typeRefusal('sequence');
@@ -15305,11 +15571,12 @@ function runPathAndSliderSuite(): number {
   // the parser's own default, and the clause that keeps the case from being a
   // rule against writing attachments at all.
   const absentType = typeRefusal(undefined);
-  const deferred = [linkedByType, pointByType];
+  const deferred = [pointByType];
   say(
     'PS98_EACH_ATTACHMENT_TYPE_A_SPEC_CAN_SAY_IS_REFUSED_UNDER_ITS_OWN_NAME',
     deferred.every((m) => m.includes('rigc does not emit it yet') && m.includes('docs/SPEC_COVERAGE.md part 1-6')) &&
-      linkedByType.includes('"source" (the attachment it links to') &&
+      linkedByType.includes('a linked mesh needs "source"') &&
+      !linkedByType.includes('rigc does not emit it yet') &&
       pointByType.includes('"x", "y", "rotation"') &&
       notAType.includes('is not one of the 7 the Spine 4.3 format defines') &&
       // The false promise, and the reason the two refusals are two: `sequence`
@@ -15319,7 +15586,8 @@ function runPathAndSliderSuite(): number {
       nulledType.includes('is not a name') &&
       nulledType.includes('dropped from the skeleton without a word') &&
       absentType === '(compiled)',
-    `linkedmesh — ${gist(linkedByType)}; point — ${gist(pointByType)}; sequence — ${gist(notAType)}; ` +
+    `linkedmesh (emitted since #691, and this map states no source) — ${gist(linkedByType)}; ` +
+      `point — ${gist(pointByType)}; sequence — ${gist(notAType)}; ` +
       `\`"type": null\` — ${gist(nulledType)}; and with the key left out, ` +
       `${absentType === '(compiled)' ? 'the attachment still reads as a region and builds' : `it was refused: ${gist(absentType)}`}`,
     'the parser has no default branch — an unrecognised `type` returns null and the attachment vanishes ' +
@@ -15328,7 +15596,9 @@ function runPathAndSliderSuite(): number {
       '"region")` takes the default only when the key is MISSING, so the parser would have dropped it. Measured ' +
       'before the repair: `{"type": null, "image": "marker.png"}` gated green, and the same map with no size was ' +
       'refused as *a region needs width and height* — which is the message issue #577 quoted and read as a ' +
-      '`linkedmesh` fault. `"type": "linkedmesh"` was refused by that name throughout',
+      '`linkedmesh` fault. `"type": "linkedmesh"` was refused by that name throughout, and since #691 it is ' +
+      'refused by that name for a reason an author can act on: the map states no `source`, which is the key that ' +
+      'makes a mesh linked',
   );
 
   const meshOffName = attachmentBuild(OFF_NAME, { type: 'mesh', image: 'marker.png', ...SQUARE });
@@ -15369,28 +15639,43 @@ function runPathAndSliderSuite(): number {
       'attachment follows". So this is the tree agreeing with itself, not a new convention',
   );
 
+  // `source` beside the geometry the same map states: two readings, one file.
+  // The geometry is what makes it refusable at all now that a link compiles —
+  // `SQUARE` is exactly what a link may not carry.
   const sourcedMesh = attachmentBuild('marker', { type: 'mesh', image: 'marker.png', source: 'block', skin: 'default', ...SQUARE });
+  // The probe's `block` slot holds a REGION, so this one resolves its name and
+  // then finds the wrong kind of thing — which is the clause proving `source`
+  // was resolved at all rather than merely tolerated.
+  const linkedMesh = attachmentBuild('marker', { type: 'mesh', image: 'marker.png', source: 'block', slot: 'block' });
   const plainMesh = attachmentBuild('marker', { type: 'mesh', image: 'marker.png', ...SQUARE });
   say(
-    'PS100_A_MESH_CARRYING_SOURCE_IS_REFUSED_AS_THE_LINKED_MESH_IT_IS',
+    'PS100_A_MESH_CARRYING_SOURCE_IS_READ_AS_THE_LINKED_MESH_IT_IS',
     typeof sourcedMesh === 'string' &&
-      sourcedMesh.includes('this attachment is a "linkedmesh" (a mesh carrying "source" is one)') &&
-      sourcedMesh.includes('rigc does not emit it yet') &&
+      sourcedMesh.includes('a linked mesh states') &&
+      sourcedMesh.includes('has no geometry of its own') &&
       // The message it must NOT be any more: an unknown-key fault whose remedy
       // is to delete `source`, which is the key that makes it a linked mesh.
       !sourcedMesh.includes('keys this compiler does not read') &&
+      // …nor the deferral it was until #691, which told an author to stop.
+      !sourcedMesh.includes('rigc does not emit it yet') &&
+      typeof linkedMesh === 'string' &&
+      linkedMesh.includes('which is a "region" attachment and not a mesh') &&
       typeof plainMesh !== 'string' &&
       plainMesh.failures.length === 0,
     typeof sourcedMesh !== 'string'
-      ? 'a mesh carrying `source` compiled as an ordinary mesh, which drops the link in silence'
+      ? 'a mesh carrying `source` AND geometry compiled, and the parser reads the geometry off neither'
       : `refused with: ${gist(sourcedMesh)}` +
+        `; the same map without the geometry, whose \`source\` names this probe's region, ${typeof linkedMesh === 'string' ? gist(linkedMesh) : 'COMPILED — the name was not resolved'}` +
         `; the same mesh with \`source\` removed ${typeof plainMesh === 'string' ? `was ALSO refused: ${gist(plainMesh)}` : 'builds and gates green'}`,
     '`type: "mesh"` and `type: "linkedmesh"` share ONE parser branch and the `source` key is what decides between ' +
       'them (`SkeletonJson.ts:568-569`, `:582`; docs/SPEC_COVERAGE.md part 1-6 says so outright). So a mesh ' +
       'carrying `source` is a linked mesh whatever its `type` says. It was refused as *2 keys this compiler does ' +
       'not read: "source", "skin" … fix the spelling or remove it* — and removing `source` is precisely what ' +
-      'unmakes the linked mesh, so the remedy sentence destroyed the construct. The second half is the positive ' +
-      'control: without it this would be a rule against meshes',
+      'unmakes the linked mesh, so the remedy sentence destroyed the construct (#577); then as a deferral, which ' +
+      'named the construct and still told the author to stop (#691). Three readings of one map: the geometry ' +
+      'sentence says it was read as a LINK, the "not a mesh" sentence says its `source` was resolved by name and ' +
+      'not merely tolerated, and the mesh with `source` removed is the positive control — without it this would ' +
+      'be a rule against meshes',
   );
 
   // --- the INTERIOR of the two-value space (issue #399) ---------------------
@@ -20125,6 +20410,14 @@ function buildContourRig(
     softmask?: { kind: 'softmask' | 'colour' | 'flat'; level?: number; width?: number; height?: number };
     /** A motion spec other than the empty one, for the cases that key a deform. */
     motion?: Record<string, unknown>;
+    /**
+     * More slots beside `blob`'s, and the attachments that fill them in the
+     * default skin — for the linked-mesh cases, which need a second slot to put
+     * a link in and a source for it to name (issue #691). Absent, the rig is the
+     * one-slot rig every other case here builds.
+     */
+    slots?: Array<Record<string, unknown>>;
+    attachments?: Record<string, Record<string, unknown>>;
   } = {},
 ): ContourBuild {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-contour-'));
@@ -20173,8 +20466,8 @@ function buildContourRig(
         skeleton: { width: 256, height: 256 },
         ...(extra.invariants === null ? {} : { invariants: extra.invariants ?? { meshSlots: 1, meshTriangles: 120 } }),
         bones: [{ name: 'root' }, { name: 'blob', parent: 'root', x: bx, y: by }, ...(extra.bones ?? [])],
-        slots: [{ name: 'blob', bone: 'blob', attachment: 'blob' }],
-        skins: { default: { blob: { blob: attachment } } },
+        slots: [{ name: 'blob', bone: 'blob', attachment: 'blob' }, ...(extra.slots ?? [])],
+        skins: { default: { blob: { blob: attachment }, ...(extra.attachments ?? {}) } },
       },
       null,
       2,
@@ -27578,7 +27871,237 @@ function runMeshSuite(): number {
     );
   }
 
+  // --- M57–M61: a mesh that borrows another mesh's geometry (issue #691) -----
+  //
+  // 🔗 A LINKED mesh is the one attachment whose geometry is not its own, which
+  // is why it needs its own block here: every rule in this file about a mesh's
+  // vertices is a rule about vertices somebody put there, and a link puts none.
+  // The source is a rigc `ring` deliberately — a topology the gate HAS an
+  // opinion about — and the link sits in a slot on a different bone, which is
+  // where that opinion goes wrong if nothing tells the two apart.
+  {
+    const linkSlot = 'aside';
+    const linkBone = [{ name: 'blob_ctl', parent: 'blob', x: 0, y: 0 }, { name: 'aside_bone', parent: 'root', x: 140, y: 40 }];
+    /** The ring, plus whatever attachment is put in a second slot beside it. */
+    const ringWithLink = (link: Record<string, unknown> | null): NonNullable<Parameters<typeof buildContourRig>[1]> => ({
+      bones: linkBone,
+      // Two mesh SLOTS, because a link is a mesh slot of its own to
+      // `A13_MESH_BUDGET` — the runtime draws it as one. Measured with the
+      // helper's own `meshSlots: 1`: `2 mesh slots, the rig budgets 1`, which is
+      // the budget working rather than the link being wrong.
+      invariants: { meshSlots: 2, meshTriangles: 120 },
+      slots: link === null ? [] : [{ name: linkSlot, bone: 'aside_bone', attachment: 'linked' }],
+      attachments: link === null ? {} : { [linkSlot]: { linked: link } },
+    });
+    /** The link's own art is the source's PNG: one file, one region, two attachments. */
+    const linkArt = { image: 'blob.png' };
+    // 🚨 ONE parse per build, handed to both lookups. `timelineAttachment` is an
+    // object identity — the link's is the source object itself — so two calls to
+    // `posableFromText` would compare two attachments that were never the same
+    // object and report the switch off in every position. Measured: the case
+    // below printed `the link's timelineAttachment is NOT the source` on a build
+    // where it was.
+    const loadOf = (build: ContourBuild): Posable =>
+      posableFromText(build.result.skeletonText, build.result.atlasText, build.opts.outDir);
+    const loadedIn = (posable: Posable, slot: string, placeholder: string): MeshAttachment | null => {
+      const found = posable.data.findSlot(slot);
+      const att = found ? posable.data.findSkin('default')?.getAttachment(found.index, placeholder) : null;
+      return att instanceof MeshAttachment ? att : null;
+    };
+    const emitted = (build: ContourBuild, slot: string, placeholder: string): Record<string, unknown> | undefined => {
+      const skins = (JSON.parse(build.result.skeletonText) as {
+        skins: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }>;
+      }).skins;
+      return skins.find((s) => s.name === 'default')?.attachments[slot]?.[placeholder];
+    };
+    const shapeOf = (mesh: MeshAttachment | null): string =>
+      mesh === null
+        ? 'not a mesh in the loaded skin'
+        : `${mesh.worldVerticesLength / 2} vertices / ${(mesh.triangles?.length ?? 0) / 3} triangles / ` +
+          `hull ${mesh.hullLength / 2} / ${mesh.regionUVs?.length ?? 0} uv number(s)`;
+
+    const linkedBuild = buildContourRig(RING_ATTACHMENT, ringWithLink({ type: 'linkedmesh', ...linkArt, source: 'blob', slot: 'blob' }));
+    const linkedLoad = loadOf(linkedBuild);
+    const sourceMesh = loadedIn(linkedLoad, 'blob', 'blob');
+    const linkMesh = loadedIn(linkedLoad, linkSlot, 'linked');
+    const sameGeometry =
+      sourceMesh !== null &&
+      linkMesh !== null &&
+      shapeOf(sourceMesh) === shapeOf(linkMesh) &&
+      linkMesh.worldVerticesLength > 0 &&
+      (linkMesh.bones?.length ?? 0) === (sourceMesh.bones?.length ?? 0);
+    bad += say(
+      'M57_A_LINKED_MESH_READS_BACK_WITH_ITS_SOURCES_GEOMETRY_AND_ITS_OWN_EMIT',
+      sameGeometry && JSON.stringify(emitted(linkedBuild, linkSlot, 'linked')) === JSON.stringify({
+        type: 'linkedmesh',
+        source: 'blob',
+        width: CONTOUR_W,
+        height: CONTOUR_H,
+        path: 'blob',
+        slot: 'blob',
+      }),
+      `the source loads ${shapeOf(sourceMesh)} and the link loads ${shapeOf(linkMesh)}, binding ` +
+        `${linkMesh?.bones?.length ?? 0} bone index/indices against the source's ${sourceMesh?.bones?.length ?? 0}; ` +
+        `the file says ${JSON.stringify(emitted(linkedBuild, linkSlot, 'linked'))}`,
+      'the emit carries no geometry at all, so everything the link draws has to arrive through the runtime\'s own ' +
+        'linked-mesh pass — and `timelines`/`skin` are absent because they are at the parser\'s defaults, which is ' +
+        'what keeps the file the editor\'s own shape',
+    );
+
+    const geometryOnALink: Array<[string, Record<string, unknown>]> = [
+      ['uvs + triangles', { uvs: [0, 0, 1, 0, 1, 1], triangles: [0, 1, 2] }],
+      ['weights', { weights: [[{ bone: 'blob', x: 0, y: 0, weight: 1 }]] }],
+      ['a generator', { generator: RING_ATTACHMENT.generator }],
+      ['hull alone', { hull: 4 }],
+    ];
+    const geometryRefusals = geometryOnALink.map(
+      ([what, keys]) =>
+        [what, contourRefusal(RING_ATTACHMENT, ringWithLink({ type: 'linkedmesh', ...linkArt, source: 'blob', slot: 'blob', ...keys }))] as const,
+    );
+    const namesItsKeys = geometryRefusals.every(
+      ([, message]) => message !== null && message.includes('a linked mesh states') && message.includes('has no geometry of its own'),
+    );
+    bad += say(
+      'M58_GEOMETRY_ON_A_LINKED_MESH_IS_REFUSED_BY_NAME_AND_THE_SAME_LINK_WITHOUT_IT_BUILDS',
+      namesItsKeys && sameGeometry,
+      geometryRefusals
+        .map(([what, message]) => `${what} — ${message === null ? 'COMPILED, and the parser reads none of it' : gistOf(message)}`)
+        .join('; ') + `; the same link with none of it builds and loads ${shapeOf(linkMesh)}`,
+      'the parser returns from the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`), so these keys ' +
+        'are read by NOTHING: measured on a forged skeleton, a link declaring 5 uvs, 3 triangles, hull 5 and ' +
+        'edges [0,2] beside a 4-vertex source loaded the source\'s 8-long worldVerticesLength, 6 triangles, ' +
+        'hullLength 8 and 10 edges. The second half is the positive control, or this is a rule against links',
+    );
+
+    const missRefusals: Array<[string, string | null]> = [
+      [
+        'a source no slot holds',
+        contourRefusal(RING_ATTACHMENT, ringWithLink({ type: 'linkedmesh', ...linkArt, source: 'nope', slot: 'blob' })),
+      ],
+      [
+        'a source in this slot rather than the one named',
+        contourRefusal(RING_ATTACHMENT, ringWithLink({ type: 'linkedmesh', ...linkArt, source: 'blob' })),
+      ],
+      [
+        'a slot the rig does not declare',
+        contourRefusal(RING_ATTACHMENT, ringWithLink({ type: 'linkedmesh', ...linkArt, source: 'blob', slot: 'nope' })),
+      ],
+      [
+        'a skin the rig does not declare',
+        contourRefusal(RING_ATTACHMENT, ringWithLink({ type: 'linkedmesh', ...linkArt, source: 'blob', slot: 'blob', skin: 'nope' })),
+      ],
+      [
+        'a source that is itself a link',
+        contourRefusal(
+          RING_ATTACHMENT,
+          (() => {
+            const shape = ringWithLink({ type: 'linkedmesh', ...linkArt, source: 'blob', slot: 'blob' });
+            (shape.attachments![linkSlot] as Record<string, unknown>).chained = {
+              type: 'linkedmesh',
+              ...linkArt,
+              source: 'linked',
+            };
+            return shape;
+          })(),
+        ),
+      ],
+      ['no source at all', contourRefusal(RING_ATTACHMENT, ringWithLink({ type: 'linkedmesh', ...linkArt, slot: 'blob' }))],
+    ];
+    const namedMisses = [
+      missRefusals[0][1]?.includes('slot "blob" holds 1: "blob"') === true,
+      missRefusals[1][1]?.includes(`slot "${linkSlot}" (this attachment's own slot`) === true,
+      missRefusals[2][1]?.includes('which the rig does not declare as a slot') === true,
+      missRefusals[3][1]?.includes('the rig declares no such skin') === true,
+      missRefusals[4][1]?.includes('which is itself a linked mesh, and a chain of them is refused') === true,
+      missRefusals[5][1]?.includes('a linked mesh needs "source"') === true,
+    ];
+    bad += say(
+      'M59_EVERY_NAME_A_LINK_RESOLVES_IS_REFUSED_UNDER_THE_NAME_IT_MISSED',
+      namedMisses.every(Boolean),
+      missRefusals
+        .map(([what, message], i) => `${what} — ${message === null ? 'COMPILED' : `${namedMisses[i] ? '' : 'WRONG MESSAGE: '}${gistOf(message)}`}`)
+        .join('; '),
+      'left to the round trip these are the runtime\'s `Source mesh not found`, `Source mesh slot not found` and ' +
+        '`Skin not found` — thrown Errors that `A00_ROUNDTRIP_PARSE` reports in the runtime\'s words, naming ' +
+        'neither the attachment that asked nor where it looked. The chain has no runtime error at ALL: it loads ' +
+        'the source\'s geometry or a 0x0 nothing depending on which key comes first in the file',
+    );
+
+    const untimed = buildContourRig(
+      RING_ATTACHMENT,
+      ringWithLink({ type: 'linkedmesh', ...linkArt, source: 'blob', slot: 'blob', timelines: false }),
+    );
+    const untimedLoad = loadOf(untimed);
+    const untimedLink = loadedIn(untimedLoad, linkSlot, 'linked');
+    const untimedSource = loadedIn(untimedLoad, 'blob', 'blob');
+    const followsSource = linkMesh !== null && linkMesh.timelineAttachment === sourceMesh;
+    const ownsItself = untimedLink !== null && untimedLink.timelineAttachment === untimedLink;
+    bad += say(
+      'M60_TIMELINES_DECIDES_WHICH_ATTACHMENT_A_DEFORM_KEY_REACHES_AND_IS_WRITTEN_ONLY_WHEN_FALSE',
+      followsSource &&
+        ownsItself &&
+        emitted(untimed, linkSlot, 'linked')?.timelines === false &&
+        emitted(linkedBuild, linkSlot, 'linked')?.timelines === undefined &&
+        // The other half of the same switch: with `timelines` on, the SOURCE
+        // learns the link's slot, which is how a deform keyed on the source
+        // reaches a link sitting somewhere else.
+        (sourceMesh?.timelineSlots.length ?? 0) > 0 &&
+        (untimedSource?.timelineSlots.length ?? 0) === 0,
+      `default: the link's timelineAttachment is ${followsSource ? 'the source' : 'NOT the source'} and the source ` +
+        `carries timelineSlots [${sourceMesh?.timelineSlots.join(', ') ?? ''}]; with \`timelines: false\` it is ` +
+        `${ownsItself ? 'itself' : 'NOT itself'} and the source carries [${untimedSource?.timelineSlots.join(', ') ?? ''}]. ` +
+        `The file writes ${JSON.stringify(emitted(untimed, linkSlot, 'linked')?.timelines)} for the first and ` +
+        `${JSON.stringify(emitted(linkedBuild, linkSlot, 'linked')?.timelines)} for the second`,
+      'the default is TRUE, so writing it out would be a byte the editor\'s own export does not carry — and the ' +
+        'key is what decides whether a deform written against the source moves this attachment too, which no ' +
+        'other field of a link can be read off',
+    );
+
+    const gateOf = (build: ContourBuild): ReturnType<typeof validate> =>
+      validate({
+        skeletonText: build.result.skeletonText,
+        atlasText: build.result.atlasText,
+        atlasDir: build.opts.outDir,
+        declaredDurations: build.result.declaredDurations,
+        rig: build.result.rig,
+        profile: 'spine-html',
+      });
+    const withLinkReport = gateOf(linkedBuild);
+    const ringOnly = buildContourRig(RING_ATTACHMENT, ringWithLink(null));
+    const ringOnlyReport = gateOf(ringOnly);
+    const rimRule = 'A21_MESH_RIM_PINNED';
+    const rimFailures = withLinkReport.failures.filter((f) => f.assertion === rimRule);
+    bad += say(
+      'M61_THE_RIM_RULE_MEASURES_THE_RING_AND_PASSES_OVER_THE_LINK_THAT_BORROWED_IT',
+      rimFailures.length === 0 &&
+        withLinkReport.passed.includes(rimRule) &&
+        // The positive control, and it is the half that makes the first one mean
+        // something: the same rule on the same ring with no link at all.
+        ringOnlyReport.passed.includes(rimRule) &&
+        ringOnlyReport.failures.length === 0,
+      rimFailures.length === 0
+        ? `${rimRule} ${withLinkReport.passed.includes(rimRule) ? 'ran and held' : 'did NOT run'} on a rig whose ring ` +
+            `sits on bone "blob" and whose link sits on "aside_bone"; the same ring with no link ` +
+            `${ringOnlyReport.passed.includes(rimRule) ? 'also holds' : 'does NOT hold'}, with ` +
+            `${ringOnlyReport.failures.length} failure(s)`
+        : `${rimFailures.length} rim failure(s) on correct geometry: ${rimFailures.slice(0, 3).map((f) => f.detail).join('; ')}`,
+      'measured with the link compiling and this clause absent, on a rig of the same shape (a ring on slot "sa", ' +
+        'bone "a"; a link to it on slot "sb", bone "b"): **8 failures**, one per hull vertex, reading ' +
+        '`mesh "sb" rim vertex 0 is pinned to "a", not the slot bone "b"` — the rim pinned exactly where the ' +
+        'ring\'s own slot put it, which is the only place it could be. That is issue #44\'s `|| "ring"` default ' +
+        'reached by a new route, because `meshKinds` is keyed by SLOT and a link\'s slot is not its geometry\'s. ' +
+        'Writing the link INTO `meshKinds` would have gone the other way and silenced the rule on the ring itself ' +
+        'wherever the two share a slot, which is the commonest link there is',
+    );
+  }
+
   return bad;
+}
+
+/** A refusal with its `where` prefix off and a bound on its length. */
+function gistOf(message: string): string {
+  const body = message.replace(/^.*?attachment "[^"]*": /, '');
+  return body.length > 150 ? `${body.slice(0, 150)}…` : body;
 }
 
 // ---------------------------------------------------------------------------
@@ -45910,6 +46433,15 @@ const INGEST_PROBE_RIG: Record<string, unknown> = {
     { name: 'box', bone: 'root', attachment: 'box' },
     { name: 'clip', bone: 'root', attachment: 'clip' },
     { name: 'track', bone: 'root', attachment: 'track' },
+    // A mesh and a LINK to it, in two slots on two bones (issue #691). The link
+    // is the only attachment type whose geometry is not its own, and `IG03` asks
+    // whether every word of `INGEST_VOCABULARY` is exercised by a rig somebody
+    // builds — so adding `linkedmesh` to the module's list and not to a rig here
+    // would move the hole rather than close it. Two slots rather than two skins,
+    // because the link then has to STATE `slot`, which is the field a rebuild
+    // writing the parser's default instead would lose in silence.
+    { name: 'panel', bone: 'root', attachment: 'panel' },
+    { name: 'panel_echo', bone: 'aim', attachment: 'panel_echo' },
   ],
   events: { ping: { int: 1 } },
   constraints: [
@@ -45964,6 +46496,20 @@ const INGEST_PROBE_RIG: Record<string, unknown> = {
       track: {
         track: { type: 'path', vertexCount: 6, vertices: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10] },
       },
+      panel: {
+        panel: {
+          type: 'mesh',
+          image: 'block.png',
+          uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+          triangles: [0, 1, 2, 0, 2, 3],
+          vertices: [0, 0, 12, 0, 12, 8, 0, 8],
+          hull: 4,
+        },
+      },
+      // `slot` and `timelines` are both away from the parser's defaults on
+      // purpose: those two keys are written only when they differ, so a probe
+      // taking both defaults would exercise a branch that emits nothing.
+      panel_echo: { panel_echo: { type: 'linkedmesh', image: 'marker.png', source: 'panel', slot: 'panel', timelines: false } },
     },
     // A second skin, filling a placeholder the default skin does not: two skins
     // in the emitted array, which is the only shape that exercises the skin
@@ -46461,7 +47007,6 @@ function runIngestSuite(): number {
   const planted = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
   const skins = planted.skins as Array<Record<string, unknown>>;
   const blockAttachments = (skins[0].attachments as Record<string, Record<string, unknown>>).block;
-  blockAttachments.linked = { type: 'linkedmesh', parent: 'block', skin: 'default' };
   blockAttachments.tip = { type: 'point', x: 1, y: 2 };
   (blockAttachments.block as Record<string, unknown>).sequence = { count: 2, start: 1 };
   // An attachment `name` on a placeholder only ONE skin fills: rigc composes a
@@ -46487,8 +47032,13 @@ function runIngestSuite(): number {
   // the rebuild will be missing has to be a `blocker`, and one the skeleton
   // states that rigc re-derives has to be `lossy`. Reporting the second as the
   // first would make every editor export exit non-zero for nothing.
+  // ⚠️ `ATTACHMENT_LINKEDMESH` stood at the head of this list until issue #691,
+  // planted as `{ type: 'linkedmesh', parent: 'block', skin: 'default' }` — the
+  // 4.2 spelling, which 4.3 does not read at all. It is gone rather than
+  // repaired because the construct is no longer a blocker: `IG38`–`IG40` measure
+  // it being CARRIED, which is the stronger claim, and `IG39` is what keeps the
+  // family's remaining member refused by name.
   const expected: Array<[string, IngestFinding['kind']]> = [
-    ['ATTACHMENT_LINKEDMESH', 'blocker'],
     ['ATTACHMENT_POINT', 'blocker'],
     ['ATTACHMENT_SEQUENCE', 'blocker'],
     ['BONE_FIELD', 'blocker'],
@@ -48103,6 +48653,162 @@ function runIngestSuite(): number {
         'raw curve is 28 numbers where `rgba`\'s is 16; a decompiler that read the array back at the wrong width, ' +
         'or an emitter that wrote it at the wrong one, produces a file that loads and interpolates through NaN. ' +
         'The probe\'s first key carries a named easing for exactly that reason',
+    );
+  }
+
+  // --- IG38–IG40: the linked mesh, carried rather than blocked (issue #691) --
+  {
+    const probeSkins = (probeTrip.rig as { skins: Record<string, Record<string, Record<string, Record<string, unknown>>>> }).skins;
+    const carried = probeSkins.default?.panel_echo?.panel_echo ?? {};
+    const linkBlockers = probeTrip.findings.filter((f) => f.code === 'ATTACHMENT_LINKEDMESH');
+    // The same skeleton with the two non-default keys taken off the link: a
+    // rebuild that wrote them anyway would be stating more than the file did.
+    const bare = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+    const bareSkins = bare.skins as Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }>;
+    const bareLink = bareSkins.find((skin) => skin.name === 'default')?.attachments.panel_echo?.panel_echo;
+    if (bareLink) {
+      delete bareLink.slot;
+      delete bareLink.timelines;
+      bareLink.source = 'panel_echo';
+    }
+    const bareRig = ingest(bare, { name: 'p', art: 'none', source: 's.json', version: '0' }).rig as {
+      skins: Record<string, Record<string, Record<string, Record<string, unknown>>>>;
+    };
+    const bareCarried = bareRig.skins.default?.panel_echo?.panel_echo ?? {};
+    const carriedKeys = Object.keys(carried).sort().join(', ');
+    say(
+      'IG38_A_LINKED_MESH_IS_CARRIED_WITH_THE_FIELDS_THE_FILE_STATES_AND_NO_OTHERS',
+      linkBlockers.length === 0 &&
+        carried.type === 'linkedmesh' &&
+        carried.source === 'panel' &&
+        carried.slot === 'panel' &&
+        carried.timelines === false &&
+        carried.skin === undefined &&
+        bareCarried.type === 'linkedmesh' &&
+        bareCarried.slot === undefined &&
+        bareCarried.timelines === undefined,
+      `${linkBlockers.length} ATTACHMENT_LINKEDMESH blocker(s); the rebuilt link states [${carriedKeys}], and with ` +
+        `\`slot\` and \`timelines\` taken off the source file it states [${Object.keys(bareCarried).sort().join(', ')}]`,
+      '`slot`, `skin` and `timelines` each have a parser default — this attachment\'s slot, the default skin, ' +
+        'true — so a decompiler that wrote one the source omitted would be inventing a value, and one that ' +
+        'dropped one the source stated would move the link to another slot or another skin in silence. Both ' +
+        'directions are read, because a writer that emitted nothing would pass the second clause alone',
+    );
+
+    const pointOnly = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+    const pointSkins = pointOnly.skins as Array<{ name: string; attachments: Record<string, Record<string, unknown>> }>;
+    pointSkins.find((skin) => skin.name === 'default')!.attachments.marker = { marker: { type: 'point', x: 1, y: 2 } };
+    const pointFindings = ingest(pointOnly, { name: 'p', art: 'none', source: 's.json', version: '0' }).findings.filter(
+      (f) => f.code === 'ATTACHMENT_POINT',
+    );
+    const pointDetail = pointFindings[0]?.detail ?? '';
+    say(
+      'IG39_POINT_IS_THE_ONE_DEFERRED_ATTACHMENT_LEFT_AND_THE_BLOCKER_SAYS_SO',
+      pointFindings.length === 1 &&
+        pointFindings[0].kind === 'blocker' &&
+        pointDetail.includes('point is the one deferred type left') &&
+        INGEST_VOCABULARY.attachments.includes('linkedmesh') &&
+        !INGEST_VOCABULARY.attachments.includes('point') &&
+        INGEST_VOCABULARY.attachments.every((type) => pointDetail.includes(type)),
+      pointFindings.length === 0
+        ? 'a `point` attachment was carried, and the rig spec has no field that could hold one'
+        : `${pointDetail}\n          the module carries [${INGEST_VOCABULARY.attachments.join(', ')}]`,
+      'the family row is composed from the type it found, so it is the sentence that has to name what is LEFT — ' +
+        'and the list it names is the module\'s own, read here rather than typed, because a blocker claiming to ' +
+        'emit something it does not is the one failure a set comparison cannot show you. ⚠️ Nothing in this tree ' +
+        'holds `ATTACHMENT_TYPES` equal to `src/compile.ts`\'s `EMITTED_ATTACHMENT_TYPES`: that constant is not ' +
+        'exported, and `IG03` asks the adjacent question instead — is every word here reached by a rig somebody ' +
+        'builds',
+    );
+
+    // The card's own shape: one mesh, two links, two skins — which the coverage
+    // probe does not carry, because its link is in the default skin beside its
+    // source. `skin` is therefore STATED on both, and a rebuild that dropped it
+    // would resolve them against the default skin instead.
+    const twoSkinDir = mkdtempSync(join(tmpdir(), 'rigc-linkskins-'));
+    writeProbePng(join(twoSkinDir, 'block.png'), 12, 8, [40, 60, 90, 255]);
+    writeProbePng(join(twoSkinDir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
+    const twoSkinRigPath = join(twoSkinDir, 'probe.rig.json');
+    writeFileSync(
+      twoSkinRigPath,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-rig/1',
+          name: 'link_skins',
+          skeleton: { width: 64, height: 64 },
+          bones: [{ name: 'root' }, { name: 'block', parent: 'root', length: 12 }],
+          slots: [
+            { name: 'block', bone: 'block', attachment: 'block' },
+            { name: 'echo', bone: 'root', attachment: 'echo' },
+          ],
+          skins: {
+            base: {
+              block: {
+                block: {
+                  type: 'mesh',
+                  image: 'block.png',
+                  uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+                  triangles: [0, 1, 2, 0, 2, 3],
+                  vertices: [0, 0, 12, 0, 12, 8, 0, 8],
+                  hull: 4,
+                },
+              },
+              echo: { echo: { type: 'linkedmesh', image: 'marker.png', source: 'block', slot: 'block', skin: 'base' } },
+            },
+            alt: {
+              echo: { echo: { type: 'linkedmesh', image: 'marker.png', source: 'block', slot: 'block', skin: 'base', timelines: false } },
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const twoSkinMotionPath = join(twoSkinDir, 'probe.motion.json');
+    writeFileSync(twoSkinMotionPath, `${JSON.stringify({ ...STATIC_MOTION, archetype: 'link_skins', cut: 'link_skins' }, null, 2)}\n`);
+    let twoSkinLine = 'the two-skin rig did not compile';
+    let twoSkinHeld = false;
+    try {
+      const first = compile({
+        rigPath: twoSkinRigPath,
+        motionPath: twoSkinMotionPath,
+        outDir: join(twoSkinDir, 'spine'),
+        imagesDir: twoSkinDir,
+      });
+      const decompiled = ingest(JSON.parse(first.skeletonText) as Record<string, unknown>, {
+        name: 'link_skins',
+        art: 'loose',
+        source: 'skeleton.json',
+        version: '0',
+      });
+      const rebuiltRig = join(twoSkinDir, 'rebuilt.rig.json');
+      const rebuiltMotion = join(twoSkinDir, 'rebuilt.motion.json');
+      writeFileSync(rebuiltRig, `${JSON.stringify(decompiled.rig, null, 2)}\n`);
+      writeFileSync(rebuiltMotion, `${JSON.stringify(decompiled.motion, null, 2)}\n`);
+      const second = compile({
+        rigPath: rebuiltRig,
+        motionPath: rebuiltMotion,
+        outDir: join(twoSkinDir, 'spine2'),
+        imagesDir: twoSkinDir,
+      });
+      const identical = first.skeletonText === second.skeletonText;
+      const blockers = decompiled.findings.filter((f) => f.kind === 'blocker');
+      twoSkinHeld = identical && blockers.length === 0;
+      twoSkinLine = identical
+        ? `one mesh and two links across two skins: ${first.skeletonText.length} B out and back, byte for byte, ` +
+          `with ${blockers.length} blocker(s)`
+        : `${differingJsonPaths(JSON.parse(first.skeletonText), JSON.parse(second.skeletonText)).join('; ')}`;
+    } catch (err) {
+      twoSkinLine = `refused: ${(err as Error).message}`;
+    }
+    say(
+      'IG40_ONE_MESH_AND_TWO_LINKS_ACROSS_TWO_SKINS_REBUILD_BYTE_FOR_BYTE',
+      twoSkinHeld,
+      twoSkinLine,
+      'the shape the type exists for and the one `IG00`\'s probe cannot reach, because that probe\'s link sits in ' +
+        'the default skin beside its source and so states no `skin` at all. Here both links state one, and a ' +
+        'rebuild that dropped it would resolve them against the default skin — a different mesh, or none, with ' +
+        'the gate green either way',
     );
   }
 

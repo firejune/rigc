@@ -836,6 +836,30 @@ export interface SpineMeshAttachment {
 }
 
 /**
+ * A mesh that borrows another mesh's geometry (`RigLinkedMeshAttachment`).
+ *
+ * Only the keys the parser reads, and only where they differ from its defaults:
+ * `slot` defaults to the link's own slot, `skin` to the default skin and
+ * `timelines` to true (`SkeletonJson.js:571-581`), so writing one at its default
+ * would be a byte the editor's own export does not carry. `width`/`height` are
+ * emitted for the editor and overwritten by the source's at load
+ * (`MeshAttachment.setSourceMesh`), which is why nothing reads them back.
+ */
+export interface SpineLinkedMeshAttachment {
+  type: 'linkedmesh';
+  /** See `SpineRegionAttachment.name` — and it takes `path` with it. */
+  name?: string;
+  path?: string;
+  source: string;
+  slot?: string;
+  skin?: string;
+  timelines?: boolean;
+  width: number;
+  height: number;
+  color?: string;
+}
+
+/**
  * The two vertex-only attachments: a polygon and nothing else.
  *
  * `vertexCount` is not optional the way a mesh's is absent-by-design: the parser
@@ -959,6 +983,7 @@ export interface SpinePathAttachment {
 export type SpineAttachment =
   | SpineRegionAttachment
   | SpineMeshAttachment
+  | SpineLinkedMeshAttachment
   | SpineBoundingBoxAttachment
   | SpineClippingAttachment
   | SpinePathAttachment;
