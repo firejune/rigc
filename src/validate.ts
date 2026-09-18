@@ -130,9 +130,11 @@ export const CLI_DEFAULT_PROFILE: ValidateProfile = 'spine';
  * Two assertions are MIXED and are marked `validity` here because their
  * validity half must never stop running; their policy clauses are gated inside
  * the assertion body against `profile`, and each such clause says so where it
- * lives. They are A06 (size-vs-PNG is validity; pma / rotation / full-page
- * coverage are policy) and A20 (weight coherence is validity; requiring a mesh
- * to be weighted at all is policy).
+ * lives. They are A06 (size-vs-PNG and every region's rectangle inside the page
+ * it names are validity; pma / rotation / two regions over the same texels are
+ * policy — the rectangle moved across that line in issue #694, and the reason
+ * is stated where it now sits) and A20 (weight coherence is validity; requiring
+ * a mesh to be weighted at all is policy).
  *
  * A08 was the third until issue #574 retired its policy clause. It required a
  * skin entry's placeholder to be spelled like the region it resolves to, under
@@ -3611,6 +3613,51 @@ export function validate(input: ValidateInput): ValidateReport {
         fail('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', `page "${page.name}" claims premultiplied alpha; parts are straight alpha`);
       }
     }
+    // 🔒 **A region's rectangle lies inside the page it names, and that is
+    // VALIDITY** (issue #694). The clause is not new — it has read the same four
+    // numbers since issue #266 — but it stood inside the policy half below, and
+    // behind a guard that skipped any page carrying one region that covered it.
+    // Both fences were wrong for it. A rectangle that leaves its page is not a
+    // convention somebody else may hold differently: `u2 > 1` samples whatever
+    // the wrap mode returns, which is never the drawing the pack was made of, so
+    // the part draws garbage or nothing at all. Measured on a pack shaped like
+    // the two production atlases that found this — a page declaring 2048x256
+    // with regions at `2274,0 980x200` and `0,252 100x258` — every atlas
+    // assertion passed under the default profile and the first of the two parts
+    // drew 0 of the 10,517 pixels it draws when the same rig is built loose.
+    //
+    // ⭐ The tool's other half already said so, which is what settles where the
+    // clause belongs. `resolveFromAtlas` ([`src/compile.ts`](compile.ts)) refuses
+    // exactly this rectangle as a `CompileError` under every profile when a pack
+    // arrives through `--atlas-in`, so while it was policy here the compiler and
+    // the gate disagreed about the same four numbers — and the gate is the only
+    // half that a skeleton and a pack somebody else made ever reach.
+    //
+    // ⚠️ It is stated over `atlas.regions` rather than per page group, because
+    // the question is about one region and its own page and needs no neighbour:
+    // a page carrying a single full-page region is measured too, and answers
+    // trivially. The rectangle is `pageFootprint`'s and nobody else's here
+    // (issue #579): what `TextureAtlas` transposes at 90 and not at 270 is
+    // `u2`/`v2`, a UV pair `MeshAttachment.computeUVs` never reads for an atlas
+    // region, and the page rectangle is a different quantity — transposed at
+    // BOTH quarter turns. A region that fits only *because* it is turned is
+    // inside its page, and this clause says so.
+    for (const region of atlas.regions) {
+      const foot = pageFootprint(region);
+      if (
+        region.x < 0 ||
+        region.y < 0 ||
+        region.x + foot.width > region.page.width ||
+        region.y + foot.height > region.page.height
+      ) {
+        fail(
+          'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+          `region "${region.name}" occupies ${region.x},${region.y} ${foot.width}x${foot.height} of page ` +
+            `"${region.page.name}", which is ${region.page.width}x${region.page.height} — a region that runs off ` +
+            'its page samples texels that are not there',
+        );
+      }
+    }
     if (!policy) return;
     // ⭐ **One part per page OR a tiling page** (issue #266, follow-up 2). This
     // clause used to be the first alternative alone — every region's UVs
@@ -3623,11 +3670,19 @@ export function validate(input: ValidateInput): ValidateReport {
     // What the first alternative bought was the attachment -> region -> file
     // chain being checkable exactly, and `A27` already owns that half and already
     // stands down on a multi-region page. What is left to check on a *tiling*
-    // page is what makes shared-page sampling well defined at all: every region
-    // wholly inside the page it names, and no two regions on one page
-    // overlapping. Both are conditions a foreign pack can fail while loading
-    // clean — an off-page rectangle samples texels that are not there, and two
-    // overlapping rectangles put one drawing inside another's.
+    // page is what makes shared-page sampling well defined at all: no two regions
+    // on one page overlapping. A foreign pack can fail that while loading clean,
+    // and two overlapping rectangles put one drawing inside another's.
+    //
+    // ⚠️ Its sibling — every region inside the page it names — moved above and
+    // out of this profile in issue #694, and the two are not symmetrical. That
+    // one is broken for every consumer; this one is a statement about what a
+    // pack MEANS, and the corpus is the evidence rather than the taste:
+    // measured over the ten atlases in `examples/`, 0 of 132 regions are off
+    // their page and 49 pairs on four of those pages overlap, editor-exported
+    // and correct. A rule that called those files broken would be one
+    // consumer's convention refusing everybody else's data, which is the thing
+    // the profile split exists to prevent.
     //
     // ⚠️ Rotation stays refused either way, and that is not the same clause: it
     // is about rigc's own packer never turning a region, which is a statement
@@ -3643,29 +3698,15 @@ export function validate(input: ValidateInput): ValidateReport {
       else regionsPerPage.set(region.page.name, [region]);
     }
     for (const [pageName, on] of regionsPerPage) {
-      const onePartPerPage =
-        on.length === 1 && on[0].u === 0 && on[0].v === 0 && on[0].u2 === 1 && on[0].v2 === 1;
-      if (onePartPerPage) continue;
-      // The rectangle a region occupies on its page is `pageFootprint`'s and
-      // nobody else's here (issue #579). What `TextureAtlas` transposes at 90 and
-      // not at 270 is `u2`/`v2` — a UV pair `MeshAttachment.computeUVs` never
-      // reads for an atlas region — and the page rectangle is a different
-      // quantity, transposed at BOTH quarter turns. See that function for the
-      // runtime lines.
+      // The `onePartPerPage` guard that stood here went with the clause it was
+      // written for: with only the pair check left, a page carrying one region
+      // has no pair and the loop below does nothing on it anyway. Nothing reads
+      // `u`/`v`/`u2`/`v2` in this assertion any more, which is the point of
+      // #579 kept rather than restated.
       const rects = on.map((region) => {
         const foot = pageFootprint(region);
-        return { name: region.name, x: region.x, y: region.y, width: foot.width, height: foot.height, page: region.page };
+        return { name: region.name, x: region.x, y: region.y, width: foot.width, height: foot.height };
       });
-      for (const rect of rects) {
-        if (rect.x < 0 || rect.y < 0 || rect.x + rect.width > rect.page.width || rect.y + rect.height > rect.page.height) {
-          fail(
-            'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
-            `region "${rect.name}" occupies ${rect.x},${rect.y} ${rect.width}x${rect.height} of page ` +
-              `"${pageName}", which is ${rect.page.width}x${rect.page.height} — a region that runs off its page ` +
-              'samples texels that are not there',
-          );
-        }
-      }
       for (let i = 0; i < rects.length; i++) {
         for (let j = i + 1; j < rects.length; j++) {
           const a = rects[i];

@@ -1083,6 +1083,37 @@ const MUTANTS: Mutant[] = [
       }),
     }),
   },
+  {
+    // M14's edit under the OTHER profile, and it is a statement about the SPLIT
+    // rather than about the assertion — M36a/M36b's precedent. Until issue #694
+    // "a region inside the page it names" was a clause of the renderer's policy,
+    // so this exact break was green under the profile the CLI defaults to: the
+    // two production atlases that found it declare a 2048x256 page and place
+    // regions at x = 2274 and at y = 252, and `rigc validate` called them valid
+    // Spine. Both edges, because the clause compares two sums and one of them
+    // held while the other did not on the corpus that reported it.
+    name: 'M56_two_regions_outside_the_pages_they_name',
+    origin:
+      'a rectangle outside its page loads clean and samples whatever the wrap mode returns — and under `spine`, ' +
+      'the default, no assertion asked (issue #694)',
+    expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+    profile: 'spine',
+    mutate: (a) => {
+      // The unpacked convention: one region per page, covering it exactly. So
+      // shifting a region by one texel in either direction puts that edge past
+      // the page, and the sizes are read off the text rather than written down.
+      let moved = 0;
+      return {
+        ...a,
+        atlasText: a.atlasText.replace(/^bounds: \d+, \d+, (\d+), (\d+)$/gm, (line, w, h) => {
+          moved++;
+          if (moved === 1) return `bounds: 1, 0, ${w}, ${h}`;
+          if (moved === 2) return `bounds: 0, 1, ${w}, ${h}`;
+          return line;
+        }),
+      };
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -29039,14 +29070,22 @@ function runPackerSuite(): number {
   // page OR a tiling page" and these four cases are what that is worth: one
   // positive control, two ways a foreign tiling is refused, and the one that
   // keeps the relaxation from quietly hollowing out a neighbouring assertion.
-  const gatePacked = (dir: string, atlasText: string, result: CompileResult): ReturnType<typeof validate> =>
+  const gatePacked = (
+    dir: string,
+    atlasText: string,
+    result: CompileResult,
+    // The renderer's own rulebook is what PK19-PK22 are about, so it stays the
+    // default; PK58 onwards name a profile because the clause they measure is
+    // validity and has to hold under both (#694).
+    profile: ValidateProfile = 'spine-html',
+  ): ReturnType<typeof validate> =>
     validate({
       skeletonText: result.skeletonText,
       atlasText,
       atlasDir: dir,
       declaredDurations: result.declaredDurations,
       rig: result.rig,
-      profile: 'spine-html',
+      profile,
     });
   /** Rewrite one region's `bounds:` line, structurally — no measured literal. */
   const withBounds = (atlasText: string, region: string, x: number, y: number, w: number, h: number): string => {
@@ -29550,6 +29589,295 @@ function runPackerSuite(): number {
       'the scan walks the rectangle, so one wider than the drawing reaches the transparent gutter, takes that ' +
       'texel for the part\'s own and returns. Two solid rectangles on one page were measured GREEN by A19 at ' +
       'rotate: 270 and red at 0, 90 and 180 — the same pixels, the same assertion, opposite verdicts',
+  );
+
+  // --- PK58..PK62: a rectangle inside the page it names is VALIDITY (#694) ---
+  //
+  // The clause has read the same four numbers since #266 and it stood inside the
+  // policy half, behind a guard that skipped a page carrying one full-page
+  // region. So a pack whose regions leave their page gated GREEN under `spine` —
+  // the profile a stranger's `rigc validate` runs. Measured on the branch point
+  // with the two shapes the card reports, a page declaring 2048x256 carrying
+  // regions at `2274,0 980x200` and `0,252 100x258`: A06, A07, A08 and A17 all
+  // PASS, and the first of the two parts draws 0 of the 10,517 pixels the same
+  // rig draws when it is built from the loose art.
+  //
+  // ⭐ What the card did not know: the tool's OTHER half already refused it.
+  // `resolveFromAtlas` throws a `CompileError` naming the same rectangle under
+  // every profile, so the `--atlas-in` route the card calls silent is closed.
+  // PK62 measures the two together, and their agreement is why the clause
+  // belongs on A06 rather than on an assertion of its own.
+  //
+  // ⚠️ Its neighbour does NOT move, and the corpus is the reason rather than the
+  // symmetry: over the ten atlases in `examples/`, 0 of 132 regions are off
+  // their page and 49 pairs on four of those pages OVERLAP — editor-exported and
+  // correct. PK61 is that split stated as a verdict.
+  const packPage = parseAtlasText(htmlPack.atlasText).pages[0];
+  const pastRightEdge = withBounds(
+    htmlPack.atlasText,
+    packedRegions[0].name.trim(),
+    packPage.width - packedRegions[0].width + 1,
+    packedRegions[0].y,
+    packedRegions[0].width,
+    packedRegions[0].height,
+  );
+  const pastBothEdges = withBounds(
+    pastRightEdge,
+    packedRegions[1].name.trim(),
+    packedRegions[1].x,
+    packPage.height - packedRegions[1].height + 1,
+    packedRegions[1].width,
+    packedRegions[1].height,
+  );
+  const ATLAS_RULE = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+  /** What A06 said about one region's rectangle, or null where it said nothing about it. */
+  const offPageDetail = (report: ReturnType<typeof validate>, region: string): string | null =>
+    report.failures.find(
+      (f) => f.assertion === ATLAS_RULE && f.detail.includes('runs off') && f.detail.includes(`"${region}"`),
+    )?.detail ?? null;
+  /** Which of the three lists an assertion came back in, for a probe that has to say. */
+  const verdictOf = (report: ReturnType<typeof validate>, name: string): string =>
+    report.passed.includes(name)
+      ? 'PASS'
+      : report.skipped.some((s) => s.assertion === name)
+        ? 'SKIP'
+        : `FAIL: ${report.failures
+            .filter((f) => f.assertion === name)
+            .map((f) => f.detail.slice(0, 90))
+            .join(' | ')}`;
+  const plantedRects = [
+    [packedRegions[0].name.trim(), `${packPage.width - packedRegions[0].width + 1},${packedRegions[0].y}`],
+    [packedRegions[1].name.trim(), `${packedRegions[1].x},${packPage.height - packedRegions[1].height + 1}`],
+  ] as const;
+  const packPageSize = `${packPage.width}x${packPage.height}`;
+  const edgeProbes: string[] = [];
+  let edgeNamed = 0;
+  for (const profile of VALIDATE_PROFILES) {
+    const report = gatePacked(htmlPack.dir, pastBothEdges, htmlPack.result, profile);
+    for (const [region, at] of plantedRects) {
+      const detail = offPageDetail(report, region);
+      if (detail === null) {
+        edgeProbes.push(
+          `profile ${profile}: "${region}" is at ${at} on a ${packPageSize} page and A06 came back ` +
+            verdictOf(report, ATLAS_RULE),
+        );
+        continue;
+      }
+      edgeNamed++;
+      const absent = [at, packPageSize].filter((token) => !detail.includes(token));
+      if (absent.length > 0) {
+        edgeProbes.push(`profile ${profile}: A06 names "${region}" without ${absent.join(' and ')} — ${detail}`);
+      }
+    }
+  }
+  const edgeHeld = edgeProbes.length === 0;
+  say(
+    'PK58_A_REGION_PAST_ITS_PAGES_EDGE_IS_NAMED_UNDER_EVERY_PROFILE',
+    edgeHeld,
+    probeDetail(
+      edgeHeld,
+      edgeProbes,
+      `one region one texel past the right edge ("${plantedRects[0][0]}" at ${plantedRects[0][1]}) and one past ` +
+        `the bottom ("${plantedRects[1][0]}" at ${plantedRects[1][1]}) on a ${packPageSize} page: A06 named ` +
+        `${edgeNamed} of them across ${VALIDATE_PROFILES.join(' and ')}, each with its rectangle and the page's size`,
+    ),
+    'the production shapes this came from are exactly these two, and under the default profile the branch point ' +
+      'called them green. One texel is the smallest break there is and both offsets are derived from the page, so ' +
+      'nothing here is a number somebody typed; both profiles are required because the clause is validity, and a ' +
+      'clause that fires under one of them only is the defect this case exists for',
+  );
+
+  // PK59: the turn is HONOURED, and the same four numbers read two ways decide
+  // it. `turnedPack` sizes its page for the TURNED footprints, so a region moved
+  // to the page's right edge by the width it occupies AT 90 — its `height` —
+  // fits exactly there; with only its `rotate:` line changed to 0 it occupies
+  // `width` instead and hangs `width - height` texels past the edge.
+  /** The same atlas with one region's `rotate:` line rewritten, structurally. */
+  const withTurn = (atlasText: string, region: string, degrees: number): string => {
+    const lines = atlasText.split('\n');
+    const at = lines.findIndex((line) => line.trim() === region);
+    const turn = lines.findIndex((line, i) => i > at && line.trim().startsWith('rotate:'));
+    lines[turn] = lines[turn].replace(/rotate:.*/, `rotate: ${degrees}`);
+    return lines.join('\n');
+  };
+  const quarterTurn = turnedPack(turnParts, 90);
+  const quarterText = readFileSync(quarterTurn.atlasPath, 'utf8');
+  const quarterPage = parseAtlasText(quarterText).pages[0];
+  const oblong = quarterPage.regions.find((r) => r.width > r.height);
+  const turnProbes: string[] = [];
+  let turnedClean = '';
+  if (oblong === undefined) {
+    turnProbes.push(
+      'no region on the turned page is wider than it is tall, so no rectangle here can tell a footprint from its ' +
+        `transpose: ${quarterPage.regions.map((r) => `${r.name.trim()} ${r.width}x${r.height}`).join(', ')}`,
+    );
+  } else {
+    const name = oblong.name.trim();
+    const edge = quarterPage.width - oblong.height;
+    const atEdge = withBounds(quarterText, name, edge, 0, oblong.width, oblong.height);
+    const turnedReport = gatePacked(quarterTurn.dir, atEdge, overlayCompile, 'spine');
+    const flatReport = gatePacked(quarterTurn.dir, withTurn(atEdge, name, 0), overlayCompile, 'spine');
+    const flatDetail = offPageDetail(flatReport, name);
+    if (!turnedReport.passed.includes(ATLAS_RULE)) {
+      turnProbes.push(
+        `at rotate 90 "${name}" occupies ${oblong.height}x${oblong.width} at ${edge},0 of a ` +
+          `${quarterPage.width}x${quarterPage.height} page, which is inside it, and A06 came back ` +
+          verdictOf(turnedReport, ATLAS_RULE),
+      );
+    }
+    if (flatDetail === null) {
+      turnProbes.push(
+        `at rotate 0 the same region occupies ${oblong.width}x${oblong.height} from ${edge}, which ends ` +
+          `${oblong.width - oblong.height} texel(s) past the page, and A06 came back ` +
+          verdictOf(flatReport, ATLAS_RULE),
+      );
+    } else if (!flatDetail.includes(`${oblong.width}x${oblong.height}`)) {
+      turnProbes.push(`at rotate 0 A06 names "${name}" over a rectangle that is not the drawing's own — ${flatDetail}`);
+    }
+    turnedClean =
+      `"${name}" is a ${oblong.width}x${oblong.height} drawing at ${edge},0 on a ` +
+      `${quarterPage.width}x${quarterPage.height} page: at rotate 90 it occupies ${oblong.height}x${oblong.width} ` +
+      `and A06 PASSES, at rotate 0 it occupies ${oblong.width}x${oblong.height} and A06 names it — ` +
+      (flatDetail ?? '').slice(0, 130);
+  }
+  const turnHeld = turnProbes.length === 0;
+  say(
+    'PK59_A_REGION_THAT_FITS_ONLY_BECAUSE_IT_IS_TURNED_IS_INSIDE_ITS_PAGE',
+    turnHeld,
+    probeDetail(turnHeld, turnProbes, turnedClean),
+    "the positive control for the clause, and the one a rule written on `bounds:` alone fails: a foreign packer " +
+      "turns a region to fit it, so a gate reading the drawing's own orientation would refuse the pack the editor " +
+      'ships. The two halves are one line apart — the same four numbers, one `rotate:` — so a rule that ignored ' +
+      'the turn goes red on the first and a rule that never fires goes red on the second',
+  );
+
+  // PK60: the page shape the guard used to skip. `onePartPerPage` — one region
+  // whose UVs are exactly (0,0)-(1,1) — was a `continue` above both clauses, so
+  // rigc's OWN unpacked emit was the one artifact this rule never read. It is
+  // read now, and it passes, on both loose emits this suite already holds.
+  const looseEmits = [
+    ['overlay', overlayCompile, optsForFixture(OVERLAY).outDir],
+    ['articulated', htmlPack.result, optsForFixture(ARTICULATED).outDir],
+  ] as const;
+  const looseProbes: string[] = [];
+  let fullPagePages = 0;
+  for (const [name, result, dir] of looseEmits) {
+    for (const page of parseAtlasText(result.atlasText).pages) {
+      const only = page.regions.length === 1 ? page.regions[0] : null;
+      if (only && only.x === 0 && only.y === 0 && only.width === page.width && only.height === page.height) {
+        fullPagePages++;
+      }
+    }
+    for (const profile of VALIDATE_PROFILES) {
+      const report = gatePacked(dir, result.atlasText, result, profile);
+      if (!report.passed.includes(ATLAS_RULE)) {
+        looseProbes.push(`${name} under ${profile}: A06 came back ${verdictOf(report, ATLAS_RULE)}`);
+      }
+    }
+  }
+  looseProbes.push(
+    ...floorProbes(
+      [[fullPagePages, 2, `${fullPagePages} page(s) carry exactly one region covering them`]],
+      'the shape the guard used to skip has to be IN the population, or this case measures the packed shape twice',
+    ),
+  );
+  const looseHeld = looseProbes.length === 0;
+  say(
+    'PK60_THE_UNPACKED_CONVENTION_IS_MEASURED_BY_THE_CLAUSE_NOW_AND_PASSES',
+    looseHeld,
+    probeDetail(
+      looseHeld,
+      looseProbes,
+      `${looseEmits.length} loose emit(s) carrying ${fullPagePages} one-region page(s) between them, gated under ` +
+        `${VALIDATE_PROFILES.join(' and ')}: A06 PASS on every one`,
+    ),
+    'the clause is stated over every region now rather than over the pages a guard let through, and that guard ' +
+      'covered exactly the shape rigc itself writes — so the widening is only honest if the shape it newly reads ' +
+      'is green. A SKIP would not do either: an atlas with regions always has something to measure',
+  );
+
+  // PK61: and the neighbour it stood beside does NOT move. Two regions over the
+  // same texels is what an editor's own packer writes — 49 pairs on four of the
+  // ten corpus atlases — so it stays the renderer's policy while the rectangle
+  // leaves it.
+  const splitProbes: string[] = [];
+  for (const profile of VALIDATE_PROFILES) {
+    const report = gatePacked(htmlPack.dir, overlapped, htmlPack.result, profile);
+    const named = report.failures.some((f) => f.assertion === ATLAS_RULE && f.detail.includes('overlap on page'));
+    if (profile === 'spine' && named) {
+      splitProbes.push(`profile ${profile} refuses two regions over the same texels: ${verdictOf(report, ATLAS_RULE)}`);
+    }
+    if (profile === 'spine-html' && !named) {
+      splitProbes.push(
+        `profile ${profile} accepts two regions over the same texels: A06 came back ${verdictOf(report, ATLAS_RULE)}`,
+      );
+    }
+  }
+  const splitHeld = splitProbes.length === 0;
+  say(
+    'PK61_TWO_REGIONS_OVER_THE_SAME_TEXELS_STAY_THE_RENDERERS_POLICY',
+    splitHeld,
+    probeDetail(
+      splitHeld,
+      splitProbes,
+      `"${packedRegions[1].name.trim()}" moved onto "${packedRegions[0].name.trim()}"'s corner, on one atlas text: ` +
+        'no overlap named under spine, one named under spine-html',
+    ),
+    'the two clauses sat in one profile and only one of them belongs there, so moving both would refuse correct ' +
+      'foreign data and moving neither would leave the defect standing. The corpus decides it rather than ' +
+      'symmetry: 0 of its 132 regions are off their page and 49 pairs of them overlap',
+  );
+
+  // PK62: the compiler and the gate refuse the same rectangle. `resolveFromAtlas`
+  // has thrown on it under every profile since `--atlas-in` existed; for as long
+  // as the gate's clause was policy the two halves of the tool disagreed about
+  // the same four numbers, and the gate is the half a pack somebody else made
+  // ever reaches.
+  const offPageDir = join(ARTICULATED.dir, 'atlas_in_off_page');
+  mkdirSync(offPageDir, { recursive: true });
+  for (const page of htmlPack.pages) copyFileSync(join(htmlPack.dir, page), join(offPageDir, page));
+  const offPagePath = join(offPageDir, 'skeleton.atlas');
+  writeFileSync(offPagePath, pastBothEdges);
+  const compileRefusal = refusalOf(() =>
+    compile({
+      ...optsForFixture(ARTICULATED),
+      outDir: join(ARTICULATED.dir, 'imported_off_page'),
+      atlasInPath: offPagePath,
+    }),
+  );
+  const gateReport = gatePacked(htmlPack.dir, pastBothEdges, htmlPack.result, 'spine');
+  const agreeProbes: string[] = [];
+  const refusedRegion =
+    compileRefusal === null ? undefined : plantedRects.find(([region]) => compileRefusal.includes(`"${region}"`));
+  if (compileRefusal === null) {
+    agreeProbes.push('the compiler took the same atlas through --atlas-in and wrote an artifact from it');
+  } else if (refusedRegion === undefined) {
+    agreeProbes.push(`the compiler refused something else: ${compileRefusal.slice(0, 140)}`);
+  } else {
+    const [region, at] = refusedRegion;
+    const gateDetail = offPageDetail(gateReport, region);
+    const absent = [at, packPageSize].filter((token) => !compileRefusal.includes(token));
+    if (absent.length > 0) {
+      agreeProbes.push(`the compile-time refusal states neither ${absent.join(' nor ')}: ${compileRefusal.slice(0, 140)}`);
+    }
+    if (gateDetail === null) {
+      agreeProbes.push(`the gate says nothing about "${region}": A06 came back ${verdictOf(gateReport, ATLAS_RULE)}`);
+    }
+  }
+  const agreeHeld = agreeProbes.length === 0;
+  say(
+    'PK62_THE_COMPILER_AND_THE_GATE_REFUSE_THE_SAME_RECTANGLE',
+    agreeHeld,
+    probeDetail(
+      agreeHeld,
+      agreeProbes,
+      `one atlas, both halves: --atlas-in throws "${(compileRefusal ?? '').slice(0, 120)}" and A06 under spine ` +
+        `names ${gateReport.failures.filter((f) => f.assertion === ATLAS_RULE).length} region(s) on the same text`,
+    ),
+    'this is what decides that the clause belongs on A06 rather than on an assertion of its own: the tool already ' +
+      'had a name for this rectangle, in the message an author gets when the pack arrives through the compiler. A ' +
+      'second name would leave a reader working out that A06 under one profile and a new code under the other are ' +
+      'the same sentence about the same four numbers',
   );
 
   return bad;

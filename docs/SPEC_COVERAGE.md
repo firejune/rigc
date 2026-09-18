@@ -731,7 +731,7 @@ This is the split Part 4(c) needs. **Spine-validity** = the file is wrong for an
 | `A16_SKELETON_VERSION_4_3` | validity (portability) | a `spine` string outside `4.3.x` |
 | `A17_ATLAS_PAGE_FILES_EXIST` | validity | a page PNG not on disk |
 | `A18_DETERMINISTIC_EMIT` | tool contract | recompiling differs byte-for-byte |
-| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | **mixed** | size≠PNG is **validity** (case 6h); `pma:true`, region rotation, and "region covers the whole page" are **renderer-profile** |
+| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | **mixed** | size≠PNG is **validity** (case 6h), and so is a region whose rectangle is outside the page it names, rotation honoured ([#694](https://github.com/firejune/rigc/issues/694)); `pma:true`, region rotation, and two regions on one page over the same texels are **renderer-profile** |
 | `A11_NO_CLIPPING_ATTACHMENTS` | **renderer-profile** | clipping attachments — "the renderer skips them silently" |
 | `A12_NO_DARK_COLOR` | **renderer-profile** | slot `dark`, `rgba2`/`rgb2` timelines — "parsed, then ignored" |
 | `A13_MESH_BUDGET` | **renderer-profile** | >4 mesh slots, >80 triangles per mesh |
