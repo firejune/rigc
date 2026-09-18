@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.25.5](https://github.com/firejune/rigc/compare/v0.25.4...v0.25.5) (2026-09-18)
+
+
+### Bug Fixes
+
+* **check:** the identity run reports a drift bounded by the sub-pixel step, names no frame that cannot exist, and the page says what a figure has to beat ([#678](https://github.com/firejune/rigc/issues/678)) ([#689](https://github.com/firejune/rigc/issues/689)) ([8c87dbb](https://github.com/firejune/rigc/commit/8c87dbbc3b9128b0924e2ca0a6006e1642ca8c19))
+* **compile:** a misspelled required key in the rig spec is named as the typo rather than as the array it lost ([#672](https://github.com/firejune/rigc/issues/672)) ([#680](https://github.com/firejune/rigc/issues/680)) ([a61e1e4](https://github.com/firejune/rigc/commit/a61e1e49c38cc9950f56bded6153f962464eb414))
+* **compile:** a slot emptied by a manifest state with no art names that state and the path, and its DROP lines reach the console ([#671](https://github.com/firejune/rigc/issues/671)) ([#687](https://github.com/firejune/rigc/issues/687)) ([4a73529](https://github.com/firejune/rigc/commit/4a735296cff859598dbbe681e22bd796d28c6328))
+* **docs:** FACE.md states what three closed cards answered, routes to the failure map, and says which of its figures a run re-takes ([#674](https://github.com/firejune/rigc/issues/674)) ([#682](https://github.com/firejune/rigc/issues/682)) ([ba24146](https://github.com/firejune/rigc/commit/ba241462738668a8dbeb659fb35d595c930c1a7f))
+* **docs:** the five shipped skills say what the tool does today, and a control reads their bodies ([#673](https://github.com/firejune/rigc/issues/673)) ([#685](https://github.com/firejune/rigc/issues/685)) ([e237d2c](https://github.com/firejune/rigc/commit/e237d2c9fe57f08afe4ddf8078edb2e5cadb8f12))
+* **ingest:** every finding code is a documented row, held there by the module's own `note(` calls ([#675](https://github.com/firejune/rigc/issues/675)) ([#683](https://github.com/firejune/rigc/issues/683)) ([e26200a](https://github.com/firejune/rigc/commit/e26200a5607f3201013fc6a9f44780417183500b))
+
+
+### Instrument
+
+* **selftest:** the authoring guide is compared to the keys the two parsers accept, in both directions ([#676](https://github.com/firejune/rigc/issues/676)) ([#686](https://github.com/firejune/rigc/issues/686)) ([1d446bd](https://github.com/firejune/rigc/commit/1d446bde2d149d5e51cffe39c939462a9e1202af))
+* **selftest:** the currency scan reads the doctrine, and an exported symbol stated as a number is the module's ([#677](https://github.com/firejune/rigc/issues/677)) ([#688](https://github.com/firejune/rigc/issues/688)) ([10a0967](https://github.com/firejune/rigc/commit/10a09677658bada21764224cfe73a3ccef717bbb))
+
 ## [0.25.4](https://github.com/firejune/rigc/compare/v0.25.3...v0.25.4) (2026-09-18)
 
 
