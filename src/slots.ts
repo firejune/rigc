@@ -29,6 +29,16 @@
  * window around where the candidate drew it. Touching parts stop being fatal —
  * a link that overlaps its neighbour still correlates against its own pixels.
  *
+ * ⛔ **Its own pixels means the ones you can see.** The template is the slot drawn
+ * alone and the reference is a composite, so a template pixel the candidate itself
+ * draws something over matches nothing at the true offset — and a residual that is
+ * there at every offset is not evidence about position. Left in, it *moves the
+ * answer*: issue #698 measured four of the seven shipped examples reporting
+ * 0.8–2.2 px against frames rendered from themselves, and on every one the score
+ * field's own whole-pixel minimum sat off the identity offset because the covered
+ * samples' gradient outvoted a shallow basin. `visibleField` drops them, and the
+ * minimum comes back to the origin on all seven.
+ *
  * ⛔ And both matchers are capped by `searchRadius`: a part may be displaced by
  * about its own size and still be the same part in the picture, and past that the
  * honest report is **no match**. A number that is not a measurement of the slot it
@@ -36,7 +46,15 @@
  */
 import { Plate, type RGBA } from '../tools/plate.ts';
 import { backgroundDistance, isContent } from './framing.ts';
-import { pageFor, projector, rasterisePiece, type Frame, type Footprint, type Viewport } from './render.ts';
+import {
+  frameGeometry,
+  pageFor,
+  projector,
+  rasterisePiece,
+  type Frame,
+  type Footprint,
+  type Viewport,
+} from './render.ts';
 
 /** Components smaller than this are antialiasing crumbs, not parts. */
 const MIN_COMPONENT_PIXELS = 4;
@@ -244,8 +262,38 @@ export interface SlotTrack {
   confidence: number | null;
   /** How far the match was allowed to look, in frame pixels. */
   searchRadius: number | null;
+  /**
+   * The whole-pixel offset the sub-pixel step refined — template matches only.
+   *
+   * It is the half of the answer that is a *displacement*: `(0, 0)` says the
+   * correlation put the part where the candidate drew it and everything in
+   * `drift` is the parabola's own residue.
+   */
+  wholePixel: { dx: number; dy: number } | null;
   /** Set when the drift is not a measurement of this slot, saying why. */
   ambiguity: string | null;
+}
+
+/**
+ * The most this match could have read, given the winner it found.
+ *
+ * `hypot(|dx| + SUBPIXEL_CLAMP, |dy| + SUBPIXEL_CLAMP)`, because the sub-pixel
+ * step is clamped to half a pixel on each axis. A reader comparing a drift to a
+ * floor needs it beside the figure: 0.44 px under a bound of 0.71 px is the
+ * instrument at rest, and 0.44 px under a bound of 1.58 px is a part that moved a
+ * whole pixel and came most of the way back. `null` for a component match — a
+ * distance between two centroids is bounded by nothing but the search radius.
+ *
+ * 🔒 **A function and not a field**, and the red-first run is why. It was stored
+ * on the track first, and `C29`'s plant — one track's whole-pixel winner forced a
+ * pixel off the identity — printed *"bounded by 0.71 px — the correlation moved
+ * this slot by (1, 0) whole pixel(s)"*: the sentence and the figure beside it came
+ * from two fields that could disagree, which is this repository's own antipattern
+ * with a drift figure attached to it. One derivation, one place.
+ */
+export function driftBound(track: SlotTrack): number | null {
+  if (track.method !== 'template' || track.wholePixel === null) return null;
+  return Math.hypot(Math.abs(track.wholePixel.dx) + SUBPIXEL_CLAMP, Math.abs(track.wholePixel.dy) + SUBPIXEL_CLAMP);
 }
 
 /**
@@ -419,11 +467,16 @@ export function matchSlots(
   }
 
   // The fallback: anything the components could not attribute, correlated against
-  // its own rendered pixels.
+  // the pixels of its own that the candidate's composite lets show. The owner mask
+  // is a property of the frame rather than of the slot, so it is taken once and
+  // only when something is actually going to correlate against it.
   if (source) {
-    for (const entry of pending) {
-      if (entry.track.ambiguity === null || entry.track.candidate === null || entry.foot.pixels === 0) continue;
-      applyTemplateMatch(entry.track, entry.foot, source);
+    const wanted = pending.filter(
+      (entry) => entry.track.ambiguity !== null && entry.track.candidate !== null && entry.foot.pixels > 0,
+    );
+    if (wanted.length > 0) {
+      const visible = visibleField(source);
+      for (const entry of wanted) applyTemplateMatch(entry.track, entry.foot, source, visible);
     }
   }
 
@@ -450,6 +503,7 @@ function blankTrack(slot: string): SlotTrack {
     heightDrift: null,
     confidence: null,
     searchRadius: null,
+    wholePixel: null,
     ambiguity: null,
   };
 }
@@ -478,6 +532,7 @@ function clearMatch(track: SlotTrack): void {
   track.driftY = null;
   track.widthDrift = null;
   track.heightDrift = null;
+  track.wholePixel = null;
 }
 
 /**
@@ -515,25 +570,83 @@ interface Template {
   height: number;
   /** The slot alone, composited over the background. */
   patch: Plate;
-  /** Offsets into the patch that carry the slot's own pixels. */
+  /** Offsets into the patch that carry the slot's own VISIBLE pixels. */
   samples: Int32Array;
   /** Mean distance from the background over those samples: how visible it is. */
   contrast: number;
+  /** How much of the slot's own ink reaches the picture, and how much does not. */
+  ink: number;
+  covered: number;
 }
 
 /**
- * The slot on its own, over the background, at the size it drew.
+ * A template to correlate, or why this slot has none.
+ *
+ * `covered` is a *reported* outcome and not a quiet miss: a slot every pixel of
+ * which the candidate draws over has no position to measure, and saying so is a
+ * different fact from a correlation that searched and found nothing.
+ */
+type TemplateOutcome =
+  | { kind: 'template'; template: Template }
+  | { kind: 'undrawn' }
+  | { kind: 'covered'; ink: number; width: number; height: number };
+
+/**
+ * Which slot you would SEE at each pixel of the CANDIDATE's own frame.
+ *
+ * The composite's own rule, last writer wins, over the candidate's pieces in draw
+ * order — `frameGeometry`'s owner mask, which already computes exactly this for
+ * the chain split. It is entirely candidate-side: what it answers is *which of my
+ * template's pixels do I myself cover*, which is a fact about the thing being
+ * looked for and never a reading of the reference.
+ *
+ * ⚠️ So it is one-sided by construction, and that is the honest half to have. A
+ * pixel the candidate leaves visible may be covered in the reference, and nothing
+ * here can know it; what it removes is the half that is knowable, which is the
+ * half that was moving the answer.
+ */
+interface VisibleField {
+  owner: Int32Array;
+  idOf: Map<string, number>;
+  width: number;
+  height: number;
+}
+
+function visibleField(source: SlotSource): VisibleField {
+  const idOf = new Map<string, number>();
+  for (const piece of source.frame.pieces) if (!idOf.has(piece.slot)) idOf.set(piece.slot, idOf.size);
+  const { owner } = frameGeometry(source.frame, source.pages, source.viewport, idOf);
+  return {
+    owner: owner ?? new Int32Array(source.viewport.width * source.viewport.height).fill(-1),
+    idOf,
+    width: source.viewport.width,
+    height: source.viewport.height,
+  };
+}
+
+/**
+ * The slot on its own, over the background, at the size it drew — sampled only
+ * where the candidate's own composite lets it show.
  *
  * Its own pieces and nothing else — the point of the fallback is that the
  * reference merged this part with its neighbours, so the thing being looked for
  * has to be the part rather than the blob.
+ *
+ * 🚨 And only the pixels of it that reach the picture. A template pixel the
+ * candidate draws something over cannot match the reference at the true offset,
+ * so it contributes a residual at *every* offset and the correlation is reading
+ * the occluder rather than the part — issue #698's whole finding. ⚠️ It is not a
+ * flat penalty that cancels: sliding the template moves those samples onto other
+ * pixels, and where the visible basin is shallow their gradient is what decides
+ * the winner. `contrast` is taken over the same retained samples, so the residual
+ * test below compares two figures measured on one population.
  */
-function templateFor(slot: string, foot: Footprint, source: SlotSource): Template | null {
+function templateFor(slot: string, foot: Footprint, source: SlotSource, visible: VisibleField): TemplateOutcome {
   const ox = Math.floor(foot.minX);
   const oy = Math.floor(foot.minY);
   const width = Math.ceil(foot.maxX) - ox;
   const height = Math.ceil(foot.maxY) - oy;
-  if (width <= 0 || height <= 0) return null;
+  if (width <= 0 || height <= 0) return { kind: 'undrawn' };
   const patch = new Plate(width, height);
   const bg = source.background;
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) patch.set(x, y, bg);
@@ -550,30 +663,45 @@ function templateFor(slot: string, foot: Footprint, source: SlotSource): Templat
       drew = true;
     });
   }
-  if (!drew) return null;
+  if (!drew) return { kind: 'undrawn' };
 
+  const own = visible.idOf.get(slot) ?? -1;
   const hits: number[] = [];
+  let ink = 0;
   let sum = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const d = backgroundDistance(patch, x, y, bg);
       if (d <= 0) continue;
+      ink++;
+      const fx = ox + x;
+      const fy = oy + y;
+      // Off the frame counts as covered: a pixel outside the reference compares
+      // against the background at every offset, which is the same constant.
+      if (fx < 0 || fy < 0 || fx >= visible.width || fy >= visible.height) continue;
+      if (visible.owner[fy * visible.width + fx] !== own) continue;
       hits.push(y * width + x);
       sum += d;
     }
   }
-  if (hits.length === 0) return null;
+  if (ink === 0) return { kind: 'undrawn' };
+  if (hits.length === 0) return { kind: 'covered', ink, width, height };
   const stride = Math.max(1, Math.ceil(hits.length / MAX_SAMPLES));
   const samples: number[] = [];
   for (let i = 0; i < hits.length; i += stride) samples.push(hits[i]);
   return {
-    ox,
-    oy,
-    width,
-    height,
-    patch,
-    samples: Int32Array.from(samples),
-    contrast: sum / hits.length,
+    kind: 'template',
+    template: {
+      ox,
+      oy,
+      width,
+      height,
+      patch,
+      samples: Int32Array.from(samples),
+      contrast: sum / hits.length,
+      ink,
+      covered: ink - hits.length,
+    },
   };
 }
 
@@ -638,16 +766,28 @@ function sweepOffsets(radius: number, coarse: number): number[] {
  * from.
  *
  * ⚠️ What is left over on an identity run is the **sub-pixel step**, and it
- * cannot be zero: the template is the slot drawn *alone* and the reference is the
- * composite, so wherever a neighbour covers part of the slot the residual surface
- * around the true minimum is asymmetric and the parabola's vertex sits off it.
- * `parabolic` clamps that to `SUBPIXEL_CLAMP` on each axis, which is what bounds
- * the whole instrument's identity floor — see `docs/AUTHORING.md` §9.2.
+ * cannot be zero: the parabola is fitted through three whole-pixel residuals that
+ * antialiasing alone makes slightly uneven, so its vertex sits a fraction off the
+ * winner. `parabolic` clamps that to `SUBPIXEL_CLAMP` on each axis, which bounds
+ * the identity floor **provided the whole-pixel winner is the identity offset** —
+ * and `templateFor` masking the occluded samples is what makes that second half
+ * true. `track.wholePixel` publishes the winner and `driftBound` turns it into the
+ * figure, so a reader never has to assume it. See `docs/AUTHORING.md` §9.2.
  */
-function applyTemplateMatch(track: SlotTrack, foot: Footprint, source: SlotSource): void {
+function applyTemplateMatch(track: SlotTrack, foot: Footprint, source: SlotSource, visible: VisibleField): void {
   if (!track.candidate || track.searchRadius === null) return;
-  const template = templateFor(track.slot, foot, source);
-  if (!template || template.contrast <= 0) return;
+  const outcome = templateFor(track.slot, foot, source, visible);
+  if (outcome.kind === 'undrawn') return;
+  if (outcome.kind === 'covered') {
+    track.method = 'none';
+    track.ambiguity =
+      `${track.ambiguity ?? 'no component of its own'}; its drift is not measurable — every one of the ` +
+      `${outcome.ink} px this ${outcome.width}x${outcome.height} px slot draws is covered by something the ` +
+      'candidate draws over it, so none of its own ink reaches the picture to be correlated against';
+    return;
+  }
+  const template = outcome.template;
+  if (template.contrast <= 0) return;
   const radius = track.searchRadius;
   const cache = new Map<number, number>();
   const score = (dx: number, dy: number): number => {
@@ -709,7 +849,8 @@ function applyTemplateMatch(track: SlotTrack, foot: Footprint, source: SlotSourc
     track.ambiguity =
       `${track.ambiguity ?? 'no component of its own'}; correlating the slot's own pixels found no match within ` +
       `${radius} px either (best residual ${best.toFixed(1)} against its own ${template.contrast.toFixed(1)} of ` +
-      `contrast; confidence ${(Number.isFinite(confidence) ? confidence : 0).toFixed(2)} where ` +
+      `contrast over the ${template.ink - template.covered} of its ${template.ink} px that reach the picture; ` +
+      `confidence ${(Number.isFinite(confidence) ? confidence : 0).toFixed(2)} where ` +
       `${required.toFixed(2)} is needed ${Math.hypot(bestX, bestY).toFixed(1)} px out)`;
     return;
   }
@@ -724,6 +865,7 @@ function applyTemplateMatch(track: SlotTrack, foot: Footprint, source: SlotSourc
   track.widthDrift = null;
   track.heightDrift = null;
   track.confidence = confidence;
+  track.wholePixel = { dx: bestX, dy: bestY };
   track.ambiguity = null;
 }
 

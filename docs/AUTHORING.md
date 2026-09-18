@@ -6034,6 +6034,13 @@ There are two matchers and the `how` column says which one answered:
   confidence: how much better the winning position was than the best rival inside
   the search window. This is what gives a shot like a chain of touching links any
   drift at all — under connected components alone, every frame of it is ambiguous.
+  ⭐ **Only the pixels of it your own composite lets show are correlated**: a
+  template pixel you draw something over cannot match the reference wherever the
+  slot really is, so it adds the same residual at every offset — and, because
+  sliding the template moves those samples onto other pixels, their gradient
+  decides the winner wherever the visible basin is shallow. That is not a
+  hypothetical: it is what made four of the seven examples in this repository
+  report 0.8–2.2 px against frames rendered from themselves (issue #698).
 
 ⚠️ **Both matchers are capped, and a blank is a real answer.** A part can be
 displaced by about its own size and still be that part in the picture; past that,
@@ -6042,6 +6049,23 @@ further, and reports **no match** rather than a number — a 4 px ball cannot re
 the 47 px course as its drift. The bar rises with the distance being claimed: a
 peak sitting where you already drew the slot only has to confirm it, a peak
 claiming the part moved most of a radius has to be distinctive to be believed.
+
+⚠️ **And a slot you cover completely has no drift to report at all.** If every
+pixel a slot draws is painted over by something later in your own draw order,
+none of its ink reaches the picture, so there is nothing to correlate — `check`
+says so by name and counts it out, rather than correlating hidden pixels against
+whatever is on top of them:
+
+```
+its drift is not measurable — every one of the 2116 px this 48x54 px slot draws is
+covered by something the candidate draws over it, so none of its own ink reaches the
+picture to be correlated against
+```
+
+That is a fact about the shot and not an error: a part behind another part is
+still where the rig put it, and the answer to *where did it land* is that this
+run cannot say. Read it beside the `slots` column, which counts it as
+unattributed.
 
 The `slots` column is how many of the slots you drew got an answer at all, and the
 summary line carries the same denominator. `N reference component(s) no slot
@@ -6066,25 +6090,67 @@ bun cli.ts check  --candidate <build> --frames <frames>
      frames     11 on disk, candidate samples 11, 11 compared
      MAE        mean 0.00  worst 0.00 (exact: none of the 11 compared frame(s) differs from the reference)   (0..255 over the union alpha; over the whole frame, mean 0.00)
                 ⤷ over the REFERENCE's own drawn pixels, mean 0.00 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
-     slot drift worst 0.4 px  "arm_b" at f0007
+     slot drift worst 0.5 px  "plate" at f0004
+                ⤷ bounded by 0.71 px — the correlation put this slot where the candidate drew it, so the whole figure is the sub-pixel step, clamped to 0.5 px on each axis
      per-frame all 10 adjacent pair(s) change by as much as the reference's own frames do
 ```
 
 ⚠️ **The MAE floor is zero and the slot-drift floor is not**, and the second half of
 that is the instrument's own arithmetic rather than anything about your rig. Both
 sides are the same pixels, so every frame's MAE is exactly 0 — which is why the line
-says `(exact)` instead of naming a frame. The drift is a **correlation**, and its
-last step fits a parabola through three whole-pixel residuals and takes its vertex,
-clamped to half a pixel on each axis; so an identity run can report up to
-`hypot(0.5, 0.5) = 0.71 px` and no more. ⭐ **It is not zero because the template is
-your slot drawn *alone* and the reference is the composite**: wherever a neighbour
-covers part of the slot, the residual surface around the true minimum is asymmetric
-and the parabola's vertex sits a fraction of a pixel off it. That fraction is the
-floor, it is per slot, and it is bounded — **a drift above 0.71 px on an identity run
-is a defect in `check`, not a property of it.** This example read 3.7 px until issue
-#678: the coarse sweep started at `−radius` and stepped by its stride, so the
-identity offset was on the lattice only when the stride divided the radius, and the
-`±1` refinement around a winner two pixels out could not reach back to it.
+says `(exact)` instead of naming a frame. The drift is a **correlation**: it finds
+the whole-pixel offset that matches best and then fits a parabola through three
+whole-pixel residuals for the fraction, clamped to half a pixel on each axis.
+
+🔑 **So the bound has two halves, and the run states both of them for you.** The
+`⤷ bounded by` line is not a constant off this page: it is `hypot(|dx| + 0.5,
+|dy| + 0.5)` for that match's own whole-pixel winner `(dx, dy)`. A winner at the
+offset you drew — which is the answer on every frame of a correct rig — bounds the
+whole figure at `hypot(0.5, 0.5) = 0.71 px`, and the line says the figure is the
+sub-pixel step and nothing else. A winner one pixel out bounds it at 1.58 px and
+says the correlation moved the part. ⇒ **Read a drift against the line under it,
+never against a number from a page about another rig.** A component match prints
+the other sentence — two centroids have no such bound, only the search radius.
+
+🚨 **The clamp bounds the figure only while the whole-pixel winner is the
+identity, and for a while nothing checked that second half.** Issue #698: four of
+the seven examples in this repository read **0.81, 1.11, 2.13 and 2.21 px** against
+frames rendered from themselves, because the template carried the pixels the
+candidate draws *over itself*. Those match nothing wherever the slot really is, so
+they add a residual at every offset — and sliding the template moves them onto
+other pixels, so their gradient walks the winner off the origin wherever the
+visible basin is shallow. The exhaustive whole-pixel field for `flex`'s backdrop
+had its minimum at `(2, 0)` scoring 7.75 against the identity offset's 8.76.
+Correlating only what shows put all seven back on `(0, 0)`, and `C25`–`C30` of
+the repository's own selftest gate that over every example it ships — so the next
+one is gated by arriving.
+
+🔸 The same page said `3.7 px` before issue #678, for an unrelated reason worth
+keeping: the coarse sweep started at `−radius` and stepped by its stride, so the
+identity offset was on the lattice only when the stride divided the radius, and
+the `±1` refinement around a winner two pixels out could not reach back to it.
+
+**A second example, and the one the repair was measured on.** `gallery/flex` draws
+a banner and a leaf over a full-stage backdrop, so almost every slot of it reaches
+the template matcher:
+
+```bash
+bun cli.ts build  --rig gallery/flex/rig.json --motion gallery/flex/motion.json --out <build>
+bun cli.ts render --candidate <build> --animation wave --fps 12 --out <frames>
+bun cli.ts check  --candidate <build> --frames <frames>
+```
+
+```
+  ── wave — candidate animation "wave", 12 fps ──
+     frames     30 on disk, candidate samples 30, 30 compared
+     MAE        mean 0.00  worst 0.00 (exact: none of the 30 compared frame(s) differs from the reference)   (0..255 over the union alpha; over the whole frame, mean 0.00)
+                ⤷ over the REFERENCE's own drawn pixels, mean 0.00 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+     slot drift worst 0.2 px  "plate" at f0009
+                ⤷ bounded by 0.71 px — the correlation put this slot where the candidate drew it, so the whole figure is the sub-pixel step, clamped to 0.5 px on each axis
+     per-frame all 29 adjacent pair(s) change by as much as the reference's own frames do
+```
+
+That figure was **2.21 px** on the same command before #698, on the same slot.
 
 ⭐ **And the same frames plus two deliberately wrong builds are what say which column
 answers which question.** Each differs from the build above in exactly one way —
@@ -6125,6 +6191,15 @@ time changes *when* the poses arrive and not how fast the shot travels between t
 samples, so the column is correctly silent on it. ⇒ Read the pair together: a loud
 MAE with `per-frame` silent is a pose in the wrong place or at the wrong moment; a
 loud MAE with `per-frame` firing is a **speed**, which is a curve.
+
+🔸 Neither block above reprints its own `⤷ bounded by` line, for the same reason
+both carry the declaration: the spec edits are not in the tree, so those two lines
+would be hand-written rather than taken. What the gate measures on them is stated
+instead — the worst match of each sits at whole-pixel `(0, −31)` and `(0, −32)`,
+which bounds them at **31.50 px** and **32.50 px**. That is the contrast worth
+carrying away: a correct rig's drift is bounded by the clamp because its winner is
+the identity, and these two are bounded by nothing of the kind because a part
+really moved.
 
 **The `chains` block is the same two measures on the unit you actually repair.**
 

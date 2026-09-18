@@ -112,6 +112,7 @@ import {
   checkAgainstFrames,
   checkLines,
   componentField,
+  driftBound,
   EXTENT_SPREAD_REACH,
   matchSlots,
   OVERDRAW_RATIO,
@@ -122,6 +123,7 @@ import {
   type FrameChange,
   type FramingHow,
   type FramingSource,
+  type SlotTrack,
 } from './src/check.ts';
 import { buildAtlasText, compile, CompileError, relativeImagesPath } from './src/compile.ts';
 import { ingest, IngestError, INGEST_GUTTERS, INGEST_VOCABULARY, type IngestFinding } from './src/ingest.ts';
@@ -2574,15 +2576,37 @@ interface ExampleBuild {
   atlasDir: string;
 }
 
-/** Compile `gallery/squash`, optionally against a rewritten motion spec. */
-function buildIdentityExample(motionText: string | null): ExampleBuild {
+/**
+ * Compile a shipped example, optionally against a rewritten motion or rig spec.
+ *
+ * `example` defaults to `IDENTITY_EXAMPLE` so `C19`–`C24` read exactly as they
+ * did; `C25`, `C26` and `C30` walk every example the tree has, and `C27` builds
+ * one with its draw order rewritten. A rewritten rig is written to the temp
+ * directory, so `imagesDir` points the parts back at the example — the edit is
+ * to the spec and never to the art.
+ */
+function buildIdentityExample(
+  motionText: string | null,
+  example: string = IDENTITY_EXAMPLE,
+  rigText?: string,
+): ExampleBuild {
   const outDir = mkdtempSync(join(tmpdir(), 'rigc-identity-'));
-  let motionPath = join(IDENTITY_EXAMPLE, 'motion.json');
+  let motionPath = join(example, 'motion.json');
   if (motionText !== null) {
     motionPath = join(outDir, 'motion.json');
     writeFileSync(motionPath, motionText);
   }
-  const result = compile({ rigPath: join(IDENTITY_EXAMPLE, 'rig.json'), motionPath, outDir });
+  let rigPath = join(example, 'rig.json');
+  if (rigText !== undefined) {
+    rigPath = join(outDir, 'rig.json');
+    writeFileSync(rigPath, rigText);
+  }
+  const result = compile({
+    rigPath,
+    motionPath,
+    outDir,
+    ...(rigText === undefined ? {} : { imagesDir: join(example, 'parts') }),
+  });
   // Written out as well as returned: `C24` opens this directory through the CLI,
   // and a candidate the CLI cannot open is a candidate the exit codes cannot be
   // measured on. The atlas resolves its pages relatively, so these two files are
@@ -2599,14 +2623,20 @@ function buildIdentityExample(motionText: string | null): ExampleBuild {
  * measured, or it is not an identity run. Nothing here is a second renderer:
  * `framingViewport`, `sampleAnimation` and `renderFrame` are the three calls
  * `cmdRender` makes, and the sidecar is the shape `FramesSidecar` declares.
+ *
+ * `only` renders one named animation instead of all of them. `C25`, `C26` and
+ * `C30` walk seven examples and fourteen animations between them, and the
+ * question they ask — *what does this instrument say when nothing moved?* — is
+ * answered by each example's first set as completely as by all of them.
  */
-function renderOwnFrames(build: ExampleBuild, fps: number): string {
+function renderOwnFrames(build: ExampleBuild, fps: number, only?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-identity-frames-'));
   const posable = posableFromText(build.skeletonText, build.atlasText, build.atlasDir);
   const viewport = framingViewport(posable.data, 256);
   if (viewport === null) throw new Error('the identity fixture posed no drawable attachment');
   const sets: FramesSidecar['sets'] = [];
   for (const animation of posable.data.animations) {
+    if (only !== undefined && animation.name !== only) continue;
     const frames = sampleAnimation(posable.data, animation.name, fps);
     const setDir = join(dir, animation.name);
     mkdirSync(setDir, { recursive: true });
@@ -4194,6 +4224,366 @@ function runCheckSuite(): number | null {
       'the exit code answers whether the comparison could be MADE, and nothing else. A run that graded would make ' +
         "every figure here a bar, which is the opposite of what `check` is for — and the build it exits 0 on is the " +
         'one the gate passed green and the pictures refute',
+    );
+
+    // --- C25-C30: the same floor, over every example the tree ships ---------
+    //
+    // 🧭 Everything above takes ONE example, and issue #698 is the bill for
+    // that: `gallery/squash` cleared the floor §9.2 states and four of the other
+    // six did not, printing 0.8-2.2 px against frames rendered from themselves.
+    // The population here is the tree's own — `galleryExampleNames`, shared with
+    // the gallery suite and `CUR13` — so an example added later is gated by
+    // arriving rather than by somebody remembering to list it.
+    const galleryRoot = resolve(import.meta.dir, 'gallery');
+    const shipped = galleryExampleNames(galleryRoot);
+    /** One example checked against frames rendered from itself. */
+    interface ShippedIdentity {
+      example: string;
+      animation: string;
+      report: CheckReport;
+    }
+    const identities: ShippedIdentity[] = [];
+    for (const example of shipped) {
+      const build = buildIdentityExample(null, join(galleryRoot, example));
+      const first = posableFromText(build.skeletonText, build.atlasText, build.atlasDir).data.animations[0];
+      if (first === undefined) continue;
+      identities.push({
+        example,
+        animation: first.name,
+        report: checkAgainstFrames({ ...build, framesDir: renderOwnFrames(build, IDENTITY_FPS, first.name) }),
+      });
+    }
+    /** Every track of every compared frame of one report. */
+    const tracksOf = (report: CheckReport): SlotTrack[] =>
+      comparedSets(report).flatMap((anim) => anim.frames.flatMap((frame) => frame.slots));
+
+    // --- C25: the floor, on all of them ------------------------------------
+    //
+    // 🔒 `C20`'s bound, imported rather than typed, asked of the whole gallery.
+    const shippedFloor = Math.hypot(SUBPIXEL_CLAMP, SUBPIXEL_CLAMP);
+    const shippedProbes = [
+      ...(identities.length === shipped.length && shipped.length > 0
+        ? []
+        : [`${identities.length} of ${shipped.length} shipped example(s) produced an identity run`]),
+      ...identities
+        .filter(({ report }) => comparedSets(report).some((anim) => anim.worstMae !== 0 || anim.meanMae !== 0))
+        .map(({ example }) => `${example} is not an identity: its own frames differ from its own build`),
+      ...identities
+        .flatMap(({ example, report }) => comparedSets(report).map((anim) => ({ example, anim })))
+        .filter(({ anim }) => anim.worstDrift > shippedFloor)
+        .map(
+          ({ example, anim }) =>
+            `${example}/${anim.dir} drifts ${anim.worstDrift.toFixed(2)} px on "${String(anim.worstDriftSlot)}" at ` +
+            `f${anim.worstDriftFrame}, past the ${shippedFloor.toFixed(4)} px a half-pixel sub-pixel step on each ` +
+            'axis can reach',
+        ),
+    ];
+    const shippedHeld = shippedProbes.length === 0;
+    say(
+      'C25_EVERY_EXAMPLE_THIS_TREE_SHIPS_DRIFTS_NO_FURTHER_THAN_THE_SUBPIXEL_STEP_AGAINST_ITS_OWN_FRAMES',
+      shippedHeld,
+      probeDetail(
+        shippedHeld,
+        shippedProbes,
+        `${identities.length} example(s) at MAE 0 exactly, worst drift ` +
+          `${Math.max(...identities.map(({ report }) => checkExtremes(report).drift)).toFixed(2)} px under the ` +
+          `${shippedFloor.toFixed(4)} px hypot(${SUBPIXEL_CLAMP}, ${SUBPIXEL_CLAMP}) the sub-pixel step is clamped ` +
+          `to: ${identities
+            .map(({ example, report }) => `${example} ${checkExtremes(report).drift.toFixed(2)}`)
+            .join(', ')}`,
+      ),
+      'issue #698: the floor §9.2 states was measured on one example and held there. Four of the seven shipped ' +
+        'ones read 0.81, 1.11, 2.13 and 2.21 px against frames rendered from themselves, and the card that filed ' +
+        'it read 21.5 px on art this repository does not carry',
+    );
+
+    // --- C26: and the reason, which is the half a bound cannot state --------
+    //
+    // ⭐ The mechanism rather than the symptom. `hypot(0.5, 0.5)` bounds a drift
+    // only while the whole-pixel winner is the identity offset; the four that
+    // broke the floor each had a residual field whose own minimum sat one or two
+    // whole pixels off it, because the template carried samples the candidate
+    // draws over itself and those match nothing at any offset. A control that
+    // asked only for the figure would go green again on the next instrument that
+    // happened to land under it.
+    const shippedTemplates = identities.flatMap(({ example, report }) =>
+      tracksOf(report)
+        .filter((track) => track.method === 'template' && track.ambiguity === null)
+        .map((track) => ({ example, track })),
+    );
+    const winnerProbes = [
+      ...shippedTemplates
+        .filter(({ track }) => track.wholePixel === null || driftBound(track) === null)
+        .map(({ example, track }) => `${example}/"${track.slot}" reports a template match with no whole-pixel winner`),
+      ...shippedTemplates
+        .filter(({ track }) => track.wholePixel !== null && (track.wholePixel.dx !== 0 || track.wholePixel.dy !== 0))
+        .map(
+          ({ example, track }) =>
+            `${example}/"${track.slot}" put the slot ${String(track.wholePixel?.dx)},${String(track.wholePixel?.dy)} ` +
+            'whole pixel(s) from where the candidate drew it, on a frame that IS what the candidate drew',
+        ),
+      ...shippedTemplates
+        .filter(({ track }) => (track.drift ?? 0) > (driftBound(track) ?? 0))
+        .map(
+          ({ example, track }) =>
+            `${example}/"${track.slot}" drifts ${(track.drift ?? 0).toFixed(4)} px past its own stated bound of ` +
+            `${(driftBound(track) ?? 0).toFixed(4)} px`,
+        ),
+    ];
+    const winnerHeld = winnerProbes.length === 0;
+    say(
+      'C26_ON_AN_IDENTITY_RUN_EVERY_CORRELATION_LANDS_ON_THE_OFFSET_THE_CANDIDATE_DREW',
+      winnerHeld,
+      probeDetail(
+        winnerHeld,
+        winnerProbes,
+        `${shippedTemplates.length} template match(es) across ${identities.length} example(s), every one of them ` +
+          `at whole-pixel (0, 0) and inside its own bound — so the whole of every figure above is the sub-pixel step`,
+      ),
+      'issue #698: the bound is the clamp only while the whole-pixel winner is the identity, and nothing asserted ' +
+        'the second half. The score field of the worst four had its own minimum 1-2 px off the origin',
+    );
+
+    // --- C27: a slot nothing of whose ink shows says so ---------------------
+    //
+    // 🧪 The fixture is one stated edit to a shipped example: its FIRST-drawn
+    // slot moved to the end of the draw order, so the backdrop is painted over
+    // everything. Derived rather than named — whichever slot a rig draws first
+    // is the one this moves — and it needs no art, no coordinates and no second
+    // spec in the tree.
+    //
+    // ⚠️ The positive control is in the same run and is what makes the case
+    // two-sided: the slot that MOVED is now wholly visible, and it has to come
+    // back with a drift. A matcher that had simply stopped answering would
+    // satisfy the first half and fail this one.
+    const drawOrder = JSON.parse(readFileSync(join(IDENTITY_EXAMPLE, 'rig.json'), 'utf8')) as {
+      slots: Array<{ name: string }>;
+    };
+    const painter = drawOrder.slots.shift();
+    drawOrder.slots.push(painter as { name: string });
+    const buried = buildIdentityExample(null, IDENTITY_EXAMPLE, `${JSON.stringify(drawOrder, null, 2)}\n`);
+    const buriedReport = checkAgainstFrames({
+      ...buried,
+      framesDir: renderOwnFrames(buried, IDENTITY_FPS),
+    });
+    const buriedTracks = tracksOf(buriedReport);
+    const coveredPhrase = 'its drift is not measurable';
+    const hidden = buriedTracks.filter(
+      (track) => track.slot !== painter?.name && track.candidate !== null && track.drift === null,
+    );
+    const namedHidden = hidden.filter((track) => (track.ambiguity ?? '').includes(coveredPhrase));
+    const painterTracks = buriedTracks.filter((track) => track.slot === painter?.name);
+    const painterAnswered = painterTracks.filter((track) => track.drift !== null && track.ambiguity === null);
+    const coveredProbes = [
+      ...(painter === undefined ? ['the example declares no slots, so nothing could be buried'] : []),
+      ...(hidden.length > 0
+        ? []
+        : ['moving the first-drawn slot to the end buried nothing — the fixture exercised no covered slot']),
+      ...hidden
+        .filter((track) => !(track.ambiguity ?? '').includes(coveredPhrase))
+        .map(
+          (track) =>
+            `"${track.slot}" is drawn and unattributed and its reason never says the drift is not measurable: ` +
+            `${(track.ambiguity ?? 'nothing at all').slice(0, 120)}`,
+        ),
+      ...(painterAnswered.length === painterTracks.length && painterTracks.length > 0
+        ? []
+        : [
+            `"${String(painter?.name)}" is now on top of everything and ${painterTracks.length - painterAnswered.length}` +
+              ` of its ${painterTracks.length} frame(s) still report no drift — the fixture buried the measure, not ` +
+              'one slot',
+          ]),
+    ];
+    const coveredHeld = coveredProbes.length === 0;
+    say(
+      'C27_A_SLOT_WHOSE_OWN_INK_NEVER_REACHES_THE_PICTURE_REPORTS_NO_DRIFT_AND_NAMES_WHY',
+      coveredHeld,
+      probeDetail(
+        coveredHeld,
+        coveredProbes,
+        `"${String(painter?.name)}" moved to the end of ${IDENTITY_EXAMPLE.split('/').pop() ?? ''}'s draw order ` +
+          `buries ${namedHidden.length} slot-frame(s), every one of which names its own pixel count and size as the ` +
+          `reason; the slot that moved answers on all ${painterAnswered.length} of its frame(s)`,
+      ),
+      'a number printed for a part nothing can see is the same defect as a number printed for the wrong part — and ' +
+        'correlating pixels nobody drew over anything is what moved the answer in the first place',
+    );
+
+    // --- C28: the two mutants still read a DISPLACEMENT ---------------------
+    //
+    // 🔒 #689's pair, asked the question the repair could have broken. Clearing
+    // the floor is not enough on its own: the claim is that the correlation still
+    // finds a part that MOVED, so each mutant's worst match has to land at a
+    // whole-pixel winner that is not the identity. An instrument that had gone
+    // blind would clear the floor by reporting nothing at all.
+    const worstTrackOf = (report: CheckReport): SlotTrack | null => {
+      for (const anim of comparedSets(report)) {
+        const frame = anim.frames.find((f) => f.index === anim.worstDriftFrame);
+        const track = frame?.slots.find((s) => s.slot === anim.worstDriftSlot) ?? null;
+        if (track !== null) return track;
+      }
+      return null;
+    };
+    const mutants = [
+      { what: 'reversed easings', report: curveReport, drift: c.drift },
+      { what: movedKey.what, report: movedReport, drift: m.drift },
+    ].map((entry) => ({ ...entry, track: worstTrackOf(entry.report) }));
+    const displacementProbes = [
+      ...mutants
+        .filter((entry) => entry.drift <= identityFloor)
+        .map((entry) => `${entry.what} drifts ${entry.drift.toFixed(2)} px, inside the identity floor`),
+      ...mutants
+        .filter((entry) => entry.track === null)
+        .map((entry) => `${entry.what} names a worst slot no frame of its report carries`),
+      ...mutants
+        .filter(
+          (entry) =>
+            entry.track !== null &&
+            entry.track.method === 'template' &&
+            (entry.track.wholePixel === null || (entry.track.wholePixel.dx === 0 && entry.track.wholePixel.dy === 0)),
+        )
+        .map(
+          (entry) =>
+            `${entry.what}'s worst match is a correlation whose whole-pixel winner is the identity offset, so its ` +
+            'whole figure is the sub-pixel step and no part was found to have moved',
+        ),
+    ];
+    const displacementHeld = displacementProbes.length === 0;
+    say(
+      'C28_A_PART_THAT_REALLY_MOVED_IS_STILL_FOUND_WHOLE_PIXELS_AWAY',
+      displacementHeld,
+      probeDetail(
+        displacementHeld,
+        displacementProbes,
+        mutants
+          .map(
+            (entry) =>
+              `${entry.what}: ${entry.drift.toFixed(1)} px past the ${identityFloor.toFixed(2)} px floor, worst ` +
+              `match by ${String(entry.track?.method)}` +
+              (entry.track?.wholePixel === null || entry.track?.wholePixel === undefined
+                ? ''
+                : ` at whole-pixel (${entry.track.wholePixel.dx}, ${entry.track.wholePixel.dy})`),
+          )
+          .join('; '),
+      ),
+      'issue #698: masking the template to what shows is a repair that could have bought the floor by measuring ' +
+        'less. These two builds are wrong in a way that moves a part, and the column still says so',
+    );
+
+    // --- C29: the line an author reads the figure against -------------------
+    //
+    // 🔒 `C19`'s shape: the rendering is DERIVED from the track and the data is
+    // what the plant breaks. The bound is recomputed here off `wholePixel` and
+    // the imported clamp, so a formatter that printed a plausible constant is
+    // caught, and a report whose worst track is forced onto a displaced winner
+    // has to print the other sentence and a larger figure.
+    // 🚨 It takes a nullable track on purpose. Written to take a `SlotTrack` and
+    // called with `identityWorst as SlotTrack` in the clean detail, it THREW on
+    // the plant that leaves the identity with nothing attributed — and a control
+    // that throws is not a control, it is a run that stopped. `probeDetail`
+    // builds the clean string whether or not the probe list is empty, so every
+    // term in it has to survive the data any plant can produce.
+    const boundOf = (track: SlotTrack | null): number =>
+      track === null
+        ? 0
+        : Math.hypot(
+            Math.abs(track.wholePixel?.dx ?? 0) + SUBPIXEL_CLAMP,
+            Math.abs(track.wholePixel?.dy ?? 0) + SUBPIXEL_CLAMP,
+          );
+    // The report's own line and not the footer's prose about it: the footer names
+    // the same phrase, and a filter that caught both would let the plant below be
+    // satisfied by a sentence nothing measured.
+    const boundLines = (report: CheckReport): string[] =>
+      checkLines(report).filter((line) => /^ +⤷ bounded by /.test(line));
+    const identityBoundLines = boundLines(identityReport);
+    const identityWorst = worstTrackOf(identityReport);
+    /** The same report with its worst track pushed one whole pixel off the identity. */
+    const displaced = {
+      ...identityReport,
+      animations: identityReport.animations.map((anim) => ({
+        ...anim,
+        frames: anim.frames.map((frame) => ({
+          ...frame,
+          slots: frame.slots.map((slot) =>
+            slot.slot === anim.worstDriftSlot && slot.wholePixel !== null
+              ? { ...slot, wholePixel: { dx: slot.wholePixel.dx + 1, dy: slot.wholePixel.dy } }
+              : slot,
+          ),
+        })),
+      })),
+    };
+    const lineProbes = [
+      ...(identityWorst === null ? ['the identity run names no worst track, so no line could be read'] : []),
+      ...(identityBoundLines.length > 0 ? [] : ['the identity report prints no `⤷ bounded by` line at all']),
+      ...(identityWorst === null || identityWorst.method !== 'template'
+        ? []
+        : identityBoundLines.some((line) => line.includes(boundOf(identityWorst).toFixed(2)))
+          ? []
+          : [
+              `no printed line carries the bound this track's own winner gives it, ` +
+                `${boundOf(identityWorst).toFixed(2)} px: ${identityBoundLines.map((l) => l.trim()).join(' | ')}`,
+            ]),
+      ...(identityWorst !== null && identityWorst.wholePixel !== null
+        ? boundLines(displaced).some((line) => line.includes(boundOf(identityWorst).toFixed(2)))
+          ? [
+              'a worst track forced one whole pixel off the identity still prints the identity bound, so the line is ' +
+                'not read off the track',
+            ]
+          : []
+        : []),
+    ];
+    const lineHeld = lineProbes.length === 0;
+    say(
+      'C29_THE_DRIFT_A_RUN_PRINTS_CARRIES_THE_BOUND_ITS_OWN_MATCH_GIVES_IT',
+      lineHeld,
+      probeDetail(
+        lineHeld,
+        lineProbes,
+        `${identityBoundLines.length} line(s) reading "${identityBoundLines
+          .map((line) => line.trim().slice(0, 56))
+          .join(' | ')}", which is the ${boundOf(identityWorst).toFixed(2)} px this track's own ` +
+          `whole-pixel winner gives it; forcing that winner one pixel off the identity prints "${boundLines(displaced)
+            .map((line) => line.trim().slice(0, 56))
+            .join(' | ')}" instead`,
+      ),
+      'issue #698: an author was told to read a drift against 0.71 px on a page about another rig. The bound is per ' +
+        'match and derivable, so the run states its own',
+    );
+
+    // --- C30: and none of it was bought by measuring less --------------------
+    //
+    // 🚨 The non-vacuity leg for `C25` and `C26` both, and it is the one a plant
+    // has to be able to take red on its own: a mask that dropped every sample
+    // would put the worst drift at zero, leave no template match to inspect, and
+    // print two green sentences about an instrument that had stopped answering.
+    const answered = identities.map(({ example, report }) => ({
+      example,
+      templates: tracksOf(report).filter((track) => track.method === 'template' && track.ambiguity === null).length,
+      blind: comparedSets(report).reduce((n, anim) => n + anim.framesWithoutDrift, 0),
+      compared: comparedSets(report).reduce((n, anim) => n + anim.compared, 0),
+    }));
+    const answeredProbes = [
+      ...answered
+        .filter((row) => row.templates === 0)
+        .map((row) => `${row.example} got no template match at all, so nothing above measured it`),
+      ...answered
+        .filter((row) => row.blind > 0)
+        .map((row) => `${row.example} attributed no slot in ${row.blind} of its ${row.compared} compared frame(s)`),
+    ];
+    const answeredHeld = answeredProbes.length === 0;
+    say(
+      'C30_THE_FLOOR_ABOVE_WAS_NOT_BOUGHT_BY_REFUSING_TO_MEASURE',
+      answeredHeld,
+      probeDetail(
+        answeredHeld,
+        answeredProbes,
+        `every compared frame of all ${answered.length} example(s) attributed a slot, on ` +
+          `${answered.reduce((n, row) => n + row.templates, 0)} template match(es): ${answered
+            .map((row) => `${row.example} ${row.templates}`)
+            .join(', ')}`,
+      ),
+      'a correlation that dropped every sample would clear the floor on every rig in the tree and say nothing about ' +
+        'any of them — the two cases above are only worth their green beside this one',
     );
   }
   return bad;

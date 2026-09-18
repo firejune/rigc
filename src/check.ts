@@ -117,7 +117,15 @@ import {
   type FramingFit,
   type OffsetGain,
 } from './framing.ts';
-import { componentField, isAttributable, matchSlots, searchRadius, type SlotTrack } from './slots.ts';
+import {
+  componentField,
+  driftBound,
+  isAttributable,
+  matchSlots,
+  searchRadius,
+  SUBPIXEL_CLAMP,
+  type SlotTrack,
+} from './slots.ts';
 import { chainsOf, type BoneChain } from './chains.ts';
 import { readPlate, type Plate, type RGBA } from '../tools/plate.ts';
 import { GLYPH_H, textWidth } from '../tools/font5x7.ts';
@@ -125,6 +133,7 @@ import { GLYPH_H, textWidth } from '../tools/font5x7.ts';
 export {
   componentField,
   componentsOf,
+  driftBound,
   matchSlots,
   searchRadius,
   SUBPIXEL_CLAMP,
@@ -3312,6 +3321,8 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
         : `     slot drift worst ${anim.worstDrift.toFixed(1)} px  ${JSON.stringify(anim.worstDriftSlot)} at ` +
           `f${String(anim.worstDriftFrame).padStart(4, '0')}${blind}`,
     );
+    const boundLine = driftBoundLine(anim);
+    if (boundLine !== null) lines.push(boundLine);
     lines.push(changeSummary(anim));
     for (const line of sheetLines(anim.sheet)) lines.push(line);
     for (const line of chainTable(anim)) lines.push(line);
@@ -3360,6 +3371,16 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   lines.push('  marked `tmpl` was correlated against the slot’s own pixels because the reference');
   lines.push('  merged it into a neighbour; the number beside it is how much better that match was');
   lines.push('  than its best rival, and a slot that matched nothing at all is left out of the count.');
+  lines.push('  Only the pixels of a slot that its own composite lets show are correlated — one it');
+  lines.push('  draws over itself matches nothing at any offset, so leaving it in moves the answer');
+  lines.push('  rather than costing it. A slot covered everywhere reports no drift and says so. The');
+  lines.push('  `⤷ bounded by` line under a drift is what that figure could have reached: for a');
+  lines.push(`  template match, its whole-pixel winner plus ${SUBPIXEL_CLAMP} px on each axis — so a winner at`);
+  lines.push(
+    `  the offset you drew bounds the whole figure at ${Math.hypot(SUBPIXEL_CLAMP, SUBPIXEL_CLAMP).toFixed(2)} px ` +
+      'and says the drift is the',
+  );
+  lines.push('  instrument, not the rig. Read every drift against its own line and not against a page.');
   lines.push('  A `sheet` line is the frames a set does not commit as files: the candidate sampled at the');
   lines.push("  set's own rate against the tiles of its contact.png, in the same box the frame table used.");
   lines.push('  Read it as a series — flat is framing or art, a spike is timing at that moment — and note');
@@ -3414,6 +3435,43 @@ function textureFloorLines(anim: AnimationCheck): string[] {
 function worstAt(frame: number, compared: number, unit: string): string {
   if (frame >= 0) return `at f${String(frame).padStart(4, '0')}`;
   return `(exact: none of the ${compared} compared ${unit} differs from the reference)`;
+}
+
+/**
+ * What bounds the drift the summary line just printed.
+ *
+ * ⭐ A drift figure is unreadable on its own, and issue #698 is the bill for that:
+ * §9.2 told an author to read one against `hypot(0.5, 0.5) = 0.71 px`, and four of
+ * the seven shipped examples printed more than that against frames rendered from
+ * themselves. The bound is per match and it is derived: a template match's
+ * whole-pixel winner says how much of the figure is a *displacement*, and the
+ * sub-pixel step can add at most `SUBPIXEL_CLAMP` on each axis to it. So a reader
+ * comparing 0.4 px to a floor now sees the floor the match itself carries rather
+ * than one read off a page about another rig.
+ *
+ * A component match has no such bound — the distance between two centroids is
+ * bounded by nothing but how far this slot was allowed to have moved — and the
+ * line says that instead of inventing one.
+ */
+function driftBoundLine(anim: AnimationCheck): string | null {
+  if (anim.worstDriftFrame < 0 || anim.worstDriftSlot === null) return null;
+  const frame = anim.frames.find((f) => f.index === anim.worstDriftFrame);
+  const track = frame?.slots.find((s) => s.slot === anim.worstDriftSlot) ?? null;
+  if (track === null) return null;
+  if (track.method === 'component') {
+    return (
+      '                ⤷ a component match: the distance between two centroids, bounded by nothing but the ' +
+      `${String(track.searchRadius)} px this slot could have moved and still be itself`
+    );
+  }
+  const bound = driftBound(track);
+  if (bound === null || track.wholePixel === null) return null;
+  const { dx, dy } = track.wholePixel;
+  return dx === 0 && dy === 0
+    ? `                ⤷ bounded by ${bound.toFixed(2)} px — the correlation put this slot where the candidate ` +
+        `drew it, so the whole figure is the sub-pixel step, clamped to ${SUBPIXEL_CLAMP} px on each axis`
+    : `                ⤷ bounded by ${bound.toFixed(2)} px — the correlation moved this slot by (${dx}, ${dy}) ` +
+        `whole pixel(s), plus a sub-pixel step clamped to ${SUBPIXEL_CLAMP} px on each axis`;
 }
 
 /** One drift, as the table says it: distance, slot, frame. */
