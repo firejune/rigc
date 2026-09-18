@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.25.6](https://github.com/firejune/rigc/compare/v0.25.5...v0.25.6) (2026-09-18)
+
+
+### Bug Fixes
+
+* **check:** a slot's drift is correlated only over the pixels that reach the picture, and every figure carries the bound its own match gives it ([#698](https://github.com/firejune/rigc/issues/698)) ([#704](https://github.com/firejune/rigc/issues/704)) ([aa976a6](https://github.com/firejune/rigc/commit/aa976a65c1f0f7eab74068404fe16f477b85778f))
+* **cli:** `explain` lists `--atlas-in` in its own help, and a pair it cannot pose is refused by name instead of thrown through ([#697](https://github.com/firejune/rigc/issues/697)) ([#702](https://github.com/firejune/rigc/issues/702)) ([c46b3a0](https://github.com/firejune/rigc/commit/c46b3a09251f71f94562cbe915368629ca8275a0))
+* **compile:** `--copy-images` copies the pages the atlas names, so an `--atlas-in` build writes the pack it gated ([#693](https://github.com/firejune/rigc/issues/693)) ([#701](https://github.com/firejune/rigc/issues/701)) ([b55f9b4](https://github.com/firejune/rigc/commit/b55f9b46ff89f8233321a98e0cf65e25827fabc2))
+* **compile:** a rig-spec ring binds every control bone it declares, and a bone no vertex binds is named by the gate ([#684](https://github.com/firejune/rigc/issues/684)) ([#699](https://github.com/firejune/rigc/issues/699)) ([6c557ce](https://github.com/firejune/rigc/commit/6c557ce7df9f1ad9d2ac3f9f15eff259b9794c7b))
+* **compile:** an attachment key resolves against every skin, and a name no skin holds is refused with the skins searched ([#695](https://github.com/firejune/rigc/issues/695)) ([#703](https://github.com/firejune/rigc/issues/703)) ([c899ed0](https://github.com/firejune/rigc/commit/c899ed080b0fed06bb1cde9f0a0f567deb58c944))
+
 ## [0.25.5](https://github.com/firejune/rigc/compare/v0.25.4...v0.25.5) (2026-09-18)
 
 
