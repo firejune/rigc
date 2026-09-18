@@ -405,10 +405,19 @@ export function parseAtlasText(text: string): ParsedAtlas {
  * field it re-emits, and the ones it did not understand would quietly vanish
  * (`scale:` is the expensive example — [`atlasScales`](render.ts) reports it, and
  * a pack that is coarser than its drawings would stop saying so).
+ *
+ * `rename` is handed the page's INDEX as well as its name, because a name is not
+ * a key: nothing in the format forbids two pages spelling the same path, and a
+ * caller that has already decided one new name per page (`copyAtlasPages` in
+ * [`emit.ts`](emit.ts) assigns the copies' filenames in page order) would then
+ * hand both of them the first decision. The index is the page's identity here;
+ * the name is data.
  */
-export function rewritePageNames(parsed: ParsedAtlas, rename: (name: string) => string): string {
+export function rewritePageNames(parsed: ParsedAtlas, rename: (name: string, index: number) => string): string {
   const out = parsed.lines.slice();
-  for (const page of parsed.pages) out[page.nameLine] = rename(page.name);
+  parsed.pages.forEach((page, index) => {
+    out[page.nameLine] = rename(page.name, index);
+  });
   return out.join('\n');
 }
 

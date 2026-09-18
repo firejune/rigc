@@ -160,7 +160,7 @@ import {
   type DiffMeasure,
   type DiffReport,
 } from './src/diff.ts';
-import { copyAtlasImages } from './src/emit.ts';
+import { copyAtlasPages } from './src/emit.ts';
 import {
   DEFAULT_PADDING,
   DEFAULT_PAGE_SIZE,
@@ -171,6 +171,7 @@ import {
   rewritePageNames,
   writeAtlasText,
   type PackInput,
+  type ParsedAtlas,
 } from './src/atlas.ts';
 import { isContent } from './src/framing.ts';
 import {
@@ -26800,9 +26801,9 @@ function runSuite(suite: Suite): number {
 // `compile()` never writes a page's bytes anywhere, and a page's NAME is
 // relative to the atlas file — by default that name is wherever the source art
 // already sits, which is very often outside `--out` (`../parts/torso.png`).
-// `copyAtlasImages` (`src/emit.ts`) is the opt-in that copies every page into
-// the output directory and rewrites the atlas to match. Three things have to
-// hold:
+// `copyAtlasPages` (`src/emit.ts`) is the opt-in that copies every page the
+// atlas names into the output directory and rewrites the atlas to match. Three
+// things have to hold:
 //
 //   * left alone, nothing changed — a page still points outside `outDir`;
 //   * asked for, every page lands inside `outDir` and the REWRITTEN atlas
@@ -26838,8 +26839,13 @@ function runCopyImagesSuite(): number {
   );
 
   // --- asked for, the directory is genuinely self-contained -------------------
+  //
+  // The atlas handed to the copy is the one that would be WRITTEN into that
+  // directory, so its page names resolve against it — which is why the compile
+  // is repeated with `outDir` set to it rather than the earlier text being
+  // reused at a second address (issue #693).
   const selfContainedDir = join(OVERLAY.dir, 'spine_self_contained');
-  const copied = copyAtlasImages(result.images, selfContainedDir);
+  const copied = copyAtlasPages(compile({ ...opts, outDir: selfContainedDir }).atlasText, selfContainedDir);
   const pageLines = copied.atlasText.split('\n').filter((l) => l.endsWith('.png'));
   // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Three independent
   // things are being asked of one directory — the atlas names basenames, the
@@ -26891,14 +26897,19 @@ function runCopyImagesSuite(): number {
   mkdirSync(dirB, { recursive: true });
   writeProbePng(join(dirA, 'torso.png'), 4, 4, [220, 30, 30, 255]);
   writeProbePng(join(dirB, 'torso.png'), 4, 4, [30, 220, 30, 255]);
+  // Two pages one directory up from the output, sharing a basename. Spelled as
+  // an atlas rather than as an image list because the atlas is what the copy
+  // reads (issue #693) — `buildAtlasText` writes the same one-page-per-part text
+  // a default build would.
   const synthetic: CompiledImage[] = [
-    { region: 'torso', page: 'a/torso.png', absPath: join(dirA, 'torso.png'), width: 4, height: 4, hasAlpha: false, isBase: false },
-    { region: 'torso_alt', page: 'b/torso.png', absPath: join(dirB, 'torso.png'), width: 4, height: 4, hasAlpha: false, isBase: false },
+    { region: 'torso', page: '../a/torso.png', absPath: join(dirA, 'torso.png'), width: 4, height: 4, hasAlpha: false, isBase: false },
+    { region: 'torso_alt', page: '../b/torso.png', absPath: join(dirB, 'torso.png'), width: 4, height: 4, hasAlpha: false, isBase: false },
   ];
-  const firstRun = copyAtlasImages(synthetic, join(collideRoot, 'out1'));
+  const syntheticAtlas = buildAtlasText(synthetic);
+  const firstRun = copyAtlasPages(syntheticAtlas, join(collideRoot, 'out1'));
   // Same inputs, a different outDir: the mapping must not depend on what else
   // happened to be on disk already.
-  const secondRun = copyAtlasImages(synthetic, join(collideRoot, 'out2'));
+  const secondRun = copyAtlasPages(syntheticAtlas, join(collideRoot, 'out2'));
   const names = firstRun.pages.map((p) => p.to);
   const secondNames = secondRun.pages.map((p) => p.to);
   const disambiguated = names[0] === 'torso.png' && names[1] === 'torso-2.png';
@@ -29455,6 +29466,294 @@ function runAtlasReaderSuite(): number | null {
       'agree by construction. The oracle has to be the routine that decides where the texels are, and the corpus ' +
       'is the only foreign art here. The blindness figure is printed rather than left implicit because the card ' +
       'this closes cited this very population as the proof of the mapping, and on the 270 case it is not one',
+  );
+
+  // PKR40–PKR44: the atlas a `--copy-images` build WRITES, against the one it
+  // gated (issue #693).
+  //
+  // 🚨 `--copy-images` rewrote the atlas after the gate had read it, and it
+  // rewrote it from the image list rather than from the atlas — a list that says
+  // one page per part, which is a true statement about the default emit and
+  // about nothing else. Under `--atlas-in` the emitted atlas is the imported
+  // pack, so the rebuild wrote a file the pack never contained while the console
+  // printed PASS on all four atlas assertions: zero bytes for a rig that
+  // declares no `image` (which is what `ingest --art none` writes, the documented
+  // route for rebuilding an export), and one fabricated page per part for a rig
+  // that does. `validate` on the directory answered `A00_ROUNDTRIP_PARSE` and one
+  // `A08` per attachment.
+  //
+  // ⭐ The oracle is therefore not a shape these cases assert — it is `validate`
+  // run on the written directory with no flags, which is the same question a
+  // consumer asks of a build it was handed. A control that re-derived the
+  // expected atlas here would be the emitter agreeing with itself, which is how
+  // the defect stayed green for the run that produced it.
+  const copyPack = (() => {
+    for (const path of atlases) {
+      const exportDir = dirname(path);
+      const here = readdirSync(exportDir).sort();
+      // §0.2's own rule: which pack is "the one beside it" is resolved rather
+      // than guessed, so an export directory holding two atlases is passed over.
+      if (here.filter((f) => f.endsWith('.atlas')).length !== 1) continue;
+      const skeleton = here.find((f) => f.endsWith('.json'));
+      if (skeleton === undefined) continue;
+      return { atlasPath: path, skeletonPath: join(exportDir, skeleton) };
+    }
+    return null;
+  })();
+  if (copyPack === null) {
+    console.log(
+      '  SKIP  the --copy-images cases (PKR40, PKR41, PKR42, PKR43) did not run: no export directory holds exactly ' +
+        'one atlas beside a skeleton, so there is no pack a rebuild could be resolved against.',
+    );
+  } else {
+    /** The verdict words one assertion printed in a run, as a run can print several. */
+    const verdictOf = (text: string, code: string): string => {
+      const seen = new Set<string>();
+      for (const line of text.split('\n')) {
+        const parsed = /^ {2}(PASS|FAIL|SKIP) {2}([A-Z0-9_]+)/.exec(line);
+        if (parsed !== null && parsed[2] === code) seen.add(parsed[1]);
+      }
+      return seen.size === 0 ? 'absent' : [...seen].sort().join('+');
+    };
+    const atlasAssertions = [
+      'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+      'A07_ATLAS_TEXT_SHAPE',
+      'A08_REGION_NAMES_MATCH_ATTACHMENTS',
+      'A17_ATLAS_PAGE_FILES_EXIST',
+    ];
+    const atlasVerdicts = (text: string): string =>
+      atlasAssertions.map((code) => `${code.slice(0, 3)}=${verdictOf(text, code)}`).join(' ');
+    const faultsOf = (text: string): string[] =>
+      text
+        .split('\n')
+        .filter((line) => line.startsWith('  FAIL  '))
+        .map((line) => line.slice('  FAIL  '.length).trim());
+
+    const copyRoot = mkdtempSync(join(tmpdir(), 'rigc-copy-in-'));
+    const specDir = join(copyRoot, 'spec');
+    mkdirSync(specDir, { recursive: true });
+    const sourceAtlas = readFileSync(copyPack.atlasPath, 'utf8');
+    const rebuilt = ingest(JSON.parse(readFileSync(copyPack.skeletonPath, 'utf8')), {
+      name: basename(copyPack.skeletonPath, '.json'),
+      art: 'none',
+      source: basename(copyPack.skeletonPath),
+      version: packageVersion(),
+    });
+    writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(rebuilt.rig, null, 2)}\n`);
+    writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(rebuilt.motion, null, 2)}\n`);
+    const buildInto = (out: string, atlasIn: string): { status: number | null; stdout: string; stderr: string } =>
+      runCli([
+        'build',
+        '--rig',
+        join(specDir, 'rig.json'),
+        '--motion',
+        join(specDir, 'motion.json'),
+        '--atlas-in',
+        atlasIn,
+        '--out',
+        out,
+        '--copy-images',
+      ]);
+
+    const copiedOut = join(copyRoot, 'copied');
+    const copiedBuild = buildInto(copiedOut, copyPack.atlasPath);
+    const copiedValidate = runCli(['validate', copiedOut]);
+    const writtenPath = join(copiedOut, 'skeleton.atlas');
+    const writtenBytes = existsSync(writtenPath) ? statSync(writtenPath).size : null;
+    const written = writtenBytes === null ? null : parseAtlasText(readFileSync(writtenPath, 'utf8'));
+
+    const agreementProbes = [
+      ...(copiedBuild.status === 0
+        ? []
+        : [`the build itself refused (exit ${String(copiedBuild.status)}): ${copiedBuild.stderr.trim().split('\n').pop() ?? ''}`]),
+      ...(copiedValidate.status === 0
+        ? []
+        : [
+            `validate ${basename(copiedOut)} exits ${String(copiedValidate.status)} on a directory the build wrote ` +
+              `green: ${faultsOf(copiedValidate.stdout)[0] ?? '(no FAIL line)'}`,
+          ]),
+      ...(atlasVerdicts(copiedBuild.stdout) === atlasVerdicts(copiedValidate.stdout)
+        ? []
+        : [
+            `the build printed ${atlasVerdicts(copiedBuild.stdout)} and validate printed ` +
+              `${atlasVerdicts(copiedValidate.stdout)} on what it wrote`,
+          ]),
+      ...(writtenBytes !== null && writtenBytes > 0
+        ? []
+        : [`the written skeleton.atlas is ${writtenBytes === null ? 'not there at all' : `${writtenBytes} bytes`}`]),
+    ];
+    const agreementHeld = agreementProbes.length === 0;
+    say(
+      'PKR40_A_COPY_IMAGES_BUILD_WRITES_A_DIRECTORY_VALIDATE_READS_AS_THE_BUILD_DID',
+      agreementHeld,
+      probeDetail(
+        agreementHeld,
+        agreementProbes,
+        `${basename(dirname(dirname(copyPack.atlasPath)))} rebuilt through --atlas-in --copy-images: the build and ` +
+          `validate <out> with no flags both exit 0 and both print ${atlasVerdicts(copiedBuild.stdout)} over ` +
+          `${String(writtenBytes)} bytes of atlas`,
+      ),
+      'a build directory is a thing `validate` reads as it is, and the console saying PASS over a file nobody could ' +
+        'read is the one report this tool exists to make impossible. The verdicts are compared rather than asserted ' +
+        'because the defect was an agreement failure, not a wrong value: both halves were individually plausible',
+    );
+
+    const writtenPages = written === null ? [] : written.pages;
+    const strayPaths = writtenPages.filter((page) => page.name.includes('/') || page.name.includes('\\'));
+    const notLanded = writtenPages.filter((page) => {
+      const abs = join(copiedOut, page.name);
+      return !existsSync(abs) || statSync(abs).size === 0;
+    });
+    const containedProbes = [
+      ...firstFew(
+        strayPaths.map((page) => `the written atlas still names a path rather than a basename: ${JSON.stringify(page.name)}`),
+        'page(s)',
+      ),
+      ...firstFew(
+        notLanded.map((page) => `${JSON.stringify(page.name)} is not a non-empty file in the output directory`),
+        'page(s)',
+      ),
+      ...floorProbes(
+        [[writtenPages.length, 1, `the written atlas names ${writtenPages.length} page(s)`]],
+        'a directory whose atlas names no page at all is not self-contained, it is empty',
+      ),
+    ];
+    const containedHeld = containedProbes.length === 0;
+    say(
+      'PKR41_THE_PAGES_A_PACK_NAMES_ARE_COPIED_BESIDE_THE_SKELETON',
+      containedHeld,
+      probeDetail(
+        containedHeld,
+        containedProbes,
+        `${writtenPages.length} page(s) — ${writtenPages.map((page) => page.name).join(', ')} — stat-ed non-empty in ` +
+          'the output directory, each named by its basename alone',
+      ),
+      'the flag is for zipping or committing --out on its own, and a pack page sits outside it exactly as a loose ' +
+        'part does. Copying what the IMAGE list named copied nothing at all here, because a rebuild through a pack ' +
+        'resolves no loose art',
+    );
+
+    const namesIn = (parsed: ParsedAtlas): string[] => parsed.regions.map((region) => region.name.trim()).sort();
+    const sourceParsed = parseAtlasText(sourceAtlas);
+    const keptRegions = written !== null && namesIn(written).join('\n') === namesIn(sourceParsed).join('\n');
+    const keptPages = written !== null && written.pages.length === sourceParsed.pages.length;
+    const missing = written === null ? namesIn(sourceParsed) : namesIn(sourceParsed).filter((name) => !namesIn(written).includes(name));
+    const survivalProbes = [
+      ...(keptPages
+        ? []
+        : [`the pack has ${sourceParsed.pages.length} page(s) and the written atlas has ${writtenPages.length}`]),
+      ...(keptRegions ? [] : firstFew(missing.map((name) => `region ${JSON.stringify(name)} is not in the written atlas`), 'region(s)')),
+    ];
+    const survivalHeld = survivalProbes.length === 0;
+    say(
+      'PKR42_THE_COPY_KEEPS_EVERY_REGION_BLOCK_THE_PACK_DECLARED',
+      survivalHeld,
+      probeDetail(
+        survivalHeld,
+        survivalProbes,
+        `${namesIn(sourceParsed).length} region(s) over ${sourceParsed.pages.length} page(s) in ` +
+          `${basename(copyPack.atlasPath)}, the same multiset in the file the build wrote`,
+      ),
+      'the page names are paths and move; everything else in a pack is the pack, and a copy that re-serialised it ' +
+        'would drop what this compiler has no reader for. A region block is what `A08` joins an attachment onto, ' +
+        'which is what the 17 failures on the written directory were',
+    );
+
+    // The plant: one page says it is a pixel wider than the PNG under it. A
+    // whole-pixel edit is the smallest that crosses the line, and the honest
+    // twin below is what makes the red this one's rather than the run's.
+    const plantDir = join(copyRoot, 'pack');
+    mkdirSync(plantDir, { recursive: true });
+    const flattened = rewritePageNames(sourceParsed, (name) => basename(name));
+    for (const page of sourceParsed.pages) {
+      copyFileSync(resolve(dirname(copyPack.atlasPath), page.name), join(plantDir, basename(page.name)));
+    }
+    const honestPath = join(plantDir, 'honest.atlas');
+    writeFileSync(honestPath, flattened);
+    const lying = (() => {
+      const parsed = parseAtlasText(flattened);
+      const lines = flattened.split('\n');
+      const page = parsed.pages[0];
+      for (let i = page.nameLine + 1; i < lines.length; i++) {
+        if (/^\s*size:/.test(lines[i])) {
+          const indent = lines[i].slice(0, lines[i].length - lines[i].trimStart().length);
+          lines[i] = `${indent}size: ${page.width + 1}, ${page.height}`;
+          return { text: lines.join('\n'), said: `${page.width + 1}x${page.height}`, real: `${page.width}x${page.height}` };
+        }
+      }
+      return null;
+    })();
+    const honestBuild = buildInto(join(copyRoot, 'honest'), honestPath);
+    const lyingPath = join(plantDir, 'lying.atlas');
+    if (lying !== null) writeFileSync(lyingPath, lying.text);
+    const lyingOut = join(copyRoot, 'refused');
+    const lyingBuild = lying === null ? null : buildInto(lyingOut, lyingPath);
+    const raised = lyingBuild === null ? [] : raisedBy(faultsOf(lyingBuild.stdout), { was: faultsOf(honestBuild.stdout) });
+    const namedTheSize = raised.filter((fault) => fault.startsWith('A06_ATLAS_PAGE_SIZE_MATCHES_PNG'));
+    const plantProbes = [
+      ...(lying === null ? ['the pack carries no `size:` line to plant a lie in, so nothing was measured here'] : []),
+      ...(honestBuild.status === 0
+        ? []
+        : [`the same pack WITHOUT the lie was refused (exit ${String(honestBuild.status)}), so a red below is the run's, not the plant's`]),
+      ...(lyingBuild !== null && lyingBuild.status !== 0
+        ? []
+        : [`the build accepted a pack whose page declares ${lying?.said ?? '?'} over a ${lying?.real ?? '?'} PNG`]),
+      ...(namedTheSize.length > 0 ? [] : [`the refusal named [${raised.join('; ')}] rather than A06_ATLAS_PAGE_SIZE_MATCHES_PNG`]),
+      ...(existsSync(join(lyingOut, 'skeleton.atlas'))
+        ? [`${join(lyingOut, 'skeleton.atlas')} was written anyway, which is emit-before-green`]
+        : []),
+    ];
+    const plantHeld = plantProbes.length === 0;
+    say(
+      'PKR43_A_PACK_WHOSE_PAGE_SIZE_LIES_IS_REFUSED_BEFORE_ANYTHING_IS_WRITTEN',
+      plantHeld,
+      probeDetail(
+        plantHeld,
+        plantProbes,
+        `the same pack builds green as written and is refused when its page says ${lying?.said ?? '?'} over the ` +
+          `${lying?.real ?? '?'} PNG beside it: ${namedTheSize.length} A06 failure(s) raised, exit ` +
+          `${String(lyingBuild?.status)}, and no skeleton.atlas under --out`,
+      ),
+      'what the gate reads has to be the file the write lands on. The pair is the control: the honest half says the ' +
+        'red belongs to the plant, and the written directory being absent is `emit only after green` measured rather ' +
+        'than restated',
+    );
+  }
+
+  // The positive control for the route that did NOT change: on the default emit
+  // the page list and the image list are the same list, so reading the copy out
+  // of the atlas has to reproduce, byte for byte, what rebuilding it from the
+  // images produced. That expectation is spelled out below rather than recorded,
+  // which is why it still means something after the old function is gone.
+  const looseCopyDir = join(OVERLAY.dir, 'spine_copy_pages');
+  const looseCompiled = compile({ ...optsForFixture(OVERLAY), outDir: looseCopyDir });
+  const looseCopied = copyAtlasPages(looseCompiled.atlasText, looseCopyDir);
+  const looseBasenames = looseCompiled.images.map((img) => basename(img.page));
+  const fromTheImageList = buildAtlasText(looseCompiled.images.map((img) => ({ ...img, page: basename(img.page) })));
+  const looseProbes = [
+    ...floorProbes(
+      [[looseCompiled.images.length, 2, `${looseCompiled.images.length} page(s) in the default build`]],
+      'one page cannot tell an atlas-driven copy from an image-driven one',
+    ),
+    ...(new Set(looseBasenames).size === looseBasenames.length
+      ? []
+      : [`two pages of this fixture share a basename (${looseBasenames.join(', ')}), so the comparison below is against the collision rule rather than against the old text`]),
+    ...(looseCopied.atlasText === fromTheImageList
+      ? []
+      : [`the copied atlas differs from the text the image list would have produced: ${JSON.stringify(looseCopied.atlasText.slice(0, 120))} vs ${JSON.stringify(fromTheImageList.slice(0, 120))}`]),
+  ];
+  const looseHeld = looseProbes.length === 0;
+  say(
+    'PKR44_THE_DEFAULT_ROUTES_COPY_IS_THE_TEXT_THE_IMAGE_LIST_PRODUCED',
+    looseHeld,
+    probeDetail(
+      looseHeld,
+      looseProbes,
+      `${looseCompiled.images.length} one-part page(s) copied as ${looseBasenames.join(', ')}; the text is identical ` +
+        'to the one-page-per-part rebuild, so no build without --atlas-in emits a byte it did not emit before',
+    ),
+    'issue #693 changed what `--copy-images` reads. The route it was written for has to come out unmoved, and the ' +
+      'only honest way to say that after the old emitter is gone is to derive its text here and compare',
   );
 
   return bad;

@@ -68,7 +68,7 @@ import {
 } from './src/deformmeasure.ts';
 import { diffLines, diffSkeletons, reportedFigures, sectionFigures, type DiffReport } from './src/diff.ts';
 import { ingest, IngestError, INGEST_GUTTERS, type IngestStage } from './src/ingest.ts';
-import { copyAtlasImages } from './src/emit.ts';
+import { copyAtlasPages } from './src/emit.ts';
 import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas } from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
 import { KEY_TIME_EPSILON } from './src/timelines.ts';
@@ -1242,14 +1242,21 @@ function cmdBuild(flags: Record<string, string>): void {
   // correct for a build sitting beside the project it came from and breaks the
   // moment the directory is zipped, committed or moved on its own (issue #217).
   // Opt-in only: the default stays exactly what it has always been.
+  //
+  // What is copied is what the ATLAS names, not what the image list holds: under
+  // `--atlas-in` the two are different lists, and rebuilding the text from the
+  // second wrote a file the pack never contained — zero bytes for a rig that
+  // declares no parts, one fabricated page per part for a rig that does, both of
+  // them green here because the gate above had already read the compile's own
+  // text (issue #693, `src/emit.ts`).
   let atlasText = result.atlasText;
   if (flags['copy-images'] !== undefined) {
-    const copied = copyAtlasImages(result.images, opts.outDir);
+    const copied = copyAtlasPages(atlasText, opts.outDir);
     atlasText = copied.atlasText;
     console.log(`  ..    copy-images: ${copied.pages.length} page(s) copied into ${opts.outDir}`);
     for (const p of copied.pages) {
-      const note = p.to === basename(p.from) ? '' : `  (renamed from ${basename(p.from)} — basename collision)`;
-      console.log(`  ..      ${p.region.padEnd(24)} <- ${p.to}${note}`);
+      const note = p.to === basename(p.from) ? '' : '  (renamed — basename collision)';
+      console.log(`  ..      ${p.to.padEnd(24)} <- ${p.from}  (${p.regions} region(s))${note}`);
     }
   }
 
