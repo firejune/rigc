@@ -500,6 +500,23 @@ the first:
 | `JUDGE` | the skeleton cannot answer and somebody has to: the stage, and each animation's duration |
 | `LOSS` | the skeleton's spelling and rigc's differ, on purpose, and the line says how. A path attachment's `lengths` is the one that matters — it is `PathConstraint`'s own four-sample measurement rather than an arc length (#560), so a transcribed one would freeze whatever produced the source. The header ones are cheaper: `HEADER_BOOKKEEPING` for a field the spec has no home for, `HEADER_REDERIVED` for the version string, `HEADER_ORIGIN` for an origin the source left to the format and the rebuild writes out (#622) |
 
+⛔ **It reads one generation of the format, and a file from another one ends loud.**
+Spine data is locked to the generation that exported it and a mismatch does not
+throw: 4.3 takes constraints from the top-level `constraints` array alone, so a
+4.0–4.2 file's `ik`/`transform`/`path`/`physics` arrays load as nothing at all — 1,302
+shipped skeletons parsed on a 4.3 runtime and loaded 0 of 8,672 constraints
+([#706](https://github.com/firejune/rigc/issues/706) row 1). So `ingest` reads
+`skeleton.spine` before it reads a field of the file. A file from another generation is
+a `BLOCK GENERATION_UNSUPPORTED` naming the generation, the string it was read from,
+and what a 4.3 reader loses **on that file**: the constraints parked in those arrays
+counted by kind, the bones carrying 4.2's `transform` where 4.3 spells `inherit`, and
+the physics constraints omitting `inertia`/`damping`, whose default is not the same
+number in the two. A label naming no generation rigc knows — or a header stating none —
+is a `BLOCK GENERATION_UNKNOWN`, never rounded to the nearest: a catalog that rounded
+handed 19 skeletons labelled `3.8.99` a 4.2 runtime and every one of them posed as NaN
+(row 7). Reading a file with *that generation's own* defaults is #706's item 2 and is
+not in this tool — re-export as 4.3, or transcribe by hand ([INGEST.md](INGEST.md) §2).
+
 📝 **Do not delete the `note`.** Both written specs carry one saying the file is
 decompiled and naming the skeleton it came from. A decompiled spec is
 indistinguishable from an authored one by inspection, every gate here calls it green —

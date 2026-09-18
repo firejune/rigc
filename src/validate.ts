@@ -59,6 +59,12 @@ import {
   type DeformReach,
   type DialSpan,
 } from './deformmeasure.ts';
+import {
+  LEGACY_BONE_INHERIT_KEY,
+  spineGeneration,
+  TOPLEVEL_CONSTRAINT_ARRAYS,
+  type SpineGeneration,
+} from './generation.ts';
 import { colourTypeName, readPngInfo } from './png.ts';
 import {
   CHANNELS_BY_KIND,
@@ -512,11 +518,20 @@ function float32Step(t: number): number {
 }
 
 /**
- * `4.3`, `4.3.<patch>`, or `4.3.<patch>-<suffix>` — the last of which is what the
- * Spine editor writes for a pre-release (`"4.3.75-beta"` in all twelve official
- * example exports). The major/minor pair is the load-bearing part; see A16.
+ * The generation `A16` demands, which is the whole of what that assertion is
+ * about: the MAJOR.MINOR pair.
+ *
+ * ⭐ **The reading itself moved to [`generation.ts`](generation.ts)** with issue
+ * #706 — one reader of `skeleton.spine` for the whole repository, because
+ * `ingest` has to ask the same question of a file somebody else wrote and two
+ * regexes would answer it two ways. What did NOT move is the accepted set:
+ * `4.3`, `4.3.<patch>` and `4.3.<patch>-<suffix>`, the last of which is what the
+ * editor writes for a pre-release (`"4.3.75-beta"` in all twelve official
+ * example exports, and the string the original `/^4\.3(\.\d+)?$/` rejected —
+ * blocker B2). `GN05` holds that set against the old regex, which survives in
+ * `selftest.ts` and nowhere else, for exactly that comparison.
  */
-const SPINE_4_3_VERSION = /^4\.3(\.\d+(-[0-9A-Za-z][0-9A-Za-z.+-]*)?)?$/;
+const SPINE_4_3: SpineGeneration = '4.3';
 
 type Json = Record<string, unknown>;
 
@@ -1585,7 +1600,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // stay rejected.
   check('A16_SKELETON_VERSION_4_3', () => {
     const declared = isObj(raw?.skeleton) ? (raw.skeleton as Json).spine : undefined;
-    if (typeof declared !== 'string' || !SPINE_4_3_VERSION.test(declared)) {
+    if (typeof declared !== 'string' || spineGeneration(declared) !== SPINE_4_3) {
       fail(
         'A16_SKELETON_VERSION_4_3',
         `skeleton.spine is ${JSON.stringify(declared)}, expected 4.3, 4.3.<patch> or 4.3.<patch>-<suffix>`,
@@ -1596,9 +1611,11 @@ export function validate(input: ValidateInput): ValidateReport {
   // --- A01: no legacy top-level constraint arrays ---------------------------
   // 4.3 folds every constraint into one `constraints` array with a `type`.
   // A 4.1/4.2-shaped `physics` array loads clean and the constraint just
-  // vanishes.
+  // vanishes. ⭐ The list is `generation.ts`'s since #706, because `ingest` has
+  // to count the same arrays in a file it did not emit, and two copies of five
+  // names is how one of them comes to be four.
   check('A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS', () => {
-    for (const key of ['ik', 'transform', 'path', 'physics', 'slider']) {
+    for (const key of TOPLEVEL_CONSTRAINT_ARRAYS) {
       if (raw && key in raw) {
         fail(
           'A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS',
@@ -1610,11 +1627,12 @@ export function validate(input: ValidateInput): ValidateReport {
 
   // --- A02: no bone.transform key ------------------------------------------
   // 4.3 renamed it to `inherit`; the old key loads and silently falls back to
-  // Normal inheritance (case 6b).
+  // Normal inheritance (case 6b). The key itself is `generation.ts`'s, for
+  // A01's reason.
   check('A02_NO_BONE_TRANSFORM_KEY', () => {
     const bones = Array.isArray(raw?.bones) ? (raw.bones as unknown[]) : [];
     for (const bone of bones) {
-      if (isObj(bone) && 'transform' in bone) {
+      if (isObj(bone) && LEGACY_BONE_INHERIT_KEY in bone) {
         fail('A02_NO_BONE_TRANSFORM_KEY', `bone "${String(bone.name)}" uses 4.2's "transform"; 4.3 wants "inherit"`);
       }
     }
