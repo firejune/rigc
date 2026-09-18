@@ -87,6 +87,22 @@ export class IngestError extends Error {
  */
 export type IngestFindingKind = 'blocker' | 'judgement' | 'lossy';
 
+/**
+ * The gutter each kind prints under — the token a reader meets before the code,
+ * and the column `docs/INGEST.md` §2.0's finding-code table is keyed on.
+ *
+ * ⭐ Exported for the reason `SLOT_TRACKS` below is read off `compile.ts`
+ * (issue #650): it was a local table inside `cmdIngest`, so the CLI that prints
+ * a gutter, the page that documents one and the gate that compares the two
+ * would have held three copies of the same three pairs. The CLI pads it to one
+ * width for the column; the width is a printing decision and stays there.
+ */
+export const INGEST_GUTTERS: Record<IngestFindingKind, string> = {
+  blocker: 'BLOCK',
+  judgement: 'JUDGE',
+  lossy: 'LOSS',
+};
+
 export interface IngestFinding {
   /** Stable code, so a table can count them and a doc can name one. */
   code: string;
@@ -338,7 +354,17 @@ const TRANSFORM_KEY_DEFAULTS: Record<string, number | boolean | string> = {
 /** The three ik booleans, which `compileConstraintTrack` stamps from the rig. */
 const IK_FLAGS = ['bendPositive', 'compress', 'stretch'];
 
-/** The animation groups `readAnimation` reads. Anything else is a blocker. */
+/**
+ * The animation groups the motion spec carries. Anything else is a blocker.
+ *
+ * ⚠️ This said *"the groups `readAnimation` reads"* until issue #675, and the
+ * `ANIMATION_GROUP` detail below said it to the reader. It is not the same set:
+ * `SkeletonJson.readAnimation` reads `drawOrderFolder` too and builds a
+ * `DrawOrderFolderTimeline` from it, so on that one name the sentence told an
+ * author the parser ignores something it plays. What is true either way is the
+ * half that decides the rebuild — the motion spec has no home for it — so that
+ * is what both the list and the finding now say.
+ */
 const ANIMATION_GROUPS = ['bones', 'slots', 'ik', 'transform', 'path', 'physics', 'slider', 'attachments', 'drawOrder', 'events'];
 
 /** The header fields rigc writes that no rig spec field holds. */
@@ -994,7 +1020,13 @@ function ingestAnimation(animName: string, anim: JsonObject, root: JsonObject, n
       const shape = BONE_TRACKS[property];
       const where = `animation "${animName}" bone "${bone}" ${property}`;
       if (shape === undefined) {
-        note('blocker', 'BONE_TIMELINE', where, `timeline "${property}" is not in the motion spec`);
+        note(
+          'blocker',
+          'BONE_TIMELINE',
+          where,
+          `timeline "${property}" has no track in the motion spec — a bone track is ${Object.keys(BONE_TRACKS).join(', ')} ` +
+            'and nothing else, so the rebuild plays nothing here',
+        );
         continue;
       }
       valueTrack({ bone }, property, keys, shape, where);
@@ -1112,7 +1144,13 @@ function ingestAnimation(animName: string, anim: JsonObject, root: JsonObject, n
 
   for (const group of Object.keys(anim)) {
     if (ANIMATION_GROUPS.includes(group)) continue;
-    note('blocker', 'ANIMATION_GROUP', `animation "${animName}"`, `group "${group}" is not one readAnimation reads, so it is dropped`);
+    note(
+      'blocker',
+      'ANIMATION_GROUP',
+      `animation "${animName}"`,
+      `group "${group}" has no home in the motion spec — an animation group is ${ANIMATION_GROUPS.join(', ')} and ` +
+        'nothing else, so the rebuild carries nothing from it',
+    );
   }
 
   // 🚨 There is no duration in skeleton JSON. The largest key time is the only

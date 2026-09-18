@@ -4076,6 +4076,19 @@ at setup, key it somewhere.
 
 Failures arrive in two layers, and they read differently.
 
+📥 **A third surface is `ingest`'s, and it is not a failure at all.** What a skeleton
+holds and the spec format cannot say is **recorded** rather than refused — one coded
+line per finding, and a non-zero exit only when one of them is a blocker (§0.3's gutter
+table is the three kinds); both specs are written either way. So there is no file to
+change for one of those, there is a decision to make. (`ingest` does refuse one thing,
+and it is not about the file's contents: an *option* that contradicts the file, such as
+`--stage` beside a box the skeleton declares.)
+Every code it can print, with its gutter, whether it changes the exit code, what it
+means and what to do, is the finding-code table in `docs/INGEST.md` §2.0. (Spelled
+rather than linked, like the references at the top of this page: that page cites the
+corpus inventory, and a ladder run reads this guide without following its references
+out of it.)
+
 ### 5.1 Compile errors — before the gate
 
 A `CompileError` names the object and the field, and nothing is written.

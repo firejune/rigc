@@ -123,7 +123,7 @@ import {
   type FramingSource,
 } from './src/check.ts';
 import { buildAtlasText, compile, CompileError, relativeImagesPath } from './src/compile.ts';
-import { ingest, IngestError, INGEST_VOCABULARY, type IngestFinding } from './src/ingest.ts';
+import { ingest, IngestError, INGEST_GUTTERS, INGEST_VOCABULARY, type IngestFinding } from './src/ingest.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
 import { RIG_KEYS, parseRigSpec } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
@@ -42913,6 +42913,210 @@ function runIngestSuite(): number {
     );
   }
 
+  // --- IG25/IG26: the finding codes, against the page that documents them ----
+  //
+  // The code is the one part of a finding line that is the same on every run —
+  // `IngestFinding.code` says as much, *"so a table can count them and a doc can
+  // name one"* — and no shipped document named twelve of them (issue #675), ten
+  // of those blockers that decide the exit code. The repair is a table in
+  // `docs/INGEST.md` §2.0; what makes it a table rather than a list somebody
+  // typed is this pair:
+  //
+  //   IG25  the page and the module agree     read out of both, compared as sets
+  //   IG26  it says so when they do not       a row removed, invented, flipped; the heading taken away
+  //
+  // ⚠️ **The card's own list was short and the shape of the miss is the lesson.**
+  // Nineteen codes were extracted by a scan for quoted ones, and three `note(`
+  // calls COMPOSE a code instead — so `PATH_TIMELINE`, `PHYSICS_TIMELINE`,
+  // `SLIDER_TIMELINE`, `IK_KEY_FIELD` and `TRANSFORM_KEY_FIELD` were in neither
+  // the source's list nor the page's, and one of the five is what `IG12` twelve
+  // cases up is about. A control built on the same scan would have agreed with
+  // itself, which is why `ingestFindingCodes` counts `note(` calls against the
+  // sites it could read and `IG25` carries that as a floor.
+  {
+    const ingestSource = readFileSync(resolve(import.meta.dir, 'src/ingest.ts'), 'utf8');
+    const ingestPage = readFileSync(resolve(import.meta.dir, INGEST_PAGE), 'utf8');
+    const emitted = ingestFindingCodes(ingestSource);
+    const stated = findingCodeRows(ingestPage);
+    const disagreements = findingCodeFaults(emitted.codes, stated);
+    const tableProbes = [
+      ...disagreements,
+      ...emitted.unresolved,
+      ...floorProbes(
+        [
+          [emitted.sites, emitted.calls, `${emitted.sites} of ${emitted.calls} \`note(\` call(s) in src/ingest.ts were read`],
+          [emitted.codes.size, 1, `${emitted.codes.size} code(s) came back from the module`],
+          [stated === null ? 0 : stated.rows.size, 1, `${stated === null ? 0 : stated.rows.size} row(s) came back from the page`],
+        ],
+        'and a code the scan cannot see is absent from BOTH sides, which is the one failure comparing two sets ' +
+          'is structurally unable to report',
+      ),
+    ];
+    const tableHeld = tableProbes.length === 0;
+    say(
+      'IG25_EVERY_FINDING_CODE_THE_MODULE_EMITS_IS_A_ROW_ON_THE_PAGE_UNDER_THE_GUTTER_IT_PRINTS',
+      tableHeld,
+      probeDetail(
+        tableHeld,
+        tableProbes,
+        `${emitted.codes.size} code(s) off ${emitted.sites} of ${emitted.calls} \`note(\` call(s), against ` +
+          `${stated === null ? 0 : stated.rows.size} row(s) of ${INGEST_PAGE}: ` +
+          `${[...emitted.codes].map(([code, kinds]) => `${code} ${[...kinds].map((kind) => INGEST_GUTTERS[kind]).sort().join('+')}`).sort().join(', ')}`,
+        (count) => `${count} thing(s) the page and the module do not agree about:`,
+      ),
+      'the validator\'s messages are the UI and `ingest`\'s findings are the same surface — a code an agent reads ' +
+        'and has to act on. Eighteen of the twenty-five were named in no shipped document at all, so the only ' +
+        'reading of one was the sentence beside it, and the commonest code in a real run was among them. Twelve ' +
+        'is the figure issue #675 carries, and the difference is the five composed codes its scan could not see ' +
+        'plus the family. The comparison is two-way on purpose: a ' +
+        'row for a code nothing emits is the same defect pointed the other way, and it is the one a rename ' +
+        'produces. The gutter is compared too, because the gutter is what the exit code turns on',
+    );
+
+    // IG26 — the plants. Each is an edit to a COPY of the page text; the page on
+    // disk is never written, so this needs no mutation window and cannot leave
+    // a tree behind it.
+    const sampleCode = [...emitted.codes.keys()].sort()[0] ?? '';
+    const blockerCode = [...emitted.codes].sort().find(([, kinds]) => kinds.has('blocker'))?.[0] ?? '';
+    const INVENTED = 'NO_SUCH_FINDING';
+    const rowsOf = (doc: string): string[] => doc.split('\n');
+    const withoutRow = (code: string): string =>
+      rowsOf(ingestPage)
+        .filter((line) => !line.startsWith(`| \`${code}\` |`))
+        .join('\n');
+    const withInventedRow = (): string =>
+      ingestPage.replace(`| \`${sampleCode}\` |`, `| \`${INVENTED}\` | \`BLOCK\` | 1 | planted | planted |\n| \`${sampleCode}\` |`);
+    const withFlippedGutter = (code: string): string =>
+      rowsOf(ingestPage)
+        .map((line) =>
+          line.startsWith(`| \`${code}\` |`) ? line.replace(INGEST_GUTTERS.blocker, INGEST_GUTTERS.lossy) : line,
+        )
+        .join('\n');
+    const faultsOf = (doc: string): string[] => findingCodeFaults(emitted.codes, findingCodeRows(doc));
+    const removed = raisedBy(faultsOf(withoutRow(sampleCode)), { was: disagreements, at: `${sampleCode}:` });
+    const invented = raisedBy(faultsOf(withInventedRow()), { was: disagreements, at: `${INVENTED}:` });
+    const flipped = raisedBy(faultsOf(withFlippedGutter(blockerCode)), { was: disagreements, at: `${blockerCode}:` });
+    const headless = raisedBy(faultsOf(ingestPage.replace(FINDING_TABLE_HEADING, '#### Something else')), {
+      was: disagreements,
+      at: INGEST_PAGE,
+    });
+    const plantProbes = [
+      ...(sampleCode === '' || blockerCode === ''
+        ? ['the module gave up no code to plant with, so none of the clauses below can conclude anything']
+        : []),
+      ...(emitted.codes.has(INVENTED) ? [`the module emits ${INVENTED}, so the invented row is not invented`] : []),
+      ...(removed.length > 0 ? [] : [`${sampleCode}: a row taken out of the copy was NOT faulted`]),
+      ...(invented.length > 0 ? [] : [`${INVENTED}: a row for a code nothing emits was NOT faulted`]),
+      ...(flipped.length > 0 ? [] : [`${blockerCode}: a gutter cell flipped from a blocker to a loss was NOT faulted`]),
+      ...(headless.length > 0 ? [] : [`${INGEST_PAGE}: the table's own heading taken away was NOT faulted`]),
+    ];
+    const plantsHeld = plantProbes.length === 0;
+    say(
+      'IG26_A_ROW_REMOVED_INVENTED_OR_FLIPPED_AND_A_MISSING_HEADING_ARE_EACH_NAMED',
+      plantsHeld,
+      probeDetail(
+        plantsHeld,
+        plantProbes,
+        `4 plant(s) on a copy of ${INGEST_PAGE}, each faulted by name — ${removed[0] ?? ''}; ${invented[0] ?? ''}; ` +
+          `${flipped[0] ?? ''}; ${headless[0] ?? ''}`,
+        (count) => `${count} plant(s) the comparison did not report:`,
+      ),
+      'a table nobody has seen refused is a table nobody is holding to anything, and the three ways it can go ' +
+        'wrong are not one clause: a row can be missing, a row can name something the source no longer emits, and ' +
+        'a row can be there with the wrong gutter — which is the quiet one, because it changes what a reader ' +
+        'believes about the exit code while the code count still reconciles. The fourth plant is the floor rather ' +
+        'than a spelling: a heading that moved would leave both sets empty and every other clause vacuously true',
+    );
+  }
+
+  // --- IG27/IG28: two blocker details brought to SLOT_TIMELINE's shape -------
+  //
+  // `SLOT_TIMELINE` names what a slot track may be — *"a slot track is attachment
+  // or rgba and nothing else, so the rebuild plays nothing here"* — and its two
+  // neighbours stopped at the object: *"timeline "x" is not in the motion spec"*,
+  // *"group "x" is not one readAnimation reads"*. Object and value found, no
+  // value required (issue #675). Both plants are a name the RUNTIME plays, which
+  // is the half that makes them worth a sentence: a reader who meets one is
+  // holding a file that works and a rebuild that will not.
+  {
+    const forgedBone = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+    const boneTimelines = ((forgedBone.animations as Record<string, Record<string, unknown>>).everything.bones ??
+      {}) as Record<string, Record<string, unknown>>;
+    const boneName = Object.keys(boneTimelines)[0] ?? '';
+    if (boneName !== '') boneTimelines[boneName].inherit = [{ time: 0, inherit: 'noScale' }];
+    const boneResult = ingest(forgedBone, { name: 'p', art: 'none', source: 's.json', version: '0' });
+    const boneFindings = boneResult.findings.filter((f) => f.code === 'BONE_TIMELINE');
+    const boneDetail = boneFindings[0]?.detail ?? '';
+    const boneMissing = INGEST_VOCABULARY.boneTracks.filter((track) => !new RegExp(`\\b${track}\\b`).test(boneDetail));
+    const boneProbes = [
+      ...(boneName === '' ? ['the probe keys no bone timeline at all, so there is nowhere to plant one'] : []),
+      ...(boneFindings.length === 1 ? [] : [`${boneFindings.length} BONE_TIMELINE finding(s), not 1`]),
+      ...(boneFindings.every((f) => f.kind === 'blocker') ? [] : ['a BONE_TIMELINE finding is not a `blocker`']),
+      ...(boneFindings.every((f) => f.where.includes(boneName) && f.where.includes('inherit'))
+        ? []
+        : [`the finding's \`where\` does not name bone "${boneName}" and the timeline`]),
+      ...(boneMissing.length === 0 ? [] : [`the detail does not name ${boneMissing.join(', ')} — the track(s) the family admits`]),
+      ...(probeTrip.findings.some((f) => f.code === 'BONE_TIMELINE')
+        ? ['the unplanted probe raises a BONE_TIMELINE of its own, so this plant proves nothing']
+        : []),
+    ];
+    const boneHeld = boneProbes.length === 0;
+    say(
+      'IG27_A_BONE_TIMELINE_THE_SPEC_HAS_NO_TRACK_FOR_IS_REFUSED_WITH_THE_TRACKS_IT_DOES_HAVE',
+      boneHeld,
+      probeDetail(
+        boneHeld,
+        boneProbes,
+        `an "inherit" timeline planted on bone "${boneName}": ${boneFindings.length} BONE_TIMELINE blocker at ` +
+          `${boneFindings[0]?.where ?? '(nowhere)'}, naming all ${INGEST_VOCABULARY.boneTracks.length} bone ` +
+          `track(s)\n          ${boneDetail}`,
+        (count) => `${count} thing(s) the refusal did not do:`,
+      ),
+      '`inherit` rather than a nonsense name, because it is the eleventh case of the runtime\'s own bone switch ' +
+        'and the motion spec has ten: the file plays, the rebuild does not, and the old sentence told the reader ' +
+        'only that something was "not in the motion spec". What the family admits is the value REQUIRED, which is ' +
+        'the third of a failure detail this one was missing — and it is read off `BONE_TRACKS` rather than typed, ' +
+        'so a track added to the spec reaches the message without anybody editing it',
+    );
+
+    const forgedGroup = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+    (forgedGroup.animations as Record<string, Record<string, unknown>>).everything.drawOrderFolder = [];
+    const groupResult = ingest(forgedGroup, { name: 'p', art: 'none', source: 's.json', version: '0' });
+    const groupFindings = groupResult.findings.filter((f) => f.code === 'ANIMATION_GROUP');
+    const groupDetail = groupFindings[0]?.detail ?? '';
+    const groupMissing = INGEST_VOCABULARY.animationGroups.filter((group) => !new RegExp(`\\b${group}\\b`).test(groupDetail));
+    const groupProbes = [
+      ...(groupFindings.length === 1 ? [] : [`${groupFindings.length} ANIMATION_GROUP finding(s), not 1`]),
+      ...(groupFindings.every((f) => f.kind === 'blocker') ? [] : ['an ANIMATION_GROUP finding is not a `blocker`']),
+      ...(groupDetail.includes('drawOrderFolder') ? [] : ['the detail does not name the group that was planted']),
+      ...(groupMissing.length === 0 ? [] : [`the detail does not name ${groupMissing.join(', ')} — the group(s) the family admits`]),
+      ...(/readAnimation/.test(groupDetail)
+        ? ['the detail still claims the parser does not read the group, which is what made it wrong']
+        : []),
+      ...(probeTrip.findings.some((f) => f.code === 'ANIMATION_GROUP')
+        ? ['the unplanted probe raises an ANIMATION_GROUP of its own, so this plant proves nothing']
+        : []),
+    ];
+    const groupHeld = groupProbes.length === 0;
+    say(
+      'IG28_AN_ANIMATION_GROUP_THE_SPEC_CANNOT_CARRY_IS_REFUSED_WITH_THE_GROUPS_IT_DOES_CARRY',
+      groupHeld,
+      probeDetail(
+        groupHeld,
+        groupProbes,
+        `a "drawOrderFolder" group planted on the probe's animation: ${groupFindings.length} ANIMATION_GROUP ` +
+          `blocker, naming all ${INGEST_VOCABULARY.animationGroups.length} group(s) the spec carries` +
+          `\n          ${groupDetail}`,
+        (count) => `${count} thing(s) the refusal did not do:`,
+      ),
+      'the plant is the measurement that made this a defect rather than a thin sentence. The old detail said the ' +
+        'group "is not one readAnimation reads" — and `SkeletonJson.readAnimation` reads `drawOrderFolder` and ' +
+        'builds a `DrawOrderFolderTimeline` from it, so on the one group an export can realistically carry the ' +
+        'sentence told an author the runtime ignores something it plays. The claim that survives is the one about ' +
+        'the spec, and the clause refusing the old wording is what keeps it from coming back',
+    );
+  }
+
   return bad;
 }
 
@@ -42950,6 +43154,173 @@ function halveFirstBoneRotation(skeletonText: string): { text: string; bone: str
 function boneWithNoRotation(skeletonText: string): string | null {
   for (const bone of boneList(skeletonText)) if (bone.rotation === undefined) return String(bone.name);
   return null;
+}
+
+/** The page whose §2.0 documents what `ingest` prints, read by `IG25` and planted on by `IG26`. */
+const INGEST_PAGE = 'docs/INGEST.md';
+
+/** The heading the finding-code table sits under, which is also the fence `IG26` takes away. */
+const FINDING_TABLE_HEADING = '#### Every finding code';
+
+/**
+ * Every finding code `src/ingest.ts` can print, under the kinds it prints each
+ * one with — read out of the module's own `note(` calls.
+ *
+ * 🚨 **A code is not always a literal, and that is the whole difficulty.** Three
+ * calls COMPOSE one from an identifier, so a scan for quoted codes comes back
+ * with nineteen while five more exist: `<GROUP>_TIMELINE` over `path`, `physics`
+ * and `slider`, and `<GROUP>_KEY_FIELD` over `ik` and `transform`. An
+ * interpolation is therefore expanded over the union its identifier is DECLARED
+ * with, taking the nearest declaration above the call — the same identifier
+ * `group` carries two different unions in this module, so a file-wide lookup
+ * would answer with whichever came last.
+ *
+ * ⭐ One interpolation cannot be resolved that way and is not pretended to be:
+ * `ATTACHMENT_${type.toUpperCase()}` composes from the FILE's text, so it
+ * renders as `ATTACHMENT_<TYPE>` — a family, which the page documents as one.
+ *
+ * 🔒 `calls` is what keeps the rest honest. A second, dumber regex counts
+ * `note(` however its arguments are written, because a call this one cannot read
+ * is missing from BOTH sides of the comparison a table gate makes, and two sets
+ * that agree about nothing agree.
+ */
+function ingestFindingCodes(source: string): {
+  codes: Map<string, Set<IngestFinding['kind']>>;
+  sites: number;
+  calls: number;
+  unresolved: string[];
+} {
+  const codes = new Map<string, Set<IngestFinding['kind']>>();
+  const unresolved: string[] = [];
+  const calls = [...source.matchAll(/(?<![A-Za-z_$.])note\(/g)].length;
+  let sites = 0;
+  for (const match of source.matchAll(/(?<![A-Za-z_$.])note\(\s*'(blocker|judgement|lossy)'\s*,\s*(?:'([A-Z_]+)'|`([^`]*)`)/g)) {
+    sites++;
+    const kind = match[1] as IngestFinding['kind'];
+    const spellings = match[2] !== undefined ? [match[2]] : findingCodeSpellings(match[3], source, match.index ?? 0);
+    if (spellings.length === 0) {
+      unresolved.push(
+        `a \`note(\` call writes its code as \`${match[3]}\`, which this scan cannot expand — it reads a quoted ` +
+          'code, or an interpolation of one identifier\'s `.toUpperCase()`',
+      );
+      continue;
+    }
+    for (const code of spellings) {
+      const kinds = codes.get(code) ?? new Set<IngestFinding['kind']>();
+      kinds.add(kind);
+      codes.set(code, kinds);
+    }
+  }
+  return { codes, sites, calls, unresolved };
+}
+
+/**
+ * One `note(` call's code argument written as a template, as every spelling it
+ * can produce — and `[]` where the template holds something this cannot read,
+ * which the caller reports rather than skips.
+ */
+function findingCodeSpellings(template: string, source: string, at: number): string[] {
+  let out = [''];
+  let rest = template;
+  while (rest.length > 0) {
+    const literal = /^[A-Z_]+/.exec(rest);
+    if (literal !== null) {
+      out = out.map((prefix) => prefix + literal[0]);
+      rest = rest.slice(literal[0].length);
+      continue;
+    }
+    const interpolated = /^\$\{\s*([A-Za-z_$][\w$]*)\.toUpperCase\(\)\s*\}/.exec(rest);
+    if (interpolated === null) return [];
+    const members = unionAbove(interpolated[1], source, at);
+    const parts = members.length > 0 ? members.map((member) => member.toUpperCase()) : [`<${interpolated[1].toUpperCase()}>`];
+    out = out.flatMap((prefix) => parts.map((part) => prefix + part));
+    rest = rest.slice(interpolated[0].length);
+  }
+  return out;
+}
+
+/**
+ * The string union an identifier is declared with, nearest declaration above a
+ * position — `[]` where it has none, which is what makes a family a family.
+ */
+function unionAbove(name: string, source: string, at: number): string[] {
+  let members: string[] = [];
+  for (const match of source.matchAll(new RegExp(`\\b${name}\\s*:\\s*('[a-z]+'(?:\\s*\\|\\s*'[a-z]+')+)`, 'g'))) {
+    if ((match.index ?? 0) > at) break;
+    members = [...match[1].matchAll(/'([a-z]+)'/g)].map((member) => member[1]);
+  }
+  return members;
+}
+
+/**
+ * The finding-code rows a page states: the code, the gutters its cell names and
+ * the exit it claims. `null` where the section itself is not there, which is a
+ * floor the caller reports rather than an empty table it would read as agreement.
+ */
+function findingCodeRows(
+  doc: string,
+): { rows: Map<string, { gutters: string[]; exit: string }>; repeated: string[] } | null {
+  const at = doc.indexOf(FINDING_TABLE_HEADING);
+  if (at < 0) return null;
+  const rest = doc.slice(at + FINDING_TABLE_HEADING.length);
+  const ends = rest.search(/\n#{1,4} /);
+  const section = ends < 0 ? rest : rest.slice(0, ends);
+  const rows = new Map<string, { gutters: string[]; exit: string }>();
+  const repeated: string[] = [];
+  for (const match of section.matchAll(/^\| `([A-Z_<>]+)` \|([^|]*)\|([^|]*)\|/gm)) {
+    const code = match[1];
+    if (rows.has(code)) {
+      repeated.push(code);
+      continue;
+    }
+    rows.set(code, {
+      gutters: Object.values(INGEST_GUTTERS)
+        .filter((gutter) => match[2].includes(gutter))
+        .sort(),
+      exit: match[3].replace(/[`\s]/g, ''),
+    });
+  }
+  return { rows, repeated };
+}
+
+/**
+ * What the page and the module disagree about, one row per disagreement.
+ *
+ * Both directions, because they are different defects: a code with no row is a
+ * finding an agent can only read from the sentence beside it, and a row for a
+ * code nothing emits is what a rename leaves behind. The gutter is compared as
+ * well, and the exit derived from it rather than read twice — a cell claiming
+ * exit 0 under a blocker is the quiet one, since the code count still reconciles.
+ */
+function findingCodeFaults(
+  codes: ReadonlyMap<string, ReadonlySet<IngestFinding['kind']>>,
+  stated: { rows: Map<string, { gutters: string[]; exit: string }>; repeated: string[] } | null,
+): string[] {
+  if (stated === null) {
+    return [`${INGEST_PAGE}: no section headed "${FINDING_TABLE_HEADING}", so there is no table to compare against`];
+  }
+  const faults: string[] = [];
+  for (const code of stated.repeated) faults.push(`${code}: the table states it on more than one row`);
+  for (const code of [...codes.keys()].sort()) {
+    const row = stated.rows.get(code);
+    if (row === undefined) {
+      faults.push(`${code}: \`src/ingest.ts\` emits it and the table has no row for it`);
+      continue;
+    }
+    const gutters = [...(codes.get(code) ?? [])].map((kind) => INGEST_GUTTERS[kind]).sort();
+    if (row.gutters.join(' ') !== gutters.join(' ')) {
+      faults.push(
+        `${code}: the table's gutter cell names ${row.gutters.join(' ') || 'nothing'} where the source records ` +
+          `${gutters.join(' ')}`,
+      );
+    }
+    const exit = gutters.includes(INGEST_GUTTERS.blocker) ? '1' : '0';
+    if (row.exit !== exit) faults.push(`${code}: the table states exit ${row.exit} where a ${gutters.join('/')} gutter means ${exit}`);
+  }
+  for (const code of [...stated.rows.keys()].sort()) {
+    if (!codes.has(code)) faults.push(`${code}: the table has a row and no \`note(\` in \`src/ingest.ts\` emits it`);
+  }
+  return faults;
 }
 
 /** IG21's edit: state a rotation on a bone that had none. */
