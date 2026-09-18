@@ -13694,12 +13694,12 @@ function runPathAndSliderSuite(): number {
   // skeleton's. The two ways to break that rule are both refused here — a
   // prediction taken by applying the same animation through spine-core, and a
   // tolerance wide enough to make one unnecessary.
-  type S644Property = 'rotate' | 'x' | 'y' | 'scaleX' | 'scaleY' | 'shearY';
+  type DialProperty = 'rotate' | 'x' | 'y' | 'scaleX' | 'scaleY' | 'shearY';
   /** One dial of a grid: the constraint that reads it, and the animation's own two amplitudes. */
   interface ComposedDial {
     name: string;
     bone: string;
-    property: S644Property;
+    property: DialProperty;
     dial: SliderDial;
     /** The `rotate` and `x` a key of this dial's animation states at its own t=1. */
     rotate: number;
@@ -13716,7 +13716,7 @@ function runPathAndSliderSuite(): number {
    * table this file is allowed to state, because it is the FORMAT's rule and not
    * a measurement. `rotate` is the one spelling that differs between the two.
    */
-  const s644SetDial = (skeleton: Skeleton, bone: string, property: S644Property, value: number): void => {
+  const poseDialProperty = (skeleton: Skeleton, bone: string, property: DialProperty, value: number): void => {
     const pose = skeleton.bones.find((one) => one.data.name === bone)!.pose;
     switch (property) {
       case 'rotate': pose.rotation = value; break;
@@ -13728,7 +13728,7 @@ function runPathAndSliderSuite(): number {
     }
   };
   /** One slider of the pair/trio, with whatever the case is about patched over it. */
-  const s644Slider = (dial: ComposedDial, patch: Record<string, unknown> = {}): Record<string, unknown> => ({
+  const dialConstraint = (dial: ComposedDial, patch: Record<string, unknown> = {}): Record<string, unknown> => ({
     name: dial.name,
     type: 'slider',
     animation: `${dial.name}-pose`,
@@ -13741,7 +13741,7 @@ function runPathAndSliderSuite(): number {
     ...patch,
   });
   /** The motion spec a set of dials reads: one two-key ramp each, over a rotation AND a translation. */
-  const s644Motion = (dials: ComposedDial[], eased?: string): Record<string, unknown> => ({
+  const dialMotion = (dials: ComposedDial[], eased?: string): Record<string, unknown> => ({
     spec: 'rigc-motion/1',
     archetype: 'static_probe',
     cut: 'static_probe',
@@ -13750,19 +13750,19 @@ function runPathAndSliderSuite(): number {
       dials.map((dial) => [`${dial.name}-pose`, gridRamp(dial.rotate, dial.x, dial.name === eased ? GRID_EASE : undefined)]),
     ),
   });
-  const s644Build = (dials: ComposedDial[], patches: Array<Record<string, unknown>> = [], eased?: string): SkeletonData =>
+  const buildDialRig = (dials: ComposedDial[], patches: Array<Record<string, unknown>> = [], eased?: string): SkeletonData =>
     timelinePosable(
-      writeProbeRig({ bones: SLIDER_BONES, constraints: dials.map((dial, i) => s644Slider(dial, patches[i] ?? {})) }),
-      s644Motion(dials, eased),
+      writeProbeRig({ bones: SLIDER_BONES, constraints: dials.map((dial, i) => dialConstraint(dial, patches[i] ?? {})) }),
+      dialMotion(dials, eased),
     ).data;
-  const s644Gate = (dials: ComposedDial[]): ReturnType<typeof validate> =>
+  const gateDials = (dials: ComposedDial[]): ReturnType<typeof validate> =>
     gateProbe(
-      writeProbeRig({ bones: SLIDER_BONES, constraints: dials.map((dial) => s644Slider(dial)) }),
-      s644Motion(dials),
+      writeProbeRig({ bones: SLIDER_BONES, constraints: dials.map((dial) => dialConstraint(dial)) }),
+      dialMotion(dials),
     );
 
   /** `time = to + (reading - from) x scale`, before the runtime clamps or wraps it. */
-  const s644Time = (reading: number, dial: SliderDial): number => dial.to + (reading - dial.from) * dial.scale;
+  const mappedDialTime = (reading: number, dial: SliderDial): number => dial.to + (reading - dial.from) * dial.scale;
   /**
    * How much of a dial's animation has been reached at a reading — the ONE place
    * the two `Slider.update` branches differ.
@@ -13772,13 +13772,13 @@ function runPathAndSliderSuite(): number {
    * POSITIVE modulo once `Animation.apply`'s own `time %= duration` has run over
    * it, so nothing is ever held and the frame at `duration` is unreachable.
    */
-  const s644Share = (reading: number, dial: ComposedDial): number => {
-    const time = s644Time(reading, dial.dial);
+  const dialShare = (reading: number, dial: ComposedDial): number => {
+    const time = mappedDialTime(reading, dial.dial);
     if (dial.loop !== true) return Math.min(1, Math.max(0, time) / GRID_DURATION);
     return (((time % GRID_DURATION) + GRID_DURATION) % GRID_DURATION) / GRID_DURATION;
   };
   /** The cartesian product of every dial's own samples — the grid, from the mappings and nothing else. */
-  const s644Rows = (dials: ComposedDial[], axes?: number[][]): number[][] => {
+  const composedRows = (dials: ComposedDial[], axes?: number[][]): number[][] => {
     let rows: number[][] = [[]];
     for (const [i, dial] of dials.entries()) {
       const axis = axes?.[i] ?? dialSamples(dial.dial, dial.steps);
@@ -13786,7 +13786,7 @@ function runPathAndSliderSuite(): number {
     }
     return rows;
   };
-  interface S644Cell {
+  interface ComposedCell {
     at: number[];
     rotate: number;
     x: number;
@@ -13800,16 +13800,16 @@ function runPathAndSliderSuite(): number {
    * is what a consumer holding a value does — `PS128`'s own reason, and the only
    * way to reach a grid at all.
    */
-  const s644Skeleton = (data: SkeletonData, dials: ComposedDial[], at: number[]): Skeleton => {
+  const skeletonPosedAt = (data: SkeletonData, dials: ComposedDial[], at: number[]): Skeleton => {
     const skeleton = new Skeleton(data);
     skeleton.setupPose();
-    for (const [i, dial] of dials.entries()) s644SetDial(skeleton, dial.bone, dial.property, at[i]);
+    for (const [i, dial] of dials.entries()) poseDialProperty(skeleton, dial.bone, dial.property, at[i]);
     skeleton.update(0);
     skeleton.updateWorldTransform(Physics.update);
     return skeleton;
   };
-  const s644Posed = (data: SkeletonData, dials: ComposedDial[], at: number[]): { rotate: number; x: number } => {
-    const flag = s644Skeleton(data, dials, at).bones.find((bone) => bone.data.name === 'flag')!.appliedPose;
+  const flagPosedAt = (data: SkeletonData, dials: ComposedDial[], at: number[]): { rotate: number; x: number } => {
+    const flag = skeletonPosedAt(data, dials, at).bones.find((bone) => bone.data.name === 'flag')!.appliedPose;
     return { rotate: flag.rotation, x: flag.x };
   };
   /**
@@ -13820,18 +13820,18 @@ function runPathAndSliderSuite(): number {
    * weights of every dial before it 0, and the control then requires the pose to
    * be THAT arithmetic at every cell.
    */
-  const s644Sweep = (
+  const composedSweep = (
     data: SkeletonData,
     dials: ComposedDial[],
     rows: number[][],
     weights: number[] = dials.map(() => 1),
     readings?: (at: number[]) => number[],
-  ): S644Cell[] => {
+  ): ComposedCell[] => {
     const setup = data.findBone('flag')!.setupPose;
     return rows.map((at) => {
-      const posed = s644Posed(data, dials, at);
+      const posed = flagPosedAt(data, dials, at);
       const read = readings?.(at) ?? at;
-      const share = dials.map((dial, i) => weights[i] * s644Share(read[i], dial));
+      const share = dials.map((dial, i) => weights[i] * dialShare(read[i], dial));
       return {
         at,
         rotate: posed.rotate,
@@ -13841,20 +13841,20 @@ function runPathAndSliderSuite(): number {
       };
     });
   };
-  const s644Error = (cell: S644Cell): number =>
+  const composedError = (cell: ComposedCell): number =>
     Math.max(Math.abs(cell.rotate - cell.wantRotate), Math.abs(cell.x - cell.wantX));
-  const s644Worst = (cells: S644Cell[]): S644Cell =>
-    cells.reduce((worst, cell) => (s644Error(cell) > s644Error(worst) ? cell : worst), cells[0]);
+  const worstComposedCell = (cells: ComposedCell[]): ComposedCell =>
+    cells.reduce((worst, cell) => (composedError(cell) > composedError(worst) ? cell : worst), cells[0]);
   /** The sentence a FAIL prints: the cell, the value found and the value required, per property. */
-  const s644Says = (dials: ComposedDial[], cell: S644Cell): string =>
+  const composedSays = (dials: ComposedDial[], cell: ComposedCell): string =>
     `${dials.map((dial, i) => `${dial.name} ${dial.property} ${cell.at[i].toFixed(3)}`).join(' x ')}: flag rotate posed ` +
     `${cell.rotate.toFixed(6)}° and the arithmetic requires ${cell.wantRotate.toFixed(6)}°; flag x posed ` +
-    `${cell.x.toFixed(6)} and requires ${cell.wantX.toFixed(6)} (off by ${s644Error(cell).toExponential(3)})`;
+    `${cell.x.toFixed(6)} and requires ${cell.wantX.toFixed(6)} (off by ${composedError(cell).toExponential(3)})`;
   /** Float64 noise over the chain: the largest magnitude it carries times `PS128`'s own op count. */
-  const s644FloatFloor = (dials: ComposedDial[]): number =>
+  const dialFloatFloor = (dials: ComposedDial[]): number =>
     dials.reduce((sum, dial) => sum + Math.abs(dial.rotate) + Math.abs(dial.x), 0) * Number.EPSILON * GRID_FLOAT_OPS;
   /** What the six-decimal emit can cost these dials, reported beside the cells and never used as a tolerance (`PS131` owns it). */
-  const s644EmitBound = (dials: ComposedDial[]): number =>
+  const dialEmitBound = (dials: ComposedDial[]): number =>
     Math.max(
       ...(['rotate', 'x'] as const).map((field) =>
         dials.reduce(
@@ -13884,30 +13884,30 @@ function runPathAndSliderSuite(): number {
   const readerSays: string[] = [];
   for (const pair of SLIDER_READER_PAIRS) {
     const dials = [...pair];
-    const rows = s644Rows(dials);
-    const floor = s644FloatFloor(dials);
-    const gate = s644Gate(dials);
-    const cells = s644Sweep(s644Build(dials), dials, rows);
-    const off = cells.filter((cell) => s644Error(cell) > floor);
+    const rows = composedRows(dials);
+    const floor = dialFloatFloor(dials);
+    const gate = gateDials(dials);
+    const cells = composedSweep(buildDialRig(dials), dials, rows);
+    const off = cells.filter((cell) => composedError(cell) > floor);
     const label = `${pair[0].property} x ${pair[1].property}`;
     if (gate.failures.length > 0) {
       readerRows.push(`${label}: the fixture does not gate green, so every cell of it is a reading of a rig the validator refuses: ${gate.failures.map((f) => f.assertion).join(', ')}`);
     }
-    if (off.length > 0) readerRows.push(`${label} — ${off.length} of ${cells.length} cells: ${s644Says(dials, s644Worst(cells))}`);
-    readerSays.push(`${label} worst ${s644Error(s644Worst(cells)).toExponential(3)} over ${cells.length} cells (floor ${floor.toExponential(3)}, emit bound ${s644EmitBound(dials).toExponential(3)})`);
+    if (off.length > 0) readerRows.push(`${label} — ${off.length} of ${cells.length} cells: ${composedSays(dials, worstComposedCell(cells))}`);
+    readerSays.push(`${label} worst ${composedError(worstComposedCell(cells)).toExponential(3)} over ${cells.length} cells (floor ${floor.toExponential(3)}, emit bound ${dialEmitBound(dials).toExponential(3)})`);
   }
   // The plants, both DATA: the later slider's own flag, and the pair of
   // `property` fields exchanged between the two dials — which leaves each
   // slider reading a field this sweep never moves, so what it reads is the
   // bone's setup value and its contribution is a constant.
-  const readerPlants: Array<{ what: string; cells: S644Cell[]; floor: number; dials: ComposedDial[] }> = [];
+  const readerPlants: Array<{ what: string; cells: ComposedCell[]; floor: number; dials: ComposedDial[] }> = [];
   {
     const dials = [...SLIDER_READER_PAIRS[0]];
-    const rows = s644Rows(dials);
-    const floor = s644FloatFloor(dials);
+    const rows = composedRows(dials);
+    const floor = dialFloatFloor(dials);
     readerPlants.push({
       what: 'the later slider left at the format default (`"additive": false`)',
-      cells: s644Sweep(s644Build(dials, [{}, { additive: false }]), dials, rows),
+      cells: composedSweep(buildDialRig(dials, [{}, { additive: false }]), dials, rows),
       floor,
       dials,
     });
@@ -13919,18 +13919,18 @@ function runPathAndSliderSuite(): number {
       what: 'the two `property` fields exchanged between the dials, the rig otherwise identical',
       // Built from the swapped rig, swept at the ORIGINAL dials — so the poser
       // still moves `x` and `scaleX` and the sliders read the other one.
-      cells: s644Sweep(s644Build(swapped), dials, rows),
+      cells: composedSweep(buildDialRig(swapped), dials, rows),
       floor,
       dials,
     });
   }
   for (const plant of readerPlants) {
-    const moved = plant.cells.filter((cell) => s644Error(cell) > plant.floor);
+    const moved = plant.cells.filter((cell) => composedError(cell) > plant.floor);
     if (moved.length === 0) {
       readerRows.push(`${plant.what}: every cell still read the arithmetic, so this plant is one the comparison above is blind to`);
       continue;
     }
-    readerSays.push(`${plant.what} — ${moved.length} of ${plant.cells.length} cells leave the arithmetic, worst ${s644Error(s644Worst(plant.cells)).toExponential(3)}`);
+    readerSays.push(`${plant.what} — ${moved.length} of ${plant.cells.length} cells leave the arithmetic, worst ${composedError(worstComposedCell(plant.cells)).toExponential(3)}`);
   }
   const readersHeld = readerRows.length === 0;
   say(
@@ -13939,7 +13939,7 @@ function runPathAndSliderSuite(): number {
     probeDetail(
       readersHeld,
       readerRows,
-      `${SLIDER_READER_PAIRS.length} pairs of unlike readers, each swept at ${s644Rows([...SLIDER_READER_PAIRS[0]]).length} cells of ` +
+      `${SLIDER_READER_PAIRS.length} pairs of unlike readers, each swept at ${composedRows([...SLIDER_READER_PAIRS[0]]).length} cells of ` +
         `its own two mappings: ${readerSays.join('; ')}. ⇒ under \`local: true\` every one of the six readers is ` +
         '`source.<field> + offsets[...]` with `Slider.offsets` all zero, so the map from the property to the time stays ' +
         'affine and ONE arithmetic covers all six',
@@ -13978,20 +13978,20 @@ function runPathAndSliderSuite(): number {
   const SLIDER_WRAP_RESIDUE = 360 * (1 - Math.PI / MathUtils.PI);
   const SLIDER_ROOT_SHEAR = Math.abs(MathUtils.cosDeg(90));
   /** How far a world reading can sit from the number the bone was posed at, in the property's own unit. */
-  const s644WorldReading = (dial: ComposedDial, boneY: number): number =>
+  const worldReadingError = (dial: ComposedDial, boneY: number): number =>
     dial.property === 'rotate' ? SLIDER_WRAP_RESIDUE + MathUtils.radDeg * SLIDER_ROOT_SHEAR : SLIDER_ROOT_SHEAR * Math.abs(boneY);
   /** That reading error carried through the mapping and the ramp, per property, and summed over the dials. */
-  const s644WorldBound = (dials: ComposedDial[], bonesY: number[]): number =>
+  const worldReadingBound = (dials: ComposedDial[], bonesY: number[]): number =>
     Math.max(
       ...(['rotate', 'x'] as const).map((field) =>
         dials.reduce(
-          (sum, dial, i) => sum + (s644WorldReading(dial, bonesY[i]) * Math.abs(dial.dial.scale) * Math.abs(dial[field])) / GRID_DURATION,
+          (sum, dial, i) => sum + (worldReadingError(dial, bonesY[i]) * Math.abs(dial.dial.scale) * Math.abs(dial[field])) / GRID_DURATION,
           0,
         ),
       ),
-    ) + s644FloatFloor(dials);
+    ) + dialFloatFloor(dials);
   /** `FromRotate.value`'s own range: `[0, 360)`, reached by a modulo and not by one subtraction (`PS44`). */
-  const s644Circle = (value: number): number => ((value % 360) + 360) % 360;
+  const intoCircle = (value: number): number => ((value % 360) + 360) % 360;
 
   // The yaw dial's range is 40°..240°, inside the circle so the rig compiles at
   // all (`PS34`–`PS46` refuse both ends of it), and past 180° so the wrap term
@@ -14007,36 +14007,36 @@ function runPathAndSliderSuite(): number {
     const bone = SLIDER_BONES.find((one) => one.name === dial.bone);
     return bone === undefined || bone.y === undefined ? 0 : bone.y;
   });
-  const worldFloor = s644FloatFloor(SLIDER_WORLD);
-  const worldTolerance = s644WorldBound(SLIDER_WORLD, SLIDER_WORLD_BONE_Y);
-  const worldGate = s644Gate(SLIDER_WORLD);
-  const worldData = s644Build(SLIDER_WORLD);
-  const worldRows = s644Rows(SLIDER_WORLD);
-  const worldCells = s644Sweep(worldData, SLIDER_WORLD, worldRows);
-  const worldWorst = s644Error(s644Worst(worldCells));
+  const worldFloor = dialFloatFloor(SLIDER_WORLD);
+  const worldTolerance = worldReadingBound(SLIDER_WORLD, SLIDER_WORLD_BONE_Y);
+  const worldGate = gateDials(SLIDER_WORLD);
+  const worldData = buildDialRig(SLIDER_WORLD);
+  const worldRows = composedRows(SLIDER_WORLD);
+  const worldCells = composedSweep(worldData, SLIDER_WORLD, worldRows);
+  const worldWorst = composedError(worstComposedCell(worldCells));
   // The same two mappings and amplitudes, read locally. Nothing else moves.
   const localTwin = SLIDER_WORLD.map((dial) => ({ ...dial, local: true }));
-  const localCells = s644Sweep(s644Build(localTwin), localTwin, worldRows);
-  const localWorst = s644Error(s644Worst(localCells));
+  const localCells = composedSweep(buildDialRig(localTwin), localTwin, worldRows);
+  const localWorst = composedError(worstComposedCell(localCells));
   // The cells that cross the circle: every yaw sample one whole turn below it,
   // which is a bone position no reader can return. Derived from the sample and
   // the reader's own period, not written out.
   const aliasRows = worldRows.map((at) => [at[0] - 360, ...at.slice(1)]);
-  const aliasAsRead = s644Sweep(worldData, SLIDER_WORLD, aliasRows, undefined, (at) => [s644Circle(at[0]), ...at.slice(1)]);
-  const aliasAsPosed = s644Sweep(worldData, SLIDER_WORLD, aliasRows);
-  const aliasReadWorst = s644Error(s644Worst(aliasAsRead));
-  const aliasPosedWorst = s644Error(s644Worst(aliasAsPosed));
+  const aliasAsRead = composedSweep(worldData, SLIDER_WORLD, aliasRows, undefined, (at) => [intoCircle(at[0]), ...at.slice(1)]);
+  const aliasAsPosed = composedSweep(worldData, SLIDER_WORLD, aliasRows);
+  const aliasReadWorst = composedError(worstComposedCell(aliasAsRead));
+  const aliasPosedWorst = composedError(worstComposedCell(aliasAsPosed));
   const outside = aliasRows.filter((at) => at[0] < 0 || at[0] > 360).length;
-  const worldPlantCells = s644Sweep(s644Build(SLIDER_WORLD, [{}, { additive: false }]), SLIDER_WORLD, worldRows);
-  const worldPlantMoved = worldPlantCells.filter((cell) => s644Error(cell) > worldTolerance).length;
+  const worldPlantCells = composedSweep(buildDialRig(SLIDER_WORLD, [{}, { additive: false }]), SLIDER_WORLD, worldRows);
+  const worldPlantMoved = worldPlantCells.filter((cell) => composedError(cell) > worldTolerance).length;
   const worldRowsSaid: string[] = [
     ...(worldGate.failures.length === 0 && worldGate.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')
       ? []
       : [`the world fixture does not gate green, so every cell below reads a rig the validator refuses: ${worldGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
     ...worldCells
-      .filter((cell) => s644Error(cell) > worldTolerance)
+      .filter((cell) => composedError(cell) > worldTolerance)
       .slice(0, 3)
-      .map((cell) => s644Says(SLIDER_WORLD, cell)),
+      .map((cell) => composedSays(SLIDER_WORLD, cell)),
     ...(worldWorst > worldFloor
       ? []
       : [`the world readers cost this grid ${worldWorst.toExponential(3)}, at or under the float64 floor of ${worldFloor.toExponential(3)} — the bound above is then satisfied by a fixture that never tests it`]),
@@ -14105,34 +14105,34 @@ function runPathAndSliderSuite(): number {
     { name: 'pitch', bone: 'pitch-dial', property: 'rotate', dial: GRID_PITCH, rotate: GRID_PITCH_ROTATE, x: GRID_PITCH_X, steps: 5 },
     { name: 'roll', bone: 'roll-dial', property: 'rotate', dial: { from: 10, to: 0, scale: 0.005 }, rotate: SLIDER_ROLL_ROTATE, x: SLIDER_ROLL_X, steps: 6 },
   ];
-  const trioFloor = s644FloatFloor(SLIDER_TRIO);
-  const trioRows = s644Rows(SLIDER_TRIO);
+  const trioFloor = dialFloatFloor(SLIDER_TRIO);
+  const trioRows = composedRows(SLIDER_TRIO);
   const trioAxes = SLIDER_TRIO.map((dial) => dialSamples(dial.dial, dial.steps));
-  const trioCorner = (cell: S644Cell): boolean =>
+  const trioCorner = (cell: ComposedCell): boolean =>
     cell.at.every((value, i) => value === trioAxes[i][0] || value === trioAxes[i][trioAxes[i].length - 1]);
-  const trioGate = s644Gate(SLIDER_TRIO);
-  const trioCells = s644Sweep(s644Build(SLIDER_TRIO), SLIDER_TRIO, trioRows);
-  const trioOff = trioCells.filter((cell) => s644Error(cell) > trioFloor);
+  const trioGate = gateDials(SLIDER_TRIO);
+  const trioCells = composedSweep(buildDialRig(SLIDER_TRIO), SLIDER_TRIO, trioRows);
+  const trioOff = trioCells.filter((cell) => composedError(cell) > trioFloor);
   // Plant 1: the MIDDLE slider at the format default. Its own closed form is
   // the same sum with the weights of every dial before it set to 0.
-  const middleData = s644Build(SLIDER_TRIO, [{}, { additive: false }, {}]);
-  const middleAsErasing = s644Sweep(middleData, SLIDER_TRIO, trioRows, [0, 1, 1]);
-  const middleAsSum = s644Sweep(middleData, SLIDER_TRIO, trioRows);
-  const middleOff = middleAsErasing.filter((cell) => s644Error(cell) > trioFloor);
-  const middleMoved = middleAsSum.filter((cell) => s644Error(cell) > trioFloor);
+  const middleData = buildDialRig(SLIDER_TRIO, [{}, { additive: false }, {}]);
+  const middleAsErasing = composedSweep(middleData, SLIDER_TRIO, trioRows, [0, 1, 1]);
+  const middleAsSum = composedSweep(middleData, SLIDER_TRIO, trioRows);
+  const middleOff = middleAsErasing.filter((cell) => composedError(cell) > trioFloor);
+  const middleMoved = middleAsSum.filter((cell) => composedError(cell) > trioFloor);
   // Plant 2: an easing on the middle animation, which every corner of the cube
   // reads as correct — `PS129`'s argument, one dimension up.
-  const easedCells = s644Sweep(s644Build(SLIDER_TRIO, [], 'pitch'), SLIDER_TRIO, trioRows);
-  const easedMoved = easedCells.filter((cell) => s644Error(cell) > trioFloor);
+  const easedCells = composedSweep(buildDialRig(SLIDER_TRIO, [], 'pitch'), SLIDER_TRIO, trioRows);
+  const easedMoved = easedCells.filter((cell) => composedError(cell) > trioFloor);
   const easedCorners = easedMoved.filter(trioCorner);
   const trioSaid: string[] = [
     ...(trioGate.failures.length === 0 && trioGate.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')
       ? []
       : [`the three-dial fixture does not gate green: ${trioGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
-    ...trioOff.slice(0, 3).map((cell) => s644Says(SLIDER_TRIO, cell)),
+    ...trioOff.slice(0, 3).map((cell) => composedSays(SLIDER_TRIO, cell)),
     ...(middleOff.length === 0
       ? []
-      : [`with the middle slider at the format default the cube is not the erasing arithmetic either — ${middleOff.length} of ${middleAsErasing.length} cells: ${s644Says(SLIDER_TRIO, s644Worst(middleAsErasing))}`]),
+      : [`with the middle slider at the format default the cube is not the erasing arithmetic either — ${middleOff.length} of ${middleAsErasing.length} cells: ${composedSays(SLIDER_TRIO, worstComposedCell(middleAsErasing))}`]),
     ...(middleMoved.length > 0
       ? []
       : ['the middle slider left at the format default moved no cell of the cube, so this comparison is one that plant is blind to']),
@@ -14152,11 +14152,11 @@ function runPathAndSliderSuite(): number {
       trioSaid,
       `${trioAxes.map((axis) => axis.length).join(' x ')} = ${trioCells.length} readings of three dials, each from the bottom of ` +
         `its own mapping to the top: flag rotate and flag x are the closed-form sum at every one of them, worst ` +
-        `${s644Error(s644Worst(trioCells)).toExponential(3)} against a float64 floor of ${trioFloor.toExponential(3)} and a ` +
-        `six-decimal emit bound of ${s644EmitBound(SLIDER_TRIO).toExponential(3)}. The two plants: the MIDDLE slider at the format ` +
+        `${composedError(worstComposedCell(trioCells)).toExponential(3)} against a float64 floor of ${trioFloor.toExponential(3)} and a ` +
+        `six-decimal emit bound of ${dialEmitBound(SLIDER_TRIO).toExponential(3)}. The two plants: the MIDDLE slider at the format ` +
         `default moves ${middleMoved.length} of ${middleAsSum.length} cells away from the sum and lands on the erasing ` +
         `arithmetic — the first dial dead, the third still adding — at every one of them to ` +
-        `${s644Error(s644Worst(middleAsErasing)).toExponential(3)}; an \`"ease": "${GRID_EASE}"\` on that same middle animation moves ` +
+        `${composedError(worstComposedCell(middleAsErasing)).toExponential(3)}; an \`"ease": "${GRID_EASE}"\` on that same middle animation moves ` +
         `${easedMoved.length} of ${easedCells.length} cells and ${easedCorners.length} of the cube's ${trioRows.filter((at) => at.every((value, i) => value === trioAxes[i][0] || value === trioAxes[i][trioAxes[i].length - 1])).length} corners`,
       (count) => `${count} reading(s) of the cube are not the arithmetic:`,
     ),
@@ -14214,7 +14214,7 @@ function runPathAndSliderSuite(): number {
     height: 8,
   };
   /** One shared target a slider's animation can key, and the closed form of ONE slider on it. */
-  interface S644Kind {
+  interface SharedTargetKind {
     /** What this target is, in the words `A40`'s own message uses. */
     kind: string;
     /** Extra rig blocks — slots, skins — merged over the probe rig. */
@@ -14263,17 +14263,17 @@ function runPathAndSliderSuite(): number {
    * slot moved and 0 for the other. The third key repeats the second because a
    * motion spec's declared duration has to equal its last key time.
    */
-  const s644SwapKeys = (which: number): Array<[number, number]> =>
+  const steppedKeys = (which: number): Array<[number, number]> =>
     which === 0
       ? [[0, 1], [SLIDER_SWAP_AT, 0], [GRID_DURATION, 0]]
       : [[0, 0], [SLIDER_SWAP_AT, 1], [GRID_DURATION, 1]];
   /** A stepped timeline's value at a time: the last key at or before it. That is the FORMAT's rule for attachment and draw-order timelines, not a reading of one. */
-  const s644Stepped = (keys: Array<[number, number]>, time: number): number => {
+  const steppedValueAt = (keys: Array<[number, number]>, time: number): number => {
     let held = keys[0][1];
     for (const [at, value] of keys) if (time >= at) held = value;
     return held;
   };
-  const SLIDER_IGNORES_ADD: S644Kind[] = [
+  const SLIDER_IGNORES_ADD: SharedTargetKind[] = [
     {
       kind: 'slot "marker" rgb',
       rig: {},
@@ -14302,12 +14302,12 @@ function runPathAndSliderSuite(): number {
           {
             slot: 'marker',
             property: 'attachment',
-            keys: s644SwapKeys(which).map(([t, shown]) => ({ t, v: shown === 1 ? 'marker' : null })),
+            keys: steppedKeys(which).map(([t, shown]) => ({ t, v: shown === 1 ? 'marker' : null })),
           },
         ],
       }),
       setup: [1],
-      alone: (which, share) => [s644Stepped(s644SwapKeys(which), share * GRID_DURATION)],
+      alone: (which, share) => [steppedValueAt(steppedKeys(which), share * GRID_DURATION)],
       describe: (values) => `attachment ${values[0] === 1 ? '"marker"' : 'none'}`,
       read: (skeleton) => [skeleton.slots.find((slot) => slot.data.name === 'marker')!.appliedPose.attachment === null ? 0 : 1],
     },
@@ -14322,10 +14322,10 @@ function runPathAndSliderSuite(): number {
         // A key with no `offsets` restores the setup order, which is the
         // parser's own encoding — so `0` below is the setup and `1` is `block`
         // one place later, and the closed form reads the same two numbers.
-        drawOrder: s644SwapKeys(which === 0 ? 1 : 0).map(([t, moved]) => ({ t, ...(moved === 1 ? { offsets: [{ slot: 'block', offset: 1 }] } : {}) })),
+        drawOrder: steppedKeys(which === 0 ? 1 : 0).map(([t, moved]) => ({ t, ...(moved === 1 ? { offsets: [{ slot: 'block', offset: 1 }] } : {}) })),
       }),
       setup: [0],
-      alone: (which, share) => [s644Stepped(s644SwapKeys(which === 0 ? 1 : 0), share * GRID_DURATION)],
+      alone: (which, share) => [steppedValueAt(steppedKeys(which === 0 ? 1 : 0), share * GRID_DURATION)],
       describe: (values) => `slot "block" drawn at index ${values[0]}`,
       read: (skeleton) => [skeleton.drawOrder.appliedPose.findIndex((slot) => slot.data.name === 'block')],
     },
@@ -14345,7 +14345,7 @@ function runPathAndSliderSuite(): number {
       read: (skeleton) => [skeleton.findConstraint('leg-ik', IkConstraint)!.appliedPose.mix],
     },
   ];
-  const SLIDER_SUPPORTS_ADD: S644Kind[] = [
+  const SLIDER_SUPPORTS_ADD: SharedTargetKind[] = [
     {
       kind: 'slot "flat" deform of "flat"',
       rig: {
@@ -14421,8 +14421,8 @@ function runPathAndSliderSuite(): number {
     { name: 'pitch', bone: 'pitch-dial', property: 'rotate', dial: GRID_PITCH, rotate: 0, x: 0, steps: 2 },
   ];
   /** Compile one kind's rig once, and hand back both the gate's report and a posable skeleton. */
-  const s644KindRun = (
-    kind: S644Kind,
+  const compileKindRig = (
+    kind: SharedTargetKind,
     order: number[],
     patches: Array<Record<string, unknown>> = [],
   ): { data: SkeletonData; report: ReturnType<typeof validate> } => {
@@ -14430,7 +14430,7 @@ function runPathAndSliderSuite(): number {
       bones: SLIDER_KIND_BONES,
       ...kind.rig,
       constraints: [
-        ...order.map((which, seat) => s644Slider(SLIDER_KIND_DIALS[which], patches[seat] ?? {})),
+        ...order.map((which, seat) => dialConstraint(SLIDER_KIND_DIALS[which], patches[seat] ?? {})),
         ...kind.after,
       ],
     });
@@ -14463,25 +14463,25 @@ function runPathAndSliderSuite(): number {
     };
   };
   /** The largest magnitude a kind's own values carry, which is what its float64 floor is off. */
-  const s644KindFloor = (kind: S644Kind): number =>
+  const kindFloatFloor = (kind: SharedTargetKind): number =>
     Math.max(...[...kind.setup, ...kind.alone(0, 1), ...kind.alone(1, 1)].map((value) => Math.abs(value)), 1) *
     Number.EPSILON *
     GRID_FLOAT_OPS;
-  const s644KindRows = s644Rows(SLIDER_KIND_DIALS);
+  const kindGridRows = composedRows(SLIDER_KIND_DIALS);
   /** The share each dial of a row has reached — the same map and ramp every control here uses. */
-  const s644Shares = (at: number[]): number[] => SLIDER_KIND_DIALS.map((dial, i) => s644Share(at[i], dial));
-  const s644Apart = (a: number[], b: number[]): number =>
+  const kindShares = (at: number[]): number[] => SLIDER_KIND_DIALS.map((dial, i) => dialShare(at[i], dial));
+  const maxApart = (a: number[], b: number[]): number =>
     Math.max(...a.map((value, i) => Math.abs(value - (b[i] ?? Number.NaN))));
 
   const ignoreRows: string[] = [];
   const ignoreSays: string[] = [];
   for (const kind of SLIDER_IGNORES_ADD) {
-    const floor = s644KindFloor(kind);
+    const floor = kindFloatFloor(kind);
     // 🔒 The clause that keeps "the later one alone" from being unfalsifiable:
     // two animations that put the SAME value there would satisfy it whichever
     // slider won, so the fixture has to make them differ somewhere on the grid.
     const apart = Math.max(
-      ...s644KindRows.flatMap((at) => s644Shares(at).map((share) => s644Apart(kind.alone(0, share), kind.alone(1, share)))),
+      ...kindGridRows.flatMap((at) => kindShares(at).map((share) => maxApart(kind.alone(0, share), kind.alone(1, share)))),
     );
     if (apart <= floor) {
       ignoreRows.push(
@@ -14495,15 +14495,15 @@ function runPathAndSliderSuite(): number {
     ];
     const seen: string[] = [];
     for (const [label, order] of orders) {
-      const { data, report } = s644KindRun(kind, order);
+      const { data, report } = compileKindRig(kind, order);
       const later = order[order.length - 1];
       let worst = 0;
       let worstSaid = '';
-      for (const at of s644KindRows) {
-        const shares = s644Shares(at);
-        const got = kind.read(s644Skeleton(data, SLIDER_KIND_DIALS, at));
+      for (const at of kindGridRows) {
+        const shares = kindShares(at);
+        const got = kind.read(skeletonPosedAt(data, SLIDER_KIND_DIALS, at));
         const want = kind.alone(later, shares[later]);
-        const apart = s644Apart(got, want);
+        const apart = maxApart(got, want);
         if (apart > worst) {
           worst = apart;
           worstSaid =
@@ -14520,9 +14520,9 @@ function runPathAndSliderSuite(): number {
       for (const held of dialSamples(SLIDER_KIND_DIALS[later].dial, SLIDER_KIND_DIALS[later].steps)) {
         const values = dialSamples(SLIDER_KIND_DIALS[1 - later].dial, SLIDER_KIND_DIALS[1 - later].steps).map((moving) => {
           const at = later === 0 ? [held, moving] : [moving, held];
-          return kind.read(s644Skeleton(data, SLIDER_KIND_DIALS, at));
+          return kind.read(skeletonPosedAt(data, SLIDER_KIND_DIALS, at));
         });
-        for (const value of values) spread = Math.max(spread, s644Apart(value, values[0]));
+        for (const value of values) spread = Math.max(spread, maxApart(value, values[0]));
       }
       if (spread > floor) {
         ignoreRows.push(
@@ -14544,7 +14544,7 @@ function runPathAndSliderSuite(): number {
   {
     const dirs = writeProbeRig({
       bones: SLIDER_KIND_BONES,
-      constraints: [s644Slider(SLIDER_KIND_DIALS[0])],
+      constraints: [dialConstraint(SLIDER_KIND_DIALS[0])],
     });
     const motionPath = join(dirs.dir, 'probe.motion.json');
     writeFileSync(
@@ -14596,7 +14596,7 @@ function runPathAndSliderSuite(): number {
       ignoreHeld,
       ignoreRows,
       `${SLIDER_IGNORES_ADD.length} kinds of shared target that ignore \`add\`, each under two sliders BOTH declaring ` +
-        `\`"additive": true\`, read at ${s644KindRows.length} cells of the two dials and then again with the ` +
+        `\`"additive": true\`, read at ${kindGridRows.length} cells of the two dials and then again with the ` +
         `\`constraints\` array order swapped: ${ignoreSays.join('; ')}. At every cell the target is what the LAST slider ` +
         'in the array puts there, the earlier dial moves it by nothing at all, and the winner follows the array rather ' +
         'than the flags or the animation names. A40 refuses every one of them by name. ⭐ The ik constraint among them is ' +
@@ -14616,15 +14616,15 @@ function runPathAndSliderSuite(): number {
   const addRows: string[] = [];
   const addSays: string[] = [];
   for (const kind of SLIDER_SUPPORTS_ADD) {
-    const floor = s644KindFloor(kind);
-    const { data, report } = s644KindRun(kind, [0, 1]);
+    const floor = kindFloatFloor(kind);
+    const { data, report } = compileKindRig(kind, [0, 1]);
     let worst = 0;
     let worstSaid = '';
-    for (const at of s644KindRows) {
-      const shares = s644Shares(at);
-      const got = kind.read(s644Skeleton(data, SLIDER_KIND_DIALS, at));
+    for (const at of kindGridRows) {
+      const shares = kindShares(at);
+      const got = kind.read(skeletonPosedAt(data, SLIDER_KIND_DIALS, at));
       const want = kind.setup.map((base, i) => base + (kind.alone(0, shares[0])[i] - base) + (kind.alone(1, shares[1])[i] - base));
-      const apart = s644Apart(got, want);
+      const apart = maxApart(got, want);
       if (apart > worst) {
         worst = apart;
         worstSaid =
@@ -14639,16 +14639,16 @@ function runPathAndSliderSuite(): number {
     // The plant, on the same fixture: the later slider at the format default.
     // Its own closed form is the later slider alone, and it has to differ from
     // the sum somewhere or this kind distinguishes nothing.
-    const plant = s644KindRun(kind, [0, 1], [{}, { additive: false }]);
+    const plant = compileKindRig(kind, [0, 1], [{}, { additive: false }]);
     let plantWorst = 0;
     let plantApart = 0;
-    for (const at of s644KindRows) {
-      const shares = s644Shares(at);
-      const got = kind.read(s644Skeleton(plant.data, SLIDER_KIND_DIALS, at));
+    for (const at of kindGridRows) {
+      const shares = kindShares(at);
+      const got = kind.read(skeletonPosedAt(plant.data, SLIDER_KIND_DIALS, at));
       const alone = kind.alone(1, shares[1]);
       const sum = kind.setup.map((base, i) => kind.alone(0, shares[0])[i] + kind.alone(1, shares[1])[i] - base);
-      plantWorst = Math.max(plantWorst, s644Apart(got, alone));
-      plantApart = Math.max(plantApart, s644Apart(alone, sum));
+      plantWorst = Math.max(plantWorst, maxApart(got, alone));
+      plantApart = Math.max(plantApart, maxApart(alone, sum));
     }
     if (plantWorst > floor) {
       addRows.push(`${kind.kind}: with the later slider at the format default the target is not that slider alone either — off by ${plantWorst.toExponential(3)}`);
@@ -14669,7 +14669,7 @@ function runPathAndSliderSuite(): number {
       addHeld,
       addRows,
       `${SLIDER_SUPPORTS_ADD.length} kinds of shared target that support \`add\` — a mesh deform, a physics wind and a ` +
-        `transform constraint's rotate mix — under two additive sliders at ${s644KindRows.length} cells each: ` +
+        `transform constraint's rotate mix — under two additive sliders at ${kindGridRows.length} cells each: ` +
         `${addSays.join('; ')}. Every one of them gates green, which is the other half of A40's own claim — and since #665 that ` +
         'includes A42: the physics and transform constraints are declared AFTER the two dials, so the value the pair composes ' +
         'is the value the constraint runs on. The arithmetic is the same in the order these fixtures used to sit in, which is ' +
@@ -14708,33 +14708,33 @@ function runPathAndSliderSuite(): number {
     { length: SLIDER_LOOP[0].steps + 1 },
     (_, i) => SLIDER_LOOP[0].dial.from - loopSpan + (4 * loopSpan * i) / SLIDER_LOOP[0].steps,
   );
-  const loopRows = s644Rows(SLIDER_LOOP, [loopAxis, dialSamples(SLIDER_LOOP[1].dial, SLIDER_LOOP[1].steps)]);
-  const loopFloor = s644FloatFloor(SLIDER_LOOP);
-  const loopGate = s644Gate(SLIDER_LOOP);
-  const loopData = s644Build(SLIDER_LOOP);
-  const loopCells = s644Sweep(loopData, SLIDER_LOOP, loopRows);
-  const loopOff = loopCells.filter((cell) => s644Error(cell) > loopFloor);
+  const loopRows = composedRows(SLIDER_LOOP, [loopAxis, dialSamples(SLIDER_LOOP[1].dial, SLIDER_LOOP[1].steps)]);
+  const loopFloor = dialFloatFloor(SLIDER_LOOP);
+  const loopGate = gateDials(SLIDER_LOOP);
+  const loopData = buildDialRig(SLIDER_LOOP);
+  const loopCells = composedSweep(loopData, SLIDER_LOOP, loopRows);
+  const loopOff = loopCells.filter((cell) => composedError(cell) > loopFloor);
   // The other branch, as a model and as a rig: `loop: false` on the same
   // mapping is `Math.max(0, time)` and a held last frame.
   const heldDials = SLIDER_LOOP.map((dial) => ({ ...dial, loop: false }));
-  const asHeld = s644Sweep(loopData, heldDials, loopRows);
-  const heldApart = asHeld.filter((cell) => s644Error(cell) > loopFloor);
-  const plantCells = s644Sweep(s644Build(heldDials), heldDials, loopRows);
-  const plantOff = plantCells.filter((cell) => s644Error(cell) > loopFloor);
+  const asHeld = composedSweep(loopData, heldDials, loopRows);
+  const heldApart = asHeld.filter((cell) => composedError(cell) > loopFloor);
+  const plantCells = composedSweep(buildDialRig(heldDials), heldDials, loopRows);
+  const plantOff = plantCells.filter((cell) => composedError(cell) > loopFloor);
   // The wrap itself: the readings whose time is a whole number of durations.
-  const onTheWrap = loopRows.filter((at) => Number.isInteger(s644Time(at[0], SLIDER_LOOP[0].dial)));
-  const wrapWrong = onTheWrap.filter((at) => s644Share(at[0], SLIDER_LOOP[0]) !== 0);
+  const onTheWrap = loopRows.filter((at) => Number.isInteger(mappedDialTime(at[0], SLIDER_LOOP[0].dial)));
+  const wrapWrong = onTheWrap.filter((at) => dialShare(at[0], SLIDER_LOOP[0]) !== 0);
   const loopSaid: string[] = [
     ...(loopGate.failures.length === 0 && loopGate.passed.includes('A37_SLIDER_CONSTRAINT_EFFECTIVE')
       ? []
       : [`the looping fixture does not gate green: ${loopGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ') || 'A37 did not run on it'}`]),
-    ...loopOff.slice(0, 3).map((cell) => s644Says(SLIDER_LOOP, cell)),
+    ...loopOff.slice(0, 3).map((cell) => composedSays(SLIDER_LOOP, cell)),
     ...(heldApart.length > 0
       ? []
       : ['the held model and the wrapping model agree on every cell of this sweep, so nothing here is on the `loop` branch at all']),
     ...(plantOff.length === 0
       ? []
-      : [`with \`"loop": true\` removed from the rig spec the same sweep is not the held arithmetic either — ${plantOff.length} of ${plantCells.length} cells: ${s644Says(heldDials, s644Worst(plantCells))}`]),
+      : [`with \`"loop": true\` removed from the rig spec the same sweep is not the held arithmetic either — ${plantOff.length} of ${plantCells.length} cells: ${composedSays(heldDials, worstComposedCell(plantCells))}`]),
     ...(onTheWrap.length > 0
       ? []
       : ['no reading of this sweep lands exactly on a whole duration, so the clause below about the unreachable last frame is about no cell']),
@@ -14751,10 +14751,10 @@ function runPathAndSliderSuite(): number {
       loopSaid,
       `${loopAxis.length} x ${dialSamples(SLIDER_LOOP[1].dial, SLIDER_LOOP[1].steps).length} = ${loopCells.length} readings, the looping dial ` +
         `swept from ${loopAxis[0].toFixed(3)}° to ${loopAxis[loopAxis.length - 1].toFixed(3)}° — one duration below its own range and two ` +
-        `above it — against \`((time % duration) + duration) % duration\`: worst ${s644Error(s644Worst(loopCells)).toExponential(3)} ` +
+        `above it — against \`((time % duration) + duration) % duration\`: worst ${composedError(worstComposedCell(loopCells)).toExponential(3)} ` +
         `against a float64 floor of ${loopFloor.toExponential(3)}. The branch is load-bearing on ${heldApart.length} of ` +
         `${loopCells.length} cells, where \`Math.max(0, time)\` and a held last frame would give something else (worst ` +
-        `${s644Error(s644Worst(asHeld)).toExponential(3)}), and removing \`"loop": true\` from the rig spec lands the same sweep ` +
+        `${composedError(worstComposedCell(asHeld)).toExponential(3)}), and removing \`"loop": true\` from the rig spec lands the same sweep ` +
         `on that held arithmetic exactly. ⭐ ${onTheWrap.length} reading(s) put the time on a whole number of durations — the top of ` +
         "the dial among them — and every one of them poses the animation's FIRST frame",
       (count) => `${count} reading(s) of the looping sweep are not the wrap:`,
@@ -14802,20 +14802,20 @@ function runPathAndSliderSuite(): number {
     { name: 'vane', parent: 'root', x: VANE_PLACE.x, y: VANE_PLACE.y, length: 16 },
     { name: 'rider', parent: 'root', x: 0, y: 0, length: 20 },
   ];
-  /** `s644Build` and `s644Gate` one bone list over, for the controls that need a turned dial or a fourth one. */
+  /** `buildDialRig` and `gateDials` one bone list over, for the controls that need a turned dial or a fourth one. */
   const residualBuild = (
     dials: ComposedDial[],
     patches: Array<Record<string, unknown>> = [],
     eased?: string,
   ): SkeletonData =>
     timelinePosable(
-      writeProbeRig({ bones: RESIDUAL_BONES, constraints: dials.map((dial, i) => s644Slider(dial, patches[i] ?? {})) }),
-      s644Motion(dials, eased),
+      writeProbeRig({ bones: RESIDUAL_BONES, constraints: dials.map((dial, i) => dialConstraint(dial, patches[i] ?? {})) }),
+      dialMotion(dials, eased),
     ).data;
   const residualGate = (dials: ComposedDial[]): ReturnType<typeof validate> =>
     gateProbe(
-      writeProbeRig({ bones: RESIDUAL_BONES, constraints: dials.map((dial) => s644Slider(dial)) }),
-      s644Motion(dials),
+      writeProbeRig({ bones: RESIDUAL_BONES, constraints: dials.map((dial) => dialConstraint(dial)) }),
+      dialMotion(dials),
     );
 
   // =========================================================================
@@ -14864,7 +14864,7 @@ function runPathAndSliderSuite(): number {
           0,
         ),
       ),
-    ) + s644FloatFloor(dials);
+    ) + dialFloatFloor(dials);
 
   /**
    * One pair, the axis whose reader folds, and the axis that has to prove the
@@ -14931,37 +14931,37 @@ function runPathAndSliderSuite(): number {
   const residualReaderSays: string[] = [];
   for (const { dials: pair, fold } of WORLD_RESIDUAL_PAIRS) {
     const dials: WorldResidualDial[] = [...pair];
-    const rows = s644Rows(dials);
-    const floor = s644FloatFloor(dials);
+    const rows = composedRows(dials);
+    const floor = dialFloatFloor(dials);
     const bound = residualWorldBound(dials);
     const gate = residualGate(dials);
     const data = residualBuild(dials);
-    const cells = s644Sweep(data, dials, rows);
-    const worst = s644Error(s644Worst(cells));
+    const cells = composedSweep(data, dials, rows);
+    const worst = composedError(worstComposedCell(cells));
     const label = `${pair[0].property} x ${pair[1].property}`;
     // The same two mappings and amplitudes read locally: the lower half of the bound.
     const twin = dials.map((dial) => ({ ...dial, local: true }));
-    const twinWorst = s644Error(s644Worst(s644Sweep(residualBuild(twin), twin, rows)));
+    const twinWorst = composedError(worstComposedCell(composedSweep(residualBuild(twin), twin, rows)));
     // The fold, and the axis that has to refuse the same prediction.
     const displaced = (index: number): number[][] => rows.map((at) => at.map((value, i) => (i === index ? fold.move(value) : value)));
     const readBack = (index: number) => (at: number[]): number[] => at.map((value, i) => (i === index ? fold.back(value) : value));
-    const foldedCells = s644Sweep(data, dials, displaced(fold.folds), undefined, readBack(fold.folds));
-    const controlCells = s644Sweep(data, dials, displaced(fold.control), undefined, readBack(fold.control));
-    const foldedWorst = s644Error(s644Worst(foldedCells));
-    const controlWorst = s644Error(s644Worst(controlCells));
+    const foldedCells = composedSweep(data, dials, displaced(fold.folds), undefined, readBack(fold.folds));
+    const controlCells = composedSweep(data, dials, displaced(fold.control), undefined, readBack(fold.control));
+    const foldedWorst = composedError(worstComposedCell(foldedCells));
+    const controlWorst = composedError(worstComposedCell(controlCells));
     // The plant, data: the later slider left at the format default, which has its
     // own closed form — the same sum with the first dial's weight set to 0.
     const plantData = residualBuild(dials, [{}, { additive: false }]);
-    const plantAsErasing = s644Sweep(plantData, dials, rows, [0, 1]);
-    const plantAsSum = s644Sweep(plantData, dials, rows);
+    const plantAsErasing = composedSweep(plantData, dials, rows, [0, 1]);
+    const plantAsSum = composedSweep(plantData, dials, rows);
     if (gate.failures.length > 0 || !gate.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')) {
       residualReaderRows.push(
         `${label}: the fixture does not gate green, so every cell of it reads a rig the validator refuses: ` +
           `${gate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ') || 'A40 did not run on it'}`,
       );
     }
-    for (const cell of cells.filter((one) => s644Error(one) > bound).slice(0, 3)) {
-      residualReaderRows.push(`${label} — ${s644Says(dials, cell)}, past the ${bound.toExponential(3)} the readers can account for`);
+    for (const cell of cells.filter((one) => composedError(one) > bound).slice(0, 3)) {
+      residualReaderRows.push(`${label} — ${composedSays(dials, cell)}, past the ${bound.toExponential(3)} the readers can account for`);
     }
     if (worst <= floor) {
       residualReaderRows.push(
@@ -14988,13 +14988,13 @@ function runPathAndSliderSuite(): number {
           `${controlWorst.toExponential(3)}, inside the bound — so this pair's fold is not a property of its reader and the clause above names nothing`,
       );
     }
-    if (plantAsErasing.filter((cell) => s644Error(cell) > bound).length > 0) {
+    if (plantAsErasing.filter((cell) => composedError(cell) > bound).length > 0) {
       residualReaderRows.push(
         `${label}: with the later slider at the format default the grid is not the erasing arithmetic either — ` +
-          `${s644Says(dials, s644Worst(plantAsErasing))}`,
+          `${composedSays(dials, worstComposedCell(plantAsErasing))}`,
       );
     }
-    if (plantAsSum.filter((cell) => s644Error(cell) > bound).length === 0) {
+    if (plantAsSum.filter((cell) => composedError(cell) > bound).length === 0) {
       residualReaderRows.push(`${label}: the later slider left at the format default moved no cell, so this comparison is one that plant is blind to`);
     }
     residualReaderSays.push(
@@ -15002,7 +15002,7 @@ function runPathAndSliderSuite(): number {
         `(float64 floor ${floor.toExponential(3)}, the same two mappings read \`local: true\` ${twinWorst.toExponential(3)}); ` +
         `${displaced(fold.folds).length} displaced cell(s) of the \`${pair[fold.folds].property}\` axis read back at ` +
         `${foldedWorst.toExponential(3)} while the same displacement on \`${pair[fold.control].property}\` is ${controlWorst.toExponential(3)} away; ` +
-        `the format default on the later slider moves ${plantAsSum.filter((cell) => s644Error(cell) > bound).length} of ${plantAsSum.length} cells onto the erasing arithmetic`,
+        `the format default on the later slider moves ${plantAsSum.filter((cell) => composedError(cell) > bound).length} of ${plantAsSum.length} cells onto the erasing arithmetic`,
     );
   }
   const residualReadersHeld = residualReaderRows.length === 0;
@@ -15013,7 +15013,7 @@ function runPathAndSliderSuite(): number {
       residualReadersHeld,
       residualReaderRows,
       `${WORLD_RESIDUAL_PAIRS.length} pairs of \`local: false\` dials — the four readers #644 did not reach, two per pair — ` +
-        `each swept at ${s644Rows([...WORLD_RESIDUAL_PAIRS[0].dials]).length} cells of its own two mappings: ${residualReaderSays.join('; ')}. ` +
+        `each swept at ${composedRows([...WORLD_RESIDUAL_PAIRS[0].dials]).length} cells of its own two mappings: ${residualReaderSays.join('; ')}. ` +
         '⇒ the composition is the same closed-form sum, the residue is ONE float32-π term per reader derived from ' +
         '`sinDeg(90)` and `cosDeg(90)`, and what `sqrt` and the `atan2` window do is FOLD the axis rather than bend it — ' +
         'the displaced half is not unreachable, it poses as the half it aliases onto',
@@ -15095,7 +15095,7 @@ function runPathAndSliderSuite(): number {
   ): { data: SkeletonData; report: ReturnType<typeof validate> } => {
     const dirs = writeProbeRig({
       bones: RESIDUAL_BONES,
-      constraints: order.map((dial) => s644Slider(dial, dial === AUTHORITY_DRIVEN ? drivenPatch : {})),
+      constraints: order.map((dial) => dialConstraint(dial, dial === AUTHORITY_DRIVEN ? drivenPatch : {})),
     });
     const motionPath = join(dirs.dir, 'probe.motion.json');
     writeFileSync(motionPath, `${JSON.stringify(authorityMotion(), null, 2)}\n`);
@@ -15113,8 +15113,8 @@ function runPathAndSliderSuite(): number {
     };
   };
   const AUTHORITY_DIALS = [AUTHORITY_DRIVER, AUTHORITY_DRIVEN];
-  const authorityRows = s644Rows(AUTHORITY_DIALS);
-  const authorityFloor = s644FloatFloor(AUTHORITY_DIALS);
+  const authorityRows = composedRows(AUTHORITY_DIALS);
+  const authorityFloor = dialFloatFloor(AUTHORITY_DIALS);
   /**
    * The closed form, with one weight per dial: the driver at 1, the driven at
    * whatever authority it was handed. A plant states its own weights and the
@@ -15126,10 +15126,10 @@ function runPathAndSliderSuite(): number {
   ): Array<{ at: number[]; rotate: number; x: number; wantRotate: number; wantX: number; mix: number }> => {
     const setup = data.findBone('flag')!.setupPose;
     return authorityRows.map((at) => {
-      const skeleton = s644Skeleton(data, AUTHORITY_DIALS, at);
+      const skeleton = skeletonPosedAt(data, AUTHORITY_DIALS, at);
       const flag = skeleton.bones.find((bone) => bone.data.name === 'flag')!.appliedPose;
-      const driver = s644Share(at[0], AUTHORITY_DRIVER);
-      const driven = s644Share(at[1], AUTHORITY_DRIVEN) * drivenWeight(at);
+      const driver = dialShare(at[0], AUTHORITY_DRIVER);
+      const driven = dialShare(at[1], AUTHORITY_DRIVEN) * drivenWeight(at);
       return {
         at,
         rotate: flag.rotation,
@@ -15150,7 +15150,7 @@ function runPathAndSliderSuite(): number {
     `${cell.x.toFixed(6)} and requires ${cell.wantX.toFixed(6)} (driven mix ${cell.mix.toFixed(6)})`;
 
   const declared = authorityRun([AUTHORITY_DRIVER, AUTHORITY_DRIVEN], { mix: 0 });
-  const authorityDeclared = authorityCells(declared.data, (at) => s644Share(at[0], AUTHORITY_DRIVER));
+  const authorityDeclared = authorityCells(declared.data, (at) => dialShare(at[0], AUTHORITY_DRIVER));
   // The array order swapped: the driven slider reads its mix BEFORE the driver
   // writes it, so its own closed form is the driver's contribution alone.
   const swapped = authorityRun([AUTHORITY_DRIVEN, AUTHORITY_DRIVER], { mix: 0 });
@@ -15158,10 +15158,10 @@ function runPathAndSliderSuite(): number {
   // The plant, data: the driven slider's own `mix` left at the format default.
   // Its authority is then `1 + share_driver`, which is not the product.
   const authorityPlant = authorityRun([AUTHORITY_DRIVER, AUTHORITY_DRIVEN], {});
-  const authorityPlanted = authorityCells(authorityPlant.data, (at) => 1 + s644Share(at[0], AUTHORITY_DRIVER));
+  const authorityPlanted = authorityCells(authorityPlant.data, (at) => 1 + dialShare(at[0], AUTHORITY_DRIVER));
   const authorityAsPlain = authorityCells(declared.data, () => 1);
   const authorityMixOff = authorityDeclared.filter(
-    (cell) => Math.abs(cell.mix - s644Share(cell.at[0], AUTHORITY_DRIVER) * AUTHORITY_TOP) > authorityFloor,
+    (cell) => Math.abs(cell.mix - dialShare(cell.at[0], AUTHORITY_DRIVER) * AUTHORITY_TOP) > authorityFloor,
   );
   const authorityProbes: string[] = [
     ...(declared.report.failures.length === 0
@@ -15180,7 +15180,7 @@ function runPathAndSliderSuite(): number {
     ...(authorityOff(authorityPlanted).length === 0
       ? []
       : [`with the driven slider's \`mix\` left at the format default the grid is not \`1 + share\` authority either — ${authoritySays(authorityOff(authorityPlanted)[0])}`]),
-    ...(authorityOff(authorityCells(authorityPlant.data, (at) => s644Share(at[0], AUTHORITY_DRIVER))).length > 0
+    ...(authorityOff(authorityCells(authorityPlant.data, (at) => dialShare(at[0], AUTHORITY_DRIVER))).length > 0
       ? []
       : ['the format default on the driven slider moved no cell, so this comparison is one that plant is blind to']),
   ];
@@ -15258,7 +15258,7 @@ function runPathAndSliderSuite(): number {
     to: number[],
     first: number,
   ): { data: SkeletonData; report: ReturnType<typeof validate> } => {
-    const sliders = TIME_DRIVEN_DIALS.map((dial) => s644Slider(dial));
+    const sliders = TIME_DRIVEN_DIALS.map((dial) => dialConstraint(dial));
     const constraints = place === 'after' ? [...sliders, carriedSlider] : [carriedSlider, ...sliders];
     const dirs = writeProbeRig({ bones: RESIDUAL_BONES, constraints });
     const motionPath = join(dirs.dir, 'probe.motion.json');
@@ -15308,7 +15308,7 @@ function runPathAndSliderSuite(): number {
       }),
     };
   };
-  const timeDrivenRows = s644Rows(TIME_DRIVEN_DIALS);
+  const timeDrivenRows = composedRows(TIME_DRIVEN_DIALS);
   /**
    * 🚨 The float64 floor is not the floor here, and the reason is one the rest
    * of this file has never had to name: `Timeline.frames` is a **Float32Array**
@@ -15336,9 +15336,9 @@ function runPathAndSliderSuite(): number {
   ): Array<{ at: number[]; time: number; rotate: number; x: number; wantRotate: number; wantX: number }> => {
     const setup = data.findBone('flag')!.setupPose;
     return timeDrivenRows.map((at) => {
-      const skeleton = s644Skeleton(data, TIME_DRIVEN_DIALS, at);
+      const skeleton = skeletonPosedAt(data, TIME_DRIVEN_DIALS, at);
       const flag = skeleton.bones.find((bone) => bone.data.name === 'flag')!.appliedPose;
-      const time = TIME_DRIVEN_DIALS.reduce((sum, dial, i) => sum + weights[i] * s644Share(at[i], dial) * to[i], 0);
+      const time = TIME_DRIVEN_DIALS.reduce((sum, dial, i) => sum + weights[i] * dialShare(at[i], dial) * to[i], 0);
       const applied = carriedPose(time, first);
       return {
         at,
@@ -15473,10 +15473,10 @@ function runPathAndSliderSuite(): number {
       skins,
       // The later slider is left at the format default deliberately: if these two
       // ever met, A40 would have something to say, and it says nothing.
-      constraints: [s644Slider(SKIN_DIALS[0], { skin: true }), s644Slider(SKIN_DIALS[1], { skin: true, additive: false })],
+      constraints: [dialConstraint(SKIN_DIALS[0], { skin: true }), dialConstraint(SKIN_DIALS[1], { skin: true, additive: false })],
     });
     const motionPath = join(dirs.dir, 'probe.motion.json');
-    writeFileSync(motionPath, `${JSON.stringify(s644Motion(SKIN_DIALS), null, 2)}\n`);
+    writeFileSync(motionPath, `${JSON.stringify(dialMotion(SKIN_DIALS), null, 2)}\n`);
     const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
     return {
       data: posableFromText(built.skeletonText, built.atlasText, dirs.outDir).data,
@@ -15490,20 +15490,20 @@ function runPathAndSliderSuite(): number {
       }),
     };
   };
-  const skinRows = s644Rows(SKIN_DIALS);
-  const skinFloor = s644FloatFloor(SKIN_DIALS);
-  /** The same sweep `s644Sweep` takes, with a skin chosen first and one weight per dial. */
-  const skinSweep = (data: SkeletonData, skin: string, weights: number[]): S644Cell[] => {
+  const skinRows = composedRows(SKIN_DIALS);
+  const skinFloor = dialFloatFloor(SKIN_DIALS);
+  /** The same sweep `composedSweep` takes, with a skin chosen first and one weight per dial. */
+  const skinSweep = (data: SkeletonData, skin: string, weights: number[]): ComposedCell[] => {
     const setup = data.findBone('flag')!.setupPose;
     return skinRows.map((at) => {
       const skeleton = new Skeleton(data);
       skeleton.setSkin(skin);
       skeleton.setupPose();
-      for (const [i, dial] of SKIN_DIALS.entries()) s644SetDial(skeleton, dial.bone, dial.property, at[i]);
+      for (const [i, dial] of SKIN_DIALS.entries()) poseDialProperty(skeleton, dial.bone, dial.property, at[i]);
       skeleton.update(0);
       skeleton.updateWorldTransform(Physics.update);
       const flag = skeleton.bones.find((bone) => bone.data.name === 'flag')!.appliedPose;
-      const share = SKIN_DIALS.map((dial, i) => weights[i] * s644Share(at[i], dial));
+      const share = SKIN_DIALS.map((dial, i) => weights[i] * dialShare(at[i], dial));
       return {
         at,
         rotate: flag.rotation,
@@ -15529,12 +15529,12 @@ function runPathAndSliderSuite(): number {
       : ['A40 did not RUN on the disjoint rig, so its silence there is an absence rather than a comparison']),
     ...SKIN_EXPECTED.flatMap(([skin, weights]) => {
       const cells = skinSweep(apart.data, skin, weights);
-      const off = cells.filter((cell) => s644Error(cell) > skinFloor);
-      return off.length === 0 ? [] : [`skin "${skin}" — ${off.length} of ${cells.length} cells: ${s644Says(SKIN_DIALS, s644Worst(cells))}`];
+      const off = cells.filter((cell) => composedError(cell) > skinFloor);
+      return off.length === 0 ? [] : [`skin "${skin}" — ${off.length} of ${cells.length} cells: ${composedSays(SKIN_DIALS, worstComposedCell(cells))}`];
     }),
     // The vacuity clause: two dials that posed the same would make every reading
     // above true whichever slider the skin switched on.
-    ...(skinSweep(apart.data, 'calm', [0, 1]).filter((cell) => s644Error(cell) > skinFloor).length > 0
+    ...(skinSweep(apart.data, 'calm', [0, 1]).filter((cell) => composedError(cell) > skinFloor).length > 0
       ? []
       : ['the two dials pose identically on this grid, so "the skin decides which one runs" is a sentence about nothing']),
     ...(together.report.failures.some((one) => one.assertion === 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')
@@ -15543,7 +15543,7 @@ function runPathAndSliderSuite(): number {
           'the same two sliders listed in ONE skin are not refused by A40, so the exclusion above is not what is keeping it quiet — it said ' +
             `[${together.report.failures.map((f) => f.assertion).join(', ') || 'nothing'}]`,
         ]),
-    ...(skinSweep(together.data, 'calm', [0, 1]).filter((cell) => s644Error(cell) > skinFloor).length === 0
+    ...(skinSweep(together.data, 'calm', [0, 1]).filter((cell) => composedError(cell) > skinFloor).length === 0
       ? []
       : ['under the skin that lists both, the pose is not the later slider alone either, so the refusal and the pose disagree']),
   ];
@@ -15594,32 +15594,32 @@ function runPathAndSliderSuite(): number {
     { name: 'roll', bone: 'roll-dial', property: 'rotate', dial: { from: 10, to: 0, scale: 0.005 }, rotate: SLIDER_ROLL_ROTATE, x: SLIDER_ROLL_X, steps: 6 },
     { name: 'breath', bone: 'breath-dial', property: 'rotate', dial: { from: -8, to: 0, scale: 0.04 }, rotate: QUAD_BREATH_ROTATE, x: QUAD_BREATH_X, steps: 7 },
   ];
-  const quadFloor = s644FloatFloor(QUAD_DIALS);
-  const quadRows = s644Rows(QUAD_DIALS);
+  const quadFloor = dialFloatFloor(QUAD_DIALS);
+  const quadRows = composedRows(QUAD_DIALS);
   const quadAxes = QUAD_DIALS.map((dial) => dialSamples(dial.dial, dial.steps));
-  const quadCorner = (cell: S644Cell): boolean =>
+  const quadCorner = (cell: ComposedCell): boolean =>
     cell.at.every((value, i) => value === quadAxes[i][0] || value === quadAxes[i][quadAxes[i].length - 1]);
   const quadGate = residualGate(QUAD_DIALS);
-  const quadCells = s644Sweep(residualBuild(QUAD_DIALS), QUAD_DIALS, quadRows);
-  const quadOff = quadCells.filter((cell) => s644Error(cell) > quadFloor);
+  const quadCells = composedSweep(residualBuild(QUAD_DIALS), QUAD_DIALS, quadRows);
+  const quadOff = quadCells.filter((cell) => composedError(cell) > quadFloor);
   const quadMiddleData = residualBuild(QUAD_DIALS, [{}, { additive: false }, {}, {}]);
-  const quadAsErasing = s644Sweep(quadMiddleData, QUAD_DIALS, quadRows, [0, 1, 1, 1]);
-  const quadAsSum = s644Sweep(quadMiddleData, QUAD_DIALS, quadRows);
-  const quadEased = s644Sweep(residualBuild(QUAD_DIALS, [], 'roll'), QUAD_DIALS, quadRows);
-  const quadEasedMoved = quadEased.filter((cell) => s644Error(cell) > quadFloor);
+  const quadAsErasing = composedSweep(quadMiddleData, QUAD_DIALS, quadRows, [0, 1, 1, 1]);
+  const quadAsSum = composedSweep(quadMiddleData, QUAD_DIALS, quadRows);
+  const quadEased = composedSweep(residualBuild(QUAD_DIALS, [], 'roll'), QUAD_DIALS, quadRows);
+  const quadEasedMoved = quadEased.filter((cell) => composedError(cell) > quadFloor);
   const quadCorners = quadRows.filter((at) => at.every((value, i) => value === quadAxes[i][0] || value === quadAxes[i][quadAxes[i].length - 1]));
   const quadProbes: string[] = [
     ...(quadGate.failures.length === 0 && quadGate.passed.includes('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET')
       ? []
       : [`the four-dial fixture does not gate green: ${quadGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ') || 'A40 did not run on it'}`]),
-    ...quadOff.slice(0, 3).map((cell) => s644Says(QUAD_DIALS, cell)),
-    ...(quadAsErasing.filter((cell) => s644Error(cell) > quadFloor).length === 0
+    ...quadOff.slice(0, 3).map((cell) => composedSays(QUAD_DIALS, cell)),
+    ...(quadAsErasing.filter((cell) => composedError(cell) > quadFloor).length === 0
       ? []
       : [
           `with the slider at index 1 at the format default the grid is not the erasing arithmetic either — ` +
-            `${quadAsErasing.filter((cell) => s644Error(cell) > quadFloor).length} of ${quadAsErasing.length} cells: ${s644Says(QUAD_DIALS, s644Worst(quadAsErasing))}`,
+            `${quadAsErasing.filter((cell) => composedError(cell) > quadFloor).length} of ${quadAsErasing.length} cells: ${composedSays(QUAD_DIALS, worstComposedCell(quadAsErasing))}`,
         ]),
-    ...(quadAsSum.filter((cell) => s644Error(cell) > quadFloor).length > 0
+    ...(quadAsSum.filter((cell) => composedError(cell) > quadFloor).length > 0
       ? []
       : ['the slider at index 1 left at the format default moved no cell, so this comparison is one that plant is blind to']),
     ...(quadEasedMoved.length > 0
@@ -15638,11 +15638,11 @@ function runPathAndSliderSuite(): number {
       quadProbes,
       `${quadAxes.map((axis) => axis.length).join(' x ')} = ${quadCells.length} readings of four dials, each from the bottom of ` +
         `its own mapping to the top: flag rotate and flag x are the closed-form sum at every one of them, worst ` +
-        `${s644Error(s644Worst(quadCells)).toExponential(3)} against a float64 floor of ${quadFloor.toExponential(3)} and a ` +
-        `six-decimal emit bound of ${s644EmitBound(QUAD_DIALS).toExponential(3)}. The two plants: the slider at index 1 at the format ` +
-        `default moves ${quadAsSum.filter((cell) => s644Error(cell) > quadFloor).length} of ${quadAsSum.length} cells away from the sum and lands on the ` +
+        `${composedError(worstComposedCell(quadCells)).toExponential(3)} against a float64 floor of ${quadFloor.toExponential(3)} and a ` +
+        `six-decimal emit bound of ${dialEmitBound(QUAD_DIALS).toExponential(3)}. The two plants: the slider at index 1 at the format ` +
+        `default moves ${quadAsSum.filter((cell) => composedError(cell) > quadFloor).length} of ${quadAsSum.length} cells away from the sum and lands on the ` +
         `erasing arithmetic — the first dial dead, the third and fourth still adding — to ` +
-        `${s644Error(s644Worst(quadAsErasing)).toExponential(3)}; an \`"ease": "${GRID_EASE}"\` on the third dial's animation moves ` +
+        `${composedError(worstComposedCell(quadAsErasing)).toExponential(3)}; an \`"ease": "${GRID_EASE}"\` on the third dial's animation moves ` +
         `${quadEasedMoved.length} of ${quadEased.length} cells and ${quadEasedMoved.filter(quadCorner).length} of the grid's ${quadCorners.length} corners`,
       (count) => `${count} reading(s) of the four-dial grid are not the arithmetic:`,
     ),
@@ -15685,7 +15685,7 @@ function runPathAndSliderSuite(): number {
   // left at the format default every observable spelling collapses to that
   // slider alone.
   type VaneField = 'rotation' | 'x' | 'y' | 'scaleX' | 'scaleY' | 'shearX' | 'shearY';
-  interface SpellingCase extends S644Kind {
+  interface SpellingCase extends SharedTargetKind {
     /** The spelling as a motion spec writes it. */
     spelling: string;
     /** False when a slider-applied timeline leaves nothing a pose can read back. */
@@ -15707,7 +15707,7 @@ function runPathAndSliderSuite(): number {
    */
   const keyedNumbers = (kind: SpellingCase): number[] => kind.keyed ?? [...kind.setup, ...kind.alone(0, 1), ...kind.alone(1, 1)];
   const spellingFloor = (kind: SpellingCase): number =>
-    s644KindFloor(kind) +
+    kindFloatFloor(kind) +
     2 * SLIDER_KIND_DIALS.length * Math.max(0, ...keyedNumbers(kind).map((one) => Math.abs(Math.fround(one) - one)));
   const vaneRead = (fields: VaneField[]) => (skeleton: Skeleton): number[] => {
     const pose = skeleton.bones.find((bone) => bone.data.name === 'vane')!.appliedPose;
@@ -15889,7 +15889,7 @@ function runPathAndSliderSuite(): number {
     },
   ];
 
-  /** `s644KindRun` with one more seat: constraints that have to sit after the dials. */
+  /** `compileKindRig` with one more seat: constraints that have to sit after the dials. */
   const spellingRun = (
     kind: SpellingCase,
     patches: Array<Record<string, unknown>> = [],
@@ -15898,7 +15898,7 @@ function runPathAndSliderSuite(): number {
       bones: SLIDER_KIND_BONES,
       ...kind.rig,
       constraints: [
-        ...SLIDER_KIND_DIALS.map((dial, seat) => s644Slider(dial, patches[seat] ?? {})),
+        ...SLIDER_KIND_DIALS.map((dial, seat) => dialConstraint(dial, patches[seat] ?? {})),
         ...kind.after,
       ],
     });
@@ -15939,14 +15939,14 @@ function runPathAndSliderSuite(): number {
     let sum = 0;
     let later = 0;
     let apart = 0;
-    for (const at of s644KindRows) {
-      const shares = s644Shares(at);
-      const got = kind.read(s644Skeleton(data, SLIDER_KIND_DIALS, at));
+    for (const at of kindGridRows) {
+      const shares = kindShares(at);
+      const got = kind.read(skeletonPosedAt(data, SLIDER_KIND_DIALS, at));
       const asSum = kind.setup.map((base, i) => base + (kind.alone(0, shares[0])[i] - base) + (kind.alone(1, shares[1])[i] - base));
       const asLater = kind.alone(1, shares[1]);
-      sum = Math.max(sum, s644Apart(got, asSum));
-      later = Math.max(later, s644Apart(got, asLater));
-      apart = Math.max(apart, s644Apart(asSum, asLater));
+      sum = Math.max(sum, maxApart(got, asSum));
+      later = Math.max(later, maxApart(got, asLater));
+      apart = Math.max(apart, maxApart(asSum, asLater));
     }
     if (sum <= floor) return { rule: 'the sum', worst: sum, apart };
     if (later <= floor) return { rule: 'the later slider alone', worst: later, apart };
@@ -16008,7 +16008,7 @@ function runPathAndSliderSuite(): number {
       censusHeld,
       censusRows,
       `${SPELLING_CENSUS.length} spellings, each compiled under two additive sliders keying it to two different values and read at ` +
-        `${s644KindRows.length} cells of the two dials — and every constraint one of them declares is declared AFTER the dials, which ` +
+        `${kindGridRows.length} cells of the two dials — and every constraint one of them declares is declared AFTER the dials, which ` +
         `is the only order in which that constraint READS what they wrote (#665: ` +
         `${SPELLING_CENSUS.filter((one) => one.after.length > 0).length} rows declare a constraint of their own, and the ` +
         `${SPELLING_CENSUS.filter((one) => one.after.some((entry) => String(entry.type) !== 'slider')).length} whose constraint is not ` +
@@ -16670,7 +16670,7 @@ function runPathAndSliderSuite(): number {
   };
   const declaredTravel = drivenTravel(authorityDeclared);
   const swappedTravel = drivenTravel(authoritySwapped);
-  const unkeyedPair = s644Gate(AUTHORITY_DIALS);
+  const unkeyedPair = gateDials(AUTHORITY_DIALS);
   const unkeyedSkip = unkeyedPair.skipped.find((one) => one.assertion === DRIVEN_RULE);
   const timeStored = Math.max(...timeAsDead.map((cell) => Math.abs(cell.time)));
   const orderProbes: string[] = [
@@ -16754,7 +16754,7 @@ function runPathAndSliderSuite(): number {
   ): { data: SkeletonData; report: ReturnType<typeof validate> } => {
     const dirs = writeProbeRig({
       bones: RESIDUAL_BONES,
-      constraints: order.map((dial) => s644Slider(dial, dial === patched ? patch : {})),
+      constraints: order.map((dial) => dialConstraint(dial, dial === patched ? patch : {})),
     });
     const motionPath = join(dirs.dir, 'probe.motion.json');
     writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
@@ -17016,7 +17016,7 @@ function runPathAndSliderSuite(): number {
     const dirs = writeProbeRig({
       bones: RESIDUAL_BONES,
       ...(kind.rig ?? {}),
-      constraints: constraintFirst ? [constraint, s644Slider(DRIVEN_DIAL)] : [s644Slider(DRIVEN_DIAL), constraint],
+      constraints: constraintFirst ? [constraint, dialConstraint(DRIVEN_DIAL)] : [dialConstraint(DRIVEN_DIAL), constraint],
     });
     const motionPath = join(dirs.dir, 'probe.motion.json');
     writeFileSync(
@@ -17044,7 +17044,7 @@ function runPathAndSliderSuite(): number {
     drivenReadings.map((at) => {
       const skeleton = new Skeleton(data);
       skeleton.setupPose();
-      s644SetDial(skeleton, DRIVEN_DIAL.bone, DRIVEN_DIAL.property, at);
+      poseDialProperty(skeleton, DRIVEN_DIAL.bone, DRIVEN_DIAL.property, at);
       for (let frame = 0; frame < kind.frames; frame++) {
         skeleton.update(1 / 60);
         skeleton.updateWorldTransform(Physics.update);
@@ -17052,7 +17052,7 @@ function runPathAndSliderSuite(): number {
       return { at, pose: kind.pose(skeleton), drives: kind.drives(skeleton) };
     });
   const drivenSpan = (values: number[]): number => Math.max(...values) - Math.min(...values);
-  /** `s644KindFloor`'s own derivation, taken off the readings a sweep produced rather than off a dial's amplitudes. */
+  /** `kindFloatFloor`'s own derivation, taken off the readings a sweep produced rather than off a dial's amplitudes. */
   const drivenFloorOf = (values: number[]): number => Math.max(1, ...values.map((one) => Math.abs(one))) * Number.EPSILON * GRID_FLOAT_OPS;
   const drivenRows: string[] = [];
   const drivenSays: string[] = [];
@@ -17151,7 +17151,7 @@ function runPathAndSliderSuite(): number {
   const resetRun = (keyed: boolean, constraintFirst: boolean): { data: SkeletonData; report: ReturnType<typeof validate> } => {
     const dirs = writeProbeRig({
       bones: RESIDUAL_BONES,
-      constraints: constraintFirst ? [JIGGLE, s644Slider(DRIVEN_DIAL)] : [s644Slider(DRIVEN_DIAL), JIGGLE],
+      constraints: constraintFirst ? [JIGGLE, dialConstraint(DRIVEN_DIAL)] : [dialConstraint(DRIVEN_DIAL), JIGGLE],
     });
     const motionPath = join(dirs.dir, 'probe.motion.json');
     writeFileSync(
@@ -17188,7 +17188,7 @@ function runPathAndSliderSuite(): number {
       const skeleton = new Skeleton(data);
       skeleton.setupPose();
       for (let frame = 0; frame < RESET_FRAMES; frame++) {
-        s644SetDial(skeleton, DRIVEN_DIAL.bone, DRIVEN_DIAL.property, (at * (frame + 1)) / RESET_FRAMES);
+        poseDialProperty(skeleton, DRIVEN_DIAL.bone, DRIVEN_DIAL.property, (at * (frame + 1)) / RESET_FRAMES);
         skeleton.update(1 / 60);
         skeleton.updateWorldTransform(mode);
       }
@@ -17293,7 +17293,7 @@ function runPathAndSliderSuite(): number {
     const jiggle = { ...JIGGLE, ...(windGlobal ? { windGlobal: true } : {}) };
     const dirs = writeProbeRig({
       bones: RESIDUAL_BONES,
-      constraints: constraintFirst ? [jiggle, s644Slider(DRIVEN_DIAL)] : [s644Slider(DRIVEN_DIAL), jiggle],
+      constraints: constraintFirst ? [jiggle, dialConstraint(DRIVEN_DIAL)] : [dialConstraint(DRIVEN_DIAL), jiggle],
     });
     const motionPath = join(dirs.dir, 'probe.motion.json');
     writeFileSync(
@@ -17357,7 +17357,7 @@ function runPathAndSliderSuite(): number {
   const globalSpelling = (() => {
     try {
       drivenRun(DRIVEN_KINDS[3], true, { name: 'jiggle' });
-      const dirs = writeProbeRig({ bones: RESIDUAL_BONES, constraints: [JIGGLE, s644Slider(DRIVEN_DIAL)] });
+      const dirs = writeProbeRig({ bones: RESIDUAL_BONES, constraints: [JIGGLE, dialConstraint(DRIVEN_DIAL)] });
       const motionPath = join(dirs.dir, 'probe.motion.json');
       writeFileSync(
         motionPath,
