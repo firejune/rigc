@@ -364,6 +364,46 @@ export function buildRingMesh(input: MeshSpecInput): MeshGeometry {
 }
 
 /**
+ * The angles `buildRingMesh` splits a ring's authority by, measured from where
+ * the rig actually put each control bone.
+ *
+ * ⚠️ It is a function because it was a copy, and only one of the two callers had
+ * it (issue #684). The manifest route measured these angles; the rig-spec route
+ * passed none, so `controlAngles ?? [0]` collapsed the split and a rig naming two
+ * grips got the single-bone geometry — the second bone on the `MESH` line, bound
+ * by no vertex, and the whole gate green. What the two routes still do for
+ * themselves is turn a bone's WORLD position into the part-local pixels this ring
+ * is built in, because that is the part that genuinely differs: a manifest has a
+ * crop to flip against, and a rig spec centres the window on its own slot bone.
+ * Everything from the subtraction on is here.
+ *
+ * `positionOf` is a callback rather than an array so that the single-control rule
+ * below is the only thing that decides whether a position is needed at all.
+ *
+ * One control needs no angle: it owns the whole ring, and a face rig deliberately
+ * puts it ON the aperture centre, where a radial direction does not exist. That
+ * is `undefined` rather than `[0]`, so the single-bone path stays byte for byte
+ * what it was — and it is why the refusal below cannot fire on a ring with one
+ * control, whose bone is *expected* to sit there.
+ */
+export function ringControlAngles(
+  controls: readonly string[],
+  center: readonly [number, number],
+  positionOf: (name: string) => readonly [number, number],
+): number[] | undefined {
+  if (controls.length <= 1) return undefined;
+  return controls.map((name) => {
+    const [x, y] = positionOf(name);
+    const dx = x - center[0];
+    const dy = y - center[1];
+    if (Math.hypot(dx, dy) < 1e-6) {
+      throw new MeshError(`control bone "${name}" sits on the aperture centre, so it has no radial direction`);
+    }
+    return (Math.atan2(dy, dx) * 180) / Math.PI;
+  });
+}
+
+/**
  * Build a ribbon strip.
  *
  * Vertices run in PERIMETER order — left side entry-to-tip, then right side

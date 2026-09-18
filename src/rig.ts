@@ -419,7 +419,11 @@ export interface RigRingGenerator {
   size: [number, number];
   /** Directional authority across an axis — see `sideWeight` in mesh.ts. */
   bias?: RigMeshBias;
-  /** Control bones, by name. More than one splits the ring by angle. */
+  /**
+   * Control bones, by name. More than one splits the ring by angle, and the
+   * angle of each is measured from where the rig put that bone relative to
+   * `center` — never stated here, so the split cannot drift from the skeleton.
+   */
   controls: string[];
 }
 

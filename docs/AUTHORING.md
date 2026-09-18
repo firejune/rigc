@@ -1213,7 +1213,7 @@ ends, so the deformation dies into the pinned rim instead of creasing against it
 | `inner` | **required.** Where the moving ring sits between the centre (`0`) and the hull (`1`), strictly inside that interval. No default: a ring with no number here is refused, not centred |
 | `size` | **required.** The part window, `[w, h]` in pixels, which the UVs and the emitted `width`/`height` are taken from |
 | `bias` | optional; absent means authority is radial only. `{ "axis_deg": <screen degrees, y down>, "ramp": [d0, d1] }` — a line through `center` at that angle, with control authority 0 on its negative side and 1 on its positive side, smoothstepped across the signed distances `d0 < d1`. It is what lets a mouth open downward with the upper lip left pinned |
-| `controls` | **required.** The control bones, by name, at least one. Each must be a bone the rig declares |
+| `controls` | **required.** The control bones, by name, at least one. Each must be a bone the rig declares. **More than one splits the ring by angle**, and the angle of each is measured from where the rig put that bone relative to `center` — so the split is a consequence of the skeleton and never a number you write here |
 
 ⚠️ **`size` is stated here, not measured.** A `contour` and a `grid` take the
 window off the attachment's own `image`; a `ring` and a `ribbon` are built from
@@ -1223,17 +1223,24 @@ drawing — measured: a 240x240 part declared `"size": [64, 64]` builds green un
 `--profile spine-html`. That is R1 rather than a gap: the compiler emits the
 number the spec states and does not re-measure a plate to overrule it.
 
-🚨 **On this route the FIRST control bone is the only one that moves the mesh.**
-Splitting a ring's authority between several grips needs each bone's angle about
-the aperture centre, and rigc measures that from where the rig put the bone — on
-the **manifest** route, which is the one that has a crop to measure in. A rig spec
-that lists two gets the single-bone geometry instead: `controls[0]` takes the
-whole of the control authority, the second name is still printed on the `MESH`
-line, and the gate is green. Measured on a two-control ring — 25 vertices, 40
-triangles, report line `bones=[box, grip_a, grip_b]`, and the emitted weighted run
-binds two bone indices, the slot bone and `grip_a`. Until that is closed, write
-one `controls` entry on this route and reach for the manifest when a ring needs
-several grips.
+⭐ **Several grips split the ring by where the rig put them, on this route as on
+the manifest one.** Each control bone's angle about `center` is measured from its
+own rest position — the window is centred on the slot bone (the ⭐ above), so a
+bone sitting below the aperture owns the arc below it — and authority is
+smoothstepped between the two bones either side of a vertex, so no grip creases
+against the next. Measured on a two-control ring whose grips sit 12px above and
+below the centre: 25 vertices, both grips bound, and of the 8 shared vertices off
+the centre line all 8 take more weight from the grip on their own side. Splitting
+**moves** authority rather than adding it: every vertex gives its controls the
+same total with one grip, two or three.
+
+⚠️ **This route used to bind only the first name**
+([#684](https://github.com/firejune/rigc/issues/684)). It passed no angles at all,
+so the split collapsed onto `controls[0]` and the rest of the names reached the
+`MESH` line, the bone list and nothing else — and the gate was green, because a
+bone no vertex binds is in no weight, no sum and no index. `A20_MESH_WEIGHTS_COHERENT`
+now names it, so a ring that declares a grip and does not use it is a failure
+rather than a quiet stiffness.
 
 **Stated limits, each a named refusal rather than a mesh that loads wrong:**
 
@@ -1245,6 +1252,8 @@ several grips.
 | a hull the centre cannot see all of | `hull is not star-shaped about the aperture centre; the inner ring would fold` — the inner ring is the hull scaled toward `center`, so an edge hidden from it crosses the rim and renders as folded meat |
 | a `bias` ramp that does not increase | `bias ramp must increase, got [16, 4]` |
 | a control bone the rig does not declare | `mesh bone "nobody" is not in the rig's bone list` |
+| two or more `controls`, one of them ON `center` | `control bone "iris_aperture" sits on the aperture centre, so it has no radial direction` — the position a lone control is supposed to occupy is the one position a split cannot use. With a single control it is never asked, so this refusal cannot fire on one |
+| two `controls` at the same angle about `center` | `two control bones share the angle 90 degrees about the aperture centre` — further out is not elsewhere: the arc between them is empty and one of them would bind nothing |
 
 #### `ribbon` — a strip of cross rows riding a bone chain
 
@@ -4545,7 +4554,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A17_ATLAS_PAGE_FILES_EXIST` | both | a page the atlas declares is not a file. Check `--images` and `--out`. **SKIP** when the atlas declares no page ([#580](https://github.com/firejune/rigc/issues/580)) — as it is for `A06`, `A19` and `A27`; see `A07` ([#608](https://github.com/firejune/rigc/issues/608)) |
 | `A18_DETERMINISTIC_EMIT` | both | a second compile of the same inputs differed. That is a compiler bug, not a spec bug — report it |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | an overlay part image can never be transparent: no alpha channel (colour type 4 or 6) and no `tRNS` chunk either, so it would paint a solid rectangle over what is behind it. Re-export it as RGBA, or as an indexed / greyscale PNG that keeps its `tRNS`. Only the full-stage base plate may be opaque. Indexed-with-`tRNS` — the usual output of ImageMagick, "Export as PNG-8", GIMP's indexed mode, aseprite and pngquant — **passes**: it is transparent art. On a **shared** page the question is asked per REGION over the decoded page rather than per file, because a packed page's own file all but always declares transparency — its gutter is transparent — and the file-level question would then be answered by the packing rather than by the art ([#266](https://github.com/firejune/rigc/issues/266)) **SKIP** when the atlas declares no page ([#580](https://github.com/firejune/rigc/issues/580)) |
-| `A20_MESH_WEIGHTS_COHERENT` | both ◑ | a weighted vertex with no bone, a negative weight, a bone index out of range, or weights that do not sum to 1. Under `spine-html` also: an unweighted mesh, or a binding at weight 0. **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
+| `A20_MESH_WEIGHTS_COHERENT` | both ◑ | a weighted vertex with no bone, a negative weight, a bone index out of range, or weights that do not sum to 1. Under `spine-html` also: an unweighted mesh, a binding at weight 0, or **a bone the mesh declares that no vertex binds** — `mesh "x" declares bone "grip_b" and none of its 25 vertices binds it; the weights reference "box", "grip_a"`. Those three are one sentence about rigc's own generators: the bone set a generated mesh declares is the bone set its weights reference, so a `controls` or `chain` name that moves nothing is a defect where a foreign mesh's is not ([#684](https://github.com/firejune/rigc/issues/684)). Fix the rig spec's `controls`/`chain`, or the manifest's `control_bones`. **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A21_MESH_RIM_PINNED` | archetype | a generated ring's rim, a ribbon's entry row, or a contour's outline (which is all of it) is not pinned to its anchor bone at weight 1 |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | a mesh UV outside its region, or a UV array that disagrees with the vertex count. **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | a physics constraint that drives no component, is muted by `mix: 0`, has `mass: 0`, has `strength: 0`, or has `damping` outside `(0, 1)` so it never settles — **at rest, and on every physics timeline key** ([#610](https://github.com/firejune/rigc/issues/610)). The timeline arm reads each key through the runtime's own `PhysicsConstraint*Timeline.set`, so a keyed `mass` is judged as the `massInverse` it becomes, and the detail names the animation, the constraint, the key time, the value and the bound. One difference between the two arms, and the runtime is the reason for it: a **key** of `mix: 0` is accepted, because `update` opens with `if (mix === 0) return;` and muting a constraint for a stretch is what a mix timeline is for — the editor's own `sack-pro` example keys it there on 24 of its 36 mix keys. `inertia`, `wind`, `gravity` and the top of `mix` are bounded nowhere, at rest or keyed. **SKIP** when the skeleton declares no physics constraint ([#580](https://github.com/firejune/rigc/issues/580)) — the same sentence `A36` and `A37` have always printed for their own constraint types |

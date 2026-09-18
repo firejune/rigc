@@ -2073,6 +2073,38 @@ export function validate(input: ValidateInput): ValidateReport {
             fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" vertex ${i} weights sum to ${sum.toFixed(4)}`);
           }
         });
+        // 📐 PROFILE, and the converse of the weight-0 branch above: that one
+        // says a generated mesh binds only bones that MOVE it, and this one says
+        // every bone it declares moves it. They are halves of one sentence — the
+        // bone set the mesh declares is the bone set its weights reference — so
+        // they are one assertion rather than two, and neither is a fact about
+        // Spine: a declared bone nothing binds loads and renders perfectly.
+        //
+        // 🚨 It is the one mesh question a vertex cannot answer, which is why
+        // every per-vertex rule above was green on the ring that raised it: a
+        // rig-spec ring naming two grips bound one of them, and the absent bone
+        // appears in no vertex, in no sum and in no index (issue #684). The
+        // declaration comes from the compiler's own record of what it bound,
+        // which is what the `MESH` report line prints.
+        if (policy && generated && input.rig) {
+          const slot = slotOfAttachment(mesh);
+          const declared = (slot && input.rig.meshDeclaredBones[slot]) || [];
+          const bound = new Set<string>();
+          for (const vertex of perVertex) {
+            for (const { bone } of vertex) {
+              const named = data.bones[bone];
+              if (named) bound.add(named.name);
+            }
+          }
+          for (const name of declared) {
+            if (bound.has(name)) continue;
+            fail(
+              'A20_MESH_WEIGHTS_COHERENT',
+              `mesh "${mesh.name}" declares bone "${name}" and none of its ${perVertex.length} vertices binds it; ` +
+                `the weights reference ${[...bound].map((n) => `"${n}"`).join(', ')}`,
+            );
+          }
+        }
       }
     });
 

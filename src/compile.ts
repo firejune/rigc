@@ -76,6 +76,7 @@ import {
   measureAuthoredMeshFit,
   meshEdges,
   MeshError,
+  ringControlAngles,
   traceOutline,
   type MeshBoneRef,
   type MeshFitReport,
@@ -3903,13 +3904,31 @@ function buildGeneratedMesh(
   if (generator.kind === 'contour') return buildContourAttachment(att, generator, placeholder, where, ctx);
   if (generator.kind === 'grid') return buildGridAttachment(att, generator, placeholder, where, ctx);
   const controls = generator.kind === 'ring' ? generator.controls : generator.chain;
-  const refFor = (name: string): MeshBoneRef => {
+  // Resolving the bone list and the setup transform is one step with two named
+  // refusals, because the ring's control angles need the transform and the encode
+  // needs the index — and the two must refuse a bone the rig lacks in the same
+  // words whichever of them asks for it first.
+  const resolve = (name: string): { index: number; transform: BoneTransform } => {
     const index = ctx.bones.findIndex((b) => b.name === name);
     if (index < 0) throw new CompileError(`${where}: mesh bone "${name}" is not in the rig's bone list`);
-    const m = ctx.transforms.get(name);
-    if (!m) throw new CompileError(`${where}: no setup transform for mesh bone "${name}"`);
-    return { index, toBind: (wx, wy) => toBoneLocal(m, wx, wy) };
+    const transform = ctx.transforms.get(name);
+    if (!transform) throw new CompileError(`${where}: no setup transform for mesh bone "${name}"`);
+    return { index, transform };
   };
+  const refFor = (name: string): MeshBoneRef => {
+    const { index, transform } = resolve(name);
+    return { index, toBind: (wx, wy) => toBoneLocal(transform, wx, wy) };
+  };
+  // The generator works in part-local pixels, y down. Without a manifest there is
+  // no crop to flip against, so the part window is centred on its own slot bone.
+  // `place` is that placement and `toPartLocal` is its inverse — which is the
+  // conversion a control bone's own position has to come back through before its
+  // angle about the aperture means anything (issue #684).
+  const [w, h] = generator.size;
+  const anchor = ctx.transforms.get(ctx.anchorBone);
+  if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  const place = (px: number, py: number): [number, number] => [anchor.worldX + px - w / 2, anchor.worldY + h / 2 - py];
+  const toPartLocal = (wx: number, wy: number): [number, number] => [wx - anchor.worldX + w / 2, anchor.worldY + h / 2 - wy];
   let geometry;
   try {
     geometry =
@@ -3921,19 +3940,21 @@ function buildGeneratedMesh(
             inner: generator.inner,
             size: generator.size,
             bias: generator.bias,
+            controlAngles: ringControlAngles(controls, generator.center, (name) => {
+              const { transform } = resolve(name);
+              return toPartLocal(transform.worldX, transform.worldY);
+            }),
           });
   } catch (err) {
     if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
     throw err;
   }
-  // The generator works in part-local pixels, y down. Without a manifest there is
-  // no crop to flip against, so the part window is centred on its own slot bone.
-  const [w, h] = generator.size;
-  const anchor = ctx.transforms.get(ctx.anchorBone);
-  if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
   const vertices = encodeWeightedVertices(
     geometry,
-    (px, py) => [r6(anchor.worldX + px - w / 2), r6(anchor.worldY + h / 2 - py)],
+    (px, py) => {
+      const [wx, wy] = place(px, py);
+      return [r6(wx), r6(wy)];
+    },
     { anchor: refFor(ctx.anchorBone), controls: controls.map(refFor) },
   );
   ctx.meshBones.add(ctx.anchorBone);
@@ -5225,6 +5246,8 @@ function buildRigInfo(
   }
   const meshKinds: RigInfo['meshKinds'] = {};
   for (const mesh of meshes) meshKinds[mesh.slot] = mesh.kind;
+  const meshDeclaredBones: RigInfo['meshDeclaredBones'] = {};
+  for (const mesh of meshes) meshDeclaredBones[mesh.slot] = mesh.bones;
   const meshSoftBones: RigInfo['meshSoftBones'] = {};
   for (const mesh of meshes) if (mesh.soft !== undefined) meshSoftBones[mesh.slot] = mesh.soft.bone;
   // A fold exemption on a slot that carries no mesh cannot exempt anything —
@@ -5263,6 +5286,7 @@ function buildRigInfo(
     detached: (rig.invariants?.detached ?? []).map((d) => [d.bone, d.notUnder] as [string, string]),
     slotOrder: rig.slots.length ? rig.slots.map((s) => s.name) : null,
     meshKinds,
+    meshDeclaredBones,
     meshSoftBones,
     deformMayFold,
     editorRoundTrip: rig.invariants?.editorRoundTrip === true,
@@ -5369,24 +5393,17 @@ function buildMesh(
       // declared position, and then the ring would deform toward a bone that is
       // somewhere else.
       //
-      // A single control bone needs no angle at all: it owns the whole ring, and
-      // the face rig deliberately puts it ON the aperture centre, where a radial
-      // direction does not exist.
-      const controlAngles =
-        controls.length > 1
-          ? controls.map((name) => {
-              const m = transforms.get(name);
-              if (!m) throw new CompileError(`internal: no setup transform for control bone "${name}"`);
-              const dx = m.worldX - spec.center![0];
-              const dy = cropH - m.worldY - spec.center![1];
-              if (Math.hypot(dx, dy) < 1e-6) {
-                throw new CompileError(
-                  `control bone "${name}" sits on the aperture centre of slot "${part.slot}", so it has no radial direction`,
-                );
-              }
-              return (Math.atan2(dy, dx) * 180) / Math.PI;
-            })
-          : undefined;
+      // The angle itself is `ringControlAngles`, shared with the rig-spec route
+      // (issue #684). What stays here is this route's own conversion: a manifest
+      // measures in crop pixels, y down, and Spine world is that crop flipped, so
+      // `cropH - worldY` is the whole of it. `spec.center` is in the same crop
+      // pixels, which is why the centre passed here is not the window-local
+      // `centre` two lines up.
+      const controlAngles = ringControlAngles(controls, spec.center!, (name) => {
+        const m = transforms.get(name);
+        if (!m) throw new CompileError(`internal: no setup transform for control bone "${name}"`);
+        return [m.worldX, cropH - m.worldY];
+      });
       geometry = buildRingMesh({
         hull: (part.polygon ?? []).map(([x, y]) => [x - win.x, y - win.y] as [number, number]),
         center: centre,

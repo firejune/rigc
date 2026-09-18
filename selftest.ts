@@ -1252,6 +1252,32 @@ const ARTICULATED_MUTANTS: Mutant[] = [
       }),
     }),
   },
+  {
+    name: 'M51_a_control_bone_the_ring_declares_and_no_vertex_binds',
+    origin:
+      'the one thing about a mesh no vertex can answer: the bone is in no weight, no sum and no index, so every per-vertex rule passes over it and the ring quietly deforms with one grip fewer (issue #684)',
+    expect: 'A20_MESH_WEIGHTS_COHERENT',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const names = (j as any).bones.map((b: any) => b.name);
+        // Rebound onto the grip beside it rather than deleted: the run keeps its
+        // length, every vertex still sums to 1 and no weight becomes 0, so the
+        // clauses above this one have nothing to say. What is gone is a NAME the
+        // rig declared, which is exactly the class this mutant is for.
+        const orphaned = names.indexOf('rim_grip_d');
+        const takesOver = names.indexOf('rim_grip_c');
+        const attachments = (j as any).skins[0].attachments.collar;
+        const mesh = attachments[Object.keys(attachments)[0]];
+        for (let i = 0; i < mesh.vertices.length; ) {
+          const influences = mesh.vertices[i++];
+          for (let n = 0; n < influences; n++, i += 4) {
+            if (mesh.vertices[i] === orphaned) mesh.vertices[i] = takesOver;
+          }
+        }
+      }),
+    }),
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -5639,6 +5665,59 @@ function runRigSuite(): number {
         'resolved its parts against a pack opened no file, so `restore the file` would send an author to a ' +
         'directory nobody consulted — the same wrong subject the message just stopped having, one step further ' +
         'on. `PK13B` holds the identical line for the `DROP` output; this holds it for the refusal',
+    );
+  }
+
+  // --- a rig-spec ring whose control bones cannot be told apart (#684) -------
+  //
+  // Two refusals that were unreachable from a rig spec until this landing,
+  // because the rig-spec route measured no angles at all: it passed none, the
+  // split collapsed to control 0, and a second grip anywhere — on the centre,
+  // on top of the first — was accepted and bound nothing. Now that both routes
+  // measure the same angles, both of the builder's own refusals arrive here too,
+  // and these are the cases that say so in the author's own words.
+  //
+  // They build through `buildContourRig`/`contourRefusal` — the ring probe the
+  // generator suite already ships — rather than a second copy of a rig spec with
+  // a generator in it. The bones are the whole variable.
+  {
+    const ringWith = (controls: string[], bones: Array<Record<string, unknown>>): string | null =>
+      contourRefusal({ ...RING_ATTACHMENT, generator: { ...RING_ATTACHMENT.generator, controls } }, { bones });
+    const refusalDetail = (message: string | null): string =>
+      message === null ? 'compiled — the ring with two indistinguishable control bones went through' : `refused with: ${message}`;
+    // `blob_ctl` is the single-control convention: a child of the slot bone at
+    // (0, 0), which IS the aperture centre of this probe's ring.
+    const onTheCentre = ringWith(
+      ['blob_ctl', 'grip_b'],
+      [
+        { name: 'blob_ctl', parent: 'blob', x: 0, y: 0 },
+        { name: 'grip_b', parent: 'blob', x: 0, y: -10 },
+      ],
+    );
+    bad += reportCase(
+      'RF45_a_second_control_bone_on_the_aperture_centre_is_refused_by_name',
+      onTheCentre !== null &&
+        onTheCentre.includes('control bone "blob_ctl" sits on the aperture centre, so it has no radial direction'),
+      refusalDetail(onTheCentre),
+      'the position a single control bone is SUPPOSED to occupy — it owns the whole ring and needs no direction ' +
+        'at all — is the one position that cannot be shared. A ring that splits by angle has to ask each bone ' +
+        'where it is, and this bone is nowhere in particular',
+    );
+
+    const sameAngle = ringWith(
+      ['grip_a', 'grip_b'],
+      [
+        { name: 'grip_a', parent: 'blob', x: 0, y: -10 },
+        { name: 'grip_b', parent: 'blob', x: 0, y: -20 },
+      ],
+    );
+    bad += reportCase(
+      'RF46_two_control_bones_on_one_angle_about_the_aperture_are_refused_by_name',
+      sameAngle !== null && sameAngle.includes('two control bones share the angle 90 degrees about the aperture centre'),
+      refusalDetail(sameAngle),
+      'the second bone is further out, not elsewhere: an author who reads "splits the ring by angle" as "splits ' +
+        'it by distance" writes exactly this rig. The arc between the two is empty, so one of them would bind ' +
+        'nothing — the defect #684 is about, arriving as a refusal instead',
     );
   }
 
@@ -25653,6 +25732,163 @@ function runMeshSuite(): number {
       `while two deliberately coincident triangles cover theirs ${doubled}x`,
     'source-over blending makes a doubly-covered edge visible wherever the art is not opaque',
   );
+
+  // --- what a ring's `controls` actually bind (issue #684) ------------------
+  //
+  // 🚨 The defect these four measure was invisible to every per-vertex rule in
+  // the gate, and that is the point of them. A rig-spec ring naming two grips
+  // built the SINGLE-bone geometry: `buildGeneratedMesh` passed no angles, the
+  // angular split collapsed to control 0, and the second bone was printed on the
+  // `MESH` line, added to `meshBones`, and bound by nothing. Measured on the
+  // branch point: 25 vertices, 40 triangles, `bones=[blob, grip_a, grip_b]`, and
+  // a weighted run referencing two bone indices. `--profile spine-html` green.
+  //
+  // ⭐ Every figure below is read back through spine-core rather than off the
+  // emitted JSON, and each vertex's part-local pixel comes from its own
+  // `regionUVs` — so "the grip below the centre owns the vertices below the
+  // centre" is a statement about the file a runtime loads, not about an
+  // intermediate the compiler happens to hold.
+  {
+    /** A grip `(dx, dy)` from the aperture centre in the ring's own pixels, y DOWN. */
+    const grip = (name: string, dx: number, dy: number): Record<string, unknown> => ({ name, parent: 'blob', x: dx, y: -dy });
+    /** The generator suite's ring probe, with these bones as its `controls`. */
+    const ringOf = (grips: Array<Record<string, unknown>>): ContourBuild =>
+      buildContourRig(
+        { ...RING_ATTACHMENT, generator: { ...RING_ATTACHMENT.generator, controls: grips.map((b) => String(b.name)) } },
+        { bones: grips },
+      );
+    interface RingVertex {
+      /** Part-local pixels, y down, recovered from the vertex's own uv pair. */
+      x: number;
+      y: number;
+      bound: Array<{ bone: string; weight: number }>;
+      /** The bind coordinates, which live in each bound bone's own local space. */
+      bind: number[];
+    }
+    const bindingsOfMesh = (p: Posable, mesh: MeshAttachment): RingVertex[] => {
+      const out: RingVertex[] = [];
+      if (!mesh.bones) return out;
+      // ⚠️ Two arrays, two strides — `bones` holds `boneCount, index…` and
+      // `vertices` an `x, y, weight` triple per influence. `CT03`'s note is why.
+      for (let bi = 0, vi = 0, v = 0; bi < mesh.bones.length; v++) {
+        const boneCount = mesh.bones[bi++];
+        const bound: Array<{ bone: string; weight: number }> = [];
+        const bind: number[] = [];
+        for (let n = 0; n < boneCount; n++, bi++, vi += 3) {
+          bound.push({ bone: p.data.bones[mesh.bones[bi]].name, weight: mesh.vertices[vi + 2] });
+          bind.push(mesh.vertices[vi], mesh.vertices[vi + 1]);
+        }
+        out.push({ x: mesh.regionUVs[v * 2] * CONTOUR_W, y: mesh.regionUVs[v * 2 + 1] * CONTOUR_H, bound, bind });
+      }
+      return out;
+    };
+    const bindingsOf = (build: ContourBuild): RingVertex[] => {
+      const loaded = loadedContourMesh(build);
+      return bindingsOfMesh(loaded.posable, loaded.mesh);
+    };
+    const controlsOf = (vertex: RingVertex): Array<{ bone: string; weight: number }> =>
+      vertex.bound.filter((b) => b.bone !== 'blob');
+    const controlTotal = (vertex: RingVertex): number => controlsOf(vertex).reduce((sum, b) => sum + b.weight, 0);
+    const boneNames = (vertices: RingVertex[]): string[] => [
+      ...new Set(vertices.flatMap((v) => v.bound.map((b) => b.bone))),
+    ];
+    const countFor = (vertices: RingVertex[], bone: string): number =>
+      vertices.filter((v) => v.bound.some((b) => b.bone === bone)).length;
+    const [ringCx, ringCy] = RING_ATTACHMENT.generator.center;
+
+    const twoWay = bindingsOf(ringOf([grip('grip_below', 0, 12), grip('grip_above', 0, -12)]));
+    // Off the centre LINE, because a vertex on it is equidistant from both grips
+    // by construction and a claim about "its own side" would be a coin toss.
+    const sided = twoWay.filter((v) => controlsOf(v).length > 0 && Math.abs(v.y - ringCy) > 1e-6);
+    const ownSide = sided.filter((v) => {
+      const dominant = controlsOf(v).reduce((best, b) => (b.weight > best.weight ? b : best));
+      return dominant.bone === (v.y > ringCy ? 'grip_below' : 'grip_above');
+    });
+    bad += say(
+      'M52_A_RIG_SPEC_RING_BINDS_BOTH_CONTROLS_AND_SPLITS_BY_WHERE_THE_RIG_PUT_THEM',
+      sided.length > 0 &&
+        ownSide.length === sided.length &&
+        countFor(twoWay, 'grip_below') > 0 &&
+        countFor(twoWay, 'grip_above') > 0,
+      `${twoWay.length} vertices bind [${boneNames(twoWay).join(', ')}] — grip_below on ${countFor(twoWay, 'grip_below')} ` +
+        `of them and grip_above on ${countFor(twoWay, 'grip_above')} — and of the ${sided.length} shared vertices off ` +
+        `the centre line, ${ownSide.length} are dominated by the grip the rig put on their own side`,
+      'the branch point bound only the first name and the whole gate was green on it: a bone no vertex references ' +
+        'is in no weight, no sum and no index, so every per-vertex rule there is passes over it (issue #684)',
+    );
+
+    const singleAtCentre = bindingsOf(ringOf([grip('blob_ctl', 0, 0)]));
+    const singleMoved = bindingsOf(ringOf([grip('blob_ctl', 0, 12)]));
+    const sameWeights =
+      JSON.stringify(singleAtCentre.map((v) => v.bound)) === JSON.stringify(singleMoved.map((v) => v.bound));
+    // The bind coordinates are in the control bone's OWN local space, so moving
+    // it has to move them. Without this half the case could pass on two builds
+    // that were never different.
+    const bindMoved = JSON.stringify(singleAtCentre.map((v) => v.bind)) !== JSON.stringify(singleMoved.map((v) => v.bind));
+    bad += say(
+      'M53_A_ONE_CONTROL_RING_DOES_NOT_ASK_WHERE_ITS_BONE_IS',
+      sameWeights && bindMoved && countFor(singleAtCentre, 'blob_ctl') > 0,
+      sameWeights
+        ? `the same ${singleAtCentre.length} weight lists with the control bone moved 12px below the aperture centre ` +
+            `(blob_ctl on ${countFor(singleAtCentre, 'blob_ctl')} of them), while the bind coordinates ` +
+            `${bindMoved ? 'moved with it' : 'DID NOT MOVE — the two builds are the same build'}`
+        : 'moving the single control bone changed the weights it is not supposed to be consulted for',
+      'one control owns the whole ring and a face rig deliberately puts it ON the aperture centre, where there is no ' +
+        'radial direction to measure — so the angle path has to stay unasked rather than answer 0 degrees',
+    );
+
+    const threeWay = bindingsOf(ringOf([grip('grip_e', 14, 0), grip('grip_s', -7, 12), grip('grip_n', -7, -12)]));
+    const spread = ['grip_e', 'grip_s', 'grip_n'].map((bone) => countFor(threeWay, bone));
+    // Six decimals per share and six per product, so the sum of N shares can miss
+    // the single-control weight by a few ulps of that rounding and nothing more.
+    const conserved = singleAtCentre.every(
+      (v, i) =>
+        Math.abs(controlTotal(v) - controlTotal(twoWay[i])) < 1e-5 &&
+        Math.abs(controlTotal(v) - controlTotal(threeWay[i])) < 1e-5,
+    );
+    bad += say(
+      'M54_SPLITTING_A_RING_MOVES_AUTHORITY_RATHER_THAN_MAKING_OR_LOSING_IT',
+      conserved && spread.every((count) => count > 0) && singleAtCentre.length === threeWay.length,
+      `every one of the ${singleAtCentre.length} vertices gives its controls the same total weight with one, two and ` +
+        `three of them (within 1e-5), and the three-way split reaches all three: ${spread.join(' / ')} vertices`,
+      'a split that redistributed only part of the authority would leave the aperture stiffer than the one-bone ring ' +
+        "and no assertion would see it — A20 reads the sum of ALL a vertex's weights, which the anchor keeps at 1",
+    );
+
+    // The positive control for the refactor: the manifest route measured these
+    // angles before this landing and must answer identically after it, so this
+    // asks the same question of the fixture's two rings and its ribbon.
+    const manifestBuild = compile(opts);
+    const manifestPosable = posableFromText(manifestBuild.skeletonText, manifestBuild.atlasText, opts.outDir);
+    const unbound: string[] = [];
+    const measured: string[] = [];
+    for (const record of manifestBuild.meshes) {
+      const slot = manifestPosable.data.findSlot(record.slot);
+      for (const name of record.attachments) {
+        const found = slot ? manifestPosable.data.findSkin('default')?.getAttachment(slot.index, name) : null;
+        if (!(found instanceof MeshAttachment)) {
+          unbound.push(`${record.slot}/${name} is not a mesh in the loaded skin`);
+          continue;
+        }
+        const vertices = bindingsOfMesh(manifestPosable, found);
+        const bound = new Set(boneNames(vertices));
+        for (const bone of record.bones) {
+          if (!bound.has(bone)) unbound.push(`${record.slot} declares ${bone}, nothing binds it`);
+        }
+        measured.push(`${record.slot} ${record.kind} ${record.bones.length} declared / ${bound.size} bound`);
+      }
+    }
+    bad += say(
+      'M55_THE_MANIFEST_ROUTE_STILL_BINDS_EVERY_BONE_ITS_MESHES_DECLARE',
+      unbound.length === 0 && measured.length > 0,
+      unbound.length === 0
+        ? `${measured.length} mesh attachment(s) on this fixture: ${measured.join('; ')}`
+        : unbound.join('; '),
+      'this route already measured its control angles, so it is what the shared helper has to leave alone — a ' +
+        'refactor that fixed the rig-spec route by changing this one would trade a silent bug for a silent change',
+    );
+  }
+
   return bad;
 }
 
