@@ -8,7 +8,7 @@ its own evidence.
 
 Studies live here rather than in [`runs/`](../runs/README.md) because a run is *"the
 record of an agent authoring a rig from a brief"* and its tooling is frozen once it
-lands ([`runs/README.md`](runs/README.md), *After a run*). A study is the opposite
+lands ([`runs/README.md`](../runs/README.md), *After a run*). A study is the opposite
 on both counts: its subject is the instrument rather than a candidate, and its
 claim stays **live** — it is quoted in the skill docs, so if `src/` drifts away
 from it, that should be loud.
@@ -38,7 +38,7 @@ store.
 
 ## What a study may and may not do
 
-- **May** read `src/`, the committed corpora under [`reference/`](reference), a
+- **May** read `src/`, the committed corpora under [`reference/`](../reference), a
   landed run's committed inputs, and the docs it is about.
 - **May not** edit a landed run's files, a frozen record, or a closed issue's
   comments. Where a study's finding bears on one, it says so from its own

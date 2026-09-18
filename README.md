@@ -513,12 +513,13 @@ commands take it and what its default is.
 | `pose --images <dir> --frame <png>` | reads part placements **out of** a picture |
 | `chainfit --candidate <dir> --images <dir> --frame <png>` | reads the parts `pose` refuses, through the candidate's own draw order and hierarchy: masked residuals over **visible** pixels, one hinge per child instead of four degrees of freedom, and the `rotate` key value each answer implies. A bone with two or more anchored descendants is **determined** rather than searched, and the residual that over-determination leaves is reported |
 | `diff <candidate.json> <reference.json>` | structural comparison of two skeletons, one ratio per measure and deliberately no combined score |
+| `bonedist --candidate … --reference … --bones …` | per-frame, per-bone world-transform distance against another skeleton — the ladder's stage 3, run on its own. `--bones <correspondence.json \| identity>` is required rather than defaulted: a candidate is entitled to its own bone names, so the pairing is stated |
 | `check --candidate <dir> --frames <dir>` | the candidate against reference pictures — the only instrument here that can see a *wrong animation* |
 | `bench <rung> --candidate <dir>` | one rung of the benchmark ladder |
 
-`diff`, `check` and `bench` measure against something you were given; the first two
-work on any frames you have, and `bench` is a repository workflow that needs a clone
-and `bun run fetch-examples`. The reasoning behind all three is in
+`diff`, `bonedist`, `check` and `bench` measure against something you were given; the
+first three work on any reference you have, and `bench` is a repository workflow that needs a clone
+and `bun run fetch-examples`. The reasoning behind them is in
 [the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md).
 
 `build` and `validate` both default to `--profile spine` — the 28 validity rules, which
@@ -672,6 +673,7 @@ letting `A17` blame the editor for the harness's own doing.
 | 🎓 **[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 43 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
 | 📋 [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) · [GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md) · [PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) | the live rung ledger, the clause statements a candidate is graded against, and how to run an agent through the ladder and score what comes back |
 | 🗺️ [ROADMAP.md](https://github.com/firejune/rigc/blob/main/ROADMAP.md) | where this is going, and where it has been. What 1.0 has to mean before the number is claimed — conditions rather than a feature list, because direction here comes from what users hit |
+| 📐 [CLAUDE.md](https://github.com/firejune/rigc/blob/main/CLAUDE.md) | **the doctrine** — why the validator's messages are the product, why nothing reaches disk before green, why no number is ever invented, and what a change has to keep. [CONTRIBUTING.md](https://github.com/firejune/rigc/blob/main/CONTRIBUTING.md) calls it worth ten minutes before a first patch. Repository material |
 
 ## Why you can trust the output
 

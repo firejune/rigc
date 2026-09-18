@@ -34,8 +34,10 @@ bun run selftest     # the validator's own negative controls
 ```
 
 `bun run selftest` needs no arguments and no assets — it generates its own
-fixtures. If you have not run `bun run fetch-examples`, two of its suites will
-report a hole rather than a result; fetch the corpus before trusting a green.
+fixtures. If you have not run `bun run fetch-examples`, the suites that read the
+corpus will report a hole rather than a result — `TY20` prints them by name, so
+the run says which — and a run where nothing substantive executed exits 2 rather
+than printing green. Fetch the corpus before trusting a green.
 
 There is a fourth. It is fast — the whole battery was 9.4s on the machine it was
 written on — but it is out of the list above because it is not offline: it
@@ -67,9 +69,12 @@ the tarball runs* is the argument.
   gate comes to look kept while checking nothing.
 - **No bypass of the round trip.** There must never be a `--no-validate` flag, an
   environment escape, or an exported API that hands back emitted artifacts without
-  spine-core having parsed them. That is a structural invariant for two
-  independent reasons, correctness and licensing; [CLAUDE.md](CLAUDE.md) sets both
-  out and [NOTICE.md](NOTICE.md) has the licence chain.
+  spine-core having parsed them. That is a structural invariant for one reason,
+  correctness, and that reason is sufficient by itself; the licensing one was
+  retired on 2026-09-05 (issue #398 — the bullet below records it).
+  [CLAUDE.md](CLAUDE.md) sets the invariant out, and [NOTICE.md](NOTICE.md) has
+  the licence chain, which is a fact about what the code links and stands
+  whether or not the clause does.
 - **The compiler never invents a value.** No defaults guessed from the art, no
   re-measuring of plates, no reasonable fallbacks. A missing number is a
   `CompileError` naming the field.
@@ -91,8 +96,8 @@ the tarball runs* is the argument.
 `feat(compile):`, `fix(validate):`, `test(selftest):`, `docs(authoring):`. Subject
 and body in English. The subject line is what release-please reads to decide the
 next version and what lands in the changelog, so write it for the person reading
-`CHANGELOG.md` six months from now: `feat` bumps the minor, `fix` and `perf` bump
-the patch, and everything else is invisible to the release. See
+`CHANGELOG.md` six months from now: `feat` bumps the minor, `fix`, `perf` and
+`check` bump the patch, and everything else is invisible to the release. See
 [RELEASING.md](RELEASING.md).
 
 ⚠️ **A landing that changes a file inside the published package has to be
@@ -107,6 +112,16 @@ shows, or a `Release-As:` footer in a **commit message on the branch**, since th
 squash body is made of the commits and not of the pull request body. A change
 that touches nothing in the package is unaffected whatever its type
 ([#516](https://github.com/firejune/rigc/issues/516)).
+
+⚠️ **A control that leaves has to be named by the change that removes it.** The
+`removals` job in CI reads the control names on your branch against the ones its
+merge base carried, and every name that went has to be declared. What counts as
+a declaration is derived per run rather than listed: the code's **first
+segment** where that segment names one control in the base, and the **whole
+name** where it names several — the job prints which, and prints the name it
+wants. The remedy is that line: write the code it names **in a commit message on
+this branch, or in the pull request title or body**. A rename takes the old name
+out of the tree, so it is declared exactly like any other removal.
 
 Keep one unit of work per commit. A body that has to explain two unrelated things
 is two commits.

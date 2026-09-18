@@ -247,8 +247,8 @@ record:
 2. **Drop the diverse rows.** AUTHORING §8.1's: *"re-solve the joint from a subset
    that excludes the diverse configurations and see how far the answer moves. If it
    moves a long way at comparable residuals, the diverse frames were carrying the
-   whole identification."* ⚠️ **No run in the corpus has performed this one as a
-   check** — attempt 5 performed the *unconditional* version of it by accident and
+   whole identification."* ⚠️ **No run in the corpus had performed this one as a
+   check as of 2026-09-18** — attempt 5 performed the *unconditional* version of it by accident and
    that is §2.2's 21-unit result, which is what a deliberate subset test is designed
    to produce on purpose. It is prescribed, cheap and unexercised.
 3. **Look at the spread of relative angle directly**, before believing any residual.
@@ -1273,6 +1273,7 @@ general form of this and it is the section to read next.
 | `build` / `validate` | that the tree parses, that every name resolves, and `A25` if you declared a forbidden pair | every build |
 | `check` | the *consequences* of the structure, in pixels — and **only where the structure moves art.** A pivot is invisible at the pose and everything in the movement (§3.2) | inside the authoring loop |
 | `chainfit` | ⭐ **the only reading of structure against a picture.** `pivotDisagreementPx` is *"the one direct measurement of your rig against the picture"*; `bone.carriedBones` names the links whose hinge could not be fitted and whose setup rotation was carried through | inside the loop, once a candidate exists |
+| `explain` | ⭐ **the only reader of the tree that needs no reference at all** — every bone with its resolved `parent=`, in one table, off the compiled rig. It sees what the spec *says* the hierarchy is, never what it looks like, and writes nothing | before the first build, and whenever a rig compiles and still looks wrong |
 | `diff` | that two files *say* the same thing. It read **1.000 on all 49 measures** across a 236.5-unit pivot move (INGEST §4.1) | finish line |
 | `bonedist` | per-frame, per-bone world-transform distance against **another skeleton** — so it reads the reference and is subject to the honesty rule | finish line only |
 | `bench`'s `depth_histogram` / `degree_sequence` | ⭐ the **name-agnostic** read of a tree: as many bones at each depth, as many with each child count. Nine records use this pair as the honest statement about a hierarchy, precisely because it survives two people naming the same parts differently | finish line only |

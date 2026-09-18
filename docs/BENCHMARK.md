@@ -945,7 +945,7 @@ So `validate` and `build` take a `--profile`:
 | `spine-html` | all 43 — those 28 plus 7 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
 
 Those are the two numbers `src/validate.ts` exports rather than states in prose:
-`ASSERTION_NAMES.length` is 40 and `assertionCountForProfile('spine')` is 25, so a
+`ASSERTION_NAMES.length` is 43 and `assertionCountForProfile('spine')` is 28, so a
 control can count them instead of quoting a figure that goes stale the next time one
 is added.
 
