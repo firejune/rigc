@@ -1226,6 +1226,22 @@ export interface RigInfo {
    */
   meshKinds: Record<string, MeshKind | 'authored'>;
   /**
+   * slot -> every bone the compiler bound this mesh to, in the order the `MESH`
+   * report line prints them: the slot bone first, then the control bones the
+   * generator named.
+   *
+   * ⭐ A20 reads it to ask the one question a weighted run cannot answer about
+   * itself — whether a bone the mesh DECLARES is bound by any vertex at all. A
+   * ring that named two grips and bound one was a green build on every
+   * per-vertex rule there is, because each of those rules reads a vertex and the
+   * missing bone is in none of them (issue #684).
+   *
+   * ⚠️ On an `authored` mesh this is the set the weights themselves name, so it
+   * is a tautology there and A20's clause skips it with the rest of the
+   * generator policy — rigc did not choose those bindings.
+   */
+  meshDeclaredBones: Record<string, string[]>;
+  /**
    * Slots whose mesh carries a SOFT region on a second bone, and which bone —
    * from a generator's `soft` block.
    *
