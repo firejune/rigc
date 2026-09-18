@@ -1263,17 +1263,25 @@ export function validate(input: ValidateInput): ValidateReport {
   check('A34_CONSTRAINT_TIMELINE_TARGETS', () => {
     if (!raw) return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'the skeleton JSON did not parse (A00 owns that failure)');
     if (!isObj(raw.animations)) return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'the skeleton declares no animations');
-    const typeOf = new Map<string, string>();
+    // name -> the KINDS declared under it, because that is the namespace the
+    // lookup this assertion is about resolves in: `findConstraint(name, type)`
+    // tests the type first, so a skeleton may carry `leg` as an ik constraint
+    // AND as a transform one and each group finds its own (issue #692). A map
+    // keyed by the name alone let the second of a pair overwrite the first, and
+    // this assertion then reported a correct file as a type mismatch.
+    const kindsOf = new Map<string, string[]>();
     for (const entry of Array.isArray(raw.constraints) ? (raw.constraints as unknown[]) : []) {
-      if (isObj(entry) && typeof entry.name === 'string') typeOf.set(entry.name, String(entry.type));
+      if (isObj(entry) && typeof entry.name === 'string') {
+        kindsOf.set(entry.name, [...(kindsOf.get(entry.name) ?? []), String(entry.type)]);
+      }
     }
     let sawATimeline = false;
     /** One target of one group: the name resolves, the type matches, keys exist. */
     const checkTarget = (at: string, group: string, name: string, keyArrays: Array<[string, unknown]>): void => {
       sawATimeline = true;
-      const declared = typeOf.get(name);
-      if (declared === undefined) {
-        const known = [...typeOf.entries()].filter(([, t]) => t === group).map(([n]) => n);
+      const declared = kindsOf.get(name) ?? [];
+      if (declared.length === 0) {
+        const known = [...kindsOf.entries()].filter(([, kinds]) => kinds.includes(group)).map(([n]) => n);
         fail(
           'A34_CONSTRAINT_TIMELINE_TARGETS',
           `${at}: the skeleton's constraints array has no "${name}"` +
@@ -1281,10 +1289,10 @@ export function validate(input: ValidateInput): ValidateReport {
         );
         return;
       }
-      if (declared !== group) {
+      if (!declared.includes(group)) {
         fail(
           'A34_CONSTRAINT_TIMELINE_TARGETS',
-          `${at}: "${name}" is declared as a "${declared}" constraint, so the ${group} lookup misses it and the loader throws`,
+          `${at}: "${name}" is declared as a "${declared.join('"/"')}" constraint, so the ${group} lookup misses it and the loader throws`,
         );
         return;
       }
@@ -3402,7 +3410,13 @@ export function validate(input: ValidateInput): ValidateReport {
     check('A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED', () => {
       /** Every bone a skin can switch on, including the ancestors it drags in. */
       const activatable = new Set<string>();
-      const listedConstraints = new Map<string, string>();
+      // The constraint OBJECTS a skin lists, never their names: a name is not a
+      // constraint in this format, and two constraints of one name under two
+      // kinds are two objects a skin may list separately (issue #692). Keyed by
+      // name, a `transform` `leg` that no skin lists read as listed because an
+      // `ik` `leg` was — a skinRequired constraint that never runs, reported
+      // green by the one assertion that looks for exactly that.
+      const listedConstraints = new Set(data.skins.flatMap((skin) => skin.constraints));
       let listed = 0;
       for (const skin of data.skins) {
         for (const bone of skin.bones) {
@@ -3418,7 +3432,6 @@ export function validate(input: ValidateInput): ValidateReport {
         }
         for (const constraint of skin.constraints) {
           listed++;
-          listedConstraints.set(constraint.name, skin.name);
           if (!constraint.skinRequired) {
             fail(
               'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
@@ -3445,7 +3458,7 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
       for (const constraint of data.constraints) {
-        if (constraint.skinRequired && !listedConstraints.has(constraint.name)) {
+        if (constraint.skinRequired && !listedConstraints.has(constraint)) {
           fail(
             'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
             `constraint "${constraint.name}" is skinRequired and no skin lists it, so it never runs`,
@@ -4632,7 +4645,16 @@ export function skeletonValues(skeletonText: string, atlasText: string): Skeleto
     }
   }
   for (const constraint of data.constraints) {
-    const at = `constraints/${constraint.name}`;
+    // The KIND is part of the path, not just a value under it (issue #692):
+    // `leg` may be an ik constraint and a transform constraint at once, and a
+    // path keyed on the name alone pairs the first of one file with the second
+    // of the other. Measured on the export that made the card: a rebuild
+    // carrying both, correctly, reported `values.constraints` 197/199 with
+    // `constraints/<name>/kind "IkConstraintData" vs "TransformConstraintData"`
+    // as the difference — the comparison contradicting itself rather than the
+    // file. The class name is the same string `/kind` already carries, so the
+    // two sides pair wherever they agree about what the constraint is.
+    const at = `constraints/${constraint.constructor?.name ?? '(unknown)'}:${constraint.name}`;
     pushValue(constraint.constructor?.name ?? '(unknown)', `${at}/kind`, out, 1);
     pushValue(constraint, at, out, 0);
   }

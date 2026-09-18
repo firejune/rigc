@@ -45,6 +45,7 @@
  * spec.
  */
 import { SLOT_TRACKS as EMITTED_SLOT_TRACKS, SPINE_VERSION } from './compile.ts';
+import { CompileError } from './errors.ts';
 import { MOTION_SPEC_VERSION, parseMotionSpec } from './motion.ts';
 import { parseRigSpec, RIG_KEYS, RIG_SPEC_VERSION, type RigSpec } from './rig.ts';
 import type { MotionSpec } from './types.ts';
@@ -64,6 +65,35 @@ export class IngestError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'IngestError';
+  }
+}
+
+/**
+ * The specs this module wrote, and the tree's own parser refusing one of them.
+ *
+ * 🚨 **A parser refusal mid-`ingest` used to be the run's last word** (issue
+ * #692). `parseRigSpec` throws a `CompileError`, it went straight out through
+ * `ingest()`, and the run exited 1 with **no `BLOCK` line, no code and no
+ * `findings.json` on disk** — so a census that counts finding codes read those
+ * files as refused for no stated reason. A shape the spec format cannot hold is
+ * exactly what a coded `blocker` is for, and the code rides in `findings` here
+ * with everything else the run found.
+ *
+ * It carries the two spec objects because they are what the parser was given:
+ * writing them is what lets the sentence be read against a file rather than
+ * against the console. They are the same objects a successful run returns —
+ * `parseRigSpec` hands its input back typed — so the bytes on disk do not depend
+ * on which way the parse went.
+ */
+export class IngestSpecRefused extends Error {
+  constructor(
+    message: string,
+    readonly findings: IngestFinding[],
+    readonly rig: JsonObject,
+    readonly motion: JsonObject,
+  ) {
+    super(message);
+    this.name = 'IngestSpecRefused';
   }
 }
 
@@ -629,15 +659,33 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
     animations,
   };
 
-  return {
-    // 🔒 Through the tree's own parsers before they leave. `parseRigSpec` and
-    // `parseMotionSpec` are what `build` reads these files with, so a spec this
-    // module could produce and `build` would refuse is named here, at the
-    // decompiler, rather than three commands later at the file.
-    rig: parseRigSpec(rig, `ingest(${opts.source}): rig spec`),
-    motion: parseMotionSpec(motion, `ingest(${opts.source}): motion spec`),
-    findings,
-  };
+  // 🔒 Through the tree's own parsers before they leave. `parseRigSpec` and
+  // `parseMotionSpec` are what `build` reads these files with, so a spec this
+  // module could produce and `build` would refuse is named here, at the
+  // decompiler, rather than three commands later at the file.
+  //
+  // ⚠️ And the refusal is a FINDING (issue #692). It is the one place in this
+  // module where a reader's exit code could come from something other than the
+  // findings list, which made it the one shape the census behind the finding
+  // codes could not count.
+  try {
+    return {
+      rig: parseRigSpec(rig, `ingest(${opts.source}): rig spec`),
+      motion: parseMotionSpec(motion, `ingest(${opts.source}): motion spec`),
+      findings,
+    };
+  } catch (err) {
+    if (!(err instanceof CompileError)) throw err;
+    note(
+      'blocker',
+      'SPEC_REFUSED',
+      `the specs written from "${opts.source}"`,
+      `${err.message} — rigc's own parser refuses what this run wrote, so \`build\` will refuse it too. Both files ` +
+        'are on disk so the sentence can be read against the skeleton it came from; nothing rebuilds this ' +
+        'skeleton until the shape it names has a spelling in the spec',
+    );
+    throw new IngestSpecRefused(err.message, findings, rig, motion);
+  }
 }
 
 type Note = (kind: IngestFindingKind, code: string, where: string, detail: string) => void;

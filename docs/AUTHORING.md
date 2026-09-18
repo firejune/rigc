@@ -1973,6 +1973,20 @@ rigc emits all five: `ik`
 and `slider`. Field lists are in [`src/rig.ts`](../src/rig.ts); the traps worth
 carrying here:
 
+- 🔑 **A constraint name is unique per KIND, not across the array.** Spine
+  resolves one with `SkeletonData.findConstraint(name, type)`, which tests
+  `constraint instanceof type` **before** it compares the name, and every
+  resolution in the format goes through it: a timeline group, a skin's member
+  list (§3.4.1), a slider's animation. So an `ik` constraint and a `transform`
+  constraint may both be called `leg` — the editor exports both, the runtime
+  finds each from its own group, and a motion spec's `ik` block, `transform`
+  block and `path`/`physics`/`slider` tracks each name the kind they mean and
+  resolve the same way (§4.9, §4.12). Two constraints **of one kind** sharing a
+  name are refused (§5.1), because no timeline could say which was meant. Until
+  [#692](https://github.com/firejune/rigc/issues/692) the rig spec kept one
+  namespace over the whole array, so a rig the editor exports and the runtime
+  plays — an IK chain and the transform constraint that follows it, both carrying
+  the chain's name — could not be written down at all.
 - A transform constraint's `properties` names come from a fixed six — `rotate`,
   `x`, `y`, `scaleX`, `scaleY`, `shearY`. rigc refuses anything else by name; in
   raw JSON the parser throws.
@@ -4473,6 +4487,9 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `a rig spec needs a "slots" array (it may be empty; its ORDER is the draw order)` | §3.3 — write `[]` for a rig that draws nothing. ⚠️ These three arrive only when the key is really absent: **misspelt**, it is the unknown-key refusal above, naming what you wrote |
 | `bone "X" names parent "Y", which is not declared before it` | move `Y` earlier in `bones` |
 | `two bones are called "X"` | bone names are the join key; rename one |
+| `two ik constraints are called "X" — a constraint resolves by name AND type (\`SkeletonData.findConstraint\`), so names are unique PER KIND: an ik and a transform constraint may share one, two of a kind may not` | §3.5 — rename one of the two. The kind in the sentence is the pair's own, so `two transform constraints are called "X"` is the same refusal on another kind; a name shared **across** kinds is not this error and never was one to fix |
+| `physics constraint "X" is declared in both the rig spec and the motion spec's physics table` | §4.6 — the rig spec declares a physics constraint's structure and the motion spec's `physics` table declares one outright; pick the file it belongs in. Per kind, like every other constraint name: an `ik` "X" in the rig spec beside a `physics` "X" here is two constraints and is not this error |
+| `skin "S" activates ik constraint "X", which skin "T" already activates; a constraint belongs to one skin` | §3.4.1 — a constraint runs under one skin or under all of them. The kind is in the sentence because `ik` "X" and `transform` "X" are two constraints, and each may belong to a different skin |
 | `slot "X" names bone "Y", which this rig does not declare` | add the bone, or fix the slot's `bone` |
 | `no setup pose for slot "X": give the motion spec a \`setup\` entry or the rig slot an \`attachment\`` | R3 — pick one file and declare it there. A slot **nothing** fills is exempt: its setup pose can only be "show nothing" and is not asked for |
 | `the setup pose shows attachment "A" on slot "X", which no skin and no manifest part fills` | §3.3 — the slot is emitted empty and nothing was ever going to fill it, so `A` resolves to nothing. Give the slot an attachment (a skin entry or a manifest part), or state the setup pose as `null` |
