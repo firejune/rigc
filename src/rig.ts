@@ -1614,6 +1614,29 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   if (raw.spec !== RIG_SPEC_VERSION) {
     throw new CompileError(`${where}: unknown rig spec version ${JSON.stringify(raw.spec)}, expected "${RIG_SPEC_VERSION}"`);
   }
+  // Before anything resolves by name AND before the required keys are asked
+  // for, because a key nothing reads is very often the CAUSE of the name — or
+  // the array — that is not there: `"bones"` typed on a slider is a slider with
+  // no driving bone, and `"slot"` typed at the root is a rig with no `slots` at
+  // all. The refusal an author wants names the typo rather than the consequence.
+  //
+  // ⚠️ This comment argued exactly that while sitting three lines BELOW the
+  // throws it was arguing about (issue #672), so misspelling a required key —
+  // the commonest way to lose one — printed `a rig spec needs a "slots" array`
+  // and never named the `"slot"` the file carried. `parseMotionSpec` was
+  // written to this order and cites this function as its precedent; the
+  // precedent was the prose here rather than the code.
+  //
+  // 🔒 Two checks stay above it, and both are the scan's own preconditions
+  // rather than a preference. `isObj` is what makes `raw` an object to read
+  // keys off at all. The version tag decides WHICH key set applies: a file
+  // declaring a spec version this compiler does not know would otherwise be
+  // refused key by key against `rigc-rig/1`'s sets — a list of "keys this
+  // compiler does not read" for a format it has never read at all. The three
+  // throws directly below are the required-key checks, and each of them is the
+  // consequence a typo at the root produces.
+  checkRigSpecKeys(raw, where);
+
   if (typeof raw.name !== 'string' || raw.name.length === 0) {
     throw new CompileError(`${where}: a rig spec needs a "name" — a motion spec names it to pick this rig`);
   }
@@ -1623,11 +1646,6 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   if (!Array.isArray(raw.slots)) {
     throw new CompileError(`${where}: a rig spec needs a "slots" array (it may be empty; its ORDER is the draw order)`);
   }
-  // Before anything resolves by name, because a key nothing reads is very often
-  // the CAUSE of the name that does not resolve: `"bones"` typed on a slider is
-  // a slider with no driving bone, and the refusal an author wants names the
-  // typo rather than the consequence.
-  checkRigSpecKeys(raw, where);
 
   const spec = raw as unknown as RigSpec;
 

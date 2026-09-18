@@ -4807,6 +4807,129 @@ function runRigSuite(): number {
     );
   }
 
+  // --- a misspelt required key is named as the typo (issue #672) ------------
+  //
+  // 🚨 What was silent, measured on `370ab01`: renaming this fixture's `slots`
+  // to `slot` printed `a rig spec needs a "slots" array (it may be empty; its
+  // ORDER is the draw order)` and never named the `"slot"` the file carried.
+  // The unknown-key scan that names it sat three lines BELOW that throw, under
+  // a comment arguing that it belongs above — so the commonest way to lose a
+  // required array got the CONSEQUENCE, and an author reading the refusal was
+  // told to write a key their file already had, spelt one character off.
+  //
+  // ⭐ The two ends are what make this an ordering rather than a blanket, and
+  // both are positive controls that were green before the reorder and have to
+  // stay green after it. A key that is genuinely absent has no near miss to
+  // name, so it must keep the envelope sentence — the scan finding nothing is
+  // what lets the throw below it speak. And `parseMotionSpec` has always run
+  // its scan first and cited `parseRigSpec` as the precedent, while the
+  // precedent was the prose here rather than the code: its message is the shape
+  // this change copies, so it must print exactly what it printed before.
+  {
+    /** Compile the fixture with one edit to the rig spec, and return the refusal. */
+    const refusalFor = (edit: (rig: Record<string, unknown>) => void): string | null => {
+      const rig = JSON.parse(sourceText) as Record<string, unknown>;
+      edit(rig);
+      writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+      try {
+        compile({ ...opts, rigPath });
+        return null;
+      } catch (err) {
+        return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+      }
+    };
+    const said = (message: string | null): string =>
+      message === null ? 'compiled — the broken rig went through' : `refused with: ${message}`;
+
+    const misspeltSlots = refusalFor((rig) => {
+      rig.slot = rig.slots;
+      delete rig.slots;
+    });
+    bad += reportCase(
+      'RF40_a_misspelt_slots_key_is_named_as_the_typo_rather_than_as_the_array_it_lost',
+      misspeltSlots !== null &&
+        misspeltSlots.includes('"slot" (did you mean "slots"') &&
+        !misspeltSlots.includes('needs a "slots" array'),
+      said(misspeltSlots),
+      'the case in the card. Both halves are measured because either alone passes on the wrong file: naming the ' +
+        'typo would still be satisfied by a message that went on to demand the array as well, and refusing the ' +
+        'envelope sentence would be satisfied by any refusal at all',
+    );
+
+    const misspeltBones = refusalFor((rig) => {
+      rig.bone = rig.bones;
+      delete rig.bones;
+    });
+    bad += reportCase(
+      'RF41_the_same_ordering_holds_for_the_other_required_array',
+      misspeltBones !== null &&
+        misspeltBones.includes('"bone" (did you mean "bones"') &&
+        !misspeltBones.includes('needs a non-empty "bones" array'),
+      said(misspeltBones),
+      'one case would not say whether the fix was the ordering or one throw rewritten. `bones` is the throw ABOVE ' +
+        'the `slots` one, so a repair that appended a near-miss search to a single message would leave this one ' +
+        'where it was — and the near-miss list here is `"bones", "note"`, both at distance 1, which is the search ' +
+        'the reorder inherits rather than a new one',
+    );
+
+    const absentSlots = refusalFor((rig) => {
+      delete rig.slots;
+    });
+    bad += reportCase(
+      'RF42_a_required_key_that_is_GENUINELY_absent_keeps_the_envelope_sentence',
+      absentSlots !== null &&
+        absentSlots.includes('a rig spec needs a "slots" array') &&
+        !absentSlots.includes('this compiler does not read'),
+      said(absentSlots),
+      'the positive control for the envelope, and the reason the repair is a REORDER rather than a rewrite of the ' +
+        'four throws. Nothing here was misspelt, so there is no key to name and the scan finds nothing: the ' +
+        'sentence that says what the file has to grow is still the only useful one, and it still arrives',
+    );
+
+    const typoAndAbsent = refusalFor((rig) => {
+      rig.slot = rig.slots;
+      delete rig.slots;
+      delete rig.bones;
+    });
+    bad += reportCase(
+      'RF43_a_typo_beside_a_genuinely_missing_key_names_the_typo_first',
+      typoAndAbsent !== null &&
+        typoAndAbsent.includes('"slot" (did you mean "slots"') &&
+        !typoAndAbsent.includes('needs a non-empty "bones" array'),
+      said(typoAndAbsent),
+      'two faults in one file, and the one named is the one that is cheaper to be wrong about. `bones` is really ' +
+        'gone here and the old order would have said so — a true sentence that sends the author to add an array ' +
+        'while the `"slot"` beside it stays unread. One refusal per compile means the first one has to be the ' +
+        'one an author can act on without re-reading the file',
+    );
+
+    const probeMotion = join(dir, 'key_order_probe.motion.json');
+    const motionSpec = JSON.parse(readFileSync(opts.motionPath, 'utf8')) as Record<string, unknown>;
+    motionSpec.animation = motionSpec.animations;
+    delete motionSpec.animations;
+    writeFileSync(probeMotion, `${JSON.stringify(motionSpec, null, 2)}\n`);
+    writeFileSync(rigPath, sourceText);
+    let motionMisspelt: string | null = null;
+    try {
+      compile({ ...opts, rigPath, motionPath: probeMotion });
+    } catch (err) {
+      motionMisspelt = err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+    }
+    bad += reportCase(
+      'RF44_the_motion_spec_this_order_was_copied_FROM_is_unchanged',
+      motionMisspelt !== null &&
+        motionMisspelt.includes('`this motion spec` has a key this compiler does not read: "animation" (did you mean "animations"?)') &&
+        !motionMisspelt.includes('`animations` is absent'),
+      said(motionMisspelt),
+      'the positive control for the precedent, and the one case here that breaks the OTHER file. `parseMotionSpec` ' +
+        'already scanned before its required-key checks and said in its own comment that it did so "for the reason ' +
+        '`parseRigSpec` puts its own first" — which was true of the rig parser\'s comment and false of its code. ' +
+        'This case is what makes that sentence checkable from now on: the two parsers answer the same mistake the ' +
+        'same way, and a reorder measured only on the rig side could not tell whether it had matched the precedent ' +
+        'or moved it',
+    );
+  }
+
   return bad;
 }
 
