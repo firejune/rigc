@@ -608,7 +608,7 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 | `name`, `bone` | ✅ |
 | `attachment` | ✅ — only when the motion spec's `setup` block names one; `null` means "show nothing" and the key is omitted |
 | `color` | ✅ — from `setup.color`, hex-encoded (`compile.ts:63-66`) |
-| `dark` | 🚫 **A12_NO_DARK_COLOR** (`validate.ts:250-262`) |
+| `dark` | ✅ — copied from the rig spec's slot when it gives one. 🚫 **A12_NO_DARK_COLOR** still names it, and that is a **renderer-profile** verdict rather than a validity one: `build` runs `--profile spine`, where A12 reports `PROF`. **A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN** reads it back off the runtime |
 | `blend` | ✅ — copied from the rig spec's slot when it gives one (`compile.ts:600`, landed in `c5eda3b`) |
 | `visible` | ❌ |
 | draw order = slots array order | ✅, and **A26_SLOT_DRAW_ORDER** pins it to the archetype's `slotOrder` table |
@@ -676,7 +676,8 @@ editor-made meshes — those arrive as authored `uvs`/`triangles`/`weights`.
 | `slots.attachment` | ✅ — value `name`, nullable; easing is refused |
 | `slots.rgba` | ✅ |
 | `slots.rgb`, `alpha` | ❌ emitted (validator knows the channel counts) |
-| `slots.rgba2`, `rgb2` | 🚫 **A12_NO_DARK_COLOR** (`validate.ts:257-261`) |
+| `slots.rgba2` | ✅ — `{time, light, dark}`, seven channels as `[lr, lg, lb, la, dr, dg, db]` in the motion spec ([#690](https://github.com/firejune/rigc/issues/690)). 🚫 **A12_NO_DARK_COLOR** names it under `spine-html` only; **A43** poses it and compares |
+| `slots.rgb2` | ❌ emitted (validator knows the channel count). 🚫 **A12_NO_DARK_COLOR** under `spine-html` |
 | `physics.inertia/strength/damping/mass/wind/gravity`, `physics.mix`, `physics.reset` | ✅ — all eight (`PHYSICS_TRACKS` in `compile.ts`), authored as `tracks` entries naming `physics`. ⚠️ Their per-key defaults are the parser's, and part 1-8 above is the source: 0 on the six, 1 on `mix`. Not the constraint defaults at `:306-312` |
 | `ik`, `transform` | ✅ — one unnamed timeline per constraint, keyed by the motion spec's `ik` / `transform` arrays |
 | `path.position/spacing/mix`, `slider.time/mix` | ✅ (`PATH_TRACKS` / `SLIDER_TRACKS`) — authored as `tracks` entries naming `path` or `slider`, the same shape as `physics`, since both groups put named timelines under a constraint name. `path.mix` is one timeline of three channels |
@@ -733,7 +734,8 @@ This is the split Part 4(c) needs. **Spine-validity** = the file is wrong for an
 | `A18_DETERMINISTIC_EMIT` | tool contract | recompiling differs byte-for-byte |
 | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | **mixed** | size≠PNG is **validity** (case 6h), and so is a region whose rectangle is outside the page it names, rotation honoured ([#694](https://github.com/firejune/rigc/issues/694)); `pma:true`, region rotation, and two regions on one page over the same texels are **renderer-profile** |
 | `A11_NO_CLIPPING_ATTACHMENTS` | **renderer-profile** | clipping attachments — "the renderer skips them silently" |
-| `A12_NO_DARK_COLOR` | **renderer-profile** | slot `dark`, `rgba2`/`rgb2` timelines — "parsed, then ignored" |
+| `A12_NO_DARK_COLOR` | **renderer-profile** | slot `dark`, `rgba2`/`rgb2` timelines — "parsed, then ignored". ⚠️ rigc **emits** the first two; a renderer that drops a construct is what a profile is for, not a reason not to emit it |
+| `A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN` | validity | a slot `dark` the parser drops or reads as NaN, an `rgba2` timeline on a slot with no dark colour to pose, or a key whose posed light/dark is not what it states |
 | `A13_MESH_BUDGET` | **renderer-profile** | >4 mesh slots, >80 triangles per mesh |
 | `A14_NO_FULL_FRAME_MESH` | **renderer-profile** | a mesh spanning the whole stage |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | **renderer-profile** | an overlay page that can never be transparent — no alpha channel and no `tRNS` chunk |

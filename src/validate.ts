@@ -187,6 +187,7 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET: 'validity',
   A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP: 'validity',
   A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER: 'validity',
+  A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN: 'validity',
 };
 
 /**
@@ -288,6 +289,8 @@ export const SKIP_NO_ATLAS_PAGE = 'the atlas declares no page';
 export const SKIP_NO_ATLAS_REGION = 'the atlas declares no region';
 export const SKIP_NO_ATTACHMENT_REGION_JOIN =
   'no attachment names a region and the atlas declares none, so there is no attachment-to-region join to hold';
+export const SKIP_NO_TWO_COLOR_TINT =
+  'no slot declares a "dark" colour and no animation keys an "rgba2" timeline, so there is no two-colour tint to read back';
 /**
  * A09's, which predates this list and joins it rather than being rewritten: it
  * is the same fact about the same subject, and a control that compares against
@@ -3564,6 +3567,214 @@ export function validate(input: ValidateInput): ValidateReport {
               fail('A10_NO_NAN_AFTER_STEPPING', `${anim.name}: slot "${slot.data.name}" colour is non-finite`);
               return;
             }
+            // The other colour a slot poses, and it was outside this loop until
+            // issue #690 for the reason every gap here has: nothing emitted one.
+            // `null` is the ordinary case — a slot with no `dark` allocates no
+            // dark colour at all — and is not a reading to make, so it is
+            // skipped rather than treated as zero.
+            const d = slot.appliedPose.darkColor;
+            if (d !== null && ![d.r, d.g, d.b].every(Number.isFinite)) {
+              fail('A10_NO_NAN_AFTER_STEPPING', `${anim.name}: slot "${slot.data.name}" dark colour is non-finite`);
+              return;
+            }
+          }
+        }
+      }
+    });
+
+    // --- A43: the two-colour tint, read back off the runtime ----------------
+    //
+    // ⭐ **Why this is its own rule and not a clause on `A10`.** A10 steps every
+    // animation already and now reads `darkColor` for NaN, which is squarely its
+    // own name; what is below is an EQUALITY — the colour in the file against the
+    // colour the runtime holds — and a failure of it printed under
+    // `A10_NO_NAN_AFTER_STEPPING` would be a verdict whose name contradicts its
+    // own detail. The rule this repository applies to a suite's summary figure
+    // applies to an assertion's name: it may not say less than what it decides.
+    //
+    // 🚨 **And the subject is real silence, measured rather than supposed.** Three
+    // shapes load with no complaint:
+    //
+    //   1. A `dark` the parser drops. `SkeletonJson` reads `getValue(slotMap,
+    //      "dark", null)` and then `if (dark)`, so `""` is discarded without a
+    //      word and the slot renders as though the field had never been written.
+    //   2. A `dark` that is not six hex digits. `Color.setFromString` runs
+    //      `parseInt` over fixed offsets and stores whatever comes back, so
+    //      `"4020"` loads `b = NaN` — a colour that is neither the author's nor
+    //      an error.
+    //   3. An `rgba2` timeline on a slot with no `dark` at all. `Slot`'s
+    //      constructor allocates `SlotPose.darkColor` only `if
+    //      (data.setupPose.darkColor != null)`, and `RGBA2Timeline.apply1` then
+    //      writes `dark.r` unconditionally — so the file parses, and the first
+    //      `state.apply` throws `TypeError: null is not an object` in the
+    //      consumer's process. `compile.ts` refuses that pairing outright; this
+    //      is the same fact held against a skeleton the compiler never saw, and
+    //      it is a named failure here rather than A10's `threw:` line, which
+    //      names neither the slot nor the timeline.
+    //
+    // ⚠️ The hex is parsed HERE rather than through `Color.fromString`, and that
+    // is the point of the clause: a check that read the required value out of the
+    // same parser it is checking would agree with it whatever it did.
+    check('A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', () => {
+      /** `rrggbb`, or `rrggbbaa` whose last pair the format drops. Null for anything else. */
+      const readDarkHex = (hex: string): [number, number, number] | null => {
+        const body = hex.startsWith('#') ? hex.slice(1) : hex;
+        if (!/^[\da-fA-F]{6}([\da-fA-F]{2})?$/.test(body)) return null;
+        return [0, 2, 4].map((i) => Number.parseInt(body.slice(i, i + 2), 16) / 255) as [number, number, number];
+      };
+      /** `rrggbbaa`, or `rrggbb` the runtime opens at alpha 1. Null for anything else. */
+      const readLightHex = (hex: string): [number, number, number, number] | null => {
+        const body = hex.startsWith('#') ? hex.slice(1) : hex;
+        if (!/^[\da-fA-F]{6}([\da-fA-F]{2})?$/.test(body)) return null;
+        const rgb = [0, 2, 4].map((i) => Number.parseInt(body.slice(i, i + 2), 16) / 255);
+        return [rgb[0], rgb[1], rgb[2], body.length === 8 ? Number.parseInt(body.slice(6, 8), 16) / 255 : 1];
+      };
+      /**
+       * Half a quantisation step. A channel is one byte in the file and a
+       * `Float32Array` entry in a timeline, so the widest honest gap between the
+       * number written and the number posed is well under `1/510`.
+       */
+      const STEP = 1 / 510;
+      const off = (found: number, want: number): boolean => !Number.isFinite(found) || Math.abs(found - want) > STEP;
+      const show = (c: readonly number[]): string => c.map((n) => (Number.isFinite(n) ? n.toFixed(4) : 'NaN')).join(', ');
+
+      // -- the subjects, read off the FILE ---------------------------------
+      const declared = new Map<string, string>();
+      for (const slot of Array.isArray(raw?.slots) ? (raw.slots as unknown[]) : []) {
+        if (isObj(slot) && typeof slot.dark === 'string') declared.set(String(slot.name), slot.dark);
+      }
+      const keyed: Array<{ anim: string; slot: string; keys: unknown[] }> = [];
+      const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
+      for (const [animName, anim] of Object.entries(rawAnimations)) {
+        if (!isObj(anim) || !isObj(anim.slots)) continue;
+        for (const [slotName, timelines] of Object.entries(anim.slots)) {
+          if (!isObj(timelines) || !Array.isArray(timelines.rgba2)) continue;
+          keyed.push({ anim: animName, slot: slotName, keys: timelines.rgba2 });
+        }
+      }
+      if (declared.size === 0 && keyed.length === 0) {
+        return skip('A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', SKIP_NO_TWO_COLOR_TINT);
+      }
+      stats.darkSlots = declared.size;
+      stats.rgba2Timelines = keyed.length;
+
+      // -- clause 1: the setup pose ----------------------------------------
+      for (const [name, hex] of declared) {
+        const want = readDarkHex(hex);
+        const loaded = data.findSlot(name)?.setupPose.darkColor ?? null;
+        // ⚠️ "The parser kept nothing" is asked FIRST, and the order is the
+        // finding rather than a style: an empty string is both unreadable as a
+        // colour and dropped outright, and only the second sentence is about
+        // what the loaded skeleton holds. Asked the other way round, `""` was
+        // reported as "not six hex digits" — true, and about the file, on the
+        // one input where the file is not what went wrong.
+        if (loaded === null) {
+          fail(
+            'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
+            `slot "${name}" states dark ${JSON.stringify(hex)} and the loaded skeleton holds no dark colour for ` +
+              'it at all — the slot reader takes `dark` through a truthiness test, so a falsy value is dropped ' +
+              'in silence and the slot is tinted with one colour',
+          );
+          continue;
+        }
+        if (want === null) {
+          fail(
+            'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
+            `slot "${name}" states dark ${JSON.stringify(hex)}, which is not six hex digits — the parser reads ` +
+              'fixed two-character slices and stores whatever `parseInt` returns, so the loaded colour is ' +
+              `(${show([loaded.r, loaded.g, loaded.b])}) rather than a failure`,
+          );
+          continue;
+        }
+        const found: [number, number, number] = [loaded.r, loaded.g, loaded.b];
+        if (found.some((n, i) => off(n, want[i]))) {
+          fail(
+            'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
+            `slot "${name}" states dark ${JSON.stringify(hex)} and the runtime loaded (${show(found)}), wanted ` +
+              `(${show(want)})`,
+          );
+        }
+      }
+
+      // -- clauses 2 and 3: every rgba2 timeline ----------------------------
+      //
+      // ⚠️ Clause 2 poisons its whole ANIMATION, not only its own timeline: the
+      // throw happens inside `state.apply`, which applies every timeline of the
+      // animation at once, so posing a second — correct — `rgba2` timeline in the
+      // same animation would take this assertion down with a `threw:` line
+      // instead of the two named failures it has already worked out.
+      const cannotPose = new Set(keyed.filter((t) => !declared.has(t.slot)).map((t) => t.anim));
+      for (const { anim: animName, slot: slotName, keys } of keyed) {
+        const where = `animation "${animName}" slot "${slotName}" rgba2`;
+        if (!declared.has(slotName)) {
+          fail(
+            'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
+            `${where}: slot "${slotName}" declares no setup "dark", so the runtime allocates no dark colour for ` +
+              'it and applying this animation throws instead of tinting — give the slot a `dark`, or key "rgba"',
+          );
+          continue;
+        }
+        if (cannotPose.has(animName)) continue;
+        const animation = data.findAnimation(animName);
+        if (!animation) {
+          fail('A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', `${where}: the loaded skeleton has no animation "${animName}"`);
+          continue;
+        }
+        for (const rawKey of keys) {
+          if (!isObj(rawKey)) continue;
+          const time = typeof rawKey.time === 'number' ? rawKey.time : 0;
+          const wantLight = typeof rawKey.light === 'string' ? readLightHex(rawKey.light) : null;
+          const wantDark = typeof rawKey.dark === 'string' ? readDarkHex(rawKey.dark) : null;
+          // ⚠️ Posed BEFORE the key's own spelling is judged, so that a key whose
+          // hex cannot be read is still reported with the colour the runtime
+          // actually holds. `Color.setFromString` slices fixed offsets and stores
+          // whatever `parseInt` gives back, so the value found is the product
+          // here — "not six hex digits" alone would be the value REQUIRED twice
+          // over and the found value nowhere.
+          const skeleton = new Skeleton(data);
+          const state = new AnimationState(new AnimationStateData(data));
+          state.setAnimation(0, animName, false);
+          skeleton.setupPose();
+          skeleton.update(0);
+          skeleton.updateWorldTransform(Physics.reset);
+          state.update(time);
+          state.apply(skeleton);
+          skeleton.update(time);
+          skeleton.updateWorldTransform(Physics.update);
+          const posed = skeleton.slots.find((s) => s.data.name === slotName)?.appliedPose;
+          const light = posed?.color;
+          const dark = posed?.darkColor ?? null;
+          if (!light || dark === null) {
+            fail(
+              'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
+              `${where} (t=${time}): the posed skeleton has no ${light ? 'dark colour' : 'slot'} to read`,
+            );
+            continue;
+          }
+          const foundLight: [number, number, number, number] = [light.r, light.g, light.b, light.a];
+          const foundDark: [number, number, number] = [dark.r, dark.g, dark.b];
+          if (wantLight === null || wantDark === null) {
+            fail(
+              'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
+              `${where} (t=${time}): the key states light ${JSON.stringify(rawKey.light)} and dark ` +
+                `${JSON.stringify(rawKey.dark)} — an rgba2 key needs both, each six or eight hex digits — and the ` +
+                `runtime poses light (${show(foundLight)}), dark (${show(foundDark)})`,
+            );
+            continue;
+          }
+          if (foundLight.some((n, i) => off(n, wantLight[i]))) {
+            fail(
+              'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
+              `${where} (t=${time}): light posed (${show(foundLight)}), the key states ${JSON.stringify(rawKey.light)} ` +
+                `= (${show(wantLight)})`,
+            );
+          }
+          if (foundDark.some((n, i) => off(n, wantDark[i]))) {
+            fail(
+              'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
+              `${where} (t=${time}): dark posed (${show(foundDark)}), the key states ${JSON.stringify(rawKey.dark)} ` +
+                `= (${show(wantDark)})`,
+            );
           }
         }
       }

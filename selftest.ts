@@ -130,7 +130,15 @@ import {
   type SlotTrack,
 } from './src/check.ts';
 import { buildAtlasText, compile, CompileError, relativeImagesPath } from './src/compile.ts';
-import { ingest, IngestError, IngestSpecRefused, INGEST_GUTTERS, INGEST_VOCABULARY, type IngestFinding } from './src/ingest.ts';
+import {
+  ingest,
+  IngestError,
+  IngestSpecRefused,
+  INGEST_GUTTERS,
+  INGEST_VOCABULARY,
+  UNSPELT_SLOT_TRACKS,
+  type IngestFinding,
+} from './src/ingest.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
 import { RIG_KEYS, parseRigSpec } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
@@ -271,6 +279,7 @@ import {
   SKIP_NO_REGION_ATTACHMENT,
   SKIP_NO_SKELETON,
   SKIP_NO_TIMELINE,
+  SKIP_NO_TWO_COLOR_TINT,
   skeletonValues,
   timelineAddBehaviour,
   validate,
@@ -5339,17 +5348,18 @@ function runRigSuite(): number {
       [1, 0, 0, 0],
     ]);
     const namesIt = (message: string | null): boolean =>
-      message !== null && message.includes('has no timeline "sequence"') && message.includes('(it has: attachment, rgba)');
+      message !== null && message.includes('has no timeline "sequence"') && message.includes('(it has: attachment, rgba, rgba2)');
     bad += reportCase(
       'RF23_a_slot_track_names_a_timeline_the_emitter_does_not_have',
       namesIt(unknownFour.message),
       unknownFour.message === null
         ? `compiled, and the emitted animation carries ${JSON.stringify(probeTimelines(unknownFour.skeletonText))}`
         : `refused with: ${unknownFour.message}`,
-      'the accepted pair is quoted here rather than read out of `SLOT_TRACKS`, and that is deliberate: a control ' +
+      'the accepted list is quoted here rather than read out of `SLOT_TRACKS`, and that is deliberate: a control ' +
         "that derived the list from the emitter would agree with the emitter whatever the emitter said. Typed, it " +
         'is the interface an author is promised, and widening the table without saying so in `docs/AUTHORING.md` ' +
-        'turns this red',
+        'turns this red — which is exactly what it did when `rgba2` joined the table (issue #690), and this line ' +
+        'is the third spelling it has had',
     );
 
     const unknownOne = withSlotTrack('sequence', [[0], [1]]);
@@ -5536,7 +5546,7 @@ function runRigSuite(): number {
   //
   // 🚨 The slot-group half is the one the card understates. Its members ARE
   // slots, so it reached `compileTrack` and got issue #650's refusal — `slot
-  // "pool" has no timeline "tint" (it has: attachment, rgba)`, which names one
+  // "pool" has no timeline "tint" (it has: attachment, rgba, rgba2)`, which names one
   // table and one member for a track that named a group and whose family the
   // compiler never determined. Refused by name, and by the wrong name.
   //
@@ -5600,7 +5610,7 @@ function runRigSuite(): number {
     const keyedMembers = (timelines: Record<string, Record<string, unknown[]>>, property: string, keys: number): string[] =>
       Object.keys(timelines).filter((member) => (timelines[member]?.[property] ?? []).length === keys);
     const BONE_LIST = 'a bone group has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate';
-    const SLOT_LIST = 'a slot group has: attachment, rgba';
+    const SLOT_LIST = 'a slot group has: attachment, rgba, rgba2';
     const PHYSICS_LIST = 'a physics constraint group has: inertia, strength, damping, mass, wind, gravity, mix, reset';
     /** The whole message, on the group and property a case wrote. */
     const namesGroup = (message: string | null, group: string, property: string): boolean =>
@@ -5683,7 +5693,7 @@ function runRigSuite(): number {
         ? `compiled, and the emitted animation carries ${JSON.stringify(probeGroupTimelines(unknownOnSlots.skeletonText, 'slots'))}`
         : `refused with: ${unknownOnSlots.message}`,
       'the half the card reads as the same defect and is not: a group of slots reached issue #650\'s refusal and ' +
-        'was told `slot "pool" has no timeline "tint" (it has: attachment, rgba)` — true of the member, and about a ' +
+        'was told `slot "pool" has no timeline "tint" (it has: attachment, rgba, rgba2)` — true of the member, and about a ' +
         'family the compiler never determined, on a file that wrote `"group": "washes"`. The negative clause is ' +
         'what keeps that sentence from coming back: a message may not answer a group by picking one of its members',
     );
@@ -6594,6 +6604,220 @@ function runRigSuite(): number {
         'exactly where it was. Held to the same typed table `RF53` is held to rather than to the shared-name ' +
         'build, because a control that reads the other build goes red when the widening is removed — over a rig ' +
         'the widening never touched',
+    );
+  }
+
+  // --- the two-colour tint, keyed over time (issue #690) ---------------------
+  //
+  // ⭐ **What was missing is exactly one timeline.** A slot's `dark` has been a
+  // rig-spec field and an emitted slot key all along — the tolerance control
+  // above adds one and requires it to reach the artifact — and the motion spec
+  // had no way to move it. `SLOT_TRACKS` was `attachment` and `rgba`, so a track
+  // spelled `rgba2` was refused with the sentence issue #650 built for a
+  // misspelling, on a name that is a real slot timeline in the format.
+  //
+  // 🚨 **And the pair has a precondition the format does not state.** A
+  // two-colour timeline poses `SlotPose.darkColor`, which `Slot`'s constructor
+  // allocates only `if (data.setupPose.darkColor != null)`; `RGBA2Timeline`
+  // writes into it unconditionally. So an `rgba2` timeline on a slot with no
+  // `dark` is a file every parser loads and no runtime plays — measured here on
+  // the emitted skeleton with the refusal removed: `TypeError: null is not an
+  // object (evaluating 'dark.r = …')` on the first `state.apply`. That is the
+  // silence this compiler converts into a name, and `RF60` is where it is seen
+  // converted.
+  {
+    const tintDir = join(dir, 'twocolour');
+    mkdirSync(join(tintDir, 'images'), { recursive: true });
+    copyFileSync(join(OVERLAY.dir, 'parts', 'lens_l_shut.png'), join(tintDir, 'images', 'plain.png'));
+    copyFileSync(join(OVERLAY.dir, 'parts', 'iris_open.png'), join(tintDir, 'images', 'trim.png'));
+    const tintRigPath = join(tintDir, 'rig.json');
+    // Three slots and three states of the precondition: two that declare a
+    // `dark` — so a GROUP of them is a legal track — and one that does not. The
+    // third is an empty slot, which costs no art and is the shape an author most
+    // easily reaches by accident: a slot the rig declares and nothing fills.
+    writeFileSync(
+      tintRigPath,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-rig/1',
+          name: 'twocolour',
+          images: 'images',
+          skeleton: { width: 256, height: 256 },
+          bones: [{ name: 'root' }, { name: 'panel', parent: 'root', x: 0, y: 40 }],
+          slots: [
+            { name: 'panel', bone: 'panel', attachment: 'plain', dark: '204060' },
+            { name: 'trim', bone: 'panel', attachment: 'trim', dark: '103020' },
+            { name: 'bare', bone: 'panel', attachment: null },
+          ],
+          skins: { default: { panel: { plain: { image: 'plain.png' } }, trim: { trim: { image: 'trim.png' } } } },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const tintMotionPath = join(tintDir, 'motion.json');
+    const tintOpts = { rigPath: tintRigPath, motionPath: tintMotionPath, outDir: join(tintDir, 'build') };
+    /** Compile the two-colour rig against a motion spec with the given tracks and groups. */
+    const tintBuild = (
+      tracks: Array<Record<string, unknown>>,
+      groups?: Record<string, string[]>,
+    ): { message: string | null; skeletonText: string | null } => {
+      writeFileSync(
+        tintMotionPath,
+        `${JSON.stringify(
+          {
+            spec: 'rigc-motion/1',
+            archetype: 'twocolour',
+            cut: 'twocolour',
+            easings: {},
+            ...(groups === undefined ? {} : { groups }),
+            animations:
+              tracks.length === 0 ? {} : { flash: { duration: 0.5, loop: false, tracks } },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      try {
+        return { message: null, skeletonText: compile(tintOpts).skeletonText };
+      } catch (err) {
+        return {
+          message: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`,
+          skeletonText: null,
+        };
+      }
+    };
+    /** One slot's emitted timelines in the probe animation. */
+    const tintTimelines = (skeletonText: string | null, slot: string): Record<string, unknown[]> => {
+      if (skeletonText === null) return {};
+      const skeleton = JSON.parse(skeletonText) as {
+        animations?: Record<string, { slots?: Record<string, Record<string, unknown[]>> }>;
+      };
+      return skeleton.animations?.flash?.slots?.[slot] ?? {};
+    };
+    // Channels chosen as exact fifths, so every one of them is a whole byte and
+    // the expected hex below is the spec's own arithmetic rather than a rounding
+    // this file would have to reproduce: 0.2 → 51 → `33`, 0.6 → 153 → `99`.
+    const RGBA2_KEYS = [
+      { t: 0, v: [1, 1, 1, 1, 0, 0, 0] },
+      { t: 0.5, v: [1, 0.8, 0.6, 1, 1, 0.4, 0.2] },
+    ];
+    const RGBA2_EMITTED = [
+      { time: 0, light: 'ffffffff', dark: '000000' },
+      { time: 0.5, light: 'ffcc99ff', dark: 'ff6633' },
+    ];
+    const rgba2Track = (slot: string): Record<string, unknown> => ({ slot, property: 'rgba2', keys: RGBA2_KEYS });
+
+    const quiet = tintBuild([]);
+    const keyed = tintBuild([rgba2Track('panel')]);
+    const movedPaths =
+      quiet.skeletonText === null || keyed.skeletonText === null
+        ? ['one of the two builds was refused, so there is nothing to compare']
+        : differingJsonPaths(JSON.parse(quiet.skeletonText), JSON.parse(keyed.skeletonText));
+    const strayPaths = movedPaths.filter((path) => !path.startsWith('animations'));
+    bad += reportCase(
+      'CONTROL_ADDING_AN_RGBA2_TRACK_MOVES_THE_ANIMATION_AND_NOTHING_ELSE',
+      quiet.message === null && keyed.message === null && movedPaths.length > 0 && strayPaths.length === 0,
+      quiet.message !== null || keyed.message !== null
+        ? `the probe did not compile: ${quiet.message ?? keyed.message}`
+        : `the same rig with and without the track differs at ${movedPaths.length} field path(s), all under ` +
+          `\`animations\`: ${movedPaths.join('; ')}`,
+      'the positive control, and it carries the claim the card puts on the whole landing: a rig that keys no ' +
+        '`rgba2` emits what it always did. Here that is measured on ONE rig by adding the track and reading back ' +
+        'what moved, which is the same question the gallery builds answer at the scale of a whole tree — and the ' +
+        'cases below are worth nothing without it, because a probe that refused every spec it wrote would make ' +
+        'every refusal pass',
+    );
+
+    const emitted = tintTimelines(keyed.skeletonText, 'panel').rgba2 ?? null;
+    bad += reportCase(
+      'RF57_an_rgba2_track_compiles_and_the_emitted_key_is_the_formats_light_and_dark_pair',
+      keyed.message === null && JSON.stringify(emitted) === JSON.stringify(RGBA2_EMITTED),
+      keyed.message === null
+        ? `slots.panel.rgba2 = ${JSON.stringify(emitted)}`
+        : `refused: ${keyed.message}`,
+      'the shape is the whole of what an emitter can get wrong here and none of it throws: `SkeletonJson` reads ' +
+        '`keyMap.light` and `keyMap.dark` by name, and a key spelled `color` — the neighbouring timeline\'s field ' +
+        '— loads as `Color.fromString(undefined)`, which is four NaN channels and no error. Seven channels go in ' +
+        'as two hex strings of four and three, because the format stores three dark channels and the fourth a ' +
+        'shader reads there is the premultiply flag rather than a colour',
+    );
+
+    const sixChannels = tintBuild([{ slot: 'panel', property: 'rgba2', keys: [{ t: 0, v: [1, 1, 1, 1, 0, 0] }] }]);
+    const shortRgbaHere = tintBuild([{ slot: 'panel', property: 'rgba', keys: [{ t: 0, v: [1, 1, 1] }] }]);
+    bad += reportCase(
+      'RF58_a_six_channel_rgba2_key_is_refused_by_its_own_arity_and_the_rgba_message_is_untouched',
+      sixChannels.message !== null &&
+        sixChannels.message.includes('rgba2 value needs 7 channels, got 6') &&
+        !sixChannels.message.includes('rgba value needs 4 channels') &&
+        shortRgbaHere.message !== null &&
+        shortRgbaHere.message.includes('rgba value needs 4 channels, got 3'),
+      `six channels: ${sixChannels.message ?? 'compiled'}\n          three on a real rgba: ${shortRgbaHere.message ?? 'compiled'}`,
+      'six is the likeliest wrong answer, because the dark half looks like it should carry an alpha and the light ' +
+        'half does. Both clauses are the case: a widening that reached the arity check by widening `rgbaHex` would ' +
+        'have accepted seven AND told a three-channel `rgba` key it needed seven, and from the outside that reads ' +
+        'as the same repair',
+    );
+
+    const unknownSlot = tintBuild([{ slot: 'panel', property: 'sequence', keys: [{ t: 0, v: [0, 0, 0, 0] }] }]);
+    const unknownGroup = tintBuild([{ group: 'washes', property: 'tint', keys: [{ t: 0, v: [0, 0, 0, 0] }] }], {
+      washes: ['panel', 'trim'],
+    });
+    const onABone = tintBuild([{ bone: 'panel', property: 'rgba2', keys: [{ t: 0, v: [1, 1, 1, 1, 0, 0, 0] }] }]);
+    const widened = [
+      { what: 'the slot refusal', message: unknownSlot.message, wants: '(it has: attachment, rgba, rgba2)' },
+      { what: 'the group refusal', message: unknownGroup.message, wants: 'a slot group has: attachment, rgba, rgba2' },
+      { what: 'the bone redirect', message: onABone.message, wants: '"rgba2" is a slot timeline — put the name in "slot"' },
+    ];
+    const notWidened = widened.filter(({ message, wants }) => message === null || !message.includes(wants));
+    bad += reportCase(
+      'RF59_every_refusal_that_prints_the_slot_list_prints_the_widened_one',
+      notWidened.length === 0,
+      probeDetail(
+        notWidened.length === 0,
+        notWidened.map(({ what, message, wants }) => `${what} does not say ${JSON.stringify(wants)}: ${message ?? 'it compiled'}`),
+        widened.map(({ what, message }) => `${what}: ${message}`).join('\n          '),
+        (count) => `${count} refusal(s) that did not move with the table:`,
+      ),
+      'three readings of one object. `SLOT_TRACKS` is printed by the slot refusal, by one third of the group ' +
+        "refusal's three lists, and — as a membership test rather than a list — by the bone track's redirect, so a " +
+        'widening that reached only the first would leave a group of slots and a misplaced bone track both told ' +
+        'that `rgba2` is not a thing. The three lists in the group message are typed in `RF30`–`RF34`, which is ' +
+        'what makes this case about the emitter rather than about itself',
+    );
+
+    const noDark = tintBuild([rgba2Track('bare')]);
+    bad += reportCase(
+      'RF60_an_rgba2_track_on_a_slot_with_no_setup_dark_is_refused_with_the_slot_named',
+      noDark.message !== null &&
+        noDark.message.includes('slot "bare" declares no setup "dark"') &&
+        noDark.message.includes('applying this animation throws instead of tinting') &&
+        !noDark.message.includes('has no timeline'),
+      noDark.message ?? 'compiled — a timeline the runtime cannot pose went through',
+      'the precondition the format does not state, and the reason it is a compile error rather than a gate ' +
+        'clause: the file that results parses, and the fault is in the rig spec, which by gate time is gone. ' +
+        'Measured with the refusal removed — the emitted skeleton loads, `SlotData.setupPose.darkColor` is null, ' +
+        'and `state.apply` throws `TypeError: null is not an object` inside `RGBA2Timeline.apply1`. The negative ' +
+        'clause keeps this from being answered with the property message, which would name a timeline the slot ' +
+        'does have',
+    );
+
+    const grouped = tintBuild([{ group: 'washes', property: 'rgba2', keys: RGBA2_KEYS }], { washes: ['panel', 'trim'] });
+    const groupedMembers = ['panel', 'trim'].map((slot) => ({
+      slot,
+      keys: tintTimelines(grouped.skeletonText, slot).rgba2 ?? null,
+    }));
+    bad += reportCase(
+      'RF61_a_group_of_slots_keys_rgba2_and_every_member_gets_the_whole_timeline',
+      grouped.message === null &&
+        groupedMembers.every(({ keys }) => JSON.stringify(keys) === JSON.stringify(RGBA2_EMITTED)),
+      grouped.message === null
+        ? groupedMembers.map(({ slot, keys }) => `slots.${slot}.rgba2 = ${JSON.stringify(keys)}`).join('\n          ')
+        : `refused: ${grouped.message}`,
+      'a group is the form the card\'s own use has — a hit flash is keyed on every slot of a figure at once — and ' +
+        'it is a different code path: `resolveMemberTrack` copies the keys per member and `compileTrack` is ' +
+        'called once each, so a shape that worked on a lone slot could still write one member\'s keys to all of ' +
+        'them. Both members are read, so passing on one of two is not a pass',
     );
   }
 
@@ -8074,6 +8298,7 @@ function runStaticRigSuite(): number {
     SKIP_NO_ATLAS_REGION,
     SKIP_NO_ATTACHMENT_REGION_JOIN,
     SKIP_NO_DECLARED_DURATION,
+    SKIP_NO_TWO_COLOR_TINT,
   ]);
   const measuredIn = (report: ReturnType<typeof validate>, name: string): boolean =>
     report.passed.includes(name) || report.failures.some((f) => f.assertion === name);
@@ -8380,6 +8605,207 @@ function runStaticRigSuite(): number {
       'a rig built the way `ingest --art none` writes one: a region attachment stating width and height and naming ' +
       'no file',
   );
+
+  // --- S66-S70: the two-colour tint read back off the runtime (issue #690) ---
+  //
+  // ⭐ `A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN` is here rather than in the
+  // rig-spec suite because two of the three shapes it names **cannot be
+  // compiled**: `compile.ts` refuses an `rgba2` timeline on a slot with no
+  // `dark`, and it writes `dark` through `channelHex`, so a malformed one can
+  // only arrive in a file rigc did not write. This suite already owns the
+  // machinery for that — `gateProbeArtifacts` breaks the emitted skeleton and
+  // gates THAT — and a rule about foreign data has to be measured on foreign
+  // data or it is a rule about the emitter.
+  //
+  // 🚨 What the three shapes have in common is that the parser is happy with all
+  // of them. `getValue(slotMap, "dark", null)` then `if (dark)` drops a falsy
+  // value without a word; `Color.setFromString` slices fixed offsets and stores
+  // whatever `parseInt` returns; and a slot with no dark colour allocates none,
+  // which `RGBA2Timeline` writes into anyway. The last is the sharpest, because
+  // the file loads and the THROW happens in the consumer's player.
+  {
+    const DARK = 'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN';
+    const twoColour = writeProbeRig({
+      slots: [
+        { name: 'block', bone: 'block', attachment: 'block', dark: '204060' },
+        { name: 'marker', bone: 'block', attachment: 'marker' },
+      ],
+    });
+    // Exact fifths again, so every channel is a whole byte and the hex below is
+    // the spec's arithmetic rather than a rounding restated here.
+    const tintMotion = {
+      ...STATIC_MOTION,
+      animations: {
+        flash: {
+          duration: 0.5,
+          loop: false,
+          tracks: [
+            {
+              slot: 'block',
+              property: 'rgba2',
+              keys: [
+                { t: 0, v: [1, 1, 1, 1, 0, 0, 0] },
+                { t: 0.5, v: [1, 0.8, 0.6, 1, 1, 0.4, 0.2] },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    /** The forged skeleton's rgba2 keys, so a plant can reach into one. */
+    const rgba2KeysOf = (skeleton: Record<string, unknown>): Array<Record<string, unknown>> => {
+      const animations = skeleton.animations as Record<string, { slots?: Record<string, Record<string, unknown[]>> }>;
+      return (animations?.flash?.slots?.block?.rgba2 ?? []) as Array<Record<string, unknown>>;
+    };
+    const slotsOf = (skeleton: Record<string, unknown>): Array<Record<string, unknown>> =>
+      (skeleton.slots ?? []) as Array<Record<string, unknown>>;
+    const detailsOf = (report: ReturnType<typeof validate>, assertion: string): string[] =>
+      report.failures.filter((f) => f.assertion === assertion).map((f) => f.detail);
+
+    const correct = gateProbe(twoColour, tintMotion);
+    say(
+      'CONTROL_A_CORRECT_TWO_COLOUR_RIG_IS_GREEN_AND_A43_MEASURED_IT',
+      correct.failures.length === 0 && correct.passed.includes(DARK),
+      correct.failures.length === 0
+        ? `A43 ${correct.passed.includes(DARK) ? 'ran and held' : 'did NOT run'} on a rig with 1 dark slot and ` +
+          `1 rgba2 timeline; ${correct.passed.length} assertion(s) passed, ${correct.skipped.length} skipped`
+        : `[${correct.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+      'the positive control the four plants below are worth nothing without, and it is not only about A43: this is ' +
+        'the first rig in this file that keys a two-colour tint at all, so a green here is also the statement that ' +
+        'an `rgba2` timeline reaches the gate without any other rule objecting to it',
+    );
+
+    const wrongSetup = gateProbeArtifacts(twoColour, tintMotion, (skeleton) => {
+      const slots = slotsOf(skeleton);
+      slots[0].dark = '4020';
+      slots[1].dark = '';
+    });
+    const setupDetails = detailsOf(wrongSetup, DARK);
+    const setupProbes = [
+      ...(setupDetails.some((d) => d.includes('slot "block" states dark "4020"') && d.includes('not six hex digits'))
+        ? []
+        : ['the short hex on slot "block" is not named with what is wrong with it']),
+      ...(setupDetails.some((d) => d.includes('slot "marker" states dark ""') && d.includes('holds no dark colour for it at all'))
+        ? []
+        : ['the empty dark on slot "marker" is not named as a value the parser dropped']),
+      ...(correct.failures.some((f) => f.assertion === DARK) ? ['the unplanted rig fails A43 too, so this plant proves nothing'] : []),
+    ];
+    const setupHeld = setupProbes.length === 0;
+    say(
+      'S66_A_SETUP_DARK_THE_PARSER_DOES_NOT_LOAD_AS_WRITTEN_IS_REFUSED_BY_NAME',
+      setupHeld,
+      probeDetail(
+        setupHeld,
+        setupProbes,
+        setupDetails.join('\n          '),
+        (count) => `${count} of the two ways a setup dark goes missing were not named:`,
+      ),
+      'two plants because the parser loses the value two different ways and only one of them leaves a trace: a ' +
+        'short hex stores NaN in a channel, and an empty string is dropped by a truthiness test so the slot ends ' +
+        'up with no dark colour at all — which is indistinguishable, from inside the loaded skeleton, from a rig ' +
+        'that never wrote the field. The FILE is what distinguishes them, which is why this clause reads the raw ' +
+        'JSON and the runtime and compares the two',
+    );
+
+    const nanKey = gateProbeArtifacts(twoColour, tintMotion, (skeleton) => {
+      rgba2KeysOf(skeleton)[1].dark = 'zz6633';
+    });
+    const nanDetails = detailsOf(nanKey, DARK);
+    const nanProbes = [
+      ...(nanDetails.some((d) => d.includes('rgba2 (t=0.5)') && d.includes('"zz6633"') && d.includes('NaN'))
+        ? []
+        : ['A43 does not name the key, its spelling and the NaN the runtime poses from it']),
+      ...(nanKey.failures.some((f) => f.assertion === 'A10_NO_NAN_AFTER_STEPPING' && f.detail.includes('dark colour is non-finite'))
+        ? []
+        : ['A10 does not report the non-finite dark colour its own stepping walked through']),
+    ];
+    const nanHeld = nanProbes.length === 0;
+    say(
+      'S67_AN_RGBA2_KEY_WHOSE_DARK_CHANNEL_IS_NAN_IS_NAMED_BY_A43_AND_BY_A10',
+      nanHeld,
+      probeDetail(
+        nanHeld,
+        nanProbes,
+        [...nanDetails, ...detailsOf(nanKey, 'A10_NO_NAN_AFTER_STEPPING')].join('\n          '),
+        (count) => `${count} rule(s) that should have seen the NaN and did not:`,
+      ),
+      'both halves are the case. A10 already stepped every animation and read the slot COLOUR for NaN, and the ' +
+        'dark one was outside that loop for no reason but that nothing emitted one — so this is the extension ' +
+        'measured rather than asserted. A43 is what makes the report usable: A10 says a colour is non-finite, and ' +
+        'A43 says which key, what it spells, and what the runtime made of it',
+    );
+
+    const orphanTimeline = gateProbeArtifacts(twoColour, tintMotion, (skeleton) => {
+      delete slotsOf(skeleton)[0].dark;
+    });
+    const orphanDetails = detailsOf(orphanTimeline, DARK);
+    const orphanProbes = [
+      ...(orphanDetails.some((d) => d.includes('slot "block" declares no setup "dark"') && d.includes('throws instead of tinting'))
+        ? []
+        : ['A43 does not name the pairing the runtime cannot pose']),
+      ...(orphanDetails.every((detail) => !detail.startsWith('threw:'))
+        ? []
+        : ['A43 threw on this skeleton instead of reporting it — the guard that keeps it off an unposable animation did not hold']),
+    ];
+    const orphanHeld = orphanProbes.length === 0;
+    say(
+      'S68_AN_RGBA2_TIMELINE_ON_A_SLOT_WITH_NO_DARK_IS_A_NAMED_FAILURE_AND_NOT_A_THROW',
+      orphanHeld,
+      probeDetail(
+        orphanHeld,
+        orphanProbes,
+        [...orphanDetails, ...detailsOf(orphanTimeline, 'A10_NO_NAN_AFTER_STEPPING')].join('\n          '),
+        (count) => `${count} thing(s) the report did not do:`,
+      ),
+      'the shape the compiler refuses outright, arriving as a file rigc did not write — and the second clause is ' +
+        'the one worth having. Before A43 this skeleton was already red, through `A10_NO_NAN_AFTER_STEPPING: ' +
+        'threw: null is not an object (evaluating \'dark.r = …\')`: a true verdict naming neither the slot nor the ' +
+        'timeline nor anything an author could act on. A43 has to name it WITHOUT throwing itself, which is why it ' +
+        'works out which animations it cannot pose before it poses any. ⚠️ A10 still throws here and is deliberately ' +
+        'left to — the detail printed above is its own line — because the alternative is teaching one rule about a ' +
+        'construct that is not its subject: A10 steps every animation of every skeleton, and a guard for this ' +
+        'pairing would be the first of an open list. The report now carries both, and one of them says what to do',
+    );
+
+    const plain = gateProbe(dirs, STATIC_MOTION);
+    const plainSkip = plain.skipped.find((s) => s.assertion === DARK);
+    say(
+      'S69_A43_SKIPS_A_RIG_THAT_CARRIES_NO_TWO_COLOUR_TINT_AT_ALL',
+      plainSkip !== undefined && plainSkip.reason === SKIP_NO_TWO_COLOR_TINT && !plain.passed.includes(DARK),
+      `${plainSkip ? `skipped: ${plainSkip.reason}` : 'A43 looked at a rig with neither half of the tint and called that a pass'}` +
+        `; A43 ${plain.passed.includes(DARK) ? 'is ALSO in `passed`' : 'is in no pass list'}`,
+      'the subject is a construct almost no rig carries — no gallery example, no film, no editor export in the ' +
+        'corpus declares a dark colour — so a rule that passed vacuously here would print green on every build in ' +
+        'this repository while having read nothing. The reason is compared against the exported constant rather ' +
+        'than quoted, so a SKIP for some other subject cannot satisfy it',
+    );
+
+    const policy = gateProbe(twoColour, tintMotion, 'spine-html');
+    const a12 = detailsOf(policy, 'A12_NO_DARK_COLOR');
+    const a12Probes = [
+      ...(a12.some((d) => d.includes('slot "block" declares a dark colour')) ? [] : ['A12 does not name the slot field']),
+      ...(a12.some((d) => d.includes('two-colour timeline "rgba2"')) ? [] : ['A12 does not name the rgba2 timeline']),
+      ...(correct.profileSkipped.some((p) => p.assertion === 'A12_NO_DARK_COLOR' && p.kind === 'renderer')
+        ? []
+        : ['A12 is not reported as a renderer-profile exclusion under `spine`, which is the profile `build` runs']),
+    ];
+    const a12Held = a12Probes.length === 0;
+    say(
+      'S70_THE_RENDERER_PROFILE_STILL_REFUSES_BOTH_HALVES_OF_WHAT_BUILD_NOW_EMITS',
+      a12Held,
+      probeDetail(
+        a12Held,
+        a12Probes,
+        `${a12.length} A12 failure(s) under \`spine-html\`: ${a12.join('; ')}. Under \`spine\`, A12 is PROF`,
+        (count) => `${count} thing(s) the profile split did not do:`,
+      ),
+      'the clause that keeps emitting and refusing from contradicting each other. A12 is filed `renderer` in ' +
+        '`ASSERTION_KIND`, so it states what ONE renderer drops rather than what is wrong — and `build` runs ' +
+        '`--profile spine`, where it never executes. The third probe is the load-bearing one: if A12 were ' +
+        '`validity` this landing would have made every two-colour rig unbuildable, and the first two clauses ' +
+        'would look exactly the same',
+    );
+  }
   return bad;
 }
 
@@ -16045,6 +16471,17 @@ function runPathAndSliderSuite(): number {
     [0, 0, 1, 1],
   ];
   const SLIDER_RGBA_SETUP = [1, 1, 1, 1];
+  /**
+   * The two-colour tint's seven channels — light r g b a, then dark r g b — for
+   * the census row below (issue #690). Every value is a whole byte at 1/255, and
+   * both dark and light move between the two animations, so a composition that
+   * carried one half and dropped the other is visible.
+   */
+  const SLIDER_RGBA2_SETUP = [1, 1, 1, 1, 0.2, 0.2, 0.2];
+  const SLIDER_RGBA2_TO: number[][] = [
+    [1, 0, 0, 1, 1, 0.4, 0],
+    [0, 0, 1, 1, 0, 0.4, 1],
+  ];
   const SLIDER_SWAP_AT = 0.5;
   const SLIDER_IK_TO = [1, 0.25];
   const SLIDER_WIND_TO = [24, -9];
@@ -17614,6 +18051,53 @@ function runPathAndSliderSuite(): number {
     boneCase('bone shearx', 'shearx', [0], [0], [[10], [-4]], ['shearX']),
     boneCase('bone sheary', 'sheary', [0], [0], [[6], [9]], ['shearY']),
     { spelling: 'slot rgba', observable: true, ...SLIDER_IGNORES_ADD[0] },
+    // The two-colour tint (issue #690). It is a census row rather than a fourth
+    // `SLIDER_IGNORES_ADD` entry because `A40`'s refusal names a target by its
+    // first PROPERTY id, and `RGBA2Timeline` declares `rgb`, `alpha` AND `rgb2`
+    // — so its refusal reads `slot "marker" rgb`, the same words the `rgba` row
+    // above already claims. What this row is for is the question `PS144` asks:
+    // every spelling the compiler admits is posed and its add behaviour
+    // measured, and `SLOT_TRACKS` grew by one. It also brings `rgb2` inside the
+    // census's own family set, which is the derivation `PS144` reads.
+    {
+      spelling: 'slot rgba2',
+      observable: true,
+      kind: 'slot "marker" rgb2',
+      rig: {
+        slots: [
+          { name: 'block', bone: 'block', attachment: 'block' },
+          // `333333` is 0.2 in each channel exactly — 51/255 — so the setup the
+          // closed form starts from is a number the file can hold.
+          { name: 'marker', bone: 'block', attachment: 'marker', dark: '333333' },
+        ],
+      },
+      after: [],
+      animation: (which) => ({
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [
+          {
+            slot: 'marker',
+            property: 'rgba2',
+            keys: [
+              { t: 0, v: SLIDER_RGBA2_SETUP },
+              { t: GRID_DURATION, v: SLIDER_RGBA2_TO[which] },
+            ],
+          },
+        ],
+      }),
+      setup: SLIDER_RGBA2_SETUP,
+      alone: (which, share) => SLIDER_RGBA2_SETUP.map((at, i) => at + (SLIDER_RGBA2_TO[which][i] - at) * share),
+      describe: (values) => `light ${values.slice(0, 4).map((v) => v.toFixed(4)).join('/')} dark ${values.slice(4).map((v) => v.toFixed(4)).join('/')}`,
+      read: (skeleton) => {
+        const pose = skeleton.slots.find((slot) => slot.data.name === 'marker')!.appliedPose;
+        const light = pose.color;
+        const dark = pose.darkColor;
+        return dark === null
+          ? [light.r, light.g, light.b, light.a, Number.NaN, Number.NaN, Number.NaN]
+          : [light.r, light.g, light.b, light.a, dark.r, dark.g, dark.b];
+      },
+    },
     { spelling: 'slot attachment', observable: true, ...SLIDER_IGNORES_ADD[1] },
     { spelling: 'drawOrder', observable: true, ...SLIDER_IGNORES_ADD[2] },
     { spelling: 'ik', observable: true, ...SLIDER_IGNORES_ADD[3] },
@@ -36402,17 +36886,17 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
   {
     row: 'README: the benchmark-dossier row (#359)',
     stale: 'the run viewer, the 36 named assertions with their profiles, and the selftest\n',
-    clean: 'the run viewer, the 43 named assertions with their profiles, and the selftest\n',
+    clean: 'the run viewer, the 44 named assertions with their profiles, and the selftest\n',
   },
   {
     row: 'AUTHORING: the `--profile` row (#359)',
     stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |\n',
-    clean: '| `--profile` | `spine` = the 28 validity rules (**the default**) · `spine-html` = all 43, opt-in |\n',
+    clean: '| `--profile` | `spine` = the 29 validity rules (**the default**) · `spine-html` = all 44, opt-in |\n',
   },
   {
     row: 'BENCHMARK: the profiles paragraph (#359)',
     stale: 'Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this\n',
-    clean: 'Not all 43 rules are about Spine. Some are about **spine-html**, the renderer this\n',
+    clean: 'Not all 44 rules are about Spine. Some are about **spine-html**, the renderer this\n',
   },
   {
     row: 'BENCHMARK: the profile table\'s own row (#359)',
@@ -36421,7 +36905,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       '| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
     clean:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      '| `spine-html` | all 43 — those 28 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
+      '| `spine-html` | all 44 — those 29 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
   },
   {
     row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',
@@ -45415,7 +45899,11 @@ const INGEST_PROBE_RIG: Record<string, unknown> = {
   ],
   slots: [
     { name: 'block', bone: 'block', attachment: 'block' },
-    { name: 'marker', bone: 'block', attachment: 'marker' },
+    // The `dark` half of the two-colour tint, and the precondition of the
+    // `rgba2` track below: the runtime allocates a slot's dark colour only when
+    // its setup pose declares one, so a rig that keys the timeline has to
+    // declare it (issue #690).
+    { name: 'marker', bone: 'block', attachment: 'marker', dark: '204060' },
     // A slot some skin fills and the setup pose shows nothing in: the `null` the
     // rig spec spells and `ingest` has to read back out of an ABSENT field.
     { name: 'badge', bone: 'root', attachment: null },
@@ -45525,6 +46013,21 @@ const INGEST_PROBE_MOTION: Record<string, unknown> = {
         { physics: 'wobble', property: 'reset', keys: [{ t: 0, v: null }] },
         { slider: 'knob', property: 'time', keys: [{ t: 0, v: [1] }, { t: 1, v: [0.5] }] },
         { slider: 'knob', property: 'mix', keys: [{ t: 0, v: [1] }, { t: 1, v: [0.75] }] },
+        // The two-colour tint, here for the reason the eight physics timelines
+        // are: `IG03` asks whether every word of `INGEST_VOCABULARY` is
+        // exercised by a rig somebody builds, and `rgba2` joined that vocabulary
+        // when `SLOT_TRACKS` grew (issue #690). Seven channels — light r g b a,
+        // then dark r g b — chosen as exact fifths so every one is a whole byte,
+        // and every one differs between the two keys so a decompiler that lost a
+        // channel is visible in the rebuild.
+        {
+          slot: 'marker',
+          property: 'rgba2',
+          keys: [
+            { t: 0, v: [1, 1, 1, 1, 0, 0, 0], ease: 'ease' },
+            { t: 1, v: [1, 0.8, 0.6, 0.4, 1, 0.4, 0.2] },
+          ],
+        },
       ],
       transform: [
         {
@@ -47465,6 +47968,143 @@ function runIngestSuite(): number {
       'rebuild has to notice. The edit count is half the case, for IG04\'s reason: a plant with nothing to delete ' +
       'is green and checks nothing',
   );
+
+  // --- IG35-IG37: the two-colour tint, carried rather than blocked (#690) ----
+  //
+  // ⭐ `SLOT_TIMELINE` fired **433 times over six skeletons** of the production
+  // corpus the 1.0 exam feeds rigc, and the corpus census counted exactly 433
+  // `rgba2` timelines — one for one, so the blocker WAS the feature. What closes
+  // it is one branch beside `rgba`'s, and the two cases below are the two
+  // directions that branch can be wrong in: it can fail to carry what it now
+  // claims, and it can swallow the three timelines still unspelt.
+  //
+  // 🔒 The probe rig itself is where the construct lives, not a forgery, and that
+  // is deliberate for `IG03`'s reason: a decompiler branch no rig reaches is a
+  // branch nobody has seen work. So `rgba2` is authored into
+  // `INGEST_PROBE_MOTION` and the whole suite round-trips it — which also makes
+  // `IG00[ingest_probe]` a statement about this timeline.
+  {
+    const slotTracksOf = (motion: Record<string, unknown>, slot: string): Array<Record<string, unknown>> => {
+      const animations = (motion.animations ?? {}) as Record<string, { tracks?: Array<Record<string, unknown>> }>;
+      return (animations.everything?.tracks ?? []).filter((t) => t.slot === slot);
+    };
+    const carried = slotTracksOf(probeTrip.motion as unknown as Record<string, unknown>, 'marker').find(
+      (t) => t.property === 'rgba2',
+    );
+    const carriedKeys = (carried?.keys ?? []) as Array<{ t?: number; v?: number[] }>;
+    const darkSlot = ((probeTrip.rig as unknown as { slots?: Array<Record<string, unknown>> }).slots ?? []).find(
+      (slot) => slot.name === 'marker',
+    );
+    const carryProbes = [
+      ...(probeTrip.findings.some((f) => f.code === 'SLOT_TIMELINE')
+        ? [`the probe still raises ${probeTrip.findings.filter((f) => f.code === 'SLOT_TIMELINE').length} SLOT_TIMELINE blocker(s)`]
+        : []),
+      ...(carried === undefined ? ['the decompiled motion spec carries no `rgba2` track on slot "marker"'] : []),
+      ...(carriedKeys.length === 2 ? [] : [`the track came back with ${carriedKeys.length} key(s), and the probe authors 2`]),
+      ...(carriedKeys.every((key) => Array.isArray(key.v) && key.v.length === 7)
+        ? []
+        : [`a key came back with ${JSON.stringify(carriedKeys.map((k) => (Array.isArray(k.v) ? k.v.length : null)))} channel(s), and an rgba2 key is 7`]),
+      ...(darkSlot?.dark === '204060' ? [] : [`the slot's setup dark came back as ${JSON.stringify(darkSlot?.dark)}`]),
+    ];
+    const carryHeld = carryProbes.length === 0;
+    say(
+      'IG35_AN_RGBA2_TIMELINE_IS_CARRIED_INTO_THE_MOTION_SPEC_INSTEAD_OF_BLOCKING',
+      carryHeld,
+      probeDetail(
+        carryHeld,
+        carryProbes,
+        `slot "marker" came back with dark ${JSON.stringify(darkSlot?.dark)} and an rgba2 track of ` +
+          `${carriedKeys.length} key(s), 7 channels each: ${JSON.stringify(carriedKeys)}`,
+        (count) => `${count} thing(s) the decompiler did not carry:`,
+      ),
+      'both halves of the tint, because either alone is unusable: the setup `dark` was already carried by ' +
+        '`SLOT_FIELDS` and had nothing to move it, and a timeline without it is a file the runtime throws on. The ' +
+        'channels are counted rather than compared to a literal here — what they ARE is `IG37`\'s question, ' +
+        'against the file rather than against a number typed beside it',
+    );
+
+    const stillBlocked = UNSPELT_SLOT_TRACKS.map((property) => {
+      const forged = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+      const animations = forged.animations as Record<string, Record<string, unknown>>;
+      const slots = (animations.everything.slots ??= {}) as Record<string, Record<string, unknown>>;
+      (slots.block ??= {})[property] = [{ time: 0, color: 'ffffff' }];
+      const findings = ingest(forged, { name: 'p', art: 'none', source: 's.json', version: '0' }).findings.filter(
+        (f) => f.code === 'SLOT_TIMELINE',
+      );
+      return { property, findings };
+    });
+    const blockProbes = [
+      ...(UNSPELT_SLOT_TRACKS.length === 0
+        ? ['the format has no slot timeline the spec lacks, so this case planted nothing']
+        : []),
+      ...stillBlocked.flatMap(({ property, findings }) => {
+        const detail = findings[0]?.detail ?? '';
+        return [
+          ...(findings.length === 1 && findings[0].kind === 'blocker'
+            ? []
+            : [`"${property}" raised ${findings.length} SLOT_TIMELINE blocker(s), and this plant wants exactly 1`]),
+          ...(detail.includes(`timeline "${property}"`) ? [] : [`the blocker for "${property}" does not name it`]),
+          ...(INGEST_VOCABULARY.slotTracks.every((track) => new RegExp(`\\b${track}\\b`).test(detail))
+            ? []
+            : [`the blocker for "${property}" does not name the track(s) the spec does carry`]),
+          ...(UNSPELT_SLOT_TRACKS.every((other) => new RegExp(`\\b${other}\\b`).test(detail))
+            ? []
+            : [`the blocker for "${property}" does not name the format's remaining slot timelines`]),
+        ];
+      }),
+    ];
+    const blockHeld = blockProbes.length === 0;
+    say(
+      'IG36_THE_SLOT_TIMELINES_STILL_UNSPELT_ARE_STILL_BLOCKED_AND_BOTH_LISTS_ARE_NAMED',
+      blockHeld,
+      probeDetail(
+        blockHeld,
+        blockProbes,
+        `${UNSPELT_SLOT_TRACKS.length} plant(s) — ${UNSPELT_SLOT_TRACKS.join(', ')} — each one SLOT_TIMELINE ` +
+          `blocker naming both lists\n          ${stillBlocked[0]?.findings[0]?.detail ?? ''}`,
+        (count) => `${count} thing(s) the remaining blockers did not do:`,
+      ),
+      'the negative side, and the plants are the FORMAT\'s own leftovers rather than a nonsense name: a widening ' +
+        'that widened by removing the branch would carry every slot timeline into a spec that cannot hold three ' +
+        'of them, and a rebuild would play nothing there in silence. Both lists are read off the tables — ' +
+        '`SLOT_TRACKS` and `CHANNELS_BY_KIND.slot` — because this row of `docs/INGEST.md` named `rgba2` among the ' +
+        'timelines nobody carries for as long as that was true, and went on naming it afterwards',
+    );
+
+    const rgba2Of = (skeletonText: string): unknown[] => {
+      const skeleton = JSON.parse(skeletonText) as {
+        animations?: Record<string, { slots?: Record<string, Record<string, unknown[]>> }>;
+      };
+      return skeleton.animations?.everything?.slots?.marker?.rgba2 ?? [];
+    };
+    const before = rgba2Of(probeTrip.a.skeletonText);
+    const after = rgba2Of(probeTrip.b.skeletonText);
+    const identityProbes = [
+      ...(before.length === 2 ? [] : [`the first build emitted ${before.length} rgba2 key(s), and the probe authors 2`]),
+      ...(JSON.stringify(before) === JSON.stringify(after)
+        ? []
+        : [`the rebuild emitted ${JSON.stringify(after)} where the first build emitted ${JSON.stringify(before)}`]),
+      ...(before.some((key) => isIngestObject(key) && typeof key.curve === 'object')
+        ? []
+        : ['neither key carries a curve array, so the 28-number path went unmeasured']),
+    ];
+    const identityHeld = identityProbes.length === 0;
+    say(
+      'IG37_A_TWO_COLOUR_TIMELINE_SURVIVES_BUILD_INGEST_BUILD_KEY_FOR_KEY',
+      identityHeld,
+      probeDetail(
+        identityHeld,
+        identityProbes,
+        `slots.marker.rgba2 is the same ${before.length} key(s) on both sides of the round trip: ${JSON.stringify(before)}`,
+        (count) => `${count} thing(s) the round trip did not preserve:`,
+      ),
+      'the contract `IG00` states over the whole file, isolated onto the construct this landing adds — and the ' +
+        'curve clause is why it is worth stating separately. An `rgba2` key eases over **seven** channels, so its ' +
+        'raw curve is 28 numbers where `rgba`\'s is 16; a decompiler that read the array back at the wrong width, ' +
+        'or an emitter that wrote it at the wrong one, produces a file that loads and interpolates through NaN. ' +
+        'The probe\'s first key carries a named easing for exactly that reason',
+    );
+  }
 
   return bad;
 }

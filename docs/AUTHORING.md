@@ -169,7 +169,7 @@ What the flags mean:
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--cut` | `build`, `explain` and `validate`: look up a named cut in `--cuts <cuts.json>`, **instead of** `--rig`/`--motion`/`--out` — the two spellings are one build stated two ways and are refused together. A `cuts.json` is `{ "<name>": { "rig": …, "motion": …, "out": …, "manifest"?: … } }`, every path in it relative to the table's own file, so the table lives with the project that owns the art |
 | `--cuts` | the `cuts.json` `--cut` names. Required beside it — `--cut` alone is refused, with no guess at where the table lives |
-| `--profile` | `spine` = the 28 validity rules (**the default**) · `spine-html` = all 43, opt-in |
+| `--profile` | `spine` = the 29 validity rules (**the default**) · `spine-html` = all 44, opt-in |
 | `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview`, and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote`, so is a name that only *some* candidates have |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
@@ -949,7 +949,7 @@ and the inheritance silently falls back to Normal — assertion `A02` refuses it
 | `bone` | required; must be a bone this rig declares | — |
 | `attachment` | the **setup pose** attachment name, or `null` for "show nothing" | must come from here or from `motion.setup` (R3) — **except** on a slot nothing fills, where it can only be `null` and may be left out |
 | `color` | `rrggbbaa` tint | opaque white |
-| `dark` | two-colour tint, `rrggbb` | — (🚫 `A12` under `spine-html`) |
+| `dark` | two-colour tint, `rrggbb`. The **setup** half; §4.4's `rgba2` track keys it over time and requires it | — (🚫 `A12` under `spine-html`) |
 | `blend` | `normal` · `additive` · `multiply` · `screen` | `normal` |
 
 ✅ **Every slot you declare is emitted, in this order.** A slot nothing fills — no
@@ -2778,6 +2778,7 @@ a deform). Folding them in would make `v` mean four different things depending o
 | `bone` | `translate`, `scale`, `shear` | `[x, y]` |
 | `bone` | `translatex`, `translatey`, `scalex`, `scaley`, `shearx`, `sheary`, `rotate` | `[value]` |
 | `slot` | `rgba` | `[r, g, b, a]` in 0..1 |
+| `slot` | `rgba2` | `[lr, lg, lb, la, dr, dg, db]` in 0..1 — the two-colour tint, light then dark, **seven** channels. The slot must declare a setup `dark` (§3.3) |
 | `slot` | `attachment` | the attachment name, or `null` for "show nothing" |
 | `physics` | `inertia`, `strength`, `damping`, `mass`, `wind`, `gravity` | `[value]` — the constraint's own tuning, keyed over time |
 | `physics` | `mix` | `[mix]`, **0 or more** — the constraint's authority |
@@ -2821,9 +2822,9 @@ accepts is what it accepts.
   it actually poses, both ways, which is what makes the list checkable at all: it
   was stated there too until the refusal had something to state.
 
-⚠️ **A `slot` track's `property` is one of the two above, and anything else is a
+⚠️ **A `slot` track's `property` is one of the three above, and anything else is a
 compile error** — `animation "A" slot "X" has no timeline "P" (it has:
-attachment, rgba)`, §5.1's row. Until
+attachment, rgba, rgba2)`, §5.1's row. Until
 [#650](https://github.com/firejune/rigc/issues/650) it was not: the emitter had a
 branch for `attachment` and wrote **everything else** as an rgba timeline under
 the name you gave it, so a track spelled `sequence` compiled, emitted
@@ -2832,21 +2833,33 @@ the name you gave it, so a track spelled `sequence` compiled, emitted
 one-channel spelling of the same mistake was refused at compile as `rgba value
 needs 4 channels, got 1`, a message about a key you had not written.
 
-- The pair is the emitter's own dispatch table (`SLOT_TRACKS` in
+- The three are the emitter's own dispatch table (`SLOT_TRACKS` in
   `src/compile.ts`): `compileTrack` reads it to pick its branch, and the refusal
   prints `Object.keys` of the same object, so what you are told a slot accepts
   is what it accepts.
-- **Nothing derives this page's copy of that pair from the table**, and the list
-  is two names long: no `DQ*`/`RD*`/`CUR*` control reads §4.4 (the only gated
+- **Nothing derives this page's copy of that list from the table**, and it is
+  three names long: no `DQ*`/`RD*`/`CUR*` control reads §4.4 (the only gated
   table on this page is §3.5.2.1's, held by `RD01`–`RD06`). What keeps the two
   in step is the control that quotes the message — `RF23` in `selftest.ts` —
-  which goes red if the accepted pair ever widens without this page moving with
-  it.
-- The format has four more slot timelines (`rgb`, `alpha`, `rgba2`, `rgb2`) and
-  rigc emits none of them, so their names are refused here too; `A12_NO_DARK_COLOR`
-  refuses the last two in a file rigc did not write (SPEC_COVERAGE §2.1).
-  `sequence` is a timeline on an **attachment**, not on a slot, and rigc does
-  not emit that either.
+  which goes red if the accepted list ever widens without this page moving with
+  it. It did, on the day `rgba2` was added
+  ([#690](https://github.com/firejune/rigc/issues/690)), which is the mechanism
+  working rather than a hole in it.
+- 🎨 **`rgba2` keys the two-colour tint, and the slot has to own one first.** A
+  track `{ "slot": "X", "property": "rgba2" }` on a slot whose rig spec declares
+  no `dark` (§3.3) is a compile error with the slot named, and it is not a
+  formality: the runtime allocates a slot's dark colour only when its setup pose
+  has one, so a file keying it without one parses cleanly and then throws in the
+  player the first time the animation is applied. `A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN`
+  (§5.2) holds the same pairing on a skeleton rigc did not write. 🚫 Both halves
+  of the two-colour tint are refused under `--profile spine-html`, whose renderer
+  ignores them; the default `spine` profile that `build` runs reports `A12` as
+  `PROF` and never applies it.
+- The format has three more slot timelines (`rgb`, `alpha`, `rgb2`) and rigc
+  emits none of them, so their names are refused here too; `A12_NO_DARK_COLOR`
+  refuses `rgb2` — and `rgba2`, and the slot field — in a file under that
+  renderer's profile (SPEC_COVERAGE §2.1). `sequence` is a timeline on an
+  **attachment**, not on a slot, and rigc does not emit that either.
 
 ⚠️ **A `group` track's `property` is one of those two lists or the physics one,
 and anything else is a compile error** — `animation "A" group "G" has no timeline
@@ -2864,7 +2877,7 @@ resolved against the rig.
   with no table claiming the property the track fell through to the slot branch,
   and what you were told was that the first member is not a slot — on a file that
   named neither a slot nor that member. A group of **slots** got §4.4's slot row
-  instead (`slot "M" has no timeline "P" (it has: attachment, rgba)`), which is
+  instead (`slot "M" has no timeline "P" (it has: attachment, rgba, rgba2)`), which is
   true of the member and names one family out of three on a track whose family
   nothing had determined.
 - **A constraint property never reaches it.** `position`, `spacing` and `time` are
@@ -4577,9 +4590,11 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `animation "A" keys "X" as a path constraint, but the rig declares it as a "slider"` | §4.12 — a timeline group resolves by name AND type; use the field named after the constraint's own type |
 | `animation "A": "position" is a path constraint timeline, and this track names no constraint` | §4.12 — put the name in `"path"` |
 | `rgba value needs 4 channels, got 3` | §4.4 — an `rgba` key is `[r, g, b, a]`. It names no animation, slot or key time, and the only input that reaches it is a slot `rgba` key: the setup pose's `color` is refused earlier, by its own row, with the slot named |
+| `rgba2 value needs 7 channels, got 6` | §4.4 — an `rgba2` key is `[lr, lg, lb, la, dr, dg, db]`: the light colour with its alpha, then the dark colour **without** one. Six is the commonest way to get it wrong, because the dark half looks like it should take an alpha too — the format has no channel for it, and neither does the runtime's `setFrame`. Like the row above it names no animation or key time; the only input that reaches it is a slot `rgba2` key |
 | `animation "A" bone "B" has no timeline "P" (it has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate)` | §4.4 — a bone has exactly ten timelines and `P` is none of them. Fix the spelling — the single-axis ones are lower-case (`translatex`, not `translateX`). A **constraint** property is refused first, by its own row, naming the field its constraint's name goes in. When `P` is a slot timeline the message says so and where to put the name: `. "rgba" is a slot timeline — put the name in "slot"`. Before [#656](https://github.com/firejune/rigc/issues/656) all of them read `bone "B" cannot take slot property "P"`, which named the slot family whatever you had written and listed nothing |
-| `animation "A" group "G" has no timeline "P" (a bone group has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate; a slot group has: attachment, rgba; a physics constraint group has: inertia, strength, damping, mass, wind, gravity, mix, reset)` | §4.3, §4.4 — a group's family is decided by the property, and `P` is in none of the three tables, so there is no family to resolve the members as. Fix the spelling and the group becomes whichever family the property names. The group is refused before its members are looked up, so a member the rig does not declare is a **later** message; an unknown group NAME is an earlier one. Before [#661](https://github.com/firejune/rigc/issues/661) a group of bones read `animation "A" targets unknown slot "M"` and a group of slots got the slot row below, naming one family out of three |
-| `animation "A" slot "X" has no timeline "P" (it has: attachment, rgba)` | §4.4 — a slot has exactly two timelines and `P` is neither. Fix the spelling; a bone or constraint property written on a slot track is refused by its own row instead. Before [#650](https://github.com/firejune/rigc/issues/650) every other name compiled as an **rgba** timeline called `P`, and what you saw was `A00_ROUNDTRIP_PARSE` on the emitted file — or, for the one-channel spelling, `rgba value needs 4 channels, got 1` |
+| `animation "A" group "G" has no timeline "P" (a bone group has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate; a slot group has: attachment, rgba, rgba2; a physics constraint group has: inertia, strength, damping, mass, wind, gravity, mix, reset)` | §4.3, §4.4 — a group's family is decided by the property, and `P` is in none of the three tables, so there is no family to resolve the members as. Fix the spelling and the group becomes whichever family the property names. The group is refused before its members are looked up, so a member the rig does not declare is a **later** message; an unknown group NAME is an earlier one. Before [#661](https://github.com/firejune/rigc/issues/661) a group of bones read `animation "A" targets unknown slot "M"` and a group of slots got the slot row below, naming one family out of three |
+| `animation "A" slot "X" has no timeline "P" (it has: attachment, rgba, rgba2)` | §4.4 — a slot has exactly three timelines and `P` is none of them. Fix the spelling; a bone or constraint property written on a slot track is refused by its own row instead. Before [#650](https://github.com/firejune/rigc/issues/650) every other name compiled as an **rgba** timeline called `P`, and what you saw was `A00_ROUNDTRIP_PARSE` on the emitted file — or, for the one-channel spelling, `rgba value needs 4 channels, got 1` |
+| `animation "A" slot "X" rgba2: slot "X" declares no setup "dark", and an "rgba2" timeline poses a slot's dark colour …` | §3.3, §4.4 — the two-colour tint has a setup half and a keyed half, and the keyed half cannot exist without the other. `Slot`'s constructor allocates a dark colour only for a slot whose setup pose declares one, and `RGBA2Timeline` writes it unconditionally — so without the `dark` the file loads, and the first `state.apply` throws `TypeError: null is not an object` in the consumer's process. Give the slot the `dark` it holds at rest, or key `rgba` if only the light colour moves. Raised before the keys are read, with the slot named, for the same reason the row above is |
 | `N pair(s) of animation names have no one order: … "turn" / "Turn" (case) — they are one name in two cases, and which of them the editor puts first is not measured; rename one of them so they differ by more than letter case` | **R10** — rename until no pair is left. The kind in brackets says which of the editor comparator's four UNMEASURED choices decides the pair: `case` (a pure case tie), `number` (one number written two ways, or a run of digits against a word) or `separator` (make the first character that differs a letter or a digit). rigc keys `animations` in the editor's own comparator — natural and case-insensitive ([#539](https://github.com/firejune/rigc/issues/539), [#543](https://github.com/firejune/rigc/issues/543)) — so a pair that comparator settles is emitted rather than refused, and only the four choices nobody has measured are a compile error; on those, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
 | `N pair(s) of skin names have no one order: … "Zulu" / "mike" (case) — folded to one case "Zulu" and "mike" order the other way round, so whether the editor folds SKIN names decides this pair` | **R11** — rename until no pair is left. The same shape as the row above with a **wider** family: #539 measured the editor's comparator for animation names and thereby ruled codepoint out, and nothing has ruled anything out for skin names, so a pair the candidates could disagree about is refused even where the animation rule would emit it. `Zulu`/`mike` and `mike10`/`mike2` build as animation names and are refused as skin names ([#541](https://github.com/firejune/rigc/issues/541)) |
 | `slot "patch": placeholder "patch" is filled by the "default" skin AND by skins "zulu", "mike", and the Spine editor has no way to hold that … Move the default skin's entry for this slot into a named skin — call it "base"` | **R12** — do what it says: move that entry out of `default` into a named skin. The editor has no representation for a placeholder the default skin shares with a named one, in either spelling, and §3.4.2 has both measurements. Renaming the placeholder does not help; the shape is what is refused |
@@ -4717,6 +4732,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where a later one is not `additive` — it writes that property outright at `mix: 1` and every earlier slider on it is dead (§3.5.2). Also fires when the shared timeline **cannot** be applied additively (a slot colour, an attachment swap, a draw order, an ik mix, a path's `spacing`, most physics properties), where `"additive": true` is not the fix and one of the two has to go. ⭐ Which of the two it is, is **posed rather than read off `Timeline.additive`**: the shared timeline is applied twice with `add` set and the detail says what it did ([#655](https://github.com/firejune/rigc/issues/655) — two classes declare that flag falsely about themselves, so a path constraint's `mix` and a slider's `time` were refused although they compose). The detail names the bone or slot and the property, every slider keying it in `constraints` order with its flag, which one wins today, and the class that was posed. Four shapes are deliberately not findings: a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, not an overwrite), two `skinRequired` sliders no skin activates together, two sliders on different properties, and a shared timeline that writes **nothing a pose holds** — an `events` timeline fires no event under a slider (`firedEvents` is null), so neither slider has anything there for the other to erase. **SKIP** when fewer than two sliders are at full authority; a PASS means two were compared |
 | `A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP` | both | a physics constraint driving a component the **Spine editor** cannot hold, on a rig that declared `invariants.editorRoundTrip` (§3.7). The editor's physics model holds `x` and `y` only, with no cap on how many at once, so a constraint driving `rotate`, `scaleX` or `shearX` is imported, exported and handed back driving **nothing** — measured over three rigs and twelve constraints with the predictions written first ([#540](https://github.com/firejune/rigc/issues/540)). The detail names the constraint and each component. ⚠️ rigc's own output is correct — every runtime plays a rotation jiggle — so this is opt-in and the default is *not* silence: on a rig that declares nothing it **SKIPs**, and the SKIP names the constraint and the component anyway, so an author learns without having asked. Fix by driving the constraint in `x`/`y`, or by dropping the declaration if the rig never goes near the editor. Disjoint from `A23_PHYSICS_CONSTRAINT_EFFECTIVE` by construction: A23 refuses an **empty** driven set, which is what comes back from the editor, and this refuses a non-empty one that will not survive going in. **SKIP** also when the rig declares the editor and carries no physics constraint at all |
 | `A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER` | both | a slider whose animation keys a property of a constraint **at or before it** in `constraints` (§3.5.2) — a slider's `mix` or `time`, an ik or transform mix, a path `position`, `spacing` or `mix`, any physics value. That array is the update order for every kind, and each constraint reads its own applied pose when its turn comes — `Slider.update` takes `mix` as the alpha it applies with and `time` as the time it applies at, `PhysicsConstraint.update` returns on `mix` 0 before reading the rest — so the key lands after the only read of it and `Posed.resetConstrained` discards it before the next frame: what the driven constraint drives is dead at every position of the driving dial, although its pose still holds the number ([#658](https://github.com/firejune/rigc/issues/658), [#665](https://github.com/firejune/rigc/issues/665)). The detail names the slider, the driven constraint with its kind, both array indices, the property, the runtime class whose `update` reads it, and the animation the key sits in. Fix by moving the driver earlier, or by keying that property from a slider that already is. **The two indices equal is the same failure**: a slider cannot key its own `mix` or `time`, and one muted at setup that keys its own `mix` up never applies anything at all — `A37` is silent there, because it asks whether *an* animation keys the mix and not which one. **Two shapes it deliberately leaves out**, both measured: a `physics` `reset` key, which fires on a crossed frame time and so never fires from a slider at all, in either order — the reorder would repair nothing; and a physics timeline naming no constraint, which is every physics constraint declaring that property global and IS refused for the ones already run. Disjoint from `A40` by construction: `A40` asks who writes a shared property last and excludes every slider whose `mix` is keyed, this asks whether anything reads what was written. **SKIP** when the skeleton declares no slider, and when no slider's animation keys a constraint property — that SKIP names any `reset` keys it found — a pass means a driver and a driven were compared |
+| `A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN` | both | a slot's `dark` (§3.3) or an `rgba2` timeline (§4.4) that the runtime does not hold as the file states it. Three shapes, all of which parse in silence: a `dark` the slot reader **drops** — it takes the field through a truthiness test, so `""` is discarded without a word and the slot renders with one colour; a `dark` that is **not six hex digits** — `Color.setFromString` slices fixed offsets and stores whatever `parseInt` gives back, so `"4020"` loads a channel of `NaN`; and an `rgba2` timeline on a slot with **no `dark` at all**, where the runtime allocates no dark colour and the first `state.apply` throws in the consumer's process. The keyed half is read by posing: the animation is stepped to each key's own time and the posed `color` and `darkColor` are compared against the hex the key states, to half a quantisation step (`1/510`). The detail names the slot, the value found and the value required. ⚠️ The required value is parsed **here** and not through `Color.fromString`, because a check that read it out of the parser it is checking would agree with that parser whatever it did. `compile.ts` refuses the third shape outright in a rig rigc builds; this is the same fact held against a skeleton it did not write. **SKIP** when no slot declares a `dark` and no animation keys an `rgba2` — there is then no two-colour tint to read back |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.

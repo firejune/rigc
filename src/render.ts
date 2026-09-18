@@ -231,6 +231,24 @@ export interface PieceCommon {
   world: number[];
   /** Slot colour x attachment colour, straight alpha, 0..1. */
   tint: [number, number, number, number];
+  /**
+   * The slot's **dark** colour, 0..1 — the other half of Spine's two-colour
+   * tint, and absent on every slot that does not carry one.
+   *
+   * ⚠️ Absent rather than black, and that is the whole of why it is optional.
+   * `(0, 0, 0)` is a real dark colour and the identity of the blend, so the two
+   * spellings paint the same pixels — but the runtime distinguishes them
+   * (`SlotPose.darkColor` is `null` for a slot with no `dark`, and `Slot`'s
+   * constructor never allocates one), and a piece that carried a black default
+   * would take the two-colour path for every slot in every frame this
+   * repository renders. `undefined` is what keeps the arithmetic below off the
+   * ordinary case (issue #690).
+   *
+   * Three channels, not four: the format writes `dark` as `rrggbb` and
+   * `RGBA2Timeline` stores three dark channels. The alpha a shader reads on the
+   * dark colour is not a colour at all — see `tintChannel`.
+   */
+  dark?: [number, number, number];
   /** The slot this was drawn for — what per-slot tracking is keyed by. */
   slot: string;
   /** The atlas page name this samples, so a multi-page atlas resolves. */
@@ -652,7 +670,13 @@ export function piecesOf(skeleton: Skeleton, opts?: PoseOptions): Piece[] {
       colour.b * own.b,
       colour.a * own.a,
     ];
-    const common = { tint, slot: slot.data.name, page: region.page.name };
+    // The dark colour is the SLOT's alone — an attachment has a `color` and no
+    // dark one, so there is nothing to multiply it by. Read off `appliedPose`
+    // like the light colour, so an `rgba2` timeline reaches the picture.
+    const darkPose = pose.darkColor;
+    const dark: [number, number, number] | undefined =
+      darkPose === null ? undefined : [darkPose.r, darkPose.g, darkPose.b];
+    const common = { tint, dark, slot: slot.data.name, page: region.page.name };
     const texture = opts?.texture !== true ? undefined : artUvsOf(attachment, region);
 
     if (isMesh) {
@@ -1120,6 +1144,44 @@ export function projector(v: Viewport): (wx: number, wy: number) => [number, num
 // ---------------------------------------------------------------------------
 
 /**
+ * One colour channel of one texel, tinted — the whole of what a slot's colours
+ * do to a pixel.
+ *
+ * With no dark colour this is the multiply it always was, to the bit: `dark`
+ * absent returns `sample * light` and nothing else, which is why every frame in
+ * this repository renders byte for byte as it did before two-colour tinting
+ * existed.
+ *
+ * With one, the light colour multiplies the texel and the dark colour fills in
+ * what the texel leaves behind, so a black region can be tinted to any colour
+ * while its bright parts keep the light tint. [official] — spine-ts's own
+ * two-colour fragment shader, `spine-ts/spine-webgl/src/Shader.ts`
+ * (`newTwoColoredTextured`), read at branch `4.3` of `EsotericSoftware/spine-runtimes`:
+ *
+ *     gl_FragColor.a = texColor.a * v_light.a;
+ *     gl_FragColor.rgb = ((texColor.a - 1.0) * v_dark.a + 1.0 - texColor.rgb) * v_dark.rgb
+ *                        + texColor.rgb * v_light.rgb;
+ *
+ * ⚠️ `v_dark.a` in that line is **not a colour channel** — it is the
+ * premultiplied-alpha flag, which is why the dark colour is six hex digits in
+ * the file and four bytes on the vertex. `SkeletonRendererCore` packs it as such:
+ * `darkColor = 0xff000000 | …` on the `pma` branch and `darkColor = (r << 16) |
+ * (g << 8) | b` — alpha byte **zero** — on the other. This rasteriser composites
+ * **straight** alpha (see `premultiplied` below), so the flag is 0 and the shader
+ * reduces to the two terms this function computes. Reading `dark.a` out of the
+ * file here would be reading a flag as a colour.
+ *
+ * The clamp is on the dark path only, for the same reason: `sample * light` is
+ * already inside the range whenever `light` is, and a clamp on that path would
+ * be a change to pixels nothing asked to change.
+ */
+function tintChannel(sample: number, light: number, dark: number | undefined): number {
+  if (dark === undefined) return sample * light;
+  const mixed = sample * light + (255 - sample) * dark;
+  return mixed < 0 ? 0 : mixed > 255 ? 255 : mixed;
+}
+
+/**
  * Walk the destination pixels one affine quad covers, sampling the page.
  *
  * The quad is an affine image of the region's rectangle, so a destination pixel
@@ -1168,9 +1230,9 @@ export function rasteriseQuad(
       emit(
         px,
         py,
-        Math.round(sample[0] * quad.tint[0]),
-        Math.round(sample[1] * quad.tint[1]),
-        Math.round(sample[2] * quad.tint[2]),
+        Math.round(tintChannel(sample[0], quad.tint[0], quad.dark?.[0])),
+        Math.round(tintChannel(sample[1], quad.tint[1], quad.dark?.[1])),
+        Math.round(tintChannel(sample[2], quad.tint[2], quad.dark?.[2])),
         Math.round(alpha),
       );
     }
@@ -1324,9 +1386,9 @@ export function rasteriseMesh(
         emit(
           x,
           y,
-          Math.round(sample[0] * mesh.tint[0]),
-          Math.round(sample[1] * mesh.tint[1]),
-          Math.round(sample[2] * mesh.tint[2]),
+          Math.round(tintChannel(sample[0], mesh.tint[0], mesh.dark?.[0])),
+          Math.round(tintChannel(sample[1], mesh.tint[1], mesh.dark?.[1])),
+          Math.round(tintChannel(sample[2], mesh.tint[2], mesh.dark?.[2])),
           Math.round(alpha),
         );
       }
