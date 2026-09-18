@@ -5868,6 +5868,11 @@ line whenever the MAE is flat and something still looks wrong: a flat MAE says t
 framing and the art agree, and it says nothing at all about whether your shot holds
 and blinks where the reference does.
 
+⭐ **And read it when the MAE is loud, because it is what says *which kind* of loud.**
+It is the only column that separates a wrong curve from a key moved in time — the two
+builds under *The floor every figure here is read against* are that pair, and the
+drift column reports 31.1 px and 32.1 px for them.
+
 ⚠️ **Each set is compared against ITSELF, so on a shot committed at two rates a hold
 can exist in one set and not the other.** The coarse set samples every other frame of
 the fine one, so a pair the coarse set holds across is a constraint between samples
@@ -5945,6 +5950,84 @@ The `slots` column is how many of the slots you drew got an answer at all, and t
 summary line carries the same denominator. `N reference component(s) no slot
 reaches` means the reference frame contains something none of your slots overlaps:
 a part you have not authored, or one you have put somewhere else entirely.
+
+🚩 **The floor every figure here is read against, and how to measure it.** `check`
+grades nothing — `rigc check --help` says so, and the exit code is 0 on any run that
+could be made — so a figure means something only beside one you took yourself. The
+cheapest one to take is the **identity run**: a build compared against frames
+rendered from that same build. It is what this instrument says when the true answer
+is *nothing moved*.
+
+```bash
+bun cli.ts build  --rig gallery/squash/rig.json --motion gallery/squash/motion.json --out <build>
+bun cli.ts render --candidate <build> --animation bounce --fps 12 --out <frames>
+bun cli.ts check  --candidate <build> --frames <frames>
+```
+
+```
+  ── bounce — candidate animation "bounce", 12 fps ──
+     frames     11 on disk, candidate samples 11, 11 compared
+     MAE        mean 0.00  worst 0.00 (exact: none of the 11 compared frame(s) differs from the reference)   (0..255 over the union alpha; over the whole frame, mean 0.00)
+                ⤷ over the REFERENCE's own drawn pixels, mean 0.00 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+     slot drift worst 0.4 px  "arm_b" at f0007
+     per-frame all 10 adjacent pair(s) change by as much as the reference's own frames do
+```
+
+⚠️ **The MAE floor is zero and the slot-drift floor is not**, and the second half of
+that is the instrument's own arithmetic rather than anything about your rig. Both
+sides are the same pixels, so every frame's MAE is exactly 0 — which is why the line
+says `(exact)` instead of naming a frame. The drift is a **correlation**, and its
+last step fits a parabola through three whole-pixel residuals and takes its vertex,
+clamped to half a pixel on each axis; so an identity run can report up to
+`hypot(0.5, 0.5) = 0.71 px` and no more. ⭐ **It is not zero because the template is
+your slot drawn *alone* and the reference is the composite**: wherever a neighbour
+covers part of the slot, the residual surface around the true minimum is asymmetric
+and the parabola's vertex sits a fraction of a pixel off it. That fraction is the
+floor, it is per slot, and it is bounded — **a drift above 0.71 px on an identity run
+is a defect in `check`, not a property of it.** This example read 3.7 px until issue
+#678: the coarse sweep started at `−radius` and stepped by its stride, so the
+identity offset was on the lattice only when the stride divided the radius, and the
+`±1` refinement around a winner two pixels out could not reach back to it.
+
+⭐ **And the same frames plus two deliberately wrong builds are what say which column
+answers which question.** Each differs from the build above in exactly one way —
+every easing reversed `(x1,y1,x2,y2) → (1−x2,1−y2,1−x1,1−y1)`, and the ball's bottom
+key moved from 0.4 s to 0.62 s — and each is checked against the same identity
+frames. Both gate green and both exit 0.
+
+**No run reproduces this:** the candidate is `gallery/squash` with the three curves in its `easings` block reflected through the diagonal, which is an edit to a spec this repository does not carry a second copy of
+
+```
+  ── bounce — candidate animation "bounce", 12 fps ──
+     frames     11 on disk, candidate samples 11, 11 compared
+     MAE        mean 6.69  worst 11.71 at f0007   (0..255 over the union alpha; over the whole frame, mean 5.74)
+                ⤷ over the REFERENCE's own drawn pixels, mean 6.69 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+     slot drift worst 31.1 px  "ball" at f0006
+     per-frame 1 of 10 adjacent pair(s) change by a different amount than the reference does; worst f0010, yours moved 4152 px where the reference moved 912
+```
+
+**No run reproduces this:** the candidate is `gallery/squash` with the ball's `translatey` key at 0.4 s moved to 0.62 s, which is an edit to a spec this repository does not carry a second copy of
+
+```
+  ── bounce — candidate animation "bounce", 12 fps ──
+     frames     11 on disk, candidate samples 11, 11 compared
+     MAE        mean 2.15  worst 6.38 at f0007   (0..255 over the union alpha; over the whole frame, mean 1.84)
+                ⤷ over the REFERENCE's own drawn pixels, mean 2.15 — the union figure compares two builds of the same rig; this one is the one to optimise against, because the union is yours to grow.
+     slot drift worst 32.1 px  "ball" at f0007
+     per-frame all 10 adjacent pair(s) change by as much as the reference's own frames do
+```
+
+⇒ **`per-frame` is the column that separates a wrong curve from a moved key, and it
+is the only one of the three that does.** The `MAE` says both are wrong and says it
+threefold louder for the curve (6.69 against 2.15). `slot drift` cannot tell them
+apart at all — 31.1 px against 32.1 px, the same part, a frame either side — because
+both put the ball somewhere it is not at the moment being compared. `per-frame` fires
+on the reversed easings alone, and it is measuring the one thing the two defects do
+not share: how far each side moved **since its own previous frame**. A key moved in
+time changes *when* the poses arrive and not how fast the shot travels between two
+samples, so the column is correctly silent on it. ⇒ Read the pair together: a loud
+MAE with `per-frame` silent is a pose in the wrong place or at the wrong moment; a
+loud MAE with `per-frame` firing is a **speed**, which is a curve.
 
 **The `chains` block is the same two measures on the unit you actually repair.**
 

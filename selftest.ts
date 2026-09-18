@@ -115,6 +115,7 @@ import {
   EXTENT_SPREAD_REACH,
   matchSlots,
   OVERDRAW_RATIO,
+  SUBPIXEL_CLAMP,
   type AnimationCheck,
   type ChainCheck,
   type CheckReport,
@@ -201,6 +202,7 @@ import {
   EMPTY_FOOTPRINT,
   fill,
   FRAMES_SIDECAR,
+  FRAMES_SPEC,
   frameGeometry,
   framingViewport,
   loadPosable,
@@ -2501,6 +2503,161 @@ function reverseMotionTimes(text: string): string {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+// ---------------------------------------------------------------------------
+// the identity fixture: a shipped example measured against frames of itself
+// ---------------------------------------------------------------------------
+//
+// ⭐ **Why a second fixture, when the rung-3 transcription is right there.** The
+// identity run of the transcription reports a worst slot drift of 0.43 px — a
+// figure already under the floor, so it cannot show a floor being broken. Every
+// part of that shot is its own connected blob, so the component matcher answers
+// most slots and the template matcher is barely reached. A figure with parts
+// drawn over each other is what puts the correlation on the critical path, and
+// `gallery/squash` is one that this repository ships, needs no corpus, and is
+// the reproduction issue #678 was filed from.
+
+/** The shipped example whose parts overlap — see above. */
+const IDENTITY_EXAMPLE = resolve(import.meta.dir, 'gallery/squash');
+/** The rate the identity set is rendered and compared at. */
+const IDENTITY_FPS = 12;
+/**
+ * How far the moved-key mutant moves one key, in seconds.
+ *
+ * Far enough that the pose at a sampled instant is a different pose, and short
+ * enough to stay inside the animation and keep its key order. It is deliberately
+ * NOT a fraction of the duration: the claim under test is about *which column*
+ * sees it, and a shift that scaled with the shot would change what the frames
+ * either side of it are doing from example to example.
+ */
+const IDENTITY_KEY_SHIFT = 0.22;
+/**
+ * How much more of its own size the MAE has to separate the two mutants by than
+ * the slot drift does, for the drift to count as unable to tell them apart.
+ *
+ * A bound rather than a measurement: what is claimed is an ORDER, and the number
+ * is only there so "the MAE separates them better" cannot be satisfied by a
+ * hair. The run these were written against separates by 23x.
+ */
+const IDENTITY_DISCRIMINATION = 4;
+
+/** A compiled example, on disk where the CLI can also open it. */
+interface ExampleBuild {
+  skeletonText: string;
+  atlasText: string;
+  atlasDir: string;
+}
+
+/** Compile `gallery/squash`, optionally against a rewritten motion spec. */
+function buildIdentityExample(motionText: string | null): ExampleBuild {
+  const outDir = mkdtempSync(join(tmpdir(), 'rigc-identity-'));
+  let motionPath = join(IDENTITY_EXAMPLE, 'motion.json');
+  if (motionText !== null) {
+    motionPath = join(outDir, 'motion.json');
+    writeFileSync(motionPath, motionText);
+  }
+  const result = compile({ rigPath: join(IDENTITY_EXAMPLE, 'rig.json'), motionPath, outDir });
+  // Written out as well as returned: `C24` opens this directory through the CLI,
+  // and a candidate the CLI cannot open is a candidate the exit codes cannot be
+  // measured on. The atlas resolves its pages relatively, so these two files are
+  // the whole of what a reader of this directory needs.
+  writeFileSync(join(outDir, 'skeleton.json'), result.skeletonText);
+  writeFileSync(join(outDir, 'skeleton.atlas'), result.atlasText);
+  return { skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir };
+}
+
+/**
+ * Render a build's own frames, exactly as `rigc render` writes them.
+ *
+ * ⛔ The reference side of an identity run has to come from the build being
+ * measured, or it is not an identity run. Nothing here is a second renderer:
+ * `framingViewport`, `sampleAnimation` and `renderFrame` are the three calls
+ * `cmdRender` makes, and the sidecar is the shape `FramesSidecar` declares.
+ */
+function renderOwnFrames(build: ExampleBuild, fps: number): string {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-identity-frames-'));
+  const posable = posableFromText(build.skeletonText, build.atlasText, build.atlasDir);
+  const viewport = framingViewport(posable.data, 256);
+  if (viewport === null) throw new Error('the identity fixture posed no drawable attachment');
+  const sets: FramesSidecar['sets'] = [];
+  for (const animation of posable.data.animations) {
+    const frames = sampleAnimation(posable.data, animation.name, fps);
+    const setDir = join(dir, animation.name);
+    mkdirSync(setDir, { recursive: true });
+    for (let i = 0; i < frames.length; i++) {
+      renderFrame(frames[i], posable.pages, viewport, BACKGROUND).writePng(
+        join(setDir, `f${String(i).padStart(4, '0')}.png`),
+      );
+    }
+    sets.push({
+      dir: animation.name,
+      animation: animation.name,
+      fps,
+      sampled: frames.length,
+      written: frames.length,
+      stride: 1,
+      duration: frames[frames.length - 1].time,
+    });
+  }
+  const sidecar: FramesSidecar = {
+    spec: FRAMES_SPEC,
+    background: BACKGROUND,
+    viewport: {
+      x: viewport.minX,
+      y: viewport.minY,
+      width: viewport.maxX - viewport.minX,
+      height: viewport.maxY - viewport.minY,
+      scale: viewport.scale,
+      pixelWidth: viewport.width,
+      pixelHeight: viewport.height,
+    },
+    sets,
+  };
+  writeFileSync(join(dir, FRAMES_SIDECAR), `${JSON.stringify(sidecar, null, 2)}\n`);
+  return dir;
+}
+
+/**
+ * Every named easing reversed in time: `(x1,y1,x2,y2) -> (1−x2,1−y2,1−x1,1−y1)`.
+ *
+ * The reflection of a cubic Bézier ease through the diagonal, so an ease-in
+ * becomes the ease-out of the same shape. Every key still holds the value it
+ * held and every key time is where it was: what changes is the SPEED between
+ * them, which is the one thing the per-frame column looks at and the one thing a
+ * pose-by-pose comparison cannot see. It is the defect `check` was built for —
+ * rung 1 shipped a build with every easing reversed and the gate passed it green.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function reverseEasings(text: string): string {
+  const motion = JSON.parse(text);
+  const easings = motion.easings as Record<string, number[]>;
+  for (const [name, curve] of Object.entries(easings)) {
+    const [x1, y1, x2, y2] = curve;
+    (easings as any)[name] = [1 - x2, 1 - y2, 1 - x1, 1 - y1];
+  }
+  return `${JSON.stringify(motion, null, 2)}\n`;
+}
+
+/**
+ * One key moved later in time, and nothing else touched.
+ *
+ * The other half of the pair: every pose the animation reaches is a pose it
+ * reached before, and it reaches them at different moments. The middle key of
+ * the first track, which is the one the example's own README calls the impact.
+ */
+function moveOneKeyLater(text: string, shift: number): { text: string; what: string } {
+  const motion = JSON.parse(text);
+  const animation = Object.values(motion.animations)[0] as any;
+  const track = animation.tracks[0];
+  const key = track.keys[Math.floor(track.keys.length / 2)];
+  const was: number = key.t;
+  key.t = Number((was + shift).toFixed(7));
+  return {
+    text: `${JSON.stringify(motion, null, 2)}\n`,
+    what: `${String(track.bone ?? track.slot)} ${String(track.property)} key ${was}s -> ${String(key.t)}s`,
+  };
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 /**
  * The world box `frames.json` records for the rung-3 frames.
  *
@@ -3692,6 +3849,324 @@ function runCheckSuite(): number | null {
         `${JSON.stringify(bounded.map((a) => ({ mae: a.meanMae, floor: a.textureFloor })))}, own-atlas ` +
         `${JSON.stringify(comparedSets(itself).map((a) => ({ mae: a.meanMae, floor: a.textureFloor })))}, ` +
         `report ${JSON.stringify(attributed.textureFrom)}`,
+    );
+  }
+
+  // --- C19-C24: the identity run, and what an author reads off it -----------
+  //
+  // 🧭 Everything below is one measurement taken three times: a shipped example
+  // built, rendered, and checked against **its own frames**, then the same
+  // comparison for two builds that differ from it in one stated way each. That
+  // triple is what an authoring loop actually does — issue #678 is what it cost
+  // that none of it was gated.
+  {
+    const say = (name: string, ok: boolean, detail: string, why: string): void => {
+      bad += reportCase(name, ok, detail, why);
+    };
+    const motionText = readFileSync(join(IDENTITY_EXAMPLE, 'motion.json'), 'utf8');
+    const identity = buildIdentityExample(null);
+    const frames = renderOwnFrames(identity, IDENTITY_FPS);
+    const curve = buildIdentityExample(reverseEasings(motionText));
+    const movedKey = moveOneKeyLater(motionText, IDENTITY_KEY_SHIFT);
+    const moved = buildIdentityExample(movedKey.text);
+    const identityReport = checkAgainstFrames({ ...identity, framesDir: frames });
+    const curveReport = checkAgainstFrames({ ...curve, framesDir: frames });
+    const movedReport = checkAgainstFrames({ ...moved, framesDir: frames });
+    const identitySets = comparedSets(identityReport);
+    const i = checkExtremes(identityReport);
+    const c = checkExtremes(curveReport);
+    const m = checkExtremes(movedReport);
+
+    // --- C19: the sentinel is a sentence, not a frame index ----------------
+    //
+    // `worstMaeFrame` is -1 when no compared frame differs at all, and the line
+    // used to run it through `padStart(4, '0')` and print `at f00-1`. The
+    // unguarded rendering is DERIVED here rather than typed, so a change to the
+    // padding cannot leave this case looking for a string nothing would print.
+    const sentinelRendering = (frame: number): string => `f${String(frame).padStart(4, '0')}`;
+    const identityLines = checkLines(identityReport);
+    // The plant: a set whose worst frame is real, forced onto the sentinel. It
+    // breaks the DATA and leaves the formatter alone, which is what makes this
+    // two-sided — the identity leg alone would pass on a formatter that special-
+    // cased a zero MAE instead of the frame index.
+    const forced = {
+      ...curveReport,
+      animations: curveReport.animations.map((anim) => ({ ...anim, worstMaeFrame: -1 })),
+    };
+    const forcedLines = checkLines(forced);
+    const maeLines = (lines: string[]): string[] => lines.filter((line) => /^ {5}MAE\s/.test(line));
+    const sentinelProbes = [
+      ...(identitySets.length > 0 && identitySets.every((anim) => anim.worstMaeFrame < 0)
+        ? []
+        : [
+            `the identity run did not come out exact (${identitySets
+              .map((anim) => `${anim.dir} worst frame ${anim.worstMaeFrame}`)
+              .join(', ')}), so nothing here exercised the sentinel at all`,
+          ]),
+      ...identityLines
+        .filter((line) => line.includes(sentinelRendering(-1)))
+        .map((line) => `the identity report prints "${sentinelRendering(-1)}": ${line.trim().slice(0, 96)}`),
+      ...maeLines(identityLines)
+        .filter((line) => !line.includes('exact'))
+        .map((line) => `an identity MAE line names a frame instead of saying it is exact: ${line.trim().slice(0, 96)}`),
+      ...(curveReport.animations.some((anim) => anim.worstMaeFrame >= 0)
+        ? forcedLines
+            .filter((line) => line.includes(sentinelRendering(-1)))
+            .map((line) => `the forced sentinel still prints "${sentinelRendering(-1)}": ${line.trim().slice(0, 96)}`)
+        : ['no set of the curve mutant carries a real worst frame, so the sentinel could not be forced onto one']),
+    ];
+    const sentinelHeld = sentinelProbes.length === 0;
+    say(
+      'C19_AN_EXACT_RUN_NAMES_NO_FRAME_INDEX_THAT_CANNOT_EXIST',
+      sentinelHeld,
+      probeDetail(
+        sentinelHeld,
+        sentinelProbes,
+        `${identitySets.length} identity set(s) report the sentinel and print ${maeLines(identityLines)
+          .map((line) => line.trim().split('   ')[0])
+          .join(' | ')}; forcing it onto ${forced.animations.length} set(s) that carry a real frame prints no ` +
+          `"${sentinelRendering(-1)}" either`,
+      ),
+      'issue #678: the one report an agent calibrates on — the same build against its own frames — said `worst 0.00 ' +
+        'at f00-1`, and the three other sentinels in this file were already guarded where they print',
+    );
+
+    // --- C20: the identity floor, bounded by the sub-pixel step ------------
+    //
+    // 🔒 The bound is `SUBPIXEL_CLAMP`'s and is imported rather than measured:
+    // once the whole-pixel winner is the identity offset, all that is left is
+    // the parabolic step, and that is clamped to half a pixel per axis. A
+    // control that typed the figure this run happens to report would go red on
+    // the next art and say nothing about why.
+    const identityFloor = Math.hypot(SUBPIXEL_CLAMP, SUBPIXEL_CLAMP);
+    const identityFloorProbes = [
+      ...(identitySets.length === 0 ? ['no set was compared, so this control measured nothing'] : []),
+      ...identitySets
+        .filter((anim) => anim.worstMae !== 0 || anim.meanMae !== 0)
+        .map(
+          (anim) =>
+            `${anim.dir} is not an identity: mean MAE ${anim.meanMae.toFixed(4)}, worst ${anim.worstMae.toFixed(4)}`,
+        ),
+      ...identitySets
+        .filter((anim) => anim.framesWithoutDrift >= anim.compared)
+        .map((anim) => `${anim.dir} attributed no slot in any of its ${anim.compared} frame(s), so no drift was read`),
+      ...identitySets
+        .filter((anim) => anim.worstDrift > identityFloor)
+        .map(
+          (anim) =>
+            `${anim.dir} drifts ${anim.worstDrift.toFixed(2)} px on "${String(anim.worstDriftSlot)}" at ` +
+            `f${anim.worstDriftFrame}, past the ${identityFloor.toFixed(4)} px a half-pixel sub-pixel step on each ` +
+            'axis can reach — so the whole-pixel winner was not the identity offset',
+        ),
+    ];
+    const floorHeld = identityFloorProbes.length === 0;
+    say(
+      'C20_THE_SAME_BUILD_AGAINST_ITS_OWN_FRAMES_DRIFTS_NO_FURTHER_THAN_THE_SUBPIXEL_STEP',
+      floorHeld,
+      probeDetail(
+        floorHeld,
+        identityFloorProbes,
+        `${identitySets.length} set(s) at MAE 0 exactly, worst slot drift ${i.drift.toFixed(2)} px under the ` +
+          `${identityFloor.toFixed(4)} px hypot(${SUBPIXEL_CLAMP}, ${SUBPIXEL_CLAMP}) the sub-pixel step is clamped to`,
+      ),
+      'issue #678: this reported 3.72 px on "ear_r" because the coarse sweep started at −radius and stepped by the ' +
+        'stride, so the identity offset was on the lattice only when the stride divided the radius — and the ±1 ' +
+        'refinement around a winner two pixels out cannot reach back to it',
+    );
+
+    // --- C21: and the floor is a floor because the mutants clear it --------
+    const loudProbes = [
+      ...(c.sets > 0 && m.sets > 0 ? [] : ['one of the two mutants compared no set at all']),
+      ...(c.drift > identityFloor ? [] : [`the curve mutant drifts ${c.drift.toFixed(2)} px, inside the floor`]),
+      ...(m.drift > identityFloor ? [] : [`the moved-key mutant drifts ${m.drift.toFixed(2)} px, inside the floor`]),
+      ...(c.meanMae > i.meanMae && m.meanMae > i.meanMae
+        ? []
+        : [`a mutant reads no worse than the identity: ${c.meanMae.toFixed(2)} and ${m.meanMae.toFixed(2)} against ${i.meanMae.toFixed(2)}`]),
+    ];
+    // The other half of the card's claim, and the reason §9.2 does not send an
+    // author to the drift column for this: the two mutants are different defects
+    // and the drift reports almost the same number for both.
+    const driftGap = Math.abs(c.drift - m.drift) / Math.max(c.drift, m.drift);
+    const maeGap = Math.abs(c.meanMae - m.meanMae) / Math.max(c.meanMae, m.meanMae);
+    const separationProbes = [
+      ...(maeGap >= IDENTITY_DISCRIMINATION * driftGap
+        ? []
+        : [
+            `the MAE separates the two mutants by ${(maeGap * 100).toFixed(1)}% of its own size and the drift by ` +
+              `${(driftGap * 100).toFixed(1)}% — not the ${IDENTITY_DISCRIMINATION}x that makes the drift the column ` +
+              'that cannot tell them apart',
+          ]),
+    ];
+    const loudHeld = loudProbes.length === 0 && separationProbes.length === 0;
+    say(
+      'C21_BOTH_MUTANTS_CLEAR_THAT_FLOOR_AND_THE_DRIFT_COLUMN_CANNOT_SEPARATE_THEM',
+      loudHeld,
+      probeDetail(
+        loudHeld,
+        [...loudProbes, ...separationProbes],
+        `reversed easings: MAE ${c.meanMae.toFixed(2)}, drift ${c.drift.toFixed(1)} px; ${movedKey.what}: MAE ` +
+          `${m.meanMae.toFixed(2)}, drift ${m.drift.toFixed(1)} px — both past the ${identityFloor.toFixed(2)} px ` +
+          `floor, and the MAE separates them by ${(maeGap * 100).toFixed(1)}% against the drift's ` +
+          `${(driftGap * 100).toFixed(1)}%`,
+      ),
+      'a floor nothing crosses is not a floor. And the pair is what makes the floor worth stating: against no floor ' +
+        'at all an agent reading 3.7 px on a correct rig cannot tell it from a defect',
+    );
+
+    // --- C22: the column that separates a wrong curve from a moved key -----
+    //
+    // ⭐ The negative leg is the load-bearing one. `per-frame` firing on the
+    // reversed easings proves it can fire; staying silent on a build that is
+    // loudly wrong in the MAE proves it is measuring the SPEED between frames
+    // and not wrongness in general — which is the whole of what §9.2 now claims
+    // for it.
+    const changeOf = (report: CheckReport): { fired: number; pairs: number } =>
+      comparedSets(report).reduce(
+        (sum, anim) => ({ fired: sum.fired + anim.changeDisagreements, pairs: sum.pairs + anim.changePairs }),
+        { fired: 0, pairs: 0 },
+      );
+    const identityChange = changeOf(identityReport);
+    const curveChange = changeOf(curveReport);
+    const movedChange = changeOf(movedReport);
+    const columnProbes = [
+      ...(curveChange.pairs > 0 && movedChange.pairs > 0
+        ? []
+        : ['a mutant had no adjacent pair to measure, so the column said nothing either way']),
+      ...(curveChange.fired > 0
+        ? []
+        : [`the reversed easings disagree on none of ${curveChange.pairs} adjacent pair(s) — the column cannot fire`]),
+      ...(movedChange.fired === 0
+        ? []
+        : [
+            `the moved key disagrees on ${movedChange.fired} of ${movedChange.pairs} adjacent pair(s) — the column ` +
+              'fires on a defect that changes no inter-frame speed, so it does not separate the two',
+          ]),
+      ...(identityChange.fired === 0
+        ? []
+        : [`the identity run disagrees on ${identityChange.fired} of ${identityChange.pairs} adjacent pair(s)`]),
+      // 🔒 Without this the silent leg is vacuous: a "moved key" that moved
+      // nothing would be silent here for the reason the identity is, and the
+      // case would print the same PASS about a column that had measured a
+      // correct rig twice.
+      ...(m.meanMae > i.meanMae
+        ? []
+        : [
+            `the moved key reads MAE ${m.meanMae.toFixed(2)} against the identity's ${i.meanMae.toFixed(2)}, so its ` +
+              'silence in this column says nothing — there is no defect here for the column to have missed',
+          ]),
+    ];
+    const columnHeld = columnProbes.length === 0;
+    say(
+      'C22_THE_PER_FRAME_COLUMN_FIRES_ON_A_REVERSED_CURVE_AND_IS_SILENT_ON_A_MOVED_KEY',
+      columnHeld,
+      probeDetail(
+        columnHeld,
+        columnProbes,
+        `per-frame disagreements: identity ${identityChange.fired}/${identityChange.pairs}, reversed easings ` +
+          `${curveChange.fired}/${curveChange.pairs}, ${movedKey.what} ${movedChange.fired}/${movedChange.pairs} — ` +
+          `and the moved key reads MAE ${m.meanMae.toFixed(2)} against the identity's ${i.meanMae.toFixed(2)}, so ` +
+          'its silence here is a reading and not an absence of a defect',
+      ),
+      'issue #678: of the three columns, the MAE differs 3x between these two mutants and the slot drift cannot tell ' +
+        'them apart — `per-frame` is the one that names which kind of wrong it is, and §9.2 did not say so',
+    );
+
+    // --- C23-C24: what the page claims about its own exit code -------------
+    //
+    // 🔒 The two are one control in two halves and they are in this order for a
+    // reason: `C24` MEASURES the exit codes and `C23` requires the page to name
+    // the ones it measured. A page checked against a list typed here would be a
+    // spelling test; checked against the run, it is a claim that can go stale
+    // and be caught going stale.
+    const absentFrames = join(mkdtempSync(join(tmpdir(), 'rigc-identity-absent-')), 'not-a-frame-set');
+    const observed = [
+      {
+        what: 'a comparison that ran, on the build with every easing reversed',
+        run: runCli(['check', '--candidate', curve.atlasDir, '--frames', frames]),
+        want: 0,
+      },
+      {
+        what: 'a comparison that could not be made — frames that are not there',
+        run: runCli(['check', '--candidate', identity.atlasDir, '--frames', absentFrames]),
+        want: 1,
+      },
+      {
+        what: 'a flag error — no --frames at all',
+        run: runCli(['check', '--candidate', identity.atlasDir]),
+        want: 2,
+      },
+    ];
+    const help = runCli(['check', '--help']).stdout;
+    // The notes region: everything the page prints after its own `--help` row.
+    // Read off the printed page rather than off `COMMANDS`, for `CLI71`'s reason
+    // — a wording that stops reaching the page has to fail here.
+    const helpRows = help.split('\n');
+    const notesFrom = helpRows.findIndex((line) => /^ {2}--help\s/.test(line));
+    const notes = notesFrom < 0 ? '' : helpRows.slice(notesFrom + 1).join('\n');
+    // The clause a sibling carries, taken off the sibling's own page. Typing it
+    // here would make this case agree with itself about what the tree says.
+    const siblingRow = runCli(['pose', '--help'])
+      .stdout.split('\n')
+      .find((line) => /^ {2}--max-residual\s/.test(line));
+    const clause = siblingRow === undefined ? null : (siblingRow.split('; ').pop() ?? '').replace(/^it is /, '').trim();
+    /** Does this page state the clause and every exit code the runs produced? */
+    const audit = (page: string): string[] => [
+      ...(clause === null
+        ? ['`pose --help` prints no --max-residual row, so there is no sibling clause to require']
+        : page.includes(clause)
+          ? []
+          : [`it does not carry the clause \`pose --help\` carries: "${clause}"`]),
+      ...observed
+        .filter((entry) => !new RegExp(`\\b${String(entry.run.status)}\\b`).test(page))
+        .map((entry) => `it names no exit ${String(entry.run.status)}, which is what ${entry.what} produced`),
+    ];
+    const pageProbes = [
+      ...(notesFrom < 0 ? ['`check --help` prints no --help row, so its notes region could not be found'] : []),
+      ...audit(notes),
+      // The plants, one per half, each removing something the page carries and
+      // leaving the audit alone.
+      ...(clause !== null && audit(notes.replace(clause, '')).length === 0
+        ? ['the page with the sibling clause cut out of it still audits clean']
+        : []),
+      ...observed
+        .filter(
+          (entry) =>
+            audit(notes.replace(new RegExp(`\\b${String(entry.run.status)}\\b`, 'g'), '')).length === 0,
+        )
+        .map((entry) => `the page with every \`${String(entry.run.status)}\` cut out of it still audits clean`),
+    ];
+    const pageHeld = pageProbes.length === 0;
+    say(
+      'C23_THE_CHECK_PAGE_CARRIES_THE_CLAUSE_ITS_SIBLINGS_CARRY_AND_NAMES_THE_EXIT_CODES_IT_USES',
+      pageHeld,
+      probeDetail(
+        pageHeld,
+        pageProbes,
+        `\`check --help\` carries "${String(clause)}" — taken off \`pose --help\`, not typed here — and names exit ` +
+          `${observed.map((entry) => String(entry.run.status)).join(', ')}; cutting the clause out of the page, and ` +
+          'cutting out each of those codes in turn, faults it every time',
+      ),
+      'issue #678: `pose` and `chainfit` both say a threshold of theirs is a reporting threshold and not a pass bar, ' +
+        '`check` has no such flag to hang it on, and so its page said nothing at all about whether any of its ' +
+        'figures is a bar to beat',
+    );
+
+    const exitProbes = observed
+      .filter((entry) => entry.run.status !== entry.want)
+      .map((entry) => `${entry.what} exited ${String(entry.run.status)} where the page says ${String(entry.want)}`);
+    const exitHeld = exitProbes.length === 0;
+    say(
+      'C24_A_COMPARISON_THAT_RAN_EXITS_ZERO_HOWEVER_LOUD_ITS_FIGURES_ARE',
+      exitHeld,
+      probeDetail(
+        exitHeld,
+        exitProbes,
+        observed.map((entry) => `${entry.what}: exit ${String(entry.run.status)}`).join('; ') +
+          ` — and that first run reports MAE ${c.meanMae.toFixed(2)} and a drift of ${c.drift.toFixed(1)} px`,
+      ),
+      'the exit code answers whether the comparison could be MADE, and nothing else. A run that graded would make ' +
+        "every figure here a bar, which is the opposite of what `check` is for — and the build it exits 0 on is the " +
+        'one the gate passed green and the pictures refute',
     );
   }
   return bad;
@@ -50204,24 +50679,33 @@ function docsQuoteWorkingCopy(dir: string): string {
 function docsQuotePool(
   commands: readonly DocsQuoteCommand[],
   roundDir: string,
-  memo: Map<string, TranscriptRun>,
+  memo: Map<string, { run: TranscriptRun; out: string | null }>,
 ): TranscriptRun[] {
   const produced = new Map<string, string>();
   const runs: TranscriptRun[] = [];
   for (const command of commands) {
     if (command.reason !== null) continue;
-    const argv = command.argv.map((word, i) =>
-      command.outAt >= 0 && i === command.outAt + 1
-        ? join(roundDir, `out-${memo.size}-${runs.length}`)
-        : produced.get(word) ?? word,
-    );
-    const key = argv.map((word, i) => (command.outAt >= 0 && i === command.outAt + 1 ? '<out>' : word)).join(' ');
-    if (command.outAt >= 0 && /^<[^<>]+>$/.test(command.argv[command.outAt + 1] ?? '')) {
-      produced.set(command.argv[command.outAt + 1], argv[command.outAt + 1]);
-    }
+    const fresh = join(roundDir, `out-${memo.size}-${runs.length}`);
+    const key = command.argv
+      .map((word, i) => (command.outAt >= 0 && i === command.outAt + 1 ? '<out>' : (produced.get(word) ?? word)))
+      .join(' ');
     const cached = memo.get(key);
+    // 🔒 **A memoised run hands back the directory IT wrote, not a fresh name.**
+    // The placeholder a later command reads has to name artifacts that exist, and
+    // on a cache hit nothing writes to `fresh` — so registering `fresh` against
+    // the placeholder pointed every reader of it at an empty path and the run
+    // that reads it failed for a reason no page states. Found by issue #678: two
+    // fences in `docs/AUTHORING.md` state the same `gallery/squash` build with
+    // different `--out`s, and the second one's `render`/`check` were never run.
+    const out = cached?.out ?? fresh;
+    const argv = command.argv.map((word, i) =>
+      command.outAt >= 0 && i === command.outAt + 1 ? out : (produced.get(word) ?? word),
+    );
+    if (command.outAt >= 0 && /^<[^<>]+>$/.test(command.argv[command.outAt + 1] ?? '')) {
+      produced.set(command.argv[command.outAt + 1], out);
+    }
     if (cached !== undefined) {
-      runs.push(cached);
+      runs.push(cached.run);
       continue;
     }
     const result = runCli(argv);
@@ -50230,7 +50714,7 @@ function docsQuotePool(
       lines: `${result.stdout}${result.stderr}`.split('\n'),
       status: result.status,
     };
-    memo.set(key, run);
+    memo.set(key, { run, out: command.outAt >= 0 ? out : null });
     runs.push(run);
   }
   return runs;
@@ -50591,7 +51075,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   }
 
   const roundDir = mkdtempSync(join(tmpdir(), 'rigc-docsquote-round-'));
-  const memo = new Map<string, TranscriptRun>();
+  const memo = new Map<string, { run: TranscriptRun; out: string | null }>();
   const runsBy = new Map<string, TranscriptRun[]>();
   for (const [file, commands] of commandsBy) runsBy.set(file, docsQuotePool(commands, roundDir, memo));
 

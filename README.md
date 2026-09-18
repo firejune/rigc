@@ -407,6 +407,14 @@ that does not belong to it. See
   could. If you have reference pictures of the shot,
   `rigc check --candidate spine --frames <dir>` is the half of the loop that can
   see a wrong animation — AUTHORING.md §9.
+- 🧭 **No reference pictures, because the rig is your own?** Then make them:
+  `rigc render` the first build you are happy with and keep those frames. Every
+  later build is checked against them, and the first such check — the same build
+  against frames of itself — is the floor the rest are read against, because
+  `check` grades nothing and has no pass mark. It is the same instrument and the
+  same commands; what changes is that the reference is a build of yours you have
+  already looked at, so what it measures is **what your edit did**. AUTHORING.md
+  §9.2 says what that floor reads and why it is not zero.
 - [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) is the benchmark: the same job, from a brief
   and rendered frames, scored. [docs/PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) is how to run an
   agent through it and score what comes back.

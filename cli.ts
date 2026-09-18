@@ -3067,6 +3067,18 @@ interface CommandDoc {
    * nine, and nothing had ever compared the two.
    */
   overrides?: Record<string, { value?: string; meaning?: string }>;
+  /**
+   * Lines printed under the flag table: what this command's own figures mean.
+   *
+   * ⚠️ Not a second place to describe a flag. It exists for what is true of the
+   * **command** and of no flag it takes — and the case that earned it is issue
+   * #678: `pose` and `chainfit` each say *"it is a reporting threshold, not a
+   * pass bar"* on the flag that carries their threshold, and `check` has no such
+   * flag, so its page said nothing at all about whether any of its figures is a
+   * bar to beat. An agent reading `slot drift worst 3.7 px` off a correct rig had
+   * no page to consult and no exit code to read it in.
+   */
+  notes?: string[];
 }
 
 const COMMANDS: CommandDoc[] = [
@@ -3144,6 +3156,19 @@ const COMMANDS: CommandDoc[] = [
           'REFUSED by name, and one that records none says so in the report rather than pretending to agree',
       },
     },
+    notes: [
+      'every figure here is a reporting threshold, not a pass bar. Nothing in this report',
+      'grades, no number has to beat anything, and the exit code says only whether the',
+      'comparison could be MADE: 0 when it ran — including the build with every easing',
+      'reversed, which is the defect this command exists for — 1 when it could not (frames',
+      'that are not there, a skin the frames do not record, a candidate that will not load),',
+      '2 on the flags.',
+      '',
+      'So read a figure against a floor you measured yourself: render the first green build',
+      'and keep its frames, then check every later build against them. The identity run of',
+      'that pair is the floor, and it is not zero — docs/AUTHORING.md §9.2 states it, what',
+      'it comes from, and which column separates a wrong curve from a moved key.',
+    ],
   },
   {
     name: 'bench',
@@ -3285,9 +3310,14 @@ function commandHelp(name: string): string {
   const meaning = (key: string): string => doc.overrides?.[key]?.meaning ?? FLAG_MEANINGS[key];
   const labels = keys.map((key) => `--${key}${value(key) ? ` ${value(key)}` : ''}`);
   const width = Math.max(...labels.map((l) => l.length)) + 2;
-  return ['usage:', ...doc.usage.map((u) => `  ${u}`), '', 'flags:', ...keys.map((key, i) => `  ${labels[i].padEnd(width)}${meaning(key)}`)].join(
-    '\n',
-  );
+  return [
+    'usage:',
+    ...doc.usage.map((u) => `  ${u}`),
+    '',
+    'flags:',
+    ...keys.map((key, i) => `  ${labels[i].padEnd(width)}${meaning(key)}`),
+    ...(doc.notes === undefined ? [] : ['', ...doc.notes]),
+  ].join('\n');
 }
 
 const USAGE = [
