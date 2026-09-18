@@ -208,10 +208,15 @@ part per page" flat and rigc's own pack could not satisfy it. Since
 [#266](https://github.com/firejune/rigc/issues/266) that clause is **one part per
 page OR a tiling page**, so the combination is an ordinary build — and it is the
 only one that puts the renderer's own rulebook over shared-page sampling. What a
-*tiling* page has to satisfy is stated where the clause is, §7's `A06` row: every
-region wholly inside the page it names, and no two regions on one page
-overlapping. Rotation is still refused, and that is a separate clause about
-rigc's packer never turning a region.
+*tiling* page has to satisfy under that profile is stated where the clause is,
+§5.2's `A06` row: no two regions on one page overlapping. Rotation is still
+refused, and that is a separate clause about rigc's packer never turning a region.
+
+⚠️ The other half of that sentence — every region wholly inside the page it names
+— left this profile in [#694](https://github.com/firejune/rigc/issues/694). It is
+**validity**, so no profile switches it off: a rectangle outside its page is
+broken for every consumer, while two regions over the same texels is something
+correct, editor-exported data does.
 
 ### 0.1 Packing the parts onto shared pages — `--pack`
 
@@ -345,7 +350,7 @@ Four things are refused rather than warned about, because each of them otherwise
 | a region name the atlas does not have | `AtlasAttachmentLoader` returns null and the part silently does not draw. The refusal lists the near misses — the usual cause is one character |
 | a size the spec disagrees with | the same silence `A06` exists for, one link earlier: a quad sized against a region of another size collapses |
 | a page the atlas names and the disk lacks | nothing to sample; caught on the way in, so the message names the atlas rather than the artifact rigc wrote from it |
-| a rectangle that runs off its page | `x + width` past the page width makes `u2 > 1`, which samples whatever the wrap mode does |
+| a rectangle that runs off its page | `x + width` past the page width makes `u2 > 1`, which samples whatever the wrap mode does. The gate names the same rectangle, under every profile, for a pack that reaches it without passing through here — `A06`, §5.2 ([#694](https://github.com/firejune/rigc/issues/694)) |
 
 One limit, stated rather than discovered:
 
@@ -4628,7 +4633,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A03_REGION_WIDTH_HEIGHT_FINITE` | both | a region loaded `NaN` or a non-positive size — the attachment has no `image` and no `width`/`height`. **SKIP** when the skeleton carries no region attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A04_MESH_TRIANGLES_AND_ENCODING` | both | authored mesh geometry: triangle count not a multiple of 3, an index out of range, or a `vertices` length that disagrees with `uvs` (the weighted/unweighted trap) **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A05_CURVE_ARRAY_LENGTH` | both | a raw `curve` with the wrong number of values, a non-finite number in one, or a curve on a timeline that cannot take one. Four numbers **per value channel**. **SKIP** when no animation carries a timeline at all ([#580](https://github.com/firejune/rigc/issues/580)). Timelines with no `curve` on any key still PASS: every timeline name is checked against the channel table whether or not a curve sits on one |
-| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | the atlas `size:` disagrees with the PNG on disk. Under `spine-html` also: `pma`, rotation, and a page that is neither **one part covering it exactly** (the unpacked convention) nor a **tiling** — a page whose regions all sit inside it and none of which overlap ([#266](https://github.com/firejune/rigc/issues/266)). A packed atlas therefore gates under this profile; what the message names is the region that runs off its page, or the pair that shares texels. **SKIP** when the atlas declares no page ([#580](https://github.com/firejune/rigc/issues/580)) |
+| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | the atlas `size:` disagrees with the PNG on disk, **or** a region's rectangle is not inside the page it names — rotation honoured, so a region at `rotate: 90` or `270` occupies `height x width` of the page and a region that fits only because it is turned is inside it. The message names the region, the rectangle it occupies, the page and the page's size. That clause is **validity** and runs under both profiles ([#694](https://github.com/firejune/rigc/issues/694)): a rectangle outside its page makes `u2 > 1` and samples whatever the wrap mode returns, and `--atlas-in` already refuses the same rectangle at compile time (§0.2). Under `spine-html` also: `pma`, rotation, and two regions on one page over the same texels — a packed page must be **one part covering it exactly** (the unpacked convention) or a **tiling** ([#266](https://github.com/firejune/rigc/issues/266)), and what that message names is the pair that shares texels. **SKIP** when the atlas declares no page ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A07_ATLAS_TEXT_SHAPE` | both | atlas text: a region name with stray whitespace, or a blank line splitting a page block. rigc writes the atlas, so this means a hand-edited file. ⚠️ An atlas with **no page block at all** — no non-blank line — is not one of those: its subject is absent, so this reports **SKIP** naming the byte count it read, and so do the four rules below whose subject is a page ([#608](https://github.com/firejune/rigc/issues/608)). A rig whose skins need no art writes exactly that file (§3.4), and before #608 this row refused it with two findings naming a page block that was not there. What an empty atlas does **not** excuse is an attachment that wants a region out of it — that is `A08` |
 | `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both | three things, and the message says which: an attachment whose `path` names **no region** of this atlas; a `path` carrying **stray whitespace**, printed quoted so you can see it; an **atlas region name** carrying stray whitespace (`A07` names that same line with its line number). The first two are read off the raw file **before** the loader is asked, so the miss is named here with the skin, the slot, the placeholder and the attachment's own name — the four things `AtlasAttachmentLoader`'s own `Region not found in atlas: <path> (attachment: <name>)` does not carry. Until [#589](https://github.com/firejune/rigc/issues/589) they were unreachable: the loader threw first and the miss arrived as `A00_ROUNDTRIP_PARSE`. There is no `spine-html` clause here any more — a placeholder is free to differ from the region its `path` names ([#574](https://github.com/firejune/rigc/issues/574)) **SKIP** when no attachment names a region *and* the atlas declares none — both of its subjects at once ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the loaded duration ≠ the declared one, or the two sides disagree about which animations exist (R7). Asymmetric by design: a frame of slack for an animation that ends early, and none worth the name for a key *past* the declared end, which is the same rule §4.5 states at compile time — held here against a skeleton the compiler never saw. **SKIP** when neither side has an animation at all — a static rig has no duration |
