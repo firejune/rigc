@@ -1614,6 +1614,12 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   if (raw.spec !== RIG_SPEC_VERSION) {
     throw new CompileError(`${where}: unknown rig spec version ${JSON.stringify(raw.spec)}, expected "${RIG_SPEC_VERSION}"`);
   }
+
+  // Before anything resolves by name, because a key nothing reads is very often
+  // the CAUSE of the name that does not resolve: `"bones"` typed on a slider is
+  // a slider with no driving bone, and the refusal an author wants names the
+  // typo rather than the consequence.
+  checkRigSpecKeys(raw, where);
   if (typeof raw.name !== 'string' || raw.name.length === 0) {
     throw new CompileError(`${where}: a rig spec needs a "name" — a motion spec names it to pick this rig`);
   }
@@ -1623,11 +1629,6 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   if (!Array.isArray(raw.slots)) {
     throw new CompileError(`${where}: a rig spec needs a "slots" array (it may be empty; its ORDER is the draw order)`);
   }
-  // Before anything resolves by name, because a key nothing reads is very often
-  // the CAUSE of the name that does not resolve: `"bones"` typed on a slider is
-  // a slider with no driving bone, and the refusal an author wants names the
-  // typo rather than the consequence.
-  checkRigSpecKeys(raw, where);
 
   const spec = raw as unknown as RigSpec;
 
