@@ -10629,6 +10629,32 @@ function runHoldCurveSuite(): number {
 // knots sit at x = 0, 90, 180, the path is 180 long, and a bone at position p
 // (Percent) must land at exactly `180 * p`. A tolerance would hide a systematic
 // error of a few percent; an exact number cannot.
+/**
+ * The straight, 180-long track `PATH_RIG` rides — named rather than inlined so a
+ * second rig can carry the SAME curve (issue #696's mixed-target control), and
+ * so the two cannot drift into two curves with one set of figures.
+ */
+const PATH_TRACK = {
+  type: 'path',
+  vertexCount: 9,
+  // Nine points: the first and last are the end knots' outer handles
+  // and no curve uses them, which is why an open path of K curves
+  // carries 3(K + 1) of them rather than 3K + 1.
+  vertices: [-30, 0, 0, 0, 30, 0, 60, 0, 90, 0, 120, 0, 150, 0, 180, 0, 210, 0],
+};
+
+/** The path constraint that rides it, and the bone name it expects (`rider`). */
+const PATH_RIDE_CONSTRAINT = {
+  name: 'ride',
+  type: 'path',
+  bones: ['rider'],
+  slot: 'track',
+  positionMode: 'percent',
+  spacingMode: 'percent',
+  rotateMode: 'tangent',
+  position: 0.25,
+};
+
 const PATH_RIG = {
   bones: [
     { name: 'root' },
@@ -10649,16 +10675,7 @@ const PATH_RIG = {
   skins: {
     default: {
       attachments: {
-        track: {
-          track: {
-            type: 'path',
-            vertexCount: 9,
-            // Nine points: the first and last are the end knots' outer handles
-            // and no curve uses them, which is why an open path of K curves
-            // carries 3(K + 1) of them rather than 3K + 1.
-            vertices: [-30, 0, 0, 0, 30, 0, 60, 0, 90, 0, 120, 0, 150, 0, 180, 0, 210, 0],
-          },
-        },
+        track: { track: PATH_TRACK },
         block: { block: { image: 'block.png' } },
       },
     },
@@ -10667,16 +10684,7 @@ const PATH_RIG = {
     armoured: { bones: ['pauldron'], ik: ['pauldron-ik'] },
   },
   constraints: [
-    {
-      name: 'ride',
-      type: 'path',
-      bones: ['rider'],
-      slot: 'track',
-      positionMode: 'percent',
-      spacingMode: 'percent',
-      rotateMode: 'tangent',
-      position: 0.25,
-    },
+    PATH_RIDE_CONSTRAINT,
     // 1/90 per degree, so 90° of dial is one second of animation.
     { name: 'dial', type: 'slider', animation: 'dial-pose', bone: 'knob', property: 'rotate', scale: 0.011111 },
     { name: 'pauldron-ik', type: 'ik', bones: ['pauldron'], target: 'pauldron-target', mix: 1, skin: true },
@@ -21854,6 +21862,20 @@ function buildTurnRig(
      */
     skinRequiredDials?: boolean;
     /**
+     * A second deform timeline in the same animation, on a `path` attachment
+     * (issue #696).
+     *
+     * ⭐ The mesh is what this fixture is for, and that is the point: a path has
+     * a vertex array and NO triangles, so the survey passes over it — and the
+     * one thing that has to stay true is that passing over it does not cost the
+     * MESH its measurement. No rig in this tree keys both, so the interaction
+     * could not be stated without a rig that does.
+     *
+     * The curve is `PATH_RIG`'s own straight track, on `root` rather than on the
+     * head, so nothing about the grid moves.
+     */
+    pathDeform?: Array<Record<string, unknown>>;
+    /**
      * A rotation on `root`, which every dial above hangs off (issue #419).
      *
      * ⭐ The only way to reach a case where the field that drives a slider is not
@@ -21910,11 +21932,18 @@ function buildTurnRig(
   // skin and leaves the default one empty; `skinRequiredDials` adds the member
   // lists that switch the dial bones and their sliders on under it, which is the
   // long form (`{ attachments, bones, slider }`) rather than the short one.
+  // The path, its slot and the bone it carries — present only when a case asked
+  // for one, so every rig built without `pathDeform` is the file it always was.
+  const pathSlot = extra.pathDeform === undefined ? [] : [{ name: 'track', bone: 'root', attachment: 'track' }];
+  const pathAttachments =
+    extra.pathDeform === undefined
+      ? {}
+      : { track: { track: { type: 'path', vertexCount: PATH_TRACK.vertexCount, vertices: PATH_TRACK.vertices } } };
   const skinTable: Record<string, unknown> =
     extra.meshSkin === undefined
-      ? { default: { head: attachments } }
+      ? { default: { head: attachments, ...pathAttachments } }
       : {
-          default: {},
+          default: { ...pathAttachments },
           [extra.meshSkin]: extra.skinRequiredDials
             ? {
                 attachments: { head: attachments },
@@ -21935,15 +21964,22 @@ function buildTurnRig(
           extra.rootRotation === undefined ? { name: 'root' } : { name: 'root', rotation: extra.rootRotation },
           { name: 'head', parent: 'root', x: 400, y: 400 },
           ...dials,
+          ...(extra.pathDeform === undefined ? [] : [{ name: 'rider', parent: 'root', x: 0, y: 0, length: 20 }]),
         ],
-        slots: extra.slots ?? [{ name: 'head', bone: 'head', attachment: 'head' }],
-        ...(extra.sliders
+        slots: [...(extra.slots ?? [{ name: 'head', bone: 'head', attachment: 'head' }]), ...pathSlot],
+        // ⚠️ The condition is still "did a case ask for either", not "is the list
+        // non-empty": a case passing `sliders: []` emitted an empty
+        // `constraints` array before #696 and has to go on emitting one.
+        ...(extra.sliders !== undefined || extra.pathDeform !== undefined
           ? {
-              constraints: extra.sliders.map((s) => ({
-                type: 'slider',
-                ...s,
-                ...(extra.skinRequiredDials ? { skin: true } : {}),
-              })),
+              constraints: [
+                ...(extra.sliders ?? []).map((s) => ({
+                  type: 'slider',
+                  ...s,
+                  ...(extra.skinRequiredDials ? { skin: true } : {}),
+                })),
+                ...(extra.pathDeform === undefined ? [] : [{ ...PATH_RIDE_CONSTRAINT }]),
+              ],
             }
           : {}),
         skins: extra.skins ?? skinTable,
@@ -21993,6 +22029,13 @@ function buildTurnRig(
                 attachment: 'head',
                 keys: deformKeys,
               },
+              // The path's own timeline, after the mesh's so the emitted order is
+              // the one the skin table already puts them in (issue #696). Keyed
+              // on the default skin whatever `meshSkin` says, because that is
+              // where the curve was put.
+              ...(extra.pathDeform === undefined
+                ? []
+                : [{ slot: 'track', attachment: 'track', keys: extra.pathDeform }]),
             ],
           },
           // The same fold under a second name, when a case asked for one. It
@@ -24609,6 +24652,292 @@ function runDeformWindingSuite(): number {
       'skin, `updateCache` switches them off under any other, and the survey planned and drove its dials on a ' +
       'skeleton wearing none — so the frame a key was posed in was decided by an instrument the rig had switched ' +
       'off. Neither silence names a skin in its own message, which is why neither was found by reading one',
+  );
+
+  // -- a deform key on a PATH attachment (issue #696) ------------------------
+  //
+  // ⭐ The other kind of vertex array, and it belongs in THIS suite because of
+  // what it has none of: a path is knots and handles, there is no triangle in
+  // it, and A39's whole subject is a winding. So the five cases below are the
+  // two halves of that — what the run does to the curve, and what the
+  // assertion is allowed to say about a target it cannot measure.
+  //
+  // The geometry is `PATH_RIG`'s own straight track, which `PS01`–`PS05`
+  // already measure undeformed, so every figure here is a whole number: nine
+  // control points at x = −30…210 on y = 0, two curves of 90, and a rider the
+  // constraint puts at 25 % of the arc.
+  const pathDirs = writeProbeRig(PATH_RIG);
+  const pathPoints = PATH_TRACK.vertexCount;
+  /** The `move` animation, carrying one deform timeline on the track. */
+  const pathDeformMotion = (keys: Array<Record<string, unknown>>): Record<string, unknown> =>
+    pathMotion({ duration: 1, loop: false, tracks: [], deform: [{ slot: 'track', attachment: 'track', keys }] });
+  /** Every control point of a slot's path, in world, with the deform applied. */
+  const pathWorld = (skeleton: Skeleton, slotName: string): Array<[number, number]> => {
+    const slot = skeleton.slots.find((s) => s.data.name === slotName)!;
+    const attachment = slot.appliedPose.attachment;
+    if (!(attachment instanceof PathAttachment)) throw new Error(`slot "${slotName}" shows no path`);
+    const world = new Array<number>(attachment.worldVerticesLength).fill(0);
+    attachment.computeWorldVertices(skeleton, slot, 0, attachment.worldVerticesLength, world, 0, 2);
+    const out: Array<[number, number]> = [];
+    for (let i = 0; i < world.length; i += 2) out.push([world[i], world[i + 1]]);
+    return out;
+  };
+  const riderAt = (data: SkeletonData, sample: number): [number, number] => {
+    const pose = poseAtSample(data, 'move', 4, sample).bones.find((b) => b.data.name === 'rider')!.appliedPose;
+    return [pose.worldX, pose.worldY];
+  };
+  // ⚠️ A tolerance and not equality, and the reason is in the numbers this
+  // prints: the parser holds the deform array in a `Float32Array`, so a control
+  // point that comes back as −30.000000928 is the format's storage and not a
+  // wrong pair. 1e-3 is three orders above that noise and four below the 40 the
+  // key moves.
+  const PATH_NEAR = 1e-3;
+  const near = (a: number, b: number): boolean => Math.abs(a - b) <= PATH_NEAR;
+
+  // --- the lift: every control point moved by the same pair -----------------
+  //
+  // A translation, because it is the one deformation whose answer needs no
+  // arithmetic from this file: the curve is the setup curve moved by (0, 40), so
+  // every control point and the rider on it move by exactly that and nothing
+  // else can be mistaken for a pass.
+  const PATH_LIFT = 40;
+  const liftRun = Array.from({ length: pathPoints }, () => [0, PATH_LIFT]).flat();
+  const liftMotion = pathDeformMotion([{ t: 0 }, { t: 1, vertices: liftRun }]);
+  const liftGate = gateProbe(pathDirs, liftMotion, 'spine-html');
+  const liftBuilt = compile({
+    rigPath: pathDirs.rigPath,
+    motionPath: join(pathDirs.dir, 'probe.motion.json'),
+    outDir: pathDirs.outDir,
+    imagesDir: pathDirs.dir,
+  });
+  const liftEmitted = (
+    JSON.parse(liftBuilt.skeletonText) as {
+      animations: Record<string, { attachments?: Record<string, Record<string, Record<string, { deform: Array<Record<string, unknown>> }>>> }>;
+    }
+  ).animations.move.attachments?.default?.track?.track?.deform;
+  const liftRunEmitted = liftEmitted?.[1]?.vertices as number[] | undefined;
+  const liftData = timelinePosable(pathDirs, liftMotion).data;
+  const liftSetup = pathWorld(poseAtSample(liftData, 'move', 4, 0), 'track');
+  const liftPosed = pathWorld(poseAtSample(liftData, 'move', 4, 4), 'track');
+  const liftMoved = liftPosed.filter(([x, y], i) => near(y, liftSetup[i][1] + PATH_LIFT) && near(x, liftSetup[i][0]));
+  const dw77Probes = [
+    ...firstFew(
+      liftGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 200)}`),
+      'gate failure(s)',
+    ),
+    ...(liftEmitted === undefined ? ['the emitted skeleton carries no `attachments.default.track.track.deform` at all'] : []),
+    ...(liftEmitted?.length === 2 ? [] : [`the emitted timeline has ${String(liftEmitted?.length)} key(s) rather than 2`]),
+    ...(liftRunEmitted?.length === pathPoints * 2
+      ? []
+      : [
+          `the emitted run is ${String(liftRunEmitted?.length)} number(s) long and the path's ${pathPoints} ` +
+            `control points make a ${pathPoints * 2}-long deform array`,
+        ]),
+    ...(liftSetup.every(([, y]) => near(y, 0)) ? [] : ['the setup frame is already off the axis the track was written on']),
+    ...(liftMoved.length === pathPoints
+      ? []
+      : [
+          `${liftMoved.length} of ${pathPoints} control point(s) landed at the setup point plus (0, ${PATH_LIFT}); ` +
+            `the posed frame reads [${liftPosed.map(([x, y]) => `${x.toFixed(3)},${y.toFixed(3)}`).join(' ')}]`,
+        ]),
+  ];
+  const dw77Held = dw77Probes.length === 0;
+  say(
+    'DW77_A_DEFORM_KEY_ON_A_PATH_EMITS_ITS_RUN_AND_POSES_THE_CONTROL_POINTS_WHERE_THE_KEY_SAYS',
+    dw77Held,
+    probeDetail(
+      dw77Held,
+      dw77Probes,
+      `${liftGate.passed.length} assertion(s) green; the emitted timeline is ${JSON.stringify(liftEmitted)}, and ` +
+        `posed through spine-core at the key's own time all ${pathPoints} control points sit at their setup x and ` +
+        `y = ${PATH_LIFT} (${liftPosed.map(([x, y]) => `${x.toFixed(3)},${y.toFixed(3)}`).join(' ')})`,
+    ),
+    'a path attachment was the one type with a vertex array that rigc refused to key, on the reading that a ' +
+      'deformed path invalidates the `lengths` it carries. The refusal is gone and this is what replaces it: the ' +
+      'run reaches the file and the runtime puts the curve where the run says',
+  );
+
+  // --- the run that does not fit -------------------------------------------
+  //
+  // Both directions, because the interesting one is the direction that must NOT
+  // be refused: a deform key is a sparse edit, so a run SHORTER than the array
+  // is the idiom (the editor trims leading zeros off one, AUTHORING §4.11), and
+  // only a run that ends past the end is the silent defect.
+  const pathRefusal = (keys: Array<Record<string, unknown>>): string | null => {
+    const motionPath = join(pathDirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(pathDeformMotion(keys), null, 2)}\n`);
+    try {
+      compile({ rigPath: pathDirs.rigPath, motionPath, outDir: pathDirs.outDir, imagesDir: pathDirs.dir });
+      return null;
+    } catch (err) {
+      return (err as Error).message;
+    }
+  };
+  const overrun = pathRefusal([{ t: 0 }, { t: 1, vertices: [...liftRun, 0, 0] }]);
+  const sparse = pathRefusal([{ t: 0 }, { t: 1, fromVertex: 2, vertices: [0, PATH_LIFT, 0, PATH_LIFT] }]);
+  const dw78Probes = [
+    ...(overrun === null ? ['a run one pair longer than the deform array compiled'] : []),
+    ...(overrun?.includes(`is ${liftRun.length + 2} long`) ?? false ? [] : ['the refusal does not say how long the run is']),
+    ...(overrun?.includes(`deform array is ${pathPoints * 2} long (${pathPoints} vertices)`) ?? false
+      ? []
+      : [`the refusal does not name the array's ${pathPoints * 2} numbers and the path's ${pathPoints} control points`]),
+    ...(sparse === null ? [] : [`a two-control-point run was refused as well: ${sparse}`]),
+  ];
+  const dw78Held = dw78Probes.length === 0;
+  say(
+    'DW78_A_RUN_PAST_THE_END_OF_A_PATHS_CONTROL_POINTS_IS_REFUSED_WITH_BOTH_COUNTS',
+    dw78Held,
+    probeDetail(
+      dw78Held,
+      dw78Probes,
+      `a ${liftRun.length + 2}-long run into an array of ${pathPoints * 2}: ` +
+        `${overrun?.split(': ').slice(1).join(': ')}; and a two-control-point run at \`fromVertex: 2\` compiles`,
+    ),
+    'the quiet one: `Utils.arrayCopy` into a `Float32Array` drops everything past the end without a word, so a ' +
+      'path keyed as if it had more control points than it has deforms part of the curve correctly. The same bound ' +
+      'a mesh has, stated in the units a path author counts in',
+  );
+
+  // --- what A39 may say about a target with no triangles --------------------
+  const a39Skip = liftGate.skipped.find((s) => s.assertion === A39);
+  const dw79Probes = [
+    ...(liftGate.passed.includes(A39) ? [`${A39} PASSED on a target it cannot measure`] : []),
+    ...(a39Skip === undefined ? [`${A39} neither passed nor skipped; it did not report at all`] : []),
+    ...((a39Skip?.reason ?? '').includes('"track"') ? [] : ['the SKIP does not name the slot the timeline is on']),
+    ...((a39Skip?.reason ?? '').includes('no triangles') ? [] : ['the SKIP does not say why there is nothing to measure']),
+  ];
+  const dw79Held = dw79Probes.length === 0;
+  say(
+    'DW79_A39_SKIPS_BY_NAME_ON_A_PATH_TARGET_BECAUSE_A_PATH_HAS_NO_WINDING',
+    dw79Held,
+    probeDetail(dw79Held, dw79Probes, `SKIP: ${a39Skip?.reason ?? '(nothing)'}`),
+    'an assertion with nothing to measure reports SKIP and never a pass — and a path is the case that makes the ' +
+      'rule visible, because it is a deform target that is keyed on purpose and still has no winding to keep',
+  );
+
+  // --- the positive control: the mesh beside it ----------------------------
+  //
+  // Both verdicts on one rig, because the risk is a silent one: the survey
+  // passes over the path, and the thing that must not happen is the mesh being
+  // passed over with it. A green run proves the timeline is tolerated; only the
+  // FOLD proves the mesh is still being measured.
+  const pathKeys = [{ t: 0 }, { t: 1, vertices: liftRun }];
+  const mixedSafe = gateTurn(buildTurnRig(turnRow(12), { pathDeform: pathKeys }));
+  const mixedFolded = gateTurn(buildTurnRig(turnRow(FOLDED_TURN), { pathDeform: pathKeys }));
+  const mixedHits = mixedFolded.failures.filter((f) => f.assertion === A39);
+  const mixedDetail = mixedHits[0]?.detail ?? '';
+  const dw80Probes = [
+    ...firstFew(
+      mixedSafe.failures.map((f) => `inside the fold angle: ${f.assertion}: ${f.detail.slice(0, 160)}`),
+      'failure(s) on the safe build',
+    ),
+    ...(mixedSafe.passed.includes(A39) ? [] : [`${A39} did not run on the safe build`]),
+    ...(mixedHits.length === 1 ? [] : [`${A39} refused ${mixedHits.length} key(s) on the folded build rather than one`]),
+    ...(/8 of 32 triangle\(s\) reverse winding/.test(mixedDetail)
+      ? []
+      : [`the folded build's message does not report 8 of 32 triangles reversing: ${mixedDetail || 'it said nothing'}`]),
+    ...(/deform head\/head key 1/.test(mixedDetail) ? [] : ['the refusal does not name the MESH slot and key']),
+  ];
+  const dw80Held = dw80Probes.length === 0;
+  say(
+    'DW80_A_PATH_TIMELINE_BESIDE_A_MESH_ONE_COSTS_THE_MESH_NONE_OF_ITS_MEASUREMENT',
+    dw80Held,
+    probeDetail(
+      dw80Held,
+      dw80Probes,
+      `one animation deforming both a 5x5 grid and a ${pathPoints}-point path: at 12° the build is green with ` +
+        `${A39} PASSED, and at ${FOLDED_TURN}° the same pair is refused — ${mixedDetail.slice(0, 200)}`,
+    ),
+    'the survey drops a timeline whose attachment carries no triangles and goes on to the next one, so the way ' +
+      'this could have gone wrong is not a wrong number but a mesh that stopped being looked at. No rig in this ' +
+      'tree keyed both kinds until this one',
+  );
+
+  // --- the constraint that reads the curve ---------------------------------
+  //
+  // ⭐ And the `lengths` question, which is why the refusal this replaces stood
+  // for as long as it did. `PathConstraint.computeWorldPositions` re-measures
+  // the curve from the posed world vertices under `constantSpeed: true` — the
+  // parser's default — and reads the attachment's own `lengths` under `false`.
+  // A deform moves the vertices and cannot move `lengths`, which is a field of
+  // the attachment and has nowhere per key to live, so the second spelling
+  // traverses a curve it no longer has. That is the format's behaviour and
+  // every runtime shares it; AUTHORING §4.11 states it rather than refusing it.
+  const liftRider = { setup: riderAt(liftData, 0), posed: riderAt(liftData, 4) };
+  // The stretch: the far half pushed out, which is the one edit that CHANGES the
+  // arc length — a translation cannot tell the two traversals apart.
+  const STRETCH = 90;
+  const stretchFrom = 10;
+  const stretchRun = Array.from({ length: (pathPoints * 2 - stretchFrom) / 2 }, () => [STRETCH, 0]).flat();
+  const stretchKeys = [{ t: 0 }, { t: 1, offset: stretchFrom, vertices: stretchRun }];
+  const stretchAt = (constantSpeed: boolean | undefined): [number, number] => {
+    const dirs = writeProbeRig({
+      ...PATH_RIG,
+      skins: {
+        ...PATH_RIG.skins,
+        default: {
+          attachments: {
+            ...PATH_RIG.skins.default.attachments,
+            track: { track: { ...PATH_TRACK, ...(constantSpeed === undefined ? {} : { constantSpeed }) } },
+          },
+        },
+      },
+    });
+    return riderAt(timelinePosable(dirs, pathDeformMotion(stretchKeys)).data, 4);
+  };
+  const stretchDefault = stretchAt(undefined);
+  const stretchStale = stretchAt(false);
+  // Derived here, off the fixture's own geometry and nothing measured: the track
+  // is straight and its knots are every third point, so its arc length is the
+  // distance between the first knot and the last. The stretch moves the far knot
+  // and both its handles out by `STRETCH` along the same line, which adds
+  // exactly that much. The constraint's `position` is a percentage of whichever
+  // total the traversal believes in.
+  const knotX = (knot: number): number => PATH_TRACK.vertices[2 * (3 * knot + 1)];
+  const setupLength = knotX(PATH_TRACK.vertexCount / 3 - 1) - knotX(0);
+  const stretchedLength = setupLength + STRETCH;
+  const onTheCurve = PATH_RIDE_CONSTRAINT.position * stretchedLength;
+  const onTheSetupLengths = PATH_RIDE_CONSTRAINT.position * setupLength;
+  const dw81Probes = [
+    ...(near(liftRider.setup[0], onTheSetupLengths) && near(liftRider.setup[1], 0)
+      ? []
+      : [`undeformed, the rider is at (${liftRider.setup.map((n) => n.toFixed(4)).join(', ')}) and not at (${onTheSetupLengths}, 0)`]),
+    ...(near(liftRider.posed[0], onTheSetupLengths) && near(liftRider.posed[1], PATH_LIFT)
+      ? []
+      : [
+          `with every control point lifted by ${PATH_LIFT} the rider is at ` +
+            `(${liftRider.posed.map((n) => n.toFixed(4)).join(', ')}) and not at (${onTheSetupLengths}, ${PATH_LIFT})`,
+        ]),
+    ...(near(stretchDefault[0], onTheCurve)
+      ? []
+      : [
+          `with the far half pushed out to a ${stretchedLength}-long curve the rider is at x=` +
+            `${stretchDefault[0].toFixed(4)}, and ${PATH_RIDE_CONSTRAINT.position} of that curve is ${onTheCurve}`,
+        ]),
+    ...(near(stretchStale[0], onTheSetupLengths)
+      ? []
+      : [
+          `under \`constantSpeed: false\` the same stretch puts the rider at x=${stretchStale[0].toFixed(4)}, and ` +
+            `${PATH_RIDE_CONSTRAINT.position} of the SETUP ${setupLength} the emitted \`lengths\` records is ` +
+            `${onTheSetupLengths}`,
+        ]),
+  ];
+  const dw81Held = dw81Probes.length === 0;
+  say(
+    'DW81_THE_CONSTRAINT_FOLLOWS_THE_DEFORMED_CURVE_AND_CONSTANT_SPEED_FALSE_READS_THE_SETUP_LENGTHS',
+    dw81Held,
+    probeDetail(
+      dw81Held,
+      dw81Probes,
+      `lifted by ${PATH_LIFT}: the rider goes from (${liftRider.setup.map((n) => n.toFixed(3)).join(', ')}) to ` +
+        `(${liftRider.posed.map((n) => n.toFixed(3)).join(', ')}), which is the deformed curve and not the setup one. ` +
+        `Stretched to ${stretchedLength}: x=${stretchDefault[0].toFixed(3)} where the re-measuring traversal puts ` +
+        `${PATH_RIDE_CONSTRAINT.position} of it, and x=${stretchStale[0].toFixed(3)} under \`constantSpeed: false\`, ` +
+        `where ${PATH_RIDE_CONSTRAINT.position} of the setup ${setupLength} is`,
+    ),
+    'the refusal this replaces named the `lengths` array as its reason, so the reason is measured rather than ' +
+      'taken on trust: the field is read by one spelling of one flag, it is the setup measurement in every export ' +
+      'any tool writes because the format has nowhere else to put one, and the default traversal never reads it',
   );
 
   return bad;
@@ -46500,6 +46829,208 @@ function runIngestSuite(): number {
         'the spec, and the clause refusing the old wording is what keeps it from coming back',
     );
   }
+
+  // --- a deform keyed on a PATH attachment, forged (issue #696) -------------
+  //
+  // ⭐ Forged rather than built from a spec, and that is the whole point: until
+  // this landing rigc could not WRITE such a file, so the only skeleton that
+  // could exercise the reader was one produced by hand. The construct is
+  // ordinary Spine 4.3 — `PathAttachment extends VertexAttachment`
+  // (`attachments/PathAttachment.js:34`), and `SkeletonJson`'s deform branch
+  // builds a `DeformTimeline` from `attachment.vertices` with no test of the
+  // attachment's type at all — and four skeletons of a production corpus carry
+  // one. The probe already has the path (`track`) and the constraint that rides
+  // it, so what is added here is the timeline and nothing else.
+  const forgedPath = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+  const PATH_DEFORM_OFFSET = 4;
+  const PATH_DEFORM_RUN = [0, 40, 0, 40];
+  const forgedTimeline = {
+    default: {
+      track: { track: { deform: [{ time: 0 }, { time: 1, offset: PATH_DEFORM_OFFSET, vertices: PATH_DEFORM_RUN }] } },
+    },
+  };
+  // ⚠️ Inserted where the group BELONGS and not appended, which is a property of
+  // the file rather than of this fixture: `readAnimation`'s reading order puts
+  // `attachments` after the constraint groups and before `drawOrder`, and the
+  // editor writes it there too (`spineboy-pro`'s `hoverboard` is `slots, bones,
+  // transform, attachments`). Appended last, the forgery holds the same values
+  // in different bytes — measured, and it fails IG33 while every structural
+  // measure reads 1.000, which is exactly the difference a byte comparison is
+  // here to catch and a field walk cannot see.
+  const AFTER_ATTACHMENTS = ['drawOrder', 'events'];
+  const forgedAnimation = (forgedPath.animations as Record<string, Record<string, unknown>>).everything;
+  const orderedAnimation: Record<string, unknown> = {};
+  for (const [group, value] of Object.entries(forgedAnimation)) {
+    if (orderedAnimation.attachments === undefined && AFTER_ATTACHMENTS.includes(group)) {
+      orderedAnimation.attachments = forgedTimeline;
+    }
+    orderedAnimation[group] = value;
+  }
+  if (orderedAnimation.attachments === undefined) orderedAnimation.attachments = forgedTimeline;
+  (forgedPath.animations as Record<string, Record<string, unknown>>).everything = orderedAnimation;
+  const forgedPathText = `${JSON.stringify(forgedPath, null, 2)}\n`;
+  /** Ingest the forged file and rebuild it against the pack the probe emitted. */
+  const rebuildForged = (
+    mutate?: (motion: Record<string, unknown>) => number,
+  ): { findings: IngestFinding[]; motion: Record<string, unknown>; built: CompileResult | null; refusal: string; edits: number } => {
+    const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-pathdeform-'));
+    const specDir = join(root, 'S');
+    const outDir = join(root, 'B');
+    for (const dir of [specDir, outDir]) mkdirSync(dir, { recursive: true });
+    const atlasPath = join(root, 'skeleton.atlas');
+    writeFileSync(atlasPath, probeTrip.a.atlasText);
+    const decompiled = ingest(JSON.parse(forgedPathText), {
+      name: 'ingest_probe',
+      art: 'none',
+      source: 'skeleton.json',
+      version: packageVersion(),
+    });
+    const motion = decompiled.motion as unknown as Record<string, unknown>;
+    const edits = mutate === undefined ? 0 : mutate(motion);
+    writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(decompiled.rig, null, 2)}\n`);
+    writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(motion, null, 2)}\n`);
+    try {
+      const built = compile({
+        rigPath: join(specDir, 'rig.json'),
+        motionPath: join(specDir, 'motion.json'),
+        outDir,
+        atlasInPath: atlasPath,
+      });
+      return { findings: decompiled.findings, motion, built, refusal: '', edits };
+    } catch (err) {
+      return { findings: decompiled.findings, motion, built: null, refusal: (err as Error).message, edits };
+    }
+  };
+
+  const pathTrip = rebuildForged();
+  const pathTrack = ((pathTrip.motion.animations as Record<string, Record<string, unknown>>).everything.deform ??
+    []) as Array<Record<string, unknown>>;
+  const pathEntry = pathTrack.find((entry) => entry.slot === 'track');
+  const pathKeysRead = (pathEntry?.keys ?? []) as Array<Record<string, unknown>>;
+  const newBlockers = pathTrip.findings.filter(
+    (f) => f.kind === 'blocker' && !probeTrip.findings.some((was) => was.code === f.code && was.where === f.where),
+  );
+  const ig32Probes = [
+    ...firstFew(
+      newBlockers.map((f) => `${f.code} at ${f.where}: ${f.detail.slice(0, 160)}`),
+      'blocker(s) the forged timeline added',
+    ),
+    ...(pathEntry === undefined ? ['the decompiled motion spec carries no deform track on slot "track"'] : []),
+    ...(pathKeysRead.length === 2 ? [] : [`the decompiled track has ${pathKeysRead.length} key(s) rather than 2`]),
+    ...(pathKeysRead[1]?.offset === PATH_DEFORM_OFFSET ? [] : ['the run\'s start index did not survive the read']),
+    ...(JSON.stringify(pathKeysRead[1]?.vertices) === JSON.stringify(PATH_DEFORM_RUN)
+      ? []
+      : [`the run came back as ${JSON.stringify(pathKeysRead[1]?.vertices)} and not ${JSON.stringify(PATH_DEFORM_RUN)}`]),
+  ];
+  const ig32Held = ig32Probes.length === 0;
+  say(
+    'IG32_A_FORGED_PATH_DEFORM_IS_READ_INTO_THE_MOTION_SPEC_WITH_ITS_START_AND_ITS_RUN',
+    ig32Held,
+    probeDetail(
+      ig32Held,
+      ig32Probes,
+      `${JSON.stringify(pathEntry)} — ${pathTrip.findings.length} finding(s), none of them a blocker this timeline ` +
+        'added',
+    ),
+    'the reader was never the half that refused a path deform, which is worth stating in a case rather than in a ' +
+      'sentence: `ingest` carried this timeline before #696 exactly as it carries a mesh\'s, and the refusal was ' +
+      'in the REBUILD — so a decompiled spec could be written to disk and then not compile',
+  );
+
+  const rebuiltPathText = pathTrip.built?.skeletonText ?? '';
+  const pathStructure = pathTrip.built === null ? null : diffSkeletons(JSON.parse(rebuiltPathText), JSON.parse(forgedPathText));
+  const pathValues =
+    pathTrip.built === null
+      ? []
+      : diffSkeletonValues(
+          skeletonValues(rebuiltPathText, pathTrip.built.atlasText),
+          skeletonValues(forgedPathText, probeTrip.a.atlasText),
+        );
+  const pathMovedStructure = pathStructure === null ? ['(nothing built)'] : [...movedMeasures(pathStructure), ...movedAgnosticMeasures(pathStructure)];
+  const pathMovedValues = movedValueMeasures(pathValues);
+  const pathValuesCompared = pathValues.reduce((n, m) => n + m.total, 0);
+  const deformMeasure = pathStructure?.sections
+    .flatMap((s) => s.measures)
+    .find((m) => m.id === 'animations.deform');
+  const ig33Probes = [
+    ...(pathTrip.built === null ? [`the rebuild was refused: ${pathTrip.refusal.split(': ').slice(1).join(': ')}`] : []),
+    ...(pathTrip.built !== null && rebuiltPathText !== forgedPathText
+      ? [
+          // ⚠️ Two sentences, because an empty path list is a finding and not an
+          // absence: a field walk compares key SETS, so a rebuild that moved a
+          // group to another place in the object differs in bytes and in no
+          // path at all. Saying "is not the forged file:" and then nothing is
+          // how this case first read, and it named nothing an author could act on.
+          ((paths) =>
+            paths.length > 0
+              ? `the rebuilt skeleton is not the forged file: ${paths.join('; ')}`
+              : 'the rebuilt skeleton holds every value the forged file holds and not the same bytes, so what ' +
+                'moved is the order of the keys or the spacing between them')(
+            differingJsonPaths(JSON.parse(rebuiltPathText), JSON.parse(forgedPathText)),
+          ),
+        ]
+      : []),
+    ...(pathMovedStructure.length === 0 ? [] : [`structural measure(s) below 1.000: ${pathMovedStructure.join(', ')}`]),
+    ...(pathMovedValues.length === 0 ? [] : [`value measure(s) below 1.000: ${pathMovedValues.join(', ')}`]),
+    ...(pathValuesCompared > 0 ? [] : ['the value walk compared nothing at all, so its 1.000 is vacuous']),
+  ];
+  const ig33Held = ig33Probes.length === 0;
+  say(
+    'IG33_THE_REBUILD_OF_A_FORGED_PATH_DEFORM_IS_THE_FILE_IT_WAS_READ_FROM',
+    ig33Held,
+    probeDetail(
+      ig33Held,
+      ig33Probes,
+      `skeleton.json ${rebuiltPathText.length} B identical; every structural measure 1.000 with ` +
+        `${deformMeasure?.matched}/${deformMeasure?.total} on \`animations.deform\`, and ` +
+        `${pathValuesCompared} value(s) compared at 1.000`,
+    ),
+    'the same contract IG00 holds every rig in this run to, asked of the one construct rigc could not emit — and ' +
+      'held to the FILE rather than to an assertion about it, which is what makes the deform run\'s start index ' +
+      'and its numbers a measurement rather than a claim',
+  );
+
+  const droppedPath = rebuildForged((motion) => {
+    const animations = motion.animations as Record<string, Record<string, unknown>>;
+    let dropped = 0;
+    for (const animation of Object.values(animations)) {
+      const tracks = animation.deform;
+      if (!Array.isArray(tracks)) continue;
+      const kept = (tracks as Array<Record<string, unknown>>).filter((entry) => entry.slot !== 'track');
+      if (kept.length === tracks.length) continue;
+      dropped += tracks.length - kept.length;
+      if (kept.length === 0) delete animation.deform;
+      else animation.deform = kept;
+    }
+    return dropped;
+  });
+  const droppedPaths =
+    droppedPath.built === null ? [] : differingJsonPaths(JSON.parse(droppedPath.built.skeletonText), JSON.parse(forgedPathText));
+  const ig34Probes = [
+    ...(droppedPath.edits > 0 ? [] : ['the plant had no path deform to remove, so it checks nothing']),
+    ...(droppedPath.built === null ? [`the planted rebuild was refused rather than measured: ${droppedPath.refusal}`] : []),
+    ...(droppedPath.built !== null && droppedPath.built.skeletonText === forgedPathText
+      ? ['the rebuild came back identical with the timeline removed, so IG33 would pass on a decompiler that drops it']
+      : []),
+    ...(droppedPaths.some((path) => path.includes('attachments'))
+      ? []
+      : [`the difference is not on an attachments timeline: ${droppedPaths.join('; ') || '(none)'}`]),
+  ];
+  const ig34Held = ig34Probes.length === 0;
+  say(
+    'IG34_A_DECOMPILER_THAT_DROPS_THE_PATH_DEFORM_IS_CAUGHT_AND_THE_TIMELINE_IS_NAMED',
+    ig34Held,
+    probeDetail(
+      ig34Held,
+      ig34Probes,
+      `${droppedPath.edits} deform track(s) removed from the decompiled motion spec; the rebuild differs at ` +
+        `${droppedPaths.length} path(s): ${droppedPaths.join('; ')}`,
+    ),
+    'IG33 is a byte comparison and a byte comparison passes for two reasons — the timeline came back, or nothing ' +
+      'about it was ever written. This is which: the plant deletes the track from the decompiled spec and the ' +
+      'rebuild has to notice. The edit count is half the case, for IG04\'s reason: a plant with nothing to delete ' +
+      'is green and checks nothing',
+  );
 
   return bad;
 }
