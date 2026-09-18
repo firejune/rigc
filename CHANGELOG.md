@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.26.0](https://github.com/firejune/rigc/compare/v0.25.6...v0.26.0) (2026-09-18)
+
+
+### Features
+
+* **compile:** a deform key may target a `path` attachment, and the constraint follows the curve the key wrote ([#696](https://github.com/firejune/rigc/issues/696)) ([#709](https://github.com/firejune/rigc/issues/709)) ([a19ad53](https://github.com/firejune/rigc/commit/a19ad53f339ec8404fd3c338d7c9010949e3a7c8))
+* **compile:** a linked mesh draws another mesh's geometry, resolved by name, and every silence the parser keeps about one is refused ([#691](https://github.com/firejune/rigc/issues/691)) ([#713](https://github.com/firejune/rigc/issues/713)) ([e7a4381](https://github.com/firejune/rigc/commit/e7a4381f385d1afc5a209b5b19604670e6cca17f))
+* **compile:** a slot's dark colour moves — `rgba2` is spelled, emitted, read back off the runtime and drawn ([#690](https://github.com/firejune/rigc/issues/690)) ([#712](https://github.com/firejune/rigc/issues/712)) ([41cfb15](https://github.com/firejune/rigc/commit/41cfb15d389c89586e6253a0a3b12266afd72308))
+
+
+### Bug Fixes
+
+* **compile:** a constraint name is unique per kind, the way Spine resolves one, and a spec rigc's own parser refuses is a coded ingest finding ([#692](https://github.com/firejune/rigc/issues/692)) ([#711](https://github.com/firejune/rigc/issues/711)) ([dc59f55](https://github.com/firejune/rigc/commit/dc59f55ceb068de8b6b878c7031d058c90f05994))
+
+
+### Instrument
+
+* **validate:** a region's rectangle lies inside the page it names, under every profile ([#694](https://github.com/firejune/rigc/issues/694)) ([#707](https://github.com/firejune/rigc/issues/707)) ([20061b0](https://github.com/firejune/rigc/commit/20061b019e0c3e086c508e22f6f9e87967eb96ef))
+
 ## [0.25.6](https://github.com/firejune/rigc/compare/v0.25.5...v0.25.6) (2026-09-18)
 
 
