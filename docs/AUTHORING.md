@@ -986,6 +986,12 @@ A skin can also say which bones and constraints it **switches on**, and that nee
 one more level, so a skin entry has a second spelling — see §3.4.1. The short one
 above is unchanged and is what almost every rig wants.
 
+🔸 **`default` is a name, not a requirement.** A rig may put every attachment in
+named skins and declare no `default` at all, which is what an editor export of a
+multi-skin character gives back; rigc still emits a `default` skin, empty, because
+it always does. An animation keying such a slot resolves its attachment names
+against every skin there is — §4.4 states that rule and §5.1 the one refusal left.
+
 🔸 **A skin may fill no slot with anything that needs art, and that build is
 green.** The atlas is built out of what the skins reference, so a rig whose skins
 name no `image` — an empty `default`, or one carrying only a `boundingbox`, a
@@ -2902,6 +2908,36 @@ different curves. The same applies to `scale`/`scalex`/`scaley` and
 An `attachment` key carries no easing — attachment timelines are inherently
 stepped.
 
+🔑 **An attachment key resolves against every skin, not against `default` alone.**
+A slot's `attachment` timeline carries a name and **no skin** — the format has no
+field for one — so the names a key may use are the union of every skin's
+placeholders for that slot, the default skin's included.
+`Skeleton.getAttachment` resolves the keyed name at run time through the skin the
+skeleton is **wearing** and, failing that, through `defaultSkin` (spine-core
+4.3.13 `Skeleton.js:335-346`), so which skin's art a key lands on is the
+consumer's, decided by dressing the skeleton rather than by the animation.
+
+- **A name some skins fill and others do not is accepted, and that is the
+  format's own semantics** rather than a hole in the check: under a skin that
+  lacks it the slot shows nothing, which is exactly what a `null` key says and a
+  thing a rig may well mean. What is refused is a name **no** skin holds, and the
+  refusal says which skins were searched and what the slot does have (§5.1).
+- A rig with **no `default` skin at all** — every attachment in named skins,
+  which is the shape an editor export of a multi-skin character gives back — is
+  therefore a rig whose attachment keys work. Until
+  [#695](https://github.com/firejune/rigc/issues/695) it was not: keys were
+  checked against the default skin alone, so a named-skin name was refused as
+  unknown, and a rig with no default skin had **every** attachment key refused,
+  including ones whose art is in the first named skin. The setup pose resolved
+  across skins the whole time (§4.2), so the two halves of one slot disagreed —
+  `slots[].attachment: "plain"` was accepted and a key naming `plain` on that
+  same slot was not.
+- ⚠️ **A `deform` track is the other way round and names its skin outright**
+  (§4.11.5), because the format keys a deform timeline on a `skin/slot/attachment`
+  triple and a deform run is geometry for one attachment object. An attachment
+  timeline has no such field, which is why this one is a union and that one is a
+  lookup.
+
 ### 4.5 `keys` — times, values, curves
 
 - `t` is in seconds and **must strictly increase** after `lag`/`stagger` are added.
@@ -4426,6 +4462,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `motion spec names archetype "A" but the rig spec at … is called "B"` | make `archetype` equal the rig's `name` |
 | `animation "A" declares duration Ns but its last key is at Ms` | R7 — fix whichever of the two you meant |
 | `animation "A" slot "X" attachment: key at Ns is Ms past the declared duration Ds` | §4.5 — the key is past the end of the animation and nothing will sample it. Move the key onto `duration`, or raise `duration` |
+| `animation "A" slot "X" attachment: attachment "N" is not in slot "X" under any skin (searched: default, alt) — the slot has: plain, trim` | §4.4 — the keyed name is in **no** skin, and the two clauses say where the compiler looked and what it would have taken. Fix the spelling, or give some skin a placeholder called `N`. A name only a NAMED skin fills is not this error and never was one to fix — it compiles, and the slot shows nothing under the skins that lack it. Before [#695](https://github.com/firejune/rigc/issues/695) the message read `attachment "N" is not in slot "X"` and was raised against the **default skin alone**, so it fired on correct rigs: any key into named-skin art, and every key in a rig with no default skin. `the slot has no attachments at all` is the same message where nothing fills the slot |
 | `animation "A" keys unknown bone "X"` | the track's `bone` is not in the rig |
 | `animation "A" bone "X" translatex: key value must be an array of 1 number(s)` | the value shape must match the property (§4.4) |
 | `animation "A" physics constraint "C" mass key at t=… is 0 (massInverse Infinity); must be > 0 — …` | §4.4 — a keyed physics value the runtime cannot use. The message names the bound and the `PhysicsConstraint.js` lines that make it one: `mass` and `strength` are `> 0`, `damping` is inside `(0, 1)`, `mix` is `0` or more, and `inertia`/`wind`/`gravity` are bounded nowhere ([#610](https://github.com/firejune/rigc/issues/610)) |

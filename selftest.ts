@@ -5722,6 +5722,189 @@ function runRigSuite(): number {
     );
   }
 
+  // --- an attachment key resolves across skins, not in `default` alone (#695) -
+  //
+  // 🚨 What was wrong: `compileTrack` was handed `tableFor('default')` and
+  // nothing else, so a key naming art that lives in a NAMED skin was refused
+  // `attachment "x" is not in slot "y"` — a sentence about the one skin the
+  // compiler happened to look in, printed as a fact about the slot. Measured on
+  // the branch point with the two rigs below: the two-skin rig was refused at
+  // `attachment "trim" is not in slot "panel"`, and the rig with **no default
+  // skin** — every attachment in named skins, which is what an editor export of
+  // a multi-skin character gives back — was refused on `plain` as well, because
+  // the table it was checked against was empty. Every attachment key in such a
+  // rig was unreachable, not just the named-skin ones.
+  //
+  // 🔑 The format is why this is a compiler defect rather than a policy: an
+  // attachment timeline carries a slot and a NAME, never a skin, and
+  // `Skeleton.getAttachment` resolves that name through the worn skin and then
+  // `defaultSkin`. Which skin is worn is the consumer's, so the set a key may
+  // draw from is every skin's — and `RF51` measures that the runtime does
+  // exactly this with the emitted file rather than taking the paragraph's word.
+  //
+  // ⭐ The tree already read the union one line earlier: the setup-pose check
+  // above resolves `slots[].attachment` against `names`, which for a rig whose
+  // art lives in skins IS the union across them. So `plain` as a setup pose was
+  // accepted on the branch point and `plain` as a key at t=0 was refused, in the
+  // same compile, on the same slot.
+  {
+    const skinArt = (name: string): string => {
+      const art = join(dir, name);
+      mkdirSync(join(art, 'images'), { recursive: true });
+      // Two of the overlay fixture's plates, renamed to the placeholders that
+      // will carry them: `path` then derives to the placeholder on both sides,
+      // so nothing here depends on the naming rule a different case owns.
+      copyFileSync(join(OVERLAY.dir, 'parts', 'lens_l_shut.png'), join(art, 'images', 'plain.png'));
+      copyFileSync(join(OVERLAY.dir, 'parts', 'iris_open.png'), join(art, 'images', 'trim.png'));
+      return art;
+    };
+    /** A one-slot rig whose art is in skins, with the skin table the caller wants. */
+    const swapRig = (skins: Record<string, unknown>): Record<string, unknown> => ({
+      spec: 'rigc-rig/1',
+      name: 'skinswap',
+      images: 'images',
+      skeleton: { width: 256, height: 256 },
+      bones: [{ name: 'root' }, { name: 'panel', parent: 'root', x: 0, y: 40 }],
+      slots: [{ name: 'panel', bone: 'panel', attachment: 'plain' }],
+      skins,
+    });
+    /** One animation that swaps the slot from `plain` to whatever it is told to. */
+    const swapMotion = (keyed: string): Record<string, unknown> => ({
+      spec: 'rigc-motion/1',
+      archetype: 'skinswap',
+      cut: 'skinswap',
+      easings: {},
+      animations: {
+        swap: {
+          duration: 0.5,
+          tracks: [
+            {
+              slot: 'panel',
+              property: 'attachment',
+              keys: [
+                { t: 0, v: 'plain' },
+                { t: 0.5, v: keyed },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    const plain = { panel: { plain: { image: 'plain.png' } } };
+    const trim = { panel: { trim: { image: 'trim.png' } } };
+    const swapOpts = (name: string, skins: Record<string, unknown>, keyed: string): Options => {
+      const art = skinArt(name);
+      writeFileSync(join(art, 'rig.json'), `${JSON.stringify(swapRig(skins), null, 2)}\n`);
+      writeFileSync(join(art, 'motion.json'), `${JSON.stringify(swapMotion(keyed), null, 2)}\n`);
+      return { rigPath: join(art, 'rig.json'), motionPath: join(art, 'motion.json'), outDir: join(art, 'build') };
+    };
+    /** The names an emitted animation's attachment timeline keys on one slot. */
+    const keyedNames = (skeletonText: string | null, slot: string): string[] => {
+      if (skeletonText === null) return [];
+      const skeleton = JSON.parse(skeletonText) as {
+        animations?: Record<string, { slots?: Record<string, { attachment?: Array<{ name?: string }> }> }>;
+      };
+      return (skeleton.animations?.swap?.slots?.[slot]?.attachment ?? []).map((key) => key.name ?? 'null');
+    };
+
+    let acrossText: string | null = null;
+    let acrossAtlas: string | null = null;
+    const acrossOpts = swapOpts('skin_key_across', { default: plain, alt: trim }, 'trim');
+    const acrossRefusal = refusalOf(() => {
+      const built = compile(acrossOpts);
+      acrossText = built.skeletonText;
+      acrossAtlas = built.atlasText;
+    });
+    bad += reportCase(
+      'RF47_a_key_naming_art_a_named_skin_holds_compiles_and_reaches_the_timeline',
+      acrossRefusal === null && keyedNames(acrossText, 'panel').join(', ') === 'plain, trim',
+      acrossRefusal === null
+        ? `the emitted attachment timeline keys [${keyedNames(acrossText, 'panel').join(', ')}]`
+        : `refused: ${acrossRefusal}`,
+      'the card\'s own reproduction. The emitted names are read rather than the exit code, because a compiler ' +
+        'that accepted the key and dropped it would pass an exit-code check and ship a slot that never swaps',
+    );
+
+    let bareText: string | null = null;
+    const bareRefusal = refusalOf(() => {
+      bareText = compile(swapOpts('skin_key_no_default', { base: plain, alt: trim }, 'trim')).skeletonText;
+    });
+    bad += reportCase(
+      'RF48_a_rig_whose_art_is_all_in_named_skins_builds_at_all',
+      bareRefusal === null && keyedNames(bareText, 'panel').join(', ') === 'plain, trim',
+      bareRefusal === null
+        ? `the emitted attachment timeline keys [${keyedNames(bareText, 'panel').join(', ')}]`
+        : `refused: ${bareRefusal}`,
+      'the production shape, and the sharper half of the defect: with no default skin the table the keys were ' +
+        'checked against was EMPTY, so `plain` — which the setup pose on the same slot resolved happily one ' +
+        'check earlier — was refused too. A fix measured only on the two-skin rig would not have seen it',
+    );
+
+    const missRefusal = refusalOf(() => compile(swapOpts('skin_key_miss', { default: plain, alt: trim }, 'sheen')));
+    bad += reportCase(
+      'RF49_a_name_no_skin_holds_is_refused_naming_the_skins_searched_and_what_the_slot_has',
+      missRefusal !== null &&
+        missRefusal.includes('attachment "sheen" is not in slot "panel" under any skin') &&
+        missRefusal.includes('(searched: default, alt)') &&
+        missRefusal.includes('the slot has: plain, trim'),
+      missRefusal ?? 'compiled — a name no skin holds went through',
+      'the other side of the widening, and the two clauses answer two different questions the old sentence left ' +
+        'open: `searched` says WHERE the compiler looked, which is the question a multi-skin rig\'s author has, ' +
+        'and the placeholder list is the value required, which every failure detail here owes its reader',
+    );
+
+    let keptText: string | null = null;
+    const keptRefusal = refusalOf(() => {
+      keptText = compile(swapOpts('skin_key_default_only', { default: { panel: { ...plain.panel, trim: { image: 'trim.png' } } } }, 'trim')).skeletonText;
+    });
+    bad += reportCase(
+      'RF50_a_key_the_default_skin_already_held_is_unchanged',
+      keptRefusal === null && keyedNames(keptText, 'panel').join(', ') === 'plain, trim',
+      keptRefusal === null
+        ? `the emitted attachment timeline keys [${keyedNames(keptText, 'panel').join(', ')}]`
+        : `refused: ${keptRefusal}`,
+      'this suite\'s positive control for the widening, and its role is in this line rather than in its name for ' +
+        'the reason issue #451 settled: a positive control is a role and not a token. A widening that widened ' +
+        'the wrong way shows up here first — every rig in this repository and all twelve editor exports key ' +
+        'attachments the DEFAULT skin holds, so this is the shape the change must leave exactly where it was, ' +
+        'and the cases around it are worth nothing without it',
+    );
+
+    // The runtime's own answer, rather than this file's reading of the format:
+    // wear the named skin, play the animation to the swap key, and ask the slot
+    // what it shows. `RF47` measured that the name reached the file; this
+    // measures that the name resolves to the named skin's attachment when the
+    // skeleton is dressed in it, which is the whole claim the widening rests on.
+    // ⚠️ It reads the `across` build rather than compiling a fourth rig, so a
+    // compile that threw above leaves `shown` saying so and this case red — a
+    // skip here would be the one shape this file refuses.
+    let shown = 'nothing was posed';
+    if (acrossText !== null && acrossAtlas !== null) {
+      const data = posableFromText(acrossText, acrossAtlas, acrossOpts.outDir).data;
+      const skeleton = new Skeleton(data);
+      skeleton.setSkin(data.findSkin('alt')!);
+      const state = new AnimationState(new AnimationStateData(data));
+      state.setAnimation(0, 'swap', false);
+      skeleton.setupPose();
+      state.apply(skeleton);
+      skeleton.update(0);
+      skeleton.updateWorldTransform(Physics.reset);
+      state.update(0.5);
+      state.apply(skeleton);
+      skeleton.update(0.5);
+      skeleton.updateWorldTransform(Physics.update);
+      shown = skeleton.slots.find((s) => s.data.name === 'panel')?.appliedPose.attachment?.name ?? 'no attachment';
+    }
+    bad += reportCase(
+      'RF51_the_emitted_key_resolves_to_the_named_skins_attachment_when_that_skin_is_worn',
+      shown === 'trim',
+      `with skin "alt" worn, slot "panel" shows ${JSON.stringify(shown)} at the swap key`,
+      'spine-core is the oracle for the sentence the widening is derived from — `Skeleton.getAttachment` checks ' +
+        'the worn skin before `defaultSkin`. Reading it off the runtime rather than off the emitted JSON is what ' +
+        'makes this a measurement of the claim and not a second copy of `RF47`',
+    );
+  }
+
   return bad;
 }
 
