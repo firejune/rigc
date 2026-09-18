@@ -737,6 +737,26 @@ function rgbaHex(v: number[]): string {
 }
 
 /**
+ * A two-colour key's seven channels, as the pair of hex strings the format
+ * carries: `light` is `rrggbbaa`, `dark` is `rrggbb`.
+ *
+ * ⚠️ **Seven and not eight**, and the asymmetry is the format's rather than a
+ * simplification here. `RGBA2Timeline.setFrame(frame, time, r, g, b, a, r2, g2,
+ * b2)` stores three dark channels and no fourth, and `SkeletonJson`'s `rgba2`
+ * branch reads `Color.fromString(keyMap.dark)` into a colour whose alpha it then
+ * never passes on. `Color.setFromString` does fill one — `a = hex.length !== 8 ?
+ * 1 : …` — so a `dark` written with eight digits loads without complaint and the
+ * eighth pair is dropped one line later. Emitting six is emitting what is read.
+ *
+ * The channel ORDER is the format's too, and it is what a curve array indexes
+ * by: `readCurve(…, 0..3, light r/g/b/a)` then `readCurve(…, 4..6, dark r/g/b)`.
+ */
+function rgba2Hex(v: number[]): { light: string; dark: string } {
+  if (v.length !== 7) throw new CompileError(`rgba2 value needs 7 channels, got ${v.length}`);
+  return { light: v.slice(0, 4).map(channelHex).join(''), dark: v.slice(4, 7).map(channelHex).join('') };
+}
+
+/**
  * One timeline a `MotionValueTrack` can name: the JSON fields a key carries, the
  * per-key default the parser uses for each, and — where the runtime has one — the
  * bound each field is held to.
@@ -894,12 +914,21 @@ const SLIDER_TRACKS: Record<string, ValueTrackShape> = {
  * the branch below that writes its keys — so an entry added here without a
  * branch to write it is an entry emitted in some other timeline's shape, which
  * is the defect this table closed rather than a new affordance. The format has
- * four more (`rgb`, `alpha`, `rgba2`, `rgb2`); rigc emits none of them, and
- * `A12_NO_DARK_COLOR` refuses the last two outright.
+ * three more (`rgb`, `alpha`, `rgb2`) and rigc emits none of them.
+ *
+ * 🎨 `rgba2` joined in issue #690, and what it adds is the half of the two-colour
+ * tint that moves: a slot's `dark` has been an emitted setup field all along
+ * (`RigSlot.dark`, step 4 below), with no way to key it. 🚫 Both halves are still
+ * refused by `A12_NO_DARK_COLOR`, and that is not a contradiction — A12 is filed
+ * `renderer` in `ASSERTION_KIND`, so it states what ONE renderer ignores rather
+ * than what is wrong. The `spine` profile `build` runs reports it `PROF` and
+ * never applies it; `--profile spine-html` is where it fires. Emitting a
+ * construct one consumer drops is exactly what a profile is for.
  */
-export const SLOT_TRACKS: Record<string, 'attachment' | 'rgba'> = {
+export const SLOT_TRACKS: Record<string, 'attachment' | 'rgba' | 'rgba2'> = {
   attachment: 'attachment',
   rgba: 'rgba',
+  rgba2: 'rgba2',
 };
 
 /**
@@ -2368,6 +2397,12 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   const animations: SpineSkeletonJson['animations'] = {};
   const declaredDurations: Record<string, number> = {};
   const slotNames = new Set(slots.map((s) => s.name));
+  // Which slots an `rgba2` timeline may be keyed on: the ones the EMITTED file
+  // gives a `dark`, for the same reason `attachmentIndex` is built off the
+  // emitted skins — what the runtime does with a timeline depends on the file,
+  // not on the spec that produced it. A slot whose `dark` never reached the
+  // artifact is a slot the runtime allocates no dark colour for (issue #690).
+  const darkSlots = new Set(slots.filter((s) => s.dark !== undefined).map((s) => s.name));
 
   withMotionSource(() => {
     checkMotionGroups(motion);
@@ -2451,7 +2486,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
                 )
               : isBoneTrack
                 ? compileValueTrack(resolved, motion, animName, anim.duration, target, shift, BONE_TRACKS, 'bone')
-                : compileTrack(resolved, motion, animName, anim.duration, target, shift, attachmentIndex);
+                : compileTrack(resolved, motion, animName, anim.duration, target, shift, attachmentIndex, darkSlots);
           for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
           if (family !== null) (familyTimelines[family][target] ??= {})[track.property] = keys;
           else if (isBoneTrack) (boneTimelines[target] ??= {})[track.property] = keys;
@@ -6952,6 +6987,7 @@ function compileTrack(
   target: string,
   shift: number,
   attachments: SlotAttachmentIndex,
+  darkSlots: ReadonlySet<string>,
 ): SpineTimelineKey[] {
   const where = `animation "${animName}" slot "${target}" ${track.property}`;
   // Before any key is shaped, and before the empty-track refusal: a property
@@ -6962,6 +6998,25 @@ function compileTrack(
     throw new CompileError(
       `animation "${animName}" slot "${target}" has no timeline "${track.property}" ` +
         `(it has: ${Object.keys(SLOT_TRACKS).join(', ')})`,
+    );
+  }
+  // 🚨 Raised here, with the target and before the keys, for the same reason as
+  // the refusal above: the fault is in the pairing of timeline and slot, not in
+  // any key. A two-colour timeline poses `SlotPose.darkColor`, and the runtime
+  // creates that object only for a slot whose setup pose HAS one — `Slot`'s
+  // constructor reads `if (data.setupPose.darkColor != null)` before allocating
+  // it. Measured on the emitted file with the refusal removed: `SkeletonJson`
+  // loads it in silence, `SlotData.setupPose.darkColor` is `null`, and the first
+  // `state.apply` throws `TypeError: null is not an object (evaluating 'dark.r =
+  // …')` inside `RGBA2Timeline.apply1`. That is a crash in the consumer's
+  // process, from a file every parser accepts — the exact silence this compiler
+  // exists to convert into a name (issue #690).
+  if (shape === 'rgba2' && !darkSlots.has(target)) {
+    throw new CompileError(
+      `${where}: slot "${target}" declares no setup "dark", and an "rgba2" timeline poses a slot's dark colour — ` +
+        'the runtime allocates one only for a slot whose setup pose has it, so applying this animation throws ' +
+        `instead of tinting. Give slot "${target}" a \`dark\` in the rig spec (the colour it holds at rest), or ` +
+        'key "rgba" if only the light colour moves',
     );
   }
   if (!track.keys.length) throw new CompileError(`${where}: no keys`);
@@ -7002,16 +7057,28 @@ function compileTrack(
       continue;
     }
 
-    // rgba — the other shape `SLOT_TRACKS` names, and now the only way to reach
-    // this branch: a property the table does not carry was refused above.
-    if (!Array.isArray(key.v)) throw new CompileError(`${where}: rgba key value must be [r,g,b,a]`);
-    const entry: SpineTimelineKey = { time, color: rgbaHex(key.v) };
+    // rgba / rgba2 — the two colour shapes `SLOT_TRACKS` names, and between them
+    // the only ways left to reach here: `attachment` returned above and a
+    // property the table does not carry was refused before any key was shaped.
+    //
+    // ⚠️ The two differ in three places and nowhere else, so they are read out of
+    // `shape` rather than forked into two loops: how many channels a `v` carries,
+    // which FIELDS the emitted key spells them as (`color`, or `light` + `dark`),
+    // and therefore how long a raw curve array is. Everything else — the
+    // ease/curve exclusivity, the stepped case, the hold test, the last-key
+    // refusals — is one rule, and a second copy of it is a second thing to keep
+    // in step.
+    const spelling = shape === 'rgba2' ? '[lr,lg,lb,la,dr,dg,db]' : '[r,g,b,a]';
+    const channels = shape === 'rgba2' ? 7 : 4;
+    const colourOf = (v: number[]): Record<string, string> => (shape === 'rgba2' ? rgba2Hex(v) : { color: rgbaHex(v) });
+    if (!Array.isArray(key.v)) throw new CompileError(`${where}: ${shape} key value must be ${spelling}`);
+    const entry: SpineTimelineKey = { time, ...colourOf(key.v) };
     if (key.ease !== undefined && key.curve !== undefined) {
       throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
     }
     if (key.curve !== undefined) {
       if (!next) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`);
-      entry.curve = rawCurve(key.curve, 4, where, String(key.t));
+      entry.curve = rawCurve(key.curve, channels, where, String(key.t));
       out.push(entry);
       continue;
     }
@@ -7022,14 +7089,18 @@ function compileTrack(
         const handles = motion.easings?.[key.ease];
         if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
         if (!Array.isArray(next.v)) {
-          throw new CompileError(`${where}: rgba key value must be [r,g,b,a]`);
+          throw new CompileError(`${where}: ${shape} key value must be ${spelling}`);
         }
         const t2 = keyTime(next.t + shift);
-        // 4 numbers per channel, r g b a — 16 in total. Short arrays become NaN
+        // 4 numbers per channel, in the format's own channel order — 16 for
+        // `rgba` (r g b a), 28 for `rgba2` (light r g b a, then dark r g b, which
+        // is the order `readCurve` indexes them in). Short arrays become NaN
         // curves with no error. The hold test reads the emitted hex rather than
         // the authored floats: two colours that quantise to one byte are one
-        // colour in the file.
-        entry.curve = easingCurve(handles, time, t2, key.v, next.v, rgbaHex(key.v) === rgbaHex(next.v));
+        // colour in the file, and for `rgba2` that has to be true of BOTH — a key
+        // whose light holds while its dark moves is not a hold.
+        const held = JSON.stringify(colourOf(key.v)) === JSON.stringify(colourOf(next.v));
+        entry.curve = easingCurve(handles, time, t2, key.v, next.v, held);
       }
     } else if (key.ease && !next) {
       throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);

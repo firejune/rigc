@@ -6,7 +6,7 @@ yardstick rigc is measured against, the three instruments that do the measuring
 (`rigc diff`, `rigc bonedist` and `rigc check`) and what none of them can see, the eight-rung
 benchmark ladder and the spineboy graduation exam, the commands that let you look at a
 rig with no reference at all, the run viewer, the input and output surface as it stands
-today, the 43 named assertions and their profiles, the selftest that has watched every
+today, the 44 named assertions and their profiles, the selftest that has watched every
 one of them fire, and the layout of the repository all of that lives in.
 
 It is **repository material rather than package material** — most of what it names
@@ -920,7 +920,7 @@ model (what is pinned, what may move, how authority falls off), and the
 ### The validator
 
 [`src/validate.ts`](../src/validate.ts) parses the emitted artifacts with `spine-core`
-and then runs 43 named assertions over the loaded skeleton. Each one exists because
+and then runs 44 named assertions over the loaded skeleton. Each one exists because
 the failure it catches is **silent**: the file loads, animates, and lies.
 
 Assertions whose data is absent are reported as **SKIP**, never folded into the pass
@@ -928,7 +928,7 @@ count — an assertion with nothing to check has not checked anything.
 
 #### Profiles — "wrong" versus "not how we do it here"
 
-Not all 43 rules are about Spine. Some are about **spine-html**, the renderer this
+Not all 44 rules are about Spine. Some are about **spine-html**, the renderer this
 compiler was built to feed, and about one project's frame budget; they fire on real,
 correct, editor-produced Spine data, because the official example projects carry
 clipping attachments, unweighted meshes, 116-triangle meshes and packed atlases —
@@ -941,17 +941,17 @@ So `validate` and `build` take a `--profile`:
 
 | Profile | Runs | For |
 | --- | --- | --- |
-| `spine` | the 28 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
-| `spine-html` | all 43 — those 28 plus 7 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
+| `spine` | the 29 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
+| `spine-html` | all 44 — those 29 plus 7 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
 
 Those are the two numbers `src/validate.ts` exports rather than states in prose:
-`ASSERTION_NAMES.length` is 43 and `assertionCountForProfile('spine')` is 28, so a
+`ASSERTION_NAMES.length` is 44 and `assertionCountForProfile('spine')` is 29, so a
 control can count them instead of quoting a figure that goes stale the next time one
 is added.
 
 `spine` is the default because it is the question this package's output answers:
 the artifact imports into the Spine editor and plays in any 4.3 runtime, and
-that is what the 28 validity rules are about. The other 15 are somebody's policy
+that is what the 29 validity rules are about. The other 15 are somebody's policy
 — one renderer's, one canvas budget's, one compiler's own formations' — and a
 rig arriving from anywhere else has no stake in them. Ask for them with
 `--profile spine-html` when you want them.
@@ -1010,6 +1010,7 @@ the renderer policy*.
 | `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where one of the later ones is not `additive`. `Slider.update` applies its animation with `MixFrom.current` and that flag, and at `mix: 1` a non-additive apply writes the value outright — so the slider later in the `constraints` array wins the property and every earlier one on it is dead weight on every frame. Measured: two dials on one bone contributing 7.50° and 18.75° pose 18.75° at the default, 7.50° with the array order swapped, and 26.25° — the sum — when both are additive. It also fires when the shared timeline **cannot** be additive at all (a slot colour, an attachment swap, a draw order, a sequence ignore the `add` argument), because there `"additive": true` is not the fix and a message recommending it would be a green gate over the same dead axis. `validity` rather than policy: the arithmetic is the runtime's, not this project's. Three shapes are excluded structurally rather than by a threshold — a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, and a chain of those is a legitimate weighting), two `skinRequired` sliders no single skin activates, and two sliders on different properties. SKIPs when fewer than two sliders are at full authority |
 | `A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP` | both | a physics constraint driving a component the Spine editor discards, on a rig that declared `invariants.editorRoundTrip`. Measured rather than assumed: three rigs, twelve constraints, predictions recorded before the round trip and scored by the code that printed them — a lone `y` returns and `x` + `y` return together, so the rule is membership and not arity, while a lone `rotate`, a lone `scaleX` and a lone `shearX` each return driving no component at all and neither `scaleY` mode rescues `scaleX`. Every constraint carried a fixed-point `strength` and all twelve returned exactly, so the rows reporting nothing were live (Spine 4.3.26 Professional, issue #540). Opt-in because the artifact is not wrong: a rotation-driven jiggle is valid Spine that every runtime plays, and only the rig knows whether the editor is one of its consumers — so an undeclared rig SKIPs, with the constraint and the component named in the skip. The far side of the same loss is `A23`, which is what fires on the file the editor returns |
 | `A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER` | both | a slider whose animation keys a property of a constraint at or before it in the `constraints` array — which is the update order for every constraint kind, so the key is written after the only read of it and `Posed.resetConstrained` puts the pose back before the next frame. Measured: two dials where the second keys the first's `mix`, posed over 99 cells of both dials — in the declared order the driven dial moves the shared bone by up to 75.000000°, with the array entries swapped by 0.000e+0 against a float64 floor of 2.434e-13 (issue #658); and one dial against each other kind, posed at 6 positions in both orders — the constraint's own pose holds the same ramp either way while what it drives travels 0.000e+0 with the constraint declared first against 1.662e+1 (ik), 4.000e+1 (transform), 1.620e+2 (path) and 4.256e+2 (physics, over 30 frames) with it declared last (issue #665). The two indices equal is the same failure and is the one `A37` cannot see: its `keyedBy` asks whether any animation keys the `mix`, and a slider's own animation is one of them, so a slider muted at setup that keys its own `mix` up reported green and never ran. Two measured exclusions: a `physics` `reset` key never fires from a slider in either order, so no reorder repairs it; a physics timeline naming no constraint is every physics constraint declaring that property global, and those already run are refused. `validity` rather than policy: the update order is the runtime's. SKIPs when no slider drives a constraint, and names the absence |
+| `A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN` | both | a two-colour tint the runtime does not hold as the file states it: a slot `dark` the parser drops (it takes the field through a truthiness test, so `""` is discarded in silence), a `dark` that is not six hex digits (fixed `parseInt` slices store `NaN`), an `rgba2` timeline on a slot with no dark colour to pose — measured: `SkeletonJson` loads that file without complaint and the first `state.apply` throws `TypeError: null is not an object` inside `RGBA2Timeline.apply1`, because `Slot`'s constructor allocates a dark colour only for a slot whose setup pose has one — or a key whose posed light or dark is not what it states, read by stepping the animation to the key's own time and comparing `appliedPose` to half a quantisation step (`1/510`). The required value is parsed independently of `Color.fromString`, so the check is not the parser agreeing with itself. `validity` rather than policy: every one of the three is a file the format admits and no runtime plays as written. SKIPs when nothing declares a `dark` and nothing keys an `rgba2` |
 
 ## Usage
 
@@ -1084,7 +1085,7 @@ bun cli.ts pose    --images path/to/parts --frame poseA.png # read a pose OUT of
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
 it re-derive the declared durations and the structural expectations too, and the
 report says which it had. `build` and `validate` both default to `--profile spine`,
-the 28 validity rules; `--profile spine-html` adds this project's renderer and
+the 29 validity rules; `--profile spine-html` adds this project's renderer and
 archetype policy on top.
 
 `render` and `preview` are the two that need no reference at all — see

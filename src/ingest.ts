@@ -46,6 +46,7 @@
  */
 import { SLOT_TRACKS as EMITTED_SLOT_TRACKS, SPINE_VERSION } from './compile.ts';
 import { CompileError } from './errors.ts';
+import { CHANNELS_BY_KIND } from './timelines.ts';
 import { MOTION_SPEC_VERSION, parseMotionSpec } from './motion.ts';
 import { parseRigSpec, RIG_KEYS, RIG_SPEC_VERSION, type RigSpec } from './rig.ts';
 import type { MotionSpec } from './types.ts';
@@ -417,6 +418,21 @@ const ATTACHMENT_TYPES = ['region', 'mesh', 'boundingbox', 'clipping', 'path'];
 const SLOT_TRACKS = Object.keys(EMITTED_SLOT_TRACKS);
 
 /**
+ * The slot timelines the FORMAT has and the motion spec has no track for —
+ * `rgb`, `alpha` and `rgb2` as this is written, and whatever is left the next
+ * time the spec grows one.
+ *
+ * ⭐ Both sides are derived, and that is the whole reason it exists rather than
+ * being spelled into the blocker's sentence. `docs/INGEST.md`'s row for this
+ * code named `rgba2` among the timelines nobody carries for as long as that was
+ * true, and went on saying it after issue #690 made it false — a hand-kept list
+ * beside a derived one, which is the shape this repository refuses everywhere
+ * else. The format's own list is `CHANNELS_BY_KIND.slot`, the emitter's is
+ * `SLOT_TRACKS`, and the difference is the answer.
+ */
+export const UNSPELT_SLOT_TRACKS = Object.keys(CHANNELS_BY_KIND.slot).filter((name) => !(name in EMITTED_SLOT_TRACKS));
+
+/**
  * Everything this module has a branch for, as the branches themselves state it.
  *
  * ⭐ It exists so that a gate can ask the question a suite cannot answer from a
@@ -474,6 +490,16 @@ function decodeWeights(vertices: readonly number[], boneNames: readonly string[]
  */
 function hexToRgba(hex: string): number[] {
   return [0, 2, 4, 6].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255);
+}
+
+/**
+ * The three-channel form, which is what a two-colour key's `dark` is written as
+ * — `rrggbb` and no alpha, because `RGBA2Timeline` stores three dark channels
+ * and the fourth a shader reads there is the premultiply flag rather than a
+ * colour (`compile.ts`'s `rgba2Hex` states the same fact from the emit side).
+ */
+function hexToRgb(hex: string): number[] {
+  return [0, 2, 4].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255);
 }
 
 /**
@@ -1108,13 +1134,33 @@ function ingestAnimation(animName: string, anim: JsonObject, root: JsonObject, n
             return entry;
           }),
         });
+      } else if (property === 'rgba2') {
+        // Inverts `compileTrack`'s rgba2 branch, whose key is `{time, light,
+        // dark}`. The spec's `v` concatenates the two in the format's own
+        // channel order — light r g b a, then dark r g b — which is the order
+        // `readCurve` indexes a curve array by, so a key and its curve stay
+        // parallel through the round trip.
+        tracks.push({
+          slot,
+          property: 'rgba2',
+          keys: keys.map((raw) => {
+            const key = obj(raw);
+            const entry: JsonObject = {
+              t: timeOf(key),
+              v: [...hexToRgba(String(key.light)), ...hexToRgb(String(key.dark))],
+            };
+            easing(key, entry);
+            return entry;
+          }),
+        });
       } else {
         note(
           'blocker',
           'SLOT_TIMELINE',
           where,
           `timeline "${property}" is in the format and the motion spec has no track for it — a slot track is ` +
-            `${SLOT_TRACKS.join(' or ')} and nothing else, so the rebuild plays nothing here`,
+            `${SLOT_TRACKS.join(' or ')} and nothing else, so the rebuild plays nothing here. The format's ` +
+            `remaining slot timelines are ${UNSPELT_SLOT_TRACKS.join(', ')}`,
         );
       }
     }
