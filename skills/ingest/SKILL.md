@@ -65,7 +65,7 @@ thing to reach for; transcription by hand is what you fall back on for a constru
    complaint means on an export (§3), and the re-pivot, rename and extend
    recipes (§4).
 2. [AUTHORING.md](../../docs/AUTHORING.md) — the two spec files the transcription
-   targets (§3–§4), the failure map (§5–§6), and the coordinate contract (§11).
+   targets (§3–§4), the failure map (§5–§6), and the coordinate contract (§11.2).
 3. Then [RIGGING.md](../../docs/RIGGING.md) for why the re-pivot edit has the shape
    it has, and [MOTION.md](../../docs/MOTION.md) for the animation you are adding.
 

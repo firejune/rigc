@@ -17,7 +17,8 @@ whole interface, and this skill only says which of them to open.
 
 - **Validation is never bypassed.** `build` writes nothing on a red gate; there is
   no `--no-validate`, and none may be added — AUTHORING §0 says so in as many
-  words, and [README.md](../../README.md) states the licensing reason.
+  words. Correctness is the whole of the reason: the round trip through the
+  official parser is the only thing that makes the output trustworthy.
 - **The compiler never invents a value.** A field the spec leaves out is a
   `CompileError` naming that field. Fill the spec; do not expect a default read off
   the art — AUTHORING §2 and §5.
@@ -41,12 +42,18 @@ bun add -d spine-rigc        # or pin it in the project; the command is `rigc`
    gates, and writes only on green.
 2. Read the report. Every red line names the file to change; fix the spec and
    build again.
-3. `rigc render --candidate <out>` or `rigc preview --candidate <out>` — look at
+3. `rigc explain --rig <spec> --motion <spec> --out <dir>` when the red line is
+   not enough — the compiled rig as a table: every bone with its resolved parent,
+   the slots in draw order, every timeline key by key, and a `DEFORM` block per
+   deform key. It takes no `--profile`, it never gates, and it writes nothing, so
+   the figures are readable on a build the gate is refusing — AUTHORING §0 and
+   §4.11.2.
+4. `rigc render --candidate <out>` or `rigc preview --candidate <out>` — look at
    it. A rig with its head off its torso passes the gate; looking is what catches it.
-4. `rigc check --candidate <out> --frames <dir>` when you have reference pictures;
+5. `rigc check --candidate <out> --frames <dir>` when you have reference pictures;
    `rigc vote --candidate <a> --candidate <b>` when several candidates are green and
    only a person can choose between them.
-5. `rigc validate <out>` re-gates artifacts already on disk, and
+6. `rigc validate <out>` re-gates artifacts already on disk, and
    `rigc <command> --help` is each command's own flag table.
 
 The loop in full, with `pose` before it and `chainfit` after the first build:

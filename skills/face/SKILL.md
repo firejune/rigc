@@ -24,10 +24,19 @@ it will not do for you.
 
 ## What this guide will not do
 
-Nothing in the toolchain measures what a `deform` key does: the setup geometry is
-measured and printed, the deformed geometry is not, and a key that folds a mesh
-inside out gates green. FACE §9.2 demonstrates it and §9.3 is the differential
-audit that works today.
+A `deform` key's own geometry is measured now.
+`A39_DEFORM_KEEPS_TRIANGLE_WINDING` refuses a key that folds a mesh inside out —
+per key, per interpolated span between two keys, per frame and per skin — and
+names the reversed triangles with their signed areas. `invariants.deformMayFold`
+in the rig spec is the one declared exemption, so reach for it when the slot
+folds on purpose and never to quiet a refusal you have not read. It is an
+**archetype** rule: a `--profile spine` build prints `PROF` for it and says
+nothing about the fold, so author under `--profile spine-html`.
+
+What `A39` still cannot say is whether the projection was the right one —
+nothing measures whether 12° was the angle the shot wanted. FACE §9.2 is that
+demonstration, three builds with one of them refused, and §9.3 is the
+differential audit and the three limits it does not lift.
 
 ## Read, in this order
 

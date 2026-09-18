@@ -32001,6 +32001,297 @@ function auditSkillSurface(root: string): SkillSurface {
   return { skills, links, manifests, pluginName, faults };
 }
 
+// ---------------------------------------------------------------------------
+// what a skill's BODY says — the references it makes and the verdicts it states
+// (issue #673)
+// ---------------------------------------------------------------------------
+//
+// ⭐ The suite above reads a skill as a router: its frontmatter, and whether its
+// pointers resolve. It says nothing about the text between them, and #673 is what
+// that costs. Five sentences across the five files were about two months stale,
+// and the first was behavioural: `skills/face` told an agent that *"a key that
+// folds a mesh inside out gates green"*, which `A39_DEFORM_KEEPS_TRIANGLE_WINDING`
+// had stopped being true of — so an agent meeting a correct A39 refusal reads it
+// as impossible and reaches for `invariants.deformMayFold`, the one field that
+// turns the check off.
+//
+// Three forms are derivable and one is not, and the split is the whole design:
+//
+//   * an `A??` code or `A??_NAME` has to be one the registry has;
+//   * a `§N.M` has to be a section of the page the sentence names;
+//   * a `rigc <command>` has to be a command the CLI offers;
+//   * whether a sentence's CLAIM is true is not readable at all — so the one
+//     class this file can judge is a **negative verdict**: a sentence saying the
+//     tool measures nothing here. The registry cannot tell whether a blanket
+//     "nothing measures X" is true, so the blanket form is refused and the
+//     sentence is required to name the rule whose limit it is stating. The
+//     registry then decides whether that name exists.
+//
+// ⚠️ Its blind spots, each measured rather than asserted — `SKL09`'s second half
+// runs both spellings of the rows this reader CANNOT read and requires both to be
+// silent, so the reach of the gate is a figure in the run rather than a claim
+// here:
+//
+//   1. A section that exists but is the wrong one. `skills/ingest` sent a reader
+//      to *"the coordinate contract (§11)"*, and AUTHORING §11 is *Reading a pose
+//      you were given* — §11.2 is the contract. Both resolve, so only a human
+//      reading catches it.
+//   2. A claim about another document's contents (*"README states the licensing
+//      reason"*), which is a fact about a file this reader does not parse.
+//   3. An unqualified equality (*"rebuild it, byte for byte"*), which carries no
+//      verdict vocabulary at all.
+//   4. What a skill does NOT say — the `explain` command was in no skill — since
+//      absence has no site to fault.
+//
+// ⚠️ And the vocabulary is deliberately short of one obvious member: *"passes the
+// gate"*. Two correct sentences in this tree use it — `skills/rigging` and
+// `skills/rigc` both say a rig with its head off its torso passes the gate, which
+// is true and is not about an assertion — so admitting the phrase would refuse
+// correct text, and telling those from a false one needs the sentence's subject,
+// which this reader cannot read. A check that refuses what is right is worse than
+// one with a hole in it, and the hole is named here.
+
+/** The one class of verdict a registry can be held against: the tool measures nothing here. */
+const SKILL_NEGATIVE_VERDICTS: ReadonlyArray<{ phrase: string; re: () => RegExp }> = [
+  { phrase: 'gates green', re: () => /\bgates? green\b/gi },
+  { phrase: 'builds green', re: () => /\bbuilds? green\b/gi },
+  { phrase: 'nothing … measures', re: () => /\bnothing\b[^.;:!?]{0,80}?\bmeasur(?:e|es|ed)\b/gi },
+  { phrase: 'no rule … measures', re: () => /\bno (?:assertion|rule|gate|check)\b[^.;:!?]{0,80}?\bmeasur(?:e|es|ed)\b/gi },
+  { phrase: 'is not measured', re: () => /\bis not measured\b/gi },
+];
+
+type SkillClaimKind = 'assertion' | 'section' | 'command' | 'verdict';
+
+interface SkillClaimFault {
+  kind: SkillClaimKind;
+  /** `<file>:<line>`, the line a reader opens. */
+  where: string;
+  what: string;
+}
+
+/** Everything the tool itself answers, so no reference below is checked against a list written here. */
+interface SkillClaimTruth {
+  /** `A39`, from the registry's own names. */
+  codes: Set<string>;
+  names: Set<string>;
+  /** Page (`FACE`) to the section numbers its headings carry. */
+  sections: Map<string, Set<string>>;
+  /** What `rigc` offers, read off its own usage. */
+  commands: Set<string>;
+}
+
+function skillClaimTruth(root: string): SkillClaimTruth {
+  const sections = new Map<string, Set<string>>();
+  const docsDir = join(root, 'docs');
+  if (existsSync(docsDir)) {
+    for (const file of readdirSync(docsDir).sort()) {
+      if (!file.endsWith('.md')) continue;
+      const numbers = new Set<string>();
+      for (const line of readFileSync(join(docsDir, file), 'utf8').split('\n')) {
+        const head = /^#{2,6}\s+(.*)$/.exec(line);
+        if (head === null) continue;
+        // A heading may open with an emoji or a bold marker before its number.
+        const numbered = /^[^0-9A-Za-z]*(\d+(?:\.\d+)*[a-z]?)(?=[.\s)]|$)/.exec(head[1]);
+        if (numbered !== null) numbers.add(numbered[1]);
+      }
+      sections.set(file.replace(/\.md$/, ''), numbers);
+    }
+  }
+  const usage = runCli([]).stderr;
+  return {
+    codes: new Set(ASSERTION_NAMES.map((name) => name.slice(0, 3))),
+    names: new Set(ASSERTION_NAMES),
+    sections,
+    commands: new Set([...usage.matchAll(/^ {2}rigc ([a-z][a-z-]*) /gm)].map((m) => m[1])),
+  };
+}
+
+/**
+ * The reader, over files given as text so the negative control runs the same code
+ * on a planted sentence that the positive one runs on the tree.
+ *
+ * References are read out of the RAW lines, fences included — `scanNamedThings`'s
+ * argument, one surface over: a command in a shell example is exactly where a
+ * reader will type it, and a rule named in a transcript is still a rule named.
+ * Verdicts are read out of the prose, because a sentence inside a fence is a
+ * transcript of the tool rather than a claim by the page; inline code spans keep
+ * their text there, since `` `A39` `` is how a sentence names its rule.
+ */
+function readSkillClaims(
+  files: ReadonlyArray<{ path: string; text: string }>,
+  truth: SkillClaimTruth,
+): { sites: Map<string, number>; faults: SkillClaimFault[] } {
+  const faults: SkillClaimFault[] = [];
+  const sites = new Map<string, number>();
+  const site = (limb: string): void => {
+    sites.set(limb, (sites.get(limb) ?? 0) + 1);
+  };
+  const pages = [...truth.sections.keys()].sort((a, b) => b.length - a.length);
+  const pageRe = pages.length === 0 ? null : new RegExp(`\\b(${pages.join('|')})\\b`, 'g');
+  const assertionRe = /\bA\d{2}(?:_[A-Z\d_]+)?\b/g;
+  const known = (token: string): boolean => (token.includes('_') ? truth.names.has(token) : truth.codes.has(token));
+
+  for (const file of files) {
+    const raw = file.text.split('\n');
+    const prose = linesOutsideFences(raw);
+
+    raw.forEach((line, i) => {
+      for (const found of line.matchAll(assertionRe)) {
+        site('assertion reference');
+        if (known(found[0])) continue;
+        faults.push({
+          kind: 'assertion',
+          where: `${file.path}:${i + 1}`,
+          what: `names ${found[0]}, and the assertion registry holds ${String(truth.names.size)} rules with no such name`,
+        });
+      }
+      // A command is read where a reader would copy it: an inline code span, or a
+      // line of a fenced block. `rigc compiles a rig spec` is prose about the
+      // tool and names no command.
+      const spans = [...line.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+      if (prose[i] === null && !/^ {0,3}(```+|~~~+)/.test(line)) spans.push(line.trim());
+      for (const span of spans) {
+        const spelled = /^rigc\s+([a-z][a-z-]*)\b/.exec(span.trim());
+        if (spelled === null) continue;
+        site('command');
+        if (truth.commands.has(spelled[1])) continue;
+        faults.push({
+          kind: 'command',
+          where: `${file.path}:${i + 1}`,
+          what:
+            `spells \`rigc ${spelled[1]}\`, and rigc offers ` +
+            `${[...truth.commands].sort().join(', ')}`,
+        });
+      }
+    });
+
+    // Paragraphs: consecutive non-blank prose lines, with every character's own
+    // line kept so a fault opens where the sentence starts rather than where the
+    // paragraph does.
+    interface Paragraph {
+      from: number;
+      text: string;
+      lineAt: number[];
+    }
+    const paragraphs: Paragraph[] = [];
+    let open: Paragraph | null = null;
+    prose.forEach((line, i) => {
+      if (line === null || line.trim() === '') {
+        open = null;
+        return;
+      }
+      const bare = line.replace(/`/g, ' ');
+      if (open === null) {
+        open = { from: i + 1, text: '', lineAt: [] };
+        paragraphs.push(open);
+      } else {
+        open.text += ' ';
+        open.lineAt.push(i + 1);
+      }
+      for (let k = 0; k < bare.length; k++) open.lineAt.push(i + 1);
+      open.text += bare;
+    });
+
+    for (const paragraph of paragraphs) {
+      const lineOf = (at: number): number => paragraph.lineAt[at] ?? paragraph.from;
+      // Which page a `§` belongs to is the last one named before it — the shape
+      // every reading list in these files already has, one page per item.
+      const named = pageRe === null ? [] : [...paragraph.text.matchAll(pageRe)].map((m) => ({ at: m.index ?? 0, page: m[1] }));
+      for (const found of paragraph.text.matchAll(/§\s*(\d+(?:\.\d+)*[a-z]?)/g)) {
+        const at = found.index ?? 0;
+        site('section reference');
+        const page = named.filter((mark) => mark.at < at).pop();
+        if (page === undefined) {
+          faults.push({
+            kind: 'section',
+            where: `${file.path}:${String(lineOf(at))}`,
+            what: `§${found[1]} names no page before it, so nothing says which document to open`,
+          });
+          continue;
+        }
+        const numbers = truth.sections.get(page.page);
+        if (numbers !== undefined && numbers.has(found[1])) continue;
+        faults.push({
+          kind: 'section',
+          where: `${file.path}:${String(lineOf(at))}`,
+          what: `sends a reader to ${page.page} §${found[1]}, and docs/${page.page}.md has no heading numbered ${found[1]}`,
+        });
+      }
+
+      let scanned = 0;
+      for (const sentence of paragraph.text.split(/(?<=[.!?])\s+/)) {
+        const at = paragraph.text.indexOf(sentence, scanned);
+        scanned = at + sentence.length;
+        const anchors = [...sentence.matchAll(assertionRe)].map((m) => m[0]).filter(known);
+        for (const verdict of SKILL_NEGATIVE_VERDICTS) {
+          for (const hit of sentence.matchAll(verdict.re())) {
+            site('negative verdict');
+            if (anchors.length > 0) continue;
+            faults.push({
+              kind: 'verdict',
+              where: `${file.path}:${String(lineOf(at))}`,
+              what:
+                `"${hit[0].trim()}" says the toolchain measures nothing here and names no rule, and the registry ` +
+                `holds ${String(truth.names.size)} of them — name the one whose limit this is, or the sentence ` +
+                `cannot be checked against anything: ${JSON.stringify(sentence.trim().slice(0, 120))}`,
+            });
+          }
+        }
+      }
+    }
+  }
+  return { sites, faults };
+}
+
+/**
+ * #673's five rows, transcribed as the sentence that shipped and the sentence
+ * that replaced it, and split by whether this reader can see the difference.
+ *
+ * ⭐ The second list is the load-bearing one. A gate whose reach is described in
+ * prose is a gate whose reach nobody measures: these rows are run in BOTH
+ * spellings and required to fault in neither, so the day one of them starts
+ * faulting — or a widening makes the stale spelling readable — the run says so
+ * instead of this comment going quietly out of date.
+ */
+const SKILL_CLAIM_PROBES: ReadonlyArray<{ row: string; stale: string; clean: string }> = [
+  {
+    row: 'skills/face: the deform audit gap (#673 row 1)',
+    stale:
+      'Nothing in the toolchain measures what a `deform` key does: the setup geometry is\n' +
+      'measured and printed, the deformed geometry is not, and a key that folds a mesh\n' +
+      'inside out gates green. FACE §9.2 demonstrates it and §9.3 is the differential\n' +
+      'audit that works today.',
+    clean:
+      'What `A39` still cannot say is whether the projection was the right one —\n' +
+      'nothing measures whether 12° was the angle the shot wanted. FACE §9.2 is that\n' +
+      'demonstration, three builds with one of them refused.',
+  },
+];
+
+/** The same five rows' other three, plus the absence, which this reader cannot tell apart. */
+const SKILL_CLAIM_BLIND_SPOTS: ReadonlyArray<{ row: string; stale: string; clean: string }> = [
+  {
+    row: 'skills/ingest: a section that exists and is the wrong one (#673 row 4)',
+    stale: '2. [AUTHORING.md](../../docs/AUTHORING.md) — the coordinate contract (§11).',
+    clean: '2. [AUTHORING.md](../../docs/AUTHORING.md) — the coordinate contract (§11.2).',
+  },
+  {
+    row: 'skills/rigc: a claim about another document (#673 row 2)',
+    stale: 'AUTHORING §0 says so in as many words, and [README.md](../../README.md) states the licensing reason.',
+    clean: 'AUTHORING §0 says so in as many words. Correctness is the whole of the reason.',
+  },
+  {
+    row: 'skills/ingest: an unqualified equality (#673 row 3)',
+    stale: 'It writes the rig spec and motion spec that rebuild it, byte for byte.',
+    clean: 'Byte for byte holds for a skeleton rigc emitted, and not for an editor export — INGEST §2.3.',
+  },
+  {
+    row: 'skills/rigc: a command no skill mentioned (#673 row 5)',
+    stale: '2. Read the report. Every red line names the file to change; fix the spec and build again.',
+    clean: '2. Read the report, and `rigc explain --rig <spec> --motion <spec> --out <dir>` when it is not enough.',
+  },
+];
+
 function runSkillSurfaceSuite(): number {
   console.log('\n── the agent-skill surface: skills/ and .claude-plugin/ (issue #366) ──');
   let bad = 0;
@@ -32158,6 +32449,125 @@ function runSkillSurfaceSuite(): number {
             'reader knows, a correct surface produces none, and a description folded over two lines reads as its text',
     'a gate nobody has seen fail is not a gate: every refusal above is exercised on input built to trigger it, and ' +
       'the clean surface is the positive control that keeps the reader from refusing what the specification allows',
+  );
+
+  // --- SKL06: the body scan's derivation floor -------------------------------
+  // SKL01's argument about the same surface one layer in. Every quantity SKL07
+  // and SKL08 read is derived and each can come back empty — a `docs/` that moved
+  // and so has no sections, a usage banner that stopped printing its commands, a
+  // reference form that no longer matches the way these files spell it — and each
+  // of those makes the two cases below pass over text they never read.
+  const truth = skillClaimTruth(root);
+  const bodies = surface.skills.map((path) => ({ path, text: readFileSync(join(root, path), 'utf8') }));
+  const claims = readSkillClaims(bodies, truth);
+  const claimSites = (limb: string): number => claims.sites.get(limb) ?? 0;
+  const thinForms = ['assertion reference', 'section reference', 'command', 'negative verdict'].filter(
+    (limb) => claimSites(limb) === 0,
+  );
+  say(
+    'SKL06_THE_SKILL_BODY_SCAN_READ_THE_REGISTRY_THE_SECTIONS_THE_COMMANDS_AND_EVERY_SKILL',
+    bodies.length > 0 &&
+      bodies.every((body) => body.text.trim() !== '') &&
+      truth.names.size > 0 &&
+      truth.commands.size > 0 &&
+      [...truth.sections.values()].some((numbers) => numbers.size > 0) &&
+      thinForms.length === 0,
+    thinForms.length > 0
+      ? `${thinForms.length} form(s) matched nothing across ${bodies.length} skill(s): ${thinForms.join(', ')}`
+      : `${bodies.length} skill body(ies) read against ${truth.names.size} registry rule(s), ` +
+        `${truth.commands.size} command(s) and ${truth.sections.size} page(s) of headings — ` +
+        `${claimSites('assertion reference')} rule mention(s), ${claimSites('section reference')} section ` +
+        `reference(s), ${claimSites('command')} command mention(s) and ${claimSites('negative verdict')} ` +
+        'negative verdict(s)',
+    'each figure below is a count of what a form matched, and a form that has stopped matching the way these files ' +
+      'are written goes SILENT rather than red; the negative-verdict floor is the sharpest of the four, because one ' +
+      'unanchored sentence is the whole of what issue #673 found',
+  );
+
+  // --- SKL07: every reference a skill makes resolves --------------------------
+  const unresolved = claims.faults.filter((f) => f.kind !== 'verdict');
+  const claimListed = (faults: SkillClaimFault[]): string =>
+    faults.map((f) => `\n          ${f.where}  ${f.what}`).join('');
+  say(
+    'SKL07_EVERY_RULE_SECTION_AND_COMMAND_A_SKILL_NAMES_RESOLVES_IN_THE_TOOL',
+    unresolved.length === 0,
+    unresolved.length === 0
+      ? `${claimSites('assertion reference')} rule mention(s), ${claimSites('section reference')} \`§N.M\` ` +
+        `reference(s) and ${claimSites('command')} \`rigc <command>\` spelling(s) across ${bodies.length} ` +
+        'skill(s) all resolve — the rules against the registry, the sections against the headings of the page ' +
+        'each sentence names, the commands against rigc\'s own usage'
+      : `${unresolved.length} reference(s) resolve to nothing:${claimListed(unresolved)}`,
+    'a skill is read by an agent that cannot open a second window: a renamed rule, a renumbered section or a ' +
+      'command that never existed sends it to look for something that is not there, and the repository — where the ' +
+      'reader knows what was meant — is the one place that reads as fine',
+  );
+
+  // --- SKL08: a verdict the registry can be held against ----------------------
+  const unanchored = claims.faults.filter((f) => f.kind === 'verdict');
+  say(
+    'SKL08_A_SKILL_THAT_SAYS_NOTHING_MEASURES_THIS_NAMES_THE_RULE_IT_IS_SPEAKING_ABOUT',
+    unanchored.length === 0,
+    unanchored.length === 0
+      ? `${claimSites('negative verdict')} negative verdict(s) across ${bodies.length} skill(s), each naming a rule ` +
+        `the registry's ${truth.names.size} hold — the form this file can check, and \`SKL09\` measures the four ` +
+        'kinds of staleness it cannot see'
+      : `${unanchored.length} verdict(s) the registry contradicts or cannot be held against:${claimListed(unanchored)}`,
+    'whether a claim is TRUE is not readable here, so the blanket form is what is refused: a sentence saying the ' +
+      'toolchain measures nothing about X, with no rule named, cannot be compared against anything — which is ' +
+      'exactly how `skills/face` went on telling agents that a folded mesh gates green for the two months after ' +
+      '`A39_DEFORM_KEEPS_TRIANGLE_WINDING` began refusing one',
+  );
+
+  // --- SKL09: the reader on the sentences that shipped ------------------------
+  // #673's rows in both spellings, and the two halves are two different claims:
+  // the first that the defect faults and its repair does not, the second that the
+  // rows this reader CANNOT read are silent in both spellings. The second is what
+  // keeps the blind-spot list above from being prose nobody measures.
+  const probeFile = 'skills/probe/SKILL.md';
+  const probeHead = '---\nname: probe\ndescription: a planted skill body\n---\n\n';
+  const probeLine = probeHead.split('\n').length;
+  const readProbe = (body: string): SkillClaimFault[] =>
+    readSkillClaims([{ path: probeFile, text: `${probeHead}${body}\n` }], truth).faults;
+  const probeRows = SKILL_CLAIM_PROBES.map((probe) => {
+    const stale = readProbe(probe.stale);
+    const clean = readProbe(probe.clean);
+    const located = stale.every((fault) => fault.where === `${probeFile}:${String(probeLine)}`);
+    return { probe, stale, clean, ok: stale.length > 0 && located && clean.length === 0 };
+  });
+  const blindRows = SKILL_CLAIM_BLIND_SPOTS.map((probe) => {
+    const stale = readProbe(probe.stale);
+    const clean = readProbe(probe.clean);
+    return { probe, stale, clean, ok: stale.length === 0 && clean.length === 0 };
+  });
+  const brokenProbes = probeRows.filter((row) => !row.ok);
+  const brokenBlind = blindRows.filter((row) => !row.ok);
+  say(
+    'SKL09_THE_SENTENCES_THAT_SHIPPED_FAULT_THEIR_REPAIRS_DO_NOT_AND_THE_ROWS_THIS_READER_CANNOT_SEE_ARE_SILENT_IN_BOTH',
+    brokenProbes.length === 0 && brokenBlind.length === 0,
+    brokenProbes.length > 0
+      ? brokenProbes
+          .map(
+            (row) =>
+              `${row.probe.row}: the shipped sentence faulted ${row.stale.length} time(s) ` +
+              `(${row.stale.map((f) => f.where).join(', ') || 'nowhere'}, and line ${String(probeLine)} is where it ` +
+              `was planted) and its repair faulted ${row.clean.length} time(s)`,
+          )
+          .join('\n          ')
+      : brokenBlind.length > 0
+        ? brokenBlind
+            .map(
+              (row) =>
+                `${row.probe.row} is listed as unreadable and the reader answered: ${row.stale.length} fault(s) on ` +
+                `the shipped sentence, ${row.clean.length} on its repair`,
+            )
+            .join('\n          ')
+        : `${probeRows.length} row(s) this reader sees fault on the sentence that shipped — ` +
+          `${probeRows.reduce((n, row) => n + row.stale.length, 0)} fault(s), each naming the planted file and ` +
+          `line ${String(probeLine)} — and none on the repair; ${blindRows.length} row(s) it cannot see are silent ` +
+          'in both spellings, which is what makes the four blind spots a measurement instead of a comment',
+    'a gate nobody has seen fail is not a gate, and a gate whose REACH nobody has measured is a gate that grows a ' +
+      'comment instead of a case: the second half goes red the day a widening makes a blind spot readable, so the ' +
+      'list above cannot quietly stop being true',
   );
 
   return bad;
