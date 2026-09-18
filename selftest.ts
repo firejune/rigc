@@ -31431,6 +31431,222 @@ function runCliSuite(): number {
     }
   }
 
+  // --- CLI77-CLI81: `explain` poses, so it needs the art a pose resolves -----
+  //
+  // 🚨 `explain` loads the emitted pair through `spine-core` to measure what each
+  // deform key did, and that load resolves EVERY attachment against the atlas —
+  // deformed or not. On the specs `ingest --art none` writes there is nothing to
+  // resolve against: the entries state a size and name no image, so the compile
+  // atlases nothing, and the load threw the runtime's own `Region not found in
+  // atlas: shade (attachment: shade)` with a spine-core stack trace under it and
+  // exit 1 (issue #697). `build` reads those same two files through `--atlas-in
+  // <pack>` and gates them green, which is what made the gap a gap rather than a
+  // limit — and `--atlas-in` already reached `explain` through the shared cut
+  // resolver, so what was missing on that half was the help row saying so.
+  //
+  // ⭐ The fixture is written here rather than taken from the tree, because the
+  // shape under test is a spec with sizes and NO art and every rig in this
+  // repository has art. Its pack is a few lines of atlas text in rigc's own
+  // emitted dialect: a pose reads region rectangles out of the TEXT and never
+  // opens a page, which is why an attachment resolves against a pack whose PNG
+  // does not exist. Nothing here is fetched, so none of these five can HOLE.
+  {
+    const artless = mkdtempSync(join(tmpdir(), 'rigc-sizes-only-'));
+    const rigPath = join(artless, 'rig.json');
+    const motionPath = join(artless, 'motion.json');
+    const packPath = join(artless, 'pack.atlas');
+    const outDir = join(artless, 'out');
+    // The slot, the placeholder and the animation are three different words on
+    // purpose: a refusal that names one of them can then be told from one that
+    // names all three, which is the whole of what CLI78 measures. They are bound
+    // once and read by the fixture, the probes and the plants alike, so nothing
+    // below is a second spelling of a name this block chose.
+    const slot = 'lamp';
+    const placeholder = 'shade';
+    const animation = 'sway';
+    writeFileSync(
+      rigPath,
+      JSON.stringify({
+        spec: 'rigc-rig/1',
+        name: placeholder,
+        skeleton: { width: 200, height: 200 },
+        bones: [{ name: 'root' }, { name: slot, parent: 'root', x: 0, y: 40 }],
+        slots: [{ name: slot, bone: slot, attachment: placeholder }],
+        skins: { default: { [slot]: { [placeholder]: { width: 64, height: 48 } } } },
+      }),
+    );
+    writeFileSync(
+      motionPath,
+      JSON.stringify({
+        spec: 'rigc-motion/1',
+        archetype: placeholder,
+        cut: placeholder,
+        easings: {},
+        animations: {
+          [animation]: {
+            duration: 1,
+            loop: true,
+            tracks: [{ bone: slot, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [12] }] }],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      packPath,
+      `pack.png\nsize: 64, 48\nfilter: Linear, Linear\npma: false\n${placeholder}\nbounds: 0, 0, 64, 48\noffsets: 0, 0, 64, 48\nrotate: 0\n`,
+    );
+
+    const withPack = runCli(['explain', '--rig', rigPath, '--motion', motionPath, '--out', outDir, '--atlas-in', packPath]);
+    // The report is checked on what the two specs put in it rather than on a
+    // count of its sections: a section list is this fixture's shape and would go
+    // red the day `explain` grows a block, while the slot and the animation are
+    // what the files say and what the report is an account OF.
+    const missing = [`setup=${placeholder}`, `${animation}  declared=1s`, `${slot}.rotate`].filter(
+      (said) => !withPack.stdout.includes(said),
+    );
+    say(
+      'CLI77_EXPLAIN_READS_A_SIZE_ONLY_SPEC_THROUGH_THE_PACK_ITS_SIZES_WERE_WRITTEN_FOR',
+      withPack.status === 0 && withPack.stderr === '' && missing.length === 0,
+      `exit=${String(withPack.status)} stderr=${JSON.stringify(withPack.stderr.split('\n')[0])} ` +
+        (missing.length === 0
+          ? "the report names the slot's setup attachment, the animation and its one track"
+          : `the report never printed: ${missing.join(', ')}`),
+      'the half of #697 that was reachable and undocumented: the cut resolver has always read `--atlas-in` for ' +
+        'every command that goes through it, so this exact run was green before the flag was listed anywhere. ' +
+        'It is here as the positive half — a rule that only ever refuses is a rule nobody can tell from a break',
+    );
+
+    const withoutPack = runCli(['explain', '--rig', rigPath, '--motion', motionPath, '--out', outDir]);
+    /**
+     * What the refusal has to say, as a probe list — one sentence per term that
+     * is NOT there. The plants below are handed the same function, so what they
+     * catch is what the live run is being held to rather than a second reading
+     * of it, and every content probe reads rigc's OWN line rather than stderr at
+     * large: a term that reaches the screen only inside somebody else's stack
+     * trace is not a term the refusal said.
+     */
+    const refusalFaults = (status: number | null, stderr: string): string[] => {
+      const said = stderr.split('\n').find((line) => line.startsWith('rigc explain: ')) ?? '';
+      return [
+        ...(status === 2 ? [] : [`it exited ${String(status)} rather than 2`]),
+        ...(said === '' ? ['it printed no `rigc explain:` line at all'] : []),
+        ...(said.includes(`slot "${slot}"`) ? [] : ['it does not name the slot']),
+        ...(said.includes(`placeholder "${placeholder}"`) ? [] : ['it does not name the placeholder']),
+        ...(said.includes(`wants region "${placeholder}"`) ? [] : ['it does not name the region that was wanted']),
+        ...(said.includes('--atlas-in') ? [] : ['it does not name `--atlas-in`, the way this spec reaches art']),
+        ...(said.includes('--images') ? [] : ['it does not name `--images`, the other way art reaches a compile']),
+        ...(/^\s+at \S+ \(/m.test(stderr) ? ['it carries a stack frame'] : []),
+        ...(stderr.includes('Region not found in atlas') ? ["it hands back the runtime's own sentence"] : []),
+      ];
+    };
+    const liveFaults = refusalFaults(withoutPack.status, withoutPack.stderr);
+    say(
+      'CLI78_A_SPEC_WITH_NO_ART_TO_POSE_IS_REFUSED_BY_NAME_RATHER_THAN_THROWN_THROUGH',
+      liveFaults.length === 0,
+      probeDetail(
+        liveFaults.length === 0,
+        liveFaults,
+        `exit=${String(withoutPack.status)}, and the refusal names the slot, the placeholder, the region it ` +
+          'wanted and both ways art reaches a compile, with no stack frame under it',
+        (count) => `${count} thing(s) the refusal owes an author it did not say:`,
+      ),
+      'the branch point printed the whole bone and timeline dump and then died inside `AtlasAttachmentLoader` at ' +
+        'exit 1, on the one input `docs/INGEST.md` §2.0 sends an author to — a runtime exception standing in for ' +
+        "rigc's own sentence, which is the first paragraph of CLAUDE.md inverted",
+    );
+
+    // CLI78 passing means nothing until the criterion has been seen to fault, so
+    // it is handed the shape the branch point actually printed and four
+    // abridgements of the live one — each breaking a different term of the
+    // sentence and none of them touching the function that reads it.
+    const plants: Array<[string, number | null, string]> = [
+      [
+        'the runtime exception this used to print',
+        1,
+        `error: Region not found in atlas: ${placeholder} (attachment: ${placeholder})\n` +
+          '      at findRegion (node_modules/@esotericsoftware/spine-core/dist/AtlasAttachmentLoader.js:58:23)\n',
+      ],
+      ['the same refusal at exit 0', 0, withoutPack.stderr],
+      [
+        'the refusal with its object dropped',
+        2,
+        withoutPack.stderr.split(`skin "default" slot "${slot}" placeholder "${placeholder}": `).join(''),
+      ],
+      [
+        'the refusal with the region it wanted left vague',
+        2,
+        withoutPack.stderr.split(`wants region "${placeholder}"`).join('wants a region'),
+      ],
+      [
+        'the refusal with neither remedy named',
+        2,
+        withoutPack.stderr.split('--atlas-in').join('a pack flag').split('--images').join('a loose-art flag'),
+      ],
+    ];
+    const uncaught = plants.filter(([, status, stderr]) => refusalFaults(status, stderr).length === 0).map(([what]) => what);
+    say(
+      'CLI79_THE_REFUSAL_CRITERION_FAULTS_THE_RUNTIME_EXCEPTION_AND_EVERY_ABRIDGED_SENTENCE',
+      uncaught.length === 0 && liveFaults.length === 0,
+      probeDetail(
+        uncaught.length === 0 && liveFaults.length === 0,
+        [
+          ...uncaught.map((what) => `${what} passed the criterion unfaulted`),
+          ...(liveFaults.length === 0 ? [] : ['the live refusal itself faulted, so this control cannot be two-sided']),
+        ],
+        `${plants.length} planted stderr(s) each faulted by name, and the live refusal faulted nothing — the two ` +
+          'sides a criterion needs before a green from it means anything',
+        (count) => `${count} side(s) of this control did not hold:`,
+      ),
+      'a criterion assembled out of `includes` is exactly the shape that goes green on a sentence nobody wrote: ' +
+        'every plant here leaves the reader intact and breaks the DATA, which is the only way to find out whether ' +
+        'the reader reads',
+    );
+
+    // Read off `--help` rather than off `FLAG_MEANINGS`, for CLI71's reason — a
+    // wording that stops reaching the page has stopped being the UI — and
+    // compared against `build`'s own row, because the claim is that this is the
+    // SAME flag rather than a second one worded here.
+    const atlasInRow = (command: string): string =>
+      (runCli([command, '--help']).stdout.split('\n').find((line) => line.startsWith('  --atlas-in ')) ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const explainRow = atlasInRow('explain');
+    const buildRow = atlasInRow('build');
+    say(
+      'CLI80_EXPLAIN_HELP_LISTS_ATLAS_IN_IN_THE_WORDING_BUILD_PRINTS',
+      explainRow !== '' && explainRow === buildRow,
+      explainRow === ''
+        ? '`explain --help` prints no `--atlas-in` row at all, so the flag is reachable and undocumented'
+        : explainRow === buildRow
+          ? `both commands print ${JSON.stringify(explainRow.slice(0, 72))}…, one wording for one flag`
+          : `explain prints ${JSON.stringify(explainRow.slice(0, 48))}… where build prints ${JSON.stringify(buildRow.slice(0, 48))}…`,
+      'the flag worked and no page said so, which for a tool whose messages are its UI is the same as not having ' +
+        'it: an agent that cannot see the rig cannot try a flag it has never been shown',
+    );
+
+    // The other side of CLI78, on a rig whose art DOES resolve: the pre-check
+    // has to be invisible there, and the DEFORM block is the proof the pose it
+    // guards actually ran rather than being skipped into a green.
+    const withArt = runCli([
+      'explain',
+      '--rig',
+      'gallery/look/rig.json',
+      '--motion',
+      'gallery/look/motion.json',
+      '--out',
+      join(artless, 'look-out'),
+    ]);
+    const deformLines = withArt.stdout.split('\n').filter((line) => line.startsWith('  DEFORM  ')).length;
+    say(
+      'CLI81_A_RIG_WHOSE_ART_RESOLVES_STILL_POSES_AND_PRINTS_ITS_DEFORM_BLOCK',
+      withArt.status === 0 && withArt.stderr === '' && deformLines > 0,
+      `exit=${String(withArt.status)} stderr=${JSON.stringify(withArt.stderr.split('\n')[0])} ` +
+        `DEFORM key line(s): ${deformLines}`,
+      'a check that runs before a pose is one refusal away from refusing every rig in the tree, and the cheapest ' +
+        'way for it to be wrong is to be right about a name and wrong about the atlas it reads names out of',
+    );
+  }
+
   return bad;
 }
 
