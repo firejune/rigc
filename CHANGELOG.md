@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.25.4](https://github.com/firejune/rigc/compare/v0.25.3...v0.25.4) (2026-09-18)
+
+
+### Bug Fixes
+
+* **compile:** a bone track's property is refused with the ten timelines a bone has ([#656](https://github.com/firejune/rigc/issues/656)) ([#662](https://github.com/firejune/rigc/issues/662)) ([109268d](https://github.com/firejune/rigc/commit/109268d51d47fad30c46c44e79b96c74e4550e82))
+* **compile:** a group's property is refused before a family is picked, with all three vocabularies a group can have ([#661](https://github.com/firejune/rigc/issues/661)) ([#667](https://github.com/firejune/rigc/issues/667)) ([b45a582](https://github.com/firejune/rigc/commit/b45a582d87c252616196525d587d3bad726372ca))
+* **compile:** a world `scale` slider whose range dips below 0 is refused with the mirror it would pose ([#657](https://github.com/firejune/rigc/issues/657)) ([#664](https://github.com/firejune/rigc/issues/664)) ([40523f6](https://github.com/firejune/rigc/commit/40523f629768189c48beb43fd9affde35e725eeb))
+* **validate:** A40 poses what a shared timeline's `apply` does with `add`, instead of reading a flag two classes state falsely about themselves ([#655](https://github.com/firejune/rigc/issues/655)) ([#663](https://github.com/firejune/rigc/issues/663)) ([261cf65](https://github.com/firejune/rigc/commit/261cf658b386ad60e30543163d1b5febe7aff623))
+
+
+### Instrument
+
+* **selftest:** the residual [#644](https://github.com/firejune/rigc/issues/644) left — four world readers, all thirty spellings, and three branches of the slider format ([#652](https://github.com/firejune/rigc/issues/652)) ([#659](https://github.com/firejune/rigc/issues/659)) ([3d62d30](https://github.com/firejune/rigc/commit/3d62d30f0acc1d692099ec52b19903ab9212fbb2))
+* **validate:** a dial that drives any constraint the `constraints` array has already run is refused by name ([#665](https://github.com/firejune/rigc/issues/665)) ([#668](https://github.com/firejune/rigc/issues/668)) ([64e49a2](https://github.com/firejune/rigc/commit/64e49a2a6f44f99ff49504561c2f9989cdcadaba))
+* **validate:** a slider that drives a slider the `constraints` array has already run is refused by name ([#658](https://github.com/firejune/rigc/issues/658)) ([#666](https://github.com/firejune/rigc/issues/666)) ([98d1fbe](https://github.com/firejune/rigc/commit/98d1fbe95be9b38baa024af44440a620d7350f57))
+
 ## [0.25.3](https://github.com/firejune/rigc/compare/v0.25.2...v0.25.3) (2026-09-17)
 
 
