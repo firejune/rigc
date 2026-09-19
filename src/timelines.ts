@@ -327,6 +327,30 @@ export interface PhysicsPoseRule {
    *   sub-step and still NaN after the restoring key, so it stays refused.
    */
   keyOk: ((poseValue: number) => boolean) | null;
+  /**
+   * True where a SETUP value this bound refuses leaves the constraint doing
+   * **nothing**, rather than doing something wrong — so an animation keying a
+   * value the bound accepts makes it effective, and a rig resting outside the
+   * bound is off rather than broken.
+   *
+   * Only `mix` is, and it is measured rather than argued (issue #743). At rest —
+   * setup pose, no animation applied, 36 steps at 60 fps — a constraint resting
+   * at `mix` 0 leaves its bone at worldX 12.0000 on every frame, while one
+   * resting at `mass` 0 reads NaN on every frame *although an animation keys
+   * `mass` to 1*, because `massInverse` is already Infinity before anything
+   * plays. Measured with the fixture's gravity at 0 and again at −40: the second
+   * rig is NaN either way, since `m = t * massInverse` is Infinity and the force
+   * it multiplies need not be non-zero for the product to be NaN.
+   *
+   * The same asymmetry is in the runtime's own text: `update` opens with
+   * `if (mix === 0) return;` (`PhysicsConstraint.js:109-111`) and has no such
+   * branch for the other three.
+   *
+   * ⚠️ This is NOT `keyOk !== null`, although today both are `mix` alone. That
+   * one says what a KEY may hold; this says whether a key can rescue the SETUP
+   * value — two questions with one answer here and no reason to share a field.
+   */
+  inertAtSetup: boolean;
   /** The bound in words, for a message: what the value has to be. */
   states: string;
   /** The bound a KEY is held to, where `keyOk` widens it. */
@@ -369,6 +393,7 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     toPose: (v) => v,
     poseOk: (v) => v > 0,
     keyOk: (v) => v >= 0,
+    inertAtSetup: true,
     states: '> 0',
     statesKeyed: '>= 0',
     why: 'the runtime documents it as a percentage (0+) and `update` returns immediately at 0 (`PhysicsConstraint.js:109-111`)',
@@ -379,6 +404,7 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     toPose: (v) => 1 / v,
     poseOk: (v) => Number.isFinite(v) && v > 0,
     keyOk: null,
+    inertAtSetup: false,
     states: '> 0',
     statesKeyed: '> 0',
     why:
@@ -392,6 +418,7 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     toPose: (v) => v,
     poseOk: (v) => v > 0,
     keyOk: (v) => v >= 0,
+    inertAtSetup: false,
     states: '> 0',
     statesKeyed: '>= 0',
     why:
@@ -406,6 +433,7 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     toPose: (v) => v,
     poseOk: (v) => v > 0 && v < 1,
     keyOk: null,
+    inertAtSetup: false,
     states: 'inside (0, 1)',
     statesKeyed: 'inside (0, 1)',
     why:

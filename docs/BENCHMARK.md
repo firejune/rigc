@@ -1026,7 +1026,7 @@ the renderer policy*.
 | `A20_MESH_WEIGHTS_COHERENT` | both ◑ | every weighted vertex has at least one bone, no negative weight, bone indices in range, and each vertex's weights sum to 1. `spine-html` also requires that a mesh be weighted at all and that no binding sit at weight 0 |
 | `A21_MESH_RIM_PINNED` | archetype | a ring mesh's rim vertices are pinned to the anchor bone and its hull is a real ring; a ribbon's entry row stays put; a contour's outline — which is every vertex it has — is pinned. **SKIPs on authored geometry** — rigc did not place its rim |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | every UV lies inside its region |
-| `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | each physics constraint actually drives a component, is not muted by `mix: 0`, has non-zero mass, and has `damping < 1` so it settles |
+| `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | each physics constraint actually drives a component, is not left muted — resting at `mix: 0` with no animation keying that `mix` above 0 — has non-zero mass, and has `damping < 1` so it settles |
 | `A24_AXIS_SPACE_STROKE` | archetype | the stroke is authored in **axis space** — no screen-space Y component anywhere in the axis subtree, and no keys at all on the axis bone (its rotation is the one per-cut setup value) |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | bones that must stay detached are not parented under a moving part |
 | `A26_SLOT_DRAW_ORDER` | archetype | the slots array — which *is* the draw order — matches the rig spec's slot table |
