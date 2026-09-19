@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.27.0](https://github.com/firejune/rigc/compare/v0.26.0...v0.27.0) (2026-09-19)
+
+
+### Features
+
+* **ingest:** a file from another Spine generation is named, with what a 4.3 reader loses counted on that file ([#706](https://github.com/firejune/rigc/issues/706)) ([#721](https://github.com/firejune/rigc/issues/721)) ([ce233a0](https://github.com/firejune/rigc/commit/ce233a0a64a96c09b67f3cdf508b4af22a5fd518))
+
+
+### Instrument
+
+* **validate:** `A19` counts the texels it read, so a rectangle it could not read is a named non-measurement and not a verdict ([#705](https://github.com/firejune/rigc/issues/705)) ([#723](https://github.com/firejune/rigc/issues/723)) ([dad641e](https://github.com/firejune/rigc/commit/dad641e94d409c3d5792640624cea441e2e39cae))
+* **validate:** a foreign linked mesh that states its own geometry is refused by name, and `ingest` says what it dropped ([#710](https://github.com/firejune/rigc/issues/710)) ([#724](https://github.com/firejune/rigc/issues/724)) ([294eab8](https://github.com/firejune/rigc/commit/294eab881614999263bc4877cafc647155f4f2e6))
+
 ## [0.26.0](https://github.com/firejune/rigc/compare/v0.25.6...v0.26.0) (2026-09-18)
 
 
