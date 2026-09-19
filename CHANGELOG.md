@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.28.0](https://github.com/firejune/rigc/compare/v0.27.0...v0.28.0) (2026-09-19)
+
+
+### Features
+
+* **diff:** animations get a name-agnostic block and an `--as` bridge, so a candidate that named its own shot can be measured ([#720](https://github.com/firejune/rigc/issues/720)) ([#736](https://github.com/firejune/rigc/issues/736)) ([0593c7f](https://github.com/firejune/rigc/commit/0593c7f1c5f7ab45895769d86a7b00b03dec9691))
+
+
+### Bug Fixes
+
+* **cli:** a turned atlas region's page rectangle is printed where an author reads it, and §0.2 says which way to turn it ([#718](https://github.com/firejune/rigc/issues/718)) ([#739](https://github.com/firejune/rigc/issues/739)) ([aaaf866](https://github.com/firejune/rigc/commit/aaaf866fbaecf1ac76bdc6e46601782a6a04bd9b))
+* **docs:** §3.4 documents the three attachment types that carry geometry and no art, and says which corner a mesh's `uvs` start from ([#717](https://github.com/firejune/rigc/issues/717)) ([#734](https://github.com/firejune/rigc/issues/734)) ([bf609ee](https://github.com/firejune/rigc/commit/bf609ee3d952823a00a93cb9c66b33a2d6e8cfe2))
+* **pose:** a refusal that stopped on a wall of the search window names the wall, and the rotation ladder the report prints is the one it walked ([#719](https://github.com/firejune/rigc/issues/719)) ([#740](https://github.com/firejune/rigc/issues/740)) ([6b4ae47](https://github.com/firejune/rigc/commit/6b4ae47ed2b99f869d46fc3601a7b051b30599ea))
+
 ## [0.27.0](https://github.com/firejune/rigc/compare/v0.26.0...v0.27.0) (2026-09-19)
 
 
