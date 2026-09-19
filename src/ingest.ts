@@ -1053,6 +1053,53 @@ function ingestAttachment(
   const type = att.type === undefined ? 'region' : String(att.type);
   const out: JsonObject = {};
 
+  // A LINKED mesh, in either of the format's two spellings. The test is the
+  // parser's own — one branch for `mesh` and `linkedmesh`, and a truthy `source`
+  // decides (`SkeletonJson.js:568-569`, `:582`) — so `type: "mesh"` carrying
+  // `source` inverts to a link, and a `linkedmesh` with none does NOT: that map
+  // is read as an ordinary mesh, whose `uvs` it does not have, and the parser
+  // throws on it. Reading the second as a link would be this module inventing a
+  // construct the file does not contain (issue #691).
+  const linked = (type === 'mesh' || type === 'linkedmesh') && typeof att.source === 'string' && att.source.length > 0;
+
+  // The three types the parser gives a texture `path` to, which is exactly the
+  // three that call `carryArt` below. `readAttachment` reaches
+  // `getValue(map, "path", name)` in the `region` branch (`SkeletonJson.js:529`)
+  // and in the shared `mesh`/`linkedmesh` branch (`:560`); `boundingbox`,
+  // `path`, `point` and `clipping` are constructed from the name alone and
+  // resolve no region at all.
+  const resolvesRegion = linked || type === 'region' || type === 'mesh';
+
+  /**
+   * The atlas region a dropped `name` was carrying, which the rebuild has to
+   * state as `path` or lose.
+   *
+   * 🚨 **The name is not bookkeeping — it is the region key** (issue #742).
+   * `readAttachment` reads `name = getValue(map, "name", placeholder)` and then
+   * `path = getValue(map, "path", name)`, so `path` defaults to the NAME and not
+   * to the placeholder. A source that states a `name` and no `path` therefore
+   * draws the region that name spells; rigc drops the name (the rig spec has no
+   * field for one — see below) and used to write no `path` either, so the
+   * rebuild asked the atlas for the PLACEHOLDER. Measured on a forged export
+   * whose three attachments state `name` and no `path`: the source loads against
+   * its own pack and the rebuild failed `A08_REGION_NAMES_MATCH_ATTACHMENTS`
+   * three times and `A00_ROUNDTRIP_PARSE` with it.
+   *
+   * ⚠️ A name EQUAL to the placeholder resolves the same region either way, so
+   * nothing is written for it — the rebuild would otherwise spell a field the
+   * source did not, and `A18`'s reference is the source file.
+   *
+   * 🔑 This is not `at.contested`'s business, and that is the half the card
+   * nearly missed. Where a placeholder is contested rigc composes a name of its
+   * own and `nameSkinAttachment` pins `path` at the PLACEHOLDER — so a contested
+   * source naming its own regions lost them with no finding at all, which is
+   * quieter than the uncontested case rather than safer.
+   */
+  const keptPath =
+    att.path === undefined && resolvesRegion && typeof att.name === 'string' && att.name !== placeholder
+      ? att.name
+      : undefined;
+
   // `name` is DERIVED by rigc — `composeSkinAttachmentName` writes one exactly
   // where a placeholder is contested — so the rig spec has no field for it and
   // it is dropped. Where the contest survives the round trip the same name comes
@@ -1063,17 +1110,34 @@ function ingestAttachment(
       'ATTACHMENT_NAME',
       at.where,
       `the attachment states name ${JSON.stringify(att.name)} and only ONE skin fills this placeholder, so rigc ` +
-        'writes no name on the rebuild — it composes "<skin>/<placeholder>" only for a contested placeholder (#541)',
+        'writes no name on the rebuild — it composes "<skin>/<placeholder>" only for a contested placeholder (#541). ' +
+        (keptPath !== undefined
+          ? `That name was also the ATLAS REGION this attachment resolves, because \`path\` defaults to the name and ` +
+            `not to the placeholder (\`SkeletonJson.js:526\`, \`:529\`, \`:560\`) — so the region key is KEPT as ` +
+            `"path": ${JSON.stringify(keptPath)} and the name alone is lost`
+          : att.path !== undefined
+            ? `The region key is the source's own \`path\` ${JSON.stringify(att.path)}, carried unchanged, so the ` +
+              'name alone is lost'
+            : resolvesRegion
+              ? 'The name is the placeholder itself, so the rebuild resolves the same atlas region and no `path` is ' +
+                'written for it'
+              : `An attachment of type ${JSON.stringify(type)} resolves no atlas region — the parser builds it from ` +
+                'the name alone — so there is no region key to keep and the name is the whole loss'),
     );
   }
 
   /** The texture side, which the skeleton does not encode. Inverts `buildRigRegion`'s tail. */
   const carryArt = (): void => {
     if (att.path !== undefined) out.path = att.path;
+    else if (keptPath !== undefined) out.path = keptPath;
     // `buildRigRegion` writes `path` when the image basename differs from the
-    // placeholder, so naming the image after `path ?? placeholder` reproduces
-    // the same `path` decision AND the same atlas region name.
-    if (opts.art === 'loose') out.image = `${att.path === undefined ? placeholder : String(att.path)}.png`;
+    // placeholder, so naming the image after the region this attachment RESOLVES
+    // reproduces the same `path` decision AND the same atlas region name. Read
+    // off `out.path` rather than off `att.path`, so that the region a dropped
+    // `name` was carrying names the loose PNG too — otherwise `path` and `image`
+    // would disagree and `attachmentPath` would emit the first while the atlas
+    // was packed under the second.
+    if (opts.art === 'loose') out.image = `${out.path === undefined ? placeholder : String(out.path)}.png`;
     if (att.width !== undefined) out.width = att.width;
     if (att.height !== undefined) out.height = att.height;
   };
@@ -1093,15 +1157,6 @@ function ingestAttachment(
   };
 
   const vertexCount = typeof att.vertexCount === 'number' ? att.vertexCount : undefined;
-
-  // A LINKED mesh, in either of the format's two spellings. The test is the
-  // parser's own — one branch for `mesh` and `linkedmesh`, and a truthy `source`
-  // decides (`SkeletonJson.js:568-569`, `:582`) — so `type: "mesh"` carrying
-  // `source` inverts to a link, and a `linkedmesh` with none does NOT: that map
-  // is read as an ordinary mesh, whose `uvs` it does not have, and the parser
-  // throws on it. Reading the second as a link would be this module inventing a
-  // construct the file does not contain (issue #691).
-  const linked = (type === 'mesh' || type === 'linkedmesh') && typeof att.source === 'string' && att.source.length > 0;
 
   if (linked) {
     out.type = 'linkedmesh';

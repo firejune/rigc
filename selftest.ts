@@ -101,6 +101,7 @@ import {
   PhysicsConstraintPose,
   PhysicsConstraintTimeline,
   Property,
+  RegionAttachment,
   Sequence,
   Skeleton,
   SkeletonJson,
@@ -53121,6 +53122,440 @@ function runIngestSuite(): number {
       'byte identity is the contract this suite is built on, and the member lists are read back beside it because ' +
         'identity alone would also be satisfied by a rebuild that dropped the lists from BOTH files — the source ' +
         'is one rigc emitted, so a drop on the emit side would move the reference with the measurement',
+    );
+  }
+
+  // --- IG51–IG53: a dropped `name` was the atlas region key (issue #742) ----
+  //
+  // 🚨 **Measured on the branch point, on forged exports and nothing else.**
+  // `readAttachment` reads `name = getValue(map, "name", placeholder)` and then
+  // `path = getValue(map, "path", name)` (`SkeletonJson.js:526`, `:529`, `:560`),
+  // so a source that states a `name` and NO `path` draws the region that name
+  // spells. `ingest` dropped the name — correctly; the rig spec derives names —
+  // and wrote no `path` either, so the rebuild asked the atlas for the
+  // PLACEHOLDER. On the probe below that was three `FAIL
+  // A08_REGION_NAMES_MATCH_ATTACHMENTS` and an `A00_ROUNDTRIP_PARSE` under them,
+  // against a source the runtime loads.
+  //
+  // ⭐ The CONTESTED half was quieter and not safer, which is why it has a case
+  // of its own. There rigc composes `<skin>/<placeholder>` and
+  // `nameSkinAttachment` pins `path` at the placeholder — so two skins naming
+  // two regions came back asking for ONE region, neither of them the source's,
+  // and `ATTACHMENT_NAME` says nothing at all there because that is exactly
+  // where the name is re-derived. `IG53` is that half.
+  //
+  // 🌱 The plant is DATA, not source: every `path` the repair writes is deleted
+  // out of the decompiled spec before the rebuild, which is the branch point
+  // reproduced inside the run. Its own count is read off the spec, so a plant
+  // that removed nothing reports itself instead of passing.
+  {
+    // ⚠️ Three of the four PNGs are named after the placeholder that draws them,
+    // and that is load-bearing rather than tidy: `attachmentPath` emits a `path`
+    // whenever a basename differs, so a probe whose art was named otherwise would
+    // start out with a `path` already on it — and the case below that asks
+    // whether a redundant `name` moves a byte would be comparing against an emit
+    // the forge had changed for another reason. It was measured wrong that way
+    // first: `1 field path(s) of the original emit` moved, and the field was the
+    // `path` the probe's own art had put there.
+    const namedDir = mkdtempSync(join(tmpdir(), 'rigc-attachmentname-'));
+    writeProbePng(join(namedDir, 'block.png'), 12, 8, [40, 60, 90, 255]);
+    writeProbePng(join(namedDir, 'panel.png'), 10, 10, [90, 40, 60, 255]);
+    writeProbePng(join(namedDir, 'echo.png'), 6, 6, [180, 70, 50, 255]);
+    writeProbePng(join(namedDir, 'plate.png'), 10, 10, [30, 120, 40, 255]);
+
+    /** A four-corner authored mesh over one image, so a mesh and a link each draw a region. */
+    const quad = (image: string): Record<string, unknown> => ({
+      type: 'mesh',
+      image,
+      uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+      triangles: [0, 1, 2, 0, 2, 3],
+      vertices: [0, 0, 10, 0, 10, 10, 0, 10],
+      hull: 4,
+    });
+
+    /** Compile one probe rig out of this block's own art, and keep its pack beside it. */
+    const buildProbe = (
+      name: string,
+      slots: Array<Record<string, unknown>>,
+      skinTable: Record<string, unknown>,
+    ): { skeletonText: string; atlasText: string; dir: string } => {
+      const rigPath = join(namedDir, `${name}.rig.json`);
+      const motionPath = join(namedDir, `${name}.motion.json`);
+      writeFileSync(
+        rigPath,
+        `${JSON.stringify(
+          {
+            spec: 'rigc-rig/1',
+            name,
+            skeleton: { width: 64, height: 64 },
+            bones: [{ name: 'root' }, { name: 'pin', parent: 'root', length: 12 }],
+            slots,
+            skins: skinTable,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      writeFileSync(motionPath, `${JSON.stringify({ ...STATIC_MOTION, archetype: name, cut: name }, null, 2)}\n`);
+      const outDir = join(namedDir, name);
+      mkdirSync(outDir, { recursive: true });
+      const built = compile({ rigPath, motionPath, outDir, imagesDir: namedDir });
+      return { skeletonText: built.skeletonText, atlasText: built.atlasText, dir: outDir };
+    };
+
+    /**
+     * An emitted export rewritten into the shape a hand-made one has: each
+     * attachment states a `name` of its own, and a `path` only where `pathFor`
+     * gives it one — with the pack re-keyed to whichever of the two the parser
+     * will resolve, so the forged pair is one the runtime loads.
+     *
+     * ⚠️ Nothing is invented. The region each attachment resolved BEFORE the
+     * rewrite is read off the file by the parser's own `path ?? name ??
+     * placeholder`, and it is that string the atlas line is renamed from, so the
+     * forge cannot quietly point somewhere the pack has nothing.
+     */
+    const forgeNames = (
+      source: { skeletonText: string; atlasText: string },
+      nameFor: (skin: string, placeholder: string) => string,
+      pathFor?: (skin: string, placeholder: string) => string,
+    ): { skeletonText: string; atlasText: string; wanted: Map<string, string> } => {
+      const file = JSON.parse(source.skeletonText) as {
+        skins: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }>;
+      };
+      const wanted = new Map<string, string>();
+      let atlasText = source.atlasText;
+      for (const skin of file.skins) {
+        for (const [slot, perSlot] of Object.entries(skin.attachments)) {
+          for (const [placeholder, att] of Object.entries(perSlot)) {
+            const was = typeof att.path === 'string' ? att.path : typeof att.name === 'string' ? att.name : placeholder;
+            const now = nameFor(skin.name, placeholder);
+            const stated = pathFor === undefined ? undefined : pathFor(skin.name, placeholder);
+            if (stated === undefined) delete att.path;
+            else att.path = stated;
+            att.name = now;
+            // What `getValue(map, "path", name)` will ask the atlas for, which is
+            // the string the pack has to be keyed by and the string the rebuild
+            // has to reproduce.
+            const resolves = stated ?? now;
+            // A polygon type resolves no region at all, so it wants none and is
+            // not counted among what the rebuild has to find.
+            const kind = att.type === undefined ? 'region' : String(att.type);
+            if (kind === 'region' || kind === 'mesh' || kind === 'linkedmesh') {
+              wanted.set(`${skin.name}/${slot}/${placeholder}`, resolves);
+            }
+            if (resolves !== was) atlasText = atlasText.replace(new RegExp(`^${was}$`, 'm'), resolves);
+          }
+        }
+      }
+      return { skeletonText: `${JSON.stringify(file, null, 2)}\n`, atlasText, wanted };
+    };
+
+    /** Every `path` a decompiled spec states, deleted — the branch point, as data. */
+    const dropPaths = (rig: Record<string, unknown>): number => {
+      let removed = 0;
+      const skins = (rig.skins ?? {}) as Record<string, Record<string, unknown>>;
+      for (const skin of Object.values(skins)) {
+        const table = (skin.attachments ?? skin) as Record<string, Record<string, Record<string, unknown>>>;
+        for (const perSlot of Object.values(table)) {
+          if (typeof perSlot !== 'object' || perSlot === null) continue;
+          for (const att of Object.values(perSlot)) {
+            if (typeof att !== 'object' || att === null || att.path === undefined) continue;
+            delete att.path;
+            removed++;
+          }
+        }
+      }
+      return removed;
+    };
+
+    /** `ingest --art none`, then the rebuild against the forged pack, with an optional plant. */
+    const rebuild = (
+      name: string,
+      forged: { skeletonText: string; atlasText: string },
+      tag: string,
+      plant?: (rig: Record<string, unknown>) => number,
+    ): {
+      findings: IngestFinding[];
+      rig: Record<string, unknown>;
+      skeletonText: string;
+      atlasText: string;
+      outDir: string;
+      refusal: string | null;
+      planted: number;
+    } => {
+      const got = ingest(JSON.parse(forged.skeletonText), { name, art: 'none', source: 'skeleton.json', version: '0' });
+      const rig = got.rig as unknown as Record<string, unknown>;
+      const planted = plant === undefined ? 0 : plant(rig);
+      const specDir = join(namedDir, `${name}-${tag}`);
+      const outDir = join(specDir, 'out');
+      mkdirSync(outDir, { recursive: true });
+      const packPath = join(specDir, 'in.atlas');
+      writeFileSync(packPath, forged.atlasText);
+      writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+      writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(got.motion, null, 2)}\n`);
+      try {
+        const built = compile({
+          rigPath: join(specDir, 'rig.json'),
+          motionPath: join(specDir, 'motion.json'),
+          outDir,
+          atlasInPath: packPath,
+        });
+        return { findings: got.findings, rig, skeletonText: built.skeletonText, atlasText: built.atlasText, outDir, refusal: null, planted };
+      } catch (err) {
+        return { findings: got.findings, rig, skeletonText: '', atlasText: '', outDir, refusal: (err as Error).message, planted };
+      }
+    };
+
+    /**
+     * The atlas region each LOADED attachment resolved, per `skin/slot/placeholder`.
+     *
+     * 🔑 Read off the runtime rather than off the JSON, because the whole card is
+     * that a file can state the right-looking fields and resolve the wrong
+     * region: `AtlasAttachmentLoader` fills `sequence.regions` at load time, so
+     * this is the join the renderer will make and not a second reading of `path`.
+     */
+    const loadedRegions = (skeletonText: string, atlasText: string): Map<string, string> | string => {
+      try {
+        const data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(
+          JSON.parse(skeletonText),
+        );
+        const out = new Map<string, string>();
+        for (const skin of data.skins) {
+          for (const entry of skin.getAttachments()) {
+            const att = entry.attachment;
+            if (!(att instanceof RegionAttachment) && !(att instanceof MeshAttachment)) continue;
+            const region = att.sequence.regions[0];
+            out.set(
+              `${skin.name}/${data.slots[entry.slotIndex].name}/${entry.placeholder}`,
+              region == null ? '(no region)' : (region as TextureAtlasRegion).name,
+            );
+          }
+        }
+        return out;
+      } catch (err) {
+        return `the loader refused the pair: ${(err as Error).message}`;
+      }
+    };
+
+    /** Every row on which the resolved regions and the wanted ones disagree. */
+    const regionRows = (got: Map<string, string> | string, wanted: Map<string, string>, whose: string): string[] => {
+      if (typeof got === 'string') return [`${whose}: ${got}`];
+      return [...wanted]
+        .filter(([at, region]) => got.get(at) !== region)
+        .map(([at, region]) => `${whose} resolves "${at}" as ${JSON.stringify(got.get(at) ?? '(absent)')} and the pack keys it ${JSON.stringify(region)}`);
+    };
+
+    const failuresOf = (
+      built: { skeletonText: string; atlasText: string; outDir: string; refusal: string | null },
+      assertion: string,
+    ): string[] => {
+      if (built.refusal !== null) return [];
+      return validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: built.outDir,
+        profile: 'spine',
+      })
+        .failures.filter((f) => f.assertion === assertion)
+        .map((f) => f.detail);
+    };
+
+    // -- IG51: the three types that resolve a region --------------------------
+    const soloSlots = [
+      { name: 'block', bone: 'pin', attachment: 'block' },
+      { name: 'panel', bone: 'root', attachment: 'panel' },
+      { name: 'echo', bone: 'root', attachment: 'echo' },
+    ];
+    const soloSkins = {
+      default: {
+        block: { block: { image: 'block.png' } },
+        panel: { panel: quad('panel.png') },
+        echo: { echo: { type: 'linkedmesh', image: 'echo.png', source: 'panel', slot: 'panel' } },
+      },
+    };
+    const solo = buildProbe('attachment_names', soloSlots, soloSkins);
+    const soloForged = forgeNames(solo, (_skin, placeholder) => `art_${placeholder}`);
+    const soloBuilt = rebuild('attachment_names', soloForged, 'kept');
+    const soloPlanted = rebuild('attachment_names', soloForged, 'plant', dropPaths);
+    const soloNamed = soloBuilt.findings.filter((f) => f.code === 'ATTACHMENT_NAME');
+    const plantFailures = failuresOf(soloPlanted, 'A08_REGION_NAMES_MATCH_ATTACHMENTS');
+    const soloProbes = [
+      ...regionRows(loadedRegions(soloForged.skeletonText, soloForged.atlasText), soloForged.wanted, 'the forged source'),
+      ...(soloBuilt.refusal === null ? [] : [`the rebuild was refused: ${soloBuilt.refusal}`]),
+      ...failuresOf(soloBuilt, 'A08_REGION_NAMES_MATCH_ATTACHMENTS').map((d) => `A08 still fires: ${d}`),
+      ...failuresOf(soloBuilt, 'A00_ROUNDTRIP_PARSE').map((d) => `A00 still fires: ${d}`),
+      ...regionRows(loadedRegions(soloBuilt.skeletonText, soloBuilt.atlasText), soloForged.wanted, 'the rebuild'),
+      ...(soloNamed.length === soloForged.wanted.size
+        ? []
+        : [`${soloNamed.length} ATTACHMENT_NAME finding(s) over ${soloForged.wanted.size} attachment(s) that resolve a region`]),
+      ...[...soloForged.wanted]
+        .filter(([at, region]) => {
+          const found = soloNamed.find((f) => f.where.includes(`"${at.split('/')[2]}"`));
+          return found === undefined || !found.detail.includes(`"path": ${JSON.stringify(region)}`);
+        })
+        .map(([at, region]) => `the finding for "${at}" does not say the region key was kept as "path": ${JSON.stringify(region)}`),
+      ...(soloPlanted.planted > 0 ? [] : ['the plant deleted no `path` at all, so it is not the branch point']),
+      ...(soloPlanted.refusal !== null || plantFailures.length > 0
+        ? []
+        : ['the plant that drops every new `path` rebuilt GREEN, so this control cannot fail']),
+    ];
+    const soloHeld = soloProbes.length === 0;
+    say(
+      'IG51_A_DROPPED_NAME_LEAVES_ITS_ATLAS_REGION_BEHIND_AS_PATH_AND_THE_REBUILD_RESOLVES_IT',
+      soloHeld,
+      probeDetail(
+        soloHeld,
+        soloProbes,
+        `${soloForged.wanted.size} attachment(s) — region, mesh and linked mesh — state a name and no path: the ` +
+          `source resolves [${[...soloForged.wanted.values()].join(', ')}], the rebuild resolves the same through ` +
+          `\`path\` with A08 and A00 silent, and dropping the ${soloPlanted.planted} path(s) the repair wrote leaves ` +
+          `${plantFailures.length} A08 failure(s)${soloPlanted.refusal === null ? '' : ` and a refused compile`}`,
+        (count) => `${count} thing(s) the region key did not survive:`,
+      ),
+      'the card\'s own shape, and the region is read off the LOADED attachment rather than off the file: `path` is ' +
+        'the only field that carries an attachment\'s art once the name is gone, and a rebuild that states a ' +
+        'plausible one still has to make the join the renderer makes. The plant is the branch point put back as ' +
+        'DATA — every `path` the repair wrote, deleted out of the decompiled spec — so what goes red here is the ' +
+        'defect itself and not a predicate somebody weakened',
+    );
+
+    // -- IG52: the two shapes that must write nothing new ---------------------
+    const statedForged = forgeNames(
+      solo,
+      (_skin, placeholder) => `alias_${placeholder}`,
+      (_skin, placeholder) => `kept_${placeholder}`,
+    );
+    const statedBuilt = rebuild('attachment_names', statedForged, 'stated');
+    const statedSpec = (statedBuilt.rig.skins as Record<string, Record<string, Record<string, Record<string, unknown>>>>).default;
+    const echoingForged = forgeNames(solo, (_skin, placeholder) => placeholder);
+    const echoingBuilt = rebuild('attachment_names', echoingForged, 'echoing');
+    const echoingSpec = (echoingBuilt.rig.skins as Record<string, Record<string, Record<string, Record<string, unknown>>>>).default;
+    const boxProbe = buildProbe(
+      'attachment_names_box',
+      [{ name: 'hull', bone: 'root', attachment: 'hull' }],
+      { default: { hull: { hull: { type: 'boundingbox', vertexCount: 3, vertices: [0, 0, 8, 0, 8, 8] } } } },
+    );
+    const boxForged = forgeNames(boxProbe, () => 'art_hull');
+    const boxIngested = ingest(JSON.parse(boxForged.skeletonText), {
+      name: 'attachment_names_box',
+      art: 'none',
+      source: 'skeleton.json',
+      version: '0',
+    });
+    const boxSpec = (boxIngested.rig as unknown as { skins: Record<string, Record<string, Record<string, Record<string, unknown>>>> })
+      .skins.default;
+    const boxNamed = boxIngested.findings.filter((f) => f.code === 'ATTACHMENT_NAME');
+    const statedNamed = statedBuilt.findings.filter((f) => f.code === 'ATTACHMENT_NAME');
+    const statedProbes = [
+      ...regionRows(
+        loadedRegions(statedForged.skeletonText, statedForged.atlasText),
+        statedForged.wanted,
+        'the stated-path source',
+      ),
+      ...(statedBuilt.refusal === null ? [] : [`the stated-path rebuild was refused: ${statedBuilt.refusal}`]),
+      ...regionRows(loadedRegions(statedBuilt.skeletonText, statedBuilt.atlasText), statedForged.wanted, 'the stated-path rebuild'),
+      ...[...statedForged.wanted]
+        .filter(([at, region]) => statedSpec[at.split('/')[1]]?.[at.split('/')[2]]?.path !== region)
+        .map(([at, region]) => `the spec writes "${at}" with path ${JSON.stringify(statedSpec[at.split('/')[1]]?.[at.split('/')[2]]?.path)} and the source stated ${JSON.stringify(region)}`),
+      ...statedNamed
+        .filter((f) => !f.detail.includes("the source's own `path`"))
+        .map((f) => `a source that states \`path\` is reported as if the name carried the region: ${f.where}`),
+      ...(echoingBuilt.refusal === null ? [] : [`the placeholder-name rebuild was refused: ${echoingBuilt.refusal}`]),
+      ...Object.entries(echoingSpec)
+        .flatMap(([slot, perSlot]) => Object.entries(perSlot).map(([placeholder, att]) => [slot, placeholder, att] as const))
+        .filter(([, , att]) => att.path !== undefined)
+        .map(([slot, placeholder, att]) => `a name equal to its placeholder wrote path ${JSON.stringify(att.path)} on "${slot}/${placeholder}"`),
+      ...(echoingBuilt.skeletonText === solo.skeletonText
+        ? []
+        : [
+            `a name equal to its placeholder moved ${
+              differingJsonPaths(JSON.parse(solo.skeletonText), JSON.parse(echoingBuilt.skeletonText || '{}')).length
+            } field path(s) of the original emit`,
+          ]),
+      ...Object.entries(boxSpec.hull ?? {})
+        .filter(([, att]) => att.path !== undefined)
+        .map(([placeholder, att]) => `a bounding box got path ${JSON.stringify(att.path)} on "${placeholder}", which the rig spec has no field for`),
+      ...(boxNamed.length === 1 && boxNamed[0].detail.includes('resolves no atlas region')
+        ? []
+        : [`the bounding box's finding does not say the type resolves no region: ${boxNamed.map((f) => f.detail).join('; ') || '(no finding)'}`]),
+      ...boxIngested.findings.filter((f) => f.code === 'SPEC_REFUSED').map((f) => `SPEC_REFUSED: ${f.detail}`),
+    ];
+    const statedHeld = statedProbes.length === 0;
+    say(
+      'IG52_A_STATED_PATH_IS_CARRIED_UNCHANGED_AND_A_NAME_THAT_IS_ITS_PLACEHOLDER_WRITES_NOTHING',
+      statedHeld,
+      probeDetail(
+        statedHeld,
+        statedProbes,
+        `a source stating both a differing name and a \`path\` keeps the \`path\` on all ` +
+          `${statedForged.wanted.size} attachment(s) and resolves [${[...statedForged.wanted.values()].join(', ')}]; a ` +
+          `name equal to its placeholder writes no \`path\` and rebuilds the original emit\'s ` +
+          `${solo.skeletonText.length} B byte for byte; and a bounding box naming itself gets no \`path\` at all`,
+        (count) => `${count} thing(s) the repair wrote that the source did not say:`,
+      ),
+      'the other side of the repair, and the side a one-sided control would miss: a rule that wrote the NAME into ' +
+        '`path` unconditionally would overwrite a `path` the source stated — a different region, silently — and one ' +
+        'that ignored the placeholder comparison would spell a field on every attachment of every export, which ' +
+        'moves bytes of a round trip that was already exact. The bounding box is the third: the parser builds it ' +
+        'from its name alone, so a `path` there is a field `parseRigSpec` refuses and the decompiler would be ' +
+        'handing back a spec the tree\'s own reader will not take',
+    );
+
+    // -- IG53: the contested placeholder, which said nothing at all -----------
+    const contested = buildProbe(
+      'attachment_names_skins',
+      [
+        { name: 'block', bone: 'pin', attachment: 'block' },
+        { name: 'panel', bone: 'root', attachment: 'panel' },
+      ],
+      {
+        default: { block: { block: { image: 'block.png' } } },
+        base: { panel: { panel: quad('panel.png') } },
+        alt: { panel: { panel: quad('plate.png') } },
+      },
+    );
+    const contestedForged = forgeNames(contested, (skin, placeholder) => `art_${skin}_${placeholder}`);
+    const contestedBuilt = rebuild('attachment_names_skins', contestedForged, 'kept');
+    const contestedPlanted = rebuild('attachment_names_skins', contestedForged, 'plant', dropPaths);
+    const contestedRegions = loadedRegions(contestedBuilt.skeletonText, contestedBuilt.atlasText);
+    const contestedPlantFailures = failuresOf(contestedPlanted, 'A08_REGION_NAMES_MATCH_ATTACHMENTS');
+    const distinct =
+      typeof contestedRegions === 'string'
+        ? 0
+        : new Set([...contestedForged.wanted.keys()].map((at) => contestedRegions.get(at))).size;
+    const contestedProbes = [
+      ...regionRows(loadedRegions(contestedForged.skeletonText, contestedForged.atlasText), contestedForged.wanted, 'the forged source'),
+      ...(contestedBuilt.refusal === null ? [] : [`the rebuild was refused: ${contestedBuilt.refusal}`]),
+      ...failuresOf(contestedBuilt, 'A08_REGION_NAMES_MATCH_ATTACHMENTS').map((d) => `A08 still fires: ${d}`),
+      ...regionRows(contestedRegions, contestedForged.wanted, 'the rebuild'),
+      ...(distinct === contestedForged.wanted.size
+        ? []
+        : [`${contestedForged.wanted.size} attachment(s) came back on ${distinct} region(s), so at least two share one`]),
+      ...(contestedPlanted.planted > 0 ? [] : ['the plant deleted no `path` at all, so it is not the branch point']),
+      ...(contestedPlanted.refusal !== null || contestedPlantFailures.length > 0
+        ? []
+        : ['the plant that drops every new `path` rebuilt GREEN on the contested half too']),
+    ];
+    const contestedHeld = contestedProbes.length === 0;
+    say(
+      'IG53_TWO_SKINS_THAT_NAME_THEIR_OWN_REGIONS_REBUILD_ONTO_TWO_REGIONS_AND_NOT_ONE',
+      contestedHeld,
+      probeDetail(
+        contestedHeld,
+        contestedProbes,
+        `${contestedForged.wanted.size} attachment(s) across ${
+          new Set([...contestedForged.wanted.keys()].map((at) => at.split('/')[0])).size
+        } skin(s) resolve ${distinct} distinct region(s) — [${[...contestedForged.wanted.values()].join(', ')}] — and ` +
+          `dropping the ${contestedPlanted.planted} path(s) the repair wrote leaves ${contestedPlantFailures.length} ` +
+          `A08 failure(s)`,
+        (count) => `${count} thing(s) the contested rebuild lost:`,
+      ),
+      'the half with no finding behind it. `ATTACHMENT_NAME` is silenced where a placeholder is contested, because ' +
+        'that is where rigc composes a name of its own — and `nameSkinAttachment` then pins `path` at the ' +
+        'PLACEHOLDER, so on the branch point both skins came back asking for one region and neither was the art ' +
+        'the source drew. The count of DISTINCT regions is the clause that matters: every row could name a region ' +
+        'the pack has and still be one region doing the work of two, which is the whole of what a contested ' +
+        'placeholder exists to avoid',
     );
   }
 
