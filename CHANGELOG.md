@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.29.0](https://github.com/firejune/rigc/compare/v0.28.0...v0.29.0) (2026-09-19)
+
+
+### Features
+
+* **compile:** a skin's `bones` and its constraint lists are per-skin sets, so two skins may activate one bone ([#725](https://github.com/firejune/rigc/issues/725)) ([#741](https://github.com/firejune/rigc/issues/741)) ([4c85f87](https://github.com/firejune/rigc/commit/4c85f87db0c317234a7dc07273775ee37b392437))
+
+
+### Bug Fixes
+
+* **compile:** a physics `strength` key of 0 is a span the next key undoes, so a KEY is held to `>= 0` where a setup pose stays `> 0` ([#727](https://github.com/firejune/rigc/issues/727)) ([#749](https://github.com/firejune/rigc/issues/749)) ([8141634](https://github.com/firejune/rigc/commit/81416340723ff46b35a328a3af41b817ba2965ee))
+* **compile:** the editor's name order is read off five stored round trips rather than quantified over a family, so folders, capitals and accents build and only what those files leave open is refused ([#728](https://github.com/firejune/rigc/issues/728)) ([#745](https://github.com/firejune/rigc/issues/745)) ([d111e25](https://github.com/firejune/rigc/commit/d111e256715214c3f9ca3ab28aa61508df04ea93))
+* **ingest:** a dropped attachment `name` is the atlas region key, so it is kept as `path` — on a contested placeholder too, where nothing was said at all ([#742](https://github.com/firejune/rigc/issues/742)) ([#747](https://github.com/firejune/rigc/issues/747)) ([8aa3296](https://github.com/firejune/rigc/commit/8aa3296a43a606bed8869b3b5bd5a3c47d28c002))
+* **validate:** a physics constraint muted at rest is refused only when no timeline keys its `mix` above 0 ([#743](https://github.com/firejune/rigc/issues/743)) ([#753](https://github.com/firejune/rigc/issues/753)) ([a610488](https://github.com/firejune/rigc/commit/a6104884e194bc9f482eabbf1dd9e81e27d13dcd))
+
+
+### Instrument
+
+* **validate:** the page-size clause names the ratio it measured and the `scale:` header that states the same art truthfully, and `A19` stops judging texels it cannot locate ([#715](https://github.com/firejune/rigc/issues/715)) ([#751](https://github.com/firejune/rigc/issues/751)) ([99f9156](https://github.com/firejune/rigc/commit/99f91569c4d7e689eafe566d747b1e7f0c5ec254))
+
 ## [0.28.0](https://github.com/firejune/rigc/compare/v0.27.0...v0.28.0) (2026-09-19)
 
 
