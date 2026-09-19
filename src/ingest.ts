@@ -412,6 +412,26 @@ const HEADER_REDERIVED = ['spine'];
 const ATTACHMENT_TYPES = ['region', 'mesh', 'linkedmesh', 'boundingbox', 'clipping', 'path'];
 
 /**
+ * The geometry keys a LINKED mesh may state and the parser never reads
+ * (issue #710).
+ *
+ * `readAttachment` returns from the `source` branch at `SkeletonJson.js:586`,
+ * before `map.uvs` is touched, so a link carrying any of these is a file that
+ * says one mesh while every runtime draws its source's. The rig spec cannot hold
+ * them either — `buildRigLinkedMesh` refuses geometry on a link by name — so a
+ * rebuild that carried one would be a spec `build` refuses, and a rebuild that
+ * dropped it in silence would be this module normalising somebody's file without
+ * saying so.
+ *
+ * ⚠️ A second list beside `src/validate.ts`'s, deliberately: that module links
+ * spine-core and this one must not, so importing it would pull the runtime into
+ * every `ingest`. What holds the two equal is a RUN rather than a shared
+ * constant — one forged skeleton through both, with the keys `A44` names and the
+ * keys this finding names compared as sets.
+ */
+const LINKED_MESH_UNREAD_KEYS = ['uvs', 'triangles', 'vertices', 'hull', 'edges'];
+
+/**
  * The slot timelines the motion spec carries — `compileTrack`'s own table,
  * rather than a second list of the same two names.
  *
@@ -1092,6 +1112,20 @@ function ingestAttachment(
     // writing one the source omitted would be a rebuild that says more than the
     // file did — and `buildRigLinkedMesh` drops it again on the way back out.
     for (const field of ['slot', 'skin', 'timelines', 'color']) if (att[field] !== undefined) out[field] = att[field];
+    const dropped = LINKED_MESH_UNREAD_KEYS.filter((field) => att[field] !== undefined);
+    if (dropped.length > 0) {
+      note(
+        'lossy',
+        'ATTACHMENT_LINK_GEOMETRY',
+        at.where,
+        `the attachment is a LINKED mesh and states ${dropped.map((field) => `\`${field}\``).join(', ')}, which the ` +
+          'parser reads with nothing at all: it returns from the `source` branch before `readVertices` ' +
+          `(\`SkeletonJson.ts:582-586\`), so what this attachment draws is the geometry of ${JSON.stringify(att.source)}. ` +
+          `The rebuild drops ${dropped.length === 1 ? 'it' : 'them'} — the rig spec refuses geometry on a link by name, ` +
+          'and carrying it would write a spec `build` will not take. `A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN` ' +
+          'is the same fact held against the source file',
+      );
+    }
   } else if (type === 'region') {
     carryArt();
     for (const field of ['x', 'y', 'rotation', 'scaleX', 'scaleY', 'color']) {

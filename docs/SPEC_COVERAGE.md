@@ -736,6 +736,7 @@ This is the split Part 4(c) needs. **Spine-validity** = the file is wrong for an
 | `A11_NO_CLIPPING_ATTACHMENTS` | **renderer-profile** | clipping attachments — "the renderer skips them silently" |
 | `A12_NO_DARK_COLOR` | **renderer-profile** | slot `dark`, `rgba2`/`rgb2` timelines — "parsed, then ignored". ⚠️ rigc **emits** the first two; a renderer that drops a construct is what a profile is for, not a reason not to emit it |
 | `A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN` | validity | a slot `dark` the parser drops or reads as NaN, an `rgba2` timeline on a slot with no dark colour to pose, or a key whose posed light/dark is not what it states |
+| `A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN` | validity | a linked mesh, in either spelling, that also states `uvs`, `triangles`, `vertices`, `hull` or `edges` — keys the `source` branch returns before reading, so the file says one mesh and every runtime draws its source's |
 | `A13_MESH_BUDGET` | **renderer-profile** | >4 mesh slots, >80 triangles per mesh |
 | `A14_NO_FULL_FRAME_MESH` | **renderer-profile** | a mesh spanning the whole stage |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | **renderer-profile** | an overlay page that can never be transparent — no alpha channel and no `tRNS` chunk |

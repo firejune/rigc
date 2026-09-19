@@ -533,9 +533,9 @@ first three work on any reference you have, and `bench` is a repository workflow
 and `bun run fetch-examples`. The reasoning behind them is in
 [the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md).
 
-`build` and `validate` both default to `--profile spine` — the 29 validity rules, which
+`build` and `validate` both default to `--profile spine` — the 30 validity rules, which
 ask *is this valid Spine 4.3 that any runtime plays correctly?* `--profile spine-html`
-adds all 44: the other 15 are one renderer's policy and one canvas budget's, and they
+adds all 45: the other 15 are one renderer's policy and one canvas budget's, and they
 fire on perfectly correct editor-produced Spine data, which is why they are opt-in.
 ⇒ **That reason is about foreign data and does not carry to a rig you are authoring
 yourself: author under `--profile spine-html` and read the extra 15 as findings, and
@@ -681,7 +681,7 @@ letting `A17` blame the editor for the harness's own doing.
 | 📥 **[docs/INGEST.md](docs/INGEST.md)** | **working with a skeleton you did not author.** What every command can and cannot do with a foreign `skeleton.json`, reading it with the toolchain, transcription as the route that makes it yours, what each validator complaint means on an export, and the re-pivot/rename/extend recipes. Ships in the package too |
 | 🤖 **[docs/PROMPTING.md](docs/PROMPTING.md)** | **handing the authoring to an AI agent** — the prompt clauses a measured pilot run paid for, and what you can leave unsaid. Ships in the package too |
 | 🔬 **[docs/SPEC_COVERAGE.md](docs/SPEC_COVERAGE.md)** | Spine 4.3's full export surface against what rigc emits and what the official examples measurably use, with the ordered gap list |
-| 🎓 **[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 44 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
+| 🎓 **[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 45 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
 | 📋 [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) · [GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md) · [PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) | the live rung ledger, the clause statements a candidate is graded against, and how to run an agent through the ladder and score what comes back |
 | 🗺️ [ROADMAP.md](https://github.com/firejune/rigc/blob/main/ROADMAP.md) | where this is going, and where it has been. What 1.0 has to mean before the number is claimed — conditions rather than a feature list, because direction here comes from what users hit |
 | 📐 [CLAUDE.md](https://github.com/firejune/rigc/blob/main/CLAUDE.md) | **the doctrine** — why the validator's messages are the product, why nothing reaches disk before green, why no number is ever invented, and what a change has to keep. [CONTRIBUTING.md](https://github.com/firejune/rigc/blob/main/CONTRIBUTING.md) calls it worth ten minutes before a first patch. Repository material |
@@ -738,7 +738,7 @@ quality."* All six, with their verdicts, are in
 [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).
 
 The whole dossier — the yardstick, `diff` and `check` and what neither of them can
-see, every rung, the run viewer, the 44 assertions and the selftest behind them — is
+see, every rung, the run viewer, the 45 assertions and the selftest behind them — is
 [docs/BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md).
 Live rung status is
 [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).
