@@ -1934,8 +1934,35 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   // consumer's process, so they are refused here where the message can name the
   // rig spec. What the parser does NOT check is the pairing with `skin: true`,
   // and that half is silent in both directions (see `RigSkinEntry`).
-  const skinBoneUse = new Map<string, string>();
-  const skinConstraintUse = new Map<string, string>();
+  //
+  // ⭐ **Sets rather than "which skin owns this", because a name may be in
+  // several lists.** Until issue #725 these were `name -> the skin that claimed
+  // it first`, and a second skin naming the same bone or constraint was refused
+  // with *"a bone belongs to one skin"*. The rule was never the parser's and the
+  // comment above it said so; what it rested on was that "which skin am I for"
+  // has no answer for a name in two lists. It has one, and the runtime gives it:
+  // `Skeleton.updateCache` activates the bones of the skin being WORN, so a bone
+  // two mutually exclusive variants both list is active under either — measured
+  // on a hand-forged file the refusal used to prevent, `bone.active` true under
+  // each of the two skins, false under a third that lists nothing and false with
+  // no skin set. `Skin.addSkin` deduplicates by object identity, so even a
+  // consumer combining both variants gets the bone once. The format is a
+  // per-skin SET and rigc now says the same thing.
+  //
+  // ⚠️ **The worn skin, and only the worn skin.** `updateCache` reads
+  // `this.skin` and never `SkeletonData.defaultSkin` — the default-skin fallback
+  // is `getAttachment`'s and covers art alone — so a `skin: true` bone that only
+  // the `default` skin lists is measured INACTIVE under every other skin and
+  // with no skin set. That is why nothing here is a union, and it is the one
+  // shape an author is most likely to write expecting "always on".
+  //
+  // What the rule was really guarding — a second list that was meant to name a
+  // different bone — is not derivable from the file, so it is not refused. Every
+  // refusal that IS derivable stays: a name the rig does not declare, a name
+  // declared under another constraint kind, and both halves of the `skin: true`
+  // switch, each of which the rig suite now measures on a shared member.
+  const skinBoneUse = new Set<string>();
+  const skinConstraintUse = new Set<string>();
   if (spec.skins !== undefined) {
     if (!isObj(spec.skins)) throw new CompileError(`${where}: "skins" is an object keyed by skin name`);
     const collision = RIG_SKIN_KEYS.find((key) => slotNames.has(key));
@@ -1956,17 +1983,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
         if (!seen.has(bone)) {
           throw new CompileError(`${at} activates bone "${bone}", which this rig does not declare`);
         }
-        const previous = skinBoneUse.get(bone);
-        if (previous !== undefined && previous !== skinName) {
-          // Not a parser rule — a rig-spec one. `updateCache` activates the union
-          // of the current skin's bones, so a bone in two skins is a bone whose
-          // "which skin am I for" question has no answer, and the second list is
-          // usually a copy-paste that was meant to be a different bone.
-          throw new CompileError(
-            `${at} activates bone "${bone}", which skin "${previous}" already activates; a bone belongs to one skin`,
-          );
-        }
-        skinBoneUse.set(bone, skinName);
+        skinBoneUse.add(bone);
         const declared = spec.bones.find((b) => b.name === bone);
         if (declared?.skin !== true) {
           throw new CompileError(
@@ -1994,13 +2011,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
                 'a skin looks its constraints up by name AND type, so this one is a miss and the loader throws',
             );
           }
-          const previous = skinConstraintUse.get(constraintAt(type, name));
-          if (previous !== undefined && previous !== skinName) {
-            throw new CompileError(
-              `${at} activates ${type} constraint "${name}", which skin "${previous}" already activates; a constraint belongs to one skin`,
-            );
-          }
-          skinConstraintUse.set(constraintAt(type, name), skinName);
+          skinConstraintUse.add(constraintAt(type, name));
           if (!facts.skinRequired) {
             throw new CompileError(
               `${at} activates ${type} constraint "${name}", but that constraint does not declare \`"skin": true\`. ` +
@@ -2016,7 +2027,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   // there is. Outside the block above on purpose — a rig with no `skins` at all
   // is the strongest case of it. A listed bone activates its ancestors too
   // (`Skeleton.ts:198-205`), so a parent reachable only that way is not dead.
-  const activated = new Set(skinBoneUse.keys());
+  const activated = new Set(skinBoneUse);
   const parentOf = new Map(spec.bones.map((b) => [b.name, b.parent]));
   for (const bone of [...activated]) {
     for (let cursor = parentOf.get(bone); cursor; cursor = parentOf.get(cursor)) activated.add(cursor);
