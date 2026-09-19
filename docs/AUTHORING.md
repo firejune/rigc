@@ -819,8 +819,7 @@ behind it writes literal `x`/`y` instead.
 
 **R10 — The `animations` object is keyed in the editor's order, not in yours, and
 names that have no one order are refused.** Declare animations in whatever order
-reads best; the emit keys them the way the Spine editor does — **natural and
-case-insensitive**. This is the one place rigc
+reads best; the emit keys them the way the Spine editor does. This is the one place rigc
 reorders anything you wrote, and it is not cosmetic: a `slider`'s animation is a
 **name** in JSON and an **ordinal** in the format's binary half, so an editor that
 re-sorts the object repoints every slider whose animation moved index — silently,
@@ -829,61 +828,73 @@ in a file that still parses and still gates green (§3.5.2,
 animation's own body is byte-identical either way, and every other collection is
 emitted in the order you gave it.
 
-⚠️ **What is measured about that comparator, and what is not.** The editor sorts
-natural and case-insensitive — measured, two rigs, one axis each:
-`Turn, sweep, wave` came back `sweep, Turn, wave`, and `turn10, turn2, zoom` came
-back `turn2, turn10, zoom` ([#539](https://github.com/firejune/rigc/issues/539)).
-But "natural and case-insensitive" is a **family** of comparators, not one, and
-**four** of its choices have never been measured. rigc emits the order every
-member of that family agrees on, and **refuses the sets where one of the four
-would decide**, naming the pair. So the rule you have to hold is about *names*,
-and it is four things:
+⚠️ **What that comparator is, measured rather than inferred.** Five name lists
+went through a licensed 4.3.26 editor as JSON and came back as JSON, and the ten
+answers are in the repository as
+`fixtures/editor-order/probe{1..5}.{in,out}.json`
+([#728](https://github.com/firejune/rigc/issues/728)). Every row below is a clause
+of the rule with the pair from those files that shows it — nothing here is a
+guess, and the selftest re-derives each row from the files rather than from this
+page:
 
-| Do not let two animation names differ | Because | Instead |
+| The editor | Shown by |
+| --- | --- |
+| folds case **upward**, per character, and leaves a character with no single upper case where it is | `z` before `_x` (`_` is 0x5F, above `Z` and below `a`); `z` before `ß`, which a whole-string upper case would write `SS` and sort among the `S`s |
+| reads a **run of digits as a number** — at any position, after any script | `x2` before `x10`; `中2` before `中10` |
+| **defers** two runs that are one number written twice, and settles them at the end with the leading zeros later | `a01` before `a1b`, so the walk did not stop at the equal runs; `a1` before `a01`, which is how it ends |
+| **skips a space**, and gives that tie to the name with fewer of them — after the leading-zero tie-break, not before it | `bc` before `b c`; `a 1` before `a01` |
+| otherwise orders by **code point after folding**, and does not treat punctuation as ignorable | `a-1` before `a1`; `a1b` before `a_1` |
+| leaves a remaining **tie in the order your file declares it** | `turn` before `Turn`; `Mango` before `mango` — each given in that order and returned in it |
+| writes **leaves then folders at the root**, and **sub-folders then leaves inside a folder** | `h` before `f/sub1/deep/q`; `f/sub1/x` before `f/leafA` |
+
+⭐ **A tie is not an ambiguity, and that is what retired most of this rule's
+refusals.** Two names the comparator cannot separate come back in the order the
+file gave them, so the order rigc emits for such a pair is **your own declaration
+order** and the editor keeps it. Nothing moves index, so there is nothing to
+refuse: `Turn` beside `turn`, `turn01` beside `turn1`, `1turn` beside `turn`,
+`wave_x` beside `wavea` all build, and each is keyed the way the round trips say.
+
+So what is left refused is short, and each row is a pair two readings of the
+**same** measurement order differently:
+
+| Refused | Because | Instead |
 | --- | --- | --- |
-| by **case alone** (`Turn` against `turn`) | they fold together, so only a tie-break separates them, and nobody has measured which way it breaks | pick one case for all of them, or change a letter |
-| by a **number written two ways** (`turn01` against `turn1`) | `01` and `1` are one number twice; shorter-first, longer-first and lexicographic are all real tie-breaks | write the number one way — with leading zeros or without, but not both |
-| by a **digit run against a word** (`1turn` against `turn`) | comparators differ on whether a number sorts before a word | rename so a run of digits is never compared against a word |
-| by a **separator** — anything that is neither a letter nor a digit (`wave_x` against `wavea`, `wave` against `wave-`) | a collator may treat `-` or a space as ignorable, and `_` sits *between* `Z` and `a`, so folding up and folding down order it oppositely | rename so the first character that differs is a letter or a digit |
+| `number` — two or more digit runs that are each one number written twice, pointing opposite ways (`x01y1` against `x1y01`) | the round trips measured one deferred run; keeping the first such difference and keeping the last are both consistent with that | write each number one way, with leading zeros or without |
+| `separator` — a whitespace character that is not a space (a tab, a no-break space) | the space is measured skipped and nothing else is, so a rule that skips all whitespace and one that skips only the space disagree here | rename so the only whitespace in either name is a space |
+| `folder` — two sibling **folders** the comparator cannot separate (`Fx/a` against `fx/b`) | a tie between two leaves is file order, but the editor holds a folder as an object and keeps its entries together, and no round trip carried two folders one fold apart | rename one of the folders so they differ by more than letter case, spacing or a leading zero |
 
-⭐ **Capitals and numbered series are not what is refused** — only pairs one of
-those four decides. `Sweep, Turn, Wave, Zoom02, Zoom10` builds, and so does
-`shot1 … shot12`: every member of the family puts each of those sets in one
-order, and that order is what rigc emits. A numbered series that crosses 9 → 10 is
-keyed **1, 2, … 9, 10, 11, 12**, which is what the editor does with it — and is
-not what a codepoint sort does.
+⭐ **Capitals and numbered series are not what is refused.**
+`Sweep, Turn, Wave, Zoom02, Zoom10` builds, and so does `shot1 … shot12`: a
+numbered series that crosses 9 → 10 is keyed **1, 2, … 9, 10, 11, 12**, which is
+what the editor does with it — and is not what a codepoint sort does.
 
-✅ **This list had two more rows before
-[#543](https://github.com/firejune/rigc/issues/543), and both were artefacts of
-the emit rather than facts about the editor.** rigc used to key `animations`
-**codepoint-ascending** and refuse every pair codepoint and the editor could order
-differently — which refused a pair that folds the other way (`Turn` against
-`sweep`) and a pair of digit runs of unequal width (`turn10` against `turn2`).
-Those are the only two name sets anybody has ever put through the editor and read
-back, so the tool was refusing precisely the pairs it knew the most about, and its
-only repair was *rename* — the one repair a transcription cannot take. Emitting a
-member of the family instead moves no byte on any set the old rule accepted; it
-just stops refusing the ones it did.
+✅ **This rule was a quantifier over comparators until #728, and that is what
+changed.** rigc keyed `animations` codepoint-ascending until
+[#543](https://github.com/firejune/rigc/issues/543) and then emitted a member of
+the "natural, case-insensitive" family, refusing every pair the family could
+disagree about. Both refusals were sound and both over-refused by construction,
+because a quantifier stands in for a measurement: a name with a capital, an
+accent, a space or a folder in it was refused rather than emitted in the order the
+editor returns. Measuring the comparator moves no byte on any set the old rule
+accepted; it stops refusing the ones it did.
 
-**R11 — The `skins` array is written with `default` first and the rest in the
-editor's order, and skin names that have no one order are refused.** The same rule
-as R10, in the collection that was believed exempt from it. A skin is a **name** in
-the JSON half of the format and an **ordinal** in the binary half —
-`skins[readInt()]` for an attachment timeline, `skins[skinIndex]` for a linked mesh
-— so an editor that writes the array in another order repoints every such
-reference, silently, in a file that still parses. Measured: a rig built
-`default, zulu, mike, alpha` exported `default, alpha, mike, zulu`
+**R11 — The `skins` array is written with `default` first and the rest in exactly
+the order R10 describes.** A skin is a **name** in the JSON half of the format and
+an **ordinal** in the binary half — `skins[readInt()]` for an attachment timeline,
+`skins[skinIndex]` for a linked mesh — so an editor that writes the array in
+another order repoints every such reference, silently, in a file that still
+parses. Measured: a rig built `default, zulu, mike, alpha` exported
+`default, alpha, mike, zulu`
 ([#541](https://github.com/firejune/rigc/issues/541)).
 
-⚠️ **The refusal here is wider than R10's, and deliberately.** R10 can be narrow
-because #539 measured two animation-name pairs and thereby *refuted* a codepoint
-sort. The skins measurement refutes nothing — `alpha, mike, zulu` is the answer
-codepoint, folding and natural order all give — so the editor's skin comparator is
-**not established**, and rigc refuses any pair those candidates could disagree
-about. In practice that is R10's four rows plus two more: a pair a case fold
-reverses (`Zulu` against `mike`) and two digit runs of unequal width (`mike10`
-against `mike2`). Both of those *build* as animation names and are refused as skin
-names, and the two refusals say which is which.
+⚠️ **It is one comparator, and that is measured too.** Two of the five round
+trips carried one name list as **both** collections and both came back in one
+order, which is what retired the wider skin refusal #541 shipped: until #728,
+`Zulu` beside `mike` and `mike10` beside `mike2` built as animation names and were
+refused as skin names. Both build now. `default` is pinned rather than sorted, on
+names the same comparator puts ahead of it — `default` before `2`, `default`
+before `A` — so renaming a skin away from `default` makes it an ordinary name that
+sorts like one.
 
 **R12 — A placeholder that more than one skin fills gets a per-skin attachment
 `name`, and the `default` skin may not be one of those skins.** rigc writes
@@ -2393,9 +2404,11 @@ re-rendered mean absolute error from 10.4655 / 8.4961 / 8.7140 down to
 identically, which is what rigc emitted when that trip was measured.)
 
 ⚠️ The editor's comparator is natural and case-insensitive
-([#539](https://github.com/firejune/rigc/issues/539)), and four of its choices are
-unmeasured — so the emit is that family's order for names none of the four
-decides, and the rest are a compile error. **R10** has the four shapes to avoid.
+([#539](https://github.com/firejune/rigc/issues/539)) and is now measured in full
+off five stored round trips
+([#728](https://github.com/firejune/rigc/issues/728)) — so the emit is the
+editor's own order, and only what those files leave open is a compile error.
+**R10** has the rule and the three shapes to avoid.
 
 ✅ **What that repair does not reach is a compile error now, not a hazard.** This
 paragraph used to say that names a codepoint sort and a friendlier one disagree
@@ -2407,7 +2420,8 @@ that to naming discipline — and since
 [#543](https://github.com/firejune/rigc/issues/543) it does better than refusing
 those two, because they are the two sets the editor's answer is **known** for:
 both are emitted in the order it returned. What is still a compile error is the
-set whose order turns on one of the four unmeasured choices, printed with both
+set whose order turns on one of the three things the round trips of
+[#728](https://github.com/firejune/rigc/issues/728) leave open, printed with both
 names, which of them decides it, and the rename that settles it. What changed is
 the price of forgetting: a build that stops, rather than a slider that silently
 applies the wrong animation.
@@ -4853,8 +4867,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `animation "A" group "G" has no timeline "P" (a bone group has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate; a slot group has: attachment, rgba, rgba2; a physics constraint group has: inertia, strength, damping, mass, wind, gravity, mix, reset)` | §4.3, §4.4 — a group's family is decided by the property, and `P` is in none of the three tables, so there is no family to resolve the members as. Fix the spelling and the group becomes whichever family the property names. The group is refused before its members are looked up, so a member the rig does not declare is a **later** message; an unknown group NAME is an earlier one. Before [#661](https://github.com/firejune/rigc/issues/661) a group of bones read `animation "A" targets unknown slot "M"` and a group of slots got the slot row below, naming one family out of three |
 | `animation "A" slot "X" has no timeline "P" (it has: attachment, rgba, rgba2)` | §4.4 — a slot has exactly three timelines and `P` is none of them. Fix the spelling; a bone or constraint property written on a slot track is refused by its own row instead. Before [#650](https://github.com/firejune/rigc/issues/650) every other name compiled as an **rgba** timeline called `P`, and what you saw was `A00_ROUNDTRIP_PARSE` on the emitted file — or, for the one-channel spelling, `rgba value needs 4 channels, got 1` |
 | `animation "A" slot "X" rgba2: slot "X" declares no setup "dark", and an "rgba2" timeline poses a slot's dark colour …` | §3.3, §4.4 — the two-colour tint has a setup half and a keyed half, and the keyed half cannot exist without the other. `Slot`'s constructor allocates a dark colour only for a slot whose setup pose declares one, and `RGBA2Timeline` writes it unconditionally — so without the `dark` the file loads, and the first `state.apply` throws `TypeError: null is not an object` in the consumer's process. Give the slot the `dark` it holds at rest, or key `rgba` if only the light colour moves. Raised before the keys are read, with the slot named, for the same reason the row above is |
-| `N pair(s) of animation names have no one order: … "turn" / "Turn" (case) — they are one name in two cases, and which of them the editor puts first is not measured; rename one of them so they differ by more than letter case` | **R10** — rename until no pair is left. The kind in brackets says which of the editor comparator's four UNMEASURED choices decides the pair: `case` (a pure case tie), `number` (one number written two ways, or a run of digits against a word) or `separator` (make the first character that differs a letter or a digit). rigc keys `animations` in the editor's own comparator — natural and case-insensitive ([#539](https://github.com/firejune/rigc/issues/539), [#543](https://github.com/firejune/rigc/issues/543)) — so a pair that comparator settles is emitted rather than refused, and only the four choices nobody has measured are a compile error; on those, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
-| `N pair(s) of skin names have no one order: … "Zulu" / "mike" (case) — folded to one case "Zulu" and "mike" order the other way round, so whether the editor folds SKIN names decides this pair` | **R11** — rename until no pair is left. The same shape as the row above with a **wider** family: #539 measured the editor's comparator for animation names and thereby ruled codepoint out, and nothing has ruled anything out for skin names, so a pair the candidates could disagree about is refused even where the animation rule would emit it. `Zulu`/`mike` and `mike10`/`mike2` build as animation names and are refused as skin names ([#541](https://github.com/firejune/rigc/issues/541)) |
+| `N pair(s) of animation names have no one order: … "Fx/a" / "fx/b" (folder) — "Fx/a" and "fx/b" sit in the sibling folders "Fx" and "fx", which the comparator leaves in one place …; rename one of the two folders so they differ by more than letter case, spacing or a leading zero` | **R10** — rename until no pair is left. The kind in brackets says which of the three things the five stored round trips leave open decides the pair: `number` (two digit runs that are each one number written twice, pointing opposite ways), `separator` (a whitespace character that is not a space) or `folder` (two sibling folders the comparator cannot separate). rigc keys `animations` in the editor's own comparator, read off `fixtures/editor-order/probe{1..5}.{in,out}.json` ([#728](https://github.com/firejune/rigc/issues/728)) — so a pair those files settle is emitted rather than refused, **including a pair that differs only in case**, whose order is then the one your spec declared. On the three that are left, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
+| `N pair(s) of skin names have no one order: … "Fx/a" / "fx/b" (folder) — …` | **R11** — rename until no pair is left. The same shape and the same three kinds as the row above, because it is the same comparator: two of the five round trips carried one name list as both collections and both came back in one order ([#728](https://github.com/firejune/rigc/issues/728)). ⚠️ This row was **wider** than R10's until then — `Zulu`/`mike` and `mike10`/`mike2` built as animation names and were refused as skin names ([#541](https://github.com/firejune/rigc/issues/541)) — and both build now |
 | `slot "patch": placeholder "patch" is filled by the "default" skin AND by skins "zulu", "mike", and the Spine editor has no way to hold that … Move the default skin's entry for this slot into a named skin — call it "base"` | **R12** — do what it says: move that entry out of `default` into a named skin. The editor has no representation for a placeholder the default skin shares with a named one, in either spelling, and §3.4.2 has both measurements. Renaming the placeholder does not help; the shape is what is refused |
 | `N attachment name collision(s): a placeholder that more than one skin fills is emitted with the name "<skin>/<placeholder>" … slot "patch": skin "base" placeholder "zulu/patch" and skin "zulu" placeholder "patch" would both be named "zulu/patch"` | **R12** — rename the placeholder or the skin. rigc composes an attachment name for every placeholder more than one skin fills (§3.4.2), and this fires when a composed name is one another entry in the same slot already answers to — including a plain name in the default skin, which composed nothing. Both sites are named; either rename ends it |
 
@@ -6738,9 +6752,9 @@ one key, deform blocks counted at each of their three levels;
 ⇒ in rigc: only `animations` is emitted sorted (R10), because it is the one
 object measured here whose ORDER is also an index space — every reference into
 the re-sorted *other* objects is by name on both sides, so nothing moves when
-they are re-keyed. rigc emits **that comparator's own order** and refuses the name
-sets on which its leading-zero, case-tie, digit-against-word or separator
-behaviour — the four choices still unmeasured — would decide a pair. Sorting the
+they are re-keyed. rigc emits **that comparator's own order**, which
+[#728](https://github.com/firejune/rigc/issues/728) then measured in full off five
+stored round trips (R10) rather than quantifying over a family. Sorting the
 105 collections that way reproduces **105 of 105**, the three codepoint cannot
 included, and refuses none of them; the codepoint rule that stood until
 [#543](https://github.com/firejune/rigc/issues/543) reproduced 102 and refused
@@ -6763,10 +6777,13 @@ does — `skins` carries ordinals in the binary half, `skins[readInt()]` for an
 attachment timeline and `skins[skinIndex]` for a linked mesh — so this is the
 `animations` defect (#535) in the collection nobody had checked. ⇒ in rigc: R11.
 
-⚠️ **What that measurement does *not* settle is which comparator.** `alpha, mike,
-zulu` is the order codepoint, case-folding and natural order all produce, so unlike
-the animations case nothing here refutes anything, and rigc refuses any skin-name
-pair the candidates could disagree about (R11).
+✅ **Which comparator it is was the open half of that, and #728 closed it.**
+`alpha, mike, zulu` is the order codepoint, case-folding and natural order all
+produce, so #541's rig refuted nothing and rigc refused any skin-name pair the
+candidates could disagree about. Two of the five round trips carried one name list
+as **both** collections and both came back in one order, so `skins` and
+`animations` share one comparator — measured, not inferred — and the wider skin
+refusal is gone (R11).
 
 ✅ **The two readings this replaces.** A pull request once called `skins` *measured
 preserved*, on the strength of a one-skin rig where a one-element array comes back

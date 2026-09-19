@@ -46,7 +46,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync,
 import { basename, join, resolve } from 'node:path';
 
 /** Where the editor lives, per platform, from Esoteric's own CLI page. */
-const EDITOR_DEFAULTS: Record<string, string> = {
+export const EDITOR_DEFAULTS: Record<string, string> = {
   darwin: '/Applications/Spine.app/Contents/MacOS/Spine',
   win32: 'C:\\Program Files\\Spine\\Spine.com',
   linux: '/opt/Spine/Spine',
