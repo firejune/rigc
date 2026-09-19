@@ -178,7 +178,7 @@ What the flags mean:
 | `--again` | `vote --record` only: record a second vote on a ballot the ledger already has. Without it a repeat is refused by name rather than doubled |
 | `--frame` | `pose` and `chainfit`: one pose frame — the picture to read part placements out of. One frame per call; several key poses are several calls, and correlating them is yours (§11) |
 | `--scale` | the scale window to search, as **frame pixels per part pixel**, `<min>,<max>` (default `0.5,2`). The report states what it searched, and a window that does not contain the truth does not reliably refuse — §11. For `chainfit` it sizes the **internal anchor pass** and is refused beside `--anchor` — §12.4 |
-| `--rotation` | the rotation window to search, in screen degrees, `<min>,<max>` (default `-180,180`, a full turn). Narrow it when you know the art is upright. For `chainfit`, again the internal anchor pass — the chains' own window is `--hinge` |
+| `--rotation` | the rotation window to search, in screen degrees, `<min>,<max>` (default `-180,180`, a full turn). Narrow it when you know the art is upright — a window narrower than the coarse step is divided rather than refused, and `search` states the step that division produced (§11.3). For `chainfit`, again the internal anchor pass — the chains' own window is `--hinge` |
 | `--max-residual` | `pose` and `chainfit`: above this residual a placement is **refused by name** instead of reported flat (default `0.25`). A reporting threshold, not a pass bar — the placement is still in the JSON |
 | `--anchor` | `chainfit` only: a `rigc pose` report for **this** frame, whose confident placements become the anchors the chains hang off. Without it that pass runs internally — §12.2 |
 | `--hinge` | `chainfit` only: the window each child bone's local rotation is searched over, in **Spine** degrees about its setup value, `<min>,<max>` (default `-180,180`) — §12.4 |
@@ -7490,7 +7490,7 @@ Per part:
 | `ambiguous` | at least one alternate is inside the ambiguity margin. **Choose with something this instrument cannot see** — anatomy, the other frame, or `rigc vote` |
 | `rotationFree` | the part is self-similar under rotation, so `rotationDeg` is a placeholder and the value is yours |
 | `rotationSelfSimilarity` | the number `rotationFree` is a threshold on. A part just over the line is worth a look |
-| `refusal` | `{ reason, detail }` or `null`. Reasons: `no-match`, `larger-than-canvas`, `empty-part` |
+| `refusal` | `{ reason, detail }` or `null`. Reasons: `no-match`, `larger-than-canvas`, `empty-part`. A `no-match` whose best placement stopped **on a wall of the search window** names the wall in its detail — see §11.4 |
 | `coarse` | the grid this part was actually searched on. A handful of cells means the part is small relative to the frame and the first pass had little to go on |
 | `notes` | the same facts in prose, in the order they were found |
 
@@ -7508,6 +7508,16 @@ The report also carries `frame.background` (how the picture's empty space was
 identified — a flat colour, transparency, or `unknown`), `search` (every window
 and threshold that was applied), and `caveats`.
 
+🔒 **`search` states what ran, not what was asked for.** `search.rotation` carries
+`degrees`, the ladder the coarse pass actually walked, and its `stepDeg` is read
+off that ladder rather than off the constant the ladder was capped at. The coarse
+step `15°` is a **ceiling** on the step, not the step: a narrower window is
+divided into whole steps no coarser than it, so
+`--rotation -5,5` prints `rotation -5°–5° in 2 step(s) of 10°` and walks those two
+angles and no others. Nothing reported leaves the window either — the refinement
+and the quarter-turn probes are held inside it, and a window spanning a full turn
+holds nothing because it already contains every angle.
+
 ### 11.4 What it cannot see — read this before using the numbers
 
 - ⚠️ **Residuals degrade under occlusion, and there is no depth solver here.** A
@@ -7523,6 +7533,16 @@ and threshold that was applied), and `caveats`.
   answer is the best placement available *inside* `--scale` / `--rotation` and its
   residual can look reasonable. This is why the window is a reported field: if the
   numbers surprise you, check `search` before you trust them.
+- 🔒 **A refusal that stopped on a wall of the window says which wall.** When a
+  `no-match`'s best placement sits on the floor or the ceiling of `--scale`, or on
+  an edge of a `--rotation` window narrower than a full turn, the detail names it:
+  `best placement at scale 0.500, the floor of --scale 0.5,2 — the truth may lie below the window`.
+  That is the case where the window is the first thing to move rather than the
+  frame or the threshold — eleven parts of one frame came back refused at
+  `scale=0.500` against art rendered at `0.311` per part pixel, and the message
+  said only that the residual was above `--max-residual`. It is printed on a
+  **refusal and nowhere else**: an accepted placement sitting on a wall is a window
+  chosen to bracket the answer, which is the flag working.
 - ⚠️ **A frame whose border has no dominant colour reports `background.unknown`.**
   Every pixel then counts as material, the silhouette signal is gone, and the
   residual is colour agreement alone. The report says so rather than being quietly

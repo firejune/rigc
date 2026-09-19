@@ -198,13 +198,22 @@ import {
 } from './src/atlas.ts';
 import { isContent } from './src/framing.ts';
 import {
+  COARSE_ROTATION_STEP,
   DEFAULT_MAX_RESIDUAL,
+  DEFAULT_SCALE_MAX,
+  DEFAULT_SCALE_MIN,
   errBilinear,
   estimatePose,
   levelOf,
+  normaliseDegrees,
   POSE_SPEC,
+  poseLines,
   ROTATION_FREE_TOLERANCE,
+  rotationLadder,
+  searchRotationClause,
+  windowEdgeNote,
   type PosePlacement,
+  type PoseReport,
 } from './src/pose.ts';
 import {
   chainFitLines,
@@ -42282,6 +42291,167 @@ function runCurrencySuite(): number {
     }
   }
 
+  // --- CUR47/CUR48: the guide against the two sentences `pose` prints (#719) -
+  //
+  // ⭐ The same currency question as every case above, on a surface none of them
+  // reaches: a message. `docs/AUTHORING.md` is the only interface an agent that
+  // cannot see the rig has besides the messages themselves, so a page teaching a
+  // sentence the tool no longer prints is worse than a page that never taught it
+  // — the reader has been given a string to look for.
+  //
+  // 🔑 Neither figure below is typed here. The step comes off `rotationLadder`
+  // run over the window the PAGE quotes, the ceiling off `COARSE_ROTATION_STEP`,
+  // and the wall sentence out of `windowEdgeNote` over the two default scale
+  // bounds — so the page is compared against what the module would produce
+  // rather than against a copy of it made on the day it was written.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const guideRaw = readFileSync(join(root, guidePath), 'utf8').split('\n');
+    /** The page with its wrapping taken out, so a sentence that spans two lines is one string. */
+    const flatten = (lines: readonly string[]): string => lines.join('\n').replace(/\s+/g, ' ');
+    /** The page with one line rewritten — the plant shape every case in this suite uses. */
+    const rewritten = (at: number, line: string): string[] => guideRaw.map((was, i) => (i === at ? line : was));
+    const lineWith = (needle: string): number => guideRaw.findIndex((line) => line.includes(needle));
+
+    // --- CUR47: the step the page quotes is the step the ladder produces -----
+    {
+      const CEILING = /The coarse step `(-?[\d.]+)°` is a \*\*ceiling\*\*/;
+      const QUOTED = /`--rotation (-?[\d.]+),(-?[\d.]+)` prints `([^`]+)`/;
+      const scanGuide = (lines: readonly string[]): string[] => {
+        const faults: string[] = [];
+        const text = flatten(lines);
+        const ceiling = CEILING.exec(text);
+        if (ceiling === null) {
+          faults.push(`${guidePath} no longer calls the coarse rotation step a ceiling, so nothing here reads it`);
+        } else if (Number(ceiling[1]) !== COARSE_ROTATION_STEP) {
+          faults.push(
+            `${guidePath} calls ${ceiling[1]}° the ceiling on the coarse rotation step and the module answers ` +
+              `${COARSE_ROTATION_STEP}`,
+          );
+        }
+        const quoted = QUOTED.exec(text);
+        if (quoted === null) {
+          faults.push(`${guidePath} quotes no \`search\` line for a named --rotation window, so the step it teaches is unchecked`);
+        } else {
+          const minDeg = Number(quoted[1]);
+          const maxDeg = Number(quoted[2]);
+          const degrees = rotationLadder(minDeg, maxDeg);
+          const built = searchRotationClause({
+            minDeg,
+            maxDeg,
+            stepDeg: degrees.length > 1 ? degrees[1] - degrees[0] : 0,
+            steps: degrees.length,
+            degrees,
+          });
+          if (quoted[3] !== built) {
+            faults.push(
+              `${guidePath} teaches ${JSON.stringify(quoted[3])} for --rotation ${minDeg},${maxDeg} and this build ` +
+                `prints ${JSON.stringify(built)}`,
+            );
+          }
+        }
+        return faults;
+      };
+      const standing = scanGuide(guideRaw);
+      const probes = [...standing];
+      let note = '';
+      const ceilingAt = lineWith('is a **ceiling**');
+      const quotedAt = lineWith('` prints `rotation ');
+      if (ceilingAt < 0 || quotedAt < 0) {
+        probes.push(
+          `${guidePath} carries the ceiling sentence on line ${ceilingAt + 1} and the quoted line on line ` +
+            `${quotedAt + 1}, and a plant needs both`,
+        );
+      } else if (standing.length === 0) {
+        const one = (what: string, at: number, line: string): void => {
+          const raised = raisedBy(scanGuide(rewritten(at, line)), { was: standing });
+          if (raised.length !== 1) {
+            probes.push(
+              `${what} was faulted ${raised.length} time(s) and this control requires one` +
+                (raised.length === 0 ? '' : `: ${raised.join('; ')}`),
+            );
+          } else note = `${note}${note === '' ? '' : ' · '}${what}: "${raised[0]}"`;
+        };
+        one(
+          'the ceiling raised by a degree',
+          ceilingAt,
+          guideRaw[ceilingAt].replace(`\`${COARSE_ROTATION_STEP}°\``, `\`${COARSE_ROTATION_STEP + 1}°\``),
+        );
+        one(
+          'the quoted step replaced by the constant it is a ceiling on',
+          quotedAt,
+          guideRaw[quotedAt].replace(/of ([\d.]+)°`/, `of ${COARSE_ROTATION_STEP}°\``),
+        );
+      }
+      const held = probes.length === 0;
+      say(
+        'CUR47_THE_ROTATION_STEP_THE_GUIDE_TEACHES_IS_THE_ONE_THE_LADDER_PRODUCES',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${guidePath} calls ${COARSE_ROTATION_STEP}° a ceiling on the coarse step and quotes one window's ` +
+            `\`search\` line, which this build reproduces angle for angle — and ${note}`,
+        ),
+        'the page taught `step 15°` for four weeks because the report printed it, over windows the ladder walked ' +
+          'at ten and at thirteen and a third. A guide that quotes a message is a second copy of it, and the only ' +
+          'copy that cannot drift is one built from the same function the message is',
+      );
+    }
+
+    // --- CUR48: the wall sentence the guide teaches is the one emitted ------
+    {
+      const scanGuide = (lines: readonly string[]): string[] => {
+        const wanted = windowEdgeNote(
+          'scale',
+          'floor',
+          DEFAULT_SCALE_MIN.toFixed(3),
+          `${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX}`,
+        );
+        return flatten(lines).includes(wanted)
+          ? []
+          : [`${guidePath} does not carry the sentence a refusal at the default floor prints: ${JSON.stringify(wanted)}`];
+      };
+      const standing = scanGuide(guideRaw);
+      const probes = [...standing];
+      let note = '';
+      const at = lineWith(`the floor of --scale ${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX}`);
+      if (at < 0) {
+        probes.push(`${guidePath} states the sentence on no single line, so a plant has nothing to aim at`);
+      } else if (standing.length === 0) {
+        const one = (what: string, line: string): void => {
+          const raised = raisedBy(scanGuide(rewritten(at, line)), { was: standing });
+          if (raised.length !== 1) {
+            probes.push(
+              `${what} was faulted ${raised.length} time(s) and this control requires one` +
+                (raised.length === 0 ? '' : `: ${raised.join('; ')}`),
+            );
+          } else note = `${note}${note === '' ? '' : ' · '}${what} is reported once`;
+        };
+        one('the wall named as the ceiling instead of the floor', guideRaw[at].replace('the floor of', 'the ceiling of'));
+        one(
+          'the scale a decimal place out',
+          guideRaw[at].replace(`scale ${DEFAULT_SCALE_MIN.toFixed(3)}`, `scale ${(DEFAULT_SCALE_MIN + 0.001).toFixed(3)}`),
+        );
+        one('the claim made flat rather than conditional', guideRaw[at].replace('may lie below', 'lies below'));
+      }
+      const held = probes.length === 0;
+      say(
+        'CUR48_THE_WALL_SENTENCE_THE_GUIDE_TEACHES_IS_THE_ONE_A_REFUSAL_PRINTS',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${guidePath} §11.4 carries the sentence \`windowEdgeNote\` builds for a refusal at the default scale ` +
+            `floor, word for word, over the two bounds the module exports — and ${note}`,
+        ),
+        'the sentence is the remedy: an author who reads the refusal and the page has to find the same string in ' +
+          'both, because what the page is teaching is which words to look for. A paraphrase here is the failure ' +
+          'mode — it reads correct and sends nobody to the right line',
+      );
+    }
+  }
+
   // --- CUR49-CUR50: the two pages that document `diff`, against the code -----
   //
   // ⭐ `docs/AUTHORING.md` §9 is `check` and not `diff`; the two documents below
@@ -45766,6 +45936,490 @@ function runPoseSuite(): number {
         `${first === second ? 'byte-identical' : `DIFFERENT (${first.length} vs ${second.length} chars)`}`,
       'a placement an agent cannot reproduce is not a measurement, and `src/` is specified to hold no clock and ' +
         'no randomness — this is the assertion that says the arithmetic obeys that too',
+    );
+  }
+
+  // --- PO12–PO16: the window as a promise the whole report keeps (#719) ------
+  //
+  // ⭐ The sitting that found this ran `pose` on eleven parts against a frame
+  // rendered at 0.311 frame pixels per part pixel, with the default window whose
+  // floor is 0.5. All eleven were refused, all eleven at `scale=0.500`, and the
+  // message named the residual and the threshold and not the wall — so the one
+  // remedy that could work was the one thing the refusal did not mention. The
+  // same sitting then narrowed `--rotation` to `-5,5` and read placements back
+  // at 91.2°, −86.2° and 90.3° under a line that said `rotation -5°–5°`.
+  //
+  // 🔑 Both are one defect wearing two faces: a window that is REPORTED without
+  // being APPLIED, and a window that is APPLIED without being REPORTED at the
+  // one moment it decided the answer.
+  //
+  // The windows below are placed against the fixture's own truth rather than at
+  // numbers typed here — "a fifth above the true scale", "twenty degrees past
+  // the true turn" — so the cases move with the fixture instead of pinning it.
+  const truthScale = want('torso').scale;
+  const truthTurn = Math.abs(want('arm_l').rotationDeg);
+  const to3 = (n: number): number => Math.round(n * 1000) / 1000;
+  const partPath = (file: string): string => join(fixture.parts, file);
+
+  /**
+   * The wall sentences that are TRUE of one reported placement.
+   *
+   * ⚠️ Derived from the reported numbers and the caller's own window, never from
+   * the module's idea of what counts as "at the wall": the clamp writes the bound
+   * itself, so equality is the whole test and an epsilon here would be this file
+   * agreeing with the code about the one thing it is checking. A rotation window
+   * is compared plainly because every window below sits inside (−180, 180], which
+   * is the range a reported angle is normalised into.
+   */
+  const wallsOf = (
+    p: PosePlacement,
+    scale: { min: number; max: number },
+    rotation: { minDeg: number; maxDeg: number },
+  ): string[] => {
+    const out: string[] = [];
+    const scaleWindow = `${scale.min},${scale.max}`;
+    if (scale.max > scale.min) {
+      if (p.scale === scale.min) out.push(windowEdgeNote('scale', 'floor', p.scale.toFixed(3), scaleWindow));
+      else if (p.scale === scale.max) out.push(windowEdgeNote('scale', 'ceiling', p.scale.toFixed(3), scaleWindow));
+    }
+    const turnWindow = `${rotation.minDeg},${rotation.maxDeg}`;
+    const said = `${p.rotationDeg.toFixed(1)}°`;
+    if (rotation.maxDeg > rotation.minDeg && rotation.maxDeg - rotation.minDeg < 360) {
+      if (p.rotationDeg === rotation.minDeg) out.push(windowEdgeNote('rotation', 'floor', said, turnWindow));
+      else if (p.rotationDeg === rotation.maxDeg) out.push(windowEdgeNote('rotation', 'ceiling', said, turnWindow));
+    }
+    return out;
+  };
+
+  /** How many wall sentences a refusal detail carries, by the clause every one of them ends on. */
+  const wallClauses = (detail: string): number => detail.split('— the truth may lie ').length - 1;
+
+  const FULL_TURN = { minDeg: -180, maxDeg: 180 };
+
+  /**
+   * Every refusal in one run, against the walls its own placement stands on.
+   *
+   * Two-sided by construction: a detail missing a wall it is on and a detail
+   * naming a wall it is not on are both reported, and the second is the reason
+   * the count of clauses is compared rather than their presence.
+   */
+  const wallFaults = (
+    what: string,
+    run: PoseReport,
+    scale: { min: number; max: number },
+    rotation: { minDeg: number; maxDeg: number },
+  ): { faults: string[]; named: string[] } => {
+    const faults: string[] = [];
+    const named: string[] = [];
+    for (const part of run.parts) {
+      if (part.refusal?.reason !== 'no-match' || part.placement === null) continue;
+      const want = wallsOf(part.placement, scale, rotation);
+      const detail = part.refusal.detail;
+      for (const sentence of want) {
+        if (detail.includes(sentence)) named.push(`${part.part} ${JSON.stringify(sentence)}`);
+        else faults.push(`${what}: ${part.part} stopped on a wall and its refusal does not say so — ${JSON.stringify(detail)}`);
+      }
+      const carried = wallClauses(detail);
+      if (carried !== want.length) {
+        faults.push(
+          `${what}: ${part.part} stands on ${want.length} wall(s) of this window and its refusal names ` +
+            `${carried} — ${JSON.stringify(detail)}`,
+        );
+      }
+    }
+    return { faults, named };
+  };
+
+  // --- PO12: a refusal that stopped on a wall names the wall ----------------
+  {
+    const lowFloor = { min: to3(truthScale * 1.2), max: to3(truthScale * 1.75) };
+    const highCeiling = { min: to3(truthScale * 0.78), max: to3(truthScale * 0.87) };
+    const pastTurn = { minDeg: to3(truthTurn + 20), maxDeg: to3(truthTurn + 60) };
+    const beforeTurn = { minDeg: to3(-(truthTurn + 60)), maxDeg: to3(-(truthTurn + 20)) };
+    // A bar tight enough that a part held away from its own answer is refused
+    // rather than reported flat, stated as a fraction of the shipped one so the
+    // two move together.
+    const tight = DEFAULT_MAX_RESIDUAL / 5;
+    const solid = [partPath('torso.png'), partPath('ball.png')];
+    const absent = [partPath('foreign.png')];
+    const runs: {
+      what: string;
+      run: PoseReport;
+      scale: { min: number; max: number };
+      rotation: { minDeg: number; maxDeg: number };
+      wall: string;
+    }[] = [
+      {
+        what: `--scale ${lowFloor.min},${lowFloor.max}, whose floor is above the true ${to3(truthScale)}`,
+        run: estimatePose({ imagesDir: fixture.parts, framePath: fixture.framePath, parts: solid, scale: lowFloor }),
+        scale: lowFloor,
+        rotation: FULL_TURN,
+        wall: `the floor of --scale ${lowFloor.min},${lowFloor.max}`,
+      },
+      {
+        what: `--scale ${highCeiling.min},${highCeiling.max}, whose ceiling is below the true ${to3(truthScale)}`,
+        run: estimatePose({
+          imagesDir: fixture.parts,
+          framePath: fixture.framePath,
+          parts: solid,
+          scale: highCeiling,
+          maxResidual: tight,
+        }),
+        scale: highCeiling,
+        rotation: FULL_TURN,
+        wall: `the ceiling of --scale ${highCeiling.min},${highCeiling.max}`,
+      },
+      {
+        what: `--rotation ${pastTurn.minDeg},${pastTurn.maxDeg}, a window past the true ${to3(truthTurn)}°`,
+        run: estimatePose({
+          imagesDir: fixture.parts,
+          framePath: fixture.framePath,
+          parts: absent,
+          rotation: pastTurn,
+          maxResidual: tight,
+        }),
+        scale: { min: 0.5, max: 2 },
+        rotation: pastTurn,
+        wall: `the floor of --rotation ${pastTurn.minDeg},${pastTurn.maxDeg}`,
+      },
+      {
+        what: `--rotation ${beforeTurn.minDeg},${beforeTurn.maxDeg}, a window short of the true −${to3(truthTurn)}°`,
+        run: estimatePose({
+          imagesDir: fixture.parts,
+          framePath: fixture.framePath,
+          parts: absent,
+          rotation: beforeTurn,
+          maxResidual: tight,
+        }),
+        scale: { min: 0.5, max: 2 },
+        rotation: beforeTurn,
+        wall: `the ceiling of --rotation ${beforeTurn.minDeg},${beforeTurn.maxDeg}`,
+      },
+    ];
+    const probes: string[] = [];
+    const notes: string[] = [];
+    for (const one of runs) {
+      const { faults, named } = wallFaults(one.what, one.run, one.scale, one.rotation);
+      probes.push(...faults);
+      const onThisWall = named.filter((row) => row.includes(one.wall));
+      if (onThisWall.length === 0) {
+        probes.push(
+          `${one.what} was chosen to drive a refusal onto ${one.wall} and drove none — ` +
+            `${one.run.parts.map((p) => `${p.part} ${p.refusal?.reason ?? 'placed'} at scale ${p.placement?.scale ?? 'n/a'} rotation ${p.placement?.rotationDeg ?? 'n/a'}`).join(', ')}`,
+        );
+        continue;
+      }
+      notes.push(`${one.wall}: ${onThisWall[0]}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'PO12_A_REFUSAL_WHOSE_BEST_PLACEMENT_STOPPED_ON_A_WALL_OF_THE_WINDOW_NAMES_THE_WALL',
+      held,
+      probeDetail(held, probes, `four windows placed against the fixture's own truth — ${notes.join(' · ')}`),
+      'eleven parts of one frame came back refused at the floor of a window that could not reach the art, and the ' +
+        'message named the residual and the threshold. An author reading it has every reason to change the frame ' +
+        'or the threshold and none to change the one thing that was wrong, because the report never said the ' +
+        'answer had stopped against a wall rather than settled',
+    );
+  }
+
+  // --- PO13: and a placement inside the window is left alone ----------------
+  //
+  // 🔒 The other half, and the half that decides whether the sentence above is
+  // worth reading. A wall named on every refusal is a wall named on none: the
+  // parts of a correct run sit at whatever scale explains them, and a window an
+  // author chose to bracket the answer puts placements near its edges on
+  // purpose. The plant is the same frame and the same part under a window whose
+  // floor is moved onto the answer it already found — nothing about the picture
+  // changes, only whether the answer is against a wall.
+  {
+    const refused = report.parts.filter((p) => p.refusal?.reason === 'no-match' && p.placement !== null);
+    const interior = refused.filter(
+      (p) => wallsOf(p.placement as PosePlacement, { min: 0.5, max: 2 }, FULL_TURN).length === 0,
+    );
+    const probes: string[] = [];
+    if (interior.length === 0) {
+      probes.push(
+        'the default window refused nothing away from its own walls, so this run cannot say whether the sentence ' +
+          'is conditional at all',
+      );
+    }
+    for (const part of interior) {
+      const detail = part.refusal?.detail ?? '';
+      if (wallClauses(detail) !== 0) {
+        probes.push(`${part.part} was refused inside the window and its detail names a wall anyway — ${JSON.stringify(detail)}`);
+      }
+      if (!detail.includes('--max-residual')) {
+        probes.push(`${part.part}'s refusal stopped naming the threshold it was refused against — ${JSON.stringify(detail)}`);
+      }
+    }
+    for (const part of report.parts) {
+      if (part.refusal !== null) continue;
+      const said = [part.refusal ?? '', ...part.notes].join(' ');
+      if (wallClauses(said) !== 0) probes.push(`${part.part} was placed, not refused, and a wall is named over it — ${JSON.stringify(said)}`);
+    }
+    // The plant: the same part, the same frame, a floor moved onto the answer.
+    let plantNote = '';
+    const victim = interior[0];
+    if (victim !== undefined && victim.placement !== null) {
+      const onTheWall = { min: victim.placement.scale, max: to3(victim.placement.scale * 2) };
+      const moved = estimatePose({
+        imagesDir: fixture.parts,
+        framePath: fixture.framePath,
+        parts: [victim.path],
+        scale: onTheWall,
+      });
+      const after = moved.parts[0]?.refusal?.detail ?? '';
+      const wanted = windowEdgeNote('scale', 'floor', onTheWall.min.toFixed(3), `${onTheWall.min},${onTheWall.max}`);
+      if (!after.includes(wanted)) {
+        probes.push(
+          `${victim.part} under --scale ${onTheWall.min},${onTheWall.max}, whose floor is the answer it already ` +
+            `found, is refused without naming the wall — ${JSON.stringify(after)}`,
+        );
+      } else {
+        plantNote =
+          `and the same part under --scale ${onTheWall.min},${onTheWall.max} — its own answer made the floor — ` +
+          `is refused with ${JSON.stringify(wanted)}`;
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'PO13_A_REFUSAL_THAT_SETTLED_INSIDE_THE_WINDOW_NAMES_NO_WALL',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${interior.length} of ${refused.length} refusal(s) under the default window settled away from both walls ` +
+          `and none of them names one, no placed part carries the sentence anywhere, ${plantNote}`,
+      ),
+      'a warning printed on every refusal is a warning nobody reads, and this one would be easy to write that ' +
+        'way — the two flags have four walls between them and a refused part is usually near one. The claim is ' +
+        'conditional or it is noise',
+    );
+  }
+
+  // --- PO14: a window narrower than the coarse step is divided, not swallowed -
+  //
+  // ⭐ The measurement the card asked for first, and it refutes the reading the
+  // card put first. `--rotation -5,5` does NOT collapse to one angle under a 15°
+  // step: the old ladder marched from the floor and then appended the ceiling, so
+  // it searched exactly two angles ten degrees apart — and printed `step 15°`,
+  // a resolution no run of it ever had. The ladder now divides the window, so the
+  // number printed is the number walked.
+  //
+  // 🔑 Through the real command, because `--rotation` is parsed on the way in:
+  // "a legal window still runs" is a fact about the flag, not about the module.
+  {
+    const narrow = { minDeg: -COARSE_ROTATION_STEP / 3, maxDeg: COARSE_ROTATION_STEP / 3 };
+    const out = join(fixture.dir, 'pose-narrow.json');
+    const run = runCli([
+      'pose',
+      '--images',
+      fixture.parts,
+      '--frame',
+      fixture.framePath,
+      '--rotation',
+      `${narrow.minDeg},${narrow.maxDeg}`,
+      '--out',
+      out,
+    ]);
+    const written = existsSync(out) ? (JSON.parse(readFileSync(out, 'utf8')) as PoseReport) : null;
+    const probes: string[] = [];
+    if (run.status !== 0) probes.push(`a window narrower than the coarse step was not run: exit ${String(run.status)} ${JSON.stringify(run.stderr.split('\n')[0])}`);
+    if (written === null) probes.push(`no report was written to ${out}`);
+    let note = '';
+    if (written !== null) {
+      const ladder = written.search.rotation;
+      const span = narrow.maxDeg - narrow.minDeg;
+      if (ladder.degrees.length < 2) {
+        probes.push(`the window was searched at ${ladder.degrees.length} angle(s): ${ladder.degrees.join(', ')}`);
+      }
+      if (ladder.degrees.some((deg) => deg < narrow.minDeg - 1e-9 || deg > narrow.maxDeg + 1e-9)) {
+        probes.push(`the ladder leaves its own window: ${ladder.degrees.join(', ')}`);
+      }
+      if (Math.abs(ladder.stepDeg * (ladder.degrees.length - 1) - span) > 1e-9) {
+        probes.push(`${ladder.degrees.length} angle(s) at ${ladder.stepDeg}° do not span the ${span}° window`);
+      }
+      if (!(ladder.stepDeg < COARSE_ROTATION_STEP)) {
+        probes.push(`the applied step ${ladder.stepDeg}° is not below the ${COARSE_ROTATION_STEP}° ceiling the window is narrower than`);
+      }
+      const escaped = written.parts.flatMap((part) =>
+        (part.placement === null ? [] : [part.placement, ...part.alternates])
+          .filter((p) => p.rotationDeg < narrow.minDeg - 1e-6 || p.rotationDeg > narrow.maxDeg + 1e-6)
+          .map((p) => `${part.part} at ${p.rotationDeg}°`),
+      );
+      probes.push(...firstFew(escaped.map((row) => `a placement outside the searched window was reported: ${row}`), 'placement(s)'));
+      note =
+        `${ladder.degrees.length} angle(s) — ${ladder.degrees.join('°, ')}° — at a step of ${ladder.stepDeg}°, under ` +
+        `the ${COARSE_ROTATION_STEP}° ceiling the window is narrower than, and not one of the ` +
+        `${written.parts.reduce((n, part) => n + (part.placement === null ? 0 : 1 + part.alternates.length), 0)} ` +
+        'placement(s) reported leaves it';
+    }
+    // ⭐ And the ceiling as an INVARIANT rather than as one window's figure.
+    // Dividing a window into a ROUNDED number of steps passes everything above —
+    // a window narrower than the constant still divides into one step — while
+    // giving a 20° window a 20° step, which is the constant bounding nothing.
+    // Every window a caller may name, walked as the pure function it is.
+    const coarser: string[] = [];
+    for (let span = 1; span <= 360; span++) {
+      const rungs = rotationLadder(-span / 2, span / 2);
+      const step = rungs.length > 1 ? rungs[1] - rungs[0] : 0;
+      if (step > COARSE_ROTATION_STEP + 1e-9) coarser.push(`a ${span}° window is walked at ${step}°`);
+    }
+    probes.push(...firstFew(coarser, 'window(s)'));
+    if (note !== '') note = `${note}; and no window from 1° to 360° is walked at a step above ${COARSE_ROTATION_STEP}°`;
+    const held = probes.length === 0;
+    say(
+      'PO14_A_ROTATION_WINDOW_NARROWER_THAN_THE_COARSE_STEP_IS_DIVIDED_AND_NOTHING_REPORTED_LEAVES_IT',
+      held,
+      probeDetail(held, probes, note),
+      'the constant was documented as the step and used as one, which left two ways for the reported step to be a ' +
+        'different number from the walked one; and the polish clamped its scale to the window while leaving the ' +
+        'rotation free to walk out of it, so a ten-degree window came back with 28.1° in it',
+    );
+  }
+
+  // --- PO15: the line printed is the ladder walked --------------------------
+  //
+  // 🌱 The plant is the branch point's own field: `stepDeg` set to the constant
+  // while the ladder beside it is untouched. That is not an invented defect, it
+  // is what this file measured before the repair — and a reading that passes it
+  // is a reading that would have passed the report the exam candidate read.
+  {
+    const reading = (run: PoseReport): string[] => {
+      const faults: string[] = [];
+      const line = poseLines(run).find((row) => row.includes('search '));
+      if (line === undefined) return ['the report prints no `search` line at all'];
+      const clause = searchRotationClause(run.search.rotation);
+      if (!line.includes(clause)) faults.push(`the printed line does not carry ${JSON.stringify(clause)} — ${JSON.stringify(line.trim())}`);
+      const ladder = run.search.rotation;
+      if (ladder.degrees.length !== ladder.steps) faults.push(`the line counts ${ladder.steps} step(s) over a ladder of ${ladder.degrees.length}`);
+      for (let i = 1; i < ladder.degrees.length; i++) {
+        const gap = ladder.degrees[i] - ladder.degrees[i - 1];
+        if (Math.abs(gap - ladder.stepDeg) > 1e-9) {
+          faults.push(`the line states one step of ${ladder.stepDeg}° over a ladder that walks ${gap}° between angle ${i} and ${i + 1}`);
+          break;
+        }
+      }
+      if (ladder.degrees.length > 0 && ladder.degrees[0] !== ladder.minDeg) {
+        faults.push(`the line opens the window at ${ladder.minDeg}° and the ladder opens at ${ladder.degrees[0]}°`);
+      }
+      const last = ladder.degrees[ladder.degrees.length - 1];
+      const wraps = ladder.maxDeg - ladder.minDeg >= 360 - 1e-9;
+      // A full turn's ladder drops the duplicate endpoint, so the angle that
+      // closes the window is one step past the last one it holds.
+      const reach = wraps ? last + ladder.stepDeg : last;
+      if (ladder.degrees.length > 0 && Math.abs(reach - ladder.maxDeg) > 1e-9) {
+        faults.push(`the line closes the window at ${ladder.maxDeg}° and the ladder reaches ${reach}°`);
+      }
+      return faults;
+    };
+    const narrow = estimatePose({
+      imagesDir: fixture.parts,
+      framePath: fixture.framePath,
+      parts: [partPath('ball.png')],
+      rotation: { minDeg: -COARSE_ROTATION_STEP / 3, maxDeg: COARSE_ROTATION_STEP / 3 },
+    });
+    const probes: string[] = [];
+    for (const [what, run] of [
+      ['the default full turn', report],
+      ['a window narrower than the coarse step', narrow],
+    ] as const) {
+      probes.push(...reading(run).map((fault) => `${what}: ${fault}`));
+    }
+    // Two plants, on the DATA the reading is taken from. The first is the field
+    // this repair replaced; the second moves one rung out of the window.
+    const planted = (edit: (run: PoseReport) => PoseReport, what: string): void => {
+      const before = reading(narrow);
+      const raised = raisedBy(reading(edit(structuredClone(narrow))), { was: before });
+      if (raised.length === 0) probes.push(`${what} was read as agreeing with its own line`);
+    };
+    planted((run) => {
+      run.search.rotation.stepDeg = COARSE_ROTATION_STEP;
+      return run;
+    }, `a report stating the ${COARSE_ROTATION_STEP}° constant as the step it walked`);
+    planted((run) => {
+      run.search.rotation.degrees[run.search.rotation.degrees.length - 1] += COARSE_ROTATION_STEP;
+      return run;
+    }, 'a ladder whose last angle sits outside the window the line names');
+    const held = probes.length === 0;
+    say(
+      'PO15_THE_SEARCH_LINE_PRINTED_IS_THE_LADDER_THE_RUN_WALKED',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the full turn prints ${JSON.stringify(searchRotationClause(report.search.rotation))} and the narrow ` +
+          `window ${JSON.stringify(searchRotationClause(narrow.search.rotation))}; each is the ladder beside it, ` +
+          `angle for angle. The same reading faults a report carrying the ${COARSE_ROTATION_STEP}° constant as its ` +
+          'step, and one whose last angle was pushed out of the window',
+      ),
+      '§11.3 calls `search` every window and threshold that was applied, which makes the line a promise rather ' +
+        'than a courtesy. A caller who reads `rotation -5°–5° step 15°` and then reads `rot=91.2°` has been told ' +
+        'two things that cannot both be true and has no way to find out which',
+    );
+  }
+
+  // --- PO16: where the quarter turns came from ------------------------------
+  //
+  // ⭐ The card offered two readings of the 91° placements — a step that
+  // swallowed the window, or a symmetric part matched a quarter turn off — and
+  // the measurement says the second, with the polish as its carrier. The ladder
+  // searched its two endpoints honestly; what left the window was the explicit
+  // `[90, 180, 270]` seed pass, which is not a ladder rung at all, and a polish
+  // that clamped its scale to the window and let its rotation walk.
+  //
+  // This is that pair as a fact rather than a story: the family is still probed
+  // where the window contains it, and is not where the window does not.
+  {
+    const probes: string[] = [];
+    const quarterTurnsOf = (run: PoseReport): string[] =>
+      run.parts.flatMap((part) =>
+        part.placement === null
+          ? []
+          : part.alternates
+              .filter((alt) =>
+                [90, 180, 270].some(
+                  (turn) =>
+                    Math.abs(
+                      normaliseDegrees(alt.rotationDeg - ((part.placement as PosePlacement).rotationDeg + turn)),
+                    ) <= 5,
+                ),
+              )
+              .map((alt) => `${part.part} ${(part.placement as PosePlacement).rotationDeg}° and ${alt.rotationDeg}°`),
+      );
+    const wide = quarterTurnsOf(report);
+    if (wide.length === 0) {
+      probes.push(
+        'a window spanning the whole turn reported no pair of optima a quarter or a half turn apart, so this run ' +
+          'cannot say the family is probed at all',
+      );
+    }
+    const narrow = estimatePose({
+      imagesDir: fixture.parts,
+      framePath: fixture.framePath,
+      parts: [partPath('foreign.png'), partPath('arm.png')],
+      rotation: { minDeg: -COARSE_ROTATION_STEP / 3, maxDeg: COARSE_ROTATION_STEP / 3 },
+    });
+    probes.push(
+      ...quarterTurnsOf(narrow).map(
+        (row) => `a window ten degrees wide reported two optima a quarter turn apart: ${row}`,
+      ),
+    );
+    const held = probes.length === 0;
+    say(
+      'PO16_THE_QUARTER_TURN_FAMILY_IS_PROBED_WHERE_THE_WINDOW_HOLDS_IT_AND_NOT_WHERE_IT_DOES_NOT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `over the whole turn ${wide.length} pair(s) of optima sit a quarter or a half turn apart — ${wide[0] ?? 'none'} — ` +
+          'and inside a window ten degrees wide not one does',
+      ),
+      'a part that is its own mirror after a quarter turn has to be reported at both angles, and the translation ' +
+        'scan cannot see the second — so the seeds are added by hand, outside the ladder. That is exactly why they ' +
+        'reached a report whose window excluded them, and why taking them out of a narrowed window is a different ' +
+        'change from clamping the polish',
     );
   }
 
