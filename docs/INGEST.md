@@ -237,7 +237,9 @@ Spine runtime plays it, whatever rigc's own rasteriser or validator thinks.
 `diff` takes two compiled skeletons and reports 49 measures in eight groups, plus two
 blocks that report and gate nothing: the `(reported)` measures beside `attachments`
 and `animations`, and the `skeleton` header block at the top, which measures the stage
-(issue #578). Both sides may be foreign; the interesting pairing during ingest is
+(issue #578). A ninth group of six joins them when something has paired the two sides'
+animations — `--as <candidate>=<reference>`, or one animation each side, which pairs by
+position (§1.3.1). Both sides may be foreign; the interesting pairing during ingest is
 **your transcription against the export it came from**:
 
 ```bash
@@ -325,6 +327,44 @@ degree sequence, shape histogram, declaration order of shapes, and for slots the
 attachment types and bone-binding shapes by draw-order position. That is how you tell
 *"the same rig with a different vocabulary"* from *"a different rig"*, and §4.2 is the
 recipe built on it.
+
+#### 1.3.1 Animations differ by name too — `--as`
+
+`bones` and `slots` are matched name-agnostically by their own shape. Animations have
+none: the candidate's `take01` and the reference's `arcs` are the same shot only
+because somebody says they are. Two things say it —
+
+```bash
+rigc diff work/t6/skeleton.json examples/6-arcs/export/6-arcs-pro.json --as take01=arcs
+```
+
+— and, with no flag, **one animation each side**, which pairs by position because there
+is exactly one reading of which shot is which. `--as` is repeatable, one pair each, and
+the candidate's name goes on the left, as it does in `bonedist`'s correspondence file.
+
+With the pairing in hand the `animations` section reports two figures like the other
+two sections, the second over the paired shots — `duration`, `timeline_kinds`,
+`key_counts`, `curve_kinds`, `draw_order`, `deform` — and the heading says which pairing
+it used:
+
+```
+  animations            mean 0.222  over 9 measures
+      1.000  count                        1/1         how many animations
+      0.000  names                        0/2         the animation names
+      …
+  animations (name-agnostic) mean 1.000  over 6 measures  — the same two skeletons compared with names thrown away, paired by position: take01=arcs, the one animation each side carries
+```
+
+Read that pair exactly as you read `bones`'s: **1.000 beside `names` 0.000** says the
+shot is right and its name is yours. ⛔ `names` never moves into the second block, and
+with two shots on each side and no `--as`, the block is **absent** rather than paired by
+declaration order — a candidate that declares its two shots the other way round would
+then read 0.000 across it and the report would be calling a guess a measurement.
+
+⚠️ An `--as` naming an animation a side does not have is **refused** with what that side
+does have, and so is one that pairs the same animation twice. Neither is dropped
+quietly: a typo that measured less than you asked for is a report about a pairing you
+did not state.
 
 ### 1.4 `check` — the instrument that does see coordinates
 

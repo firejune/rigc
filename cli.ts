@@ -66,7 +66,14 @@ import {
   type DeformKeyMeasure,
   type DeformSpan,
 } from './src/deformmeasure.ts';
-import { diffLines, diffSkeletons, reportedFigures, sectionFigures, type DiffReport } from './src/diff.ts';
+import {
+  diffLines,
+  diffSkeletons,
+  reportedFigures,
+  sectionFigures,
+  type DiffAnimationPair,
+  type DiffReport,
+} from './src/diff.ts';
 import { ingest, IngestError, IngestSpecRefused, INGEST_GUTTERS, type IngestFinding, type IngestStage } from './src/ingest.ts';
 import { copyAtlasPages } from './src/emit.ts';
 import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas, parseAtlasText } from './src/atlas.ts';
@@ -218,13 +225,16 @@ const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images',
 /**
  * The flags a command is allowed to spell more than once.
  *
- * Only `vote --candidate` is, because a ballot is *by definition* several
- * candidates. Everywhere else a repeat is a mistake and is refused: `check
+ * `vote --candidate` is, because a ballot is *by definition* several
+ * candidates, and `diff --as` is, because a skeleton has as many shots as it
+ * has and one pairing per flag is the only spelling that keeps each pair a pair
+ * (issue #720). Everywhere else a repeat is a mistake and is refused: `check
  * --candidate a --candidate b` used to take `b` silently, which is a report
  * about a rig the caller did not think they were asking about.
  */
 const REPEATABLE_FLAGS: Record<string, ReadonlySet<string>> = {
   vote: new Set(['candidate']),
+  diff: new Set(['as']),
 };
 
 /**
@@ -1403,7 +1413,69 @@ function cmdValidate(flags: Record<string, string>, positional: string[]): void 
   console.log('rigc: green');
 }
 
-function cmdDiff(flags: Record<string, string>, positional: string[]): void {
+/**
+ * `--as <candidate>=<reference>`, one pair per occurrence.
+ *
+ * ⚠️ Spelled with a pair where `check --as <name>` takes one name, and the
+ * difference is in what the two commands have on the other side. `check`
+ * measures against a rendered frame SET, which already carries the reference
+ * animation's name in its own directory, so one name closes the gap. `diff` has
+ * two skeletons and either may have its own vocabulary, so one name says which
+ * shot on which side and leaves the other unanswered. The direction — candidate
+ * first — is the one `bonedist`'s correspondence file already writes its
+ * `animations` map in.
+ *
+ * Every refusal here is a UsageError because every one of them is about the
+ * flag's own value, and each names what it read: a value with no `=`, an empty
+ * side, a name repeated on either side, and a name no animation on that side
+ * answers to. ⛔ The last of those is a refusal rather than a dropped pair for
+ * the reason a miss is refused by name everywhere else in this tool — a typo
+ * that quietly measured less would be a report about a pairing the caller did
+ * not ask for.
+ */
+function readAnimationPairs(values: string[], candidate: unknown, reference: unknown): DiffAnimationPair[] {
+  const animationsOf = (root: unknown): string[] => {
+    const anims = (root as { animations?: unknown } | null)?.animations;
+    return typeof anims === 'object' && anims !== null && !Array.isArray(anims) ? Object.keys(anims) : [];
+  };
+  const have = { candidate: animationsOf(candidate), reference: animationsOf(reference) };
+  const pairs: DiffAnimationPair[] = [];
+  for (const value of values) {
+    const at = value.indexOf('=');
+    if (at < 0) {
+      throw new UsageError(
+        `--as ${JSON.stringify(value)} is not a pair. It takes <candidate>=<reference> — two animation names joined ` +
+          'by `=`, because diff compares two skeletons and either may have its own name for the shot. The candidate ' +
+          `has [${have.candidate.join(', ') || 'none'}] and the reference has [${have.reference.join(', ') || 'none'}].`,
+      );
+    }
+    const pair = { candidate: value.slice(0, at), reference: value.slice(at + 1) };
+    if (pair.candidate === '' || pair.reference === '') {
+      throw new UsageError(
+        `--as ${JSON.stringify(value)} leaves the ${pair.candidate === '' ? 'candidate' : 'reference'} side empty; ` +
+          'it takes <candidate>=<reference>, a name on each side',
+      );
+    }
+    for (const side of ['candidate', 'reference'] as const) {
+      if (!have[side].includes(pair[side])) {
+        throw new UsageError(
+          `--as ${JSON.stringify(value)} names no ${side} animation: the ${side} has ` +
+            `[${have[side].join(', ') || 'none'}] and not ${JSON.stringify(pair[side])}`,
+        );
+      }
+      if (pairs.some((p) => p[side] === pair[side])) {
+        throw new UsageError(
+          `--as pairs the ${side} animation ${JSON.stringify(pair[side])} twice; each animation may be in one pair, ` +
+            'or the block would compare one shot against two',
+        );
+      }
+    }
+    pairs.push(pair);
+  }
+  return pairs;
+}
+
+function cmdDiff(flags: Record<string, string>, lists: Record<string, string[]>, positional: string[]): void {
   const [candidate, reference] = positional;
   if (!candidate || !reference) throw new UsageError('diff takes two paths: <candidate.json> <reference.json>');
   const candidatePath = resolve(candidate);
@@ -1411,7 +1483,10 @@ function cmdDiff(flags: Record<string, string>, positional: string[]): void {
   for (const path of [candidatePath, referencePath]) {
     if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
   }
-  const report = diffSkeletons(readJsonFile(candidatePath), readJsonFile(referencePath));
+  const candidateJson = readJsonFile(candidatePath);
+  const referenceJson = readJsonFile(referencePath);
+  const animationPairs = readAnimationPairs(lists.as ?? [], candidateJson, referenceJson);
+  const report = diffSkeletons(candidateJson, referenceJson, { animationPairs });
   console.log('rigc diff');
   for (const line of diffLines(report, { candidate: candidatePath, reference: referencePath })) console.log(line);
   if (flags.json !== undefined) {
@@ -3266,8 +3341,26 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'diff',
-    usage: ['rigc diff <candidate.json> <reference.json> [--json <out>]'],
-    flags: ['json'],
+    usage: ['rigc diff <candidate.json> <reference.json> [--as <candidate>=<reference>]… [--json <out>]'],
+    flags: ['as', 'json'],
+    overrides: {
+      as: {
+        value: '<candidate>=<reference>',
+        meaning:
+          'pair a candidate animation with a reference one, so the name-agnostic `animations` block can be ' +
+          'measured over shots the two files call different things. Repeatable, one pair each. An INPUT and never ' +
+          'derived: two skeletons cannot say which of their shots are the same shot. Without it the block appears ' +
+          'only when each side has exactly one animation, which pairs by position, and is otherwise absent rather ' +
+          'than guessed',
+      },
+    },
+    notes: [
+      'the `animations` block reads two figures once something has paired the shots, exactly as',
+      '`bones` and `slots` do: name-matched, where `names` lives, and name-agnostic over the pair.',
+      'A candidate that followed a brief withholding the animation name reads `count` 1/1 and 0.000',
+      'on every other name-matched measure — including `duration` and `key_counts` it may have got',
+      'exactly right — so read the pair and not the section mean.',
+    ],
   },
   {
     name: 'check',
@@ -3562,7 +3655,7 @@ try {
   else if (command === 'ingest') cmdIngest(flags, positional);
   else if (command === 'validate') cmdValidate(flags, positional);
   else if (command === 'explain') cmdExplain(flags);
-  else if (command === 'diff') cmdDiff(flags, positional);
+  else if (command === 'diff') cmdDiff(flags, lists, positional);
   else if (command === 'check') cmdCheck(flags);
   else if (command === 'bench') cmdBench(flags, positional);
   else if (command === 'bonedist') cmdBoneDist(flags);

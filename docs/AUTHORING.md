@@ -533,7 +533,7 @@ The other commands:
 ```bash
 bun cli.ts explain  --rig … --motion … --out …   # the compiled rig as a table
 bun cli.ts validate path/to/spine                # re-gate artifacts already on disk
-bun cli.ts diff     candidate.json reference.json
+bun cli.ts diff     candidate.json reference.json [--as <candidate>=<reference>]…
 bun cli.ts check    --candidate path/to/spine --frames path/to/frames [--skin …]
 bun cli.ts bench    3 --candidate path/to/spine [--frames path/to/frames]
 bun cli.ts render   --candidate path/to/spine [--animation …] [--skin …] [--fps 12] [--max 256]
@@ -567,6 +567,19 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   deliberately does not combine them into a score: a rig with the right skeleton
   and the wrong timing and a rig with the right timing and the wrong skeleton call
   for opposite fixes. A measure with nothing to compare says `0/0` and says so.
+
+  ⭐ **If your animation is not called what the reference's is, say so with
+  `--as <candidate>=<reference>`** (repeatable, one pair each) — or let it pair by
+  position, which happens with no flag when each side carries exactly one
+  animation. Without a pairing every animation measure but `count` is keyed on the
+  name, so a rig whose shot is right down to the key counts reads **0.000** across
+  the section. The pairing gets `animations` the same two figures `bones` and
+  `slots` carry, and reading them as a pair — name-agnostic 1.000 beside `names`
+  0.000 — is what says the shot is right and the name is yours. The measures, the
+  refusals and what makes the block absent instead of guessed:
+  [INGEST.md](INGEST.md) §1.3.1, and *The measure inventory* in
+  [BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md),
+  which is repository material rather than part of this package.
 - **`check`** renders your candidate into the reference frames' own pixel grid and
   compares pixels — the only thing here that can see a wrong animation. **§9.**
   🚨 What it certifies is the **default skin** unless you pass `--skin <name>`:
