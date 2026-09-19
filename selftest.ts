@@ -1198,6 +1198,20 @@ const MUTANTS: Mutant[] = [
       }),
     }),
   },
+  {
+    // The case the card behind issue #715 proposed to exempt, and the mutant is
+    // here because the answer is that it is not exempt. Doubling both edges of
+    // the first page's `size:` line makes the declared page a UNIFORM 2x of the
+    // file under it — the shape a production pack ships when its pages were
+    // halved after packing — and the factor comes off the line rather than out
+    // of this table. A runtime draws such a page (`pageGridReading` in
+    // `src/validate.ts` has the routines and the figures); every reader that
+    // addresses it in texels does not.
+    name: 'M66_page_declares_a_uniform_double_of_its_own_file',
+    origin: 'the picture still draws, and every reader that cuts the page by texel coordinates cuts the wrong rectangle',
+    expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+    mutate: (a) => ({ ...a, atlasText: doubleFirstAtlasPageSize(a.atlasText) }),
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -8473,6 +8487,23 @@ function doubleFirstAtlasPageSize(atlasText: string): string {
 }
 
 /**
+ * The same plant with the two axes stretched by DIFFERENT whole factors.
+ *
+ * Its sibling above is the case `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` can offer a
+ * repair for — one ratio is what a `scale:` line states — and this is the case it
+ * cannot, because the header carries one number and this page needs two. Both
+ * factors are applied to numbers the line itself supplied, so neither is a
+ * measurement written down here.
+ */
+function stretchFirstAtlasPageSize(atlasText: string): string {
+  const lines = atlasText.replace(/\n$/, '').split('\n');
+  const at = lines.findIndex((line) => line.startsWith('size:'));
+  const [width, height] = lines[at].slice('size:'.length).split(',').map((n) => Number(n.trim()));
+  lines[at] = `size: ${width * 2}, ${height * 3}`;
+  return `${lines.join('\n')}\n`;
+}
+
+/**
  * The assertions whose bodies sit behind the round trip, read off
  * `src/validate.ts` itself.
  *
@@ -9820,6 +9851,99 @@ function runStaticRigSuite(): number {
         'reason is compared against the exported constant rather than quoted',
     );
   }
+
+  // S80–S81: what the page-size clause SAYS, and the profile it says it under
+  // (issue #715).
+  //
+  // ⭐ The card that opened this expected the clause to move behind the profile
+  // switch: `TextureAtlas` computes every region's UVs from the DECLARED size and
+  // never reads the texture's own, so a page whose PNG is the declared page
+  // rescaled draws correctly and is not "wrong for any consumer". The
+  // measurement holds and the conclusion does not follow, for two reasons this
+  // pair states: two of the three readers a wrong page grid breaks are rigc's
+  // own and run under BOTH profiles, and the format already has an honest way to
+  // say "coarser texels" — `scale:` — so the refusal can name a repair instead of
+  // a preference. S80 is the uniform case, where that repair exists; S81 is the
+  // case where it cannot, because one `scale:` line cannot state two ratios.
+  //
+  // Both read the probe's own atlas for the numbers they expect. The page the
+  // rig emits declares exactly its PNG's size, so the ratio is the plant's
+  // factor recovered from the two texts rather than a number typed here.
+  let probeAtlasText = '';
+  const uniform = gateProbeAtlas(
+    dirs,
+    STATIC_MOTION,
+    (text) => {
+      probeAtlasText = text;
+      return doubleFirstAtlasPageSize(text);
+    },
+    'spine',
+  );
+  const probePage = parseAtlasText(probeAtlasText).pages[0];
+  const uniformPage = parseAtlasText(doubleFirstAtlasPageSize(probeAtlasText)).pages[0];
+  const uniformX = (probePage.width / uniformPage.width).toFixed(4);
+  const uniformY = (probePage.height / uniformPage.height).toFixed(4);
+  const uniformSaid = uniform.failures.find((f) => f.assertion === A06)?.detail ?? null;
+  const honestHeader = `\`size: ${probePage.width}, ${probePage.height}\` with \`scale: ${uniformX}\``;
+  const uniformProbes = [
+    ...(uniformSaid === null
+      ? [
+          `A06 did not fire under the default profile on a page declaring ${uniformPage.width}x${uniformPage.height} ` +
+            `over a ${probePage.width}x${probePage.height} file — it was ${rowOf(uniform, A06).join(', ') || 'in no list'}`,
+        ]
+      : []),
+    ...(uniformSaid !== null && uniformSaid.includes(`${uniformX} of the declared width`) ? [] : ['the ratio on the width axis is not named']),
+    ...(uniformSaid !== null && uniformSaid.includes(`${uniformY} of the declared height`) ? [] : ['the ratio on the height axis is not named']),
+    ...(uniformSaid !== null && uniformSaid.includes(honestHeader) ? [] : [`the header the format provides for this page — ${honestHeader} — is not in the message`]),
+    ...(uniformSaid !== null && uniformSaid.includes('cannot be declared honestly') ? ["the message offers the repair AND says there is none"] : []),
+  ];
+  const uniformHeld = uniformProbes.length === 0;
+  say(
+    'S80_A_UNIFORMLY_RESCALED_PAGE_IS_REFUSED_UNDER_THE_DEFAULT_PROFILE_AND_THE_MESSAGE_NAMES_THE_HEADER_THAT_STATES_IT',
+    uniformHeld,
+    probeDetail(
+      uniformHeld,
+      uniformProbes,
+      `under --profile spine, the one that runs no renderer policy at all, a page declaring ` +
+        `${uniformPage.width}x${uniformPage.height} over its ${probePage.width}x${probePage.height} file is refused ` +
+        `at ${uniformX} on both axes, and the message names ${honestHeader}`,
+    ),
+    'the profile is the whole point of the case: `spine` asks "is this valid Spine 4.3 that any runtime plays ' +
+      'correctly", and a rule that only rigc\'s own renderer cared about would have no business firing here. What ' +
+      'keeps it here is that the compiler\'s own region lift reads the same declared coordinates under both ' +
+      'profiles — and that the refusal can name a repair the FORMAT provides, which is what a convention cannot do',
+  );
+
+  const stretched = gateProbeAtlas(dirs, STATIC_MOTION, stretchFirstAtlasPageSize, 'spine');
+  const stretchedPage = parseAtlasText(stretchFirstAtlasPageSize(probeAtlasText)).pages[0];
+  const stretchedX = (probePage.width / stretchedPage.width).toFixed(4);
+  const stretchedY = (probePage.height / stretchedPage.height).toFixed(4);
+  const stretchedSaid = stretched.failures.find((f) => f.assertion === A06)?.detail ?? null;
+  const stretchedProbes = [
+    ...(stretchedSaid === null ? [`A06 was ${rowOf(stretched, A06).join(', ') || 'in no list'} on a page whose axes differ`] : []),
+    ...(stretchedX === stretchedY ? [`the plant did not produce two ratios: both axes read ${stretchedX}`] : []),
+    ...(stretchedSaid !== null && stretchedSaid.includes(`${stretchedX} of the declared width`) ? [] : ['the width ratio is not named']),
+    ...(stretchedSaid !== null && stretchedSaid.includes(`${stretchedY} of the declared height`) ? [] : ['the height ratio is not named']),
+    ...(stretchedSaid !== null && stretchedSaid.includes('cannot be declared honestly') ? [] : ['the message does not say that no `scale:` line can state this page']),
+    ...(stretchedSaid !== null && stretchedSaid.includes('declare `size:') ? ['the message offers a `scale:` header for a page two ratios cannot fit in one'] : []),
+  ];
+  const stretchedHeld = stretchedProbes.length === 0;
+  say(
+    'S81_A_PAGE_WHOSE_TWO_AXES_DIFFER_NAMES_BOTH_RATIOS_AND_OFFERS_NO_HEADER',
+    stretchedHeld,
+    probeDetail(
+      stretchedHeld,
+      stretchedProbes,
+      `a page declaring ${stretchedPage.width}x${stretchedPage.height} over its ${probePage.width}x${probePage.height} ` +
+        `file is refused at ${stretchedX} on the width and ${stretchedY} on the height, and the message says no ` +
+        '`scale:` line can state it rather than offering one',
+    ),
+    'the near-miss direction, and the one a message is most likely to get wrong: the repair S80 checks for is ' +
+      'correct advice on a page with one ratio and WRONG advice on a page with two, because `AtlasPage.scale` is a ' +
+      'single number and halving one axis of these regions would put them somewhere the file has no texels. A ' +
+      'message that offered it anyway would be the validator sending an author to rewrite a pack into a second ' +
+      'broken state',
+  );
   return bad;
 }
 
@@ -33519,6 +33643,36 @@ function runPackerSuite(): number {
   return bad;
 }
 
+/**
+ * An atlas re-declared on its page files' own grid — the repair
+ * `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` prints for a uniformly rescaled page,
+ * carried out on the text an author is holding.
+ *
+ * ⭐ A line rewrite rather than a trip through `writeAtlasText`, and that is the
+ * point of it: the case that uses this is asking whether the ADVICE works, so
+ * re-serialising the pack through rigc's own writer would be the emitter
+ * agreeing with itself. Each line keeps its own indentation, because the editor
+ * writes these fields with a tab and rigc writes them flush.
+ */
+function atlasOnItsFilesOwnGrid(atlasText: string, ratio: number): string {
+  const scaled = (list: string): string =>
+    list
+      .split(',')
+      .map((n) => String(Number(n.trim()) * ratio))
+      .join(', ');
+  const out: string[] = [];
+  for (const line of atlasText.replace(/\n$/, '').split('\n')) {
+    const field = /^([ \t]*)(size|bounds|offsets|orig|xy):[ \t]*(.*)$/.exec(line);
+    if (field === null) {
+      out.push(line);
+      continue;
+    }
+    out.push(`${field[1]}${field[2]}: ${scaled(field[3])}`);
+    if (field[2] === 'size') out.push(`${field[1]}scale: ${ratio}`);
+  }
+  return `${out.join('\n')}\n`;
+}
+
 // ---------------------------------------------------------------------------
 // the atlas reader against the runtime that owns the format — issue #4
 // ---------------------------------------------------------------------------
@@ -34292,6 +34446,239 @@ function runAtlasReaderSuite(): number | null {
     'issue #693 changed what `--copy-images` reads. The route it was written for has to come out unmoved, and the ' +
       'only honest way to say that after the old emitter is gone is to derive its text here and compare',
   );
+
+  // PKR45–PKR48: a page whose image is not the size its atlas declares for it
+  // (issue #715).
+  //
+  // The subject is BUILT here out of the public fixture's own parts, packed onto
+  // a shared page and then written again at half resolution. It is not found:
+  // every page of the example corpus matches its `size:` line, so the corpus is
+  // this change's negative control and cannot be its subject. Both page edges
+  // come out of `packAtlas` as powers of two, so halving them is exact and the
+  // factor is the file's own rather than a number written down here.
+  const halved = (() => {
+    const packed = packFixture(OVERLAY, DEFAULT_PADDING);
+    const pages = parseAtlasText(packed.atlasText).pages;
+    if (pages.length === 0 || pages.some((page) => page.width % 2 !== 0 || page.height % 2 !== 0)) return null;
+    // A temp directory of its own rather than a child of the pack's, because
+    // several suites walk `packed_p2` for the pages it holds and a subdirectory
+    // in there is a file that appeared in somebody else's subject.
+    const dir = mkdtempSync(join(tmpdir(), 'rigc-page-grid-'));
+    for (const name of packed.pages) {
+      const full = readPlate(join(packed.dir, name));
+      const half = new Plate(full.width / 2, full.height / 2);
+      for (let y = 0; y < half.height; y++) {
+        for (let x = 0; x < half.width; x++) half.set(x, y, full.get(x * 2, y * 2));
+      }
+      half.writePng(join(dir, name));
+    }
+    const ratio = 0.5;
+    const honestText = atlasOnItsFilesOwnGrid(packed.atlasText, ratio);
+    writeFileSync(join(dir, 'honest.atlas'), honestText);
+    const gate = (atlasText: string, atlasDir: string, profile: ValidateProfile): ReturnType<typeof validate> =>
+      validate({
+        skeletonText: packed.result.skeletonText,
+        atlasText,
+        atlasDir,
+        declaredDurations: packed.result.declaredDurations,
+        rig: packed.result.rig,
+        profile,
+      });
+    return { packed, pages, dir, ratio, honestText, gate };
+  })();
+  if (halved === null) {
+    console.log(
+      '  SKIP  the page-grid cases (PKR45, PKR46, PKR47, PKR48) did not run: the packer put this fixture on a ' +
+        'page with an odd edge, so there is no exact half-resolution copy of it to measure.',
+    );
+  } else {
+    const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+    const A19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
+    /** Which of the four lists an assertion came back in — a probe that says so states it. */
+    const rowOf = (report: ReturnType<typeof validate>, name: string): string[] => {
+      const where: string[] = [];
+      if (report.passed.includes(name)) where.push('PASS');
+      if (report.failures.some((f) => f.assertion === name)) where.push('FAIL');
+      if (report.skipped.some((s) => s.assertion === name)) where.push('SKIP');
+      if (report.profileSkipped.some((p) => p.assertion === name)) where.push('PROF');
+      return where;
+    };
+
+    // PKR45 — the card's own question, asked of the routine that answers it.
+    const mappingProbes: string[] = [];
+    let uvs = 0;
+    for (const region of new TextureAtlas(halved.packed.atlasText).regions) {
+      uvs++;
+      const want = [
+        ['u', region.u, region.x / region.page.width],
+        ['v', region.v, region.y / region.page.height],
+        ['u2', region.u2, (region.x + (region.degrees === 90 ? region.height : region.width)) / region.page.width],
+        ['v2', region.v2, (region.y + (region.degrees === 90 ? region.width : region.height)) / region.page.height],
+      ] as const;
+      for (const [field, got, fromTheDeclaredSize] of want) {
+        if (got === fromTheDeclaredSize) continue;
+        mappingProbes.push(
+          `region ${JSON.stringify(region.name.trim())}.${field} is ${got} and the declared size gives ` +
+            `${fromTheDeclaredSize}`,
+        );
+      }
+    }
+    const declaredSizes = halved.pages.map((page) => `${page.width}x${page.height}`).join(', ');
+    for (const page of new TextureAtlas(halved.packed.atlasText).pages) {
+      const stated = halved.pages.find((p) => p.name === page.name);
+      if (stated === undefined || (page.width === stated.width && page.height === stated.height)) continue;
+      mappingProbes.push(`page ${JSON.stringify(page.name)} loaded as ${page.width}x${page.height} and the text says ${stated.width}x${stated.height}`);
+    }
+    const mappingHeld = mappingProbes.length === 0;
+    say(
+      'PKR45_EVERY_REGIONS_UVS_ARE_ITS_RECTANGLE_OVER_THE_DECLARED_SIZE_AND_NOTHING_IN_THE_MAPPING_OPENS_THE_FILE',
+      mappingHeld,
+      probeDetail(
+        mappingHeld,
+        mappingProbes,
+        `${uvs} region(s) over ${halved.pages.length} page(s) declared ${declaredSizes}: every u/v/u2/v2 is the ` +
+          "region's own rectangle divided by the `size:` line, and the page loads at the size the text states",
+      ),
+      "the card behind #715 turns on this and nothing else: if the runtime read the texture's own size anywhere in " +
+        'the region mapping, a page whose PNG is a rescale would draw wrong and `A06` would be plain validity. It ' +
+        'does not — so what a wrong page grid breaks is texel READERS, which is a different argument and the one ' +
+        'the refusal now makes. Derived from the loaded regions rather than quoted from the runtime source, so a ' +
+        'runtime that started reading the file would be caught here',
+    );
+
+    // PKR46 — the refusal, and whether the repair it prints actually works.
+    const coarse = halved.gate(halved.packed.atlasText, halved.dir, 'spine');
+    const coarseSaid = coarse.failures.find((f) => f.assertion === A06)?.detail ?? null;
+    const honest = halved.gate(halved.honestText, halved.dir, 'spine');
+    const honestPack = join(halved.dir, 'honest.atlas');
+    const rebuilt = (() => {
+      try {
+        return compile({ ...optsForFixture(OVERLAY), outDir: join(halved.dir, 'rebuilt'), atlasInPath: honestPack });
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    })();
+    const sizesOf = (images: readonly CompiledImage[]): string =>
+      images
+        .map((img) => `${img.region} ${img.width}x${img.height}`)
+        .sort()
+        .join('; ');
+    const repairProbes = [
+      ...(coarseSaid === null ? [`A06 was ${rowOf(coarse, A06).join(', ') || 'in no list'} on the half-resolution pages`] : []),
+      ...(coarseSaid !== null && coarseSaid.includes(`${halved.ratio.toFixed(4)} of the declared width`) ? [] : ['the refusal does not name the ratio it measured']),
+      ...(typeof rebuilt === 'string'
+        ? [`the header the refusal prints does not build: ${rebuilt}`]
+        : [
+            ...(honest.failures.filter((f) => f.assertion === A06).length === 0
+              ? []
+              : [`the re-declared pack is still refused: ${honest.failures.find((f) => f.assertion === A06)?.detail ?? ''}`]),
+            ...(sizesOf(rebuilt.images) === sizesOf(halved.packed.result.images)
+              ? []
+              : [
+                  `the parts changed size through the repair: ${sizesOf(rebuilt.images)} against ` +
+                    `${sizesOf(halved.packed.result.images)}`,
+                ]),
+          ]),
+    ];
+    const repairHeld = repairProbes.length === 0;
+    say(
+      'PKR46_THE_HALF_RESOLUTION_PACK_IS_REFUSED_AND_THE_HEADER_THE_REFUSAL_PRINTS_BUILDS_THE_SAME_PARTS',
+      repairHeld,
+      probeDetail(
+        repairHeld,
+        repairProbes,
+        `the same pages under an atlas that lies about their size are refused at ${halved.ratio.toFixed(4)}, and ` +
+          `under the \`size:\`/\`scale:\` pair the message names they gate green and rebuild ` +
+          `${typeof rebuilt === 'string' ? 0 : rebuilt.images.length} part(s) at the sizes they already had`,
+      ),
+      'the validator\'s messages are the UI, so the strongest thing a control can do with one is carry out its ' +
+        'instruction and see whether it lands. This is also what makes the clause a rule rather than a taste: it ' +
+        'refuses a file whose own format can state the same art truthfully, and the refusal hands over the text ' +
+        'that does',
+    );
+
+    // PKR47 — the instrument the card named, on the page it cannot locate.
+    const coarsePolicy = halved.gate(halved.packed.atlasText, halved.dir, 'spine-html');
+    const declaredPolicy = halved.gate(halved.packed.atlasText, halved.packed.dir, 'spine-html');
+    const alphaSaid = coarsePolicy.failures.filter((f) => f.assertion === A19).map((f) => f.detail);
+    const declaredAlpha = declaredPolicy.failures.filter((f) => f.assertion === A19).map((f) => f.detail);
+    // 🔑 Keyed on the GRID sentence and not on "is not measured", and the
+    // difference is the whole case. #705's clause says the same three words
+    // about a rectangle with no texel on the page, and a rescaled pack produces
+    // those in quantity all by itself — measured: with the guard removed this
+    // ran GREEN on a reader that had located nothing, because the regions it
+    // could still open found a gutter texel and printed no verdict at all.
+    const gridSaid = (detail: string): boolean => detail.includes('opens the page at the coordinates the atlas states');
+    const alphaProbes = [
+      ...firstFew(
+        alphaSaid.filter((detail) => !gridSaid(detail)).map((detail) => `an A19 row on a page nothing located that is not the page-grid sentence: ${detail.slice(0, 120)}`),
+        'A19 row(s)',
+      ),
+      ...(alphaSaid.some((detail) => gridSaid(detail) && detail.includes(A06))
+        ? []
+        : ['no A19 row on the half-resolution pages names the page grid and points at the rule that owns it']),
+      ...(declaredAlpha.every((detail) => !gridSaid(detail))
+        ? []
+        : ['the DECLARED-size pages produced a page-grid non-measurement too, so the red above is not the half-resolution pages\'']),
+      ...floorProbes(
+        [[alphaSaid.filter(gridSaid).length, 2, `${alphaSaid.length} A19 row(s) came back`]],
+        'one region saying so could be a rectangle that happens to miss the page entirely, which is #705\'s clause ' +
+          'and would make this case pass over the one it is for',
+      ),
+    ];
+    const alphaHeld = alphaProbes.length === 0;
+    say(
+      'PKR47_THE_ALPHA_SCAN_ON_A_PAGE_IT_CANNOT_LOCATE_IS_A_NAMED_NON_MEASUREMENT_RATHER_THAN_A_VERDICT',
+      alphaHeld,
+      probeDetail(
+        alphaHeld,
+        alphaProbes,
+        `${alphaSaid.length} A19 row(s) on the half-resolution pages, every one of them the page-grid non-measurement naming ` +
+          `${A06}; the same rule on the same atlas beside the declared-size pages printed ${declaredAlpha.length} ` +
+          'row(s) and not one of them was that sentence',
+      ),
+      "#705's clause covers a rectangle with NO texel on the page and does not cover this: a rescaled page leaves " +
+        'most rectangles partly on it, at coordinates that address a different part of the picture, so the scan ' +
+        'came back with a confident verdict about texels nobody had located. Two-sided, because a guard that ' +
+        'answered "not measured" everywhere would pass the first half of this on its own',
+    );
+
+    // PKR48 — the positive control, and the one this change most risks failing.
+    const declaredSpine = halved.gate(halved.packed.atlasText, halved.packed.dir, 'spine');
+    const honestPolicy = halved.gate(halved.honestText, halved.dir, 'spine-html');
+    const ratioWords = ['of the declared width', 'of the declared height', 'is not measured'];
+    const untouchedProbes = [
+      ...[
+        ['the declared-size pack', declaredSpine],
+        ['the declared-size pack under the renderer profile', declaredPolicy],
+        ['the re-declared half-resolution pack', honest],
+        ['the re-declared half-resolution pack under the renderer profile', honestPolicy],
+      ].flatMap(([label, report]) => {
+        const said = (report as ReturnType<typeof validate>).failures;
+        const caught = said.filter((f) => ratioWords.some((word) => f.detail.includes(word)));
+        return [
+          ...((report as ReturnType<typeof validate>).passed.includes(A06) ? [] : [`${String(label)}: A06 is ${rowOf(report as ReturnType<typeof validate>, A06).join(', ') || 'in no list'}`]),
+          ...firstFew(caught.map((f) => `${String(label)}: ${f.assertion} says ${f.detail.slice(0, 120)}`), 'row(s)'),
+        ];
+      }),
+    ];
+    const untouchedHeld = untouchedProbes.length === 0;
+    say(
+      'PKR48_A_PACK_WHOSE_PAGES_ARE_THE_SIZE_THEY_SAY_IS_UNTOUCHED_BY_ANY_OF_THIS',
+      untouchedHeld,
+      probeDetail(
+        untouchedHeld,
+        untouchedProbes,
+        'both well-formed packs — the declared-size one and the half-resolution one re-declared on its own grid — ' +
+          'pass A06 under both profiles, and no assertion in any of the four reports prints a ratio or a ' +
+          'non-measurement',
+      ),
+      'a clause that refuses a lying page is only worth having if it leaves a truthful one alone, and the two ' +
+        'packs here are the same art: one at full resolution and one at half, each declaring what it has. The ' +
+        'corpus says the same thing at a larger scale — every page of it matches its `size:` line, which is why ' +
+        'none of these cases could be built from it',
+    );
+  }
 
   return bad;
 }
@@ -44015,6 +44402,122 @@ function runCurrencySuite(): number {
         'one, or mistyping an example on the page are all one fault here. The plant is the page\'s own first ' +
         'example reversed, so a reader that matched nothing would go red rather than agree',
     );
+  }
+
+  // --- CUR57/CUR58: the page-grid refusal, against the page that teaches it ---
+  //
+  // ⭐ The same currency question `CUR47`/`CUR48` ask of `pose`'s two sentences,
+  // on the one `A06` prints for a page whose image is not the size the atlas
+  // declares for it (issue #715). That message is unusual among this tool's
+  // refusals in that it hands over a REPAIR — a `size:`/`scale:` pair the author
+  // is meant to write — so a guide that taught a different one would be sending
+  // a reader to rewrite a pack into a second broken state.
+  //
+  // 🔑 Neither case types a phrase or a number. `CUR57` blanks every digit and
+  // every quoted name out of both the live refusal and the block the guide
+  // quotes, and asks whether what is left of the guide is what the rule says;
+  // `CUR58` reads the profile column off the §5.2 row and compares it against
+  // which profiles actually refuse the plant.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const guide = readFileSync(join(root, guidePath), 'utf8');
+    const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+    const dirs = writeProbeRig();
+    const refusalUnder = (profile: ValidateProfile, mutate: (text: string) => string): string | null =>
+      gateProbeAtlas(dirs, STATIC_MOTION, mutate, profile).failures.find((f) => f.assertion === A06)?.detail ?? null;
+    const uniformSaid = refusalUnder('spine', doubleFirstAtlasPageSize);
+    const stretchedSaid = refusalUnder('spine', stretchFirstAtlasPageSize);
+
+    // --- CUR57: the sentences the guide quotes are the sentences it prints ----
+    {
+      /** A sentence with every digit and every quoted name blanked, and its wrapping taken out. */
+      const shape = (text: string): string =>
+        text
+          .replace(/"[^"]*"/g, '""')
+          .replace(/\d+/g, '#')
+          .replace(/^[ \t]*#+ ?/gm, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      /** The fenced block in §0.2 that quotes this refusal, cut at the ellipsis the page uses. */
+      const quoted = (text: string): string[] => {
+        const block = /```bash\n((?:#.*\n)*?#[^\n]*A06_ATLAS_PAGE_SIZE_MATCHES_PNG[\s\S]*?)```/.exec(text);
+        if (block === null) return [];
+        return block[1]
+          .split('…')
+          .map((piece) => shape(piece))
+          .filter((piece) => piece.length > 0);
+      };
+      const taught = quoted(guide);
+      const live = uniformSaid === null ? '' : shape(uniformSaid);
+      const missing = taught.filter((piece) => !live.includes(piece.replace(/^FAIL [A-Z#_]+: /, '')));
+      const plantedGuide = guide.replace('multiply every `bounds`/`offsets` on this page by', 'divide every `bounds`/`offsets` on this page by');
+      const plantedPieces = quoted(plantedGuide);
+      const plantedMissing = plantedPieces.filter((piece) => !live.includes(piece.replace(/^FAIL [A-Z#_]+: /, '')));
+      const quoteProbes = [
+        ...(uniformSaid === null ? [`the rule printed no ${A06} failure on a page declaring twice its own file, so nothing was compared`] : []),
+        ...firstFew(
+          missing.map((piece) => `${guidePath} §0.2 quotes a clause the rule does not print: ${JSON.stringify(piece.slice(0, 110))}`),
+          'clause(s)',
+        ),
+        ...(plantedMissing.length > missing.length
+          ? []
+          : ['the same block with its repair verb exchanged is faulted no more often than the real one, so this reader is not reading the verb']),
+        ...floorProbes(
+          [[taught.length, 2, `${taught.length} piece(s) of the quoted block were read`]],
+          'a block that quoted nothing, or only the assertion name, would make this pass over the page rather than over the sentence',
+        ),
+      ];
+      const quoteHeld = quoteProbes.length === 0;
+      say(
+        'CUR57_THE_PAGE_GRID_REFUSAL_THE_GUIDE_QUOTES_IS_THE_ONE_THE_RULE_PRINTS',
+        quoteHeld,
+        probeDetail(
+          quoteHeld,
+          quoteProbes,
+          `${taught.length} piece(s) of §0.2's quoted refusal, every digit and quoted name blanked, are clauses of ` +
+            `the ${String(uniformSaid?.length ?? 0)}-character sentence this build prints for a page declaring ` +
+            'twice its own file; the same block with its repair verb exchanged is faulted',
+          (count) => `${count} clause(s) the page teaches that the rule does not print:`,
+        ),
+        'this refusal is the only one in the tool that hands the author a header to WRITE, so the page quoting a ' +
+          'different one is worse than the page quoting none — the reader has been given a repair to carry out. ' +
+          'Blanking the digits is what lets the page keep its own 4096/2048 example while the sentence around it ' +
+          'is compared against the live one',
+      );
+    }
+
+    // --- CUR58: the profile column, against the profiles that refuse it -------
+    {
+      const row = /\| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` \| ([^|]+?) \|/.exec(guide);
+      const refusing = VALIDATE_PROFILES.filter((profile) => refusalUnder(profile, doubleFirstAtlasPageSize) !== null);
+      const oracle = refusing.length === VALIDATE_PROFILES.length ? 'both' : refusing.join(' and ');
+      const said = row === null ? null : row[1].trim();
+      const profileProbes = [
+        ...(said === null ? [`${guidePath} §5.2 has no row for ${A06}, so the profile it teaches was not read`] : []),
+        ...(said !== null && said.split(' ')[0] === oracle
+          ? []
+          : [`${guidePath} §5.2 files ${A06} under ${JSON.stringify(said ?? '')} and the plant is refused under ${oracle}`]),
+        ...floorProbes(
+          [[refusing.length, 1, `${refusing.length} profile(s) refused the plant`]],
+          'a plant no profile refuses would let any word at all stand in that column',
+        ),
+      ];
+      const profileHeld = profileProbes.length === 0;
+      say(
+        'CUR58_THE_PROFILE_THE_GUIDE_FILES_THE_PAGE_GRID_CLAUSE_UNDER_IS_THE_ONE_THAT_REFUSES_IT',
+        profileHeld,
+        probeDetail(
+          profileHeld,
+          profileProbes,
+          `a page declaring twice its own file is refused under ${oracle} of the ${VALIDATE_PROFILES.length} ` +
+            `profile(s) (${VALIDATE_PROFILES.join(', ')}), and §5.2 files ${A06} under ${JSON.stringify(said ?? '')}`,
+        ),
+        'the column is how an author decides whether a refusal is about their file or about somebody\'s renderer, ' +
+          'and this clause is the one a card argued should move across that line. It did not, and the page has to ' +
+          'say which side it is on for the same reason the message does — read off the reports rather than off ' +
+          'the sentence that argued it',
+      );
+    }
   }
 
   return bad;
