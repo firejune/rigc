@@ -389,6 +389,37 @@ silhouette and an authored mesh's fit figure is the same number. The one thing
 that does not change is what rigc **writes**: its own packer never turns a
 region.
 
+🔑 **That is a claim about rigc's instruments, and you may be holding only the
+pack.** An author who has to cut a part out of the page by hand — to measure it
+against a rendered frame, or to look at it at all — needs what the `rotate:` line
+means for the numbers beside it, and the pack states none of this:
+
+- `bounds: x, y, w, h` gives `w x h` in the **drawing's** orientation, so it is
+  the part's size **unturned**: the same two numbers the same drawing carries at
+  `rotate: 0`;
+- the rectangle on the **page** is therefore `h x w` at `x, y` — the transpose —
+  at `rotate: 90` and at `rotate: 270` alike, while `w x h` is what a region
+  occupies at `rotate: 0` and at `rotate: 180`;
+- cut that rectangle out of the page and turn it **clockwise** to recover the
+  drawing at `rotate: 90`, and **counter-clockwise** at `rotate: 270`; a half
+  turn has no direction to name.
+
+Each direction there is **measured** rather than reasoned about: it comes off
+`MeshAttachment.computeUVs` in the linked runtime, the one routine there that
+says where a region's texels are for all four values, and the selftest derives
+the words in that list from the same routine instead of reading them. ⚠️ Do not
+take the turn from `TextureAtlas`'s own `u2`/`v2` — those transpose at a quarter
+turn one way and not at the other, so one of the two pairs describes a rectangle
+the page does not have ([#579](https://github.com/firejune/rigc/issues/579)).
+
+`build` now prints the page rectangle on the line for a turned region, so the
+report carries the rectangle to cut instead of leaving it to be derived
+([#718](https://github.com/firejune/rigc/issues/718)):
+
+```bash
+#   ..      pendulum   105x139  <- ../export/atlas.png @ 710,16 rotate 90, occupies 139x105
+```
+
 ⚠️ Two limits here are real and neither is about rotation:
 
 - `--atlas-in` cannot recover what a `scale:` quantised away (above), turned or not;
