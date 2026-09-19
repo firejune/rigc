@@ -7387,6 +7387,235 @@ function runRigSuite(): number {
     );
   }
 
+  // --- RF67–RF70: a member list is a per-skin SET (issue #725) --------------
+  //
+  // The rig spec used to refuse a bone or a constraint named by two skins — *"a
+  // bone belongs to one skin"* — and the comment above that refusal said it was
+  // not the parser's rule. It was not the format's either: two mutually
+  // exclusive variants of one body region both listing the bone they switch on
+  // is a shape a production rig has, and `Skeleton.updateCache` answers it, so
+  // rigc was refusing a file every runtime loads and poses (the activation
+  // itself is measured in the path-and-slider suite, off `bone.active`).
+  //
+  // 🔒 These four are here to say what the removal did NOT take with it. Three
+  // of the refusals on a skin's lists are derivable from the file — a name the
+  // rig does not declare, a name declared under another constraint kind, and
+  // both halves of the `skin: true` switch — and every one of them is now
+  // reached on a rig whose FIRST fault used to be the retired sentence, which
+  // is the only arrangement that can tell a rule that was removed from a rule
+  // that was removed along with its neighbours.
+  {
+    const sharedRoot = mkdtempSync(join(tmpdir(), 'rigc-sharedskin-'));
+    const TRACK = { type: 'path', vertexCount: 6, vertices: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10] };
+    /**
+     * A rig with no art at all — a path attachment is geometry — carrying one
+     * skin-owned bone and one skin-owned constraint for two skins to name.
+     */
+    const sharedRig = (skins: Record<string, unknown>, edit?: (rig: Record<string, unknown>) => void): Record<string, unknown> => {
+      const rig: Record<string, unknown> = {
+        spec: 'rigc-rig/1',
+        name: 'sharedskin',
+        skeleton: { width: 64, height: 64 },
+        bones: [
+          { name: 'root' },
+          { name: 'hinge', parent: 'root', x: 10 },
+          { name: 'wing', parent: 'hinge', x: 20, length: 10, skin: true },
+          { name: 'wing-target', parent: 'root', x: 20, y: 20 },
+        ],
+        slots: [{ name: 'track', bone: 'root', attachment: 'track' }],
+        skins,
+        constraints: [{ name: 'wing-ik', type: 'ik', bones: ['wing'], target: 'wing-target', mix: 1, skin: true }],
+      };
+      edit?.(rig);
+      return rig;
+    };
+    const sharedMotion = { spec: 'rigc-motion/1', archetype: 'sharedskin', cut: 'sharedskin', easings: {}, animations: {} };
+    let sharedLeaf = 0;
+    /** Compile one of these rigs; the refusal, or the emitted skeleton. */
+    const sharedBuild = (
+      skins: Record<string, unknown>,
+      edit?: (rig: Record<string, unknown>) => void,
+    ): { text: string | null; refusal: string | null } => {
+      const at = join(sharedRoot, `case${sharedLeaf++}`);
+      mkdirSync(at, { recursive: true });
+      writeFileSync(join(at, 'rig.json'), `${JSON.stringify(sharedRig(skins, edit), null, 2)}\n`);
+      writeFileSync(join(at, 'motion.json'), `${JSON.stringify(sharedMotion, null, 2)}\n`);
+      let text: string | null = null;
+      const refused = refusalOf(() => {
+        text = compile({ rigPath: join(at, 'rig.json'), motionPath: join(at, 'motion.json'), outDir: join(at, 'build') }).skeletonText;
+      });
+      return { text, refusal: refused };
+    };
+    /** The attachment table, plus whatever the caller's skins activate. */
+    const withTrack = (extra: Record<string, unknown>): Record<string, unknown> => ({
+      default: { attachments: { track: { track: TRACK } } },
+      ...extra,
+    });
+    /** `skinName -> [bones, ik]` off an emitted skeleton, so a claim reads the file. */
+    const emittedLists = (text: string | null): Record<string, string> => {
+      if (text === null) return {};
+      const skeleton = JSON.parse(text) as { skins: Array<{ name: string; bones?: string[]; ik?: string[] }> };
+      return Object.fromEntries(skeleton.skins.map((s) => [s.name, `bones=[${(s.bones ?? []).join(', ')}] ik=[${(s.ik ?? []).join(', ')}]`]));
+    };
+    /**
+     * The sentence this landing retired, in the two spellings it had. Written
+     * out because what a removal has to be held to is the STRING nobody should
+     * be able to make rigc print again.
+     */
+    const RETIRED = ['a bone belongs to one skin', 'a constraint belongs to one skin'];
+    const printsRetired = (message: string | null): string[] =>
+      message === null ? [] : RETIRED.filter((sentence) => message.includes(sentence));
+
+    const bothBones = sharedBuild(
+      withTrack({ variantA: { bones: ['wing'], ik: ['wing-ik'] }, variantB: { bones: ['wing'], ik: ['wing-ik'] } }),
+    );
+    const bothLists = emittedLists(bothBones.text);
+    const boneProbes = [
+      ...(bothBones.refusal === null ? [] : [`refused: ${bothBones.refusal}`]),
+      ...printsRetired(bothBones.refusal).map((s) => `the refusal still prints ${JSON.stringify(s)}`),
+      ...(bothLists.variantA === 'bones=[wing] ik=[wing-ik]' ? [] : [`skin "variantA" emitted ${bothLists.variantA ?? '(absent)'}`]),
+      ...(bothLists.variantB === 'bones=[wing] ik=[wing-ik]' ? [] : [`skin "variantB" emitted ${bothLists.variantB ?? '(absent)'}`]),
+    ];
+    const boneHeld = boneProbes.length === 0;
+    bad += reportCase(
+      'RF67_two_skins_may_name_one_bone_and_the_emitted_file_carries_it_in_both',
+      boneHeld,
+      probeDetail(
+        boneHeld,
+        boneProbes,
+        `the two skins emit ${JSON.stringify(bothLists.variantA)} and ${JSON.stringify(bothLists.variantB)}`,
+        (count) => `${count} thing(s) the shared rig did not do:`,
+      ),
+      'the card\'s own reproduction. On the branch point this spec did not compile at all — `skin "variantB" ' +
+        'activates bone "wing", which skin "variantA" already activates; a bone belongs to one skin` — so the ' +
+        'emitted lists are read back rather than the exit code: a compiler that accepted the spec and emitted the ' +
+        'bone under one skin would pass an exit-code check and ship the variant that loses its bone',
+    );
+
+    const sharedCon = sharedBuild(
+      withTrack({ variantA: { bones: ['wing'], ik: ['wing-ik'] }, variantB: { bones: ['wing'], ik: ['wing-ik'] } }),
+      (rig) => {
+        // A second constraint of another KIND under the same name, listed by one
+        // skin only: the namespace the skin lookup uses is (name, type), and a
+        // rule rewritten over names alone would read this as a third sharing.
+        (rig.constraints as Array<Record<string, unknown>>).push({
+          name: 'wing-ik',
+          type: 'transform',
+          bones: ['hinge'],
+          source: 'wing-target',
+          properties: { rotate: { to: { rotate: {} } } },
+          mixRotate: 1,
+          skin: true,
+        });
+        (rig.skins as Record<string, Record<string, unknown>>).variantA.transform = ['wing-ik'];
+      },
+    );
+    const conLists = (text: string | null): Record<string, string> => {
+      if (text === null) return {};
+      const skeleton = JSON.parse(text) as { skins: Array<{ name: string; ik?: string[]; transform?: string[] }> };
+      return Object.fromEntries(
+        skeleton.skins.map((s) => [s.name, `ik=[${(s.ik ?? []).join(', ')}] transform=[${(s.transform ?? []).join(', ')}]`]),
+      );
+    };
+    const conEmitted = conLists(sharedCon.text);
+    const conProbes = [
+      ...(sharedCon.refusal === null ? [] : [`refused: ${sharedCon.refusal}`]),
+      ...printsRetired(sharedCon.refusal).map((s) => `the refusal still prints ${JSON.stringify(s)}`),
+      ...(conEmitted.variantA === 'ik=[wing-ik] transform=[wing-ik]' ? [] : [`skin "variantA" emitted ${conEmitted.variantA ?? '(absent)'}`]),
+      ...(conEmitted.variantB === 'ik=[wing-ik] transform=[]' ? [] : [`skin "variantB" emitted ${conEmitted.variantB ?? '(absent)'}`]),
+    ];
+    const conHeld = conProbes.length === 0;
+    bad += reportCase(
+      'RF68_two_skins_may_name_one_constraint_and_the_kind_is_still_half_of_the_name',
+      conHeld,
+      probeDetail(
+        conHeld,
+        conProbes,
+        `"wing-ik" is an ik constraint two skins activate and a transform constraint one of them does: ` +
+          `variantA ${JSON.stringify(conEmitted.variantA)}, variantB ${JSON.stringify(conEmitted.variantB)}`,
+        (count) => `${count} thing(s) the shared constraint did not do:`,
+      ),
+      'the constraint half of the same removal, with the (name, type) namespace of #692 held against it in the ' +
+        'same rig: a `transform` "wing-ik" listed by ONE skin must not be read as a second sharing of the `ik` of ' +
+        'that name, which is exactly what a set keyed on the bare name would do',
+    );
+
+    const undeclaredBone = sharedBuild(withTrack({ variantA: { bones: ['wing'], ik: ['wing-ik'] }, variantB: { bones: ['nosuch'] } }));
+    const undeclaredCon = sharedBuild(
+      withTrack({ variantA: { bones: ['wing'], ik: ['wing-ik'] }, variantB: { bones: ['wing'], ik: ['no-such-ik'] } }),
+    );
+    const wrongKind = sharedBuild(
+      withTrack({ variantA: { bones: ['wing'], ik: ['wing-ik'] }, variantB: { bones: ['wing'], transform: ['wing-ik'] } }),
+    );
+    const missProbes = [
+      ...(undeclaredBone.refusal?.includes('activates bone "nosuch", which this rig does not declare')
+        ? []
+        : [`a bone no rig declares: ${undeclaredBone.refusal ?? 'compiled clean'}`]),
+      ...(undeclaredCon.refusal?.includes('activates ik constraint "no-such-ik", which this rig does not declare')
+        ? []
+        : [`a constraint no rig declares: ${undeclaredCon.refusal ?? 'compiled clean'}`]),
+      ...(wrongKind.refusal?.includes('lists "wing-ik" under "transform", but the rig declares it as a "ik" constraint')
+        ? []
+        : [`a name declared under another kind: ${wrongKind.refusal ?? 'compiled clean'}`]),
+      ...[undeclaredBone, undeclaredCon, wrongKind].flatMap((r) => printsRetired(r.refusal)).map((s) => `a refusal still prints ${JSON.stringify(s)}`),
+    ];
+    const missHeld = missProbes.length === 0;
+    bad += reportCase(
+      'RF69_a_name_the_rig_does_not_declare_is_still_refused_by_name_in_the_second_skin',
+      missHeld,
+      probeDetail(
+        missHeld,
+        missProbes,
+        `three misses in the SECOND skin, each named: ${JSON.stringify(undeclaredBone.refusal?.split(': ').slice(1).join(': '))}; ` +
+          `${JSON.stringify(undeclaredCon.refusal?.split(': ').slice(1).join(': '))}; ` +
+          `${JSON.stringify(wrongKind.refusal?.split(': ').slice(1).join(': '))}`,
+        (count) => `${count} miss(es) the second skin no longer catches:`,
+      ),
+      'what the format itself refuses, and the reason the removal is not "stop reading the second list": ' +
+        '`SkeletonJson` throws `Couldn\'t find bone nosuch for skin variantB` in the consumer\'s process, where ' +
+        'the message can name neither the rig spec nor the file. Two of the three are red-first — the branch ' +
+        'point reached the retired sentence before either, because the skin naming them also names the shared ' +
+        'bone — and the first is not: an undeclared name was checked before the sharing was, so it answered this ' +
+        'way already. All three are in the SECOND skin, so a rule that dropped that list would go red here',
+    );
+
+    // ⭐ The unflagged bone is BEHIND the shared one in the second skin's list,
+    // which is what makes this half red-first: on the branch point the list was
+    // refused at "wing" and the flag on "hinge" was never read, so the message
+    // moved rather than stayed.
+    const unflagged = sharedBuild(
+      withTrack({ variantA: { bones: ['wing'], ik: ['wing-ik'] }, variantB: { bones: ['wing', 'hinge'], ik: ['wing-ik'] } }),
+    );
+    const unlisted = sharedBuild(withTrack({ variantA: {}, variantB: {} }));
+    const switchProbes = [
+      ...(unflagged.refusal?.includes('skin "variantB" activates bone "hinge", but that bone does not declare `"skin": true`')
+        ? []
+        : [`an unflagged bone behind a shared one: ${unflagged.refusal ?? 'compiled clean'}`]),
+      ...(unlisted.refusal?.includes('bone "wing" declares `"skin": true` but no skin activates it')
+        ? []
+        : [`a flagged bone in neither list: ${unlisted.refusal ?? 'compiled clean'}`]),
+      ...[unflagged, unlisted].flatMap((r) => printsRetired(r.refusal)).map((s) => `a refusal still prints ${JSON.stringify(s)}`),
+    ];
+    const switchHeld = switchProbes.length === 0;
+    bad += reportCase(
+      'RF70_both_halves_of_the_skin_true_switch_still_fire_on_a_shared_member',
+      switchHeld,
+      probeDetail(
+        switchHeld,
+        switchProbes,
+        `unflagged, behind the shared name in the second skin's list: ${JSON.stringify(unflagged.refusal?.split(': ').slice(1).join(': '))}; ` +
+          `flagged and listed by neither skin: ${JSON.stringify(unlisted.refusal?.split(': ').slice(1).join(': '))}`,
+        (count) => `${count} half/halves of the switch that stopped firing:`,
+      ),
+      'the pairing is the half of a member list the Spine parser never checks, so it is the half that would go ' +
+        'silent unnoticed. The first plant is red-first and the second is not, deliberately: the branch point read ' +
+        '"variantB": ["wing", "hinge"] as far as "wing" and refused the SHARING, so the flag on "hinge" was never ' +
+        'reached and the sentence an author got was about the wrong bone. The second needs no sharing at all and ' +
+        'passed before this landing too — it is what says the removal did not also stop counting a shared bone as ' +
+        'activated, which is the one way a set could have been wired wrong',
+    );
+  }
+
   return bad;
 }
 
@@ -20485,6 +20714,218 @@ function runPathAndSliderSuite(): number {
       '`windGlobal` half is the control that keeps the rule honest: it reads the flag the runtime reads, so a foreign ' +
       'file whose global timeline writes into nothing at all is not refused for an order that cannot hurt it',
   );
+
+  // --- PS161–PS164: one bone, two skins (issue #725) ------------------------
+  //
+  // `PS08` above poses the per-skin switch with the bone in exactly one skin,
+  // which is all the rig spec used to allow. These four are the shape a
+  // production rig has and the rig spec refused: two mutually exclusive variants
+  // of one region, both activating the bone they share. The claims are posed
+  // rather than asserted — `bone.active` and the constrained world rotation read
+  // off spine-core after `setSkin` + `updateWorldTransform` — because "the file
+  // loads" and "the bone is switched on" are different facts and only the second
+  // one is what an author was promised.
+  {
+    /** `pauldron` and its IK under two skins instead of one, plus a skin that lists nothing. */
+    const sharedSkins = {
+      default: PATH_RIG.skins.default,
+      armoured: { bones: ['pauldron'], ik: ['pauldron-ik'] },
+      plated: { bones: ['pauldron'], ik: ['pauldron-ik'] },
+      bare: {},
+    };
+    /** The same rig with the second variant listing nothing: the reference the diff below is taken against. */
+    const loneSkins = { ...sharedSkins, plated: {} };
+    /**
+     * One build of `PATH_RIG` under other skins, as both the emitted text and
+     * something posable.
+     *
+     * ⚠️ A refusal comes back as a value rather than out of the suite. Every rig
+     * in this block was refused on the branch point, so an exception here would
+     * make a red-first window print where the run STOPPED instead of which cases
+     * went red — and the cases after it, in this suite and in every suite below,
+     * would print nothing at all.
+     */
+    const skinnedBuild = (
+      skins: Record<string, unknown>,
+    ): { dirs: ProbeDirs; text: string; data: SkeletonData | null; refusal: string | null } => {
+      const at = writeProbeRig({ ...PATH_RIG, skins });
+      const motionPath = join(at.dir, 'probe.motion.json');
+      writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+      try {
+        const built = compile({ rigPath: at.rigPath, motionPath, outDir: at.outDir, imagesDir: at.dir });
+        return { dirs: at, text: built.skeletonText, data: posableFromText(built.skeletonText, built.atlasText, at.outDir).data, refusal: null };
+      } catch (err) {
+        return { dirs: at, text: '{"skins":[]}', data: null, refusal: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}` };
+      }
+    };
+    /** Every refusal among the builds a case needs, as probe rows. */
+    const refusedRows = (...builds: Array<{ refusal: string | null }>): string[] =>
+      builds.flatMap((b) => (b.refusal === null ? [] : [`a rig this case needs did not compile: ${b.refusal}`]));
+    const sharedBuilt = skinnedBuild(sharedSkins);
+    const loneBuilt = skinnedBuild(loneSkins);
+    const sharedGate = sharedBuilt.refusal === null ? gateProbe(sharedBuilt.dirs, motion) : null;
+    /** `skinName -> "bones=[…] ik=[…]"` off an emitted skeleton. */
+    const listsOf = (text: string): Record<string, string> => {
+      const skeleton = JSON.parse(text) as { skins: Array<{ name: string; bones?: string[]; ik?: string[] }> };
+      return Object.fromEntries(
+        skeleton.skins.map((s) => [s.name, `bones=[${(s.bones ?? []).join(', ')}] ik=[${(s.ik ?? []).join(', ')}]`]),
+      );
+    };
+    const sharedLists = listsOf(sharedBuilt.text);
+    const listProbes = [
+      ...refusedRows(sharedBuilt),
+      ...(sharedLists.armoured === 'bones=[pauldron] ik=[pauldron-ik]'
+        ? []
+        : [`skin "armoured" emitted ${sharedLists.armoured ?? '(absent)'}`]),
+      ...(sharedLists.plated === 'bones=[pauldron] ik=[pauldron-ik]' ? [] : [`skin "plated" emitted ${sharedLists.plated ?? '(absent)'}`]),
+      ...(sharedLists.bare === 'bones=[] ik=[]' ? [] : [`the skin that lists nothing emitted ${sharedLists.bare ?? '(absent)'}`]),
+      ...(sharedGate === null || sharedGate.failures.length === 0
+        ? []
+        : [`the gate failed: ${sharedGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
+      ...(sharedGate !== null && sharedGate.passed.includes('A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED')
+        ? []
+        : ['A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED did not run on the shared rig, so nothing gated the member lists']),
+    ];
+    const listHeld = listProbes.length === 0;
+    say(
+      'PS161_A_BONE_AND_A_CONSTRAINT_TWO_SKINS_SHARE_ARE_EMITTED_IN_BOTH_AND_THE_GATE_IS_GREEN',
+      listHeld,
+      probeDetail(
+        listHeld,
+        listProbes,
+        `"armoured" ${JSON.stringify(sharedLists.armoured)}, "plated" ${JSON.stringify(sharedLists.plated)}, and the ` +
+          `third skin ${JSON.stringify(sharedLists.bare)}; ${sharedGate?.passed.length ?? 0} assertion(s) passed and none failed`,
+        (count) => `${count} thing(s) the shared build did not do:`,
+      ),
+      'the emitted lists rather than the exit code: a compiler that accepted the spec and wrote the bone under the ' +
+        'first skin only would leave the second variant with a bone that never switches on, and every assertion ' +
+        'here would still be green. A38 is named because it is the one rule that reads these lists',
+    );
+
+    /** `bone.active`, its constraint's, and what the bone poses to, under one worn skin. */
+    const activationOf = (data: SkeletonData | null, skin: string | null): { active: boolean; ik: boolean; rotation: number } => {
+      if (data === null) return { active: false, ik: false, rotation: 0 };
+      const skeleton = new Skeleton(data);
+      if (skin) skeleton.setSkin(skin);
+      skeleton.setupPose();
+      skeleton.update(0);
+      skeleton.updateWorldTransform(Physics.reset);
+      const bone = skeleton.bones.find((b) => b.data.name === 'pauldron')!;
+      return {
+        active: bone.active,
+        ik: skeleton.findConstraint('pauldron-ik', IkConstraint)!.active,
+        rotation: bone.appliedPose.getWorldRotationX(),
+      };
+    };
+    const underA = activationOf(sharedBuilt.data, 'armoured');
+    const underB = activationOf(sharedBuilt.data, 'plated');
+    const underBare = activationOf(sharedBuilt.data, 'bare');
+    const underNone = activationOf(sharedBuilt.data, null);
+    const poseProbes = [
+      ...refusedRows(sharedBuilt),
+      ...(underA.active && underA.ik && near(underA.rotation, 90) ? [] : [`under "armoured": ${JSON.stringify(underA)}`]),
+      ...(underB.active && underB.ik && near(underB.rotation, 90) ? [] : [`under "plated": ${JSON.stringify(underB)}`]),
+      ...(!underBare.active && !underBare.ik && near(underBare.rotation, 0) ? [] : [`under the skin that lists nothing: ${JSON.stringify(underBare)}`]),
+      ...(!underNone.active && !underNone.ik && near(underNone.rotation, 0) ? [] : [`with no skin set: ${JSON.stringify(underNone)}`]),
+    ];
+    const poseHeld = poseProbes.length === 0;
+    say(
+      'PS162_THE_SHARED_BONE_POSES_UNDER_EITHER_SKIN_AND_UNDER_NEITHER_OF_THE_OTHER_TWO',
+      poseHeld,
+      probeDetail(
+        poseHeld,
+        poseProbes,
+        `pauldron active under "armoured" ${String(underA.active)} (${underA.rotation.toFixed(2)}°), under "plated" ` +
+          `${String(underB.active)} (${underB.rotation.toFixed(2)}°), under the skin that lists nothing ` +
+          `${String(underBare.active)} (${underBare.rotation.toFixed(2)}°), with no skin ${String(underNone.active)} ` +
+          `(${underNone.rotation.toFixed(2)}°); its IK ${String(underA.ik)}/${String(underB.ik)}/${String(underBare.ik)}/${String(underNone.ik)}`,
+        (count) => `${count} skin(s) the shared bone answered wrongly under:`,
+      ),
+      'the whole reason the rig spec\'s one-skin rule went: `Skeleton.updateCache` walks the WORN skin\'s bones and ' +
+        'turns each one on, so a name in two lists is a bone active under either — which is what two mutually ' +
+        'exclusive variants of one region mean. The rotation is read beside the flag because an active bone that ' +
+        'its constraint no longer reaches would report `active` and pose at 0°',
+    );
+
+    const confined = differingJsonPaths(JSON.parse(loneBuilt.text), JSON.parse(sharedBuilt.text));
+    const platedAt = (JSON.parse(sharedBuilt.text) as { skins: Array<{ name: string }> }).skins.findIndex(
+      (s) => s.name === 'plated',
+    );
+    const wantedPaths = [`skins[${platedAt}].bones`, `skins[${platedAt}].ik`];
+    const confinedProbes = [
+      ...refusedRows(sharedBuilt, loneBuilt),
+      ...(platedAt < 0 ? ['the emitted file has no skin called "plated", so there is nothing to confine the diff to'] : []),
+      ...confined.filter((p) => !wantedPaths.some((w) => p.startsWith(`${w}:`))).map((p) => `a difference outside the shared skin's own lists: ${p}`),
+      ...(wantedPaths.every((w) => confined.some((p) => p.startsWith(`${w}:`)))
+        ? []
+        : [`the two builds do not differ at ${wantedPaths.join(' and ')}, so the plant changed nothing`]),
+      ...(loneBuilt.text === sharedBuilt.text ? ['the two builds are byte-identical, so the sharing is not in the file at all'] : []),
+    ];
+    const confinedHeld = confinedProbes.length === 0;
+    say(
+      'PS163_SHARING_A_NAME_CHANGES_THE_SECOND_SKINS_TWO_LISTS_AND_NOTHING_ELSE_IN_THE_FILE',
+      confinedHeld,
+      probeDetail(
+        confinedHeld,
+        confinedProbes,
+        `${confined.length} differing field path(s) between the same rig with and without the second skin naming ` +
+          `the bone, and both of them are the second skin's own lists: ${confined.join('; ')}`,
+        (count) => `${count} thing(s) wrong with where the change landed:`,
+      ),
+      'a removal that widened what a member list means could have moved a byte anywhere in the emitted file — the ' +
+        'skin order, the bone array, another skin\'s entry — and no case above would notice, because all of them ' +
+        'read the shared skin. The reference is a build of the SAME rig in this run rather than a stored file, so ' +
+        'it cannot go stale: the only authored difference between the two is the one list',
+    );
+
+    // ⚠️ The card asked whether a bone can be "active under both a skin and the
+    // default skin". It cannot, and not because rigc forbids it: `updateCache`
+    // reads `this.skin` and nothing else, so the default skin's own member lists
+    // are consulted only while the default skin is the one being WORN. The
+    // attachment fallback through `SkeletonData.defaultSkin` is `getAttachment`'s
+    // and covers art alone. Measured here because it is now reachable — the pair
+    // below was refused on the branch point — and because "list it in default so
+    // it is always on" is the reading the sentence in §3.4.1 has to close.
+    const defaultLong = { attachments: PATH_RIG.skins.default.attachments, bones: ['pauldron'], ik: ['pauldron-ik'] };
+    const alsoDefault = skinnedBuild({
+      default: defaultLong,
+      armoured: { bones: ['pauldron'], ik: ['pauldron-ik'] },
+      bare: {},
+    });
+    const onlyDefault = skinnedBuild({ default: defaultLong, armoured: {}, bare: {} });
+    const bothDefault = activationOf(alsoDefault.data, 'default');
+    const bothArmoured = activationOf(alsoDefault.data, 'armoured');
+    const bothBare = activationOf(alsoDefault.data, 'bare');
+    const onlyOnDefault = activationOf(onlyDefault.data, 'default');
+    const onlyOnArmoured = activationOf(onlyDefault.data, 'armoured');
+    const onlyOnNone = activationOf(onlyDefault.data, null);
+    const unionProbes = [
+      ...refusedRows(alsoDefault, onlyDefault),
+      ...(bothDefault.active && bothArmoured.active ? [] : [`listed by both, the bone is ${String(bothDefault.active)}/${String(bothArmoured.active)} under "default"/"armoured"`]),
+      ...(bothBare.active ? ['listed by both, the bone is still active under a third skin that lists nothing'] : []),
+      ...(onlyOnDefault.active ? [] : ['listed only by "default", the bone is not active under "default" either']),
+      ...(onlyOnArmoured.active ? ['listed only by "default", the bone stays active under "armoured" — the default skin IS a union'] : []),
+      ...(onlyOnNone.active ? ['listed only by "default", the bone is active with no skin set at all'] : []),
+    ];
+    const unionHeld = unionProbes.length === 0;
+    say(
+      'PS164_THE_DEFAULT_SKINS_OWN_MEMBER_LISTS_APPLY_ONLY_WHILE_IT_IS_THE_SKIN_BEING_WORN',
+      unionHeld,
+      probeDetail(
+        unionHeld,
+        unionProbes,
+        `listed by "default" AND "armoured": active ${String(bothDefault.active)}/${String(bothArmoured.active)}/` +
+          `${String(bothBare.active)} under default/armoured/the skin that lists nothing. Listed by "default" alone: ` +
+          `active ${String(onlyOnDefault.active)} under "default", ${String(onlyOnArmoured.active)} under "armoured" ` +
+          `and ${String(onlyOnNone.active)} with no skin — so wearing another skin switches it OFF`,
+        (count) => `${count} clause(s) of the worn-skin rule did not hold:`,
+      ),
+      'the question the card asked, answered by the runtime instead of by a guess: there is no union, so a bone the ' +
+        '`default` skin lists is dead under every other skin, and the pair in one file is the only way to see it — ' +
+        'the second half alone reads as an ordinary skin-owned bone. Both halves are needed because a union WOULD ' +
+        'reproduce the first half exactly',
+    );
+  }
 
   return bad;
 }
@@ -51881,6 +52322,113 @@ function runIngestSuite(): number {
         'pair of lists and the shape this repository refuses. This holds them equal by a RUN rather than by a ' +
         'shared constant: one file through both readers, the two key sets compared against each other and both ' +
         'against what the plant wrote, so a list that loses a key goes red on the module that lost it',
+    );
+  }
+
+  // --- IG49–IG50: a bone two skins activate, through the round trip (#725) ---
+  //
+  // `ingest` always carried the member lists — `SKIN_LISTS` is derived from
+  // `RIG_KEYS.RigSkinEntry`, so it has no opinion about what is in them — and on
+  // the branch point that was the defect: it wrote a spec faithfully and then
+  // rigc's OWN parser refused it, so the run ended `BLOCK SPEC_REFUSED` and the
+  // rebuild never happened. The source here is a rig the compiler now writes,
+  // which is the honest subject: the decompiler is asked about a file the tool
+  // itself emits, not about a shape forged for the occasion.
+  {
+    const sharedSkins = {
+      default: PATH_RIG.skins.default,
+      armoured: { bones: ['pauldron'], ik: ['pauldron-ik'] },
+      plated: { bones: ['pauldron'], ik: ['pauldron-ik'] },
+    };
+    const sharedDirs = writeProbeRig({ ...PATH_RIG, skins: sharedSkins });
+    const sharedMotionPath = join(sharedDirs.dir, 'shared.motion.json');
+    writeFileSync(sharedMotionPath, `${JSON.stringify(pathMotion(PATH_MOVE), null, 2)}\n`);
+    // ⚠️ The round trip's FIRST step is a compile of the shared rig, which the
+    // branch point refused — so the call is guarded and the refusal becomes a
+    // probe row. An exception here would take the rest of this suite and every
+    // suite after it with it, and a red-first window would show where the run
+    // stopped instead of which cases went red.
+    let sharedTrip: IngestTrip | null = null;
+    let tripRefusal: string | null = null;
+    try {
+      sharedTrip = ingestRoundTrip(
+        { name: 'sharedskin', rigPath: sharedDirs.rigPath, motionPath: sharedMotionPath, imagesDir: sharedDirs.dir },
+        'none',
+      );
+    } catch (err) {
+      tripRefusal = err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+    }
+    const tripRows = sharedTrip === null ? [`the round trip did not run: ${tripRefusal ?? 'it was skipped'}`] : [];
+    /** `skinName -> "bones=[…] ik=[…]"`, off a skin array in either spelling. */
+    const sourceLists = (text: string): Record<string, string> => {
+      const skeleton = JSON.parse(text) as { skins: Array<{ name: string; bones?: string[]; ik?: string[] }> };
+      return Object.fromEntries(
+        skeleton.skins.map((s) => [s.name, `bones=[${(s.bones ?? []).join(', ')}] ik=[${(s.ik ?? []).join(', ')}]`]),
+      );
+    };
+    const specLists = (rig: Record<string, unknown>): Record<string, string> =>
+      Object.fromEntries(
+        Object.entries((rig.skins ?? {}) as Record<string, Record<string, unknown>>).map(([name, skin]) => [
+          name,
+          `bones=[${((skin.bones ?? []) as string[]).join(', ')}] ik=[${((skin.ik ?? []) as string[]).join(', ')}]`,
+        ]),
+      );
+    const fromFile = sharedTrip === null ? {} : sourceLists(sharedTrip.a.skeletonText);
+    const fromSpec = sharedTrip === null ? {} : specLists(sharedTrip.rig);
+    const shared = Object.entries(fromFile).filter(([, lists]) => lists.includes('pauldron'));
+    const refusedFindings = (sharedTrip?.findings ?? []).filter((f) => f.code === 'SPEC_REFUSED');
+    const writeProbes = [
+      ...tripRows,
+      ...(shared.length === 2 ? [] : [`${shared.length} skin(s) in the source name the bone, and this case needs two`]),
+      ...shared
+        .filter(([name, lists]) => fromSpec[name] !== lists)
+        .map(([name, lists]) => `the spec writes skin "${name}" as ${fromSpec[name] ?? '(absent)'} and the file says ${lists}`),
+      ...refusedFindings.map((f) => `SPEC_REFUSED: ${f.detail}`),
+      ...(sharedTrip?.findings ?? []).filter((f) => f.kind === 'blocker').map((f) => `a blocker remains: ${f.code} ${f.where}`),
+    ];
+    const writeHeld = writeProbes.length === 0;
+    say(
+      'IG49_THE_DECOMPILED_SPEC_CARRIES_A_MEMBER_LIST_TWO_SKINS_SHARE_AND_RIGCS_OWN_PARSER_TAKES_IT',
+      writeHeld,
+      probeDetail(
+        writeHeld,
+        writeProbes,
+        `the source's two variants read ${shared.map(([name, lists]) => `"${name}" ${lists}`).join(' and ')}, the ` +
+          `written rig spec says the same of both, and ${sharedTrip?.findings.length ?? 0} finding(s) came back with no ` +
+          'SPEC_REFUSED among them',
+        (count) => `${count} thing(s) the decompiled spec did not do:`,
+      ),
+      'the card\'s own blocker, and the reason it is worth a case of its own: the decompiler was never wrong here — ' +
+        'it wrote both lists — and the round trip still ended in `BLOCK SPEC_REFUSED` because `parseRigSpec` ' +
+        'refused what `ingest` had faithfully written. So the clause that matters is the absence of that finding ' +
+        'beside the lists, not either one alone',
+    );
+
+    const rebuiltLists = sharedTrip === null ? {} : sourceLists(sharedTrip.b.skeletonText);
+    const identical = sharedTrip !== null && sharedTrip.a.skeletonText === sharedTrip.b.skeletonText;
+    const paths = sharedTrip === null ? [] : differingJsonPaths(JSON.parse(sharedTrip.a.skeletonText), JSON.parse(sharedTrip.b.skeletonText));
+    const rebuildProbes = [
+      ...tripRows,
+      ...(identical ? [] : [`${paths.length} differing field path(s): ${paths.join('; ')}`]),
+      ...(sharedTrip !== null && sharedTrip.a.atlasText === sharedTrip.b.atlasText ? [] : ['the rebuilt atlas differs']),
+      ...shared
+        .filter(([name, lists]) => rebuiltLists[name] !== lists)
+        .map(([name, lists]) => `the rebuild emits skin "${name}" as ${rebuiltLists[name] ?? '(absent)'} and the source says ${lists}`),
+    ];
+    const rebuildHeld = rebuildProbes.length === 0;
+    say(
+      'IG50_THE_REBUILD_PUTS_THE_SHARED_NAME_BACK_IN_BOTH_SKINS_AND_THE_FILE_IS_THE_ONE_IT_WAS_READ_FROM',
+      rebuildHeld,
+      probeDetail(
+        rebuildHeld,
+        rebuildProbes,
+        `skeleton.json ${sharedTrip?.a.skeletonText.length ?? 0} B identical, skeleton.atlas identical, 0 differing field ` +
+          `paths, and the two variants come back as ${shared.map(([name]) => `"${name}" ${rebuiltLists[name]}`).join(' and ')}`,
+        (count) => `${count} thing(s) the rebuild lost:`,
+      ),
+      'byte identity is the contract this suite is built on, and the member lists are read back beside it because ' +
+        'identity alone would also be satisfied by a rebuild that dropped the lists from BOTH files — the source ' +
+        'is one rigc emitted, so a drop on the emit side would move the reference with the measurement',
     );
   }
 

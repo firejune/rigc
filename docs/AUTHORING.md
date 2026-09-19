@@ -2045,8 +2045,24 @@ is dead data in silence:
   runs, under any skin there is.
 
 rigc refuses both halves by name, and `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` checks
-the artifact for them. A bone or constraint belongs to **one** skin; two skins
-naming the same one is also refused.
+the artifact for them.
+
+⭐ **A bone or a constraint may be listed by more than one skin**, and each list
+is emitted as written: two mutually exclusive variants of one body region both
+activating the bone they switch on is the ordinary case. At runtime it is active
+while **the skin being worn** lists it — `Skeleton.updateCache` walks that skin's
+`bones` and turns each one on, along with its whole ancestor chain — so a bone two
+skins name poses under either of them and under neither of the rest. A consumer
+that combines the two with `Skin.addSkin` gets it once; the runtime deduplicates
+by object identity.
+
+⚠️ **The worn skin, and only the worn skin — including `default`.** The
+default-skin fallback is about *art*: `getAttachment` looks in the current skin
+and then in `SkeletonData.defaultSkin`, and `updateCache` does no such thing. So a
+`skin: true` bone that only the `default` skin lists is **inactive under every
+other skin** and inactive with no skin set. Listing it there to mean "always on"
+gets the opposite; leave the flag off instead, which is what "active under every
+skin" is spelled as.
 
 ⚠️ **The two spellings are told apart by these seven keys** — `attachments`,
 `bones`, `ik`, `transform`, `path`, `physics`, `slider` — so a skin that uses any of
@@ -4737,7 +4753,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `two bones are called "X"` | bone names are the join key; rename one |
 | `two ik constraints are called "X" — a constraint resolves by name AND type (\`SkeletonData.findConstraint\`), so names are unique PER KIND: an ik and a transform constraint may share one, two of a kind may not` | §3.5 — rename one of the two. The kind in the sentence is the pair's own, so `two transform constraints are called "X"` is the same refusal on another kind; a name shared **across** kinds is not this error and never was one to fix |
 | `physics constraint "X" is declared in both the rig spec and the motion spec's physics table` | §4.6 — the rig spec declares a physics constraint's structure and the motion spec's `physics` table declares one outright; pick the file it belongs in. Per kind, like every other constraint name: an `ik` "X" in the rig spec beside a `physics` "X" here is two constraints and is not this error |
-| `skin "S" activates ik constraint "X", which skin "T" already activates; a constraint belongs to one skin` | §3.4.1 — a constraint runs under one skin or under all of them. The kind is in the sentence because `ik` "X" and `transform` "X" are two constraints, and each may belong to a different skin |
+| `skin "S" lists "X" under "transform", but the rig declares it as a "ik" constraint — a skin looks its constraints up by name AND type, so this one is a miss and the loader throws` | §3.4.1 — move the name to the list named after the constraint's own kind. A name the rig declares under **no** kind is the other miss and says so (`skin "S" activates ik constraint "X", which this rig does not declare`). ⚠️ A name listed by **several skins** is not an error and no longer was one as of [#725](https://github.com/firejune/rigc/issues/725): the lists are per-skin sets and a bone or constraint in two of them is active under either |
 | `slot "X" names bone "Y", which this rig does not declare` | add the bone, or fix the slot's `bone` |
 | `no setup pose for slot "X": give the motion spec a \`setup\` entry or the rig slot an \`attachment\`` | R3 — pick one file and declare it there. A slot **nothing** fills is exempt: its setup pose can only be "show nothing" and is not asked for |
 | `the setup pose shows attachment "A" on slot "X", which no skin and no manifest part fills` | §3.3 — the slot is emitted empty and nothing was ever going to fill it, so `A` resolves to nothing. Give the slot an attachment (a skin entry or a manifest part), or state the setup pose as `null` |
