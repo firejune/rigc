@@ -194,6 +194,7 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP: 'validity',
   A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER: 'validity',
   A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN: 'validity',
+  A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN: 'validity',
 };
 
 /**
@@ -297,6 +298,7 @@ export const SKIP_NO_ATTACHMENT_REGION_JOIN =
   'no attachment names a region and the atlas declares none, so there is no attachment-to-region join to hold';
 export const SKIP_NO_TWO_COLOR_TINT =
   'no slot declares a "dark" colour and no animation keys an "rgba2" timeline, so there is no two-colour tint to read back';
+export const SKIP_NO_LINKED_MESH = 'no attachment in this skeleton takes its geometry from another one';
 /**
  * A09's, which predates this list and joins it rather than being rewritten: it
  * is the same fact about the same subject, and a control that compares against
@@ -632,8 +634,53 @@ export function attachmentRegionJoins(raw: unknown): AttachmentRegionJoin[] {
 }
 
 /**
+ * The mesh keys the `source` branch never reaches — the geometry a linked mesh
+ * may state and nothing reads (issue #710).
+ *
+ * Derived from the branch rather than chosen. `readAttachment` returns at
+ * `SkeletonJson.js:586` as soon as `source` is truthy, and everything below that
+ * return reads `map.uvs` (twice: as the length handed to `readVertices` and as
+ * `regionUVs`), `map.triangles`, `map.edges` and `map.hull`. `vertices` is on the
+ * list because `readVertices` reads `map.vertices` and nothing else (`:654`), so
+ * it goes unread with the call that would have read it.
+ *
+ * ⚠️ `width` and `height` are NOT on this list, although `setSourceMesh`
+ * overwrites both with the source's (`MeshAttachment.js:102-103`). The branch
+ * reads them at `:569-570`, the format carries them on a link and rigc emits
+ * them (#691). A key the parser reads is not a key the parser ignores, whatever
+ * a later pass does with the value.
+ */
+const LINKED_MESH_UNREAD_KEYS = ['uvs', 'triangles', 'vertices', 'hull', 'edges'] as const;
+
+/** One linked mesh as the FILE spells it, before the loader has resolved anything. */
+interface RawLinkedMesh {
+  /** The placeholder of the mesh whose geometry this attachment draws. */
+  source: string;
+  /**
+   * The `skin` the entry states, or `undefined` for the parser's default — which
+   * is the DEFAULT skin and never the skin the link is written in (`:429`).
+   */
+  skin?: string;
+  /** The `slot` the entry states, or `undefined` for the parser's default: this attachment's own slot (`:573-579`). */
+  slot?: string;
+  /** Which of `LINKED_MESH_UNREAD_KEYS` this entry states, in that order. */
+  geometry: string[];
+  /**
+   * How big a mesh those keys describe — `uvs.length / 2` and
+   * `triangles.length / 3` — when the entry states them as arrays.
+   *
+   * Read so that the failure can put the shape the author wrote beside the shape
+   * the runtime draws. `undefined` where the file states the key as something
+   * other than an array, which is a file this rule refuses for the key rather
+   * than for its length.
+   */
+  statedVertices?: number;
+  statedTriangles?: number;
+}
+
+/**
  * `"<skin>\0<slot>\0<placeholder>" -> source` for every linked mesh the raw
- * skeleton declares (issue #691).
+ * skeleton declares, with what the file says about each one (issues #691, #710).
  *
  * 🔑 The test is the parser's own and it is not `type`: `type: "mesh"` and
  * `type: "linkedmesh"` share one branch and a truthy `source` is what decides
@@ -641,8 +688,8 @@ export function attachmentRegionJoins(raw: unknown): AttachmentRegionJoin[] {
  * there, so it is not a link here either — that map is read as an ordinary mesh,
  * which is exactly what the runtime does with it.
  */
-function rawLinkedMeshSources(raw: unknown): Map<string, string> {
-  const links = new Map<string, string>();
+function rawLinkedMeshes(raw: unknown): Map<string, RawLinkedMesh> {
+  const links = new Map<string, RawLinkedMesh>();
   if (!isObj(raw) || !Array.isArray(raw.skins)) return links;
   for (const skin of raw.skins as unknown[]) {
     if (!isObj(skin) || !isObj(skin.attachments)) continue;
@@ -655,7 +702,14 @@ function rawLinkedMeshSources(raw: unknown): Map<string, string> {
         if (type !== 'mesh' && type !== 'linkedmesh') continue;
         const source = entry.source;
         if (typeof source !== 'string' || source.length === 0) continue;
-        links.set(`${skinName}\u0000${slot}\u0000${placeholder}`, source);
+        links.set(`${skinName}\u0000${slot}\u0000${placeholder}`, {
+          source,
+          skin: typeof entry.skin === 'string' ? entry.skin : undefined,
+          slot: typeof entry.slot === 'string' ? entry.slot : undefined,
+          geometry: LINKED_MESH_UNREAD_KEYS.filter((key) => entry[key] !== undefined),
+          statedVertices: Array.isArray(entry.uvs) ? entry.uvs.length / 2 : undefined,
+          statedTriangles: Array.isArray(entry.triangles) ? entry.triangles.length / 3 : undefined,
+        });
       }
     }
   }
@@ -1707,8 +1761,8 @@ export function validate(input: ValidateInput): ValidateReport {
   let clippingCount = 0;
   const meshSlots = new Set<number>();
   /**
-   * The loaded mesh of every attachment the FILE spells as a link, to the
-   * `source` it names (issue #691).
+   * The loaded mesh of every attachment the FILE spells as a link, to what the
+   * file says about it (issues #691, #710).
    *
    * 🔑 Read off the raw JSON and joined by (skin, slot, placeholder) rather than
    * asked of the loaded object, because `MeshAttachment.sourceMesh` is **private
@@ -1721,11 +1775,23 @@ export function validate(input: ValidateInput): ValidateReport {
    * placeholder is unique only within one skin's slot and several skins fill
    * one — and every assertion downstream holds the attachment, not its address.
    */
-  const linkedMeshes = new Map<MeshAttachment, string>();
+  const linkedMeshes = new Map<MeshAttachment, RawLinkedMesh>();
+  /**
+   * The same pairing the other way round — join key -> the attachment the loader
+   * produced for it — which is what `A44` needs and `kindOf` does not.
+   *
+   * 🔑 Two maps rather than one because the two questions are different. Every
+   * rule that asks "is THIS attachment a link" holds the object and wants the
+   * file's word about it; `A44` walks the FILE's links and asks what the runtime
+   * made of each, including the answer "nothing" — a link whose region is
+   * missing loads as `null` and is in no skin at all (`A08` names that), so its
+   * join key is absent here while the file still declares it.
+   */
+  const loadedLinks = new Map<string, MeshAttachment>();
 
   if (skeletonData) {
     const data = skeletonData as NonNullable<typeof skeletonData>;
-    const rawLinks = rawLinkedMeshSources(raw);
+    const rawLinks = rawLinkedMeshes(raw);
     for (const skin of data.skins) {
       for (const entry of skin.getAttachments()) {
         const att = entry.attachment;
@@ -1733,8 +1799,12 @@ export function validate(input: ValidateInput): ValidateReport {
         else if (att instanceof MeshAttachment) {
           meshAttachments.push(att);
           meshSlots.add(entry.slotIndex);
-          const source = rawLinks.get(`${skin.name}\u0000${data.slots[entry.slotIndex].name}\u0000${entry.placeholder}`);
-          if (source !== undefined) linkedMeshes.set(att, source);
+          const join = `${skin.name}\u0000${data.slots[entry.slotIndex].name}\u0000${entry.placeholder}`;
+          const link = rawLinks.get(join);
+          if (link !== undefined) {
+            linkedMeshes.set(att, link);
+            loadedLinks.set(join, att);
+          }
         } else if (att instanceof ClippingAttachment) clippingCount++;
       }
     }
@@ -2115,7 +2185,7 @@ export function validate(input: ValidateInput): ValidateReport {
       list
         .filter((m) => kindOf(m) === 'authored')
         .map((m) => {
-          const source = linkedMeshes.get(m);
+          const source = linkedMeshes.get(m)?.source;
           return source === undefined ? `"${m.name}"` : `"${m.name}" (linked to "${source}")`;
         });
 
@@ -3875,6 +3945,70 @@ export function validate(input: ValidateInput): ValidateReport {
             );
           }
         }
+      }
+    });
+
+    // --- A44: a linked mesh states no geometry of its own ------------------
+    //
+    // 🚨 The one shape the parser reads in SILENCE. `readAttachment` returns from
+    // the `source` branch at `SkeletonJson.js:586`, before `map.uvs` is touched
+    // at all, so `uvs`, `triangles`, `vertices`, `hull` and `edges` written on a
+    // link are read by nothing — and `setSourceMesh` then fills the attachment
+    // with the SOURCE's arrays. The file says one mesh and every runtime draws
+    // another, which is why this is `validity` and not one renderer's policy.
+    //
+    // ⭐ **It is a separate assertion rather than a clause on A04, and the reason
+    // is measurable both ways.** A04 reads the LOADED attachment —
+    // `mesh.triangles`, `mesh.worldVerticesLength`, `mesh.vertices` — which on a
+    // link are the source's after `setSourceMesh`: measured on a forged link
+    // declaring 5 uvs and 3 triangles beside a 4-vertex source, A04 PASSED
+    // having read 8 and 2, the source's own. The keys this rule is about are not
+    // in the data A04 holds, so the clause would have had to reach for the raw
+    // file, and a verdict line reading A04's name would then be naming a
+    // measurement of the loaded geometry while deciding about file keys nothing
+    // read. The SKIP is the sharper half: A04's subject is mesh attachments, so
+    // on a rig with meshes and no link its subject is PRESENT and it passes —
+    // there is no verdict left for "this rig has no link to measure", and a
+    // clause that cannot report SKIP reports a pass for an absent subject, which
+    // this repository already has a judgment about.
+    //
+    // ⚠️ The subject is the FILE's links and not the loaded ones. A link whose
+    // region is missing loads as `null` and is in no skin (`A08` names it), so
+    // walking the loaded attachments would let the whole rule vanish on exactly
+    // the file that is already wrong.
+    check('A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN', () => {
+      if (rawLinks.size === 0) return skip('A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN', SKIP_NO_LINKED_MESH);
+      for (const [join, link] of rawLinks) {
+        if (link.geometry.length === 0) continue;
+        const [skinName, slotName, placeholder] = join.split('\u0000');
+        const at = `skin ${JSON.stringify(skinName)} slot ${JSON.stringify(slotName)} placeholder ${JSON.stringify(placeholder)}`;
+        const keys = link.geometry.map((key) => JSON.stringify(key)).join(', ');
+        // Where the parser looks for `source`, with the two defaults spelled out:
+        // an omitted `skin` is the DEFAULT skin rather than this attachment's own
+        // (`:429`), and an omitted `slot` IS this attachment's own (`:573-579`).
+        const where =
+          `skin ${JSON.stringify(link.skin ?? 'default')}${link.skin === undefined ? ' (the default skin, because no "skin" was stated — never the skin this attachment is written in)' : ''} ` +
+          `slot ${JSON.stringify(link.slot ?? slotName)}${link.slot === undefined ? ' (this attachment\'s own, because no "slot" was stated)' : ''}`;
+        // What the author's own keys describe, printed only when both are
+        // readable — the shape the file states, beside the shape it draws.
+        const states =
+          link.statedVertices === undefined || link.statedTriangles === undefined
+            ? ''
+            : ` (${link.statedVertices} vertices and ${link.statedTriangles} triangles)`;
+        const drawn = loadedLinks.get(join);
+        const loaded =
+          drawn === undefined
+            ? 'what it loaded is not shown here because the round trip produced no attachment for it (A00 owns that)'
+            : `it loaded ${drawn.worldVerticesLength / 2} vertices and ${drawn.triangles.length / 3} triangles`;
+        fail(
+          'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN',
+          `${at} links to ${JSON.stringify(link.source)} and states ${keys}${states}, and a linked mesh has no geometry of ` +
+            'its own. The parser returns from the `source` branch before `readVertices` ' +
+            `(\`SkeletonJson.ts:582-586\`), so ${link.geometry.length === 1 ? 'that key is' : 'those keys are'} read by ` +
+            `nothing at all: what this attachment draws is the geometry of ${JSON.stringify(link.source)} in ${where}, and ` +
+            `${loaded}. Remove ${link.geometry.length === 1 ? 'it' : 'them'}, or remove "source" and author this as a ` +
+            'mesh of its own.',
+        );
       }
     });
   }

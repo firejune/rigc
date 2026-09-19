@@ -281,6 +281,7 @@ import {
   SKIP_NO_ATLAS_REGION,
   SKIP_NO_ATTACHMENT_REGION_JOIN,
   SKIP_NO_DECLARED_DURATION,
+  SKIP_NO_LINKED_MESH,
   SKIP_NO_MESH_ATTACHMENT,
   SKIP_NO_PHYSICS_CONSTRAINT,
   SKIP_NO_REGION_ATTACHMENT,
@@ -1133,6 +1134,43 @@ const MUTANTS: Mutant[] = [
         }),
       };
     },
+  },
+  {
+    // 🔗 The one shape the parser reads in silence (issue #710): a link declaring
+    // the geometry it borrows. `readAttachment` returns from the `source` branch
+    // at `:586`, before `map.uvs` is touched, so every array below is dead and
+    // `setSourceMesh` fills the attachment with the source's instead.
+    //
+    // The edit copies the SOURCE's own arrays rather than inventing smaller ones,
+    // which is the harder half: the file is then internally consistent — the
+    // numbers it states are the numbers it draws — and it is still a file whose
+    // geometry keys no runtime reads. A rule that compared the two shapes instead
+    // of reading the keys would be green here.
+    name: 'M63_a_linked_mesh_declaring_the_geometry_it_borrows',
+    origin: 'the parser returns before `readVertices`, so the arrays load as the source\'s and nothing says so',
+    expect: 'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        // The first mesh the file declares, found structurally: an entry with a
+        // `uvs` array is a mesh whatever its slot happens to be called.
+        for (const skin of (j as any).skins as any[]) {
+          for (const entries of Object.values(skin.attachments as Record<string, any>)) {
+            for (const [placeholder, entry] of Object.entries(entries as Record<string, any>)) {
+              if (!Array.isArray((entry as any).uvs)) continue;
+              (entries as any).borrowed = {
+                ...(entry as any),
+                type: 'linkedmesh',
+                source: placeholder,
+                path: (entry as any).path ?? placeholder,
+              };
+              return;
+            }
+          }
+        }
+        throw new Error('the fixture declares no mesh for a link to borrow');
+      }),
+    }),
   },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -9042,18 +9080,22 @@ function runStaticRigSuite(): number {
       hull: 5,
       edges: [0, 2],
     });
+    const geometryFailures = withGeometry.failures.map((f) => f.assertion);
+    const linkRule = 'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN';
     say(
-      'S74_A_FORGED_LINK_CARRYING_ITS_OWN_GEOMETRY_IS_GREEN_AND_DRAWS_THE_SOURCES',
-      withGeometry.failures.length === 0 && withGeometry.passed.includes('A04_MESH_TRIANGLES_AND_ENCODING'),
-      withGeometry.failures.length === 0
-        ? 'a link declaring 5 uvs, 3 triangles, hull 5 and edges [0, 2] beside a 4-vertex source gated GREEN: ' +
-            `${withGeometry.passed.length} assertion(s) ran, 0 failures, and A04 measured the SOURCE's geometry ` +
-            'because that is the only geometry the loaded attachment has'
-        : `the forged link was refused: ${withGeometry.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`,
-      'the silence this feature\'s refusal exists for, and it is a fact about the FORMAT rather than about rigc: ' +
-        'the parser returns from the `source` branch before `readVertices` (`:582-586`), so no assertion here can ' +
-        'see those keys and none should pretend to. The compiler is the only place it can be caught, which is ' +
-        'why it is caught there and this case records the gate NOT catching it',
+      'S74_A_FORGED_LINK_CARRYING_ITS_OWN_GEOMETRY_IS_REFUSED_AND_A04_STILL_MEASURES_THE_SOURCES',
+      geometryFailures.length === 1 &&
+        geometryFailures[0] === linkRule &&
+        withGeometry.passed.includes('A04_MESH_TRIANGLES_AND_ENCODING'),
+      `${geometryFailures.length} failure(s) [${geometryFailures.join(', ')}]; A04 ` +
+        `${withGeometry.passed.includes('A04_MESH_TRIANGLES_AND_ENCODING') ? 'PASSED' : 'did not pass'} on the same ` +
+        'report, on the 4 vertices and 2 triangles the loaded attachment took from its source',
+      'this case recorded the gate NOT catching it until issue #710, and the half that did not change is the ' +
+        'load-bearing one. A04 reads the LOADED attachment, which after `setSourceMesh` holds the SOURCE\'s arrays, ' +
+        'so it passes here on numbers the file never states — measured on the branch point at 8 and 2 against a ' +
+        'link declaring 5 uvs and 3 triangles. That is why the new rule is its own assertion and not a clause on ' +
+        'A04: those keys are not in the data A04 holds, and A04\'s subject is present on a rig with no link at ' +
+        'all, so a clause there could never report the SKIP an absent subject is owed',
     );
 
     const wellFormed = forge(base);
@@ -9072,6 +9114,96 @@ function runStaticRigSuite(): number {
       'the positive control for the four above, and the half that keeps them from being a rule against links at ' +
         'all — the plants differ from this one by a single key each. Both sides are read, because a mesh rule ' +
         'that skipped on the probe would make the green above green over nothing',
+    );
+
+    // --- S76–S79: what the new rule says, and what it leaves alone (issue #710) -
+    const geometryDetail = withGeometry.failures.find((f) => f.assertion === linkRule)?.detail ?? '(A44 did not fail)';
+    const namedProbes = [
+      ...(geometryDetail.includes('skin "default" slot "marker" placeholder "marker"')
+        ? []
+        : ['the detail does not name the attachment by skin, slot and placeholder']),
+      ...(['uvs', 'triangles', 'vertices', 'hull', 'edges'].every((key) => geometryDetail.includes(`"${key}"`))
+        ? []
+        : ['the detail does not name every geometry key the forged link states']),
+      ...(geometryDetail.includes('read by nothing at all') && geometryDetail.includes('`SkeletonJson.ts:582-586`')
+        ? []
+        : ['the detail does not say that the parser reads none of them, with the site that returns first']),
+      ...(geometryDetail.includes('the geometry of "block"') && geometryDetail.includes('slot "block"')
+        ? []
+        : ['the detail does not say whose geometry is drawn instead, or where the parser looks for it']),
+      ...(geometryDetail.includes('(5 vertices and 3 triangles)') && geometryDetail.includes('loaded 4 vertices and 2 triangles')
+        ? []
+        : ['the detail does not put the shape the file states beside the shape the attachment loaded']),
+    ];
+    const namedHeld = namedProbes.length === 0;
+    say(
+      'S76_THE_REFUSAL_NAMES_THE_ATTACHMENT_THE_KEYS_THE_SOURCE_AND_BOTH_SHAPES',
+      namedHeld,
+      probeDetail(
+        namedHeld,
+        namedProbes,
+        geometryDetail,
+        (count) => `${count} thing(s) the sentence an author reads does not carry:`,
+      ),
+      'the verdict is the UI, and this is the one construct where an author cannot see the defect any other way: ' +
+        'the file they wrote and the mesh the runtime draws differ in every field and nothing throws. Five clauses ' +
+        'because each answers a different question — which attachment, which keys, why they are dead, whose ' +
+        'geometry replaces them, and by how much the two disagree — and a message missing any one of them sends ' +
+        'the author looking in the wrong file',
+    );
+
+    const meshSpelling = forge({
+      ...base,
+      type: 'mesh',
+      uvs: [0, 0, 1, 0, 1, 1, 0, 1, 0.5, 0.5],
+      triangles: [0, 1, 2, 0, 2, 3, 0, 3, 4],
+      vertices: [0, 0, 6, 0, 6, 6, 0, 6, 3, 3],
+      hull: 5,
+      edges: [0, 2],
+    });
+    const meshDetail = meshSpelling.failures.find((f) => f.assertion === linkRule)?.detail ?? '(A44 did not fail)';
+    say(
+      'S77_THE_SAME_LINK_SPELLED_TYPE_MESH_WITH_A_SOURCE_IS_REFUSED_WORD_FOR_WORD',
+      meshSpelling.failures.length === 1 && meshDetail === geometryDetail,
+      meshDetail === geometryDetail
+        ? `both spellings print the same sentence, and the report carries ${meshSpelling.failures.length} failure(s)`
+        : `the two spellings print different sentences:\n          ${meshDetail}`,
+      'the parser has ONE branch for `mesh` and `linkedmesh` and decides between them on a truthy `source` ' +
+        '(`:568-569`, `:582`), so a rule keyed on `type` would read half the links in the world as ordinary ' +
+        'meshes — and this is the spelling an editor is least likely to write and a hand-edit most. The two ' +
+        'details are compared as STRINGS rather than each being tested for a substring: a sentence that named the ' +
+        'type anywhere in it would satisfy a substring test on both and still be telling an author two things',
+    );
+
+    const sizeOnly = forge(base);
+    const sizePassed = sizeOnly.passed.includes(linkRule);
+    say(
+      'S78_A_LINK_STATING_ONLY_WIDTH_AND_HEIGHT_IS_MEASURED_AND_HELD',
+      sizePassed && sizeOnly.failures.length === 0,
+      sizePassed
+        ? 'the rule RAN and held on a link stating width 6 and height 6 beside a 12x8 source; the report carries ' +
+          `${sizeOnly.failures.length} failure(s)`
+        : `the rule did not run: ${sizeOnly.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ') || 'it reported no verdict at all'}`,
+      'the boundary this rule is NOT allowed to cross, and it is the one a reader would expect it to. ' +
+        '`setSourceMesh` overwrites `width` and `height` with the source\'s (`MeshAttachment.js:102-103`), so the ' +
+        'two are as dead at runtime as the geometry keys — but the parser READS them (`:569-570`), the format ' +
+        'carries them on a link and rigc emits them (#691), so refusing them would refuse every link rigc itself ' +
+        'writes. PASS rather than absent: the subject was there and the rule measured it',
+    );
+
+    const noLink = gateProbe(meshDirs, STATIC_MOTION);
+    const noLinkSkip = noLink.skipped.find((entry) => entry.assertion === linkRule);
+    say(
+      'S79_THE_RULE_SKIPS_BY_NAME_ON_A_RIG_WHOSE_MESHES_LINK_TO_NOTHING',
+      noLinkSkip !== undefined && noLinkSkip.reason === SKIP_NO_LINKED_MESH && !noLink.passed.includes(linkRule),
+      `${noLinkSkip ? `skipped: ${noLinkSkip.reason}` : 'the rule reported no skip on a rig that declares no link'}` +
+        `; it ${noLink.passed.includes(linkRule) ? 'is ALSO in `passed`' : 'is in no pass list'}, and on the same ` +
+        `report A04 ${noLink.passed.includes('A04_MESH_TRIANGLES_AND_ENCODING') ? 'PASSED' : 'did not pass'}`,
+      'the half that keeps the registry honest, and the same argument S74 makes from the other side: the probe ' +
+        'carries a mesh, so A04\'s subject is PRESENT and A04 passes on this report — there is no verdict left ' +
+        'over for "this rig has no link". Almost every skeleton in the world is this rig, so a rule that passed ' +
+        'here would print a green line about a construct it never saw, on every build in this repository. The ' +
+        'reason is compared against the exported constant rather than quoted',
     );
   }
   return bad;
@@ -37743,17 +37875,17 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
   {
     row: 'README: the benchmark-dossier row (#359)',
     stale: 'the run viewer, the 36 named assertions with their profiles, and the selftest\n',
-    clean: 'the run viewer, the 44 named assertions with their profiles, and the selftest\n',
+    clean: 'the run viewer, the 45 named assertions with their profiles, and the selftest\n',
   },
   {
     row: 'AUTHORING: the `--profile` row (#359)',
     stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |\n',
-    clean: '| `--profile` | `spine` = the 29 validity rules (**the default**) · `spine-html` = all 44, opt-in |\n',
+    clean: '| `--profile` | `spine` = the 30 validity rules (**the default**) · `spine-html` = all 45, opt-in |\n',
   },
   {
     row: 'BENCHMARK: the profiles paragraph (#359)',
     stale: 'Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this\n',
-    clean: 'Not all 44 rules are about Spine. Some are about **spine-html**, the renderer this\n',
+    clean: 'Not all 45 rules are about Spine. Some are about **spine-html**, the renderer this\n',
   },
   {
     row: 'BENCHMARK: the profile table\'s own row (#359)',
@@ -37762,7 +37894,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       '| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
     clean:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      '| `spine-html` | all 44 — those 29 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
+      '| `spine-html` | all 45 — those 30 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
   },
   {
     row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',
@@ -46669,6 +46801,8 @@ interface IngestTrip {
   motion: Record<string, unknown>;
   /** The directories the FIRST build drew its part PNGs from. */
   artDirs: string[];
+  /** Where the FIRST build's `skeleton.json` and `skeleton.atlas` were written, so a case can re-gate or re-build A. */
+  aDir: string;
   /** How many edits the planted defect made, or 0 when there was none. */
   mutations: number;
 }
@@ -47009,7 +47143,7 @@ function ingestRoundTrip(
     imagesDir: art === 'loose' ? artDirs[0] : undefined,
     atlasInPath: art === 'none' ? join(aDir, 'skeleton.atlas') : undefined,
   });
-  return { a, b, findings: result.findings, rig, motion, artDirs, mutations };
+  return { a, b, findings: result.findings, rig, motion, artDirs, aDir, mutations };
 }
 
 /** `package.json`'s version, which is what `cli.ts` writes into the provenance note. */
@@ -49619,6 +49753,162 @@ function runIngestSuite(): number {
         'is also what it does NOT claim: a file that LABELS itself 4.3 and parks its constraints anyway is read ' +
         'with them dropped and no finding, and this case deliberately asserts nothing about that, because a clause ' +
         'holding that hole open would go red the day somebody closes it',
+    );
+  }
+
+  // --- IG46–IG48: geometry on a link, dropped and SAID (issue #710) ----------
+  //
+  // The rig spec has no home for it — `buildRigLinkedMesh` refuses geometry on a
+  // link by name — so a decompiler must drop it. What it must not do is drop it
+  // in silence, which is what it did until this landing: measured on the branch
+  // point, the forged file below and the clean one produced BYTE-IDENTICAL specs
+  // and identical findings, so nothing anywhere said the round trip had
+  // normalised somebody's file.
+  {
+    /**
+     * The geometry keys the FORMAT carries on a mesh — stated here so that the
+     * two modules under test are held against a third party rather than against
+     * each other.
+     */
+    const geometryKeys = ['uvs', 'triangles', 'vertices', 'hull', 'edges'];
+    const forgedSource = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+    const forgedSkins = forgedSource.skins as Array<{
+      name: string;
+      attachments: Record<string, Record<string, Record<string, unknown>>>;
+    }>;
+    const forgedTable = forgedSkins.find((skin) => skin.name === 'default')!.attachments;
+    const forgedLink = forgedTable.panel_echo?.panel_echo ?? {};
+    const forgedMesh = forgedTable.panel?.panel ?? {};
+    // Copied from the SOURCE rather than invented: the file is then internally
+    // consistent and the keys are still read by nothing, which is the case a
+    // rule comparing two shapes would miss.
+    const planted = geometryKeys.filter((key) => forgedMesh[key] !== undefined);
+    for (const key of planted) forgedLink[key] = forgedMesh[key];
+    const forgedResult = ingest(forgedSource, { name: 'ingest_probe', art: 'none', source: 'skeleton.json', version: '0' });
+    const lossFindings = forgedResult.findings.filter((f) => f.code === 'ATTACHMENT_LINK_GEOMETRY');
+    const lossDetail = lossFindings[0]?.detail ?? '';
+    const lossProbes = [
+      ...(lossFindings.length === 1 ? [] : [`${lossFindings.length} ATTACHMENT_LINK_GEOMETRY finding(s), and the plant makes one link lossy`]),
+      ...(lossFindings[0]?.kind === 'lossy' ? [] : [`the finding is \`${lossFindings[0]?.kind ?? 'absent'}\`, and a normalisation the rebuild can carry is not a blocker`]),
+      ...(lossFindings[0]?.where === 'skin "default" slot "panel_echo" attachment "panel_echo"'
+        ? []
+        : [`the finding names ${JSON.stringify(lossFindings[0]?.where ?? '')} rather than the link the plant edited`]),
+      ...(planted.length === 0 ? ['the probe\'s own mesh states none of the format\'s geometry keys, so this plant is empty'] : []),
+      ...(planted.every((key) => lossDetail.includes(`\`${key}\``)) ? [] : ['the detail does not name every key it dropped']),
+      ...(geometryKeys.filter((key) => !planted.includes(key)).filter((key) => lossDetail.includes(`\`${key}\``)).length === 0
+        ? []
+        : ['the detail names a key the plant did not write']),
+      ...(lossDetail.includes('the geometry of "panel"') ? [] : ['the detail does not say whose geometry the attachment draws instead']),
+      ...(probeTrip.findings.some((f) => f.code === 'ATTACHMENT_LINK_GEOMETRY')
+        ? ['the UNPLANTED probe raises it too, so this plant proves nothing']
+        : []),
+    ];
+    const lossHeld = lossProbes.length === 0;
+    say(
+      'IG46_GEOMETRY_ON_A_LINK_IS_A_CODED_LOSS_NAMING_EVERY_KEY_IT_DROPPED',
+      lossHeld,
+      probeDetail(
+        lossHeld,
+        lossProbes,
+        `${lossFindings[0]?.kind ?? 'no'} ATTACHMENT_LINK_GEOMETRY @ ${lossFindings[0]?.where ?? '—'}: ${lossDetail}\n` +
+          `          the plant copied ${planted.length} of the format's ${geometryKeys.length} geometry keys onto the ` +
+          `link, which is what the probe's own mesh states: [${planted.join(', ')}]`,
+        (count) => `${count} thing(s) the finding does not do:`,
+      ),
+      'a `LOSS` and deliberately not a `BLOCK`: the rebuild is not missing anything the runtime was drawing — it ' +
+        'is missing keys the runtime never read — so exit 0 is the honest code and the line is the whole product. ' +
+        'The last clause is the one that makes the rest a measurement: the same probe without the plant carries a ' +
+        'link already, so a finding raised on every link would satisfy every clause above',
+    );
+
+    const cleanResult = ingest(JSON.parse(probeTrip.a.skeletonText), {
+      name: 'ingest_probe',
+      art: 'none',
+      source: 'skeleton.json',
+      version: '0',
+    });
+    const rebuiltDir = mkdtempSync(join(tmpdir(), 'rigc-linkgeom-'));
+    const rebuiltRigPath = join(rebuiltDir, 'rig.json');
+    const rebuiltMotionPath = join(rebuiltDir, 'motion.json');
+    writeFileSync(rebuiltRigPath, `${JSON.stringify(forgedResult.rig, null, 2)}\n`);
+    writeFileSync(rebuiltMotionPath, `${JSON.stringify(forgedResult.motion, null, 2)}\n`);
+    let rebuiltLink: Record<string, unknown> | null = null;
+    let rebuildLine = 'the decompiled spec did not compile';
+    try {
+      const rebuilt = compile({
+        rigPath: rebuiltRigPath,
+        motionPath: rebuiltMotionPath,
+        outDir: join(rebuiltDir, 'spine'),
+        atlasInPath: join(probeTrip.aDir, 'skeleton.atlas'),
+      });
+      const rebuiltSkins = (JSON.parse(rebuilt.skeletonText) as Record<string, unknown>).skins as Array<{
+        name: string;
+        attachments: Record<string, Record<string, Record<string, unknown>>>;
+      }>;
+      rebuiltLink = rebuiltSkins.find((skin) => skin.name === 'default')?.attachments.panel_echo?.panel_echo ?? null;
+      rebuildLine = `the rebuilt link states [${Object.keys(rebuiltLink ?? {}).sort().join(', ')}]`;
+    } catch (err) {
+      rebuildLine = `refused: ${(err as Error).message}`;
+    }
+    const specsMatch = JSON.stringify(forgedResult.rig) === JSON.stringify(cleanResult.rig);
+    const rebuildProbes = [
+      ...(specsMatch ? [] : ['the spec read off the forged file differs from the spec read off the clean one, so the drop is not exactly the normalisation the finding claims']),
+      ...(rebuiltLink === null ? ['the decompiled spec did not rebuild the link at all'] : []),
+      ...(rebuiltLink === null ? [] : planted.filter((key) => rebuiltLink![key] !== undefined).map((key) => `the rebuilt link carries \`${key}\`, which the rig spec refuses on a link`)),
+      ...(forgedResult.findings.some((f) => f.code === 'SPEC_REFUSED') ? ['rigc\'s own parser refused the decompiled spec'] : []),
+    ];
+    const rebuildHeld = rebuildProbes.length === 0;
+    say(
+      'IG47_THE_DECOMPILED_SPEC_STILL_PARSES_AND_REBUILDS_THE_MESH_THE_RUNTIME_WAS_DRAWING',
+      rebuildHeld,
+      probeDetail(
+        rebuildHeld,
+        rebuildProbes,
+        `${rebuildLine}; the spec read off the forged file is ${specsMatch ? 'identical to' : 'DIFFERENT from'} the ` +
+          'spec read off the clean one',
+        (count) => `${count} thing(s) the round trip did not do:`,
+      ),
+      'the other half of the finding, and the half that says what "dropped" means. Carrying the keys through would ' +
+        'write a spec `build` refuses by name, so the only question left is whether what comes out is the file the ' +
+        'runtime was ALREADY drawing — which is what the identity against the clean file measures, rather than ' +
+        'asserting it from the code that did the dropping',
+    );
+
+    const gated = validate({
+      skeletonText: `${JSON.stringify(forgedSource, null, 2)}\n`,
+      atlasText: probeTrip.a.atlasText,
+      atlasDir: probeTrip.aDir,
+      declaredDurations: probeTrip.a.declaredDurations,
+      rig: probeTrip.a.rig,
+      profile: 'spine',
+    });
+    const gateDetail =
+      gated.failures.find((f) => f.assertion === 'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN')?.detail ?? '';
+    const named = (detail: string, quote: (key: string) => string): string[] =>
+      geometryKeys.filter((key) => detail.includes(quote(key)));
+    const gateKeys = named(gateDetail, (key) => `"${key}"`);
+    const lossKeys = named(lossDetail, (key) => `\`${key}\``);
+    const agreeProbes = [
+      ...(gateKeys.length === planted.length ? [] : [`the gate names [${gateKeys.join(', ')}] of the ${planted.length} key(s) the plant wrote`]),
+      ...(lossKeys.length === planted.length ? [] : [`the finding names [${lossKeys.join(', ')}] of the ${planted.length} key(s) the plant wrote`]),
+      ...(JSON.stringify(gateKeys) === JSON.stringify(lossKeys) ? [] : ['the two modules name different key sets']),
+    ];
+    const agreeHeld = agreeProbes.length === 0;
+    say(
+      'IG48_THE_GATE_AND_THE_DECOMPILER_NAME_THE_SAME_DEAD_KEYS_ON_ONE_FILE',
+      agreeHeld,
+      probeDetail(
+        agreeHeld,
+        agreeProbes,
+        `both name [${gateKeys.join(', ')}] on the same forged skeleton, and the plant wrote [${planted.join(', ')}]`,
+        (count) => `${count} disagreement(s) between the two readers of one file:`,
+      ),
+      '⚠️ `src/validate.ts` and `src/ingest.ts` each carry their OWN list of the keys the `source` branch does ' +
+        'not reach, because the first links spine-core and the second must not — importing one into the other ' +
+        'would pull the runtime into every `ingest`. So nothing in the tree held them equal, which is a hand-kept ' +
+        'pair of lists and the shape this repository refuses. This holds them equal by a RUN rather than by a ' +
+        'shared constant: one file through both readers, the two key sets compared against each other and both ' +
+        'against what the plant wrote, so a list that loses a key goes red on the module that lost it',
     );
   }
 
