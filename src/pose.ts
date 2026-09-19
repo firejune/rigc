@@ -129,7 +129,16 @@ export const COARSE_STRIDE_FRACTION = 0.25;
 /** How many scale rungs one octave gets in the coarse ladder. */
 export const SCALE_STEPS_PER_OCTAVE = 3;
 
-/** The coarse rotation ladder's step, in degrees. */
+/**
+ * The COARSEST step, in degrees, the rotation ladder is allowed to take.
+ *
+ * ⚠️ A ceiling on the step rather than the step itself, and the distinction is
+ * the whole of issue #719. Read as "the step", a window narrower than it prints
+ * a resolution the search never had: `--rotation -5,5` reported `step 15°` over
+ * a ten-degree window. The ladder therefore divides the window into whole steps
+ * no coarser than this — the same shape `scaleLadder` has always had for
+ * octaves — and the report states the step that division produced.
+ */
 export const COARSE_ROTATION_STEP = 15;
 
 /** Default scale window, as frame pixels per part pixel. */
@@ -271,7 +280,15 @@ export interface PosePart {
 
 export interface PoseSearch {
   scale: { min: number; max: number; steps: number };
-  rotation: { minDeg: number; maxDeg: number; stepDeg: number; steps: number };
+  /**
+   * The rotation window, and the ladder it produced.
+   *
+   * 🔒 `stepDeg` is read off `degrees` rather than off `COARSE_ROTATION_STEP`,
+   * and `degrees` is the array the coarse pass iterated — so the two cannot say
+   * different things about the same run (issue #719). `steps` is how many angles
+   * that is, which is `degrees.length`.
+   */
+  rotation: { minDeg: number; maxDeg: number; stepDeg: number; steps: number; degrees: number[] };
   /**
    * How the exhaustive first pass was sized. The level it runs at is chosen PER
    * PART — see `PosePart.coarse` — because it depends on how big the part is.
@@ -783,8 +800,28 @@ function polish(
   smooth: boolean,
   /** The scale window the report declares. A polish that walked outside it would report a scale nobody searched. */
   bounds: { min: number; max: number },
+  /**
+   * The rotation window the report declares, held for exactly the reason above.
+   *
+   * ⚠️ This argument did not exist until issue #719, and the sentence over
+   * `bounds` was the whole argument for it the entire time: a polish free to
+   * walk outside the window reports an answer nobody searched, and the window is
+   * a field a caller is entitled to read as a promise. `src/chainfit.ts` had
+   * already written that argument out for its own hinge — *"for the same reason
+   * `pose`'s polish clamps its scale"* — while this file, the one it was citing,
+   * clamped one of its two windows. Measured on a rotation window of `-5,5`: the
+   * ladder walked its two endpoints and the report came back with 28.1°, 121.3°
+   * and −122.3°.
+   *
+   * A full turn contains every angle, so it is left unclamped and the rotation
+   * may wrap — which is what the default window is, and why nothing about a
+   * default run moves.
+   */
+  rotationBounds: { min: number; max: number; wraps: boolean },
 ): Candidate {
   const clamp = (v: number): number => Math.min(bounds.max, Math.max(bounds.min, v));
+  const hold = (v: number): number =>
+    rotationBounds.wraps ? v : Math.min(rotationBounds.max, Math.max(rotationBounds.min, v));
   let cur: Candidate = { ...start, residual: residualAt(level, plate, s, start, smooth) };
   let dt = step.translate;
   let dr = step.rotate;
@@ -810,8 +847,8 @@ function polish(
       }
     }
     if (dr > floor.rotate) {
-      push({ cx: cur.cx, cy: cur.cy, rotDeg: cur.rotDeg + dr, scale: cur.scale });
-      push({ cx: cur.cx, cy: cur.cy, rotDeg: cur.rotDeg - dr, scale: cur.scale });
+      push({ cx: cur.cx, cy: cur.cy, rotDeg: hold(cur.rotDeg + dr), scale: cur.scale });
+      push({ cx: cur.cx, cy: cur.cy, rotDeg: hold(cur.rotDeg - dr), scale: cur.scale });
     }
     if (ds > floor.scale) {
       push({ cx: cur.cx, cy: cur.cy, rotDeg: cur.rotDeg, scale: clamp(cur.scale * (1 + ds)) });
@@ -997,20 +1034,74 @@ function scaleLadder(min: number, max: number): number[] {
   return out;
 }
 
-function rotationLadder(minDeg: number, maxDeg: number): number[] {
+/**
+ * The angles the coarse pass actually walks, evenly dividing the window.
+ *
+ * ⭐ `scaleLadder` above is the shape this follows, and it is the reason the
+ * defect was reachable: that one takes a rung count off its window and divides,
+ * so the rung it reports is the rung it walks. This one used to march
+ * `COARSE_ROTATION_STEP` off the floor and then append the ceiling, which left
+ * two ways for the reported step to be a different number from the applied one —
+ * a window narrower than the constant got its two endpoints and a gap of the
+ * window's own width, and any window whose span is not a whole number of steps
+ * got a short final gap. Both printed `step 15°`.
+ *
+ * ⚠️ The count is a CEILING rather than a rounding, which is not tidiness: a
+ * rounding down would make the applied step wider than `COARSE_ROTATION_STEP`
+ * for a window like 20°, so the constant would stop being an upper bound on the
+ * step. Rounding up cannot coarsen the search — measured against the old ladder,
+ * every window it changes gets at least as many angles as before.
+ */
+export function rotationLadder(minDeg: number, maxDeg: number): number[] {
   const span = maxDeg - minDeg;
   if (span <= 0) return [minDeg];
-  // A full turn's two endpoints are the same rotation, so it gets one of them.
-  if (span >= 360 - 1e-9) {
-    const count = Math.round(360 / COARSE_ROTATION_STEP);
-    const out: number[] = [];
-    for (let i = 0; i < count; i++) out.push(minDeg + (i * 360) / count);
-    return out;
-  }
+  const steps = Math.ceil(span / COARSE_ROTATION_STEP - 1e-9);
   const out: number[] = [];
-  for (let deg = minDeg; deg <= maxDeg + 1e-9; deg += COARSE_ROTATION_STEP) out.push(deg);
-  if (out[out.length - 1] < maxDeg - 1e-9) out.push(maxDeg);
+  for (let i = 0; i <= steps; i++) out.push(minDeg + (span * i) / steps);
+  // A full turn's two endpoints are the same rotation, so it gets one of them.
+  if (span >= 360 - 1e-9) out.pop();
   return out;
+}
+
+/** The step a ladder walks, read off the ladder rather than off the constant it was built from. */
+function ladderStep(degrees: number[]): number {
+  return degrees.length > 1 ? degrees[1] - degrees[0] : 0;
+}
+
+/**
+ * The `search` line's rotation clause.
+ *
+ * ⭐ Exported for the same reason `windowEdgeNote` is: `docs/AUTHORING.md`
+ * quotes this line, and a guide that spells a report's own sentence by hand is
+ * a second implementation of it. `CUR47` builds the clause here and looks for it
+ * in the page, so the two go stale together or not at all.
+ */
+export function searchRotationClause(rotation: PoseSearch['rotation']): string {
+  // Rounded for the console alone — `search.rotation` in the JSON carries the
+  // ladder unrounded, because a window that divides into thirds has angles no
+  // decimal place holds.
+  return `rotation ${rotation.minDeg}°–${rotation.maxDeg}° in ${rotation.steps} step(s) of ${roundTo(rotation.stepDeg, 3)}°`;
+}
+
+/**
+ * The sentence a refusal carries when its best placement sits on a WALL of the
+ * search window rather than somewhere inside it.
+ *
+ * ⭐ Exported because the guide quotes it and `CUR48` compares the two: a
+ * message and the document that teaches it are the same interface, and the only
+ * way they cannot drift is for one of them to be built from the other.
+ *
+ * The claim is deliberately weak — *may* lie outside — because that is all that
+ * is known. The search was bounded, the optimum walked to the bound and stopped;
+ * whether the truth is past it or the part simply does not appear in this frame
+ * are two readings this instrument cannot separate. Naming the wall is what lets
+ * an author separate them, by moving the wall.
+ */
+export function windowEdgeNote(axis: 'scale' | 'rotation', edge: 'floor' | 'ceiling', at: string, window: string): string {
+  return (
+    `best placement at ${axis} ${at}, the ${edge} of --${axis} ${window} — ` +
+    `the truth may lie ${edge === 'floor' ? 'below' : 'above'} the window`
+  );
 }
 
 /** The PNGs in a directory, in name order — the parts, and the order the report lists them. */
@@ -1072,7 +1163,18 @@ export function estimatePose(options: PoseOptions): PoseReport {
     frame: { path: framePath, width: frame.width, height: frame.height, background },
     search: {
       scale: { min: scaleMin, max: scaleMax, steps: scales.length },
-      rotation: { minDeg: rotMin, maxDeg: rotMax, stepDeg: COARSE_ROTATION_STEP, steps: rotations.length },
+      rotation: {
+        minDeg: rotMin,
+        maxDeg: rotMax,
+        // ⚠️ Neither of these is rounded, and every other number in this report
+        // is. Rounding them would make the reported ladder a near-copy of the
+        // applied one, which is the defect this field exists to close — a window
+        // that divides into thirds has angles no decimal place holds. The console
+        // rounds for display; the record is exact.
+        stepDeg: ladderStep(rotations),
+        steps: rotations.length,
+        degrees: [...rotations],
+      },
       coarse: {
         frameLongSide: COARSE_LONG_SIDE,
         partSpan: COARSE_PART_SPAN,
@@ -1097,14 +1199,29 @@ export function estimatePose(options: PoseOptions): PoseReport {
         'only inside the frame canvas. ⚠️ A window that does not contain the true value does NOT reliably ' +
         'refuse: a part shrunk inside the region it came from still explains those pixels, so the answer is the ' +
         'best placement available INSIDE the window and its residual can look reasonable. That is why the window ' +
-        'is a reported field — if the numbers surprise you, check it before you trust them.',
+        'is a reported field — if the numbers surprise you, check it before you trust them. A refused part whose ' +
+        'best placement stopped ON a wall of the window says so in its own `refusal.detail`, which is the case ' +
+        'where the window is the first thing to move.',
     ],
     parts: [],
   };
 
+  // A window spanning a whole turn contains every angle there is, so nothing is
+  // outside it and nothing has to be held inside it.
+  const rotationBounds = { min: rotMin, max: rotMax, wraps: rotMax - rotMin >= 360 - 1e-9 };
   for (const path of paths) {
     report.parts.push(
-      placePart(path, frame, levels, framePyramid, scales, rotations, maxResidual, { min: scaleMin, max: scaleMax }),
+      placePart(
+        path,
+        frame,
+        levels,
+        framePyramid,
+        scales,
+        rotations,
+        maxResidual,
+        { min: scaleMin, max: scaleMax },
+        rotationBounds,
+      ),
     );
   }
   return report;
@@ -1119,6 +1236,7 @@ function placePart(
   rotations: number[],
   maxResidual: number,
   scaleBounds: { min: number; max: number },
+  rotationBounds: { min: number; max: number; wraps: boolean },
 ): PosePart {
   const scaleMin = scaleBounds.min;
   /** The scale the sample sets are sized for — the middle of the window, and NOT the scale under test. */
@@ -1303,7 +1421,7 @@ function placePart(
       }
       seeds.push(start);
     }
-    candidates = seeds.map((seed) => polish(level, plate, s, seed, step, floor, smooth, scaleBounds));
+    candidates = seeds.map((seed) => polish(level, plate, s, seed, step, floor, smooth, scaleBounds, rotationBounds));
     candidates.sort((a, b) => a.residual - b.residual);
     // ⚠️ Eight branches that walked to one optimum are one candidate, not eight —
     // and the radius has to scale with the PART rather than be a pixel count.
@@ -1324,20 +1442,31 @@ function placePart(
   // The one rotation family the translation scan cannot see: a part that is its
   // own mirror after a quarter or a half turn sits in the SAME place at more than
   // one angle, so the field records only whichever won. Probe them explicitly.
+  //
+  // 🚨 Only the turns the window contains, and this is the other half of #719's
+  // measurement. A quarter turn off is a SEED, not a ladder rung — so under
+  // `--rotation -5,5` it entered the answer from outside a window the report was
+  // calling the search, and the candidate who ran the exam read `rot=91.2°`
+  // under `rotation -5°–5°`. A caller who bounds the rotation has said the part
+  // is not a quarter turn over; the honest response is not to look there rather
+  // than to look and report it.
   if (!rotationFree && candidates.length > 0) {
     const primary = candidates[0];
     const s = samplesFor(1, POLISH_SAMPLES);
     for (const turn of [90, 180, 270]) {
+      const turned = primary.rotDeg + turn;
+      if (!rotationBounds.wraps && (turned < rotationBounds.min - 1e-9 || turned > rotationBounds.max + 1e-9)) continue;
       candidates.push(
         polish(
           levels[0],
           plates[0],
           s,
-          { ...primary, rotDeg: primary.rotDeg + turn },
+          { ...primary, rotDeg: turned },
           { translate: 1.5, rotate: 4, scale: 0.04 },
           { translate: 0.05, rotate: 0.1, scale: 0.001 },
           true,
           scaleBounds,
+          rotationBounds,
         ),
       );
     }
@@ -1373,14 +1502,56 @@ function placePart(
     );
   }
   if (best.residual > maxResidual) {
+    // ⭐ The wall the answer stopped against, named in the refusal that reports
+    // it (issue #719). A refusal that states only the residual and the threshold
+    // sends an author to the one remedy that cannot work — every part of a frame
+    // rendered below the scale floor came back refused at the floor, and the
+    // window that could not reach the truth was a line further up the report
+    // nobody was told to read.
+    //
+    // ⚠️ On a refusal and on nothing else. An accepted placement at a wall is an
+    // author who chose the window to bracket the answer, which is the flag
+    // working; saying "the truth may lie outside" over every one of those is how
+    // a warning stops being read. And a window with no interior — `min === max`
+    // — has no wall to be at, so it gets no sentence: being at the only value
+    // there is says nothing about where the truth is.
+    const edges: string[] = [];
+    if (scaleBounds.max > scaleBounds.min) {
+      const window = `${scaleBounds.min},${scaleBounds.max}`;
+      if (best.scale <= scaleBounds.min * (1 + 1e-9)) {
+        edges.push(windowEdgeNote('scale', 'floor', best.scale.toFixed(3), window));
+      } else if (best.scale >= scaleBounds.max * (1 - 1e-9)) {
+        edges.push(windowEdgeNote('scale', 'ceiling', best.scale.toFixed(3), window));
+      }
+    }
+    if (!rotationBounds.wraps && rotationBounds.max > rotationBounds.min) {
+      const window = `${rotationBounds.min},${rotationBounds.max}`;
+      const said = `${best.rotationDeg.toFixed(1)}°`;
+      // Compared through `normaliseDegrees` because the reported angle is
+      // normalised into (-180, 180] and a window need not be: `--rotation
+      // 170,190` has a ceiling the report spells −170°.
+      if (Math.abs(normaliseDegrees(best.rotationDeg - rotationBounds.min)) <= 1e-6) {
+        edges.push(windowEdgeNote('rotation', 'floor', said, window));
+      } else if (Math.abs(normaliseDegrees(best.rotationDeg - rotationBounds.max)) <= 1e-6) {
+        edges.push(windowEdgeNote('rotation', 'ceiling', said, window));
+      }
+    }
     base.refusal = {
       reason: 'no-match',
-      detail: `${name}: the best placement found has residual ${best.residual.toFixed(4)}, above --max-residual ${maxResidual}`,
+      detail:
+        `${name}: the best placement found has residual ${best.residual.toFixed(4)}, above --max-residual ${maxResidual}` +
+        (edges.length === 0 ? '' : `; ${edges.join('; ')}`),
     };
     base.notes.push(
       `${name} matches nowhere in this frame well enough to report. The best placement found is still in ` +
         '`placement` — a refusal names why not to trust it, it does not hide it.',
     );
+    if (edges.length > 0) {
+      base.notes.push(
+        `${name}'s best placement sits on a wall of the search window, so the window is the first thing to move: ` +
+          `${edges.join('; ')}.`,
+      );
+    }
   }
   if (best.unexplained > 0.25 && best.residual <= maxResidual) {
     base.notes.push(
@@ -1419,7 +1590,10 @@ export function poseLines(report: PoseReport): string[] {
     `  ..    ground  ${bgText}`,
     `  ..    parts   ${report.images}  (${report.parts.length} png)`,
     `  ..    search  scale ${report.search.scale.min}–${report.search.scale.max} in ${report.search.scale.steps} step(s) · ` +
-      `rotation ${report.search.rotation.minDeg}°–${report.search.rotation.maxDeg}° step ${report.search.rotation.stepDeg}° · ` +
+      // The step is the ladder's own rather than the constant it was capped at.
+      // Printing the constant here is what issue #719 was: a line that said
+      // `step 15°` over a window ten degrees wide, which no run had ever walked.
+      `${searchRotationClause(report.search.rotation)} · ` +
       `refuse above residual ${report.search.maxResidual}`,
   ];
   const width = Math.max(8, ...report.parts.map((p) => p.part.length));
