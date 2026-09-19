@@ -47,6 +47,13 @@
 import { SLOT_TRACKS as EMITTED_SLOT_TRACKS, SPINE_VERSION } from './compile.ts';
 import { CompileError } from './errors.ts';
 import { CHANNELS_BY_KIND } from './timelines.ts';
+import {
+  LEGACY_BONE_INHERIT_KEY,
+  PHYSICS_FIELDS_WHOSE_DEFAULT_MOVED,
+  SPINE_GENERATIONS,
+  spineGeneration,
+  TOPLEVEL_CONSTRAINT_ARRAYS,
+} from './generation.ts';
 import { MOTION_SPEC_VERSION, parseMotionSpec } from './motion.ts';
 import { parseRigSpec, RIG_KEYS, RIG_SPEC_VERSION, type RigSpec } from './rig.ts';
 import type { MotionSpec } from './types.ts';
@@ -548,6 +555,12 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
   const root = obj(skeleton);
   const boneNames: string[] = arr(root.bones).map(nameOf);
 
+  // -- the generation -------------------------------------------------------
+  // 🚨 First, because every walk below reads the file as 4.3 and a file from
+  // another generation is one this module cannot honestly claim to have read
+  // (issue #706 item 3). It records; it does not refuse — see `readGeneration`.
+  readGeneration(root, note);
+
   // -- header ---------------------------------------------------------------
   // 🚨 THE SEAM. One function decides the rig spec's `skeleton` block, and the
   // stage is the only value in this whole module that a skeleton cannot answer
@@ -715,6 +728,146 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
 }
 
 type Note = (kind: IngestFindingKind, code: string, where: string, detail: string) => void;
+
+/**
+ * The generation of the data this module inverts, read off the version the
+ * emitter writes rather than typed beside it.
+ *
+ * ⚠️ `null` here would be a compiler emitting a version string this repository's
+ * own detector cannot read, and the comparison below is written so that it
+ * blocks every file rather than none — a reader that cannot say what it reads
+ * cannot certify anything. `runGenerationSuite`'s positive control is what says
+ * out loud that it is not null.
+ */
+const READER_GENERATION = spineGeneration(SPINE_VERSION);
+
+/** Up to six names, so one finding cannot print a hundred. */
+function spellSome(names: readonly string[]): string {
+  const shown = names.slice(0, 6).map((name) => `"${name}"`).join(', ');
+  return names.length > 6 ? `${shown} +${names.length - 6} more` : shown;
+}
+
+/**
+ * What a 4.3 reader loses on THIS file, counted on this file.
+ *
+ * 🚨 Three shapes, and they are the three #706 measured rather than three this
+ * module thought of: constraints parked in the top-level arrays 4.3 folded away
+ * (row 1 — 1,302 shipped skeletons parsed and loaded 0 of 8,672 constraints),
+ * bones carrying the key 4.3 renamed (row 6), and physics constraints omitting a
+ * field whose default is not the same number in 4.2 as in 4.3 (row 4).
+ *
+ * ⚠️ It is a MEASUREMENT and not an inventory: a construct none of the three
+ * describes is lost without being counted here, which is why the empty case says
+ * so rather than saying nothing was lost.
+ */
+function generationLosses(root: JsonObject): string[] {
+  const out: string[] = [];
+
+  const parked = TOPLEVEL_CONSTRAINT_ARRAYS.map((kind) => [kind, arr(root[kind]).length] as const).filter(
+    ([, count]) => count > 0,
+  );
+  const parkedTotal = parked.reduce((total, [, count]) => total + count, 0);
+  if (parkedTotal > 0) {
+    out.push(
+      `${parkedTotal} constraint(s) sit in top-level arrays (${parked.map(([kind, count]) => `${kind} ${count}`).join(', ')}) ` +
+        'and this reader takes constraints from "constraints" alone, so it reads none of them and the rebuilt rig has none',
+    );
+  }
+
+  const renamed = arr(root.bones)
+    .filter((bone) => isObj(bone) && LEGACY_BONE_INHERIT_KEY in bone)
+    .map((bone) => nameOf(bone));
+  if (renamed.length > 0) {
+    out.push(
+      `${renamed.length} bone(s) carry "${LEGACY_BONE_INHERIT_KEY}" where 4.3 spells "inherit" (${spellSome(renamed)}), ` +
+        'each dropped as a field the rig spec has no home for — the BONE_FIELD line beside this one — so the ' +
+        'rebuilt bone inherits Normally',
+    );
+  }
+
+  const physics = [...arr(root.physics), ...arr(root.constraints).filter((one) => isObj(one) && one.type === 'physics')].filter(
+    isObj,
+  );
+  const omitting = PHYSICS_FIELDS_WHOSE_DEFAULT_MOVED.map(
+    (field) => [field, physics.filter((one) => one[field] === undefined).length] as const,
+  ).filter(([, count]) => count > 0);
+  if (omitting.length > 0) {
+    out.push(
+      `${physics.length} physics constraint(s), of which ${omitting.map(([field, count]) => `${count} omit "${field}"`).join(' and ')} — ` +
+        "JSON omits a field equal to the parser's default and that default is NOT the same number in 4.2 as in 4.3 " +
+        '(#706 row 4), so the omission means one rig there and a different one here',
+    );
+  }
+  return out;
+}
+
+/**
+ * The generation, read before a field of the file is.
+ *
+ * 🚨 **The silence this converts into a name was measured on the branch point.**
+ * A 4.3 emit with its constraints moved into the top-level arrays 4.2 kept them
+ * in came back through `ingest` as a rig spec with **zero** constraints and
+ * **no finding about them at all**; the only blocker was `BONE_FIELD`, about the
+ * bone key. A 3.8 label produced one `LOSS HEADER_REDERIVED` line and exit 0.
+ * That is the shape this whole module exists to refuse — a decompiler that is
+ * quiet about what it dropped.
+ *
+ * ⭐ **One code with the generation in the sentence, rather than one code per
+ * generation.** `IG25` derives `docs/INGEST.md` §2.0's finding table by reading
+ * every `note` call in this file for a code matching `[A-Z_]+`, and compares it
+ * against rows matched with `[A-Z_<>]+`. A composed `GENERATION_${generation}`
+ * would read `GENERATION_3.8` at runtime — digits and a dot — so the call would
+ * be one the scan cannot resolve and the code would be missing from BOTH sides
+ * of that comparison, which is the one failure comparing two sets cannot report.
+ *
+ * ⚠️ The same scan counts its own population with a second, dumber pattern over
+ * the raw text, comments included — so a prose mention of that call spelled with
+ * its opening bracket raises the count without raising the sites, and `IG25`
+ * goes red on a file with nothing wrong in it. It did, on the first green run of
+ * this change: **25 of 26 read**, the 26th being this very paragraph.
+ *
+ * ⚠️ It does NOT refuse the file. Everything here is a finding and both specs
+ * are still written, for the reason `IngestFinding` states: a spec plus a list
+ * of what is missing from it beats no spec. The exit code is the caller's and it
+ * is 1, because this is a `blocker`.
+ */
+function readGeneration(root: JsonObject, note: Note): void {
+  const declared = obj(root.skeleton).spine;
+  const generation = typeof declared === 'string' ? spineGeneration(declared) : null;
+  if (generation !== null && generation === READER_GENERATION) return;
+  const stated = typeof declared === 'string' ? `${JSON.stringify(declared)}` : 'no `skeleton.spine` at all';
+  const reads = READER_GENERATION ?? '(none — this build\'s own version string is unreadable)';
+  const losses = generationLosses(root);
+  const measured =
+    losses.length > 0
+      ? `Measured on this file: ${losses.join('; ')}.`
+      : 'Measured on this file: no constraint in a top-level array, no bone carrying ' +
+        `"${LEGACY_BONE_INHERIT_KEY}", and no physics constraint omitting a default that moved — which is three ` +
+        'shapes counted and not a guarantee that nothing else differs.';
+  if (generation === null) {
+    note(
+      'blocker',
+      'GENERATION_UNKNOWN',
+      'skeleton.spine',
+      `the file states ${stated} and no Spine generation matches it. A version is read as its LEADING major.minor ` +
+        'token — a down-export states "4.0-from-4.1.24", which is 4.0 data from a 4.1 editor — and the generations ' +
+        `rigc knows are ${SPINE_GENERATIONS.join(', ')}; this reader reads ${reads}. It is NOT read as the nearest ` +
+        'one: a catalogue that handed 19 skeletons labelled "3.8.99" the nearest runtime it had loaded every one of ' +
+        `them and posed 238 of 248 bones as NaN (issue #706 row 7). ${measured}`,
+    );
+    return;
+  }
+  note(
+    'blocker',
+    'GENERATION_UNSUPPORTED',
+    'skeleton.spine',
+    `the file states ${stated}, which is Spine ${generation} data, and this reader reads Spine ${reads} only — it ` +
+      `inverts a ${SPINE_VERSION} emitter. A generation mismatch does not throw; it drops what the newer format ` +
+      `moved. ${measured} Reading the file with ${generation}'s OWN defaults is issue #706 item 2 — a ` +
+      'per-generation table extracted by machine from each runtime\'s `SkeletonJson` — and is not in this tool. ' +
+      `Re-export from a ${reads} editor, or transcribe the file by hand (docs/INGEST.md §2).`,
+  );
+}
 
 /**
  * Does this header declare a stage?

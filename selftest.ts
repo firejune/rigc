@@ -129,7 +129,14 @@ import {
   type FramingSource,
   type SlotTrack,
 } from './src/check.ts';
-import { buildAtlasText, compile, CompileError, relativeImagesPath } from './src/compile.ts';
+import { buildAtlasText, compile, CompileError, relativeImagesPath, SPINE_VERSION } from './src/compile.ts';
+import {
+  PHYSICS_FIELDS_WHOSE_DEFAULT_MOVED,
+  SPINE_GENERATIONS,
+  spineGeneration,
+  TOPLEVEL_CONSTRAINT_ARRAYS,
+  type SpineGeneration,
+} from './src/generation.ts';
 import {
   ingest,
   IngestError,
@@ -46712,6 +46719,268 @@ function ingestCensus(skeleton: Record<string, unknown>, into: Map<string, Set<s
   }
 }
 
+/**
+ * Which generation a `skeleton.spine` string names — `src/generation.ts`, and
+ * the one assertion that reads it (issue #706 item 1).
+ *
+ * 🚨 **The defect behind it does not throw.** Spine data is locked to the
+ * generation that exported it, and 4.3 takes constraints from the top-level
+ * `constraints` array alone: 1,302 shipped 4.0–4.2 skeletons parsed on a 4.3
+ * runtime and loaded 0 of 8,672 constraints (#706 row 1). The instrument is a
+ * string, so most of these controls are strings.
+ *
+ * ⭐ **`GN05` is the load-bearing one, and it is the only place left in this tree
+ * where `A16`'s pre-#706 regex exists.** It is typed here on purpose: the
+ * function now decides what `A16` accepts, so a control derived from the
+ * function would agree with it whatever it said, and the one question worth
+ * asking — *did the accepted set move?* — can only be asked by something holding
+ * the set it used to be.
+ */
+function runGenerationSuite(): number {
+  console.log('\n── which Spine generation a version string names (issue #706 item 1) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  // --- GN01: the strings shipped data actually carries -----------------------
+  //
+  // Typed rather than derived, and from #706's own list: they are that card's
+  // measurement of a corpus this repository cannot see, and a table read out of
+  // `spineGeneration` would agree with `spineGeneration`.
+  const SHIPPED: ReadonlyArray<readonly [string, SpineGeneration]> = [
+    ['3.8.99', '3.8'],
+    ['4.0.33', '4.0'],
+    ['4.0-from-4.1.24', '4.0'],
+    ['4.0-from-4.1-from-4.2.29', '4.0'],
+    ['4.1-from-4.2.33', '4.1'],
+    ['4.2.09-beta', '4.2'],
+    ['4.2.43', '4.2'],
+    ['4.3.26', '4.3'],
+    ['4.3.75-beta', '4.3'],
+  ];
+  const shippedProbes = [
+    ...SHIPPED.filter(([version, want]) => spineGeneration(version) !== want).map(
+      ([version, want]) => `${JSON.stringify(version)} read as ${String(spineGeneration(version))} and not ${want}`,
+    ),
+    ...floorProbes(
+      [[SHIPPED.length, 9, `${SHIPPED.length} string(s) were measured`]],
+      'the nine #706 lists are the population, and a shorter list is a control measuring less than the card it comes from',
+    ),
+  ];
+  const shippedHeld = shippedProbes.length === 0;
+  say(
+    'GN01_EVERY_VERSION_STRING_SHIPPED_DATA_CARRIES_NAMES_ITS_OWN_GENERATION',
+    shippedHeld,
+    probeDetail(
+      shippedHeld,
+      shippedProbes,
+      `${SHIPPED.length} string(s) seen in shipped data: ${SHIPPED.map(([v, g]) => `${v} -> ${g}`).join(', ')}`,
+      (count) => `${count} string(s) named the wrong generation:`,
+    ),
+    'a generation mismatch is silent — it loads, and then it is a different rig — so the detection is the whole of ' +
+      'what stands between a file and a wrong reader. The floor is there because a list that lost rows would pass ' +
+      'this while measuring the rows it kept',
+  );
+
+  // --- GN02: unknown is null, and never the nearest --------------------------
+  //
+  // The first two are the task's; the rest are this tree's, and each is a
+  // DIFFERENT way to be unreadable rather than eight spellings of one.
+  const UNKNOWN = ['5.0.1', '', '4.4.1', '3.7.1', '4', '4.30', '4.3.1.2', '4.3-beta', 'x', '4.3-from-4.4.1'];
+  const guessedProbes = [
+    ...UNKNOWN.filter((version) => spineGeneration(version) !== null).map(
+      (version) => `${JSON.stringify(version)} was read as ${String(spineGeneration(version))} rather than null`,
+    ),
+    ...floorProbes(
+      [[UNKNOWN.length, 10, `${UNKNOWN.length} unreadable string(s) were measured`]],
+      'a list that shrank would leave the remaining ones agreeing with nothing',
+    ),
+  ];
+  const guessedHeld = guessedProbes.length === 0;
+  say(
+    'GN02_A_STRING_NO_GENERATION_MATCHES_IS_NULL_AND_NEVER_THE_NEAREST',
+    guessedHeld,
+    probeDetail(
+      guessedHeld,
+      guessedProbes,
+      `${UNKNOWN.length} string(s) no generation matches, every one of them null: ${UNKNOWN.map((v) => JSON.stringify(v)).join(', ')}`,
+      (count) => `${count} string(s) were given a generation they do not name:`,
+    ),
+    'this is #706 policy 1 and it is the rule a catalog builder broke by rounding: 19 skeletons labelled "3.8.99" ' +
+      'were handed the nearest runtime it had, loaded without an exception, and posed 238 of 248 bones as NaN. ' +
+      '`null` is a value a caller has to act on; the nearest generation is one it cannot tell from a right answer',
+  );
+
+  // --- GN03: in a down-export the LEADING token is the generation ------------
+  const DOWN_EXPORTS: ReadonlyArray<readonly [string, SpineGeneration, SpineGeneration]> = [
+    ['4.0-from-4.1.24', '4.0', '4.1'],
+    ['4.0-from-4.1-from-4.2.29', '4.0', '4.2'],
+    ['4.1-from-4.2.33', '4.1', '4.2'],
+  ];
+  // A chain that does not ascend is not a down-export, so it is not a version
+  // string this module can account for. It is also what keeps `A16`'s accepted
+  // set exactly where `GN05` finds it.
+  const NOT_DOWN_EXPORTS = ['4.3-from-4.2.1', '4.0-from-4.0', '4.2-from-4.0.1'];
+  const leadingProbes = [
+    ...DOWN_EXPORTS.flatMap(([version, leading, trailing]) => {
+      const read = spineGeneration(version);
+      if (read === leading) return [];
+      return [
+        `${JSON.stringify(version)} read as ${String(read)}${read === trailing ? ' — the TRAILING token, which is the editor and not the data' : ''}` +
+          `, not the leading ${leading}`,
+      ];
+    }),
+    ...NOT_DOWN_EXPORTS.filter((version) => spineGeneration(version) !== null).map(
+      (version) => `${JSON.stringify(version)} does not descend from a newer editor and was still read as ${String(spineGeneration(version))}`,
+    ),
+  ];
+  const leadingHeld = leadingProbes.length === 0;
+  say(
+    'GN03_IN_A_DOWN_EXPORT_THE_LEADING_TOKEN_IS_THE_GENERATION_AND_A_CHAIN_THAT_DOES_NOT_DESCEND_IS_NOT_ONE',
+    leadingHeld,
+    probeDetail(
+      leadingHeld,
+      leadingProbes,
+      `${DOWN_EXPORTS.length} down-export(s) read as their leading token and not their trailing one ` +
+        `(${DOWN_EXPORTS.map(([v, leading, trailing]) => `${v} -> ${leading}, not ${trailing}`).join('; ')}); ` +
+        `${NOT_DOWN_EXPORTS.length} chain(s) that do not descend are null (${NOT_DOWN_EXPORTS.join(', ')})`,
+      (count) => `${count} chain(s) were read the wrong way:`,
+    ),
+    'a down-export writes OLDER data from a NEWER editor, so the leading token is the format the file is in and the ' +
+      'trailing one is the program that wrote it — 418 such-or-plain 4.0 files and 101 4.1 files load on the 4.0 ' +
+      'and 4.1 runtimes with 0 failures (#706 item 1). Reading the trailing token would hand every one of them the ' +
+      'runtime that poses NaN. The second half is the direction with no data behind it and it is the one that ' +
+      'holds `A16` still: nothing ascends above 4.3, so no `-from-` string is ever read as 4.3',
+  );
+
+  // --- GN04: A16 reads its verdict through the same function -----------------
+  const dirs = writeProbeRig();
+  const A16 = 'A16_SKELETON_VERSION_4_3';
+  const gateSpine = (version: string): ReturnType<typeof validate> =>
+    gateProbeArtifacts(dirs, STATIC_MOTION, (skeleton) => {
+      (skeleton.skeleton as Record<string, unknown>).spine = version;
+    });
+  const refused = gateSpine('4.2.43');
+  const accepted = gateSpine('4.3.26');
+  const refusedDetail = refused.failures.find((f) => f.assertion === A16)?.detail ?? '';
+  // Typed, and it is the interface: this sentence is what an agent reads and
+  // acts on, and #706 moved the READER under it without moving the message.
+  const A16_MESSAGE = 'skeleton.spine is "4.2.43", expected 4.3, 4.3.<patch> or 4.3.<patch>-<suffix>';
+  const gateProbes = [
+    ...(refusedDetail === A16_MESSAGE
+      ? []
+      : [`A16 on "4.2.43" says ${JSON.stringify(refusedDetail) || '(nothing — it did not fail)'}, not ${JSON.stringify(A16_MESSAGE)}`]),
+    ...(accepted.failures.some((f) => f.assertion === A16)
+      ? [`A16 failed on "4.3.26": ${accepted.failures.find((f) => f.assertion === A16)?.detail ?? ''}`]
+      : []),
+    ...(accepted.passed.includes(A16) ? [] : ['A16 did not RUN on "4.3.26", so its silence there is not a pass']),
+  ];
+  const gateHeld = gateProbes.length === 0;
+  say(
+    'GN04_A16_STILL_REFUSES_A_4_2_LABEL_AND_PASSES_A_4_3_ONE_WITH_THE_SENTENCE_IT_ALWAYS_PRINTED',
+    gateHeld,
+    probeDetail(
+      gateHeld,
+      gateProbes,
+      `gated on the two-slot probe with its version label rewritten: "4.3.26" passes A16, "4.2.43" fails it\n          ${refusedDetail}`,
+      (count) => `${count} thing(s) A16 no longer does:`,
+    ),
+    'the verdict moved into `src/generation.ts` and the message did not, which is the half a reader would notice. ' +
+      'Measured through a real gate rather than through the function, because the function is now what produces ' +
+      'the verdict: asking it whether it agrees with itself is not a control. The pass clause reads `passed` and ' +
+      'not the absence of a failure — an assertion that never ran prints neither',
+  );
+
+  // --- GN05: the set A16 accepted before is the set it accepts now -----------
+  /**
+   * `A16`'s own regex as it stood before `src/generation.ts` took the question
+   * over — the last copy of it anywhere in this tree.
+   *
+   * ⚠️ Typed on purpose and it is not a second implementation: it is the
+   * HISTORICAL interface, kept so that "the accepted set did not move" is a
+   * measurement rather than a claim. RF23's argument, one file over — a control
+   * that read the accepted set out of the thing it is checking would agree with
+   * it whatever it said.
+   */
+  const A16_REGEX_BEFORE_THE_GENERATION_READER = /^4\.3(\.\d+(-[0-9A-Za-z][0-9A-Za-z.+-]*)?)?$/;
+  const CANDIDATES = [
+    ...SHIPPED.map(([version]) => version),
+    ...UNKNOWN,
+    ...NOT_DOWN_EXPORTS,
+    '4.3',
+    '4.3.13',
+    '4.2.40',
+    '4.3.0-rc.1+build',
+    '4.3.',
+    '4.3.75-beta-from-4.4',
+  ];
+  const movedAcceptance = CANDIDATES.filter(
+    (version) => A16_REGEX_BEFORE_THE_GENERATION_READER.test(version) !== (spineGeneration(version) === '4.3'),
+  ).map(
+    (version) =>
+      `${JSON.stringify(version)}: the regex ${A16_REGEX_BEFORE_THE_GENERATION_READER.test(version) ? 'accepted' : 'refused'} it and ` +
+      `the function reads it as ${String(spineGeneration(version))}`,
+  );
+  const acceptedNow = CANDIDATES.filter((version) => spineGeneration(version) === '4.3');
+  const acceptanceProbes = [
+    ...movedAcceptance,
+    ...floorProbes(
+      [
+        [acceptedNow.length, 1, `${acceptedNow.length} of the ${CANDIDATES.length} candidate(s) are accepted`],
+        [CANDIDATES.length - acceptedNow.length, 1, `${CANDIDATES.length - acceptedNow.length} of them are refused`],
+      ],
+      'a list that was all one way would reproduce the regex by agreeing with nothing',
+    ),
+  ];
+  const acceptanceHeld = acceptanceProbes.length === 0;
+  say(
+    'GN05_THE_SET_A16S_OWN_REGEX_ACCEPTED_IS_EXACTLY_THE_SET_THE_GENERATION_READER_ACCEPTS',
+    acceptanceHeld,
+    probeDetail(
+      acceptanceHeld,
+      acceptanceProbes,
+      `${CANDIDATES.length} candidate label(s), ${acceptedNow.length} accepted (${acceptedNow.join(', ')}) and ` +
+        `${CANDIDATES.length - acceptedNow.length} refused — the same verdict from the regex and from the reader on ` +
+        'every one',
+    ),
+    'the one thing #706 item 1 must not cost is a gate that moved while nobody was looking at it. It is two-sided ' +
+      'because both directions are real defects: a widened A16 passes a 4.2 file through the whole gate, and a ' +
+      'narrowed one refuses the `4.3.75-beta` that all twelve official example exports declare — which is blocker ' +
+      'B2, and it is how this assertion failed rung 1 file 1 once already',
+  );
+
+  // --- the positive control --------------------------------------------------
+  const emitted = spineGeneration(SPINE_VERSION);
+  const controlProbes = [
+    ...(emitted === null ? [`the version this tree emits, ${SPINE_VERSION}, is read as no generation at all`] : []),
+    ...(emitted !== null && !(SPINE_GENERATIONS as readonly string[]).includes(emitted)
+      ? [`${SPINE_VERSION} is read as ${emitted}, which is not one of the generations this module declares`]
+      : []),
+    ...(emitted !== null && A16_REGEX_BEFORE_THE_GENERATION_READER.test(SPINE_VERSION) !== (emitted === '4.3')
+      ? [`${SPINE_VERSION} is read as ${emitted} and A16's own regex disagrees about it`]
+      : []),
+  ];
+  const controlHeld = controlProbes.length === 0;
+  say(
+    'CONTROL_THE_VERSION_THIS_TREE_EMITS_IS_READ_AS_THE_GENERATION_ITS_OWN_GATE_DEMANDS',
+    controlHeld,
+    probeDetail(
+      controlHeld,
+      controlProbes,
+      `\`SPINE_VERSION\` is ${SPINE_VERSION} and reads as generation ${String(emitted)}, one of ` +
+        `${SPINE_GENERATIONS.join(', ')}`,
+      (count) => `${count} thing(s) the live version does not satisfy:`,
+    ),
+    'every case above is about strings this repository does not emit, and a reader that answered null to all of ' +
+      'them would pass every one. This is the live value — read off `compile.ts` rather than typed — and it is ' +
+      'what `ingest` compares a foreign file against, so a null here would make the blocker below fire on rigc\'s ' +
+      'own output',
+  );
+
+  return bad;
+}
+
 function runIngestSuite(): number {
   console.log('\n── ingest: build(ingest(build(spec))) is the file it was read from ──');
   let bad = 0;
@@ -48809,6 +49078,220 @@ function runIngestSuite(): number {
         'the default skin beside its source and so states no `skin` at all. Here both links state one, and a ' +
         'rebuild that dropped it would resolve them against the default skin — a different mesh, or none, with ' +
         'the gate green either way',
+    );
+  }
+
+  // --- IG41/IG42/IG43: the generation, before a field of the file is read ---
+  //
+  // 🚨 **Measured on the branch point, and the shape is the card's own.** The
+  // probe's emit with its three constraints moved into the top-level `path` /
+  // `physics` / `slider` arrays 4.2 kept them in, and one bone's `inherit`
+  // spelled `transform`, ingested here: the rig spec came back with **0
+  // constraints**, **no finding named them**, and the only blocker was
+  // `BONE_FIELD` — about the bone key, not about the file. Reproduced on
+  // `gallery/ride` (one `path` constraint, gone, 0 findings). The 3.8 spelling
+  // was quieter still: one `LOSS HEADER_REDERIVED` line and exit 0.
+  //
+  // ⇒ So the code is about the GENERATION and the detail carries what a 4.3
+  // reader loses on THIS file. One code with the generation in the sentence
+  // rather than `GENERATION_<3.8|4.0|4.1|4.2>`, and the reason is `IG25` two
+  // cases up: it derives its table by reading `note(` calls for a code matching
+  // `[A-Z_]+`, and the page's rows are matched with `[A-Z_<>]+`. A composed code
+  // would read `GENERATION_3.8` at runtime — digits and a dot, matched by
+  // neither — so the call would be a `note(` the scan cannot resolve, `sites`
+  // would fall below `calls`, and `IG25`'s own floor would go red for a code
+  // that is invisible on both sides of the comparison it makes.
+  {
+    const PROBE_SPINE = String(
+      ((JSON.parse(probeTrip.a.skeletonText) as { skeleton?: { spine?: unknown } }).skeleton ?? {}).spine ?? '',
+    );
+
+    /**
+     * The probe's own emit rewritten into the shape a pre-4.3 export has: the
+     * header's version, every constraint moved out of `constraints` into the
+     * top-level array of its own kind (#706 row 1), and one bone's `inherit`
+     * spelled 4.2's `transform` (row 6).
+     *
+     * ⚠️ Nothing is invented and nothing is deleted: `inertia` and `damping` are
+     * left exactly as the compiler wrote them, so row 4's count is the file's
+     * own. Every expected number below is read back off the forged file rather
+     * than typed — a literal here would be this suite agreeing with itself.
+     */
+    const forge = (version: string, park: boolean): Record<string, unknown> => {
+      const file = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
+      (file.skeleton as Record<string, unknown>).spine = version;
+      if (!park) return file;
+      for (const one of (file.constraints as Array<Record<string, unknown>> | undefined) ?? []) {
+        const kind = String(one.type);
+        const rest: Record<string, unknown> = { ...one };
+        delete rest.type;
+        const parked = (file[kind] as Array<Record<string, unknown>> | undefined) ?? [];
+        parked.push(rest);
+        file[kind] = parked;
+      }
+      delete file.constraints;
+      const bones = file.bones as Array<Record<string, unknown>>;
+      const renamed = bones[bones.length - 1];
+      renamed.transform = renamed.inherit ?? 'noRotationOrReflection';
+      delete renamed.inherit;
+      return file;
+    };
+    const parkedIn = (file: Record<string, unknown>): Array<readonly [string, number]> =>
+      TOPLEVEL_CONSTRAINT_ARRAYS.map(
+        (kind) => [kind, Array.isArray(file[kind]) ? (file[kind] as unknown[]).length : 0] as const,
+      ).filter(([, count]) => count > 0);
+    const renamedIn = (file: Record<string, unknown>): string[] =>
+      (file.bones as Array<Record<string, unknown>>).filter((bone) => bone.transform !== undefined).map((bone) => String(bone.name));
+    const omittingIn = (file: Record<string, unknown>): Array<readonly [string, number]> => {
+      const physics = (Array.isArray(file.physics) ? (file.physics as Array<Record<string, unknown>>) : []).concat(
+        (Array.isArray(file.constraints) ? (file.constraints as Array<Record<string, unknown>>) : []).filter(
+          (one) => one.type === 'physics',
+        ),
+      );
+      return PHYSICS_FIELDS_WHOSE_DEFAULT_MOVED.map(
+        (field) => [field, physics.filter((one) => one[field] === undefined).length] as const,
+      ).filter(([, count]) => count > 0);
+    };
+    const ingestForged = (file: Record<string, unknown>): IngestFinding[] =>
+      ingest(file, { name: 'p', art: 'none', source: 's.json', version: '0' }).findings;
+
+    // IG41 — four pre-4.3 labels, each blocked by name with its own counts.
+    const OLDER: ReadonlyArray<readonly [string, string]> = [
+      ['3.8.99', '3.8'],
+      ['4.0.33', '4.0'],
+      ['4.0-from-4.1.24', '4.0'],
+      ['4.2.43', '4.2'],
+    ];
+    const olderProbes: string[] = [];
+    let olderDetail = '';
+    let olderCounts = '';
+    for (const [version, generation] of OLDER) {
+      const file = forge(version, true);
+      const findings = ingestForged(file);
+      const found = findings.filter((f) => f.code === 'GENERATION_UNSUPPORTED');
+      const detail = found[0]?.detail ?? '';
+      const parked = parkedIn(file);
+      const renamed = renamedIn(file);
+      const omitting = omittingIn(file);
+      const at = `${JSON.stringify(version)}:`;
+      if (olderDetail === '') {
+        olderDetail = detail;
+        olderCounts =
+          `${parked.map(([kind, count]) => `${kind} ${count}`).join(', ')}; ` +
+          `bone(s) carrying transform: ${renamed.join(', ')}; ` +
+          `${omitting.map(([field, count]) => `${count} omit ${field}`).join(', ') || 'no omitted physics default'}`;
+      }
+      olderProbes.push(
+        ...(found.length === 1 ? [] : [`${at} ${found.length} GENERATION_UNSUPPORTED finding(s), not 1`]),
+        ...(found.every((f) => f.kind === 'blocker') ? [] : [`${at} the finding is not a \`blocker\``]),
+        ...(found.every((f) => f.where === 'skeleton.spine') ? [] : [`${at} the finding's \`where\` is not skeleton.spine`]),
+        ...(detail.includes(JSON.stringify(version)) ? [] : [`${at} the detail does not quote the version string it read`]),
+        ...(detail.includes(`Spine ${generation}`) ? [] : [`${at} the detail does not name the generation ${generation}`]),
+        ...parked
+          .filter(([kind, count]) => !detail.includes(`${kind} ${count}`))
+          .map(([kind, count]) => `${at} the detail does not count the ${count} constraint(s) parked in "${kind}"`),
+        ...renamed.filter((bone) => !detail.includes(bone)).map((bone) => `${at} the detail does not name bone "${bone}"`),
+        ...omitting
+          .filter(([field, count]) => !detail.includes(`${count} omit "${field}"`))
+          .map(([field, count]) => `${at} the detail does not count the ${count} physics constraint(s) omitting "${field}"`),
+        ...(findings.some((f) => f.code === 'GENERATION_UNKNOWN') ? [`${at} it ALSO raised GENERATION_UNKNOWN`] : []),
+        ...floorProbes(
+          [
+            [parked.reduce((total, [, count]) => total + count, 0), 1, `${at} ${parked.length} top-level array(s) were planted`],
+            [renamed.length, 1, `${at} ${renamed.length} bone(s) carry "transform"`],
+            [omitting.reduce((total, [, count]) => total + count, 0), 1, `${at} ${omitting.length} physics default(s) are omitted`],
+          ],
+          'a forgery with nothing in it would let the detail say nothing and still satisfy every clause above',
+        ),
+      );
+    }
+    const olderHeld = olderProbes.length === 0;
+    say(
+      'IG41_A_PRE_4_3_FILE_IS_BLOCKED_BY_ITS_GENERATION_WITH_WHAT_THIS_READER_LOSES_COUNTED_ON_IT',
+      olderHeld,
+      probeDetail(
+        olderHeld,
+        olderProbes,
+        `${OLDER.length} pre-4.3 label(s) — ${OLDER.map(([version, generation]) => `${version} (${generation})`).join(', ')} — ` +
+          `each one blocker naming its generation and the file's own counts (${olderCounts})\n          ${olderDetail}`,
+        (count) => `${count} thing(s) the blocker did not do:`,
+      ),
+      'the acceptance issue #706 states is that a pre-4.3 input ends in a loud coded refusal or in a read that ' +
+        "applies that generation's defaults, and never in a silent drop. This is the first half; the second is " +
+        'item 2 and the detail says so rather than implying the file was read. The counts are the whole of why ' +
+        'the finding is worth reading — "this is 4.2 data" is a label, and "3 constraints are in arrays this ' +
+        'reader does not open, one bone carries the key 4.3 renamed, one physics constraint omits a default whose ' +
+        'value moved" is what the file will actually cost',
+    );
+
+    // IG42 — a string no generation matches, and a header that states none.
+    const unknownFile = forge('5.0.1', true);
+    const unknownFindings = ingestForged(unknownFile);
+    const absentFile = forge('5.0.1', true);
+    delete (absentFile.skeleton as Record<string, unknown>).spine;
+    const absentFindings = ingestForged(absentFile);
+    const unknownFound = unknownFindings.filter((f) => f.code === 'GENERATION_UNKNOWN');
+    const absentFound = absentFindings.filter((f) => f.code === 'GENERATION_UNKNOWN');
+    const unknownProbes = [
+      ...(unknownFound.length === 1 ? [] : [`"5.0.1": ${unknownFound.length} GENERATION_UNKNOWN finding(s), not 1`]),
+      ...(absentFound.length === 1 ? [] : [`an absent skeleton.spine: ${absentFound.length} GENERATION_UNKNOWN finding(s), not 1`]),
+      ...([...unknownFound, ...absentFound].every((f) => f.kind === 'blocker') ? [] : ['a GENERATION_UNKNOWN finding is not a `blocker`']),
+      ...(unknownFound[0]?.detail.includes('"5.0.1"') ? [] : ['the detail does not quote the string it could not read']),
+      ...(absentFound[0]?.detail.includes('no `skeleton.spine`') ? [] : ['the detail does not say the field is absent']),
+      ...SPINE_GENERATIONS.filter((generation) => !(unknownFound[0]?.detail ?? '').includes(generation)).map(
+        (generation) => `the detail does not name ${generation} among the generations it knows`,
+      ),
+      ...([...unknownFindings, ...absentFindings].some((f) => f.code === 'GENERATION_UNSUPPORTED')
+        ? ['a string no generation matches was ALSO reported as an unsupported generation, which would be a guess']
+        : []),
+    ];
+    const unknownHeld = unknownProbes.length === 0;
+    say(
+      'IG42_A_VERSION_NO_GENERATION_MATCHES_AND_A_HEADER_THAT_STATES_NONE_ARE_THEIR_OWN_BLOCKER',
+      unknownHeld,
+      probeDetail(
+        unknownHeld,
+        unknownProbes,
+        `"5.0.1" and an absent skeleton.spine each raise one GENERATION_UNKNOWN blocker and no ` +
+          `GENERATION_UNSUPPORTED\n          ${unknownFound[0]?.detail ?? ''}`,
+        (count) => `${count} thing(s) the unknown blocker did not do:`,
+      ),
+      'the two codes are not one code with a hole in it: an unsupported generation is a file this reader can say ' +
+        'something ABOUT, and an unknown one is a file it cannot, so rounding the second into the first would be ' +
+        'the guess #706 policy 1 refuses. A header that states no version at all is the same question — the data ' +
+        'has to state its generation, and one that does not has not stated it',
+    );
+
+    // IG43 — the negative control, and it is the version string alone.
+    const relabelled = forge(PROBE_SPINE, true);
+    const relabelledFindings = ingestForged(relabelled);
+    const relabelledGeneration = relabelledFindings.filter((f) => f.code.startsWith('GENERATION_'));
+    const cleanGeneration = probeTrip.findings.filter((f) => f.code.startsWith('GENERATION_'));
+    const negativeProbes = [
+      ...(PROBE_SPINE === '' ? ["the probe's own emit states no version, so there is nothing to put back"] : []),
+      ...(relabelledGeneration.length === 0
+        ? []
+        : [`the same file with this reader's own label still raises ${relabelledGeneration.map((f) => f.code).join(', ')}`]),
+      ...(cleanGeneration.length === 0
+        ? []
+        : [`the unplanted probe raises ${cleanGeneration.map((f) => f.code).join(', ')}, so nothing above proves anything`]),
+      ...(spineGeneration(PROBE_SPINE) === null ? [`the probe's own label ${JSON.stringify(PROBE_SPINE)} reads as no generation`] : []),
+    ];
+    const negativeHeld = negativeProbes.length === 0;
+    say(
+      'IG43_THE_SAME_FORGED_FILE_UNDER_THIS_READERS_OWN_LABEL_RAISES_NO_GENERATION_FINDING',
+      negativeHeld,
+      probeDetail(
+        negativeHeld,
+        negativeProbes,
+        `the 4.2-shaped forgery with only its version put back to ${JSON.stringify(PROBE_SPINE)} raises 0 ` +
+          `GENERATION_* finding(s), and so does the unplanted probe (${probeTrip.findings.length} finding(s), none of them here)`,
+      ),
+      'the one thing that separates this blocker from a check on the arrays is the version string, so the control ' +
+        'changes the version string and nothing else — the constraints are still parked in the same file. ⚠️ Which ' +
+        'is also what it does NOT claim: a file that LABELS itself 4.3 and parks its constraints anyway is read ' +
+        'with them dropped and no finding, and this case deliberately asserts nothing about that, because a clause ' +
+        'holding that hole open would go red the day somebody closes it',
     );
   }
 
@@ -51093,6 +51576,7 @@ function main(): void {
   const boneDistBad = tally.of('bonedist', runBoneDistSuite, { ran: ranIt });
   const checkBad = tally.of('check', runCheckSuite, { ran: ranIt });
   tally.of('slider-reader', runSliderReaderSuite);
+  tally.of('generation', runGenerationSuite);
   tally.of('ingest', runIngestSuite);
   tally.of('loop-seam', runLoopSeamSuite);
   tally.of('run-tally', () => runRunTallySuite(tally));
@@ -51170,6 +51654,19 @@ function main(): void {
         'leaf bone that moves position and nothing else, the same bone turned 30° that reads 30° and moves the ' +
         'matrix but not the scale, and a renamed bone that is named as unmatched under `identity` and returns to ' +
         'exactly zero under a supplied correspondence)';
+  const generations =
+    ', + ' + n('generation') + ' generation controls (issue #706 item 1 — which Spine generation a `skeleton.spine` ' +
+    'string names, which is one question asked in two places: `A16` decides whether an emitted file is on the 4.3 ' +
+    'line, and `ingest` decides whether it can honestly claim to have read a file somebody else wrote. Two regexes ' +
+    'would answer it two ways, so there is one reader and these are its controls: the nine strings shipped data ' +
+    'actually carries, each named as the generation whose runtime loads it; ten strings no generation matches, ' +
+    'every one of them null rather than the nearest, which is the rule a catalog broke by rounding 19 files ' +
+    'labelled 3.8.99 up to the runtime that posed them as NaN; the down-exports read as their LEADING token rather ' +
+    'than the editor that wrote them, with the chains that do not descend refused; `A16`\'s verdict and its ' +
+    'sentence measured through a real gate rather than through the function that now produces them; and the set ' +
+    'that assertion accepted BEFORE any of this, held against the regex it used to be — the last copy of which ' +
+    'lives in this file for exactly that comparison, because a control reading the accepted set out of the thing ' +
+    'it checks would agree with it whatever it said)';
   const ingestRoundTrips =
     ', + ' + n('ingest') + ' ingest round-trip controls (issue #569 — the only gate here that compares an emitted file ' +
     'against a file rigc did not write: every rig this run builds is decompiled back into a rig spec and a motion ' +
@@ -51789,6 +52286,7 @@ function main(): void {
           'measured against the loose drawing beside it, and the page rectangle each region occupies read back ' +
           'off the extent the runtime samples for it — with the count of corpus regions this population is BLIND ' +
           'to, the ones packed at 270 whose drawing is square, printed beside it)') +
+      generations +
       ingestRoundTrips +
       loopSeam +
       runTally +

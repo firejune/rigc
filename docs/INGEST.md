@@ -476,6 +476,19 @@ a default the source left to the format and the rebuild writes out). A blocker e
 non-zero and still writes both files. **Every code it can print has a row at the end
 of this section**, with its gutter, its effect on the exit code and what to do.
 
+⛔ **And it reads one generation.** Spine data is locked to the generation that
+exported it, and a mismatch is silent rather than loud: 4.3 takes constraints from the
+top-level `constraints` array alone, so a 4.0–4.2 file's `ik`/`transform`/`path`/
+`physics` arrays load as nothing at all — 1,302 shipped skeletons parsed on a 4.3
+runtime and loaded 0 of 8,672 constraints
+([#706](https://github.com/firejune/rigc/issues/706) row 1). So `ingest` reads
+`skeleton.spine` before it reads a field of the file, and a file from another
+generation is a blocker naming that generation and counting, **on that file**, what a
+4.3 reader loses by it. Reading such a file with *that generation's own* defaults is a
+different job — #706's item 2, a per-generation table extracted by machine from each
+runtime's `SkeletonJson` — and it is not in this tool, which is why the finding points
+at the policy rather than implying the file was read.
+
 **Two values are not in a skeleton**, so `ingest` asks rather than guesses:
 
 - **the stage** (`skeleton.width`/`height`) — `--stage x,y,w,h` is how you supply one
@@ -549,9 +562,11 @@ is the one failure a comparison of two sets cannot show you.
 | `CONSTRAINT_KEY_RESTATED` | `LOSS` | 0 | an `ik` or `transform` track whose keys do not all state the same fields. The motion spec takes one field set per track, so a field **any** key states is written on **every** key at the value the parser would have read there | nothing. Same values, larger file — the rebuild plays what the source plays |
 | `CONSTRAINT_TYPE` | `BLOCK` | 1 | a constraint whose `type` is none rigc knows, so the whole constraint is dropped rather than approximated | the rebuild has no such constraint; check the spelling before assuming the type is unsupported |
 | `DURATION` | `JUDGE` | 0 | skeleton JSON has no duration field at all. The largest key time is used, which is what a runtime plays to — and wrong for an animation that holds its last pose past its last key | if you know the real number, edit `duration` in the motion spec. It costs nothing: the declared duration is checked against the compiled keys |
+| `GENERATION_UNKNOWN` | `BLOCK` | 1 | `skeleton.spine` names no generation rigc knows, or the header states none at all. A version is read as its LEADING `major.minor` token — a down-export writes `4.0-from-4.1.24`, which is 4.0 data from a 4.1 editor — and it is never rounded to the nearest generation: a catalog that rounded handed 19 skeletons labelled `3.8.99` a 4.2 runtime and every one posed as NaN ([#706](https://github.com/firejune/rigc/issues/706) row 7) | check the string against the file you were handed. A real generation rigc does not list belongs on #706 item 1, with the string beside it |
+| `GENERATION_UNSUPPORTED` | `BLOCK` | 1 | the file is Spine data from another generation and this reader reads 4.3. The detail names the generation, the string it was read from, and what a 4.3 reader loses on **this** file: constraints parked in the top-level `ik` / `transform` / `path` / `physics` / `slider` arrays 4.3 folded into `constraints` and this reader never opens (row 1), bones carrying 4.2's `transform` where 4.3 spells `inherit` (row 6), and physics constraints omitting `inertia` / `damping`, whose default is not the same number in 4.2 as in 4.3 (row 4) | re-export the file as 4.3 from an editor of its own generation, or transcribe it by hand (§2). Reading it with **that generation's** defaults is #706 item 2 and is not in this tool |
 | `HEADER_BOOKKEEPING` | `LOSS` | 0 | a header field the editor writes and the rig spec has no home for — `hash`, `audio`. Dropped, and nothing reads it back | nothing. It is one of the three differences §2.3 measures on every editor export |
 | `HEADER_ORIGIN` | `LOSS` | 0 | the source declares an extent and omits `x`/`y`. Inside a declared extent an omitted origin **is** 0, so the spec states it — and the rebuild then spells two fields the source did not | nothing. Same box, different bytes — which is why byte identity is not the claim for an export that takes this branch |
-| `HEADER_REDERIVED` | `LOSS` | 0 | `skeleton.spine`: the rebuild writes the version of the runtime rigc links. The line says whether that is the same string the source states | nothing — but read the line: a 4.2 export rebuilds as 4.3 in that one field |
+| `HEADER_REDERIVED` | `LOSS` | 0 | `skeleton.spine`: the rebuild writes the version of the runtime rigc links. The line says whether that is the same string the source states | nothing — but read the line: a 4.2 export rebuilds as 4.3 in that one field, and a source from another generation raises `GENERATION_UNSUPPORTED` beside it, which is the blocker about the DATA rather than about the string |
 | `IK_KEY_FIELD` | `BLOCK` | 1 | a key field on an `ik` timeline that is not part of its shape | check the spelling; an unknown field is dropped from the rebuilt track |
 | `NO_STAGE` | `BLOCK` `JUDGE` | 1 | the skeleton declares no stage. It is a blocker with no `--stage`, and a **judgement** — exit 0 — when `--stage x,y,w,h` supplies one, because nothing measured the box you gave it | supply the box from the project the file came from. It cannot be derived: posing the rig gives the animated extent, which is a different number |
 | `PATH_LENGTHS` | `LOSS` | 0 | the source states a path attachment's `lengths` and rigc re-measures it as `PathConstraint` does | nothing. Dropping it is the correct reading: the field is the runtime's own four-sample forward difference, not an arc length |
