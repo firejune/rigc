@@ -34982,6 +34982,198 @@ function runCliSuite(): number {
     );
   }
 
+  // --- CLI82-CLI83: the rectangle a turned region occupies, on the line that
+  // already says where it is (issue #718) -------------------------------------
+  //
+  // ⭐ The atlas line prints the DRAWING's size, because that is what an
+  // attachment's width and height mean — and a packer that turned the drawing a
+  // quarter to fit it wrote `bounds:` in the drawing's orientation too. So
+  // neither the report nor the pack stated the rectangle an author has to cut
+  // out of the page to measure a part against a rendered frame, and the one
+  // place rigc printed it was `A06`'s overlap text, reachable only under
+  // `--profile spine-html`. `pageFootprint` has derived that rectangle for every
+  // reader of it since issue #579; nothing an author reads said it.
+  //
+  // 🔒 The pair is what makes either half worth anything, and one pack supplies
+  // both sides of `CLI82` on its own: the probe rig's two parts are 12x8 and
+  // 6x6, so at `rotate: 90` the first has a footprint `bounds:` does not state
+  // and the second has one it does. The rule is therefore measured as an `iff`
+  // rather than as "a turned region carries a clause", which is the form that
+  // would go quiet the day the clause started printing a restatement.
+  //
+  // ⚠️ `CLI83` is "no line this repository already quotes moves", in the only
+  // form a run holding one version of the tool can state it: on a pack laid flat
+  // by the same packer, nothing is appended after the coordinates. Byte identity
+  // against the branch point is measurable, but only from outside a run — the
+  // landing measures it there, against a `git archive` copy of the branch point.
+  {
+    const dirs = writeProbeRig();
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    const parts = ['block', 'marker'].map((region) => ({ region, absPath: join(dirs.dir, `${region}.png`) }));
+    type PackedRegion = ParsedAtlas['regions'][number];
+    /** A `--atlas-in` build through one pack: its exit, and its part lines by region name. */
+    const buildThrough = (
+      pack: ReturnType<typeof turnedPack>,
+      out: string,
+    ): { status: number | null; stderr: string; stdout: string; lines: Map<string, string> } => {
+      const run = runCli([
+        'build',
+        '--rig',
+        dirs.rigPath,
+        '--motion',
+        motionPath,
+        '--out',
+        join(dirs.dir, out),
+        '--atlas-in',
+        pack.atlasPath,
+      ]);
+      const lines = new Map<string, string>();
+      for (const line of run.stdout.split('\n')) {
+        const named = /^ {2}\.{2} {6}(\S+) +\d+x\d+ {2}<- /.exec(line);
+        if (named) lines.set(named[1], line);
+      }
+      return { status: run.status, stderr: run.stderr, stdout: run.stdout, lines };
+    };
+    const regionsOf = (pack: ReturnType<typeof turnedPack>): Map<string, PackedRegion> =>
+      new Map(parseAtlasText(readFileSync(pack.atlasPath, 'utf8')).regions.map((r) => [r.name.trim(), r]));
+    /**
+     * The whole criterion, as one function, so the live line and the forged ones
+     * are judged by the same thing rather than by two readings of it: the clause
+     * is present exactly where `pageFootprint`'s rectangle is not the one
+     * `bounds:` states, and its two numbers are that rectangle's.
+     */
+    const clauseFaults = (region: PackedRegion, line: string): string[] => {
+      const foot = pageFootprint(region);
+      const stated = foot.width === region.width && foot.height === region.height;
+      const want = `, occupies ${foot.width}x${foot.height}`;
+      const name = region.name.trim();
+      if (stated) {
+        return / occupies \d+x\d+/.test(line)
+          ? [`"${name}" occupies the rectangle its own bounds: line states and the report restates it: ${JSON.stringify(line)}`]
+          : [];
+      }
+      return line.endsWith(want)
+        ? []
+        : [`the line for "${name}" does not end in "${want}": ${JSON.stringify(line)}`];
+    };
+
+    const quarter = turnedPack(parts, 90);
+    const quarterRun = buildThrough(quarter, 'out_quarter');
+    const quarterRegions = regionsOf(quarter);
+    const clauseProbes: string[] = [];
+    if (quarterRun.status !== 0) {
+      clauseProbes.push(
+        `the build through a rotate: 90 pack exited ${String(quarterRun.status)}: ` +
+          JSON.stringify(quarterRun.stderr.split('\n')[0]),
+      );
+    }
+    let transposed = 0;
+    let untransposed = 0;
+    const said: string[] = [];
+    for (const [name, region] of quarterRegions) {
+      const line = quarterRun.lines.get(name);
+      if (line === undefined) {
+        clauseProbes.push(`the build printed no part line for "${name}", which the pack declares`);
+        continue;
+      }
+      const foot = pageFootprint(region);
+      const differs = foot.width !== region.width || foot.height !== region.height;
+      if (differs) transposed++;
+      else untransposed++;
+      clauseProbes.push(...clauseFaults(region, line));
+      said.push(`${name} ${region.width}x${region.height} at rotate ${region.degrees} -> ${line.split('<- ')[1] ?? line}`);
+      if (!differs) continue;
+      // The plant, aimed at the DATA the criterion reads rather than at the
+      // criterion: the same line with the two numbers swapped, and the same line
+      // with the clause struck out. Either passing would mean this case is
+      // reading the clause's presence and not its content.
+      const swapped = line.replace(`, occupies ${foot.width}x${foot.height}`, `, occupies ${foot.height}x${foot.width}`);
+      if (clauseFaults(region, swapped).length === 0) {
+        clauseProbes.push(`the criterion passes a line whose two numbers are swapped: ${JSON.stringify(swapped)}`);
+      }
+      const struck = line.replace(/, occupies \d+x\d+$/, '');
+      if (clauseFaults(region, struck).length === 0) {
+        clauseProbes.push(`the criterion passes a line with the clause struck out: ${JSON.stringify(struck)}`);
+      }
+    }
+    clauseProbes.push(
+      ...floorProbes(
+        [
+          [transposed, 1, `${transposed} region(s) of the pack occupy a rectangle their bounds: line does not state`],
+          [untransposed, 1, `${untransposed} turned region(s) of the pack occupy the rectangle it does state`],
+        ],
+        'one turned region of each kind is what makes this an `iff` rather than a count of clauses — a pack of ' +
+          'squares could not tell a right print from a swapped one, and a pack of oblongs could not show the ' +
+          'clause staying silent',
+      ),
+    );
+    const clauseHeld = clauseProbes.length === 0;
+    say(
+      'CLI82_A_TURNED_REGIONS_LINE_CARRIES_THE_RECTANGLE_IT_OCCUPIES_ON_ITS_PAGE',
+      clauseHeld,
+      probeDetail(
+        clauseHeld,
+        clauseProbes,
+        `${quarterRegions.size} region(s) through a rotate: 90 pack — ${said.join('; ')} — every clause equal to ` +
+          `\`pageFootprint\`'s rectangle, present on the ${transposed} whose bounds: line does not state it and ` +
+          `absent on the ${untransposed} whose does; the same line with its two numbers swapped, and with the ` +
+          'clause struck out, are each refused',
+      ),
+      'an author holding the pack had neither end of this rectangle: `bounds:` is the kept rectangle in the ' +
+        "DRAWING's orientation and the size on the left of this line is the drawing's, so the page rectangle was " +
+        'the one quantity a turned region never stated. The numbers are `pageFootprint`\'s rather than a second ' +
+        'reading of `degrees`, which is the duplication #579 was filed on — four readers derived this rectangle ' +
+        'and two derived it wrongly',
+    );
+
+    const flat = turnedPack(parts, 0);
+    const flatRun = buildThrough(flat, 'out_flat');
+    const flatProbes: string[] = [];
+    if (flatRun.status !== 0) {
+      flatProbes.push(
+        `the build through a rotate: 0 pack exited ${String(flatRun.status)}: ` +
+          JSON.stringify(flatRun.stderr.split('\n')[0]),
+      );
+    }
+    for (const [name, line] of flatRun.lines) {
+      if (!/ @ \d+,\d+$/.test(line)) {
+        flatProbes.push(`the line for "${name}" carries something after its coordinates: ${JSON.stringify(line)}`);
+      }
+    }
+    if (/ occupies /.test(flatRun.stdout)) {
+      flatProbes.push('the build through an unturned pack printed an `occupies` clause somewhere in its report');
+    }
+    // The pairing, and the half that stops this being a case that would pass on a
+    // tool that never learnt to print the clause at all.
+    if (![...quarterRun.stdout.split('\n')].some((line) => / occupies \d+x\d+$/.test(line))) {
+      flatProbes.push('the turned build printed no `occupies` clause either, so this silence says nothing');
+    }
+    flatProbes.push(
+      ...floorProbes(
+        [[flatRun.lines.size, parts.length, `${flatRun.lines.size} part line(s) were read`]],
+        'a build whose report this case could not read would be silent for a reason that is not the rule',
+      ),
+    );
+    const flatHeld = flatProbes.length === 0;
+    say(
+      'CLI83_AN_UNTURNED_REGIONS_LINE_ENDS_WHERE_IT_ALWAYS_DID',
+      flatHeld,
+      probeDetail(
+        flatHeld,
+        flatProbes,
+        `${flatRun.lines.size} part line(s) through a rotate: 0 pack laid out by the same packer — ` +
+          `${[...flatRun.lines.values()].map((line) => line.split('<- ')[1] ?? line).join('; ')} — each ending at ` +
+          'its coordinates with nothing appended, and no `occupies` anywhere in that report, while the turned ' +
+          'build of the same rig printed one',
+      ),
+      'the clause is a report line and not an emitted byte, so the thing it must not do is move a line somebody ' +
+        'already quotes. Byte identity against the branch point cannot be measured inside a run that holds one ' +
+        'version of the tool; what can is that nothing was appended, and the turned build beside it is what ' +
+        'stops that passing on a tool that prints the clause nowhere',
+    );
+  }
+
   // --- CLI84-CLI85: `diff --as`, the flag and the heading it moves (#720) ----
   //
   // The pair is one flag seen from its two ends. `CLI84` is what a caller who
@@ -41814,6 +42006,278 @@ function runCurrencySuite(): number {
           'that a green build cannot settle: every assertion passes on a mesh whose art is upside down. The ' +
           'sitting that filed this assumed the top-left and confirmed it only through a coverage percentage on a ' +
           'part that happened not to be symmetric — an instrument standing in for a sentence',
+      );
+    }
+  }
+
+  // --- CUR45-CUR46: the turned-region paragraph, against the two routines it is
+  // a reading of (issue #718) --------------------------------------------------
+  //
+  // ⭐ `docs/AUTHORING.md` §0.2 now tells an author holding only a pack what a
+  // `rotate:` line means for the numbers beside it — which rectangle of the page
+  // the region covers, and which way to turn that rectangle to get the drawing
+  // back. Both halves are facts about somebody else's code, and prose about
+  // somebody else's code is exactly the shape that goes stale without going red:
+  // the paragraph it replaced said rigc "reads all of them", which is true of
+  // rigc's instruments and answers neither question.
+  //
+  // 🔒 So neither word is read off the page and compared with a word written
+  // here. The footprint half is derived from `pageFootprint`, which is what the
+  // compiler, `A06`, `A19` and the renderer all call; the direction half from
+  // `MeshAttachment.computeUVs` in the linked runtime, which is the one routine
+  // there that states where a region's texels are for all four `degrees` —
+  // `TextureAtlas`'s `u2`/`v2` transpose at one quarter turn and not the other
+  // and would answer this wrongly at 270 (issue #579).
+  //
+  // ⚠️ The reader is the part that can go quiet, so it is the part that is
+  // planted: a `rotate:` value is bound to the marker nearest before it IN ITS
+  // OWN unit — a bullet or a paragraph — rather than anywhere on the page, which
+  // is what keeps a mention in the prose above from binding a value it is not
+  // about. Both plants are the section's own sentences with their two words
+  // exchanged, which is `CUR34`'s bar: a control whose victim is invented proves
+  // the form matches the control's imagination.
+  {
+    const GUIDE = 'docs/AUTHORING.md';
+    const HEADING = '### 0.2 ';
+    const guide = readFileSync(join(root, GUIDE), 'utf8');
+    /**
+     * One `###` section of a page, from its own heading to the next heading.
+     *
+     * ⚠️ Fenced blocks are held out of the search for that next heading, and
+     * this file measured what leaving them in costs before it was written: every
+     * transcript this guide quotes is commented with `#   ..`, which is a hash
+     * and a space, so a reader of the raw lines ended §0.2 six lines in — at the
+     * first quoted report line — and both cases below faulted on a section that
+     * contained none of the sentences they exist to read.
+     */
+    const sectionOf = (text: string): string => {
+      const lines = text.split('\n');
+      const at = lines.findIndex((line) => line.startsWith(HEADING));
+      if (at < 0) return '';
+      let fenced = false;
+      for (let i = at + 1; i < lines.length; i++) {
+        if (lines[i].startsWith('```')) fenced = !fenced;
+        else if (!fenced && /^#{1,3} /.test(lines[i])) return lines.slice(at, i).join('\n');
+      }
+      return lines.slice(at).join('\n');
+    };
+    /**
+     * A section as the units a claim can live in: every bullet with the lines it
+     * wraps onto, and every paragraph, whitespace collapsed to one space each.
+     */
+    const unitsOf = (section: string): string[] => {
+      const units: string[] = [];
+      let current = '';
+      const flush = (): void => {
+        if (current.trim() !== '') units.push(current.replace(/\s+/g, ' ').trim());
+        current = '';
+      };
+      for (const line of section.split('\n')) {
+        if (line.trim() === '') flush();
+        else if (/^- /.test(line)) {
+          flush();
+          current = line;
+        } else current = current === '' ? line : `${current} ${line}`;
+      }
+      flush();
+      return units;
+    };
+    /**
+     * What each `rotate: N` in the section is said about: the marker nearest
+     * before it in its own unit, or nothing when its unit has none before it.
+     * A value bound two ways is reported as both rather than as the last one.
+     */
+    const boundTo = (section: string, marker: RegExp): Map<number, string> => {
+      const bound = new Map<number, string>();
+      for (const unit of unitsOf(section)) {
+        const markers = [...unit.matchAll(marker)].map((m) => ({ at: m.index ?? 0, word: m[0] }));
+        if (markers.length === 0) continue;
+        for (const token of unit.matchAll(/`rotate: (\d+)`/g)) {
+          const before = markers.filter((m) => m.at < (token.index ?? 0));
+          if (before.length === 0) continue;
+          const word = before[before.length - 1].word;
+          const turn = Number(token[1]);
+          const already = bound.get(turn);
+          bound.set(turn, already === undefined || already === word ? word : `${already} and ${word}`);
+        }
+      }
+      return bound;
+    };
+    const DIRECTION = /\b(counter-)?clockwise\b/g;
+    const SYMBOL = /`(?:w x h|h x w)`/g;
+    const printed = (map: Map<number, string>): string =>
+      [...map]
+        .sort((a, b) => a[0] - b[0])
+        .map(([turn, word]) => `rotate: ${turn} -> ${word}`)
+        .join(', ') || '(nothing)';
+    const apart = (said: Map<number, string>, measured: Map<number, string>, what: string): string[] => {
+      const rows: string[] = [];
+      for (const [turn, word] of measured) {
+        const got = said.get(turn);
+        if (got !== word) rows.push(`${GUIDE} §0.2 says ${what} at rotate: ${turn} is ${got ?? '(unsaid)'}, and it is ${word}`);
+      }
+      for (const [turn, word] of said) {
+        if (!measured.has(turn)) rows.push(`${GUIDE} §0.2 states ${what} — ${word} — for rotate: ${turn}, which has none`);
+      }
+      return rows;
+    };
+    const section = sectionOf(guide);
+
+    // The fixture: the probe rig's own parts, laid out by somebody else's packer
+    // at each turn the runtime distinguishes. Nothing is fetched, so neither of
+    // these two can HOLE.
+    const dirs = writeProbeRig();
+    const parts = ['block', 'marker'].map((region) => ({ region, absPath: join(dirs.dir, `${region}.png`) }));
+    const CORNERS: Record<string, string> = {
+      'top-left': 'no turn',
+      'bottom-left': 'clockwise',
+      'top-right': 'counter-clockwise',
+      'bottom-right': 'half turn',
+    };
+    /**
+     * Which way the rectangle ON THE PAGE has to be turned to become the
+     * drawing, asked of the runtime: the corner of the footprint the drawing's
+     * own top-left texel lands on names the turn, and nothing here says what it
+     * should be.
+     */
+    const recoverBy = (degrees: number): string => {
+      const pack = turnedPack(parts, degrees);
+      const region = new TextureAtlas(readFileSync(pack.atlasPath, 'utf8')).regions.find(
+        (r) => r.name.trim() === 'block',
+      );
+      if (region === undefined) return 'no such region';
+      const foot = pageFootprint(region);
+      const out = [0, 0];
+      MeshAttachment.computeUVs(region, [0.5 / region.originalWidth, 0.5 / region.originalHeight], out);
+      const px = Math.floor(out[0] * region.page.width);
+      const py = Math.floor(out[1] * region.page.height);
+      const side = px === region.x ? 'left' : px === region.x + foot.width - 1 ? 'right' : `x=${px}`;
+      const row = py === region.y ? 'top' : py === region.y + foot.height - 1 ? 'bottom' : `y=${py}`;
+      return CORNERS[`${row}-${side}`] ?? `${row}-${side}`;
+    };
+    const TURNS_STATED = [0, 90, 180, 270];
+    const recovered = new Map(TURNS_STATED.map((degrees) => [degrees, recoverBy(degrees)]));
+    const directionTruth = new Map(
+      [...recovered].filter(([, word]) => word === 'clockwise' || word === 'counter-clockwise'),
+    );
+
+    // --- CUR45: the direction, against the runtime that owns the mapping -----
+    {
+      const faults: string[] = [];
+      if (section === '') faults.push(`${GUIDE} has no section opening "${HEADING.trim()}", so nothing was read`);
+      const said = boundTo(section, DIRECTION);
+      faults.push(...apart(said, directionTruth, 'the turn that recovers the drawing'));
+      // The plant: the section's own two words exchanged. A reader that bound a
+      // value to whichever word is nearest ANYWHERE would still be green here,
+      // because the exchange leaves the page carrying both words.
+      const swapped = section.replace(DIRECTION, (_m, counter: string | undefined) =>
+        counter === undefined ? 'counter-clockwise' : 'clockwise',
+      );
+      const swappedSaid = boundTo(swapped, DIRECTION);
+      const swappedApart = apart(swappedSaid, directionTruth, 'the turn that recovers the drawing');
+      if (swappedApart.length !== directionTruth.size) {
+        faults.push(
+          `§0.2 with its two direction words exchanged is faulted ${swappedApart.length} time(s) and this control ` +
+            `requires ${directionTruth.size}, one per turn that has a direction — it read ${printed(swappedSaid)}`,
+        );
+      }
+      // ...and the other side of the reader: a section naming no direction at
+      // all must bind nothing, rather than reaching for the nearest word it can
+      // find. Without this a reader that answered from the page's vocabulary
+      // would pass both legs above.
+      const silent = boundTo(section.replace(DIRECTION, 'a quarter turn'), DIRECTION);
+      if (silent.size !== 0) faults.push(`§0.2 with no direction word left in it still bound ${printed(silent)}`);
+      faults.push(
+        ...floorProbes(
+          [[directionTruth.size, 2, `${directionTruth.size} turn(s) were measured to have a direction`]],
+          'a derivation that produced one direction or none would make the comparison above vacuous',
+        ),
+      );
+      const held = faults.length === 0;
+      say(
+        'CUR45_THE_TURN_THE_GUIDE_NAMES_IS_THE_TURN_THE_RUNTIME_MAKES',
+        held,
+        probeDetail(
+          held,
+          faults,
+          `the four turns recover the drawing by ${printed(recovered)}, measured on a packed fixture through ` +
+            `\`MeshAttachment.computeUVs\`, and §0.2 names ${printed(boundTo(section, DIRECTION))}; the same ` +
+            `section with its two words exchanged is faulted ${directionTruth.size} time(s), and with no ` +
+            'direction word left in it binds nothing',
+        ),
+        'the direction is a fact about somebody else\'s code and the guide is the only place an author can read ' +
+          'it. The 1.0 exam\'s first sitting derived it by cutting a page both ways and looking, after a ' +
+          'composite drew the wrong glyphs in three of eleven places — each turned region\'s footprint happened ' +
+          "to contain a neighbour's upright picture, so the wrong reading looked right. A sentence nothing " +
+          'derives would put the next author in the same position while reading as though it were checked',
+      );
+    }
+
+    // --- CUR46: the footprint, against the function every reader of it calls --
+    {
+      const PROBE = { width: 12, height: 8 };
+      const symbolTruth = new Map(
+        TURNS_STATED.map((degrees) => {
+          const foot = pageFootprint({ ...PROBE, degrees });
+          const same = foot.width === PROBE.width && foot.height === PROBE.height;
+          return [degrees, same ? '`w x h`' : '`h x w`'] as const;
+        }),
+      );
+      const faults: string[] = [];
+      if (section === '') faults.push(`${GUIDE} has no section opening "${HEADING.trim()}", so nothing was read`);
+      const said = boundTo(section, SYMBOL);
+      faults.push(...apart(said, symbolTruth, 'the rectangle on the page'));
+      const swapped = section.replace(SYMBOL, (m) => (m === '`w x h`' ? '`h x w`' : '`w x h`'));
+      const swappedApart = apart(boundTo(swapped, SYMBOL), symbolTruth, 'the rectangle on the page');
+      if (swappedApart.length !== symbolTruth.size) {
+        faults.push(
+          `§0.2 with its two footprint spellings exchanged is faulted ${swappedApart.length} time(s) and this ` +
+            `control requires ${symbolTruth.size}, one per turn the section states`,
+        );
+      }
+      // The quoted report line is the same claim in numbers, so it is read the
+      // same way: `occupies` must be `pageFootprint`'s answer for the size and
+      // the turn on its own line. (The size on the left is the untrimmed
+      // drawing's, which is the region's own `bounds:` for the untrimmed region
+      // this line quotes — a trimmed one would state a third pair and is not
+      // what any line in this guide shows.)
+      const quoted = [...section.matchAll(/(\d+)x(\d+) +<- .*?rotate (\d+), occupies (\d+)x(\d+)/g)];
+      for (const line of quoted) {
+        const [, w, h, degrees, fw, fh] = line;
+        const foot = pageFootprint({ width: Number(w), height: Number(h), degrees: Number(degrees) });
+        if (foot.width !== Number(fw) || foot.height !== Number(fh)) {
+          faults.push(
+            `${GUIDE} §0.2 quotes a ${w}x${h} region at rotate ${degrees} occupying ${fw}x${fh}, and ` +
+              `\`pageFootprint\` makes it ${foot.width}x${foot.height}`,
+          );
+        }
+      }
+      faults.push(
+        ...floorProbes(
+          [
+            [symbolTruth.size, 4, `${symbolTruth.size} turn(s) were derived`],
+            [new Set(symbolTruth.values()).size, 2, `${new Set(symbolTruth.values()).size} distinct spelling(s) were derived`],
+            [quoted.length, 1, `${quoted.length} report line(s) quoting a footprint were read`],
+          ],
+          'a derivation with one spelling in it, or a section quoting no line, would make this pass over nothing',
+        ),
+      );
+      const held = faults.length === 0;
+      say(
+        'CUR46_THE_PAGE_RECTANGLE_THE_GUIDE_STATES_IS_PAGEFOOTPRINTS',
+        held,
+        probeDetail(
+          held,
+          faults,
+          `\`pageFootprint\` makes a ${PROBE.width}x${PROBE.height} region ${printed(symbolTruth)} and §0.2 ` +
+            `states ${printed(said)}; the same section with its two spellings exchanged is faulted ` +
+            `${symbolTruth.size} time(s), and the ${quoted.length} quoted report line(s) carry the rectangle ` +
+            'that function answers with',
+        ),
+        'this is the number the whole paragraph exists for, and it was derivable from `pageFootprint` for a month ' +
+          'while no surface an author reads stated it. Deriving the PARTITION rather than the pair is what makes ' +
+          'the case two-sided for free: the turns that transpose and the turns that do not are both read off the ' +
+          'same function, so a guide that spelled either group the other way is faulted by name',
       );
     }
   }

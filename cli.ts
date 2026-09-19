@@ -76,7 +76,14 @@ import {
 } from './src/diff.ts';
 import { ingest, IngestError, IngestSpecRefused, INGEST_GUTTERS, type IngestFinding, type IngestStage } from './src/ingest.ts';
 import { copyAtlasPages } from './src/emit.ts';
-import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE, packAtlas, parseAtlasText } from './src/atlas.ts';
+import {
+  DEFAULT_PADDING,
+  DEFAULT_PAGE_SIZE,
+  packAtlas,
+  pageFootprint,
+  parseAtlasText,
+  type AtlasRegion,
+} from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
 import { KEY_TIME_EPSILON } from './src/timelines.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
@@ -1165,6 +1172,45 @@ function dropLine(dropped: DroppedState): string {
   return `  DROP  ${dropped.slot}/${dropped.state}: ${droppedStateReason(dropped)} (state not emitted)`;
 }
 
+/**
+ * The rectangle a region occupies **on its page**, for a line that has already
+ * said where the region is — and the empty string where the page rectangle is
+ * the one `bounds:` already states.
+ *
+ * ## The fact no surface an author reads carried (issue #718)
+ *
+ * The atlas line beside this clause prints the DRAWING's size, because that is
+ * what an attachment's width and height mean. A packer that turned the drawing a
+ * quarter to fit it wrote `bounds:` in the drawing's orientation too. So an
+ * author holding the pack and the build report had neither end of the rectangle
+ * they have to cut out of the page to measure a part against a rendered frame —
+ * and the one place rigc printed it was `A06`'s overlap text, reachable only
+ * under `--profile spine-html`. The knowledge was in the tree the whole time:
+ * `pageFootprint` has derived this rectangle for every reader of it since issue
+ * #579, and nothing an author reads said it.
+ *
+ * ⚠️ **The condition is `pageFootprint`'s own answer, not a second reading of
+ * `degrees`.** Re-spelling that predicate here is the exact duplication #579 was
+ * filed on — four readers derived this rectangle and two derived it wrongly — so
+ * the clause asks the function whether its answer differs from the `bounds:`
+ * line, and prints only then.
+ *
+ * 🔸 A consequence worth stating rather than leaving to be discovered: a region
+ * whose KEPT rectangle is square is silent here, because a quarter turn leaves
+ * its footprint the same two numbers and there is nothing the pack does not
+ * already say. The general rule — `bounds` is the unturned size, the footprint
+ * is its transpose at `rotate: 90` and `rotate: 270`, and which way to turn the
+ * rectangle to recover the drawing — belongs to an author's own reading and is
+ * stated in `docs/AUTHORING.md` §0.2, which holds for every region including
+ * that one.
+ */
+function pageRectangle(region: AtlasRegion): string {
+  const foot = pageFootprint(region);
+  return foot.width === region.width && foot.height === region.height
+    ? ''
+    : `, occupies ${foot.width}x${foot.height}`;
+}
+
 function cmdBuild(flags: Record<string, string>): void {
   const { label, opts } = resolveCut(flags);
   const profile = readProfile(flags);
@@ -1218,13 +1264,23 @@ function cmdBuild(flags: Record<string, string>): void {
     // that declares a `scale:` also says so and shows the texels it was read
     // from: the size on the left is the DRAWING's and the rectangle is the
     // pack's, and issue #267 is the report that printed the second as the first.
+    //
+    // `pageRectangle` closes the line's last silence (issue #718), and it is
+    // placed LAST rather than beside the turn it follows from, which is where
+    // the card put it. The two clauses collide nowhere else, and the collision
+    // is real: `scale 0.5 (373x106 texels)` is itself a size, so
+    // `rotate 90, occupies 106x373 scale 0.5 (…)` reads as though the footprint
+    // were the scaled quantity. As a trailing clause of the whole location
+    // phrase it is unambiguous with a `scale:` line and identical to the card's
+    // wording without one, which is every pack that has no `scale:` to state.
     const where =
       img.atlas === undefined
         ? img.page
         : `${img.page} @ ${img.atlas.x},${img.atlas.y}${img.atlas.degrees ? ` rotate ${img.atlas.degrees}` : ''}` +
           (img.atlasScale === undefined
             ? ''
-            : ` scale ${img.atlasScale} (${img.atlas.originalWidth}x${img.atlas.originalHeight} texels)`);
+            : ` scale ${img.atlasScale} (${img.atlas.originalWidth}x${img.atlas.originalHeight} texels)`) +
+          pageRectangle(img.atlas);
     console.log(`  ..      ${img.region.padEnd(24)} ${img.width}x${img.height}  <- ${where}`);
   }
   for (const d of result.droppedStates) console.log(dropLine(d));
