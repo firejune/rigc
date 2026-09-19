@@ -1081,6 +1081,22 @@ loader's sentence and all the report had. Since
 `A08_REGION_NAMES_MATCH_ATTACHMENTS`, with the skin, the slot, the placeholder
 and the attachment's own name beside the path.
 
+Where each vertex sits on the **art**:
+
+| Field | Meaning |
+| --- | --- |
+| `uvs` | one `u, v` per vertex, in the order the geometry below uses. Both are fractions of the region rather than pixels, and the array's length is what fixes the vertex count — a mesh states no `vertexCount`. **`(0, 0)` is the region's top-left pixel and `(1, 1)` its bottom-right**, so `u` grows toward the right edge and `v` grows *downward* toward the bottom edge: the crop-pixel convention §11.2 states for a manifest, and not Spine's y-up world. What a **turned** region (`rotate: 90`, in a pack somebody else made) does to that is §0.2's subject |
+
+⭐ **Measured, because an assumption about a corner is invisible in a build that
+went green.** On a 64×48 plate whose four quadrants are four flat colours,
+`rigc render` drew a quad given `uvs` running `0 → 0.5` on both axes as 3,120 px
+of the **top-left** quadrant's colour and not one pixel of any other, and the same
+quad given `0.5 → 1` as 3,120 px of the **bottom-right**. Beside it, the runtime's own
+`MeshAttachment.computeUVs`, handed the emitted atlas region, put `(0, 0)` at page
+pixel `(0.00, 0.00)` and `(1, 1)` at `(64.00, 48.00)` — the region's own two
+corners, in the page's y-down pixels. `CUR44` in the selftest holds the sentence
+above against that second measurement.
+
 Geometry comes in one of two fields:
 
 | Field | Meaning |
@@ -1266,6 +1282,105 @@ other mesh, because after the round trip it **is** the source's triangles, weigh
 and uvs. `A13_MESH_BUDGET` counts it as a mesh of its own: the runtime draws it as
 one, so a link in a second slot is a second mesh slot against
 `invariants.meshSlots`.
+
+**The three types that carry geometry and no art** — a bounding box, a clipping
+polygon and a path. None of them resolves an atlas region, so none of them has an
+`image`, a `path` key, a `width`/`height` or uvs, and a skin holding only these
+builds an atlas with **no pages** (above). What they do share is one geometry
+shape, and it is the mesh's with one field added:
+
+- 🚨 **`vertexCount` is required and has no parser default.** A mesh takes its
+  count from `uvs.length`; these have no uvs, so the parser reads
+  `map.vertexCount << 1` as the length to expect — and with the field absent that
+  is `undefined << 1` = **0**, which sends `readVertices` down the WEIGHTED branch,
+  decodes the coordinate list as a weight run, and hands back an attachment with no
+  vertices at all. Nothing throws, and none of the three draws a pixel, so nothing
+  downstream notices. rigc refuses it by name: `vertexCount is undefined; a polygon
+  needs at least 3 vertices, stated outright`.
+- **The two encodings are the mesh's own**, traps included: `weights` binds bones
+  by NAME and is the form to use; `vertices` is an unweighted `x, y` run when
+  `vertices.length === vertexCount * 2` and Spine's index-encoded weighted run
+  otherwise, and the second of those needs `"boneIndexing": "raw"` said out loud.
+  `A33_VERTEX_ATTACHMENT_GEOMETRY` (§5.2) gates all three types and accepts either
+  encoding on each — measured by building both on each of the three.
+- 📐 **Which space the numbers are in.** An unweighted `x, y` is in the **slot's
+  bone's** local space; a `weights` binding's `x`/`y` is in **that binding's own
+  bone's** local space, and the slot's bone plays no part in it. Measured through
+  spine-core on a rig where the two are different bones: `(0, 0)`, `(30, 0)`,
+  `(30, 20)` written unweighted on a slot whose bone sits at `(-60, 25)` turned
+  −21° posed at `(-60.0000, 25.0000)`, `(-31.9926, 14.2490)` and
+  `(-24.8252, 32.9206)`, which is that bone's own transform of them; the same three
+  points bound by name to a bone at `(110, 70)` turned 37° and scaled `1.3, 0.8`,
+  in the very same slot, posed at `(110.0000, 70.0000)`, `(141.1468, 93.4708)` and
+  `(131.5177, 106.2490)` — the BOUND bone's transform, to four decimals.
+- **A `deform` timeline reaches all three** (§4.11); none of them is drawn, so a
+  render can show you nothing about any of them.
+
+**Bounding box** ([Spine: bounding boxes](http://esotericsoftware.com/spine-bounding-boxes)) —
+`"type": "boundingbox"`. A polygon the game hit-tests against — a hurt box, a pick
+region, a trigger volume — that moves with the skeleton and draws nothing.
+
+| Field | Meaning |
+| --- | --- |
+| `type` | `"boundingbox"`. **Required**: an omitted `type` is `"region"`, and a region has nowhere to put these keys — measured, the refusal reads `attachment "mask" (region) has 2 keys this compiler does not read: "vertexCount", "vertices"` |
+| `vertexCount` | **required**, 3 or more. No default — the paragraph above is why |
+| `vertices` | the unweighted `x, y` run, in the slot bone's local space; or the index-encoded weighted run, behind `boneIndexing` |
+| `weights` | the by-name form: one entry per vertex, each a list of `{ "bone": …, "x": …, "y": …, "weight": … }`, each pair in that bone's local space. Never beside `vertices` |
+| `boneIndexing` | `"name"` (the default) or `"raw"`, which opts a weighted `vertices` run into Spine's index encoding. `"raw"` beside `weights` is refused: `weights` always binds by name |
+| `color` | `rrggbbaa`. **No default in the file** — omitted, the parser never calls `setFromString` and the attachment keeps the runtime's own colour. It is an editor affordance, the colour the polygon is drawn in there; rigc emits it verbatim when stated and leaves the key out when not |
+
+**Clipping polygon** ([Spine: clipping](http://esotericsoftware.com/spine-clipping)) —
+`"type": "clipping"`. A mask: the polygon clips every slot drawn from the one
+carrying it up to and including `end`, so a window, a portal or a wipe is one
+attachment rather than a second set of art.
+
+| Field | Meaning |
+| --- | --- |
+| `type` | `"clipping"`. **Required** |
+| `vertexCount`, `vertices`, `weights`, `boneIndexing`, `color` | exactly as on a bounding box |
+| `end` | the last slot the clip applies to, **by name**. Absent is the parser's own encoding for *clip everything after this one*, which is why a typo cannot be told from an omission once the file is loaded: `findSlot` returns null on a miss and the parser assigns that null without a word, so the clip runs to the bottom of the draw order and takes every slot below it with it. rigc refuses a name the rig does not declare — `end names slot "X", which this rig does not declare` — and `A33` refuses it again on a skeleton rigc did not write |
+| `convex` | default **false**. True tells the runtime the polygon is convex so it can clip without triangulating it, and a polygon that deforms concave is clipped by its convex hull instead (`ClippingAttachment.convex`). Nothing here checks that the polygon is in fact convex |
+| `inverse` | default **false**. True makes everything **outside** the polygon visible instead of everything inside, and inverse clipping is always treated as convex (`ClippingAttachment.inverse`) |
+
+⚠️ **A clipping attachment is refused by the renderer profile and by nothing
+else.** `A11_NO_CLIPPING_ATTACHMENTS` (§5.2) fires under `--profile spine-html`
+because that renderer skips clipping silently; it is one renderer's policy rather
+than anything about the data, and the default `spine` profile builds one.
+
+**Path** ([Spine: paths](http://esotericsoftware.com/spine-paths)) —
+`"type": "path"`. The composite cubic Bezier a path **constraint** (§3.5.1) slides
+bones along. No runtime draws it, and it deforms with the slot's bone like any
+other vertex attachment.
+
+| Field | Meaning |
+| --- | --- |
+| `type` | `"path"`. **Required** |
+| `vertexCount`, `vertices`, `weights`, `boneIndexing`, `color` | as on a bounding box — except that these vertices are knots **and** their handles, which the count rule below is about |
+| `closed` | default **false**. True joins the last knot back to the first |
+| `constantSpeed` | default **true** — note the direction. Leaving it out asks for the expensive-and-correct traversal, in which the runtime re-measures the path every frame and `lengths` is never read. `false` makes the runtime trust the emitted `lengths` instead: cheaper, exact only while the path holds its setup shape, and the reason a deformed path wants the default |
+| `lengths` | 🚫 **refused by name.** rigc measures the setup length of each curve off the geometry and emits it, the way it measures a region's size off its PNG: `"lengths" is not authored — rigc measures the setup arc length of each curve…`. The field is declared only so the refusal can say that rather than report a misspelt key. What the numbers are — and why *arc length* is the wrong name for them — is §10.6 |
+
+🚨 **`vertexCount` counts knots AND handles, and it has to be a multiple of 3.**
+The parser hands `vertexCount << 1` to `readVertices` and then walks the result in
+groups of six: the first and last points are the outer control handles of the end
+knots and are dropped, leaving a `3K + 1` chain. So an OPEN path of K curves states
+`vertexCount = 3(K + 1)`, minimum **6**, and a CLOSED one states `3K`, minimum
+**3**. A count that is not a multiple of 3 does not throw —
+`Utils.newArray(vertexCount / 3, 0)` accepts a fractional size, the groups of six
+then straddle the knots, and the constraint slides bones along a curve nobody drew
+— so rigc refuses both shapes: `vertexCount is N, which is not a multiple of 3`
+and `vertexCount is N and an open path needs at least 6`.
+
+```json
+"track": { "track": { "type": "path", "vertexCount": 9,
+  "vertices": [-30, 0, 0, 0, 30, 0, 60, 0, 90, 0, 120, 0, 150, 0, 180, 0, 210, 0] } }
+```
+
+Nine points are two curves. The outer handles at `x = -30` and `x = 210` are
+dropped, so the chain runs from `x = 0` to `x = 180` and rigc emits
+`"lengths": [90, 180]` beside it — measured, not stated. That is the path
+§3.5.1's constraint example rides: with `position: 0.25` its `cart` bone poses at
+`worldX = 45.000000`.
 
 The generators are `ring`, `ribbon`, `contour` and `grid` (see
 [`src/mesh.ts`](../src/mesh.ts)); the first two encode a deformation model rather
