@@ -276,14 +276,19 @@ export type BoneProperty =
  * distinction only bites a reader comparing an emitted file with an editor
  * export; `PHYSICS_TRACKS` in `compile.ts` carries the argument.
  *
- * 🔒 **Four of them have a compile-time range** (issue #610): `mass` and
- * `strength` must be `> 0`, `damping` strictly inside `(0, 1)`, and `mix` `0` or
+ * 🔒 **Four of them have a compile-time range** (issue #610): `mass` must be
+ * `> 0`, `damping` strictly inside `(0, 1)`, and `mix` and `strength` `0` or
  * more. The bounds are `PHYSICS_POSE_RULES` in `src/timelines.ts` and they are
  * the runtime's, not a policy — `inertia`, `wind`, `gravity` and the top of
  * `mix` are bounded nowhere, because the runtime documents nothing for the first
  * three and documents `mix` as "a percentage (0+)". The same four rows are what
  * `A23_PHYSICS_CONSTRAINT_EFFECTIVE` judges a setup pose and a foreign file's
  * timeline keys with, which is why they are not stated here as numbers.
+ *
+ * ⚠️ **Two of the four are wider on a KEY than at rest**, and `A23` holds a
+ * constraint's own tuning to the narrower one: a setup `mix` or `strength` of 0
+ * is a constraint that does nothing, while a key of 0 is an animation muting or
+ * releasing it for a span and the next key restores it (issues #610, #727).
  */
 export type PhysicsProperty =
   | 'inertia'

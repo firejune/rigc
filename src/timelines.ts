@@ -300,22 +300,46 @@ export interface PhysicsPoseRule {
   poseOk: (poseValue: number) => boolean;
   /**
    * The same question asked of a KEY, where it differs — `null` means it does
-   * not. Only `mix` has one, and the runtime is the reason: `update` opens with
-   * `if (mix === 0) return;` (`PhysicsConstraint.js:109-111`) and
-   * `PhysicsConstraintPose` documents the field as "a percentage (0+)", so a
-   * mix of exactly 0 is a state the runtime has a branch for. A setup pose at 0
-   * is a constraint that does nothing unless an animation rescues it; a KEY at 0
-   * is an animation muting it for a stretch, which is what a mix timeline is for
-   * — measured, not assumed: the editor's own `sack-pro` example keys mix to 0 on
-   * 24 of its 36 mix keys, and applying the setup rule to keys would refuse all
-   * 24 (issue #610).
+   * not. **Two rows have one, and in both the widening is to 0 exactly**, for
+   * the same reason: a setup pose states what a constraint IS and a key states
+   * what it is doing for a stretch, so a value that makes a constraint
+   * permanently useless can be a deliberate span inside an animation.
+   *
+   * - `mix`: `update` opens with `if (mix === 0) return;`
+   *   (`PhysicsConstraint.js:109-111`) and `PhysicsConstraintPose` documents the
+   *   field as "a percentage (0+)", so a mix of exactly 0 is a state the runtime
+   *   has a branch for. Measured, not assumed: the editor's own `sack-pro`
+   *   example keys mix to 0 on 24 of its 36 mix keys, and applying the setup
+   *   rule to keys would refuse all 24 (issue #610).
+   * - `strength`: 0 takes the restoring term out of the velocity update and
+   *   leaves `damping` and `inertia` applied, which is a released span rather
+   *   than a broken constraint. Measured through spine-core on the generated
+   *   overlay fixture, keying 0 for a span and restoring it (issue #727): no
+   *   NaN; with no wind or gravity the offset coasts to a LIMIT rather than
+   *   running away — 0.5 s of it and 2.0 s of it end 0.95 % apart — and the
+   *   restoring key takes the offset from 5.5063 back under 0.01 in 54 steps at
+   *   60 fps. With `gravity -40` acting, the offset travels at
+   *   terminal velocity while the key holds (178 units over 0.5 s, 843 over
+   *   2.0 s) and the restoring key still pulls it back to the never-keyed run's
+   *   own equilibrium — 39.999969 against 40.000000 — in 13 steps. What that
+   *   measurement rules out is the thing a key cannot undo, and the neighbour
+   *   that HAS one is the contrast: a keyed `mass` of 0 is NaN from the first
+   *   sub-step and still NaN after the restoring key, so it stays refused.
    */
   keyOk: ((poseValue: number) => boolean) | null;
   /** The bound in words, for a message: what the value has to be. */
   states: string;
   /** The bound a KEY is held to, where `keyOk` widens it. */
   statesKeyed: string;
-  /** What the runtime does outside the bound, with the lines that say so. */
+  /**
+   * What the runtime does outside the bound, with the lines that say so.
+   *
+   * ⚠️ It is the sentence a **key** is refused with — `physicsKeyRefusal` is
+   * this field's only reader, and the setup pose's own wording lives beside
+   * `A23` in `validate.ts`. So a row whose `keyOk` widens the bound states here
+   * what is wrong with the values a key can still be refused for, not what is
+   * wrong with the value the widening admitted (issue #727).
+   */
   why: string;
 }
 
@@ -367,12 +391,14 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     field: 'strength',
     toPose: (v) => v,
     poseOk: (v) => v > 0,
-    keyOk: null,
+    keyOk: (v) => v >= 0,
     states: '> 0',
-    statesKeyed: '> 0',
+    statesKeyed: '>= 0',
     why:
       'it is the restoring force — `velocity += (a - offset * strength) * m` ' +
-      '(`PhysicsConstraint.js:150,156,212,220`) — so at 0 nothing pulls the offset back and it drifts',
+      '(`PhysicsConstraint.js:150,156,212,220`) — so below 0 the term is ADDED to the offset instead of ' +
+      'taken out of it and every step amplifies the last. 0 is a key the runtime plays: it releases the ' +
+      'constraint for the span, damping and inertia still apply, and the next key pulls the offset back',
   },
   {
     timeline: 'damping',

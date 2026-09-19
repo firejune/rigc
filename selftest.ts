@@ -284,7 +284,7 @@ import {
   type LedgerLine,
 } from './src/ballot.ts';
 import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
-import { PHYSICS_POSE_RULES } from './src/timelines.ts';
+import { PHYSICS_POSE_RULES, physicsKeyRefusal, physicsRuleFor } from './src/timelines.ts';
 import { readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
 import { skeletonDataFromText, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
@@ -11770,24 +11770,33 @@ function runConstraintAndDeformSuite(): number {
     },
   });
 
-  // ⚠️ The ACCEPTED column is not a convenience: every value in it is one the
-  // editor's own `sack-pro` export keys, so a bound tightened past them would be
-  // refusing correct data rather than catching anything. Across that file's 169
+  // ⚠️ The ACCEPTED column is not a convenience: all but one value in it is one
+  // the editor's own `sack-pro` export keys, so a bound tightened past them would
+  // be refusing correct data rather than catching anything. Across that file's 169
   // physics timeline keys, `mix` is exactly 0 on 24 of its 36, `wind` is negative
   // on all 48 of its, and one `inertia` key omits its value, which the parser
   // reads as 0 (`SkeletonJson.js:1062`).
+  //
+  // 🔸 `strength 0` is the one entry no public file supplies — the twelve exports,
+  // the gallery and the films key no `strength` at 0 and omit no `strength` value
+  // (scanned, issue #727) — so it is here on a MEASUREMENT instead, and `T89`
+  // below is that measurement: released for the span, no NaN, and the restoring
+  // key pulls the offset back. It moved out of the refused column with #727 and
+  // the negative took its place, because a bound that admits 0 has to be shown
+  // still refusing something.
   const physicsRefused: Array<[property: string, value: number, bound: string]> = [
     ['mass', 0, '> 0'],
     ['mass', -1, '> 0'],
     ['damping', 2, 'inside (0, 1)'],
     ['damping', 1, 'inside (0, 1)'],
-    ['strength', 0, '> 0'],
+    ['strength', -100, '>= 0'],
     ['mix', -0.5, '>= 0'],
   ];
   const physicsAccepted: Array<[property: string, value: number]> = [
     ['mass', 1],
     ['mix', 0],
     ['mix', 1.5],
+    ['strength', 0],
     ['wind', -27.4],
     ['gravity', -40],
     ['inertia', 0],
@@ -11898,6 +11907,301 @@ function runConstraintAndDeformSuite(): number {
       'table exists to remove — the validator judging one number and the compiler another, agreeing on every value ' +
       'either of them happens to be handed except `mass`. The "at least one sample moves" clause is what stops the ' +
       'control passing on samples where the transform is the identity, which is every property but that one',
+  );
+
+  // --- a physics `strength` key of 0 (issue #727) ---------------------------
+  //
+  // `strength` carried the setup rule on its keys, so a motion spec releasing a
+  // constraint for a stretch — key 0, key the tuning value back — was refused
+  // with a sentence about the SETUP case: *"at 0 nothing pulls the offset back
+  // and it drifts"*. That sentence is true of a constraint tuned to 0, which is
+  // `A23`'s business and still is; it is not true of a key, and the four cases
+  // below are the measurement that says so rather than the assertion.
+  //
+  // 📏 The decision was made on a second fixture and is held on this one. On
+  // `overlay_probe`, 60 fps from `Physics.reset`: with no wind or gravity the
+  // released offset coasts to a LIMIT — a 0.5 s release and a 2.0 s release end
+  // 0.95 % apart — and the restoring key takes it from 5.5063 back under 0.01 in
+  // 54 steps; with `gravity -40` acting it travels at terminal velocity for as
+  // long as the key holds (178 units over 0.5 s, 843 over 2.0 s) and the
+  // restoring key still returns it to the never-released run's own equilibrium,
+  // 39.999969 against 40.000000, in 13 steps. No NaN in any of it. `T89` asks
+  // the same two questions of the rig below and prints ITS figures, which are
+  // different numbers and the same shape — a fixture's displacement is not a
+  // law, so nothing here is compared against a number typed from that run.
+  //
+  // The contrast is `mass`, and it is why the widening is one row and not a
+  // family: a keyed `mass` of 0 is NaN from the first sub-step and still NaN
+  // after the restoring key, which is a state no later key can undo. A keyed
+  // `damping` of 2 was still at 6.9e4 two seconds after being restored, so it
+  // stays refused as well — `T89` holds the `mass` half, and `T83`/`T84` hold
+  // both of them as refusals.
+  const SPAN_START = 0.5;
+  /** One animation: displace the bone once, then key `property` for a span and key it back. */
+  const spanMotion = (
+    property: string,
+    spanValue: number,
+    restored: number,
+    spanEnd: number,
+    duration: number,
+  ): Record<string, unknown> => ({
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      jig: {
+        duration,
+        loop: false,
+        tracks: [
+          // The offset the restoring force has to act on: the constraint hangs
+          // off `tip`, so moving `block` is what feeds `xOffset` at all. Still
+          // from 0.3 s, which puts the whole span below in the constraint's own
+          // arithmetic rather than in the bone's.
+          {
+            bone: 'block',
+            property: 'translate',
+            keys: [{ t: 0, v: [0, 0] }, { t: 0.2, v: [40, 30] }, { t: 0.3, v: [0, 0] }, { t: duration, v: [0, 0] }],
+          },
+          { physics: 'jiggle', property: 'reset', keys: [{ t: 0, v: null }] },
+          {
+            physics: 'jiggle',
+            property,
+            keys: [
+              { t: 0, v: [restored], ease: 'stepped' },
+              { t: SPAN_START, v: [spanValue], ease: 'stepped' },
+              { t: spanEnd, v: [restored], ease: 'stepped' },
+              { t: duration, v: [restored] },
+            ],
+          },
+        ],
+      },
+    },
+  });
+
+  /**
+   * Compile one of those, optionally planting a value the compiler refuses, and
+   * load it.
+   *
+   * ⚠️ A refusal comes back as a string rather than being thrown, for
+   * `gateProbeOrRefusal`'s reason one step further on: the specs below are what
+   * a re-narrowed bound would refuse, and a throw here would take the suite down
+   * at the first of them instead of printing four red lines. Measured on the
+   * branch point, where the compile IS refused: the exception aborted the run
+   * mid-suite and `T89` never printed at all.
+   */
+  const spanPosable = (
+    motion: Record<string, unknown>,
+    plant: ((skeleton: Record<string, unknown>) => void) | null,
+  ): { data: SkeletonData | null; refused: string | null } => {
+    const motionPath = join(physicsDirs.dir, 'span.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+    try {
+      const built = compile({
+        rigPath: physicsDirs.rigPath,
+        motionPath,
+        outDir: physicsDirs.outDir,
+        imagesDir: physicsDirs.dir,
+      });
+      if (plant === null) return { data: posableFromText(built.skeletonText, built.atlasText, physicsDirs.outDir).data, refused: null };
+      const skeleton = JSON.parse(built.skeletonText) as Record<string, unknown>;
+      plant(skeleton);
+      return { data: posableFromText(`${JSON.stringify(skeleton, null, 2)}\n`, built.atlasText, physicsDirs.outDir).data, refused: null };
+    } catch (err) {
+      return { data: null, refused: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}` };
+    }
+  };
+
+  /**
+   * Set the SPAN key of one physics timeline in an emitted skeleton, and report
+   * how many keys it hit — a plant that matched nothing would otherwise pose the
+   * legal value and read as a pass.
+   */
+  const plantSpanKey = (skeleton: Record<string, unknown>, property: string, value: number): number => {
+    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+    const timelines = (animations.jig.physics as Record<string, Record<string, Array<Record<string, unknown>>>>).jiggle;
+    let planted = 0;
+    for (const key of timelines[property] ?? []) {
+      if (key.time !== SPAN_START) continue;
+      key.value = value;
+      planted += 1;
+    }
+    return planted;
+  };
+
+  /** The constraint's own state per step, walked the way a player walks it. */
+  const spanWalk = (posed: { data: SkeletonData | null }, steps: number): Array<{ strength: number; x: number; y: number }> => {
+    const data = posed.data;
+    if (data === null) return [];
+    const skeleton = new Skeleton(data);
+    const state = new AnimationState(new AnimationStateData(data));
+    state.setAnimation(0, 'jig', false);
+    skeleton.setupPose();
+    const step = 1 / 60;
+    const out: Array<{ strength: number; x: number; y: number }> = [];
+    for (let i = 0; i <= steps; i++) {
+      if (i === 0) {
+        state.apply(skeleton);
+        skeleton.update(0);
+        skeleton.updateWorldTransform(Physics.reset);
+      } else {
+        state.update(step);
+        state.apply(skeleton);
+        skeleton.update(step);
+        skeleton.updateWorldTransform(Physics.update);
+      }
+      const constraint = skeleton.findConstraint('jiggle', PhysicsConstraint)!;
+      out.push({ strength: constraint.pose.strength, x: constraint.xOffset, y: constraint.yOffset });
+    }
+    return out;
+  };
+
+  const released = spanMotion('strength', 0, 100, 1, 3);
+  const releasedGate = gateProbeOrRefusal(physicsDirs, released, []);
+  const releasedPosed = spanPosable(released, null);
+  const posedAt = (sample: number): number =>
+    releasedPosed.data === null ? NaN : poseAtSample(releasedPosed.data, 'jig', 60, sample).findConstraint('jiggle', PhysicsConstraint)!.pose.strength;
+  // Non-vacuity, and it needs no mutation of the tree: the row with its
+  // pre-#727 `keyOk` put back is an object, and the same value through
+  // `physicsKeyRefusal` is what the compiler used to say about this very key.
+  const strengthRule = physicsRuleFor('strength');
+  const underTheOldRule =
+    strengthRule === undefined ? 'no strength rule at all' : physicsKeyRefusal({ ...strengthRule, keyOk: null, statesKeyed: strengthRule.states }, 0);
+  say(
+    'T86_A_PHYSICS_STRENGTH_KEY_OF_ZERO_BUILDS_AND_THE_RUNTIME_POSES_ZERO_FOR_THE_SPAN',
+    releasedGate.refused === null &&
+      releasedGate.report?.failures.length === 0 &&
+      (releasedGate.report?.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') ?? false) &&
+      posedAt(0) === 100 &&
+      posedAt(42) === 0 &&
+      posedAt(90) === 100 &&
+      typeof underTheOldRule === 'string' &&
+      underTheOldRule.includes('must be > 0'),
+    releasedGate.refused !== null
+      ? `refused with: ${releasedGate.refused}`
+      : `compiled with ${releasedGate.report?.failures.length ?? 0} gate failure(s), A23 ` +
+        `${releasedGate.report?.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') ? 'passed' : 'did NOT pass'}; posed strength ` +
+        `${posedAt(0)} at 0.0s, ${posedAt(42)} inside the span, ${posedAt(90)} after the ` +
+        `restoring key; the same key under the pre-#727 rule: ${String(underTheOldRule)}`,
+    'the release is what the runtime plays, so the tool refusing it was refusing an animation rather than a defect. ' +
+      'The last clause is what keeps this case from being vacuous: with `keyOk` back at `null` the very same value is ' +
+      'refused, so a green here is the widening and not a spec the compiler was always going to take',
+  );
+
+  // The two arms on ONE number. The compiler never sees the setup case — a rig
+  // states it and no `bounds` row applies — and `A23` never sees a spec, so a
+  // reader who knows only one of them cannot tell which owns `strength: 0`.
+  const plantedZero = plantPhysicsKey('strength', 0);
+  const setupZeroDirs = writeProbeRig({
+    ...PHYSICS_TIMELINE_RIG,
+    constraints: [{ ...PHYSICS_TIMELINE_RIG.constraints[0], strength: 0 }],
+  });
+  const setupZeroMotion = { spec: 'rigc-motion/1', archetype: 'static_probe', cut: 'static_probe', easings: {}, animations: {} };
+  const setupZeroGate = gateProbeOrRefusal(setupZeroDirs, setupZeroMotion, []);
+  const setupZeroSays = (setupZeroGate.report?.failures ?? [])
+    .filter((f) => f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE')
+    .map((f) => f.detail);
+  say(
+    'T87_A_STRENGTH_OF_ZERO_IS_ACCEPTED_AS_A_KEY_AND_STILL_REFUSED_AS_A_SETUP_POSE',
+    plantedZero.failures.length === 0 &&
+      plantedZero.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') &&
+      setupZeroGate.refused === null &&
+      setupZeroSays.length === 1 &&
+      setupZeroSays[0].includes('physics "jiggle" has strength 0') &&
+      setupZeroSays[0].includes('nothing pulls it back'),
+    `planted into a file rigc did not write, a strength key of 0 draws ${plantedZero.failures.length} gate failure(s) and A23 ` +
+      `${plantedZero.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') ? 'passes' : 'does NOT pass'}; the same number as the ` +
+      `constraint's own tuning ${setupZeroGate.refused === null ? 'compiles' : `is refused at compile: ${setupZeroGate.refused}`} and ` +
+      `draws ${setupZeroSays.length} A23 failure(s)${setupZeroSays.length === 0 ? '' : ` — ${setupZeroSays.join('; ')}`}`,
+    'the asymmetry has to be visible from both sides or it reads as an inconsistency. A setup pose says what the ' +
+      'constraint IS and a key says what it is doing for a stretch, which is the same division `mix` has carried since ' +
+      '#610 — and the setup arm keeps its own sentence, because "nothing pulls it back" is what happens to a rig tuned ' +
+      'that way and says nothing useful about a span an author keyed on purpose',
+  );
+
+  // What the new sentence claims about a NEGATIVE, measured rather than asserted.
+  const amplified = spanMotion('strength', -100, 100, 1, 3);
+  // The spec above is the one the COMPILER refuses, so the walk cannot be built
+  // from it: the negative is planted into the emitted file of the legal spec
+  // beside it, which is the only way a value the tool refuses reaches a runtime.
+  let amplifiedPlanted = 0;
+  const holding = spanMotion('strength', 100, 100, 1, 3);
+  const amplifiedWalk = spanWalk(
+    spanPosable(holding, (skeleton) => {
+      amplifiedPlanted = plantSpanKey(skeleton, 'strength', -100);
+    }),
+    180,
+  );
+  const holdingWalk = spanWalk(spanPosable(holding, null), 180);
+  const releasedWalk = spanWalk(releasedPosed, 180);
+  const biggest = (walk: Array<{ x: number; y: number }>, from: number, to: number): number =>
+    walk.slice(from, to).reduce((m, s) => Math.max(m, Math.abs(s.x)), 0);
+  const spanFrom = Math.round(SPAN_START * 60);
+  const heldPeak = biggest(holdingWalk, spanFrom, 60);
+  const releasedPeak = biggest(releasedWalk, spanFrom, 60);
+  const amplifiedPeak = biggest(amplifiedWalk, spanFrom, 60);
+  const negativeRefusal = refusal(physicsDirs, amplified);
+  // One threshold, used in both directions, so the case cannot be satisfied by
+  // a fixture that simply swings wider: the negative has to clear it and the
+  // release has to stay inside it.
+  const RUNAWAY = 5;
+  say(
+    'T88_A_NEGATIVE_STRENGTH_KEY_IS_REFUSED_BY_NAME_AND_THE_SENTENCE_IS_WHAT_THE_RUNTIME_DOES_WITH_IT',
+    negativeRefusal !== null &&
+      negativeRefusal.includes('strength key at t=0.5 is -100') &&
+      negativeRefusal.includes('must be >= 0') &&
+      amplifiedPlanted === 1 &&
+      Number.isFinite(amplifiedPeak) &&
+      amplifiedPeak > RUNAWAY * releasedPeak &&
+      releasedPeak < RUNAWAY * heldPeak,
+    negativeRefusal === null
+      ? 'a keyed strength of -100 COMPILED'
+      : `refused with: ${negativeRefusal}. With ${amplifiedPlanted} planted key walked through the runtime, the offset over ` +
+        `the span peaks at ${amplifiedPeak.toFixed(4)} against ${releasedPeak.toFixed(4)} for the same span released at 0 and ` +
+        `${heldPeak.toFixed(4)} for the same span holding 100 — ${(amplifiedPeak / releasedPeak).toFixed(2)}x and ` +
+        `${(releasedPeak / heldPeak).toFixed(2)}x, against a ${RUNAWAY}x line`,
+    'the message says a negative strength is added to the offset instead of taken out of it, and a message stating a ' +
+      'mechanism nobody measured is the shape this repository has already paid for. The two peers are what make the ' +
+      'figure mean anything: the same rig, the same span, one holding and one released, so what the ratio reports is ' +
+      'the sign of the number and not the fixture',
+  );
+
+  // The transient the widening rests on, and the neighbour that has no such
+  // property — held here so a runtime bump that changes either goes red.
+  const longRelease = spanPosable(spanMotion('strength', 0, 100, 2.5, 4), null);
+  const longWalk = spanWalk(longRelease, 240);
+  const shortHold = releasedWalk[Math.round(1 * 60)]?.x ?? NaN;
+  const longHold = longWalk[Math.round(2.5 * 60)]?.x ?? NaN;
+  const moved = Math.abs(shortHold - (releasedWalk[spanFrom]?.x ?? NaN));
+  const coasts = Math.abs(longHold - shortHold) < moved / 10;
+  const backUnder = releasedWalk.slice(60).findIndex((s) => Math.abs(s.x) < Math.abs(shortHold) / 100 && Math.abs(s.y) < Math.abs(shortHold) / 100);
+  const finite = (walk: Array<{ x: number; y: number }>): boolean => walk.length > 0 && walk.every((s) => Number.isFinite(s.x) && Number.isFinite(s.y));
+  let massPlanted = 0;
+  const massWalk = spanWalk(
+    spanPosable(spanMotion('mass', 1, 1, 1, 3), (skeleton) => {
+      massPlanted = plantSpanKey(skeleton, 'mass', 0);
+    }),
+    180,
+  );
+  // A walk that never happened is not a walk whose last step is non-finite, so
+  // the length is asked first: an empty array would otherwise read as the NaN
+  // this clause is looking for.
+  const massNaNAtEnd = massWalk.length > 0 && !Number.isFinite(massWalk[massWalk.length - 1].x);
+  say(
+    'T89_A_RELEASED_SPAN_COASTS_TO_A_LIMIT_AND_THE_RESTORING_KEY_UNDOES_IT_WHERE_A_KEYED_MASS_OF_ZERO_IS_NOT_UNDONE',
+    finite(releasedWalk) && finite(longWalk) && coasts && backUnder >= 0 && massPlanted === 1 && massNaNAtEnd,
+    releasedWalk.length === 0 || longWalk.length === 0
+      ? `nothing was walked — the compile was refused with: ${releasedPosed.refused ?? longRelease.refused}`
+      : `released for 0.5 s the offset ends the span at ${shortHold.toFixed(4)} and released for 2.0 s at ` +
+        `${longHold.toFixed(4)} — ${((Math.abs(longHold - shortHold) / moved) * 100).toFixed(2)}% of the ${moved.toFixed(4)} it ` +
+        `moved inside the short span, so it coasts to a limit rather than running away; the restoring key brings it back ` +
+        `under 1% of that in ${backUnder < 0 ? 'NEVER' : `${backUnder} step(s)`}; no non-finite value in either walk. The ` +
+        `neighbour: ${massPlanted} planted mass key of 0 leaves the offset ${massNaNAtEnd ? 'non-finite at the last step, after the restoring key' : `FINITE at the last step (${massWalk[massWalk.length - 1].x})`}`,
+    'this is the whole argument for the widening, so it is the thing to hold: a released span is bounded and the next ' +
+      'key undoes it. ⚠️ The clauses are relative — a longer hold against the short one, the return against the offset ' +
+      'it started from — because a threshold in units would be this fixture\'s displacement written down as a law. The ' +
+      '`mass` half is the falsifier: if a keyed 0 were judged by "the runtime accepts the number" rather than by what ' +
+      'the next key can undo, `mass` would be widened too, and its NaN outlives every key after it',
   );
 
   return bad;
@@ -34654,6 +34958,66 @@ function runMotionParseSuite(): { failures: number; cases: number; specs: number
     'the sharpest of these: `power` is a REAL key of a `bend` and means nothing on a `wave`, so a union ' +
       'checked against its flattened keys would accept it. The dispatch is on `kind`, which is what makes the ' +
       'refusal say something true',
+  );
+
+  // --- what this parse does NOT decide about a physics number (issue #727) ---
+  //
+  // `strength` used to be refused at 0 on a KEY as well as at rest, and the
+  // widening of the keyed bound is the kind of change that gets made in two
+  // places by accident: the parse reads every physics number too. It states
+  // exactly one thing about them — `optFinite`, because a non-number becomes
+  // `r6`'s NaN and ships as `null`, which the runtime reads as zero — and the
+  // two cases below are that boundary from both sides, so a later bound written
+  // into this file has somewhere to go red.
+  const tuning = (value: unknown): Record<string, unknown> => withField('physics', { settle: { bone: 'block', x: 1, strength: value } });
+  const tuningString = refusal(dirs, tuning('0'));
+  const tuningZero = refusal(dirs, tuning(0));
+  say(
+    'MP38_A_PHYSICS_TUNING_NUMBER_IS_PARSED_FOR_FINITENESS_AND_NOT_FOR_ITS_BOUND',
+    tuningString !== null &&
+      tuningString.includes(join(dirs.dir, 'probe.motion.json')) &&
+      tuningString.includes('`physics."settle".strength` is the string "0"') &&
+      tuningZero === null,
+    `a tuning strength of the string "0" ${tuningString === null ? 'COMPILED' : `is refused with: ${tuningString}`}; the number 0 ` +
+      `${tuningZero === null ? 'passes the parse and the compiler, and is left to A23' : `is refused at compile: ${tuningZero}`}`,
+    'the bound and the type are different questions with different owners, and a setup `strength` of 0 is the value ' +
+      'that makes the difference visible: it is a real refusal — `A23` names it on the emitted skeleton — and it is ' +
+      'not this file\'s. A parse that grew its own copy of the bound would be the second reading of one rule that ' +
+      '`PHYSICS_POSE_RULES` exists to prevent',
+  );
+
+  const strengthKeyed = (value: unknown): Record<string, unknown> => ({
+    ...base,
+    physics: { settle: { bone: 'block', x: 1 } },
+    animations: {
+      move: {
+        duration: 1,
+        loop: false,
+        tracks: [{ physics: 'settle', property: 'strength', keys: [{ t: 0, v: [value] }, { t: 1, v: [100] }] }],
+      },
+    },
+  });
+  const parsedAnyway = ([0, -100, '0'] as unknown[]).map((value) => [value, refusalOf(() => parseMotionSpec(strengthKeyed(value), 'probe.motion.json'))] as const);
+  const parseRefused = parsedAnyway.filter(([, message]) => message !== null);
+  const keyedZero = refusal(dirs, strengthKeyed(0));
+  const keyedNegative = refusal(dirs, strengthKeyed(-100));
+  const keyedString = refusal(dirs, strengthKeyed('0'));
+  say(
+    'MP39_A_PHYSICS_KEYS_VALUE_REACHES_THE_COMPILER_WHATEVER_IT_IS_AND_THE_RUNTIMES_TABLE_IS_WHAT_JUDGES_IT',
+    parseRefused.length === 0 &&
+      keyedZero === null &&
+      keyedNegative !== null &&
+      keyedNegative.includes('must be >= 0') &&
+      keyedString !== null &&
+      keyedString.includes('non-finite value'),
+    `${parsedAnyway.length} spec(s) keying strength 0, -100 and "0" ` +
+      `${parseRefused.length === 0 ? 'all parse clean — `MotionKey.v` is deliberately not a shape here' : `NOT all parsed: ${parseRefused.map(([value, message]) => `${JSON.stringify(value)}: ${message}`).join('; ')}`}` +
+      `; the compiler then takes 0 (${keyedZero === null ? 'compiled' : keyedZero}), refuses -100 (${keyedNegative ?? 'COMPILED'}) and ` +
+      `refuses "0" (${keyedString ?? 'COMPILED'})`,
+    'the three values are one shape to this file and three different answers one layer down, which is what "the ' +
+      'parse proves the shape and `compileValueTrack` proves the number" means when it is measured rather than ' +
+      'stated. ⚠️ The string is the half that keeps the other two honest: `v` carries no type check here either, so ' +
+      'a parse that had quietly started judging values would show up as the wrong one of these three going red',
   );
 
   // --- the walk itself -------------------------------------------------------

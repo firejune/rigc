@@ -464,6 +464,12 @@ const EDITOR_PHYSICS_COMPONENTS: ReadonlySet<(typeof PHYSICS_COMPONENTS)[number]
  * is worth nothing to a compiler refusing a key. `PHYSICS_POSE_RULES` is the
  * index, so a rule added there with no sentence here fails to type-check rather
  * than printing `undefined`.
+ *
+ * ⚠️ These are the SETUP pose's sentences and nothing else, which matters on the
+ * two rows whose keyed bound is wider than their resting one — `mix` since issue
+ * #610 and `strength` since #727. A key of 0 on either is accepted, so "it is
+ * muted" and "nothing pulls it back" are read here by a rig that states the
+ * number at rest, and what a key is refused with is the row's own `why`.
  */
 const SETUP_POSE_SAYS: Record<string, (pose: PhysicsConstraintPose) => string> = {
   mix: (pose) => `has mix ${pose.mix}; it is muted`,
