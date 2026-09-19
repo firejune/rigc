@@ -31494,6 +31494,333 @@ function runPackerSuite(): number {
       'the same sentence about the same four numbers',
   );
 
+  // --- PK63..PK66: A19's scan counts what it READ (issue #705) --------------
+  //
+  // ⭐ Seen while landing #694 and deliberately left standing there. On a pack
+  // whose region lies outside the page it names, A19 printed `part "x" is
+  // opaque in every one of its 12x8 texels` over **0 of 96** — its scan
+  // `continue`s past every out-of-page coordinate, so a walk that opened
+  // nothing came out of the loop as "found no transparent texel", which is the
+  // same state a solid drawing leaves it in. The sentence is then a claim about
+  // texels nobody read, and it is actionable in the wrong direction: measured
+  // on a part carrying 36 clear texels of its 96, the vacuous line named it
+  // opaque and told the author to re-export art whose alpha was never the
+  // problem.
+  //
+  // ⚠️ The verdict does NOT move, on any artifact — a rectangle with no texel
+  // on its page failed this rule before and fails it now — so nothing here can
+  // be a row in `MUTANTS`, whose `expect` is an assertion name: such a row is
+  // green on the branch point. What moved is the DETAIL, so the cases read the
+  // detail, and each one is red on the branch point for a sentence rather than
+  // for a verdict.
+  const ALPHA_RULE = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
+  /** Every A19 failure naming one region, as the sentences it printed. */
+  const alphaDetails = (report: ReturnType<typeof validate>, region: string): string[] =>
+    report.failures.filter((f) => f.assertion === ALPHA_RULE && f.detail.includes(`part "${region}"`)).map((f) => f.detail);
+  /**
+   * The texels of a rectangle that are ON a decoded page — the count this rule
+   * may speak for. Derived from the intersection rather than from the scan it
+   * is the oracle for; `PK56`'s first draft is why that matters.
+   */
+  const texelsOnPage = (rect: { x: number; y: number; width: number; height: number }, plate: Plate): number => {
+    const across = Math.min(rect.x + rect.width, plate.width) - Math.max(rect.x, 0);
+    const down = Math.min(rect.y + rect.height, plate.height) - Math.max(rect.y, 0);
+    return Math.max(across, 0) * Math.max(down, 0);
+  };
+
+  // PK63: the rectangle none of whose texels are on the page, on the pack this
+  // suite builds from the articulated fixture's own art. Moved to the first
+  // column PAST the page's right edge — `packPage.width`, read off the page and
+  // not typed — so the whole rectangle is off it.
+  //
+  // ⚠️ The SUBJECT has to be chosen the way A19 chooses one, and the first draft
+  // of this case was not: it planted on `packedRegions[0]`, which is this
+  // fixture's full-stage plate — the one region this rule EXEMPTS — and went red
+  // on both sides reporting that A19 had said nothing. So the region is the one
+  // whose art is smaller than the stage in either direction, which is the
+  // negation of the exemption's own question rather than a name.
+  const packStage = ((): { width: number; height: number } => {
+    const parsed = JSON.parse(htmlPack.result.skeletonText) as { skeleton?: { width?: number; height?: number } };
+    return { width: parsed.skeleton?.width ?? 0, height: parsed.skeleton?.height ?? 0 };
+  })();
+  const overlayRegion = packedRegions.find((region) => {
+    const art = htmlPack.result.images.find((img) => img.region === region.name.trim());
+    return (
+      art !== undefined &&
+      packStage.width > 0 &&
+      packStage.height > 0 &&
+      (art.width < packStage.width || art.height < packStage.height)
+    );
+  });
+  const unreadProbes: string[] = [];
+  let unreadClean = '';
+  if (overlayRegion === undefined) {
+    unreadProbes.push(
+      `no region on this pack is an overlay by A19's own question — every one of ${packedRegions
+        .map((r) => r.name.trim())
+        .join(', ')} covers the ${packStage.width}x${packStage.height} stage, so the exemption would answer this ` +
+        'case rather than the scan',
+    );
+  } else {
+    const unreadName = overlayRegion.name.trim();
+    const unreadRect = {
+      x: packPage.width,
+      y: overlayRegion.y,
+      width: overlayRegion.width,
+      height: overlayRegion.height,
+    };
+    const unreadText = withBounds(
+      htmlPack.atlasText,
+      unreadName,
+      unreadRect.x,
+      unreadRect.y,
+      unreadRect.width,
+      unreadRect.height,
+    );
+    const unreadPlate = readPlate(join(htmlPack.dir, packPage.name));
+    const unreadDeclared = unreadRect.width * unreadRect.height;
+    const unreadOnPage = texelsOnPage(unreadRect, unreadPlate);
+    const unreadDetails = alphaDetails(gatePacked(htmlPack.dir, unreadText, htmlPack.result), unreadName);
+    if (unreadDetails.length !== 1) {
+      unreadProbes.push(
+        `A19 printed ${unreadDetails.length} line(s) about "${unreadName}" and one rectangle is one subject: ` +
+          (unreadDetails.join(' | ').slice(0, 160) || 'nothing at all'),
+      );
+    }
+    for (const detail of unreadDetails) {
+      if (detail.includes('is opaque in')) {
+        unreadProbes.push(
+          `A19 states opacity over a rectangle it read ${unreadOnPage} texel(s) of — ${detail.slice(0, 150)}`,
+        );
+      }
+      const missing = [
+        'is not measured',
+        `0 of the ${unreadDeclared} texels`,
+        `${unreadRect.width}x${unreadRect.height} rectangle at ${unreadRect.x},${unreadRect.y}`,
+        `${unreadPlate.width}x${unreadPlate.height}`,
+        ATLAS_RULE,
+      ].filter((token) => !detail.includes(token));
+      if (missing.length > 0) unreadProbes.push(`the line omits ${missing.join(' and ')} — ${detail.slice(0, 150)}`);
+    }
+    unreadProbes.push(
+      ...floorProbes(
+        [
+          [
+            unreadDeclared - unreadOnPage,
+            unreadDeclared,
+            `${unreadOnPage} of the rectangle's ${unreadDeclared} texel(s) are on the page`,
+          ],
+          [packedRegions.length, 2, `the page carries ${packedRegions.length} region(s)`],
+        ],
+        'a rectangle with a texel still on the page, or a page carrying one region, never reaches the per-region scan',
+      ),
+    );
+    unreadClean =
+      `"${unreadName}" — an overlay by A19's own question, ${
+        htmlPack.result.images.find((img) => img.region === unreadName)?.width ?? 0
+      }px wide against a ${packStage.width}x${packStage.height} stage — moved to ${unreadRect.x},${unreadRect.y} ` +
+      `on a ${unreadPlate.width}x${unreadPlate.height} page, ${unreadOnPage} of its ${unreadDeclared} texels on ` +
+      `it: ${(unreadDetails[0] ?? '').slice(0, 170)}`;
+  }
+  const unreadHeld = unreadProbes.length === 0;
+  say(
+    'PK63_A_RECTANGLE_WITH_NO_TEXEL_ON_ITS_PAGE_IS_NAMED_AS_NOT_MEASURED',
+    unreadHeld,
+    probeDetail(unreadHeld, unreadProbes, unreadClean),
+    'the branch point printed the opposite sentence here — opacity, over the whole declared rectangle, on a scan ' +
+      'that opened nothing — and it is indifferent to the art, which is what makes it a non-measurement rather ' +
+      'than a wrong measurement: the same line comes out over transparent art and over solid art. The A06 pointer ' +
+      'is required because the repair is the rectangle and not the PNG, and the branch-point sentence sent the ' +
+      'reader to the PNG',
+  );
+
+  // PK64: partly on the page. Packed with NO padding, so a part sits against
+  // the page's own corner and a rectangle pushed one column and one row off it
+  // keeps every texel it still has inside the drawing — which is what makes the
+  // opacity verdict fire at all, and the count something to state it over.
+  const flushDir = join(turnedOpaqueDirs.dir, 'packed_flush');
+  mkdirSync(flushDir, { recursive: true });
+  const flushPack = packAtlas(packInputsOf(turnedOpaqueResult.images), { padding: 0 });
+  for (const page of flushPack.pages) page.plate.writePng(join(flushDir, page.name));
+  const flushPage = parseAtlasText(flushPack.atlasText).pages[0];
+  const flushPlate = readPlate(join(flushDir, flushPage.name));
+  const corner = flushPage.regions.find((r) => r.x === 0 && r.y === 0);
+  const partlyProbes: string[] = [];
+  let partlyClean = '';
+  if (corner === undefined) {
+    partlyProbes.push(
+      'no region sits at the page origin, so no rectangle here can hang off an edge with the drawing still under ' +
+        `every texel that stays: ${flushPage.regions.map((r) => `${r.name.trim()} at ${r.x},${r.y}`).join(', ')}`,
+    );
+  } else {
+    const partlyName = corner.name.trim();
+    const partlyRect = { x: corner.x - 1, y: corner.y - 1, width: corner.width, height: corner.height };
+    const partlyDeclared = partlyRect.width * partlyRect.height;
+    const partlyRead = texelsOnPage(partlyRect, flushPlate);
+    const partlyText = withBounds(
+      flushPack.atlasText,
+      partlyName,
+      partlyRect.x,
+      partlyRect.y,
+      partlyRect.width,
+      partlyRect.height,
+    );
+    const partlyDetails = alphaDetails(gatePacked(flushDir, partlyText, turnedOpaqueResult), partlyName);
+    if (partlyDetails.length !== 1) {
+      partlyProbes.push(
+        `A19 printed ${partlyDetails.length} line(s) about "${partlyName}", which is opaque over the ` +
+          `${partlyRead} texel(s) of its rectangle that are on the page: ` +
+          (partlyDetails.join(' | ').slice(0, 160) || 'nothing at all'),
+      );
+    }
+    for (const detail of partlyDetails) {
+      const missing = [
+        `every one of the ${partlyRead} texels`,
+        `${partlyDeclared - partlyRead} of the ${partlyDeclared}`,
+        `${partlyRect.width}x${partlyRect.height} rectangle at ${partlyRect.x},${partlyRect.y}`,
+      ].filter((token) => !detail.includes(token));
+      if (missing.length > 0) partlyProbes.push(`the line omits ${missing.join(' and ')} — ${detail.slice(0, 170)}`);
+      if (detail.includes(`every one of its ${partlyRect.width}x${partlyRect.height} texels`)) {
+        partlyProbes.push(
+          `A19 states the verdict over the whole declared rectangle where it read ${partlyRead} of ` +
+            `${partlyDeclared} — ${detail.slice(0, 150)}`,
+        );
+      }
+    }
+    partlyProbes.push(
+      ...floorProbes(
+        [
+          [partlyRead, 1, `${partlyRead} texel(s) of the rectangle are on the page`],
+          [partlyDeclared - partlyRead, 1, `${partlyDeclared - partlyRead} of them are not`],
+          [flushPage.regions.length, 2, `the flush page carries ${flushPage.regions.length} region(s)`],
+        ],
+        'a rectangle wholly on or wholly off its page is one of the other two cases, and a one-region page never ' +
+          'reaches the per-region scan',
+      ),
+    );
+    partlyClean =
+      `"${partlyName}" pushed one column and one row off a ${flushPlate.width}x${flushPlate.height} page it was ` +
+      `packed flush against: ${partlyRead} of its ${partlyDeclared} texels stay on it, and A19 says so — ` +
+      (partlyDetails[0] ?? '').slice(0, 150);
+  }
+  const partlyHeld = partlyProbes.length === 0;
+  say(
+    'PK64_A_RECTANGLE_PARTLY_ON_ITS_PAGE_STATES_THE_VERDICT_OVER_THE_TEXELS_IT_READ',
+    partlyHeld,
+    probeDetail(partlyHeld, partlyProbes, partlyClean),
+    'the shape short of a full miss, and the one a rule written as "all or nothing" would still get wrong: the ' +
+      'scan really did find every texel it read opaque, so the verdict stands — what it may not do is state it ' +
+      'over texels that are not there. The count is the whole claim, so it is derived from the intersection of ' +
+      'the rectangle with the decoded page rather than from the scan being measured',
+  );
+
+  // PK65: and the sentence a part wholly on its page gets does not move. The
+  // same flush pack, untouched: every region on it is opaque and on the page,
+  // so every one is named, in the words the branch point used, to the byte.
+  const intactReport = gatePacked(flushDir, flushPack.atlasText, turnedOpaqueResult);
+  const intactProbes: string[] = [];
+  let intactNamed = 0;
+  for (const region of flushPage.regions) {
+    const name = region.name.trim();
+    const rect = { x: region.x, y: region.y, width: region.width, height: region.height };
+    const read = texelsOnPage(rect, flushPlate);
+    const details = alphaDetails(intactReport, name);
+    if (read !== rect.width * rect.height) {
+      intactProbes.push(`"${name}" is not wholly on its page — ${read} of ${rect.width * rect.height} texels — so it is the wrong control`);
+      continue;
+    }
+    if (details.length !== 1) {
+      intactProbes.push(`A19 printed ${details.length} line(s) about the opaque part "${name}"`);
+      continue;
+    }
+    const want =
+      `part "${name}" is opaque in every one of its ${rect.width}x${rect.height} texels on shared page ` +
+      `"${flushPage.name}", so it would paint a solid rectangle over whatever is drawn behind it. Re-export the ` +
+      'part with transparency and pack again.';
+    if (!details[0].startsWith(want)) {
+      intactProbes.push(`the sentence for "${name}" moved — ${details[0].slice(0, 190)}`);
+      continue;
+    }
+    intactNamed++;
+  }
+  intactProbes.push(
+    ...floorProbes(
+      [[intactNamed, flushPage.regions.length, `${intactNamed} of ${flushPage.regions.length} region(s) were named in the old words`]],
+      'a control that names no part cannot show that its sentence held',
+    ),
+  );
+  const intactHeld = intactProbes.length === 0;
+  say(
+    'PK65_A_PART_WHOLLY_ON_ITS_PAGE_IS_NAMED_IN_THE_WORDS_IT_ALWAYS_WAS',
+    intactHeld,
+    probeDetail(
+      intactHeld,
+      intactProbes,
+      `${intactNamed} opaque part(s) wholly on a ${flushPlate.width}x${flushPlate.height} page, each named with ` +
+        'the whole-rectangle sentence unchanged to the byte',
+    ),
+    'the counting clause is only worth having if it leaves the ordinary verdict alone: every quotation of this ' +
+      'message in the tree, `PK57`\'s regex included, is a reading of a rectangle wholly on its page. The check is ' +
+      'a prefix of the literal sentence rather than a token from it, because a clause inserted mid-sentence is ' +
+      'exactly what a token test would miss',
+  );
+
+  // PK66: the positive control. The clause has to be SILENT on every pack this
+  // suite builds, and the population has to be one where it could have spoken:
+  // every region of it is measured over every texel it declares.
+  const alphaPopulation = [
+    ['articulated pack', htmlPack.dir, htmlPack.atlasText, htmlPack.result],
+    ['flush probe pack', flushDir, flushPack.atlasText, turnedOpaqueResult],
+    ['overlay loose emit', optsForFixture(OVERLAY).outDir, overlayCompile.atlasText, overlayCompile],
+    ['articulated loose emit', optsForFixture(ARTICULATED).outDir, htmlPack.result.atlasText, htmlPack.result],
+  ] as const;
+  const silentProbes: string[] = [];
+  let regionsSeen = 0;
+  let fullyRead = 0;
+  for (const [label, dir, text, result] of alphaPopulation) {
+    const report = gatePacked(dir, text, result);
+    for (const f of report.failures) {
+      if (f.assertion === ALPHA_RULE && f.detail.includes('is not measured')) {
+        silentProbes.push(`${label}: ${f.detail.slice(0, 150)}`);
+      }
+    }
+    for (const page of parseAtlasText(text).pages) {
+      const plate = readPlate(join(dir, page.name));
+      for (const region of page.regions) {
+        regionsSeen++;
+        const rect = { x: region.x, y: region.y, width: region.width, height: region.height };
+        const read = texelsOnPage(rect, plate);
+        if (read === rect.width * rect.height) fullyRead++;
+        else silentProbes.push(`${label}: "${region.name.trim()}" has ${read} of its ${rect.width * rect.height} texels on "${page.name}"`);
+      }
+    }
+  }
+  silentProbes.push(
+    ...floorProbes(
+      [
+        [fullyRead, regionsSeen, `${fullyRead} of the ${regionsSeen} region(s) read are wholly on their page`],
+        [regionsSeen, alphaPopulation.length, `${regionsSeen} region(s) across ${alphaPopulation.length} artifact(s)`],
+      ],
+      'a clause that stayed silent over no region at all is silent for the wrong reason',
+    ),
+  );
+  const silentHeld = silentProbes.length === 0;
+  say(
+    'PK66_THE_NOT_MEASURED_CLAUSE_IS_SILENT_ON_EVERY_PACK_THIS_SUITE_BUILDS',
+    silentHeld,
+    probeDetail(
+      silentHeld,
+      silentProbes,
+      `${regionsSeen} region(s) across ${alphaPopulation.length} artifact(s) — ${alphaPopulation
+        .map(([label]) => label)
+        .join(', ')} — every one of them wholly on the page it names, and not one "is not measured" line`,
+    ),
+    'a new refusal is worth what it does not say as much as what it does: the clause reads the same rectangles ' +
+      'every correct pack in this suite carries, and one that fired on them would be refusing rigc\'s own emit. ' +
+      'The second half is what keeps it honest — the population is measured to be one the clause could have ' +
+      'spoken about, so silence here is a verdict rather than an absence',
+  );
+
   return bad;
 }
 

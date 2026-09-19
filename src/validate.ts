@@ -4132,14 +4132,39 @@ export function validate(input: ValidateInput): ValidateReport {
         // `rotate: 270` and red at 0, 90 and 180 — this assertion's own verdict,
         // flipped by the rotation it does not judge (issue #579). The footprint
         // is `pageFootprint`'s, which every other reader of it now calls.
+        // 🚨 **The scan counts what it READ, and zero texels read is not a
+        // verdict** (issue #705). The `continue` above walks past every
+        // coordinate that is not on the page, so a rectangle none of whose
+        // texels are on it came out of this loop with `transparent` still
+        // false — indistinguishable from a solid drawing — and the sentence
+        // below then stated opacity over texels nobody had opened. Measured on
+        // a pack shaped like #707's: `part "block" is opaque in every one of
+        // its 12x8 texels`, over **0 of 96**, on art carrying 36 clear texels
+        // where it was packed. That is the message-as-UI defect in one line —
+        // the reader is sent to re-export a part whose alpha was never the
+        // problem, and the rectangle that is the problem belongs to A06.
+        //
+        // ⚠️ It is a FAIL rather than a SKIP, and the report's own shape
+        // decides that rather than taste. `skip()` is per ASSERTION, so
+        // skipping here would delete the verdicts on every other part of the
+        // page — on that same pack the second part is genuinely opaque and is
+        // named — and adding a skip BESIDE those failures puts A19 in two of
+        // the four buckets `reportLines` adds up, which prints `45 assertions`
+        // where the registry holds 44. What is left is a failure that says
+        // what was not measured, which is also what "green means measured"
+        // requires: a part this rule could not read must not be certified by
+        // it.
         const plate = readPlate(abs);
         for (const region of on) {
           if (baseRegions.has(region.name)) continue;
           const { width, height } = pageFootprint(region);
+          const declared = width * height;
+          let read = 0;
           let transparent = false;
           for (let y = region.y; y < region.y + height && !transparent; y++) {
             for (let x = region.x; x < region.x + width; x++) {
               if (x < 0 || y < 0 || x >= plate.width || y >= plate.height) continue;
+              read++;
               if (plate.get(x, y)[3] < 255) {
                 transparent = true;
                 break;
@@ -4147,12 +4172,37 @@ export function validate(input: ValidateInput): ValidateReport {
             }
           }
           if (transparent) continue;
+          // The page's size here is the DECODED image's and not the `size:`
+          // line's, because it is the bound this scan actually clipped
+          // against; where the two disagree A06 says so in its own sentence.
+          if (read === 0) {
+            fail(
+              'A19_OVERLAY_PNGS_HAVE_ALPHA',
+              `part "${region.name}" is not measured: this rule read 0 of the ${declared} texels of its ` +
+                `${width}x${height} rectangle at ${region.x},${region.y} on page "${page.name}", whose image is ` +
+                `${plate.width}x${plate.height}, so it states nothing about whether "${region.name}" can draw a ` +
+                "transparent pixel. A region's rectangle is A06_ATLAS_PAGE_SIZE_MATCHES_PNG's to judge, and one " +
+                'that runs off its page is refused there by name. This is renderer policy, and it belongs to ' +
+                '--profile spine-html: the default --profile spine does not run this check.',
+            );
+            continue;
+          }
+          // A rectangle partly on the page states the verdict over the texels
+          // it read and says how many of the declared ones that was. A whole
+          // rectangle prints the sentence it has always printed, to the byte.
+          const over =
+            read === declared
+              ? `every one of its ${width}x${height} texels on shared page "${page.name}"`
+              : `every one of the ${read} texels of its ${width}x${height} rectangle at ${region.x},${region.y} ` +
+                `that are on shared page "${page.name}", whose image is ${plate.width}x${plate.height} — the ` +
+                `other ${declared - read} of the ${declared} it declares are not on the page and are not ` +
+                'measured here';
           fail(
             'A19_OVERLAY_PNGS_HAVE_ALPHA',
-            `part "${region.name}" is opaque in every one of its ${width}x${height} texels on shared page ` +
-              `"${page.name}", so it would paint a solid rectangle over whatever is drawn behind it. Re-export ` +
-              `the part with transparency and pack again. ${exemption} This is renderer policy, and it belongs ` +
-              'to --profile spine-html: the default --profile spine does not run this check.',
+            `part "${region.name}" is opaque in ${over}, so it would paint a solid rectangle over whatever is ` +
+              `drawn behind it. Re-export the part with transparency and pack again. ${exemption} This is ` +
+              'renderer policy, and it belongs to --profile spine-html: the default --profile spine does not run ' +
+              'this check.',
           );
         }
         continue;
