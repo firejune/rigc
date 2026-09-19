@@ -147,7 +147,7 @@ import {
   type IngestFinding,
 } from './src/ingest.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
-import { RIG_KEYS, parseRigSpec } from './src/rig.ts';
+import { RIG_KEYS, RIG_SPEC_VERSION, parseRigSpec } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
   buildGridMesh,
@@ -41027,6 +41027,364 @@ function runCurrencySuite(): number {
         'a form that reads a raw line is reading markup, and both directions fail silently there: narrowed to one ' +
           'spelling it goes quiet on the next author who bolds the figure, and loosened to "a number near a code ' +
           'span" it faults on prose and earns itself an exception table, which is the defect this suite gates for',
+      );
+    }
+  }
+
+  // --- CUR42–CUR44: the guide's typed attachment tables, and the uv corner ---
+  //
+  // ⭐ **Why `CUR37` is not already doing this.** It reads a field table only
+  // under a `####` heading, and §3.4's attachment tables sit under a `###` one —
+  // measured on the branch point at 53 rows under 8 sections, not one of them
+  // §3.4's. So the guide's oldest field tables have never been held by anything,
+  // and an agent authoring from them was reading a list nothing checked. The
+  // exam sitting that filed this reconstructed a clipping attachment out of two
+  // refusal rows and a round-trip note because §3.4 named the type nowhere.
+  //
+  // 🔒 **And the hold here is tighter than `CUR37`'s, in the one way that
+  // matters.** `CUR37` resolves a field against the union of every shape's keys,
+  // so a field listed under the wrong type passes; the price of that is stated in
+  // its own case, and it is the price of not keeping a heading-to-shape map by
+  // hand. This keeps no map either — it asks the PARSER what it accepts for that
+  // `type`, by handing it an attachment carrying a key no shape declares and
+  // reading the `Known here:` list out of the refusal — so both directions are
+  // exact: a key the parser grows without a row is a fault, and a row naming a
+  // key the parser refuses is a fault.
+  {
+    const GUIDE = 'docs/AUTHORING.md';
+    const guideDoc = docs.find((doc) => doc.path === GUIDE);
+    const guideRaw: readonly string[] = guideDoc?.raw ?? [];
+    /** A key no shape of either format declares, planted to make the parser list what it does declare. */
+    const UNDECLARED = 'zzKeyNoShapeDeclares';
+
+    /** Every backticked identifier in one table cell. */
+    const identifiersIn = (cell: string): string[] =>
+      [...cell.matchAll(/`([^`]+)`/g)].map((found) => found[1]).filter((word) => /^[A-Za-z_][A-Za-z\d_]*$/.test(word));
+
+    /**
+     * Every `| Field | Meaning |` table the guide attaches to an attachment
+     * `"type"`, with the fields its FIRST column names.
+     *
+     * The anchor is the type spelled the way a spec spells it — `"type": "x"` in
+     * a code span — and it is dropped again at the next heading, so a table under
+     * a later section cannot inherit an anchor from an earlier one. Only the first
+     * column is read: the second is prose and routinely spells another key.
+     */
+    const typedTables = (raw: readonly string[]): Array<{ type: string; at: number; fields: string[] }> => {
+      const lines = linesOutsideFences(raw);
+      const out: Array<{ type: string; at: number; fields: string[] }> = [];
+      let anchor: { type: string; at: number } | null = null;
+      for (const [i, line] of lines.entries()) {
+        if (line === null) continue;
+        if (/^#{1,6} /.test(line)) {
+          anchor = null;
+          continue;
+        }
+        // An anchor is a section's own intro line. The same spelling inside a
+        // TABLE ROW is prose about a type — §5.1's refusal table carries one,
+        // `give that slot a "type": "path" attachment` — and anchoring on it
+        // would hand the next field table to whatever type that row named.
+        const named = line.startsWith('|') ? null : /`"type": "([a-z]+)"`/.exec(line);
+        if (named !== null) anchor = { type: named[1], at: i + 1 };
+        if (!/^\| *Field *\|/.test(line) || anchor === null) continue;
+        const fields: string[] = [];
+        for (let at = i + 1; at < lines.length; at++) {
+          const row = lines[at];
+          if (row === null || !row.startsWith('|')) break;
+          if (/^\| *-+/.test(row)) continue;
+          fields.push(...identifiersIn(row.split('|')[1] ?? ''));
+        }
+        out.push({ type: anchor.type, at: anchor.at, fields });
+        anchor = null;
+      }
+      return out;
+    };
+
+    /**
+     * What the parser itself says it accepts on an attachment of this `type`,
+     * read out of the refusal it raises over a key no shape declares.
+     *
+     * Asking the compiler rather than indexing a table is what makes this need no
+     * type-to-shape map: the map is `src/rig.ts`'s own, and a `type` it stopped
+     * recognising comes back `null` here rather than silently resolving elsewhere.
+     */
+    const acceptedFor = (type: string): string[] | null => {
+      const probe = { spec: RIG_SPEC_VERSION, skins: { default: { s: { p: { type, [UNDECLARED]: 1 } } } } };
+      try {
+        parseRigSpec(probe, 'probe');
+      } catch (error) {
+        const said = error instanceof Error ? error.message : String(error);
+        const found = /Known here: ([^.]+)\./.exec(said);
+        if (found !== null) return found[1].split(', ');
+      }
+      return null;
+    };
+
+    /** The shapes that carry a polygon — the ones a `####` section has never documented. */
+    const rigSets: Array<[string, readonly string[]]> = Object.entries(RIG_KEYS);
+    const polygonShapes = rigSets.filter(([, keys]) => keys.includes('vertexCount'));
+    const sameSet = (left: readonly string[], right: readonly string[]): boolean =>
+      [...left].sort().join(',') === [...right].sort().join(',');
+
+    /**
+     * What one table and the parser disagree about, in both directions.
+     * `accepted` is passed in so a plant can hand it a key set the parser does
+     * not actually have, which is the second half of `CUR43`.
+     */
+    const disagreements = (
+      table: { type: string; at: number; fields: string[] },
+      accepted: readonly string[] | null,
+    ): string[] => {
+      if (accepted === null) {
+        return [
+          `${GUIDE} line ${table.at} gives a field table to \`"type": "${table.type}"\` and the parser named no ` +
+            'key set for it at all — the type resolves to no shape, so every row of that table is unchecked',
+        ];
+      }
+      const rows = new Set(table.fields);
+      return [
+        ...accepted
+          .filter((key) => !rows.has(key))
+          .map(
+            (key) =>
+              `\`${key}\` is a key the parser accepts on a "${table.type}" attachment and the table at ${GUIDE} ` +
+              `line ${table.at} gives it no row — an affordance an author can only find by reading src/rig.ts`,
+          ),
+        ...table.fields
+          .filter((field) => !accepted.includes(field))
+          .map(
+            (field) =>
+              `the table at ${GUIDE} line ${table.at} lists \`${field}\` on a "${table.type}" attachment and the ` +
+              'parser refuses it — an author who writes it gets `has a key this compiler does not read`, from the ' +
+              'guide that told them to',
+          ),
+      ];
+    };
+
+    const tables = typedTables(guideRaw);
+    const live = tables.map((table) => ({ table, accepted: acceptedFor(table.type) }));
+    const unmatchedShapes = polygonShapes
+      .filter(([, keys]) => !live.some(({ accepted }) => accepted !== null && sameSet(accepted, keys)))
+      .map(([shape]) => shape);
+
+    // --- CUR42: the typed tables against the keys the parser accepts ---------
+    {
+      const probes = [
+        ...(guideDoc === undefined ? [`${GUIDE} is not one of the ${docs.length} document(s) this scan reads`] : []),
+        ...floorProbes(
+          [
+            [tables.length, 1, `${tables.length} \`"type"\` field table(s) were read out of ${GUIDE}`],
+            [tables.reduce((sum, table) => sum + table.fields.length, 0), 1, 'field row(s) across them'],
+            [polygonShapes.length, 1, `${polygonShapes.length} shape(s) of RIG_KEYS carry a \`vertexCount\``],
+          ],
+          'a step that comes back empty makes this compare a complete set of tables against nothing',
+        ),
+        ...firstFew(
+          live.flatMap(({ table, accepted }) => disagreements(table, accepted)),
+          'disagreement(s)',
+        ),
+        ...unmatchedShapes.map(
+          (shape) =>
+            `${shape} carries a \`vertexCount\` and no \`"type"\` table in ${GUIDE} names the key set it declares — ` +
+            'a polygon type the guide documents nowhere is exactly the hole this case was opened over',
+        ),
+      ];
+      const held = probes.length === 0;
+      say(
+        'CUR42_EVERY_TYPED_ATTACHMENT_TABLE_NAMES_THE_KEYS_THAT_TYPE_ACCEPTS',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${tables.length} table(s) — ${live
+            .map(({ table, accepted }) => `${table.type} (${table.fields.length} row field(s), parser ${accepted?.length ?? 0})`)
+            .join(', ')} — name exactly the keys the parser accepts for their own type, and each of the ` +
+            `${polygonShapes.length} shape(s) carrying a \`vertexCount\` is the key set one of them states`,
+        ),
+        'the guide and the refusals are the whole interface an agent that cannot see the rig has, and a type the ' +
+          'guide never names costs more than a missing field: the sitting that filed this reconstructed a clipping ' +
+          "attachment out of two refusal rows and could not learn from anything shipped whether `convex` was read " +
+          'on the way in, which space the vertices were in, or that `inverse` existed at all',
+      );
+    }
+
+    // --- CUR43: the table reader and the comparison, planted both ways -------
+    {
+      const clean = live.flatMap(({ table, accepted }) => disagreements(table, accepted));
+      // 🌱 The table both plants are aimed at, and what the parser says about its
+      // own type. The empty stand-in is what a guide with no typed table at all
+      // leaves, and the row below reports THAT rather than letting the two plants
+      // pass over nothing. ⚠️ Both `raisedBy` calls are spelled at the binding
+      // and not behind a `?:`, because `RB04` resolves the NAME to its
+      // initializer — a ternary there reads as a fault list against a constant,
+      // which is what this landing's first full run was red on.
+      const aim = tables[0] ?? { type: '', at: 0, fields: [] };
+      const aimAccepted = tables.length === 0 ? [] : acceptedFor(aim.type);
+      const rowPlant = raisedBy(
+        disagreements({ ...aim, fields: [...aim.fields, 'zzPlantedGuideField'] }, aimAccepted),
+        { was: clean },
+      );
+      const keyPlant = raisedBy(disagreements(aim, [...(aimAccepted ?? []), 'zzPlantedParserKey']), { was: clean });
+      const table = (anchor: string, cell: string): string =>
+        `${anchor}\n\n| Field | Meaning |\n| --- | --- |\n| ${cell} | planted by this control |\n`;
+      const readOf = (text: string): Array<{ type: string; at: number; fields: string[] }> =>
+        typedTables(text.split('\n'));
+      const fenced = '```\n' + table('`"type": "probe"`', '`zzFencedField`') + '```\n';
+      const faults = [
+        ...(tables.length === 0
+          ? ['the guide gave up no `"type"` table at all, so both plants below had nothing to aim at']
+          : []),
+        ...(rowPlant.length === 0
+          ? [
+              'a field row planted into a copy of a table was not faulted as a key the parser refuses, so the ' +
+                'guide could grow a row for a field that does not exist and this stays green',
+            ]
+          : []),
+        ...(keyPlant.length === 0
+          ? [
+              'a key planted into a copy of the accepted set was not faulted as a row the guide lacks, so a shape ' +
+                'could grow a field the tables never mention and this stays green',
+            ]
+          : []),
+        ...(acceptedFor('zzNoSuchAttachmentType') === null
+          ? []
+          : ['a type no shape declares came back with a key set, so the parser is not what this reads the set from']),
+        ...(readOf(fenced).length === 0
+          ? []
+          : ['a typed table inside a fence was read, so a transcript of the guide would be scanned as the guide']),
+        ...(readOf(table('`"type": "probe"`', '`alpha` | `zzMeaningColumn`'))[0]?.fields.includes('zzMeaningColumn')
+          ? ['the Meaning column was read as a field list, and it is prose that routinely spells another key']
+          : []),
+        ...(readOf(table('`"type": "probe"`', '`us` / `vs`'))[0]?.fields.join(',') === 'us,vs'
+          ? []
+          : ['a cell naming two fields was not read as two, and the guide writes several keys in one cell']),
+        ...(readOf(`\`"type": "probe"\`\n\n#### a heading\n\n| Field | Meaning |\n| --- | --- |\n| \`alpha\` | x |\n`).length === 0
+          ? []
+          : ['a table separated from its anchor by a heading was still attributed to it, so an anchor leaks forward']),
+        ...(readOf(`| a | \`"type": "probe"\` |\n\n| Field | Meaning |\n| --- | --- |\n| \`alpha\` | x |\n`).length === 0
+          ? []
+          : [
+              'a type named inside a table ROW anchored the field table below it — §5.1 spells one in a refusal row, ' +
+                'and reading that as a section intro hands the next field table to a type nobody documented there',
+            ]),
+        ...(readOf(table('`"type": "probe"`', '`alpha`'))[0]?.fields.includes('alpha')
+          ? []
+          : ['a one-field table this control wrote was not read at all, so every negative result above is vacuous']),
+      ];
+      const held = faults.length === 0;
+      say(
+        'CUR43_THE_TYPED_TABLE_READER_AND_THE_COMPARISON_FIRE_ON_EITHER_SIDE_GOING_WRONG',
+        held,
+        probeDetail(
+          held,
+          faults,
+          'a row planted into a copy of a table is reported as a key the parser refuses and a key planted into a ' +
+            'copy of the accepted set as a row the guide lacks; a type no shape declares yields no key set; and a ' +
+            'one-field table is read while a table inside a fence, a key spelled in the Meaning column, a table a ' +
+            'heading separates from its anchor and a type named inside a table row are each read in no way, a cell ' +
+            'naming two fields as two',
+        ),
+        'both halves of `CUR42` fail silently on their own: a reader that stops matching the guide\'s tables ' +
+          'compares an empty list against a full one and the floor is the only thing left, while a key set read ' +
+          'from anywhere but the parser turns the case into two documents agreeing with each other',
+      );
+    }
+
+    // --- CUR44: which corner of the region a mesh's `uvs` (0, 0) is ----------
+    //
+    // 🌱 The measurement is the runtime's own `MeshAttachment.computeUVs`, handed
+    // the region rigc's own atlas writer produced, and the corner NAME is derived
+    // from where it landed rather than chosen here: row 0 of a page is its top
+    // row and column 0 its left one, which is what `tools/plate.ts` and
+    // `src/render.ts` both read a PNG as. The guide's row then has to name that
+    // corner and must not name either of the other two.
+    {
+      const width = 64;
+      const height = 48;
+      const atlasText = buildAtlasText([
+        { region: 'probe', page: 'probe.png', absPath: '/probe.png', width, height, hasAlpha: true, isBase: true },
+      ]);
+      const region = new TextureAtlas(atlasText).findRegion('probe');
+      const cornerAt = (u: number, v: number): string | null => {
+        if (region === null) return null;
+        const out = [0, 0];
+        MeshAttachment.computeUVs(region, [u, v], out);
+        const x = Math.min(Math.floor(out[0] * region.page.width), width - 1);
+        const y = Math.min(Math.floor(out[1] * region.page.height), height - 1);
+        return `${y === 0 ? 'top' : 'bottom'}-${x === 0 ? 'left' : 'right'}`;
+      };
+      const origin = cornerAt(0, 0);
+      const opposite = cornerAt(1, 1);
+      const acrossU = cornerAt(1, 0);
+      const acrossV = cornerAt(0, 1);
+      const corners = ['top', 'bottom'].flatMap((down) => ['left', 'right'].map((across) => `${down}-${across}`));
+      const uvRows = guideRaw
+        .map((line, i) => ({ line, at: i + 1 }))
+        .filter(({ line }) => line.startsWith('|') && identifiersIn(line.split('|')[1] ?? '').join(',') === 'uvs');
+      const named = uvRows.length === 1 ? corners.filter((corner) => uvRows[0].line.includes(corner)) : [];
+      const wanted = origin === null || opposite === null ? [] : [origin, opposite];
+      // 🌱 The same row with `top` and `bottom` exchanged, read back through the
+      // same selector — the mistake this case is about, since y-up is what an
+      // author brings to a uv from everywhere else in Spine.
+      //
+      // ⚠️ The DIAGONAL swap is deliberately not the plant: exchanging both words
+      // of both corners maps {top-left, bottom-right} onto itself, so a control
+      // that looked convinced by it would be reading nothing at all.
+      const plantedRow =
+        uvRows.length === 1
+          ? uvRows[0].line.replace(/\b(top|bottom)-/g, (_whole: string, down: string) => `${down === 'top' ? 'bottom' : 'top'}-`)
+          : '';
+      const planted = corners.filter((corner) => plantedRow.includes(corner));
+      const probes = [
+        ...(region === null ? ['rigc\'s own atlas writer produced no region called "probe" to measure against'] : []),
+        ...(uvRows.length === 1
+          ? []
+          : [
+              `${GUIDE} carries ${uvRows.length} table row(s) whose field is \`uvs\`, and this reads the one that ` +
+                'states the corner — with none there is no sentence to hold, and with several there is no telling ' +
+                'which one an author would read',
+            ]),
+        ...(origin === acrossU || origin === acrossV
+          ? [
+              `\`u\` and \`v\` do not separate: (0, 0) landed ${String(origin)}, (1, 0) ${String(acrossU)} and ` +
+                `(0, 1) ${String(acrossV)}, so one axis of this measurement is not being read at all`,
+            ]
+          : []),
+        ...(uvRows.length === 1 && !sameSet(named, wanted)
+          ? [
+              `${GUIDE} line ${uvRows[0].at} is the \`uvs\` row and it names ${named.length === 0 ? 'no corner' : named.join(' and ')}; ` +
+                `the runtime puts uv (0, 0) at the region's ${String(origin)} pixel and (1, 1) at its ` +
+                `${String(opposite)} — a row that names another corner sends an author to the wrong end of the art, ` +
+                'and one that names none leaves them to find it with an instrument',
+            ]
+          : []),
+        ...(uvRows.length === 1 && plantedRow === uvRows[0].line
+          ? ['exchanging `top` and `bottom` rewrote nothing in the `uvs` row, so the clause below measures nothing']
+          : []),
+        ...(uvRows.length === 1 && plantedRow !== uvRows[0].line && sameSet(planted, wanted)
+          ? [
+              `the \`uvs\` row with \`top\` and \`bottom\` exchanged names ${planted.join(' and ') || 'no corner'} and ` +
+                'still satisfied this case, so the one word it exists to hold could be written either way and stay green',
+            ]
+          : []),
+      ];
+      const held = probes.length === 0;
+      say(
+        'CUR44_THE_GUIDE_NAMES_THE_CORNER_A_MESHS_UVS_START_FROM',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `\`MeshAttachment.computeUVs\`, over the region rigc's own atlas writer states for a ${width}x${height} ` +
+            `page, puts uv (0, 0) at that region's ${String(origin)} pixel, (1, 0) at its ${String(acrossU)}, ` +
+            `(0, 1) at its ${String(acrossV)} and (1, 1) at its ${String(opposite)}; ${GUIDE} line ` +
+            `${uvRows[0]?.at ?? 0} names ${named.join(' and ')} and neither other corner, while the same row with ` +
+            `\`top\` and \`bottom\` exchanged names ${planted.join(' and ')} and is refused`,
+        ),
+        'Spine\'s world is y up and a region\'s uvs are y down, so the guess an author makes here is a coin flip ' +
+          'that a green build cannot settle: every assertion passes on a mesh whose art is upside down. The ' +
+          'sitting that filed this assumed the top-left and confirmed it only through a coverage percentage on a ' +
+          'part that happened not to be symmetric — an instrument standing in for a sentence',
       );
     }
   }
