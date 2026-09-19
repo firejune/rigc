@@ -3227,9 +3227,19 @@ a delta from the constraint's own setting.
   `strength`, 0 takes the restoring term out of the velocity update and leaves
   `damping` and `inertia` applied — the offset is not pulled back *while the key
   holds*, which is "physics released" for that span, and the next key pulls it
-  back ([#727](https://github.com/firejune/rigc/issues/727)). A constraint at 0
-  *at rest* does nothing at all unless some animation rescues it, which is the
-  silence `A23` was built for.
+  back ([#727](https://github.com/firejune/rigc/issues/727)). At rest the two
+  part ways: a `strength` of 0 is a constraint nothing pulls back, which `A23`
+  refuses, and a `mix` of 0 is a constraint muted until an animation keys it
+  above 0 — the next bullet.
+- ⚠️ **A setup `mix` of `0` is legal when some animation keys it above 0** ([#743](https://github.com/firejune/rigc/issues/743)).
+  A constraint muted *at rest* is a rig whose physics is off until an animation
+  switches it on, which is a design rather than the silence `A23` was built for.
+  What `A23` refuses is the constraint nothing rescues: muted at setup and keyed
+  **nowhere**, or keyed **to 0 only**. [measured] the three are not a matter of
+  taste — muted-and-keyed-to-1 poses its bone exactly where the same rig resting
+  at 1 does, and keyed-to-0 poses it exactly where one with no timeline at all
+  does. The unnamed global timeline counts as a key for every constraint whose
+  own `mixGlobal` is set (§3.5), and so does an animation only a slider applies.
 - 📏 **What a `strength` key of `0` costs, measured through spine-core** on the
   generated overlay fixture, stepping at 60 fps from `Physics.reset` (#727). With
   no wind or gravity the offset coasts to a limit rather than running away — a
@@ -3562,11 +3572,15 @@ mass?, wind?, gravity?, mix?, fps?, limit? }`. These are emitted into the 4.3
 be **keyed over time** as `tracks` entries naming this constraint (§4.4); this
 table is the value at rest, and a timeline overrides it while it plays. `mass: 0` becomes an infinite inverse mass and `damping ≥ 1`
 never settles — both are `A23`, here and on every timeline key that states them
-([#610](https://github.com/firejune/rigc/issues/610)). ⚠️ `mix: 0` and
-`strength: 0` are `A23` **here and not on a key**: at rest they are a constraint
-that does nothing at all, and on a key they are a span somebody asked for — the
-mute and the release — which §4.4 states with the measurement behind it
-([#727](https://github.com/firejune/rigc/issues/727)). Every field but `bone` and `note` must be a finite
+([#610](https://github.com/firejune/rigc/issues/610)). ⚠️ `strength: 0` is `A23` **here and not on a key**:
+at rest it is a constraint nothing pulls back, and on a key it is a release somebody
+asked for, which §4.4 states with the measurement behind it
+([#727](https://github.com/firejune/rigc/issues/727)). `mix: 0` is the one value
+here an animation can answer for: it rests the constraint **muted**, which is
+legal, and `A23` names it only when no timeline in any animation keys that `mix`
+above 0 — on a key it is the mute for a span (§4.4, [#743](https://github.com/firejune/rigc/issues/743)). None of the
+three is a compile error — a setup value this table states reaches the gate, where the whole
+file can be read; it is a **key** outside its bound that `build` refuses (§4.4). Every field but `bone` and `note` must be a finite
 number: a non-number is rounded to `NaN` and emitted as `null`, which the runtime
 reads as **zero**, so `"mass": "heavy"` used to ship a constraint that never
 settles with no word from anybody (#307).
@@ -4676,7 +4690,11 @@ so `v` is three numbers and not one.
 ⚠️ **A muted constraint with no timeline is a finding, not an idiom.** Turning a
 constraint on from an animation is the idiom (§4.10), so `A36`/`A37` only object to
 all-zero mixes when **no** animation keys that constraint's `mix`. If you mute one
-at setup, key it somewhere.
+at setup, key it somewhere. `A23` asks the same question of a physics constraint
+([#743](https://github.com/firejune/rigc/issues/743)) and asks it more sharply:
+it reads the key **values**, so a `mix` timeline keying 0 only is not a rescue,
+and it counts the unnamed global timeline for every constraint declaring
+`mixGlobal`. `A36`/`A37` take any non-empty key array.
 
 ---
 
@@ -5042,7 +5060,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A20_MESH_WEIGHTS_COHERENT` | both ◑ | a weighted vertex with no bone, a negative weight, a bone index out of range, or weights that do not sum to 1. Under `spine-html` also: an unweighted mesh, a binding at weight 0, or **a bone the mesh declares that no vertex binds** — `mesh "x" declares bone "grip_b" and none of its 25 vertices binds it; the weights reference "box", "grip_a"`. Those three are one sentence about rigc's own generators: the bone set a generated mesh declares is the bone set its weights reference, so a `controls` or `chain` name that moves nothing is a defect where a foreign mesh's is not ([#684](https://github.com/firejune/rigc/issues/684)). Fix the rig spec's `controls`/`chain`, or the manifest's `control_bones`. **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A21_MESH_RIM_PINNED` | archetype | a generated ring's rim, a ribbon's entry row, or a contour's outline (which is all of it) is not pinned to its anchor bone at weight 1 |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | a mesh UV outside its region, or a UV array that disagrees with the vertex count. **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
-| `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | a physics constraint that drives no component, is muted by `mix: 0`, has `mass: 0`, has `strength: 0`, or has `damping` outside `(0, 1)` so it never settles — **at rest, and on every physics timeline key** ([#610](https://github.com/firejune/rigc/issues/610)). The timeline arm reads each key through the runtime's own `PhysicsConstraint*Timeline.set`, so a keyed `mass` is judged as the `massInverse` it becomes, and the detail names the animation, the constraint, the key time, the value and the bound. Two differences between the two arms, and the runtime is the reason for both: a **key** of `mix: 0` is accepted, because `update` opens with `if (mix === 0) return;` and muting a constraint for a stretch is what a mix timeline is for — the editor's own `sack-pro` example keys it there on 24 of its 36 mix keys — and a **key** of `strength: 0` is accepted, because it releases the constraint for the span with `damping` and `inertia` still applied and the next key pulls the offset back, measured through spine-core at no NaN, a coast to a limit and a return in 54 steps ([#727](https://github.com/firejune/rigc/issues/727)). Both are still refused as a **setup** value by the arm above. `inertia`, `wind`, `gravity` and the top of `mix` are bounded nowhere, at rest or keyed. **SKIP** when the skeleton declares no physics constraint ([#580](https://github.com/firejune/rigc/issues/580)) — the same sentence `A36` and `A37` have always printed for their own constraint types |
+| `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | a physics constraint that drives no component, rests at `mix: 0` with **no timeline in any animation keying that `mix` above 0**, has `mass: 0`, has `strength: 0`, or has `damping` outside `(0, 1)` so it never settles — **at rest, and on every physics timeline key** ([#610](https://github.com/firejune/rigc/issues/610), [#743](https://github.com/firejune/rigc/issues/743)). The timeline arm reads each key through the runtime's own `PhysicsConstraint*Timeline.set`, so a keyed `mass` is judged as the `massInverse` it becomes, and the detail names the animation, the constraint, the key time, the value and the bound. Two differences between the two arms, and the runtime is the reason for both: a **key** of `mix: 0` is accepted, because `update` opens with `if (mix === 0) return;` and muting a constraint for a stretch is what a mix timeline is for — the editor's own `sack-pro` example keys it there on 24 of its 36 mix keys — and a **key** of `strength: 0` is accepted, because it releases the constraint for the span with `damping` and `inertia` still applied and the next key pulls the offset back, measured through spine-core at no NaN, a coast to a limit and a return in 54 steps ([#727](https://github.com/firejune/rigc/issues/727)). As a **setup** value `strength: 0` is still refused by the arm above, and `mix: 0` is refused only when nothing keys it above 0. The `mix` branch above is why `mix` is the one setup value a key can answer for: at rest the constraint is **inert** rather than broken, so a rig that rests muted and is keyed above 0 is refused by nothing, while a rig resting at `mass: 0` is `massInverse` Infinity before anything plays and no key reaches back into that. The detail of the refusal says both halves and how many animations were searched: `physics "C" has mix 0 and none of the 3 animations keys its mix above 0; it is muted — rest it above 0, or key its mix above 0 in an animation`. The search counts the unnamed global timeline for every constraint whose own `mixGlobal` is set, reads each key through the runtime's accessor, and takes an animation a slider applies like any other. `inertia`, `wind`, `gravity` and the top of `mix` are bounded nowhere, at rest or keyed. **SKIP** when the skeleton declares no physics constraint ([#580](https://github.com/firejune/rigc/issues/580)) — the same sentence `A36` and `A37` have always printed for their own constraint types |
 | `A24_AXIS_SPACE_STROKE` | archetype | a bone under the rig's `axisBone` was keyed with a screen-space Y component, or the axis bone itself was keyed. **SKIP** when the rig declares no axis bone, and also when no animation keys that bone or anything under it ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | a bone the rig declares `detached` is a descendant of the bone it must never hang under |
 | `A26_SLOT_DRAW_ORDER` | archetype | the emitted slots are not the rig's slot table — a slot is out of order, is not in the table at all, or is in the table and missing from the skeleton (§3.3). **SKIP** when the rig declares no canonical slot order. ⚠️ A skeleton with **no** slot beside a rig that declares some is **not** a skip, and it is the one rule in this family where an empty loop is not a vacuous pass ([#580](https://github.com/firejune/rigc/issues/580)): the completeness clause reads it as every declared slot lost and names them, which is the maximal case of what [#575](https://github.com/firejune/rigc/issues/575) filed |

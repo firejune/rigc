@@ -1198,6 +1198,42 @@ const MUTANTS: Mutant[] = [
       }),
     }),
   },
+  // ─── a constraint muted at rest, with and without the key that ──────────
+  // ─── switches it on (issue #743) ────────────────────────────────────────
+  //
+  // The pair is two-sided for the reason M47/M48 are: this arm of A23 was
+  // WIDENED, so the risk moved from "it never fires" to "it fires on correct
+  // data", and a suite made only of breaks cannot see the second end. The
+  // fixture keys no `mix` at all, which is what makes the first of these a
+  // break rather than a design.
+  {
+    name: 'M64_physics_rests_muted_and_no_animation_switches_it_on',
+    origin: 'the runtime returns at `mix` 0 (`PhysicsConstraint.js:109-111`), so the constraint parses, loads, and is never once applied',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).constraints.find((x: any) => x.type === 'physics').mix = 0;
+      }),
+    }),
+  },
+  {
+    name: 'M65_physics_rests_muted_and_an_animation_keys_its_mix_up',
+    origin:
+      'a rig whose physics is off at rest and switched on by the animation that needs it — [measured] its bone poses ' +
+      'identically to one that rests live, and A23 refused it for resting at the same number (issue #743)',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const constraint = (j as any).constraints.find((x: any) => x.type === 'physics');
+        constraint.mix = 0;
+        // 1 is full mix rather than a measurement — the state the constraint
+        // would have rested in had it not been muted.
+        (j as any).animations.shut_once.physics = { [constraint.name]: { mix: [{ time: 0, value: 1 }] } };
+      }),
+    }),
+  },
   {
     // The case the card behind issue #715 proposed to exempt, and the mutant is
     // here because the answer is that it is not exempt. Doubling both edges of
@@ -12326,6 +12362,293 @@ function runConstraintAndDeformSuite(): number {
       'it started from — because a threshold in units would be this fixture\'s displacement written down as a law. The ' +
       '`mass` half is the falsifier: if a keyed 0 were judged by "the runtime accepts the number" rather than by what ' +
       'the next key can undo, `mass` would be widened too, and its NaN outlives every key after it',
+  );
+
+  // --- muted at rest, switched on by a key (issue #743) ---------------------
+  //
+  // A23 read the setup pose alone, so a constraint that rests at `mix` 0 and is
+  // keyed above 0 by an animation printed the same verdict as one nothing will
+  // ever switch on. Those are two different rigs and the runtime plays them
+  // differently, which is what the four controls below measure rather than
+  // assert — every clause in them compares one run of this suite against
+  // another, so no MEASURED number is typed into this file: the samples and the
+  // swing below are the fixture's own choices, and no verdict reads one.
+  //
+  // 🔑 The escape is `PHYSICS_POSE_RULES`' own `inertAtSetup` rather than the
+  // word "mix", and `T93` is why: a setup value outside the other three bounds
+  // has already broken the rig it is resting in, and no key reaches back into
+  // the state the rig is in when nothing is playing.
+  const mutedDirs = writeProbeRig({
+    ...PHYSICS_TIMELINE_RIG,
+    // Derived from the live rig rather than restated beside it, so the two
+    // differ in the one field this issue is about and in nothing else.
+    constraints: PHYSICS_TIMELINE_RIG.constraints.map((constraint) => ({ ...constraint, mix: 0 })),
+  });
+  const liveDirs = writeProbeRig(PHYSICS_TIMELINE_RIG);
+  const SWING_SAMPLES = [6, 12, 18, 24, 30, 36];
+  /** A physics track on the probe's constraint, one key per value, one second apart. */
+  const physicsTrack = (property: string, values: number[]): Record<string, unknown> => ({
+    physics: 'jiggle',
+    property,
+    keys: values.map((value, at) => ({ t: at, v: [value] })),
+  });
+  /**
+   * The probe swung by its PARENT, with whatever physics tracks the caller adds.
+   *
+   * `jiggle` sits on `tip`, whose parent is `block`, and the swing is what gives
+   * the spring something to integrate: this fixture states `wind` and `gravity`
+   * at 0, so a constraint on a bone nobody moves is indistinguishable from a
+   * muted one whatever its `mix` says.
+   */
+  const swung = (extra: Array<Record<string, unknown>> = []): Record<string, unknown> => ({
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      swing: {
+        duration: 1,
+        loop: false,
+        tracks: [
+          { bone: 'block', property: 'translate', keys: [{ t: 0, v: [0, 0] }, { t: 0.5, v: [60, 0] }, { t: 1, v: [0, 0] }] },
+          ...extra,
+        ],
+      },
+    },
+  });
+  /**
+   * Where `tip` is at each sample, and where it would be with the constraint
+   * contributing nothing.
+   *
+   * The second reading is the one that makes "the bone moved" checkable without
+   * a threshold: `block` only translates in this motion, so a `tip` the
+   * constraint did not touch sits exactly at its parent's world x plus its own
+   * setup x.
+   *
+   * ⚠️ `appliedPose` on BOTH, and the parent is why. It is "the pose to use for
+   * rendering" — the constrained one where a constraint touched the bone, the
+   * unconstrained one where none did (`Posed.js:60-72`) — and a bone nobody
+   * constrains never has its constrained pose brought up to date: [measured]
+   * `block.constrainedPose.worldX` reads 0 on every frame of this swing while
+   * its applied pose reads the 12 and 24 its own timeline put there. Reading the
+   * constrained pose on both would have compared a moving bone against a
+   * stationary phantom parent.
+   */
+  const swungTip = (data: SkeletonData): Array<{ at: number; follow: number }> =>
+    SWING_SAMPLES.map((sample) => {
+      const skeleton = poseAtSample(data, 'swing', 60, sample);
+      const tip = skeleton.bones.find((one) => one.data.name === 'tip')!;
+      return { at: tip.appliedPose.worldX, follow: tip.parent!.appliedPose.worldX + tip.data.setupPose.x };
+    });
+  const mixedUp = physicsTrack('mix', [1, 1]);
+  const mutedKeyedUp = gateProbeOrRefusal(mutedDirs, swung([mixedUp]), []);
+  const keyedUpTip = mutedKeyedUp.refused === null ? swungTip(timelinePosable(mutedDirs, swung([mixedUp])).data) : [];
+  const neverKeyedTip = swungTip(timelinePosable(mutedDirs, swung()).data);
+  const liveTip = swungTip(timelinePosable(liveDirs, swung()).data);
+  const posedMix =
+    mutedKeyedUp.refused === null
+      ? poseAtSample(timelinePosable(mutedDirs, swung([mixedUp])).data, 'swing', 60, SWING_SAMPLES[0]).findConstraint(
+          'jiggle',
+          PhysicsConstraint,
+        )!.appliedPose.mix
+      : NaN;
+  const keyedValue = ((mixedUp.keys as Array<{ v: number[] }>)[0]).v[0];
+  const swingProbes = [
+    ...(mutedKeyedUp.refused === null ? [] : [`the muted rig keyed above 0 was refused at compile: ${mutedKeyedUp.refused}`]),
+    ...(mutedKeyedUp.report?.failures.length ? [`the gate refused it: ${mutedKeyedUp.report.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`] : []),
+    ...(mutedKeyedUp.report?.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') ? [] : ['A23 did not pass on the muted rig its animation switches on']),
+    ...(posedMix === keyedValue ? [] : [`the posed mix at the key is ${posedMix}, not the ${keyedValue} the timeline states`]),
+    ...keyedUpTip.flatMap((row, i) => (row.at === row.follow ? [`sample ${SWING_SAMPLES[i]}: the keyed run's bone sits exactly where an untouched bone would, at ${row.at}`] : [])),
+    ...neverKeyedTip.flatMap((row, i) => (row.at === row.follow ? [] : [`sample ${SWING_SAMPLES[i]}: the never-keyed run's bone is at ${row.at}, off its parent's ${row.follow}`])),
+    ...keyedUpTip.flatMap((row, i) => (row.at === liveTip[i].at ? [] : [`sample ${SWING_SAMPLES[i]}: keyed up reads ${row.at} where the rig that RESTS live reads ${liveTip[i].at}`])),
+  ];
+  const swingHeld = swingProbes.length === 0 && keyedUpTip.length === SWING_SAMPLES.length;
+  say(
+    'T90_A_CONSTRAINT_MUTED_AT_REST_AND_KEYED_ABOVE_ZERO_BUILDS_GREEN_AND_MOVES_ITS_BONE_WHERE_THE_TWIN_THAT_KEYS_NOTHING_SITS_STILL',
+    swingHeld,
+    probeDetail(
+      swingHeld,
+      swingProbes,
+      `the muted rig whose animation keys mix to ${keyedValue} gates green with A23 passing and poses that mix back; ` +
+        `over ${SWING_SAMPLES.length} samples its bone is never where an untouched bone would be ` +
+        `(${keyedUpTip.map((row, i) => `${row.at.toFixed(4)} vs ${row.follow.toFixed(4)} at ${SWING_SAMPLES[i]}`).join(', ')}) ` +
+        `and is exactly where the rig that RESTS live puts it, while the twin that keys nothing is at its parent's ` +
+        `position on every one of them`,
+      (count) => `${count} clause(s) of the muted-and-keyed pair did not hold:`,
+    ),
+    'the gate cannot see an animation, so a constraint that rests muted and is switched on by a key looked exactly ' +
+      'like one nothing will ever switch on — and this is the control that tells them apart by what the RUNTIME ' +
+      'does with each. The "never where an untouched bone would be" clause is why there is no tolerance anywhere ' +
+      'here: a muted constraint adds exactly nothing, so its bone is at its parent\'s position to the last bit, and ' +
+      'the two readings are equal or they are not',
+  );
+
+  /** The emitted `mix` key array of the muted rig's one physics constraint. */
+  const mixKeysOf = (skeleton: Record<string, unknown>): Array<Record<string, unknown>> => {
+    const physics = (skeleton.animations as Record<string, Record<string, unknown>>).swing.physics as Record<
+      string,
+      Record<string, Array<Record<string, unknown>>>
+    >;
+    return physics.jiggle.mix;
+  };
+  const mutedWith = (edit: (skeleton: Record<string, unknown>) => void): ReturnType<typeof validate> =>
+    gateProbeArtifacts(mutedDirs, swung([mixedUp]), edit);
+  const keyRemoved = mutedWith((skeleton) => {
+    const physics = (skeleton.animations as Record<string, Record<string, unknown>>).swing.physics as Record<string, Record<string, unknown>>;
+    delete physics.jiggle.mix;
+  });
+  const keyZeroed = mutedWith((skeleton) => {
+    for (const key of mixKeysOf(skeleton)) key.value = 0;
+  });
+  const keyKept = mutedWith(() => {});
+  /** A23's failures on one report, and whether they name this rig's muted constraint. */
+  const mutedRefusal = (report: ReturnType<typeof validate>): string[] =>
+    report.failures.filter((f) => f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE').map((f) => f.detail);
+  const bothHalves = (detail: string): boolean =>
+    detail.includes('physics "jiggle"') && detail.includes('has mix 0') && detail.includes('keys its mix above 0');
+  const fanProbes = [
+    ...(keyKept.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') ? [] : [`the untouched artifact is refused: ${mutedRefusal(keyKept).join('; ')}`]),
+    ...(mutedRefusal(keyRemoved).length === 1 ? [] : [`the artifact with its mix timeline deleted drew ${mutedRefusal(keyRemoved).length} A23 failure(s), not one`]),
+    ...(mutedRefusal(keyZeroed).length === 1 ? [] : [`the artifact whose mix keys were zeroed drew ${mutedRefusal(keyZeroed).length} A23 failure(s), not one`]),
+    ...[...mutedRefusal(keyRemoved), ...mutedRefusal(keyZeroed)].flatMap((detail) =>
+      bothHalves(detail) ? [] : [`a refusal names only one half of the rule: ${detail}`],
+    ),
+  ];
+  const fanHeld = fanProbes.length === 0;
+  say(
+    'T91_THE_SAME_ARTIFACT_WITH_ITS_MIX_TIMELINE_DELETED_OR_ZEROED_IS_REFUSED_BY_NAME_AND_THE_REFUSAL_SAYS_BOTH_HALVES',
+    fanHeld,
+    probeDetail(
+      fanHeld,
+      fanProbes,
+      `one build, three artifacts: untouched it passes A23; with the mix timeline deleted and with its keys zeroed ` +
+        `it is refused once each, and both refusals name the constraint, the value it rests at and the animations ` +
+        `that were searched — "${mutedRefusal(keyRemoved)[0] ?? '(none)'}"`,
+      (count) => `${count} clause(s) of the verdict fan did not hold:`,
+    ),
+    'the three differ in one key array and in nothing else, which is what makes them a fan rather than three ' +
+      'fixtures: a rule that ignored timelines would refuse all three, and one that took any mix key as a rescue ' +
+      'would accept the zeroed one — [measured] on this fixture the zeroed artifact poses its bone exactly where ' +
+      'the deleted one does, max |dx| 0.000000 over 36 steps at 60 fps. ⚠️ The "both halves" clause is the message\'s, not the predicate\'s: a refusal that said only "it is ' +
+      'muted" would send an author to the setup value when keying an animation is now equally a repair',
+  );
+
+  const globalRig = (declareGlobal: boolean): ProbeDirs =>
+    writeProbeRig({
+      ...PHYSICS_TIMELINE_RIG,
+      constraints: PHYSICS_TIMELINE_RIG.constraints.map((constraint) => ({ ...constraint, mix: 0, mixGlobal: declareGlobal })),
+    });
+  /** Move the emitted physics table onto the empty name — the form no rig spec can state. */
+  const toGlobalForm = (skeleton: Record<string, unknown>): void => {
+    const physics = (skeleton.animations as Record<string, Record<string, unknown>>).swing.physics as Record<string, unknown>;
+    physics[''] = physics.jiggle;
+    delete physics.jiggle;
+  };
+  const globalDeclared = gateProbeArtifacts(globalRig(true), swung([mixedUp]), toGlobalForm);
+  const globalNotDeclared = gateProbeArtifacts(globalRig(false), swung([mixedUp]), toGlobalForm);
+  const globalProbes = [
+    ...(globalDeclared.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE')
+      ? []
+      : [`the constraint declaring mixGlobal is still refused: ${mutedRefusal(globalDeclared).join('; ')}`]),
+    ...(mutedRefusal(globalNotDeclared).length === 1
+      ? []
+      : [`the constraint that does NOT declare mixGlobal drew ${mutedRefusal(globalNotDeclared).length} A23 failure(s), not one`]),
+  ];
+  const globalHeld = globalProbes.length === 0;
+  say(
+    'T92_AN_UNNAMED_PHYSICS_TIMELINE_UNMUTES_ONLY_THE_CONSTRAINTS_WHOSE_OWN_DATA_DECLARES_THAT_PROPERTY_GLOBAL',
+    globalHeld,
+    probeDetail(
+      globalHeld,
+      globalProbes,
+      'the same planted timeline, moved onto the empty name, unmutes the constraint that declares `mixGlobal` and ' +
+        `leaves the one that does not refused once — "${mutedRefusal(globalNotDeclared)[0] ?? '(none)'}"`,
+      (count) => `${count} clause(s) of the global form did not hold:`,
+    ),
+    'no rig spec can reach this shape — the compiler refuses a track naming a constraint the skeleton has not got, ' +
+      'the empty name among them — so it is planted into the artifact, which is the only way a file rigc did not ' +
+      'write gets measured here. Which constraints it reaches is asked of `PhysicsConstraintTimeline.global`, the ' +
+      'runtime\'s own answer (`Animation.js:2067-2075`), rather than of a reading of `mixGlobal` this file would ' +
+      'keep in step by hand. ⚠️ [measured] `A34` refuses the empty name on both of these, which is a verdict about ' +
+      'a construct the runtime reads deliberately and is not this control\'s subject: the clauses read A23 alone',
+  );
+
+  /** Step the setup pose with nothing playing: the state the rig is in when no animation is. */
+  const atRestFinite = (data: SkeletonData): { finite: boolean; moved: boolean; last: number } => {
+    const skeleton = new Skeleton(data);
+    skeleton.setupPose();
+    skeleton.update(0);
+    skeleton.updateWorldTransform(Physics.reset);
+    const tip = skeleton.bones.find((one) => one.data.name === 'tip')!;
+    const seen: number[] = [];
+    for (let i = 0; i < SWING_SAMPLES[SWING_SAMPLES.length - 1]; i++) {
+      skeleton.update(1 / 60);
+      skeleton.updateWorldTransform(Physics.update);
+      seen.push(tip.appliedPose.worldX);
+    }
+    return { finite: seen.every((x) => Number.isFinite(x)), moved: seen.some((x) => x !== seen[0]), last: seen[seen.length - 1] };
+  };
+  const inertRules = PHYSICS_POSE_RULES.filter((rule) => rule.inertAtSetup);
+  /** For one bounded property: a setup value the rule refuses, and a keyed value it accepts. */
+  const restedOutside = PHYSICS_POSE_RULES.filter((rule) => !rule.inertAtSetup).map((rule) => {
+    const refusedValue = physicsRefused.find(([property]) => property === rule.timeline)?.[1];
+    const acceptedKey = PHYSICS_TRACK_KEYS.find(([property]) => property === rule.timeline)?.[1];
+    if (refusedValue === undefined || acceptedKey === undefined) {
+      return { rule, probes: [`${rule.timeline}: no refused setup value or no accepted key value is tabulated in this suite`] };
+    }
+    const dirs = writeProbeRig({
+      ...PHYSICS_TIMELINE_RIG,
+      constraints: PHYSICS_TIMELINE_RIG.constraints.map((constraint) => ({ ...constraint, [rule.timeline]: refusedValue })),
+    });
+    const gate = gateProbeOrRefusal(dirs, swung([physicsTrack(rule.timeline, [acceptedKey, acceptedKey])]), []);
+    const hits = gate.report === null ? [] : mutedRefusal(gate.report);
+    return {
+      rule,
+      probes:
+        gate.refused !== null
+          ? [`${rule.timeline}: resting at ${refusedValue} was refused at compile, so the gate never judged it — ${gate.refused}`]
+          : hits.some((detail) => detail.includes(rule.field))
+            ? []
+            : [`${rule.timeline}: resting at ${refusedValue} with a key at ${acceptedKey} drew ${hits.length} A23 failure(s), none naming \`${rule.field}\``],
+    };
+  });
+  const restMuted = atRestFinite(timelinePosable(mutedDirs, swung([mixedUp])).data);
+  const restBroken = atRestFinite(
+    timelinePosable(
+      writeProbeRig({
+        ...PHYSICS_TIMELINE_RIG,
+        constraints: PHYSICS_TIMELINE_RIG.constraints.map((constraint) => ({
+          ...constraint,
+          mass: physicsRefused.find(([property]) => property === 'mass')?.[1] ?? NaN,
+        })),
+      }),
+      swung([physicsTrack('mass', [PHYSICS_TRACK_KEYS.find(([property]) => property === 'mass')?.[1] ?? NaN])]),
+    ).data,
+  );
+  const asymmetryProbes = [
+    ...(inertRules.length === 1 ? [] : [`${inertRules.length} rule(s) are marked inertAtSetup and this control is written for one`]),
+    ...restedOutside.flatMap((one) => one.probes),
+    ...(restMuted.finite && !restMuted.moved ? [] : [`at rest the muted rig's bone is finite=${restMuted.finite}, moved=${restMuted.moved}`]),
+    ...(restBroken.finite ? [`at rest the rig resting outside \`mass\`'s bound stayed finite, last reading ${restBroken.last}`] : []),
+  ];
+  const asymmetryHeld = asymmetryProbes.length === 0;
+  say(
+    'T93_ONLY_THE_ONE_BOUND_WHOSE_SETUP_VALUE_LEAVES_THE_RIG_INERT_IS_RESCUED_BY_A_KEY_AND_THE_OTHERS_ARE_ALREADY_BROKEN_AT_REST',
+    asymmetryHeld,
+    probeDetail(
+      asymmetryHeld,
+      asymmetryProbes,
+      `${inertRules.length} of ${PHYSICS_POSE_RULES.length} bounded properties is marked inertAtSetup (\`${inertRules.map((rule) => rule.timeline).join(', ')}\`); ` +
+        `the other ${restedOutside.length} are still refused by name when a rig rests outside them and an animation ` +
+        `keys a value they accept. At rest with nothing playing the muted rig's bone holds ${restMuted.last} on every ` +
+        `frame while the one resting outside \`mass\`'s bound reads ${restBroken.last}`,
+      (count) => `${count} clause(s) of the asymmetry did not hold:`,
+    ),
+    '⭐ this is the clause that stops the new escape from being read as "a key can fix a setup value". It cannot: ' +
+      'the setup pose is the state the rig is in when NOTHING is playing, and only `mix` has a runtime branch for ' +
+      'being outside its bound there (`if (mix === 0) return;`). A `massInverse` of Infinity is already NaN on the ' +
+      'first step, before any animation has been applied — so the escape is the rule row\'s own field and the count ' +
+      'of rows that carry it is read off the table rather than written here',
   );
 
   return bad;

@@ -470,9 +470,18 @@ const EDITOR_PHYSICS_COMPONENTS: ReadonlySet<(typeof PHYSICS_COMPONENTS)[number]
  * #610 and `strength` since #727. A key of 0 on either is accepted, so "it is
  * muted" and "nothing pulls it back" are read here by a rig that states the
  * number at rest, and what a key is refused with is the row's own `why`.
+ *
+ * `animations` is how many animations the skeleton declares, and only the `mix`
+ * sentence reads it: that bound is the one a key can satisfy instead of the
+ * setup pose (`inertAtSetup`, issue #743), so the refusal has to say that the
+ * other half was looked for and how wide the search was. A rig with no animation
+ * at all then says "none of the 0 animations" rather than implying somebody
+ * keyed something.
  */
-const SETUP_POSE_SAYS: Record<string, (pose: PhysicsConstraintPose) => string> = {
-  mix: (pose) => `has mix ${pose.mix}; it is muted`,
+const SETUP_POSE_SAYS: Record<string, (pose: PhysicsConstraintPose, animations: number) => string> = {
+  mix: (pose, animations) =>
+    `has mix ${pose.mix} and none of the ${animations} animation${animations === 1 ? '' : 's'} keys its mix above 0; ` +
+    'it is muted — rest it above 0, or key its mix above 0 in an animation',
   mass: (pose) => `has massInverse ${pose.massInverse} (mass must be > 0)`,
   strength: (pose) => `has strength ${pose.strength}; nothing pulls it back`,
   damping: (pose) => `has damping ${pose.damping}; outside (0,1) it never settles`,
@@ -3000,6 +3009,63 @@ export function validate(input: ValidateInput): ValidateReport {
           }
         }
       }
+      // --- which constraints an animation switches ON (issue #743) ----------
+      //
+      // 🔑 The setup pose is the rig AT REST, and one of the four bounds is a
+      // state rather than a break there: `PHYSICS_POSE_RULES` marks `mix`
+      // `inertAtSetup`, because `update` opens with `if (mix === 0) return;`
+      // (`PhysicsConstraint.js:109-111`) and nothing else in the pose has such a
+      // branch. So a constraint that rests muted and is keyed above 0 by an
+      // animation is a rig the runtime plays as authored, and refusing it would
+      // refuse a design: physics off at rest, switched on by the animation that
+      // needs it.
+      //
+      // 📏 Measured on a generated physics fixture, 36 steps at 60 fps with the
+      // constraint's own bone swung by its parent: resting at `mix` 0 with an
+      // animation keying `mix` to 1 poses the bone IDENTICALLY to the same rig
+      // resting at 1 (max |dx| 0.000000) and up to 7.771177 away from the twin
+      // that keys nothing — which poses identically to one keyed to 0 only
+      // (max |dx| 0.000000). Two states, and the file says which.
+      //
+      // ⚠️ The escape is the rule's own field rather than the word "mix": a
+      // setup `mass` of 0 is `massInverse` Infinity BEFORE anything plays, and
+      // [measured] at rest it reads NaN on every frame although an animation
+      // keys `mass` to 1. A key cannot rescue a value that has already broken
+      // the rig it is resting in.
+      const unmuted = new Map<PhysicsConstraintData, Set<string>>();
+      const raised = new PhysicsConstraintPose();
+      for (const animation of data.animations) {
+        for (const timeline of animation.timelines) {
+          if (!(timeline instanceof PhysicsConstraintTimeline)) continue;
+          const rule = physicsRuleFor(PHYSICS_TIMELINE_NAMES[Number(timeline.getPropertyIds()[0].split('|')[0])] ?? '');
+          if (rule === undefined || !rule.inertAtSetup) continue;
+          const entries = timeline.getFrameEntries();
+          let keysInside = false;
+          for (let i = 0; i < timeline.frames.length && !keysInside; i += entries) {
+            // The runtime's own accessor, for the reason the second arm uses it:
+            // the pose field is where the integrator reads the number, and for
+            // `mass` that is not the number the key states.
+            timeline.set(raised, timeline.frames[i + 1]);
+            keysInside = rule.poseOk(raised[rule.field]);
+          }
+          if (!keysInside) continue;
+          // -1 is the global form: the timeline names no constraint and the
+          // runtime applies it to every physics constraint whose own data
+          // declares that property global (`Animation.js:2067-2075`). No rig
+          // spec can reach it — the compiler refuses a track naming a constraint
+          // the skeleton has not got, the empty name among them — but a file
+          // rigc did not write can carry one, and `timeline.global` is the
+          // runtime's own answer to which constraints it reaches.
+          for (const one of data.constraints) {
+            if (!(one instanceof PhysicsConstraintData)) continue;
+            if (timeline.constraintIndex === -1 ? !timeline.global(one) : data.constraints[timeline.constraintIndex] !== one) continue;
+            const by = unmuted.get(one) ?? new Set<string>();
+            by.add(rule.timeline);
+            unmuted.set(one, by);
+          }
+        }
+      }
+      let mutedUntilKeyed = 0;
       for (const constraint of data.constraints) {
         if (!(constraint instanceof PhysicsConstraintData)) continue;
         const where = `physics "${constraint.name}"`;
@@ -3015,10 +3081,14 @@ export function validate(input: ValidateInput): ValidateReport {
         // sentence.
         for (const rule of PHYSICS_POSE_RULES) {
           if (rule.poseOk(pose[rule.field])) continue;
+          if (rule.inertAtSetup && unmuted.get(constraint)?.has(rule.timeline)) {
+            mutedUntilKeyed++;
+            continue;
+          }
           const drivesAMesh = rule.timeline === 'damping' && meshBoneNames.has(constraint.bone.name);
           fail(
             'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
-            `${where} ${SETUP_POSE_SAYS[rule.timeline](pose)}` +
+            `${where} ${SETUP_POSE_SAYS[rule.timeline](pose, data.animations.length)}` +
               (drivesAMesh ? ' — and this bone drives a mesh, so the canvas never rests' : ''),
           );
         }
@@ -3026,6 +3096,15 @@ export function validate(input: ValidateInput): ValidateReport {
           fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} has step ${constraint.step} (fps must be > 0)`);
         }
       }
+      // What the PASS would otherwise not say: this rig rests with physics off
+      // on that many constraints and an animation is what switches them on. A
+      // pass carries no detail — `passed` is a list of names — so `stats` is the
+      // channel that exists, and a number is what belongs in a line printed as
+      // `k=v`: naming every such constraint and the animations that reach it
+      // would be a paragraph on one line, and the rig where nobody meant it is
+      // the rig where the NUMBER is the surprise. Absent rather than 0 when
+      // nothing rests muted, so it appears only where it says something.
+      if (mutedUntilKeyed) stats.physicsMutedUntilKeyed = mutedUntilKeyed;
 
       // --- the same criterion, on every physics timeline key (issue #610) ----
       //
@@ -3165,12 +3244,24 @@ export function validate(input: ValidateInput): ValidateReport {
     /**
      * Does any animation key `<group>.<constraint>.<timeline>`?
      *
-     * ⭐ The reason the two assertions below need this, and the reason they are
-     * not A23 with a different type name: a constraint whose mixes are all 0 at
-     * setup is **the idiom**, not a defect — spineboy's aim rig is exactly that,
-     * and issue #88 landed the timelines that turn one on. So "muted" is only a
-     * finding when nothing turns it on, and that question lives in the animations
-     * rather than in the constraint.
+     * ⭐ The reason the two assertions below need this: a constraint whose mixes
+     * are all 0 at setup is **the idiom**, not a defect — spineboy's aim rig is
+     * exactly that, and issue #88 landed the timelines that turn one on. So
+     * "muted" is only a finding when nothing turns it on, and that question
+     * lives in the animations rather than in the constraint.
+     *
+     * ⚠️ This comment used to add "and the reason they are not A23 with a
+     * different type name", which said the idiom stops at path and slider
+     * constraints. It does not: a production rig rests 87 of its 87 physics
+     * constraints at `mix` 0 and keys them up in four of its six animations
+     * (issue #743), so A23 asks the same question now — and does NOT ask it
+     * here. Two reasons, both measured: this reads the raw JSON and takes a
+     * non-empty key array as a rescue, so a `mix` timeline that keys **0 only**
+     * counts, and [measured] such a rig poses its bone exactly where one with no
+     * timeline at all does; and it cannot see the unnamed global form, which the
+     * runtime applies to every constraint declaring that property global. A23's
+     * arm reads the key VALUES through the runtime's own accessor and asks
+     * `PhysicsConstraintTimeline.global` who they reach.
      */
     const keyedBy = (group: string, name: string, timeline: string): boolean => {
       if (!raw || !isObj(raw.animations)) return false;
