@@ -1,0 +1,370 @@
+{
+ "skeleton": {
+  "spine": "4.3.26",
+  "x": -2,
+  "y": -2,
+  "width": 4,
+  "height": 4,
+  "images": "./"
+ },
+ "bones": [
+  {
+   "name": "root"
+  }
+ ],
+ "slots": [
+  {
+   "name": "s1",
+   "bone": "root",
+   "attachment": "p"
+  }
+ ],
+ "skins": [
+  {
+   "name": "default",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_00",
+      "x": 0,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "z",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_01",
+      "x": 1,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "é",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_02",
+      "x": 2,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "e",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_03",
+      "x": 3,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "E",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_04",
+      "x": 4,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "ä",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_05",
+      "x": 5,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "a",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_06",
+      "x": 6,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "中",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_07",
+      "x": 7,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "あ",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_08",
+      "x": 8,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "가",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_09",
+      "x": 9,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "ß",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_10",
+      "x": 10,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "_x",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_11",
+      "x": 11,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "1",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_12",
+      "x": 12,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "x2",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_13",
+      "x": 13,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "x10",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_14",
+      "x": 14,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "x02",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_15",
+      "x": 15,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "X2",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_16",
+      "x": 16,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "中2",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_17",
+      "x": 17,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "中10",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_18",
+      "x": 18,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "b c",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_19",
+      "x": 19,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "bc",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_20",
+      "x": 20,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "b  c",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_21",
+      "x": 21,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "B C",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_22",
+      "x": 22,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  }
+ ],
+ "animations": {
+  "z": {},
+  "é": {},
+  "e": {},
+  "E": {},
+  "ä": {},
+  "a": {},
+  "中": {},
+  "あ": {},
+  "가": {},
+  "ß": {},
+  "_x": {},
+  "1": {},
+  "x2": {},
+  "x10": {},
+  "x02": {},
+  "X2": {},
+  "中2": {},
+  "中10": {},
+  "b c": {},
+  "bc": {},
+  "b  c": {},
+  "B C": {}
+ }
+}

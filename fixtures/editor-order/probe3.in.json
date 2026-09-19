@@ -1,0 +1,199 @@
+{
+ "skeleton": {
+  "spine": "4.3.26",
+  "x": -2,
+  "y": -2,
+  "width": 4,
+  "height": 4,
+  "images": "./"
+ },
+ "bones": [
+  {
+   "name": "root"
+  }
+ ],
+ "slots": [
+  {
+   "name": "s1",
+   "bone": "root",
+   "attachment": "p"
+  }
+ ],
+ "skins": [
+  {
+   "name": "default",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_00",
+      "x": 0,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "f/leafZ",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_01",
+      "x": 1,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "f/sub1/x",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_02",
+      "x": 2,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "f/leafA",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_03",
+      "x": 3,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "f/sub2/y",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_04",
+      "x": 4,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "g/a",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_05",
+      "x": 5,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "h",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_06",
+      "x": 6,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "f/sub1/deep/q",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_07",
+      "x": 7,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "f/sub1/leaf",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_08",
+      "x": 8,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "A",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_09",
+      "x": 9,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "a2",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_10",
+      "x": 10,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  },
+  {
+   "name": "a10",
+   "attachments": {
+    "s1": {
+     "p": {
+      "name": "img_11",
+      "x": 11,
+      "y": 0,
+      "width": 4,
+      "height": 4
+     }
+    }
+   }
+  }
+ ],
+ "animations": {
+  "f/leafZ": {},
+  "f/sub/x": {},
+  "f/leafA": {},
+  "h": {},
+  "a": {}
+ }
+}

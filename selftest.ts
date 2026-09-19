@@ -129,7 +129,14 @@ import {
   type FramingSource,
   type SlotTrack,
 } from './src/check.ts';
-import { buildAtlasText, compile, CompileError, relativeImagesPath, SPINE_VERSION } from './src/compile.ts';
+import {
+  buildAtlasText,
+  compile,
+  CompileError,
+  editorNamesInOrder,
+  relativeImagesPath,
+  SPINE_VERSION,
+} from './src/compile.ts';
 import {
   PHYSICS_FIELDS_WHOSE_DEFAULT_MOVED,
   SPINE_GENERATIONS,
@@ -308,7 +315,14 @@ import {
 import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
 import { exactDecimal, landingRates, maxSideOf, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
-import { diffSummaryLines, shapeDiff, shapeOf, skinBlocks, skinsDeclaredBy } from './tools/editor_roundtrip.ts';
+import {
+  diffSummaryLines,
+  EDITOR_DEFAULTS,
+  shapeDiff,
+  shapeOf,
+  skinBlocks,
+  skinsDeclaredBy,
+} from './tools/editor_roundtrip.ts';
 
 /** Same shape `cli.ts` reads; declared here so this file never imports the CLI. */
 interface CutEntry {
@@ -14315,18 +14329,21 @@ function runPathAndSliderSuite(): number {
   // and `turn10, turn2, zoom` came back **`turn2, turn10, zoom`**. Natural
   // order, case-insensitive, is the only hypothesis both leave standing.
   //
-  // ⇒ rigc emits a member of that family and refuses every name set on which
+  // ⇒ rigc emitted a member of that family and refused every name set on which
   // the family's four UNMEASURED choices — leading zeros, a pure case tie,
-  // digits against words, what a separator is worth — could decide a pair. On a
-  // set none of the four touches, every member of the family produces one order,
-  // so the emit is the editor's order whatever those four turn out to be.
+  // digits against words, what a separator is worth — could decide a pair.
   //
   // ⚠️ It emitted **codepoint** until issue #543, with the refusal widened to
   // cover every pair codepoint and the family could order differently. That is
   // sound and it over-refuses by construction, because codepoint is not in the
   // family — so the two rigs above, the only ones the editor was ever measured
   // on, were refused rather than emitted in the order it returned. `PS52` is
-  // that correction; the rows left in the table below are the four free choices.
+  // that correction.
+  //
+  // ⭐ All four of those choices are MEASURED since issue #728 — five stored
+  // round trips, `PS165`-`PS172` — so none of them is a row below any more. The
+  // rows that are left are what the round trips still leave open, and each of
+  // them is a pair two readings of the SAME measurement order differently.
   const named = (names: string[]): { dirs: ProbeDirs; motion: Record<string, unknown> } => {
     const base = sliderPairMotion();
     const body = (base.animations as Record<string, unknown>)['yaw-pose'];
@@ -14336,14 +14353,12 @@ function runPathAndSliderSuite(): number {
   };
 
   // Every branch of the predicate, one rig each, and the two names each rig's
-  // message has to carry. One row per unmeasured choice in the editor's
-  // comparator, which is what the refusal is now stated on.
+  // message has to carry. One row per choice the round trips leave open, which
+  // is what the refusal is now stated on.
   const ambiguous: Array<[string, string[], [string, string], string]> = [
-    ['one name in two cases', ['Turn', 'turn'], ['Turn', 'turn'], 'case'],
-    ['one number written two ways', ['turn01', 'turn1'], ['turn01', 'turn1'], 'number'],
-    ['a number where the other has a word', ['1turn', 'turn'], ['1turn', 'turn'], 'number'],
-    ['a separator decides', ['wave_x', 'wavea'], ['wave_x', 'wavea'], 'separator'],
-    ['a separator is all that is left', ['wave', 'wave-'], ['wave', 'wave-'], 'separator'],
+    ['two digit runs deferred in opposite directions', ['x01y1', 'x1y01'], ['x01y1', 'x1y01'], 'number'],
+    ['whitespace that is not a space', ['gust\tx', 'gustx'], ['gust\tx', 'gustx'], 'separator'],
+    ['two sibling folders one fold apart', ['Fx/a', 'fx/b'], ['Fx/a', 'fx/b'], 'folder'],
   ];
   const refused = ambiguous.map(([label, names, [x, y], kind]) => {
     const rig = named(names);
@@ -14523,8 +14538,8 @@ function runPathAndSliderSuite(): number {
       fineNames.some((n) => /\d/.test(n)) &&
       JSON.stringify(fineOrder) === JSON.stringify(sortedByCodepoint(fineNames)),
     fineRefusal === null
-      ? `[${fineNames.join(', ')}] compiled and is keyed [${fineOrder.join(', ')}] — a set none of the four ` +
-        'unmeasured choices touches, so the editor\'s comparator and a codepoint sort agree on it; ' +
+      ? `[${fineNames.join(', ')}] compiled and is keyed [${fineOrder.join(', ')}] — a set the stored round ` +
+        'trips settle, so the editor\'s comparator and a codepoint sort agree on it; ' +
         `${fineNames.filter((n) => /[A-Z]/.test(n)).length} of them carry a capital and ` +
         `${fineNames.filter((n) => /\d/.test(n)).length} carry digits`
       : `a set with no ambiguous pair was refused: ${fineRefusal}`,
@@ -14645,7 +14660,7 @@ function runPathAndSliderSuite(): number {
   // to a fixture rather than a change of what it measures. It used to fill
   // `marker` beside the other three, which is now REFUSED: the editor holds no
   // placeholder that the default skin and a named skin both fill. The four skin
-  // NAMES are kept exactly, because `PS59`-`PS62` measure the editor's skin
+  // NAMES are kept exactly, because `PS59`-`PS61` measure the editor's skin
   // ORDER on these four and a fifth skin would retire that measurement; what the
   // fixture loses is a default-skin filler, and `PS70` is where that shape lives
   // now — as a refusal.
@@ -14701,7 +14716,7 @@ function runPathAndSliderSuite(): number {
       'costs nothing: a placeholder one skin fills is emitted exactly as it always was. ⚠️ The default skin used ' +
       'to be one of the fillers here and is not any more: issue #567 measured that the editor holds no placeholder ' +
       'the default skin and a named skin share, in either spelling, so that rig is now a refusal (`PS70`) rather ' +
-      'than an emit. The four skin NAMES are unchanged because `PS59`-`PS62` measure the editor\'s skin order on ' +
+      'than an emit. The four skin NAMES are unchanged because `PS59`-`PS61` measure the editor\'s skin order on ' +
       'exactly them',
   );
 
@@ -14898,40 +14913,9 @@ function runPathAndSliderSuite(): number {
     JSON.stringify(skinOrderOf(pinnedFirst)) === JSON.stringify(['default', 'aardvark']),
     `[default, aardvark] is emitted [${skinOrderOf(pinnedFirst).join(', ')}], where any comparator that sorted ` +
       'the whole array would put "aardvark" first',
-    "this is the whole of what the measurement pins down about the editor's skin order, and it is separable only " +
-      'by a name that sorts before "default" — `alpha` in the measured rig did exactly that, and came back second',
-  );
-
-  // ⭐ The sharpest of these: the SAME two name sets, refused as skins and
-  // accepted as animations. #539 measured the editor's comparator for animation
-  // names — natural, case-insensitive — and #543 narrowed the animation refusal
-  // onto what that family leaves open. Nothing has measured it for skins:
-  // `alpha, mike, zulu` is the answer every candidate gives. Carrying the
-  // narrowing across would be the inference that put `skins` on the safe side of
-  // the "arrays an editor cannot move" list for two releases.
-  const skinCase = skinEmit({ default: { ...PROBE_BLOCK_ONLY_SKIN }, Zulu: markerSkin(1), mike: markerSkin(2) });
-  const skinDigits = skinEmit({ default: { ...PROBE_BLOCK_ONLY_SKIN }, mike10: markerSkin(1), mike2: markerSkin(2) });
-  const animCase = emittedOrderOf(['Turn', 'sweep', 'wave']);
-  const animDigits = emittedOrderOf(['turn10', 'turn2', 'zoom']);
-  say(
-    'PS62_THE_TWO_PAIRS_THE_EDITOR_WAS_MEASURED_ON_FOR_ANIMATIONS_ARE_REFUSED_AS_SKINS',
-    typeof skinCase === 'string' &&
-      skinCase.includes('pair(s) of skin names have no one order') &&
-      skinCase.includes('whether the editor folds SKIN names decides this pair') &&
-      typeof skinDigits === 'string' &&
-      skinDigits.includes('whether the editor sorts SKIN names naturally decides this pair') &&
-      animCase !== null &&
-      JSON.stringify(animCase) === JSON.stringify(['sweep', 'Turn', 'wave']) &&
-      animDigits !== null &&
-      JSON.stringify(animDigits) === JSON.stringify(['turn2', 'turn10', 'zoom']),
-    typeof skinCase !== 'string' || typeof skinDigits !== 'string'
-      ? `a skin pair the candidates disagree about compiled: case=${typeof skinCase}, digits=${typeof skinDigits}`
-      : `as SKIN names, "Zulu"/"mike" and "mike10"/"mike2" are both refused; as ANIMATION names the same two sets ` +
-        `are emitted [${(animCase ?? []).join(', ')}] and [${(animDigits ?? []).join(', ')}], which is what the ` +
-        'editor returned them as',
-    'the two collections have been measured to different depths and the refusals have to say so. An emitter that ' +
-      'reused the animation narrowing here would pass every other case in this suite and be claiming a ' +
-      'measurement nobody took',
+    'the pinning is separable only by a name that sorts before "default" — `alpha` in #541\'s rig did exactly ' +
+      'that, and came back second. `PS172` is the same fact off the stored round trips, on names a digit and a ' +
+      'capital put below "default" rather than a letter',
   );
 
   // --- the ART behind a contested placeholder (issue #555) ------------------
@@ -20926,6 +20910,469 @@ function runPathAndSliderSuite(): number {
         'reproduce the first half exactly',
     );
   }
+
+  // --- the editor's own name order, off five stored round trips (issue #728) --
+  //
+  // 🔒 The oracle is `fixtures/editor-order/probe{1..5}.{in,out}.json`: five name
+  // lists handed to a licensed 4.3.26 editor as JSON and read back as JSON, each
+  // carried as `skins` AND as `animations`. **No order below is typed.** Every
+  // expectation is a position in the editor's own output, and a probe whose files
+  // cannot be read is a fault rather than a case that quietly measures nothing.
+  //
+  // ⚠️ `Object.keys` hoists an integer-like key and probe 5 declares one (`1`),
+  // so the animation lists are read off the FILE's key order rather than off the
+  // parsed object. File order is the whole of what a tie resolves to, so reading
+  // it through a JavaScript object would be reading the wrong thing.
+  interface ProbeList {
+    which: 'skins' | 'animations';
+    given: string[];
+    editor: string[];
+  }
+  interface OrderProbe {
+    at: string;
+    spine: string;
+    lists: ProbeList[];
+  }
+  const fileKeyOrder = (text: string, block: string): string[] => {
+    const at = text.indexOf(`"${block}"`);
+    if (at < 0) return [];
+    const body = text.slice(text.indexOf('{', at) + 1);
+    return [...body.matchAll(/"((?:[^"\\]|\\.)*)"\s*:\s*\{\s*\}/g)].map((hit) => JSON.parse(`"${hit[1]}"`) as string);
+  };
+  const roundTrips: OrderProbe[] = [];
+  const probeFileFaults: string[] = [];
+  for (const which of [1, 2, 3, 4, 5]) {
+    const at = `fixtures/editor-order/probe${which}`;
+    try {
+      const halves = (['in', 'out'] as const).map((half) => {
+        const text = readFileSync(join(import.meta.dir, `${at}.${half}.json`), 'utf8');
+        const parsed = JSON.parse(text) as {
+          skeleton: { spine: string };
+          skins: Array<{ name: string }>;
+          animations: Record<string, unknown>;
+        };
+        const animations = fileKeyOrder(text, 'animations');
+        if (animations.length !== Object.keys(parsed.animations).length) {
+          probeFileFaults.push(
+            `${at}.${half}.json: the file's key order gave ${animations.length} animation name(s) and the parsed ` +
+              `object has ${Object.keys(parsed.animations).length} — the reader missed some`,
+          );
+        }
+        return { spine: parsed.skeleton.spine, skins: parsed.skins.map((skin) => skin.name), animations };
+      });
+      roundTrips.push({
+        at,
+        spine: halves[1].spine,
+        lists: [
+          { which: 'skins', given: halves[0].skins, editor: halves[1].skins },
+          { which: 'animations', given: halves[0].animations, editor: halves[1].animations },
+        ],
+      });
+    } catch (err) {
+      probeFileFaults.push(`${at}: ${(err as Error).message}`);
+    }
+  }
+  /** rigc's own emit for a list of names — `default` pinned the way the emitter pins it. */
+  const emittedNameOrder = (names: string[], which: 'skins' | 'animations'): string[] =>
+    which === 'skins'
+      ? ['default', ...editorNamesInOrder(names.filter((name) => name !== 'default'), which)]
+      : editorNamesInOrder(names, which);
+  const listsOf = (probe: OrderProbe): ProbeList[] => probe.lists;
+
+  const reproduction = roundTrips.flatMap((probe) =>
+    listsOf(probe).map((list) => {
+      try {
+        const sorted = emittedNameOrder(list.given, list.which);
+        const again = emittedNameOrder(list.editor, list.which);
+        return {
+          at: `${probe.at} ${list.which}`,
+          moved: JSON.stringify(list.given) !== JSON.stringify(list.editor),
+          faults: [
+            JSON.stringify(sorted) === JSON.stringify(list.editor)
+              ? null
+              : `is emitted [${sorted.join(', ')}] and the editor returned [${list.editor.join(', ')}]`,
+            JSON.stringify(again) === JSON.stringify(list.editor)
+              ? null
+              : `is not a fixed point — re-sorting the editor's own output gives [${again.join(', ')}]`,
+          ].filter((one): one is string => one !== null),
+        };
+      } catch (err) {
+        return {
+          at: `${probe.at} ${list.which}`,
+          moved: false,
+          faults: [`was REFUSED: ${err instanceof CompileError ? err.message.slice(0, 200) : String(err)}`],
+        };
+      }
+    }),
+  );
+  /** The probes that carried ONE name list as both collections — the one-comparator evidence. */
+  const bothCollections = roundTrips.filter(
+    (probe) =>
+      JSON.stringify(listsOf(probe)[0].given.filter((name) => name !== 'default')) ===
+      JSON.stringify(listsOf(probe)[1].given),
+  );
+  const sameBothWays = bothCollections.filter(
+    (probe) =>
+      JSON.stringify(listsOf(probe)[0].editor.filter((name) => name !== 'default')) ===
+      JSON.stringify(listsOf(probe)[1].editor),
+  );
+  const reproductionProbes = [
+    ...probeFileFaults,
+    ...reproduction.filter((one) => one.faults.length > 0).map((one) => `${one.at} ${one.faults.join('; ')}`),
+    ...(roundTrips.length > 0 ? [] : ['no probe file was read at all, so nothing below measures anything']),
+    ...(reproduction.some((one) => one.moved)
+      ? []
+      : ['every probe was already given in the order the editor returned, so the sort is doing nothing']),
+    ...(bothCollections.length === sameBothWays.length && bothCollections.length > 0
+      ? []
+      : [
+          `${bothCollections.length} probe(s) carried one name list as both collections and ${sameBothWays.length} ` +
+            'of them came back in one order, so "one comparator" is not what these files say',
+        ]),
+  ];
+  const reproductionHeld = reproductionProbes.length === 0;
+  say(
+    'PS165_EVERY_STORED_ROUND_TRIP_IS_REPRODUCED_NAME_FOR_NAME_AND_IS_A_FIXED_POINT_OF_THE_EDITORS_SORT',
+    reproductionHeld,
+    probeDetail(
+      reproductionHeld,
+      reproductionProbes,
+      `${reproduction.length} list(s) over ${roundTrips.length} round trip(s) at data version ` +
+        `${[...new Set(roundTrips.map((probe) => probe.spine))].join(', ')}: each is emitted exactly as the ` +
+        `editor returned it, each survives a second sort unchanged, ${
+          reproduction.filter((one) => one.moved).length
+        } of them were given in another order, and ${sameBothWays.length} probe(s) carried one name list as both ` +
+        'collections and got one order back',
+      (count) => `${count} stored list(s) the emitted order does not reproduce:`,
+    ),
+    'this is the positive control the other seven clauses are cut out of, and the fixed-point half is why it is ' +
+      "stated twice: a slider's animation and a linked mesh's skin are ORDINALS (#535, #541), so what has to hold " +
+      'is not that the emit is sorted but that the editor re-sorting it moves nothing. ⚠️ The third probe clause ' +
+      'is the anti-vacuity floor — a probe already given in the returned order would pass with the emitter ' +
+      'doing nothing at all',
+  );
+
+  // 🌱 The plants. Each is the measured rule with ONE clause swapped, and the
+  // fault it raises is the EDITOR'S OWN OUTPUT contradicting it — so a clause
+  // nothing in the files discriminates cannot be stated here at all. None of
+  // these is rigc's comparator and none is ever used as an expectation: the
+  // expectation is always a position in a stored `.out.json`.
+  const foldedUp = (name: string): string =>
+    [...name].map((char) => ([...char.toUpperCase()].length === 1 ? char.toUpperCase() : char)).join('');
+  const byCodePoint = (a: string, b: string): number => {
+    const x = [...a];
+    const y = [...b];
+    for (let at = 0; at < Math.min(x.length, y.length); at++) {
+      if (x[at] !== y[at]) return (x[at].codePointAt(0) ?? 0) < (y[at].codePointAt(0) ?? 0) ? -1 : 1;
+    }
+    return x.length === y.length ? 0 : x.length < y.length ? -1 : 1;
+  };
+  interface RivalClauses {
+    numbers: boolean;
+    skipSpaces: boolean;
+    zerosFirst: boolean;
+    /** Settle two runs that are one number at the run, rather than at the end. */
+    decideAtRun?: boolean;
+  }
+  const rivalLeaf =
+    (clauses: RivalClauses) =>
+    (a: string, b: string): number => {
+      const read = (name: string): string[] =>
+        [...foldedUp(name)].filter((char) => !(clauses.skipSpaces && char === ' '));
+      const x = read(a);
+      const y = read(b);
+      const deferred: number[] = [];
+      let i = 0;
+      let j = 0;
+      while (i < x.length && j < y.length) {
+        if (clauses.numbers && /[0-9]/.test(x[i]) && /[0-9]/.test(y[j])) {
+          let ei = i;
+          while (ei < x.length && /[0-9]/.test(x[ei])) ei++;
+          let ej = j;
+          while (ej < y.length && /[0-9]/.test(y[ej])) ej++;
+          const rx = x.slice(i, ei).join('');
+          const ry = y.slice(j, ej).join('');
+          if (BigInt(rx) !== BigInt(ry)) return BigInt(rx) < BigInt(ry) ? -1 : 1;
+          if (rx.length !== ry.length) {
+            if (clauses.decideAtRun === true) return rx.length < ry.length ? -1 : 1;
+            deferred.push(rx.length < ry.length ? -1 : 1);
+          }
+          i = ei;
+          j = ej;
+          continue;
+        }
+        if (x[i] !== y[j]) return (x[i].codePointAt(0) ?? 0) < (y[j].codePointAt(0) ?? 0) ? -1 : 1;
+        i++;
+        j++;
+      }
+      if (i < x.length) return 1;
+      if (j < y.length) return -1;
+      const spaces = [...a].filter((char) => char === ' ').length - [...b].filter((char) => char === ' ').length;
+      const zeros = deferred.length > 0 ? deferred[0] : 0;
+      const bySpaces = spaces === 0 ? 0 : spaces < 0 ? -1 : 1;
+      return clauses.zerosFirst ? zeros || bySpaces : bySpaces || zeros;
+    };
+  const rivalPath =
+    (leavesLeadAtRoot: boolean, foldersLeadInside: boolean) =>
+    (a: string, b: string): number => {
+      const pa = a.split('/');
+      const pb = b.split('/');
+      const depth = Math.min(pa.length, pb.length);
+      let at = 0;
+      while (at < depth && pa[at] === pb[at]) at++;
+      const leavesLead = at === 0 ? leavesLeadAtRoot : !foldersLeadInside;
+      if (at === depth) {
+        if (pa.length === pb.length) return 0;
+        return (pa.length < pb.length) === leavesLead ? -1 : 1;
+      }
+      const aLeaf = at === pa.length - 1;
+      const bLeaf = at === pb.length - 1;
+      if (aLeaf !== bLeaf) return aLeaf === leavesLead ? -1 : 1;
+      return rivalLeaf({ numbers: true, skipSpaces: true, zerosFirst: true })(pa[at], pb[at]);
+    };
+
+  /** One pair a clause rests on, and the rule that gets that pair wrong. */
+  interface ClausePair {
+    probe: number;
+    which: 'skins' | 'animations';
+    a: string;
+    b: string;
+    rival: (a: string, b: string) => number;
+  }
+  const clause = (name: string, pairs: ClausePair[], why: string): void => {
+    const probes: string[] = [...probeFileFaults];
+    const notes: string[] = [];
+    for (const pair of pairs) {
+      const probe = roundTrips.find((one) => one.at.endsWith(`probe${pair.probe}`));
+      const list = probe === undefined ? undefined : listsOf(probe).find((one) => one.which === pair.which);
+      if (list === undefined || !list.editor.includes(pair.a) || !list.editor.includes(pair.b)) {
+        probes.push(`probe${pair.probe} ${pair.which} does not carry both "${pair.a}" and "${pair.b}"`);
+        continue;
+      }
+      const editorSays = Math.sign(list.editor.indexOf(pair.a) - list.editor.indexOf(pair.b));
+      const emitted = emittedNameOrder(list.given, pair.which);
+      const rigcSays = Math.sign(emitted.indexOf(pair.a) - emitted.indexOf(pair.b));
+      const rivalSays = Math.sign(pair.rival(pair.a, pair.b));
+      const lead = editorSays < 0 ? pair.a : pair.b;
+      const after = editorSays < 0 ? pair.b : pair.a;
+      if (editorSays === 0) probes.push(`probe${pair.probe} puts "${pair.a}" and "${pair.b}" at one index`);
+      else if (rigcSays !== editorSays) {
+        probes.push(`the emit puts "${after}" before "${lead}", where probe${pair.probe} returned "${lead}" first`);
+      } else if (rivalSays === editorSays) {
+        probes.push(`the planted rule orders "${pair.a}" / "${pair.b}" exactly as the editor did, so it plants nothing`);
+      } else notes.push(`probe${pair.probe} returned "${lead}" before "${after}" and its plant reverses them`);
+    }
+    const held = probes.length === 0;
+    say(
+      name,
+      held,
+      probeDetail(held, probes, `${pairs.length} pair(s) read off the stored round trips — ${notes.join(' · ')}`),
+      why,
+    );
+  };
+
+  const foldDownward = (a: string, b: string): number => byCodePoint(a.toLowerCase(), b.toLowerCase());
+  const wholeStringUpper = (a: string, b: string): number => byCodePoint(a.toUpperCase(), b.toUpperCase());
+  clause(
+    'PS166_CASE_IS_FOLDED_UPWARD_PER_CHARACTER_AND_ONLY_WHERE_THE_CHARACTER_HAS_A_SINGLE_UPPER_CASE',
+    [
+      { probe: 5, which: 'animations', a: 'z', b: '_x', rival: foldDownward },
+      { probe: 5, which: 'skins', a: 'z', b: '_x', rival: foldDownward },
+      { probe: 5, which: 'animations', a: 'z', b: 'ß', rival: wholeStringUpper },
+      { probe: 5, which: 'skins', a: 'z', b: 'ß', rival: wholeStringUpper },
+    ],
+    '`_` is 0x5F — above `Z` and below `a` — so the DIRECTION of the fold is the whole of what orders the first ' +
+      "pair, and folding down returns it the other way round. The second pair is the fold's shape: " +
+      "`'ß'.toUpperCase()` is `'SS'`, which would sort it among the `S`s and ahead of `z`, and it came back at " +
+      '0xDF instead — after `z`, after `é`. So the fold is per character and leaves a character with no ' +
+      'single-character upper case where it is, which a whole-string fold would break in silence on any German name',
+  );
+  clause(
+    'PS167_A_RUN_OF_DIGITS_COMPARES_AS_A_NUMBER_AT_ANY_POSITION_AND_AFTER_ANY_SCRIPT',
+    (
+      [
+        { probe: 5, which: 'animations', a: 'x2', b: 'x10' },
+        { probe: 5, which: 'animations', a: '中2', b: '中10' },
+        { probe: 1, which: 'skins', a: '2', b: '10' },
+      ] as Array<Omit<ClausePair, 'rival'>>
+    ).map((pair) => ({ ...pair, rival: rivalLeaf({ numbers: false, skipSpaces: true, zerosFirst: true }) })),
+    'the third pair is the whole name and the second sits behind a character no ASCII rule reaches, so between ' +
+      'them they say the digit rule is neither a suffix rule nor an ASCII one. A comparator reading the runs as ' +
+      'text puts `x10` before `x2`, which is the defect #543 was filed about, one collection over',
+  );
+  clause(
+    'PS168_AT_THE_ROOT_A_LEAF_LEADS_A_FOLDER_WHATEVER_THE_TWO_ARE_CALLED',
+    (
+      [
+        { probe: 3, which: 'skins', a: 'h', b: 'f/sub1/deep/q' },
+        { probe: 2, which: 'animations', a: 'c', b: 'b/one' },
+      ] as Array<Omit<ClausePair, 'rival'>>
+    ).map((pair) => ({ ...pair, rival: rivalPath(false, true) })),
+    '`h` came back ahead of everything under `f`, and `c` ahead of everything under `b` — in both cases the leaf ' +
+      'sorts LATER than the folder by name, so the rule cannot be read off the names. A rule that led with ' +
+      'folders at the root reverses both, and so does a rule with no folders in it at all, which is what rigc had',
+  );
+  clause(
+    'PS169_INSIDE_A_FOLDER_THE_SIDE_THAT_LEADS_IS_THE_OTHER_ONE',
+    (
+      [
+        { probe: 3, which: 'skins', a: 'f/sub1/x', b: 'f/leafA' },
+        { probe: 2, which: 'skins', a: 'apple/y/B', b: 'apple/a' },
+      ] as Array<Omit<ClausePair, 'rival'>>
+    ).map((pair) => ({ ...pair, rival: rivalPath(true, false) })),
+    'the two folder clauses point OPPOSITE WAYS, which is the whole reason both are stated: one rule for both ' +
+      'levels reproduces one of these pairs and reverses the other, whichever way it is written. The plant here ' +
+      "is `PS168`'s own rule applied one level down",
+  );
+  clause(
+    'PS170_A_SPACE_IS_SKIPPED_THE_SHORTER_NAME_WINS_THAT_TIE_AND_A_LEADING_ZERO_IS_SETTLED_BEFORE_IT',
+    [
+      {
+        probe: 5,
+        which: 'animations',
+        a: 'bc',
+        b: 'b c',
+        rival: rivalLeaf({ numbers: true, skipSpaces: false, zerosFirst: true }),
+      },
+      {
+        probe: 5,
+        which: 'animations',
+        a: 'b c',
+        b: 'b  c',
+        rival: rivalLeaf({ numbers: true, skipSpaces: false, zerosFirst: true }),
+      },
+      {
+        probe: 4,
+        which: 'animations',
+        a: 'a 1',
+        b: 'a01',
+        rival: rivalLeaf({ numbers: true, skipSpaces: true, zerosFirst: false }),
+      },
+      {
+        probe: 4,
+        which: 'animations',
+        a: 'a01',
+        b: 'a1b',
+        rival: rivalLeaf({ numbers: true, skipSpaces: true, zerosFirst: true, decideAtRun: true }),
+      },
+    ],
+    'a space is 0x20, below every letter, so a comparator that COUNTED it would put `b c` ahead of `bc`; the ' +
+      'editor put `bc` first and the two-space spelling last. ⭐ The last two pairs carry what nothing else does. ' +
+      '`a 1` before `a01` says the leading-zero tie-break runs BEFORE the space one — run the other way round it ' +
+      'puts `a01` first. And `a01` before `a1b` says the comparison walked PAST the equal runs rather than ' +
+      'deciding there, because deciding at `01` against `1` would have put `a1b` ahead',
+  );
+
+  // --- a tie is file order, which makes such a pair KNOWN rather than open ----
+  //
+  // 🎯 The card this landed from proposed "upper case first" off probes 1 and 2,
+  // where `Beta` before `beta` and `Mango` before `mango` are BOTH readings —
+  // those names were given in that order too. Probe 4 separates them.
+  const tieGroup = ['turn', 'Turn', 'TURN'];
+  const tieProbe = roundTrips.find((one) => one.at.endsWith('probe4'));
+  const tieList = tieProbe === undefined ? undefined : listsOf(tieProbe).find((one) => one.which === 'animations');
+  const positionsIn = (list: string[]): number[] => tieGroup.map((name) => list.indexOf(name));
+  const rising = (values: number[]): boolean =>
+    values.every((value, at) => value >= 0 && (at === 0 || value > values[at - 1]));
+  const upperFirst = [...tieGroup].sort((a, b) => (foldedUp(a) === foldedUp(b) ? byCodePoint(a, b) : 0));
+  const reversedBack = tieList === undefined ? [] : editorNamesInOrder([...tieGroup].reverse(), 'animations');
+  const skinTieCase = skinEmit({ default: { ...PROBE_BLOCK_ONLY_SKIN }, Zulu: markerSkin(1), mike: markerSkin(2) });
+  const skinTieDigits = skinEmit({ default: { ...PROBE_BLOCK_ONLY_SKIN }, mike10: markerSkin(1), mike2: markerSkin(2) });
+  const tieProbes = [
+    ...probeFileFaults,
+    ...(tieList === undefined ? ['probe4 carries no animation list, so nothing below reads an order'] : []),
+    ...(tieList !== undefined && rising(positionsIn(tieList.given)) && rising(positionsIn(tieList.editor))
+      ? []
+      : [`probe4 gave [${tieGroup.join(', ')}] at ${JSON.stringify(tieList === undefined ? [] : positionsIn(tieList.given))} and returned them at ${JSON.stringify(tieList === undefined ? [] : positionsIn(tieList.editor))}, which is not one order kept`]),
+    ...(JSON.stringify(upperFirst) === JSON.stringify(tieGroup)
+      ? ['"upper case first" reproduces the file order here, so this probe separates nothing']
+      : []),
+    ...(JSON.stringify(reversedBack) === JSON.stringify([...tieGroup].reverse())
+      ? []
+      : [`handed the same three names reversed the emit returns [${reversedBack.join(', ')}], so the tie is a preference rather than the order it was given`]),
+    ...(typeof skinTieCase === 'string' ? [`"Zulu"/"mike" is still refused as a skin pair: ${skinTieCase.slice(0, 160)}`] : []),
+    ...(typeof skinTieDigits === 'string' ? [`"mike10"/"mike2" is still refused as a skin pair: ${skinTieDigits.slice(0, 160)}`] : []),
+    ...(typeof skinTieCase === 'string' ||
+    JSON.stringify(skinOrderOf(skinTieCase).slice(1)) === JSON.stringify(emittedOrderOf(['Zulu', 'mike']) ?? [])
+      ? []
+      : ['"Zulu"/"mike" builds as a skin pair and as an animation pair in DIFFERENT orders']),
+    ...(typeof skinTieDigits === 'string' ||
+    JSON.stringify(skinOrderOf(skinTieDigits).slice(1)) === JSON.stringify(emittedOrderOf(['mike10', 'mike2']) ?? [])
+      ? []
+      : ['"mike10"/"mike2" builds as a skin pair and as an animation pair in DIFFERENT orders']),
+  ];
+  const tieHeld = tieProbes.length === 0;
+  say(
+    'PS171_A_TIE_IS_THE_ORDER_THE_SPEC_DECLARED_SO_A_PAIR_THE_COMPARATOR_CANNOT_SEPARATE_IS_KNOWN',
+    tieHeld,
+    probeDetail(
+      tieHeld,
+      tieProbes,
+      `probe4 gave [${tieGroup.join(', ')}] and returned them in that order, which "upper case first" would write ` +
+        `[${upperFirst.join(', ')}]; handed them reversed the emit returns [${reversedBack.join(', ')}]. The two ` +
+        'pairs #541 refused as SKIN names build, in the same order they build as animation names: ' +
+        `[${typeof skinTieCase === 'string' ? '(refused)' : skinOrderOf(skinTieCase).slice(1).join(', ')}] and ` +
+        `[${typeof skinTieDigits === 'string' ? '(refused)' : skinOrderOf(skinTieDigits).slice(1).join(', ')}]`,
+      (count) => `${count} clause(s) of the tie rule did not hold:`,
+    ),
+    '⭐ this is what retires a refusal rather than narrowing one. A pair the comparator cannot separate used to be ' +
+      'ambiguous; a tie kept in file order makes it KNOWN — the emitted order is the order the spec declared and ' +
+      'the editor keeps it, so no ordinal moves and there is nothing left to refuse. The reversed half is the ' +
+      'clause that says so: a rule with a preference in it would return one order whichever way it was handed them',
+  );
+
+  // --- `default` is pinned, on names a comparator would put ahead of it -------
+  const pinnedProbes = [
+    ...probeFileFaults,
+    ...roundTrips.flatMap((probe) => {
+      const skins = listsOf(probe).find((one) => one.which === 'skins');
+      if (skins === undefined || !skins.editor.includes('default')) return [];
+      const sortedWithIt = editorNamesInOrder(skins.given, 'skins');
+      const ahead = sortedWithIt.slice(0, sortedWithIt.indexOf('default'));
+      if (ahead.length === 0) return [];
+      return [
+        ...(skins.editor[0] === 'default'
+          ? []
+          : [`${probe.at} returned "${skins.editor[0]}" at index 0 rather than "default"`]),
+        ...(emittedNameOrder(skins.given, 'skins')[0] === 'default'
+          ? []
+          : [`${probe.at} is emitted with "${emittedNameOrder(skins.given, 'skins')[0]}" at index 0`]),
+      ];
+    }),
+    ...(roundTrips.some((probe) => {
+      const skins = listsOf(probe).find((one) => one.which === 'skins');
+      if (skins === undefined) return false;
+      const sortedWithIt = editorNamesInOrder(skins.given, 'skins');
+      return sortedWithIt.indexOf('default') > 0;
+    })
+      ? []
+      : ['no probe declares a skin the comparator puts ahead of "default", so the pinning is unobservable here']),
+  ];
+  const pinnedHeld = pinnedProbes.length === 0;
+  const pinnedWitness = roundTrips
+    .map((probe) => {
+      const skins = listsOf(probe).find((one) => one.which === 'skins');
+      if (skins === undefined) return null;
+      const sortedWithIt = editorNamesInOrder(skins.given, 'skins');
+      const ahead = sortedWithIt.slice(0, sortedWithIt.indexOf('default'));
+      return ahead.length === 0 ? null : `${probe.at}: [${ahead.join(', ')}]`;
+    })
+    .filter((one): one is string => one !== null);
+  say(
+    'PS172_DEFAULT_LEADS_THE_SKINS_ARRAY_OVER_NAMES_THE_SAME_COMPARATOR_PUTS_AHEAD_OF_IT',
+    pinnedHeld,
+    probeDetail(
+      pinnedHeld,
+      pinnedProbes,
+      `sorted WITH "default" in the list these skins come out ahead of it — ${pinnedWitness.join(' · ')} — and ` +
+        'every one of those round trips returned "default" at index 0 anyway',
+      (count) => `${count} clause(s) of the pinning did not hold:`,
+    ),
+    '#541 measured this on `alpha`, one letter of one name. The stored probes say it on a digit and on a capital, ' +
+      'which is a different part of the comparator reaching the same answer — and the last probe clause is what ' +
+      'stops the case being vacuous, because a probe whose skins all sort after "default" would pass it with the ' +
+      'pinning deleted',
+  );
 
   return bad;
 }
@@ -36905,6 +37352,117 @@ function runEditorRoundtripSuite(): number {
     );
   }
 
+  // --- the stored round trips this repository keeps as an oracle (issue #728) -
+  //
+  // 🔒 `fixtures/editor-order/probe{1..5}.{in,out}.json` is the only measurement
+  // of the editor's name order in the tree, and it is a measurement rather than a
+  // belief only while its PROVENANCE is readable. Both clauses below read it off
+  // the files: the data version out of each half's own `skeleton.spine`, and the
+  // hash the editor computes on export out of the `out` half, which the `in` half
+  // does not carry because nothing but the editor writes it.
+  {
+    interface ProbeHalves {
+      at: string;
+      versions: string[];
+      hashedOut: boolean;
+      hashedIn: boolean;
+      skins: number;
+      animations: number;
+    }
+    const halvesOf: ProbeHalves[] = [];
+    const readFaults: string[] = [];
+    for (const which of [1, 2, 3, 4, 5]) {
+      const at = `fixtures/editor-order/probe${which}`;
+      try {
+        const halves = (['in', 'out'] as const).map(
+          (half) =>
+            JSON.parse(readFileSync(join(import.meta.dir, `${at}.${half}.json`), 'utf8')) as {
+              skeleton: { spine?: string; hash?: string };
+              skins: Array<{ name: string }>;
+              animations: Record<string, unknown>;
+            },
+        );
+        halvesOf.push({
+          at,
+          versions: halves.map((half) => String(half.skeleton.spine)),
+          hashedIn: halves[0].skeleton.hash !== undefined,
+          hashedOut: halves[1].skeleton.hash !== undefined,
+          skins: halves[1].skins.length,
+          animations: Object.keys(halves[1].animations).length,
+        });
+      } catch (err) {
+        readFaults.push(`${at}: ${(err as Error).message}`);
+      }
+    }
+    const versions = [...new Set(halvesOf.flatMap((probe) => probe.versions))];
+    const provenance = [
+      ...readFaults,
+      ...halvesOf
+        .filter((probe) => probe.versions[0] !== probe.versions[1])
+        .map((probe) => `${probe.at} was given at ${probe.versions[0]} and came back at ${probe.versions[1]}`),
+      ...halvesOf.filter((probe) => !probe.hashedOut).map((probe) => `${probe.at}.out.json carries no skeleton hash, so nothing in it says an editor wrote it`),
+      ...halvesOf.filter((probe) => probe.hashedIn).map((probe) => `${probe.at}.in.json already carries a hash, so the hash says nothing about which half the editor wrote`),
+      ...(versions.length === 1 ? [] : [`the probes name ${versions.length} data version(s) (${versions.join(', ')}) and the oracle has to be one editor`]),
+      ...(halvesOf.length > 0 ? [] : ['no probe was read at all']),
+      ...(halvesOf.every((probe) => probe.skins > 0 && probe.animations > 0)
+        ? []
+        : ['a probe came back with an empty collection, so one of its two lists measures nothing']),
+    ];
+    const provenanceHeld = provenance.length === 0;
+    say(
+      'ERT69_THE_STORED_ROUND_TRIPS_NAME_THEIR_OWN_EDITOR_VERSION_AND_CARRY_WHAT_ONLY_THE_EDITOR_WRITES',
+      provenanceHeld,
+      probeDetail(
+        provenanceHeld,
+        provenance,
+        `${halvesOf.length} round trip(s) at data version ${versions.join(', ')} — read off each half's own ` +
+          `\`skeleton.spine\` — returning ${halvesOf.reduce((sum, probe) => sum + probe.skins, 0)} skin name(s) and ` +
+          `${halvesOf.reduce((sum, probe) => sum + probe.animations, 0)} animation name(s); every \`out\` half ` +
+          'carries the skeleton hash the editor computes on export and no `in` half does',
+        (count) => `${count} clause(s) of the oracle's provenance did not hold:`,
+      ),
+      'a fixture claiming to be an editor export is worth exactly what its provenance is worth, and "the version ' +
+        'is 4.3.26" typed into a comment is worth nothing. Both halves of every probe state their own version, ' +
+        'and the hash is the one field in the format that an authoring tool does not fill in',
+    );
+
+    // ⚠️ This machine may or may not have a licensed editor, and the claim must
+    // not depend on which: the derivation reads the STORED outputs, so it runs
+    // either way and is a PASS or a FAIL. There is no skip branch here on
+    // purpose — a SKIP would be the one verdict that looks like agreement.
+    const editorHere = EDITOR_DEFAULTS[process.platform] ?? '';
+    const derived = halvesOf.map((probe) => {
+      const text = readFileSync(join(import.meta.dir, `${probe.at}.out.json`), 'utf8');
+      const editor = (JSON.parse(text) as { skins: Array<{ name: string }> }).skins.map((skin) => skin.name);
+      const again = ['default', ...editorNamesInOrder(editor.filter((name) => name !== 'default'), 'skins')];
+      return { at: probe.at, held: JSON.stringify(again) === JSON.stringify(editor), got: again, editor };
+    });
+    const standingOffline = [
+      ...readFaults,
+      ...derived
+        .filter((one) => !one.held)
+        .map((one) => `${one.at}: re-sorting the editor's own skins gives [${one.got.join(', ')}] and the file says [${one.editor.join(', ')}]`),
+      ...(derived.length > 0 ? [] : ['nothing was re-derived, so this case reports on no measurement at all']),
+    ];
+    const offlineHeld = standingOffline.length === 0;
+    say(
+      'ERT70_THE_ORDER_CLAIM_IS_RE_DERIVED_FROM_THE_STORED_OUTPUTS_WHETHER_OR_NOT_AN_EDITOR_IS_HERE',
+      offlineHeld,
+      probeDetail(
+        offlineHeld,
+        standingOffline,
+        `${derived.length} stored output(s) re-sorted by the emitter's own comparator and returned unchanged, on a ` +
+          `machine where ${existsSync(editorHere) ? `a licensed editor IS installed at ${editorHere}` : `no editor is installed at ${editorHere || 'any known path'}`} — ` +
+          'the derivation read neither way',
+        (count) => `${count} stored output(s) the emitted order does not return unchanged:`,
+      ),
+      'the rest of this suite is about a tool that needs the editor, and every case in it runs against a stub for ' +
+        "that reason. This one is the opposite shape: the measurement is already taken and stored, so the claim " +
+        'survives a machine with no Spine on it — and the case prints which machine it ran on rather than ' +
+        'assuming. ⚠️ A SKIP here would report "not measured" on a fact that is measured and in the tree',
+    );
+  }
+
   rmSync(root, { recursive: true, force: true });
   return bad;
 }
@@ -42958,6 +43516,140 @@ function runCurrencySuite(): number {
           'messages are its UI is the same as not having it',
       );
     }
+  }
+
+  // --- CUR51-CUR52: the guide's rule for the emitted name order (issue #728) --
+  //
+  // 🔒 Both sides are read rather than typed. The KINDS come off the compiler's
+  // own union, and the ORDERS the page teaches come off the stored round trips:
+  // R10 states the rule as "`x` before `y`", and every one of those pairs has to
+  // be a pair some probe returned in that order. A page that teaches a rule the
+  // oracle contradicts is the failure this pair exists for, and it is the one
+  // shape a reader of either file alone cannot see.
+  {
+    const guide = 'docs/AUTHORING.md';
+    const guideText = readFileSync(join(root, guide), 'utf8');
+    const ruleBlock = (text: string): string => {
+      const from = text.indexOf('**R10 — ');
+      const to = text.indexOf('**R12 — ', from);
+      return from < 0 || to < 0 ? '' : text.slice(from, to);
+    };
+
+    const kindsDeclared = (
+      readFileSync(join(root, 'src/compile.ts'), 'utf8').match(/kind:\s*((?:'[a-z]+'\s*\|\s*)*'[a-z]+')/) ?? ['', '']
+    )[1]
+      .split('|')
+      .map((kind) => kind.trim().replace(/'/g, ''))
+      .filter(Boolean)
+      .sort();
+    /** Which of a kind list the failure map and R10 between them spell as code. */
+    const kindsTaught = (kinds: readonly string[], text: string): string[] =>
+      kinds.filter((kind) => text.includes(`\`${kind}\``));
+    const mapRows = guideText
+      .split('\n')
+      .filter((line) => line.includes('have no one order'))
+      .join('\n');
+    const taughtIn = `${ruleBlock(guideText)}\n${mapRows}`;
+    const missingKinds = kindsDeclared.filter((kind) => !kindsTaught(kindsDeclared, taughtIn).includes(kind));
+    const plantedKind = 'sibling';
+    const kindProbes = [
+      ...(kindsDeclared.length > 0 ? [] : ['`src/compile.ts` declares no refusal kinds this reader can find']),
+      ...(mapRows === '' ? [`${guide} carries no §5.1 row for the order refusal, so the map sends nobody anywhere`] : []),
+      ...missingKinds.map((kind) => `${guide} never spells \`${kind}\`, which the compiler declares and a refusal prints`),
+      ...(kindsTaught([plantedKind], taughtIn).length === 0
+        ? []
+        : [`${guide} spells \`${plantedKind}\`, which the compiler does not declare — this control cannot tell a real kind from a planted one`]),
+      ...(kindsTaught([...kindsDeclared, plantedKind], taughtIn).length === kindsDeclared.length
+        ? []
+        : ['the reader found a kind the compiler does not declare, so it is not reading the union']),
+    ];
+    const kindsHeld = kindProbes.length === 0;
+    say(
+      'CUR51_THE_REFUSAL_KINDS_THE_GUIDE_TEACHES_ARE_THE_ONES_THE_COMPILER_DECLARES',
+      kindsHeld,
+      probeDetail(
+        kindsHeld,
+        kindProbes,
+        `the compiler declares ${kindsDeclared.length} kind(s) (${kindsDeclared.join(', ')}) and ${guide} spells ` +
+          `every one of them across R10 and its §5.1 row(s); a kind it does not declare (\`${plantedKind}\`) is ` +
+          'not on the page',
+        (count) => `${count} clause(s) of the kind vocabulary did not hold:`,
+      ),
+      'the kind in brackets is the only part of that refusal an author navigates by — it is what tells them which ' +
+        'of the three repairs to take — so a page that teaches a kind the compiler stopped printing, or omits one ' +
+        'it prints, sends the reader to a row that does not exist. Both sides are read: the union off the source, ' +
+        'the spellings off the page',
+    );
+
+    interface TaughtPair {
+      a: string;
+      b: string;
+    }
+    const pairsTaught = (text: string): TaughtPair[] =>
+      [...ruleBlock(text).matchAll(/`([^`]+)` before `([^`]+)`/g)].map((hit) => ({ a: hit[1], b: hit[2] }));
+    interface OracleList {
+      at: string;
+      names: string[];
+    }
+    const oracle: OracleList[] = [];
+    const oracleFaults: string[] = [];
+    for (const which of [1, 2, 3, 4, 5]) {
+      const at = `fixtures/editor-order/probe${which}.out.json`;
+      try {
+        const text = readFileSync(join(root, at), 'utf8');
+        const parsed = JSON.parse(text) as { skins: Array<{ name: string }> };
+        const from = text.indexOf('"animations"');
+        const body = from < 0 ? '' : text.slice(text.indexOf('{', from) + 1);
+        oracle.push({ at: `${at} skins`, names: parsed.skins.map((skin) => skin.name) });
+        oracle.push({
+          at: `${at} animations`,
+          names: [...body.matchAll(/"((?:[^"\\]|\\.)*)"\s*:\s*\{\s*\}/g)].map((hit) => JSON.parse(`"${hit[1]}"`) as string),
+        });
+      } catch (err) {
+        oracleFaults.push(`${at}: ${(err as Error).message}`);
+      }
+    }
+    /** Every pair the page teaches that no stored output returned in that order. */
+    const unsupported = (pairs: TaughtPair[]): string[] =>
+      pairs
+        .filter(
+          (pair) =>
+            !oracle.some(
+              (list) =>
+                list.names.includes(pair.a) &&
+                list.names.includes(pair.b) &&
+                list.names.indexOf(pair.a) < list.names.indexOf(pair.b),
+            ),
+        )
+        .map((pair) => `${guide} teaches "${pair.a}" before "${pair.b}", which no stored round trip returned`);
+    const taught = pairsTaught(guideText);
+    const standingPairs = unsupported(taught);
+    const swapped = taught.length === 0 ? [] : unsupported([{ a: taught[0].b, b: taught[0].a }]);
+    const pairProbes = [
+      ...oracleFaults,
+      ...standingPairs,
+      ...(taught.length > 0 ? [] : [`${guide} states R10's rule with no "\`x\` before \`y\`" pair in it, so nothing here is checkable`]),
+      ...(oracle.length > 0 ? [] : ['no stored output was read, so every pair on the page would pass unmeasured']),
+      ...(swapped.length === 1
+        ? []
+        : [`the first taught pair read backwards was faulted ${swapped.length} time(s) and this control requires one`]),
+    ];
+    const pairsHeld = pairProbes.length === 0;
+    say(
+      'CUR52_EVERY_ORDER_THE_GUIDES_RULE_TEACHES_IS_ONE_A_STORED_ROUND_TRIP_RETURNED',
+      pairsHeld,
+      probeDetail(
+        pairsHeld,
+        pairProbes,
+        `R10 states its rule with ${taught.length} pair(s) of names and every one of them is a pair one of the ` +
+          `${oracle.length} stored list(s) returned in that order; the first of them read backwards is faulted once`,
+        (count) => `${count} order(s) the guide teaches that the oracle does not:`,
+      ),
+      '⭐ this is the clause that makes R10 a reading of the files rather than a paraphrase of them. The page is ' +
+        'where an author meets the rule, and every example it gives is now derived: renaming a probe, reordering ' +
+        'one, or mistyping an example on the page are all one fault here. The plant is the page\'s own first ' +
+        'example reversed, so a reader that matched nothing would go red rather than agree',
+    );
   }
 
   return bad;
