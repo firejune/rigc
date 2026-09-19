@@ -73,6 +73,34 @@ Three properties the measures are built to have:
   sets rather than two halves of one; the name-matched figure is unchanged, so
   older reports stay comparable. `sections[].nameAgnostic` in the JSON lists them.
 
+  ⭐ **`animations` carries the same pair, once something has PAIRED the two
+  sides' shots.** A bone is matched to a bone by its depth and its child count,
+  which the file states; two animations have no such shape, so the candidate's
+  `take01` and the reference's `arcs` are the same shot only because somebody
+  says they are. Two things say it and nothing else does:
+
+  ```bash
+  bun cli.ts diff candidate.json reference.json --as take01=arcs --as take02=jump
+  ```
+
+  and, with no flag, **one animation each side**, which pairs by position
+  because there is exactly one reading of which shot is which. Anything else —
+  two against two, three against one — has several, so the block is **absent**
+  rather than guessed at, and its absence is the report saying so. The heading
+  states which of the two it used:
+
+  ```
+  animations (name-agnostic) mean 1.000  over 6 measures  — the same two skeletons compared with names thrown away, paired by position: take01=arcs, the one animation each side carries
+  ```
+
+  `names` stays in the name-matched block alone, and reading the pair is the
+  whole point of the split: **agnostic 1.000 beside `names` 0.000** says the
+  shot is right and its name is the author's own. Before this existed, a
+  candidate written from a brief that withholds the animation name read `count`
+  1/1 and **0.000 on every other animation measure** — including the `duration`
+  and `key_counts` it had got exactly right
+  ([#720](https://github.com/firejune/rigc/issues/720)).
+
 An assertion or measure with nothing to compare reports its `total` as 0 and says
 so, exactly as the validator's SKIP does — a vacuous 1.000 that looks earned is
 the same false green in a different costume.
@@ -80,12 +108,20 @@ the same false green in a different costume.
 #### The measure inventory
 
 Six sections. `bones` and `slots` each carry a **second** comparison made without
-consulting a name (`sections[].nameAgnostic`), and `attachments` and `animations`
+consulting a name (`sections[].nameAgnostic`), `animations` carries one too
+wherever something has paired its shots — `--as <candidate>=<reference>`, or one
+animation each side — and `attachments` and `animations`
 each carry a **`(reported)`** block (`sections[].reported`) — measures that report
 and never gate, with no mean over them. The three figures a section can carry are
 three different comparisons and none is a part of another; `sections[].ratio` is
 the mean of the **first** column only, which is what every stored `bench.json`
 quotes.
+
+⚠️ **`animations`'s second comparison is the one block that can be absent**, and
+that is a statement rather than a gap: with two shots on each side and nothing
+pairing them there is no reading of which is which, so the report says so by
+carrying none. `sections[].nameAgnostic.pairedBy` names the pairing wherever the
+block is there.
 
 Beside the six, the file's own `skeleton` header block is compared and reported —
 `header` in the JSON, printed first because that is where it sits in the file. It
@@ -101,7 +137,7 @@ every reader of every other section would then have to handle.
 | `slots` | `count` · `names` · `order` · `bone` · `attachment` · `blend` · `color_present` | `count` · `attachment_types_by_position` · `bone_binding_shape` · `order_shape` | — |
 | `attachments` | `skins` · `count` · `names` · `type_counts` · `mesh_vertices` · `mesh_triangles` · `mesh_weighted` · `mesh_hull` · `region_size` | — | **`mesh_edges`** |
 | `constraints` | `count` · `names` · `type_counts` · `type_by_name` · `refs` | — | — |
-| `animations` | `count` · `names` · `duration` · `timeline_kinds` · `key_counts` · `curve_kinds` · `event_keys` · `draw_order` · `deform` | — | **`key_density`** · **`keys_per_timeline`** |
+| `animations` | `count` · `names` · `duration` · `timeline_kinds` · `key_counts` · `curve_kinds` · `event_keys` · `draw_order` · `deform` | over the paired shots, and only where something pairs them: `duration` · `timeline_kinds` · `key_counts` · `curve_kinds` · `draw_order` · `deform` | **`key_density`** · **`keys_per_timeline`** |
 | `events` | `names` · `payloads` | — | — |
 
 ##### Why a measure can be reported and not gating

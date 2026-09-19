@@ -46,6 +46,34 @@
  *    wrong; name-agnostic low alone is impossible, since a wrong shape cannot
  *    have right names.
  *
+ *    ⭐ `animations` carries the same second comparison, and it arrived last
+ *    because it needs something the other two do not: a PAIRING. A bone is
+ *    paired with a bone by its depth and its child count, which the file
+ *    states; two animations have no such shape to be matched on, so the
+ *    candidate's `take01` and the reference's `arcs` are the same shot only
+ *    because somebody says they are. Until that was said, every animation
+ *    measure was keyed on the name — and a candidate that followed a brief
+ *    withholding it read `count` 1/1 and **0.000 on all eight measures below**,
+ *    on a shot with the same duration, the same timeline families and the same
+ *    key counts (issue #720). That is the *gate that cannot be passed* shape on
+ *    the measuring instrument rather than on the gate.
+ *
+ *    Two things say it, and nothing else does. `--as <candidate>=<reference>`
+ *    pairs them outright; failing that, **one animation each side** pairs by
+ *    position, because there is exactly one reading of which shot is which and
+ *    no name is consulted to reach it. Anything else — two against two, three
+ *    against one — has several readings, so the block is ABSENT rather than
+ *    guessed at, which is what `DiffSection.nameAgnostic` means by *"should say
+ *    so by having none"*. ⚠️ Guessing there is the failure this file is built
+ *    against: pairing two-against-two by position would score a candidate whose
+ *    two shots are declared in the other order 0.000 across the block and call
+ *    it a measurement.
+ *
+ *    🔒 `names` stays in the name-matched block alone, and that is the whole
+ *    point of the split rather than an oversight: the pair is read as *agnostic
+ *    1.000 with `names` 0.000*, which says the shot is right and its name is the
+ *    author's own.
+ *
  * 4. **A measure that cannot gate is not in the mean.** `section.reported`
  *    carries the measures `docs/GATE.md`'s *What never gates* calls
  *    unobservable by construction — *"could any reading of the frames have
@@ -121,6 +149,18 @@ export interface DiffAgnostic {
   /** Unweighted mean of the measures below. NOT a quality score either. */
   ratio: number;
   measures: DiffMeasure[];
+  /**
+   * How the two sides were put against each other, for a block that had to
+   * choose — `animations` alone today. Absent where the correspondence is the
+   * elements themselves and there was nothing to decide.
+   *
+   * ⚠️ It is data rather than a caption. A block whose figures depend on a
+   * pairing, printed without the pairing beside it, is a measurement of
+   * something the reader cannot name — and the two pairings say different
+   * things: `--as` is the caller's claim, position is this file's reading of a
+   * one-against-one roster.
+   */
+  pairedBy?: string;
 }
 
 /**
@@ -279,12 +319,21 @@ function sectionOf(
   measures: DiffMeasure[],
   nameAgnostic?: DiffMeasure[],
   reported?: DiffMeasure[],
+  pairedBy?: string,
 ): DiffSection {
   return {
     name,
     ratio: meanRatio(measures),
     measures,
-    ...(nameAgnostic === undefined ? {} : { nameAgnostic: { ratio: meanRatio(nameAgnostic), measures: nameAgnostic } }),
+    ...(nameAgnostic === undefined
+      ? {}
+      : {
+          nameAgnostic: {
+            ratio: meanRatio(nameAgnostic),
+            measures: nameAgnostic,
+            ...(pairedBy === undefined ? {} : { pairedBy }),
+          },
+        }),
     ...(reported === undefined ? {} : { reported: { measures: reported } }),
   };
 }
@@ -905,11 +954,154 @@ function keyingTotals(f: AnimationFacts): KeyingTotals {
   return { keys: sum(f.keys), timelines: sum(f.kinds), seconds: sum(f.duration) };
 }
 
-function diffAnimations(c: Json, r: Json): DiffSection {
+/** One animation on each side, said to be the same shot. */
+export interface DiffAnimationPair {
+  candidate: string;
+  reference: string;
+}
+
+/**
+ * What a caller may tell `diffSkeletons` that neither file can say itself.
+ *
+ * Only the animation pairing today, and it is an INPUT in the sense
+ * `bonedist`'s correspondence file is one: two skeletons cannot derive which of
+ * their shots are the same shot, so a value worked out here would be a guess
+ * reported as a measurement.
+ */
+export interface DiffOptions {
+  /** `--as <candidate>=<reference>`, in the order the caller stated them. */
+  animationPairs?: readonly DiffAnimationPair[];
+}
+
+/**
+ * The pairing used for `animations.agnostic.*`, or `null` when there is none.
+ *
+ * ⚠️ A stated pair naming an animation a side does not have is DROPPED and said
+ * so in `pairedBy`, rather than silently making the block narrower. `cmdDiff`
+ * refuses one by name before this is reached, so through the CLI the branch is
+ * unreachable; it exists because this module is exported and a caller of the
+ * API can state one.
+ */
+function pairAnimations(
+  a: AnimationFacts,
+  b: AnimationFacts,
+  stated: readonly DiffAnimationPair[],
+): { pairs: DiffAnimationPair[]; pairedBy: string } | null {
+  const spell = (p: DiffAnimationPair): string => `${p.candidate}=${p.reference}`;
+  if (stated.length > 0) {
+    const usable = stated.filter((p) => a.duration.has(p.candidate) && b.duration.has(p.reference));
+    if (usable.length === 0) return null;
+    const dropped = stated.filter((p) => !usable.includes(p));
+    return {
+      pairs: [...usable],
+      pairedBy:
+        `paired by --as: ${usable.map(spell).join(', ')}` +
+        (dropped.length === 0 ? '' : `; ${dropped.map(spell).join(', ')} named an animation a side does not have and was dropped`),
+    };
+  }
+  if (a.names.length === 1 && b.names.length === 1) {
+    const pair = { candidate: a.names[0], reference: b.names[0] };
+    return { pairs: [pair], pairedBy: `paired by position: ${spell(pair)}, the one animation each side carries` };
+  }
+  return null;
+}
+
+/**
+ * `f` restricted to the animations `label` names, with each one's name replaced
+ * by the label — `#0` for the first pair, `#1` for the second.
+ *
+ * That substitution is the whole of what makes the block name-agnostic: the
+ * measures below are the name-matched ones run again over facts whose keys are
+ * positions in the pairing. Everything else about them — the tolerance, the
+ * denominators, the histogram — is unchanged, which is what lets the two blocks
+ * be read against each other.
+ */
+function underLabels(f: AnimationFacts, label: ReadonlyMap<string, string>): AnimationFacts {
+  const keyed = <T>(m: Map<string, T>): Map<string, T> => {
+    const out = new Map<string, T>();
+    for (const [anim, v] of m) {
+      const to = label.get(anim);
+      if (to !== undefined) out.set(to, v);
+    }
+    return out;
+  };
+  // `kinds`, `keys` and `curves` are keyed `<anim>|<rest>`, so only the head is
+  // relabelled and the tail — the timeline's kind, the curve's shape — is what
+  // the histogram then intersects on.
+  const prefixed = (m: Map<string, number>): Map<string, number> => {
+    const out = new Map<string, number>();
+    for (const [k, v] of m) {
+      const bar = k.indexOf('|');
+      const to = label.get(k.slice(0, bar));
+      if (to === undefined) continue;
+      const id = `${to}${k.slice(bar)}`;
+      out.set(id, (out.get(id) ?? 0) + v);
+    }
+    return out;
+  };
+  return {
+    names: [...label.values()],
+    duration: keyed(f.duration),
+    kinds: prefixed(f.kinds),
+    keys: prefixed(f.keys),
+    curves: prefixed(f.curves),
+    events: keyed(f.events),
+    hasDrawOrder: keyed(f.hasDrawOrder),
+    hasDeform: keyed(f.hasDeform),
+  };
+}
+
+/**
+ * The six measures of `animations.agnostic.*`.
+ *
+ * ⛔ `names` is not among them, by construction — a block that threw the names
+ * away cannot then compare them. ⛔ Neither is `count`, which `bones` and
+ * `slots` do carry, and the difference is what the block is OVER: those two
+ * compare whole rosters, so their agnostic half has the same subject as their
+ * name-matched half and restates the count for a reader with one block open.
+ * This one is over the PAIRS. A `count` in it would either restate the roster
+ * figure — a different subject under the same heading — or count the pairs,
+ * which measures the flag rather than the two rigs. The roster figure is
+ * `animations.count`, and it is already name-free.
+ */
+function agnosticAnimationMeasures(a: AnimationFacts, b: AnimationFacts, pairs: readonly DiffAnimationPair[]): DiffMeasure[] {
+  const slot = (i: number): string => `#${i}`;
+  const ca = underLabels(a, new Map(pairs.map((p, i) => [p.candidate, slot(i)])));
+  const rb = underLabels(b, new Map(pairs.map((p, i) => [p.reference, slot(i)])));
+  return [
+    agreement(
+      'animations.agnostic.duration',
+      'each paired animation runs as long (last key time, within one frame)',
+      ca.duration,
+      rb.duration,
+      (x, y) => Math.abs(x - y) <= FRAME,
+    ),
+    histogram('animations.agnostic.timeline_kinds', 'the same timelines exist in the paired animations', ca.kinds, rb.kinds),
+    histogram('animations.agnostic.key_counts', 'those timelines carry as many keys', ca.keys, rb.keys),
+    histogram('animations.agnostic.curve_kinds', 'as many linear / stepped / bezier keys', ca.curves, rb.curves),
+    agreement(
+      'animations.agnostic.draw_order',
+      'a draw-order timeline is present or absent alike',
+      ca.hasDrawOrder,
+      rb.hasDrawOrder,
+      (x, y) => x === y,
+    ),
+    agreement(
+      'animations.agnostic.deform',
+      'a deform timeline is present or absent alike',
+      ca.hasDeform,
+      rb.hasDeform,
+      (x, y) => x === y,
+    ),
+  ];
+}
+
+function diffAnimations(c: Json, r: Json, pairsStated: readonly DiffAnimationPair[]): DiffSection {
   const a = animationFacts(c);
   const b = animationFacts(r);
   const at = keyingTotals(a);
   const bt = keyingTotals(b);
+  const paired = pairAnimations(a, b, pairsStated);
   const perSecond = (t: KeyingTotals): number => (t.seconds === 0 ? 0 : t.keys / t.seconds);
   const perTimeline = (t: KeyingTotals): number => (t.timelines === 0 ? 0 : t.keys / t.timelines);
   return sectionOf('animations', [
@@ -929,7 +1121,14 @@ function diffAnimations(c: Json, r: Json): DiffSection {
     agreement('animations.draw_order', 'a draw-order timeline is present or absent alike', a.hasDrawOrder, b.hasDrawOrder, (x, y) => x === y),
     agreement('animations.deform', 'a deform timeline is present or absent alike', a.hasDeform, b.hasDeform, (x, y) => x === y),
   ],
-  undefined,
+  // ── the same two skeletons' shots, paired rather than named (issue #720) ──
+  //
+  // Absent unless something pairs them — see `pairAnimations` and the header's
+  // point 3. `undefined` and not `[]`: a block with no measures in it prints a
+  // vacuous `mean 1.000 over 0 measures`, which is the false green this whole
+  // file is built to refuse, and `movedAgnosticMeasures` cannot tell it from a
+  // block that agreed about everything.
+  paired === null ? undefined : agnosticAnimationMeasures(a, b, paired.pairs),
   // ── reported (issue #20) ────────────────────────────────────────────────
   //
   // 🔍 What #20 asked and what was actually wrong. The issue proposed making key
@@ -981,7 +1180,8 @@ function diffAnimations(c: Json, r: Json): DiffSection {
         `(${at.timelines} vs ${bt.timelines}), compared as min/max at ${RATE_PLACES} decimal places. Read beside ` +
         '`key_density`: this one alone moving means the same keying spread over a different number of timelines.',
     ),
-  ]);
+  ],
+  paired?.pairedBy);
 }
 
 function eventFacts(root: Json): Map<string, string> {
@@ -1168,11 +1368,19 @@ function orientation(root: Json): Record<string, number> {
   };
 }
 
-export function diffSkeletons(candidate: unknown, reference: unknown): DiffReport {
+export function diffSkeletons(candidate: unknown, reference: unknown, options?: DiffOptions): DiffReport {
   const c = isObj(candidate) ? candidate : {};
   const r = isObj(reference) ? reference : {};
+  const animationPairs = options?.animationPairs ?? [];
   return {
-    sections: [diffBones(c, r), diffSlots(c, r), diffAttachments(c, r), diffConstraints(c, r), diffAnimations(c, r), diffEvents(c, r)],
+    sections: [
+      diffBones(c, r),
+      diffSlots(c, r),
+      diffAttachments(c, r),
+      diffConstraints(c, r),
+      diffAnimations(c, r, animationPairs),
+      diffEvents(c, r),
+    ],
     header: diffHeader(c, r),
     candidate: orientation(c),
     reference: orientation(r),
@@ -1466,8 +1674,18 @@ export function diffLines(report: DiffReport, labels: { candidate: string; refer
   );
   lines.push(...measureLines(report.header.measures, 'skeleton.'.length));
   lines.push('');
-  // Wide enough for `<longest section> (name-agnostic)`, so that a section's two
-  // headings line their figures up under each other and read as a pair.
+  // Wide enough for `bones (name-agnostic)` and `animations (reported)`, both
+  // exactly 21, so that most of a section's headings line their figures up
+  // under each other and read as a pair.
+  //
+  // ⚠️ Two headings are longer and push their own figure right instead:
+  // `attachments (reported)`, which has done so since that block existed, and
+  // `animations (name-agnostic)` (issue #720). Widening the column is the
+  // obvious repair and it is the wrong one — it moves every heading line of
+  // every report, and those lines are quoted verbatim in `docs/LADDER.md` and
+  // in the landed run records under `bench/runs/`, which are sealed. A
+  // cosmetic alignment is not worth a byte change in every transcript already
+  // written, and the overflow is visible rather than silent.
   const head = (label: string, ratio: number, n: number): string =>
     `  ${label.padEnd(21)} mean ${fmt(ratio)}  over ${n} measures`;
   for (const section of report.sections) {
@@ -1478,7 +1696,9 @@ export function diffLines(report: DiffReport, labels: { candidate: string; refer
       lines.push('');
       lines.push(
         `${head(`${section.name} (name-agnostic)`, agnostic.ratio, agnostic.measures.length)}` +
-          '  — the same two skeletons compared with names thrown away',
+          '  — the same two skeletons compared with names thrown away' +
+          // The pairing is part of the figure, not decoration: see `DiffAgnostic.pairedBy`.
+          (agnostic.pairedBy === undefined ? '' : `, ${agnostic.pairedBy}`),
       );
       lines.push(...measureLines(agnostic.measures, section.name.length + '.agnostic.'.length));
     }
@@ -1505,6 +1725,12 @@ export function diffLines(report: DiffReport, labels: { candidate: string; refer
   lines.push('  keyed on names, and a candidate is entitled to its own. They are two');
   lines.push('  comparisons, not two halves of one: name-agnostic 1.000 beside a low');
   lines.push('  name-matched figure means the shape is right and the vocabulary differs.');
+  lines.push('');
+  lines.push('  `animations` carries the same pair, and only once something has PAIRED the two');
+  lines.push('  sides\' shots: `--as <candidate>=<reference>`, or one animation each side, which');
+  lines.push('  pairs by position. With neither there is no reading of which shot is which, so');
+  lines.push('  the block is absent rather than guessed — and its absence beside `names` 0.000');
+  lines.push('  is the report saying the candidate named its shots itself and nothing said how.');
   lines.push('');
   lines.push('  `skeleton` is the file\'s own header block and reports two measures for the stage.');
   lines.push('  It has no mean for the reason a `(reported)` block never does, and it never');

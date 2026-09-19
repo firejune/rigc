@@ -178,8 +178,10 @@ import {
   VALUE_EMITTED_GRID,
   valueFigures,
   valueTolerance,
+  type DiffAnimationPair,
   type DiffMeasure,
   type DiffReport,
+  type DiffSection,
 } from './src/diff.ts';
 import { copyAtlasPages } from './src/emit.ts';
 import {
@@ -1815,11 +1817,137 @@ const DIFF_CASES: DiffCase[] = [
       delete header.height;
     },
   },
+  // --- D42-D44: the paired `animations` block, one measure at a time (#720) --
+  //
+  // All three take the `mesh` fixture and none of them could take the other
+  // one: `6-arcs-pro` carries exactly one animation, so the two sides pair by
+  // position with nothing said, which is what puts an `animations.agnostic.*`
+  // block in the report at all. On `3-timing-and-spacing-ess` there is no block
+  // for an edit to move, and a case written against it would pass while
+  // measuring nothing.
+  //
+  // ⭐ These do NOT rename anything, and that is the point of where they sit.
+  // The pairing controls in the identity phase ask *does a renamed copy still
+  // read 1.000* — the feature. These ask *does the block MOVE when the data
+  // does*, which is what stops it being a second name for 1.000. So both
+  // blocks' figures fall together here and `animations.names` stays 1.000
+  // throughout, because nothing touched a name.
+  {
+    name: 'D42_run_the_one_shot_a_second_longer',
+    fixture: 'mesh',
+    why:
+      "the pairing's own duration measure, and the cleanest of the three: a key time is the only thing it reads, " +
+      'so moving the latest key later moves `duration` in both blocks and leaves every count where it was. The ' +
+      'reported `key_density` travels with it and `keys_per_timeline` does not, which is the pair those two exist ' +
+      'to separate — the same keys over more seconds is a thinner shot, and the same keys in the same timelines is ' +
+      'not a different keying at all',
+    expect: ['animations.duration'],
+    expectAgnostic: ['animations.agnostic.duration'],
+    expectReported: ['animations.key_density'],
+    mutate: (j) => {
+      const anim = theOneShotOf(j);
+      let latest: any = null;
+      for (const key of timedKeysOf(anim)) if (latest === null || key.time > latest.time) latest = key;
+      if (latest === null) throw new Error('the fixture keys no time at all — the case would prove nothing');
+      latest.time += 1;
+    },
+  },
+  {
+    name: 'D43_key_one_bone_scale_where_it_keyed_rotation',
+    fixture: 'mesh',
+    why:
+      'a timeline KIND, moved without moving a key. `timeline_kinds` and `key_counts` are two histograms over the ' +
+      'same bucket — `<kind>.<timeline name>`, with the target dropped — so an edit that moves a timeline from one ' +
+      'bucket to another necessarily moves both, and stating that here is honest where pretending to isolate it ' +
+      'would need an edit no file could carry. What it does isolate is the other two: `curve_kinds` counts key ' +
+      'shapes wherever they sit and both reported rates are totals, so all three stay at 1.000 while the same ' +
+      'keys are declared under a different timeline',
+    expect: ['animations.timeline_kinds', 'animations.key_counts'],
+    expectAgnostic: ['animations.agnostic.timeline_kinds', 'animations.agnostic.key_counts'],
+    expectReported: [],
+    mutate: (j) => {
+      const anim = theOneShotOf(j);
+      for (const timelines of Object.values(anim.bones ?? {}) as any[]) {
+        if (!Array.isArray(timelines.rotate) || Array.isArray(timelines.scale)) continue;
+        timelines.scale = timelines.rotate;
+        delete timelines.rotate;
+        return;
+      }
+      throw new Error('no bone keys `rotate` without also keying `scale` — the case would prove nothing');
+    },
+  },
+  {
+    name: 'D44_declare_one_key_under_a_timeline_it_was_not_in',
+    fixture: 'mesh',
+    why:
+      'a key count and nothing else, which is reachable only by MOVING a key rather than adding or dropping one. ' +
+      'Every other edit to a count drags something with it — a new key is a new curve shape, a dropped key is a ' +
+      'shorter shot or a missing one — while a key handed from one of a bone\'s timelines to another leaves the ' +
+      'key total, the timeline total, every curve shape and the last key time exactly as they were. So this is the ' +
+      'narrowest statement the block can make: `key_counts` alone, in both halves, and the two reported rates ' +
+      'still 1.000 beside it',
+    expect: ['animations.key_counts'],
+    expectAgnostic: ['animations.agnostic.key_counts'],
+    expectReported: [],
+    mutate: (j) => {
+      const anim = theOneShotOf(j);
+      for (const timelines of Object.values(anim.bones ?? {}) as any[]) {
+        if (!Array.isArray(timelines.rotate) || timelines.rotate.length < 2) continue;
+        if (!Array.isArray(timelines.translatex)) continue;
+        timelines.translatex.push(timelines.rotate.pop());
+        return;
+      }
+      throw new Error('no bone keys both `rotate` (twice over) and `translatex` — the case would prove nothing');
+    },
+  },
 ];
+
+/**
+ * The single animation of a one-shot fixture, refusing anything else.
+ *
+ * The refusal is the case's own precondition: a fixture that grew a second
+ * animation would stop pairing by position, the block the three cases above
+ * measure would stop being emitted, and each of them would pass while asserting
+ * that nothing moved.
+ */
+function theOneShotOf(j: any): any {
+  const names = Object.keys(j.animations ?? {});
+  if (names.length !== 1) {
+    throw new Error(`fixture carries ${names.length} animation(s) where pairing by position needs exactly one`);
+  }
+  return j.animations[names[0]];
+}
+
+/** Every keyed object under a node, found by carrying a `time` rather than by path. */
+function timedKeysOf(node: any): any[] {
+  const out: any[] = [];
+  const walk = (v: any): void => {
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+      return;
+    }
+    if (v === null || typeof v !== 'object') return;
+    if (typeof v.time === 'number') out.push(v);
+    for (const x of Object.values(v)) walk(x);
+  };
+  walk(node);
+  return out;
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-/** How many name-agnostic measures the two split sections carry between them. */
+/** How many name-agnostic measures the two always-split sections carry between them. */
 const DIFF_AGNOSTIC_MEASURES = 9;
+/**
+ * How many `animations` carries, when something has paired the two sides' shots.
+ *
+ * ⚠️ A second constant rather than a bigger first one, because this block is
+ * CONDITIONAL where the other two are not (issue #720): it is emitted only where
+ * `--as` pairs the animations or each side has exactly one. Folding the two
+ * figures into one would make the sum reachable two ways — nine plus six on a
+ * one-shot fixture, and fifteen on a two-shot fixture whose block wrongly
+ * appeared — and a control cannot tell those apart from a total.
+ */
+const DIFF_ANIMATION_AGNOSTIC_MEASURES = 6;
 /**
  * How many `(reported)` measures the report carries in total — the section
  * blocks and the `skeleton` header block together.
@@ -1853,19 +1981,36 @@ function runDiffIdentityControls(label: string, text: string): number {
   // name-agnostic reports have to exist and have to be 1.000 on identity too. A
   // section that quietly stopped emitting one would still pass the control
   // above, because a report with no measures has nothing below 1.000 in it.
+  // ⚠️ What is expected here is read off the FIXTURE and not stated per label
+  // (issue #720). `animations` carries a name-agnostic block only where
+  // something pairs the two sides' shots, and on an identity comparison that is
+  // a file with exactly one animation in it — which `6-arcs-pro` is and
+  // `3-timing-and-spacing-ess` is not. A figure written per label would say the
+  // same thing twice and stop being true the day either fixture changed; this
+  // asks the file.
+  const shots = Object.keys((reference.animations ?? {}) as Record<string, unknown>).length;
+  const pairs = shots === 1;
+  const wantSections = pairs ? ['bones', 'slots', 'animations'] : ['bones', 'slots'];
+  const wantMeasures = DIFF_AGNOSTIC_MEASURES + (pairs ? DIFF_ANIMATION_AGNOSTIC_MEASURES : 0);
   const split = identity.sections.filter((s) => s.nameAgnostic !== undefined);
   const agnosticDrift = movedAgnosticMeasures(identity);
   const agnosticCount = split.reduce((n, s) => n + (s.nameAgnostic?.measures.length ?? 0), 0);
-  if (split.length === 2 && agnosticCount === DIFF_AGNOSTIC_MEASURES && agnosticDrift.length === 0) {
+  const sectionsFound = split.map((s) => s.name);
+  if (
+    sectionsFound.join(', ') === wantSections.join(', ') &&
+    agnosticCount === wantMeasures &&
+    agnosticDrift.length === 0
+  ) {
     console.log(
-      `  PASS  CONTROL_NAME_AGNOSTIC_REPORTS_EXIST_AND_ARE_ONE [${label}]  (${split.map((s) => s.name).join(', ')}; ${agnosticCount} measures, all 1.000)`,
+      `  PASS  CONTROL_NAME_AGNOSTIC_REPORTS_EXIST_AND_ARE_ONE [${label}]  (${sectionsFound.join(', ')}; ${agnosticCount} measures, all 1.000; ${shots} animation(s) in the fixture)`,
     );
   } else {
     bad++;
     console.log(
-      `  FAIL  CONTROL_NAME_AGNOSTIC_REPORTS_EXIST_AND_ARE_ONE [${label}]: sections [${split.map((s) => s.name).join(', ')}] ` +
+      `  FAIL  CONTROL_NAME_AGNOSTIC_REPORTS_EXIST_AND_ARE_ONE [${label}]: sections [${sectionsFound.join(', ')}] ` +
         `carrying ${agnosticCount} measure(s); below 1.000: [${agnosticDrift.join(', ')}]  ` +
-        `(want: bones and slots, ${DIFF_AGNOSTIC_MEASURES} measures, none below 1.000)`,
+        `(want: ${wantSections.join(' and ')}, ${wantMeasures} measures, none below 1.000 — the fixture has ` +
+        `${shots} animation(s), so the paired \`animations\` block ${pairs ? 'is' : 'is not'} among them)`,
     );
   }
 
@@ -1934,6 +2079,214 @@ function runDiffIdentityControls(label: string, text: string): number {
         `below 1.000: [${[...bareDrift, ...bareReported].join(', ')}]; stage_present ` +
         `${present ? `${present.matched}/${present.total}` : 'absent'}, stage_box ${box ? `${box.matched}/${box.total}` : 'absent'}  ` +
         '(want: nothing below 1.000, stage_present counted 1/1 rather than 0/0, and stage_box vacuous at 0/0)',
+    );
+  }
+  return bad;
+}
+
+/**
+ * The four controls over the animation PAIRING, run once rather than per
+ * fixture (issue #720).
+ *
+ * They sit in the identity phase because that is what they are: a renamed copy
+ * of a real export is the same rig under another vocabulary, so the
+ * name-agnostic figures have to come back 1.000 exactly as `diff X X` does, and
+ * the name-matched ones have to come back 0. What makes them a separate
+ * function is that each needs a fixture with a PARTICULAR number of animations
+ * — one to pair by position, two to pair with `--as` and two to have nothing
+ * pair them — so running them under both labels would run two of the three
+ * against a fixture that cannot state their question.
+ *
+ * ⭐ The third is the one that decides whether this feature is a measurement or
+ * a flatterer. Pairing two against two by position would make it read 1.000
+ * here, which is why the block is absent instead — and the crossed `--as` in
+ * the second shows the same thing from the other side: pair the shots wrongly
+ * and the figures fall, so the block is reading the pairing it was given rather
+ * than agreeing with itself.
+ */
+function runDiffPairingControls(texts: Record<DiffFixture, string>): number {
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  /** The fixture with every animation renamed, and the names it had. */
+  const renamedShots = (text: string): { skeleton: Record<string, unknown>; was: string[]; now: string[] } => {
+    const skeleton = JSON.parse(text) as Record<string, unknown>;
+    const animations = (skeleton.animations ?? {}) as Record<string, unknown>;
+    const was = Object.keys(animations);
+    const now = was.map((_, i) => `shot0${i + 1}`);
+    skeleton.animations = Object.fromEntries(was.map((name, i) => [now[i], animations[name]]));
+    return { skeleton, was, now };
+  };
+  const animationsOf = (report: DiffReport): DiffSection =>
+    report.sections.find((s) => s.name === 'animations') ?? { name: 'animations', ratio: 0, measures: [] };
+  const ratioOf = (section: DiffSection, id: string): number | null =>
+    section.measures.find((m) => m.id === id)?.ratio ?? null;
+
+  // --- one animation each side: paired by position, with no flag at all -----
+  {
+    const one = renamedShots(texts.mesh);
+    const report = diffSkeletons(one.skeleton, JSON.parse(texts.mesh));
+    const section = animationsOf(report);
+    const agnostic = section.nameAgnostic;
+    const names = ratioOf(section, 'animations.names');
+    const matchedZero = section.measures.filter((m) => m.ratio === 0).map((m) => m.id);
+    const probes = [
+      ...(one.was.length === 1 ? [] : [`the fixture has ${one.was.length} animation(s), so nothing here pairs by position`]),
+      ...(agnostic === undefined ? ['the `animations` section carries no name-agnostic block at all'] : []),
+      ...(agnostic === undefined
+        ? []
+        : agnostic.measures.filter((m) => m.ratio < 1).map((m) => `${m.id} reads ${m.ratio.toFixed(3)} (${m.matched}/${m.total})`)),
+      ...(agnostic?.measures.length === DIFF_ANIMATION_AGNOSTIC_MEASURES
+        ? []
+        : [`the block carries ${agnostic?.measures.length ?? 0} measure(s) where ${DIFF_ANIMATION_AGNOSTIC_MEASURES} is the block`]),
+      ...(names === 0 ? [] : [`\`animations.names\` reads ${names === null ? 'nothing' : names.toFixed(3)} where a renamed copy must read 0`]),
+      ...(agnostic?.pairedBy === undefined ? ['the block says nothing about how it paired the two sides'] : []),
+    ];
+    const held = probes.length === 0;
+    say(
+      'CONTROL_A_RENAMED_COPY_OF_A_REAL_EXPORT_PAIRS_BY_POSITION_AND_READS_ONE_WITH_ITS_NAMES_AT_ZERO',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `6-arcs-pro with ${JSON.stringify(one.was)} renamed to ${JSON.stringify(one.now)}: the name-agnostic block ` +
+          `reads ${agnostic?.ratio.toFixed(3) ?? 'nothing'} over its ${agnostic?.measures.length ?? 0} measures ` +
+          `(${agnostic?.pairedBy ?? 'no pairing stated'}) while \`animations.names\` reads 0.000 and ` +
+          `${matchedZero.length} name-matched measure(s) sit at zero beside it: ${matchedZero.join(', ')}`,
+        (count) => `${count} thing(s) this control requires did not hold:`,
+      ),
+      'a candidate authored from a brief that withholds the animation name scored 0.000 on every animation measure ' +
+        'but `count` — on a shot it had got right — so the instrument, not the rig, was what could not be passed ' +
+        '(issue #720)',
+    );
+  }
+
+  // --- two each side: the flag is honoured, and pairing them wrongly costs --
+  {
+    const two = renamedShots(texts.default);
+    const reference = JSON.parse(texts.default) as Record<string, unknown>;
+    const asPairs = (pairs: DiffAnimationPair[]): DiffSection =>
+      animationsOf(diffSkeletons(two.skeleton, reference, { animationPairs: pairs }));
+    const straight = asPairs(two.now.map((now, i) => ({ candidate: now, reference: two.was[i] })));
+    // The same two shots paired the other way round. It is a control on the
+    // INPUT, in `BD04`'s sense one instrument over: a flag that was read and
+    // then ignored would leave the straight pairing green and prove nothing.
+    const crossed = asPairs(two.now.map((now, i) => ({ candidate: now, reference: two.was[two.was.length - 1 - i] })));
+    const drifted = crossed.nameAgnostic?.measures.filter((m) => m.ratio < 1).map((m) => m.id) ?? [];
+    const probes = [
+      ...(two.was.length === 2 ? [] : [`the fixture has ${two.was.length} animation(s) where this control needs two`]),
+      ...(straight.nameAgnostic === undefined ? ['the straight pairing produced no name-agnostic block'] : []),
+      ...(straight.nameAgnostic?.measures ?? [])
+        .filter((m) => m.ratio < 1)
+        .map((m) => `the straight pairing reads ${m.id} at ${m.ratio.toFixed(3)} where the two shots are the same data`),
+      ...(crossed.nameAgnostic === undefined ? ['the crossed pairing produced no name-agnostic block'] : []),
+      ...(drifted.length > 0
+        ? []
+        : ['the crossed pairing reads 1.000 on every measure, so the block is not reading the pairing it was given']),
+      ...(straight.ratio === crossed.ratio
+        ? []
+        : ['the two pairings moved the NAME-MATCHED figure, which no pairing may touch']),
+    ];
+    const held = probes.length === 0;
+    say(
+      'CONTROL_AN_ANIMATION_PAIRING_IS_HONOURED_AND_THE_SAME_SHOTS_PAIRED_THE_OTHER_WAY_ROUND_ARE_NOT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `3-timing-and-spacing-ess with ${JSON.stringify(two.was)} renamed to ${JSON.stringify(two.now)}: paired ` +
+          `straight the block reads ${straight.nameAgnostic?.ratio.toFixed(3) ?? 'nothing'} over ` +
+          `${straight.nameAgnostic?.measures.length ?? 0} measures (${straight.nameAgnostic?.pairedBy ?? 'none'}); ` +
+          `paired the other way round it reads ${crossed.nameAgnostic?.ratio.toFixed(3) ?? 'nothing'} and ` +
+          `${drifted.length} measure(s) fall: ${drifted.join(', ')}. The name-matched figure is ` +
+          `${straight.ratio.toFixed(3)} either way`,
+        (count) => `${count} thing(s) this control requires did not hold:`,
+      ),
+      'a pairing is an input — two skeletons cannot derive which of their shots are the same shot — and an input ' +
+        'that is quietly ignored leaves every other case on this page green',
+    );
+  }
+
+  // --- two each side and nothing pairing them: no block, not a vacuous one --
+  {
+    const two = renamedShots(texts.default);
+    const report = diffSkeletons(two.skeleton, JSON.parse(texts.default));
+    const section = animationsOf(report);
+    const agnosticElsewhere = report.sections.filter((s) => s.nameAgnostic !== undefined).map((s) => s.name);
+    const probes = [
+      ...(two.was.length === 2 ? [] : [`the fixture has ${two.was.length} animation(s) where this control needs two`]),
+      ...(section.nameAgnostic === undefined
+        ? []
+        : [
+            `the \`animations\` section carries a name-agnostic block reading ` +
+              `${section.nameAgnostic.ratio.toFixed(3)} (${section.nameAgnostic.pairedBy ?? 'no pairing stated'}) on ` +
+              'two shots nothing paired — which is a figure invented out of declaration order',
+          ]),
+      ...(agnosticElsewhere.join(', ') === 'bones, slots'
+        ? []
+        : [`the sections carrying a name-agnostic block are [${agnosticElsewhere.join(', ')}] and not [bones, slots]`]),
+    ];
+    const held = probes.length === 0;
+    say(
+      'CONTROL_TWO_SHOTS_WITH_NOTHING_TO_PAIR_THEM_GET_NO_BLOCK_RATHER_THAN_A_VACUOUS_ONE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `3-timing-and-spacing-ess renamed to ${JSON.stringify(two.now)} against itself, with no pairing stated: the ` +
+          `sections carrying a name-agnostic block are [${agnosticElsewhere.join(', ')}], and \`animations\` is not ` +
+          'among them — two against two has several readings, and the block says so by having none',
+        (count) => `${count} thing(s) this control requires did not hold:`,
+      ),
+      'the cheap way to make the control above green is to pair by declaration order whatever the rosters are, ' +
+        'which would score a candidate that declares its two shots in the other order 0.000 across the block and ' +
+        'call that a measurement',
+    );
+  }
+
+  // --- the written report, under the naming the header contract states ------
+  //
+  // ⚠️ The prefix is derived from the section's own name rather than typed, for
+  // the reason the contract gives it: `<section>.agnostic.*` is a rule about
+  // every such block and not a spelling for this one.
+  {
+    const one = renamedShots(texts.mesh);
+    const report = diffSkeletons(one.skeleton, JSON.parse(texts.mesh));
+    const written = JSON.parse(JSON.stringify({ candidatePath: 'a', referencePath: 'b', ...report })) as DiffReport;
+    const unpaired = diffSkeletons(one.skeleton, JSON.parse(texts.mesh), {
+      animationPairs: [{ candidate: 'no such shot', reference: 'no such shot either' }],
+    });
+    const section = animationsOf(written);
+    const misnamed = (section.nameAgnostic?.measures ?? [])
+      .filter((m) => !m.id.startsWith(`${section.name}.agnostic.`))
+      .map((m) => m.id);
+    const nameMatchedMoved = JSON.stringify(section.measures) !== JSON.stringify(animationsOf(unpaired).measures);
+    const probes = [
+      ...(section.nameAgnostic === undefined ? ['the written report carries no name-agnostic block for `animations`'] : []),
+      ...misnamed.map((id) => `${id} is not under \`${section.name}.agnostic.\``),
+      ...(section.nameAgnostic?.pairedBy === undefined ? ['`pairedBy` did not survive being written out'] : []),
+      ...(nameMatchedMoved ? ['the name-matched measures differ between a paired report and an unpaired one'] : []),
+      ...(animationsOf(unpaired).nameAgnostic === undefined
+        ? []
+        : ['a pairing naming no animation on either side still produced a block'] ),
+    ];
+    const held = probes.length === 0;
+    say(
+      'CONTROL_THE_WRITTEN_REPORT_CARRIES_THE_PAIRED_BLOCK_UNDER_THE_NAMING_THE_CONTRACT_STATES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `\`--json\` carries ${section.nameAgnostic?.measures.length ?? 0} measure(s), every id under ` +
+          `\`${section.name}.agnostic.\` (${(section.nameAgnostic?.measures ?? []).map((m) => m.id.slice(`${section.name}.agnostic.`.length)).join(', ')}), ` +
+          `with \`pairedBy\` "${section.nameAgnostic?.pairedBy ?? ''}" beside them; the name-matched measures are ` +
+          'the same list a report with no pairing writes, and a pairing naming no animation on either side ' +
+          'produces no block at all',
+        (count) => `${count} thing(s) this control requires did not hold:`,
+      ),
+      'a spread once quietly overwrote the file paths in this very report (CLAUDE.md, *Verification*), so what a ' +
+        'block is called in the JSON is asserted here rather than read off the console table',
     );
   }
   return bad;
@@ -2017,7 +2370,15 @@ function runDiffSuite(tally: RunTally): number | null {
   bad += tally.partOf(
     'diff',
     'identity',
-    () => runDiffIdentityControls('3-timing-and-spacing-ess', texts.default) + runDiffIdentityControls('6-arcs-pro', texts.mesh),
+    () =>
+      runDiffIdentityControls('3-timing-and-spacing-ess', texts.default) +
+      runDiffIdentityControls('6-arcs-pro', texts.mesh) +
+      // In this phase and not a third one: a renamed copy against its original
+      // is an identity comparison whose vocabulary moved, which is the question
+      // this phase already asks. A third bracket would also need the summary to
+      // state a third figure, and the summary's sentence already covers these —
+      // they are name-agnostic controls over both fixtures.
+      runDiffPairingControls(texts),
   );
   bad += tally.partOf('diff', 'measure', () => runDiffMeasureControls(texts));
   return bad;
@@ -34621,6 +34982,74 @@ function runCliSuite(): number {
     );
   }
 
+  // --- CLI84-CLI85: `diff --as`, the flag and the heading it moves (#720) ----
+  //
+  // The pair is one flag seen from its two ends. `CLI84` is what a caller who
+  // spells it like `check`'s — one bare name — is told, and `CLI85` is what the
+  // report then prints when the pairing is right. Both run the real subprocess
+  // for `CLI71`'s reason: the wording an agent meets is the printed page, not
+  // the string in the source.
+  //
+  // ⛔ No corpus: `gallery/walk` is the one shipped example with exactly ONE
+  // animation, which is what makes the two sides pair by position with no flag
+  // at all — so the second case measures the heading the feature adds rather
+  // than the flag that is optional beside it.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'rigc-diff-as-'));
+    const built = join(dir, 'built');
+    const build = runCli(['build', '--rig', 'gallery/walk/rig.json', '--motion', 'gallery/walk/motion.json', '--out', built]);
+    const skeletonPath = join(built, 'skeleton.json');
+    const renamedPath = join(dir, 'renamed.json');
+    let was: string[] = [];
+    let now: string[] = [];
+    if (build.status === 0 && existsSync(skeletonPath)) {
+      const skeleton = JSON.parse(readFileSync(skeletonPath, 'utf8')) as Record<string, unknown>;
+      const animations = (skeleton.animations ?? {}) as Record<string, unknown>;
+      was = Object.keys(animations);
+      now = was.map((_, i) => `shot0${i + 1}`);
+      skeleton.animations = Object.fromEntries(was.map((name, i) => [now[i], animations[name]]));
+      writeFileSync(renamedPath, `${JSON.stringify(skeleton, null, 2)}\n`);
+    }
+    const ready = build.status === 0 && was.length === 1;
+
+    const bare = runCli(['diff', renamedPath, skeletonPath, '--as', now[0] ?? 'shot01']);
+    const bareLine = bare.stderr.split('\n')[0];
+    say(
+      'CLI84_A_ONE_NAME_AS_IS_REFUSED_WITH_THE_PAIR_IT_TAKES_AND_THE_ROSTERS_EITHER_SIDE',
+      ready &&
+        bare.status === 2 &&
+        bareLine.includes('<candidate>=<reference>') &&
+        bareLine.includes(now[0]) &&
+        bareLine.includes(was[0]),
+      ready
+        ? `exit=${String(bare.status)} stderr=${JSON.stringify(bareLine.slice(0, 160))}`
+        : `the fixture build exited ${String(build.status)} with ${was.length} animation(s), so this case could not run`,
+      '`check --as <name>` takes one name and `diff --as` cannot: it compares two skeletons, either of which may ' +
+        'have its own name for the shot, so a caller who carries the habit over from one command to the other has ' +
+        'to be told which spelling this one takes and what each side is called',
+    );
+
+    const paired = runCli(['diff', renamedPath, skeletonPath]);
+    const heading =
+      paired.stdout.split('\n').find((line) => line.trim().startsWith('animations (name-agnostic)')) ?? '';
+    const namesLine = paired.stdout.split('\n').find((line) => /^\s+\S+\s+names\s/.test(line) && line.includes('0.000')) ?? '';
+    say(
+      'CLI85_THE_HUMAN_REPORT_HEADS_THE_PAIRED_BLOCK_AND_SAYS_HOW_IT_PAIRED',
+      ready &&
+        paired.status === 0 &&
+        heading.includes('mean 1.000') &&
+        heading.includes('paired by position') &&
+        heading.includes(`${now[0]}=${was[0]}`) &&
+        namesLine !== '',
+      ready
+        ? `exit=${String(paired.status)} heading=${JSON.stringify(heading.trim().slice(0, 170))}`
+        : `the fixture build exited ${String(build.status)} with ${was.length} animation(s), so this case could not run`,
+      'a block whose figures depend on a pairing, printed without the pairing beside it, is a measurement of ' +
+        'something the reader cannot name — and the heading is where a reader of the console table meets it',
+    );
+    rmSync(dir, { recursive: true, force: true });
+  }
+
   return bad;
 }
 
@@ -41385,6 +41814,73 @@ function runCurrencySuite(): number {
           'that a green build cannot settle: every assertion passes on a mesh whose art is upside down. The ' +
           'sitting that filed this assumed the top-left and confirmed it only through a coverage percentage on a ' +
           'part that happened not to be symmetric — an instrument standing in for a sentence',
+      );
+    }
+  }
+
+  // --- CUR49-CUR50: the two pages that document `diff`, against the code -----
+  //
+  // ⭐ `docs/AUTHORING.md` §9 is `check` and not `diff`; the two documents below
+  // are where `diff` is written down, which is measured rather than assumed —
+  // the page's own heading says *"Checking against the frames — `rigc check`"*.
+  //
+  // 🔒 Everything compared here is READ OFF THE TOOL: the measure names come
+  // from a report this file builds, and the flag's value spelling comes from
+  // `diff --help`, which is the page an agent actually meets. Nothing on either
+  // side of the comparison is typed here, so a rename in `src/diff.ts` that no
+  // document followed is what goes red — and the plant is a measure name the
+  // tool does not emit, which must be faulted on both pages.
+  {
+    const oneShot = (name: string): Record<string, unknown> => ({ animations: { [name]: {} } });
+    const paired = diffSkeletons(oneShot('candidate shot'), oneShot('reference shot'));
+    const block = paired.sections.find((s) => s.name === 'animations')?.nameAgnostic;
+    const prefix = 'animations.agnostic.';
+    const tails = (block?.measures ?? []).map((m) => m.id.slice(prefix.length));
+    const helpRow = /^ {2}(--as)((?: \S+)?) {2,}\S/.exec(
+      runCli(['diff', '--help']).stdout.split('\n').find((line) => line.startsWith('  --as ')) ?? '',
+    );
+    const flagValue = helpRow?.[2].trim() ?? '';
+    const heading = 'animations (name-agnostic)';
+
+    /** What a page has to carry, faulted term by term. */
+    const audit = (page: string, text: string, names: readonly string[]): string[] => [
+      ...names.filter((tail) => !text.includes(`\`${tail}\``)).map((tail) => `${page} spells no \`${tail}\``),
+      ...(text.includes('--as') ? [] : [`${page} never names the \`--as\` flag`]),
+      ...(flagValue !== '' && text.includes(flagValue) ? [] : [`${page} does not spell --as's value as \`${flagValue}\``]),
+      ...(text.includes(heading) ? [] : [`${page} never shows the block's own heading, "${heading}"`]),
+    ];
+    const ready = tails.length > 0 && flagValue !== '';
+    const planted = [...tails.slice(0, -1), `${tails[tails.length - 1] ?? ''}_under_another_name`];
+
+    for (const [name, page] of [
+      ['CUR49_THE_BENCHMARK_PAGE_NAMES_THE_PAIRED_BLOCK_AND_ITS_FLAG_AS_THE_CODE_SPELLS_THEM', 'docs/BENCHMARK.md'],
+      ['CUR50_THE_INGEST_PAGE_NAMES_THE_PAIRED_BLOCK_AND_ITS_FLAG_AS_THE_CODE_SPELLS_THEM', 'docs/INGEST.md'],
+    ] as const) {
+      const text = readFileSync(join(root, page), 'utf8');
+      const standing = audit(page, text, tails);
+      const raised = audit(page, text, planted).filter((fault) => !standing.includes(fault));
+      const probes = [
+        ...(ready ? [] : [`the report carried ${tails.length} measure name(s) and --help gave the value "${flagValue}" — nothing to compare`]),
+        ...standing,
+        ...(raised.length === 1
+          ? []
+          : [`a measure name the tool does not emit was faulted ${raised.length} time(s) on this page, and this control requires exactly one`]),
+      ];
+      const held = probes.length === 0;
+      bad += reportCase(
+        name,
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${page} spells all ${tails.length} of \`${prefix}*\` (${tails.join(', ')}), the flag \`--as ` +
+            `${flagValue}\` as \`diff --help\` prints it, and the block's heading "${heading}"; a name the tool ` +
+            'does not emit is faulted once',
+          (count) => `${count} term(s) of this page did not hold:`,
+        ),
+        'the two pages here are where `diff` is documented — AUTHORING §9 is `check` — and a measure an agent ' +
+          'cannot find under the name the report prints is a measure it cannot act on, which for a tool whose ' +
+          'messages are its UI is the same as not having it',
       );
     }
   }
