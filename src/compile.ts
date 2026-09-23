@@ -95,6 +95,7 @@ import {
   pageFootprint,
   pageGridSaid,
   pageGridSentence,
+  canonicalAtlasShape,
   parseAtlasText,
   rewritePageNames,
   writeAtlasText,
@@ -2463,6 +2464,14 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // for — `scale:` most expensively — so the text passes through by line and only
   // the name lines are replaced (`rewritePageNames`).
   //
+  // 🔸 Its BLANK lines are the one thing put into rigc's shape
+  // (`canonicalAtlasShape`, issue #803): none before the first entry, one between
+  // blocks, one trailing newline. The runtime reads any run of blank lines as
+  // one, and a 3.8-era packer opens every file with one, which `A07` read at
+  // `line 1` and refused — the gate refusing a whitespace choice of a packer
+  // rigc re-anchored, on a pack every 4.x runtime loads. Non-blank lines are
+  // untouched, so a pack already in that shape is emitted byte for byte as before.
+  //
   // ⚠️ Regions the rig does not use stay in the emitted atlas. They are not a
   // defect: a real pack is shared between cuts, an unused region costs a consumer
   // nothing, and dropping them would make `--out` disagree with the pack it was
@@ -2470,8 +2479,8 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   const atlasText =
     atlasIn === null
       ? buildAtlasText(images)
-      : rewritePageNames(atlasIn.parsed, (name) =>
-          relative(outDir, resolve(atlasIn.dir, name)).split('\\').join('/'),
+      : canonicalAtlasShape(
+          rewritePageNames(atlasIn.parsed, (name) => relative(outDir, resolve(atlasIn.dir, name)).split('\\').join('/')),
         );
 
   // -- 3. bones --------------------------------------------------------------

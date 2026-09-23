@@ -217,6 +217,7 @@ import {
 } from './src/diff.ts';
 import { copyAtlasPages } from './src/emit.ts';
 import {
+  canonicalAtlasShape,
   DEFAULT_PADDING,
   DEFAULT_PAGE_SIZE,
   extractRegion,
@@ -1630,6 +1631,29 @@ const MUTANTS: Mutant[] = [
       'curve — so a gate that refused it would refuse correct data the editor\'s count merely extends',
     expect: null,
     mutate: (a) => ({ ...a, skeletonText: editJson(a.skeletonText, (j) => forgeMeasuredPath(j, 1)) }),
+  },
+  // Issue #803 moved a leading blank line out of what `--atlas-in` emits and
+  // renamed what A07 calls it; neither is licence for A07 to stop refusing one.
+  // The runtime reads it as nothing, which is exactly why rigc's own text must
+  // not carry it silently: these two keep the verdict while the sentences move.
+  {
+    name: 'M88_an_atlas_that_begins_with_a_blank_line',
+    origin:
+      'issue #803: a 3.8-era packer opens every atlas with one; rigc writes none, so a file that has one was written by ' +
+      'something else — it is refused as a leading blank, not as a doubled one',
+    expect: 'A07_ATLAS_TEXT_SHAPE',
+    mutate: (a) => ({ ...a, atlasText: `\n${a.atlasText}` }),
+  },
+  {
+    name: 'M89_an_atlas_with_two_blank_lines_between_two_page_blocks',
+    origin:
+      'issue #803: `--atlas-in` now collapses such a run into the one blank rigc writes, so a file that still has it ' +
+      'was written by something else — and the runtime reading it the same is no reason for the gate to stop saying so',
+    expect: 'A07_ATLAS_TEXT_SHAPE',
+    mutate: (a) => {
+      if (!a.atlasText.includes('\n\n')) throw new Error('the fixture atlas has one page block, and two are needed');
+      return { ...a, atlasText: a.atlasText.replace('\n\n', '\n\n\n') };
+    },
   },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -12496,6 +12520,105 @@ function runStaticRigSuite(): number {
         'set did not measure stays a pair the comparator leaves open, and a slot key is no ordinal, so the map is ' +
         'kept whole rather than refused',
     );
+  }
+
+  // --- S107–S109: A07 names a leading blank line as that (issue #803) ---
+  //
+  // `--atlas-in` no longer re-emits a pack's leading blank line, so the one place
+  // it still reaches the gate is a file rigc did not write, handed to `validate`.
+  // A07 used to read it at `line 1` as a SECOND blank line — "consecutive blank
+  // lines", with no line 0 to be consecutive with — and printed one finding per
+  // leading blank. The verdict is kept: all three texts below are refused. The
+  // doubled blank is placed structurally, before the second region of the
+  // overlay pack's first page, and every line number is read off where it went.
+  {
+    const A07 = 'A07_ATLAS_TEXT_SHAPE';
+    const pack = packWithFirstPageReplaced((png) => png);
+    const a07Of = (atlasText: string): string[] =>
+      validate({
+        skeletonText: pack.result.skeletonText,
+        atlasText,
+        atlasDir: pack.dir,
+        declaredDurations: pack.result.declaredDurations,
+        rig: pack.result.rig,
+        profile: 'spine',
+      })
+        .failures.filter((f) => f.assertion === A07)
+        .map((f) => f.detail);
+    const honestSaid = a07Of(pack.atlasText);
+    const honestProbe = honestSaid.length === 0 ? [] : [`the pack untouched is already refused by A07: ${honestSaid.join('; ')}`];
+
+    // S107 — a doubled blank between two regions of one page: unchanged.
+    const lines = pack.atlasText.replace(/\n$/, '').split('\n');
+    const pageRegions = parseAtlasText(pack.atlasText).pages[0]?.regions ?? [];
+    const secondRegion = pageRegions.length >= 2 ? lines.indexOf(pageRegions[1].name) : -1;
+    const doubledProbes: string[] = [...honestProbe];
+    let doubledSaid: string[] = [];
+    let wanted = '';
+    if (secondRegion < 0) doubledProbes.push(`the pack's first page holds ${pageRegions.length} region(s), and two are needed to put a blank between`);
+    else {
+      const doubled = [...lines.slice(0, secondRegion), '', '', ...lines.slice(secondRegion)].join('\n') + '\n';
+      // The first blank closes the page block after a region, which is legal; the
+      // second one, at 1-based line `secondRegion + 2`, is the adjacent one.
+      wanted = `line ${secondRegion + 2}: consecutive blank lines`;
+      doubledSaid = a07Of(doubled);
+      if (!doubledSaid.includes(wanted)) doubledProbes.push(`A07 said [${doubledSaid.join('; ')}], where "${wanted}" is required`);
+      if (doubledSaid.some((detail) => detail.includes('begins with'))) doubledProbes.push('A07 called a blank in the middle of the file a leading one');
+    }
+    say(
+      'S107_A_DOUBLED_BLANK_BETWEEN_TWO_REGIONS_OF_ONE_PAGE_IS_STILL_REFUSED_AS_CONSECUTIVE',
+      doubledProbes.length === 0,
+      probeDetail(doubledProbes.length === 0, doubledProbes, `refused as "${wanted}", the line the second blank sits on, and nothing else called it leading`),
+      'the sentence that used to misname a leading blank is still the right sentence for the case it describes — two ' +
+        'blank lines side by side inside the file — and narrowing it must not lose that case',
+    );
+
+    // S108 — a file beginning with a blank line, on disk, through `validate`.
+    const diskDir = mkdtempSync(join(tmpdir(), 'rigc-leading-blank-'));
+    for (const name of readdirSync(pack.dir)) {
+      if (name.endsWith('.png') || name === 'skeleton.json') copyFileSync(join(pack.dir, name), join(diskDir, name));
+    }
+    writeFileSync(join(diskDir, 'skeleton.atlas'), pack.atlasText);
+    const honestRun = runCli(['validate', diskDir]);
+    writeFileSync(join(diskDir, 'skeleton.atlas'), `\n${pack.atlasText}`);
+    const leadingRun = runCli(['validate', diskDir]);
+    const newSentence = `${A07}: line 1: the file begins with a blank line`;
+    const leadingProbes = [
+      ...(honestRun.status === 0 ? [] : [`the same directory without the blank line is not green (exit ${String(honestRun.status)})`]),
+      ...(leadingRun.status === 1 ? [] : [`validate exited ${String(leadingRun.status)} on the leading blank, where a refusal is 1`]),
+      ...(leadingRun.stdout.includes(newSentence) ? [] : [`validate did not print "${newSentence}"`]),
+      ...(leadingRun.stdout.includes('consecutive blank lines') ? ['validate still calls the leading blank "consecutive blank lines"'] : []),
+    ];
+    say(
+      'S108_A_FILE_BEGINNING_WITH_A_BLANK_LINE_IS_REFUSED_BY_VALIDATE_AS_A_LEADING_BLANK',
+      leadingProbes.length === 0,
+      probeDetail(
+        leadingProbes.length === 0,
+        leadingProbes,
+        `the directory is green, and with one blank line before the first page validate exits ${String(leadingRun.status)} ` +
+          `printing "${newSentence}" and not "consecutive blank lines"`,
+      ),
+      'a file rigc did not write is where a leading blank can still reach the gate, and the author reading that ' +
+        'refusal must be sent to line 1 for what is there — not after a doubled blank the file does not have',
+    );
+    rmSync(diskDir, { recursive: true, force: true });
+
+    // S109 — a run of leading blanks is one finding that states its length.
+    const run = 2;
+    const runSaid = a07Of(`${'\n'.repeat(run)}${pack.atlasText}`);
+    const runWanted = `line 1: the file begins with ${run} blank lines`;
+    const runProbes = [
+      ...honestProbe,
+      ...(runSaid.length === 1 && runSaid[0] === runWanted ? [] : [`A07 said [${runSaid.join('; ')}], where exactly "${runWanted}" is required`]),
+    ];
+    say(
+      'S109_A_RUN_OF_LEADING_BLANK_LINES_IS_ONE_FINDING_THAT_STATES_ITS_LENGTH',
+      runProbes.length === 0,
+      probeDetail(runProbes.length === 0, runProbes, `${run} leading blank lines: one finding, "${runWanted}"`),
+      'one defect, one finding: on the branch point a run of k leading blanks printed k "consecutive blank lines", each ' +
+        'pointing at a line that is only the next of the same run',
+    );
+    rmSync(pack.dir, { recursive: true, force: true });
   }
   return bad;
 }
@@ -41940,6 +42063,121 @@ function runAtlasReaderSuite(): number | null {
     );
   }
 
+  // --- PKR63–PKR65: `--atlas-in` re-emits a pack in rigc's blank-line shape (issue #803) ---
+  //
+  // A 3.8-era packer opens every atlas with a blank line. The runtime reads any
+  // run of blank lines before the first page as nothing, so such a pack loads —
+  // and `--atlas-in` re-emitted the blank, which `A07` then refused as
+  // `line 1: consecutive blank lines` on the text rigc itself was about to write.
+  // The pack here is the overlay fixture's own, prefixed with the blank lines
+  // and written BESIDE the untouched copy, so both builds resolve the same pages
+  // from the same directory and whatever differs between their emissions is the
+  // prefix's doing. The runtime's reading of the two texts is compared first:
+  // were it to differ, normalising would be changing a file's meaning.
+  {
+    const pack = packWithFirstPageReplaced((png) => png);
+    const outDir = join(pack.dir, 'reemitted');
+    const importFrom = (atlasPath: string): CompileResult =>
+      compile({ ...optsForFixture(OVERLAY), outDir, atlasInPath: atlasPath });
+    const runtimeReading = (text: string): string => {
+      const atlas = new TextureAtlas(text);
+      return JSON.stringify([
+        atlas.pages.map((page) => [page.name, page.width, page.height, page.pma]),
+        atlas.regions.map((r) => [r.page.name, r.name, r.x, r.y, r.width, r.height, r.offsetX, r.offsetY, r.originalWidth, r.originalHeight, r.degrees, r.index]),
+      ]);
+    };
+    const plain = importFrom(pack.atlasPath);
+    const leadingCases: Array<[string, number]> = [
+      ['PKR63_A_PACK_THAT_BEGINS_WITH_A_BLANK_LINE_BUILDS_UNDER_ATLAS_IN_AND_ITS_EMISSION_BEGINS_WITH_THE_PAGE', 1],
+      ['PKR64_A_PACK_THAT_BEGINS_WITH_TWO_BLANK_LINES_BUILDS_THE_SAME', 2],
+    ];
+    for (const [code, blanks] of leadingCases) {
+      const prefixed = `${'\n'.repeat(blanks)}${pack.atlasText}`;
+      const prefixedPath = join(pack.dir, `leading_${blanks}.atlas`);
+      writeFileSync(prefixedPath, prefixed);
+      const probes: string[] = [];
+      if (runtimeReading(prefixed) !== runtimeReading(pack.atlasText)) {
+        probes.push(`spine-core reads the pack with ${blanks} leading blank line(s) differently from the pack without, so the blank is content here`);
+      }
+      let built: CompileResult | null = null;
+      try {
+        built = importFrom(prefixedPath);
+      } catch (err) {
+        probes.push(`the compile refused it: ${(err as Error).message.split('\n')[0]}`);
+      }
+      if (built !== null) {
+        const gate = validate({
+          skeletonText: built.skeletonText,
+          atlasText: built.atlasText,
+          atlasDir: outDir,
+          declaredDurations: built.declaredDurations,
+          rig: built.rig,
+          reEmit: { skeletonText: importFrom(prefixedPath).skeletonText, atlasText: importFrom(prefixedPath).atlasText },
+          profile: 'spine',
+        });
+        probes.push(...gate.failures.map((f) => `the gate refused the emission: ${f.assertion}: ${f.detail}`));
+        const firstLine = built.atlasText.split('\n')[0];
+        const firstPage = parseAtlasText(built.atlasText).pages[0]?.name;
+        if (firstPage === undefined || firstLine !== firstPage) {
+          probes.push(`the emitted atlas begins with ${JSON.stringify(built.atlasText.slice(0, 24))}, where its first page is ${JSON.stringify(firstPage)}`);
+        }
+        if (built.atlasText !== plain.atlasText) {
+          probes.push('the emitted atlas differs from the one the same pack without the blank line(s) emits');
+        }
+      }
+      const held = probes.length === 0;
+      say(
+        code,
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${blanks} leading blank line(s): spine-core reads the same pages and regions with and without them, the build ` +
+            `is green, and the emission begins ${JSON.stringify(built?.atlasText.split('\n')[0] ?? '')} — byte for byte ` +
+            'the emission of the same pack without them',
+        ),
+        'the blank lines are the packer\'s, not the pack\'s: the runtime reads a run of them before the first page as ' +
+          'nothing, and rigc re-emitting them only to refuse its own emission at A07 made a pack every 4.x runtime loads ' +
+          'unbuildable (the 3.8-era production pack behind #803)',
+      );
+    }
+
+    // PKR65 — the positive control: on a pack already in the shape, nothing moves.
+    const shapeProbes: string[] = [];
+    const canonical: string[] = [];
+    for (const [label, text] of [...atlases.map((path) => [basename(path), readFileSync(path, 'utf8')] as const), ['the overlay pack', pack.atlasText] as const]) {
+      const reanchored = rewritePageNames(parseAtlasText(text), (name) => `moved/${name}`);
+      if (canonicalAtlasShape(reanchored) === reanchored) canonical.push(label);
+      else shapeProbes.push(`${label}: the normalised re-emission differs from the page-name rewrite it was made from`);
+    }
+    // The other half of the shape: a run of blank lines between two page blocks
+    // is one blank to the runtime, and comes back as the one blank rigc writes.
+    // Read on the overlay fixture's default atlas, which has a page per part.
+    const perPart = compile(optsForFixture(OVERLAY)).atlasText;
+    const runBetween = perPart.replace('\n\n', '\n\n\n');
+    if (runBetween === perPart) shapeProbes.push('the per-part atlas has one page block, so no run between two could be placed');
+    else if (runtimeReading(runBetween) !== runtimeReading(perPart)) shapeProbes.push('spine-core reads a doubled blank between two page blocks differently from one');
+    else if (canonicalAtlasShape(runBetween) !== perPart) shapeProbes.push('a doubled blank between two page blocks is not re-emitted as the one blank rigc writes');
+    const plainPasses = plain.atlasText === rewritePageNames(parseAtlasText(pack.atlasText), (name) => relative(outDir, resolve(pack.dir, name)).split('\\').join('/'));
+    if (!plainPasses) shapeProbes.push('the overlay pack built under --atlas-in emits something other than its page-name rewrite');
+    shapeProbes.push(...floorProbes([[atlases.length, 1, `${atlases.length} corpus atlas file(s)`]], 'a positive control over no editor export shows nothing'));
+    const shapeHeld = shapeProbes.length === 0;
+    say(
+      'PKR65_A_PACK_ALREADY_IN_THE_SHAPE_IS_RE_EMITTED_BYTE_FOR_BYTE',
+      shapeHeld,
+      probeDetail(
+        shapeHeld,
+        shapeProbes,
+        `${canonical.length} atlas text(s) — ${atlases.length} editor export(s) and the overlay pack — re-emitted byte for ` +
+          'byte as the page-name rewrite alone, the overlay pack\'s --atlas-in build emits exactly that rewrite, and a ' +
+          'doubled blank between two of the per-part atlas\'s page blocks — the same to spine-core — comes back as one',
+      ),
+      'the normalisation is licensed only by moving nothing but blank lines: on every export the editor wrote, and on ' +
+        'rigc\'s own pack, the emission has to be the one it was before #803',
+    );
+    rmSync(pack.dir, { recursive: true, force: true });
+  }
+
   return bad;
 }
 
@@ -54807,6 +55045,57 @@ function runCurrencySuite(): number {
       probeDetail(held, probes, `${quotes.length} quote(s), each a clause of: ${raised}`),
       'the message is the UI: the guide\'s quote is what an author searches for when the build stops, and the ' +
         'row beside it is the remedy. A quote the compiler does not raise is a remedy nobody reaches',
+    );
+  }
+
+  // --- CUR104: the guide's A07 row quotes the two blank-line sentences A07 prints (#803) ---
+  //
+  // The sentences are read off the validator, not typed here: a pack gated once
+  // with a leading blank line and once with a doubled one between two page
+  // blocks, and each detail's `line N: ` stripped. The row is the one an agent
+  // holding either refusal is sent to, so it must tell the two apart in the
+  // words the gate uses. Held both ways: each sentence cut from the row is named.
+  {
+    const A07 = 'A07_ATLAS_TEXT_SHAPE';
+    const pack = packWithFirstPageReplaced((png) => png);
+    const saidOf = (atlasText: string): string[] =>
+      validate({
+        skeletonText: pack.result.skeletonText,
+        atlasText,
+        atlasDir: pack.dir,
+        declaredDurations: pack.result.declaredDurations,
+        rig: pack.result.rig,
+        profile: 'spine',
+      })
+        .failures.filter((f) => f.assertion === A07)
+        .map((f) => f.detail.replace(/^line \d+: /, ''));
+    const lines = pack.atlasText.replace(/\n$/, '').split('\n');
+    const sentences = [
+      ...saidOf(`\n${pack.atlasText}`),
+      // the pack's one page block twice, with two blank lines between them
+      ...saidOf([...lines, '', '', ...lines].join('\n') + '\n').filter((said) => said === 'consecutive blank lines'),
+    ];
+    const guide = readFileSync(join(root, 'docs/AUTHORING.md'), 'utf8');
+    const rowOf = (text: string): string => text.split('\n').find((line) => line.startsWith(`| \`${A07}\``)) ?? '';
+    const missingFrom = (row: string): string[] => sentences.filter((said) => !row.includes(said)).map((said) => `the A07 row does not quote "${said}"`);
+    const standing = missingFrom(rowOf(guide));
+    const plantProbes = sentences.flatMap((said) => {
+      const planted = missingFrom(rowOf(guide).split(said).join(''));
+      return planted.length === standing.length + 1 ? [] : [`"${said}" cut from the row raised ${planted.length - standing.length} fault(s), and one is required`];
+    });
+    const probes = [
+      ...(sentences.length === 2 ? [] : [`the validator printed ${sentences.length} blank-line sentence(s) over the two forgeries, and two are expected: [${sentences.join('; ')}]`]),
+      ...(rowOf(guide) === '' ? ['docs/AUTHORING.md has no A07 row'] : []),
+      ...standing,
+      ...plantProbes,
+    ];
+    rmSync(pack.dir, { recursive: true, force: true });
+    say(
+      'CUR104_THE_GUIDES_A07_ROW_QUOTES_BOTH_BLANK_LINE_SENTENCES_THE_GATE_PRINTS',
+      probes.length === 0,
+      probeDetail(probes.length === 0, probes, `the A07 row quotes ${sentences.map((said) => `"${said}"`).join(' and ')}, and each cut from it is named`),
+      'the two sentences name two different repairs — delete a leading blank, or a doubled one mid-file — and the row ' +
+        'is where an agent holding one of them looks up which it has',
     );
   }
 
