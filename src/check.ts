@@ -1059,6 +1059,18 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   const notes: string[] = [];
 
   const posable = posableFromText(options.skeletonText, options.atlasText, options.atlasDir);
+  // A candidate that declares no stage is framed exactly as one that does,
+  // because no framing here reads a stage: the world box is fitted from what the
+  // candidate draws. Said on the one candidate where a reader can ask what box
+  // stood in for the absent one (issue #714) — `SkeletonJson` copies the header
+  // fields across unconditionally (`SkeletonJson.js:70-73`), so an omitted
+  // extent is `undefined` here, not 0.
+  if (typeof posable.data.width !== 'number' || typeof posable.data.height !== 'number') {
+    notes.push(
+      'the candidate declares no stage (no `skeleton.width`/`height`), and nothing stands in for one: its world ' +
+        'box is fitted from the pixels it draws, as it is for every candidate, so the absence moves no figure below.',
+    );
+  }
   // The substitution is loaded before anything is posed, because posing has to
   // record each piece's original-art UVs for it and that is the one thing about
   // this measure that cannot be added afterwards — see `PieceTexture`.

@@ -1747,6 +1747,46 @@ function readPositiveNumber(flags: Record<string, string>, key: string, fallback
 }
 
 /**
+ * Does this skeleton declare a setup stage — a numeric width AND height?
+ *
+ * Read off the loaded `SkeletonData` for `render` and off the file's header for
+ * `preview`, which never loads one; both are the same two fields, because
+ * `SkeletonJson` copies them across unconditionally (`SkeletonJson.js:70-73`),
+ * so a header that omits them leaves `undefined` on a field typed `number`.
+ */
+function declaresSetupStage(header: { width?: unknown; height?: unknown }): boolean {
+  return typeof header.width === 'number' && typeof header.height === 'number';
+}
+
+/** The `skeleton` block of a skeleton file's text, or an empty one where it has none. */
+function skeletonHeaderOf(skeletonText: string): { width?: unknown; height?: unknown } {
+  const root = JSON.parse(skeletonText) as { skeleton?: { width?: unknown; height?: unknown } };
+  return root.skeleton ?? {};
+}
+
+/**
+ * What `render` and `preview` say of their framing on a skeleton that declares
+ * no stage (issue #714).
+ *
+ * ⚠️ **Neither frames to a stage on ANY skeleton**, so this is not a fallback
+ * being announced: `framingViewport` is the union of every animation's posed
+ * bounds, and the Spine Web Player's `calculateAnimationViewport` samples the
+ * playing animation's bounds whenever its config states no viewport box, which
+ * `buildPreview` never does. The line is printed only where a stage is absent
+ * because that is the one case where a reader can ask *what box stood in for
+ * it* — and the answer has to be "none", said, rather than a rectangle that looks
+ * like a default. On a staged skeleton the output is the bytes it always was.
+ */
+const STAGELESS_FRAMING = {
+  render:
+    'framing  the posed extent of every animation, padded — this skeleton declares no stage, and nothing stands ' +
+    'in for one: render frames to the posed extent whether or not a stage is declared',
+  preview:
+    "framing  the Spine Web Player's own: the posed extent of the animation it plays — this skeleton declares no " +
+    'stage, and nothing stands in for one: the player frames that way whether or not a stage is declared',
+} as const;
+
+/**
  * render — the frame series, drawn by the same rasteriser `check` measures with.
  *
  * The framing is measured across EVERY animation at `FRAMING_FPS` and not across
@@ -1788,6 +1828,7 @@ function cmdRender(flags: Record<string, string>): void {
   const sampled: Map<string, Frame[]> =
     only === undefined ? sampleAll(data, fps, pose) : new Map([[only, sampleAnimation(data, only, fps, pose)]]);
   console.log(`  ..    ${viewport.width}x${viewport.height}px at ${fps} fps, ${sampled.size} set(s) -> ${outRoot}`);
+  if (!declaresSetupStage(data)) console.log(`  ..    ${STAGELESS_FRAMING.render}`);
 
   mkdirSync(outRoot, { recursive: true });
   const sets: FrameSet[] = [];
@@ -1903,6 +1944,7 @@ function cmdPreview(flags: Record<string, string>): void {
   for (const page of pages) {
     console.log(`  ..    page     ${page.name.padEnd(28)} ${(page.bytes.length / 1024).toFixed(1)} KiB`);
   }
+  if (!declaresSetupStage(skeletonHeaderOf(skeletonText))) console.log(`  ..    ${STAGELESS_FRAMING.preview}`);
 
   const html = buildPreview({
     skeletonText,
@@ -3263,9 +3305,10 @@ const FLAG_MEANINGS: Record<string, string> = {
     '--images <dir>` on every rebuild), `none` states width/height only for `build --atlas-in <pack>` to ' +
     'resolve (default: loose)',
   stage:
-    'the setup bounding box — `skeleton.x,y,width,height` — for a skeleton that declares none. It cannot be ' +
+    'the setup bounding box — `skeleton.x,y,width,height` — to ADD to a skeleton that declares none. It cannot be ' +
     'derived: posing the rig gives the ANIMATED extent, which is a different number from the setup box, so this ' +
-    "is the caller's value, and without it the missing stage is reported as a blocker. ⚠️ An editor export MAY " +
+    "is the caller's value, and without it the absence is carried: the spec states `\"width\": null, \"height\": " +
+    'null` and the rebuild declares no stage either. ⚠️ An editor export MAY ' +
     'carry none; every editor export measured for this project carries one and ingest reads it straight through, ' +
     'so the flag is for a file that really has none rather than for editor exports as a class. ⛔ Beside a ' +
     'skeleton that already declares a box it is REFUSED rather than ignored: two sources for one value, and the ' +
@@ -3677,12 +3720,11 @@ const USAGE = [
   '  rigc ingest hero.json --out specs/ --images parts/         rig.json + motion.json',
   'The contract is an equality, not a rulebook: build(ingest(x)) is x, byte for byte.',
   'It reads the skeleton and nothing else — no .spine project, no binary .skel, no',
-  'atlas — so two things are the caller\'s and are refused rather than guessed: the',
-  'setup stage (--stage, only when the skeleton itself declares none — beside a box the',
-  'file states, the flag is refused rather than ignored) and how the spec',
-  'reaches the art (--art). --images <dir> is the third and the only optional one: it',
-  'WRITES the rig spec\'s own images directory, relative to --out, so the rebuild needs',
-  'no flag.',
+  'atlas — so how the spec reaches the art is the caller\'s (--art) and is not guessed.',
+  'A setup stage the skeleton states is read; one it does not state is carried as',
+  'absent, and --stage is how a caller adds a box to such a file — beside a box the',
+  'file states, the flag is refused rather than ignored. --images <dir> WRITES the rig',
+  'spec\'s own images directory, relative to --out, so the rebuild needs no flag.',
   'Everything the spec format cannot hold is printed as a named finding and',
   'exits non-zero, with both files still written, because a spec plus a list of what',
   'is missing from it beats no spec at all.',

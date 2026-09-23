@@ -573,7 +573,7 @@ repository builds on every run.
 | `--art loose` (default) | name an `image` per attachment — `<path or placeholder>.png` — so the rebuild resolves loose PNGs and rigc measures them |
 | `--art none` | state `width`/`height` only, so the rebuild is `build --atlas-in <pack.atlas>` and every part resolves out of the pack |
 | `--images <dir>` | **write** the rig spec's own `images` directory, spelled relative to `--out`, so the rebuild is a plain `build --rig … --motion … --out …`. Without it the field is left out and every `image` resolves against `--out` itself, which holds the specs and no art — so every rebuild has to repeat `build --images <dir>`. Refused together with `--art none`, which writes no `image` for it to be the base of |
-| `--stage x,y,w,h` | the setup bounding box, **for a skeleton that declares none**. An editor export *may* be one; every export under `examples/` carries a box and `ingest` reads it straight through — so passing the flag at one of them is **refused**, naming both boxes, rather than silently doing nothing ([#626](https://github.com/firejune/rigc/issues/626)) |
+| `--stage x,y,w,h` | a setup bounding box to **add** to a skeleton that declares none — without it the absence is carried as `"width": null, "height": null` ([#714](https://github.com/firejune/rigc/issues/714)). An editor export *may* be such a file; every export under `examples/` carries a box and `ingest` reads it straight through — so passing the flag at one of them is **refused**, naming both boxes, rather than silently doing nothing ([#626](https://github.com/firejune/rigc/issues/626)) |
 | `--name <n>` | the rig spec's `name`, which the motion spec's `archetype` must equal (default: the file's basename) |
 
 ⚠️ **`ingest --images` and `build --images` point opposite ways.** `build --images`
@@ -586,9 +586,13 @@ where the parts are in one convention.
 🚨 **The stage is one of the two values `ingest` will not guess.** A skeleton JSON
 *need not* carry `skeleton.width`/`height`, and when it does not rigc cannot derive
 one — posing the rig gives the *animated* extent, which is a different number from the
-editor's setup box. So a file that declares none is a **blocker**, named, unless
-`--stage x,y,w,h` supplies it; supply it from the project the file came from, or from
-the editor's own canvas.
+editor's setup box. So a file that declares none is **carried as declaring none**: the
+spec states `"width": null, "height": null` (§3.1), the rebuild emits no box, and
+nothing is recorded, because the rebuild is the file that was read
+([#714](https://github.com/firejune/rigc/issues/714)). `--stage x,y,w,h` *adds* a box —
+supply it from the project the file came from, or from the editor's own canvas — and
+is recorded as a `NO_STAGE` judgement. A header stating **half** a stage (an origin
+with no extent) is a `NO_STAGE` blocker: the spec holds a stage as four fields or none.
 
 ⛔ **The flag is refused beside a box the file states.** Two sources for one value, and
 the file is the one that was measured — so `ingest` names both boxes and stops rather
@@ -609,7 +613,8 @@ early return on every one of them, and not one needs the flag. What an editor ex
 round trip with a header of `hash`, `spine`, `images`, `audio` and **no box at all** —
 the editor preserves the absence rather than inventing a stage
 ([#616](https://github.com/firejune/rigc/issues/616)). So `--stage` is for a file that
-really has none, and this repository's corpus holds no example of one. It is still the
+really has none, and this repository's corpus holds no example of one; a production
+corpus measured for [#714](https://github.com/firejune/rigc/issues/714) holds 48 of 48. It is still the
 value that costs least to get wrong: `diff` reports the box as `stage_present` and
 `stage_box` ([#578](https://github.com/firejune/rigc/issues/578)) and both are
 `(reported)`, so nothing on the ladder consults them.
@@ -1078,6 +1083,23 @@ Three readings stay apart, and the middle one is the point of the other two:
 | neither | **refused**, exactly as before: `no stage size: …` |
 | one `null`, one number | refused — a stage has both extents or neither, and which half was meant is not derivable |
 | the pair `null` **and** an `x` or `y` | refused — an origin for a box that is not there |
+
+What each tool does without one — every reader of the stage in the tree, measured
+for [#714](https://github.com/firejune/rigc/issues/714), and not one of them puts a
+number where the box would be:
+
+| Reader | With a stage | Without one |
+| --- | --- | --- |
+| `build` | emits `x`/`y`/`width`/`height` | emits none of them |
+| `A14_NO_FULL_FRAME_MESH` | fails a mesh as big as the stage | **SKIP**, by name |
+| `A19_OVERLAY_PNGS_HAVE_ALPHA` | exempts the one image that covers the stage | exempts nothing, and says so |
+| `diff` | `stage_present` and `stage_box` | `stage_present` 1/1 when neither side declares one (agreement), `stage_box` 0/0 |
+| `explain` | `stage  W x H` | `stage  none declared` |
+| `render` | frames the posed extent of every animation | the same frames, plus a line saying the viewport is the posed extent and no stage |
+| `preview` | the Spine Web Player frames the posed extent of the animation it plays | the same, plus the same line |
+| `check` | fits the candidate's world box from what it draws | the same figures, plus a note saying so |
+| `build --pack` | never reads it | the same pages and atlas |
+| `ingest` | reads it straight through | writes `"width": null, "height": null`; `--stage` adds one |
 
 ⚠️ A stage-less skeleton is **unmeasured, not certified**: `A14_NO_FULL_FRAME_MESH`
 reports **SKIP** on one, because there is no full frame for a mesh to span. And
