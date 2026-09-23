@@ -827,7 +827,7 @@ export interface RigLinkedMeshAttachment {
   sequence?: RigSequence;
   /**
    * 🚫 Every geometry field a mesh may state, refused by name on a link. They
-   * are declared for the reason `RigPathAttachment.lengths` is: a key the shape
+   * are declared so the refusal can name them: a key the shape
    * does not hold at all comes back as *keys this compiler does not read … fix
    * the spelling or remove it*, and the remedy sentence is wrong here — the
    * fault is not a typo, it is that the parser reads none of them on a link.
@@ -938,12 +938,22 @@ export interface RigClippingAttachment extends RigVertexGeometry {
  * six then straddle the knots, and the constraint slides bones along a curve
  * nobody drew.
  *
- * ⚠️ `lengths` is NOT authored here. It is the cumulative length at the end of
- * each curve in the SETUP pose, in world units — a measurement of the geometry
- * above, and the same relationship `image` has to `width`/`height`: a restated
- * number can disagree with the vertices, and when it does, a
- * `constantSpeed: false` path traverses a length that is not the length of the
- * curve, silently. So rigc measures it and refuses an authored one by name.
+ * ⭐ `lengths` is **stated or measured** (issue #804). It is the cumulative
+ * length at the end of each curve, in world units, and `vertexCount / 3` entries
+ * on an open path and a closed one alike — the parser's allocation, one more
+ * than an open path's curves, the last being the wrap-around curve's cumulative,
+ * which nothing reads. Stated, it is emitted as stated: that is what `ingest`
+ * writes from an export, because the editor measured it on a pose rigc does not
+ * reproduce (below). Left out, rigc measures it off the geometry on the
+ * unconstrained setup pose. Only `constantSpeed: false` reads it.
+ *
+ * ⚠️ Why a stated one is not re-measured: the editor's numbers are
+ * `PathConstraint`'s own measurement of the pose the first update gives it —
+ * with every constraint ordered before the path constraint applied. rigc does
+ * not pose, so an authored path whose bones a constraint moves at rest gets the
+ * unconstrained figure, and an export's own array is the only way to carry the
+ * constrained one. Re-deriving it moved 232 of a production rig's 259 bones in
+ * issue #804's pose comparison.
  *
  * 🔸 *Which* length, exactly, is `SpinePathAttachment`'s subject in
  * [`types.ts`](types.ts) and it is not the arc: it is `PathConstraint`'s own
@@ -966,8 +976,8 @@ export interface RigPathAttachment extends RigVertexGeometry {
    */
   constantSpeed?: boolean;
   /**
-   * 🚫 Refused by name. rigc measures the arc lengths off `vertices`/`weights` —
-   * see the note above. The field is declared so the refusal can name it.
+   * Stated: exactly `vertexCount / 3` finite entries, none below the one before
+   * it, emitted as stated. Absent: measured — see the note above.
    */
   lengths?: number[];
 }

@@ -607,7 +607,6 @@ bun cli.ts ingest hero.json --out specs/ --images parts/
 #   ..    art  loose
 #   ..    images ../parts/  (the rig spec's own, from /abs/path/specs)
 #   JUDGE DURATION: animation "idle" — skeleton JSON carries no duration; the largest key time (2.667) is used …
-#   LOSS  PATH_LENGTHS: skin "default" slot "track" attachment "track" — the source states `lengths`; rigc RE-MEASURES it …
 # rigc: wrote /abs/path/specs/rig.json
 # rigc: wrote /abs/path/specs/motion.json
 # rigc: wrote /abs/path/specs/findings.json
@@ -698,7 +697,7 @@ the first:
 | --- | --- |
 | `BLOCK` | the spec format cannot say it, so the rebuild will **not** be the file that was read — `point`, a `sequence` block the parser would read as some other series, an unknown field on a bone, slot or constraint, a timeline family the motion spec has no track for. The command exits non-zero **and still writes both specs**, because a spec plus a list of what is missing from it beats no spec |
 | `JUDGE` | the skeleton cannot answer and somebody has to: the stage, and each animation's duration |
-| `LOSS` | the skeleton's spelling and rigc's differ, on purpose, and the line says how. A path attachment's `lengths` is the one that matters — it is `PathConstraint`'s own four-sample measurement rather than an arc length (#560), so a transcribed one would freeze whatever produced the source. The header ones are cheaper: `HEADER_BOOKKEEPING` for a field the spec has no home for, `HEADER_REDERIVED` for the version string, `HEADER_ORIGIN` for an origin the source left to the format and the rebuild writes out (#622) |
+| `LOSS` | the skeleton's spelling and rigc's differ, on purpose, and the line says how: `HEADER_BOOKKEEPING` for a field the spec has no home for, `HEADER_REDERIVED` for the version string, `HEADER_ORIGIN` for an origin the source left to the format and the rebuild writes out (#622) |
 
 ⛔ **It reads one generation of the format, and a file from another one ends loud.**
 Spine data is locked to the generation that exported it and a mismatch does not
@@ -1658,7 +1657,7 @@ other vertex attachment.
 | `name`, `vertexCount`, `vertices`, `weights`, `boneIndexing`, `color` | as on a bounding box — except that these vertices are knots **and** their handles, which the count rule below is about |
 | `closed` | default **false**. True joins the last knot back to the first |
 | `constantSpeed` | default **true** — note the direction. Leaving it out asks for the expensive-and-correct traversal, in which the runtime re-measures the path every frame and `lengths` is never read. `false` makes the runtime trust the emitted `lengths` instead: cheaper, exact only while the path holds its setup shape, and the reason a deformed path wants the default |
-| `lengths` | 🚫 **refused by name.** rigc measures the setup length of each curve off the geometry and emits it, the way it measures a region's size off its PNG: `"lengths" is not authored — rigc measures the setup arc length of each curve…`. The field is declared only so the refusal can say that rather than report a misspelt key. What the numbers are — and why *arc length* is the wrong name for them — is §10.6 |
+| `lengths` | **stated or measured** ([#804](https://github.com/firejune/rigc/issues/804)). The cumulative length at the end of each curve, and exactly **`vertexCount / 3`** entries on an open path and a closed one alike — the parser's own allocation, which on an open path is one more than its curves: the last entry is the wrap-around curve's cumulative, which the editor writes and nothing reads. **Stated**, it is emitted as stated (float32, like every number in the file) — which is what `ingest` writes from an export, and the only way to carry the editor's number, because the editor measures the pose the first update gives the path constraint, *constraints applied*, and rigc does not pose. A stated array of the wrong count is refused with both counts, `"lengths" has N entry(ies) where the parser sizes M`, and a non-finite entry or one below its predecessor by index. **Left out**, rigc measures it off the geometry: weighted vertices through their bones' setup world transforms, scale, shear and `inherit` included, on the **unconstrained** setup pose — so a path whose bones a constraint moves at rest gets a different figure from the editor's. Only `constantSpeed: false` reads the field at all. What the numbers are — and why *arc length* is the wrong name for them — is §10.6 |
 
 🚨 **`vertexCount` counts knots AND handles, and it has to be a multiple of 3.**
 The parser hands `vertexCount << 1` to `readVertices` and then walks the result in
@@ -1678,7 +1677,8 @@ and `vertexCount is N and an open path needs at least 6`.
 
 Nine points are two curves. The outer handles at `x = -30` and `x = 210` are
 dropped, so the chain runs from `x = 0` to `x = 180` and rigc emits
-`"lengths": [90, 180]` beside it — measured, not stated. That is the path
+`"lengths": [90, 180, 360]` beside it — measured, not stated, and the third entry
+is the wrap-around curve from `x = 180` back to `x = 0`, which nothing reads. That is the path
 §3.5.1's constraint example rides: with `position: 0.25` its `cart` bone poses at
 `worldX = 45.000000`.
 
@@ -5574,7 +5574,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `deform … (t=…): transform <kind> states …, and every one of this attachment's N vertices evaluates to an offset of 0` | §4.11.1 — the parameters state a deformation and the geometry sampled it to nothing; the message names the measured cause. A key that means the setup pose states the identity in its parameters, or carries no run |
 | `vertexCount is N, which is not a multiple of 3` | §3.4 — a path's vertices are knots and handles read in groups of three: `3(K + 1)` open, `3K` closed |
 | `vertexCount is N and an open path needs at least 6` | §3.4 — an open path drops its first and last point, so it needs six for one curve |
-| `"lengths" is not authored — rigc measures the setup arc length of each curve` | §3.4 — delete the array; it is a measurement of the vertices above it |
+| `"lengths" has N entry(ies) where the parser sizes M — vertexCount / 3 on …` | §3.4 — `vertexCount / 3` entries on either shape; give the array the source states, or leave the field out and rigc measures it |
+| `"lengths"[i] is V, below …` / `"lengths"[i] is "…"; every entry is a finite cumulative length` | §3.4 — the array is cumulative, so each entry is at least the one before it |
 | `rig constraint "X": slot "Y" has no path attachment in any skin` | §3.5.1 — give that slot a `"type": "path"` attachment, or aim the constraint at the slot that has one |
 | `rig constraint "X": rotateMode is "CHAINSCALE"; known: Tangent, Chain, ChainScale` | §3.5.1 — only the first letter's case is free; anything else resolves to `undefined` in the parser |
 | `rig constraint "X": applies animation "Y", which the motion spec does not declare (it declares: …)` | §3.5.2 — fix the slider's `animation`, or add it to the motion spec |
@@ -5780,7 +5781,6 @@ are `CompileError`s, and they name what the format actually defines
 | attachment `type` of anything else — `sequence`, a typo | `attachment type "X" is not one of the 7 the Spine 4.3 format defines (region, mesh, linkedmesh, boundingbox, path, point, clipping). … the attachment is dropped from the skeleton without a word` — a **`CompileError`**, not a deferral: rigc is not going to implement a name the format does not have. (`sequence` is a key on a region or a mesh, not a type of its own.) |
 | `"type": null` | `"type" is null, which is not a name. … PRESENT-and-null is not absent: getValue(map, "type", "region") takes the default only when the key is missing, so this map matches no case, readAttachment returns null, and the attachment is dropped from the skeleton without a word. Remove the key, or name a type.` Leaving the key **out** is legal and reads as `region`; writing it as `null` is not the same thing ([#577](https://github.com/firejune/rigc/issues/577)) |
 | constraint `type` of anything else | `constraint type "X" is not one Spine 4.3 knows. The five are: ik, transform, path, physics, slider.` — all five are emitted, so this is a typo, and a typo is what the parser drops in silence |
-| a path attachment's `lengths` | `"lengths" is not authored — rigc measures the setup arc length of each curve off the geometry` (§3.4). Not a deferral: a second copy of a number the vertices already fix |
 | any key neither format has, anywhere in either file | `<object> has a key this compiler does not read: "x" (did you mean "y"?) … Known here: …` (§5.1). Not a deferral either: a key nothing reads is a value you wrote and the emitted skeleton does not contain |
 
 Two more limits that are not errors but will shape what you can attempt:
@@ -8105,8 +8105,10 @@ evidence that the format will carry what you write.
   so do its `position`, `spacing` and three-channel `mix` timelines — all three
   channels of every `mix` key, and all twelve curve numbers on each key that
   carries a curve. ⚠️ Its `lengths` did **not**, which is the last bullet — and
-  since [#560](https://github.com/firejune/rigc/issues/560) they do, because rigc
-  now emits the numbers the editor recomputes rather than numbers near them.
+  since [#560](https://github.com/firejune/rigc/issues/560) they do on that rig,
+  because rigc emits the computation the editor runs rather than one near it.
+  What they are computed ON is a second question, which the round trip could not
+  ask and #804 did: see the end of this section.
 - 🔬 **`physics.mix` and `physics.reset` timelines survive**, the `reset` key
   included — a key that carries a time and no value at all — and so does the
   physics constraint's setup `mix`.
@@ -8159,9 +8161,33 @@ out of the artifact.
 
 🔬 **And the editor always writes `vertexCount / 3` entries, computing the
 wrap-around curve even on an open path** — that open path's fourth entry,
-`2136.228`, is the closed-chain cumulative. ⚠️ Neither array is wrong: the parser
-allocates `vertexCount / 3` and copies whatever is there, and `PathConstraint`
-reads at most `lengths[curveCount]`, so the trailing entry is never read.
+`2136.228`, is the closed-chain cumulative. The parser allocates `vertexCount / 3`
+and copies whatever is there, and `PathConstraint` reads at most
+`lengths[curveCount]`, so the trailing entry is never read — and since
+[#804](https://github.com/firejune/rigc/issues/804) rigc writes it too, measured
+over the closed chain, so the `gallery/ride` build ends on the same `2136.228`.
+
+🚨 **"Every digit the editor printed" was true of two rigs and false in
+production** ([#804](https://github.com/firejune/rigc/issues/804)). Both rigs above
+are unweighted, unscaled and unconstrained, and the computation is only half of
+the number — the other half is the geometry it is fed, and there the editor and
+rigc differed twice:
+
+- **Scale.** rigc blended weighted vertices through setup matrices that ignored
+  bone scale, shear and `inherit`: a 50/50-weighted probe path over a bone at
+  scale 2 measured 0.752× the runtime's own `curves`. The matrices are the
+  runtime's now, and an omitted `lengths` measures within 1e-4 of `curves`
+  (`PS186`).
+- **Constraints.** The editor measures the pose the first update hands the path
+  constraint, with every constraint ordered before it applied; a transform
+  constraint on the path's slot bone ordered after it moves nothing. rigc does
+  not pose, so it cannot reproduce that — an omitted `lengths` is the
+  **unconstrained** setup figure (`PS190`), and on a path a constraint moves at
+  rest that is not the editor's number.
+
+⇒ **A stated `lengths` is carried as stated**, and `ingest` writes the source's
+array into the spec, so a rebuilt export is its export on this field. What rigc
+still measures is an array you left out of a spec you wrote.
 
 ⇒ **What this means for you.** `lengths` is the one number in a path rig you
 cannot check by looking: `diff` does not compare it, and `A33` asks only that it

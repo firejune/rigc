@@ -3050,7 +3050,10 @@ function cmdExplain(flags: Record<string, string>): void {
       const curve = attachments.find((att) => (att as { type?: string }).type === 'path') as
         | { lengths?: number[]; closed?: boolean; constantSpeed?: boolean }
         | undefined;
-      const lengths = curve?.lengths ?? [];
+      // `vertexCount / 3` entries on both shapes since issue #804, so an open
+      // path's curves are one fewer than its entries and its length is the last
+      // CURVE's entry — the trailing one is the wrap-around curve nothing reads.
+      const lengths = (curve?.lengths ?? []).slice(0, curve?.closed ? undefined : -1);
       console.log(
         `  ${c.name.padEnd(12)} slot=${slot.padEnd(12)} bones=[${(c.bones as string[]).join(', ')}] ` +
           `position=${c.position ?? 0} ${String(c.positionMode ?? 'percent')}/${String(c.spacingMode ?? 'length')}/${String(c.rotateMode ?? 'tangent')}`,
