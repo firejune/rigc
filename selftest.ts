@@ -1472,6 +1472,55 @@ const MUTANTS: Mutant[] = [
       return { ...a, atlasText: `${rewritten.join('\n\n')}\n` };
     },
   },
+  // ─── one frame of the series made larger than the attachment (issue #795) ──
+  //
+  // An edit the gate has to ACCEPT. The fixture's series is found structurally
+  // — the first attachment carrying a `sequence` — and its second frame's
+  // region has its original size doubled (the `offsets` line the atlas states,
+  // or the bounds where it states none), so that frame no longer measures what
+  // the attachment does. The runtime scales
+  // it into the attachment's one size (`computeUVs`), which is the shape an
+  // editor exports for a series that mixes image sizes.
+  {
+    name: 'M80_a_series_frame_whose_original_size_differs_from_the_attachment_is_a_skeleton_the_gate_accepts',
+    origin:
+      'issue #795: the compiler refused this shape as "a packed frame\'s rectangle is fixed" while the runtime draws it ' +
+      'correctly — so no gate may refuse it either',
+    expect: null,
+    mutate: (a) => {
+      let frame: string | null = null;
+      for (const skin of (JSON.parse(a.skeletonText) as any).skins ?? []) {
+        for (const entries of Object.values(skin.attachments ?? {}) as any[]) {
+          for (const [placeholder, entry] of Object.entries(entries) as Array<[string, any]>) {
+            if (frame !== null || entry.sequence === undefined || entry.sequence.count < 2) continue;
+            const number = String((entry.sequence.start ?? 1) + 1);
+            frame = `${entry.path ?? entry.name ?? placeholder}${'0'.repeat(Math.max(0, (entry.sequence.digits ?? 0) - number.length))}${number}`;
+          }
+        }
+      }
+      if (frame === null) throw new Error('the fixture carries no series of two or more frames for the mutant to resize');
+      // The region's field lines are the ones after its name that carry a colon;
+      // `offsets` is rewritten where the atlas states it and added where it does not.
+      const lines = a.atlasText.split('\n');
+      const at = lines.indexOf(frame);
+      let end = at + 1;
+      while (at >= 0 && end < lines.length && /^\s*\w+:/.test(lines[end])) end++;
+      const fields = at < 0 ? [] : lines.slice(at + 1, end);
+      const numbers = (key: string): number[] | null => {
+        const line = fields.find((field) => new RegExp(`^\\s*${key}:`).test(field));
+        return line === undefined ? null : line.slice(line.indexOf(':') + 1).split(',').map((v) => Number(v.trim()));
+      };
+      const bounds = numbers('bounds');
+      if (bounds === null) throw new Error(`the fixture atlas carries no bounds line under region "${frame}"`);
+      const [offsetX, offsetY, originalWidth, originalHeight] = numbers('offsets') ?? [0, 0, bounds[2], bounds[3]];
+      const doubled = `offsets: ${offsetX}, ${offsetY}, ${originalWidth * 2}, ${originalHeight * 2}`;
+      const kept = fields.filter((field) => !/^\s*offsets:/.test(field));
+      const atlasText = [...lines.slice(0, at + 1), ...kept, doubled, ...lines.slice(end)].join('\n');
+      // An accepted edit that edited nothing would pass for one the gate accepted.
+      if (atlasText === a.atlasText) throw new Error(`resizing region "${frame}" left the atlas unchanged`);
+      return { ...a, atlasText };
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -8247,6 +8296,134 @@ function runRigSuite(): number {
     );
   }
 
+  // --- RF80–RF83: a series whose frames differ in size, under --atlas-in (issue #795)
+  //
+  // The runtime draws every frame into the attachment's one size
+  // (`RegionAttachment.computeUVs` scales each region by `width /
+  // region.originalWidth`), so a stated size is the quad and no frame is
+  // compared with it. RF80 and RF83 are red on the branch point, which refused
+  // the stated size as "a packed frame's rectangle is fixed"; RF81 and RF82 are
+  // the two halves of the omitted-size rule this landing keeps.
+  {
+    const sizes = SERIES_PACK_SIZES;
+    const stated = sizes[0];
+    const seq = { count: sizes.length, start: 1, digits: 4 };
+    const packed = (attachment: Record<string, unknown>, frameSizes: readonly number[]): ReturnType<typeof buildSeriesProbe> => {
+      const probe = writeSeriesProbe({ sequence: seq, ...attachment }, [{ t: 0, mode: 'loop', delay: 0.1 }], frameSizes.length);
+      return buildSeriesProbe(probe, writeSeriesPack(probe.dirs.dir, frameSizes));
+    };
+    type SkinEntry = { width?: number; height?: number };
+    const entryOf = (result: ReturnType<typeof buildSeriesProbe>): SkinEntry | null =>
+      result.built === null
+        ? null
+        : (JSON.parse(result.built.skeletonText) as { skins: Array<{ attachments: Record<string, Record<string, SkinEntry>> }> }).skins[0].attachments.glint.glint;
+    const gatedGreen = (result: ReturnType<typeof buildSeriesProbe>): string[] => [
+      ...(result.message === null ? [] : [`refused: ${result.message}`]),
+      ...(result.report === null || result.report.failures.length === 0
+        ? []
+        : [`the gate failed: ${result.report.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
+      ...(result.report === null || result.report.passed.includes('A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES')
+        ? []
+        : ['A46 did not pass']),
+      ...(result.report === null || Number(result.report.stats.sequenceSamples ?? 0) > 0 ? [] : ['A46 posed no sample']),
+    ];
+    const sizeProbes = (entry: SkinEntry | null, want: number): string[] =>
+      entry === null
+        ? []
+        : (['width', 'height'] as const).flatMap((field) =>
+            entry[field] === want ? [] : [`the emitted ${field} is ${String(entry[field])}, and ${want} was wanted`],
+          );
+
+    // RF80 — the stated size is emitted, and the runtime draws every frame into it from its own region.
+    const region = packed({ width: stated, height: stated }, sizes);
+    const runtimeProbes: string[] = [];
+    let quads = '';
+    if (region.built !== null) {
+      const data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(region.built.atlasText))).readSkeletonData(region.built.skeletonText);
+      const shown = new Skeleton(data).findSlot('glint')?.appliedPose.attachment;
+      if (!(shown instanceof RegionAttachment)) {
+        runtimeProbes.push('the runtime loaded no region attachment on "glint"');
+      } else {
+        const uvSets = new Set<string>();
+        shown.sequence.regions.forEach((loaded, i) => {
+          const atlasRegion = loaded as TextureAtlasRegion | null;
+          const offsets = shown.sequence.offsets?.[i] ?? [];
+          const xs = offsets.filter((_, k) => k % 2 === 0);
+          const ys = offsets.filter((_, k) => k % 2 === 1);
+          const extent = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+          uvSets.add(Array.from(shown.sequence.uvs?.[i] ?? []).join(','));
+          if (atlasRegion?.name !== seriesFrame(i)) runtimeProbes.push(`frame ${i} resolved to ${String(atlasRegion?.name)}, not ${seriesFrame(i)}`);
+          if (atlasRegion?.originalWidth !== sizes[i]) runtimeProbes.push(`frame ${i}'s region is ${String(atlasRegion?.originalWidth)} wide, not the pack's ${sizes[i]}`);
+          if (JSON.stringify(extent) !== JSON.stringify([-stated / 2, stated / 2, -stated / 2, stated / 2])) {
+            runtimeProbes.push(`frame ${i}'s quad spans ${extent.join(', ')}, not the attachment's ${stated}x${stated} about its origin`);
+          }
+        });
+        if (uvSets.size !== sizes.length) runtimeProbes.push(`${uvSets.size} distinct UV set(s) over ${sizes.length} frames — some frame samples another's region`);
+        quads = `every frame's quad is ±${stated / 2} and its UVs its own region's (${uvSets.size} distinct)`;
+      }
+    }
+    const regionProbes = [...gatedGreen(region), ...sizeProbes(entryOf(region), stated), ...runtimeProbes];
+    bad += reportCase(
+      'RF80_A_SERIES_OF_UNEQUAL_FRAMES_AT_A_STATED_SIZE_BUILDS_UNDER_ATLAS_IN_AND_THE_RUNTIME_DRAWS_EVERY_FRAME_INTO_IT',
+      regionProbes.length === 0,
+      probeDetail(
+        regionProbes.length === 0,
+        regionProbes,
+        `frames of ${sizes.join(', ')} under a stated ${stated}x${stated}: emitted at ${stated}x${stated}, gated green with ` +
+          `A46 over ${String(region.report?.stats.sequenceSamples)} sample(s), and ${quads}`,
+      ),
+      'the size a spec states is the quad, and the frames are what is drawn into it — the editor writes the setup ' +
+        'frame\'s size for a series that mixes image sizes, and refusing that refused its own exports. The runtime ' +
+        'half is read through spine-core rather than assumed, so a quad that did change per frame would say so here',
+    );
+
+    // RF81 — the same frames with no size stated are still refused: they state several numbers.
+    const omitted = packed({}, sizes);
+    const wantOmitted = `measure ${sizes.join(', ')} in width`;
+    const omittedHeld = omitted.message !== null && omitted.message.includes(wantOmitted) && omitted.message.includes('State "width" — the frames do not agree on one');
+    bad += reportCase(
+      'RF81_A_SERIES_OF_UNEQUAL_FRAMES_WITH_NO_SIZE_STATED_IS_STILL_REFUSED_BY_ITS_SIZES',
+      omittedHeld,
+      omitted.message === null ? `it compiled, at ${JSON.stringify(entryOf(omitted))} — a size the spec never stated` : omitted.message,
+      'frames of different sizes state several numbers and the spec states none, so picking one would be the ' +
+        'compiler choosing a value. This is the half of the old rule that was right, kept by name',
+    );
+
+    // RF82 — equal frames with no size stated still derive it.
+    const equalSizes = sizes.map(() => stated);
+    const equal = packed({}, equalSizes);
+    const equalProbes = [...gatedGreen(equal), ...sizeProbes(entryOf(equal), stated)];
+    bad += reportCase(
+      'RF82_A_SERIES_OF_EQUAL_FRAMES_WITH_NO_SIZE_STATED_TAKES_THE_ONE_SIZE_THEY_STATE',
+      equalProbes.length === 0,
+      probeDetail(equalProbes.length === 0, equalProbes, `${equalSizes.length} frames of ${stated} emit ${JSON.stringify(entryOf(equal))}, gated green`),
+      'the positive control for the omitted-size rule: when every frame measures the same that one number is the ' +
+        'frames\' own statement, so the compiler reads it rather than choosing it',
+    );
+
+    // RF83 — the mesh route takes the same rule: its size comes from the same function.
+    const half = stated / 2;
+    const mesh = packed(
+      {
+        type: 'mesh',
+        width: stated,
+        height: stated,
+        uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+        triangles: [0, 1, 2, 0, 2, 3],
+        vertices: [-half, half, half, half, half, -half, -half, -half],
+      },
+      sizes,
+    );
+    const meshProbes = [...gatedGreen(mesh), ...sizeProbes(entryOf(mesh), stated)];
+    bad += reportCase(
+      'RF83_A_MESH_SERIES_OF_UNEQUAL_FRAMES_AT_A_STATED_SIZE_BUILDS_UNDER_ATLAS_IN',
+      meshProbes.length === 0,
+      probeDetail(meshProbes.length === 0, meshProbes, `a mesh over frames of ${sizes.join(', ')} emits ${JSON.stringify(entryOf(mesh))}, gated green`),
+      'a mesh maps each frame by its uvs (`MeshAttachment.computeUVs`), so its stated size is the image size it ' +
+        'declares, not a claim about any frame — the branch point refused it through the same comparison',
+    );
+  }
+
   return bad;
 }
 
@@ -9056,13 +9233,19 @@ function writeSeriesProbe(
 }
 
 /** Compile and gate a series probe: the refusal, or what was built and what the gate said. */
-function buildSeriesProbe(probe: { dirs: ProbeDirs; motionPath: string }): {
+function buildSeriesProbe(probe: { dirs: ProbeDirs; motionPath: string }, atlasInPath?: string): {
   message: string | null;
   built: CompileResult | null;
   report: ReturnType<typeof validate> | null;
 } {
   try {
-    const built = compile({ rigPath: probe.dirs.rigPath, motionPath: probe.motionPath, outDir: probe.dirs.outDir, imagesDir: probe.dirs.dir });
+    const built = compile({
+      rigPath: probe.dirs.rigPath,
+      motionPath: probe.motionPath,
+      outDir: probe.dirs.outDir,
+      imagesDir: probe.dirs.dir,
+      ...(atlasInPath === undefined ? {} : { atlasInPath }),
+    });
     const report = validate({
       skeletonText: built.skeletonText,
       atlasText: built.atlasText,
@@ -9075,6 +9258,37 @@ function buildSeriesProbe(probe: { dirs: ProbeDirs; motionPath: string }): {
   } catch (err) {
     return { message: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`, built: null, report: null };
   }
+}
+
+/**
+ * The frame sizes of the unequal series pack (issue #795): chosen, all
+ * different, and the first is the size the probe states — the setup frame's,
+ * which is what an editor writes for a series that mixes image sizes.
+ */
+const SERIES_PACK_SIZES = [16, 24, 32] as const;
+
+/**
+ * A pack holding the series probe's frames at `sizes`, square, left to right on
+ * one page, each with an `offsets` line stating its original size. `trim`
+ * takes that many texels off every edge of each region, so the region's bounds
+ * and its original size are two different numbers and a reader of one cannot
+ * pass for a reader of the other.
+ */
+function writeSeriesPack(dir: string, sizes: readonly number[], trim = 0): string {
+  const width = sizes.reduce((sum, size) => sum + size, 0);
+  const height = Math.max(...sizes);
+  writeProbePng(join(dir, 'series_pack.png'), width, height, [90, 60, 40, 255]);
+  let x = 0;
+  const regions = sizes.map((size, i) => {
+    const block =
+      `${seriesFrame(i)}\n\tbounds: ${x + trim}, ${trim}, ${size - 2 * trim}, ${size - 2 * trim}\n` +
+      `\toffsets: ${trim}, ${trim}, ${size}, ${size}\n`;
+    x += size;
+    return block;
+  });
+  const path = join(dir, 'series_pack.atlas');
+  writeFileSync(path, `series_pack.png\n\tsize: ${width}, ${height}\n\tfilter: Linear, Linear\n${regions.join('')}`);
+  return path;
 }
 
 /** The region the runtime shows on `slot` at `time` of `animation`, stepping the file through spine-core. */
@@ -40361,6 +40575,44 @@ function runAtlasReaderSuite(): number | null {
     if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
 
+  // --- PKR62: every frame of a series keeps its own `offsets` (issue #795) ---
+  //
+  // RF80 holds that a stated size is the attachment's one size; this holds the
+  // other side of the same build — that the reader did not make the frames
+  // agree to get there. Each region is trimmed, so bounds and original size
+  // differ and the figure read has to be the one `offsets` states.
+  {
+    const trim = 2;
+    const sizes = SERIES_PACK_SIZES;
+    const probe = writeSeriesProbe({ sequence: { count: sizes.length, start: 1, digits: 4 }, width: sizes[0], height: sizes[0] }, null, sizes.length);
+    const result = buildSeriesProbe(probe, writeSeriesPack(probe.dirs.dir, sizes, trim));
+    const frameProbes = [
+      ...(result.message === null ? [] : [`refused: ${result.message}`]),
+      ...(result.built === null
+        ? []
+        : sizes.flatMap((size, i) => {
+            const img = result.built?.images.find((image) => image.region === seriesFrame(i));
+            const read = img === undefined ? 'absent' : `${img.width}x${img.height}, bounds ${String(img.atlas?.width)}, offset ${String(img.atlas?.offsetX)}`;
+            return img !== undefined && img.width === size && img.height === size && img.atlas?.originalWidth === size &&
+              img.atlas.width === size - 2 * trim && img.atlas.offsetX === trim
+              ? []
+              : [`frame ${i} (${seriesFrame(i)}) reads ${read}; the pack states ${size}x${size} trimmed ${trim} from every edge`];
+          })),
+    ];
+    say(
+      'PKR62_EVERY_FRAME_OF_A_PACKED_SERIES_KEEPS_ITS_OWN_ORIGINAL_SIZE',
+      frameProbes.length === 0,
+      probeDetail(
+        frameProbes.length === 0,
+        frameProbes,
+        `${sizes.length} trimmed frames read as ${sizes.map((size) => `${size}x${size}`).join(', ')} from their offsets, under one ` +
+          `stated ${sizes[0]}x${sizes[0]} attachment`,
+      ),
+      'the frames of one series are free to differ, and a reader or compiler that coerced them to the attachment\'s ' +
+        'size would draw each at a scale the pack does not state — the build going green is only half the claim',
+    );
+  }
+
   return bad;
 }
 
@@ -52596,6 +52848,40 @@ function runCurrencySuite(): number {
       ),
       'the fold is measured on one production map and no public file can re-take it, so the guide\'s statement of ' +
         'which characters it covers is only as good as its agreement with the table the comparator reads',
+    );
+  }
+
+  // --- CUR97: the retired sequence-size refusal is quoted nowhere (#795) ---
+  //
+  // The compiler no longer compares a series' stated size with its frames, so
+  // the refusal's sentence and the guide's "refused, as it is for one region"
+  // would each tell an author to change a correct spec. Held both ways: the
+  // tree carries neither, and either one planted back into the guide is named.
+  {
+    const RETIRED = [
+      "a packed frame's rectangle is fixed",
+      'a stated size that disagrees with a packed frame is refused',
+    ];
+    const scanned = ['docs/AUTHORING.md', 'README.md', 'src/compile.ts', 'src/rig.ts'];
+    const texts = scanned.map((path) => [path, readFileSync(join(root, path), 'utf8').replace(/\s+/g, ' ')] as const);
+    const scanRetired = (population: ReadonlyArray<readonly [string, string]>): string[] =>
+      population.flatMap(([path, text]) => RETIRED.filter((sentence) => text.includes(sentence)).map((sentence) => `${path} still says "${sentence}"`));
+    const standing = scanRetired(texts);
+    const plantProbes = RETIRED.flatMap((sentence) => {
+      const planted = scanRetired(texts.map(([path, text]) => [path, path === 'docs/AUTHORING.md' ? `${text} ${sentence}` : text] as const));
+      return planted.length === standing.length + 1 ? [] : [`"${sentence}" planted into the guide raised ${planted.length - standing.length} fault(s), and one is required`];
+    });
+    const retiredProbes = [...standing, ...plantProbes];
+    say(
+      'CUR97_THE_RETIRED_SEQUENCE_SIZE_REFUSAL_IS_QUOTED_NOWHERE',
+      retiredProbes.length === 0,
+      probeDetail(
+        retiredProbes.length === 0,
+        retiredProbes,
+        `${RETIRED.length} retired sentence(s) absent from ${scanned.join(', ')}, and each planted into the guide is named`,
+      ),
+      'a sentence the compiler no longer raises, left in the guide, is an instruction to break a correct spec — the ' +
+        'series the editor exports with its setup frame\'s size — and nothing else in the run reads the guide for it',
     );
   }
 
