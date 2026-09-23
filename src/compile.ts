@@ -39,7 +39,7 @@ import { parseJsonWithPosition } from './json-position.ts';
 // of it — the same search serves `refuseUnknownKeys`, and a second copy here with
 // a threshold edited is how such a pair drifts apart.
 import { nearMisses } from './keys.ts';
-import { parseMotionSpec } from './motion.ts';
+import { EVERY_GLOBAL_PHYSICS, parseMotionSpec } from './motion.ts';
 import {
   constraintAt,
   declaresNoStage,
@@ -2395,6 +2395,16 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   /** kind -> the names it declares, for the "the rig declares: …" half of one. */
   const constraintNamesOfKind = new Map<string, string[]>();
   const declareConstraint = (name: string, type: string): void => {
+    // Reserved, because a track's `"physics": "*"` is the timeline that names no
+    // constraint (issue #726): a physics constraint of that name is one no track
+    // could key by name without meaning every global one instead.
+    if (type === 'physics' && name === EVERY_GLOBAL_PHYSICS) {
+      throw new CompileError(
+        `physics constraint "${EVERY_GLOBAL_PHYSICS}": the name is reserved — a motion spec's \`"physics": ` +
+          `"${EVERY_GLOBAL_PHYSICS}"\` is the timeline that names no constraint and drives every physics constraint ` +
+          'declaring the keyed property global, so a constraint called that could not be keyed by name. Rename it',
+      );
+    }
     constraintDeclared.add(constraintAt(type, name));
     constraintKinds.set(name, [...(constraintKinds.get(name) ?? []), type]);
     constraintNamesOfKind.set(type, [...(constraintNamesOfKind.get(type) ?? []), name]);
@@ -2568,7 +2578,40 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         const perMember = resolveMemberTrack(track, animName, targets, bones, trackDerivations);
         targets.forEach((target, index) => {
           const resolved = perMember.get(target)!;
-          if (family !== null) {
+          // The timeline that names no constraint (issue #726). Resolved against
+          // the constraints' own `…Global` flags rather than a name, and refused
+          // when it reaches none — the runtime would walk every physics
+          // constraint, skip each one, and the file would parse and do nothing.
+          const everyGlobal = family === 'physics' && target === EVERY_GLOBAL_PHYSICS;
+          if (everyGlobal && track.physics === undefined) {
+            throw new CompileError(
+              `animation "${animName}": group "${String(track.group)}" lists "${EVERY_GLOBAL_PHYSICS}", which is not a ` +
+                `constraint but the target that names none — write it as the track's \`"physics": "${EVERY_GLOBAL_PHYSICS}"\``,
+            );
+          }
+          if (everyGlobal) {
+            const physics = constraints.filter((one) => one.type === 'physics');
+            const flag = `${track.property}Global`;
+            const reached =
+              track.property === 'reset'
+                ? physics
+                : physics.filter((one) => one[flag] === true);
+            if (reached.length === 0) {
+              throw new CompileError(
+                `animation "${animName}" keys physics "${EVERY_GLOBAL_PHYSICS}" ${track.property}, the timeline that ` +
+                  `names no constraint and drives every physics constraint ` +
+                  (track.property === 'reset' ? 'the rig has' : `declaring "${flag}": true`) +
+                  ', and ' +
+                  (physics.length === 0
+                    ? 'the rig declares no physics constraint'
+                    : `none of ${physics.map((one) => `"${one.name}"`).join(', ')} does`) +
+                  ' — it would parse and move nothing. ' +
+                  (track.property === 'reset'
+                    ? 'Declare a physics constraint, or remove the track'
+                    : `Set "${flag}": true on the constraints it is for, or key one by name`),
+              );
+            }
+          } else if (family !== null) {
             const label = CONSTRAINT_TRACK_FAMILIES[family].label;
             // Resolved by name AND by type in the parser
             // (`findConstraint(name, PathConstraintData)`), which returns null on
@@ -2650,7 +2693,8 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
                 ? compileValueTrack(resolved, motion, animName, anim.duration, target, shift, BONE_TRACKS, 'bone')
                 : compileTrack(resolved, motion, animName, anim.duration, target, shift, attachmentIndex, darkSlots);
           for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
-          if (family !== null) (familyTimelines[family][target] ??= {})[track.property] = keys;
+          // Under the empty name, which is the file's own spelling of it.
+          if (family !== null) (familyTimelines[family][everyGlobal ? '' : target] ??= {})[track.property] = keys;
           else if (isBoneTrack) (boneTimelines[target] ??= {})[track.property] = keys;
           else (slotTimelines[target] ??= {})[track.property] = keys;
         });

@@ -12979,7 +12979,7 @@ function runConstraintAndDeformSuite(): number {
       ...PHYSICS_TIMELINE_RIG,
       constraints: PHYSICS_TIMELINE_RIG.constraints.map((constraint) => ({ ...constraint, mix: 0, mixGlobal: declareGlobal })),
     });
-  /** Move the emitted physics table onto the empty name — the form no rig spec can state. */
+  /** Move the emitted physics table onto the empty name — the form a foreign file carries. */
   const toGlobalForm = (skeleton: Record<string, unknown>): void => {
     const physics = (skeleton.animations as Record<string, Record<string, unknown>>).swing.physics as Record<string, unknown>;
     physics[''] = physics.jiggle;
@@ -13006,12 +13006,12 @@ function runConstraintAndDeformSuite(): number {
         `leaves the one that does not refused once — "${mutedRefusal(globalNotDeclared)[0] ?? '(none)'}"`,
       (count) => `${count} clause(s) of the global form did not hold:`,
     ),
-    'no rig spec can reach this shape — the compiler refuses a track naming a constraint the skeleton has not got, ' +
-      'the empty name among them — so it is planted into the artifact, which is the only way a file rigc did not ' +
-      'write gets measured here. Which constraints it reaches is asked of `PhysicsConstraintTimeline.global`, the ' +
+    'written when no motion spec could reach this shape — `"physics": "*"` does since #726 — and it stays planted ' +
+      'into the artifact, which is how a file rigc did not write gets measured here. Which constraints it reaches is asked of `PhysicsConstraintTimeline.global`, the ' +
       'runtime\'s own answer (`Animation.js:2067-2075`), rather than of a reading of `mixGlobal` this file would ' +
-      'keep in step by hand. ⚠️ [measured] `A34` refuses the empty name on both of these, which is a verdict about ' +
-      'a construct the runtime reads deliberately and is not this control\'s subject: the clauses read A23 alone',
+      'keep in step by hand. ⚠️ `A34` refused the empty name on both of these until #726, and since then refuses it ' +
+      'on the second only, where no constraint declares `mixGlobal` — which is `T95`\'s subject and not this ' +
+      'control\'s: the clauses read A23 alone',
   );
 
   /** Step the setup pose with nothing playing: the state the rig is in when no animation is. */
@@ -13090,6 +13090,176 @@ function runConstraintAndDeformSuite(): number {
       'being outside its bound there (`if (mix === 0) return;`). A `massInverse` of Infinity is already NaN on the ' +
       'first step, before any animation has been applied — so the escape is the rule row\'s own field and the count ' +
       'of rows that carry it is read off the table rather than written here',
+  );
+
+  // --- T94–T97: the timeline that names no constraint, spelled (issue #726) --
+  //
+  // 🚨 **Measured on the branch point.** A skeleton keying `physics: { "": {
+  // strength } }` over three physics constraints, two of them declaring
+  // `strengthGlobal`, poses the two at the keyed value and leaves the third at
+  // its setup — and `A34` refused it with a sentence that is false about it
+  // ("the skeleton's constraints array has no """). No motion spec could state
+  // it: `"physics": ""` and `"physics": "*"` were both "keys unknown physics
+  // constraint". The motion spec now spells it `"*"`, `compile` writes it under
+  // the empty name, and `A34` asks `unnamedPhysicsReach` who it reaches.
+  const [, strengthSetup, strengthKeyed] = PHYSICS_TRACK_KEYS.find(([property]) => property === 'strength')!;
+  const twoGlobal = ['jiggle', 'jiggle_b'];
+  const everyGlobalDirs = writeProbeRig(threeTipsRig(twoGlobal));
+  const everyGlobalEmitted: Array<Record<string, unknown>> = [];
+  const everyGlobalGate = gateProbeOrRefusal(everyGlobalDirs, threeTipsMotion('*'), everyGlobalEmitted);
+  /**
+   * Posed through spine-core at the animation's end: every constraint in
+   * `globalOn` holds the keyed strength and every other one its setup value.
+   * The problems as text, so a mutant's red names the constraint that missed.
+   */
+  const reachProblems = (skeletonText: string, atlasText: string, globalOn: readonly string[]): string[] => {
+    const skeleton = poseAtSample(posableFromText(skeletonText, atlasText, everyGlobalDirs.outDir).data, 'jig', 4, 4);
+    return THREE_TIPS.flatMap((name) => {
+      const found = skeleton.findConstraint(name, PhysicsConstraint)?.pose.strength;
+      const want = globalOn.includes(name) ? strengthKeyed : strengthSetup;
+      return found !== undefined && near(found, want) ? [] : [`${name} strength ${String(found)}, wanted ${want}${globalOn.includes(name) ? ' (global)' : ''}`];
+    });
+  };
+  const everyGlobalText = everyGlobalEmitted[0] === undefined ? null : `${JSON.stringify(everyGlobalEmitted[0], null, 2)}\n`;
+  // The atlas is the rig's and not the motion's, so the probe's last compile has it.
+  const everyGlobalAtlas =
+    everyGlobalGate.refused === null
+      ? compile({
+          rigPath: everyGlobalDirs.rigPath,
+          motionPath: join(everyGlobalDirs.dir, 'probe.motion.json'),
+          outDir: everyGlobalDirs.outDir,
+          imagesDir: everyGlobalDirs.dir,
+        }).atlasText
+      : '';
+  const emittedGroups = Object.keys(
+    ((everyGlobalEmitted[0]?.animations as Record<string, Record<string, unknown>> | undefined)?.jig?.physics ?? {}) as Record<string, unknown>,
+  );
+  const everyGlobalProbes = [
+    ...(everyGlobalGate.refused === null ? [] : [`the compile was refused: ${everyGlobalGate.refused}`]),
+    ...(everyGlobalGate.report === null || everyGlobalGate.report.failures.length === 0
+      ? []
+      : everyGlobalGate.report.failures.map((f) => `gate: ${f.assertion}: ${f.detail}`)),
+    ...(everyGlobalGate.report === null || everyGlobalGate.report.passed.includes('A34_CONSTRAINT_TIMELINE_TARGETS')
+      ? []
+      : ['A34 did not pass']),
+    ...(everyGlobalText === null || JSON.stringify(emittedGroups) === JSON.stringify([''])
+      ? []
+      : [`the physics group is keyed ${JSON.stringify(emittedGroups)}, not the empty name`]),
+    ...(everyGlobalText === null ? [] : reachProblems(everyGlobalText, everyGlobalAtlas, twoGlobal)),
+  ];
+  const everyGlobalHeld = everyGlobalProbes.length === 0;
+  say(
+    'T94_THE_UNNAMED_PHYSICS_TRACK_COMPILES_UNDER_THE_EMPTY_NAME_AND_DRIVES_THE_GLOBAL_CONSTRAINTS_AND_NOT_THE_REST',
+    everyGlobalHeld,
+    probeDetail(
+      everyGlobalHeld,
+      everyGlobalProbes,
+      `\`"physics": "*"\` compiled to the group ${JSON.stringify(emittedGroups)} and gated green with A34 passing; posed ` +
+        `through spine-core at t=1, ${twoGlobal.join(' and ')} (strengthGlobal) hold ${strengthKeyed} and ` +
+        `${THREE_TIPS.filter((name) => !twoGlobal.includes(name)).join(', ')} holds its setup ${strengthSetup}`,
+      (count) => `${count} clause(s) of the unnamed track did not hold:`,
+    ),
+    'the runtime half is the one that matters: the empty name is `constraintIndex -1`, and ' +
+      '`PhysicsConstraintTimeline.apply` then writes every active constraint whose data declares the property ' +
+      'global (`Animation.js:2067-2075`) — so a constraint left at its setup value is half of the claim, not a ' +
+      'side note. A track that drove all three would pass the other clauses',
+  );
+
+  // T95: the gate's half, on the same artifact with the flags taken off it —
+  // the shape a file rigc did not write can carry and `compile` cannot write.
+  const flagsStripped =
+    everyGlobalGate.refused === null
+      ? gateProbeArtifacts(everyGlobalDirs, threeTipsMotion('*'), (skeleton) => {
+          for (const constraint of skeleton.constraints as Array<Record<string, unknown>>) delete constraint.strengthGlobal;
+        })
+      : null;
+  const strippedA34 = (flagsStripped?.failures ?? []).filter((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS');
+  const a34Probes = [
+    ...(flagsStripped === null ? [`nothing to strip — the compile was refused: ${everyGlobalGate.refused}`] : []),
+    ...(flagsStripped === null || strippedA34.length === 1 ? [] : [`${strippedA34.length} A34 failure(s) on the stripped artifact, not one`]),
+    ...(strippedA34.length !== 1 ||
+    (strippedA34[0].detail.includes('timeline "strength"') &&
+      strippedA34[0].detail.includes('"strengthGlobal": true') &&
+      THREE_TIPS.every((name) => strippedA34[0].detail.includes(`"${name}"`)) &&
+      !strippedA34[0].detail.includes('has no ""'))
+      ? []
+      : [`the refusal does not name the timeline, the flag and the three constraints: ${strippedA34[0].detail}`]),
+  ];
+  const a34Held = a34Probes.length === 0;
+  say(
+    'T95_A34_REFUSES_THE_EMPTY_NAME_ONLY_WHERE_NO_CONSTRAINT_DECLARES_THE_KEYED_PROPERTY_GLOBAL',
+    a34Held,
+    probeDetail(
+      a34Held,
+      a34Probes,
+      `with every strengthGlobal deleted from the artifact T94 gated green: ${strippedA34[0]?.detail ?? '(none)'}`,
+      (count) => `${count} clause(s) of A34's reading did not hold:`,
+    ),
+    'the accepting half is T94\'s "A34 passed"; this is the refusing half, and the sentence is the product: the ' +
+      'branch point printed "the skeleton\'s constraints array has no """ over this artifact AND over the one it ' +
+      'accepts now, which is true of neither — the parser does not look the empty name up at all ' +
+      '(`SkeletonJson.js:1048-1054`). Who it reaches is `unnamedPhysicsReach`, the one reading `A23` and `A42` ask too',
+  );
+
+  // T96: the two things `"*"` cannot be — a track that reaches nobody, and a
+  // constraint's name.
+  const noneGlobal = refusal(writeProbeRig(threeTipsRig([])), threeTipsMotion('*'));
+  const reservedName = refusal(
+    writeProbeRig({ ...threeTipsRig(twoGlobal), constraints: [{ ...PHYSICS_TIMELINE_RIG.constraints[0], name: '*' }] }),
+    threeTipsMotion('jiggle'),
+  );
+  const refusalProbes = [
+    ...(noneGlobal !== null &&
+    noneGlobal.includes('keys physics "*" strength') &&
+    noneGlobal.includes('"strengthGlobal": true') &&
+    THREE_TIPS.every((name) => noneGlobal.includes(`"${name}"`))
+      ? []
+      : [`the track on a rig declaring no strengthGlobal is not refused by name: ${noneGlobal ?? 'it compiled'}`]),
+    ...(reservedName !== null && reservedName.includes('physics constraint "*": the name is reserved')
+      ? []
+      : [`a rig declaring a physics constraint named "*" is not refused as reserved: ${reservedName ?? 'it compiled'}`]),
+  ];
+  const refusalHeld = refusalProbes.length === 0;
+  say(
+    'T96_A_TRACK_ON_EVERY_GLOBAL_CONSTRAINT_THAT_REACHES_NONE_AND_A_CONSTRAINT_CALLED_STAR_ARE_BOTH_REFUSED_BY_NAME',
+    refusalHeld,
+    probeDetail(
+      refusalHeld,
+      refusalProbes,
+      `no strengthGlobal anywhere: ${noneGlobal}\n          a physics constraint called "*": ${reservedName}`,
+      (count) => `${count} refusal(s) did not happen:`,
+    ),
+    'a refusal and not a SKIP, because the track is not unmeasured — it is measured to do nothing: the runtime ' +
+      'walks every constraint and skips each, which is the "parses and does nothing" shape `A23` exists for. And ' +
+      '`"*"` has to be unavailable as a name, or a track naming it could mean either',
+  );
+
+  // T97: the mutant. The emitted group moved onto the first constraint's own
+  // name — a file that is correct for a different intent, so the gate has
+  // nothing to object to — and the posed readback T94 holds is what goes red.
+  const onFirst =
+    everyGlobalGate.refused === null
+      ? gateProbeArtifacts(everyGlobalDirs, threeTipsMotion('*'), (skeleton) => {
+          const physics = (skeleton.animations as Record<string, Record<string, Record<string, unknown>>>).jig.physics;
+          physics[THREE_TIPS[0]] = physics[''];
+          delete physics[''];
+          everyGlobalEmitted.push(skeleton);
+        })
+      : null;
+  const mutantText = everyGlobalEmitted[1] === undefined ? null : `${JSON.stringify(everyGlobalEmitted[1], null, 2)}\n`;
+  const mutantProblems = mutantText === null ? [] : reachProblems(mutantText, everyGlobalAtlas, twoGlobal);
+  const mutantHeld = onFirst !== null && mutantProblems.length > 0 && mutantProblems.every((problem) => problem.startsWith('jiggle_b '));
+  say(
+    'T97_THE_TRACK_EMITTED_UNDER_THE_FIRST_CONSTRAINTS_NAME_GOES_RED_ON_THE_POSED_READBACK',
+    mutantHeld,
+    onFirst === null
+      ? `nothing to mutate — the compile was refused: ${everyGlobalGate.refused}`
+      : `moved onto "${THREE_TIPS[0]}": ${onFirst.failures.length} gate failure(s); T94's readback names ` +
+        `${mutantProblems.length ? mutantProblems.join('; ') : 'nothing — it cannot tell the mutant from the real thing'}`,
+    'a gate nobody has seen fail is not a gate, and T94\'s posed clause is the one that separates "every global ' +
+      'constraint" from "the first one": the group names on disk and a green gate are equally true of both files. ' +
+      '⚠️ The gate is green on the mutant and that is measured, not overlooked — `validate` never sees the motion ' +
+      'spec, so a correct file for another intent is a correct file',
   );
 
   return bad;
@@ -13177,6 +13347,51 @@ function emittedPhysicsTimelines(skeleton: Record<string, unknown> | undefined):
   const animations = (skeleton?.animations ?? {}) as Record<string, Record<string, unknown>>;
   const physics = (animations.jig?.physics ?? {}) as Record<string, Record<string, unknown[]>>;
   return physics.jiggle ?? {};
+}
+
+/**
+ * `PHYSICS_TIMELINE_RIG`'s constraint three times over, on three bones, with
+ * `strengthGlobal: true` on the ones named in `globalOn` — the shape the
+ * timeline that names no constraint is about (issue #726): it drives the
+ * constraints declaring the keyed property global and must leave the rest
+ * alone, so a fixture needs both kinds side by side.
+ */
+const THREE_TIPS = ['jiggle', 'jiggle_b', 'jiggle_c'] as const;
+function threeTipsRig(globalOn: readonly string[]): Record<string, unknown> {
+  return {
+    bones: [
+      ...PHYSICS_TIMELINE_RIG.bones,
+      { name: 'tip_b', parent: 'block', x: 6, y: 0 },
+      { name: 'tip_c', parent: 'block', x: 3, y: 0 },
+    ],
+    constraints: THREE_TIPS.map((name, i) => ({
+      ...PHYSICS_TIMELINE_RIG.constraints[0],
+      name,
+      bone: ['tip', 'tip_b', 'tip_c'][i],
+      ...(globalOn.includes(name) ? { strengthGlobal: true } : {}),
+    })),
+  };
+}
+
+/**
+ * One animation keying `strength` from its setup value to `PHYSICS_TRACK_KEYS`'
+ * `to` on the physics target `target`, plus `extra` tracks.
+ */
+function threeTipsMotion(target: string, extra: unknown[] = []): Record<string, unknown> {
+  const [, from, to] = PHYSICS_TRACK_KEYS.find(([property]) => property === 'strength')!;
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: {},
+    animations: {
+      jig: {
+        duration: 1,
+        loop: false,
+        tracks: [{ physics: target, property: 'strength', keys: [{ t: 0, v: [from] }, { t: 1, v: [to] }] }, ...extra],
+      },
+    },
+  };
 }
 
 /** The `deform` key array of one slot in an emitted animation, for a mutant to edit. */
@@ -36560,6 +36775,32 @@ function runMotionParseSuite(): { failures: number; cases: number; specs: number
       'refuse the setup alpha itself',
   );
 
+  // --- the timeline that names no constraint has one spelling (issue #726) ---
+  //
+  // The skeleton file spells it with the empty name and the motion spec with
+  // `"*"`, and each has to be unavailable for the other job: `""` because it is
+  // the shape of a target somebody forgot to fill in, `"*"` because a
+  // constraint called that could not be keyed by name.
+  named(
+    'MP43_A_TRACK_WHOSE_PHYSICS_TARGET_IS_THE_EMPTY_NAME_IS_REFUSED_AND_POINTED_AT_THE_STAR',
+    dirs,
+    { ...base, animations: { move: { duration: 1, loop: false, tracks: [{ physics: '', property: 'strength', keys: [{ t: 0, v: [1] }] }] } } },
+    '`animations."move".tracks[0].physics` is the string ""; the empty name is how a skeleton file spells a physics ' +
+      'timeline that names no constraint, and a motion spec spells that "*"',
+    'on the branch point this reached the compiler and was refused as "keys unknown physics constraint """, which ' +
+      'is true of the rig and says nothing about the format: the empty name is a real target in a skeleton file ' +
+      '(`SkeletonJson.js:1048-1054`), and the author needs to be told its spelling here rather than that a ' +
+      'constraint is missing',
+  );
+  named(
+    'MP44_A_PHYSICS_TUNING_ENTRY_CALLED_STAR_IS_REFUSED_AS_RESERVED',
+    dirs,
+    withField('physics', { '*': { bone: 'block', x: 1 } }),
+    '`physics."*"` names a physics constraint "*", and that name is reserved',
+    'the table\'s keys are constraint names, and this is the one name a track could not reach: `"physics": "*"` ' +
+      'means every constraint declaring the keyed property global. On the branch point it built green',
+  );
+
   // --- the walk itself -------------------------------------------------------
   //
   // MP30 reads whatever is on disk under the repository root, so what the walk
@@ -56268,6 +56509,174 @@ function runIngestSuite(): number {
         'the omitting; the two refusals are the branch point\'s output and the half-fix, each named where it fails — ' +
         'so a decompiler that stopped omitting either the constraint or its timelines goes red here by the sentence ' +
         'the author would have met',
+    );
+  }
+
+  // --- IG60–IG62: the timeline that names no constraint (issue #726) --------
+  //
+  // 🚨 **Measured on the branch point.** A skeleton keying `physics: { "": {
+  // strength } }` ingested with exit 0 and no finding at all, wrote
+  // `"physics": ""` into the motion spec, and `build` refused that spec with
+  // `keys unknown physics constraint ""`. The source here is rigc's own emit of
+  // `threeTipsRig` keyed by NAME, with the group moved onto the empty name — so
+  // it can be forged on the branch point and on this one alike.
+  {
+    const unnamedIngest = { name: 'static_probe', art: 'loose' as const, source: 'skeleton.json', version: '0' };
+    /** Compile `threeTipsRig(globalOn)` keyed by name, move the `jiggle` group onto the empty name, and hand back the text. */
+    const forgeUnnamed = (globalOn: readonly string[], extra: Record<string, unknown> = {}, tracks: unknown[] = []) => {
+      const dirs = writeProbeRig({ ...threeTipsRig(globalOn), ...extra });
+      const motionPath = join(dirs.dir, 'probe.motion.json');
+      writeFileSync(motionPath, `${JSON.stringify(threeTipsMotion('jiggle', tracks), null, 2)}\n`);
+      const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+      const skeleton = JSON.parse(built.skeletonText) as { animations: Record<string, Record<string, Record<string, unknown>>> };
+      const physics = skeleton.animations.jig.physics;
+      physics[''] = physics.jiggle;
+      delete physics.jiggle;
+      return { dirs, text: `${JSON.stringify(skeleton, null, 2)}\n`, atlasText: built.atlasText };
+    };
+    /** `ingest` the text, write both specs, `build` them the way the CLI would, and gate. */
+    const rebuildUnnamed = (forged: ReturnType<typeof forgeUnnamed>) => {
+      let read: IngestResult;
+      try {
+        read = ingest(JSON.parse(forged.text), unnamedIngest);
+      } catch (err) {
+        if (!(err instanceof IngestSpecRefused)) throw err;
+        return { read: null, refusal: `ingest refused the specs it wrote: ${err.message}`, text: null, failures: [] as string[] };
+      }
+      const specDir = join(forged.dirs.dir, 'S');
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(read.rig, null, 2)}\n`);
+      writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(read.motion, null, 2)}\n`);
+      try {
+        const outDir = join(forged.dirs.dir, 'B');
+        const built = compile({
+          rigPath: join(specDir, 'rig.json'),
+          motionPath: join(specDir, 'motion.json'),
+          outDir,
+          imagesDir: forged.dirs.dir,
+        });
+        const gated = validate({
+          skeletonText: built.skeletonText,
+          atlasText: built.atlasText,
+          atlasDir: outDir,
+          declaredDurations: built.declaredDurations,
+          rig: built.rig,
+          profile: 'spine',
+        });
+        return { read, refusal: '', text: built.skeletonText, failures: gated.failures.map((f) => `${f.assertion}: ${f.detail}`) };
+      } catch (err) {
+        return { read, refusal: (err as Error).message, text: null, failures: [] as string[] };
+      }
+    };
+    const tracksOf = (read: IngestResult | null): Array<Record<string, unknown>> =>
+      ((read?.motion as unknown as { animations?: Record<string, { tracks: Array<Record<string, unknown>> }> })?.animations?.jig?.tracks ?? []);
+
+    // IG60: the reaching case — the round trip is exact, so there is nothing to report.
+    const reaching = forgeUnnamed(['jiggle', 'jiggle_b']);
+    const reachingTrip = rebuildUnnamed(reaching);
+    const namedTwin = ingest(JSON.parse(forgeUnnamed(['jiggle', 'jiggle_b']).text.replace('"": {', '"jiggle": {')), unnamedIngest);
+    const unnamedTrack = tracksOf(reachingTrip.read).find((track) => track.property === 'strength');
+    const reachingProbes = [
+      ...(reachingTrip.refusal ? [reachingTrip.refusal] : []),
+      ...(unnamedTrack?.physics === '*' ? [] : [`the strength track targets ${JSON.stringify(unnamedTrack?.physics)}, not "*"`]),
+      ...(reachingTrip.text === null || reachingTrip.text === reaching.text
+        ? []
+        : [`the rebuild differs from the forged file at ${differingJsonPaths(JSON.parse(reaching.text), JSON.parse(reachingTrip.text)).join('; ')}`]),
+      ...reachingTrip.failures.map((failure) => `the rebuild is refused at the gate: ${failure}`),
+      ...(JSON.stringify(reachingTrip.read?.findings.map((f) => f.code)) === JSON.stringify(namedTwin.findings.map((f) => f.code))
+        ? []
+        : ['the unnamed file raises other findings than its named twin, and a round trip that is exact has nothing to report']),
+    ];
+    const reachingHeld = reachingProbes.length === 0;
+    say(
+      'IG60_AN_UNNAMED_PHYSICS_TIMELINE_IS_CARRIED_AS_STAR_AND_REBUILDS_BYTE_FOR_BYTE_WITH_NO_FINDING_OF_ITS_OWN',
+      reachingHeld,
+      probeDetail(
+        reachingHeld,
+        reachingProbes,
+        `the group keyed "" over two strengthGlobal constraints is carried as \`"physics": "*"\`, the rebuild is the ` +
+          `forged file byte for byte (${reaching.text.length} B) with ${reachingTrip.failures.length} gate failure(s), ` +
+          `and the findings are the named twin's (${namedTwin.findings.map((f) => f.code).join(', ') || 'none'})`,
+        (count) => `${count} thing(s) the round trip did not do:`,
+      ),
+      'no finding, argued rather than forgotten: the defect was a spelling the motion spec lacked, and once it has ' +
+        'one the rebuild is the source to the byte — a LOSS row over an exact round trip would be a line reporting ' +
+        'that nothing was lost',
+    );
+
+    // IG61: the no-op — no constraint declares strengthGlobal, so the timeline
+    // reached nobody in the source either. A named `mix` track on `jiggle_c`
+    // at the same key times keeps the animation's length, so the omission is
+    // the only difference the rebuild can show.
+    const mixKeys = [{ t: 0, v: [1] }, { t: 1, v: [1] }];
+    const nobody = forgeUnnamed([], {}, [{ physics: 'jiggle_c', property: 'mix', keys: mixKeys }]);
+    const nobodyTrip = rebuildUnnamed(nobody);
+    const nobodyFindings = nobodyTrip.read?.findings.filter((f) => f.code === 'PHYSICS_GLOBAL_REACHES_NOTHING') ?? [];
+    const nobodyDetail = nobodyFindings[0]?.detail ?? '';
+    const withoutIt = JSON.parse(nobody.text) as { animations: Record<string, Record<string, Record<string, unknown>>> };
+    delete withoutIt.animations.jig.physics[''];
+    const nobodyProbes = [
+      ...(nobodyTrip.refusal ? [nobodyTrip.refusal] : []),
+      ...(nobodyFindings.length === 1 ? [] : [`${nobodyFindings.length} PHYSICS_GLOBAL_REACHES_NOTHING finding(s), not one`]),
+      ...(nobodyFindings[0] === undefined || (nobodyFindings[0].kind === 'lossy' && nobodyFindings[0].where === 'animation "jig" physics "" strength')
+        ? []
+        : [`the finding is ${nobodyFindings[0].kind} at ${nobodyFindings[0].where}`]),
+      ...(nobodyDetail.includes('"strengthGlobal"') && THREE_TIPS.every((name) => nobodyDetail.includes(`"${name}"`))
+        ? []
+        : ['the detail does not name the flag and the constraints that do not declare it']),
+      ...(tracksOf(nobodyTrip.read).some((track) => track.physics === '*') ? ['the no-op track is still in the motion spec'] : []),
+      ...(nobodyTrip.text === null || nobodyTrip.text === `${JSON.stringify(withoutIt, null, 2)}\n`
+        ? []
+        : ['the rebuild is not the source less that one timeline']),
+      ...nobodyTrip.failures.map((failure) => `the rebuild is refused at the gate: ${failure}`),
+    ];
+    const nobodyHeld = nobodyProbes.length === 0;
+    say(
+      'IG61_AN_UNNAMED_PHYSICS_TIMELINE_NO_CONSTRAINT_DECLARES_GLOBAL_FOR_IS_OMITTED_WITH_A_CODED_LOSS',
+      nobodyHeld,
+      probeDetail(
+        nobodyHeld,
+        nobodyProbes,
+        `${nobodyFindings[0]?.kind} ${nobodyFindings[0]?.code} @ ${nobodyFindings[0]?.where}: ${nobodyDetail}\n` +
+          '          the rebuild is the source less that timeline, byte for byte, and gates green',
+        (count) => `${count} thing(s) the omission did not do:`,
+      ),
+      'the same argument as `PHYSICS_DRIVES_NOTHING`, one level down: the timeline walked every constraint and ' +
+        'wrote into none, and `build` refuses a `"*"` track that reaches nobody by name — so carrying it made a spec ' +
+        'its own build refuses, and dropping it silently would be the loss nobody hears about',
+    );
+
+    // IG62: #731's omission meets this one. The only constraint declaring
+    // strengthGlobal drives no component, so `ingest` omits it — and with it
+    // the only thing the unnamed timeline could reach.
+    const inertOnly = forgeUnnamed(['jiggle_b'], {
+      constraints: (threeTipsRig(['jiggle_b']).constraints as Array<Record<string, unknown>>).map((constraint) =>
+        constraint.name === 'jiggle_b' ? { ...constraint, x: 0, y: 0 } : constraint,
+      ),
+    }, [{ physics: 'jiggle_c', property: 'mix', keys: mixKeys }]);
+    const inertOnlyTrip = rebuildUnnamed(inertOnly);
+    const inertOnlyCodes = (inertOnlyTrip.read?.findings ?? []).map((f) => `${f.code} @ ${f.where}`);
+    const inertOnlyProbes = [
+      ...(inertOnlyTrip.refusal ? [inertOnlyTrip.refusal] : []),
+      ...['PHYSICS_DRIVES_NOTHING @ constraint "jiggle_b" (physics)', 'PHYSICS_GLOBAL_REACHES_NOTHING @ animation "jig" physics "" strength']
+        .filter((code) => !inertOnlyCodes.includes(code))
+        .map((code) => `no ${code}`),
+      ...inertOnlyTrip.failures.map((failure) => `the rebuild is refused at the gate: ${failure}`),
+      ...(inertOnlyTrip.text === null ? ['nothing was rebuilt'] : []),
+    ];
+    const inertOnlyHeld = inertOnlyProbes.length === 0;
+    say(
+      'IG62_WHEN_THE_ONLY_GLOBAL_CONSTRAINT_DRIVES_NOTHING_BOTH_OMISSIONS_ARE_SAID_AND_THE_REBUILD_GATES_GREEN',
+      inertOnlyHeld,
+      probeDetail(
+        inertOnlyHeld,
+        inertOnlyProbes,
+        `${inertOnlyCodes.filter((code) => code.startsWith('PHYSICS_')).join('; ')}; the rebuild gates green`,
+        (count) => `${count} thing(s) the two omissions did not do:`,
+      ),
+      'what the unnamed timeline can reach is read against the constraints the REBUILD carries, not the ones the ' +
+        'file declares: read against the file, the timeline was carried as `"*"` onto a rig with no strengthGlobal ' +
+        'left in it, and `build` refused the spec `ingest` had just written',
     );
   }
 

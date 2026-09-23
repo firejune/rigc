@@ -54,7 +54,7 @@ import {
   spineGeneration,
   TOPLEVEL_CONSTRAINT_ARRAYS,
 } from './generation.ts';
-import { MOTION_SPEC_VERSION, parseMotionSpec } from './motion.ts';
+import { EVERY_GLOBAL_PHYSICS, MOTION_SPEC_VERSION, parseMotionSpec } from './motion.ts';
 import { parseRigSpec, RIG_KEYS, RIG_SPEC_VERSION, type RigSpec } from './rig.ts';
 import type { MotionSpec } from './types.ts';
 
@@ -1448,6 +1448,16 @@ function ingestAnimation(
    * `lossy`, on the argument that the rebuilt skeleton plays identically — is
    * a decision about all three families and is not made here.
    */
+  /**
+   * The physics constraints the rebuild carries — every one the file declares
+   * but those `ingest` omits as inert — which is what an unnamed physics
+   * timeline can reach in it.
+   */
+  const carriedPhysics = arr(root.constraints)
+    .map(obj)
+    .filter((one) => one.type === 'physics' && !(typeof one.name === 'string' && inert.has(one.name)));
+  /** Unnamed physics timelines that reach nothing in the rebuild, said once the duration is known. */
+  const unreached: Array<{ property: string; lastKey: number }> = [];
   const family = (group: 'path' | 'physics' | 'slider', shapes: Record<string, TrackShape>): void => {
     for (const [name, timelines] of objEntries(anim[group])) {
       for (const [property, keys] of arrEntries(timelines)) {
@@ -1469,6 +1479,26 @@ function ingestAnimation(
         const where = `animation "${animName}" ${group} "${name}" ${property}`;
         if (shape === undefined) {
           note('blocker', `${group.toUpperCase()}_TIMELINE`, where, `timeline "${property}" is not in the motion spec`);
+          continue;
+        }
+        // The empty name is the physics group's timeline that names no
+        // constraint (issue #726), which the motion spec spells `"*"`. It
+        // writes every carried constraint declaring the property global —
+        // `reset` every one — and one that reaches none is a no-op the rebuild
+        // would be refused over by name, so it goes, and is said, instead.
+        if (group === 'physics' && name === '') {
+          const reaches =
+            property === 'reset' ? carriedPhysics.length > 0 : carriedPhysics.some((one) => Boolean(one[`${property}Global`]));
+          if (!reaches) {
+            let lastKey = 0;
+            for (const raw of keys) {
+              const t = obj(raw).time;
+              if (typeof t === 'number' && t > lastKey) lastKey = t;
+            }
+            unreached.push({ property, lastKey });
+            continue;
+          }
+          valueTrack({ physics: EVERY_GLOBAL_PHYSICS }, property, keys, shape, where);
           continue;
         }
         valueTrack({ [group]: name }, property, keys, shape, where);
@@ -1665,6 +1695,26 @@ function ingestAnimation(
       }
       return out;
     });
+  }
+
+  for (const { property, lastKey } of unreached) {
+    const flag = `${property}Global`;
+    note(
+      'lossy',
+      'PHYSICS_GLOBAL_REACHES_NOTHING',
+      `animation "${animName}" physics "" ${property}`,
+      'names no constraint, so the runtime writes it into every physics constraint ' +
+        (property === 'reset' ? 'the skeleton has' : `declaring "${flag}"`) +
+        ', and the rebuild carries ' +
+        (carriedPhysics.length === 0
+          ? 'no physics constraint'
+          : `none that does (${carriedPhysics.map((one) => `"${String(one.name)}"`).join(', ')})`) +
+        ` — it moves nothing, and \`build\` would refuse its \`"physics": "${EVERY_GLOBAL_PHYSICS}"\` track by name. ` +
+        'The motion spec omits it' +
+        (lastKey > maxT
+          ? `, and an animation's duration is the last key it has left, so the rebuilt animation ends at ${maxT}s rather than ${lastKey}s`
+          : '; the rebuild differs from the source by exactly this no-op'),
+    );
   }
 
   for (const group of Object.keys(anim)) {
