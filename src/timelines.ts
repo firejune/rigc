@@ -494,12 +494,25 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     timeline: 'damping',
     field: 'damping',
     toPose: (v) => v,
-    poseOk: (v) => v > 0 && v < 1,
+    poseOk: (v) => v >= 0 && v <= 1,
     keyOk: null,
     inertAtSetup: false,
     outside: null,
-    states: 'inside (0, 1)',
-    statesKeyed: 'inside (0, 1)',
+    states: 'inside [0, 1]',
+    statesKeyed: 'inside [0, 1]',
+    // 🔑 The interval is CLOSED (issue #794). `1 ** x` is 1 and `0 ** x` is 0
+    // for every positive exponent, so both ends are finite at every `fps` and
+    // both are rigs somebody can mean: 1 holds the jiggle, 0 follows the bone
+    // with no overshoot. [measured] through spine-core on the generated physics
+    // fixture, 120 steps from `Physics.reset` at 60, 45 and 30 fps under a
+    // displacing animation, as a setup value and as a key: every pose value
+    // finite, the velocity never 0 at 1 and 0 after every step at 0. And 1 is
+    // not only a choice: it is 4.2's own parser default for an omitted
+    // `damping` (`SkeletonJson.js:242` in 4.2.120,
+    // `getValue(constraintMap, "damping", 1)`; 4.3.13 reads 0.85 at `:308`), so a
+    // rig migrated from 4.2 that keys "the default" writes 1 and the editor
+    // exports it as it is. The open interval this replaced refused that rig.
+    //
     // ⚠️ The frame-rate half is why the bound cannot be checked by playing a rig
     // at 60 fps (issue #748): `step` is `1 / fps`, the constraint's own rate, so
     // the exponent is exactly 1 there and a negative damping only flips the
@@ -508,11 +521,13 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     // steps of the key at 45 and at 120 (exponents 1.3333 and 0.5).
     why:
       'the per-step decay is `damping ** (60 * step)`, with `step` = 1 / the constraint\'s `fps`, and every velocity ' +
-      'is multiplied by it (`PhysicsConstraint.js:114,148,158,163,210,222,227`), so 1 never decays, above 1 ' +
-      'diverges, and 0 kills the velocity outright, at every rate. Below 0 the result depends on `fps`: where ' +
-      '`60 / fps` is a whole number a negative base stays finite — at 60 fps it is the velocity\'s sign flipped each ' +
-      'step, which can look like a jiggle settling — and at any other rate it is a negative number raised to a ' +
-      'fractional power, which is NaN (`(-0.5) ** (60 / 45)`), so a rig tried only at 60 fps never shows the failure',
+      'is multiplied by it (`PhysicsConstraint.js:114,148,158,163,210,222,227`), so above 1 every velocity grows on ' +
+      'every step and the offset diverges, at every rate. Below 0 the result depends on `fps`: where `60 / fps` is a ' +
+      'whole number a negative base stays finite — at 60 fps it is the velocity\'s sign flipped each step, which can ' +
+      'look like a jiggle settling — and at any other rate it is a negative number raised to a fractional power, ' +
+      'which is NaN (`(-0.5) ** (60 / 45)`), so a rig tried only at 60 fps never shows the failure. The two ends are ' +
+      'values the runtime plays at every rate: at 1 the velocity never decays, so the jiggle holds for as long as it ' +
+      'runs, and at 0 every velocity is zeroed on every step, so the offset follows the bone with no overshoot',
   },
 ];
 

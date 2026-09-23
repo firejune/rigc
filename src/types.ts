@@ -281,7 +281,7 @@ export type BoneProperty =
  * export; `PHYSICS_TRACKS` in `compile.ts` carries the argument.
  *
  * 🔒 **Four of them have a compile-time range** (issue #610): `mass` must be
- * `> 0`, `damping` strictly inside `(0, 1)`, and `mix` and `strength` `0` or
+ * `> 0`, `damping` inside the closed `[0, 1]`, and `mix` and `strength` `0` or
  * more. The bounds are `PHYSICS_POSE_RULES` in `src/timelines.ts` and they are
  * the runtime's, not a policy — `inertia`, `wind`, `gravity` and the top of
  * `mix` are bounded nowhere, because the runtime documents nothing for the first

@@ -570,7 +570,11 @@ const SETUP_POSE_SAYS: Record<
   // back and below 0 one that is pushed away, and the row's `why` — the key's
   // sentence — quotes the second from the same object.
   strength: (pose, _animations, rule) => `has strength ${pose.strength}; ${physicsOutsideSays(rule, pose.strength)}`,
-  damping: (pose) => `has damping ${pose.damping}; outside (0,1) it never settles`,
+  // The bound is read off the row, so the setup pose and a key cannot state two
+  // intervals; the reason is the two ways out, since the ends are inside (#794).
+  damping: (pose, _animations, rule) =>
+    `has damping ${pose.damping}; must be ${rule.states} — above 1 every velocity grows on every step, and below 0 ` +
+    'it is NaN at any fps where 60 / fps is not whole',
 };
 
 /**
@@ -3090,8 +3094,10 @@ export function validate(input: ValidateInput): ValidateReport {
     //
     // Every failure mode here is silent. The five component fields default to
     // 0, so a constraint can drive nothing at all; `mix` 0 mutes it; `mass` 0
-    // becomes an infinite massInverse; and `damping` >= 1 never settles, which
-    // on a mesh-driving bone means the canvas re-rasterises forever.
+    // becomes an infinite massInverse; and `damping` above 1 never settles, which
+    // on a mesh-driving bone means the canvas re-rasterises forever. 1 itself is
+    // inside the bound since issue #794: it never decays, which is finite and a
+    // choice, and what it costs a consumer's frame is the consumer's to judge.
     //
     // 🔑 **Two arms, one criterion.** The second arm below reads every physics
     // TIMELINE key, and it is written against `PHYSICS_POSE_RULES` — the table
