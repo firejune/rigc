@@ -153,6 +153,7 @@ import {
   INGEST_VOCABULARY,
   UNSPELT_SLOT_TRACKS,
   type IngestFinding,
+  type IngestResult,
 } from './src/ingest.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
 import { RIG_KEYS, RIG_SPEC_VERSION, parseRigSpec } from './src/rig.ts';
@@ -54746,6 +54747,261 @@ function runIngestSuite(): number {
         'the source drew. The count of DISTINCT regions is the clause that matters: every row could name a region ' +
         'the pack has and still be one region doing the work of two, which is the whole of what a contested ' +
         'placeholder exists to avoid',
+    );
+  }
+
+  // --- IG57–IG59: a physics constraint that drives nothing (issue #731) ------
+  //
+  // 🚨 **Measured on the branch point.** A physics constraint none of whose
+  // `x`/`y`/`rotate`/`scaleX`/`shearX` is above 0 moves no bone —
+  // `PhysicsConstraint.update` applies a component only above 0
+  // (`PhysicsConstraint.js:112`) — and `ingest` carried it through with no line
+  // at all, so the rebuild was refused whole: `FAIL
+  // A23_PHYSICS_CONSTRAINT_EFFECTIVE: physics "<c>" drives no component; it
+  // parses and does nothing`, and `build` wrote nothing. A spec that dropped the
+  // constraint and kept its timeline was refused one step earlier, at compile,
+  // for keying an unknown physics constraint. The source here is the
+  // articulated probe's own emit with one constraint added: its first driven
+  // physics constraint copied under a new name with its five components taken
+  // away, which is the shape an editor exports and the smallest edit that makes
+  // it.
+  {
+    const physicsTrip = trips.get('articulated_probe')!;
+    type LooseSkeleton = {
+      constraints: Array<Record<string, unknown>>;
+      skins: Array<Record<string, unknown>>;
+      animations: Record<string, Record<string, unknown>>;
+    };
+    const cleanSkeleton = JSON.parse(physicsTrip.a.skeletonText) as LooseSkeleton;
+    const components = ['x', 'y', 'rotate', 'scaleX', 'shearX'];
+    const template = cleanSkeleton.constraints.find((c) => c.type === 'physics');
+    const animationNames = Object.keys(cleanSkeleton.animations);
+    const inertName = 'inert_physics';
+    /** The template under `name`, with `set` laid over it after its components are removed. */
+    const physicsLike = (name: string, set: Record<string, number>): Record<string, unknown> => {
+      const out: Record<string, unknown> = { ...(template ?? {}), name };
+      for (const field of components) delete out[field];
+      return { ...out, ...set };
+    };
+    const durationOf = (animation: string): number => physicsTrip.a.declaredDurations[animation] ?? 0;
+    // Two animations each get a timeline keyed to the inert constraint: the
+    // first inside its own length, the second with a key at twice its length,
+    // which is the one shape where omitting the timeline moves something — the
+    // rebuilt animation is as long as the keys it has left.
+    const [keyedInside, keyedPast] = animationNames;
+    const forgedSkeleton = structuredClone(cleanSkeleton);
+    // `skin: true` because a skin's member list may name only a skin-required
+    // constraint — rigc's own parser refuses the other shape by name — and a
+    // skin-required constraint is the shape whose list has to let go of it.
+    forgedSkeleton.constraints.push({ ...physicsLike(inertName, {}), skin: true });
+    const defaultSkin = forgedSkeleton.skins.find((skin) => skin.name === 'default');
+    if (defaultSkin !== undefined) defaultSkin.physics = [inertName];
+    if (keyedInside !== undefined) {
+      forgedSkeleton.animations[keyedInside].physics = {
+        [inertName]: { strength: [{ time: 0, value: 1 }, { time: durationOf(keyedInside), value: 2 }] },
+      };
+    }
+    if (keyedPast !== undefined) {
+      forgedSkeleton.animations[keyedPast].physics = {
+        [inertName]: { damping: [{ time: 0, value: 0.5 }, { time: durationOf(keyedPast) * 2, value: 0.6 }] },
+      };
+    }
+    const ingestOptions = { name: 'articulated_probe', art: 'none' as const, source: 'skeleton.json', version: '0' };
+    const cleanRead = ingest(JSON.parse(physicsTrip.a.skeletonText), ingestOptions);
+    /**
+     * `ingest` on a forged file, with a refusal turned into a probe row: a throw
+     * here would take every suite after this one with it, and a red-first run
+     * has to show which of these cases went red rather than where the run stopped.
+     */
+    const readForged = (skeleton: unknown): { read: IngestResult; refusal: string | null } => {
+      try {
+        return { read: ingest(skeleton, ingestOptions), refusal: null };
+      } catch (err) {
+        if (!(err instanceof IngestSpecRefused)) throw err;
+        return {
+          read: { rig: err.rig, motion: err.motion, findings: err.findings } as unknown as IngestResult,
+          refusal: err.message,
+        };
+      }
+    };
+    const forgedTry = readForged(structuredClone(forgedSkeleton));
+    const forgedRead = forgedTry.read;
+    const inertFindings = forgedRead.findings.filter((f) => f.code === 'PHYSICS_DRIVES_NOTHING');
+    const inertDetail = inertFindings[0]?.detail ?? '';
+    const otherFindings = forgedRead.findings.filter((f) => f.code !== 'PHYSICS_DRIVES_NOTHING');
+    const specText = (read: { rig: unknown; motion: unknown }): string => JSON.stringify([read.rig, read.motion]);
+    const namedInSpec = specText(forgedRead).includes(`"${inertName}"`);
+    const noteProbes = [
+      ...(forgedTry.refusal === null ? [] : [`ingest refused the specs it wrote: ${forgedTry.refusal}`]),
+      ...(template === undefined ? ['the articulated probe declares no physics constraint to copy, so this plant is empty'] : []),
+      ...(keyedPast === undefined ? ['the articulated probe has fewer than two animations, so one half of this plant is empty'] : []),
+      ...(inertFindings.length === 1 ? [] : [`${inertFindings.length} PHYSICS_DRIVES_NOTHING finding(s), and the plant adds one inert constraint`]),
+      ...(inertFindings[0]?.kind === 'lossy' ? [] : [`the finding is \`${inertFindings[0]?.kind ?? 'absent'}\`, and omitting a no-op the rebuild does not need is not a blocker`]),
+      ...(inertFindings[0]?.where === `constraint "${inertName}" (physics)`
+        ? []
+        : [`the finding names ${JSON.stringify(inertFindings[0]?.where ?? '')} rather than the constraint the plant added`]),
+      ...[`animation "${keyedInside}" strength`, `animation "${keyedPast}" damping`]
+        .filter((timeline) => !inertDetail.includes(timeline))
+        .map((timeline) => `the detail does not name the omitted timeline ${timeline}`),
+      ...(inertDetail.includes('skin(s) "default"') ? [] : ['the detail does not name the skin whose physics list let go of it']),
+      ...(inertDetail.includes(
+        `animation "${keyedPast}" had its last key at ${durationOf(keyedPast) * 2}s on one of them, so the rebuilt animation ends at ${durationOf(keyedPast)}s`,
+      )
+        ? []
+        : ['the detail does not say which animation the omission shortened, and to what']),
+      ...(inertDetail.includes(`animation "${keyedInside}" had its last key`) ? ['the detail claims a shortening on the animation keyed inside its own length'] : []),
+      ...(JSON.stringify(otherFindings) === JSON.stringify(cleanRead.findings)
+        ? []
+        : ['the forged file raises other findings than the clean one besides this code, so the omission is not the only difference']),
+      ...(cleanRead.findings.some((f) => f.code === 'PHYSICS_DRIVES_NOTHING') ? ['the UNPLANTED file raises it too, so this plant proves nothing'] : []),
+      ...(namedInSpec ? [`the written specs still name "${inertName}" somewhere`] : []),
+    ];
+    const noteHeld = noteProbes.length === 0;
+    say(
+      'IG57_A_PHYSICS_CONSTRAINT_THAT_DRIVES_NOTHING_IS_OMITTED_WITH_A_CODED_LOSS_NAMING_EVERYTHING_THAT_WENT_WITH_IT',
+      noteHeld,
+      probeDetail(
+        noteHeld,
+        noteProbes,
+        `${inertFindings[0]?.kind ?? 'no'} PHYSICS_DRIVES_NOTHING @ ${inertFindings[0]?.where ?? '—'}: ${inertDetail}\n` +
+          `          every other finding is the clean file's (${cleanRead.findings.length}), and neither written spec names ` +
+          `"${inertName}"`,
+        (count) => `${count} thing(s) the finding does not do:`,
+      ),
+      'a `LOSS` and deliberately not a `BLOCK`: the rebuild is missing a constraint that moved nothing and the ' +
+        'timelines that keyed it, so exit 0 is the honest code and the line is the whole record of the omission. ' +
+        'Carrying it and letting `A23` SKIP it was the rejected branch — a pass-shaped line over exactly the ' +
+        'construct #536 refuses. The clauses that make it a measurement are the last three: the clean twin raises ' +
+        'none, the forged file raises nothing else new, and the one place the omission is not a no-op — the ' +
+        'animation whose last key sat on an omitted timeline — is named with both lengths',
+    );
+
+    // IG58: the predicate, both sides of it. One constraint per component with
+    // only that component above 0 must be carried exactly as the file states
+    // it; a component stated at 0 or below is the runtime's "not driven" too.
+    const predicateSkeleton = structuredClone(cleanSkeleton);
+    const drivenNames = components.map((field) => `driven_by_${field}`);
+    components.forEach((field, i) => predicateSkeleton.constraints.push(physicsLike(drivenNames[i], { [field]: 0.5 })));
+    predicateSkeleton.constraints.push(physicsLike('stated_at_or_below_zero', { x: 0, rotate: -1 }));
+    const predicateTry = readForged(structuredClone(predicateSkeleton));
+    const predicateRead = predicateTry.read;
+    const sortedJson = (value: unknown): string =>
+      JSON.stringify(value, (_key, v: unknown) =>
+        isIngestObject(v) ? Object.fromEntries(Object.entries(v).sort(([p], [q]) => (p < q ? -1 : p > q ? 1 : 0))) : v,
+      );
+    const specConstraints = ((predicateRead.rig as unknown as { constraints?: Array<Record<string, unknown>> }).constraints ?? []);
+    const carriedWrong = drivenNames.filter((name) => {
+      const written = specConstraints.find((c) => c.name === name);
+      const stated = predicateSkeleton.constraints.find((c) => c.name === name);
+      return written === undefined || sortedJson(written) !== sortedJson(stated);
+    });
+    const predicateFindings = predicateRead.findings.filter((f) => f.code === 'PHYSICS_DRIVES_NOTHING');
+    const belowDetail = predicateFindings.find((f) => f.where === 'constraint "stated_at_or_below_zero" (physics)')?.detail ?? '';
+    const predicateProbes = [
+      ...(predicateTry.refusal === null ? [] : [`ingest refused the specs it wrote: ${predicateTry.refusal}`]),
+      ...carriedWrong.map((name) => `constraint "${name}" is not carried exactly as the file states it`),
+      ...predicateFindings
+        .filter((f) => drivenNames.some((name) => f.where.includes(`"${name}"`)))
+        .map((f) => `a driven constraint is reported as driving nothing: ${f.where}`),
+      ...(predicateFindings.length === 1 ? [] : [`${predicateFindings.length} PHYSICS_DRIVES_NOTHING finding(s), and exactly one constraint here drives nothing`]),
+      ...(belowDetail.includes('it states x 0, rotate -1') ? [] : ['the constraint stating x 0 and rotate -1 is not named with the values it states']),
+      ...(specConstraints.some((c) => c.name === 'stated_at_or_below_zero') ? ['the constraint stating only x 0 and rotate -1 is carried, and the runtime drives neither'] : []),
+    ];
+    const predicateHeld = predicateProbes.length === 0;
+    say(
+      'IG58_A_PHYSICS_CONSTRAINT_DRIVING_ANY_ONE_COMPONENT_IS_CARRIED_UNTOUCHED_AND_ONE_STATED_AT_OR_BELOW_ZERO_IS_NOT',
+      predicateHeld,
+      probeDetail(
+        predicateHeld,
+        predicateProbes,
+        `${drivenNames.length} one-component constraints (${components.join(', ')}) carried field for field as the ` +
+          `file states them; the one stating x 0 and rotate -1 omitted: ${belowDetail}`,
+        (count) => `${count} thing(s) the predicate got wrong:`,
+      ),
+      'the rule is the runtime\'s own comparison — `data.x > 0` and its four siblings — so it has two edges and ' +
+        'this holds both: every component alone is enough to be carried untouched, and a component the file ' +
+        'STATES at 0 or below is not driven either, which an absence test would have carried into A23',
+    );
+
+    // IG59: the rebuild. The forged file's specs are the clean file's, so the
+    // rebuild is the clean file byte for byte and gates green; the two ways of
+    // carrying the constraint through are each refused, by name, where they are.
+    const rebuildDir = mkdtempSync(join(tmpdir(), 'rigc-inertphysics-'));
+    const atlasInPath = join(physicsTrip.aDir, 'skeleton.atlas');
+    /** Write a rig and motion spec, compile them, and gate the result; the refusal as text when there is one. */
+    const buildSpecs = (tag: string, rig: unknown, motion: unknown): { text: string | null; refusal: string; failures: string[] } => {
+      const dir = join(rebuildDir, tag);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+      writeFileSync(join(dir, 'motion.json'), `${JSON.stringify(motion, null, 2)}\n`);
+      try {
+        const built = compile({
+          rigPath: join(dir, 'rig.json'),
+          motionPath: join(dir, 'motion.json'),
+          outDir: join(dir, 'spine'),
+          atlasInPath,
+        });
+        const gated = validate({
+          skeletonText: built.skeletonText,
+          atlasText: built.atlasText,
+          // The rebuilt atlas spells its pages relative to the directory it was
+          // compiled for, so that — not the first build's — is what they resolve against.
+          atlasDir: join(dir, 'spine'),
+          declaredDurations: built.declaredDurations,
+          rig: built.rig,
+          profile: 'spine',
+        });
+        return { text: built.skeletonText, refusal: '', failures: gated.failures.map((f) => `${f.assertion}: ${f.detail}`) };
+      } catch (err) {
+        return { text: null, refusal: (err as Error).message, failures: [] };
+      }
+    };
+    const rebuilt = buildSpecs('omitted', forgedRead.rig, forgedRead.motion);
+    const sourceEntry = forgedSkeleton.constraints.find((c) => c.name === inertName);
+    const carriedRig = structuredClone(forgedRead.rig) as unknown as { constraints: Array<Record<string, unknown>> };
+    // Carried as the branch point wrote it, less `skin`: the skin's list is gone
+    // from the spec, and a skin-required constraint under no skin is a different
+    // refusal from the one this clause is about.
+    const { skin: _skinRequired, ...carriedEntry } = sourceEntry ?? {};
+    carriedRig.constraints.push(carriedEntry);
+    const carried = buildSpecs('carried', carriedRig, forgedRead.motion);
+    const halfMotion = structuredClone(forgedRead.motion) as unknown as { animations: Record<string, { tracks: unknown[] }> };
+    if (keyedInside !== undefined) {
+      halfMotion.animations[keyedInside].tracks.push({ physics: inertName, property: 'strength', keys: [{ t: 0, v: [1] }] });
+    }
+    const dangling = buildSpecs('dangling', forgedRead.rig, halfMotion);
+    const a23Sentence = `A23_PHYSICS_CONSTRAINT_EFFECTIVE: physics "${inertName}" drives no component; it parses and does nothing`;
+    const rebuildProbes = [
+      ...(forgedTry.refusal === null ? [] : [`ingest refused the specs it wrote: ${forgedTry.refusal}`]),
+      ...(specText(forgedRead) === specText(cleanRead) ? [] : ['the specs read off the forged file differ from the specs read off the clean one']),
+      ...(rebuilt.text === null ? [`the decompiled specs did not compile: ${rebuilt.refusal}`] : []),
+      ...(rebuilt.text !== null && rebuilt.text !== physicsTrip.a.skeletonText
+        ? [`the rebuild differs from the clean file at ${differingJsonPaths(JSON.parse(physicsTrip.a.skeletonText), JSON.parse(rebuilt.text)).join('; ')}`]
+        : []),
+      ...rebuilt.failures.map((failure) => `the rebuild is refused at the gate: ${failure}`),
+      ...(carried.failures.includes(a23Sentence) ? [] : [`the spec carrying the constraint through is not refused with A23's sentence (${carried.failures.join('; ') || carried.refusal || 'green'})`]),
+      ...(dangling.refusal.includes(`keys unknown physics constraint "${inertName}"`)
+        ? []
+        : [`the spec keeping a timeline on the omitted constraint is not refused for naming it (${dangling.refusal || 'it compiled'})`]),
+    ];
+    const rebuildHeld = rebuildProbes.length === 0;
+    say(
+      'IG59_THE_REBUILD_OMITTING_IT_IS_THE_CLEAN_FILE_AND_GATES_GREEN_WHERE_CARRYING_IT_OR_ITS_TIMELINE_IS_REFUSED_BY_NAME',
+      rebuildHeld,
+      probeDetail(
+        rebuildHeld,
+        rebuildProbes,
+        `the specs read off the forged file are the clean file's, the rebuild is the clean file byte for byte ` +
+          `(${physicsTrip.a.skeletonText.length} B) with ${rebuilt.failures.length} gate failure(s); carried through it ` +
+          `is refused — ${a23Sentence} — and a kept timeline is refused at compile: ` +
+          dangling.refusal.slice(Math.max(0, dangling.refusal.indexOf('animation "'))),
+        (count) => `${count} thing(s) the rebuild did not do:`,
+      ),
+      'the half that says what "omitted" buys. The identity against the clean file is the measurement that the ' +
+        'omission is exactly the no-op the finding claims, rather than an assertion of it from the code that did ' +
+        'the omitting; the two refusals are the branch point\'s output and the half-fix, each named where it fails — ' +
+        'so a decompiler that stopped omitting either the constraint or its timelines goes red here by the sentence ' +
+        'the author would have met',
     );
   }
 
