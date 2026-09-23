@@ -44,7 +44,7 @@
  * break `A18_DETERMINISTIC_EMIT` the first time anybody rebuilt from an ingested
  * spec.
  */
-import { SLOT_TRACKS as EMITTED_SLOT_TRACKS, SPINE_VERSION } from './compile.ts';
+import { PHYSICS_COMPONENTS, SLOT_TRACKS as EMITTED_SLOT_TRACKS, SPINE_VERSION } from './compile.ts';
 import { CompileError } from './errors.ts';
 import { CHANNELS_BY_KIND } from './timelines.ts';
 import {
@@ -291,6 +291,47 @@ const CONSTRAINT_FIELDS: Record<string, string[]> = {
   physics: carried('RigPhysicsConstraint', 'name', 'type'),
   slider: carried('RigSliderConstraint', 'name', 'type'),
 };
+
+/**
+ * The physics constraints that drive nothing, by name, each with the component
+ * fields it DOES state — every one of them at most 0 (issue #731).
+ *
+ * 🔑 The runtime's own predicate, not a reading of it: `PhysicsConstraint.update`
+ * decides what it applies with `this.data.x > 0` and its four siblings
+ * (`PhysicsConstraint.js:112`) and nothing else, so a constraint with none of
+ * `PHYSICS_COMPONENTS` above 0 moves no bone. `build` refuses exactly that shape
+ * by name — `A23_PHYSICS_CONSTRAINT_EFFECTIVE` at the gate — so carrying one
+ * through made the decompiled spec of a file an editor exports unbuildable as a
+ * whole, over a constraint that did nothing in it.
+ *
+ * ⚠️ A component that is present and NOT a number is not inert: the parser takes
+ * it as written and `"0.5" > 0` is true in the runtime's comparison, so such a
+ * constraint is carried and rigc's own parser says what is wrong with it.
+ */
+function inertPhysics(root: JsonObject): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const raw of arr(root.constraints)) {
+    const constraint = obj(raw);
+    if (constraint.type !== 'physics' || typeof constraint.name !== 'string') continue;
+    const stated = PHYSICS_COMPONENTS.filter((field) => constraint[field] !== undefined);
+    if (!stated.every((field) => typeof constraint[field] === 'number' && !((constraint[field] as number) > 0))) continue;
+    out.set(
+      constraint.name,
+      stated.map((field) => `${field} ${String(constraint[field])}`),
+    );
+  }
+  return out;
+}
+
+/** What omitting one inert physics constraint took with it, for its finding. */
+interface PhysicsOmission {
+  /** `animation "<a>" <timeline>`, in file order. */
+  timelines: string[];
+  /** The skins whose `physics` member list named it. */
+  skins: string[];
+  /** Per animation, the latest key time on an omitted timeline of this constraint. */
+  lastKeys: Map<string, number>;
+}
 
 /**
  * The per-skin member lists (`SkeletonJson` reads them before `attachments`).
@@ -588,6 +629,19 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
   // declares no stage; when it does, this is the one place that changes.
   const rigHeader = ingestHeader(obj(root.skeleton), opts, note);
 
+  // -- physics constraints that drive nothing (issue #731) ------------------
+  // Read before the skins, because a skin's `physics` member list is one of the
+  // three places such a constraint is named and each has to let go of it.
+  const inert = inertPhysics(root);
+  const omissions = new Map<string, PhysicsOmission>();
+  const omission = (name: string): PhysicsOmission => {
+    const found = omissions.get(name);
+    if (found !== undefined) return found;
+    const made: PhysicsOmission = { timelines: [], skins: [], lastKeys: new Map() };
+    omissions.set(name, made);
+    return made;
+  };
+
   // -- bones ----------------------------------------------------------------
   // Inverts `buildBone`, which copies every declared field and omits the rest.
   const bones = arr(root.bones).map((raw) => {
@@ -645,7 +699,17 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
     let anyList = false;
     for (const list of SKIN_LISTS) {
       if (entry[list] !== undefined) {
-        lists[list] = entry[list];
+        let members = entry[list];
+        if (list === 'physics' && Array.isArray(members)) {
+          const named = members.filter((member): member is string => typeof member === 'string' && inert.has(member));
+          for (const member of named) omission(member).skins.push(nameOf(entry));
+          members = members.filter((member) => !(typeof member === 'string' && inert.has(member)));
+          // A list that named nothing BUT omitted constraints goes with them: an
+          // empty list and an absent one read the same, and only one of them is
+          // what the rebuild writes for a skin with no physics member.
+          if (named.length > 0 && (members as unknown[]).length === 0) continue;
+        }
+        lists[list] = members;
         anyList = true;
       }
     }
@@ -669,6 +733,9 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
       note('blocker', 'CONSTRAINT_TYPE', who, `type ${JSON.stringify(constraint.type)} is not one of ${Object.keys(CONSTRAINT_FIELDS).join(', ')}`);
       continue;
     }
+    // Omitted rather than carried, and said below once the timelines it takes
+    // with it are known (`PHYSICS_DRIVES_NOTHING`).
+    if (type === 'physics' && typeof constraint.name === 'string' && inert.has(constraint.name)) continue;
     const out: JsonObject = { name: constraint.name, type };
     for (const field of fields) if (constraint[field] !== undefined) out[field] = constraint[field];
     for (const key of Object.keys(constraint)) {
@@ -681,7 +748,43 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
   // -- animations -----------------------------------------------------------
   const animations: JsonObject = {};
   for (const [animName, raw] of objEntries(root.animations)) {
-    animations[animName] = ingestAnimation(animName, raw, root, note);
+    animations[animName] = ingestAnimation(animName, raw, root, note, inert, (name, property, lastKey) => {
+      const one = omission(name);
+      one.timelines.push(`animation "${animName}" ${property}`);
+      one.lastKeys.set(animName, Math.max(one.lastKeys.get(animName) ?? 0, lastKey));
+    });
+  }
+
+  // One finding per inert constraint, in the file's own order, naming what went
+  // with it. ⚠️ An animation's duration is the largest key time it has LEFT, so
+  // an omitted timeline that held the last key shortens the rebuilt animation —
+  // the one place this omission is not a no-op, and the detail says so there.
+  for (const [name, stated] of inert) {
+    const gone = omission(name);
+    const shortened = [...gone.lastKeys]
+      .map(([animName, lastKey]) => [animName, lastKey, Number(obj(animations[animName]).duration)] as const)
+      .filter(([, lastKey, duration]) => lastKey > duration)
+      .map(
+        ([animName, lastKey, duration]) =>
+          `animation "${animName}" had its last key at ${lastKey}s on one of them, so the rebuilt animation ends at ${duration}s`,
+      );
+    note(
+      'lossy',
+      'PHYSICS_DRIVES_NOTHING',
+      `constraint "${name}" (physics)`,
+      `drives no component: ${PHYSICS_COMPONENTS.join(', ')} are ` +
+        (stated.length ? `absent or at most 0 (it states ${stated.join(', ')})` : 'all absent') +
+        ', and `PhysicsConstraint.update` applies one only above 0, so it moves no bone and `build` would refuse it ' +
+        'by name (A23_PHYSICS_CONSTRAINT_EFFECTIVE). The rig spec omits it' +
+        (gone.timelines.length
+          ? `, and with it the ${gone.timelines.length} timeline(s) keyed to it, which would name a constraint the ` +
+            `rebuild does not have: ${gone.timelines.join('; ')}`
+          : '; no timeline keys it') +
+        (gone.skins.length ? `; it is taken off the physics list of skin(s) ${gone.skins.map((skin) => `"${skin}"`).join(', ')}` : '') +
+        (shortened.length
+          ? `. One thing does move, because a duration is the last key an animation has left: ${shortened.join('; ')}`
+          : '. The rebuild differs from the source by exactly these no-ops'),
+    );
   }
 
   // -- assemble -------------------------------------------------------------
@@ -1247,7 +1350,14 @@ function ingestAttachment(
 }
 
 /** One animation. Inverts step 5 of `compile()` — the whole timeline half. */
-function ingestAnimation(animName: string, anim: JsonObject, root: JsonObject, note: Note): JsonObject {
+function ingestAnimation(
+  animName: string,
+  anim: JsonObject,
+  root: JsonObject,
+  note: Note,
+  inert: ReadonlyMap<string, unknown>,
+  omitted: (constraint: string, property: string, lastKey: number) => void,
+): JsonObject {
   const tracks: JsonObject[] = [];
   let maxT = 0;
   const seeT = (t: number): void => {
@@ -1338,6 +1448,20 @@ function ingestAnimation(animName: string, anim: JsonObject, root: JsonObject, n
   const family = (group: 'path' | 'physics' | 'slider', shapes: Record<string, TrackShape>): void => {
     for (const [name, timelines] of objEntries(anim[group])) {
       for (const [property, keys] of arrEntries(timelines)) {
+        // A timeline keyed to a physics constraint `ingest` omitted (issue #731)
+        // goes with it: carried, it names a constraint the rebuilt rig has not
+        // got, and `build` refuses the whole motion spec over it. Its keys are
+        // not seen by `seeT` — they are not in the rebuild — and their latest
+        // time is handed back so the finding can say when that shortened one.
+        if (group === 'physics' && inert.has(name)) {
+          let lastKey = 0;
+          for (const raw of keys) {
+            const t = obj(raw).time;
+            if (typeof t === 'number' && t > lastKey) lastKey = t;
+          }
+          omitted(name, property, lastKey);
+          continue;
+        }
         const shape = shapes[property];
         const where = `animation "${animName}" ${group} "${name}" ${property}`;
         if (shape === undefined) {

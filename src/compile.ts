@@ -1068,8 +1068,14 @@ const CONSTRAINT_TIMELINES: Record<'ik' | 'transform', ConstraintTimelineShape> 
   },
 };
 
-/** Physics constraint fields and their parser defaults (SkeletonJson.js:295-319). */
-const PHYSICS_COMPONENTS = ['x', 'y', 'rotate', 'scaleX', 'shearX'] as const;
+/**
+ * Physics constraint fields and their parser defaults (SkeletonJson.js:295-319).
+ *
+ * `PHYSICS_COMPONENTS` is exported for `ingest.ts`, which omits a constraint that
+ * drives none of them (issue #731) and must read "drives" off the same five
+ * names this module refuses an empty constraint with, not off a copy.
+ */
+export const PHYSICS_COMPONENTS = ['x', 'y', 'rotate', 'scaleX', 'shearX'] as const;
 const PHYSICS_PARAMS: Array<[string, number]> = [
   ['inertia', 0.5],
   ['strength', 100],
