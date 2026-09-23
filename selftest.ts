@@ -1420,6 +1420,33 @@ const MUTANTS: Mutant[] = [
       }),
     }),
   },
+  // ─── an overlay region moved onto the base plate's own page (issue #770) ───
+  //
+  // The base plate is exempt as a REGION, not as a page. Found structurally: the
+  // base's page block is the one whose region's bounds are the skeleton's stage,
+  // and the first other block's region is moved onto it at the page's origin —
+  // over the plate's opaque texels. An exemption widened from "the plate the
+  // rig names" to "whatever sits where the plate is" would pass it.
+  {
+    name: 'M77_an_overlay_region_moved_onto_the_base_plates_page_is_judged_by_its_own_texels',
+    origin:
+      'issue #770 carries the rig\'s own base plate to A19 by name; a name that exempted its page, or every opaque ' +
+      'region, would certify an overlay that paints a solid rectangle over the plate',
+    expect: 'A19_OVERLAY_PNGS_HAVE_ALPHA',
+    mutate: (a) => {
+      const stage = (JSON.parse(a.skeletonText) as { skeleton?: { width?: number; height?: number } }).skeleton ?? {};
+      const blocks = a.atlasText.trimEnd().split('\n\n');
+      const at = blocks.findIndex((block) => block.split('\n').includes(`bounds: 0, 0, ${stage.width}, ${stage.height}`));
+      const other = blocks.findIndex((_, i) => i !== at);
+      if (at < 0 || other < 0) throw new Error('the fixture atlas has no page holding a stage-sized region beside another page');
+      // A page block is four header lines (path, size, filter, pma) and then its regions.
+      const moved = blocks[other].split('\n').slice(4).join('\n');
+      const rewritten = blocks
+        .map((block, i) => (i === at ? `${block}\n${moved}` : block))
+        .filter((_, i) => i !== other);
+      return { ...a, atlasText: `${rewritten.join('\n\n')}\n` };
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -11258,6 +11285,117 @@ function gatePartImage(write: (path: string) => void): ReturnType<typeof validat
   return gateProbe(dirs, STATIC_MOTION, 'spine-html');
 }
 
+/**
+ * A private copy of a generated fixture, so a case can rewrite its art.
+ *
+ * ⚠️ Not a second call to the fixture's builder: every builder writes into the
+ * one per-run root (`fixtureRoot` in `fixtures/public.ts`), so calling it again
+ * rewrites the directory every other suite is reading.
+ */
+function privateFixtureCopy(fixture: Fixture, prefix: string): Fixture {
+  const dir = join(mkdtempSync(join(tmpdir(), prefix)), basename(fixture.dir));
+  cpSync(fixture.dir, dir, { recursive: true });
+  const moved = (path: string): string => join(dir, relative(fixture.dir, path));
+  return {
+    ...fixture,
+    dir,
+    rigPath: moved(fixture.rigPath),
+    motionPath: moved(fixture.motionPath),
+    manifestPath: moved(fixture.manifestPath),
+    outDir: moved(fixture.outDir),
+  };
+}
+
+interface ManifestPartWindow {
+  slot: string;
+  image: string;
+  w: number;
+  h: number;
+}
+
+/**
+ * Read off a fixture's manifest: its base plate — the part whose window IS the
+ * crop — and its first plain overlay, a part with an `image`, no mesh and a
+ * window that is not the crop.
+ *
+ * Read from the manifest rather than from the compiled rig on purpose: the
+ * controls below measure the channel that carries the base plate to `A19`, so
+ * they must not learn which part it is from that same channel.
+ */
+function manifestBaseAndOverlay(fixture: Fixture): { base: ManifestPartWindow; overlay: ManifestPartWindow } {
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, 'utf8')) as {
+    crop: { w: number; h: number };
+    parts: Array<{ slot: string; image?: string | null; offset: [number, number]; size?: [number, number]; mesh?: unknown }>;
+  };
+  const windowOf = (part: (typeof manifest.parts)[number]): ManifestPartWindow => {
+    const [w, h] = part.size ?? [manifest.crop.w, manifest.crop.h];
+    return { slot: part.slot, image: part.image ?? '', w, h };
+  };
+  const isCrop = (part: (typeof manifest.parts)[number]): boolean => {
+    const win = windowOf(part);
+    return part.offset[0] === 0 && part.offset[1] === 0 && win.w === manifest.crop.w && win.h === manifest.crop.h;
+  };
+  const base = manifest.parts.find((part) => part.image && isCrop(part));
+  const overlay = manifest.parts.find((part) => part.image && !part.mesh && !isCrop(part));
+  if (!base || !overlay) throw new Error(`the fixture manifest at ${fixture.manifestPath} has no base plate or no plain overlay`);
+  return { base: windowOf(base), overlay: windowOf(overlay) };
+}
+
+/**
+ * Compile `opts`, then gate the build twice under `profile`: as compiled (one
+ * part per page) and packed onto shared pages, the pair `build --pack` gates.
+ * The packed pair is written into `<outDir>/packed` as `skeleton.json` and
+ * `skeleton.atlas`, so `rigc validate <dir>` can be pointed at it.
+ */
+function gateLooseAndPacked(
+  opts: Options,
+  profile: ValidateProfile,
+): {
+  result: CompileResult;
+  loose: ReturnType<typeof validate>;
+  packed: ReturnType<typeof validate>;
+  packedDir: string;
+  packedAtlas: string;
+} {
+  const result = compile(opts);
+  const gate = (atlasText: string, atlasDir: string): ReturnType<typeof validate> =>
+    validate({
+      skeletonText: result.skeletonText,
+      atlasText,
+      atlasDir,
+      declaredDurations: result.declaredDurations,
+      rig: result.rig,
+      profile,
+    });
+  const packedDir = join(opts.outDir, 'packed');
+  mkdirSync(packedDir, { recursive: true });
+  const pack = packAtlas(packInputsOf(result.images), { padding: DEFAULT_PADDING });
+  for (const page of pack.pages) page.plate.writePng(join(packedDir, page.name));
+  writeFileSync(join(packedDir, 'skeleton.atlas'), pack.atlasText);
+  writeFileSync(join(packedDir, 'skeleton.json'), result.skeletonText);
+  return {
+    result,
+    loose: gate(result.atlasText, opts.outDir),
+    packed: gate(pack.atlasText, packedDir),
+    packedDir,
+    packedAtlas: pack.atlasText,
+  };
+}
+
+/**
+ * The static probe with no stage and one opaque RGBA backdrop as big as the
+ * probe's old stage — a rig spec's build, which has no way to name a base
+ * plate — gated loose and packed under `spine-html`.
+ */
+function gateStagelessSpecBackdrop(): ReturnType<typeof gateLooseAndPacked> & { part: string } {
+  const dirs = writeProbeRig({ skeleton: { width: null, height: null } });
+  writeProbePng(join(dirs.dir, 'block.png'), 64, 64, [40, 60, 90, 255]);
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+  const opts: Options = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
+  return { ...gateLooseAndPacked(opts, 'spine-html'), part: 'block' };
+}
+
 function runPngTransparencySuite(): number {
   let bad = 0;
   console.log('\n── PNG transparency (self-contained: this suite writes its own art) ──');
@@ -11362,6 +11500,132 @@ function runPngTransparencySuite(): number {
     `with tRNS: ${JSON.stringify(withTrns)}; without: ${JSON.stringify(withoutTrns)}`,
     'hasAlpha stays "a per-pixel alpha channel"; the tRNS chunk is a separate fact and the size must survive the walk',
   );
+
+  // --- PT08–PT10: which image is the base plate, decided with no box (issue #770)
+  //
+  // A cut manifest names its base plate — the part whose window IS the crop —
+  // and the size-against-the-stage reading is only the fallback for a build
+  // that names none. These three hold the two edges of that: the named plate is
+  // the only thing exempt (an opaque overlay beside it is still refused, with
+  // no stage and with a stage stated small enough for the overlay to "cover"),
+  // and a gate that has no rig says what would have decided it.
+  const fromManifest = manifestBaseAndOverlay(ARTICULATED);
+  const baseRegion = basename(fromManifest.base.image, '.png');
+  const overlayRegion = basename(fromManifest.overlay.image, '.png');
+  const a19Details = (report: ReturnType<typeof validate>): string[] =>
+    report.failures.filter((f) => f.assertion === A19).map((f) => f.detail);
+  /** Whether an A19 detail's SUBJECT is `region` — the packed form names the region, the loose form its page file. */
+  const refuses = (detail: string, region: string): boolean =>
+    detail.startsWith(`part "${region}" `) || new RegExp(`^part image "(?:[^"]*/)?${region}\\.png" `).test(detail);
+  const opaqueOverlayProbes = (gated: ReturnType<typeof gateLooseAndPacked>): string[] => {
+    const loose = a19Details(gated.loose);
+    const packed = a19Details(gated.packed);
+    return [
+      ...(loose.some((d) => refuses(d, overlayRegion) && /colour type 2 \(truecolour\) with no tRNS/.test(d))
+        ? []
+        : [`the loose build did not refuse "${overlayRegion}" as colour type 2 with no tRNS: ${loose.join(' | ') || 'A19 raised nothing'}`]),
+      ...(packed.some((d) => refuses(d, overlayRegion) && d.includes('is opaque in every one of'))
+        ? []
+        : [`the packed build did not refuse region "${overlayRegion}" as opaque: ${packed.join(' | ') || 'A19 raised nothing'}`]),
+      ...[...loose, ...packed].filter((d) => refuses(d, baseRegion)).map((d) => `the base plate was refused: ${d.slice(0, 140)}`),
+    ];
+  };
+
+  {
+    const copy = privateFixtureCopy(ARTICULATED, 'rigc-baseplate-overlay-');
+    writeTypedPng(join(copy.dir, fromManifest.overlay.image), fromManifest.overlay.w, fromManifest.overlay.h, {
+      colourType: 2,
+      trns: false,
+    });
+    const gated = gateLooseAndPacked(
+      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-baseplate-overlay-out-')), 'loose'),
+      'spine-html',
+    );
+    const probes = opaqueOverlayProbes(gated);
+    const held = probes.length === 0;
+    say(
+      'PT08_AN_OPAQUE_OVERLAY_ON_A_STAGELESS_MANIFEST_RIG_IS_REFUSED_ON_BOTH_ROUTES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `"${overlayRegion}" rewritten as colour type 2 with no tRNS, on the articulated rig with no stage: refused ` +
+          `loose by its file and packed by its texels, and the base plate "${baseRegion}" named on neither`,
+        (count) => `${count} thing(s) the stageless rig's gate did not do:`,
+      ),
+      'exempting the plate the rig names must not become exempting every opaque part of a rig that states no box',
+    );
+  }
+
+  {
+    const copy = privateFixtureCopy(ARTICULATED, 'rigc-baseplate-precedence-');
+    writeTypedPng(join(copy.dir, fromManifest.overlay.image), fromManifest.overlay.w, fromManifest.overlay.h, {
+      colourType: 2,
+      trns: false,
+    });
+    const rig = JSON.parse(readFileSync(copy.rigPath, 'utf8')) as Record<string, unknown>;
+    rig.skeleton = { ...((rig.skeleton ?? {}) as Record<string, unknown>), x: 0, y: 0, width: fromManifest.overlay.w, height: fromManifest.overlay.h };
+    const root = mkdtempSync(join(tmpdir(), 'rigc-baseplate-precedence-out-'));
+    const rigPath = join(root, 'stated.rig.json');
+    writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+    const outDir = join(root, 'loose');
+    mkdirSync(outDir, { recursive: true });
+    const gated = gateLooseAndPacked({ ...optsForFixture(copy), rigPath, outDir }, 'spine-html');
+    // Two-sided: the stated stage must really be one the overlay covers, or the
+    // size reading had nothing to exempt and the case measures nothing.
+    const header = (JSON.parse(gated.result.skeletonText) as { skeleton?: { width?: number; height?: number } }).skeleton ?? {};
+    const covered =
+      header.width !== undefined &&
+      header.height !== undefined &&
+      fromManifest.overlay.w >= header.width &&
+      fromManifest.overlay.h >= header.height;
+    const probes = [
+      ...(covered
+        ? []
+        : [`the emitted stage is ${header.width}x${header.height}, which "${overlayRegion}" does not cover, so the size reading was never tempted`]),
+      ...opaqueOverlayProbes(gated),
+    ];
+    const held = probes.length === 0;
+    say(
+      'PT09_THE_BASE_PLATE_THE_RIG_NAMES_DECIDES_BEFORE_THE_SIZE_OF_THE_STAGE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `stage stated as ${header.width}x${header.height}, which the opaque "${overlayRegion}" covers: refused ` +
+          `loose and packed all the same, because the rig names "${baseRegion}" and the size reading is only read ` +
+          'when it names none',
+        (count) => `${count} thing(s) the rule's precedence did not do:`,
+      ),
+      'two readings of "base plate" that can disagree must have an order, and a stage stated small is where they ' +
+        'disagree: without the order, stating a box exempts whatever covers it',
+    );
+  }
+
+  {
+    const gated = gateLooseAndPacked(
+      stagelessOptionsFor(ARTICULATED, mkdtempSync(join(tmpdir(), 'rigc-baseplate-norig-')), 'loose'),
+      'spine-html',
+    );
+    const run = runCli(['validate', gated.packedDir, '--profile', 'spine-html']);
+    const line = run.stdout.split('\n').find((l) => l.startsWith(`  FAIL  ${A19}: `)) ?? '';
+    const missing = [
+      run.status === 1 ? null : `exit ${run.status} rather than 1`,
+      line === '' ? `no ${A19} failure was printed` : null,
+      line !== '' && !refuses(line.slice(`  FAIL  ${A19}: `.length), baseRegion) ? `the failure is not about "${baseRegion}"` : null,
+      /no rig was given/.test(line) ? null : 'what is missing here (no rig was given)',
+      /"skeleton" stage/.test(line) ? null : 'the first remedy (a "skeleton" stage the plate covers)',
+      /--manifest/.test(line) ? null : 'the second remedy (validate with the --manifest it was built from)',
+      /whose window is the crop/.test(line) ? null : 'what a manifest names as its base plate (the part whose window is the crop)',
+    ].filter((m): m is string => m !== null);
+    say(
+      'PT10_VALIDATE_ON_A_DIRECTORY_SAYS_WHAT_WOULD_DECIDE_THE_BASE_PLATE',
+      missing.length === 0,
+      missing.length === 0 ? line.trim() : `missing: ${missing.join('; ')} — got: ${line.trim() || run.stdout.slice(-300)}`,
+      '`validate <dir>` reads a stageless skeleton with no rig beside it, so nothing there can say which opaque ' +
+        'image is the plate; "nothing here qualifies" left the reader with no door, and there are two',
+    );
+  }
   return bad;
 }
 
@@ -36208,10 +36472,9 @@ function runPackerSuite(): number {
     const stagedPagesDir = join(root, 'staged-pages');
     mkdirSync(stagedPagesDir, { recursive: true });
     for (const page of stagedPack.pages) page.plate.writePng(join(stagedPagesDir, page.name));
-    // Under `spine`: the question is validity. Under `spine-html` this pack is
-    // refused by A19 — its base plate is opaque on a shared page and
-    // A19's one exemption is the image that covers the STAGE, which this rig
-    // declares none of; that is A19's own sentence about the absence.
+    // Under `spine`: the question is validity. The same pack under `spine-html`
+    // is PK68's: A19 used to refuse its opaque base plate here, because its one
+    // reading of "base plate" was the image covering the stage (issue #770).
     const packGate = gatePacked(stagelessOpts.outDir, stagelessPack.atlasText, stagelessResult, 'spine');
     const packProbes = [
       ...(stageFieldsOf(stagedResult.skeletonText).length === 4
@@ -36241,6 +36504,89 @@ function runPackerSuite(): number {
       ),
       'issue #714 asks what `--pack` does without a stage, and the answer is structural — the packer never sees ' +
         'one — so it is measured as bytes rather than restated as a property of its signature',
+    );
+  }
+
+  // --- PK68–PK69: the base plate a stageless pack is allowed (issue #770) ----
+  //
+  // PK67 gates its stageless pack under `spine` because under `spine-html` A19
+  // refused the pack's opaque base plate: the only reading of "base plate" it
+  // had was an image at least the stage's size, and the rig states no stage. A
+  // cut manifest names the plate itself, so that build has an answer with no
+  // box; a rig spec has no way to name one, so its build has none — and says so.
+  {
+    const { base } = manifestBaseAndOverlay(ARTICULATED);
+    const baseRegion = basename(base.image, '.png');
+    const root = mkdtempSync(join(tmpdir(), 'rigc-pack-baseplate-'));
+    const stageless = gateLooseAndPacked(stagelessOptionsFor(ARTICULATED, root, 'stageless'), 'spine-html');
+    const stagedOut = join(root, 'staged');
+    mkdirSync(stagedOut, { recursive: true });
+    const staged = gateLooseAndPacked({ ...optsForFixture(ARTICULATED), outDir: stagedOut }, 'spine-html');
+    // The exemption is only worth anything if the plate really is opaque where
+    // it was packed and really shares its page: otherwise this passes on
+    // transparency, or on the file-level read, and measures nothing.
+    const packedAtlas = new TextureAtlas(stageless.packedAtlas);
+    const region = packedAtlas.findRegion(baseRegion);
+    let clear = -1;
+    let neighbours = 0;
+    if (region) {
+      const plate = readPlate(join(stageless.packedDir, region.page.name));
+      const { width, height } = pageFootprint(region);
+      clear = 0;
+      for (let y = region.y; y < region.y + height; y++) {
+        for (let x = region.x; x < region.x + width; x++) if (plate.get(x, y)[3] < 255) clear++;
+      }
+      neighbours = packedAtlas.regions.filter((other) => other.page === region.page && other !== region).length;
+    }
+    const failuresOf = (label: string, report: ReturnType<typeof validate>): string[] =>
+      report.failures.map((f) => `${label}: ${f.assertion}: ${f.detail.slice(0, 140)}`);
+    const probes = [
+      ...(region ? [] : [`the pack has no region "${baseRegion}"`]),
+      ...(clear === 0 ? [] : [`the base plate's packed rectangle has ${clear} texel(s) below full alpha, so it is not the opaque plate this case is about`]),
+      ...(neighbours > 0 ? [] : ['the base plate is alone on its page, so the shared-page scan never ran']),
+      ...failuresOf('stageless packed', stageless.packed),
+      ...failuresOf('stageless loose', stageless.loose),
+      ...failuresOf('staged packed', staged.packed),
+      ...failuresOf('staged loose', staged.loose),
+      ...(stageless.packed.passed.includes('A19_OVERLAY_PNGS_HAVE_ALPHA') ? [] : ['A19 did not pass on the stageless pack']),
+    ];
+    const held = probes.length === 0;
+    say(
+      'PK68_A_STAGELESS_MANIFEST_RIGS_PACK_EXEMPTS_THE_BASE_PLATE_IT_NAMES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `"${baseRegion}" is opaque in all of its packed rectangle and shares its page with ${neighbours} other ` +
+          'region(s); the stageless pack passes A19 under spine-html, and so do its loose build and both staged builds',
+        (count) => `${count} thing(s) the stageless pack's gate did not do:`,
+      ),
+      'the manifest names its base plate — the part whose window is the crop — so "no stage" is not "no base plate" ' +
+        'for this build, and the loose and packed routes must not disagree about the same plate',
+    );
+  }
+  {
+    const backdrop = gateStagelessSpecBackdrop();
+    const packed = backdrop.packed.failures.find((f) => f.assertion === 'A19_OVERLAY_PNGS_HAVE_ALPHA')?.detail ?? '';
+    const looseVerdict = backdrop.loose.passed.includes('A19_OVERLAY_PNGS_HAVE_ALPHA') ? 'passes' : 'does not pass';
+    const missing = [
+      packed === '' ? 'the packed build was not refused by A19' : null,
+      packed === '' || packed.startsWith(`part "${backdrop.part}" is opaque`) ? null : `the refusal is not about "${backdrop.part}"`,
+      /names no base plate/.test(packed) ? null : 'what is missing here (the build names no base plate)',
+      /"skeleton" stage/.test(packed) ? null : 'the first remedy (a "skeleton" stage the plate covers)',
+      /cut manifest/.test(packed) && /whose window is the crop/.test(packed)
+        ? null
+        : 'the second remedy (a cut manifest, whose base plate is the part whose window is the crop)',
+      /nothing here qualifies/.test(packed) ? 'DROP the old sentence, which named no door' : null,
+    ].filter((m): m is string => m !== null);
+    say(
+      'PK69_A_STAGELESS_SPEC_RIGS_OPAQUE_BACKDROP_IS_REFUSED_WITH_THE_TWO_WAYS_TO_DECIDE_IT',
+      missing.length === 0,
+      missing.length === 0
+        ? `${packed} (the loose build of the same rig ${looseVerdict}: its file declares an alpha channel)`
+        : `missing: ${missing.join('; ')} — got: ${packed}`,
+      'a rig spec cannot name a base plate, so on a stageless one nothing decides it; the refusal stands, and it ' +
+        'has to say what would decide it rather than that nothing does',
     );
   }
   return bad;
@@ -48531,6 +48877,53 @@ function runCurrencySuite(): number {
         'is the name to scan for because no other word in the format contains it, and zero occurrences — the ' +
         'list moved or renamed — is as red as two',
     );
+  }
+
+  // --- CUR74–CUR75: the base-plate sentence the pages quote is the one A19 prints (issue #770)
+  //
+  // Every `*"…"*` quote in an `A19` table row is held to the refusal a
+  // stageless rig-spec build prints for its opaque backdrop — the sentence that
+  // says what would decide which image is the base plate. A quote reworded
+  // on the page, or a sentence reworded in the rule, is red here.
+  {
+    const backdrop = gateStagelessSpecBackdrop();
+    const live = backdrop.packed.failures.find((f) => f.assertion === 'A19_OVERLAY_PNGS_HAVE_ALPHA')?.detail ?? '';
+    const quotesIn = (text: string): string[] =>
+      text
+        .split('\n')
+        .filter((line) => line.startsWith('| `A19_OVERLAY_PNGS_HAVE_ALPHA` |'))
+        .flatMap((line) => [...line.matchAll(/\*"([^"]+)"\*/g)].map((m) => m[1]));
+    const cases: Array<[string, string]> = [
+      ['CUR74_THE_BASE_PLATE_SENTENCE_THE_GUIDE_QUOTES_IS_THE_ONE_A19_PRINTS', 'docs/AUTHORING.md'],
+      ['CUR75_THE_BASE_PLATE_SENTENCE_THE_BENCHMARK_PAGE_QUOTES_IS_THE_ONE_A19_PRINTS', 'docs/BENCHMARK.md'],
+    ];
+    for (const [name, path] of cases) {
+      const text = readFileSync(join(root, path), 'utf8');
+      const quotes = quotesIn(text);
+      const missing = quotes.filter((quote) => !live.includes(quote));
+      const planted = quotesIn(text.replace(/(\| `A19_OVERLAY_PNGS_HAVE_ALPHA` \|[^\n]*?\*")(\S+)/, '$1RENAMED'));
+      const plantedMissing = planted.filter((quote) => !live.includes(quote));
+      const probes = [
+        ...(live === '' ? ['the stageless rig-spec backdrop printed no A19 refusal, so nothing was compared'] : []),
+        ...(quotes.length > 0 ? [] : [`no \`*"…"*\` quote stands in an A19 row of ${path}`]),
+        ...missing.map((quote) => `${path} quotes a clause A19 does not print: ${JSON.stringify(quote.slice(0, 110))}`),
+        ...(plantedMissing.length > missing.length ? [] : ['the same rows with a quote reworded are faulted no more often, so this reader is not reading the quote']),
+      ];
+      const held = probes.length === 0;
+      say(
+        name,
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${quotes.length} quote(s) in ${path}'s A19 rows are clauses of the sentence A19 prints for a stageless ` +
+            'rig-spec backdrop; the same rows with a quote reworded are faulted',
+          (count) => `${count} thing(s) the page's A19 quotes did not hold:`,
+        ),
+        'the page is where an author learns what would decide the base plate, and a quote the rule no longer ' +
+          'prints sends them after a remedy the refusal does not name',
+      );
+    }
   }
 
   return bad;
