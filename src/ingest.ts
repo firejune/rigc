@@ -55,7 +55,7 @@ import {
   TOPLEVEL_CONSTRAINT_ARRAYS,
 } from './generation.ts';
 import { EVERY_GLOBAL_PHYSICS, MOTION_SPEC_VERSION, parseMotionSpec } from './motion.ts';
-import { parseRigSpec, RIG_KEYS, RIG_SPEC_VERSION, type RigSpec } from './rig.ts';
+import { parseRigSpec, resolveBoneInherit, RIG_KEYS, RIG_SPEC_VERSION, type RigSpec } from './rig.ts';
 import type { MotionSpec } from './types.ts';
 
 /**
@@ -375,6 +375,18 @@ const BONE_TRACKS: Record<string, TrackShape> = {
 };
 
 /**
+ * The bone timeline whose key holds a NAME rather than numbers — `inherit`,
+ * `{ time, inherit }`, stepped by the format (its reader builds no curve). The
+ * field and the default `SkeletonJson`'s `inherit` branch reads where a key
+ * omits it: `getValue(aFrame, "inherit", "Normal")`, which the table spells
+ * `normal`. Inverts `compileValueTrack`'s named branch (issue #733).
+ */
+const INHERIT_TRACK = { property: 'inherit', field: 'inherit', dflt: 'normal' } as const;
+
+/** Every bone timeline the motion spec has a track for, in the order the refusal prints them. */
+const BONE_TRACK_NAMES = [...Object.keys(BONE_TRACKS), INHERIT_TRACK.property];
+
+/**
  * The eight physics timelines — `PHYSICS_TRACKS` in `compile.ts`, same order.
  * `reset` carries no value at all — `compileValueTrack`'s zero-field branch.
  *
@@ -516,7 +528,7 @@ export const UNSPELT_SLOT_TRACKS = Object.keys(CHANNELS_BY_KIND.slot).filter((na
 export const INGEST_VOCABULARY = {
   attachments: ATTACHMENT_TYPES,
   constraints: Object.keys(CONSTRAINT_FIELDS),
-  boneTracks: Object.keys(BONE_TRACKS),
+  boneTracks: BONE_TRACK_NAMES,
   slotTracks: SLOT_TRACKS,
   path: Object.keys(PATH_TRACKS),
   physics: Object.keys(PHYSICS_TRACKS),
@@ -1510,12 +1522,46 @@ function ingestAnimation(
     for (const [property, keys] of arrEntries(timelines)) {
       const shape = BONE_TRACKS[property];
       const where = `animation "${animName}" bone "${bone}" ${property}`;
+      if (property === INHERIT_TRACK.property) {
+        // `{ time, inherit }` -> `{ t, v: mode }`. The mode is carried in the
+        // table's spelling, which is what `build` writes back; a key that omits
+        // it, or spells it with a capital the runtime also folds, is a key the
+        // rebuild states differently and is counted as such. A spelling the
+        // runtime cannot resolve at all is carried as written — the file plays
+        // no mode there, and `build` refuses it by name rather than guessing one.
+        let restated = 0;
+        const out = keys.map((raw) => {
+          const key = obj(raw);
+          const entry: JsonObject = { t: timeOf(key) };
+          const written = key[INHERIT_TRACK.field];
+          const mode = written === undefined ? INHERIT_TRACK.dflt : resolveBoneInherit(written);
+          if (mode !== written && mode !== undefined) restated++;
+          entry.v = mode ?? (written as JsonObject[string]);
+          for (const field of Object.keys(key)) {
+            if (field === 'time' || field === INHERIT_TRACK.field) continue;
+            note('blocker', 'TIMELINE_FIELD', where, `key field "${field}" is not part of this timeline's shape`);
+          }
+          return entry;
+        });
+        if (restated > 0) {
+          note(
+            'lossy',
+            'TIMELINE_KEY_RESTATED',
+            where,
+            `${restated} key(s) omit the mode or spell it with a capital first letter, and are written out as the ` +
+              `mode the runtime reads there (an omitted one is ${INHERIT_TRACK.dflt}) — the same mode, in the ` +
+              'spelling the editor writes',
+          );
+        }
+        tracks.push({ bone, property, keys: out });
+        continue;
+      }
       if (shape === undefined) {
         note(
           'blocker',
           'BONE_TIMELINE',
           where,
-          `timeline "${property}" has no track in the motion spec — a bone track is ${Object.keys(BONE_TRACKS).join(', ')} ` +
+          `timeline "${property}" has no track in the motion spec — a bone track is ${BONE_TRACK_NAMES.join(', ')} ` +
             'and nothing else, so the rebuild plays nothing here',
         );
         continue;

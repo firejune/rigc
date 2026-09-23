@@ -41,6 +41,7 @@ import { parseJsonWithPosition } from './json-position.ts';
 import { nearMisses } from './keys.ts';
 import { EVERY_GLOBAL_PHYSICS, parseMotionSpec } from './motion.ts';
 import {
+  BONE_INHERIT_KNOWN,
   constraintAt,
   declaresNoStage,
   parseRigSpec,
@@ -50,6 +51,7 @@ import {
   RIG_PATH_SPACING_MODES,
   RIG_SCALE_Y_MODES,
   RIG_SKIN_CONSTRAINT_KEYS,
+  resolveBoneInherit,
   splitRigSkin,
   type RigAttachment,
   type RigBone,
@@ -864,6 +866,17 @@ interface ValueTrackShape {
   fields: string[];
   identity: number[];
   bounds?: Array<PhysicsPoseRule | null>;
+  /**
+   * A timeline whose key holds one NAMED value instead of numbers — the JSON
+   * field it is written as, and the resolver that turns a spelling into the
+   * name the file carries (or `undefined` for one the runtime cannot resolve).
+   *
+   * ⚠️ Such a timeline is stepped by the format rather than by choice: its
+   * reader builds no curve at all, so an `ease` or a `curve` on its key would be
+   * accepted by the parser and never read. `compileValueTrack` refuses both.
+   * One entry has it — the bone's `inherit` (issue #733).
+   */
+  named?: { field: string; resolve: (value: unknown) => string | undefined; known: string };
 }
 
 /**
@@ -898,6 +911,12 @@ const BONE_TRACKS: Record<string, ValueTrackShape> = {
   shearx: { fields: ['value'], identity: [0] },
   sheary: { fields: ['value'], identity: [0] },
   rotate: { fields: ['value'], identity: [0] },
+  // The eleventh case of the runtime's bone switch, and the one that keys no
+  // number: `InheritTimeline` sets `pose.inherit` at the key and
+  // `updateWorldTransform` reads it that frame. Resolved by the SAME call the
+  // setup field is (`resolveBoneInherit`), so the five a key may name are the
+  // five a bone may rest in and a refusal prints the one list (issue #733).
+  inherit: { fields: [], identity: [], named: { field: 'inherit', resolve: resolveBoneInherit, known: BONE_INHERIT_KNOWN } },
 };
 
 /**
@@ -6012,6 +6031,26 @@ function compileValueTrack(
       throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
     }
     checkKeyTime(where, time, key.t, duration);
+    // A named-value timeline (`inherit`): the key's `v` is one name, stepped by
+    // the format. The name is resolved rather than copied, and what is WRITTEN
+    // is the resolver's spelling — so `NoScale`, which the runtime also reads,
+    // emits as the `noScale` an editor writes, and a spelling the runtime
+    // cannot resolve never reaches the file at all.
+    if (shape.named !== undefined) {
+      if (key.ease !== undefined || key.curve !== undefined) {
+        throw new CompileError(
+          `${where} key at t=${key.t} carries ${key.ease !== undefined ? `an easing ("${key.ease}")` : 'a curve'}, and ` +
+            `this timeline is stepped by the format — its reader builds no curve, so the mode changes AT the key and ` +
+            'holds until the next one. Remove it',
+        );
+      }
+      const mode = shape.named.resolve(key.v);
+      if (mode === undefined) {
+        throw new CompileError(`${where} key at t=${key.t} names mode ${JSON.stringify(key.v)}; ${shape.named.known}`);
+      }
+      out.push({ time, [shape.named.field]: mode });
+      continue;
+    }
     // A no-field timeline (`reset`) is an event: the key IS the value, so it
     // carries none. Anything else must match the field count exactly.
     if (shape.fields.length === 0) {

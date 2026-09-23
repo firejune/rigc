@@ -24,6 +24,7 @@ import {
   ClippingAttachment,
   type ConstraintTimeline,
   DeformTimeline,
+  Inherit,
   isBoneTimeline,
   isConstraintTimeline,
   isSlotTimeline,
@@ -66,6 +67,7 @@ import {
   type SpineGeneration,
 } from './generation.ts';
 import { colourTypeName, readPngHeader } from './png.ts';
+import { BONE_INHERIT_KNOWN } from './rig.ts';
 import {
   CHANNELS_BY_KIND,
   KEY_TIME_EPSILON,
@@ -4020,6 +4022,64 @@ export function validate(input: ValidateInput): ValidateReport {
       // static rig has no duration to compare — and the two must not print
       // different verdicts over one skeleton's empty animation list.
       if (data.animations.length === 0) return skip('A10_NO_NAN_AFTER_STEPPING', SKIP_NO_ANIMATION);
+      /** Is this a mode `updateWorldTransform`'s switch has a case for? Read off the runtime's own enum. */
+      const isMode = (inherit: unknown): boolean => typeof inherit === 'number' && Inherit[inherit] !== undefined;
+
+      // -- the bone's inheritance mode, posed at every `inherit` key ---------
+      //
+      // 🚨 The one bone timeline whose value is a NAME, and the only one that
+      // can pose a NaN with a finite world: `SkeletonJson` resolves a key's mode
+      // through `Utils.enumValue`, which folds the first letter's case and
+      // nothing else, so `"NOSCALE"` resolves to `undefined` and the timeline's
+      // `Float32Array` frame stores NaN. `InheritTimeline.apply` then sets
+      // `pose.inherit = NaN`, `updateWorldTransform`'s switch matches no case,
+      // and the bone keeps whatever world matrix it had — measured on a forged
+      // two-bone chain: at the key the child's `a,b,c,d` equal the setup
+      // Normal-mode pose to the last digit while the file says `noScale`. The
+      // world position stays finite, so the loop below never saw it (#733).
+      //
+      // ⚠️ Posed AT each key rather than read off the stepping loop, because a
+      // stepped value lives from its key to the next one and a sampling grid
+      // can step over a short span entirely. What is judged is whether the
+      // posed value IS a mode — which is this assertion's name exactly — and
+      // not which mode: for any spelling the lookup resolves, the mode posed
+      // is the mode written by construction of the same lookup, so an equality
+      // here would be the parser agreeing with itself.
+      const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
+      let unresolved = 0;
+      for (const [animName, rawAnim] of Object.entries(rawAnimations)) {
+        if (!isObj(rawAnim) || !isObj(rawAnim.bones)) continue;
+        for (const [boneName, timelines] of Object.entries(rawAnim.bones)) {
+          if (!isObj(timelines) || !Array.isArray(timelines.inherit)) continue;
+          if (!data.findAnimation(animName) || !data.findBone(boneName)) continue;
+          for (const rawKey of timelines.inherit as unknown[]) {
+            if (!isObj(rawKey)) continue;
+            const time = typeof rawKey.time === 'number' ? rawKey.time : 0;
+            const skeleton = new Skeleton(data);
+            const state = new AnimationState(new AnimationStateData(data));
+            state.setAnimation(0, animName, false);
+            skeleton.setupPose();
+            skeleton.update(0);
+            skeleton.updateWorldTransform(Physics.reset);
+            state.update(time);
+            state.apply(skeleton);
+            skeleton.update(time);
+            skeleton.updateWorldTransform(Physics.update);
+            const posed = skeleton.findBone(boneName)?.appliedPose.inherit;
+            if (isMode(posed)) continue;
+            unresolved++;
+            fail(
+              'A10_NO_NAN_AFTER_STEPPING',
+              `animation "${animName}" bone "${boneName}" inherit (t=${time}): the bone poses inheritance mode ` +
+                `${String(posed)} — the key spells ${JSON.stringify(rawKey.inherit)}, which the runtime's mode lookup ` +
+                `does not resolve (${BONE_INHERIT_KNOWN}), so no mode applies until the next key and the bone keeps ` +
+                'the world rotation, scale and shear it had',
+            );
+          }
+        }
+      }
+      if (unresolved > 0) return;
+
       for (const anim of data.animations) {
         const skeleton = new Skeleton(data);
         const state = new AnimationState(new AnimationStateData(data));
@@ -4037,6 +4097,23 @@ export function validate(input: ValidateInput): ValidateReport {
             const pose = bone.appliedPose;
             if (!Number.isFinite(pose.worldX) || !Number.isFinite(pose.worldY)) {
               fail('A10_NO_NAN_AFTER_STEPPING', `${anim.name}: bone "${bone.data.name}" world is (${pose.worldX}, ${pose.worldY})`);
+              return;
+            }
+            // The setup half of the clause above: a bone's own `inherit` goes
+            // through the same lookup, and a miss there loads `undefined` into
+            // the setup pose, which every frame copies. Only reachable on a
+            // file rigc did not write — `parseRigSpec` refuses the spelling.
+            if (!isMode(pose.inherit)) {
+              const rawBone = Array.isArray(raw?.bones)
+                ? (raw.bones as unknown[]).find((b) => isObj(b) && b.name === bone.data.name)
+                : undefined;
+              fail(
+                'A10_NO_NAN_AFTER_STEPPING',
+                `${anim.name}: bone "${bone.data.name}" poses inheritance mode ${String(pose.inherit)} — its setup ` +
+                  `spells inherit ${JSON.stringify(isObj(rawBone) ? rawBone.inherit : undefined)}, which the ` +
+                  `runtime's mode lookup does not resolve (${BONE_INHERIT_KNOWN}), so its world rotation, scale and shear ` +
+                  'are never computed — they stay 0 and everything the bone carries collapses to a point',
+              );
               return;
             }
           }

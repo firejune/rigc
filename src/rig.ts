@@ -163,6 +163,38 @@ export const RIG_BONE_INHERIT: readonly RigBoneInherit[] = [
 ];
 
 /**
+ * The mode a spelling of `inherit` resolves to, in the table's own spelling —
+ * or `undefined` for one the runtime cannot resolve.
+ *
+ * ⭐ **One rule for both places the format spells a mode**: a bone's setup
+ * `inherit` and an `inherit` timeline key are read by the same call,
+ * `Utils.enumValue(Inherit, name)`, which is `Inherit[name[0].toUpperCase() +
+ * name.slice(1)]` — the FIRST letter is folded and nothing else. So `noScale`
+ * and `NoScale` resolve and `NOSCALE` or `noscale` do not, and a spelling that
+ * misses loads as `undefined`: the setup pose holds no mode at all and a
+ * timeline frame holds NaN, and in both cases `updateWorldTransform`'s switch
+ * matches no case and leaves the world matrix where it was. Nothing throws.
+ *
+ * 🚨 The setup check was **case-insensitive** until issue #733, which is wider
+ * than the runtime's rule by exactly that silence: `"inherit": "NOSCALE"`
+ * compiled, gated green on all 45 assertions, and loaded `setupPose.inherit ===
+ * undefined`. Measured, not argued — and a key read through the same wide rule
+ * would have shipped the same spelling into a timeline.
+ */
+export function resolveBoneInherit(value: unknown): RigBoneInherit | undefined {
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  const folded = value[0].toLowerCase() + value.slice(1);
+  return RIG_BONE_INHERIT.find((mode) => mode === folded);
+}
+
+/**
+ * The value REQUIRED, as both refusals of an unresolvable mode print it: the
+ * five, and the one liberty the runtime's lookup allows.
+ */
+export const BONE_INHERIT_KNOWN =
+  `known: ${RIG_BONE_INHERIT.join(', ')} — the runtime folds the case of the first letter and of nothing else`;
+
+/**
  * Take a bone's setup transform from the cut manifest rather than from a literal.
  *
  * ⭐ This is the one place the rig spec deliberately does not mirror Spine, and
@@ -1802,9 +1834,9 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
         `${where}: bone "${bone.name}" names parent ${JSON.stringify(bone.parent)}, which is not declared before it`,
       );
     }
-    if (bone.inherit !== undefined && !RIG_BONE_INHERIT.some((v) => v.toLowerCase() === String(bone.inherit).toLowerCase())) {
+    if (bone.inherit !== undefined && resolveBoneInherit(bone.inherit) === undefined) {
       throw new CompileError(
-        `${where}: bone "${bone.name}" has inherit ${JSON.stringify(bone.inherit)}; known: ${RIG_BONE_INHERIT.join(', ')}`,
+        `${where}: bone "${bone.name}" has inherit ${JSON.stringify(bone.inherit)}; ${BONE_INHERIT_KNOWN}`,
       );
     }
     const from = bone.from;

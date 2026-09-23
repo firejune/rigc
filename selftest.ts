@@ -92,6 +92,7 @@ import {
   EventTimeline,
   IkConstraint,
   IkConstraintData,
+  Inherit,
   MeshAttachment,
   PathAttachment,
   PathConstraint,
@@ -161,7 +162,7 @@ import {
   type IngestResult,
 } from './src/ingest.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
-import { RIG_KEYS, RIG_SPEC_VERSION, parseRigSpec } from './src/rig.ts';
+import { BONE_INHERIT_KNOWN, RIG_BONE_INHERIT, RIG_KEYS, RIG_SPEC_VERSION, parseRigSpec, resolveBoneInherit } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
   buildGridMesh,
@@ -1280,6 +1281,30 @@ const MUTANTS: Mutant[] = [
           time: key.time ?? 0,
           value: Number.parseInt(String(key.color).slice(6, 8), 16) / 255,
         }));
+      }),
+    }),
+  },
+  // ─── a bone `inherit` key the runtime resolves to no mode (issue #733) ──
+  //
+  // Every letter capitalised is a spelling the setup check's old
+  // case-insensitive rule accepted and `Utils.enumValue` — which folds the
+  // first letter and nothing else — does not resolve. The timeline's frame
+  // stores NaN, the pose holds no mode, and the world POSITION stays finite,
+  // which is why A10's stepping loop never saw it. The spelling is derived off
+  // the table rather than typed, and the bone is the first one with a parent.
+  {
+    name: 'M70_bone_inherit_key_spelled_so_the_runtime_resolves_no_mode',
+    origin:
+      'the file loads, `InheritTimeline` sets `pose.inherit` to NaN, `updateWorldTransform` matches no mode and the bone ' +
+      'keeps the rotation and scale it had — measured on a two-bone chain, bit for bit the setup pose (issue #733)',
+    expect: 'A10_NO_NAN_AFTER_STEPPING',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const bone = (j as any).bones.find((b: any) => b.parent !== undefined).name;
+        const animation = (j as any).animations[Object.keys((j as any).animations)[0]];
+        animation.bones = animation.bones ?? {};
+        animation.bones[bone] = { ...(animation.bones[bone] ?? {}), inherit: [{ time: 0, inherit: RIG_BONE_INHERIT[3].toUpperCase() }] };
       }),
     }),
   },
@@ -5957,7 +5982,7 @@ function runRigSuite(): number {
       };
       return skeleton.animations?.[probeAnimation]?.bones?.plunger ?? {};
     };
-    const TEN = '(it has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate)';
+    const TEN = '(it has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate, inherit)';
 
     const legalBone = withBoneTrack('rotate', [[0], [30]]);
     const legalBoneKeys = probeBoneTimelines(legalBone.skeletonText).rotate;
@@ -5983,10 +6008,10 @@ function runRigSuite(): number {
       unknownBone.message === null
         ? `compiled, and the emitted animation carries ${JSON.stringify(probeBoneTimelines(unknownBone.skeletonText))}`
         : `refused with: ${unknownBone.message}`,
-      'the ten are quoted here rather than read out of `BONE_TRACKS`, for the reason `RF23` quotes the slot pair: a ' +
+      'the eleven are quoted here rather than read out of `BONE_TRACKS`, for the reason `RF23` quotes the slot pair: a ' +
         'control that derived the list from the emitter would agree with the emitter whatever the emitter said. ' +
         'Typed, it is the interface `docs/AUTHORING.md` §4.4 promises, and widening the table without moving that ' +
-        'page turns this red. What is derived instead is the CENSUS: `PS144` reads the same ten off this same ' +
+        'page turns this red (it did, when `inherit` joined in issue #733). What is derived instead is the CENSUS: `PS144` reads the same eleven off this same ' +
         'message and compares them against the spellings it poses, both ways',
     );
 
@@ -6124,7 +6149,7 @@ function runRigSuite(): number {
     /** Every member that came back carrying the property, so a control cannot pass on one member of four. */
     const keyedMembers = (timelines: Record<string, Record<string, unknown[]>>, property: string, keys: number): string[] =>
       Object.keys(timelines).filter((member) => (timelines[member]?.[property] ?? []).length === keys);
-    const BONE_LIST = 'a bone group has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate';
+    const BONE_LIST = 'a bone group has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate, inherit';
     const SLOT_LIST = 'a slot group has: attachment, rgba, rgb, alpha, rgba2, rgb2';
     const PHYSICS_LIST = 'a physics constraint group has: inertia, strength, damping, mass, wind, gravity, mix, reset';
     /** The whole message, on the group and property a case wrote. */
@@ -20465,6 +20490,32 @@ function runPathAndSliderSuite(): number {
     boneCase('bone shear', 'shear', [0, 0], [0, 0], [[10, 6], [-4, 8]], ['shearX', 'shearY']),
     boneCase('bone shearx', 'shearx', [0], [0], [[10], [-4]], ['shearX']),
     boneCase('bone sheary', 'sheary', [0], [0], [[6], [9]], ['shearY']),
+    {
+      // The bone spelling whose key is a NAME rather than an offset (issue
+      // #733), so it cannot be a `boneCase`: `InheritTimeline` sets the mode at
+      // the key and holds it, which is the stepped rule the attachment row
+      // below is written in — and the reading is the enum the pose holds.
+      spelling: 'bone inherit',
+      observable: true,
+      kind: 'bone "vane" inherit',
+      rig: { bones: RESIDUAL_BONES },
+      after: [],
+      animation: (which) => ({
+        duration: GRID_DURATION,
+        loop: false,
+        tracks: [
+          {
+            bone: 'vane',
+            property: 'inherit',
+            keys: steppedKeys(which).map(([t, moved]) => ({ t, v: moved === 1 ? 'noScale' : 'normal' })),
+          },
+        ],
+      }),
+      setup: [Inherit.Normal],
+      alone: (which, share) => [steppedValueAt(steppedKeys(which), share * GRID_DURATION) === 1 ? Inherit.NoScale : Inherit.Normal],
+      describe: (values) => `inherit ${Inherit[values[0]] ?? String(values[0])}`,
+      read: (skeleton) => [skeleton.bones.find((bone) => bone.data.name === 'vane')!.appliedPose.inherit],
+    },
     { spelling: 'slot rgba', observable: true, ...SLIDER_IGNORES_ADD[0] },
     // The two-colour tint (issue #690). It is a census row rather than a fourth
     // `SLIDER_IGNORES_ADD` entry because `A40`'s refusal names a target by its
@@ -29951,6 +30002,80 @@ function emittedMemberValues(result: CompileResult, timeline: string, key: numbe
 }
 
 /**
+ * A two-bone chain for the bone `inherit` track (issue #733): the parent turned
+ * and scaled unevenly, so the five modes pose the child five different ways
+ * rather than agreeing by accident. The numbers are chosen, not measured — the
+ * controls derive what each mode must give from these and nothing else.
+ */
+const INHERIT_CHAIN = { parentRotation: 30, parentScaleX: 2, parentScaleY: 1.5, childX: 20, childRotation: 10 } as const;
+const INHERIT_CHAIN_DURATION = 1.25;
+
+/** The chain as a rig spec, the child resting in `childInherit` when one is given. */
+function inheritChainRig(childInherit?: string): Record<string, unknown> {
+  return {
+    bones: [
+      { name: 'root' },
+      {
+        name: 'upper',
+        parent: 'root',
+        rotation: INHERIT_CHAIN.parentRotation,
+        scaleX: INHERIT_CHAIN.parentScaleX,
+        scaleY: INHERIT_CHAIN.parentScaleY,
+        length: 20,
+      },
+      {
+        name: 'lower',
+        parent: 'upper',
+        x: INHERIT_CHAIN.childX,
+        rotation: INHERIT_CHAIN.childRotation,
+        length: 10,
+        ...(childInherit === undefined ? {} : { inherit: childInherit }),
+      },
+    ],
+    slots: [{ name: 'block', bone: 'lower', attachment: 'block' }],
+    skins: { default: { block: { block: { image: 'block.png' } } } },
+  };
+}
+
+/** One animation over the chain: a held rotate on the parent, and the child's `inherit` keys when there are any. */
+function inheritChainMotion(keys: unknown[] | null): Record<string, unknown> {
+  return {
+    spec: 'rigc-motion/1',
+    archetype: 'static_probe',
+    cut: 'static_probe',
+    easings: { soft: [0.42, 0, 0.58, 1] },
+    animations: {
+      swap: {
+        duration: INHERIT_CHAIN_DURATION,
+        loop: false,
+        tracks: [
+          { bone: 'upper', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: INHERIT_CHAIN_DURATION, v: [0] }] },
+          ...(keys === null ? [] : [{ bone: 'lower', property: 'inherit', keys }]),
+        ],
+      },
+    },
+  };
+}
+
+/** The child's posed mode, in the table's spelling, and its world matrix at one time of `swap` — through spine-core. */
+function poseInheritChild(skeletonText: string, atlasText: string, time: number): { mode: string; m: [number, number, number, number] } {
+  const data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(skeletonText);
+  const skeleton = new Skeleton(data);
+  const state = new AnimationState(new AnimationStateData(data));
+  state.setAnimation(0, 'swap', false);
+  skeleton.setupPose();
+  skeleton.update(0);
+  skeleton.updateWorldTransform(Physics.reset);
+  state.update(time);
+  state.apply(skeleton);
+  skeleton.update(time);
+  skeleton.updateWorldTransform(Physics.update);
+  const pose = skeleton.findBone('lower')!.appliedPose;
+  const named = Inherit[pose.inherit] as string | undefined;
+  return { mode: (named === undefined ? undefined : resolveBoneInherit(named)) ?? String(pose.inherit), m: [pose.a, pose.b, pose.c, pose.d] };
+}
+
+/**
  * A group track's per-member values, and the six rules that keep the construct
  * honest (#295).
  *
@@ -30431,6 +30556,230 @@ function runGroupMemberSuite(): number {
     'FACE §3: a residual is 1–6 units where a total is 30–40, so the audit is the column of six — and a report that ' +
       're-evaluated the model instead of quoting the file could agree with itself while the artifact said otherwise',
   );
+
+  // --- GM08–GM11: the bone `inherit` track (issue #733) ---------------------
+  //
+  // The one bone track whose key is a NAME, over a two-bone chain whose parent
+  // is turned and unevenly scaled (`INHERIT_CHAIN`). Everything is posed through
+  // spine-core on the compiled file: what is claimed is what the runtime does
+  // with what `build` wrote, not what the compiler meant.
+  {
+    const chainDirs = writeProbeRig(inheritChainRig());
+    /** Compile the chain with these `inherit` keys; the refusal as text when there is one. */
+    const buildChain = (keys: unknown[] | null, dirs: ProbeDirs = chainDirs): { result: CompileResult | null; refusal: string } => {
+      const motionPath = join(dirs.dir, 'probe.motion.json');
+      writeFileSync(motionPath, `${JSON.stringify(inheritChainMotion(keys), null, 2)}\n`);
+      try {
+        return { result: compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir }), refusal: '' };
+      } catch (err) {
+        return { result: null, refusal: (err as Error).message };
+      }
+    };
+    /** The mode the FORMAT says is live at `time`: the last key at or before it, and the setup mode before the first. */
+    const liveMode = (keys: Array<{ t: number; v: string }>, setup: string, time: number): string => {
+      let held = setup;
+      for (const key of keys) if (time >= key.t) held = key.v;
+      return held;
+    };
+    const SAMPLES = [0.25, 0.5, 0.75, 1, 1.25];
+
+    // GM08 — stepped: between two keys the earlier key's mode, before the first
+    // the setup's. The two keys are neither the setup mode nor each other.
+    const steppedKeys = [
+      { t: 0.5, v: 'noScale' },
+      { t: 1, v: 'onlyTranslation' },
+    ];
+    const stepped = buildChain(steppedKeys);
+    const steppedResult = stepped.result;
+    const steppedRows =
+      steppedResult === null
+        ? []
+        : SAMPLES.map((t) => ({
+            t,
+            want: liveMode(steppedKeys, 'normal', t),
+            got: poseInheritChild(steppedResult.skeletonText, steppedResult.atlasText, t).mode,
+          }));
+    const steppedProbes = [
+      ...(steppedResult === null ? [`the chain with two inherit keys did not compile: ${stepped.refusal}`] : []),
+      ...steppedRows
+        .filter((row) => row.got !== row.want)
+        .map((row) => `at t=${row.t} the child poses ${row.got}; the last key at or before it says ${row.want}`),
+      ...floorProbes(
+        [[steppedRows.filter((row) => !steppedKeys.some((key) => key.t === row.t)).length, 2, 'sample(s) fell between keys or before the first']],
+        'a sample on every key would pass a timeline that interpolated',
+      ),
+    ];
+    const steppedHeld = steppedProbes.length === 0;
+    say(
+      'GM08_AN_INHERIT_KEY_HOLDS_ITS_MODE_UNTIL_THE_NEXT_KEY_AND_THE_SETUP_MODE_RULES_BEFORE_THE_FIRST',
+      steppedHeld,
+      probeDetail(
+        steppedHeld,
+        steppedProbes,
+        `keys ${steppedKeys.map((key) => `${key.v}@${key.t}`).join(', ')}, posed through spine-core: ` +
+          steppedRows.map((row) => `t=${row.t} ${row.got}`).join(', '),
+        (count) => `${count} sample(s) off the stepped rule:`,
+      ),
+      'issue #733: a bone\'s transform-inheritance mode could not be keyed at all, so `ingest` blocked on the one ' +
+        'rig of the exam that keyed it. The format\'s rule is `InheritTimeline.apply` — the frame at or before the ' +
+        'time, and the SETUP mode before the first frame — so the samples between keys are the ones that would ' +
+        'expose a compiler that wrote an interpolated or an off-by-one timeline',
+    );
+
+    // GM09 — what each mode does to the world transform, measured against the
+    // setup (normal) pose and against the mode's own closed form over the
+    // chain's numbers: the parent's world P = R(parent)·S(parent), the child's
+    // local L = R(child), and each mode is the part of P it keeps.
+    type M2 = [number, number, number, number];
+    const normal = buildChain(null);
+    const normalM = normal.result === null ? null : poseInheritChild(normal.result.skeletonText, normal.result.atlasText, 0.5).m;
+    const rot = (deg: number): M2 => {
+      const r = (deg * Math.PI) / 180;
+      return [Math.cos(r), -Math.sin(r), Math.sin(r), Math.cos(r)];
+    };
+    const mul = (x: M2, y: M2): M2 => [x[0] * y[0] + x[1] * y[2], x[0] * y[1] + x[1] * y[3], x[2] * y[0] + x[3] * y[2], x[2] * y[1] + x[3] * y[3]];
+    const parentWorld = mul(rot(INHERIT_CHAIN.parentRotation), [INHERIT_CHAIN.parentScaleX, 0, 0, INHERIT_CHAIN.parentScaleY]);
+    const childLocal = rot(INHERIT_CHAIN.childRotation);
+    const carried = mul(parentWorld, [childLocal[0], 0, childLocal[2], 0]);
+    const closedForm: Record<string, { m: M2; says: string }> = {
+      normal: { m: mul(parentWorld, childLocal), says: 'P·L — all of the parent' },
+      onlyTranslation: { m: childLocal, says: 'L — none of it but the position' },
+      noRotationOrReflection: {
+        m: mul(parentWorld, rot(INHERIT_CHAIN.childRotation - INHERIT_CHAIN.parentRotation)),
+        says: "P·R(child − parent) — the parent's scale, its rotation taken back off",
+      },
+      noScale: { m: rot((Math.atan2(carried[2], carried[0]) * 180) / Math.PI), says: "a unit rotation along P·(own x axis) — the parent's rotation, no scale" },
+      noScaleOrReflection: { m: rot((Math.atan2(carried[2], carried[0]) * 180) / Math.PI), says: "the same as noScale here: the parent reflects nothing" },
+    };
+    const EPS = 1e-6;
+    const same = (x: readonly number[], y: readonly number[]): boolean => x.every((v, i) => Math.abs(v - y[i]) <= EPS);
+    const modeRows = RIG_BONE_INHERIT.map((mode) => {
+      const built = buildChain([{ t: 0, v: mode }]);
+      return {
+        mode,
+        refusal: built.refusal,
+        m: built.result === null ? null : poseInheritChild(built.result.skeletonText, built.result.atlasText, 0.5).m,
+      };
+    });
+    const show = (m: readonly number[] | null): string => (m === null ? '(none)' : `[${m.map((v) => v.toFixed(4)).join(', ')}]`);
+    const modeProbes = [
+      ...(normalM === null ? [`the chain with no inherit track did not compile: ${normal.refusal}`] : []),
+      ...modeRows.flatMap((row) => {
+        if (row.m === null) return [`mode ${row.mode} did not compile: ${row.refusal}`];
+        const out: string[] = [];
+        if (normalM !== null && (row.mode === 'normal') !== same(row.m, normalM)) {
+          out.push(`${row.mode} poses ${show(row.m)} and the setup-mode pose is ${show(normalM)} — only normal may equal it`);
+        }
+        const form = closedForm[row.mode];
+        if (form === undefined) out.push(`mode ${row.mode} has no closed form here to be measured against`);
+        else if (!same(row.m, form.m)) out.push(`${row.mode} poses ${show(row.m)}; ${form.says} is ${show(form.m)}`);
+        return out;
+      }),
+    ];
+    const modeHeld = modeProbes.length === 0;
+    say(
+      'GM09_EACH_KEYED_MODE_CHANGES_THE_WORLD_TRANSFORM_THE_WAY_THE_MODE_SAYS',
+      modeHeld,
+      probeDetail(
+        modeHeld,
+        modeProbes,
+        `the child at t=0.5 under each keyed mode, parent at ${INHERIT_CHAIN.parentRotation}° scaled ` +
+          `${INHERIT_CHAIN.parentScaleX}x${INHERIT_CHAIN.parentScaleY}: ` +
+          modeRows.map((row) => `${row.mode} ${show(row.m)} = ${closedForm[row.mode]?.says ?? '?'}`).join('; ') +
+          ` — setup-mode pose ${show(normalM)}`,
+        (count) => `${count} mode(s) that did not pose what they say:`,
+      ),
+      'the card asked for the world transform to change "the way the mode says, measured through ' +
+        '`updateWorldTransform`, not asserted" — so each mode is compared with the setup-mode pose AND with a ' +
+        'closed form over the chain\'s own numbers: only `normal` may equal the setup pose, and each mode is the ' +
+        'part of the parent\'s world it keeps. The parent is scaled UNEVENLY on purpose — a first draft of this ' +
+        'control expected `noRotationOrReflection` to point where the child does, and the runtime measured 14.73° ' +
+        'rather than 10°, because a non-uniform scale kept turns the axis it scales',
+    );
+
+    // GM10 — no key, no change: the setup mode is the child's for the whole
+    // animation and the file carries no `inherit` timeline at all; and a keyed
+    // child rests in its OWN setup mode before the first key, not in normal.
+    const restingDirs = writeProbeRig(inheritChainRig('noRotationOrReflection'));
+    const unkeyed = buildChain(null, restingDirs);
+    const keyedLater = buildChain([{ t: 0.5, v: 'noScale' }], restingDirs);
+    const inheritTimelinesIn = (text: string): number =>
+      Object.values((JSON.parse(text) as { animations?: Record<string, { bones?: Record<string, Record<string, unknown>> }> }).animations ?? {})
+        .flatMap((anim) => Object.values(anim.bones ?? {}))
+        .filter((timelines) => 'inherit' in timelines).length;
+    const unkeyedResult = unkeyed.result;
+    const unkeyedModes = unkeyedResult === null ? [] : SAMPLES.map((t) => poseInheritChild(unkeyedResult.skeletonText, unkeyedResult.atlasText, t).mode);
+    const unkeyedTimelines = unkeyedResult === null ? null : inheritTimelinesIn(unkeyedResult.skeletonText);
+    const before = keyedLater.result === null ? null : poseInheritChild(keyedLater.result.skeletonText, keyedLater.result.atlasText, 0.25).mode;
+    const after = keyedLater.result === null ? null : poseInheritChild(keyedLater.result.skeletonText, keyedLater.result.atlasText, 0.75).mode;
+    const restingProbes = [
+      ...(unkeyedResult === null ? [`the resting chain did not compile: ${unkeyed.refusal}`] : []),
+      ...(keyedLater.result === null ? [`the resting chain with one key did not compile: ${keyedLater.refusal}`] : []),
+      ...(unkeyedTimelines === null || unkeyedTimelines === 0 ? [] : [`the file with no inherit track carries ${unkeyedTimelines} inherit timeline(s)`]),
+      ...unkeyedModes.flatMap((mode, i) =>
+        mode === 'noRotationOrReflection' ? [] : [`with no key the child poses ${mode} at t=${SAMPLES[i]}, not its setup noRotationOrReflection`],
+      ),
+      ...(before === null || before === 'noRotationOrReflection' ? [] : [`before its first key the keyed child poses ${before}, not its setup noRotationOrReflection`]),
+      ...(after === null || after === 'noScale' ? [] : [`after its key the keyed child poses ${after}, not noScale`]),
+    ];
+    const restingHeld = restingProbes.length === 0;
+    say(
+      'GM10_WITH_NO_KEY_THE_SETUP_MODE_HOLDS_AND_BEFORE_THE_FIRST_KEY_IT_IS_THE_SETUP_MODE_AND_NOT_NORMAL',
+      restingHeld,
+      probeDetail(
+        restingHeld,
+        restingProbes,
+        `a child resting in noRotationOrReflection: with no inherit track the file carries ${unkeyedTimelines ?? '-'} ` +
+          `inherit timeline(s) and poses [${unkeyedModes.join(', ')}] over t=${SAMPLES.join('/')}; keyed noScale at 0.5 ` +
+          `it poses ${before} at 0.25 and ${after} at 0.75`,
+        (count) => `${count} thing(s) the setup mode did not do:`,
+      ),
+      'the compiler never invents a value: no key must mean no timeline, and the runtime\'s "before the first ' +
+        'frame" branch restores `bone.data.setupPose.inherit` — so a child resting in a non-normal mode is the ' +
+        'case that separates the setup mode from the parser\'s default, which a normal-resting fixture cannot',
+    );
+
+    // GM11 — the key is written in the table's spelling and the format's shape,
+    // and the gate passes it with A10 measured rather than skipped.
+    const capital = buildChain([{ t: 0.5, v: 'NoScale' }]);
+    const capitalResult = capital.result;
+    const capitalKeys = capitalResult === null ? [] : emittedBoneKeys(capitalResult, 'swap', 'lower', 'inherit');
+    const capitalGate =
+      capitalResult === null
+        ? null
+        : validate({
+            skeletonText: capitalResult.skeletonText,
+            atlasText: capitalResult.atlasText,
+            atlasDir: chainDirs.outDir,
+            declaredDurations: capitalResult.declaredDurations,
+            reEmit: { skeletonText: capitalResult.skeletonText, atlasText: capitalResult.atlasText },
+            rig: capitalResult.rig,
+            profile: 'spine',
+          });
+    const spellingProbes = [
+      ...(capitalResult === null ? [`a key spelled NoScale did not compile: ${capital.refusal}`] : []),
+      ...(JSON.stringify(capitalKeys) === JSON.stringify([{ time: 0.5, inherit: 'noScale' }])
+        ? []
+        : [`the emitted timeline is ${JSON.stringify(capitalKeys)}, not one { time, inherit: "noScale" } key`]),
+      ...(capitalGate === null ? [] : capitalGate.failures.map((f) => `the gate refused it: ${f.assertion}: ${f.detail}`)),
+      ...(capitalGate === null || capitalGate.passed.includes('A10_NO_NAN_AFTER_STEPPING') ? [] : ['A10 is not among the rules that ran and held']),
+    ];
+    const spellingHeld = spellingProbes.length === 0;
+    say(
+      'GM11_A_KEY_IS_WRITTEN_IN_THE_TABLES_SPELLING_AND_THE_FORMATS_SHAPE_AND_GATES_GREEN',
+      spellingHeld,
+      probeDetail(
+        spellingHeld,
+        spellingProbes,
+        `a key spelled NoScale emits ${JSON.stringify(capitalKeys)}; the gate reports ${capitalGate?.failures.length ?? '-'} ` +
+          `failure(s), A10 among the ${capitalGate?.passed.length ?? '-'} rule(s) that held`,
+        (count) => `${count} thing(s) the emitted key did not do:`,
+      ),
+      'the runtime also reads `NoScale`, so refusing it would refuse a spelling that works; writing it verbatim ' +
+        'would make the file depend on the one letter the lookup folds. The resolver\'s spelling is the editor\'s, ' +
+        'which is also what keeps `ingest` → `build` byte-identical on an export (`IG63`)',
+    );
+  }
 
   return bad;
 }
@@ -36860,6 +37209,97 @@ function runMotionParseSuite(): { failures: number; cases: number; specs: number
       'a shape gate is only worth having if it costs the format nothing, and the gallery, the transcriptions ' +
         'and every benchmark run are the format as it is actually written. This case is what caught the `loop` ' +
         'mistake in MP21 — 20 of these files would have been refused by a parser that read the type literally',
+    );
+  }
+
+  // --- MP45/MP46: the bone `inherit` track's two refusals (issue #733) ------
+  //
+  // Neither is a shape: `v` is deliberately not typed by this parse (MP39), so
+  // both are the compiler's, measured through the same `refusal` every case
+  // above uses and named against the file.
+  {
+    /** One animation keying bone `block`'s `inherit` with these keys. */
+    const inheritKeys = (keys: unknown[]): Record<string, unknown> => ({
+      ...base,
+      easings: { soft: [0.42, 0, 0.58, 1] },
+      animations: { move: { duration: 1, loop: false, tracks: [{ bone: 'block', property: 'inherit', keys }] } },
+    });
+    const motionFile = join(dirs.dir, 'probe.motion.json');
+    const eased = [
+      ['a named easing', refusal(dirs, inheritKeys([{ t: 0, v: 'noScale', ease: 'soft' }, { t: 1, v: 'normal' }])), 'carries an easing ("soft")'],
+      ['"stepped"', refusal(dirs, inheritKeys([{ t: 0, v: 'noScale', ease: 'stepped' }, { t: 1, v: 'normal' }])), 'carries an easing ("stepped")'],
+      ['a raw curve', refusal(dirs, inheritKeys([{ t: 0, v: 'noScale', curve: [0.25, 0, 0.75, 1] }, { t: 1, v: 'normal' }])), 'carries a curve'],
+    ] as const;
+    const plain = refusal(dirs, inheritKeys([{ t: 0, v: 'noScale' }, { t: 1, v: 'normal' }]));
+    const easeProbes = [
+      ...eased.flatMap(([what, message, fragment]) =>
+        message !== null && message.includes(motionFile) && message.includes('bone "block" inherit key at t=0') &&
+        message.includes(fragment) && message.includes('stepped by the format')
+          ? []
+          : [`${what} on an inherit key: ${message === null ? 'it compiled' : `refused with: ${message}`}`],
+      ),
+      ...(plain === null ? [] : [`the same keys with no easing are refused too, so nothing above is about the easing: ${plain}`]),
+    ];
+    const easeHeld = easeProbes.length === 0;
+    say(
+      'MP45_AN_EASING_OR_A_CURVE_ON_AN_INHERIT_KEY_IS_REFUSED_BY_NAME',
+      easeHeld,
+      probeDetail(
+        easeHeld,
+        easeProbes,
+        `${eased.length} spelling(s) of a curve on an inherit key, each refused naming the file, the bone, the key's ` +
+          `time and what it carried; the same keys with none compile. ${eased[0][1] ?? ''}`,
+        (count) => `${count} thing(s) the refusal did not do:`,
+      ),
+      'the parser\'s `inherit` branch reads `time` and `inherit` and builds no curve, so an easing would be written ' +
+        'into a key nobody reads — the silence this compiler exists to name. `"stepped"` is refused with the other ' +
+        'two because the timeline already is, and `A05` refuses the same `curve` on a file rigc did not write',
+    );
+
+    // MP46 — an unknown mode, refused with the five; and the SAME rule on the
+    // setup field, which is what "one table" has to mean to be checkable.
+    const setupRefusal = (spelling: string): string | null =>
+      refusal(
+        writeProbeRig({ bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12, inherit: spelling }] }),
+        base,
+      );
+    // Two misses: every letter capitalised — a spelling the setup check's old
+    // case-insensitive rule accepted — and the first letter kept while the rest
+    // is folded. The pass is the one liberty the runtime's lookup allows.
+    const misses = [RIG_BONE_INHERIT[3].toUpperCase(), RIG_BONE_INHERIT[3].toLowerCase()];
+    const pass = RIG_BONE_INHERIT[3][0].toUpperCase() + RIG_BONE_INHERIT[3].slice(1);
+    const modeProbes = [
+      ...misses.flatMap((spelling) => {
+        const keyed = refusal(dirs, inheritKeys([{ t: 0, v: spelling }, { t: 1, v: 'normal' }]));
+        const rested = setupRefusal(spelling);
+        return [
+          ...(keyed !== null && keyed.includes(`names mode "${spelling}"; ${BONE_INHERIT_KNOWN}`)
+            ? []
+            : [`an inherit key naming "${spelling}": ${keyed === null ? 'it compiled' : `refused with: ${keyed}`}`]),
+          ...(rested !== null && rested.includes(`has inherit "${spelling}"; ${BONE_INHERIT_KNOWN}`)
+            ? []
+            : [`a bone resting in "${spelling}": ${rested === null ? 'it compiled' : `refused with: ${rested}`}`]),
+        ];
+      }),
+      ...[refusal(dirs, inheritKeys([{ t: 0, v: pass }, { t: 1, v: 'normal' }])), setupRefusal(pass)].flatMap((message, i) =>
+        message === null ? [] : [`${i === 0 ? 'an inherit key' : 'a bone resting'} in "${pass}", which the runtime reads, was refused: ${message}`],
+      ),
+    ];
+    const modeHeld = modeProbes.length === 0;
+    say(
+      'MP46_AN_UNKNOWN_MODE_IS_REFUSED_WITH_THE_FIVE_BY_ONE_RULE_ON_THE_KEY_AND_ON_THE_SETUP_FIELD',
+      modeHeld,
+      probeDetail(
+        modeHeld,
+        modeProbes,
+        `${misses.map((m) => `"${m}"`).join(' and ')} refused on a key and on a bone's setup, both ending "${BONE_INHERIT_KNOWN}"; ` +
+          `"${pass}" compiles in both places`,
+        (count) => `${count} spelling(s) the two fields did not treat alike:`,
+      ),
+      'the runtime resolves a mode by folding the case of its first letter and nothing else, and a miss loads as ' +
+        'no mode at all. The setup check was case-insensitive — wider than that rule — so the capitalised spelling ' +
+        'compiled, gated green and loaded `undefined`; a key read through the same wide rule would have shipped it ' +
+        'into a timeline. One resolver for both is the fix, and the pair of fields is how it is held',
     );
   }
 
@@ -46116,6 +46556,72 @@ function runCurrencySuite(): number {
     for (const pack of [webpPack, unknownPack]) rmSync(pack.dir, { recursive: true, force: true });
   }
 
+  // --- CUR65/CUR66: the five inheritance modes, in the two places the guide lists them (issue #733)
+  //
+  // The guide states the modes twice — the setup field (§3.2) and the track
+  // (§4.4) — and the compiler states them once, in the sentence both refusals
+  // print. Each copy is held to that sentence rather than to the table in
+  // `src/rig.ts`, so what is compared is what an author is told.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const guide = readFileSync(join(root, guidePath), 'utf8');
+    const probe = writeProbeRig();
+    const probeMotion = join(probe.dir, 'probe.motion.json');
+    writeFileSync(
+      probeMotion,
+      `${JSON.stringify({ spec: 'rigc-motion/1', archetype: 'static_probe', cut: 'static_probe', easings: {}, animations: { move: { duration: 1, loop: false, tracks: [{ bone: 'block', property: 'inherit', keys: [{ t: 0, v: 'wobble' }] }] } } }, null, 2)}\n`,
+    );
+    let said = '';
+    try {
+      compile({ rigPath: probe.rigPath, motionPath: probeMotion, outDir: probe.outDir, imagesDir: probe.dir });
+    } catch (err) {
+      said = (err as Error).message;
+    }
+    const live = (/known: ([^—]*?) —/.exec(said)?.[1] ?? '').split(/,\s*/).map((mode) => mode.trim()).filter(Boolean);
+    const ticked = (text: string): string[] => [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+    const differ = (a: readonly string[], b: readonly string[]): boolean => [...a].sort().join('|') !== [...b].sort().join('|');
+    const rows: Array<[string, string, string, RegExp]> = [
+      [
+        'CUR65_THE_MODES_THE_GUIDES_INHERIT_TRACK_ROW_TEACHES_ARE_THE_ONES_THE_REFUSAL_PRINTS',
+        '§4.4',
+        'the `bone` / `inherit` track row',
+        /^\| `bone` \| `inherit` \| a mode name, not an array: ([^\n]*?) —/m,
+      ],
+      [
+        'CUR66_THE_MODES_THE_GUIDES_SETUP_INHERIT_ROW_TEACHES_ARE_THE_ONES_THE_REFUSAL_PRINTS',
+        '§3.2',
+        "the bone field table's `inherit` row",
+        /^\| `inherit` \| ((?:`[^`]+`(?: · )?)+)\./m,
+      ],
+    ];
+    for (const [name, section, what, pattern] of rows) {
+      const row = pattern.exec(guide);
+      const taught = row === null ? [] : ticked(row[1]);
+      const planted = row === null ? [] : ticked(row[1]).slice(0, -1);
+      const probes = [
+        ...(live.length === 0 ? [`the refusal for an unknown mode lists no modes: ${said || 'the probe compiled'}`] : []),
+        ...(row === null ? [`${guidePath} ${section} has no ${what} listing the modes`] : []),
+        ...(differ(taught, live) ? [`${guidePath} ${section} teaches [${taught.join(', ')}] and the refusal prints [${live.join(', ')}]`] : []),
+        ...(differ(planted, live) ? [] : ['the row with its last mode dropped still agrees with the refusal, so this is not reading the list']),
+        ...floorProbes([[live.length, 2, `${live.length} mode(s) read off the refusal`]], 'one mode is an example, not a table'),
+      ];
+      const held = probes.length === 0;
+      say(
+        name,
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${section}'s ${what} and the compiler's own refusal of an unknown mode both name [${live.join(', ')}]; the row ` +
+            'with its last mode dropped is faulted',
+        ),
+        'one resolver reads the setup field and the key, and prints one list when it refuses — so the page has two ' +
+          'copies of it and each is a place an author learns the vocabulary. A copy that dropped one is an author ' +
+          'told a mode does not exist; read off the sentence, the page is compared against the code rather than a copy',
+      );
+    }
+  }
+
   return bad;
 }
 
@@ -52579,6 +53085,13 @@ const INGEST_PROBE_MOTION: Record<string, unknown> = {
         { bone: 'block', property: 'shear', keys: [{ t: 0, v: [0, 0], ease: 'ease' }, { t: 1, v: [4, 2] }] },
         { bone: 'aim', property: 'shearx', keys: [{ t: 0, v: [0] }, { t: 1, v: [3] }] },
         { bone: 'aim', property: 'sheary', keys: [{ t: 0, v: [0] }, { t: 1, v: [2] }] },
+        // The bone timeline whose key is a NAME, here for the reason the eight
+        // physics timelines below are: `IG03` asks whether every word of
+        // `INGEST_VOCABULARY` is exercised by a rig somebody builds, and
+        // `inherit` joined that vocabulary with issue #733. Two keys, neither of
+        // them the setup mode, so a decompiler that dropped one or wrote the
+        // parser's default in its place is visible in the rebuild.
+        { bone: 'spring', property: 'inherit', keys: [{ t: 0, v: 'noScale' }, { t: 0.5, v: 'onlyTranslation' }] },
         { path: 'rail', property: 'position', keys: [{ t: 0, v: [0] }, { t: 1, v: [1] }] },
         { path: 'rail', property: 'spacing', keys: [{ t: 0, v: [0] }, { t: 1, v: [0.5] }] },
         { path: 'rail', property: 'mix', keys: [{ t: 0, v: [1, 1, 1] }, { t: 1, v: [0.5, 1, 1] }] },
@@ -54410,15 +54923,24 @@ function runIngestSuite(): number {
   // or rgba and nothing else, so the rebuild plays nothing here"* — and its two
   // neighbours stopped at the object: *"timeline "x" is not in the motion spec"*,
   // *"group "x" is not one readAnimation reads"*. Object and value found, no
-  // value required (issue #675). Both plants are a name the RUNTIME plays, which
-  // is the half that makes them worth a sentence: a reader who meets one is
-  // holding a file that works and a rebuild that will not.
+  // value required (issue #675). Both plants were a name the RUNTIME plays, which
+  // is the half that made them worth a sentence: a reader who met one was
+  // holding a file that works and a rebuild that would not.
+  //
+  // ⚠️ The bone half no longer can be. Its plant was `inherit`, the eleventh case
+  // of the runtime's bone switch, and since issue #733 the motion spec carries
+  // it — so there is no bone timeline left that the runtime plays and the spec
+  // lacks, and the blocker is reachable only for a name the PARSER throws on
+  // (`Invalid timeline type for a bone`), the same position #593 left
+  // `PHYSICS_TIMELINE` in. What this still measures is the half that does not
+  // depend on the plant: the sentence names every track the family admits.
   {
+    const unplayedBoneTimeline = 'wobble';
     const forgedBone = JSON.parse(probeTrip.a.skeletonText) as Record<string, unknown>;
     const boneTimelines = ((forgedBone.animations as Record<string, Record<string, unknown>>).everything.bones ??
       {}) as Record<string, Record<string, unknown>>;
     const boneName = Object.keys(boneTimelines)[0] ?? '';
-    if (boneName !== '') boneTimelines[boneName].inherit = [{ time: 0, inherit: 'noScale' }];
+    if (boneName !== '') boneTimelines[boneName][unplayedBoneTimeline] = [{ time: 0, value: 1 }];
     const boneResult = ingest(forgedBone, { name: 'p', art: 'none', source: 's.json', version: '0' });
     const boneFindings = boneResult.findings.filter((f) => f.code === 'BONE_TIMELINE');
     const boneDetail = boneFindings[0]?.detail ?? '';
@@ -54427,7 +54949,7 @@ function runIngestSuite(): number {
       ...(boneName === '' ? ['the probe keys no bone timeline at all, so there is nowhere to plant one'] : []),
       ...(boneFindings.length === 1 ? [] : [`${boneFindings.length} BONE_TIMELINE finding(s), not 1`]),
       ...(boneFindings.every((f) => f.kind === 'blocker') ? [] : ['a BONE_TIMELINE finding is not a `blocker`']),
-      ...(boneFindings.every((f) => f.where.includes(boneName) && f.where.includes('inherit'))
+      ...(boneFindings.every((f) => f.where.includes(boneName) && f.where.includes(unplayedBoneTimeline))
         ? []
         : [`the finding's \`where\` does not name bone "${boneName}" and the timeline`]),
       ...(boneMissing.length === 0 ? [] : [`the detail does not name ${boneMissing.join(', ')} — the track(s) the family admits`]),
@@ -54442,14 +54964,15 @@ function runIngestSuite(): number {
       probeDetail(
         boneHeld,
         boneProbes,
-        `an "inherit" timeline planted on bone "${boneName}": ${boneFindings.length} BONE_TIMELINE blocker at ` +
+        `a "${unplayedBoneTimeline}" timeline planted on bone "${boneName}": ${boneFindings.length} BONE_TIMELINE blocker at ` +
           `${boneFindings[0]?.where ?? '(nowhere)'}, naming all ${INGEST_VOCABULARY.boneTracks.length} bone ` +
           `track(s)\n          ${boneDetail}`,
         (count) => `${count} thing(s) the refusal did not do:`,
       ),
-      '`inherit` rather than a nonsense name, because it is the eleventh case of the runtime\'s own bone switch ' +
-        'and the motion spec has ten: the file plays, the rebuild does not, and the old sentence told the reader ' +
-        'only that something was "not in the motion spec". What the family admits is the value REQUIRED, which is ' +
+      'the plant was `inherit` until issue #733 carried it, because it was the eleventh case of the runtime\'s own ' +
+        'bone switch and the motion spec had ten; now the spec has all eleven and a name nothing plays is the only ' +
+        'one left to plant. The old sentence told the reader only that something was "not in the motion spec". ' +
+        'What the family admits is the value REQUIRED, which is ' +
         'the third of a failure detail this one was missing — and it is read off `BONE_TRACKS` rather than typed, ' +
         'so a track added to the spec reaches the message without anybody editing it',
     );
@@ -56677,6 +57200,118 @@ function runIngestSuite(): number {
       'what the unnamed timeline can reach is read against the constraints the REBUILD carries, not the ones the ' +
         'file declares: read against the file, the timeline was carried as `"*"` onto a rig with no strengthGlobal ' +
         'left in it, and `build` refused the spec `ingest` had just written',
+    );
+  }
+
+  // --- IG63/IG64: the bone `inherit` timeline (issue #733) ------------------
+  //
+  // IG63 is the card's own shape on a generated file: a chain rigc builds, with
+  // an `inherit` timeline written INTO the emitted file the way an editor would
+  // — so the file is one the branch point could not have produced — then read,
+  // rebuilt, and compared byte for byte against itself.
+  {
+    const chainDirs = writeProbeRig(inheritChainRig());
+    const chainMotion = join(chainDirs.dir, 'probe.motion.json');
+    writeFileSync(chainMotion, `${JSON.stringify(inheritChainMotion(null), null, 2)}\n`);
+    const plainChain = compile({ rigPath: chainDirs.rigPath, motionPath: chainMotion, outDir: chainDirs.outDir, imagesDir: chainDirs.dir });
+    const packDir = mkdtempSync(join(tmpdir(), 'rigc-inherittrack-'));
+    writeFileSync(join(packDir, 'skeleton.atlas'), plainChain.atlasText);
+    const plantedKeys = [
+      { time: 0.5, inherit: 'noScale' },
+      { time: 1, inherit: 'onlyTranslation' },
+    ];
+    const forgedChain = JSON.parse(plainChain.skeletonText) as { animations: Record<string, { bones: Record<string, unknown> }> };
+    forgedChain.animations.swap.bones.lower = { inherit: plantedKeys };
+    const forgedText = `${JSON.stringify(forgedChain, null, 2)}\n`;
+    const read = ingest(JSON.parse(forgedText), { name: 'static_probe', art: 'none', source: 'skeleton.json', version: packageVersion() });
+    const specDir = join(packDir, 'S');
+    mkdirSync(specDir, { recursive: true });
+    writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(read.rig, null, 2)}\n`);
+    writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(read.motion, null, 2)}\n`);
+    let rebuiltText: string | null = null;
+    let rebuildRefusal = '';
+    try {
+      rebuiltText = compile({
+        rigPath: join(specDir, 'rig.json'),
+        motionPath: join(specDir, 'motion.json'),
+        outDir: join(packDir, 'B'),
+        atlasInPath: join(packDir, 'skeleton.atlas'),
+      }).skeletonText;
+    } catch (err) {
+      rebuildRefusal = (err as Error).message;
+    }
+    const carriedTrack = ((read.motion as unknown as { animations: Record<string, { tracks: Array<Record<string, unknown>> }> }).animations.swap?.tracks ?? []).find(
+      (track) => track.bone === 'lower' && track.property === 'inherit',
+    );
+    const blockers = read.findings.filter((f) => f.kind === 'blocker');
+    const tripProbes = [
+      ...blockers.map((f) => `ingest recorded a blocker: ${f.code}: ${f.where} — ${f.detail}`),
+      ...(carriedTrack === undefined ? ['the written motion spec has no inherit track on bone "lower"'] : []),
+      ...(rebuiltText === null ? [`the decompiled specs did not build: ${rebuildRefusal}`] : []),
+      ...(rebuiltText !== null && rebuiltText !== forgedText
+        ? [`the rebuild differs from the file it was read from at ${differingJsonPaths(JSON.parse(forgedText), JSON.parse(rebuiltText)).join('; ')}`]
+        : []),
+      ...(plainChain.skeletonText === forgedText ? ['the planted file is the unplanted one, so this measured nothing'] : []),
+    ];
+    const tripHeld = tripProbes.length === 0;
+    say(
+      'IG63_A_FILE_KEYING_A_BONES_INHERIT_MODE_INGESTS_AND_REBUILDS_BYTE_FOR_BYTE',
+      tripHeld,
+      probeDetail(
+        tripHeld,
+        tripProbes,
+        `an inherit timeline of ${plantedKeys.length} key(s) written into a built chain: ${blockers.length} blocker(s), ` +
+          `carried as ${JSON.stringify(carriedTrack?.keys ?? null)}, and the rebuild is the file it was read from ` +
+          `(${forgedText.length} B identical)`,
+        (count) => `${count} thing(s) the round trip did not do:`,
+      ),
+      'issue #733: the one rig of the exam that keyed `inherit` ingested to one blocker, `BONE_TIMELINE`, and its ' +
+        'rebuild played nothing there. The contract `ingest` states is byte identity, so the plant is written into ' +
+        'the FILE rather than into a spec — a spec-side plant would have been built by the same compiler it checks',
+    );
+
+    // IG64 — no bone timeline the format has is one the motion spec lacks, on
+    // either side of the tool, and neither side has one the format lacks.
+    const catalogue = Object.keys(CHANNELS_BY_KIND.bone);
+    const carried = [...INGEST_VOCABULARY.boneTracks];
+    writeFileSync(
+      chainMotion,
+      `${JSON.stringify({ ...inheritChainMotion(null), animations: { swap: { duration: 1, loop: false, tracks: [{ bone: 'lower', property: 'wobble', keys: [{ t: 0, v: [0] }] }] } } }, null, 2)}\n`,
+    );
+    let listed = '';
+    try {
+      compile({ rigPath: chainDirs.rigPath, motionPath: chainMotion, outDir: chainDirs.outDir, imagesDir: chainDirs.dir });
+    } catch (err) {
+      listed = /\(it has: ([^)]*)\)/.exec((err as Error).message)?.[1] ?? '';
+    }
+    const compiled = listed.split(/,\s*/).filter(Boolean);
+    const sides: Array<[string, string[]]> = [
+      ['the compiler (the list its refusal prints)', compiled],
+      ["ingest (`INGEST_VOCABULARY.boneTracks`)", carried],
+    ];
+    const vocabularyProbes = [
+      ...sides.flatMap(([side, names]) => [
+        ...catalogue.filter((name) => !names.includes(name)).map((name) => `${side} has no track for the format's bone timeline "${name}"`),
+        ...names.filter((name) => !catalogue.includes(name)).map((name) => `${side} names "${name}", which the format's catalogue does not have`),
+      ]),
+      ...floorProbes([[compiled.length, 1, `${compiled.length} name(s) read off the compiler's refusal`]], 'a refusal the reader could not parse would make every clause above vacuous'),
+    ];
+    const vocabularyHeld = vocabularyProbes.length === 0;
+    say(
+      'IG64_EVERY_BONE_TIMELINE_THE_FORMAT_HAS_IS_A_TRACK_ON_BOTH_SIDES_OF_THE_TOOL',
+      vocabularyHeld,
+      probeDetail(
+        vocabularyHeld,
+        vocabularyProbes,
+        `the format's bone catalogue (\`CHANNELS_BY_KIND.bone\` in src/timelines.ts) is [${catalogue.join(', ')}]; the ` +
+          `compiler prints the same ${compiled.length} and ingest carries the same ${carried.length}, so the ` +
+          '`BONE_TIMELINE` blocker is left with no timeline the runtime plays',
+        (count) => `${count} name(s) the three lists disagree on:`,
+      ),
+      'the blocker\'s sentence names what the spec HAS, and it could name all of them while the format still had ' +
+        'one more — which is exactly where it stood with `inherit`. The catalogue is the validator\'s, read off ' +
+        '`SkeletonJson`\'s own switch, and it is compared against both halves of the tool rather than against a ' +
+        'number, so the next timeline 4.x adds turns this red on whichever side forgot it',
     );
   }
 
