@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.30.0](https://github.com/firejune/rigc/compare/v0.29.0...v0.30.0) (2026-09-23)
+
+
+### Features
+
+* **compile:** the separable slot colour timelines `rgb`, `alpha` and `rgb2` are spelled, emitted as themselves and read back — and `ingest` carries them instead of blocking ([#730](https://github.com/firejune/rigc/issues/730)) ([#757](https://github.com/firejune/rigc/issues/757)) ([4d6d427](https://github.com/firejune/rigc/commit/4d6d4276335ad854f72654bcef80bc5d80b36b0d))
+
+
+### Bug Fixes
+
+* **ingest:** a physics constraint that drives no component is omitted with its timelines and skin membership, and named by a coded LOSS, so the rebuild of a file an editor exports is no longer refused whole by `A23` ([#731](https://github.com/firejune/rigc/issues/731)) ([#754](https://github.com/firejune/rigc/issues/754)) ([96d7c2b](https://github.com/firejune/rigc/commit/96d7c2b02d8ac354f0e64a830a295a32d3f562c6))
+* **validate:** an atlas page that is not a PNG is refused by name — one signature reader names WebP, JPEG, GIF, KTX, KTX2 or the bytes it found, and says truncated for a PNG that runs out before IEND ([#732](https://github.com/firejune/rigc/issues/732)) ([#756](https://github.com/firejune/rigc/issues/756)) ([c21854b](https://github.com/firejune/rigc/commit/c21854b93337735fffde949f71358354b6c740a6))
+
 ## [0.29.0](https://github.com/firejune/rigc/compare/v0.28.0...v0.29.0) (2026-09-19)
 
 
