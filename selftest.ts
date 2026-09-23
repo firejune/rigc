@@ -291,7 +291,14 @@ import {
   type LedgerLine,
 } from './src/ballot.ts';
 import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
-import { CHANNELS_BY_KIND, PHYSICS_POSE_RULES, physicsKeyRefusal, physicsRuleFor, SLOT_COLOR_CHANNELS } from './src/timelines.ts';
+import {
+  CHANNELS_BY_KIND,
+  PHYSICS_POSE_RULES,
+  physicsKeyRefusal,
+  physicsOutsideSays,
+  physicsRuleFor,
+  SLOT_COLOR_CHANNELS,
+} from './src/timelines.ts';
 import { readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
 import { skeletonDataFromText, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
@@ -13287,6 +13294,295 @@ function runConstraintAndDeformSuite(): number {
       'spec, so a correct file for another intent is a correct file',
   );
 
+  // --- muted at rest and keyed to 0 only, on a path and a slider (issue #752)
+  //
+  // `A36` and `A37` asked whether a `mix` key array was non-empty, so a
+  // timeline keying 0 only rescued a constraint it leaves exactly as muted as
+  // no timeline does. They now read what `A23` reads — the values a key poses,
+  // through the loaded timeline — and the rigs below differ in one track each.
+  // Every clause compares one run of this suite against another, so no
+  // measured number is typed: `LIFT` is the handle this fixture chose, and the
+  // verdicts read equality or inequality of two poses, never a figure.
+  const mutedPathDirs = writeProbeRig({
+    ...PATH_RIG,
+    constraints: PATH_RIG.constraints.map((constraint) =>
+      constraint.type === 'path'
+        ? { ...constraint, mixRotate: 0, mixX: 0, mixY: 0 }
+        : constraint.type === 'slider'
+          ? { ...constraint, mix: 0 }
+          : constraint,
+    ),
+  });
+  const pathMixTrack = (values: number[]): Record<string, unknown> => ({
+    path: 'ride',
+    property: 'mix',
+    keys: [{ t: 0, v: values }, { t: 1, v: values }],
+  });
+  const sliderMixTrack = (value: number): Record<string, unknown> => ({
+    slider: 'dial',
+    property: 'mix',
+    keys: [{ t: 0, v: [value] }, { t: 1, v: [value] }],
+  });
+  /** `PATH_MOVE` with whatever mix tracks the caller adds. */
+  const keyedMove = (extra: Array<Record<string, unknown>>): Record<string, unknown> =>
+    pathMotion({ ...PATH_MOVE, tracks: [...PATH_MOVE.tracks, ...extra] });
+  /** Compile, let `edit` change the emitted skeleton, and load what it left. */
+  const editedPosable = (
+    probe: ProbeDirs,
+    motion: Record<string, unknown>,
+    edit: (skeleton: Record<string, unknown>) => void,
+  ): SkeletonData => {
+    const motionPath = join(probe.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+    const built = compile({ rigPath: probe.rigPath, motionPath, outDir: probe.outDir, imagesDir: probe.dir });
+    const skeleton = JSON.parse(built.skeletonText) as Record<string, unknown>;
+    edit(skeleton);
+    return posableFromText(`${JSON.stringify(skeleton, null, 2)}\n`, built.atlasText, probe.outDir).data;
+  };
+  /** Every bone's applied world transform at every sample of `move`, as one flat series. */
+  const moveSeries = (posed: SkeletonData): number[] =>
+    [1, 2, 3, 4].flatMap((sample) =>
+      poseAtSample(posed, 'move', 4, sample).bones.flatMap((bone) => {
+        const p = bone.appliedPose;
+        return [p.a, p.b, p.c, p.d, p.worldX, p.worldY];
+      }),
+    );
+  const sameSeries = (a: number[], b: number[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);
+  const detailsOf = (report: ReturnType<typeof validate>, assertion: string): string[] =>
+    report.failures.filter((f) => f.assertion === assertion).map((f) => f.detail);
+  const saysBothHalves = (detail: string, subject: string): boolean =>
+    detail.includes(subject) && detail.includes('keys its mix above 0') && detail.includes('key its mix above 0 in an animation');
+
+  const noMixTimeline = keyedMove([]);
+  const keyedToZero = keyedMove([pathMixTrack([0, 0, 0]), sliderMixTrack(0)]);
+  const zeroGate = gateProbe(mutedPathDirs, keyedToZero);
+  const bareGate = gateProbe(mutedPathDirs, noMixTimeline);
+  const liveGate = gateProbe(writeProbeRig(PATH_RIG), pathMotion(PATH_MOVE));
+  const zeroSeries = moveSeries(timelinePosable(mutedPathDirs, keyedToZero).data);
+  const bareSeries = moveSeries(timelinePosable(mutedPathDirs, noMixTimeline).data);
+  const zeroProbes = [
+    ...(['A36_PATH_CONSTRAINT_EFFECTIVE', 'A37_SLIDER_CONSTRAINT_EFFECTIVE'] as const).flatMap((assertion) => {
+      const zero = detailsOf(zeroGate, assertion);
+      const bare = detailsOf(bareGate, assertion);
+      const subject = assertion.startsWith('A36') ? 'path constraint "ride"' : 'slider "dial"';
+      return [
+        ...(zero.length === 1 ? [] : [`${assertion}: the rig keyed to 0 only drew ${zero.length} failure(s), not one`]),
+        ...(bare.length === 1 ? [] : [`${assertion}: the rig with no mix timeline drew ${bare.length} failure(s), not one`]),
+        ...[...zero, ...bare].flatMap((detail) => (saysBothHalves(detail, subject) ? [] : [`${assertion} names only one half: ${detail}`])),
+        ...(liveGate.passed.includes(assertion) ? [] : [`${assertion} did not pass on the rig that rests live`]),
+      ];
+    }),
+    ...(sameSeries(zeroSeries, bareSeries) ? [] : ['the rig keyed to 0 only does not pose exactly where the rig with no mix timeline does']),
+  ];
+  const zeroHeld = zeroProbes.length === 0 && zeroSeries.length > 0;
+  say(
+    'T98_A_PATH_OR_SLIDER_MUTED_AT_REST_AND_KEYED_TO_ZERO_ONLY_IS_REFUSED_BY_NAME_AND_POSES_EXACTLY_WHERE_NO_TIMELINE_DOES',
+    zeroHeld,
+    probeDetail(
+      zeroHeld,
+      zeroProbes,
+      `muted at rest, a path constraint and a slider keyed to 0 only pose every bone at every sample exactly where the ` +
+        `same rig with no mix timeline does (${zeroSeries.length} readings, all equal), and both rigs are refused once ` +
+        `per assertion with both halves — "${detailsOf(zeroGate, 'A36_PATH_CONSTRAINT_EFFECTIVE')[0] ?? '(none)'}"; ` +
+        `"${detailsOf(zeroGate, 'A37_SLIDER_CONSTRAINT_EFFECTIVE')[0] ?? '(none)'}" — while the rig that rests live passes both`,
+      (count) => `${count} clause(s) of the keyed-to-0 pair did not hold:`,
+    ),
+    'a timeline that keys 0 only leaves the constraint exactly as muted as no timeline does, and the pose equality ' +
+      'is what makes that a fact about the runtime rather than about this rule: the two rigs are one rig to spine-core, ' +
+      'to the last bit, so they have to be one verdict. Taking any key array as the rescue passed the first and ' +
+      'refused the second',
+  );
+
+  // The rescue, read the way the runtime reads it: any channel, and every value
+  // a key POSES — a Bezier between two keys of 0 whose handles lie above 0 is a
+  // curve the runtime interpolates through, and the flat twin is not.
+  const oneChannel = keyedMove([pathMixTrack([0, 1, 0]), sliderMixTrack(1)]);
+  const oneChannelGate = gateProbe(mutedPathDirs, oneChannel);
+  const oneChannelSeries = moveSeries(timelinePosable(mutedPathDirs, oneChannel).data);
+  const LIFT = 0.8;
+  const lift = (skeleton: Record<string, unknown>): void => {
+    const move = (skeleton.animations as Record<string, Record<string, Record<string, Record<string, Array<Record<string, unknown>>>>>>).move;
+    move.path.ride.mix[0].curve = [0.25, LIFT, 0.75, LIFT, 0.25, LIFT, 0.75, LIFT, 0.25, LIFT, 0.75, LIFT];
+    move.slider.dial.mix[0].curve = [0.25, LIFT, 0.75, LIFT];
+  };
+  const liftedGate = gateProbeArtifacts(mutedPathDirs, keyedToZero, lift);
+  const liftedSeries = moveSeries(editedPosable(mutedPathDirs, keyedToZero, lift));
+  const liftPhysics = (skeleton: Record<string, unknown>): void => {
+    mixKeysOf(skeleton)[0].curve = [0.25, LIFT, 0.75, LIFT];
+  };
+  const physicsFlat = swung([physicsTrack('mix', [0, 0])]);
+  const physicsFlatGate = gateProbeArtifacts(mutedDirs, physicsFlat, () => {});
+  const physicsLiftedGate = gateProbeArtifacts(mutedDirs, physicsFlat, liftPhysics);
+  const physicsLiftedTip = swungTip(editedPosable(mutedDirs, physicsFlat, liftPhysics));
+  const physicsFlatTip = swungTip(timelinePosable(mutedDirs, physicsFlat).data);
+  const refusedWith = (report: ReturnType<typeof validate>): string => report.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ');
+  const rescueProbes = [
+    ...(oneChannelGate.failures.length === 0 ? [] : [`one channel keyed above 0 is refused: ${refusedWith(oneChannelGate)}`]),
+    ...(sameSeries(oneChannelSeries, bareSeries) ? ['one channel keyed above 0 poses exactly where no timeline does, so this rig proves nothing'] : []),
+    ...(liftedGate.failures.length === 0 ? [] : [`the lifted curve between two keys of 0 is refused: ${refusedWith(liftedGate)}`]),
+    ...(sameSeries(liftedSeries, zeroSeries) ? ['the lifted curve poses exactly where the flat pair does, so the plant reached nothing'] : []),
+    ...(mutedRefusal(physicsFlatGate).length === 1 ? [] : [`A23 drew ${mutedRefusal(physicsFlatGate).length} failure(s) on the flat physics pair, not one`]),
+    ...(physicsLiftedGate.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') ? [] : [`A23 refuses the lifted physics pair: ${mutedRefusal(physicsLiftedGate).join('; ')}`]),
+    ...(physicsLiftedTip.every((row, i) => row.at === physicsFlatTip[i]?.at) ? ['the lifted physics pair poses its bone exactly where the flat pair does'] : []),
+  ];
+  const rescueHeld = rescueProbes.length === 0;
+  say(
+    'T99_A_KEY_POSING_ANY_MIX_CHANNEL_ABOVE_ZERO_IS_THE_RESCUE_ON_ONE_CHANNEL_AND_BETWEEN_TWO_KEYS_OF_ZERO_ON_EVERY_KIND',
+    rescueHeld,
+    probeDetail(
+      rescueHeld,
+      rescueProbes,
+      'a path keyed above 0 on mixX alone and a slider keyed above 0 gate green and pose away from the rig with no ' +
+        'timeline; the same two keys of 0 with a Bezier whose handles lie above 0 gate green on the path, the slider ' +
+        'and a physics constraint and pose away from the flat pair, while the flat physics pair is refused once by A23',
+      (count) => `${count} clause(s) of the rescue did not hold:`,
+    ),
+    'the rescue is a value the RUNTIME poses, so it is read where the runtime keeps it: one channel of three is ' +
+      "enough because `PathConstraint.update` returns only when all three are 0, and a curve's samples count because " +
+      '`getBezierValue` interpolates through them rather than between the keys. The physics row is `A23` on the same ' +
+      'helper — until #752 it read the keys alone and refused the lifted pair, a rig whose constraint moves its bone',
+  );
+
+  // --- A23's setup sentence for `strength`, two arms off one row (issue #748)
+  //
+  // "nothing pulls it back" was said of every setup strength outside the
+  // bound, and it is true of 0 only. The two arms live on the row, the key's
+  // sentence quotes the negative one from the same object, and the runtime is
+  // asked what a negative setup value does rather than told.
+  const strengthRow = physicsRuleFor('strength');
+  const negativeStrength = physicsRefused.find(([property]) => property === 'strength')?.[1] ?? NaN;
+  const restingAt = (strength: number): ProbeDirs =>
+    writeProbeRig({
+      ...PHYSICS_TIMELINE_RIG,
+      constraints: PHYSICS_TIMELINE_RIG.constraints.map((constraint) => ({ ...constraint, strength })),
+    });
+  const noAnimations = { spec: 'rigc-motion/1', archetype: 'static_probe', cut: 'static_probe', easings: {}, animations: {} };
+  const setupSays = (strength: number): string[] => mutedRefusal(gateProbe(restingAt(strength), noAnimations));
+  const negativeSays = setupSays(negativeStrength);
+  const zeroSays = setupSays(0);
+  /** The clauses the two setup sentences have to meet — applied to the gate, and to a row with its arms collapsed. */
+  const armProbes = (negative: string, zero: string): string[] => [
+    ...(negative.includes('pushed away') ? [] : [`the negative setup sentence does not say "pushed away": ${negative}`]),
+    ...(negative.includes('nothing pulls it back') ? [`the negative setup sentence says what 0 does: ${negative}`] : []),
+    ...(zero.includes('nothing pulls it back') ? [] : [`the zero setup sentence does not say "nothing pulls it back": ${zero}`]),
+    ...(zero.includes('pushed away') ? [`the zero setup sentence says what a negative does: ${zero}`] : []),
+  ];
+  const arms = strengthRow?.outside ?? [];
+  const negativeArm = arms.find((arm) => arm.when(negativeStrength));
+  const zeroArm = arms.find((arm) => arm.when(0));
+  const keySays = strengthRow === undefined ? null : physicsKeyRefusal(strengthRow, negativeStrength);
+  // The walk: the probe displaced once, as `spanMotion` does, with nothing else
+  // moving — its span keys `inertia` at the value it already rests at — so from
+  // 0.3 s on the offset is the setup value's own arithmetic.
+  const displacedOnce = spanMotion('inertia', PHYSICS_TIMELINE_RIG.constraints[0].inertia, PHYSICS_TIMELINE_RIG.constraints[0].inertia, 1, 2);
+  const offsetsAt = (strength: number): Array<{ x: number }> => {
+    const probe = restingAt(strength);
+    const motionPath = join(probe.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(displacedOnce, null, 2)}\n`);
+    const built = compile({ rigPath: probe.rigPath, motionPath, outDir: probe.outDir, imagesDir: probe.dir });
+    return spanWalk({ data: posableFromText(built.skeletonText, built.atlasText, probe.outDir).data }, 60);
+  };
+  const settleFrom = Math.round(0.3 * 60);
+  const pushedWalk = offsetsAt(negativeStrength).slice(settleFrom);
+  const pulledWalk = offsetsAt(PHYSICS_TIMELINE_RIG.constraints[0].strength).slice(settleFrom);
+  const signChanges = (walk: Array<{ x: number }>): number =>
+    walk.filter((s, i) => i > 0 && Math.sign(s.x) !== Math.sign(walk[i - 1].x)).length;
+  // Never smaller than the step before, and larger at the end than at the
+  // start: a player step can land short of a whole physics step and integrate
+  // nothing, so "strictly larger on every step" would be a claim about the
+  // sampler rather than about the sign.
+  const grows = (walk: Array<{ x: number }>): boolean =>
+    walk.length > 1 &&
+    walk.every((s, i) => i === 0 || Math.abs(s.x) >= Math.abs(walk[i - 1].x)) &&
+    Math.abs(walk[walk.length - 1].x) > Math.abs(walk[0].x);
+  const collapsed =
+    strengthRow === undefined || zeroArm === undefined
+      ? null
+      : { ...strengthRow, outside: [{ when: (v: number) => v <= 0, says: zeroArm.says }] };
+  const collapsedProbes =
+    collapsed === null ? ['no zero arm to collapse onto'] : armProbes(physicsOutsideSays(collapsed, negativeStrength), physicsOutsideSays(collapsed, 0));
+  const sentenceProbes = [
+    ...(negativeSays.length === 1 && zeroSays.length === 1 ? [] : [`A23 drew ${negativeSays.length} and ${zeroSays.length} failure(s), not one each`]),
+    ...armProbes(negativeSays[0] ?? '', zeroSays[0] ?? ''),
+    ...(negativeArm !== undefined && negativeSays[0]?.endsWith(negativeArm.says) ? [] : ['the negative setup sentence is not the arm the row carries for it']),
+    ...(zeroArm !== undefined && zeroSays[0]?.endsWith(zeroArm.says) ? [] : ['the zero setup sentence is not the arm the row carries for it']),
+    ...(negativeArm !== undefined && keySays?.includes(negativeArm.says) ? [] : [`the key's refusal of ${negativeStrength} does not quote the same arm: ${keySays}`]),
+    ...(grows(pushedWalk) && signChanges(pushedWalk) === 0 ? [] : [`resting at ${negativeStrength} the offset does not grow away (sign changes ${signChanges(pushedWalk)})`]),
+    ...(signChanges(pulledWalk) > 0 ? [] : ['the rig resting at its own strength never swings back through 0, so the walk shows nothing']),
+    ...(collapsedProbes.length > 0 ? [] : ['a row whose two arms are collapsed into one sentence meets every clause above, so they check nothing']),
+  ];
+  const sentencesHeld = sentenceProbes.length === 0 && pushedWalk.length > 1;
+  say(
+    'T100_A23_SAYS_PUSHED_AWAY_OF_A_NEGATIVE_SETUP_STRENGTH_AND_NOTHING_PULLS_IT_BACK_OF_ZERO_BOTH_OFF_THE_ROW_THE_KEY_QUOTES',
+    sentencesHeld,
+    probeDetail(
+      sentencesHeld,
+      sentenceProbes,
+      `"${negativeSays[0]}"; "${zeroSays[0]}" — each the row's own arm, and the key's refusal of ${negativeStrength} ` +
+        `quotes the first. Resting at ${negativeStrength} the offset never shrinks over ${pushedWalk.length - 1} steps and grows from ` +
+        `${Math.abs(pushedWalk[0]?.x ?? NaN).toFixed(4)} to ${Math.abs(pushedWalk[pushedWalk.length - 1]?.x ?? NaN).toFixed(4)} ` +
+        `with no sign change, where the rig resting at its own strength crosses 0 ${signChanges(pulledWalk)} time(s). ` +
+        `The same clauses on a row with its arms collapsed into one: ${collapsedProbes.join('; ')}`,
+      (count) => `${count} clause(s) of the two arms did not hold:`,
+    ),
+    'an author reading "nothing pulls it back" of a negative looks for the missing force and finds one — the fix for ' +
+      'a negative is its sign. The sentences are read off the row rather than typed beside A23 so the setup pose and ' +
+      'a key cannot say two things about one number, and the collapsed row is the plant: it breaks the DATA the ' +
+      'sentence is built from, and the clauses have to go red on it',
+  );
+
+  // --- `damping`'s bound at two rates (issue #748) --------------------------
+  //
+  // The decay is `damping ** (60 * step)` with `step` = 1 / the constraint's
+  // `fps`, so the same keyed value is a different number at another rate. The
+  // second rate is chosen for the one property the sentence names — `60 / fps`
+  // not a whole number — and the clause checks that choice rather than trusting
+  // it. −0.5 is the card's value, not a measurement.
+  const NEGATIVE_DAMPING = -0.5;
+  const RATES = [60, 45] as const;
+  const dampingRow = physicsRuleFor('damping');
+  const restingDamping = PHYSICS_TIMELINE_RIG.constraints[0].damping;
+  const dampingWalk = (fps: number): { walk: Array<{ x: number; y: number }>; planted: number } => {
+    const probe = writeProbeRig({
+      ...PHYSICS_TIMELINE_RIG,
+      constraints: PHYSICS_TIMELINE_RIG.constraints.map((constraint) => ({ ...constraint, fps })),
+    });
+    const motionPath = join(probe.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(spanMotion('damping', restingDamping, restingDamping, 1, 3), null, 2)}\n`);
+    const built = compile({ rigPath: probe.rigPath, motionPath, outDir: probe.outDir, imagesDir: probe.dir });
+    const skeleton = JSON.parse(built.skeletonText) as Record<string, unknown>;
+    const planted = plantSpanKey(skeleton, 'damping', NEGATIVE_DAMPING);
+    const posed = posableFromText(`${JSON.stringify(skeleton, null, 2)}\n`, built.atlasText, probe.outDir).data;
+    return { walk: spanWalk({ data: posed }, 60), planted };
+  };
+  const [atSixty, atOther] = RATES.map((fps) => dampingWalk(fps));
+  const nonFinite = (walk: Array<{ x: number; y: number }>): number => walk.findIndex((s) => !Number.isFinite(s.x) || !Number.isFinite(s.y));
+  const dampingSays = dampingRow === undefined ? null : physicsKeyRefusal(dampingRow, NEGATIVE_DAMPING);
+  const rateProbes = [
+    ...(Number.isInteger(60 / RATES[0]) && !Number.isInteger(60 / RATES[1]) ? [] : [`the rates ${RATES.join(', ')} are not one whole and one fractional exponent`]),
+    ...(atSixty.planted === 1 && atOther.planted === 1 ? [] : [`${atSixty.planted} and ${atOther.planted} key(s) planted, not one each`]),
+    ...(atSixty.walk.length > 0 && nonFinite(atSixty.walk) < 0 ? [] : [`at ${RATES[0]} fps the walk is non-finite from step ${nonFinite(atSixty.walk)}`]),
+    ...(nonFinite(atOther.walk) > 0 ? [] : [`at ${RATES[1]} fps the walk stays finite`]),
+    ...(dampingSays !== null && dampingSays.includes('60 * step') && dampingSays.includes('fps') && dampingSays.includes('NaN')
+      ? []
+      : [`the refusal of ${NEGATIVE_DAMPING} does not name the exponent, the rate and the NaN: ${dampingSays}`]),
+  ];
+  const ratesHeld = rateProbes.length === 0;
+  say(
+    'T101_A_NEGATIVE_DAMPING_KEY_IS_FINITE_AT_60_FPS_AND_NAN_AT_A_RATE_WHOSE_EXPONENT_IS_FRACTIONAL_AND_THE_REFUSAL_SAYS_SO',
+    ratesHeld,
+    probeDetail(
+      ratesHeld,
+      rateProbes,
+      `the same planted damping key of ${NEGATIVE_DAMPING} walks ${atSixty.walk.length} steps finite at ${RATES[0]} fps and is ` +
+        `non-finite from step ${nonFinite(atOther.walk)} at ${RATES[1]} fps (exponent ${(60 / RATES[1]).toFixed(4)}); the refusal: ${dampingSays}`,
+      (count) => `${count} clause(s) of the two rates did not hold:`,
+    ),
+    'a rig tried at 60 fps sees an exponent of exactly 1, where a negative damping only flips the velocity and comes ' +
+      'back — which is how a keyed −0.5 looked like the case #727 widened. The bound is right at every rate and the ' +
+      'sentence has to say why, or an author who plays the rig at 60 will read the refusal as over-cautious',
+  );
+
   return bad;
 }
 
@@ -21528,12 +21824,13 @@ function runPathAndSliderSuite(): number {
   // `animation.apply`, and `appliedPose.time` as the time it applies at, BEFORE
   // that animation runs. So a slider keying its own `mix` or `time` is the
   // upward case with the indices equal, and the mix shape is the one `A37`
-  // cannot see: `keyedBy` asks whether ANY animation keys the slider's `mix`,
-  // and the slider's own animation is one of them — so a slider muted at setup
+  // cannot see: it asks whether ANY animation keys the slider's `mix` above 0
+  // (`sliderSwitchedOn`, which replaced `keyedBy` in #752 and kept this blind
+  // spot), and the slider's own animation is one of them — so a slider muted at setup
   // that keys its own `mix` up reports green and never runs at all.
   //
   // ⚠️ What A37 says about the self-keying rig is PRINTED and not asserted. A
-  // repaired A37 that saw through `keyedBy` would refuse it too, and a clause
+  // repaired A37 that saw through that reading would refuse it too, and a clause
   // requiring today's silence would go red on that improvement. What IS
   // asserted is A37's own case — the same rig with no such key anywhere — which
   // this change does not touch.
@@ -21659,7 +21956,7 @@ function runPathAndSliderSuite(): number {
         `${authorityRows.length} cells while the slider's own \`mix\` never leaves ${selfMix.toExponential(3)} — \`update\` ` +
         `returns on mix 0 before the animation that would raise it is applied. The bone-less \`time\` spelling is refused the ` +
         `same way. ⚠️ A37 says ${a37On(selfKeyed.report) === null ? 'NOTHING about that rig' : `"${a37On(selfKeyed.report)}"`} — ` +
-        `reported and not gated, because its \`keyedBy\` asks whether any animation keys the mix and the slider's own is one ` +
+        `reported and not gated, because it asks whether any animation keys the mix above 0 and the slider's own is one ` +
         `of them; its own case is unmoved, and the same rig with no such key anywhere is still refused: "` +
         `${a37On(noKeyAtAll.report)}". The repair the message names is the pair of PS139 in declared order, which passes here ` +
         `with up to ${Math.max(...declaredTravel).toFixed(6)}° of travel on the axis the refused rig leaves dead`,

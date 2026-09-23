@@ -276,6 +276,14 @@ export interface PhysicsJudgedPose {
   damping: number;
 }
 
+/** One way out of a physics bound, and what the runtime does with a value that takes it. */
+export interface PhysicsOutsideArm {
+  /** True for the pose values this arm is about — every one of them outside the bound. */
+  when: (poseValue: number) => boolean;
+  /** What the runtime does with such a value, in the words both of `A23`'s arms print. */
+  says: string;
+}
+
 /**
  * One physics property `A23` has an opinion about, stated once for the two
  * layers that hold it.
@@ -351,6 +359,23 @@ export interface PhysicsPoseRule {
    * value — two questions with one answer here and no reason to share a field.
    */
   inertAtSetup: boolean;
+  /**
+   * What the runtime does with a value outside the bound, one arm per way out,
+   * where the ways out do different things — or `null` where one sentence covers
+   * them all. `A23`'s SETUP sentence reads the arm that holds for the value, and
+   * the row's `why` — the KEY's sentence — is written from the same arms, so the
+   * two cannot say different things about one number (issue #748).
+   *
+   * Only `strength` has two, and they are measured rather than argued: resting
+   * at 0 the offset is only the bone's own lag, since nothing restores it,
+   * while resting below 0 the restoring term is added instead of taken out and
+   * the offset runs away — on the generated physics fixture, stepped at 60 fps
+   * from `Physics.reset`, a setup `strength` of −100 grew the offset 28.35× over
+   * 0.5 s with no sign change. The single sentence this replaced said "nothing
+   * pulls it back" of both, which sends an author reading the negative one to
+   * the wrong fix.
+   */
+  outside: readonly PhysicsOutsideArm[] | null;
   /** The bound in words, for a message: what the value has to be. */
   states: string;
   /** The bound a KEY is held to, where `keyOk` widens it. */
@@ -366,6 +391,23 @@ export interface PhysicsPoseRule {
    */
   why: string;
 }
+
+/**
+ * `strength`'s two ways out of its bound — two different rigs, so two sentences
+ * (issue #748). Resting at 0 there is no restoring force and the offset is only
+ * the bone's own lag; below 0 the restoring term has the wrong sign, so the
+ * offset feeds its own velocity and runs away. The row's `outside` is this array
+ * and its `why` quotes the first arm, which is the one a key can still take.
+ */
+const STRENGTH_OUTSIDE: readonly PhysicsOutsideArm[] = [
+  {
+    when: (v) => v < 0,
+    says:
+      'below 0 the restoring term is ADDED to the offset instead of taken out of it, so the offset is pushed ' +
+      'away and grows with every step',
+  },
+  { when: (v) => v === 0, says: 'nothing pulls it back' },
+];
 
 /**
  * Every physics property with a bound the runtime supports, and **only** those.
@@ -394,6 +436,7 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     poseOk: (v) => v > 0,
     keyOk: (v) => v >= 0,
     inertAtSetup: true,
+    outside: null,
     states: '> 0',
     statesKeyed: '>= 0',
     why: 'the runtime documents it as a percentage (0+) and `update` returns immediately at 0 (`PhysicsConstraint.js:109-111`)',
@@ -405,6 +448,7 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     poseOk: (v) => Number.isFinite(v) && v > 0,
     keyOk: null,
     inertAtSetup: false,
+    outside: null,
     states: '> 0',
     statesKeyed: '> 0',
     why:
@@ -419,13 +463,15 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     poseOk: (v) => v > 0,
     keyOk: (v) => v >= 0,
     inertAtSetup: false,
+    outside: STRENGTH_OUTSIDE,
     states: '> 0',
     statesKeyed: '>= 0',
+    // The key's sentence names the arm a key can still take — below 0 — off the
+    // same object the setup sentence reads, so the two say one thing about it.
     why:
       'it is the restoring force — `velocity += (a - offset * strength) * m` ' +
-      '(`PhysicsConstraint.js:150,156,212,220`) — so below 0 the term is ADDED to the offset instead of ' +
-      'taken out of it and every step amplifies the last. 0 is a key the runtime plays: it releases the ' +
-      'constraint for the span, damping and inertia still apply, and the next key pulls the offset back',
+      `(\`PhysicsConstraint.js:150,156,212,220\`) — so ${STRENGTH_OUTSIDE[0].says}. 0 is a key the runtime plays: ` +
+      'it releases the constraint for the span, damping and inertia still apply, and the next key pulls the offset back',
   },
   {
     timeline: 'damping',
@@ -434,14 +480,33 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     poseOk: (v) => v > 0 && v < 1,
     keyOk: null,
     inertAtSetup: false,
+    outside: null,
     states: 'inside (0, 1)',
     statesKeyed: 'inside (0, 1)',
+    // ⚠️ The frame-rate half is why the bound cannot be checked by playing a rig
+    // at 60 fps (issue #748): `step` is `1 / fps`, the constraint's own rate, so
+    // the exponent is exactly 1 there and a negative damping only flips the
+    // velocity's sign. [measured] on the generated physics fixture, a keyed −0.5
+    // stays finite at 60 fps and at 30 (exponent 2), and is NaN within three
+    // steps of the key at 45 and at 120 (exponents 1.3333 and 0.5).
     why:
-      'the per-step decay is `damping ** (60 * step)` and every velocity is multiplied by it ' +
-      '(`PhysicsConstraint.js:148,158,163,210,222,227`), so 1 never decays, above 1 diverges, and ' +
-      'at or below 0 the velocity is killed outright or raised to a fractional power',
+      'the per-step decay is `damping ** (60 * step)`, with `step` = 1 / the constraint\'s `fps`, and every velocity ' +
+      'is multiplied by it (`PhysicsConstraint.js:114,148,158,163,210,222,227`), so 1 never decays, above 1 ' +
+      'diverges, and 0 kills the velocity outright, at every rate. Below 0 the result depends on `fps`: where ' +
+      '`60 / fps` is a whole number a negative base stays finite — at 60 fps it is the velocity\'s sign flipped each ' +
+      'step, which can look like a jiggle settling — and at any other rate it is a negative number raised to a ' +
+      'fractional power, which is NaN (`(-0.5) ** (60 / 45)`), so a rig tried only at 60 fps never shows the failure',
   },
 ];
+
+/**
+ * What `A23`'s setup arm says about a pose value its rule refuses: the arm of
+ * `outside` that holds for it, or the bound itself where the row has no arms or
+ * none holds (a non-number the parser handed over, say).
+ */
+export function physicsOutsideSays(rule: PhysicsPoseRule, poseValue: number): string {
+  return rule.outside?.find((arm) => arm.when(poseValue))?.says ?? `must be ${rule.states}`;
+}
 
 /** The rule for one timeline name, or `undefined` where the runtime bounds nothing. */
 export function physicsRuleFor(timeline: string): PhysicsPoseRule | undefined {
