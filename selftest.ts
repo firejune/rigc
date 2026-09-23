@@ -321,6 +321,8 @@ import {
   CHANNELS_BY_KIND,
   float32Step,
   PHYSICS_POSE_RULES,
+  physicsBasisFor,
+  physicsBasisSays,
   physicsKeyRefusal,
   physicsOutsideSays,
   physicsRuleFor,
@@ -17165,6 +17167,258 @@ function runConstraintAndDeformSuite(): number {
     'an import is judged by A23 alone, so the setup arm has to take the same two ends the compiler does, and say the ' +
       'bound the row states rather than a sentence of its own that can drift from it — which is how "outside (0,1) it ' +
       'never settles" came to call a finite, deliberate 1 a fault',
+  );
+
+  // --- each way out of a physics bound states its basis (issue #798) -------
+  //
+  // A row's `basis` says, per way out, whether the runtime's arithmetic fails
+  // there or the value runs and rigc refuses what it does. That is a claim
+  // about the runtime, so the runtime is asked: each arm's witness is planted
+  // as the constraint's SETUP value in an emitted file, at the arm's own rate,
+  // and walked 120 steps from `Physics.reset` under the animation `T100` uses
+  // to displace the bone once. Nothing here types a measured number: the
+  // witnesses are the rows', and every clause compares a walk with itself.
+  const BASIS_STEPS = 120;
+  type BasisStep = { x: number; y: number; vx: number; vy: number; boneX: number; boneY: number };
+  const basisPosed = (field: string, value: number, fps: number | undefined, strip = false): SkeletonData | null => {
+    const probe = writeProbeRig({
+      ...PHYSICS_TIMELINE_RIG,
+      constraints: PHYSICS_TIMELINE_RIG.constraints.map((constraint) => (fps === undefined ? constraint : { ...constraint, fps })),
+    });
+    const motionPath = join(probe.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(displacedOnce, null, 2)}\n`);
+    const built = compile({ rigPath: probe.rigPath, motionPath, outDir: probe.outDir, imagesDir: probe.dir });
+    const skeleton = JSON.parse(built.skeletonText) as Record<string, unknown>;
+    const constraints = skeleton.constraints as Array<Record<string, unknown>>;
+    for (const constraint of constraints) if (constraint.type === 'physics') constraint[field] = value;
+    if (strip) {
+      // The twin with no constraint at all: the pose the animation alone gives.
+      skeleton.constraints = constraints.filter((constraint) => constraint.type !== 'physics');
+      for (const animation of Object.values(skeleton.animations as Record<string, Record<string, unknown>>)) delete animation.physics;
+    }
+    return posableFromText(`${JSON.stringify(skeleton, null, 2)}\n`, built.atlasText, probe.outDir).data;
+  };
+  const basisWalk = (data: SkeletonData | null): BasisStep[] => {
+    if (data === null) return [];
+    const skeleton = new Skeleton(data);
+    const state = new AnimationState(new AnimationStateData(data));
+    state.setAnimation(0, 'jig', false);
+    skeleton.setupPose();
+    const out: BasisStep[] = [];
+    for (let i = 0; i <= BASIS_STEPS; i++) {
+      const dt = i === 0 ? 0 : 1 / 60;
+      state.update(dt);
+      state.apply(skeleton);
+      skeleton.update(dt);
+      skeleton.updateWorldTransform(i === 0 ? Physics.reset : Physics.update);
+      const constraint = skeleton.findConstraint('jiggle', PhysicsConstraint);
+      const tip = skeleton.findBone('tip')!.appliedPose;
+      out.push({
+        x: constraint?.xOffset ?? 0,
+        y: constraint?.yOffset ?? 0,
+        vx: constraint?.xVelocity ?? 0,
+        vy: constraint?.yVelocity ?? 0,
+        boneX: tip.worldX,
+        boneY: tip.worldY,
+      });
+    }
+    return out;
+  };
+  const firstNonFinite = (walk: BasisStep[]): { step: number; field: string } | null => {
+    for (let i = 0; i < walk.length; i++) {
+      const hit = (Object.entries(walk[i]) as Array<[string, number]>).find(([, v]) => !Number.isFinite(v));
+      if (hit) return { step: i, field: hit[0] };
+    }
+    return null;
+  };
+  type BasisArm = (typeof PHYSICS_POSE_RULES)[number]['basis'][number];
+  const armText = (arm: BasisArm): string => (arm.kind === 'arithmetic' ? arm.expression : arm.does);
+  const armWalks = PHYSICS_POSE_RULES.flatMap((rule) =>
+    rule.basis.map((arm) => ({ rule, arm, walk: basisWalk(basisPosed(rule.timeline, arm.witness.value, arm.witness.fps)) })),
+  );
+  /** Every way one arm's stated basis disagrees with the rows and with the walk the runtime did. */
+  const basisFaults = (rule: (typeof PHYSICS_POSE_RULES)[number], arm: BasisArm, walk: BasisStep[]): string[] => {
+    const label = `${rule.timeline} ${arm.witness.value}${arm.witness.fps === undefined ? '' : ` at ${arm.witness.fps} fps`}`;
+    const posed = rule.toPose(arm.witness.value);
+    const lost = firstNonFinite(walk);
+    const keyRefuses = !(rule.keyOk ?? rule.poseOk)(posed);
+    return [
+      ...(rule.poseOk(posed) ? [`${label}: the witness is inside the bound, so it witnesses nothing`] : []),
+      ...(physicsBasisFor(rule, posed) === arm ? [] : [`${label}: the witness is not the arm's own — another arm, or none, holds for it`]),
+      ...(walk.length === BASIS_STEPS + 1 ? [] : [`${label}: walked ${walk.length} step(s), not ${BASIS_STEPS + 1}`]),
+      ...(arm.kind === 'arithmetic' && lost === null ? [`${label}: stated arithmetic, and the runtime walked it finite for ${walk.length} step(s)`] : []),
+      ...(arm.kind === 'behavioural' && lost !== null ? [`${label}: stated behavioural, and the runtime's ${lost.field} is non-finite at step ${lost.step}`] : []),
+      ...(keyRefuses && !rule.why.includes(armText(arm)) ? [`${label}: a key is refused at it and the row's why does not quote the arm`] : []),
+      ...(keyRefuses && arm.kind === 'behavioural' && !rule.why.includes("rigc's call") ? [`${label}: a key is refused at it and the why never says it is rigc's call`] : []),
+    ];
+  };
+  const basisProbes = armWalks.flatMap(({ rule, arm, walk }) => basisFaults(rule, arm, walk));
+  // The plant: every arm with its kind flipped, texts kept, judged on the same
+  // walks. Each arm has to raise exactly one fault of its own, or the clause
+  // that reads `kind` is reading nothing.
+  const flipped = armWalks.map(({ rule, arm, walk }) => {
+    const other: BasisArm =
+      arm.kind === 'arithmetic'
+        ? { kind: 'behavioural', when: arm.when, witness: arm.witness, does: arm.expression }
+        : { kind: 'arithmetic', when: arm.when, witness: arm.witness, expression: arm.does, lines: '' };
+    const row = { ...rule, basis: rule.basis.map((one) => (one === arm ? other : one)) };
+    return raisedBy(basisFaults(row, other, walk), { was: basisFaults(rule, arm, walk) }).length;
+  });
+  const flipProbes = flipped.every((n) => n === 1) ? [] : [`flipping each arm's kind raised ${flipped.join(', ')} fault(s), and one each is required`];
+  const armLines = armWalks.map(({ rule, arm, walk }) => {
+    const lost = firstNonFinite(walk);
+    return `${rule.timeline} ${arm.witness.value}${arm.witness.fps === undefined ? '' : `@${arm.witness.fps}fps`} ${arm.kind}: ${lost === null ? `finite over ${walk.length - 1} steps` : `${lost.field} non-finite at step ${lost.step}`}`;
+  });
+  const basisHeld = basisProbes.length === 0 && flipProbes.length === 0 && armWalks.length > 0;
+  say(
+    'T113_EVERY_WAY_OUT_OF_A_PHYSICS_BOUND_IS_NON_FINITE_WHERE_ITS_ROW_SAYS_ARITHMETIC_AND_FINITE_WHERE_IT_SAYS_BEHAVIOURAL',
+    basisHeld,
+    probeDetail(
+      basisHeld,
+      [...basisProbes, ...flipProbes],
+      `${armWalks.length} way(s) out across ${PHYSICS_POSE_RULES.length} row(s), each witness walked through spine-core as a setup value — ` +
+        `${armLines.join('; ')}; and each arm with its kind flipped raises one fault of its own`,
+      (count) => `${count} clause(s) of the stated bases did not hold:`,
+    ),
+    'a refusal that says "the runtime cannot use this" of a rig the runtime plays is a sentence an author learns to ' +
+      'distrust, and `src/types.ts` said exactly that of all four rows. The kind is a claim about the runtime, so the ' +
+      'runtime answers it; the flipped rows are the plant, breaking the data the clause reads rather than the clause',
+  );
+
+  // --- a negative mix, on physics and on transform (issue #798) -------------
+  //
+  // `T105` accepts a transform constraint resting at a negative mix; the
+  // physics row refuses one. The row's answer is that neither side is the
+  // runtime's arithmetic — both are a signed scale, finite and mirrored — and
+  // that each follows the range the runtime DOCUMENTS for its own field. All
+  // three halves of that are facts about the runtime, asked of it here.
+  const mixRow = physicsRuleFor('mix');
+  const mixNegative = mixRow?.basis.find((arm) => arm.when(-1));
+  const mirrorAt = mixNegative?.witness.value ?? NaN;
+  const [mirrored, straight, unconstrained] = [
+    basisWalk(basisPosed('mix', mirrorAt, undefined)),
+    basisWalk(basisPosed('mix', -mirrorAt, undefined)),
+    basisWalk(basisPosed('mix', 1, undefined, true)),
+  ];
+  const offsetOf = (walk: BasisStep[], i: number): number => walk[i].boneX - unconstrained[i].boneX;
+  const mirrorMoved = straight.filter((_, i) => offsetOf(straight, i) !== 0).length;
+  const followMirror = (mixRotate: number): number[] => {
+    const dirs = writeProbeRig({
+      bones: [
+        { name: 'root' },
+        { name: 'block', parent: 'root', x: 0, y: 0, length: 12 },
+        { name: 'follower', parent: 'root', x: 40, y: 0, length: 20 },
+        { name: 'source', parent: 'root', x: 60, y: 0, rotation: 45, length: 20 },
+      ],
+      constraints: [{ name: 'follow', type: 'transform', bones: ['follower'], source: 'source', properties: { rotate: { to: { rotate: {} } } }, mixRotate }],
+    });
+    const data = timelinePosable(
+      dirs,
+      timelineMotion({ duration: 1, loop: false, tracks: [{ bone: 'source', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [60] }] }] }),
+    ).data;
+    const skeleton = new Skeleton(data);
+    const state = new AnimationState(new AnimationStateData(data));
+    state.setAnimation(0, data.animations[0].name, false);
+    skeleton.setupPose();
+    const out: number[] = [];
+    for (let i = 0; i <= BASIS_STEPS / 2; i++) {
+      state.update(i === 0 ? 0 : 1 / 60);
+      state.apply(skeleton);
+      skeleton.update(i === 0 ? 0 : 1 / 60);
+      skeleton.updateWorldTransform(Physics.update);
+      out.push(skeleton.findBone('follower')!.appliedPose.getWorldRotationX());
+    }
+    return out;
+  };
+  const [turnedBack, turned] = [followMirror(mirrorAt), followMirror(-mirrorAt)];
+  const spineDist = dirname(Bun.resolveSync('@esotericsoftware/spine-core', import.meta.dir));
+  const docOf = (file: string, field: string): string =>
+    new RegExp(`/\\*\\*\\s*(.*?)\\s*\\*/\\s*${field}: number;`).exec(readFileSync(join(spineDist, file), 'utf8'))?.[1] ?? '(no doc comment)';
+  const physicsMixDoc = docOf('PhysicsConstraintPose.d.ts', 'mix');
+  const transformMixDoc = docOf('TransformConstraintPose.d.ts', 'mixRotate');
+  const PHYSICS_RANGE = '(0+)';
+  const TRANSFORM_RANGE = '(unbounded)';
+  const negativeProbes = [
+    ...(mixNegative === undefined ? ['the mix row has no arm for a negative value'] : []),
+    ...(mixNegative?.kind === 'behavioural' ? [] : [`the mix row calls a negative mix ${mixNegative?.kind}, and it poses finite`]),
+    ...(mixRow !== undefined && !mixRow.poseOk(mirrorAt) && !(mixRow.keyOk ?? mixRow.poseOk)(mirrorAt) ? [] : [`a mix of ${mirrorAt} is not refused at rest and on a key`]),
+    ...([mirrored, straight, unconstrained].every((walk) => walk.length === BASIS_STEPS + 1 && firstNonFinite(walk) === null) ? [] : ['a walk is short or non-finite']),
+    ...(mirrored.every((s, i) => s.x === straight[i].x && s.y === straight[i].y) ? [] : [`mix ${mirrorAt} and ${-mirrorAt} integrate different offsets, so mix entered the x/y solve`]),
+    ...(mirrored.every((_, i) => Math.sign(offsetOf(mirrored, i)) === -Math.sign(offsetOf(straight, i))) ? [] : [`the bone at mix ${mirrorAt} is not moved against the bone at ${-mirrorAt} on every step`]),
+    ...(mirrorMoved > 0 ? [] : [`the bone at mix ${-mirrorAt} never leaves the unconstrained pose, so the mirror compares nothing`]),
+    ...(turned.every(Number.isFinite) && turnedBack.every(Number.isFinite) ? [] : ['a transform walk is non-finite']),
+    ...(turned.some((r) => r !== 0) && turnedBack.every((r, i) => Math.abs(r + turned[i]) <= 1e-9 * Math.max(1, Math.abs(turned[i])))
+      ? []
+      : [`the transform at mixRotate ${mirrorAt} does not rotate its bone by the negative of ${-mirrorAt}'s`]),
+    ...(physicsMixDoc.includes(PHYSICS_RANGE) ? [] : [`PhysicsConstraintPose.mix is documented "${physicsMixDoc}", not ${PHYSICS_RANGE}`]),
+    ...(transformMixDoc.includes(TRANSFORM_RANGE) ? [] : [`TransformConstraintPose.mixRotate is documented "${transformMixDoc}", not ${TRANSFORM_RANGE}`]),
+    ...(mixNegative?.kind === 'behavioural' && mixNegative.does.includes(`"a percentage ${PHYSICS_RANGE}"`) && mixNegative.does.includes(`"${TRANSFORM_RANGE.slice(1, -1)}"`)
+      ? []
+      : ["the negative arm does not quote both documented ranges it rests on"]),
+  ];
+  const negativeHeld = negativeProbes.length === 0;
+  say(
+    'T114_A_NEGATIVE_MIX_IS_A_FINITE_MIRROR_ON_PHYSICS_AND_ON_TRANSFORM_AND_EACH_RULE_FOLLOWS_ITS_OWN_DOCUMENTED_RANGE',
+    negativeHeld,
+    probeDetail(
+      negativeHeld,
+      negativeProbes,
+      `a physics constraint resting at mix ${mirrorAt} integrates the same offsets as one at ${-mirrorAt} and moves its bone against it on ` +
+        `all ${mirrored.length} steps (${mirrorMoved} of them off the unconstrained pose), finite throughout; a transform at mixRotate ${mirrorAt} ` +
+        `rotates its bone by the negative of ${-mirrorAt}'s, ${turnedBack[turnedBack.length - 1].toFixed(4)}° against ${turned[turned.length - 1].toFixed(4)}°; ` +
+        `the runtime documents the physics mix "${physicsMixDoc}" and the transform's "${transformMixDoc}", and the row calls its refusal ` +
+        `${mixNegative?.kind}, quoting both`,
+      (count) => `${count} clause(s) of the negative mix did not hold:`,
+    ),
+    'the two constraints disagree about a negative mix and #798 asked which is wrong. Neither is: the arithmetic is the ' +
+      'same signed scale on both, so a refusal on arithmetic grounds would be false on both, and each follows the range ' +
+      'the runtime documents for its own field. The row has to call that rigc\'s call, and this holds it to it',
+  );
+
+  // --- A23's setup sentence is the arm the value took (issue #798) ----------
+  //
+  // Each witness planted as an emitted file's setup value, gated: the A23
+  // sentence has to carry its own arm's basis sentence and no sibling's. The
+  // sharpest clause is the one the branch point fails — a setup mix below 0
+  // was told "it is muted", which `T114` measures it is not.
+  const setupBasisProbes: string[] = [];
+  const setupBasisSeen: string[] = [];
+  for (const rule of PHYSICS_POSE_RULES) {
+    for (const arm of rule.basis) {
+      const probe = writeProbeRig({
+        ...PHYSICS_TIMELINE_RIG,
+        constraints: PHYSICS_TIMELINE_RIG.constraints.map((constraint) => (arm.witness.fps === undefined ? constraint : { ...constraint, fps: arm.witness.fps })),
+      });
+      const report = gateProbeArtifacts(probe, noAnimations, (skeleton) => {
+        for (const constraint of skeleton.constraints as Array<Record<string, unknown>>) if (constraint.type === 'physics') constraint[rule.timeline] = arm.witness.value;
+      });
+      const label = `${rule.timeline} ${arm.witness.value}`;
+      const named = mutedRefusal(report).filter((detail) => detail.includes(`physics "jiggle" has ${rule.field} `));
+      if (named.length !== 1) {
+        setupBasisProbes.push(`${label}: ${named.length} A23 sentence(s) naming ${rule.field}, not one — ${mutedRefusal(report).join(' | ')}`);
+        continue;
+      }
+      const siblings = rule.basis.filter((other) => other !== arm && named[0].includes(armText(other)));
+      if (!named[0].includes(physicsBasisSays(arm))) setupBasisProbes.push(`${label}: the sentence is not its arm's basis — ${named[0]}`);
+      if (siblings.length > 0) setupBasisProbes.push(`${label}: the sentence also says what a sibling way out does — ${named[0]}`);
+      if (rule.timeline === 'mix' && arm.witness.value < 0 && named[0].includes('is muted')) setupBasisProbes.push(`${label}: a mirrored constraint is told it is muted — ${named[0]}`);
+      setupBasisSeen.push(`${label}: "${named[0]}"`);
+    }
+  }
+  const siblingsDiffer = PHYSICS_POSE_RULES.every((rule) => new Set(rule.basis.map((arm) => physicsBasisSays(arm))).size === rule.basis.length);
+  const setupBasisHeld = setupBasisProbes.length === 0 && siblingsDiffer;
+  say(
+    'T115_A23_SAYS_THE_BASIS_OF_THE_WAY_OUT_A_SETUP_VALUE_TOOK_AND_A_NEGATIVE_MIX_IS_NOT_TOLD_IT_IS_MUTED',
+    setupBasisHeld,
+    probeDetail(
+      setupBasisHeld,
+      [...setupBasisProbes, ...(siblingsDiffer ? [] : ['two arms of one row print the same basis sentence, so "no sibling\'s" checks nothing'])],
+      `${setupBasisSeen.length} setup value(s), one per way out, each refused once with its own arm's basis and no sibling's — ${setupBasisSeen.join('; ')}`,
+      (count) => `${count} clause(s) of the setup sentences did not hold:`,
+    ),
+    'the setup sentence is the one an import is refused with, so it is the one an author reads without a spec to look ' +
+      'at; "it is muted" of a constraint moving its bone against the jiggle sends the author to switch on something ' +
+      'that is already on',
   );
 
   return bad;
@@ -42424,6 +42678,58 @@ function runMotionParseSuite(): { failures: number; cases: number; specs: number
     }
   }
 
+  // --- a keyed physics value is refused on its basis (issue #798) ----------
+  //
+  // The two kinds, one key each: a `mass` of 0 is the runtime's arithmetic and
+  // the refusal names the expression; a negative `strength` runs, and the
+  // refusal says refusing it is rigc's call and what the value does. The
+  // sentences are typed here rather than read off the row, because they are
+  // the claim under test — as `MP50`/`MP51` type theirs.
+  {
+    const physicsProbe = writeProbeRig(PHYSICS_TIMELINE_RIG);
+    const physicsKey = (property: string, value: number): Record<string, unknown> => ({
+      ...base,
+      animations: {
+        move: { duration: 1, loop: false, tracks: [{ physics: 'jiggle', property, keys: [{ t: 0, v: [value] }, { t: 1, v: [1] }] }] },
+      },
+    });
+    const bases: Array<[name: string, property: string, value: number, fragments: string[], why: string]> = [
+      [
+        'MP52_A_MASS_KEY_OF_0_IS_REFUSED_WITH_THE_EXPRESSION_THAT_MAKES_IT_NAN',
+        'mass',
+        0,
+        [
+          'physics constraint "jiggle" mass key at t=0 is 0 (massInverse Infinity); must be > 0 — at 0 `massInverse = 1 / mass` ' +
+            'is Infinity and `m = t * massInverse` multiplies every velocity update, so the first step takes every velocity and offset to NaN',
+          'PhysicsConstraint.js:149,156,211',
+        ],
+        'a mass of 0 is one of the two ways out the runtime cannot compute, so its refusal is the one place "the runtime ' +
+          'cannot use this" is true — and it has to name the expression, since that is what makes it true',
+      ],
+      [
+        'MP53_A_NEGATIVE_STRENGTH_KEY_IS_REFUSED_AS_RIGCS_CALL_WITH_WHAT_THE_VALUE_DOES',
+        'strength',
+        -5,
+        [
+          "physics constraint \"jiggle\" strength key at t=0 is -5; must be >= 0 — the runtime runs this value finitely, so refusing it is rigc's call rather than the runtime's: " +
+            'below 0 the restoring term is ADDED to the offset instead of taken out of it, so the offset is pushed away and grows with every step',
+        ],
+        'a negative strength runs — every term it enters is a product — so a sentence implying the runtime cannot take it ' +
+          'is false, and the author it misleads looks for a NaN that is not there. The refusal stands; its reason is rigc\'s',
+      ],
+    ];
+    for (const [name, property, value, fragments, why] of bases) {
+      const message = refusal(physicsProbe, physicsKey(property, value));
+      const missing = message === null ? fragments : fragments.filter((fragment) => !message.includes(fragment));
+      say(
+        name,
+        message !== null && message.includes(join(physicsProbe.dir, 'probe.motion.json')) && missing.length === 0,
+        message === null ? 'the compile went through' : `refused with: ${message}${missing.length === 0 ? '' : `\n          missing: ${missing.join(' | ')}`}`,
+        why,
+      );
+    }
+  }
+
   return { failures: bad, cases, specs: corpus };
 }
 
@@ -53985,6 +54291,121 @@ function runCurrencySuite(): number {
       ),
       'a sentence the compiler no longer raises, left in the guide, is an instruction to break a correct spec — the ' +
         'series the editor exports with its setup frame\'s size — and nothing else in the run reads the guide for it',
+    );
+  }
+
+  // --- CUR100: the guide's physics basis table is the rows' own (#798) -----
+  //
+  // §4.4 states, per bounded field, the two intervals and the basis of every
+  // way out. All of it is read off `PHYSICS_POSE_RULES` here — the table's
+  // fields, intervals, kinds and sentences — so no literal in this control can
+  // agree with a stale guide on its own. The plants break the DATA: each arm's
+  // kind flipped in a copy of the rows, and one kind in the guide reverted.
+  {
+    type BoundRow = (typeof PHYSICS_POSE_RULES)[number];
+    type BoundArm = BoundRow['basis'][number];
+    const guideText = readFileSync(join(root, 'docs/AUTHORING.md'), 'utf8');
+    const HEADER = '| field | at rest | on a key | basis |';
+    const cellOf = (arm: BoundArm): string => `${arm.kind}: ${arm.kind === 'arithmetic' ? physicsBasisSays(arm) : arm.does}`;
+    const scanBasisTable = (text: string, rows: readonly BoundRow[]): { faults: string[]; rows: number } => {
+      const lines = text.split('\n');
+      const start = lines.findIndex((line) => line.trim() === HEADER);
+      if (start < 0) return { faults: [`docs/AUTHORING.md has no table headed "${HEADER}"`], rows: 0 };
+      const body: Array<{ at: number; cells: string[] }> = [];
+      for (let i = start + 2; i < lines.length && lines[i].trim().startsWith('|'); i++) {
+        body.push({ at: i + 1, cells: lines[i].trim().slice(1, -1).split(' | ').map((cell) => cell.trim()) });
+      }
+      const faults: string[] = [];
+      for (const rule of rows) {
+        const mine = body.filter((row) => row.cells[0] === `\`${rule.timeline}\``);
+        if (mine.length !== 1) {
+          faults.push(`the table has ${mine.length} line(s) for \`${rule.timeline}\`, and one is required`);
+          continue;
+        }
+        const [, rest, key, basis] = mine[0].cells;
+        const where = `docs/AUTHORING.md:${mine[0].at}`;
+        if (rest !== `\`${rule.states}\``) faults.push(`${where} states ${rule.timeline} at rest as ${rest} and the row states \`${rule.states}\``);
+        if (key !== `\`${rule.statesKeyed}\``) faults.push(`${where} states ${rule.timeline} on a key as ${key} and the row states \`${rule.statesKeyed}\``);
+        for (const arm of rule.basis) {
+          if (!(basis ?? '').includes(cellOf(arm))) faults.push(`${where} does not state ${rule.timeline}'s ${arm.kind} way out at ${arm.witness.value} as the row does`);
+        }
+        const labels = (basis ?? '').match(/\b(arithmetic|behavioural): /g)?.length ?? 0;
+        if (labels !== rule.basis.length) faults.push(`${where} states ${labels} basis(es) for ${rule.timeline} and the row has ${rule.basis.length}`);
+      }
+      for (const row of body) {
+        if (!rows.some((rule) => row.cells[0] === `\`${rule.timeline}\``)) faults.push(`docs/AUTHORING.md:${row.at} states a bound for ${row.cells[0]}, which no row bounds`);
+      }
+      return { faults, rows: body.length };
+    };
+    const standing = scanBasisTable(guideText, PHYSICS_POSE_RULES);
+    const armCount = PHYSICS_POSE_RULES.reduce((sum, rule) => sum + rule.basis.length, 0);
+    const probes = [...standing.faults, ...floorProbes([[standing.rows, PHYSICS_POSE_RULES.length, `${standing.rows} table line(s) read`]], 'one per bounded field')];
+    let note = '';
+    if (probes.length === 0) {
+      const flips = PHYSICS_POSE_RULES.flatMap((rule, r) =>
+        rule.basis.map((arm) => {
+          const other: BoundArm =
+            arm.kind === 'arithmetic'
+              ? { kind: 'behavioural', when: arm.when, witness: arm.witness, does: arm.expression }
+              : { kind: 'arithmetic', when: arm.when, witness: arm.witness, expression: arm.does, lines: '' };
+          const rows = PHYSICS_POSE_RULES.map((one, i) => (i === r ? { ...one, basis: one.basis.map((a) => (a === arm ? other : a)) } : one));
+          return raisedBy(scanBasisTable(guideText, rows).faults, { was: standing.faults }).length;
+        }),
+      );
+      const reverted = guideText.replace(/(\| `[a-z]+` \| `[^`]+` \| `[^`]+` \| )behavioural: /, '$1arithmetic: ');
+      const quoteRaised = raisedBy(scanBasisTable(reverted, PHYSICS_POSE_RULES).faults, { was: standing.faults });
+      if (!flips.every((n) => n === 1) || flips.length !== armCount) probes.push(`flipping each of the ${armCount} arm(s)' kind raised ${flips.join(', ')} fault(s), and one each is required`);
+      if (quoteRaised.length !== 1) probes.push(`the guide's first behavioural basis reverted to arithmetic raised ${quoteRaised.length} fault(s) and this control requires one`);
+      if (probes.length === 0) note = `each of the ${armCount} arm(s) flipped in the rows raises one fault; a kind reverted in the guide: "${quoteRaised[0]}"`;
+    }
+    const held = probes.length === 0;
+    say(
+      'CUR100_EVERY_BOUND_AND_BASIS_THE_GUIDE_STATES_FOR_THE_FOUR_PHYSICS_FIELDS_IS_ITS_ROWS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${standing.rows} line(s) of §4.4's basis table, ${armCount} way(s) out, each field's intervals and every basis sentence the rows' own — and ${note}`,
+      ),
+      'the basis table is where an author learns whether a refusal is the runtime or rigc, and it is the rows\' text ' +
+        'verbatim: a kind changed in the rows and not in the guide is a guide telling the author the runtime cannot ' +
+        'take a value it plays, which is the sentence #798 removed from `src/types.ts`',
+    );
+  }
+
+  // --- CUR101: the retired physics-bound sentences are said nowhere (#798) --
+  //
+  // Each of these told an author that a value the runtime runs finitely is one
+  // it cannot use, or that a mirrored constraint is muted. Held both ways: the
+  // tree carries none, and each planted back into the guide is named.
+  {
+    const RETIRED = [
+      "they are the runtime's, not a policy",
+      'a keyed physics value the runtime cannot use',
+      'an infinite inverse mass — the constraint stops moving',
+      'keys its mix above 0; it is muted —',
+    ];
+    const scanned = ['README.md', 'src/types.ts', 'src/timelines.ts', 'src/validate.ts', ...readdirSync(join(root, 'docs')).filter((name) => name.endsWith('.md')).sort().map((name) => `docs/${name}`)];
+    const texts = scanned.map((path) => [path, readFileSync(join(root, path), 'utf8').replace(/\s+\*?\s*/g, ' ')] as const);
+    const scanRetired = (population: ReadonlyArray<readonly [string, string]>): string[] =>
+      population.flatMap(([path, text]) => RETIRED.filter((sentence) => text.includes(sentence)).map((sentence) => `${path} still says "${sentence}"`));
+    const standing = scanRetired(texts);
+    const plantProbes = RETIRED.flatMap((sentence) => {
+      const planted = scanRetired(texts.map(([path, text]) => [path, path === 'docs/AUTHORING.md' ? `${text} ${sentence}` : text] as const));
+      return planted.length === standing.length + 1 ? [] : [`"${sentence}" planted into the guide raised ${planted.length - standing.length} fault(s), and one is required`];
+    });
+    const retiredProbes = [...standing, ...plantProbes];
+    say(
+      'CUR101_THE_RETIRED_PHYSICS_BOUND_SENTENCES_ARE_SAID_NOWHERE',
+      retiredProbes.length === 0,
+      probeDetail(
+        retiredProbes.length === 0,
+        retiredProbes,
+        `${RETIRED.length} retired sentence(s) absent from ${scanned.length} file(s), and each planted into the guide is named`,
+      ),
+      'three of them called a value the runtime plays one it cannot use, and the fourth told a constraint moving its ' +
+        'bone against the jiggle that it is muted; each is the reason an author would take a correct refusal for a ' +
+        'wrong one, or a wrong one for correct',
     );
   }
 

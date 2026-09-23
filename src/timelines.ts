@@ -302,6 +302,82 @@ export interface PhysicsOutsideArm {
 }
 
 /**
+ * A value a basis arm is measured at: a stated number (a key's or the tuning
+ * table's, before `toPose`) and the constraint `fps` it is stepped at, where the
+ * arm's claim depends on the rate. Absent `fps` is the constraint's own rate.
+ */
+export interface PhysicsBasisWitness {
+  value: number;
+  fps?: number;
+}
+
+/**
+ * Why one way out of a physics bound is refused, in the one of two kinds it is
+ * (issue #798).
+ *
+ * - **arithmetic** — the runtime cannot compute the value: an expression in the
+ *   integrator is non-finite at it, whatever the rest of the rig does.
+ *   `expression` says which and `lines` cites where.
+ * - **behavioural** — the runtime computes it, finitely, and the rig runs
+ *   wrongly: a run-away, an inverted jiggle, a constraint doing nothing.
+ *   Refusing it is rigc's call, and the sentence says so.
+ *
+ * ⚠️ The line between them is **non-finite within the walk that measures it**,
+ * never "non-finite eventually". [measured] through spine-core on the generated
+ * physics fixture, stepped from `Physics.reset` at 60 fps under a displacing
+ * animation: a setup `damping` of 2 is finite for 1,064 steps and its velocity
+ * is Infinity at step 1,065, and 1.0001 is finite over 4,000; a `mass` of −1
+ * takes the offset to 2.7e6 in 120 steps and is finite on every one. Every
+ * run-away overflows at SOME horizon, so "eventually" would call each of them
+ * arithmetic and the distinction would say nothing. The arithmetic arms are
+ * non-finite from the first or second step: `mass` 0 at step 1, a `damping` of
+ * −0.5 at 45 fps at step 2.
+ *
+ * `witness` is the value `T113` steps through the runtime to hold `kind`
+ * against it: an arithmetic arm has to go non-finite within its 120 steps, a
+ * behavioural one has to stay finite for all of them.
+ */
+export type PhysicsBoundBasis =
+  | {
+      kind: 'arithmetic';
+      /** True for the pose values this arm is about — every one of them outside the bound. */
+      when: (poseValue: number) => boolean;
+      witness: PhysicsBasisWitness;
+      /** The expression that is non-finite at the value, and what that does to the pose. */
+      expression: string;
+      /** Where the runtime computes it, in spine-core 4.3.13's `dist`. */
+      lines: string;
+    }
+  | {
+      kind: 'behavioural';
+      /** True for the pose values this arm is about — every one of them outside the bound. */
+      when: (poseValue: number) => boolean;
+      witness: PhysicsBasisWitness;
+      /** What the runtime does with the value, finitely — the reason the rig is wrong. */
+      does: string;
+    };
+
+/**
+ * One arm's reason, in the words every sentence that refuses a value by it
+ * prints: an arithmetic arm names its expression and lines, a behavioural one
+ * says that refusing it is rigc's call and then what the value does.
+ *
+ * ⚠️ The behavioural reason ENDS on `does`, so a sentence built on it ends on
+ * what the value does — `T100` holds `strength`'s setup sentences to ending on
+ * the row's own `outside` arm, and this order is what keeps that true.
+ */
+export function physicsBasisSays(arm: PhysicsBoundBasis): string {
+  return arm.kind === 'arithmetic'
+    ? `${arm.expression} (\`${arm.lines}\`)`
+    : `the runtime runs this value finitely, so refusing it is rigc's call rather than the runtime's: ${arm.does}`;
+}
+
+/** The arm of a row's `basis` that holds for a pose value, or `undefined` where none does. */
+export function physicsBasisFor(rule: PhysicsPoseRule, poseValue: number): PhysicsBoundBasis | undefined {
+  return rule.basis.find((arm) => arm.when(poseValue));
+}
+
+/**
  * One physics property `A23` has an opinion about, stated once for the two
  * layers that hold it.
  *
@@ -393,12 +469,26 @@ export interface PhysicsPoseRule {
    * the wrong fix.
    */
   outside: readonly PhysicsOutsideArm[] | null;
+  /**
+   * Why each way out of the bound is refused — one arm per way out, arithmetic
+   * or behavioural, disjoint and together covering every pose value `poseOk`
+   * refuses (issue #798). `A23`'s setup sentence prints the arm that holds for
+   * the value, and the row's `why` — the key's sentence — opens with the arms a
+   * key can still take. Until this field existed `src/types.ts` said of all four
+   * rows that "the bounds are the runtime's, not a policy", which is true of two
+   * of the eight ways out.
+   */
+  basis: readonly PhysicsBoundBasis[];
   /** The bound in words, for a message: what the value has to be. */
   states: string;
   /** The bound a KEY is held to, where `keyOk` widens it. */
   statesKeyed: string;
   /**
-   * What the runtime does outside the bound, with the lines that say so.
+   * What the runtime does outside the bound, with the lines that say so. It
+   * OPENS with the basis of the ways out a key can take — the arithmetic
+   * arm's expression, or the behavioural arm's "refusing it is rigc's call"
+   * and what the value does (issue #798) — quoted off the same `basis` objects
+   * the setup sentence prints, so the two cannot say different things.
    *
    * ⚠️ It is the sentence a **key** is refused with — `physicsKeyRefusal` is
    * this field's only reader, and the setup pose's own wording lives beside
@@ -427,7 +517,87 @@ const STRENGTH_OUTSIDE: readonly PhysicsOutsideArm[] = [
 ];
 
 /**
- * Every physics property with a bound the runtime supports, and **only** those.
+ * The eight ways out of the four bounds, each with its basis (issue #798). They
+ * are named constants rather than literals inside the rows because each row's
+ * `why` quotes its own — the key's sentence and `A23`'s setup sentence are then
+ * one text about one number, as `STRENGTH_OUTSIDE` already made them for two.
+ *
+ * 📏 Every witness below was stepped through spine-core 4.3.13 on the generated
+ * physics fixture — `x` and `y` driven, 120 steps from `Physics.reset` at 60 fps
+ * under an animation that swings the constraint's bone and brings it back — as
+ * the constraint's SETUP value: `mass` 0 is NaN at step 1 (`xVelocity`, and the
+ * bone's `worldX` with it); `mass` −1 is finite on every step and runs the
+ * offset away to 2.7e6; `strength` 0 and −5 are finite; `mix` 0 poses the bone
+ * exactly where the rig with no constraint does, on every step; `mix` −0.5 is
+ * finite and moves the bone by exactly −1× what +0.5 moves it by; `damping` 2 is
+ * finite over the walk (Infinity only at step 1,065); `damping` −0.5 at 45 fps is
+ * NaN at step 2. `T113` re-takes all eight on every run.
+ */
+const MIX_BELOW_0: PhysicsBoundBasis = {
+  kind: 'behavioural',
+  when: (v) => v < 0,
+  witness: { value: -0.5 },
+  does:
+    'below 0 the jiggle is applied inverted, on `x` and `y` exactly the offset a positive mix of the same size ' +
+    'applies, mirrored (`PhysicsConstraint.js:172,174`), and `PhysicsConstraintPose` documents mix as ' +
+    '"a percentage (0+)" where a transform constraint documents its own as "unbounded"',
+};
+const MIX_AT_0: PhysicsBoundBasis = {
+  kind: 'behavioural',
+  when: (v) => v === 0,
+  witness: { value: 0 },
+  does: 'at 0 `update` returns before it does anything (`PhysicsConstraint.js:109-111`), so the constraint is muted',
+};
+const MASS_AT_0: PhysicsBoundBasis = {
+  kind: 'arithmetic',
+  // The pose holds 1 / mass, so a mass of 0 arrives as Infinity (−0 as −Infinity).
+  when: (v) => !Number.isFinite(v),
+  witness: { value: 0 },
+  expression:
+    'at 0 `massInverse = 1 / mass` is Infinity and `m = t * massInverse` multiplies every velocity update, so the ' +
+    'first step takes every velocity and offset to NaN',
+  lines: 'SkeletonJson.js:309, Animation.js:2140, PhysicsConstraint.js:149,156,211',
+};
+const MASS_BELOW_0: PhysicsBoundBasis = {
+  kind: 'behavioural',
+  when: (v) => Number.isFinite(v) && v < 0,
+  witness: { value: -1 },
+  does:
+    'below 0 `massInverse` is a finite negative, which flips the sign of every force the velocity update applies, ' +
+    'so the restoring force pushes the offset away and it grows with every step',
+};
+const STRENGTH_BELOW_0: PhysicsBoundBasis = {
+  kind: 'behavioural',
+  when: STRENGTH_OUTSIDE[0].when,
+  witness: { value: -5 },
+  does: STRENGTH_OUTSIDE[0].says,
+};
+const STRENGTH_AT_0: PhysicsBoundBasis = {
+  kind: 'behavioural',
+  when: STRENGTH_OUTSIDE[1].when,
+  witness: { value: 0 },
+  does: STRENGTH_OUTSIDE[1].says,
+};
+const DAMPING_ABOVE_1: PhysicsBoundBasis = {
+  kind: 'behavioural',
+  when: (v) => v > 1,
+  witness: { value: 2 },
+  does: 'above 1 every velocity grows on every step and the offset diverges',
+};
+const DAMPING_BELOW_0: PhysicsBoundBasis = {
+  kind: 'arithmetic',
+  when: (v) => v < 0,
+  // 45 rather than 60: at 60 the exponent is exactly 1 and a negative base is
+  // finite, which is the whole of #748.
+  witness: { value: -0.5, fps: 45 },
+  expression: 'at any fps where `60 / fps` is not whole it is a negative number raised to a fractional power, which is NaN',
+  lines: 'PhysicsConstraint.js:148,210',
+};
+
+/**
+ * Every physics property with a bound, and **only** those — each bound either
+ * where the runtime's arithmetic fails or where the value runs and runs wrongly,
+ * and each row's `basis` says which.
  *
  * 🚫 `inertia`, `wind` and `gravity` are absent on purpose. The runtime
  * documents no range for any of them and the integrator diverges on none:
@@ -439,11 +609,25 @@ const STRENGTH_OUTSIDE: readonly PhysicsOutsideArm[] = [
  * failure this repository has already paid for twice (issues #44, #262).
  *
  * 🚫 There is no UPPER bound on `mix` either, for the same reason and a stronger
- * one: `PhysicsConstraintPose` documents it as "a percentage (0+)", and a keyed
- * mix of 1.5 changes nothing inside the integration at all — it multiplies the
- * finished offset onto the bone (`:172,174,251,256,287`), so it is an over-mix and
- * an over-mix is a real idiom (the same argument `CONSTRAINT_TIMELINES` makes for
- * a transform mix).
+ * one: `PhysicsConstraintPose` documents it as "a percentage (0+)", and on `x`
+ * and `y` a keyed mix of 1.5 changes nothing inside the integration at all — it
+ * multiplies the finished offset onto the bone (`:172,174,251,253`), so it is an
+ * over-mix and an over-mix is a real idiom (the same argument
+ * `CONSTRAINT_TIMELINES` makes for a transform mix).
+ *
+ * ⚠️ On `rotate` and `shearX` that is not the whole of it, and the sentence this
+ * replaced said it was (issue #798): `mr = (rotate + shearX) * mix` (`:188`) is
+ * read INSIDE the rotation solve (`:190,192,230`), so there mix changes what is
+ * integrated as well as how much of it is applied. [measured] on the generated
+ * physics fixture with `rotate: 1` added, 120 steps from `Physics.reset` at
+ * 60 fps: a setup mix of −0.5 leaves `xOffset` equal to the mix-1 run's while
+ * `rotateOffset` peaks at 1.4151 against the mix-1 run's 1.7994. Finite either
+ * way, which is all the `mix` row's basis claims.
+ *
+ * 🔎 Each row's `basis` says, per way out, whether the runtime's arithmetic
+ * fails there or the value runs and rigc refuses what it does (issue #798). Of
+ * the eight ways out, two are arithmetic — `mass` at 0 and `damping` below 0 —
+ * and six are rigc's call.
  */
 export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
   {
@@ -454,9 +638,27 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     keyOk: (v) => v >= 0,
     inertAtSetup: true,
     outside: null,
+    // 🔑 Both ways out are BEHAVIOURAL (issue #798), and the negative one is the
+    // question #798 asked: a transform constraint resting at a negative mix is
+    // accepted (`T105`) and a physics one is refused. [measured] the arithmetic
+    // is the same on both sides, a signed scale of what the constraint applies
+    // and finite on every step: on the generated physics fixture a setup mix of
+    // −0.5 moves the bone by exactly −1× what +0.5 moves it by, step for step,
+    // and a transform constraint at `mixRotate` −0.5 rotates its bone by exactly
+    // −1× what +0.5 does. So neither the refusal nor the acceptance is the
+    // runtime's arithmetic. What differs is the runtime's own DOCUMENTED range,
+    // and each rule follows its own: `PhysicsConstraintPose.mix` is "a
+    // percentage (0+)" and `TransformConstraintPose.mixRotate` is "a percentage
+    // (unbounded)". Neither is wrong; both are rigc's call, made on the
+    // runtime's text rather than on its arithmetic, and `T114` holds the
+    // mirror, the finiteness and both documented ranges against the runtime.
+    basis: [MIX_BELOW_0, MIX_AT_0],
     states: '> 0',
     statesKeyed: '>= 0',
-    why: 'the runtime documents it as a percentage (0+) and `update` returns immediately at 0 (`PhysicsConstraint.js:109-111`)',
+    // A key is refused below 0 only, so the key's sentence is that arm's.
+    why:
+      `${physicsBasisSays(MIX_BELOW_0)}. 0 is a key the runtime has a branch for: \`update\` returns immediately ` +
+      '(`PhysicsConstraint.js:109-111`), which mutes the constraint for the span',
   },
   {
     timeline: 'mass',
@@ -466,12 +668,12 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     keyOk: null,
     inertAtSetup: false,
     outside: null,
+    // The one row with a way out of each kind: 0 is the runtime's arithmetic
+    // and below 0 is rigc's call, so the key's sentence says both, in that order.
+    basis: [MASS_AT_0, MASS_BELOW_0],
     states: '> 0',
     statesKeyed: '> 0',
-    why:
-      'the pose holds 1/mass, so 0 is an infinite massInverse and `m = t * massInverse` ' +
-      '(`PhysicsConstraint.js:149,211`) takes every velocity to NaN, while a negative mass ' +
-      'injects energy instead of resisting it',
+    why: `${physicsBasisSays(MASS_AT_0)}; ${physicsBasisSays(MASS_BELOW_0)}`,
   },
   {
     timeline: 'strength',
@@ -481,13 +683,14 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     keyOk: (v) => v >= 0,
     inertAtSetup: false,
     outside: STRENGTH_OUTSIDE,
+    basis: [STRENGTH_BELOW_0, STRENGTH_AT_0],
     states: '> 0',
     statesKeyed: '>= 0',
     // The key's sentence names the arm a key can still take — below 0 — off the
     // same object the setup sentence reads, so the two say one thing about it.
     why:
-      'it is the restoring force — `velocity += (a - offset * strength) * m` ' +
-      `(\`PhysicsConstraint.js:150,156,212,220\`) — so ${STRENGTH_OUTSIDE[0].says}. 0 is a key the runtime plays: ` +
+      `${physicsBasisSays(STRENGTH_BELOW_0)}. It is the restoring force, \`velocity += (a - offset * strength) * m\` ` +
+      '(`PhysicsConstraint.js:150,156,212,220`), and a multiplicand everywhere it is read. 0 is a key the runtime plays: ' +
       'it releases the constraint for the span, damping and inertia still apply, and the next key pulls the offset back',
   },
   {
@@ -498,6 +701,12 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     keyOk: null,
     inertAtSetup: false,
     outside: null,
+    // Below 0 is arithmetic at every rate where the exponent is fractional;
+    // above 1 is a run-away, finite until the velocity overflows (step 1,065
+    // for a setup of 2 at 60 fps), so it is behavioural by the line
+    // `PhysicsBoundBasis` draws — the card that asked for the bases (#798)
+    // counted it arithmetic, and the walk says otherwise.
+    basis: [DAMPING_ABOVE_1, DAMPING_BELOW_0],
     states: 'inside [0, 1]',
     statesKeyed: 'inside [0, 1]',
     // 🔑 The interval is CLOSED (issue #794). `1 ** x` is 1 and `0 ** x` is 0
@@ -521,11 +730,11 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     // steps of the key at 45 and at 120 (exponents 1.3333 and 0.5).
     why:
       'the per-step decay is `damping ** (60 * step)`, with `step` = 1 / the constraint\'s `fps`, and every velocity ' +
-      'is multiplied by it (`PhysicsConstraint.js:114,148,158,163,210,222,227`), so above 1 every velocity grows on ' +
-      'every step and the offset diverges, at every rate. Below 0 the result depends on `fps`: where `60 / fps` is a ' +
+      `is multiplied by it (\`PhysicsConstraint.js:114,148,158,163,210,222,227\`), so ${DAMPING_ABOVE_1.does}, at ` +
+      "every rate — finite on every step until the velocity overflows, so refusing it is rigc's call rather than the " +
+      "runtime's. Below 0 the result depends on `fps`: where `60 / fps` is a " +
       'whole number a negative base stays finite — at 60 fps it is the velocity\'s sign flipped each step, which can ' +
-      'look like a jiggle settling — and at any other rate it is a negative number raised to a fractional power, ' +
-      'which is NaN (`(-0.5) ** (60 / 45)`), so a rig tried only at 60 fps never shows the failure. The two ends are ' +
+      `look like a jiggle settling — and ${DAMPING_BELOW_0.expression} (\`(-0.5) ** (60 / 45)\`), so a rig tried only at 60 fps never shows the failure. The two ends are ` +
       'values the runtime plays at every rate: at 1 the velocity never decays, so the jiggle holds for as long as it ' +
       'runs, and at 0 every velocity is zeroed on every step, so the offset follows the bone with no overshoot',
   },
