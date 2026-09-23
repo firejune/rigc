@@ -56,22 +56,6 @@ it cuts both ways:
   trusted at all. So the [Spine Runtimes License Agreement](https://esotericsoftware.com/spine-runtimes-license)
   applies to rigc exactly as it applies to any other runtime integration.
 
-🗓️ **One sentence left this section on 2026-09-05, and its removal is a decision
-rather than a tidy-up.** It read *"rigc is complementary to the editor. It is not
-a replacement for it, and it is not a way around one."* That was a claim about
-what rigc would never become, and
-[#380](https://github.com/firejune/rigc/issues/380) — a format-agnostic core with
-its own format and web player, Spine kept as one backend among others — is a
-course the claim cannot survive. A promise the roadmap contradicts is worth less
-than no promise, so it is retired rather than reworded
-([#398](https://github.com/firejune/rigc/issues/398)). What a reader can check is
-unchanged: rigc emits Spine skeleton data, links `spine-core`, validates through
-it with no flag that turns that off, and carries the licence obligation the next
-section states in full. A backend emitting something other than Spine data would
-have no spine-core to check it against, and #380 treats an oracle of its own as
-the prerequisite for shipping one — nothing here makes an unchecked emit path
-acceptable.
-
 ### Licensing, stated plainly
 
 rigc's own code is MIT (see [LICENSE](LICENSE)). That says nothing about Spine, and
@@ -686,6 +670,7 @@ letting `A17` blame the editor for the harness's own doing.
 | 🔬 **[docs/SPEC_COVERAGE.md](docs/SPEC_COVERAGE.md)** | Spine 4.3's full export surface against what rigc emits and what the official examples measurably use, with the ordered gap list |
 | 🎓 **[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 49 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
 | 📋 [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) · [GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md) · [PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) | the live rung ledger, the clause statements a candidate is graded against, and how to run an agent through the ladder and score what comes back |
+| 🧬 [GENERATIONS.md](https://github.com/firejune/rigc/blob/main/docs/GENERATIONS.md) | **Spine data from another generation.** Why a 3.8–4.2 file read as 4.3 fails in silence, the policy that follows (detect from `skeleton.spine`, never guess, play on the matching runtime), what `A16` and `ingest` do with such a file, and the editor as the migration path. Repository material |
 | 🗺️ [ROADMAP.md](https://github.com/firejune/rigc/blob/main/ROADMAP.md) | where this is going, and where it has been. What 1.0 had to mean before the number was claimed, and what it was claimed on — conditions rather than a feature list, because direction here comes from what users hit |
 | 📐 [CLAUDE.md](https://github.com/firejune/rigc/blob/main/CLAUDE.md) | **the doctrine** — why the validator's messages are the product, why nothing reaches disk before green, why no number is ever invented, and what a change has to keep. [CONTRIBUTING.md](https://github.com/firejune/rigc/blob/main/CONTRIBUTING.md) calls it worth ten minutes before a first patch. Repository material |
 

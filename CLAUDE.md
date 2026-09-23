@@ -215,6 +215,9 @@ sincere about it. rigc exists to convert that silence into a named failure.
   outside itself are `tools/plate.ts` and `tools/font5x7.ts`. A module added
   under `tools/` and left out of `files` still runs from a clone — the installed
   package is where it throws `Cannot find module`, on the command that needs it.
+- Spine data generations — `docs/GENERATIONS.md` is the policy (detect from
+  `skeleton.spine`, never guess, play on the matching runtime, the editor is the
+  migration path); `src/generation.ts` is its one reader.
 - Coordinate contract: manifests are in **crop pixels, y down, origin top-left**;
   Spine world is **y up, origin at the bottom-left of the crop**. The whole
   conversion lives in `src/transform.ts` (`cropToSpineY`, `toBoneLocal`,
