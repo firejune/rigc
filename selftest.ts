@@ -10913,6 +10913,175 @@ function runStaticRigSuite(): number {
         'may move those and nothing else',
     );
   }
+
+  // --- S91-S92: a key is posed where the runtime stores it (issue #771) -----
+  //
+  // 🚨 spine-core keeps every key time in a `Float32Array`, and a time the float
+  // cannot hold exactly is stored at the nearest one — which for the two times
+  // below is LATER than the double the file states. `A43`, `A45` and `A46`
+  // step the animation to a key's own time and read the pose, so for as long as
+  // they stepped to the file's number they posed one float step BEFORE the key:
+  // before a first key that is the setup value, and past a stepped key it is
+  // the key before. `ingest_probe`'s `alpha` key at 0.2 was refused that way as
+  // `alpha posed 1.0000, the key states value 0.4` on a file every player shows
+  // correctly from the stored key on (IG72 now holds that probe's build).
+  //
+  // ⚠️ The two times are CHOSEN, and the one property they are chosen for is
+  // derived rather than trusted: a time the float stores exactly or rounds
+  // down tests nothing here, and the case says so instead of passing. Both
+  // shapes are on every rule — a first key at the late time, and a stepped key
+  // followed by one at it — and every key value is an exact fifth.
+  {
+    const SEPARABLE = 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN';
+    const TINT = 'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN';
+    const SERIES = 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES';
+    const LATE_FIRST = 0.2;
+    const LATE_NEXT = 0.6;
+    const storedEarly = [LATE_FIRST, LATE_NEXT].filter((t) => !(Math.fround(t) > t));
+    const storedRig = writeProbeRig({
+      slots: [
+        { name: 'block', bone: 'block', attachment: 'block' },
+        { name: 'marker', bone: 'block', attachment: 'marker', dark: '204060' },
+      ],
+    });
+    const storedTracks = [
+      { slot: 'block', property: 'alpha', keys: [{ t: LATE_FIRST, v: [0.4] }, { t: 1, v: [0.8] }] },
+      { slot: 'block', property: 'rgb', keys: [{ t: 0, v: [1, 0.8, 0.6], ease: 'stepped' }, { t: LATE_NEXT, v: [0.2, 0.4, 1] }] },
+      {
+        slot: 'marker',
+        property: 'rgba2',
+        keys: [
+          { t: LATE_FIRST, v: [1, 0.8, 0.6, 0.4, 0.2, 0.4, 0.6], ease: 'stepped' },
+          { t: LATE_NEXT, v: [0.6, 0.4, 0.2, 0.8, 1, 0.8, 0.6] },
+        ],
+      },
+    ];
+    const storedMotion = { ...STATIC_MOTION, animations: { stored: { duration: 1, loop: false, tracks: storedTracks } } };
+    const colourGate = gateProbe(storedRig, storedMotion);
+    const seriesProbe = writeSeriesProbe({}, [{ t: LATE_FIRST, mode: 'hold', index: SERIES_COUNT - 1 }]);
+    const storedSeries = buildSeriesProbe(seriesProbe);
+    const seriesGate = storedSeries.report;
+    const storedProbes = [
+      ...storedEarly.map((t) => `the float stores ${t} at ${Math.fround(t)}, which is not later than ${t}, so this case measures nothing at it`),
+      ...colourGate.failures.map((f) => `${f.assertion}: ${f.detail}`),
+      ...[SEPARABLE, TINT].filter((name) => !colourGate.passed.includes(name)).map((name) => `${name} did not run and hold on the colour probe`),
+      ...(seriesGate === null ? [`the series probe was refused at compile: ${storedSeries.message}`] : []),
+      ...(seriesGate?.failures ?? []).map((f) => `${f.assertion}: ${f.detail}`),
+      ...(seriesGate === null || seriesGate.passed.includes(SERIES) ? [] : [`${SERIES} did not run and hold on the series probe`]),
+    ];
+    const storedHeld = storedProbes.length === 0;
+    say(
+      'S91_A_KEY_AT_A_TIME_THE_FLOAT_STORES_LATER_IS_POSED_AT_THE_KEY_BY_EVERY_RULE_THAT_POSES_ONE',
+      storedHeld,
+      probeDetail(
+        storedHeld,
+        storedProbes,
+        `keys at ${LATE_FIRST} (stored ${Math.fround(LATE_FIRST)}) and ${LATE_NEXT} (stored ${Math.fround(LATE_NEXT)}) — an ` +
+          'alpha first key, an rgb after a stepped key, an rgba2 both ways, a hold sequence key — and A45, A43 and A46 ' +
+          `each ran and held; ${colourGate.passed.length} and ${seriesGate?.passed.length ?? 0} assertion(s) passed`,
+        (count) => `${count} thing(s) posed off the stored key:`,
+      ),
+      'issue #771: a correct file refused because the gate stepped to the file\'s double and the runtime keeps a ' +
+        'float, so the pose read was one float step before the key it judged. A validity rule refusing a file every ' +
+        'player shows correctly is the worst direction this gate can be wrong in, and the author has nothing to repair',
+    );
+
+    // The near-miss direction: posing at the stored key must not make the rules
+    // blind AT those times. Each plant repeats a late first key at its own time
+    // with another value — a key time another key repeats is read by nothing,
+    // which is clause 2's own shape — so the runtime poses the repeat's value at
+    // the key, and each rule must name the ORIGINAL key and the value the repeat
+    // poses. On the branch point the same plants fired too, but on the setup
+    // value, which is the discrimination: what was posed is in the line.
+    //
+    // ⚠️ What this adds to S91 is the BLIND direction. A rule that skipped the
+    // keys it could not pose clears S91 — a correct file stays green — and
+    // only a plant at those keys can see it: measured, with A45 skipping every
+    // key whose float differs from its double, S91 held and this went red on
+    // the empty alpha half. The alpha's repeat takes the MIDPOINT of the first
+    // key and the next, so its segment is sloped and a rule posing a little
+    // AFTER the key reads a value off the repeat's here too (S91 sees that
+    // direction as well, on its own sloped alpha). The rgba2 and sequence
+    // halves repeat the next key's value and frame.
+    const show4 = (values: readonly number[]): string => values.map((n) => n.toFixed(4)).join(', ');
+    const hexOf = (hex: string): number[] =>
+      Array.from({ length: hex.length / 2 }, (_, i) => Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16) / 255);
+    type Keys = Array<Record<string, unknown>>;
+    type SlotTimelines = Record<string, Record<string, Keys>>;
+    const repeatFirst = (keys: Keys, override: Record<string, unknown> = {}): void => {
+      keys.splice(1, 0, { ...keys[1], time: keys[0].time, ...override });
+    };
+    let alphaFirst: unknown = null;
+    let alphaRepeat: unknown = null;
+    const alphaGate = gateProbeArtifacts(storedRig, storedMotion, (skeleton) => {
+      const keys = (skeleton.animations as Record<string, { slots: SlotTimelines }>).stored.slots.block.alpha;
+      alphaFirst = keys[0].value;
+      alphaRepeat = (Number(keys[0].value) + Number(keys[1].value)) / 2;
+      repeatFirst(keys, { value: alphaRepeat });
+    });
+    let tintNext: unknown = null;
+    const tintGate = gateProbeArtifacts(storedRig, storedMotion, (skeleton) => {
+      const keys = (skeleton.animations as Record<string, { slots: SlotTimelines }>).stored.slots.marker.rgba2;
+      tintNext = keys[1].light;
+      repeatFirst(keys);
+    });
+    const seriesPlanted = (() => {
+      if (storedSeries.built === null) return null;
+      const skeleton = JSON.parse(storedSeries.built.skeletonText) as {
+        animations: Record<string, { attachments: Record<string, Record<string, Record<string, { sequence: Keys }>>> }>;
+      };
+      const keys = skeleton.animations.spark.attachments.default.glint.glint.sequence;
+      // One frame below the key's own, which is neither that frame nor the
+      // setup frame 0 the branch point showed — so the line tells the three apart.
+      const index = Number(keys[0].index) - 1;
+      keys.push({ ...keys[0], index });
+      return {
+        index,
+        report: validate({
+          skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
+          atlasText: storedSeries.built.atlasText,
+          atlasDir: seriesProbe.dirs.outDir,
+          declaredDurations: storedSeries.built.declaredDurations,
+          rig: storedSeries.built.rig,
+          profile: 'spine',
+        }),
+      };
+    })();
+    const linesOf = (report: ReturnType<typeof validate>, assertion: string): string[] =>
+      report.failures.filter((f) => f.assertion === assertion).map((f) => f.detail);
+    const alphaLines = linesOf(alphaGate, SEPARABLE);
+    const alphaWant = `alpha (t=${LATE_FIRST}): alpha posed ${show4([Number(alphaRepeat)])}, the key states value ${JSON.stringify(alphaFirst)}`;
+    const tintLines = linesOf(tintGate, TINT);
+    const tintWant = `rgba2 (t=${LATE_FIRST}): light posed (${show4(hexOf(String(tintNext)))})`;
+    const seriesLines = seriesPlanted === null ? [] : linesOf(seriesPlanted.report, SERIES);
+    const seriesWant = seriesPlanted === null ? '' : `(t=${LATE_FIRST}): the slot shows region ${JSON.stringify(seriesFrame(seriesPlanted.index))}`;
+    const onlyAt = (lines: string[], want: string): boolean => lines.length > 0 && lines.every((line) => line.includes(`(t=${LATE_FIRST})`)) && lines.some((line) => line.includes(want));
+    const firedProbes = [
+      ...(onlyAt(alphaLines, alphaWant) ? [] : [`A45 on a repeated alpha key: [${alphaLines.join(' | ')}], wanted a line with "${alphaWant}" and none at another time`]),
+      ...alphaGate.failures.filter((f) => f.assertion !== SEPARABLE).map((f) => `the alpha plant also moved ${f.assertion}: ${f.detail}`),
+      ...(onlyAt(tintLines, tintWant) ? [] : [`A43 on a repeated rgba2 key: [${tintLines.join(' | ')}], wanted a line with "${tintWant}" and none at another time`]),
+      ...tintGate.failures.filter((f) => f.assertion !== TINT).map((f) => `the rgba2 plant also moved ${f.assertion}: ${f.detail}`),
+      ...(seriesPlanted === null ? ['the series probe did not build, so nothing was planted in it'] : []),
+      ...(seriesPlanted === null || onlyAt(seriesLines, seriesWant)
+        ? []
+        : [`A46 on a repeated sequence key: [${seriesLines.join(' | ')}], wanted a line with "${seriesWant}" and none at another time`]),
+    ];
+    const firedHeld = firedProbes.length === 0;
+    say(
+      'S92_A_REPEATED_KEY_AT_A_LATE_STORED_TIME_IS_STILL_NAMED_WITH_THE_VALUE_THE_REPEAT_POSES',
+      firedHeld,
+      probeDetail(
+        firedHeld,
+        firedProbes,
+        `each rule named the key at t=${LATE_FIRST} and the value its repeat poses there — ${alphaLines[0]} · ${tintLines[0]} · ` +
+          `${seriesLines[0]}`,
+        (count) => `${count} rule(s) that went blind or read the wrong pose at the stored key:`,
+      ),
+      'the other side of S91: a fix that skipped the keys it could not pose clears S91 as well, because a correct ' +
+        'file stays green when nothing is read. What only a rule that poses AT the stored key does is read the ' +
+        'repeat\'s value there and name it in the line',
+    );
+  }
   return bad;
 }
 
@@ -59388,6 +59557,62 @@ function runIngestSuite(): number {
       'issue #714: every production export of one corpus declares no stage, so a round trip that needed a caller\'s ' +
         'box was a round trip that could only succeed by inventing one. Byte identity is the claim because it is ' +
         'the only one strong enough — a rebuild with a plausible stage would pass every figure a rung reads',
+    );
+  }
+
+  // --- IG72: the coverage probe's own build is green (issue #771) -----------
+  //
+  // Every other suite that builds a probe gates it; this one round-tripped
+  // `ingest_probe` for months with no suite asking whether its OWN build passed,
+  // and it did not — `A45` refused its `alpha` key at 0.2, a false refusal of
+  // the gate's (S91). IG71 found it only because it held a rebuild to the
+  // source's verdicts, and a failure present on both sides agrees with itself.
+  // So the probe is held to green under the profile it targets, and the
+  // renderer profile's refusals are stated rather than tolerated: each has to
+  // be a rule `spine` does not run, read off `profileSkipped` rather than listed.
+  {
+    const probe = candidates.find((c) => c.name === 'ingest_probe')!;
+    const outDir = mkdtempSync(join(tmpdir(), 'rigc-ingest-own-'));
+    const built = compile({
+      rigPath: probe.rigPath,
+      motionPath: probe.motionPath,
+      outDir,
+      manifestPath: probe.manifestPath,
+      imagesDir: probe.imagesDir,
+    });
+    const gateUnder = (profile: ValidateProfile): ReturnType<typeof validate> =>
+      validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile,
+      });
+    const own = gateUnder('spine');
+    const renderer = gateUnder('spine-html');
+    const policy = new Set(own.profileSkipped.filter((p) => p.kind === 'renderer').map((p) => p.assertion));
+    const refusedBy = [...new Set(renderer.failures.map((f) => f.assertion))];
+    const ownProbes = [
+      ...own.failures.map((f) => `under spine ${f.assertion}: ${f.detail.slice(0, 200)}`),
+      ...renderer.failures
+        .filter((f) => !policy.has(f.assertion))
+        .map((f) => `under spine-html ${f.assertion}, which is not a renderer rule: ${f.detail.slice(0, 200)}`),
+    ];
+    const ownHeld = ownProbes.length === 0;
+    say(
+      'IG72_THE_COVERAGE_PROBES_OWN_BUILD_IS_GREEN_UNDER_SPINE_AND_REFUSED_ONLY_BY_RENDERER_RULES',
+      ownHeld,
+      probeDetail(
+        ownHeld,
+        ownProbes,
+        `ingest_probe's build: under spine ${own.passed.length} pass(es), 0 failures, ${own.skipped.length} skip(s); ` +
+          `under spine-html refused by [${refusedBy.join(', ')}] only, each a renderer rule spine does not run`,
+        (count) => `${count} refusal(s) of the coverage probe's own build:`,
+      ),
+      'issue #771: every probe the selftest builds is gated green by the profile it targets, or the suite says why ' +
+        'not. This one carries a dark colour and a clipping attachment on purpose — the coverage it exists for — so ' +
+        'the renderer\'s rulebook refuses it by design, and that is the one refusal it may carry',
     );
   }
   return bad;
