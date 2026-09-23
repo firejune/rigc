@@ -8894,6 +8894,21 @@ function writeProbePng(path: string, width: number, height: number, colour: RGBA
   plate.writePng(path);
 }
 
+/**
+ * `writeProbePng` with its top-left texel clear: the art of a part that is drawn
+ * OVER something. An overlay that is opaque in every texel paints a solid
+ * rectangle, which is exactly what `A19` refuses — and since issue #777 it
+ * refuses it on the loose route too, where the file's colour type alone used to
+ * pass it. One texel is the smallest statement that the part can draw a
+ * transparent pixel, and the corner is the one no probe here samples.
+ */
+function writeOverlayProbePng(path: string, width: number, height: number, colour: RGBA): void {
+  const plate = new Plate(width, height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) plate.set(x, y, colour);
+  plate.set(0, 0, [colour[0], colour[1], colour[2], 0]);
+  plate.writePng(path);
+}
+
 interface ProbeDirs {
   dir: string;
   rigPath: string;
@@ -8908,10 +8923,21 @@ interface ProbeDirs {
  * block instead of forking a second near-identical rig. The base spec stays the
  * one every other suite already runs against.
  */
+/**
+ * The probe rig's two parts rewritten opaque in every texel — the art the
+ * packer suite's A19 negatives name on a shared page. The rig's own art keeps
+ * one clear texel each (`writeOverlayProbePng`), because a correct rig's
+ * overlays can draw a transparent pixel and every other suite gates it as one.
+ */
+function writeOpaqueProbeArt(dirs: ProbeDirs): void {
+  writeProbePng(join(dirs.dir, 'block.png'), 12, 8, [40, 60, 90, 255]);
+  writeProbePng(join(dirs.dir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
+}
+
 function writeProbeRig(extra: Record<string, unknown> = {}): ProbeDirs {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-static-'));
-  writeProbePng(join(dir, 'block.png'), 12, 8, [40, 60, 90, 255]);
-  writeProbePng(join(dir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
+  writeOverlayProbePng(join(dir, 'block.png'), 12, 8, [40, 60, 90, 255]);
+  writeOverlayProbePng(join(dir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
   const rigPath = join(dir, 'probe.rig.json');
   writeFileSync(
     rigPath,
@@ -11800,6 +11826,45 @@ function writeGreyAlphaPng(path: string, width: number, height: number): void {
   writeFileSync(path, out);
 }
 
+/**
+ * An RGBA file (colour type 6) at full alpha everywhere except the one texel
+ * `clearAt` names, which is alpha 0; `null` names none. The header of every such
+ * file says "can be transparent" — the texels are what differ.
+ */
+function writeSolidRgbaPng(path: string, width: number, height: number, clearAt: [number, number] | null): void {
+  const plate = new Plate(width, height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) plate.set(x, y, [120, 90, 60, 255]);
+  if (clearAt !== null) plate.set(clearAt[0], clearAt[1], [120, 90, 60, 0]);
+  plate.writePng(path);
+}
+
+/**
+ * A truecolour file (colour type 2) with no `tRNS` whose chunk list is whole and
+ * whose IDAT is not a zlib stream: every header reader accepts it and every
+ * decode throws, so a verdict on it says which of the two ran.
+ */
+function writeUndecodableTruecolourPng(path: string, width: number, height: number): void {
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const parts = [
+    PNG_SIGNATURE,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', new Uint8Array([0xff, 0xff, 0xff, 0xff])),
+    pngChunk('IEND', new Uint8Array(0)),
+  ];
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  writeFileSync(path, out);
+}
+
 const A19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
 
 /**
@@ -12159,6 +12224,151 @@ function runPngTransparencySuite(): number {
       missing.length === 0 ? line.trim() : `missing: ${missing.join('; ')} — got: ${line.trim() || run.stdout.slice(-300)}`,
       '`validate <dir>` reads a stageless skeleton with no rig beside it, so nothing there can say which opaque ' +
         'image is the plate; "nothing here qualifies" left the reader with no door, and there are two',
+    );
+  }
+
+  // --- PT11–PT13: one reading of a part's transparency for both routes (issue #777)
+  //
+  // The loose route read "can be transparent" off the file header and the
+  // packed route read the texels, so a part saved as RGBA with no texel below
+  // full alpha passed loose and was refused by the pack of the same rig. The
+  // header is now only the fast negative; for a file that COULD be transparent
+  // the texels decide on both routes.
+  /** Every texel of `plate` whose alpha is below full, counted. */
+  const clearTexels = (path: string): number => {
+    const plate = readPlate(path);
+    let clear = 0;
+    for (let y = 0; y < plate.height; y++) for (let x = 0; x < plate.width; x++) if (plate.get(x, y)[3] < 255) clear++;
+    return clear;
+  };
+  /** The region an A19 detail is about: the packed form's region, or the loose form's page file without its extension. */
+  const subjectOf = (detail: string): string =>
+    /^part "([^"]+)" /.exec(detail)?.[1] ?? basename(/^part image "([^"]+)" /.exec(detail)?.[1] ?? '', '.png');
+  const refusedParts = (report: ReturnType<typeof validate>): string[] => [...new Set(a19Details(report).map(subjectOf))].sort();
+
+  {
+    const copy = privateFixtureCopy(ARTICULATED, 'rigc-looseopaque-');
+    const overlayPath = join(copy.dir, fromManifest.overlay.image);
+    const basePath = join(copy.dir, fromManifest.base.image);
+    writeSolidRgbaPng(overlayPath, fromManifest.overlay.w, fromManifest.overlay.h, null);
+    writeSolidRgbaPng(basePath, fromManifest.base.w, fromManifest.base.h, null);
+    const gated = gateLooseAndPacked(
+      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-looseopaque-out-')), 'loose'),
+      'spine-html',
+    );
+    const loose = a19Details(gated.loose);
+    const packed = a19Details(gated.packed);
+    const texels = `${fromManifest.overlay.w}x${fromManifest.overlay.h}`;
+    const looseParts = refusedParts(gated.loose);
+    const packedParts = refusedParts(gated.packed);
+    const probes = [
+      // Two-sided: both files have to be ones the header calls transparent and
+      // the texels do not, or the case measured the header and nothing else.
+      ...[overlayPath, basePath].flatMap((path) => {
+        const info = readPngInfo(path);
+        const clear = clearTexels(path);
+        return info.hasTransparency && clear === 0
+          ? []
+          : [`${basename(path)} is not an RGBA file with no clear texel (colour type ${info.colourType}, ${clear} clear)`];
+      }),
+      ...(loose.some((d) => refuses(d, overlayRegion) && d.includes(`is opaque in every one of its ${texels} texels`) && /carries an alpha channel/.test(d))
+        ? []
+        : [`the loose build did not refuse "${overlayRegion}" by its ${texels} texels: ${loose.join(' | ') || 'A19 raised nothing'}`]),
+      ...(packed.some((d) => refuses(d, overlayRegion) && d.includes(`is opaque in every one of its ${texels} texels`))
+        ? []
+        : [`the packed build did not refuse region "${overlayRegion}" by its ${texels} texels: ${packed.join(' | ') || 'A19 raised nothing'}`]),
+      ...(JSON.stringify(looseParts) === JSON.stringify(packedParts)
+        ? []
+        : [`the two routes disagree part for part: loose refuses ${JSON.stringify(looseParts)}, packed ${JSON.stringify(packedParts)}`]),
+      ...[...loose, ...packed].filter((d) => refuses(d, baseRegion)).map((d) => `the base plate was refused: ${d.slice(0, 140)}`),
+    ];
+    const held = probes.length === 0;
+    say(
+      'PT11_AN_OPAQUE_RGBA_OVERLAY_IS_REFUSED_BY_ITS_TEXELS_ON_BOTH_ROUTES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `"${overlayRegion}" and the base plate "${baseRegion}" rewritten as RGBA with no clear texel, on the ` +
+          `articulated rig with no stage: both routes refuse ${JSON.stringify(looseParts)} by the texels and ` +
+          `exempt the plate the rig names — loose: ${/is opaque in every one of .*? texels/.exec(loose.find((d) => refuses(d, overlayRegion)) ?? '')?.[0] ?? ''}`,
+        (count) => `${count} thing(s) the two routes did not agree on:`,
+      ),
+      'the runtime draws the texels, not the header, so a file that declares an alpha channel and never uses it ' +
+        'paints the same solid rectangle loose as packed — and one part must not get two verdicts from one rig',
+    );
+  }
+
+  {
+    const copy = privateFixtureCopy(ARTICULATED, 'rigc-looseclear-');
+    const overlayPath = join(copy.dir, fromManifest.overlay.image);
+    // The one clear texel is the LAST one the scan reaches, so a pass needs the
+    // whole image read rather than a lucky first row.
+    const last: [number, number] = [fromManifest.overlay.w - 1, fromManifest.overlay.h - 1];
+    writeSolidRgbaPng(overlayPath, fromManifest.overlay.w, fromManifest.overlay.h, last);
+    const gated = gateLooseAndPacked(
+      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-looseclear-out-')), 'loose'),
+      'spine-html',
+    );
+    const clear = clearTexels(overlayPath);
+    const probes = [
+      ...(clear === 1 ? [] : [`the overlay carries ${clear} clear texel(s) rather than one`]),
+      ...(['loose', 'packed'] as const).flatMap((route) => {
+        const report = gated[route];
+        return report.passed.includes(A19) ? [] : [`${route}: ${verdict(report)}`];
+      }),
+    ];
+    const held = probes.length === 0;
+    say(
+      'PT12_AN_RGBA_OVERLAY_WITH_ONE_CLEAR_TEXEL_PASSES_ON_BOTH_ROUTES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `"${overlayRegion}" as RGBA whose one clear texel is its last, at ${last.join(',')}: A19 passed loose and packed`,
+        (count) => `${count} thing(s) the one clear texel did not buy:`,
+      ),
+      'the scan asks "can this part draw a transparent pixel", and one texel is an answer — a scan that demands ' +
+        'more has invented a threshold nobody stated',
+    );
+  }
+
+  {
+    // A truecolour file with no tRNS whose pixel data is not a zlib stream at
+    // all: the header is whole, so a decode would throw and a scan cannot have
+    // run for the refusal below to be the header's sentence.
+    let path = '';
+    const report = gatePartImage((p) => {
+      path = p;
+      writeUndecodableTruecolourPng(p, 12, 8);
+    });
+    let decodes = 'decodes';
+    try {
+      readPlate(path);
+    } catch (err) {
+      decodes = (err as Error).message;
+    }
+    const detail = a19Details(report).find((d) => refuses(d, 'block')) ?? '';
+    const probes = [
+      ...(decodes === 'decodes' ? ['the planted pixel data decodes, so this case cannot tell a scan from none'] : []),
+      ...(/colour type 2 \(truecolour\) with no tRNS chunk/.test(detail)
+        ? []
+        : [`block.png was not refused by its header: ${verdict(report)}`]),
+      ...(/threw/.test(verdict(report)) ? [`a decode ran: ${verdict(report)}`] : []),
+    ];
+    const held = probes.length === 0;
+    say(
+      'PT13_A_TRUECOLOUR_OVERLAY_WITH_NO_TRNS_IS_REFUSED_BY_ITS_HEADER_WITHOUT_A_SCAN',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `colour type 2 with no tRNS and pixel data that does not decode (${decodes.replace(path, '<the file>').slice(0, 80)}): refused by the ` +
+          `header's sentence, and no decode ran — ${/cannot be transparent anywhere: .*? with no tRNS chunk/.exec(detail)?.[0] ?? ''}`,
+        (count) => `${count} thing(s) the fast negative did not do:`,
+      ),
+      "#215's rule is the fast negative: a file with nowhere to keep a clear texel needs no scan, and paying for " +
+        'one would make every opaque-by-type overlay cost a decode it cannot change',
     );
   }
   return bad;
@@ -28213,7 +28423,7 @@ function buildTurnRig(
   const dir = mkdtempSync(join(tmpdir(), 'rigc-turn-'));
   const width = TURN_R * 2;
   const height = 380;
-  writeProbePng(join(dir, 'head.png'), width, height, [200, 170, 150, 255]);
+  writeOverlayProbePng(join(dir, 'head.png'), width, height, [200, 170, 150, 255]);
   const uvs: number[] = [];
   const vertices: number[] = [];
   for (const id of TURN_ORDER) {
@@ -28241,7 +28451,7 @@ function buildTurnRig(
     head: { type: 'mesh', image: 'head.png', width, height, uvs, triangles, vertices },
   };
   if (extra.swapTo !== undefined) {
-    writeProbePng(join(dir, `${extra.swapTo}.png`), 20, 20, [90, 60, 40, 255]);
+    writeOverlayProbePng(join(dir, `${extra.swapTo}.png`), 20, 20, [90, 60, 40, 255]);
     attachments[extra.swapTo] = { type: 'region', image: `${extra.swapTo}.png`, width: 20, height: 20 };
   }
   const rigPath = join(dir, 'turn.rig.json');
@@ -36346,9 +36556,10 @@ function runPackerSuite(): number {
   // A packed page's own FILE all but always declares transparency, because the
   // gutter is transparent — so A19's page-level question is answered by the
   // packing itself and would have become a pass that measures nothing the moment
-  // packs became gateable here. The probe rig's two parts are written fully
+  // packs became gateable here. The probe rig's two parts are rewritten fully
   // OPAQUE, so on a shared page A19 has to name each of them.
   const opaqueDirs = writeProbeRig();
+  writeOpaqueProbeArt(opaqueDirs);
   writeFileSync(join(opaqueDirs.dir, 'probe.motion.json'), `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
   const opaqueResult = compile({
     rigPath: opaqueDirs.rigPath,
@@ -36708,6 +36919,7 @@ function runPackerSuite(): number {
   // not the cosmetic one it was filed as. A19 opens the rectangle and stops at
   // the first transparent texel it finds.
   const turnedOpaqueDirs = writeProbeRig();
+  writeOpaqueProbeArt(turnedOpaqueDirs);
   writeFileSync(join(turnedOpaqueDirs.dir, 'probe.motion.json'), `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
   const turnedOpaqueResult = compile({
     rigPath: turnedOpaqueDirs.rigPath,
@@ -37523,7 +37735,7 @@ function runPackerSuite(): number {
       'PK69_A_STAGELESS_SPEC_RIGS_OPAQUE_BACKDROP_IS_REFUSED_WITH_THE_TWO_WAYS_TO_DECIDE_IT',
       missing.length === 0,
       missing.length === 0
-        ? `${packed} (the loose build of the same rig ${looseVerdict}: its file declares an alpha channel)`
+        ? `${packed} (the loose build of the same rig ${looseVerdict})`
         : `missing: ${missing.join('; ')} — got: ${packed}`,
       'a rig spec cannot name a base plate, so on a stageless one nothing decides it; the refusal stands, and it ' +
         'has to say what would decide it rather than that nothing does',
@@ -50782,6 +50994,69 @@ function runCurrencySuite(): number {
         probeDetail(held, probes, `both rows and the §4.12 quote carry the refusal's third door as printed — and, planted: ${note}`),
         'the third door is a spelling an agent has to type, so the page that teaches it has to carry it the way the ' +
           'refusal prints it; a door the guide words differently is one nobody can copy',
+      );
+    }
+  }
+
+  // --- CUR89–CUR90: the loose route's texel sentence the pages quote is the one A19 prints (issue #777)
+  //
+  // The clauses are read off a live refusal — the articulated rig, stageless,
+  // its first plain overlay rewritten as RGBA at full alpha in every texel —
+  // and each page's A19 row has to carry both, verbatim, as code spans.
+  // CUR74–CUR75 hold the row's `*"…"*` quotes to the base-plate sentence; these
+  // are a second sentence and are quoted the way #705's already is.
+  {
+    const fromManifest = manifestBaseAndOverlay(ARTICULATED);
+    const overlayName = basename(fromManifest.overlay.image, '.png');
+    const copy = privateFixtureCopy(ARTICULATED, 'rigc-loosequote-');
+    writeSolidRgbaPng(join(copy.dir, fromManifest.overlay.image), fromManifest.overlay.w, fromManifest.overlay.h, null);
+    const gated = gateLooseAndPacked(
+      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-loosequote-out-')), 'loose'),
+      'spine-html',
+    );
+    const live =
+      gated.loose.failures.find(
+        (f) => f.assertion === 'A19_OVERLAY_PNGS_HAVE_ALPHA' && new RegExp(`^part image "(?:[^"]*/)?${overlayName}\\.png" `).test(f.detail),
+      )?.detail ?? '';
+    const clauses = [
+      /is opaque in every one of its \d+x\d+ texels/.exec(live)?.[0],
+      /its file can hold transparency — .*? — and no texel uses it/.exec(live)?.[0],
+    ].filter((clause): clause is string => clause !== undefined);
+    /** Every A19 table row on the page, joined — the guide carries two, the base-plate table's and §5.2's. */
+    const rowOf = (text: string): string =>
+      text
+        .split('\n')
+        .filter((line) => line.startsWith('| `A19_OVERLAY_PNGS_HAVE_ALPHA` |'))
+        .join('\n');
+    const absent = (row: string): string[] => clauses.filter((clause) => !row.includes(`\`${clause}\``));
+    const cases: Array<[string, string]> = [
+      ['CUR89_THE_LOOSE_TEXEL_SENTENCE_THE_GUIDE_QUOTES_IS_THE_ONE_A19_PRINTS', 'docs/AUTHORING.md'],
+      ['CUR90_THE_LOOSE_TEXEL_SENTENCE_THE_BENCHMARK_PAGE_QUOTES_IS_THE_ONE_A19_PRINTS', 'docs/BENCHMARK.md'],
+    ];
+    for (const [name, path] of cases) {
+      const row = rowOf(readFileSync(join(root, path), 'utf8'));
+      const missing = absent(row);
+      const planted = absent(row.replaceAll('and no texel uses it`', 'and no texel uses them`'));
+      const probes = [
+        ...(live === '' ? [`the loose build did not refuse "${overlayName}", so nothing was compared`] : []),
+        ...(row === '' ? [`${path} has no A19 table row`] : []),
+        ...missing.map((clause) => `${path}'s A19 row does not quote a clause A19 prints: ${JSON.stringify(clause)}`),
+        ...(planted.length > missing.length ? [] : ['the same row with its last clause reworded is faulted no more often, so this reader is not reading the quote']),
+        ...floorProbes([[clauses.length, 2, `${clauses.length} clause(s) were read off the live refusal`]], 'a reader that found fewer is comparing part of the sentence'),
+      ];
+      const held = probes.length === 0;
+      say(
+        name,
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${path}'s A19 row quotes ${clauses.map((clause) => JSON.stringify(clause)).join(' and ')}, which the loose ` +
+            `route prints for "${overlayName}" at full alpha; the row with a clause reworded is faulted`,
+          (count) => `${count} thing(s) the page's loose-route quote did not hold:`,
+        ),
+        'the page is where an author learns that saving as RGBA is not the repair, and a quote the rule does not ' +
+          'print teaches a sentence nobody will meet',
       );
     }
   }
