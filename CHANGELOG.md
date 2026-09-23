@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/firejune/rigc/compare/v1.0.0...v1.0.1) (2026-09-23)
+
+
+### Documentation
+
+* **generations:** the Spine-generation policy as one page, and a README paragraph that was a diary entry removed ([#813](https://github.com/firejune/rigc/issues/813)) ([c1e3185](https://github.com/firejune/rigc/commit/c1e318535511cabe282c5e92e786dbae0c1d8673))
+
 ## [1.0.0](https://github.com/firejune/rigc/compare/v0.36.1...v1.0.0) (2026-09-23)
 
 
