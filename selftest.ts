@@ -235,10 +235,17 @@ import {
 import {
   chainFitLines,
   CHAINFIT_SPEC,
+  DEFAULT_HINGE_MAX,
+  DEFAULT_HINGE_MIN,
   DEFAULT_MIN_LEVER_PX,
   DEFAULT_MIN_VISIBLE,
   estimateChainFit,
+  HINGE_STEP,
+  hingeLadder,
+  hingeLadderStep,
+  hingeWalkPhrase,
   INWARD_MIN_DETERMINANTS,
+  searchHingeClause,
   type ChainFitPart,
   type ChainFitPlacement,
   type ChainFitReport,
@@ -49475,6 +49482,84 @@ function runCurrencySuite(): number {
     }
   }
 
+  // --- CUR82: the hinge step the guide teaches is the one the ladder produces (issue #738)
+  //
+  // `CUR47`'s question asked of §12.4. The page calls `HINGE_STEP` a ceiling and
+  // quotes one window's `search` clause and the note beside it; the clause is
+  // rebuilt here by `searchHingeClause` over `hingeLadder` of the window the
+  // PAGE names, and the note by `hingeWalkPhrase` of that ladder's step — so the
+  // page is compared against what the module would print rather than against a
+  // copy of it made on the day it was written.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const guideRaw = readFileSync(join(root, guidePath), 'utf8').split('\n');
+    const CEILING = /The hinge step `(-?[\d.]+)°` is a \*\*ceiling\*\*/;
+    const QUOTED = /`--hinge (-?[\d.]+),(-?[\d.]+)` prints `([^`]+)`/;
+    const NOTED = /note says it was searched `([^`]+)`/;
+    const scanGuide = (lines: readonly string[]): string[] => {
+      const faults: string[] = [];
+      const text = lines.join('\n').replace(/\s+/g, ' ');
+      const ceiling = CEILING.exec(text);
+      if (ceiling === null) {
+        faults.push(`${guidePath} no longer calls the hinge step a ceiling, so nothing here reads it`);
+      } else if (Number(ceiling[1]) !== HINGE_STEP) {
+        faults.push(`${guidePath} calls ${ceiling[1]}° the ceiling on the hinge step and the module answers ${HINGE_STEP}`);
+      }
+      const quoted = QUOTED.exec(text);
+      if (quoted === null) {
+        faults.push(`${guidePath} quotes no \`search\` clause for a named --hinge window, so the step it teaches is unchecked`);
+        return faults;
+      }
+      const minDeg = Number(quoted[1]);
+      const maxDeg = Number(quoted[2]);
+      const rungs = hingeLadder(minDeg, maxDeg);
+      const stepDeg = hingeLadderStep(rungs);
+      const built = searchHingeClause({ minDeg, maxDeg, stepDeg, steps: rungs.length });
+      if (quoted[3] !== built) {
+        faults.push(`${guidePath} teaches ${JSON.stringify(quoted[3])} for --hinge ${minDeg},${maxDeg} and this build prints ${JSON.stringify(built)}`);
+      }
+      const noted = NOTED.exec(text);
+      const phrase = hingeWalkPhrase(stepDeg);
+      if (noted === null) faults.push(`${guidePath} no longer quotes the note a chain part carries, so its step is unchecked`);
+      else if (noted[1] !== phrase) {
+        faults.push(`${guidePath} says a chain part's note reads ${JSON.stringify(noted[1])} and this build writes ${JSON.stringify(phrase)}`);
+      }
+      return faults;
+    };
+    const standing = scanGuide(guideRaw);
+    const probes = [...standing];
+    const at = guideRaw.findIndex((line) => CEILING.test(line));
+    let note = '';
+    if (at < 0) probes.push(`${guidePath} carries no line calling the hinge step a ceiling, and the plants need one`);
+    else if (standing.length === 0) {
+      const one = (what: string, line: string): void => {
+        const raised = raisedBy(scanGuide(guideRaw.map((was, i) => (i === at ? line : was))), { was: standing });
+        if (raised.length !== 1) {
+          probes.push(
+            `${what} was faulted ${raised.length} time(s) and this control requires one` +
+              (raised.length === 0 ? '' : `: ${raised.join('; ')}`),
+          );
+        } else note = `${note}${note === '' ? '' : ' · '}${what}: "${raised[0]}"`;
+      };
+      one('the ceiling raised by a degree', guideRaw[at].replace(`\`${HINGE_STEP}°\` is a`, `\`${HINGE_STEP + 1}°\` is a`));
+      one('the quoted step replaced by the constant it is a ceiling on', guideRaw[at].replace(/step ([\d.]+)° \(/, `step ${HINGE_STEP}° (`));
+      one('the quoted note replaced by the constant', guideRaw[at].replace(/searched `in [\d.]+° steps`/, `searched \`in ${HINGE_STEP}° steps\``));
+    }
+    const held = probes.length === 0;
+    say(
+      'CUR82_THE_HINGE_STEP_THE_GUIDE_TEACHES_IS_THE_ONE_THE_LADDER_PRODUCES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${guidePath} calls ${HINGE_STEP}° a ceiling on the hinge step and quotes one window's \`search\` clause and ` +
+          `note, which this build reproduces — and ${note}`,
+      ),
+      'the page is where an author learns what the `search` line promises; quoting the constant as the step ' +
+        'teaches the string the report used to print over a ladder it did not walk',
+    );
+  }
+
   return bad;
 }
 
@@ -54897,6 +54982,278 @@ function runChainFitSuite(): number {
         'is worth 32 px on the occluded part and 55 px on its child, and the floor is the only thing that asks ' +
         'for it. It is also the fixture stating condition 1 — the share at the rig\'s own prediction — as a ' +
         'measurement rather than as a claim in a comment',
+    );
+  }
+
+
+  // --- CF19: the hinge step printed is the hinge ladder walked (issue #738) --
+  //
+  // ⭐ `PO15`'s question asked of `chainfit`. `hingeLadder` used to march
+  // `HINGE_STEP` off the floor and append the ceiling, so a window the constant
+  // did not divide walked a short last gap under a line — and a note on every
+  // chain part — stating the constant. The window below is derived from the
+  // constant rather than typed, and chosen so no whole number of steps spans it.
+  //
+  // 🔑 "The ladder the run walked" is `hingeLadder` over the window the LINE
+  // names: `estimateChainFit` walks exactly that and nothing else, and parsing
+  // the window back off the printed line is what makes the line the thing read.
+  const dividedHinge = { minDeg: (-HINGE_STEP * 20) / 3, maxDeg: (HINGE_STEP * 20) / 3 };
+  const hingeGaps = (rungs: readonly number[]): number[] => rungs.slice(1).map((deg, i) => deg - rungs[i]);
+  {
+    const divided = estimateChainFit({
+      candidatePath: fixture.candidate,
+      imagesDir: fixture.parts,
+      framePath: fixture.posedPath,
+      hinge: dividedHinge,
+    });
+    /** Half the last digit the console rounds a step to, so a printed step is compared at the digits it has. */
+    const PRINTED = 0.0005;
+    const CLAUSE = /hinge (-?[\d.]+)°–(-?[\d.]+)° step (-?[\d.]+)° \((\d+) rungs\)/;
+    const NOTE = /over (-?[\d.]+)°…(-?[\d.]+)° (?:in (-?[\d.]+)° steps|at its one rung) — not/;
+    const hingeReading = (run: ChainFitReport): { faults: string[]; notes: number } => {
+      const faults: string[] = [];
+      const line = chainFitLines(run).find((row) => row.includes('search '));
+      const clause = line === undefined ? null : CLAUSE.exec(line);
+      if (line === undefined || clause === null) {
+        return { faults: [`the report prints no hinge clause on a \`search\` line: ${JSON.stringify(line?.trim() ?? '')}`], notes: 0 };
+      }
+      const [minDeg, maxDeg, printedStep, printedRungs] = clause.slice(1).map(Number);
+      const rungs = hingeLadder(minDeg, maxDeg);
+      const gaps = hingeGaps(rungs);
+      if (printedRungs !== rungs.length) faults.push(`the line counts ${printedRungs} rung(s) over a ladder of ${rungs.length}`);
+      const uneven = gaps.findIndex((gap) => Math.abs(gap - printedStep) > PRINTED);
+      if (uneven >= 0) {
+        faults.push(
+          `the line states one step of ${printedStep}° over a ladder that walks ${gaps[uneven]}° between rung ` +
+            `${uneven + 1} and ${uneven + 2}`,
+        );
+      }
+      const stated = run.search.hinge.stepDeg;
+      if (stated !== hingeLadderStep(rungs)) {
+        faults.push(`\`search.hinge.stepDeg\` is ${stated}° and the ladder's step is ${hingeLadderStep(rungs)}°`);
+      }
+      const windows = run.parts
+        .filter((part) => part.bone.window.hingeStepDeg !== stated)
+        .map((part) => `a part's \`window.hingeStepDeg\` is not the step \`search\` states (${stated}°): ${part.part} ${part.bone.window.hingeStepDeg}°`);
+      faults.push(...firstFew(windows, 'part(s)'));
+      let notes = 0;
+      for (const part of run.parts) {
+        for (const note of part.notes) {
+          const said = NOTE.exec(note);
+          if (said === null) continue;
+          notes++;
+          const noteStep = said[3] === undefined ? 0 : Number(said[3]);
+          const off = gaps.findIndex((gap) => Math.abs(gap - noteStep) > PRINTED);
+          if (off >= 0 || (gaps.length === 0) !== (said[3] === undefined)) {
+            faults.push(
+              `${part.part}'s note says ${JSON.stringify(said[0])} over a ladder that walks ` +
+                `${gaps.length === 0 ? 'one rung' : `${gaps[Math.max(0, off)]}°`}`,
+            );
+          }
+        }
+      }
+      if (notes === 0) faults.push('no chain part carries a note saying how its hinge was walked, so nothing here read one');
+      return { faults, notes };
+    };
+    const probes: string[] = [];
+    const standing = { full: hingeReading(posed), divided: hingeReading(divided) };
+    probes.push(...standing.full.faults.map((fault) => `the default full turn: ${fault}`));
+    probes.push(...standing.divided.faults.map((fault) => `a window the ceiling does not divide: ${fault}`));
+    // Two plants, on the DATA the reading is taken from — the branch point's own
+    // two fields: the constant stated as the step, and the constant in the notes.
+    const planted = (edit: (run: ChainFitReport) => void, what: string): void => {
+      const run = structuredClone(divided);
+      edit(run);
+      const raised = raisedBy(hingeReading(run).faults, { was: standing.divided.faults });
+      if (raised.length === 0) probes.push(`${what} was not caught — read as agreeing with its own ladder`);
+    };
+    planted((run) => {
+      run.search.hinge.stepDeg = HINGE_STEP;
+      for (const part of run.parts) part.bone.window.hingeStepDeg = HINGE_STEP;
+    }, `a report stating the ${HINGE_STEP}° constant as the step it walked`);
+    planted((run) => {
+      for (const part of run.parts) {
+        part.notes = part.notes.map((note) => note.replace(/in [\d.]+° steps — not/, `in ${HINGE_STEP}° steps — not`));
+      }
+    }, `notes saying \`in ${HINGE_STEP}° steps\` over the divided ladder`);
+    const held = probes.length === 0;
+    say(
+      'CF19_THE_HINGE_CLAUSE_PRINTED_IS_THE_LADDER_THE_RUN_WALKED',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the full turn prints ${JSON.stringify(searchHingeClause(posed.search.hinge))} and --hinge ` +
+          `${dividedHinge.minDeg},${dividedHinge.maxDeg} prints ${JSON.stringify(searchHingeClause(divided.search.hinge))}; ` +
+          `each is the ladder over the window it names, rung for rung, and so are the ${standing.full.notes} and ` +
+          `${standing.divided.notes} chain note(s) saying how the hinge was walked. The same reading faults the ` +
+          `${HINGE_STEP}° constant stated as the step, and the notes carrying it`,
+      ),
+      '§12.3 calls `search` the windows that were applied, so the line is a promise; the ladder used to walk a ' +
+        'short last gap under a line stating the constant, and told every chain part it was searched in steps of it',
+    );
+  }
+
+  // --- CF20: a window the ceiling does not divide is walked evenly, no coarser -
+  //
+  // The invariant rather than one window's figure, walked as the pure function
+  // it is over every whole-degree span a caller may name — and once through the
+  // real command, because `--hinge` is parsed on the way in.
+  {
+    /** What is wrong with a ladder for a window: uneven, coarser than the ceiling, or not spanning it. */
+    const ladderFaults = (rungs: readonly number[], minDeg: number, maxDeg: number): string[] => {
+      const span = maxDeg - minDeg;
+      const step = hingeLadderStep(rungs);
+      const where = `a ${span}° window from ${minDeg}°`;
+      if (rungs.length < 2) return [`${where} is walked at ${rungs.length} rung(s)`];
+      const faults: string[] = [];
+      if (step > HINGE_STEP + 1e-9) faults.push(`${where} is walked at ${step}°, above the ${HINGE_STEP}° ceiling`);
+      const gaps = hingeGaps(rungs);
+      const uneven = gaps.findIndex((gap) => Math.abs(gap - step) > 1e-9);
+      if (uneven >= 0) faults.push(`${where} walks ${step}° and then ${gaps[uneven]}° between rung ${uneven + 1} and ${uneven + 2}`);
+      if (rungs[0] !== minDeg) faults.push(`${where} opens at ${rungs[0]}°`);
+      // A full turn drops its duplicate endpoint, so it closes one step past its last rung.
+      const reach = span >= 360 - 1e-9 ? rungs[rungs.length - 1] + step : rungs[rungs.length - 1];
+      if (Math.abs(reach - maxDeg) > 1e-9) faults.push(`${where} closes at ${reach}° rather than ${maxDeg}°`);
+      return faults;
+    };
+    const probes: string[] = [];
+    let walked = 0;
+    const found: string[] = [];
+    for (let span = 1; span <= 360; span++) {
+      for (const minDeg of [DEFAULT_HINGE_MIN, -span / 2]) {
+        walked++;
+        found.push(...ladderFaults(hingeLadder(minDeg, minDeg + span), minDeg, minDeg + span));
+      }
+    }
+    probes.push(...firstFew(found, 'window(s)'));
+    // The plant: the march-and-append ladder this replaced, for the window the
+    // command runs below, handed to the same reading as data.
+    const marched: number[] = [];
+    for (let deg = dividedHinge.minDeg; deg <= dividedHinge.maxDeg + 1e-9; deg += HINGE_STEP) marched.push(deg);
+    if (marched[marched.length - 1] < dividedHinge.maxDeg - 1e-9) marched.push(dividedHinge.maxDeg);
+    const plantRaised = raisedBy(ladderFaults(marched, dividedHinge.minDeg, dividedHinge.maxDeg), {
+      was: ladderFaults(hingeLadder(dividedHinge.minDeg, dividedHinge.maxDeg), dividedHinge.minDeg, dividedHinge.maxDeg),
+    });
+    if (plantRaised.length === 0) probes.push('the march-and-append ladder was not caught — read as an even walk of its window');
+    const out = join(fixture.dir, 'chainfit-divided.json');
+    const run = runCli([
+      'chainfit',
+      '--candidate',
+      fixture.candidate,
+      '--images',
+      fixture.parts,
+      '--frame',
+      fixture.posedPath,
+      `--hinge=${dividedHinge.minDeg},${dividedHinge.maxDeg}`,
+      '--out',
+      out,
+    ]);
+    const written = existsSync(out) ? (JSON.parse(readFileSync(out, 'utf8')) as ChainFitReport) : null;
+    if (run.status !== 0) {
+      probes.push(
+        `--hinge ${dividedHinge.minDeg},${dividedHinge.maxDeg} did not run: exit ${String(run.status)} ` +
+          `${JSON.stringify(run.stderr.split('\n')[0])}`,
+      );
+    }
+    const hinge = written?.search.hinge;
+    const span = dividedHinge.maxDeg - dividedHinge.minDeg;
+    if (hinge === undefined) probes.push(`no report was written to ${out}`);
+    else {
+      if (!(hinge.stepDeg < HINGE_STEP)) {
+        probes.push(`the command reports a step of ${hinge.stepDeg}° over a window the ${HINGE_STEP}° ceiling does not divide`);
+      }
+      if (Math.abs(hinge.stepDeg * (hinge.steps - 1) - span) > 1e-9) {
+        probes.push(`${hinge.steps} rung(s) at ${hinge.stepDeg}° do not span the ${span}° window`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'CF20_A_HINGE_WINDOW_THE_CEILING_DOES_NOT_DIVIDE_IS_WALKED_EVENLY_AND_NO_COARSER',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${walked} window(s) — every whole-degree span from 1° to 360°, from two floors — each walked at one even ` +
+          `step no coarser than ${HINGE_STEP}° from its floor to its ceiling; through the command, --hinge ` +
+          `${dividedHinge.minDeg},${dividedHinge.maxDeg} reports ${hinge?.steps ?? 0} rungs at ${hinge?.stepDeg ?? 0}°; and ` +
+          `the march-and-append ladder for that window is faulted: "${plantRaised[0] ?? ''}"`,
+      ),
+      "the step is rigc's and the window is the caller's, so the step divides — a short last gap is a finer rung " +
+        'nobody asked for, under a line that says it is not there',
+    );
+  }
+
+  // --- CF21: the default window walks and reports what it always did --------
+  //
+  // 🔒 The repair moves where rungs sit in a window the constant does not
+  // divide and nothing else, so a window it DOES divide — the default full turn
+  // among them — must keep the exact rungs, bit for bit, that `floor + k·step`
+  // gives it. Compared with `===` rather than a tolerance on purpose: a rung
+  // off by float noise seeds a different search and moves placement digits.
+  {
+    const probes: string[] = [];
+    const exact = (minDeg: number, count: number): number[] => Array.from({ length: count }, (_, k) => minDeg + k * HINGE_STEP);
+    const drift = (rungs: readonly number[], want: readonly number[]): string | null => {
+      if (rungs.length !== want.length) return `${rungs.length} rung(s) where ${want.length} were walked`;
+      const at = rungs.findIndex((deg, i) => deg !== want[i]);
+      return at < 0 ? null : `rung ${at + 1} is ${rungs[at]}° where ${want[at]}° was walked`;
+    };
+    const fullTurn = 360 / HINGE_STEP;
+    const kept = hingeLadder(DEFAULT_HINGE_MIN, DEFAULT_HINGE_MAX);
+    const standingDefault = drift(kept, exact(DEFAULT_HINGE_MIN, fullTurn));
+    if (standingDefault !== null) probes.push(`the default window: ${standingDefault}`);
+    const moved: string[] = [];
+    let divisible = 0;
+    for (let k = 1; k < fullTurn; k++) {
+      for (const minDeg of [DEFAULT_HINGE_MIN, 0]) {
+        divisible++;
+        const d = drift(hingeLadder(minDeg, minDeg + k * HINGE_STEP), exact(minDeg, k + 1));
+        if (d !== null) moved.push(`a window the ceiling divides moved: ${minDeg},${minDeg + k * HINGE_STEP}: ${d}`);
+      }
+    }
+    probes.push(...firstFew(moved, 'window(s)'));
+    const clause = `hinge ${DEFAULT_HINGE_MIN}°–${DEFAULT_HINGE_MAX}° step ${HINGE_STEP}° (${fullTurn} rungs)`;
+    const line = chainFitLines(posed).find((row) => row.includes('search ')) ?? '';
+    if (!line.includes(clause)) probes.push(`the default \`search\` line no longer carries ${JSON.stringify(clause)}: ${JSON.stringify(line.trim())}`);
+    if (posed.search.hinge.stepDeg !== HINGE_STEP) probes.push(`the default \`search.hinge.stepDeg\` is ${posed.search.hinge.stepDeg}`);
+    const noteWant = `in ${HINGE_STEP}° steps — not`;
+    const offParts = posed.parts
+      .filter(
+        (part) =>
+          part.bone.window.hingeStepDeg !== HINGE_STEP ||
+          part.notes.some((note) => note.includes(' — not the four') && note.includes('searching ') && !note.includes(noteWant)),
+      )
+      .map((part) => `${part.part}'s window or note moved off the default ${HINGE_STEP}°`);
+    probes.push(...firstFew(offParts, 'part(s)'));
+    // Plants on the data: the full turn's duplicate endpoint kept, and one rung
+    // nudged by less than the console prints.
+    const standing = [...probes];
+    const plantDrift = (rungs: number[], what: string): void => {
+      const d = drift(rungs, exact(DEFAULT_HINGE_MIN, fullTurn));
+      const raised = raisedBy(d === null ? [] : [d], { was: standing });
+      if (raised.length === 0) probes.push(`${what} was not caught`);
+    };
+    plantDrift([...kept, DEFAULT_HINGE_MAX], 'a full turn keeping its duplicate endpoint');
+    plantDrift(
+      kept.map((deg, i) => (i === 1 ? deg + HINGE_STEP * 1e-12 : deg)),
+      'a rung nudged below the printed digits',
+    );
+    const held = probes.length === 0;
+    say(
+      'CF21_THE_DEFAULT_HINGE_WINDOW_WALKS_AND_REPORTS_WHAT_IT_ALWAYS_DID',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the default window walks ${fullTurn} rungs at floor + k·${HINGE_STEP}° exactly, and so do all ${divisible} ` +
+          `windows the ceiling divides from two floors; the default line carries ${JSON.stringify(clause)}, and ` +
+          `every part's window and note the ${HINGE_STEP}° step; a kept duplicate endpoint and a rung nudged by ` +
+          `${HINGE_STEP * 1e-12}° are each faulted`,
+      ),
+      'dividing the window is a repair for spans the constant does not divide; the default report is read by ' +
+        'every caller who names no window, and a repair that moved one digit of it would be a second change ' +
+        'hiding inside the first',
     );
   }
 
