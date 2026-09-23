@@ -39,6 +39,7 @@ import { parseJsonWithPosition } from './json-position.ts';
 // of it — the same search serves `refuseUnknownKeys`, and a second copy here with
 // a threshold edited is how such a pair drifts apart.
 import { nearMisses } from './keys.ts';
+import { inEditorKeyOrder } from './keyorder.ts';
 import { EVERY_GLOBAL_PHYSICS, parseMotionSpec } from './motion.ts';
 import {
   BONE_INHERIT_KNOWN,
@@ -375,6 +376,51 @@ function editorSkinOrder<T extends { name: string }>(skins: readonly T[]): T[] {
   // Equal ranks leave the pair where the spec put it, which is what a tie means.
   const rank = new Map(editorNamesInOrder(rest.map((skin) => skin.name), 'skins').map((name, at) => [name, at]));
   return [...pinned, ...[...rest].sort((a, b) => (rank.get(a.name) ?? 0) - (rank.get(b.name) ?? 0))];
+}
+
+/**
+ * A skin's `attachments` map keyed in the editor's order of its SLOT names —
+ * the comparator `animations` and `skins` use — rather than the draw order the
+ * table is built in (issue #716).
+ *
+ * 🔬 Measured twice, from both directions. The editor's export of a rigc build
+ * (`gallery/look`, 4.3.26) returned a skin's 24 slot keys sorted (§10.1 of the
+ * guide), and over the twelve exports under `examples/` every skin's slot keys
+ * are in this comparator's order — 12 of 12, `spineboy-pro`'s
+ * `portal-flare9, portal-flare10` among them, which codepoint would reverse.
+ * rigc wrote draw order, and 11 of the twelve rebuilds keyed a skin differently
+ * from the export they were rebuilt from.
+ *
+ * ⚠️ **Unlike `skins` and `animations`, nothing here is refused.** Those two are
+ * ordinals in the binary half, so an order rigc cannot certify is a reference it
+ * cannot certify. A slot key is read by name (`SkeletonJson` resolves each one
+ * with `findSlot`) and is no reference at all, so an order the comparator leaves
+ * open is a text rigc cannot promise, not a rig that is wrong — and a key's
+ * position is never a verdict. Such a map keeps rigc's order WHOLE, never
+ * partly sorted:
+ *
+ * - a pair the comparator leaves open (`editorNameOrder`'s number, separator and
+ *   folder cases);
+ * - any slot name holding `/`. The folder rule was measured on skin and
+ *   animation names, which the editor files in folders; slots it files under
+ *   bones, and no round trip carried a slot name with a `/` in it.
+ *
+ * The per-slot maps inside are left as built: their order is the rig's own, the
+ * twelve rebuilds already match the exports there (0 of 141 differ), and an
+ * attachment name holding `/` is the common case the folder question would
+ * have to answer first.
+ */
+function editorSlotKeyOrder<T>(attachments: Record<string, T>): Record<string, T> {
+  const names = Object.keys(attachments);
+  if (names.some((name) => name.includes(NAME_FOLDER))) return attachments;
+  for (let i = 0; i < names.length; i++) {
+    for (let j = i + 1; j < names.length; j++) {
+      if (typeof editorNameOrder(names[i], names[j]) !== 'number') return attachments;
+    }
+  }
+  const ordered: Record<string, T> = {};
+  for (const name of [...names].sort((a, b) => editorNameOrder(a, b) as number)) ordered[name] = attachments[name];
+  return ordered;
 }
 
 /** What separates a folder from what it holds, in a skin or an animation name. */
@@ -3213,7 +3259,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
               parts!.constraints[key],
             ]),
           ),
-          attachments,
+          attachments: editorSlotKeyOrder(attachments),
         };
       }),
     ),
@@ -3234,6 +3280,14 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   for (const slot of slots) {
     if (!boneNames.has(slot.bone)) throw new CompileError(`slot "${slot.name}" has no bone`);
   }
+
+  // Every object's keys in the order the editor writes them, per kind, from the
+  // one table that says so (`src/keyorder.ts`, issue #716) — applied here, once,
+  // to the finished object and before the text exists, so the constructors above
+  // are free to build in whatever order reads best and none of them states the
+  // order a second time. It moves positions and nothing else: no key is added,
+  // dropped or re-valued, and what the gate and `A18` read is this object's text.
+  inEditorKeyOrder(skeleton);
 
   return {
     skeleton,

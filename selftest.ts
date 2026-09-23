@@ -163,6 +163,7 @@ import {
   type IngestFinding,
   type IngestResult,
 } from './src/ingest.ts';
+import { EDITOR_KEY_ORDER, forEachKindedObject, inEditorKeyOrder, type KeyOrderTable } from './src/keyorder.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
 import { BONE_INHERIT_KNOWN, RIG_BONE_INHERIT, RIG_KEYS, RIG_SPEC_VERSION, parseRigSpec, resolveBoneInherit } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
@@ -11343,7 +11344,207 @@ function runStaticRigSuite(): number {
         'claim the file makes, and a claim to precision nothing downstream keeps is one a reader takes on trust',
     );
   }
+
+  // --- S98-S100: every emitted object's keys in the editor's order (issue #716)
+  //
+  // `src/keyorder.ts` holds one row per kind of object, read off the twelve
+  // editor exports, and the compiler applies it once to the finished skeleton.
+  // These read the generated fixtures' builds against that table; `IG76`-`IG78`
+  // read the corpus against the exports themselves, which is where the table's
+  // own correctness is decided.
+  {
+    const root = mkdtempSync(join(tmpdir(), 'rigc-keyorder-'));
+    const builds = [OVERLAY, ARTICULATED, CONTAINED].map((fixture) => {
+      const outDir = join(root, fixture.rig);
+      mkdirSync(outDir, { recursive: true });
+      return { label: fixture.rig, skeleton: JSON.parse(compile({ ...optsForFixture(fixture), outDir }).skeletonText) as Record<string, unknown> };
+    });
+    const tally = (counts: ReadonlyMap<string, number>): string =>
+      [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([kind, n]) => `${kind} ${n}`).join(' · ');
+    const summed = (maps: ReadonlyArray<ReadonlyMap<string, number>>): Map<string, number> => {
+      const out = new Map<string, number>();
+      for (const m of maps) for (const [kind, n] of m) out.set(kind, (out.get(kind) ?? 0) + n);
+      return out;
+    };
+
+    // S98 — the built fixtures, walked against the table.
+    const readings = builds.map((b) => ({ label: b.label, reading: keyOrderReading(b.skeleton, EDITOR_KEY_ORDER) }));
+    const named = summed(readings.map((r) => r.reading.named));
+    const ordered = readings.reduce((n, r) => n + r.reading.ordered, 0);
+    const outOfOrder = readings.flatMap((r) => r.reading.faults.map((fault) => `${r.label}${fault}`));
+    const orderProbes = [
+      ...floorProbes(
+        [
+          [named.size, 1, `the fixtures carry ${named.size} kind(s) the table has a row for`],
+          [ordered, 1, `${ordered} object(s) carry two or more keys their row orders`],
+        ],
+        'so the order check would compare nothing',
+      ),
+      ...outOfOrder.slice(0, 12),
+      ...(outOfOrder.length > 12 ? [`…and ${outOfOrder.length - 12} more`] : []),
+    ];
+    const orderHeld = orderProbes.length === 0;
+    say(
+      'S98_EVERY_OBJECT_A_BUILD_EMITS_HAS_ITS_KEYS_IN_THE_EDITORS_ORDER_FOR_ITS_KIND',
+      orderHeld,
+      probeDetail(
+        orderHeld,
+        orderProbes,
+        `${[...named.values()].reduce((n, v) => n + v, 0)} object(s) over ${builds.length} fixture build(s), ${ordered} ` +
+          `of them carrying two or more keys their row orders, each in its row's order — ${named.size} of ` +
+          `${Object.keys(EDITOR_KEY_ORDER).length} row(s) exercised: ${tally(named)}`,
+        () => `${outOfOrder.length} object(s) whose keys are not in their row's order:`,
+      ),
+      'issue #716: rigc wrote a bone `length, x, y, rotation`, a region `width, height` first and a constraint ' +
+        '`name, type` where the editor writes `length, rotation, x, y`, `width, height` last and `type, name`, so a ' +
+        'rebuild of an editor export was a different text in 269 objects. spine-core reads every one by name, so ' +
+        'no parse and no gate could say so',
+    );
+
+    // S99 — what the table does not name is left alone: a kind with no row keeps
+    // its order whole, and a key a row does not list keeps its index. The input
+    // is built from each build so that the pass's OWN output cannot be the
+    // expectation — a check that reads the build as "what the constructor
+    // wrote" agrees with any pass that built it, which is how the first cut of
+    // this control stayed green under a pass that sent unlisted keys to the end:
+    // every no-row object with two keys or more is REVERSED, and every object of
+    // a row's kind gets one key its row does not list, planted at index 1. The
+    // table is then applied, and both must come out exactly as they went in.
+    const PLANTED = 'unlistedKey';
+    const unnamed = new Map<string, number>();
+    let heldInPlace = 0;
+    let reversedRowless = 0;
+    const leftAloneProbes: string[] = [];
+    for (const b of builds) {
+      const probe = JSON.parse(JSON.stringify(b.skeleton)) as Record<string, unknown>;
+      const before = new Map<string, string[]>();
+      forEachKindedObject(probe, (kind, object, path) => {
+        const entries = Object.entries(object);
+        if (EDITOR_KEY_ORDER[kind] === undefined) {
+          unnamed.set(kind, (unnamed.get(kind) ?? 0) + 1);
+          if (entries.length < 2) return;
+          reversedRowless++;
+          entries.reverse();
+        } else {
+          if (entries.length < 2) return;
+          entries.splice(1, 0, [PLANTED, true]);
+          heldInPlace++;
+        }
+        for (const key of Object.keys(object)) delete object[key];
+        for (const [key, value] of entries) object[key] = value;
+        before.set(path, entries.map(([key]) => key));
+      });
+      inEditorKeyOrder(probe);
+      forEachKindedObject(probe, (kind, object, path) => {
+        const was = before.get(path);
+        if (was === undefined) return;
+        const now = Object.keys(object);
+        if (EDITOR_KEY_ORDER[kind] === undefined) {
+          if (now.join('\u0000') !== was.join('\u0000')) {
+            leftAloneProbes.push(`${b.label}${path}: ${kind} has no row and was reordered ${was.join(', ')} → ${now.join(', ')}`);
+          }
+        } else if (now[1] !== PLANTED) {
+          leftAloneProbes.push(`${b.label}${path}: ${kind}'s unlisted "${PLANTED}" moved from index 1 to ${now.indexOf(PLANTED)}`);
+        }
+      });
+    }
+    const aloneProbes = [
+      ...floorProbes(
+        [
+          [reversedRowless, 1, `the fixtures carry ${reversedRowless} object(s) of a kind with no row and two keys or more`],
+          [heldInPlace, 1, `${heldInPlace} object(s) of a row's kind took the planted key`],
+        ],
+        'so this would say nothing about what the pass leaves alone',
+      ),
+      ...leftAloneProbes.slice(0, 12),
+      ...(leftAloneProbes.length > 12 ? [`…and ${leftAloneProbes.length - 12} more`] : []),
+    ];
+    const aloneHeld = aloneProbes.length === 0;
+    say(
+      'S99_A_KIND_THE_TABLE_DOES_NOT_NAME_AND_A_KEY_A_ROW_DOES_NOT_LIST_KEEP_THE_ORDER_RIGC_BUILT',
+      aloneHeld,
+      probeDetail(
+        aloneHeld,
+        aloneProbes,
+        `a key no row lists, planted at index 1 of ${heldInPlace} object(s), is still at index 1 after the table; ` +
+          `${reversedRowless} object(s) of the kinds with no row, reversed, are still reversed — kinds with no row: ` +
+          `${tally(unnamed)}`,
+        () => `${leftAloneProbes.length} thing(s) the pass moved that it has no row for, or a floor that did not hold:`,
+      ),
+      'a row is read off the twelve exports, and a kind none of them writes with two keys has no measured order, ' +
+        'so it keeps the one its constructor states — and a key no export writes for a kind (a bone\'s `shearX`, a ' +
+        'region\'s `name`) stays where its constructor put it rather than being sent to the end, which would move ' +
+        'a physics `strength` key\'s `time` behind its `value`',
+    );
+
+    // S100 — the negative control: each row the fixtures exercise, reversed ONE
+    // AT A TIME, re-orders the builds, and S98's reading must name that row's
+    // kind and nothing else.
+    const standing = readings.flatMap((r) => r.reading.faults.map((fault) => `${r.label}${fault}`));
+    const exercisedRows = Object.keys(EDITOR_KEY_ORDER).filter((kind) => readings.some((r) => (r.reading.orderedByKind.get(kind) ?? 0) > 0));
+    const plantProbes: string[] = [];
+    const caught: string[] = [];
+    for (const kind of exercisedRows) {
+      const planted: KeyOrderTable = { ...EDITOR_KEY_ORDER, [kind]: [...EDITOR_KEY_ORDER[kind]].reverse() };
+      const after = builds.flatMap((b) =>
+        keyOrderReading(inEditorKeyOrder(JSON.parse(JSON.stringify(b.skeleton)) as Record<string, unknown>, planted), EDITOR_KEY_ORDER).faults.map(
+          (fault) => `${b.label}${fault}`,
+        ),
+      );
+      const raised = raisedBy(after, { was: standing });
+      const want = readings.reduce((n, r) => n + (r.reading.orderedByKind.get(kind) ?? 0), 0);
+      const elsewhere = raised.filter((fault) => !fault.includes(`: ${kind} keys `));
+      if (raised.length !== want) plantProbes.push(`the "${kind}" row reversed raised ${raised.length} fault(s) over ${want} object(s) it orders`);
+      if (elsewhere.length > 0) plantProbes.push(`the "${kind}" row reversed raised a fault on another kind: ${elsewhere[0]}`);
+      if (raised.length === want && elsewhere.length === 0) caught.push(`${kind} ${want}`);
+    }
+    if (exercisedRows.length === 0) plantProbes.push('no row is exercised by an object with two keys it orders, so nothing was planted');
+    const plantHeld = plantProbes.length === 0;
+    say(
+      'S100_ONE_ROW_OF_THE_TABLE_REVERSED_IS_NAMED_ON_EVERY_OBJECT_IT_ORDERS_AND_NOWHERE_ELSE',
+      plantHeld,
+      probeDetail(
+        plantHeld,
+        plantProbes,
+        `${exercisedRows.length} row(s) reversed one at a time, each named on exactly the objects it orders: ` +
+          `${caught.join(' · ')}`,
+        (count) => `${count} reversed row(s) S98's reading did not name exactly:`,
+      ),
+      'a gate nobody has seen fail is not a gate: S98 is green on a correct build, and a reading that compared ' +
+        'nothing, or compared the build against itself, would be green too. This hands the emitter a wrong row ' +
+        'and requires the reading to name every object that row moved, by kind',
+    );
+  }
   return bad;
+}
+
+/**
+ * What `table` says about one skeleton's objects: every object of a kind with a
+ * row whose keys are not in that row's order, and how many objects of each kind
+ * were read. `ordered` counts the objects carrying two or more keys their row
+ * orders — an object with one listed key cannot be out of order, so a reading
+ * over only those would be vacuous and says so through the caller's floor.
+ */
+function keyOrderReading(
+  skeleton: unknown,
+  table: KeyOrderTable,
+): { faults: string[]; named: Map<string, number>; ordered: number; orderedByKind: Map<string, number> } {
+  const faults: string[] = [];
+  const named = new Map<string, number>();
+  const orderedByKind = new Map<string, number>();
+  let ordered = 0;
+  forEachKindedObject(skeleton, (kind, object, path) => {
+    const row = table[kind];
+    if (row === undefined) return;
+    named.set(kind, (named.get(kind) ?? 0) + 1);
+    const listed = Object.keys(object).filter((key) => row.includes(key));
+    if (listed.length < 2) return;
+    ordered++;
+    orderedByKind.set(kind, (orderedByKind.get(kind) ?? 0) + 1);
+    const want = row.filter((key) => listed.includes(key));
+    if (listed.join('\u0000') !== want.join('\u0000')) faults.push(`${path}: ${kind} keys ${listed.join(', ')} — its row orders them ${want.join(', ')}`);
+  });
+  return { faults, named, ordered, orderedByKind };
 }
 
 // ---------------------------------------------------------------------------
@@ -50012,6 +50213,136 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR83-CUR84: the editor's key order, as the tree states it (#716) ----
+  //
+  // `src/keyorder.ts`'s `EDITOR_KEY_ORDER` is the one table; the guide prints
+  // it and `src/types.ts`'s interfaces declare their fields in it. Both are
+  // read here against the table, never against a copy of it.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const guideRaw = readFileSync(join(root, guidePath), 'utf8').split('\n');
+    const HEAD = '| Kind | Keys, in the order the editor writes them |';
+    const scanGuide = (lines: readonly string[]): string[] => {
+      const at = lines.indexOf(HEAD);
+      if (at < 0) return [`${guidePath} carries no table headed ${JSON.stringify(HEAD)}, so the order it teaches is unchecked`];
+      const printed: Array<[string, string[]]> = [];
+      for (let i = at + 2; i < lines.length && lines[i].startsWith('|'); i++) {
+        const cells = lines[i].split('|').slice(1, -1).map((cell) => cell.trim());
+        const kind = /^`([^`]+)`$/.exec(cells[0] ?? '')?.[1] ?? `(unreadable row ${i + 1})`;
+        printed.push([kind, [...(cells[1] ?? '').matchAll(/`([^`]+)`/g)].map((m) => m[1])]);
+      }
+      const faults: string[] = [];
+      const table = Object.entries(EDITOR_KEY_ORDER);
+      for (const [kind, keys] of printed) {
+        const row = EDITOR_KEY_ORDER[kind];
+        if (row === undefined) faults.push(`${guidePath} prints a row for "${kind}", which the table does not have`);
+        else if (row.join(',') !== keys.join(',')) faults.push(`${guidePath} prints "${kind}" as ${keys.join(', ')} and the table says ${row.join(', ')}`);
+      }
+      for (const [kind] of table) if (!printed.some(([k]) => k === kind)) faults.push(`${guidePath} prints no row for "${kind}"`);
+      const inOrder = printed.map(([k]) => k).filter((k) => EDITOR_KEY_ORDER[k] !== undefined);
+      const want = table.map(([k]) => k).filter((k) => inOrder.includes(k));
+      if (inOrder.join(',') !== want.join(',')) faults.push(`${guidePath} prints the rows in another order than the table holds them`);
+      return faults;
+    };
+    const standing = scanGuide(guideRaw);
+    const probes = [...standing];
+    const head = guideRaw.indexOf(HEAD);
+    let note = '';
+    // The plant needs a table it can read; where there is none, the standing
+    // faults already say why.
+    if (head >= 0 && standing.length === 0) {
+      const first = head + 2;
+      const cells = guideRaw[first].split('|');
+      const keys = [...cells[2].matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+      const swapped = [keys[1], keys[0], ...keys.slice(2)].map((k) => `\`${k}\``).join(', ');
+      const planted = guideRaw.map((line, i) => (i === first ? [...cells.slice(0, 2), ` ${swapped} `, ...cells.slice(3)].join('|') : line));
+      const raised = raisedBy(scanGuide(planted), { was: standing });
+      if (keys.length < 2) probes.push(`${guidePath}'s first row prints fewer than two keys, so swapping two measures nothing`);
+      else if (raised.length !== 1) probes.push(`the first row's first two keys swapped raised ${raised.length} fault(s) and this control requires one`);
+      else note = `the first row's first two keys swapped: "${raised[0]}"`;
+    }
+    const held = probes.length === 0;
+    say(
+      'CUR83_THE_KEY_ORDER_THE_GUIDE_PRINTS_IS_THE_TABLE_THE_EMITTER_APPLIES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${guidePath} prints ${Object.keys(EDITOR_KEY_ORDER).length} row(s), each the table's own in the table's ` +
+          `order — and ${note}`,
+      ),
+      'the guide is what an agent reads to know what a rebuild will look like beside an export, and a row copied ' +
+        'by hand is the one that is stale the day a row changes',
+    );
+  }
+  {
+    const typesPath = 'src/types.ts';
+    const typesText = readFileSync(join(root, typesPath), 'utf8');
+    /** Each interface that declares a kind's fields, and the kind. */
+    const DECLARED: ReadonlyArray<readonly [string, string]> = [
+      ['SpineSkeletonJson', 'top level'],
+      ['SpineBone', 'bone'],
+      ['SpineSlot', 'slot'],
+      ['SpineRegionAttachment', 'region attachment'],
+      ['SpineMeshAttachment', 'mesh attachment'],
+      ['SpineBoundingBoxAttachment', 'boundingbox attachment'],
+      ['SpineClippingAttachment', 'clipping attachment'],
+    ];
+    const scanTypes = (text: string): string[] => {
+      const faults: string[] = [];
+      for (const [name, kind] of DECLARED) {
+        const fields = interfaceFieldsIn(text, name);
+        const row = EDITOR_KEY_ORDER[kind];
+        if (fields === null) faults.push(`${typesPath} declares no interface ${name}`);
+        else if (row === undefined) faults.push(`the table has no row "${kind}" for ${name}`);
+        else {
+          const listed = fields.filter((f) => row.includes(f));
+          const want = row.filter((k) => listed.includes(k));
+          if (listed.length < 2) faults.push(`${name} declares ${listed.length} field(s) its row orders, so its order says nothing`);
+          else if (listed.join(',') !== want.join(',')) faults.push(`${name} declares ${listed.join(', ')} and the "${kind}" row orders them ${want.join(', ')}`);
+        }
+      }
+      const alias = /export type SpineConstraint = \{([^}]*)\}/.exec(text);
+      const aliasFields = alias === null ? [] : [...alias[1].matchAll(/(\w+)\??\s*:/g)].map((m) => m[1]);
+      const constraintRows = Object.keys(EDITOR_KEY_ORDER).filter((kind) => kind.endsWith(' constraint'));
+      if (alias === null) faults.push(`${typesPath} declares no SpineConstraint type`);
+      for (const kind of constraintRows) {
+        const row = EDITOR_KEY_ORDER[kind];
+        const want = row.filter((k) => aliasFields.includes(k));
+        const listed = aliasFields.filter((f) => row.includes(f));
+        if (listed.join(',') !== want.join(',')) faults.push(`SpineConstraint declares ${listed.join(', ')} and the "${kind}" row orders them ${want.join(', ')}`);
+      }
+      return faults;
+    };
+    const standing = scanTypes(typesText);
+    const probes = [...standing];
+    let note = '';
+    if (standing.length === 0) {
+      // The plant is the text this file carried until #716: a bone's rotation
+      // after its y, which is what the constructor wrote and the editor does not.
+      const bone = /export interface SpineBone \{[\s\S]*?\n\}/.exec(typesText)?.[0] ?? '';
+      const rotation = /\n {2}\/\*\*[^\n]*\*\/\n {2}rotation\?: number;|\n {2}rotation\?: number;/.exec(bone)?.[0] ?? '';
+      const moved = rotation === '' ? '' : bone.replace(rotation, '').replace('\n  y?: number;', `\n  y?: number;${rotation}`);
+      const raised = moved === '' || moved === bone ? [] : raisedBy(scanTypes(typesText.replace(bone, moved)), { was: standing });
+      if (raised.length !== 1) probes.push(`SpineBone's rotation moved after y raised ${raised.length} fault(s) and this control requires one`);
+      else note = `SpineBone's rotation moved after y: "${raised[0]}"`;
+    }
+    const held = probes.length === 0;
+    say(
+      'CUR84_THE_SPINE_INTERFACES_DECLARE_THEIR_FIELDS_IN_THE_ORDER_THE_TABLE_EMITS_THEM',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${DECLARED.length} interface(s) and SpineConstraint, each declaring the fields its row orders in that ` +
+          `row's order — and ${note}`,
+      ),
+      'this file said for two releases that its field order was rigc\'s and not the editor\'s, and that changing ' +
+        'it would say nothing; #716 changed the emitted order, and a declaration left behind would teach the old ' +
+        'one to the next constructor written against it',
+    );
+  }
+
   return bad;
 }
 
@@ -62074,6 +62405,177 @@ function runIngestSuite(): number {
       'the rest of #716 is key order, restated defaults, `"name": null` and the header, and those are later ' +
         'tranches: this is their measured starting point, and the guarantee that no number hides among them. A ' +
         'difference of any other kind reaches the remainder and is red with the place it starts',
+    );
+
+    // --- IG76-IG78: key order, read against the exports (#716 tranche 2) ----
+    //
+    //   IG76  the rebuild       every object carries its shared keys in the
+    //                           export's order — IG75's `key order` at zero
+    //   IG77  the table         every export object is in its row's order and
+    //                           every key it writes is in the row, so the
+    //                           table is these files' own order
+    //   IG78  the text          with only tranche 3's kinds taken off, each
+    //                           rebuild is its export's canonical text, key
+    //                           order INCLUDED (IG75 sorts it away)
+    const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
+    const misordered: string[] = [];
+    let pairedObjects = 0;
+    for (const r of rows) {
+      const kindAt = new Map<string, string>();
+      forEachKindedObject(r.source, (kind, _object, path) => kindAt.set(path, kind));
+      const walk = (a: unknown, b: unknown, path: string): void => {
+        if (Array.isArray(a) && Array.isArray(b)) {
+          a.forEach((v, i) => walk(v, b[i], `${path}[${i}]`));
+          return;
+        }
+        if (!isRecord(a) || !isRecord(b)) return;
+        pairedObjects++;
+        const inA = Object.keys(a).filter((k) => k in b);
+        const inB = Object.keys(b).filter((k) => k in a);
+        if (inA.join('\u0000') !== inB.join('\u0000')) {
+          misordered.push(`${r.label}${path} (${kindAt.get(path) ?? 'keyed by name'}): the export writes ${inA.join(', ')}, the rebuild ${inB.join(', ')}`);
+        }
+        for (const k of inA) walk(a[k], b[k], `${path}.${k}`);
+      };
+      walk(r.source, r.rebuild, '');
+    }
+    const orderProbes = [
+      ...(rows.length > 0 && pairedObjects > 0 ? [] : ['no export rebuilt, so no object was paired']),
+      ...misordered.slice(0, 12),
+      ...(misordered.length > 12 ? [`…and ${misordered.length - 12} more`] : []),
+    ];
+    const orderHeld = orderProbes.length === 0;
+    say(
+      'IG76_EVERY_OBJECT_OF_AN_EXPORTS_REBUILD_CARRIES_ITS_KEYS_IN_THE_EXPORTS_ORDER',
+      orderHeld,
+      probeDetail(
+        orderHeld,
+        orderProbes,
+        `${pairedObjects} object(s) over ${rows.length} export(s), paired by key name as IG75 pairs them, each with ` +
+          'its shared keys in the order the export writes them',
+        () => `${misordered.length} object(s) of a rebuild whose keys come in another order than the export's:`,
+      ),
+      'issue #716 tranche 2: the editor writes a fixed field order per kind of object and rigc wrote its own, so ' +
+        '280 objects of the twelve rebuilds — bones, slots, regions, the three constraint types, the top level and ' +
+        'the slot keys of 11 skins — were the export\'s values in another text. This is the count IG75 tallied as ' +
+        '`key order`, driven to zero and named per object if it comes back',
+    );
+
+    const exportReadings = rows.map((r) => ({ label: r.label, reading: keyOrderReading(r.source, EDITOR_KEY_ORDER) }));
+    const exportObjects = exportReadings.reduce((n, r) => n + [...r.reading.named.values()].reduce((s, v) => s + v, 0), 0);
+    const contradicting = exportReadings.flatMap((r) => r.reading.faults.map((fault) => `${r.label}${fault}`));
+    const unlisted = new Map<string, Set<string>>();
+    const rowless = new Map<string, { objects: number; widest: number }>();
+    for (const r of rows) {
+      forEachKindedObject(r.source, (kind, object) => {
+        const row = EDITOR_KEY_ORDER[kind];
+        const keys = Object.keys(object);
+        if (row === undefined) {
+          const seen = rowless.get(kind) ?? { objects: 0, widest: 0 };
+          seen.objects++;
+          seen.widest = Math.max(seen.widest, keys.length);
+          rowless.set(kind, seen);
+          return;
+        }
+        for (const key of keys) {
+          if (row.includes(key)) continue;
+          const set = unlisted.get(kind) ?? new Set<string>();
+          set.add(key);
+          unlisted.set(kind, set);
+        }
+      });
+    }
+    // The plant: the first row the exports order two keys of, reversed. The
+    // reading of the SAME files must name that kind on every object it orders.
+    const plantKind = Object.keys(EDITOR_KEY_ORDER).find((kind) => exportReadings.some((r) => (r.reading.orderedByKind.get(kind) ?? 0) > 0));
+    let plantSaid = '';
+    const tableProbes = [
+      ...(exportObjects > 0 ? [] : ['the exports carry no object of any kind the table has a row for']),
+      ...contradicting.slice(0, 12),
+      ...(contradicting.length > 12 ? [`…and ${contradicting.length - 12} more`] : []),
+      ...[...unlisted].map(([kind, keys]) => `the exports write "${kind}" keys its row does not list: ${[...keys].join(', ')}`),
+      ...[...rowless]
+        .filter(([, seen]) => seen.widest > 1)
+        .map(([kind, seen]) => `the exports write "${kind}" with up to ${seen.widest} keys and the table has no row for it`),
+    ];
+    if (plantKind === undefined) tableProbes.push('no row orders two keys of any export object, so nothing was planted');
+    else {
+      const planted: KeyOrderTable = { ...EDITOR_KEY_ORDER, [plantKind]: [...EDITOR_KEY_ORDER[plantKind]].reverse() };
+      const after = rows.flatMap((r) => keyOrderReading(r.source, planted).faults.map((fault) => `${r.label}${fault}`));
+      const raised = raisedBy(after, { was: contradicting });
+      const want = exportReadings.reduce((n, r) => n + (r.reading.orderedByKind.get(plantKind) ?? 0), 0);
+      if (raised.length !== want || raised.some((fault) => !fault.includes(`: ${plantKind} keys `))) {
+        tableProbes.push(`the "${plantKind}" row reversed raised ${raised.length} fault(s) over the ${want} export object(s) it orders`);
+      } else plantSaid = `the "${plantKind}" row reversed is named on all ${want} export object(s) it orders`;
+    }
+    const tableHeld = tableProbes.length === 0;
+    say(
+      'IG77_THE_KEY_ORDER_TABLE_IS_THE_ORDER_EVERY_EDITOR_EXPORT_WRITES_ITS_OBJECTS_IN',
+      tableHeld,
+      probeDetail(
+        tableHeld,
+        tableProbes,
+        `${exportObjects} object(s) of ${new Set(exportReadings.flatMap((r) => [...r.reading.named.keys()])).size} row ` +
+          `kind(s) over ${rows.length} export(s), each in its row's order and every key they write in its row; ` +
+          `kinds the exports write with no row, none with two keys: ` +
+          `${[...rowless].map(([kind, seen]) => `${kind} ${seen.objects}`).join(' · ') || 'none'} — and ${plantSaid}`,
+        () =>
+          `the table is not these exports' order — ${contradicting.length} export object(s) out of their row's order, ` +
+          `${unlisted.size} kind(s) with keys their row does not list:`,
+      ),
+      'the table is read off these files, not off memory of the editor, so this is the table\'s own oracle: an ' +
+        'export that wrote a kind in another order, or a key its row does not list, would make the row a guess. ' +
+        'S98 cannot see that — it holds the build to the table, and a wrong row is emitted consistently',
+    );
+
+    // IG78 — the text. IG75 compares its remainder with every object's keys
+    // SORTED, so key order is invisible to it; this takes off only what the
+    // third tranche owns and compares what is left as it stands.
+    const withoutLaterTranches = (source: unknown, rebuild: unknown, path: string): [unknown, unknown] => {
+      if (Array.isArray(source) && Array.isArray(rebuild)) {
+        const pairs = source.map((v, i) => withoutLaterTranches(v, rebuild[i], `${path}[${i}]`));
+        return [pairs.map((p) => p[0]), [...pairs.map((p) => p[1]), ...rebuild.slice(source.length)]];
+      }
+      if (!isRecord(source) || !isRecord(rebuild)) return [source, rebuild];
+      const header = path === '.skeleton';
+      const outA: Record<string, unknown> = {};
+      const outB: Record<string, unknown> = {};
+      for (const k of Object.keys(source)) {
+        if (header && headerExceptions.includes(k)) continue;
+        if (k in rebuild) [outA[k]] = withoutLaterTranches(source[k], rebuild[k], `${path}.${k}`);
+        else outA[k] = source[k];
+      }
+      for (const k of Object.keys(rebuild)) {
+        if (!(k in source) || (header && headerExceptions.includes(k))) continue;
+        [, outB[k]] = withoutLaterTranches(source[k], rebuild[k], `${path}.${k}`);
+      }
+      return [outA, outB];
+    };
+    const textResidue: string[] = [];
+    for (const r of rows) {
+      const [a, b] = withoutLaterTranches(r.source, r.rebuild, '');
+      const left = JSON.stringify(a, null, 2);
+      const right = JSON.stringify(b, null, 2);
+      if (left === right) continue;
+      const at = [...left].findIndex((ch, i) => ch !== right[i]);
+      textResidue.push(`${r.label}: differs at character ${at}: ${JSON.stringify(left.slice(Math.max(0, at - 40), at + 40))}`);
+    }
+    const textProbes = [...(rows.length > 0 ? [] : ['no export rebuilt, so there was no text to read']), ...textResidue];
+    const textHeld = textProbes.length === 0;
+    say(
+      'IG78_WITH_ONLY_THE_THIRD_TRANCHES_KINDS_TAKEN_OFF_EVERY_REBUILD_IS_ITS_EXPORTS_CANONICAL_TEXT_KEY_ORDER_INCLUDED',
+      textHeld,
+      probeDetail(
+        textHeld,
+        textProbes,
+        `${rows.length} export(s): with the three header keys and the keys only the rebuild writes taken off both ` +
+          'sides and nothing re-sorted, each rebuild is the same canonical text as its export',
+        (count) => `${count} export(s) whose rebuild is another text once the third tranche's kinds are gone:`,
+      ),
+      'the pass line #716 is working toward is the rebuild and the export identical in canonical form. After ' +
+        'numbers (IG73) and key order (IG76), what stands between them is the restated defaults, `"name": null` and ' +
+        'the header — tranche 3 — and this is where anything else would surface first, in the text rather than in ' +
+        'a count',
     );
   }
   return bad;

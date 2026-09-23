@@ -7274,10 +7274,16 @@ population is every object the format keys by a name and that carries more than
 one key, deform blocks counted at each of their three levels;
 [`src/compile.ts`](../src/compile.ts) states it in full beside
 `editorAnimationOrder`, so the count can be re-taken rather than trusted.)
-⇒ in rigc: only `animations` is emitted sorted (R10), because it is the one
+⇒ in rigc: `animations` is emitted sorted (R10), because it is the one
 object measured here whose ORDER is also an index space — every reference into
 the re-sorted *other* objects is by name on both sides, so nothing moves when
-they are re-keyed. rigc emits **that comparator's own order**, which
+they are re-keyed. ⚠️ Since [#716](https://github.com/firejune/rigc/issues/716)
+a skin's `attachments` slot keys are emitted sorted too, for the **text** and
+for no reference: a rebuild of an editor export is the export only if it is the
+same text (§10.6b), and 11 of the twelve under `examples/` keyed a skin in draw
+order where the export sorts it. Nothing is refused on that map — a pair the
+comparator leaves open, or a slot name with a `/` in it, keeps the whole map in
+rigc's order instead. rigc emits **that comparator's own order**, which
 [#728](https://github.com/firejune/rigc/issues/728) then measured in full off five
 stored round trips (R10) rather than quantifying over a family. Sorting the
 105 collections that way reproduces **105 of 105**, the three codepoint cannot
@@ -7945,6 +7951,90 @@ percent/percent and every one of its 74 rendered frames came back **byte
 identical** on an emitted array all three of whose numbers moved. ⇒ Read a
 `lengths` disagreement as *certainly wrong data, and visible only under
 `positionMode: fixed`*.
+
+### 10.6b The order it writes keys in
+
+🔬 **The editor writes every object's keys in one fixed order per kind of
+object**, and since [#716](https://github.com/firejune/rigc/issues/716) rigc
+writes the same. Read off the twelve exports under `examples/`: for each kind,
+every object's key sequence is a subsequence of one order, no two exports
+contradict each other on any kind, and the table below is that order. It lives
+in one place, [`src/keyorder.ts`](../src/keyorder.ts)'s `EDITOR_KEY_ORDER`, and
+the compiler applies it once to the finished skeleton — `CUR83` holds this table
+to that one, and `IG77` holds that one to the exports on every run with a
+corpus.
+
+| Kind | Keys, in the order the editor writes them |
+| --- | --- |
+| `top level` | `skeleton`, `bones`, `slots`, `constraints`, `skins`, `events`, `animations` |
+| `header` | `hash`, `spine`, `x`, `y`, `width`, `height`, `images`, `audio` |
+| `bone` | `name`, `parent`, `length`, `rotation`, `x`, `y`, `scaleX`, `scaleY`, `inherit`, `color`, `icon` |
+| `slot` | `name`, `bone`, `color`, `attachment`, `blend` |
+| `ik constraint` | `type`, `name`, `target`, `bones`, `mix`, `bendPositive` |
+| `transform constraint` | `type`, `name`, `source`, `bones`, `rotation`, `x`, `y`, `properties`, `localSource`, `localTarget`, `mixRotate`, `mixX`, `mixY`, `mixScaleX`, `mixShearY` |
+| `physics constraint` | `type`, `name`, `bone`, `x`, `y`, `rotate`, `damping` |
+| `skin` | `name`, `attachments` |
+| `region attachment` | `x`, `y`, `scaleX`, `scaleY`, `rotation`, `width`, `height` |
+| `mesh attachment` | `type`, `uvs`, `triangles`, `vertices`, `hull`, `edges`, `width`, `height` |
+| `boundingbox attachment` | `type`, `vertexCount`, `vertices` |
+| `clipping attachment` | `type`, `end`, `vertexCount`, `vertices`, `color` |
+| `animation` | `slots`, `bones`, `ik`, `transform`, `physics`, `attachments`, `drawOrder`, `events` |
+| `bone rotate key` | `time`, `value`, `curve` |
+| `bone translate key` | `time`, `x`, `y`, `curve` |
+| `bone translatex key` | `time`, `value`, `curve` |
+| `bone translatey key` | `time`, `value`, `curve` |
+| `bone scale key` | `time`, `x`, `y`, `curve` |
+| `bone shear key` | `time`, `x`, `y`, `curve` |
+| `slot attachment key` | `time`, `name` |
+| `slot rgba key` | `time`, `color`, `curve` |
+| `ik key` | `time`, `mix`, `softness`, `bendPositive`, `curve` |
+| `transform key` | `time`, `mixRotate`, `mixX`, `mixY`, `curve` |
+| `physics damping key` | `time`, `value` |
+| `physics inertia key` | `time`, `value` |
+| `physics mass key` | `time`, `value` |
+| `physics mix key` | `time`, `value`, `curve` |
+| `physics wind key` | `time`, `value` |
+| `attachment deform key` | `time`, `offset`, `vertices`, `curve` |
+| `drawOrder key` | `time`, `offsets` |
+| `drawOrder offset` | `slot`, `offset` |
+| `event key` | `time`, `name` |
+
+⚠️ **Three things about that table are rigc's rather than the editor's, and it
+says which.**
+
+- **A pair no export carries together has no measured order**, and the row
+  places it the way rigc already emitted it — a transform constraint's
+  `rotation` before `x`, an ik key's `time` before `mix`, a physics
+  constraint's `x`/`y` before `rotate`. `src/keyorder.ts` lists every such pair.
+  Such a pair did not move, and nothing here says the editor agrees.
+- **A kind with no row keeps rigc's order whole**: a linked mesh, a path or
+  point attachment, a sequence, the path and slider constraints, an event
+  definition, and the keys of every timeline the twelve do not key with two
+  fields (`scalex`, `rgb`, `alpha`, `rgba2`, `sequence`, the path and slider
+  timelines, …). Unmeasured is not certified.
+- **A key a row does not list stays where its constructor put it** — a bone's
+  `shearX`, a region's `name` and `path`, a header's `fps`. The row's keys are
+  permuted among the places they hold. Sending such a key to the end instead was
+  rejected on a measured case: the corpus's physics `strength` keys are all at
+  t=0, so the editor wrote them `value` alone, and that rule would have moved
+  `time` — first in every other key kind the editor writes — behind `value`.
+
+🔸 **An object keyed by NAMES is not a field order**, and the table does not
+touch one. A bone's or a slot's timelines, and a transform constraint's
+`properties` and each `to` inside them, are read into the runtime's arrays in the
+order they are keyed — for timelines, the order they are applied in — so their
+order is more than a key's position, and rigc already emits the export's own on
+all twelve. A skin's `attachments` slot keys are the one name-keyed map this
+changed: sorted by the editor's comparator (§10.1). The per-slot maps inside are
+the rig's own order.
+
+⇒ **What this means for you: nothing to write.** No input format changed and no
+key order is yours to state — a rig spec is read by name, and its field order
+still means nothing. What changed is that a canonical-form comparison of an
+export's rebuild against the export no longer finds an object whose keys sit
+elsewhere (`IG76`). What it still finds is the defaults the export leaves out
+and rigc writes (§10.5), `"name": null`, and the three header keys — and
+nothing else (`IG78`).
 
 ### 10.7 What this section does not claim
 
