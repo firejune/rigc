@@ -8025,6 +8025,7 @@ Per part:
 | --- | --- |
 | `part`, `path`, `width`, `height` | the PNG, by the name every message uses |
 | `placement` | the best placement found — `null` **only** for `empty-part` and `larger-than-canvas`, where nothing was searched |
+| `walls` | the walls of the search window `placement` stands **on**, whatever the verdict: `[]` when it settled inside, otherwise one `{ axis, edge, window }` per axis — `axis` is `scale` or `rotation`, `edge` is `floor` or `ceiling`, `window` is the flag's own `min,max`. A value on a wall is where the search was held, not where it came to rest — see §11.4 |
 | `alternates` | other optima worth reporting, best first. Non-empty means the answer was not unique |
 | `ambiguous` | at least one alternate is inside the ambiguity margin. **Choose with something this instrument cannot see** — anatomy, the other frame, or `rigc vote` |
 | `rotationFree` | the part is self-similar under rotation, so `rotationDeg` is a placeholder and the value is yours |
@@ -8079,9 +8080,22 @@ holds nothing because it already contains every angle.
   That is the case where the window is the first thing to move rather than the
   frame or the threshold — eleven parts of one frame came back refused at
   `scale=0.500` against art rendered at `0.311` per part pixel, and the message
-  said only that the residual was above `--max-residual`. It is printed on a
-  **refusal and nowhere else**: an accepted placement sitting on a wall is a window
-  chosen to bracket the answer, which is the flag working.
+  said only that the residual was above `--max-residual`. The sentence — with its
+  *"may lie below"* — is printed on a refusal only.
+- 🔒 **An accepted placement that stopped on a wall says which wall too**, beside
+  the value it holds on the console line and in `walls`:
+  `PLACE  head.png     x=   45.5  y=   37.5  rot=    0.0°  scale=2.000 (the ceiling of --scale 0.5,2)  residual=0.0394  unexplained= 10%`
+  is a part drawn at twice the scale of a frame rendered at 1.15 px/unit, whose
+  truth is **2.30** — outside the window — and whose residual at the ceiling still
+  cleared `--max-residual`. *On* a wall is not *near* one: the refinement is clamped
+  to the window, so a value the window held **is** the bound, while a correct
+  placement a window brackets closely settles strictly inside it and carries no
+  mark. A window with no interior (`min === max`) marks nothing — being at its only
+  value says nothing about the answer. ⚠️ The mark names the wall and not the side
+  the truth is on: over the rendered example corpus, a floor held both truths below
+  the window and parts shrunk into their own region whose truth was inside it. An
+  empty `walls` is not evidence either way — a window that excludes the truth can
+  still settle inside on another optimum, which is the caveat two bullets up.
 - ⚠️ **A frame whose border has no dominant colour reports `background.unknown`.**
   Every pixel then counts as material, the silhouette signal is gone, and the
   residual is colour agreement alone. The report says so rather than being quietly
