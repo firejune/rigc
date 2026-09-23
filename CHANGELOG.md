@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.36.1](https://github.com/firejune/rigc/compare/v0.36.0...v0.36.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **compile:** `--atlas-in` re-emits a pack in rigc's own blank-line shape, and `A07` names a leading blank line as that rather than as "consecutive blank lines" ([#809](https://github.com/firejune/rigc/issues/809)) ([bc74395](https://github.com/firejune/rigc/commit/bc7439566b00f81186996cf6f7979f66f1e10ced))
+* **compile:** a `default` skin is emitted exactly when the spec has one, so a rebuild of an export with no default skin declares none either ([#801](https://github.com/firejune/rigc/issues/801)) ([#805](https://github.com/firejune/rigc/issues/805)) ([9c85d84](https://github.com/firejune/rigc/commit/9c85d841aa03ac2fffef978c329cee14e8f3dde5))
+* **compile:** a stated path `lengths` is carried as stated, and an omitted one is measured through the runtime's own bone matrices at the parser's `vertexCount / 3` entries ([#808](https://github.com/firejune/rigc/issues/808)) ([f01c6d6](https://github.com/firejune/rigc/commit/f01c6d6a5ada6bbfad96115231291bf95e78431e))
+
+
+### Instrument
+
+* **timelines:** each physics bound states its basis, arithmetic or behavioural, and a control holds every one against the runtime ([#807](https://github.com/firejune/rigc/issues/807)) ([dedb4c7](https://github.com/firejune/rigc/commit/dedb4c7f309ffdbac06b12a913b33f06718a115e))
+
 ## [0.36.0](https://github.com/firejune/rigc/compare/v0.35.1...v0.36.0) (2026-09-23)
 
 
