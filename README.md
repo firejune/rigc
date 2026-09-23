@@ -633,9 +633,12 @@ bun tools/editor_roundtrip.ts --build build/ --editor /Applications/Spine.app/Co
 
 It prints the import and export exit codes, the validator's verdict on the
 export, every `diff` measure that moved, `check`'s mean MAE and worst drift per
-animation **for each skin the build declares** — one render-and-check block per
-skin, with a per-skin roll-up under them, because a rig's contested art lives in
-its named skins and a single un-skinned check draws none of it — and a
+animation **for each skin the build and the export both declare** — one
+render-and-check block per skin, with a per-skin roll-up under them, because a
+rig's contested art lives in its named skins and a single un-skinned check draws
+none of it; a skin only one side declares is a FAIL naming it as **lost** (or
+**added**) **by the export**, with `diff`'s `attachments.skins` beside it, and is
+rendered on neither side ([#801](https://github.com/firejune/rigc/issues/801)) — and a
 field-by-field list of what the editor rewrote. Every step quotes what its child
 said when that child did not do what it was for, the renderers included; a skin
 **neither** side can draw — a hit-box rig, say — is a **SKIP** naming that, not a

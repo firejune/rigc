@@ -1579,8 +1579,54 @@ const MUTANTS: Mutant[] = [
     expect: 'A08_REGION_NAMES_MATCH_ATTACHMENTS',
     mutate: (a) => ({ ...a, skeletonText: editJson(a.skeletonText, (j) => rekeyFirstRegion(j, false)) }),
   },
+  // ─── a skeleton with no default skin, and the same with an empty one (issue #801) ───
+  //
+  // The editor's export of a rig whose art is all in named skins declares no
+  // `default` skin (4.3.26, `skins` 3 → 2), and spine-core loads it with
+  // `defaultSkin` null. So a file whose default skin is re-filed under a named
+  // one is a file the gate must take (M84) — the whole rulebook then runs on a
+  // skeleton with no default skin, which is the check that nothing in it reads
+  // one positionally. M85 forges the empty `default` the branch point's
+  // compiler wrote beside it: the runtime takes that spelling too, so the gate
+  // must as well, and what tells the two apart is `diff`, not the gate.
+  {
+    name: 'M84_the_default_skin_refiled_under_a_named_skin_leaving_none_is_accepted',
+    origin:
+      'issue #801: the editor exports a multi-skin rig with no default skin, and `SkeletonData.defaultSkin` is then ' +
+      'null — a rule that needed one would refuse every such export',
+    expect: null,
+    mutate: (a) => ({ ...a, skeletonText: editJson(a.skeletonText, (j) => refileDefaultSkinAsNamed(j, false)) }),
+  },
+  {
+    name: 'M85_the_same_skeleton_with_an_empty_default_skin_forged_back_is_accepted',
+    origin:
+      'the branch point of issue #801 wrote an empty default skin into such a file on its own; the runtime loads ' +
+      'both spellings alike, so the gate cannot be what refuses the extra skin',
+    expect: null,
+    mutate: (a) => ({ ...a, skeletonText: editJson(a.skeletonText, (j) => refileDefaultSkinAsNamed(j, true)) }),
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+/**
+ * Re-file the default skin under the named skin `worn` — its attachments and
+ * every animation's attachment timelines keyed on it — leaving no default skin,
+ * or an empty one first when `emptyDefault` (M84, M85). Throws when there is no
+ * default skin to move, so an edit that moved nothing cannot pass for accepted.
+ */
+function refileDefaultSkinAsNamed(j: Record<string, unknown>, emptyDefault: boolean): void {
+  const skins = (Array.isArray(j.skins) ? j.skins : []) as Array<{ name: string }>;
+  const held = skins.find((skin) => skin.name === 'default');
+  if (held === undefined) throw new Error('the fixture declares no default skin to re-file');
+  held.name = 'worn';
+  const rest = skins.filter((skin) => skin !== held);
+  j.skins = [...(emptyDefault ? [{ name: 'default', attachments: {} }] : []), ...rest, held];
+  for (const animation of Object.values((j.animations ?? {}) as Record<string, { attachments?: Record<string, unknown> }>)) {
+    if (animation.attachments?.default === undefined) continue;
+    animation.attachments.worn = animation.attachments.default;
+    delete animation.attachments.default;
+  }
+}
 
 /**
  * Move the first region attachment that states no `path` — and whose key no
@@ -7861,18 +7907,18 @@ function runRigSuite(): number {
     bad += reportCase(
       'RF65_an_omitted_skin_on_a_link_is_the_default_skin_and_not_the_skin_the_link_is_written_in',
       defaulted !== null &&
-        defaulted.includes('skin "default" (the default skin, because no "skin" was stated') &&
-        defaulted.includes('holds no attachment at all') &&
+        defaulted.includes('no "skin" is stated, so the parser looks for the source "block" in the default skin') &&
+        defaulted.includes('this rig declares no default skin') &&
         stated === null,
       defaulted === null
         ? 'a link in skin "alt" found its source in skin "base" with no `skin` key, which is not where the runtime looks'
         : `${defaulted}; the same link stating \`"skin": "base"\` ${stated === null ? 'compiles' : `was ALSO refused: ${stated}`}`,
       'the parser reads `!linkedMesh.skin ? skeletonData.defaultSkin : findSkin(...)` (`SkeletonJson.ts:429`), so ' +
-        'an omitted `skin` means the DEFAULT skin and never the one the link is written in. ⚠️ rigc always ' +
-        'emits a `default` skin, empty if it has to, so the miss lands on the SOURCE rather than on the skin — ' +
-        'which is why the sentence naming the trap is the source one, and why a clause reading "the rig declares ' +
-        'no such skin" here would have been a branch this rig cannot reach. Both halves are read: the two differ ' +
-        'by the one key',
+        'an omitted `skin` means the DEFAULT skin and never the one the link is written in. This rig declares ' +
+        'none, and since #801 rigc emits none either, so the miss lands on the SKIN — `defaultSkin` is null — and ' +
+        'the sentence says no skin was stated rather than that one called "default" was. Until #801 an empty ' +
+        'default was always emitted and the miss fell to the source sentence; PS183 keeps that branch, on a rig ' +
+        'that states one. Both halves are read: the two differ by the one key',
     );
 
     const spellings = ['linkedmesh', 'mesh'].map((type) => {
@@ -26803,6 +26849,243 @@ function runPathAndSliderSuite(): number {
       'not have. The bare twin is what shows the stem moved rather than happening to agree',
   );
 
+  // --- PS179–PS184: a `default` skin exactly when the spec has one (issue #801) --
+  //
+  // 🔬 **Measured on the branch point.** An editor export of a rig whose art is
+  // all in named skins declares NO `default` skin — 4.3.26 took `skins: [default,
+  // alt, base]` with `default` empty and gave back `[alt, base]` — and `compile`
+  // wrote one unconditionally, so `ingest → build` of such an export read
+  // `attachments.skins 1/2` against it. spine-core takes both spellings alike:
+  // `SkeletonData.defaultSkin` is null or an empty skin, and neither fills a
+  // slot. So the rule is the spec's: `default` is emitted when `skins` carries the
+  // key or a manifest part files its states under it, and never otherwise.
+  /** The emitted `skins` array's names, off the file — `[]` for a refused build. */
+  const emittedSkinNames = (build: NamedBuild): string[] =>
+    build.skeletonText === '' ? [] : (JSON.parse(build.skeletonText) as { skins: Array<{ name: string }> }).skins.map((s) => s.name);
+  /** The attachment each slot shows with no skin set and under `skin`, off the runtime — or why it would not pose. */
+  const posedUnder = (build: NamedBuild, skin: string): { defaultSkin: string | null; bare: Record<string, string | null>; worn: Record<string, string | null> } | string => {
+    try {
+      const data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(build.atlasText))).readSkeletonData(JSON.parse(build.skeletonText));
+      const read = (worn: string | null): Record<string, string | null> => {
+        const skeleton = new Skeleton(data);
+        if (worn !== null) skeleton.setSkin(worn);
+        skeleton.setupPose();
+        skeleton.updateWorldTransform(Physics.update);
+        return Object.fromEntries(skeleton.slots.map((slot) => [slot.data.name, slot.pose.attachment?.name ?? null]));
+      };
+      return { defaultSkin: data.defaultSkin === null ? null : data.defaultSkin.name, bare: read(null), worn: read(skin) };
+    } catch (err) {
+      return `it did not pose: ${(err as Error).message}`;
+    }
+  };
+  /** The probe's two slots filled by two NAMED skins and nothing else — `extra` merged over the skins. */
+  const namedOnlySkins = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    base: { ...PROBE_BLOCK_ONLY_SKIN, marker: { marker: { image: 'marker.png' } } },
+    alt: { marker: { marker: { image: 'marker.png', x: 2 } } },
+    ...extra,
+  });
+
+  // -- PS179: no `default` in the spec, none in the file --------------------
+  const noDefault = namedBuild(writeProbeRig({ skins: namedOnlySkins() }));
+  const noDefaultPose = noDefault.refused === null ? posedUnder(noDefault, 'base') : 'not built';
+  const noDefaultProbes = [
+    ...buildRows(noDefault, 'the named-skins-only rig'),
+    ...(emittedSkinNames(noDefault).includes('default') ? [`the file declares skins [${emittedSkinNames(noDefault).join(', ')}], and the spec states no "default"`] : []),
+    ...(typeof noDefaultPose === 'string'
+      ? [noDefaultPose]
+      : [
+          ...(noDefaultPose.defaultSkin === null ? [] : [`SkeletonData.defaultSkin is "${noDefaultPose.defaultSkin}", not null`]),
+          ...(noDefaultPose.bare.block === null ? [] : [`with no skin set slot "block" shows ${JSON.stringify(noDefaultPose.bare.block)}, and no skin a slot can read fills it`]),
+          ...(noDefaultPose.worn.block === 'block' ? [] : [`under skin "base" slot "block" shows ${JSON.stringify(noDefaultPose.worn.block)}, not "block"`]),
+        ]),
+  ];
+  const noDefaultHeld = noDefaultProbes.length === 0;
+  say(
+    'PS179_A_RIG_WITH_NO_DEFAULT_SKIN_BUILDS_GREEN_AND_ITS_FILE_DECLARES_NONE',
+    noDefaultHeld,
+    probeDetail(
+      noDefaultHeld,
+      noDefaultProbes,
+      `two named skins and no "default": ${noDefault.gate?.passed.length ?? 0} assertion(s) green, the file declares ` +
+        `skins [${emittedSkinNames(noDefault).join(', ')}], spine-core loads defaultSkin null, and the setup pose ` +
+        `shows nothing with no skin set and "block" under "base"`,
+      (count) => `${count} thing(s) the default skin was not absent from:`,
+    ),
+    'the shape an editor export of a multi-skin character has, and the one a rebuild of it has to reproduce. The ' +
+      'branch point wrote an empty `default` into this file on its own — a value no spec stated — so every rebuild ' +
+      'of such an export differed from it by one skin',
+  );
+
+  // -- PS180: an empty `default` the spec states is emitted, empty ----------
+  const emptyDefault = namedBuild(writeProbeRig({ skins: { default: {}, ...namedOnlySkins() } }));
+  const emptyEntry =
+    emptyDefault.skeletonText === ''
+      ? undefined
+      : (JSON.parse(emptyDefault.skeletonText) as { skins: Array<{ name: string; attachments: Record<string, unknown> }> }).skins[0];
+  const emptyProbes = [
+    ...buildRows(emptyDefault, 'the rig stating an empty default'),
+    ...(emptyEntry?.name === 'default' && Object.keys(emptyEntry.attachments).length === 0
+      ? []
+      : [`the file's first skin is ${JSON.stringify(emptyEntry?.name ?? null)} with ${Object.keys(emptyEntry?.attachments ?? {}).length} slot(s), and the spec states an empty "default"`]),
+  ];
+  const emptyHeld = emptyProbes.length === 0;
+  say(
+    'PS180_AN_EMPTY_DEFAULT_SKIN_THE_SPEC_STATES_IS_EMITTED_FIRST_AND_EMPTY',
+    emptyHeld,
+    probeDetail(
+      emptyHeld,
+      emptyProbes,
+      `\`"default": {}\` beside the same two named skins emits skins [${emittedSkinNames(emptyDefault).join(', ')}], the default first and filling no slot`,
+      (count) => `${count} thing(s) the stated empty default did not keep:`,
+    ),
+    'the twin of PS179, and the reason the rule is "when the spec has one" rather than "when it holds art": a file ' +
+      'that states an empty default — the JSON can — ingests to a spec that states one, and its rebuild must write it back',
+  );
+
+  // -- PS181: attachments filed under `default` emit it — spec or manifest --
+  const filledDefault = namedBuild(writeProbeRig());
+  const filledEntry =
+    filledDefault.skeletonText === ''
+      ? undefined
+      : (JSON.parse(filledDefault.skeletonText) as { skins: Array<{ name: string; attachments: Record<string, unknown> }> }).skins[0];
+  const manifestOnly = JSON.parse(compile(optsForFixture(ARTICULATED)).skeletonText) as { skins: Array<{ name: string; attachments: Record<string, unknown> }> };
+  const manifestSpec = JSON.parse(readFileSync(ARTICULATED.rigPath, 'utf8')) as { skins?: unknown };
+  const filledProbes = [
+    ...buildRows(filledDefault, 'the probe rig'),
+    ...(filledEntry?.name === 'default' && Object.keys(filledEntry.attachments).length === 2
+      ? []
+      : [`the probe's first skin is ${JSON.stringify(filledEntry?.name ?? null)} over ${Object.keys(filledEntry?.attachments ?? {}).length} slot(s), and its spec files both slots under "default"`]),
+    ...(manifestSpec.skins === undefined ? [] : [`${ARTICULATED.rig}'s rig spec states \`skins\`, so it no longer measures the manifest-only path`]),
+    ...(manifestOnly.skins[0]?.name === 'default' && Object.keys(manifestOnly.skins[0].attachments).length > 0
+      ? []
+      : [`${ARTICULATED.rig} files its parts under no skin the spec names, and its first skin is ${JSON.stringify(manifestOnly.skins[0]?.name ?? null)}`]),
+  ];
+  const filledHeld = filledProbes.length === 0;
+  say(
+    'PS181_ATTACHMENTS_FILED_UNDER_DEFAULT_BY_THE_SPEC_OR_BY_A_MANIFEST_PART_EMIT_IT',
+    filledHeld,
+    probeDetail(
+      filledHeld,
+      filledProbes,
+      `the probe's spec files 2 slot(s) under "default" and the file's first skin is that; ${ARTICULATED.rig} states no ` +
+        `\`skins\` at all and its manifest parts emit "default" over ${Object.keys(manifestOnly.skins[0]?.attachments ?? {}).length} slot(s)`,
+      (count) => `${count} thing(s) the filled default skin lost:`,
+    ),
+    'the positive control: a rule that dropped the default skin whenever the spec map lacked the key would pass PS179 ' +
+      'and empty every manifest rig — whose parts are filed under "default" by the compiler, not by a skins map',
+  );
+
+  // -- PS182: a setup attachment only a named skin fills still gates --------
+  const setupNamed = namedBuild(writeProbeRig({ skins: namedOnlySkins() }));
+  const ghostDirs = writeProbeRig({
+    slots: [
+      { name: 'block', bone: 'block', attachment: 'ghost' },
+      { name: 'marker', bone: 'block', attachment: 'marker' },
+    ],
+    skins: namedOnlySkins(),
+  });
+  const ghost = namedBuild(ghostDirs);
+  const setupProbes = [
+    ...buildRows(setupNamed, 'the rig whose "marker" setup pose only skin "alt" and "base" fill'),
+    ...(ghost.refused !== null && ghost.refused.includes('setup attachment "ghost" for slot "block" is not one of [block]')
+      ? []
+      : [`a setup pose naming "ghost", which no skin fills, was not refused by name: ${ghost.refused ?? 'it compiled'}`]),
+  ];
+  const setupHeld = setupProbes.length === 0;
+  say(
+    'PS182_A_SETUP_ATTACHMENT_ONLY_A_NAMED_SKIN_FILLS_STILL_GATES_WITH_NO_DEFAULT_SKIN',
+    setupHeld,
+    probeDetail(
+      setupHeld,
+      setupProbes,
+      `slot "block" shows "block" in the setup pose, which only skin "base" fills, and the rig builds green with ` +
+        `${setupNamed.gate?.passed.length ?? 0} assertion(s); naming "ghost" instead is refused by the compiler: ${ghost.refused ?? ''}`,
+      (count) => `${count} thing(s) the setup pose check lost with the default skin:`,
+    ),
+    'the card\'s second open question, answered on the compiler side: a slot\'s setup attachment is checked against ' +
+      'the union of every skin\'s placeholders for it (`names` in `compile`), never against the default skin, so a rig ' +
+      'with none keeps the check — the runtime resolves it through the worn skin first (`Skeleton.js:335-346`)',
+  );
+
+  // -- PS183: a link that states no skin, with and without a default -------
+  // RF65 holds the rig with no default skin; this is its twin with an EMPTY one
+  // stated, which is the branch point's emit for every rig and the branch the
+  // other sentence belongs to — so the two refusals are told apart on one link.
+  const linkRig = (skin: string | undefined, emptyDefault: boolean): ProbeDirs =>
+    writeProbeRig({
+      slots: [
+        { name: 'block', bone: 'block', attachment: 'block' },
+        { name: 'marker', bone: 'block', attachment: 'marker' },
+        { name: 'echo', bone: 'block', attachment: 'echo' },
+      ],
+      skins: {
+        ...(emptyDefault ? { default: {} } : {}),
+        base: {
+          ...PROBE_BLOCK_ONLY_SKIN,
+          marker: { marker: namedQuad('marker.png', 0) },
+          echo: { echo: { type: 'linkedmesh', image: 'marker.png', source: 'marker', slot: 'marker', ...(skin === undefined ? {} : { skin }) } },
+        },
+      },
+    });
+  const intoNoDefault = namedBuild(linkRig(undefined, false));
+  const intoEmptyDefault = namedBuild(linkRig(undefined, true));
+  const statedLink = namedBuild(linkRig('base', false));
+  const noDefaultRefusal = 'no "skin" is stated, so the parser looks for the source "marker" in the default skin — and this rig declares no default skin';
+  const emptyDefaultRefusal = 'skin "default" (the default skin, because no "skin" was stated';
+  const unstatedProbes = [
+    ...(intoNoDefault.refused !== null && intoNoDefault.refused.includes(noDefaultRefusal) && intoNoDefault.refused.includes('"base"')
+      ? []
+      : [`with no default skin, the unstated link was not refused for the missing default: ${intoNoDefault.refused ?? 'it compiled'}`]),
+    ...(intoEmptyDefault.refused !== null && intoEmptyDefault.refused.includes(emptyDefaultRefusal) && intoEmptyDefault.refused.includes('holds no attachment at all')
+      ? []
+      : [`with an empty default stated, the unstated link was not refused at its source: ${intoEmptyDefault.refused ?? 'it compiled'}`]),
+    ...buildRows(statedLink, 'the same link stating skin "base"'),
+  ];
+  const unstatedHeld = unstatedProbes.length === 0;
+  say(
+    'PS183_A_LINK_STATING_NO_SKIN_IS_REFUSED_FOR_THE_DEFAULT_SKIN_IT_LACKS_OR_THE_SOURCE_THAT_SKIN_LACKS',
+    unstatedHeld,
+    probeDetail(
+      unstatedHeld,
+      unstatedProbes,
+      `no default skin: ${intoNoDefault.refused ?? ''} — an empty default stated: ${intoEmptyDefault.refused ?? ''} — ` +
+        `stating "skin": "base" builds green with ${statedLink.gate?.passed.length ?? 0} assertion(s)`,
+      (count) => `${count} thing(s) the unstated link was not refused for:`,
+    ),
+    'the parser resolves a link with no `skin` through `skeletonData.defaultSkin` (`SkeletonJson.js:429`): null in ' +
+      'a file with no default skin, where the runtime reads `getAttachment` off it with a TypeError naming nothing, ' +
+      'and an empty skin in a file that states one, where the miss is the source. Two files, two sentences, and ' +
+      'each has to be the one its file earns',
+  );
+
+  // -- PS184: `explain` on a skeleton with no default skin ------------------
+  const explainDirs = writeProbeRig({ skins: namedOnlySkins() });
+  writeFileSync(join(explainDirs.dir, 'probe.motion.json'), `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+  const explained = runCli(['explain', '--rig', explainDirs.rigPath, '--motion', join(explainDirs.dir, 'probe.motion.json'), '--out', explainDirs.outDir, '--images', explainDirs.dir]);
+  const defaultDirs = writeProbeRig();
+  writeFileSync(join(defaultDirs.dir, 'probe.motion.json'), `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+  const explainedDefault = runCli(['explain', '--rig', defaultDirs.rigPath, '--motion', join(defaultDirs.dir, 'probe.motion.json'), '--out', defaultDirs.outDir, '--images', defaultDirs.dir]);
+  const noDefaultLine = 'this skeleton declares no default skin, so the attachments column lists none; its placeholders are in the named skin(s) "alt", "base"';
+  const explainProbes = [
+    ...(explained.status === 0 ? [] : [`explain exited ${String(explained.status)}: ${explained.stderr.trim().split('\n').pop() ?? ''}`]),
+    ...(explained.stdout.includes(noDefaultLine) ? [] : ['explain did not say the skeleton declares no default skin, so its empty attachments column reads as a rig with no art']),
+    ...(explainedDefault.status === 0 && !explainedDefault.stdout.includes('declares no default skin') ? [] : ['explain said "no default skin" about the probe rig, whose default skin fills both slots']),
+  ];
+  const explainHeld = explainProbes.length === 0;
+  say(
+    'PS184_EXPLAIN_NAMES_THE_MISSING_DEFAULT_SKIN_RATHER_THAN_LISTING_EMPTY_SLOTS',
+    explainHeld,
+    probeDetail(
+      explainHeld,
+      explainProbes,
+      `explain exits 0 on the named-skins-only rig and prints "${noDefaultLine}"; on the probe rig it prints no such line`,
+      (count) => `${count} thing(s) explain did not say about the default skin:`,
+    ),
+    'the one reader in the tree that looks the default skin up by name (`cmdExplain`, since #541 retired its ' +
+      '`skins[0]`) — it tolerated the absence already, and the case is what makes it say so instead of printing ' +
+      '`attachments=[]` on every slot of a rig whose art is all in named skins',
+  );
+
   return bad;
 }
 
@@ -45389,13 +45672,12 @@ function runEditorRoundtripSuite(): number {
   // runs against it. Three builds' worth of fixture, all three written here, so
   // nothing outside this block has to hold a shape for them.
   //
-  // 🔒 ERT68 is the load-bearing one and it is aimed at the recognition rule
-  // rather than at the verdict. `render`'s refusal is a `UsageError`, so its
-  // exit code is 2 — and so is every OTHER usage error, including the export
-  // declaring a different skin from the build. A tool that read a 2 as "nothing
-  // to draw" would report the skin the editor renamed as a SKIP, and the run
-  // would come back green having measured nothing. Both children exit 2 there;
-  // only one of them is the refusal.
+  // 🔒 ERT68 was aimed at the recognition rule rather than at the verdict:
+  // `render`'s refusal is a `UsageError`, exit 2, and so was the export being
+  // asked for a skin it had renamed — a tool reading a 2 as "nothing to draw"
+  // would have reported that as a SKIP. Since #801 a skin one file lacks never
+  // reaches a renderer (`skinRoster` names it first), so the case now holds the
+  // verdict that rule protected: the renamed skin is red, by name.
   {
     const s621 = join(root, 's621');
     mkdirSync(s621, { recursive: true });
@@ -45411,8 +45693,11 @@ function runEditorRoundtripSuite(): number {
     // The rig the card is about. Two NAMED skins rather than one default,
     // because the per-skin roll-up only prints for a rig that declares more than
     // one block — and "never as a pass, never as MAE 0" is a claim about that
-    // roll-up. rigc emits an empty `default` beside them, so this build declares
-    // three skins and none of them draws.
+    // roll-up. The spec states an empty `default` beside them, so this build
+    // declares three skins and none of them draws. ⚠️ Stated rather than left to
+    // the compiler since #801: rigc used to add that skin on its own, and ERT67
+    // needs it — the drawn build's one skin is `default`, and it is under a skin
+    // BOTH files declare that one side can be blank while the other draws.
     const boxRig = spec('hitbox_probe.rig.json', {
       spec: 'rigc-rig/1',
       name: 'hitbox_probe',
@@ -45420,6 +45705,7 @@ function runEditorRoundtripSuite(): number {
       bones: [{ name: 'root' }, { name: 'body', parent: 'root', x: 0, y: 0 }],
       slots: [{ name: 'hit', bone: 'body', attachment: 'hit' }],
       skins: {
+        default: {},
         base: { hit: { hit: { type: 'boundingbox', vertexCount: 4, vertices: [-8, -8, 8, -8, 8, 8, -8, 8] } } },
         alt: { hit: { hit: { type: 'boundingbox', vertexCount: 3, vertices: [-4, -4, 4, -4, 0, 6] } } },
       },
@@ -45544,9 +45830,15 @@ function runEditorRoundtripSuite(): number {
         '`&&` would report that as not measured and exit green',
     );
 
-    // ERT68 — two children, both exit 2, and only one of them is the refusal.
-    // The export declares a skin the build does not, which is a `UsageError`
-    // like the refusal and carries its exit code and none of its words.
+    // ERT68 — the export renamed a skin the build declares. Until #801 the
+    // renamed skin was RENDERED on both sides and both children exited 2 — the
+    // export's for "no skin", the build's for "nothing to draw" — so this case
+    // was aimed at the recognition rule that tells those two apart. Step 5 now
+    // compares the two rosters first (`skinRoster`), so a skin one file lacks is
+    // named as lost by the export, its new name as added, and neither is handed
+    // to a renderer. What the case still holds is the verdict the old one did:
+    // a skin the build declares and the export does not is RED, by name, and the
+    // skins the rename left alone still SKIP on the same run.
     const renamedSkin = boxSkins.find((s) => s !== 'default' && s !== '(unnamed)') ?? 'base';
     const renamed = join(s621, 'renamed-export.json');
     if (existsSync(boxSkeleton)) {
@@ -45556,31 +45848,20 @@ function runEditorRoundtripSuite(): number {
     }
     const renamedOut = join(s621, 'out-renamed');
     const gone = runRoundtrip(['--build', boxBuild, '--out', renamedOut, '--exported', renamed]);
-    const goneIndex = boxSkins.indexOf(renamedSkin);
-    const goneHeading = headingOf(goneIndex, boxSkins.length, renamedSkin);
-    const goneBlock = reportBlock(gone.stdout, goneHeading);
-    const goneQuoted = quotedChildOutput(gone.stdout, goneHeading);
     const logged = existsSync(join(renamedOut, 'roundtrip.log'))
       ? readFileSync(join(renamedOut, 'roundtrip.log'), 'utf8')
       : '';
-    const exits = goneBlock.filter((l) => /^ {2}render .* exit=/.test(l));
+    const lostLine = `FAIL  skin "${renamedSkin}" is lost by the export: the build declares it and the export does not (diff attachments.skins `;
+    const addedLine = `FAIL  skin "${renamedSkin}_renamed" is added by the export: the export declares it and the build does not (diff attachments.skins `;
     const goneProbes = [
-      ...(goneIndex >= 0 ? [] : [`the build declares no skin to rename — it declares [${boxSkins.join(', ')}]`]),
-      // Both children are usage errors, which is the whole point of the case.
-      ...(exits.length === 2 && exits.every((l) => l.trimEnd().endsWith('exit=2'))
-        ? []
-        : [`the two renderers reported ${JSON.stringify(exits.map((l) => l.trim()))}, and this case needs both at exit=2`]),
-      ...(goneBlock.some((l) => l.includes('FAIL')) ? [] : [`the block did not fail: ${JSON.stringify(goneBlock.join(' / ').slice(0, 240))}`]),
-      ...(skipped(goneBlock) ? ['a block whose two children exited 2 for different reasons reported a SKIP'] : []),
-      // Each child said its own thing, and both reached the report.
-      ...(goneQuoted.some((l) => l.includes(`no skin "${renamedSkin}"`))
-        ? []
-        : [`the skin refusal was not quoted — the block quoted ${JSON.stringify(goneQuoted)}`]),
-      ...(goneQuoted.some((l) => l.includes('there is nothing to draw'))
-        ? []
-        : ['the other child, which refused with nothing to draw, was not quoted beside it']),
-      // And it survives the run, which is where #541's card says to read it.
-      ...(logged.includes(`no skin "${renamedSkin}"`) ? [] : ['the quoted refusal did not reach roundtrip.log']),
+      ...(boxSkins.includes(renamedSkin) ? [] : [`the build declares no skin to rename — it declares [${boxSkins.join(', ')}]`]),
+      ...(gone.stdout.includes(lostLine) ? [] : [`the renamed skin was not named lost by the export — no line starting ${JSON.stringify(lostLine)}`]),
+      ...(gone.stdout.includes(addedLine) ? [] : [`the new name was not named added by the export — no line starting ${JSON.stringify(addedLine)}`]),
+      // Rendered on neither side: no block for either name.
+      ...(gone.stdout.includes(`skin "${renamedSkin}" — render both`) || gone.stdout.includes(`skin "${renamedSkin}_renamed" — render both`)
+        ? ['a step-5 block was planned for a skin only one file declares']
+        : []),
+      ...(logged.includes(lostLine) ? [] : ['the lost-skin line did not reach roundtrip.log']),
       ...(gone.status === 0 ? ['the tool exited 0 on a run where a skin the build declares was not in the export'] : []),
       // The skins the rename left alone are still the SKIP, on the same run —
       // so this is not passed by a tool that stopped skipping altogether.
@@ -45588,17 +45869,18 @@ function runEditorRoundtripSuite(): number {
     ];
     const goneHeld = goneProbes.length === 0;
     say(
-      'ERT68_A_USAGE_ERROR_THAT_IS_NOT_THE_REFUSAL_IS_QUOTED_AND_STAYS_RED_AT_THE_SAME_EXIT_CODE',
+      'ERT68_A_SKIN_THE_EXPORT_RENAMED_IS_NAMED_LOST_AND_ADDED_BEFORE_ANY_RENDER_AND_STAYS_RED',
       goneHeld,
       probeDetail(
         goneHeld,
         goneProbes,
-        `skin "${renamedSkin}" is missing from the export: both renderers exit 2, the block quotes each child's ` +
-          `own sentence and fails by name, roundtrip.log carries them, the untouched skins still SKIP, exit=${String(gone.status)}`,
+        `skin "${renamedSkin}" is missing from the export under its own name: it is named lost by the export and ` +
+          `"${renamedSkin}_renamed" added, with diff's attachments.skins beside each, neither is rendered, ` +
+          `roundtrip.log carries it, the untouched skins still SKIP, exit=${String(gone.status)}`,
       ),
-      'the refusal is recognised by its exit code AND its sentence, and this is the case that makes the second ' +
-        'clause worth writing: `cli.ts` exits 2 on every usage error there is, so a tool reading the code alone ' +
-        'would report a skin the editor renamed as "not measured" and come back green having compared nothing',
+      'a skin one file does not declare is the finding, and rendering it measured nothing: the export side refused ' +
+        '"no skin" and the build side "nothing to draw", two exit-2 refusals for one absence. Reading the rosters ' +
+        'first says it once, by name, and a run that loses a skin still cannot come back green',
     );
   }
 
@@ -45830,6 +46112,123 @@ function runEditorRoundtripSuite(): number {
           : `editor ${namedEditor}: round trip exit ${String(trip?.status)} — ${said}`,
         `${shape.asks}. Built by rigc with no \`name\` on any entry and handed to the editor named in RIGC_ERT_EDITOR; ` +
           'the tool quotes the editor\'s own words on a failed step, so a red line here carries the reason',
+      );
+    }
+  }
+
+  // --- ERT73–ERT74: which skins the editor keeps (issue #801) -----------------
+  //
+  // 🔬 4.3.26 exported a rig whose `default` skin was EMPTY with no `default` at
+  // all (`skins` 3 → 2, found landing #796's ERT72). `compile` now writes a
+  // `default` only when the spec has one, so the card's shape with the empty
+  // default left out is a build the editor has nothing to drop from:
+  //
+  //   ERT73  two named skins and no `default` — the round trip must read
+  //          `attachments.skins` 1.000 and name no lost skin
+  //   ERT74  a NAMED skin that is empty, beside a drawable default and a filled
+  //          named skin — the card's open question: does the editor drop an
+  //          empty named skin too? Either answer is a measurement, so the case
+  //          reads the export itself: PASS = kept, and the detail names the
+  //          skins the export declared whichever way it went
+  //
+  // ⚠️ Gated behind RIGC_ERT_EDITOR exactly as ERT71–ERT72 are, and for the same
+  // reason: a selftest must not start an installed editor unasked, so unnamed
+  // each is a SKIP that says so, never a PASS.
+  {
+    const namedEditor = process.env.RIGC_ERT_EDITOR ?? '';
+    const rosterRoot = join(root, 'rosters');
+    mkdirSync(rosterRoot, { recursive: true });
+    for (const [file, colour] of [
+      ['block.png', [40, 60, 90, 255]],
+      ['panel.png', [90, 40, 60, 255]],
+      ['plate.png', [30, 120, 40, 255]],
+    ] as Array<[string, RGBA]>) {
+      writeProbePng(join(rosterRoot, file), 12, 12, colour);
+    }
+    const rosters: Array<{ code: string; name: string; slots: Array<Record<string, unknown>>; skins: Record<string, unknown>; asks: string; watched: string; passes: 'a clean trip' | 'the skin kept' }> = [
+      {
+        code: 'ERT73_A_RIG_WITH_NO_DEFAULT_SKIN_COMES_BACK_FROM_THE_EDITOR_WITH_THE_SKINS_IT_WENT_IN_WITH',
+        name: 'no_default_skin',
+        slots: [{ name: 'panel', bone: 'root', attachment: 'panel' }],
+        skins: {
+          base: { panel: { panel: { image: 'panel.png' } } },
+          alt: { panel: { panel: { image: 'plate.png' } } },
+        },
+        asks: "the card's shape with the empty default left out — whether the round trip still moves the skins measure",
+        watched: 'base',
+        passes: 'a clean trip',
+      },
+      {
+        code: 'ERT74_AN_EMPTY_NAMED_SKIN_IS_KEPT_BY_THE_EDITORS_EXPORT',
+        name: 'empty_named_skin',
+        slots: [
+          { name: 'block', bone: 'root', attachment: 'block' },
+          { name: 'panel', bone: 'root', attachment: 'panel' },
+        ],
+        skins: {
+          default: { block: { block: { image: 'block.png' } } },
+          dress: { panel: { panel: { image: 'panel.png' } } },
+          bare: {},
+        },
+        asks: 'whether the editor drops an EMPTY named skin the way it drops an empty default',
+        watched: 'bare',
+        passes: 'the skin kept',
+      },
+    ];
+    for (const shape of rosters) {
+      if (namedEditor === '' || !existsSync(namedEditor)) {
+        console.log(
+          `  SKIP  ${shape.code}  (${
+            namedEditor === '' ? 'no editor is named in RIGC_ERT_EDITOR' : `RIGC_ERT_EDITOR names ${namedEditor}, and nothing is there`
+          } — ${shape.asks} is a question only the licensed editor answers, and this run did not ask it)`,
+        );
+        continue;
+      }
+      const rigPath = join(rosterRoot, `${shape.name}.rig.json`);
+      const motionPath = join(rosterRoot, `${shape.name}.motion.json`);
+      writeFileSync(
+        rigPath,
+        `${JSON.stringify({ spec: 'rigc-rig/1', name: shape.name, skeleton: { width: 64, height: 64 }, bones: [{ name: 'root' }], slots: shape.slots, skins: shape.skins }, null, 2)}\n`,
+      );
+      writeFileSync(motionPath, `${JSON.stringify({ ...STATIC_MOTION, archetype: shape.name, cut: shape.name }, null, 2)}\n`);
+      const buildDir = join(rosterRoot, shape.name, 'build');
+      const tripDir = join(rosterRoot, shape.name, 'roundtrip');
+      const built = runCli(['build', '--rig', rigPath, '--motion', motionPath, '--images', rosterRoot, '--out', buildDir, '--copy-images']);
+      const trip = built.status === 0 ? runRoundtrip(['--build', buildDir, '--out', tripDir, '--editor', namedEditor]) : null;
+      const said = trip === null ? '' : `${trip.stdout}\n${trip.stderr}`.trim().split('\n').slice(-12).join(' | ');
+      // What each side declares, off the files — the build's and the one JSON
+      // the editor wrote under `export/`, which is the measurement itself.
+      const declared = (path: string): string[] | null =>
+        existsSync(path) ? ((JSON.parse(readFileSync(path, 'utf8')) as { skins?: Array<{ name: string }> }).skins ?? []).map((s) => s.name) : null;
+      const exportDir = join(tripDir, 'export');
+      const exportFile = existsSync(exportDir) ? readdirSync(exportDir).find((f) => f.endsWith('.json')) : undefined;
+      const buildSkins = declared(join(buildDir, 'skeleton.json'));
+      const exportSkins = exportFile === undefined ? null : declared(join(exportDir, exportFile));
+      const diffPath = join(tripDir, 'diff.json');
+      const skinsMeasure = existsSync(diffPath)
+        ? ((JSON.parse(readFileSync(diffPath, 'utf8')) as { sections?: Array<{ measures?: Array<{ id: string; matched: number; total: number; ratio: number }> }> }).sections ?? [])
+            .flatMap((s) => s.measures ?? [])
+            .find((m) => m.id === 'attachments.skins')
+        : undefined;
+      const rosterLine =
+        `the build declares [${buildSkins?.join(', ') ?? '(no build)'}], the export declares ` +
+        `[${exportSkins?.join(', ') ?? '(no export was written)'}], diff attachments.skins ` +
+        `${skinsMeasure === undefined ? '(not measured)' : `${skinsMeasure.matched}/${skinsMeasure.total}`}`;
+      const lostLine = trip !== null && trip.stdout.includes('lost by the export');
+      const ok =
+        shape.passes === 'a clean trip'
+          ? trip !== null && trip.status === 0 && skinsMeasure?.ratio === 1 && !lostLine
+          : exportSkins !== null && exportSkins.includes(shape.watched);
+      say(
+        shape.code,
+        ok,
+        built.status !== 0
+          ? `the build was refused (exit ${String(built.status)}): ${(built.stderr || built.stdout).trim().split('\n').pop() ?? ''}`
+          : `editor ${namedEditor}: round trip exit ${String(trip?.status)}; ${rosterLine}` +
+              `${exportSkins !== null && !exportSkins.includes(shape.watched) ? ` — skin "${shape.watched}" did not come back` : ''}` +
+              `${ok ? '' : ` — ${said}`}`,
+        `${shape.asks}. Read off the export the editor wrote rather than off the tool's exit, so ERT74 is a measurement ` +
+          'whichever way the editor answers: a FAIL there is the editor dropping the skin, named with the roster it did write',
       );
     }
   }
@@ -65961,6 +66360,95 @@ function runIngestSuite(): number {
       'the shape the editor exported on the production rig #796 was found on, and the one the branch point renamed ' +
         'in both skins. It is also the shape #541 claimed the editor could not hold because a link resolves by name; ' +
         'what holds it together is the link\'s `skin`, which the round trip carries and this case reads back',
+    );
+
+    // -- IG90–IG91: the default skin is carried as the export states it (issue #801) --
+    //
+    // 🔬 The 4.3.26 editor exports a rig whose `default` skin is empty with NO
+    // `default` at all (`skins` 3 → 2). `ingest` already wrote what the file
+    // stated — no key — and it was `compile` that put one back, empty, so the
+    // rebuild read `attachments.skins 1/2` against the export it came from. The
+    // forge below is that export: a build of the three-skin shape with the empty
+    // `default` entry taken out, which is exactly the editor's edit.
+    //
+    // 🌱 The plant is DATA, and it is the branch point's emit reproduced inside
+    // the run: `"default": {}` written into the decompiled spec, which is the one
+    // skin the old compiler added on its own.
+    const defaultSkinShape = candidateOf('default_skin_empty', [{ name: 'panel', bone: 'root', attachment: 'panel' }], {
+      default: {},
+      base: { panel: { panel: quad('panel.png', 0) } },
+      alt: { panel: { panel: quad('plate.png', 20) } },
+    });
+    const withEmptyDefault = emitOf(defaultSkinShape);
+    const emptyDefaultFile = JSON.parse(withEmptyDefault.skeletonText) as SkinFile;
+    const exportedNoDefault = {
+      ...withEmptyDefault,
+      skeletonText: `${JSON.stringify({ ...emptyDefaultFile, skins: emptyDefaultFile.skins.filter((skin) => skin.name !== 'default') }, null, 2)}\n`,
+    };
+    const canonical = (text: string): string => (text === '' ? '' : JSON.stringify(JSON.parse(text)));
+    const skinNamesOf = (text: string): string[] => (text === '' ? [] : (JSON.parse(text) as SkinFile).skins.map((skin) => skin.name));
+    const plantDefault = (rig: Record<string, unknown>): number => {
+      rig.skins = { default: {}, ...((rig.skins ?? {}) as Record<string, unknown>) };
+      return 1;
+    };
+    const noDefaultTrip = rebuild('default_skin_absent', exportedNoDefault);
+    const noDefaultPlant = rebuild('default_skin_absent', exportedNoDefault, plantDefault);
+    const noDefaultRows = [
+      ...(noDefaultTrip.refusal === null ? [] : [`the rebuild was refused: ${noDefaultTrip.refusal}`]),
+      ...(Object.keys((noDefaultTrip.rig.skins ?? {}) as object).includes('default') ? ['the decompiled spec states a "default" skin, and the export declares none'] : []),
+      ...noDefaultTrip.findings.filter((f) => f.where.includes('skin') || f.code.includes('SKIN')).map((f) => `a skin finding: ${f.code} ${f.where}`),
+      ...(canonical(noDefaultTrip.skeletonText) === canonical(exportedNoDefault.skeletonText)
+        ? []
+        : [`the rebuild is not the export's canonical text: ${differingJsonPaths(JSON.parse(exportedNoDefault.skeletonText), JSON.parse(noDefaultTrip.skeletonText || '{}')).join('; ')}`]),
+    ];
+    // The plant must be seen: the same comparison, on a spec with the old emit's
+    // skin written back, has to come out unequal and say it is the skins array.
+    const plantSeen =
+      noDefaultPlant.refusal === null &&
+      noDefaultPlant.planted === 1 &&
+      canonical(noDefaultPlant.skeletonText) !== canonical(exportedNoDefault.skeletonText) &&
+      skinNamesOf(noDefaultPlant.skeletonText).includes('default');
+    const noDefaultHeld = noDefaultRows.length === 0 && plantSeen;
+    say(
+      'IG90_AN_EXPORT_WITH_NO_DEFAULT_SKIN_INGESTS_TO_A_SPEC_WITH_NONE_AND_REBUILDS_TO_ITS_CANONICAL_TEXT',
+      noDefaultHeld,
+      probeDetail(
+        noDefaultHeld,
+        [...noDefaultRows, ...(plantSeen ? [] : [`the planted "default": {} did not move the rebuild off the export (skins [${skinNamesOf(noDefaultPlant.skeletonText).join(', ')}])`])],
+        `an export declaring skins [${skinNamesOf(exportedNoDefault.skeletonText).join(', ')}] ingests to a spec stating ` +
+          `[${Object.keys((noDefaultTrip.rig.skins ?? {}) as object).join(', ')}] with no skin finding, and the rebuild is its ` +
+          `${canonical(exportedNoDefault.skeletonText).length} B canonical text; the planted empty default rebuilds ` +
+          `[${skinNamesOf(noDefaultPlant.skeletonText).join(', ')}] and is told apart`,
+        (count) => `${count} thing(s) the absent default skin did not survive:`,
+      ),
+      'the card\'s measurement as a control: nothing is lost on the way in, so there is no finding to print, and the ' +
+        'rebuild writes no skin the export does not declare. The plant is the branch point\'s compiler, as data',
+    );
+
+    // -- IG91: an export that DOES declare an empty default keeps it ------------
+    const emptyDefaultTrip = rebuild('default_skin_kept', withEmptyDefault);
+    const keptRows = [
+      ...(emptyDefaultTrip.refusal === null ? [] : [`the rebuild was refused: ${emptyDefaultTrip.refusal}`]),
+      ...(JSON.stringify(((emptyDefaultTrip.rig.skins ?? {}) as Record<string, unknown>).default) === '{}'
+        ? []
+        : [`the decompiled spec states default ${JSON.stringify(((emptyDefaultTrip.rig.skins ?? {}) as Record<string, unknown>).default ?? null)}, and the file declares an empty one`]),
+      ...(canonical(emptyDefaultTrip.skeletonText) === canonical(withEmptyDefault.skeletonText)
+        ? []
+        : [`the rebuild is not the file's canonical text: ${differingJsonPaths(JSON.parse(withEmptyDefault.skeletonText), JSON.parse(emptyDefaultTrip.skeletonText || '{}')).join('; ')}`]),
+    ];
+    const keptHeld = keptRows.length === 0;
+    say(
+      'IG91_AN_EXPORT_DECLARING_AN_EMPTY_DEFAULT_SKIN_KEEPS_IT_THROUGH_INGEST_AND_REBUILD',
+      keptHeld,
+      probeDetail(
+        keptHeld,
+        keptRows,
+        `a file declaring skins [${skinNamesOf(withEmptyDefault.skeletonText).join(', ')}] with "default" empty ingests to ` +
+          '`"default": {}` and rebuilds to its canonical text',
+        (count) => `${count} thing(s) the stated empty default did not survive:`,
+      ),
+      'IG90\'s twin, and the half that rules out "drop an empty default" as the fix: the JSON can state one, a file ' +
+        'that does is the record, and a rebuild that dropped it would be the same defect in the other direction',
     );
   }
 

@@ -2523,10 +2523,32 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   };
   /** Linked meshes to resolve once every skin exists — see `resolveLinkedMeshes`. */
   const pendingLinks: PendingLink[] = [];
-  tableFor('default'); // rigc always emits a default skin, even when it is empty
-  // ...and every skin the rig declares, for the same reason: a skin can now carry
-  // `bones`/constraint lists with no attachments at all, and a skin that only
-  // switches bones on would otherwise never reach the emitted array.
+  // 🔑 **A `default` skin is emitted exactly when the spec has one** (issue #801):
+  // the rig spec's `skins` carries the key — empty or not — or a manifest part
+  // files its states under it (the loop below). Otherwise there is none, which is
+  // the shape the editor's own export has: a rig whose art all lives in named
+  // skins came back from 4.3.26 with `skins` 3 → 2, the empty `default` gone,
+  // and `SkeletonBinary.readSkin` returns null for a default skin with no slots,
+  // so the binary half cannot even hold one. The runtime treats the two
+  // spellings alike — `SkeletonData.defaultSkin` is null or an empty skin, and
+  // `Skeleton.getAttachment` finds nothing in either (`Skeleton.js:335-346`).
+  // This line used to create it unconditionally, "even when it is empty", which
+  // made every rebuild of such an export differ from it by one skin — a value
+  // the spec never stated.
+  //
+  // Created HERE, before the slot loop, rather than lazily by the first part
+  // that fills it, so `skinTables` keeps `default` first whichever of the two
+  // put it there, and every refusal that lists the emitted skins lists them in
+  // the order it did before.
+  const partsFillDefault = rig.slots.some(
+    (rigSlot) =>
+      partBySlot.has(rigSlot.name) &&
+      (slotAttachments.get(rigSlot.name) ?? rigAttachmentNames.get(rigSlot.name) ?? []).length > 0,
+  );
+  if (skinNames.includes(DEFAULT_SKIN) || partsFillDefault) tableFor(DEFAULT_SKIN);
+  // ...and every skin the rig declares: a skin can carry `bones`/constraint lists
+  // with no attachments at all, and a skin that only switches bones on would
+  // otherwise never reach the emitted array.
   for (const skinName of skinNames) tableFor(skinName);
   const meshBones = new Set<string>();
   const meshes: CompileResult['meshes'] = [];
@@ -4857,13 +4879,21 @@ function resolveLinkedMeshes(
 ): void {
   const skinNames = [...tables.keys()];
   for (const link of links) {
-    // ⚠️ Only a STATED `skin` can miss here, and it is worth saying why rather
-    // than leaving the other half to look like a branch nothing reaches: rigc
-    // always emits a `default` skin, empty if it has to (`tableFor('default')`),
-    // so the parser's own default always resolves to a table. An omitted `skin`
-    // therefore fails one line down, at the source, and the sentence there is
-    // what names the trap.
+    // ⚠️ An omitted `skin` can miss here too since issue #801: rigc emits a
+    // `default` skin only when the spec has one, and the parser's default for a
+    // link is `skeletonData.defaultSkin`, which is then null — the runtime reads
+    // `getAttachment` off it and throws a `TypeError` naming neither. So the
+    // omitted case is said separately, because "the skin is default" would be a
+    // sentence about a value nobody wrote.
     const table = tables.get(link.skin);
+    if (table === undefined && !link.skinStated) {
+      throw new CompileError(
+        `${link.where}: no "skin" is stated, so the parser looks for the source "${link.source}" in the default ` +
+          `skin — and this rig declares no default skin. The rig's skins are ${skinNames.map((s) => JSON.stringify(s)).join(', ')}. ` +
+          'State the skin the source is filed under. Left to the round trip this is a `TypeError` off the null ' +
+          '`SkeletonData.defaultSkin`, which names neither this attachment nor where it was looking.',
+      );
+    }
     if (table === undefined) {
       throw new CompileError(
         `${link.where}: "skin" is ${JSON.stringify(link.skin)}, and the rig declares no such skin. The rig's skins ` +

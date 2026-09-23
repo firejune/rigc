@@ -2836,6 +2836,17 @@ function cmdExplain(flags: Record<string, string>): void {
   // relying on. Reading it by name means a change to the skins ORDER cannot turn
   // this line into a report about some other skin.
   const defaultSkin = result.skeleton.skins.find((skin) => skin.name === 'default');
+  // ...and a skeleton may declare none (issue #801), in which case every
+  // `attachments=[]` below is true and says nothing — so the line above the
+  // column says where the placeholders are instead of letting it read as
+  // "this rig has no art".
+  if (defaultSkin === undefined) {
+    const names = result.skeleton.skins.map((skin) => JSON.stringify(skin.name));
+    console.log(
+      `  (this skeleton declares no default skin, so the attachments column lists none; its placeholders are in ` +
+        `${names.length === 0 ? 'no skin at all' : `the named skin(s) ${names.join(', ')}`})`,
+    );
+  }
   for (const s of result.skeleton.slots) {
     const atts = Object.keys(defaultSkin?.attachments[s.name] ?? {});
     console.log(
