@@ -888,7 +888,9 @@ export interface SpineMeshAttachment {
   type: 'mesh';
   /** See `SpineRegionAttachment.name` — and it takes `path` with it. */
   name?: string;
+  /** `path` and `color` are written right after `type` — `compile.ts`'s `meshTextureKeys` says where that is measured. */
   path?: string;
+  color?: string;
   uvs: number[];
   triangles: number[];
   /** Weighted encoding: boneCount, (boneIndex, bindX, bindY, weight)*n, repeated. */
@@ -910,7 +912,6 @@ export interface SpineMeshAttachment {
   /** Nonessential, but they make the mesh budget assertions readable. */
   width: number;
   height: number;
-  color?: string;
   sequence?: SpineSequence;
 }
 
