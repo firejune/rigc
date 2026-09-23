@@ -25,6 +25,8 @@ import {
   type ConstraintTimeline,
   type CurveTimeline,
   DeformTimeline,
+  IkConstraintData,
+  IkConstraintTimeline,
   Inherit,
   isBoneTimeline,
   isConstraintTimeline,
@@ -48,6 +50,14 @@ import {
   TextureAtlas,
   type TextureAtlasRegion,
   type Timeline,
+  ToRotate,
+  ToScaleX,
+  ToScaleY,
+  ToShearY,
+  ToX,
+  ToY,
+  TransformConstraintData,
+  TransformConstraintTimeline,
 } from '@esotericsoftware/spine-core';
 // ⚠️ `src/` reaches outside itself for exactly two modules and this is one of
 // them, so it is already on `package.json`'s `files` allowlist — see CLAUDE.md.
@@ -208,6 +218,8 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN: 'validity',
   A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN: 'validity',
   A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES: 'validity',
+  A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT: 'validity',
+  A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT: 'validity',
 };
 
 /**
@@ -3062,10 +3074,17 @@ export function validate(input: ValidateInput): ValidateReport {
      * A timeline naming no constraint is the physics family's global form and
      * `unnamedPhysicsReach` answers who it reaches; every other constraint
      * timeline names its one constraint by index.
+     *
+     * `live` is handed the channel as well as the value, because not every
+     * channel of every constraint timeline is a mix (issue #765): an ik frame is
+     * mix, softness, bend direction, compress and stretch, so a bend direction of
+     * +1 is not a key that switches anything on, and a transform frame carries
+     * six mixes of which only the ones for a property the constraint drives are
+     * ever read.
      */
     const keyedLive = <T extends CurveTimeline & ConstraintTimeline>(
       owns: (timeline: Timeline) => timeline is T,
-      live: (timeline: T, value: number) => boolean,
+      live: (timeline: T, value: number, channel: number) => boolean,
     ): Set<object> => {
       const reached = new Set<object>();
       for (const animation of data.animations) {
@@ -3073,7 +3092,7 @@ export function validate(input: ValidateInput): ValidateReport {
           if (!owns(timeline)) continue;
           let keysLive = false;
           for (let channel = 0; channel < timeline.getFrameEntries() - 1 && !keysLive; channel++) {
-            keysLive = curveChannelValues(timeline, channel).some((value) => live(timeline, value));
+            keysLive = curveChannelValues(timeline, channel).some((value) => live(timeline, value, channel));
           }
           if (!keysLive) continue;
           const reach =
@@ -3493,6 +3512,108 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
       stats.sliderConstraints = sliders.length;
+    });
+
+    // --- A47 / A48: an ik or a transform constraint muted for good ----------
+    //
+    // The question A23, A36 and A37 ask of their own kinds, asked of the two
+    // kinds editor exports use most (issue #765): a constraint that rests muted
+    // and that no animation switches on parses, sits in the update cache and
+    // moves nothing. [measured] on generated fixtures, 61 steps at 60 fps: an ik
+    // at `mix` 0 that nothing keys, one keyed to 0 only, a transform at every mix
+    // 0 that nothing keys and one keyed to 0 only each pose every bone exactly
+    // where the same rig with no constraint does (max |Δ| 0.000000), and all four
+    // gated green with 0 failures before these two existed.
+    //
+    // 🔑 **Live is the runtime's own test, `!== 0`, and not `mixLive`'s `> 0`.**
+    // `IkConstraint.update` returns on `mix === 0` and a transform's inner loop
+    // applies a property only when `to.mix(pose) !== 0`, so a negative mix runs.
+    // That is not a corner: [measured] five transform constraints across four of
+    // the editor's own example exports rest at mixX = mixY = −1, nothing keys
+    // them, and each moves its bones at setup against the same constraint with
+    // every mix 0. A `> 0` reading refuses all five. (`A36`/`A37` still read
+    // `> 0` — a path or slider resting negative is a question for their own card.)
+    //
+    // 🔑 **A transform mix is read only for a property the constraint drives.**
+    // The early return in `TransformConstraint.update` is over all six mixes, but
+    // it is not what decides whether anything moves: each `to` entry reads its own
+    // mix (`ToRotate.mix` is `mixRotate`, …). At setup the parser only reads a mix
+    // whose property is declared, so the two tests agree there — but a timeline
+    // key that omits a mix is read as 1 (`SkeletonJson.js`, every `getValue(…, 1)`),
+    // so a key of `mixRotate: 0` alone on a rotate-only constraint passes the
+    // six-mix test on five mixes nothing reads. [measured] that key poses every
+    // bone exactly where no constraint does, and so does one keying `mixX` 1 on
+    // the same constraint. So this reads the mixes of the declared `to` kinds,
+    // at setup and on every value a key poses.
+    const ikLive = (value: number): boolean => value !== 0;
+    /** A transform timeline's six channels, in frame order, and the `to` kind each one is the mix of. */
+    const TRANSFORM_MIXES = [
+      ['mixRotate', ToRotate],
+      ['mixX', ToX],
+      ['mixY', ToY],
+      ['mixScaleX', ToScaleX],
+      ['mixScaleY', ToScaleY],
+      ['mixShearY', ToShearY],
+    ] as const;
+    /** Which of the six channels `constraint` reads at all: the ones whose `to` kind it declares. */
+    const transformReads = (constraint: TransformConstraintData): boolean[] =>
+      TRANSFORM_MIXES.map(([, kind]) => constraint.properties.some((from) => from.to.some((to) => to instanceof kind)));
+    const ikSwitchedOn = keyedLive(
+      (timeline): timeline is IkConstraintTimeline => timeline instanceof IkConstraintTimeline,
+      // Channel 0 is `mix`; the other four are softness, bend direction, compress and stretch.
+      (_timeline, value, channel) => channel === 0 && ikLive(value),
+    );
+    const transformSwitchedOn = keyedLive(
+      (timeline): timeline is TransformConstraintTimeline => timeline instanceof TransformConstraintTimeline,
+      (timeline, value, channel) => {
+        const constraint = data.constraints[timeline.constraintIndex];
+        return constraint instanceof TransformConstraintData && transformReads(constraint)[channel] && value !== 0;
+      },
+    );
+
+    check('A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', () => {
+      const constraints = data.constraints.filter((c) => c instanceof IkConstraintData);
+      if (!constraints.length) return skip('A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', 'the skeleton declares no ik constraint');
+      for (const constraint of constraints) {
+        const mix = constraint.setupPose.mix;
+        if (ikLive(mix) || ikSwitchedOn.has(constraint)) continue;
+        fail(
+          'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT',
+          `ik constraint "${constraint.name}" has mix ${mix} at setup and ${noneKeysItsMixAbove0(data.animations.length)}; ` +
+            `update() returns on mix 0, so ${constraint.bones.map((bone) => `"${bone.name}"`).join(' and ')} never ` +
+            `reach${constraint.bones.length === 1 ? 'es' : ''} for "${constraint.target.name}" — ${REST_OR_KEY_ITS_MIX}`,
+        );
+      }
+    });
+
+    check('A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT', () => {
+      const NAME = 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT';
+      const constraints = data.constraints.filter((c) => c instanceof TransformConstraintData);
+      if (!constraints.length) return skip(NAME, 'the skeleton declares no transform constraint');
+      for (const constraint of constraints) {
+        const where = `transform constraint "${constraint.name}"`;
+        const reads = transformReads(constraint);
+        const pose = constraint.setupPose;
+        const read = TRANSFORM_MIXES.filter((_, i) => reads[i]).map(([field]) => field);
+        if (read.length === 0) {
+          // No `to` at all: no mix is ever read, so neither remedy below applies.
+          fail(
+            NAME,
+            `${where} drives no property — its \`properties\` name no \`to\` — so no mix it carries is ever read and it ` +
+              'moves nothing; declare the property it should drive',
+          );
+          continue;
+        }
+        if (read.some((field) => pose[field] !== 0) || transformSwitchedOn.has(constraint)) continue;
+        fail(
+          NAME,
+          `${where} drives ${read.map((field) => field.slice(3).replace(/^./, (c) => c.toLowerCase())).join(', ')} and has ` +
+            `${read.map((field) => `${field} ${pose[field]}`).join(', ')} at setup, and ` +
+            `${noneKeysItsMixAbove0(data.animations.length)}; a mix is read only for a property the constraint drives, and ` +
+            `update() skips each one at 0, so nothing ever moves ${constraint.bones.map((bone) => `"${bone.name}"`).join(', ')} — ` +
+            `rest ${read.length === 1 ? read[0] : `one of ${read.join(', ')}`} above 0, or key its mix above 0 in an animation`,
+        );
+      }
     });
 
     // --- A40: two sliders on one property, and the later one erases the other -

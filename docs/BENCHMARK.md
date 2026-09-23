@@ -6,7 +6,7 @@ yardstick rigc is measured against, the three instruments that do the measuring
 (`rigc diff`, `rigc bonedist` and `rigc check`) and what none of them can see, the eight-rung
 benchmark ladder and the spineboy graduation exam, the commands that let you look at a
 rig with no reference at all, the run viewer, the input and output surface as it stands
-today, the 47 named assertions and their profiles, the selftest that has watched every
+today, the 49 named assertions and their profiles, the selftest that has watched every
 one of them fire, and the layout of the repository all of that lives in.
 
 It is **repository material rather than package material** — most of what it names
@@ -956,7 +956,7 @@ model (what is pinned, what may move, how authority falls off), and the
 ### The validator
 
 [`src/validate.ts`](../src/validate.ts) parses the emitted artifacts with `spine-core`
-and then runs 47 named assertions over the loaded skeleton. Each one exists because
+and then runs 49 named assertions over the loaded skeleton. Each one exists because
 the failure it catches is **silent**: the file loads, animates, and lies.
 
 Assertions whose data is absent are reported as **SKIP**, never folded into the pass
@@ -964,7 +964,7 @@ count — an assertion with nothing to check has not checked anything.
 
 #### Profiles — "wrong" versus "not how we do it here"
 
-Not all 47 rules are about Spine. Some are about **spine-html**, the renderer this
+Not all 49 rules are about Spine. Some are about **spine-html**, the renderer this
 compiler was built to feed, and about one project's frame budget; they fire on real,
 correct, editor-produced Spine data, because the official example projects carry
 clipping attachments, unweighted meshes, 116-triangle meshes and packed atlases —
@@ -977,17 +977,17 @@ So `validate` and `build` take a `--profile`:
 
 | Profile | Runs | For |
 | --- | --- | --- |
-| `spine` | the 32 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
-| `spine-html` | all 47 — those 32 plus 7 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
+| `spine` | the 34 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
+| `spine-html` | all 49 — those 34 plus 7 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
 
 Those are the two numbers `src/validate.ts` exports rather than states in prose:
-`ASSERTION_NAMES.length` is 47 and `assertionCountForProfile('spine')` is 32, so a
+`ASSERTION_NAMES.length` is 49 and `assertionCountForProfile('spine')` is 34, so a
 control can count them instead of quoting a figure that goes stale the next time one
 is added.
 
 `spine` is the default because it is the question this package's output answers:
 the artifact imports into the Spine editor and plays in any 4.3 runtime, and
-that is what the 32 validity rules are about. The other 15 are somebody's policy
+that is what the 34 validity rules are about. The other 15 are somebody's policy
 — one renderer's, one canvas budget's, one compiler's own formations' — and a
 rig arriving from anywhere else has no stake in them. Ask for them with
 `--profile spine-html` when you want them.
@@ -1050,6 +1050,8 @@ the renderer policy*.
 | `A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN` | both | a linked mesh — `type: "linkedmesh"`, or a `type: "mesh"` carrying `source`, which is the key the parser actually decides on — that also states `uvs`, `triangles`, `vertices`, `hull` or `edges`. `readAttachment` returns from the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`), so nothing reads them and `setSourceMesh` fills the attachment with the source's arrays: measured on a forged skeleton, a link declaring 5 uvs and 3 triangles beside a 4-vertex source loaded the source's 4 and 2, and the whole gate was green. The detail names the attachment, every key, the `source` with the skin and slot the parser looks in, and both shapes. `width`/`height` are deliberately excluded — the source overwrites them too, but the parser reads them and the format carries them on a link. **SKIP** when no attachment links to another |
 | `A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN` | both | an `rgb` or `alpha` timeline — the separable colour timelines, which pose part of a slot's colour and leave the rest — the runtime does not hold as the file states it. Two shapes, both parsing in silence: another colour timeline of the same slot and animation poses a channel this one poses (`rgba` beside `alpha`, which is what a converter leaves when it writes a separable `rgb` back as `rgba` next to the `alpha` it kept) — each poses its channels at every time, setup value included, so the one the file states later overwrites the other everywhere; or a key the pose does not reproduce, read by stepping to the key's own time — a colour that is not six hex digits loads as NaN, a repeated key time leaves one key read by nothing. The channel table (`SLOT_COLOR_CHANNELS`) is shared with the compiler's refusal of the same pair and held to the runtime's property ids by a selftest control. It is its own rule rather than a clause on `A43` because neither timeline poses a dark colour, and a rig with a `dark` and no separable timeline would have given such a clause a PASS for an absent subject. ⚠️ An `rgb` alone written as `rgba` with the setup alpha is a correct `rgba` and cannot be seen from the file. SKIPs when nothing keys an `rgb` or `alpha` |
 | `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` | both | a numbered image series the runtime does not show as the file states it — a `sequence` block with no `count` or a `setup` past the end, a key whose `mode` is outside the seven (loads as `hold`), whose `index` is fractional or past the end, whose advancing mode runs at an effective delay of 0 (`Infinity \| 0` is 0: it never advances), or that steps an attachment with no block — and then the pose: every key sampled mid-frame and the region shown held to the frame the file's statement gives, the arithmetic of `SequenceTimeline.applyToSlot` transcribed rather than read back. Measured on forged skeletons through spine-core 4.3.13, every one of those loads without a word (issue #729). `validity`: the arithmetic is the runtime's. SKIPs when no attachment carries a `sequence` and no animation keys one |
+| `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | every ik constraint is either mixed in at setup or keyed away from 0 by an animation — a `mix` timeline keying 0 only is no rescue, a lifted Bezier between two keys of 0 is (#765). `IkConstraint.update` returns on `mix === 0`, so a constraint resting there that nothing keys loads, sits in the update cache and moves nothing. SKIPs when the skeleton declares no ik constraint |
+| `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | every transform constraint drives some property, and a mix of a property it drives is away from 0 at setup or on a value an animation poses (#765). The mixes of properties it does not drive are never read, which matters because a key that omits a mix reads it as 1. A negative mix runs, and the editor's own example exports rest five transforms at −1, so live is `!== 0`. SKIPs when the skeleton declares no transform constraint |
 
 ## Usage
 
@@ -1124,7 +1126,7 @@ bun cli.ts pose    --images path/to/parts --frame poseA.png # read a pose OUT of
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
 it re-derive the declared durations and the structural expectations too, and the
 report says which it had. `build` and `validate` both default to `--profile spine`,
-the 32 validity rules; `--profile spine-html` adds this project's renderer and
+the 34 validity rules; `--profile spine-html` adds this project's renderer and
 archetype policy on top.
 
 `render` and `preview` are the two that need no reference at all — see
