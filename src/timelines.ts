@@ -90,33 +90,50 @@ const EVENT_CHANNELS: Record<string, number | null> = { events: null };
 
 /**
  * How far past an animation's declared `duration` a key time may land: one step
- * of the grid every key time is rounded onto.
+ * of the **float32** grid at that duration, which is the grid a key time is
+ * both emitted on and stored on.
  *
- * The compiler quantises key times onto that grid with `keyTime`, which rounds
- * DOWN (issue #99), so 1e-6 s is the finest distinction a key can make and a
- * *correct* key now misses its target only on the early side: a key the author put
- * exactly ON a duration of 68/12 s emits as 5.666666 rather than past it. What
- * still needs the tolerance is the other side of the same rule — `validate` re-runs
- * it on an emitted file read back through a **Float32Array**, whose steps are
- * coarser than this one and round both ways, and on artifacts no rigc compile ever
- * touched. Anything a whole step past a declared duration was authored there, not
- * rounded onto it.
+ * `spine-core` reads every timeline's frames into a `Float32Array`, and since
+ * issue #716 the compiler writes every number as its float32's shortest name,
+ * so the two grids are one. A key placed exactly ON a duration the float cannot
+ * hold is stored at most half a step from it — later, for a time like `0.2`
+ * whose own text names a float; never later for a time off that grid, which
+ * `keyTime` steps down (issue #99). What still needs the tolerance is the first
+ * case, and every artifact no rigc compile touched. Anything a whole step past a
+ * declared duration was authored there, not rounded onto it.
  *
- * ⚠️ `FRAME` (1/60 s) is the wrong tolerance for this, which is why the constant
+ * ⭐ **A function and not a constant, because the grid is relative.** The fixed
+ * `KEY_TIME_EPSILON = 1e-6` that stood here was one step of `r6`'s six-decimal
+ * grid, and `A09` added this function to it for the float the file is read back
+ * into. With `r6` retired the first term had nothing left to be a step of, so it
+ * retired with it: a float32 step is 4.8e-7 s at 5 s and 3.8e-6 s at 32 s, and a
+ * flat epsilon would fail correct data for being long — 972 frames at 30 fps
+ * keyed exactly on their own declared duration are stored 1.5e-6 s late.
+ *
+ * ⚠️ `FRAME` (1/60 s) is the wrong tolerance for this, which is why the function
  * is separate rather than reused: 1/60 s answers "is the DECLARED DURATION
- * wrong?", it is 16,667 times wider than this, and it hid the defect that put
- * this here. Rung 6 rounded key times to 4 dp in its authoring tooling, so a
- * one-frame attachment reveal landed 3.4e-5 s past a 68/12 s duration — 34 steps
- * past this line but 1/500 of FRAME, with another track already sitting on the
- * declared duration, so the compiler's Rule 4 and the validator's A09 both
- * compared the animation's max key time and agreed. The reveal never fired
- * (issue #54).
+ * wrong?", it is some 35,000 times wider than this at 5 s, and it hid the
+ * defect that put this here. Rung 6 rounded key times to 4 dp in its authoring
+ * tooling, so a one-frame attachment reveal landed 3.3e-5 s past a 68/12 s
+ * duration — about 70 steps past this line but 1/500 of FRAME, with another
+ * track already sitting on the declared duration, so the compiler's Rule 4 and
+ * the validator's A09 both compared the animation's max key time and agreed.
+ * The reveal never fired (issue #54).
+ *
+ * The spacing of a normal float is 2^(exponent − 23), and `Math.log2` recovers
+ * the exponent. Zero takes the guard — a named empty animation declares
+ * `duration: 0` and A09 does compare it — and the magnitude is taken first, so a
+ * sign never reaches `log2`.
  *
  * It lives here, beside the timeline catalogue, for the reason the catalogue
  * does: `compile.ts` refuses on it and `validate.ts` re-checks the emitted file
- * against it, and a second copy of the number is a second copy that drifts.
+ * against it, and a second copy is a second copy that drifts.
  */
-export const KEY_TIME_EPSILON = 1e-6;
+export function float32Step(t: number): number {
+  const magnitude = Math.abs(t);
+  if (!Number.isFinite(magnitude) || magnitude === 0) return 0;
+  return 2 ** (Math.floor(Math.log2(magnitude)) - 23);
+}
 
 /**
  * Every timeline group `readAnimation` reads (SPEC_COVERAGE part 1-8), keyed by

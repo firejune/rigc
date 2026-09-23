@@ -762,18 +762,28 @@ State the ambition in the right units, because three different things get called
 `build(ingest(x))` is byte-identical for a skeleton **rigc** emitted — that is the
 contract `bun run selftest` gates on every run — and it is not, for a skeleton the
 editor emitted. Measured over all twelve corpus exports, a field-by-field walk of the
-rebuild against its source produces differences of exactly three kinds, in every file:
+rebuild against its source produces differences of exactly two kinds, in every file:
 
 | Kind | Example, candidate vs reference | Why |
 | --- | --- | --- |
 | **header bookkeeping**, 3 per file | `skeleton.hash: undefined vs "VFWbaK2UoCM"`, `skeleton.audio: undefined vs null`, `skeleton.spine: "4.3.13" vs "4.3.75-beta"` | the rig spec has no field for `hash` or `audio`, and the version is the runtime rigc links. `ingest` reports all three as findings — `HEADER_BOOKKEEPING` and `HEADER_REDERIVED` |
 | **an omitted default written out** | `…rotate[0].time: 0 vs undefined` | the editor omits a zero `time`; rigc writes it. AUTHORING §10.5's *do not imitate the exporter's omissions*, from the other side. The header has one of these too and it is the one `ingest` now names: a stage at the origin is written `width`/`height` with no `x`/`y`, and the rebuild spells both — `LOSS HEADER_ORIGIN`, with the box unchanged ([#622](https://github.com/firejune/rigc/issues/622)). No file in this corpus takes that branch: all twelve declare an origin away from 0 |
-| **the emitted precision** | `…curve[0]: 0.066667 vs 0.06666667`, `uvs[0]: 0 vs 2.554152e-7` | rigc emits six decimals |
+
+🔢 **A third row stood here until issue #716: the emitted precision** —
+`…curve[0]: 0.066667 vs 0.06666667`, `uvs[0]: 0 vs 2.554152e-7` — because rigc wrote
+six fixed decimals where the editor writes each number as the shortest decimal naming
+its float32. It rewrote every number with more digits than that, by up to 7e-7, with
+no `LOSS` line, and the `uvs[0]` case was that rounding taking a carried value to 0 —
+`ingest` carries every number as the double it parsed, so no derivation was involved.
+rigc now writes the editor's text, and `IG73` holds every number of the twelve
+rebuilds to its source's spelling; `IG75` counts what still differs by kind, and none
+of it is a number. The whitespace of an export is not compared at all — it is an
+export setting, pretty-printed in the examples and one line from the command line.
 
 ⇒ **So the corpus gate is `diff` at 1.000 rather than a byte comparison**, and it is
 worth being exact about what that does and does not cover. `diff` compares structure —
 counts, names, parentage, order, timeline kinds, key counts, curve kinds — and **not
-the values inside the keys**, which is why the precision row above is invisible to it.
+the values inside the keys**, which is why a moved value is invisible to it.
 On rigc's own rigs byte identity covers both; on a foreign export it used to be
 `check` (pixels) or nothing, depending on what you render.
 
@@ -784,8 +794,9 @@ every bone's `length` or mirrored every vertex would read 1.000 on all 49 measur
 on every `(reported)` one. So the corpus round trip also compares **value by value**,
 with the format's defaults taken from the parser rather than from a table — both files
 are read through `spine-core` and the parsed forms are compared path by path, under a
-tolerance that is the sum of rigc's own 1e-6 emitted grid and one float32 step of the
-runtime's storage. Nine measures, printed on `IG16`'s own line and gated there — here
+tolerance that is the sum of the 1e-6 grid rigc's closed-form models are evaluated on
+— the one absolute grid it still emits on — and one float32 step of the runtime's
+storage. Nine measures, printed on `IG16`'s own line and gated there — here
 is the `6-arcs` export's, wrapped to fit this page:
 
 ```
@@ -805,7 +816,7 @@ does **not** cover, in the same breath:
 | `version` and `hash` | the rig spec has no field for either, and `ingest` reports both as findings — the header row above, unchanged |
 | anything below one float32 step | the parser stores frames, curves and vertices in a `Float32Array`, so a difference it cannot represent is invisible to any reading of the parsed form |
 | a Bezier's handles *as written* | the parser samples them into the curve, so a moved handle arrives as moved samples rather than as the handle it was |
-| how the file is **spelled** | field order, an omitted default written out, six decimals against eight — the second and third rows of the table above are values that agree, and this measure says so |
+| how the file is **spelled** | field order and an omitted default written out — the second row of the table above is values that agree, and this measure says so. A number's spelling is `IG73`'s, which reads the rebuild as text |
 | how it **looks** | that is `check`, and `--texture-from` is how its figure is attributed |
 
 The geometric row needs a real number, because a naive reading of `check` makes an

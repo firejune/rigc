@@ -85,7 +85,7 @@ import { colourTypeName, readPngHeader } from './png.ts';
 import { BONE_INHERIT_KNOWN } from './rig.ts';
 import {
   CHANNELS_BY_KIND,
-  KEY_TIME_EPSILON,
+  float32Step,
   PHYSICS_POSE_RULES,
   physicsKeyRefusal,
   physicsOutsideSays,
@@ -640,31 +640,6 @@ export function unnamedPhysicsTimeline(name: string): Timeline | null {
     animations: { probe: { physics: { '': { [name]: [{}] } } } },
   });
   return probe.animations[0]?.timelines[0] ?? null;
-}
-
-/**
- * One step of the **float32** grid at `t`, which is the grid a loaded key time
- * actually sits on: `spine-core` reads every timeline's frames into a
- * `Float32Array`, so a time the compiler wrote as `32.366667` comes back as
- * `32.366668701171875`.
- *
- * A09 needs this and the compiler does not, and that asymmetry is the reason it
- * is a function rather than a constant. `KEY_TIME_EPSILON` is fixed because the
- * compiler's own grid is fixed — `r6` puts every key time on 1e-6 s at any
- * magnitude. A float32 step is not: 4.8e-7 s at 5 s, 3.8e-6 s at 32 s. Adding a
- * flat epsilon to a comparison against a value that has been through float32
- * would fail correct data for being long — 971 frames at 30 fps keyed exactly on
- * its own declared duration arrives 2.0e-6 s late, twice the whole epsilon.
- *
- * The spacing of a normal float is 2^(exponent − 23), and `Math.log2` recovers
- * the exponent. Zero takes the guard — a named empty animation declares
- * `duration: 0` and A09 does compare it — and the magnitude is taken first, so a
- * sign never reaches `log2`.
- */
-function float32Step(t: number): number {
-  const magnitude = Math.abs(t);
-  if (!Number.isFinite(magnitude) || magnitude === 0) return 0;
-  return 2 ** (Math.floor(Math.log2(magnitude)) - 23);
 }
 
 /**
@@ -4130,7 +4105,11 @@ export function validate(input: ValidateInput): ValidateReport {
         // 1/500 of FRAME, which this comparison read as agreement (issue #54).
         // `compile.ts` refuses that per timeline now; this is the same rule held
         // against a skeleton the compiler never saw.
-        const slack = KEY_TIME_EPSILON + float32Step(declared);
+        // The slack is one float32 step at the declared duration, and it is the
+        // same function the compiler's Rule 4 refuses on (`float32Step`, in
+        // `timelines.ts`, which says why it is a step of the float and no longer
+        // a fixed 1e-6 plus one).
+        const slack = float32Step(declared);
         const past = anim.duration - declared;
         if (past > slack) {
           const late = anim.timelines.filter((t) => t.getDuration() - declared > slack).length;

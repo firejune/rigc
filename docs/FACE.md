@@ -1187,13 +1187,14 @@ declares it: `"from": -19, "to": 0, "scale": 0.05, "max": 19, "local": true,
 and `to`** — and `to: 0` says nothing more than *the bottom of the range is the
 animation's first frame*. `from`, `max` and the duration are all the ceiling.
 
-🔸 **And `scale` is chosen for the endpoint.** rigc rounds every number it emits
-to six decimals, so a `scale` that is not exact there moves the top of the dial:
-`1/60` ships as `0.016667`, and a 60° turn then applies at 1.00002 s rather than
-1 s — the last frame under `loop: false`, the *first* under `loop: true`
-(AUTHORING §3.5.2). `0.05` is exact at six decimals, which is the only reason the
-example can put its endpoint exactly on the duration. Pick a `scale` that is not,
-and land the endpoint inside the duration instead.
+🔸 **And `scale` is chosen for the endpoint.** rigc emits every number as its
+float32's shortest name, so a `scale` the float cannot hold moves the top of the
+dial: `1/60` ships as `0.016666668`, and a 60° turn then applies at 1.00000008 s
+rather than 1 s — the last frame under `loop: false`, the *first* under
+`loop: true` (AUTHORING §3.5.2). `0.05` is its own float's name, so the file states
+exactly `0.05`, which is the only reason the example can put its endpoint exactly
+on the duration. Pick a `scale` that is not, and land the endpoint inside the
+duration instead.
 
 ⚠️ **The ceiling is per mesh, and the face's is not the smallest one on the
 face.** The same run prints one for every depth mesh, and in this example each

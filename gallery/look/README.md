@@ -126,9 +126,10 @@ property on it, and an affine map from that property's value to a time:
 `time = to + (value − from) × scale`, so the dial at −19° applies `turn` at
 `0 + (−19 + 19) × 0.05 = 0 s`, at 0° applies it at `0.95 s` and at +19° at
 `1.9 s` — which is exactly the animation's length. **0.05 s per degree**, on
-both axes; `tilt` runs −5°..+5° and is therefore 0.5 s long. `scale` is exact at
-the six decimals rigc emits, so nothing rounds the endpoint past the duration
-(AUTHORING §3.5.2's last warning).
+both axes; `tilt` runs −5°..+5° and is therefore 0.5 s long. `0.05` is its own
+float's shortest name, which is how rigc emits every number, so the file states
+exactly `0.05` and nothing rounds the endpoint past the duration (AUTHORING
+§3.5.2's last warning).
 
 `motion.json`'s `sweep` keys `yaw_dial.rotate` and `tilt_dial.rotate`, the two
 needles are attached to those bones, and the head follows. Nothing anywhere
@@ -167,7 +168,7 @@ Everything else falls out:
 | --- | --- |
 | reported ceiling, face mesh | **±19.32°** |
 | slider range | **−19°..+19°** = `from: -19`, `max: 19` |
-| seconds per degree | **0.05** (chosen; it makes `scale` exact at six decimals) |
+| seconds per degree | **0.05** (chosen; it is its own float's name, so `scale` is emitted exactly) |
 | `turn`'s duration | `2 × 19 × 0.05` = **1.9 s** |
 | the map | `time = 0 + (degrees + 19) × 0.05` |
 | key times | 0, 0.3, 0.65, 0.95, 1.25, 1.6, 1.9 — the seven angles −19, −13, −6, 0, 6, 13, 19 |
@@ -314,7 +315,7 @@ the inside — and the ceiling comes back asymmetric:
 
 ```
   MESH  hair_lock_l  grid     39 vertices / 48 triangles  (budget 320)  bones=[lock_l]  attachments=[hair_lock_l]
-        depth "lock_l_depth.png" 0c4eaeb36b7c5cac near=white zScale=64 z=[22.086275, 63.874511]
+        depth "lock_l_depth.png" 0c4eaeb36b7c5cac near=white zScale=64 z=[22.086275, 63.87451]
         32 of 39 vertices sample a texel the part image does not draw — their z is the sheet's reading of somewhere the part is not
         turn ceiling  yaw +17.04° / -45.80°   pitch +none / -none
           1st pct     yaw +unranked of 12 / -unranked of 36   pitch +none / -none

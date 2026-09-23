@@ -138,7 +138,12 @@ export interface RibbonSpecInput {
 
 export class MeshError extends Error {}
 
-/** Round to 6 decimals and never emit "-0" (byte-stable output). */
+/**
+ * The generator's own grid: 6 decimals, never "-0". Its rows, weights and
+ * shares are built on it, and what it produces reaches the file through the
+ * compiler's `f32` at emission (issue #716), so the emitted text is still each
+ * number's float32 name — this is the generator's resolution, not the file's.
+ */
 function r6(n: number): number {
   const v = Math.round(n * 1e6) / 1e6;
   return v === 0 ? 0 : v;

@@ -5996,7 +5996,8 @@ result, so it was dropped and the earlier variant reproduced to the digit.
 
 ⇒ **Issue [#18](https://github.com/firejune/rigc/issues/18) closes.** Two findings from this
 run are not about rung 5 and are folded into the guide: **a stepped key on a sample time
-already on the 1e-6 grid can be missed entirely** — 13 of this shot's 78 sample times are
+already on the 1e-6 grid can be missed entirely** (the grid rigc emitted key times on then;
+since issue #716 the same holds for a time that already names a float32) — 13 of this shot's 78 sample times are
 affected, `sampleAnimation` accumulating `1/12` can land a few ULPs below a time like
 `6.5`, and for a stepped timeline that is a whole frame late or never (fix: write
 `T − 1e-6`) — and the packed-atlas MAE floor, which two rungs now measure independently.

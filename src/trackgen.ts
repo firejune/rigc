@@ -49,7 +49,8 @@
  * Each closed form is a fixed sequence of float64 operations over numbers read
  * from the spec, evaluated in **member order** — the group's own array order,
  * never an iteration over an unordered set. The caller quantises with the
- * compiler's `r6`, so the same spec emits the same bytes and
+ * compiler's `onModelGrid` — the model's 1e-6 resolution, then the float32 name
+ * every emitted number takes — so the same spec emits the same bytes and
  * `A18_DETERMINISTIC_EMIT` proves it on a second independent compile.
  */
 
@@ -177,7 +178,7 @@ export interface TrackDeriveReport {
   members: TrackDeriveMemberValue[];
 }
 
-/** `Math.round(n * 1e6) / 1e6`, passed in so the compiler's quantiser stays in one place. */
+/** The compiler's `onModelGrid` (1e-6, then float32), passed in so the quantiser stays in one place. */
 export type Rounder = (n: number) => number;
 
 /**

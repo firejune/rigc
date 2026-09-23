@@ -217,9 +217,9 @@ table and the artifact can be read against each other:
                  t = 0.20944 rad
                  cos t − 1 = -0.021852
                  sin t = 0.207912
-                 centre shift = −radius·sin t = -35.344987
-               25 vertices, largest offset 35.344987px at vertex 2
-                 v  0 (-7.17493, 0)  v  1 (-22.413595, 0)  v  2 (-35.344987, 0)  v  3 (-27.658171, 0)
+                 centre shift = −radius·sin t = -35.344986
+               25 vertices, largest offset 35.344986px at vertex 2
+                 v  0 (-7.17493, 0)  v  1 (-22.413595, 0)  v  2 (-35.344986, 0)  v  3 (-27.65817, 0)
                  v  4 (-14.255108, 0)  v  5 (-14.255108, 0)  v  6 (-14.255108, 0)  v  7 (-14.255108, 0)
                  …five more lines: the run is in list order, so `v 0`–`v 4` are the top row's five
                  values, `v 4`–`v 8` the right column's five copies of one value, and so on around
