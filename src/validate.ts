@@ -81,6 +81,7 @@ import {
   physicsOutsideSays,
   physicsRuleFor,
   type PhysicsPoseRule,
+  SEQUENCE_MODES,
   SLOT_COLOR_CHANNELS,
   walkTimelines,
 } from './timelines.ts';
@@ -206,6 +207,7 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN: 'validity',
   A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN: 'validity',
   A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN: 'validity',
+  A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES: 'validity',
 };
 
 /**
@@ -312,6 +314,8 @@ export const SKIP_NO_TWO_COLOR_TINT =
 export const SKIP_NO_SEPARABLE_COLOR =
   'no animation keys an "rgb" or "alpha" timeline, so there is no separable slot colour to read back';
 export const SKIP_NO_LINKED_MESH = 'no attachment in this skeleton takes its geometry from another one';
+export const SKIP_NO_SEQUENCE =
+  'no attachment carries a "sequence" block and no animation keys a "sequence" timeline, so there is no numbered series to read back';
 /**
  * A09's, which predates this list and joins it rather than being rewritten: it
  * is the same fact about the same subject, and a control that compares against
@@ -4575,6 +4579,259 @@ export function validate(input: ValidateInput): ValidateReport {
             'mesh of its own.',
         );
       }
+    });
+
+    // --- A46: a numbered series shows the frame the file states ------------
+    //
+    // 🚨 Every way this goes wrong loads without a word (issue #729, measured on
+    // spine-core 4.3.13): a `sequence` block with no `count` loads a series of
+    // no region; a `setup` past the end is clamped to the last frame; a key's
+    // `mode` outside the seven loads as `hold`; an `index` past the end is
+    // clamped and a fraction truncated; an advancing mode at an effective delay
+    // of 0 never advances; and a `sequence` timeline on an attachment with no
+    // block steps a one-region series and shows that region under every mode.
+    //
+    // ⭐ Two halves, and the second is the one only posing can see. The first
+    // reads each of those off the FILE and names the value. The second POSES
+    // every key at sampled times — mid-frame, so a float32 key time cannot land
+    // a sample on a frame boundary — and compares the region the slot shows
+    // against the one the file's own statement gives: the frame arithmetic of
+    // `SequenceTimeline.applyToSlot` transcribed here, and the frame names of
+    // `Sequence.getPath` transcribed in `attachmentRegionLookups`. Neither is
+    // read off the loaded timeline, so the check is not the runtime agreeing
+    // with itself.
+    //
+    // ⚠️ A sample where the slot shows some other attachment is not compared —
+    // `applyToSlot` returns there, and a series that is hidden is not a series
+    // showing the wrong frame. A timeline with no comparable sample at all is
+    // counted in `stats.sequenceSamplesUnshown` rather than failed.
+    check('A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES', () => {
+      const NAME = 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES';
+      type Series = { where: string; lookups: string[] | null; count: number; setup: number };
+      /** The loaded attachment -> what the FILE says its series is. */
+      const series = new Map<object, Series>();
+      /** `skin\0slot\0placeholder` -> the loaded attachment, for the timelines to find. */
+      const byJoin = new Map<string, object>();
+      /** Attachments whose block was already refused above — their timelines say nothing more. */
+      const refused = new Set<object>();
+      const whole = (v: unknown, fallback: number): number | null =>
+        v === undefined ? fallback : typeof v === 'number' && Number.isInteger(v) ? v : null;
+      let blocks = 0;
+      for (const skin of isObj(raw) && Array.isArray(raw.skins) ? (raw.skins as unknown[]) : []) {
+        if (!isObj(skin) || !isObj(skin.attachments)) continue;
+        const skinName = typeof skin.name === 'string' ? skin.name : '(unnamed)';
+        const loadedSkin = data.findSkin(skinName);
+        for (const [slotName, entries] of Object.entries(skin.attachments)) {
+          if (!isObj(entries)) continue;
+          const slotIndex = data.findSlot(slotName)?.index;
+          for (const [placeholder, entry] of Object.entries(entries)) {
+            if (!isObj(entry)) continue;
+            const type = entry.type === undefined ? 'region' : entry.type;
+            if (type !== 'region' && type !== 'mesh' && type !== 'linkedmesh') continue;
+            const loaded = slotIndex === undefined ? null : loadedSkin?.getAttachment(slotIndex, placeholder) ?? null;
+            const where = `skin ${JSON.stringify(skinName)} slot ${JSON.stringify(slotName)} attachment ${JSON.stringify(placeholder)}`;
+            if (loaded !== null) byJoin.set(`${skinName}\u0000${slotName}\u0000${placeholder}`, loaded);
+            if (entry.sequence === undefined || entry.sequence === null) continue;
+            blocks++;
+            const seq = entry.sequence;
+            const name = typeof entry.name === 'string' ? entry.name : placeholder;
+            const path = typeof entry.path === 'string' ? entry.path : name;
+            const count = isObj(seq) ? whole(seq.count, 0) : null;
+            const setup = isObj(seq) ? whole(seq.setup, 0) : null;
+            if ((count === null || setup === null || count < 1) && loaded !== null) refused.add(loaded);
+            if (count === null || setup === null || count < 1) {
+              fail(
+                NAME,
+                `${where}: the sequence states ${JSON.stringify(seq)}` +
+                  (isObj(seq) && seq.count === undefined
+                    ? ' and no "count" — `readSequence` reads 0 (`SkeletonJson.js:644`), so the attachment loads holding no region and draws nothing'
+                    : ' — "count" is a whole number of at least 1 and "setup" a whole number, or the series the parser builds is not the one written'),
+              );
+              continue;
+            }
+            if ((setup < 0 || setup >= count) && loaded !== null) refused.add(loaded);
+            if (setup < 0 || setup >= count) {
+              fail(
+                NAME,
+                `${where}: the sequence's setup frame is ${setup} of a ${count}-frame series (frames 0 to ${count - 1}); ` +
+                  '`Sequence.resolveIndex` clamps it, so the setup pose shows ' +
+                  `${setup < 0 ? 'no frame at all' : `frame ${count - 1}, which the file does not name`}`,
+              );
+              continue;
+            }
+            if (loaded === null) continue; // A00/A08 own an attachment that did not load
+            series.set(loaded, { where, lookups: attachmentRegionLookups(seq, path), count, setup });
+          }
+        }
+      }
+
+      /** The frame `SequenceTimeline.applyToSlot` shows — transcribed, not called. */
+      const frameOf = (mode: string, index: number, elapsed: number, delay: number, count: number): number => {
+        if (mode === 'hold') return index;
+        let i = index + Math.trunc(elapsed / delay + 0.00001);
+        const n = count * 2 - 2;
+        switch (mode) {
+          case 'once':
+            return Math.min(count - 1, i);
+          case 'loop':
+            return i % count;
+          case 'pingpong':
+            i = n === 0 ? 0 : i % n;
+            return i >= count ? n - i : i;
+          case 'onceReverse':
+            return Math.max(count - 1 - i, 0);
+          case 'loopReverse':
+            return count - 1 - (i % count);
+          default: // pingpongReverse
+            i = n === 0 ? 0 : (i + count - 1) % n;
+            return i >= count ? n - i : i;
+        }
+      };
+
+      let timelines = 0;
+      let compared = 0;
+      let unshown = 0;
+      const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
+      for (const [animName, anim] of Object.entries(rawAnimations)) {
+        if (!isObj(anim) || !isObj(anim.attachments)) continue;
+        for (const [skinName, perSkin] of Object.entries(anim.attachments)) {
+          if (!isObj(perSkin)) continue;
+          for (const [slotName, perSlot] of Object.entries(perSkin)) {
+            if (!isObj(perSlot)) continue;
+            for (const [placeholder, perAttachment] of Object.entries(perSlot)) {
+              if (!isObj(perAttachment) || !Array.isArray(perAttachment.sequence)) continue;
+              const keys = perAttachment.sequence as unknown[];
+              if (keys.length === 0) continue; // `readAnimation` skips it; A34 owns an empty timeline
+              timelines++;
+              const where = `animation ${JSON.stringify(animName)} ${skinName}/${slotName}/${placeholder} sequence`;
+              const keyed = byJoin.get(`${skinName}\u0000${slotName}\u0000${placeholder}`);
+              if (keyed === undefined) continue; // the parser throws on a missing target: A00's
+              if (refused.has(keyed)) continue; // its block is already named above
+              const own = series.get(keyed);
+              if (own === undefined) {
+                fail(
+                  NAME,
+                  `${where}: the timeline steps an attachment that carries no "sequence" block. The parser gives it a ` +
+                    'series of ONE region (`readSequence(null)` is `new Sequence(1, false)`), so every mode shows that ' +
+                    'region at every time — measured: a "loop" key on a plain region showed it throughout',
+                );
+                continue;
+              }
+              // -- the keys, as the file states them --------------------------
+              type Key = { time: number; mode: string; index: number; delay: number };
+              const read: Key[] = [];
+              let carried = 0;
+              let malformed = false;
+              keys.forEach((rawKey, k) => {
+                const key = isObj(rawKey) ? rawKey : {};
+                const at = `${where} key ${k}`;
+                const time = typeof key.time === 'number' ? key.time : 0;
+                const mode = key.mode === undefined ? 'hold' : key.mode;
+                const index = key.index === undefined ? 0 : key.index;
+                if (key.delay !== undefined) carried = typeof key.delay === 'number' ? key.delay : Number.NaN;
+                if (typeof mode !== 'string' || !(SEQUENCE_MODES as readonly string[]).includes(mode)) {
+                  malformed = true;
+                  fail(
+                    NAME,
+                    `${at} (t=${time}): mode ${JSON.stringify(key.mode)} is not one of the ${SEQUENCE_MODES.length} the ` +
+                      `format has (${SEQUENCE_MODES.join(', ')}); the parser reads \`SequenceMode[mode]\`, which is ` +
+                      'undefined, stores mode bits 0, and the key plays as "hold"',
+                  );
+                  return;
+                }
+                if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= own.count) {
+                  malformed = true;
+                  fail(
+                    NAME,
+                    `${at} (t=${time}): index ${JSON.stringify(key.index)} is not a frame of the ${own.count}-frame series ` +
+                      `(0 to ${own.count - 1}); the runtime stores \`index << 4\`, truncating a fraction, and ` +
+                      '`Sequence.resolveIndex` clamps a frame past the end to the last one',
+                  );
+                  return;
+                }
+                if (mode !== 'hold' && !(carried > 0)) {
+                  malformed = true;
+                  fail(
+                    NAME,
+                    `${at} (t=${time}): "${mode}" at a delay of ${String(carried)}${key.delay === undefined ? ' (carried from the key before, 0 on the first)' : ''} — ` +
+                      'the frame advances by `(time - keyTime) / delay`, and at 0 that is Infinity, `Infinity | 0` is 0, ' +
+                      'and the key shows its first frame throughout: "hold" spelt as another mode',
+                  );
+                  return;
+                }
+                read.push({ time, mode, index, delay: carried });
+              });
+              if (malformed) continue;
+
+              // -- the pose, sampled ------------------------------------------
+              const animation = data.findAnimation(animName);
+              const slotIndex = data.findSlot(slotName)?.index;
+              if (animation === null || slotIndex === undefined) continue; // A00's
+              /** `key` is the index into `read`, or -1 before the first key (the setup frame). */
+              const samples: Array<{ time: number; key: number; steps: number }> = [];
+              const end = animation.duration;
+              if (read[0].time > 0) samples.push({ time: read[0].time / 2, key: -1, steps: 0 });
+              read.forEach((key, k) => {
+                const until = k + 1 < read.length ? read[k + 1].time : end;
+                if (key.mode === 'hold') {
+                  samples.push({ time: key.time, key: k, steps: 0 });
+                  return;
+                }
+                // Mid-frame, and enough steps to wrap every mode at least once.
+                for (let step = 0; step < own.count * 2 + 2; step++) {
+                  const time = key.time + (step + 0.5) * key.delay;
+                  if (time >= until || time > end) break;
+                  samples.push({ time, key: k, steps: step + 0.5 });
+                }
+              });
+              let shownHere = 0;
+              for (const sample of samples) {
+                const skeleton = new Skeleton(data);
+                const state = new AnimationState(new AnimationStateData(data));
+                state.setAnimation(0, animName, false);
+                skeleton.setupPose();
+                skeleton.update(0);
+                skeleton.updateWorldTransform(Physics.reset);
+                state.update(sample.time);
+                state.apply(skeleton);
+                const pose = skeleton.slots[slotIndex].appliedPose;
+                const shown = pose.attachment;
+                // The slot must show the keyed attachment or one playing its
+                // timelines — the only case `applyToSlot` writes.
+                if (shown === null || (shown !== keyed && shown.timelineAttachment !== keyed)) continue;
+                const drawn = series.get(shown);
+                if (drawn === undefined || drawn.lookups === null) continue;
+                shownHere++;
+                compared++;
+                // The frame count the runtime folds by is the SHOWN attachment's:
+                // a link with a series of its own steps it by its source's keys.
+                const key = sample.key < 0 ? null : read[sample.key];
+                const want = key === null ? drawn.setup : frameOf(key.mode, key.index, sample.time - key.time, key.delay, drawn.count);
+                const sequence = (shown as RegionAttachment | MeshAttachment).sequence;
+                const region = (sequence.regions[sequence.resolveIndex(pose)] as TextureAtlasRegion | null | undefined)?.name ?? null;
+                if (region !== drawn.lookups[want]) {
+                  fail(
+                    NAME,
+                    `${where} (t=${Number(sample.time.toFixed(4))}): the slot shows region ${JSON.stringify(region)}, and ` +
+                      `the file states frame ${want} of ${drawn.count} — ${JSON.stringify(drawn.lookups[want])} — ` +
+                      (key === null
+                        ? 'the setup frame, before the first key'
+                        : `key ${sample.key} plays "${key.mode}" from frame ${key.index} every ${key.delay}s, ` +
+                          `${sample.steps} delay(s) in`),
+                  );
+                  break;
+                }
+              }
+              if (shownHere === 0) unshown++;
+            }
+          }
+        }
+      }
+      if (blocks === 0 && timelines === 0) return skip(NAME, SKIP_NO_SEQUENCE);
+      stats.sequenceBlocks = blocks;
+      stats.sequenceTimelines = timelines;
+      stats.sequenceSamples = compared;
+      if (unshown > 0) stats.sequenceSamplesUnshown = unshown;
     });
   }
 

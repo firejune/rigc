@@ -618,6 +618,51 @@ export interface MotionDeformTrack {
   keys: MotionDeformKey[];
 }
 
+/**
+ * One key of a sequence timeline
+ * (`animations.<a>.attachments.<skin>.<slot>.<attachment>.sequence`), which
+ * picks the frame of an attachment's `sequence` block (see `RigSequence`).
+ *
+ * From the key's time on, the frame shown is `index` advanced by one every
+ * `delay` seconds and folded back into the series by `mode` —
+ * `SequenceTimeline.applyToSlot` (`Animation.js`):
+ * `index + floor((time - keyTime) / delay + 0.00001)`, then per mode (`hold`
+ * never advances; `once` stops on the last frame; `loop` wraps; `pingpong`
+ * bounces; the three `Reverse` modes run from the last frame down). Before the
+ * first key the frame is the attachment's `setup`.
+ *
+ * ⚠️ Three silences the compiler refuses, every one measured on spine-core
+ * 4.3.13: a `mode` outside the seven loads as `hold`; a `delay` of 0 under an
+ * advancing mode divides by zero and `Infinity | 0` is 0, so the frame never
+ * moves; an `index` at or past the series' `count` is clamped to the last frame
+ * and a fractional one is truncated (`1.5` showed frame 1).
+ *
+ * 🔑 Each field is optional in the FORMAT and none is invented here: `mode`
+ * defaults to `"hold"` and `index` to 0 in the parser, and `delay` defaults to
+ * the PREVIOUS key's delay (0 on the first) — so a key that omits it keeps its
+ * neighbour's rate, and the compiler emits exactly the fields the spec states.
+ */
+export interface MotionSequenceKey {
+  /** Time in seconds. */
+  t: number;
+  /** One of the seven `SEQUENCE_MODES`. Parser default `"hold"`. */
+  mode?: string;
+  /** The frame this key starts on, 0-based. Parser default 0. */
+  index?: number;
+  /** Seconds per frame. Parser default: the previous key's, 0 on the first. */
+  delay?: number;
+}
+
+/** One attachment's frame keyed over time — the `deform` family's triple, a sequence's keys. */
+export interface MotionSequenceTrack {
+  /** The skin the attachment lives in. Absent = `"default"`. */
+  skin?: string;
+  slot: string;
+  /** The attachment's placeholder name inside that skin and slot. */
+  attachment: string;
+  keys: MotionSequenceKey[];
+}
+
 export interface MotionAnimation {
   /** Declared, then verified against the compiled result (rule 4). */
   duration: number;
@@ -650,6 +695,13 @@ export interface MotionAnimation {
   transform?: MotionTransformTrack[];
   /** Deform timelines, one entry per skin/slot/attachment triple. */
   deform?: MotionDeformTrack[];
+  /**
+   * Sequence timelines, one entry per skin/slot/attachment triple — the other
+   * of the two timelines an attachment carries, beside `deform` for the same
+   * reason: a key of three named fields aimed at an attachment rather than at a
+   * slot.
+   */
+  sequence?: MotionSequenceTrack[];
   /**
    * The draw-order timeline. **One per animation, and it names no target** —
    * which is why it is not a `track`: 4.3 writes it as `animations.<a>.drawOrder`
@@ -808,6 +860,15 @@ export interface SpineRegionAttachment {
   scaleX?: number;
   scaleY?: number;
   color?: string;
+  sequence?: SpineSequence;
+}
+
+/** `readSequence`'s four fields, emitted as the spec stated them (`RigSequence`). */
+export interface SpineSequence {
+  count: number;
+  start?: number;
+  digits?: number;
+  setup?: number;
 }
 
 /**
@@ -842,6 +903,7 @@ export interface SpineMeshAttachment {
    */
   edges: number[];
   color?: string;
+  sequence?: SpineSequence;
 }
 
 /**
@@ -866,6 +928,7 @@ export interface SpineLinkedMeshAttachment {
   width: number;
   height: number;
   color?: string;
+  sequence?: SpineSequence;
 }
 
 /**

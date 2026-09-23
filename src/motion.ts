@@ -55,6 +55,7 @@
  */
 import { CompileError } from './errors.ts';
 import { refuseUnknownKeys } from './keys.ts';
+import { SEQUENCE_MODES } from './timelines.ts';
 import type { MotionSpec } from './types.ts';
 
 export const MOTION_SPEC_VERSION = 'rigc-motion/1';
@@ -130,7 +131,7 @@ export const MOTION_KEYS = {
     'bone', 'x', 'y', 'rotate', 'scaleX', 'shearX', 'inertia', 'strength', 'damping', 'mass', 'wind', 'gravity',
     'mix', 'fps', 'limit', 'note',
   ],
-  MotionAnimation: ['duration', 'loop', 'note', 'tracks', 'ik', 'transform', 'deform', 'drawOrder', 'events'],
+  MotionAnimation: ['duration', 'loop', 'note', 'tracks', 'ik', 'transform', 'deform', 'sequence', 'drawOrder', 'events'],
   MotionTrack: ['slot', 'group', 'bone', 'physics', 'path', 'slider', 'property', 'lag', 'stagger', 'keys'],
   MotionKey: ['t', 'v', 'derive', 'ease', 'curve'],
   MotionIkTrack: ['constraint', 'keys'],
@@ -139,6 +140,8 @@ export const MOTION_KEYS = {
   MotionTransformKey: ['t', 'mixRotate', 'mixX', 'mixY', 'mixScaleX', 'mixScaleY', 'mixShearY', 'ease', 'curve'],
   MotionDeformTrack: ['skin', 'slot', 'attachment', 'keys'],
   MotionDeformKey: ['t', 'offset', 'fromVertex', 'vertices', 'transform', 'ease', 'curve'],
+  MotionSequenceTrack: ['skin', 'slot', 'attachment', 'keys'],
+  MotionSequenceKey: ['t', 'mode', 'index', 'delay'],
   MotionDrawOrderKey: ['t', 'offsets'],
   MotionDrawOrderOffset: ['slot', 'offset'],
   MotionEventKey: ['t', 'name', 'int', 'float', 'string', 'volume', 'balance'],
@@ -479,6 +482,83 @@ function parseDeform(raw: unknown, where: string, at: string): void {
   }
 }
 
+/**
+ * `sequence` — which frame of an attachment's numbered series shows.
+ *
+ * Everything decidable from the key alone is decided here; what needs the rig
+ * (does the attachment carry a `sequence` block, is `index` inside its `count`)
+ * is `compile`'s. Each refusal is a key the parser loads without a word and
+ * plays as something else — measured on spine-core 4.3.13 (issue #729):
+ *
+ *   - a `mode` outside the seven — `SequenceMode[name]` is `undefined`, the mode
+ *     bits store 0, and the key plays as `hold`;
+ *   - an `index` that is not a whole number of at least 0 — it is stored as
+ *     `index << 4`, so `1.5` shows frame 1 and a negative one indexes before the
+ *     series;
+ *   - a `delay` that is not a number of at least 0 — and, under a mode that
+ *     advances, an EFFECTIVE delay of 0: the parser carries a key's delay from
+ *     the key before (`lastDelay`, 0 on the first), `(time - keyTime) / 0` is
+ *     `Infinity` and `Infinity | 0` is 0, so a `loop` at delay 0 shows its
+ *     first frame for the whole key.
+ */
+function parseSequence(raw: unknown, where: string, at: string): void {
+  if (raw === undefined) return;
+  const entries = needArray(raw, where, `${at}.sequence`, 'it is an array of `{ slot, attachment, keys }` entries — one per skin/slot/attachment triple');
+  for (const [i, entry] of entries.entries()) {
+    const key = `${at}.sequence[${i}]`;
+    const track = needObj(entry, where, key, 'a sequence timeline is an object of `{ skin?, slot, attachment, keys }`');
+    known(track, 'MotionSequenceTrack', where, key);
+    optString(track.skin, where, `${key}.skin`, 'it names the skin the attachment lives in; absent means "default"');
+    needString(track.slot, where, `${key}.slot`, 'a sequence timeline steps one attachment of one slot, named here');
+    needString(track.attachment, where, `${key}.attachment`, "it is the attachment's placeholder name inside that skin and slot");
+    const keys = needArray(track.keys, where, `${key}.keys`, 'it is an array of `{ t, mode?, index?, delay? }` keys');
+    // The delay the PARSER will read at each key: the stated one, else the
+    // previous key's, else 0 (`lastDelay` in `readAnimation`).
+    let carried = 0;
+    for (const [j, k] of keys.entries()) {
+      const kat = `${key}.keys[${j}]`;
+      const parsed = parseKey(k, where, kat, 'a sequence key is an object of `{ t, mode?, index?, delay? }`', 'MotionSequenceKey');
+      if (parsed.mode !== undefined && !(SEQUENCE_MODES as readonly unknown[]).includes(parsed.mode)) {
+        refuse(
+          where,
+          `${kat}.mode`,
+          parsed.mode,
+          `a sequence mode is one of the ${SEQUENCE_MODES.length} the format has — ${SEQUENCE_MODES.join(', ')} ` +
+            '(absent means "hold"). The parser reads `SequenceMode[mode]`, which is undefined for anything else, and ' +
+            'stores mode bits 0: the key would load without a word and play as "hold"',
+        );
+      }
+      const index = parsed.index;
+      if (index !== undefined && (typeof index !== 'number' || !Number.isInteger(index) || index < 0)) {
+        refuse(
+          where,
+          `${kat}.index`,
+          index,
+          'it is the 0-based frame this key starts on, so a whole number of at least 0 — the runtime stores it as ' +
+            '`index << 4`, which truncates a fraction (1.5 showed frame 1) and puts a negative one before the series',
+        );
+      }
+      const delay = parsed.delay;
+      if (delay !== undefined && (typeof delay !== 'number' || !Number.isFinite(delay) || delay < 0)) {
+        refuse(where, `${kat}.delay`, delay, 'it is the seconds each frame shows for, so a finite number of at least 0');
+      }
+      if (typeof delay === 'number') carried = delay;
+      const mode = typeof parsed.mode === 'string' ? parsed.mode : 'hold';
+      if (mode !== 'hold' && carried === 0) {
+        throw new CompileError(
+          `${where}: \`${kat}\` plays "${mode}" at a delay of 0` +
+            (delay === undefined
+              ? ` — it states none, and the parser carries the previous key's (${j === 0 ? 'there is none, so 0' : '0'})`
+              : '') +
+            '. The runtime advances the frame by `(time - keyTime) / delay`, which is Infinity at 0, and ' +
+            '`Infinity | 0` is 0 — so the key shows its first frame for as long as it lasts, which is "hold" spelt ' +
+            `as "${mode}". State the seconds per frame, or write "hold"`,
+        );
+      }
+    }
+  }
+}
+
 function parseEvents(raw: unknown, where: string, at: string): void {
   if (raw === undefined) return;
   const keys = needArray(raw, where, `${at}.events`, 'it is an array of `{ t, name }` firings — one timeline per animation, naming no target');
@@ -540,6 +620,7 @@ function parseAnimation(raw: unknown, where: string, name: string): void {
   parseTracks(anim.tracks, where, at);
   for (const group of CONSTRAINT_GROUPS) parseConstraintTracks(anim[group], where, at, group);
   parseDeform(anim.deform, where, at);
+  parseSequence(anim.sequence, where, at);
   parseDrawOrder(anim.drawOrder, where, at);
   parseEvents(anim.events, where, at);
 }

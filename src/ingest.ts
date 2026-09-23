@@ -1402,16 +1402,65 @@ function ingestAttachment(
     return out;
   }
 
-  if (att.sequence !== undefined) {
-    note(
-      'blocker',
-      'ATTACHMENT_SEQUENCE',
-      at.where,
-      'the attachment carries a `sequence` block (a numbered image series), which the rig spec cannot say; ' +
-        'the rebuild draws the single region this attachment names',
-    );
+  // A numbered image series (issue #729). Carried as the file states it —
+  // the four fields `readSequence` reads — wherever the rig spec can say it;
+  // what is left for the blocker is a block the parser reads into a series
+  // that is not the one written, or one on a kind the parser never reads it on.
+  // `null` is the parser's own absent (`getValue(map, "sequence", null)`), so it
+  // is read as no series rather than as a malformed one.
+  if (att.sequence !== undefined && att.sequence !== null) {
+    const refusal = resolvesRegion
+      ? sequenceBlockRefusal(att.sequence)
+      : `the attachment is a ${type}, and \`readAttachment\` reads a \`sequence\` only on a region or a mesh ` +
+        '(`SkeletonJson.js:530`, `:561`) — the parser never read this one, and the rig spec refuses it there by name';
+    if (refusal === null) {
+      const seq = att.sequence as JsonObject;
+      const carried: JsonObject = {};
+      for (const field of ['count', 'start', 'digits', 'setup']) if (seq[field] !== undefined) carried[field] = seq[field];
+      out.sequence = carried;
+      // The frames ARE the art: `<path><number>` regions, which on the loose
+      // route are PNGs of those names. A single `image` would name one region
+      // the series does not have, and the rig spec refuses the pair.
+      delete out.image;
+    } else {
+      note(
+        'blocker',
+        'ATTACHMENT_SEQUENCE',
+        at.where,
+        `the attachment's \`sequence\` block is ${JSON.stringify(att.sequence)}: ${refusal}. The rebuild draws the ` +
+          'single region this attachment names instead of a series',
+      );
+    }
   }
   return out;
+}
+
+/**
+ * Why a `sequence` block cannot be carried as written, or `null` when it can —
+ * the rig spec's own refusals (`checkRigSequence`), stated about a file.
+ *
+ * Every one of them is a series the parser loads into something other than
+ * what the file says (issue #729): no `count` is 0 regions, a `setup` past the
+ * end is clamped, a fraction names a region like `stem1.5`.
+ */
+function sequenceBlockRefusal(seq: unknown): string | null {
+  if (typeof seq !== 'object' || seq === null || Array.isArray(seq)) {
+    return 'a sequence is an object of `count`, `start`, `digits` and `setup`';
+  }
+  const block = seq as JsonObject;
+  if (block.count === undefined) {
+    return 'it states no `count`, and `readSequence` reads 0 — the attachment loads holding no region and draws nothing';
+  }
+  for (const [field, min] of [['count', 1], ['start', 0], ['digits', 0], ['setup', 0]] as const) {
+    const value = block[field];
+    if (value !== undefined && (typeof value !== 'number' || !Number.isInteger(value) || value < min)) {
+      return `\`${field}\` is ${JSON.stringify(value)}, and the rig spec takes a whole number of at least ${min} there`;
+    }
+  }
+  if (typeof block.setup === 'number' && block.setup >= (block.count as number)) {
+    return `\`setup\` ${block.setup} is past the end of a ${String(block.count)}-frame series, and \`Sequence.resolveIndex\` clamps it to the last frame`;
+  }
+  return null;
 }
 
 /** One animation. Inverts step 5 of `compile()` — the whole timeline half. */
@@ -1734,13 +1783,42 @@ function ingestAnimation(
   // Inverts `compileDeformTrack`, whose emitted key is `{time, offset?, vertices?}`
   // and whose `offset` is omitted at 0 (the parser's default).
   const deform: JsonObject[] = [];
+  // sequence — the other attachment timeline, inverting `compileSequenceTrack`:
+  // `{time, mode?, index?, delay?}` with each field written only where the file
+  // wrote it, because each has a parser default (`"hold"`, 0, the previous
+  // key's delay) and restating one would be a rebuild saying more than the file.
+  const sequence: JsonObject[] = [];
   for (const [skinName, perSkin] of objEntries(anim.attachments)) {
     for (const [slot, perSlot] of objEntries(perSkin)) {
       for (const [attachment, timelines] of objEntries(perSlot)) {
         for (const [property, keys] of arrEntries(timelines)) {
           const where = `animation "${animName}" ${skinName}/${slot}/${attachment}`;
+          if (property === 'sequence') {
+            const entry: JsonObject = {
+              slot,
+              attachment,
+              keys: keys.map((raw) => {
+                const key = obj(raw);
+                const out: JsonObject = { t: timeOf(key) };
+                for (const field of ['mode', 'index', 'delay']) if (key[field] !== undefined) out[field] = key[field];
+                return out;
+              }),
+            };
+            if (skinName !== 'default') entry.skin = skinName;
+            sequence.push(entry);
+            continue;
+          }
           if (property !== 'deform') {
-            note('blocker', 'ATTACHMENT_TIMELINE', where, `timeline "${property}" (the motion spec carries \`deform\` only)`);
+            // Reached only by a name OUTSIDE the format: `readAnimation` tests
+            // an attachment timeline for "deform" and "sequence" and reads
+            // nothing else (`SkeletonJson.js:1147-1201`), so no player plays it.
+            note(
+              'blocker',
+              'ATTACHMENT_TIMELINE',
+              where,
+              `timeline "${property}" is not an attachment timeline the format has — the runtime's reader tests for ` +
+                '"deform" and "sequence" and ignores anything else, and those two are what the motion spec carries',
+            );
             continue;
           }
           const entry: JsonObject = {
@@ -1840,6 +1918,7 @@ function ingestAnimation(
   if (ik.length) out.ik = ik;
   if (transform.length) out.transform = transform;
   if (deform.length) out.deform = deform;
+  if (sequence.length) out.sequence = sequence;
   if (drawOrder !== undefined) out.drawOrder = drawOrder;
   if (events !== undefined) out.events = events;
   return out;

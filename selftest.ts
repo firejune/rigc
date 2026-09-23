@@ -109,6 +109,8 @@ import {
   RGBATimeline,
   RGBTimeline,
   Sequence,
+  SequenceModeValues,
+  SequenceMode,
   Skeleton,
   SkeletonJson,
   Slider,
@@ -297,6 +299,7 @@ import {
   physicsKeyRefusal,
   physicsOutsideSays,
   physicsRuleFor,
+  SEQUENCE_MODES,
   SLOT_COLOR_CHANNELS,
 } from './src/timelines.ts';
 import { readPngInfo } from './src/png.ts';
@@ -319,6 +322,7 @@ import {
   SKIP_NO_PHYSICS_CONSTRAINT,
   SKIP_NO_REGION_ATTACHMENT,
   SKIP_NO_SEPARABLE_COLOR,
+  SKIP_NO_SEQUENCE,
   SKIP_NO_SKELETON,
   SKIP_NO_TIMELINE,
   SKIP_NO_TWO_COLOR_TINT,
@@ -1312,6 +1316,33 @@ const MUTANTS: Mutant[] = [
         const animation = (j as any).animations[Object.keys((j as any).animations)[0]];
         animation.bones = animation.bones ?? {};
         animation.bones[bone] = { ...(animation.bones[bone] ?? {}), inherit: [{ time: 0, inherit: RIG_BONE_INHERIT[3].toUpperCase() }] };
+      }),
+    }),
+  },
+  {
+    // The probe's numbered series (issue #729): the first `sequence` key that
+    // advances, found structurally, with its mode's case changed. The runtime
+    // reads `SequenceMode[mode]`, finds nothing, and stores mode bits 0 — so the
+    // key holds its first frame, and every other byte of the file is correct.
+    name: 'M73_a_sequence_key_whose_mode_is_spelt_in_the_wrong_case',
+    origin: 'the key loads without a word and plays as "hold" — the series stops on its first frame (issue #729)',
+    expect: 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        for (const anim of Object.values((j as any).animations ?? {}) as any[]) {
+          for (const perSkin of Object.values(anim.attachments ?? {}) as any[]) {
+            for (const perSlot of Object.values(perSkin) as any[]) {
+              for (const timelines of Object.values(perSlot) as any[]) {
+                const key = (timelines.sequence ?? []).find((k: any) => typeof k.mode === 'string' && k.mode !== 'hold');
+                if (key === undefined) continue;
+                key.mode = key.mode.toUpperCase();
+                return;
+              }
+            }
+          }
+        }
+        throw new Error('the fixture keys no advancing sequence for the mutant to misspell');
       }),
     }),
   },
@@ -7748,6 +7779,168 @@ function runRigSuite(): number {
     );
   }
 
+  // --- RF71–RF76: a numbered image series on one attachment (issue #729) ----
+  //
+  // The rig spec could not say a `sequence` on the branch point, so every case
+  // here but RF76 is red-first by construction there: the key was refused as one
+  // this compiler does not read, and the motion spec had no family to key it.
+  // Each probe is the series probe with one thing changed, so the refusal can
+  // only be about that thing — RF73 is the probe unchanged, gating green.
+  {
+    const refused = (probe: { dirs: ProbeDirs; motionPath: string }): string | null => buildSeriesProbe(probe).message;
+
+    const short = refused(writeSeriesProbe({ sequence: { count: SERIES_COUNT + 1, start: 1, digits: 4 } }));
+    const whole = refused(writeSeriesProbe());
+    const missingFrame = `sequence frame ${SERIES_COUNT} of ${SERIES_COUNT + 1} (number ${SERIES_COUNT + 1}) is the region "${seriesFrame(SERIES_COUNT)}"`;
+    bad += reportCase(
+      'RF71_A_SEQUENCE_FRAME_THE_ART_DOES_NOT_HAVE_IS_REFUSED_WITH_ITS_NUMBER_AND_THE_REGION_LOOKED_FOR',
+      short !== null && short.includes(missingFrame) && short.includes('the compiler draws no frame in place of another') && whole === null,
+      short === null
+        ? `a ${SERIES_COUNT + 1}-frame series over ${SERIES_COUNT} frames compiled — the missing one was invented or dropped`
+        : `${short}; the same series at count ${SERIES_COUNT} ${whole === null ? 'compiles' : `was ALSO refused: ${whole}`}`,
+      'a missing frame is the one fault the compiler can only report, never repair: any frame put in its place is a ' +
+        'frame the spec did not name. The loader\'s own miss is `Region not found in atlas: <name> (attachment: ' +
+        '<name>)`, which says neither that the region was a frame nor of which series — so the refusal carries the ' +
+        'frame number, the count and the region it looked for, and the other half is the positive control',
+    );
+
+    const kinds = [
+      {
+        what: 'a sequence on a boundingbox',
+        message: refused(writeSeriesProbe({ type: 'boundingbox', vertexCount: 3, vertices: [0, 0, 8, 0, 0, 8], path: undefined }, null)),
+        wants: 'only the 3 kinds that draw a region carry one — region, mesh, linkedmesh',
+      },
+      { what: 'no count', message: refused(writeSeriesProbe({ sequence: { start: 1, digits: 4 } }, null)), wants: 'states no "count"' },
+      {
+        what: 'a setup past the end',
+        message: refused(writeSeriesProbe({ sequence: { count: SERIES_COUNT, setup: SERIES_COUNT, digits: 4 } }, null)),
+        wants: `"sequence".setup is ${SERIES_COUNT}, and a ${SERIES_COUNT}-frame series has frames 0 to ${SERIES_COUNT - 1}`,
+      },
+      {
+        what: 'the runtime\'s field name',
+        message: refused(writeSeriesProbe({ sequence: { count: SERIES_COUNT, digits: 4, setupIndex: 1 } }, null)),
+        wants: '"setupIndex" (did you mean "setup"?)',
+      },
+      {
+        what: 'an image beside it',
+        message: refused(writeSeriesProbe({ image: `${seriesFrame(0)}.png` }, null)),
+        wants: 'states "image" beside "sequence"',
+      },
+      {
+        what: 'a fractional start',
+        message: refused(writeSeriesProbe({ sequence: { count: SERIES_COUNT, start: 1.5, digits: 4 } }, null)),
+        wants: '"sequence".start is 1.5; it is a whole number',
+      },
+    ];
+    const kindProbes = kinds.filter(({ message, wants }) => message === null || !message.includes(wants));
+    bad += reportCase(
+      'RF72_A_SEQUENCE_THE_PARSER_WOULD_READ_AS_ANOTHER_SERIES_IS_REFUSED_BY_NAME',
+      kindProbes.length === 0,
+      probeDetail(
+        kindProbes.length === 0,
+        kindProbes.map(({ what, message, wants }) => `${what} does not say ${JSON.stringify(wants)}: ${message ?? 'it compiled'}`),
+        kinds.map(({ what, message }) => `${what}: ${message}`).join('\n          '),
+        (count) => `${count} shape(s) not refused as themselves:`,
+      ),
+      'six files the parser loads without a word, each into a series other than the one written — measured: a ' +
+        'block with no count holds no region, `setup: 7` on four frames showed frame 4, and on a boundingbox the ' +
+        'key is never read. `setupIndex` is the runtime\'s field and not the file\'s (`getValue(map, "setup", 0)`), ' +
+        'so it is the likeliest misspelling and is named as one',
+    );
+
+    const green = buildSeriesProbe(writeSeriesProbe({}, [{ t: 0, mode: 'loop', delay: 0.1 }, { t: 0.5, mode: 'pingpong', index: 1, delay: 0.1 }]));
+    const skin = green.built === null ? null : (JSON.parse(green.built.skeletonText) as { skins: Array<{ attachments: Record<string, Record<string, unknown>> }> }).skins[0].attachments.glint.glint;
+    const keyed = green.built === null ? null : (JSON.parse(green.built.skeletonText) as { animations: Record<string, { attachments?: unknown }> }).animations.spark.attachments;
+    const wantSkin = { width: 16, height: 16, path: 'glint_', sequence: { count: SERIES_COUNT, start: 1, digits: 4 } };
+    const wantKeys = { default: { glint: { glint: { sequence: [{ time: 0, mode: 'loop', delay: 0.1 }, { time: 0.5, mode: 'pingpong', index: 1, delay: 0.1 }] } } } };
+    const seqPassed = green.report?.passed.includes('A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES') ?? false;
+    const samples = Number(green.report?.stats.sequenceSamples ?? 0);
+    bad += reportCase(
+      'RF73_A_SERIES_AND_ITS_TRACK_ARE_EMITTED_AS_STATED_AND_THE_GATE_POSES_THEM',
+      JSON.stringify(skin) === JSON.stringify(wantSkin) &&
+        JSON.stringify(keyed) === JSON.stringify(wantKeys) &&
+        seqPassed &&
+        samples > 0 &&
+        (green.report?.failures.length ?? 1) === 0,
+      green.message !== null
+        ? `refused: ${green.message}`
+        : `skin entry ${JSON.stringify(skin)}; attachments timelines ${JSON.stringify(keyed)}; A46 ${seqPassed ? 'PASSED' : 'did not pass'} ` +
+          `over ${samples} posed sample(s), ${green.report?.failures.length} failure(s) in the report`,
+      'the positive control for the construct, and the emitted shape is the whole of what an emitter can get ' +
+        'wrong here without a throw: the size is the frames\' own (all four measure the same), no `setup` or ' +
+        '`index` is written where the spec stated none, and the second key\'s `index` is. The sample count is ' +
+        'read so that a gate which posed nothing cannot pass for one that posed the series',
+    );
+
+    // The delay, measured through the runtime rather than read back: one key at
+    // t0, and the frame at t0 + 2.5 delays is the one the arithmetic gives.
+    const t0 = 0.2;
+    const at = (delay: number): { frame: number; shown: string | null } => {
+      const built = buildSeriesProbe(writeSeriesProbe({}, [{ t: t0, mode: 'loop', delay }])).built;
+      const time = t0 + 2.5 * 0.1;
+      return {
+        frame: Math.floor((time - t0) / delay + 0.00001) % SERIES_COUNT,
+        shown: built === null ? null : shownRegion(built.skeletonText, built.atlasText, 'spark', 'glint', time),
+      };
+    };
+    const slow = at(0.1);
+    const fast = at(0.05);
+    bad += reportCase(
+      'RF74_A_KEYS_DELAY_IS_THE_TIME_EACH_FRAME_SHOWS_FOR_MEASURED_THROUGH_THE_RUNTIME',
+      slow.shown === seriesFrame(slow.frame) && fast.shown === seriesFrame(fast.frame) && slow.frame !== fast.frame,
+      `a "loop" key at t=${t0}, posed at t=${t0 + 0.25}: at delay 0.1 the runtime shows ${JSON.stringify(slow.shown)} ` +
+        `(frame ${slow.frame} wanted), at delay 0.05 ${JSON.stringify(fast.shown)} (frame ${fast.frame} wanted)`,
+      'the delay is the one field whose effect is only visible in time, and a timeline that kept its keys and lost ' +
+        'its rate would read back identical to the file. The two delays are chosen to land on different frames at ' +
+        'one time, so an emitter that wrote either rate for both is red on one of them',
+    );
+
+    const dead = [
+      {
+        what: 'an attachment with no series',
+        message: refused(writeSeriesProbe({ sequence: undefined, path: undefined, image: `${seriesFrame(0)}.png` })),
+        wants: 'carries no "sequence" block, so there is no series to step',
+      },
+      {
+        what: 'an index past the end',
+        message: refused(writeSeriesProbe({}, [{ t: 0, mode: 'hold', index: SERIES_COUNT }])),
+        wants: `index ${SERIES_COUNT} is past the end of a ${SERIES_COUNT}-frame series`,
+      },
+    ];
+    const deadProbes = dead.filter(({ message, wants }) => message === null || !message.includes(wants));
+    bad += reportCase(
+      'RF75_A_SEQUENCE_TRACK_THE_RUNTIME_WOULD_PLAY_AS_ONE_FRAME_IS_REFUSED_WITH_THE_ATTACHMENT_NAMED',
+      deadProbes.length === 0,
+      probeDetail(
+        deadProbes.length === 0,
+        deadProbes.map(({ what, message, wants }) => `${what} does not say ${JSON.stringify(wants)}: ${message ?? 'it compiled'}`),
+        dead.map(({ what, message }) => `${what}: ${message}`).join('\n          '),
+        (count) => `${count} track(s) not refused as themselves:`,
+      ),
+      'both need the RIG, which is why they are compile refusals rather than parse ones: the parser gives every ' +
+        'region a one-region series (`readSequence(null)`), so a loop keyed on a plain region loads and shows that ' +
+        'region at every time (measured), and `Sequence.resolveIndex` clamps an index at the count to the last ' +
+        'frame, so the key starts on a frame it does not name',
+    );
+
+    const plain = writeProbeRig();
+    const plainReport = gateProbe(plain, STATIC_MOTION);
+    const plainSkip = plainReport.skipped.find((entry) => entry.assertion === 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES');
+    const plainText = compile({ rigPath: plain.rigPath, motionPath: join(plain.dir, 'probe.motion.json'), outDir: plain.outDir, imagesDir: plain.dir }).skeletonText;
+    bad += reportCase(
+      'RF76_A_RIG_WITH_NO_SERIES_EMITS_NO_SEQUENCE_AND_THE_GATE_SKIPS_BY_NAME',
+      plainSkip?.reason === SKIP_NO_SEQUENCE &&
+        !plainReport.passed.includes('A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES') &&
+        !plainText.includes('"sequence"'),
+      `${plainSkip ? `skipped: ${plainSkip.reason}` : 'A46 reported no skip on a rig with no series'}; the emitted ` +
+        `skeleton (${plainText.length} B) ${plainText.includes('"sequence"') ? 'CARRIES' : 'carries no'} "sequence" key`,
+      'almost every rig is this one, so the two halves are what keep the feature from costing it anything: the ' +
+        'emitter writes the key only where a spec states a series (the gallery builds are the same claim measured ' +
+        'byte for byte against the branch point), and a gate that passed here would print a green line about a ' +
+        'series it never saw, on every build in the repository',
+    );
+  }
+
   return bad;
 }
 
@@ -8462,6 +8655,111 @@ function writeProbeRig(extra: Record<string, unknown> = {}): ProbeDirs {
     )}\n`,
   );
   return { dir, rigPath, outDir: join(dir, 'spine') };
+}
+
+/** How many frames the series probe draws — chosen, and every figure below is derived from it. */
+const SERIES_COUNT = 4;
+
+/** The atlas region frame `i` of the series probe resolves to: `glint_` + the number, four digits. */
+function seriesFrame(i: number): string {
+  return `glint_${String(1 + i).padStart(4, '0')}`;
+}
+
+/**
+ * A one-slot rig whose one region is a numbered series (issue #729): the
+ * frames `glint_0001` … are PNGs beside the spec, and `attachment` is merged
+ * over the attachment. `keys` becomes the one `sequence` track of the one
+ * animation, or no track at all for `null`; a bone track pins the animation's
+ * length at 1s, because a sequence timeline alone does not lengthen one.
+ */
+function writeSeriesProbe(
+  attachment: Record<string, unknown> = {},
+  keys: unknown[] | null = [{ t: 0, mode: 'loop', delay: 0.1 }],
+  frames = SERIES_COUNT,
+): { dirs: ProbeDirs; motionPath: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-series-'));
+  for (let i = 0; i < frames; i++) writeProbePng(join(dir, `${seriesFrame(i)}.png`), 16, 16, [40 * (i + 1), 60, 90, 255]);
+  const rigPath = join(dir, 'probe.rig.json');
+  writeFileSync(
+    rigPath,
+    `${JSON.stringify(
+      {
+        spec: 'rigc-rig/1',
+        name: 'series_probe',
+        skeleton: { width: 64, height: 64 },
+        bones: [{ name: 'root' }],
+        slots: [{ name: 'glint', bone: 'root', attachment: 'glint' }],
+        skins: {
+          default: {
+            glint: { glint: { path: 'glint_', sequence: { count: SERIES_COUNT, start: 1, digits: 4 }, ...attachment } },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const motionPath = join(dir, 'probe.motion.json');
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify(
+      {
+        spec: 'rigc-motion/1',
+        archetype: 'series_probe',
+        cut: 'series_probe',
+        easings: {},
+        animations: {
+          spark: {
+            duration: 1,
+            tracks: [{ bone: 'root', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [0] }] }],
+            ...(keys === null ? {} : { sequence: [{ slot: 'glint', attachment: 'glint', keys }] }),
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return { dirs: { dir, rigPath, outDir: join(dir, 'spine') }, motionPath };
+}
+
+/** Compile and gate a series probe: the refusal, or what was built and what the gate said. */
+function buildSeriesProbe(probe: { dirs: ProbeDirs; motionPath: string }): {
+  message: string | null;
+  built: CompileResult | null;
+  report: ReturnType<typeof validate> | null;
+} {
+  try {
+    const built = compile({ rigPath: probe.dirs.rigPath, motionPath: probe.motionPath, outDir: probe.dirs.outDir, imagesDir: probe.dirs.dir });
+    const report = validate({
+      skeletonText: built.skeletonText,
+      atlasText: built.atlasText,
+      atlasDir: probe.dirs.outDir,
+      declaredDurations: built.declaredDurations,
+      rig: built.rig,
+      profile: 'spine',
+    });
+    return { message: null, built, report };
+  } catch (err) {
+    return { message: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`, built: null, report: null };
+  }
+}
+
+/** The region the runtime shows on `slot` at `time` of `animation`, stepping the file through spine-core. */
+function shownRegion(skeletonText: string, atlasText: string, animation: string, slot: string, time: number): string | null {
+  const data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(skeletonText);
+  const skeleton = new Skeleton(data);
+  const state = new AnimationState(new AnimationStateData(data));
+  state.setAnimation(0, animation, false);
+  skeleton.setupPose();
+  skeleton.update(0);
+  skeleton.updateWorldTransform(Physics.reset);
+  state.update(time);
+  state.apply(skeleton);
+  const pose = skeleton.findSlot(slot)?.appliedPose;
+  const shown = pose?.attachment;
+  if (!pose || !(shown instanceof RegionAttachment || shown instanceof MeshAttachment)) return null;
+  return (shown.sequence.regions[shown.sequence.resolveIndex(pose)] as TextureAtlasRegion | null)?.name ?? null;
 }
 
 /**
@@ -32726,8 +33024,12 @@ function runCopyImagesSuite(): number {
   const declaredRig = JSON.parse(readFileSync(OVERLAY.rigPath, 'utf8')) as { skeleton?: Record<string, unknown> };
   declaredRig.skeleton = { ...(declaredRig.skeleton ?? {}), images: 'parts/' };
   writeFileSync(declaredRigPath, `${JSON.stringify(declaredRig, null, 2)}\n`);
-  const declaredHeader = compile({ ...opts, rigPath: declaredRigPath, imagesDir: OVERLAY.dir }).skeleton.skeleton;
-  const declaredThenCopied = compile({ ...opts, rigPath: declaredRigPath, imagesDir: OVERLAY.dir, copyImages: true }).skeleton.skeleton;
+  // No `--images` override: the copy sits beside the original, so its own
+  // `images` resolves where the original's does — and since the overlay rig
+  // fills a slot from `parts/` itself (issue #729), an override naming the
+  // fixture root would send that skin to a directory its art is not in.
+  const declaredHeader = compile({ ...opts, rigPath: declaredRigPath }).skeleton.skeleton;
+  const declaredThenCopied = compile({ ...opts, rigPath: declaredRigPath, copyImages: true }).skeleton.skeleton;
   bad += reportCase(
     'CPI07_A_DECLARED_IMAGES_PATH_IS_CARRIED_THROUGH_AND_OVERRIDDEN_ONLY_BY_THE_FLAG',
     declaredHeader.images === 'parts/' && declaredThenCopied.images === `../${basename(opts.outDir)}/`,
@@ -37712,6 +38014,53 @@ function runMotionParseSuite(): { failures: number; cases: number; specs: number
         'no mode at all. The setup check was case-insensitive — wider than that rule — so the capitalised spelling ' +
         'compiled, gated green and loaded `undefined`; a key read through the same wide rule would have shipped it ' +
         'into a timeline. One resolver for both is the fix, and the pair of fields is how it is held',
+    );
+  }
+
+  // --- MP48–MP49: a sequence key's own shape (issue #729) ---------------------
+  //
+  // Red-first on the branch point by construction: `sequence` was not a key an
+  // animation had, so both specs were refused as a key this compiler does not
+  // read — the one sentence that names neither the mode nor the delay.
+  {
+    const sequenceSpec = (keys: unknown[]): Record<string, unknown> =>
+      beside({ sequence: [{ slot: 'block', attachment: 'block', keys }] });
+    const misspelt = refusal(dirs, sequenceSpec([{ t: 0, mode: 'pingPong', delay: 0.1 }]));
+    const everyMode = SEQUENCE_MODES.every((mode) => misspelt?.includes(mode) ?? false);
+    say(
+      'MP48_A_SEQUENCE_MODE_OUTSIDE_THE_SEVEN_IS_REFUSED_WITH_THE_SEVEN_AND_WHAT_IT_WOULD_PLAY_AS',
+      misspelt !== null &&
+        misspelt.includes('`animations."move".sequence[0].keys[0].mode` is the string "pingPong"') &&
+        misspelt.includes(`one of the ${SEQUENCE_MODES.length} the format has`) &&
+        misspelt.includes('play as "hold"') &&
+        everyMode,
+      misspelt === null ? 'the key went through' : `refused with: ${misspelt}`,
+      'measured on spine-core 4.3.13: `SequenceMode["pingPong"]` is undefined, `setFrame` stores mode bits 0, and ' +
+        'the key loads without a word and holds its first frame. The seven are read off `SEQUENCE_MODES` rather ' +
+        'than typed here, and that list is held to the runtime\'s own enum by `CUR70`',
+    );
+
+    const firstNone = refusal(dirs, sequenceSpec([{ t: 0, mode: 'loop' }]));
+    const statedZero = refusal(dirs, sequenceSpec([{ t: 0, mode: 'loop', delay: 0.1 }, { t: 0.5, mode: 'once', delay: 0 }]));
+    let carriedParses: string | null = null;
+    try {
+      parseMotionSpec(sequenceSpec([{ t: 0, mode: 'loop', delay: 0.1 }, { t: 0.5, mode: 'pingpong' }]), 'carried.motion.json');
+    } catch (err) {
+      carriedParses = (err as Error).message;
+    }
+    say(
+      'MP49_AN_ADVANCING_SEQUENCE_KEY_AT_AN_EFFECTIVE_DELAY_OF_ZERO_IS_REFUSED_AND_A_CARRIED_DELAY_IS_NOT',
+      firstNone !== null &&
+        firstNone.includes('plays "loop" at a delay of 0 — it states none, and the parser carries the previous key\'s (there is none, so 0)') &&
+        statedZero !== null &&
+        statedZero.includes('`animations."move".sequence[0].keys[1]` plays "once" at a delay of 0.') &&
+        carriedParses === null,
+      `no delay on the first key: ${firstNone ?? 'PARSED'}\n          a stated 0: ${statedZero ?? 'PARSED'}\n          ` +
+        `a second key carrying the first's 0.1: ${carriedParses === null ? 'parses' : `REFUSED: ${carriedParses}`}`,
+      'the parser reads each key\'s delay as `getValue(keyMap, "delay", lastDelay)`, so the delay that decides is ' +
+        'the EFFECTIVE one, and the refusal has to be too: a rule on the stated field alone would pass the first ' +
+        'probe (which states nothing, and advances by `/ 0`) and refuse the third (which states nothing and runs ' +
+        'at 0.1). Measured: `(time - keyTime) / 0` is Infinity and `Infinity | 0` is 0, so the key never advances',
     );
   }
 
@@ -42862,17 +43211,17 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
   {
     row: 'README: the benchmark-dossier row (#359)',
     stale: 'the run viewer, the 36 named assertions with their profiles, and the selftest\n',
-    clean: 'the run viewer, the 46 named assertions with their profiles, and the selftest\n',
+    clean: 'the run viewer, the 47 named assertions with their profiles, and the selftest\n',
   },
   {
     row: 'AUTHORING: the `--profile` row (#359)',
     stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |\n',
-    clean: '| `--profile` | `spine` = the 31 validity rules (**the default**) · `spine-html` = all 46, opt-in |\n',
+    clean: '| `--profile` | `spine` = the 32 validity rules (**the default**) · `spine-html` = all 47, opt-in |\n',
   },
   {
     row: 'BENCHMARK: the profiles paragraph (#359)',
     stale: 'Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this\n',
-    clean: 'Not all 46 rules are about Spine. Some are about **spine-html**, the renderer this\n',
+    clean: 'Not all 47 rules are about Spine. Some are about **spine-html**, the renderer this\n',
   },
   {
     row: 'BENCHMARK: the profile table\'s own row (#359)',
@@ -42881,7 +43230,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       '| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
     clean:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      '| `spine-html` | all 46 — those 31 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
+      '| `spine-html` | all 47 — those 32 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
   },
   {
     row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',
@@ -47372,6 +47721,45 @@ function runCurrencySuite(): number {
         'prints teaches them to look for a number that is not coming',
     );
     if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
+  }
+
+  // --- CUR70–CUR71: the seven sequence modes are one list (issue #729) -------
+  //
+  // The motion parser, `A46` and `ingest` all read a mode against
+  // `SEQUENCE_MODES`, and the compiler links no runtime, so nothing but these
+  // two can say the list is the runtime's and the only one.
+  {
+    const runtime = SequenceModeValues.map((value) => SequenceMode[value]);
+    const planted = [...SEQUENCE_MODES].reverse();
+    const sameList = (a: readonly string[]): boolean => JSON.stringify(a) === JSON.stringify(runtime);
+    say(
+      'CUR70_THE_SEQUENCE_MODES_RIGC_READS_ARE_THE_RUNTIMES_ENUM_IN_ITS_ORDER',
+      sameList(SEQUENCE_MODES) && !sameList(planted) && runtime.length > 1,
+      `SEQUENCE_MODES = [${SEQUENCE_MODES.join(', ')}]; spine-core's SequenceModeValues read through SequenceMode = ` +
+        `[${runtime.join(', ')}]; the list reversed ${sameList(planted) ? 'ALSO matches' : 'does not'}`,
+      'a mode the list lacks is one the parser refuses and every runtime plays; a mode it has that the runtime ' +
+        'lacks is one rigc emits and every runtime reads as "hold" — the silence the list exists to refuse. The ' +
+        'order is the enum\'s because the mode bits are its ordinal (`mode | (index << 4)`), and the reversed ' +
+        'plant is what says the comparison reads order and not only membership',
+    );
+
+    // Every other spelling of the seven in `src/`: the one mode no other word
+    // shares, so a second table would have to spell it.
+    const spelledIn = readdirSync(join(root, 'src'))
+      .filter((file) => file.endsWith('.ts'))
+      .filter((file) => readFileSync(join(root, 'src', file), 'utf8').includes("'pingpongReverse'"));
+    const plantedTree = [...spelledIn, 'compile.ts'];
+    const oneList = (files: readonly string[]): boolean => files.length === 1 && files[0] === 'timelines.ts';
+    say(
+      'CUR71_THE_SEQUENCE_MODES_ARE_SPELT_IN_ONE_MODULE_OF_SRC',
+      oneList(spelledIn) && !oneList(plantedTree),
+      `the quoted name 'pingpongReverse' occurs in ${spelledIn.length} module(s) of src/: ${spelledIn.join(', ') || 'none'}; ` +
+        `a tree with a second table in compile.ts ${oneList(plantedTree) ? 'ALSO passes' : 'is faulted'}`,
+      'four readers of one list, and the failure a second copy invites is the one CUR70 cannot see: CUR70 holds ' +
+        'the SHARED list to the runtime, so a reader that kept its own would drift in silence. `pingpongReverse` ' +
+        'is the name to scan for because no other word in the format contains it, and zero occurrences — the ' +
+        'list moved or renamed — is as red as two',
+    );
   }
 
   return bad;
@@ -54607,7 +54995,10 @@ function runIngestSuite(): number {
   const skins = planted.skins as Array<Record<string, unknown>>;
   const blockAttachments = (skins[0].attachments as Record<string, Record<string, unknown>>).block;
   blockAttachments.tip = { type: 'point', x: 1, y: 2 };
-  (blockAttachments.block as Record<string, unknown>).sequence = { count: 2, start: 1 };
+  // A sequence with no `count`. Since issue #729 a well-formed block is carried,
+  // so the plant is the one shape the rig spec still cannot say: the parser
+  // reads the omitted count as 0 and the attachment loads holding no region.
+  (blockAttachments.block as Record<string, unknown>).sequence = { start: 1 };
   // An attachment `name` on a placeholder only ONE skin fills: rigc composes a
   // name exactly where a placeholder is contested, so this one it will not
   // re-derive. Lossy rather than a blocker — the rebuild resolves, it is simply
@@ -58368,6 +58759,132 @@ function runIngestSuite(): number {
         'all, which the existing line already says, and a second line composed there would state a name the ' +
         "compiler never writes. The default skin's contest is the same: `refuseDefaultSkinContest` refuses it, so " +
         'the composed name the comparison would quote does not exist',
+    );
+  }
+
+
+  // --- IG65–IG67: a numbered series and the track that steps it (issue #729) --
+  //
+  // On the branch point the forged file below ingested to two blockers,
+  // `ATTACHMENT_SEQUENCE` and `ATTACHMENT_TIMELINE`, and exited 1: the rebuild
+  // drew the one region `path` names — which the atlas does not have — and
+  // played nothing. What changed is that both are the ordinary carrying path;
+  // IG67 is what says the two codes are still reachable, and by what.
+  {
+    const seriesIngest = { name: 'series_probe', art: 'loose' as const, source: 'skeleton.json', version: '0' };
+    const seriesKeys = [{ t: 0, mode: 'loop', delay: 0.1 }, { t: 0.5, mode: 'pingpong', index: 1, delay: 0.1 }];
+    const probe = writeSeriesProbe({ x: 3 }, seriesKeys);
+    const source = buildSeriesProbe(probe).built;
+    const read = source === null ? null : ingest(JSON.parse(source.skeletonText), seriesIngest);
+    const rigEntry = (read?.rig as unknown as { skins?: Record<string, Record<string, Record<string, Record<string, unknown>>>> } | undefined)?.skins?.default?.glint?.glint;
+    const motionTrack = (read?.motion as unknown as { animations?: Record<string, { sequence?: unknown[] }> } | undefined)?.animations?.spark?.sequence;
+    const blocked = (read?.findings ?? []).filter((f) => f.code === 'ATTACHMENT_SEQUENCE' || f.code === 'ATTACHMENT_TIMELINE');
+    const carriedProbes = [
+      ...(source === null ? ['the series probe did not compile, so nothing was ingested'] : []),
+      ...blocked.map((f) => `${f.kind} ${f.code} @ ${f.where}: ${f.detail}`),
+      ...(JSON.stringify(rigEntry) === JSON.stringify({ path: 'glint_', width: 16, height: 16, x: 3, sequence: { count: SERIES_COUNT, start: 1, digits: 4 } })
+        ? []
+        : [`the rig spec's entry is ${JSON.stringify(rigEntry)}`]),
+      ...(JSON.stringify(motionTrack) === JSON.stringify([{ slot: 'glint', attachment: 'glint', keys: seriesKeys }])
+        ? []
+        : [`the motion spec's sequence family is ${JSON.stringify(motionTrack)}`]),
+    ];
+    const carriedHeld = carriedProbes.length === 0;
+    say(
+      'IG65_A_SEQUENCE_BLOCK_AND_ITS_TIMELINE_ARE_CARRIED_AS_THE_FILE_STATES_THEM_WITH_NO_IMAGE',
+      carriedHeld,
+      probeDetail(
+        carriedHeld,
+        carriedProbes,
+        `rig spec: ${JSON.stringify(rigEntry)}; motion spec: ${JSON.stringify(motionTrack)}; ` +
+          `${read?.findings.length ?? 0} finding(s), none of them ATTACHMENT_SEQUENCE or ATTACHMENT_TIMELINE`,
+        (count) => `${count} thing(s) the carry did not do:`,
+      ),
+      'no `image` on a loose route is the half a copy of the region branch would get wrong: `carryArt` names the ' +
+        'PNG after the region the attachment resolves, and a series resolves `count` regions — `glint_.png` is a ' +
+        'file nobody has, and the rig spec refuses an image beside a sequence by name. Each key field is carried ' +
+        'only where the file wrote it, because each has a parser default the rebuild must not restate',
+    );
+
+    let rebuilt: string | null = null;
+    let rebuildRefusal = '';
+    let rebuildFailures: string[] = [];
+    if (read !== null && source !== null) {
+      const specDir = join(probe.dirs.dir, 'S');
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(read.rig, null, 2)}\n`);
+      writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(read.motion, null, 2)}\n`);
+      try {
+        const outDir = join(probe.dirs.dir, 'B');
+        const built = compile({ rigPath: join(specDir, 'rig.json'), motionPath: join(specDir, 'motion.json'), outDir, imagesDir: probe.dirs.dir });
+        rebuilt = built.skeletonText;
+        rebuildFailures = validate({
+          skeletonText: built.skeletonText,
+          atlasText: built.atlasText,
+          atlasDir: outDir,
+          declaredDurations: built.declaredDurations,
+          rig: built.rig,
+          profile: 'spine',
+        }).failures.map((f) => `${f.assertion}: ${f.detail}`);
+      } catch (err) {
+        rebuildRefusal = (err as Error).message;
+      }
+    }
+    const tripProbes = [
+      ...(rebuildRefusal ? [`the rebuild was refused: ${rebuildRefusal}`] : []),
+      ...(rebuilt === null || source === null || rebuilt === source.skeletonText
+        ? []
+        : [`the rebuild differs at ${differingJsonPaths(JSON.parse(source.skeletonText), JSON.parse(rebuilt)).join('; ')}`]),
+      ...rebuildFailures.map((failure) => `the rebuild is refused at the gate: ${failure}`),
+      ...(rebuilt === null && !rebuildRefusal ? ['nothing was rebuilt'] : []),
+    ];
+    const tripHeld = tripProbes.length === 0;
+    say(
+      'IG66_A_SERIES_REBUILDS_FROM_WHAT_INGEST_READ_BYTE_FOR_BYTE_AND_GATES_GREEN',
+      tripHeld,
+      probeDetail(
+        tripHeld,
+        tripProbes,
+        `${source?.skeletonText.length ?? 0} B out, ingested, rebuilt from the loose frames: byte for byte, 0 gate failure(s)`,
+        (count) => `${count} thing(s) the round trip did not do:`,
+      ),
+      'the contract `IG00` holds every other rig to, on the construct this landing adds — and `IG00[overlay_probe]` ' +
+        'is the same claim over `--atlas-in`, since that fixture carries the series too. Loose here, because the ' +
+        'loose route is the one where a frame has to be FOUND by its name rather than handed over by a pack',
+    );
+
+    type Tree = { [key: string]: Tree } & Record<string, unknown>;
+    const planted = JSON.parse(source?.skeletonText ?? '{}') as Tree & { skins?: Tree[] };
+    const plantedBlock = planted.skins?.[0]?.attachments?.glint?.glint?.sequence;
+    if (plantedBlock !== undefined) delete plantedBlock.count;
+    const perAttachment = planted.animations?.spark?.attachments?.default?.glint?.glint;
+    if (perAttachment !== undefined) perAttachment.sequnce = perAttachment.sequence;
+    const plantedRead = source === null ? null : ingest(planted, seriesIngest);
+    const sequenceBlock = plantedRead?.findings.find((f) => f.code === 'ATTACHMENT_SEQUENCE');
+    const timelineBlock = plantedRead?.findings.find((f) => f.code === 'ATTACHMENT_TIMELINE');
+    const reachProbes = [
+      ...(sequenceBlock?.kind === 'blocker' && sequenceBlock.detail.includes('states no `count`, and `readSequence` reads 0')
+        ? []
+        : [`a block with no count: ${sequenceBlock ? `${sequenceBlock.kind} ${sequenceBlock.detail}` : 'no ATTACHMENT_SEQUENCE'}`]),
+      ...(timelineBlock?.kind === 'blocker' &&
+      timelineBlock.detail.includes('timeline "sequnce" is not an attachment timeline the format has')
+        ? []
+        : [`a timeline called "sequnce": ${timelineBlock ? `${timelineBlock.kind} ${timelineBlock.detail}` : 'no ATTACHMENT_TIMELINE'}`]),
+    ];
+    const reachHeld = reachProbes.length === 0;
+    say(
+      'IG67_BOTH_CODES_ARE_STILL_REACHED_BY_A_FILE_THE_RUNTIME_READS_AS_SOMETHING_ELSE',
+      reachHeld,
+      probeDetail(
+        reachHeld,
+        reachProbes,
+        `${sequenceBlock?.code}: ${sequenceBlock?.detail}\n          ${timelineBlock?.code}: ${timelineBlock?.detail}`,
+        (count) => `${count} code(s) that went unreached or unexplained:`,
+      ),
+      'retiring a code is a claim that nothing reaches it, and both are still reached — by measurement, not by ' +
+        'keeping them: a block with no `count` loads a series of no region (`readSequence` reads 0), and ' +
+        '`readAnimation` tests an attachment timeline for "deform" and "sequence" and ignores every other name, so ' +
+        'a misspelt one plays nothing in any player. Each detail says which of those it is',
     );
   }
 
