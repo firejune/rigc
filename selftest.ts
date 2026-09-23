@@ -1607,6 +1607,30 @@ const MUTANTS: Mutant[] = [
     expect: null,
     mutate: (a) => ({ ...a, skeletonText: editJson(a.skeletonText, (j) => refileDefaultSkinAsNamed(j, true)) }),
   },
+  // ─── a path's `lengths` against what the constraint reads (issue #804) ──────
+  //
+  // The overlay fixture carries no path, so one is forged onto it: a second
+  // attachment under its first slot holding `PATH_TRACK`'s geometry, with `lengths` measured by the
+  // transcription over the closed chain — derived, not typed — and then cut
+  // back. The parser sizes the array `vertexCount / 3` and fills what the file
+  // leaves out with 0, so the two cuts land on either side of the one entry
+  // nothing reads.
+  {
+    name: 'M86_a_path_lengths_one_entry_short_of_what_the_constraint_reads',
+    origin:
+      'the parser fills a short array with zeros and the constraint then divides a position by a curve of length 0 — ' +
+      'NaN in the pose and nothing at load; issue #804 moved the count rigc writes, and the floor under it must not move',
+    expect: 'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    mutate: (a) => ({ ...a, skeletonText: editJson(a.skeletonText, (j) => forgeMeasuredPath(j, 2)) }),
+  },
+  {
+    name: 'M87_an_open_paths_lengths_without_its_unread_wrap_around_entry_is_a_skeleton_the_gate_accepts',
+    origin:
+      'every rigc build before issue #804 wrote an open path this way, and the runtime reads nothing past the last ' +
+      'curve — so a gate that refused it would refuse correct data the editor\'s count merely extends',
+    expect: null,
+    mutate: (a) => ({ ...a, skeletonText: editJson(a.skeletonText, (j) => forgeMeasuredPath(j, 1)) }),
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -1653,6 +1677,28 @@ function rekeyFirstRegion(j: Record<string, unknown>, keepName: boolean): void {
     }
   }
   throw new Error('the fixture has no region with no `path` that no animation names — the mutant would prove nothing');
+}
+
+/**
+ * Forge an open path onto the skeleton — a second attachment `forged_track`
+ * under the first skin's first slot, `PATH_TRACK`'s geometry, so no slot table
+ * or setup pose changes — whose `lengths` is the transcription's own
+ * measurement over the closed chain with its last `drop` entries cut (M86, M87).
+ */
+function forgeMeasuredPath(j: Record<string, unknown>, drop: number): void {
+  const skins = (Array.isArray(j.skins) ? j.skins : []) as Array<{ attachments?: Record<string, Record<string, unknown>> }>;
+  const slot = Object.keys(skins[0]?.attachments ?? {})[0];
+  if (slot === undefined) throw new Error('the fixture has no skinned slot to forge a path under');
+  const measured = runtimeCurveLengths(pathChainOf(PATH_TRACK.vertices, true)).map((n) => Math.fround(n));
+  if (measured.length !== PATH_TRACK.vertexCount / 3 || drop >= measured.length) {
+    throw new Error(`the transcription measured ${measured.length} entries for a ${PATH_TRACK.vertexCount}-vertex path — the cut would prove nothing`);
+  }
+  skins[0].attachments![slot].forged_track = {
+    type: 'path',
+    vertexCount: PATH_TRACK.vertexCount,
+    vertices: PATH_TRACK.vertices,
+    lengths: measured.slice(0, measured.length - drop),
+  };
 }
 
 
@@ -18391,11 +18437,15 @@ function runPathAndSliderSuite(): number {
   );
   say(
     'PS01_the_path_lengths_are_MEASURED_off_the_geometry',
+    // Three entries for two curves since issue #804: `vertexCount / 3`, the
+    // parser's allocation, the third being the wrap-around curve from x = 180
+    // back to x = 0 through the outer handles — 360 on this straight line.
     Array.isArray(emittedPath.lengths) &&
-      (emittedPath.lengths as number[]).length === 2 &&
+      (emittedPath.lengths as number[]).length === 3 &&
       near((emittedPath.lengths as number[])[0], 90) &&
-      near((emittedPath.lengths as number[])[1], 180),
-    `lengths = [${(emittedPath.lengths as number[]).join(', ')}] for two curves whose knots sit at x = 0, 90, 180`,
+      near((emittedPath.lengths as number[])[1], 180) &&
+      near((emittedPath.lengths as number[])[2], 360),
+    `lengths = [${(emittedPath.lengths as number[]).join(', ')}] for two curves whose knots sit at x = 0, 90, 180, and the wrap-around curve back to 0`,
     'the field has no parser default and a restated number that disagrees with the vertices is invisible until constantSpeed is false',
   );
 
@@ -18592,13 +18642,10 @@ function runPathAndSliderSuite(): number {
     'an open path drops its first and last point, so three of them leave a one-point chain and no curve at all',
   );
 
-  const restated = refusal(pathAttachment({ lengths: [90, 180] }), motion);
-  say(
-    'PS12_an_authored_lengths_array_is_refused',
-    restated !== null && restated.includes('rigc measures the setup arc length'),
-    restated === null ? 'the compile went through' : `refused with: ${restated}`,
-    'it is a measurement of the vertices two fields above it, exactly like a region\'s size against its PNG — a second copy can only drift',
-  );
+  // `PS12` stood here and required an authored `lengths` to be refused. Issue
+  // #804 retired it: a stated array is the record of what the editor measured,
+  // on a pose rigc cannot reproduce, so it is carried — `PS185`, and `PS188`–
+  // `PS189` for the shapes that are still refused.
 
   const badMode = refusal(
     writeProbeRig({
@@ -20661,8 +20708,12 @@ function runPathAndSliderSuite(): number {
         );
       }
     }
-    // 2. The emitted figure is that computation on the compiler's own chain.
-    const chain = pathChainOf(read.vertices, closed);
+    // 2. The emitted figure is that computation on the compiler's own chain —
+    //    the CLOSED one on both shapes since issue #804, because the array is
+    //    `vertexCount / 3` long on both and an open path's last entry is the
+    //    wrap-around curve. The open chain is its prefix, so every entry the
+    //    runtime reads is compared exactly as before.
+    const chain = pathChainOf(read.vertices, true);
     const want = runtimeCurveLengths(chain);
     const chord4 = chordCurveLengths(chain, 4);
     const chord64 = chordCurveLengths(chain, 64);
@@ -20728,57 +20779,10 @@ function runPathAndSliderSuite(): number {
       'wrap-around curve wrong would still reproduce every open path it was ever shown',
   );
 
-  // The second reading is about SHAPE rather than value: how many entries the
-  // field has, which is a different question for an open path and a closed one
-  // and which the editor answers differently from rigc.
-  const countProbes: string[] = [];
-  const countSaid: string[] = [];
-  for (const [what, closed] of [['open path', false], ['closed path', true]] as Array<[string, boolean]>) {
-    const read = readPathLengths(closed);
-    // `PathConstraint.computeWorldPositions:203-204`: `curveCount = verticesLength / 6`,
-    // then `curveCount -= closed ? 1 : 2`, and `lengths[curveCount]` is read as the
-    // whole path length — so the highest index the constraint reads is that, and an
-    // array one shorter divides a traversal by `undefined`.
-    const highestRead = read.worldVerticesLength / 6 - (closed ? 1 : 2);
-    // The editor's own allocation, `SkeletonJson.js:601`.
-    const editorEntries = read.vertexCount / 3;
-    if (read.emitted.length !== highestRead + 1) {
-      countProbes.push(
-        `${what}: rigc emitted ${read.emitted.length} entry(ies) but PathConstraint reads lengths[${highestRead}] ` +
-          `as the whole path length, which needs ${highestRead + 1}`,
-      );
-    }
-    if (read.emitted.length !== read.curves.length) {
-      countProbes.push(
-        `${what}: rigc emitted ${read.emitted.length} entry(ies) where the same runtime measures ` +
-          `${read.curves.length} curve(s) on the same geometry`,
-      );
-    }
-    const expectedEditorSurplus = closed ? 0 : 1;
-    if (editorEntries - read.emitted.length !== expectedEditorSurplus) {
-      countProbes.push(
-        `${what}: the editor allocates vertexCount / 3 = ${editorEntries} entry(ies) against rigc's ` +
-          `${read.emitted.length}, a surplus of ${editorEntries - read.emitted.length} where ${expectedEditorSurplus} ` +
-          'was measured on its exports',
-      );
-    }
-    countSaid.push(
-      `${what}: ${read.emitted.length} emitted = ${read.curves.length} the runtime measures = lengths[${highestRead}] ` +
-        `the constraint reads, against the editor's vertexCount / 3 = ${editorEntries}`,
-    );
-  }
-  const countHeld = countProbes.length === 0;
-  say(
-    'PS69_ONE_ENTRY_PER_CURVE_THE_CONSTRAINT_READS_AND_THE_EDITOR_WRITES_ONE_MORE_ON_AN_OPEN_PATH',
-    countHeld,
-    probeDetail(countHeld, countProbes, countSaid.join('; ')),
-    'issue #560\'s side finding, and it is the reason a shorter array is not a defect. The editor always writes ' +
-      '`vertexCount / 3` entries and computes the wrap-around curve even for an open path — its `ride` export ends ' +
-      'on the closed-chain cumulative — while `PathConstraint` reads at most `lengths[verticesLength / 6 - (closed ' +
-      '? 1 : 2)]`. So rigc\'s array covers exactly what is read and the editor\'s trailing entry is read by nothing. ' +
-      '⚠️ The clause that matters is the one going the other way: one entry SHORT and the traversal divides by an ' +
-      'undefined length, which is silent in the parser and NaN in the pose',
-  );
+  // `PS69` stood here: ONE entry per curve the constraint reads, and the editor
+  // writing one more on an open path. Issue #804 retired it by making rigc write
+  // the editor's count — `vertexCount / 3` on both shapes — which `PS187` holds,
+  // keeping the clause that mattered: never an entry SHORT of what is read.
 
   // --- the default skin may not share a placeholder (issue #567) ------------
   //
@@ -27338,6 +27342,321 @@ function runPathAndSliderSuite(): number {
     'the one reader in the tree that looks the default skin up by name (`cmdExplain`, since #541 retired its ' +
       '`skins[0]`) — it tolerated the absence already, and the case is what makes it say so instead of printing ' +
       '`attachments=[]` on every slot of a rig whose art is all in named skins',
+  );
+
+  // --- PS185–PS190: a stated `lengths` is carried; an omitted one is measured on the runtime's geometry (#804) ---
+  //
+  // 🚨 **Measured on the branch point, through spine-core 4.3.13.** A path's
+  // `lengths` was always re-measured and an authored one refused, and the
+  // re-measure was wrong in two ways the unweighted fixtures above cannot see:
+  // it blended weighted vertices through setup matrices that ignored bone scale,
+  // shear and `inherit` — 0.752× `PathConstraint.curves` on the 50/50 probe
+  // below — and it wrote `vertexCount / 3 - 1` entries on an open path where the
+  // parser allocates, and the editor writes, `vertexCount / 3`. A third reading
+  // is not a defect rigc can repair without posing, and `PS190` states it: the
+  // runtime measures the pose its update order hands the path constraint, so a
+  // constraint ordered before it moves the number, and rigc measures the
+  // unconstrained setup pose.
+  //
+  // 🌱 Red-first on the branch point by DATA — the stated array was refused
+  // (`PS185`, `PS188`, `PS189`), the weighted probe measured 0.752× (`PS186`),
+  // and the open path carried one entry short of the parser (`PS187`).
+  /** Two influences per vertex, 50/50: one plain bone, and one of a scaled, sheared bone or its `noRotationOrReflection` child. */
+  const LENGTHS_BONES = [
+    { name: 'root' },
+    { name: 'near', parent: 'root', x: 30, y: -20, rotation: 15 },
+    { name: 'far', parent: 'root', x: -40, y: 60, rotation: 40, scaleX: 2, scaleY: 1.5, shearX: 10 },
+    { name: 'tip', parent: 'far', x: 20, y: 10, rotation: -25, scaleY: 0.5, inherit: 'noRotationOrReflection' },
+    { name: 'rider', parent: 'root', length: 20 },
+  ];
+  /** The weighted probe path over `LENGTHS_BONES`, on the two shapes `PS67`/`PS68` already use. */
+  const weightedTrack = (closed: boolean, extra: Record<string, unknown> = {}): Record<string, unknown> => {
+    const flat = closed ? PATH_LENGTH_CLOSED_VERTICES : PATH_LENGTH_OPEN_VERTICES;
+    return {
+      type: 'path',
+      ...(closed ? { closed: true } : {}),
+      vertexCount: flat.length / 2,
+      weights: Array.from({ length: flat.length / 2 }, (_, i) => [
+        { bone: 'near', x: flat[2 * i] * 0.5, y: flat[2 * i + 1] * 0.5, weight: 0.5 },
+        { bone: i % 2 === 0 ? 'far' : 'tip', x: flat[2 * i] * 0.25 + 10, y: flat[2 * i + 1] * 0.25 - 5, weight: 0.5 },
+      ]),
+      ...extra,
+    };
+  };
+  const lengthsRig = (
+    track: Record<string, unknown>,
+    bones: Array<Record<string, unknown>> = LENGTHS_BONES,
+    slotBone = 'root',
+    constraints: Array<Record<string, unknown>> = [PATH_RIDE_CONSTRAINT],
+  ): ProbeDirs =>
+    writeProbeRig({
+      bones,
+      slots: [{ name: 'track', bone: slotBone, attachment: 'track' }],
+      skins: { default: { track: { track } } },
+      constraints,
+    });
+  /** What the file states for the one path, off the emitted text. */
+  const emittedLengths = (build: NamedBuild): number[] | null => {
+    const entry = emittedEntries(build.skeletonText).get('default/track/track');
+    return Array.isArray(entry?.lengths) ? (entry.lengths as number[]) : null;
+  };
+  interface LengthsOracle {
+    /** `PathConstraint.curves` off the posed build, `constantSpeed` forced on. */
+    curves: number[];
+    /** The same forward difference over the CLOSED chain of the posed world vertices — the editor's `vertexCount / 3` entries. */
+    wrap: number[];
+    /** `PathAttachment.lengths` as the parser loaded it. */
+    loaded: number[];
+  }
+  /** Pose a build and read the path's measurement off the runtime — optionally with every constraint but `ride` removed first. */
+  const lengthsOracle = (build: NamedBuild, onlyRide: boolean): LengthsOracle | string => {
+    if (build.refused !== null) return `refused: ${build.refused}`;
+    const data = skeletonDataFromText(build.skeletonText, build.atlasText);
+    if (onlyRide) data.constraints = data.constraints.filter((c) => c.name === 'ride');
+    let loaded: number[] = [];
+    for (const skin of data.skins) {
+      for (const entry of skin.getAttachments()) {
+        if (!(entry.attachment instanceof PathAttachment)) continue;
+        loaded = Array.from(entry.attachment.lengths);
+        entry.attachment.constantSpeed = true;
+      }
+    }
+    const posed = new Skeleton(data);
+    posed.setupPose();
+    posed.update(0);
+    posed.updateWorldTransform(Physics.reset);
+    const ride = posed.findConstraint('ride', PathConstraint);
+    if (!ride) return 'the build carries no constraint "ride"';
+    const path = ride.slot.appliedPose.attachment as PathAttachment;
+    const world = new Array<number>(path.worldVerticesLength).fill(0);
+    path.computeWorldVertices(posed, ride.slot, 0, path.worldVerticesLength, world, 0, 2);
+    return { curves: Array.from(ride.curves), wrap: runtimeCurveLengths(pathChainOf(world, true)), loaded };
+  };
+  const LENGTHS_TOLERANCE = 1e-4;
+
+  // -- PS185: a stated array is emitted as stated ----------------------------
+  // Numbers a float32 holds exactly, and none the geometry measures, so the
+  // only way to emit them is to carry them.
+  const STATED_LENGTHS = [100.5, 250.25, 400.125, 612.0625];
+  const statedBuild = namedBuild(lengthsRig(weightedTrack(false, { lengths: STATED_LENGTHS })));
+  const statedTwice = namedBuild(lengthsRig(weightedTrack(false, { lengths: STATED_LENGTHS })));
+  const unstatedBuild = namedBuild(lengthsRig(weightedTrack(false)));
+  const statedOracle = lengthsOracle(statedBuild, false);
+  const statedEmitted = emittedLengths(statedBuild);
+  const unstatedEmitted = emittedLengths(unstatedBuild);
+  const statedProbes = [
+    ...buildRows(statedBuild, 'the stated weighted path'),
+    ...(JSON.stringify(statedEmitted) === JSON.stringify(STATED_LENGTHS)
+      ? []
+      : [`the spec states lengths ${JSON.stringify(STATED_LENGTHS)} and the file carries ${JSON.stringify(statedEmitted)}`]),
+    ...(statedBuild.skeletonText === statedTwice.skeletonText ? [] : ['two compiles of the same stated spec emit different files']),
+    ...(typeof statedOracle === 'string'
+      ? [`the runtime did not load it: ${statedOracle}`]
+      : JSON.stringify(statedOracle.loaded) === JSON.stringify(STATED_LENGTHS)
+        ? []
+        : [`the parser loads lengths ${JSON.stringify(statedOracle.loaded)}, not the stated ${JSON.stringify(STATED_LENGTHS)}`]),
+    ...(unstatedEmitted !== null && unstatedEmitted.every((n, i) => n !== STATED_LENGTHS[i])
+      ? []
+      : [`the same path with no lengths stated emits ${JSON.stringify(unstatedEmitted)}, which shares an entry with the stated array — the fixture cannot tell a carry from a measurement`]),
+  ];
+  const statedHeld = statedProbes.length === 0;
+  say(
+    'PS185_A_STATED_LENGTHS_IS_EMITTED_AS_STATED_AND_LOADED_AS_STATED_ON_A_WEIGHTED_OPEN_PATH',
+    statedHeld,
+    probeDetail(
+      statedHeld,
+      statedProbes,
+      `a weighted open path stating lengths ${JSON.stringify(STATED_LENGTHS)} builds green, the file carries exactly ` +
+        'that array twice over, and the parser loads it — where the same path stating none measures ' +
+        `${JSON.stringify(unstatedEmitted)}`,
+      (count) => `${count} thing(s) the stated array did not survive:`,
+    ),
+    'the file is the record of what was measured, and an export\'s `lengths` is the editor\'s measurement of a pose ' +
+      'rigc cannot reproduce without posing (`PS190`). Re-deriving it moved the bones a `constantSpeed: false` path ' +
+      'drives on both production rigs #804 was filed on; carrying it moved none',
+  );
+
+  // -- PS186: an omitted array on a weighted path is the runtime's own -------
+  const weightedProbes: string[] = [];
+  const weightedSaid: string[] = [];
+  for (const closed of [false, true]) {
+    const what = closed ? 'closed' : 'open';
+    const build = closed ? namedBuild(lengthsRig(weightedTrack(true))) : unstatedBuild;
+    const emitted = emittedLengths(build);
+    const oracle = lengthsOracle(build, false);
+    weightedProbes.push(...buildRows(build, `the ${what} weighted path`));
+    if (typeof oracle === 'string' || emitted === null) {
+      weightedProbes.push(`the ${what} weighted path: ${typeof oracle === 'string' ? oracle : 'no lengths emitted'}`);
+      continue;
+    }
+    const entries = (closed ? PATH_LENGTH_CLOSED_VERTICES : PATH_LENGTH_OPEN_VERTICES).length / 6;
+    if (emitted.length !== entries) weightedProbes.push(`the ${what} weighted path emits ${emitted.length} entry(ies) where the parser sizes ${entries}`);
+    for (let i = 0; i < Math.min(emitted.length, oracle.wrap.length); i++) {
+      const want = i < oracle.curves.length ? oracle.curves[i] : oracle.wrap[i];
+      if (Math.abs(emitted[i] - want) > LENGTHS_TOLERANCE) {
+        weightedProbes.push(
+          `the ${what} weighted path's lengths[${i}] is ${emitted[i]} where ${i < oracle.curves.length ? 'PathConstraint.curves' : 'the closed chain over the posed world vertices'} ` +
+            `measures ${want.toFixed(6)} — ${(emitted[i] / want).toFixed(4)}×`,
+        );
+      }
+    }
+    weightedSaid.push(`${what}: [${emitted.join(', ')}] against the runtime's [${oracle.wrap.map((n) => n.toFixed(4)).join(', ')}]`);
+  }
+  // The fixture has to be one the old matrices got wrong, or it proves nothing.
+  const departsFromPlain = LENGTHS_BONES.filter(
+    (b) => ('scaleX' in b && b.scaleX !== 1) || ('shearX' in b && b.shearX !== 0) || ('inherit' in b && b.inherit !== 'normal'),
+  ).map((b) => b.name);
+  if (departsFromPlain.length === 0) weightedProbes.push('no weight bone carries a scale, a shear or an inherit mode, so the fixture cannot see the defect');
+  const weightedHeld = weightedProbes.length === 0;
+  say(
+    'PS186_AN_OMITTED_LENGTHS_ON_A_WEIGHTED_PATH_IS_THE_RUNTIMES_OWN_CURVES_THROUGH_SCALED_AND_INHERITING_BONES',
+    weightedHeld,
+    probeDetail(
+      weightedHeld,
+      weightedProbes,
+      `every entry within ${LENGTHS_TOLERANCE} of PathConstraint.curves off the posed build (and the open path's last, ` +
+        `of the closed chain over the same posed vertices), through [${departsFromPlain.join(', ')}] — ${weightedSaid.join('; ')}`,
+      (count) => `${count} entr(ies) measured on a geometry the runtime does not build:`,
+    ),
+    '`PS67`/`PS68` extended to weights. The unweighted fixtures hang their path off the root, so the compiler\'s ' +
+      'matrices never enter them; here every vertex is blended through a bone whose scale, shear or inheritance the ' +
+      'setup transforms ignored until #804, which is how a production rig\'s weighted path came out 2.35× the runtime',
+  );
+
+  // -- PS187: `vertexCount / 3` entries on both shapes -----------------------
+  const countProbes: string[] = [];
+  const countSaid: string[] = [];
+  for (const closed of [false, true]) {
+    const what = closed ? 'closed path' : 'open path';
+    const read = readPathLengths(closed);
+    // `PathConstraint.computeWorldPositions:203-206`: the highest index the
+    // constraint reads is `verticesLength / 6 - (closed ? 1 : 2)`, and one entry
+    // short of it divides a traversal by a length the parser filled with 0.
+    const highestRead = read.worldVerticesLength / 6 - (closed ? 1 : 2);
+    const allocated = read.vertexCount / 3;
+    if (read.emitted.length !== allocated) {
+      countProbes.push(`${what}: rigc emitted ${read.emitted.length} entry(ies) where the parser allocates vertexCount / 3 = ${allocated}`);
+    }
+    if (read.emitted.length < highestRead + 1) {
+      countProbes.push(`${what}: rigc emitted ${read.emitted.length} entry(ies) and PathConstraint reads lengths[${highestRead}]`);
+    }
+    const wrap = runtimeCurveLengths(pathChainOf(read.vertices, true));
+    const last = read.emitted.length - 1;
+    if (!closed && pathFloat(read.emitted[last]) !== pathFloat(wrap[wrap.length - 1])) {
+      countProbes.push(
+        `${what}: the trailing entry is ${read.emitted[last]} where the closed chain's cumulative is ` +
+          `${wrap[wrap.length - 1]} (float ${pathFloat(wrap[wrap.length - 1])}) — the editor's own last entry`,
+      );
+    }
+    countSaid.push(`${what}: ${read.emitted.length} = vertexCount / 3, reads up to lengths[${highestRead}]`);
+  }
+  const countHeld = countProbes.length === 0;
+  say(
+    'PS187_A_PATHS_LENGTHS_HAS_VERTEXCOUNT_OVER_3_ENTRIES_OPEN_OR_CLOSED_AND_THE_OPEN_TAIL_IS_THE_WRAP_AROUND_CURVE',
+    countHeld,
+    probeDetail(countHeld, countProbes, `${countSaid.join('; ')}; the open path's last entry is the closed chain's cumulative`),
+    'the parser sizes the array `vertexCount / 3` on both shapes and the editor fills it, computing the wrap-around ' +
+      'curve even for an open path (`gallery/ride` exported `2136.228` there). rigc wrote one entry fewer on an open ' +
+      'path until #804 — read by nothing, and still not the file the editor writes. ⚠️ The clause that matters goes ' +
+      'the other way: one entry short of what the constraint reads, and the traversal divides by the 0 the parser ' +
+      'filled in',
+  );
+
+  // -- PS188: a stated array of the wrong count ------------------------------
+  const countMotion = pathMotion(PATH_MOVE);
+  const shortStated = refusal(pathAttachment({ lengths: [90, 180] }), countMotion);
+  const longStated = refusal(pathAttachment({ lengths: [90, 180, 360, 400] }), countMotion);
+  const rightStated = refusal(pathAttachment({ lengths: [90, 180, 360] }), countMotion);
+  const wrongCountProbes = [
+    ...(shortStated !== null && shortStated.includes('"lengths" has 2 entry(ies) where the parser sizes 3') && shortStated.includes('"track"')
+      ? []
+      : [`two entries on a nine-vertex open path: ${shortStated ?? 'the compile went through'}`]),
+    ...(longStated !== null && longStated.includes('"lengths" has 4 entry(ies) where the parser sizes 3')
+      ? []
+      : [`four entries on a nine-vertex open path: ${longStated ?? 'the compile went through'}`]),
+    ...(rightStated === null ? [] : [`three entries on a nine-vertex open path were refused: ${rightStated}`]),
+  ];
+  const wrongCountHeld = wrongCountProbes.length === 0;
+  say(
+    'PS188_A_STATED_LENGTHS_OF_THE_WRONG_COUNT_IS_REFUSED_WITH_BOTH_COUNTS',
+    wrongCountHeld,
+    probeDetail(wrongCountHeld, wrongCountProbes, `short: ${shortStated}; long: ${longStated}; three entries build`),
+    'the parser copies whatever the file gives into an array it sized itself, so a short one leaves zeros the ' +
+      'constraint reads as a curve\'s end and a long one grows the array past the geometry — both in silence. ' +
+      'Trimming or padding would be a value the spec did not state, so the refusal names both counts',
+  );
+
+  // -- PS189: an entry that is not a finite cumulative length ----------------
+  const decreasing = refusal(pathAttachment({ lengths: [90, 45, 360] }), countMotion);
+  const negative = refusal(pathAttachment({ lengths: [-1, 180, 360] }), countMotion);
+  const spelt = refusal(pathAttachment({ lengths: [90, '180', 360] }), countMotion);
+  const entryProbes = [
+    ...(decreasing !== null && decreasing.includes('"lengths"[1] is 45, below the 90 before it') ? [] : [`[90, 45, 360]: ${decreasing ?? 'the compile went through'}`]),
+    ...(negative !== null && negative.includes('"lengths"[0] is -1, below 0') ? [] : [`[-1, 180, 360]: ${negative ?? 'the compile went through'}`]),
+    ...(spelt !== null && spelt.includes('"lengths"[1] is "180"') ? [] : [`[90, "180", 360]: ${spelt ?? 'the compile went through'}`]),
+  ];
+  const entryHeld = entryProbes.length === 0;
+  say(
+    'PS189_A_STATED_LENGTHS_ENTRY_BELOW_ITS_PREDECESSOR_OR_NOT_A_FINITE_NUMBER_IS_REFUSED_BY_INDEX',
+    entryHeld,
+    probeDetail(entryHeld, entryProbes, `${decreasing}; ${negative}; ${spelt}`),
+    'the array is cumulative, so an entry below the one before it is not a length on any pose, and a string the ' +
+      'parser multiplies by the scale is NaN. Equal neighbours are left to `A33`, which refuses a zero-length curve ' +
+      'where the runtime reads it',
+  );
+
+  // -- PS190: what rigc does NOT measure — the constrained pose --------------
+  const constrainedBones = [
+    { name: 'root' },
+    { name: 'carrier', parent: 'root' },
+    { name: 'target', parent: 'root', x: 10, rotation: 30, scaleX: 1.5, scaleY: 0.5 },
+    { name: 'rider', parent: 'root', length: 20 },
+  ];
+  const follow = {
+    name: 'follow',
+    type: 'transform',
+    bones: ['carrier'],
+    source: 'target',
+    properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } }, scaleX: { to: { scaleX: {} } } },
+  };
+  const constrainedBuild = namedBuild(
+    lengthsRig({ type: 'path', vertexCount: 12, vertices: PATH_LENGTH_OPEN_VERTICES }, constrainedBones, 'carrier', [follow, PATH_RIDE_CONSTRAINT]),
+  );
+  const constrainedEmitted = emittedLengths(constrainedBuild);
+  const asPosed = lengthsOracle(constrainedBuild, false);
+  const unconstrained = lengthsOracle(constrainedBuild, true);
+  const constrainedProbes = [
+    ...buildRows(constrainedBuild, 'the constrained path'),
+    ...(typeof asPosed === 'string' ? [`posed: ${asPosed}`] : []),
+    ...(typeof unconstrained === 'string' ? [`unconstrained: ${unconstrained}`] : []),
+  ];
+  if (typeof asPosed !== 'string' && typeof unconstrained !== 'string' && constrainedEmitted !== null) {
+    unconstrained.curves.forEach((want, i) => {
+      if (Math.abs(constrainedEmitted[i] - want) > LENGTHS_TOLERANCE) {
+        constrainedProbes.push(`lengths[${i}] is ${constrainedEmitted[i]} and the unconstrained setup pose measures ${want.toFixed(6)}`);
+      }
+    });
+    const moved = asPosed.curves.some((n, i) => Math.abs(n - unconstrained.curves[i]) > 1);
+    if (!moved) constrainedProbes.push('the transform constraint does not move the measured curves, so the fixture cannot tell the two poses apart');
+  }
+  const constrainedHeld = constrainedProbes.length === 0;
+  say(
+    'PS190_AN_OMITTED_LENGTHS_UNDER_A_CONSTRAINT_IS_THE_UNCONSTRAINED_SETUP_FIGURE_NOT_THE_POSE_THE_RUNTIME_MEASURES',
+    constrainedHeld,
+    probeDetail(
+      constrainedHeld,
+      constrainedProbes,
+      `the path's slot bone under a transform constraint ordered before the path constraint: rigc emits ` +
+        `${JSON.stringify(constrainedEmitted)}, the unconstrained setup pose measures ` +
+        `[${typeof unconstrained === 'string' ? unconstrained : unconstrained.curves.map((n) => n.toFixed(4)).join(', ')}] and ` +
+        `the runtime, constraints applied, [${typeof asPosed === 'string' ? asPosed : asPosed.curves.map((n) => n.toFixed(4)).join(', ')}]`,
+      (count) => `${count} thing(s) the stated limit did not match:`,
+    ),
+    'a limit stated as a control, so the prose that states it cannot drift from it. The runtime measures the pose ' +
+      'its update order gives the path constraint, and the editor writes that number; reproducing it is solving ' +
+      'every constraint type in order, which is posing, and `src/compile.ts` does not link the runtime. So an ' +
+      'omitted `lengths` is the unconstrained figure, and a stated one is how the constrained one is carried. The ' +
+      'day this goes red the limit has moved, and the guide\'s paragraph with it',
   );
 
   return bad;
@@ -54409,6 +54728,88 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR102: the retired `lengths` sentences are quoted nowhere (#804) ------
+  //
+  // A path's `lengths` was refused when authored, dropped by `ingest` as a loss
+  // and re-measured, and a comment claimed the re-measure matched the editor to
+  // the digit. All three are gone from the code; a sentence left in the guide
+  // would tell an author to delete an export's own array. Held both ways, as
+  // `CUR97` is: the tree carries none, and each planted into the guide is named.
+  {
+    const RETIRED = [
+      '"lengths" is not authored',
+      'rigc RE-MEASURES it',
+      'which rigc re-measures',
+      'reproduces every digit the editor printed',
+    ];
+    const scanned = ['docs/AUTHORING.md', 'docs/INGEST.md', 'docs/SPEC_COVERAGE.md', 'README.md', 'src/compile.ts', 'src/rig.ts', 'src/ingest.ts', 'src/types.ts'];
+    const texts = scanned.map((path) => [path, readFileSync(join(root, path), 'utf8').replace(/\s*\*\s+/g, ' ').replace(/\s+/g, ' ')] as const);
+    const scanRetired = (population: ReadonlyArray<readonly [string, string]>): string[] =>
+      population.flatMap(([path, text]) => RETIRED.filter((sentence) => text.includes(sentence)).map((sentence) => `${path} still says "${sentence}"`));
+    const standing = scanRetired(texts);
+    const plantProbes = RETIRED.flatMap((sentence) => {
+      const planted = scanRetired(texts.map(([path, text]) => [path, path === 'docs/AUTHORING.md' ? `${text} ${sentence}` : text] as const));
+      return planted.length === standing.length + 1 ? [] : [`"${sentence}" planted into the guide raised ${planted.length - standing.length} fault(s), and one is required`];
+    });
+    const retiredProbes = [...standing, ...plantProbes];
+    say(
+      'CUR102_THE_RETIRED_PATH_LENGTHS_SENTENCES_ARE_QUOTED_NOWHERE',
+      retiredProbes.length === 0,
+      probeDetail(
+        retiredProbes.length === 0,
+        retiredProbes,
+        `${RETIRED.length} retired sentence(s) absent from ${scanned.join(', ')}, and each planted into the guide is named`,
+      ),
+      'each is an instruction the tool no longer follows — delete a stated array, expect it dropped, trust a ' +
+        're-measure to match the editor — and the guide is the only interface an author has to the difference',
+    );
+  }
+
+  // --- CUR103: the count refusal the guide quotes is the one the compiler raises (#804)
+  //
+  // The guide quotes the wrong-count refusal twice — in the path table's
+  // `lengths` row and in the refusal index — with its counts written as `N` and
+  // `M`. Each quote, counts and digits blanked and cut at every `…`, is compared
+  // with what this build raises for two entries on a nine-vertex open path, and
+  // a plant exchanges the verb the sentence turns on.
+  {
+    const guide = readFileSync(join(root, 'docs/AUTHORING.md'), 'utf8');
+    const track = PATH_RIG.skins.default.attachments.track.track;
+    const raised = refusal(
+      writeProbeRig({
+        ...PATH_RIG,
+        skins: {
+          ...PATH_RIG.skins,
+          default: { attachments: { ...PATH_RIG.skins.default.attachments, track: { track: { ...track, lengths: [90, 180] } } } },
+        },
+      }),
+      pathMotion(PATH_MOVE),
+    );
+    const shape = (text: string): string => text.replace(/\b[NM]\b/g, '#').replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
+    const pieces = (quote: string): string[] => quote.split('…').map(shape).filter((piece) => piece.length > 0);
+    const quotes = [...guide.matchAll(/`("lengths" has N entry\(ies\) where the parser sizes M[^`]*)`/g)].map((m) => m[1]);
+    const shaped = raised === null ? '' : shape(raised);
+    const missingOf = (quote: string): string[] => pieces(quote).filter((piece) => !shaped.includes(piece));
+    const probes = [
+      ...(raised === null ? ['two entries on a nine-vertex open path compiled'] : []),
+      ...quotes.flatMap((quote) => missingOf(quote).map((piece) => `the guide quotes "${piece}" and the compiler raises "${raised}"`)),
+      ...floorProbes([[quotes.length, 2, `${quotes.length} quote(s) of the count refusal in the guide`]], 'so the guide was not read'),
+      ...quotes.flatMap((quote) =>
+        missingOf(quote.replace('the parser sizes', 'the parser allocates')).length === 1
+          ? []
+          : [`the verb exchanged in "${quote}" raised ${missingOf(quote.replace('the parser sizes', 'the parser allocates')).length} missing piece(s), and one is required`],
+      ),
+    ];
+    const held = probes.length === 0;
+    say(
+      'CUR103_THE_COUNT_REFUSAL_THE_GUIDE_QUOTES_FOR_A_STATED_LENGTHS_IS_THE_ONE_THE_COMPILER_RAISES',
+      held,
+      probeDetail(held, probes, `${quotes.length} quote(s), each a clause of: ${raised}`),
+      'the message is the UI: the guide\'s quote is what an author searches for when the build stops, and the ' +
+        'row beside it is the remedy. A quote the compiler does not raise is a remedy nobody reaches',
+    );
+  }
+
   return bad;
 }
 
@@ -62165,7 +62566,7 @@ function runIngestSuite(): number {
       'as anything but a JUDGEMENT is the whole difference between a transcription and an invention',
   );
 
-  // --- IG07: the other judgement, and the one thing rigc re-derives ----------
+  // --- IG07: the other judgement ------------------------------------------
   const probeTrip = trips.get('ingest_probe')!;
   const durations = probeTrip.findings.filter((f) => f.code === 'DURATION');
   const probeAnimations = Object.keys(
@@ -62191,16 +62592,11 @@ function runIngestSuite(): number {
     unknown
   >;
   const wrongDuration = declared.filter(([name, animation]) => animation.duration !== largestKeyTime(sourceAnimations[name]));
-  const pathRig = trips.get('ride') ?? probeTrip;
-  const noPathRig = trips.get('articulated_probe')!;
-  const reportsLengths = pathRig.findings.some((f) => f.code === 'PATH_LENGTHS');
-  const staysQuiet = noPathRig.findings.every((f) => f.code !== 'PATH_LENGTHS');
-  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498). Two of the five
-  // terms went unread and the clean sentence asserts both outright — *"all
-  // equal to the largest key time"* and *"PATH_LENGTHS reported on a rig with a
-  // path attachment"*. Planted with the finding's code misspelled in
-  // `src/ingest.ts`, it printed that second clause on the run where the report
-  // carried no such finding at all.
+  // 🔸 `probeDetail` rather than `RD02`'s line (issue #498): the clean sentence
+  // asserts its terms outright, so each has to be read. ⚠️ This control carried a
+  // second half until issue #804 — *a path's lengths are re-measured*, held
+  // two-sided on `PATH_LENGTHS` — and that finding is gone with the loss it
+  // named: a stated `lengths` is carried now. `IG96` holds the new reading.
   const ingestJudgements = [
     ...(durations.length === probeAnimations.length
       ? []
@@ -62213,27 +62609,21 @@ function runIngestSuite(): number {
       ? []
       : [`${wrongDuration.length} declared duration(s) are not the largest key time: ` +
           `${wrongDuration.map(([name, animation]) => `${name} states ${animation.duration}, largest key ${largestKeyTime(sourceAnimations[name])}`).join('; ')}`]),
-    ...(reportsLengths ? [] : ['no PATH_LENGTHS finding on a rig that HAS a path attachment, so the re-measure went unreported']),
-    ...(staysQuiet ? [] : ['a PATH_LENGTHS finding on a rig with no path attachment, so the report fires on everything']),
   ];
   const ingestJudged = ingestJudgements.length === 0;
   say(
-    'IG07_THE_DURATION_IS_THE_LARGEST_KEY_TIME_AND_SAYS_SO_AND_A_PATHS_LENGTHS_ARE_RE_MEASURED',
+    'IG07_THE_DURATION_IS_THE_LARGEST_KEY_TIME_AND_SAYS_SO',
     ingestJudged,
     probeDetail(
       ingestJudged,
       ingestJudgements,
       `${durations.length} DURATION judgement(s) over ${probeAnimations.length} animation(s), all equal to the ` +
-        `largest key time; PATH_LENGTHS reported on a rig with a path attachment and on ${staysQuiet ? 'no' : 'the wrong'} ` +
-        'rig without one',
-      (count) => `${count} of the two judgements did not read as the tool states them:`,
+        'largest key time',
+      (count) => `${count} of the duration's readings did not hold:`,
     ),
     'skeleton JSON has no duration field at all, so the largest key time is the only derivable answer AND it is ' +
       'wrong for an animation that holds past its last key — which is exactly the shape of thing that has to be ' +
-      'reported rather than chosen. `lengths` is the mirror image: the file HAS it and rigc drops it on purpose, ' +
-      'because the field is `PathConstraint`\'s own four-sample forward difference (#560) and a transcribed one ' +
-      'would freeze whatever produced the source. Two-sided, or "reports it" would be satisfied by reporting it ' +
-      'everywhere',
+      'reported rather than chosen',
   );
 
   // --- IG08: constructs the spec cannot hold, refused BY NAME ----------------
@@ -66870,6 +67260,220 @@ function runIngestSuite(): number {
       ),
       'IG90\'s twin, and the half that rules out "drop an empty default" as the fix: the JSON can state one, a file ' +
         'that does is the record, and a rebuild that dropped it would be the same defect in the other direction',
+    );
+
+    // -- IG94–IG96: a path's `lengths` is carried, not re-measured (#804) -------
+    //
+    // 🚨 **Measured on the branch point.** `ingest` dropped every path's
+    // `lengths` as `LOSS PATH_LENGTHS` and the rebuild re-measured it — on two
+    // production 4.1 rigs with `constantSpeed: false` paths that moved every
+    // bone downstream of them, because the editor's number is its measurement
+    // of a pose rigc does not reproduce. The array is carried verbatim now and
+    // the code is gone with the loss it named.
+    //
+    // 🌱 The forged export states numbers the geometry does not measure — rigc's
+    // own emit with every entry moved 1 % and rounded to a quarter, which a
+    // float32 holds exactly — so a rebuild that re-measured would say so. The
+    // plant is DATA: the same spec with `lengths` deleted, which is the branch
+    // point's spec reproduced inside the run.
+    const lengthsDir = mkdtempSync(join(tmpdir(), 'rigc-path-lengths-'));
+    const lengthsRigPath = join(lengthsDir, 'path_lengths.rig.json');
+    const lengthsMotionPath = join(lengthsDir, 'path_lengths.motion.json');
+    writeFileSync(
+      lengthsRigPath,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-rig/1',
+          name: 'path_lengths',
+          skeleton: { width: 64, height: 64 },
+          bones: [
+            { name: 'root' },
+            { name: 'near', parent: 'root', x: 30, y: -20, rotation: 15 },
+            { name: 'far', parent: 'root', x: -40, y: 60, rotation: 40, scaleX: 2, scaleY: 1.5 },
+            { name: 'rider', parent: 'root', length: 20 },
+          ],
+          slots: [{ name: 'track', bone: 'root', attachment: 'track' }],
+          skins: {
+            default: {
+              track: {
+                track: {
+                  type: 'path',
+                  vertexCount: PATH_LENGTH_OPEN_VERTICES.length / 2,
+                  weights: Array.from({ length: PATH_LENGTH_OPEN_VERTICES.length / 2 }, (_, i) => [
+                    { bone: 'near', x: PATH_LENGTH_OPEN_VERTICES[2 * i] * 0.5, y: PATH_LENGTH_OPEN_VERTICES[2 * i + 1] * 0.5, weight: 0.5 },
+                    { bone: 'far', x: PATH_LENGTH_OPEN_VERTICES[2 * i] * 0.25, y: PATH_LENGTH_OPEN_VERTICES[2 * i + 1] * 0.25, weight: 0.5 },
+                  ]),
+                },
+              },
+            },
+          },
+          constraints: [PATH_RIDE_CONSTRAINT],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    writeFileSync(lengthsMotionPath, `${JSON.stringify({ ...STATIC_MOTION, archetype: 'path_lengths', cut: 'path_lengths' }, null, 2)}\n`);
+    const lengthsA = join(lengthsDir, 'A');
+    mkdirSync(lengthsA, { recursive: true });
+    const lengthsSource = compile({ rigPath: lengthsRigPath, motionPath: lengthsMotionPath, outDir: lengthsA, imagesDir: lengthsDir });
+    type PathFile = { skins: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }> };
+    const trackOf = (file: PathFile): Record<string, unknown> => file.skins.find((s) => s.name === 'default')!.attachments.track.track;
+    const measuredLengths = trackOf(JSON.parse(lengthsSource.skeletonText) as PathFile).lengths as number[];
+    /** Ingest a forged export, optionally edit the spec, and rebuild it. */
+    const lengthsTrip = (
+      exported: PathFile,
+      label: string,
+      edit?: (rig: Record<string, unknown>) => void,
+    ): { findings: IngestFinding[]; spec: Record<string, unknown> | undefined; rebuilt: PathFile | null; refusal: string | null } => {
+      const got = ingest(exported as unknown as Record<string, unknown>, { name: 'path_lengths', art: 'none', source: 'skeleton.json', version: packageVersion() });
+      const rig = got.rig as unknown as Record<string, unknown>;
+      edit?.(rig);
+      const specDir = join(lengthsDir, `${label}-spec`);
+      const outDir = join(lengthsDir, `${label}-B`);
+      mkdirSync(specDir, { recursive: true });
+      mkdirSync(outDir, { recursive: true });
+      writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+      writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(got.motion, null, 2)}\n`);
+      const spec = specEntries(rig).get('default/track/track');
+      try {
+        const built = compile({
+          rigPath: join(specDir, 'rig.json'),
+          motionPath: join(specDir, 'motion.json'),
+          outDir,
+          // No `--atlas-in`: the rig draws nothing, so its pack declares no
+          // region and the flag refuses an empty one.
+          imagesDir: lengthsDir,
+        });
+        return { findings: got.findings, spec, rebuilt: JSON.parse(built.skeletonText) as PathFile, refusal: null };
+      } catch (err) {
+        return { findings: got.findings, spec, rebuilt: null, refusal: (err as Error).message };
+      }
+    };
+
+    // -- IG94: a stated array is written into the spec verbatim ---------------
+    const forged = JSON.parse(lengthsSource.skeletonText) as PathFile;
+    const forgedLengths = measuredLengths.map((n) => Math.round(n * 1.01 * 4) / 4);
+    trackOf(forged).lengths = forgedLengths;
+    const carried = lengthsTrip(forged, 'carried');
+    const planted = lengthsTrip(forged, 'planted', (rig) => {
+      const entry = specEntries(rig).get('default/track/track');
+      if (entry !== undefined) delete entry.lengths;
+    });
+    const carriedRebuilt = carried.rebuilt === null ? null : (trackOf(carried.rebuilt).lengths as number[]);
+    const plantedRebuilt = planted.rebuilt === null ? null : (trackOf(planted.rebuilt).lengths as number[]);
+    const carriedProbes = [
+      ...(carried.refusal === null ? [] : [`the rebuild was refused: ${carried.refusal}`]),
+      ...(JSON.stringify(carried.spec?.lengths) === JSON.stringify(forgedLengths)
+        ? []
+        : [`the export states lengths ${JSON.stringify(forgedLengths)} and the spec writes ${JSON.stringify(carried.spec?.lengths ?? null)}`]),
+      ...(carried.rebuilt === null
+        ? []
+        : differingJsonPaths(forged, carried.rebuilt).map((path) => `the rebuild differs from the export at ${path}`)),
+      ...carried.findings.filter((f) => f.code.includes('LENGTHS')).map((f) => `a lengths finding: ${f.kind} ${f.code} ${f.where}`),
+      // The plant: the branch point's spec, `lengths` deleted, re-measures —
+      // so a rebuild equal to the export above was not a coincidence.
+      ...(plantedRebuilt !== null && JSON.stringify(plantedRebuilt) !== JSON.stringify(forgedLengths) && JSON.stringify(plantedRebuilt) === JSON.stringify(measuredLengths)
+        ? []
+        : [`with lengths deleted from the spec the rebuild emits ${JSON.stringify(plantedRebuilt)}, which is not rigc's own measurement ${JSON.stringify(measuredLengths)} apart from the export's — the case cannot tell a carry from a re-measure`]),
+    ];
+    const carriedHeld = carriedProbes.length === 0;
+    say(
+      'IG94_A_PATHS_STATED_LENGTHS_IS_WRITTEN_INTO_THE_SPEC_VERBATIM_AND_THE_REBUILD_IS_THE_EXPORT',
+      carriedHeld,
+      probeDetail(
+        carriedHeld,
+        carriedProbes,
+        `an export stating ${JSON.stringify(forgedLengths)} on a weighted open path — numbers its geometry does not ` +
+          `measure — ingests with them in the spec and no lengths finding, and rebuilds canonically equal to the ` +
+          `export; the same spec with the array deleted rebuilds ${JSON.stringify(plantedRebuilt)} instead`,
+        (count) => `${count} thing(s) the stated array did not survive:`,
+      ),
+      'the file is the record of what was measured. An editor export\'s `lengths` is the editor\'s measurement of the ' +
+        'pose the first update hands the path constraint, constraints applied, and rigc does not pose — so the only ' +
+        'rebuild that is its export on this field is one that carries the array',
+    );
+
+    // -- IG95: an export that omits the array rebuilds with a measured one ----
+    const omitted = JSON.parse(lengthsSource.skeletonText) as PathFile;
+    delete trackOf(omitted).lengths;
+    const omittedTrip = lengthsTrip(omitted, 'omitted');
+    const omittedRebuilt = omittedTrip.rebuilt === null ? null : (trackOf(omittedTrip.rebuilt).lengths as number[] | undefined);
+    let parserOnSource = 'loaded';
+    try {
+      skeletonDataFromText(JSON.stringify(omitted), lengthsSource.atlasText);
+    } catch (err) {
+      parserOnSource = `${(err as Error).constructor.name}: ${(err as Error).message}`;
+    }
+    const omittedProbes = [
+      ...(omittedTrip.refusal === null ? [] : [`the rebuild was refused: ${omittedTrip.refusal}`]),
+      ...(omittedTrip.spec !== undefined && !('lengths' in omittedTrip.spec) ? [] : ['the spec states a lengths the export did not']),
+      ...(omittedRebuilt !== undefined && omittedRebuilt !== null && omittedRebuilt.length === PATH_LENGTH_OPEN_VERTICES.length / 6
+        ? []
+        : [`the rebuild carries ${JSON.stringify(omittedRebuilt ?? null)}, where the parser sizes ${PATH_LENGTH_OPEN_VERTICES.length / 6} entries`]),
+      ...(JSON.stringify(omittedRebuilt) === JSON.stringify(measuredLengths)
+        ? []
+        : [`the rebuild measures ${JSON.stringify(omittedRebuilt)} where a build of the same geometry measures ${JSON.stringify(measuredLengths)}`]),
+    ];
+    const omittedHeld = omittedProbes.length === 0;
+    say(
+      'IG95_AN_EXPORT_WHOSE_PATH_OMITS_LENGTHS_REBUILDS_WITH_THE_MEASURED_ARRAY_AT_THE_PARSERS_COUNT',
+      omittedHeld,
+      probeDetail(
+        omittedHeld,
+        omittedProbes,
+        `a path with no \`lengths\` ingests with none in the spec and rebuilds with ${JSON.stringify(omittedRebuilt)}, ` +
+          `vertexCount / 3 entries measured as a build of the same geometry measures them. The source itself: ${parserOnSource}`,
+        (count) => `${count} thing(s) the omitted array did not become:`,
+      ),
+      'none of the twelve public exports carries a path, so the shape is generated. It is not one an editor writes — ' +
+        'the parser dereferences `map.lengths.length` unconditionally, and the line above says what it does with the ' +
+        'source — but a hand-edited file is, and the rebuild of one has to be a file the parser loads',
+    );
+
+    // -- IG96: no round trip in this run reports or loses a path's lengths ----
+    let pathsSeen = 0;
+    const tripProbes: string[] = [];
+    for (const [name, trip] of trips) {
+      for (const finding of trip.findings) {
+        if (finding.code.includes('LENGTHS')) tripProbes.push(`${name}: ${finding.kind} ${finding.code} ${finding.where}`);
+      }
+      const source = JSON.parse(trip.a.skeletonText) as PathFile;
+      const rebuilt = JSON.parse(trip.b.skeletonText) as PathFile;
+      const spec = specEntries(trip.rig);
+      for (const skin of source.skins) {
+        for (const [slot, table] of Object.entries(skin.attachments)) {
+          for (const [key, att] of Object.entries(table)) {
+            if (att.type !== 'path') continue;
+            pathsSeen++;
+            const at = `${skin.name}/${slot}/${key}`;
+            const stated = spec.get(at)?.lengths;
+            const back = rebuilt.skins.find((s) => s.name === skin.name)?.attachments[slot]?.[key]?.lengths;
+            if (JSON.stringify(stated) !== JSON.stringify(att.lengths)) {
+              tripProbes.push(`${name}: ${at} states ${JSON.stringify(att.lengths)} and the spec writes ${JSON.stringify(stated ?? null)}`);
+            }
+            if (JSON.stringify(back) !== JSON.stringify(att.lengths)) {
+              tripProbes.push(`${name}: ${at} rebuilds ${JSON.stringify(back ?? null)} from ${JSON.stringify(att.lengths)}`);
+            }
+          }
+        }
+      }
+    }
+    tripProbes.push(...floorProbes([[pathsSeen, 1, `${pathsSeen} path attachment(s) across ${trips.size} round trip(s)`]], 'so nothing here read a path'));
+    const tripsHeld = tripProbes.length === 0;
+    say(
+      'IG96_EVERY_ROUND_TRIPS_PATH_CARRIES_ITS_SOURCES_LENGTHS_INTO_THE_SPEC_AND_BACK_AND_NONE_REPORTS_A_LOSS',
+      tripsHeld,
+      probeDetail(
+        tripsHeld,
+        tripProbes,
+        `${pathsSeen} path attachment(s) across ${trips.size} round trip(s): each spec states its source's lengths, ` +
+          'each rebuild carries them, and no trip reports a lengths finding',
+        (count) => `${count} thing(s) a round trip did not carry:`,
+      ),
+      'the reading `IG07` carried two-sided until #804 — *a path\'s lengths are re-measured* — inverted: the finding ' +
+        'is gone with the loss it named, and a trip that reported it or dropped the array would be the branch point ' +
+        'coming back',
     );
   }
 

@@ -984,12 +984,13 @@ export interface SpineClippingAttachment {
  * `lengths` is the cumulative length at the end of each curve in the setup pose,
  * measured **the way `PathConstraint` measures it** — a four-sample forward
  * difference per curve (`PathConstraint.js:301-320`), which is also what the
- * Spine editor exports and which reads about **0.5 % below the true arc**. One
- * entry per curve, so `vertexCount / 3 - 1` of them on an open path and
- * `vertexCount / 3` on a closed one. It has no parser default and the parser
+ * Spine editor exports and which reads about **0.5 % below the true arc**.
+ * `vertexCount / 3` entries on both shapes — one per curve on a closed path, and
+ * one more than the curves on an open one, the wrap-around curve's cumulative,
+ * which nothing reads (below). It has no parser default and the parser
  * dereferences `map.lengths.length` unconditionally, so an absent array is one of
- * the format's few loud failures; rigc measures the numbers off the geometry
- * rather than letting a spec restate them.
+ * the format's few loud failures. Since issue #804 rigc emits a stated array as
+ * stated and measures only an omitted one — see `buildRigPath`.
  *
  * ⚠️ That sentence read *"the cumulative **arc** length"* until issue #560, and
  * the word was load-bearing in the wrong direction: this is not an arc length,
@@ -1008,6 +1009,9 @@ export interface SpineClippingAttachment {
  * `PathConstraint` reads at most `lengths[curveCount]` with
  * `curveCount = verticesLength / 6 − (closed ? 1 : 2)` — index 2 on that path.
  * The trailing entry the editor adds to an open path is never read by anything.
+ * Since issue #804 rigc writes it too, over the closed chain, and the `ride`
+ * build ends on the editor's `2136.228`: a rebuild is the file the editor
+ * writes rather than one entry short of it.
  *
  * 🚨 **What the editor writes INTO those entries is its own measurement, and it
  * is the runtime's, not calculus'** (issue #560, measured on the same trip).
@@ -1025,7 +1029,7 @@ export interface SpineClippingAttachment {
  * ⇒ **rigc emits that computation, not a sampler aimed at it** (issue #560).
  * `pathCurveLengths` in [`compile.ts`](compile.ts) is `PathConstraint.js:301-320`
  * transcribed, down to `Math.sqrt(dx * dx + dy * dy)` rather than `Math.hypot`
- * and `0.16666667` rather than `1 / 6`; `PS67`–`PS69` in `selftest.ts` hold it
+ * and `0.16666667` rather than `1 / 6`; `PS67`, `PS68` and `PS187` in `selftest.ts` hold it
  * there by requiring it to reproduce a real `PathConstraint.curves` array **bit
  * for bit** on the runtime's own posed chain. Measured after the change, all
  * seven entries of both editor exports above come back at the precision the

@@ -4050,6 +4050,17 @@ function setupWorldVertices(
  * two are the outer control handles of the end knots, which no curve uses. A
  * closed path instead rotates by one and repeats the first knot at the end.
  * Either way what comes out is a `3K + 1` chain: knot, handle, handle, knot, …
+ *
+ * ⭐ **`lengths` is measured over the CLOSED chain whether the path is closed or
+ * not** (issue #804), because that is the array the format holds: the parser
+ * sizes it `vertexCount / 3` on both (`SkeletonJson.js:601`), which on an open
+ * path is one more than its curves, and the editor fills that last entry with
+ * the wrap-around curve's cumulative — measured on a 4.3 production export, all
+ * four of whose entries the closed chain over the runtime's own posed vertices
+ * reproduces to the digit it prints. The open chain is the closed chain's
+ * prefix, so the entries the runtime reads are the same numbers either way; the
+ * trailing one is read by nothing, and is written so a rebuild is the file the
+ * editor writes rather than one entry short of it.
  */
 function pathChain(points: Array<[number, number]>, closed: boolean): Array<[number, number]> {
   if (!closed) return points.slice(1, points.length - 1);
@@ -4072,11 +4083,33 @@ function pathChain(points: Array<[number, number]>, closed: boolean): Array<[num
  * — `0.1875 = 3t²`, `0.09375 = 6t³`, `0.75 = 3t`, `0.16666667` standing in for
  * 1/6 — accumulating four `Math.sqrt` terms per curve into a running
  * `pathLength`, and writing the running value into `curves[i]` at each curve's
- * end. The Spine editor's exported `lengths` are that same computation: measured
- * against two editor exports, one open path from 4.3.23 and one closed path from
- * 4.3.26, this reproduces every digit the editor printed. So the loop below is a
- * transcription, not a sampler that happens to agree — and the two are not the
- * same thing, which is the reason the transcription is here.
+ * end. The Spine editor's exported `lengths` are that same computation, and the
+ * loop below is a transcription of it, not a sampler that happens to agree.
+ *
+ * 🚨 **What that computation is fed decides the number, and this comment once
+ * claimed more than was measured** (issue #804). It said the loop matched the
+ * editor to every digit it printed — true on the two exports it was measured on,
+ * one open and one closed path on unweighted, unscaled, unconstrained rigs, and
+ * false in production on two counts:
+ *
+ *   - **Geometry.** The editor measures the world positions of the posed
+ *     vertices. rigc blends weighted vertices through its own setup transforms,
+ *     which until #804 ignored bone scale, shear and `inherit` — 2.35× the
+ *     runtime's own `curves` on a production rig's weighted path, 0.752× on a
+ *     50/50 probe over a bone at scale 2. `computeWorldTransforms` is now the
+ *     runtime's, and the gap is gone on both.
+ *   - **Constraints.** The runtime measures the pose its update order hands the
+ *     path constraint at the first `updateWorldTransform`: a transform
+ *     constraint on the path's slot bone ordered BEFORE the path constraint
+ *     moves the curves (416.14 → 551.59 on a probe), one ordered after does
+ *     not. A production 4.2 export's four numbers are the constrained pose's to
+ *     the digit, and its unconstrained setup measures 76.08 against 76.65 on the
+ *     first curve. Reproducing that means solving every constraint type in
+ *     update order, which is posing — and `src/compile.ts` does not link the
+ *     runtime. ⇒ **An omitted `lengths` is measured on the unconstrained setup
+ *     pose**, and a path whose bones a constraint moves at rest gets that
+ *     figure. What closes the gap for an editor export is not measuring at all:
+ *     a stated `lengths` is carried (`buildRigPath`).
  *
  * ⚠️ rigc measured this with a 64-chord sum until issue #560, and the comment
  * that stood here argued the difference was inside anything's tolerance. It was
@@ -4087,7 +4120,7 @@ function pathChain(points: Array<[number, number]>, closed: boolean): Array<[num
  * two apart and since issue #716 rigc's own file can only where the two land on
  * either side of a float's boundary. Under the six-decimal rounding that stood
  * until then it could: on both measured rigs the two spellings differed on the
- * LAST curve, where the accumulated difference is largest. `PS67`–`PS69` in `selftest.ts` compare
+ * LAST curve, where the accumulated difference is largest. `PS67`, `PS68` and `PS186` in `selftest.ts` compare
  * this against `PathConstraint`'s own `curves` array read off a posed skeleton,
  * which is the only oracle that can see that gap.
  *
@@ -4140,20 +4173,17 @@ function pathCurveLengths(chain: Array<[number, number]>): number[] {
  *      groups of six then straddle the knots, and bones slide along a curve
  *      nobody drew. Too few points is the same failure with fewer symptoms — an
  *      open path needs 6 for one curve, a closed one 3.
- *   2. **`lengths` is measured, not copied.** See `RigPathAttachment`: it is the
- *      setup arc length of the geometry two fields above it, and a restated
- *      number that disagrees is only visible under `constantSpeed: false`, where
- *      it silently rescales the whole traversal.
- *   3. **An authored `lengths` is refused**, for that reason.
+ *   2. **A stated `lengths` is carried as stated** (issue #804), and checked for
+ *      the one shape the parser cannot hold: `vertexCount / 3` entries, each
+ *      finite and none below the one before it. The file is the record of what
+ *      was measured, and the number an editor export states is the editor's
+ *      measurement of a pose rigc cannot reproduce without posing (see
+ *      `pathCurveLengths`) — so re-deriving it moved a production rig's bones by
+ *      up to 0.0054 in issue #804's pose comparison, where carrying it moved none.
+ *   3. **An omitted one is measured**, `vertexCount / 3` entries over the closed
+ *      chain (`pathChain`), on the unconstrained setup pose.
  */
 function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentContext): SpinePathAttachment {
-  if (att.lengths !== undefined) {
-    throw new CompileError(
-      `${where}: "lengths" is not authored — rigc measures the setup arc length of each curve off the geometry, the ` +
-        'same way it measures a region\'s size off its PNG. A restated length that disagrees with the vertices is ' +
-        'invisible until `constantSpeed` is false, and then it rescales the whole traversal in silence.',
-    );
-  }
   const vertices = buildVertexGeometry(att, where, ctx);
   const count = att.vertexCount;
   const closed = att.closed === true;
@@ -4171,15 +4201,25 @@ function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentCont
         `${closed ? 'a closed path of K curves carries 3K points' : 'an open one carries 3(K + 1), the first and last being the end knots\' outer handles'}`,
     );
   }
-  const anchor = ctx.transforms.get(ctx.anchorBone);
-  if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
-  const points = setupWorldVertices(vertices, count, anchor, ctx.bones, ctx.transforms, where);
-  const lengths = pathCurveLengths(pathChain(points, closed));
-  if (!lengths.length || !lengths.every((n) => Number.isFinite(n)) || lengths[lengths.length - 1] <= 0) {
-    throw new CompileError(
-      `${where}: the geometry measures ${lengths.length} curve(s) of total length ${String(lengths[lengths.length - 1])}; ` +
-        'a path of zero length divides by zero the first time a bone is placed on it',
-    );
+  const entries = count / 3;
+  let lengths: number[];
+  if (att.lengths !== undefined) {
+    lengths = statedPathLengths(att.lengths, entries, closed, where);
+  } else {
+    const anchor = ctx.transforms.get(ctx.anchorBone);
+    if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+    const points = setupWorldVertices(vertices, count, anchor, ctx.bones, ctx.transforms, where);
+    lengths = pathCurveLengths(pathChain(points, true));
+    // The total the runtime reads is the last CURVE's entry, `lengths[vertexCount
+    // / 3 - (closed ? 1 : 2)]` (`PathConstraint.js:204-206`) — on an open path
+    // the one before the trailing wrap-around entry, which nothing reads.
+    const total = lengths[closed ? entries - 1 : entries - 2];
+    if (lengths.length !== entries || !lengths.every((n) => Number.isFinite(n)) || !(total > 0)) {
+      throw new CompileError(
+        `${where}: the geometry measures ${lengths.length} entry(ies) where the parser sizes ${entries}, of total ` +
+          `length ${String(total)}; a path of zero length divides by zero the first time a bone is placed on it`,
+      );
+    }
   }
   // Field order is the parser's reading order (`:606-623`), and each optional key
   // is present exactly when the spec declared it — the rule the whole rig spec
@@ -4193,6 +4233,50 @@ function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentCont
     lengths: lengths.map(f32),
     ...(att.color !== undefined ? { color: att.color } : {}),
   };
+}
+
+/**
+ * A stated `lengths`, checked for the shape the parser needs and returned as
+ * stated (issue #804).
+ *
+ * 🔒 **The count is the parser's, not the constraint's.** `SkeletonJson.js:601`
+ * allocates `vertexCount / 3` entries on an open path and a closed one alike and
+ * copies what the file gives: a SHORT array leaves zeros the constraint then
+ * reads as a curve's end (a position divided by 0, in silence), and a LONG one
+ * grows the array past what the attachment's own geometry has. Both are refused
+ * with the two counts rather than trimmed or padded, because either repair is a
+ * value the spec did not state.
+ *
+ * ⚠️ Equal neighbours are accepted here and refused by `A33` where the runtime
+ * reads them — a zero-length curve is a fact about the pose, which the gate
+ * measures; a DECREASING entry is not a cumulative length at all, on any pose.
+ */
+function statedPathLengths(stated: unknown, entries: number, closed: boolean, where: string): number[] {
+  if (!Array.isArray(stated)) {
+    throw new CompileError(`${where}: "lengths" is ${JSON.stringify(stated)}; it is an array of ${entries} number(s)`);
+  }
+  if (stated.length !== entries) {
+    throw new CompileError(
+      `${where}: "lengths" has ${stated.length} entry(ies) where the parser sizes ${entries} — vertexCount / 3 on ` +
+        `${closed ? 'a closed' : 'an open'} path${closed ? '' : ', one more than its curves: the editor writes the wrap-around curve\'s cumulative last and nothing reads it'}. ` +
+        'Give the array the source states, or leave the field out and rigc measures it',
+    );
+  }
+  let previous = 0;
+  for (let i = 0; i < stated.length; i++) {
+    const value: unknown = stated[i];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new CompileError(`${where}: "lengths"[${i}] is ${JSON.stringify(value)}; every entry is a finite cumulative length`);
+    }
+    if (value < previous) {
+      throw new CompileError(
+        `${where}: "lengths"[${i}] is ${value}, below ${i === 0 ? '0' : `the ${previous} before it`}. The array is CUMULATIVE — the length at ` +
+          'the end of each curve — so no entry is below its predecessor',
+      );
+    }
+    previous = value;
+  }
+  return stated as number[];
 }
 
 /**
@@ -7219,8 +7303,8 @@ function deformGeometryOf(
     //
     //   - `lengths` is a field of the ATTACHMENT. The format has nowhere to put
     //     a per-key length, so no export of any tool carries a re-measured one;
-    //     the editor's own is the setup measurement, which is what
-    //     `pathCurveLengths` reproduces digit for digit.
+    //     the editor's own is the setup measurement, which a stated array
+    //     carries and `pathCurveLengths` measures when none is stated.
     //   - `PathConstraint.computeWorldPositions` reads that field only under
     //     `constantSpeed: false` (`PathConstraint.js:205`). Under the parser's
     //     default, `true`, it re-measures the curve from the posed world

@@ -19,8 +19,17 @@
  *   c = pc*la + pd*lc  d = pc*lb + pd*ld
  *   worldX = pa*x + pb*y + parent.worldX
  *
- * Scale and shear are not emitted by rigc, so they are fixed at 1 and 0 here and
- * the reader does not have to wonder which convention this file chose.
+ * ⚠️ **Scale, shear and `inherit` are honoured, and that is a correction** (issue
+ * #804). This header said *"scale and shear are not emitted by rigc, so they are
+ * fixed at 1 and 0 here"* long after the rig spec gained `scaleX`/`scaleY`/
+ * `shearX`/`shearY`/`inherit` and `ingest` began carrying them from every export
+ * that states them — so every setup measurement over a scaled bone was taken on
+ * a skeleton the runtime never builds. A 50/50-weighted probe path over one bone
+ * at scale 2 measured **0.752×** the runtime's own `PathConstraint.curves` on the
+ * build's posed geometry, and a production rig's weighted path 2.35×. The
+ * weights were blended all along; the matrices they were blended through were
+ * wrong. `computeWorldTransforms` below is `BonePose.updateWorldTransform`
+ * (spine-core 4.3.13, `BonePose.js:110-216`) at setup, with a skeleton scale of 1.
  */
 import type { SpineBone } from './types.ts';
 
@@ -60,29 +69,54 @@ export function cropToSpineY(cropY: number, cropHeight: number): number {
  * Bones must be declared parents-first, which is also what `SkeletonJson`
  * requires (it resolves `parent` by name against the bones already read), so a
  * violation here is a violation there.
+ *
+ * 🔒 **A bone with the default scale and no shear takes the exact arithmetic
+ * this function always used** — `lb = -sin`, `ld = cos` rather than the
+ * runtime's `cos(rot + 90°)`/`sin(rot + 90°)`, which can differ in the last bit.
+ * Every figure rigc emitted off an unscaled rig was computed that way, and one
+ * bit there can move a float32 spelling in the file, so the general local matrix
+ * is taken only where the old one was wrong: nothing an unscaled, normally
+ * inheriting rig emits moves by a byte. The five `inherit` cases are the
+ * runtime's, transcribed.
  */
 export function computeWorldTransforms(bones: SpineBone[]): Map<string, BoneTransform> {
   const out = new Map<string, BoneTransform>();
   for (const bone of bones) {
     const rotation = bone.rotation ?? 0;
-    const cos = Math.cos(rotation * DEG);
-    const sin = Math.sin(rotation * DEG);
-    const la = cos;
-    const lb = -sin;
-    const lc = sin;
-    const ld = cos;
+    const scaleX = bone.scaleX ?? 1;
+    const scaleY = bone.scaleY ?? 1;
+    const shearX = bone.shearX ?? 0;
+    const shearY = bone.shearY ?? 0;
+    const plain = scaleX === 1 && scaleY === 1 && shearX === 0 && shearY === 0;
+    let la: number;
+    let lb: number;
+    let lc: number;
+    let ld: number;
+    if (plain) {
+      const cos = Math.cos(rotation * DEG);
+      const sin = Math.sin(rotation * DEG);
+      la = cos;
+      lb = -sin;
+      lc = sin;
+      ld = cos;
+    } else {
+      const rx = (rotation + shearX) * DEG;
+      const ry = (rotation + 90 + shearY) * DEG;
+      la = Math.cos(rx) * scaleX;
+      lb = Math.cos(ry) * scaleY;
+      lc = Math.sin(rx) * scaleX;
+      ld = Math.sin(ry) * scaleY;
+    }
     const x = bone.x ?? 0;
     const y = bone.y ?? 0;
     if (!bone.parent) {
-      out.set(bone.name, { a: la, b: lb, c: lc, d: ld, worldX: x, worldY: y, worldRotation: rotation });
+      const worldRotation = plain ? rotation : (Math.atan2(lc, la) / DEG + 360) % 360;
+      out.set(bone.name, { a: la, b: lb, c: lc, d: ld, worldX: x, worldY: y, worldRotation });
       continue;
     }
     const p = out.get(bone.parent);
     if (!p) throw new TransformError(`bone "${bone.name}" names parent "${bone.parent}", which is not declared before it`);
-    const a = p.a * la + p.b * lc;
-    const b = p.a * lb + p.b * ld;
-    const c = p.c * la + p.d * lc;
-    const d = p.c * lb + p.d * ld;
+    const [a, b, c, d] = inheritedMatrix(inheritMode(bone), p, [la, lb, lc, ld], rotation, scaleX, scaleY, shearX, shearY);
     out.set(bone.name, {
       a,
       b,
@@ -94,6 +128,100 @@ export function computeWorldTransforms(bones: SpineBone[]): Map<string, BoneTran
     });
   }
   return out;
+}
+
+/** `MathUtils.epsilon2` — the threshold `noRotationOrReflection` tests a degenerate parent against. */
+const EPSILON2 = 0.00001 * 0.00001;
+
+type InheritMode = 'normal' | 'onlyTranslation' | 'noRotationOrReflection' | 'noScale' | 'noScaleOrReflection';
+
+const INHERIT_MODES: readonly InheritMode[] = ['normal', 'onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
+
+/**
+ * A bone's `inherit`, folded the way `Utils.enumValue` folds it — the first
+ * letter and nothing else. A spelling the runtime cannot resolve is refused by
+ * name rather than read as normal: the runtime's switch matches no case and
+ * leaves the matrix where it was, and the rig spec's parse refuses that
+ * spelling first (issue #733), so reaching this throw is rigc's own defect.
+ */
+function inheritMode(bone: SpineBone): InheritMode {
+  const value = bone.inherit;
+  if (value === undefined) return 'normal';
+  const folded = value.length === 0 ? value : value[0].toLowerCase() + value.slice(1);
+  const mode = INHERIT_MODES.find((m) => m === folded);
+  if (!mode) {
+    throw new TransformError(`bone "${bone.name}" inherit is ${JSON.stringify(value)}, which the runtime resolves to no mode`);
+  }
+  return mode;
+}
+
+/**
+ * `BonePose.updateWorldTransform`'s switch (`BonePose.js:136-215`) for a bone
+ * with a parent, at a skeleton scale of 1 — so every `sx`/`sy` factor there is 1
+ * and is left out rather than multiplied in.
+ */
+function inheritedMatrix(
+  inherit: InheritMode,
+  p: BoneTransform,
+  local: [number, number, number, number],
+  rotation: number,
+  scaleX: number,
+  scaleY: number,
+  shearX: number,
+  shearY: number,
+): [number, number, number, number] {
+  const [la, lb, lc, ld] = local;
+  if (inherit === 'normal') {
+    return [p.a * la + p.b * lc, p.a * lb + p.b * ld, p.c * la + p.d * lc, p.c * lb + p.d * ld];
+  }
+  if (inherit === 'onlyTranslation') return [la, lb, lc, ld];
+  if (inherit === 'noRotationOrReflection') {
+    let pa = p.a;
+    let pb = p.b;
+    let pc = p.c;
+    let pd = p.d;
+    let s = pa * pa + pc * pc;
+    let r: number;
+    if (s > EPSILON2) {
+      s = Math.abs(pa * pd - pb * pc) / s;
+      pb = pc * s;
+      pd = pa * s;
+      r = rotation - Math.atan2(pc, pa) / DEG;
+    } else {
+      pa = 0;
+      pc = 0;
+      r = rotation - 90 + Math.atan2(pd, pb) / DEG;
+    }
+    const rx = (r + shearX) * DEG;
+    const ry = (r + shearY + 90) * DEG;
+    const ra = Math.cos(rx) * scaleX;
+    const rb = Math.cos(ry) * scaleY;
+    const rc = Math.sin(rx) * scaleX;
+    const rd = Math.sin(ry) * scaleY;
+    return [pa * ra - pb * rc, pa * rb - pb * rd, pc * ra + pd * rc, pc * rb + pd * rd];
+  }
+  // noScale / noScaleOrReflection
+  const r = rotation * DEG;
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  let za = p.a * cos + p.b * sin;
+  let zc = p.c * cos + p.d * sin;
+  const s = 1 / Math.sqrt(za * za + zc * zc);
+  za *= s;
+  zc *= s;
+  let zb = -zc;
+  let zd = za;
+  if (inherit === 'noScale' && p.a * p.d - p.b * p.c < 0) {
+    zb = -zb;
+    zd = -zd;
+  }
+  const rx = shearX * DEG;
+  const ry = (90 + shearY) * DEG;
+  const ra = Math.cos(rx) * scaleX;
+  const rb = Math.cos(ry) * scaleY;
+  const rc = Math.sin(rx) * scaleX;
+  const rd = Math.sin(ry) * scaleY;
+  return [za * ra + zb * rc, za * rb + zb * rd, zc * ra + zd * rc, zc * rb + zd * rd];
 }
 
 /**

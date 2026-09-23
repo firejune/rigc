@@ -124,8 +124,8 @@ export class IngestSpecRefused extends Error {
  * - `judgement` — the skeleton does not carry it and somebody decided. There
  *   are exactly two: a stage the caller supplied, and an animation's duration.
  * - `lossy` — the skeleton's spelling and rigc's differ, on purpose, and the
- *   difference is named: a value rigc re-derives rather than takes (`lengths`,
- *   the `spine` version), a field the spec has no home for (`hash`), or
+ *   difference is named: a value rigc re-derives rather than takes (the
+ *   `spine` version), a field the spec has no home for (`hash`), or
  *   a default the source left to the format and the rebuild writes out
  *   (`HEADER_ORIGIN`, issue #622). The rebuilt file is a different file in that
  *   field; it is not a different rig.
@@ -1407,17 +1407,12 @@ function ingestAttachment(
     out.vertexCount = att.vertexCount;
     geometry(vertexCount);
     for (const field of ['closed', 'constantSpeed', 'color']) if (att[field] !== undefined) out[field] = att[field];
-    if (att.lengths !== undefined) {
-      note(
-        'lossy',
-        'PATH_LENGTHS',
-        at.where,
-        'the source states `lengths`; the rig spec refuses an authored one and rigc RE-MEASURES it as ' +
-          '`PathConstraint` does (issue #560, `pathCurveLengths`). Dropping it is correct: the field is the ' +
-          "runtime's own four-sample forward difference, not an arc length, and a transcribed one would freeze " +
-          'whatever produced the source',
-      );
-    }
+    // Carried verbatim (issue #804), where until then it was dropped as `LOSS
+    // PATH_LENGTHS` and re-measured. The editor measures it on the pose the
+    // first update gives the path constraint — constraints applied — and rigc
+    // does not pose, so the re-measure was a different number on every path a
+    // constraint moves at rest, and on every weighted path over a scaled bone.
+    if (att.lengths !== undefined) out.lengths = att.lengths;
   } else {
     note(
       'blocker',
