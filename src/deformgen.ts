@@ -44,13 +44,15 @@
  *
  * Every closed form below is a fixed sequence of float64 operations over
  * numbers read from the spec, in vertex order, with no iteration over an
- * unordered set. The caller quantises with the compiler's own `r6`, so the same
- * spec emits the same bytes — which `A18_DETERMINISTIC_EMIT` proves on a second
- * independent compile. The runtime then loads those decimals into a
- * `Float32Array`, so what a player sees is the float32 nearest the emitted
- * value; that is equally true of a hand-written table and is the reason the
- * offsets are reported in the units they are emitted in rather than at full
- * float64 width.
+ * unordered set. The caller quantises with the compiler's `onModelGrid` — a
+ * model's own 1e-6 resolution, ending in the float32 name every emitted number
+ * takes — so the same spec emits the same bytes, which `A18_DETERMINISTIC_EMIT`
+ * proves on a second independent compile. The grid is absolute on purpose: a
+ * closed form's identities (a zero crossing, a whole revolution) are exact
+ * zeros float64 misses by ~1e-16, and a float32 grid alone has no zero to land
+ * on. The runtime then loads the numbers into a `Float32Array`, which is the
+ * reason the offsets are reported in the units they are emitted in rather than
+ * at full float64 width.
  */
 
 import { CompileError } from './errors.ts';
@@ -234,7 +236,7 @@ export interface DeformTransformReport {
   offsets: number[];
 }
 
-/** `Math.round(n * 1e6) / 1e6`, passed in so the compiler's quantiser stays in one place. */
+/** The compiler's `onModelGrid` (1e-6, then float32), passed in so the quantiser stays in one place. */
 export type Rounder = (n: number) => number;
 
 /**
@@ -288,12 +290,12 @@ export function evaluateDeformTransform(
   //
   // `identity` is whether the transform's own scalars state the identity, and it
   // is judged on the ROUNDED scalars rather than in float64 — a `degrees: 360`
-  // turn leaves `sin t` at −2.4e−16, which is 0 in every number this compiler
-  // writes, so a spec that states a whole revolution states the identity as
+  // turn leaves `sin t` at −2.4e−16, which is 0 on the grid a model is evaluated
+  // on (`onModelGrid`), so a spec that states a whole revolution states the identity as
   // surely as `degrees: 0` does. `band` is the largest magnitude the closed form
   // reached *before* quantising, which is what separates a model that is
   // arithmetically zero (a band of float noise, ~1e−15) from one that is real
-  // and smaller than six decimals. `sampledTo` is the per-kind diagnosis.
+  // and smaller than that grid. `sampledTo` is the per-kind diagnosis.
   let identity: boolean;
   let identitySpelling: string;
   let band = 0;
@@ -557,7 +559,7 @@ export function evaluateDeformTransform(
     throw new CompileError(
       `${where}: transform ${kind} states ${stated}, and every one of this attachment's ${count} vertices evaluates ` +
         `to an offset of 0 — the largest value the closed form reached at any of them is ${band.toExponential(3)}, ` +
-        'which quantises to 0 at the six decimals every emitted number carries. So the key states a deformation and ' +
+        'which quantises to 0 on the 1e-6 grid a model is evaluated on. So the key states a deformation and ' +
         `emits the identity, and nothing downstream can tell it apart from a key that meant the setup pose. ` +
         `${sampledTo}. A key that MEANS the identity states it in its own parameters (${identitySpelling}) or carries ` +
         'no run at all.',

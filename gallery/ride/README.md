@@ -100,7 +100,7 @@ curve, which is also what the Spine editor writes back. `explain` prints it:
 ```
 path constraints  (position is a fraction of the measured length under positionMode "percent")
   ride         slot=track        bones=[cart] position=0 percent/percent/tangent
-               curve: 3 curve(s), 1127.735815 long, open, constantSpeed=true
+               curve: 3 curve(s), 1127.7358 long, open, constantSpeed=true
 ```
 
 Three things about that number turned out to matter in practice, and all three
@@ -118,7 +118,7 @@ reading the trolley's world position back out of the posed skeleton:
 The 0.0002 is the resolution of the independent polyline used to measure the
 arc, not slack in the traversal. What the two numbers beside it are is worth
 being exact about, because they are **not** two integrations of one curve: that
-polyline totals 1133.444048, and rigc writes 1127.735815 — 0.50 % less — because
+polyline totals 1133.444048, and rigc writes 1127.7358 — 0.50 % less — because
 `lengths` is not an arc length at all. It is what `PathConstraint` computes for
 itself on a `constantSpeed` path, a four-sample forward difference per curve, and
 rigc reproduces that computation rather than approximating the curve (issue #560;
@@ -140,7 +140,7 @@ knot-3 tangent of **−1.273°**. No fudge factor, no offset — which is why th
 **3. The loaded `lengths` array is one longer than the number of curves, and
 the extra entry is 0.** `SkeletonJson` sizes it `vertexCount / 3` = 4 and rigc
 writes one length per curve, so the parse comes back
-`[430.838932, 838.014216, 1127.735815, 0]`. That is not a defect: for an open
+`[430.83893, 838.0142, 1127.7358, 0]`. That is not a defect: for an open
 path `PathConstraint` reads `lengths[verticesLength / 6 - 2]` = `lengths[2]`,
 and it never reaches index 3. Worth knowing before you read the array yourself
 and take the last element for the total, which is wrong by the whole path.

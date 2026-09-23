@@ -956,7 +956,7 @@ one frame (1/60 s) is a compile error, and assertion `A09` re-checks it against 
 That frame of slack is for a duration declared *longer* than the motion — an
 animation may hold its final pose. In the other direction there is no slack to give:
 **no key may land past the declared duration**, and this is checked per timeline
-rather than per animation, within 1e-6 s. Both halves matter, and the second is not
+rather than per animation, within one float32 step of the duration. Both halves matter, and the second is not
 the first with a smaller number — see §4.5.
 
 **R8 — `from` needs a cut manifest.** `from.anchor` / `from.slotWindow` /
@@ -1970,7 +1970,7 @@ bun cli.ts build --rig gallery/look/rig.json \
           1st pct     yaw +19.32° x1.000 of 80 / -19.32° x1.000 of 80   pitch +22.92° x1.000 of 102 / -26.94° x1.000 of 130
                       first to fold: yaw + at 19.32°, triangle 174 [119,138,139], the sheet steps 28.50 level(s) across it, which is 0.112 of the range this mesh sampled
   MESH  hair_lock_l  grid     39 vertices / 48 triangles  (budget 320)  bones=[lock_l]  attachments=[hair_lock_l]
-        depth "lock_l_depth.png" 0c4eaeb36b7c5cac near=white zScale=64 z=[22.086275, 63.874511]
+        depth "lock_l_depth.png" 0c4eaeb36b7c5cac near=white zScale=64 z=[22.086275, 63.87451]
         32 of 39 vertices sample a texel the part image does not draw — their z is the sheet's reading of somewhere the part is not
         turn ceiling  yaw +17.04° / -45.80°   pitch +none / -none
           1st pct     yaw +unranked of 12 / -unranked of 36   pitch +none / -none
@@ -3023,10 +3023,11 @@ the mapping above and drives the bone to the value it names, rather than playing
 the animation on a track while the slider sits at its neutral. §4.11.4 is what
 that changes and why it matters at `mix: 1`.
 
-🔸 **`scale` is rounded to six decimals on emit**, like every other number rigc
-writes, so `1/60` ships as `0.016667` — 2e-5 relative. Invisible in the middle of
-the range; it shows at the top of it, where a 60° turn then applies at 1.00002 s
-rather than 1 s. With `loop: false` that is the last frame and harmless, with
+🔸 **`scale` is emitted as its float32**, like every other number rigc writes, so
+`1/60` ships as `0.016666668` — 8e-8 relative (it was `0.016667`, 2e-5, on the
+six-decimal grid before issue #716). Invisible in the middle of the range; it
+shows at the top of it, where a 60° turn then applies at 1.00000008 s rather than
+1 s. With `loop: false` that is the last frame and harmless, with
 `loop: true` it wraps to the start. When the range comes from a *measured* ceiling
 — the turn ceiling `build` reports for a depth mesh (§3.4, `depth`) is the natural
 one — pick `to`/`scale` so the endpoint lands **inside** the duration rather than
@@ -3597,26 +3598,33 @@ consumer's, decided by dressing the skeleton rather than by the animation.
   Seconds, not frames: nothing requires a key to land on any frame grid, and a
   reference rendered at some rate says nothing about where its keys are. Put keys
   where the motion changes.
-- **Key times are quantised onto a 1e-6 s grid by rounding DOWN, never to
-  nearest.** A key time is a position against the sample grid a player will step,
+- **Key times are emitted as float32s like every other number, and never stored
+  LATER than you wrote them.** Every emitted number is the shortest decimal naming
+  its float32 — the text the editor writes, and the precision the runtime keeps,
+  because `spine-core` reads a timeline's frames into a `Float32Array` (issue #716).
+  A time that already names a float — `0.5`, `0.2`, the editor's `1.4333333` — is
+  written as you wrote it. A time that does not — `2/12` computed in doubles, a key
+  moved by `lag` or `stagger` — steps to the **largest float not above it**, never
+  to nearest. A key time is a position against the sample grid a player will step,
   and the two directions of a half-step error are not the same size. `2/12 s` and
-  `5/30 s` are both 0.16666666…; `0.166667` is *larger* than either, so a key
-  emitted there is applied at sample **3** of a 12 fps playback and not sample 2 —
-  a whole frame late, with nothing raised. On a **stepped** timeline (an attachment
-  timeline always is) that is the wrong picture rather than a slightly wrong value:
-  the spineboy run's muzzle flare fired a frame late for exactly this until the
-  run's own frame check caught it (issue #99). Rounding down cannot do that; the
-  worst it can do is put a key a millionth of a second early, on the sample it was
-  written for. ⚠️ What this does **not** protect you from is rounding your own
-  times before you write them — write `2/12`, not `0.1667`, and let the compiler
+  `5/30 s` are both 0.16666666…, and the nearest float to that, 0.1666666716…, is
+  *larger* than either, so a key stored there is applied at sample **3** of a 12 fps
+  playback and not sample 2 — a whole frame late, with nothing raised. On a
+  **stepped** timeline (an attachment timeline always is) that is the wrong picture
+  rather than a slightly wrong value: the spineboy run's muzzle flare fired a frame
+  late for exactly this, on the six-decimal grid rigc emitted until #716, until the
+  run's own frame check caught it (issue #99). Stepping down cannot do that; the
+  worst it can do is store a key one float early — 1.5e-8 s at 1/6 s — on the sample
+  it was written for. ⚠️ What this does **not** protect you from is rounding your
+  own times before you write them — write `2/12`, not `0.1667`, and let the compiler
   do the quantising.
-- 🚨 **Nor does it protect a stepped key whose time is ALREADY on the 1e-6 grid.**
-  Rounding down leaves such a time exactly where you wrote it, and the sampler does
-  not arrive there: a player — and `sampleAnimation`, and therefore `check` — reaches
-  sample *i* by accumulating `1/fps` *i* times, which for many *i* lands a few ULPs
-  **below** `i/fps`. `2/12` is saved by the rule above precisely because it is *not*
-  on the grid; `0.25`, `0.5`, `0.75`, `1` and every other multiple of `0.25 s` is, and
-  a stepped key there sits above the sample that was meant to see it. On an
+- 🚨 **Nor does it protect a stepped key whose time ALREADY names a float.**
+  Such a time is written exactly as you wrote it, and the sampler does not arrive
+  there: a player — and `sampleAnimation`, and therefore `check` — reaches sample *i*
+  by accumulating `1/fps` *i* times, which for many *i* lands a few ULPs **below**
+  `i/fps`. `2/12` is saved by the rule above precisely because it is *not* a float;
+  `0.25`, `0.5`, `0.75`, `1` and every other multiple of `0.25 s` is one exactly,
+  and a stepped key there sits above the sample that was meant to see it. On an
   interpolated timeline that costs a few ULPs of value and nothing else. On a
   **stepped** one it is the whole frame — and on the last sample it is the whole
   event, because there is no later sample to catch it. Measured on rung 5's 6.5 s
@@ -3626,16 +3634,22 @@ consumer's, decided by dressing the skeleton rather than by the animation.
   `6.499999999999994` — which read as a frame-change disagreement the pose series had
   already fixed, and cost that run three builds
   ([`2026-08-26-rung5-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-26-rung5-1/LOOP.md), §8). ⇒ **For a
-  stepped timeline, write `T − 1e-6` rather than `T`.** One grid step early cannot
-  reach the previous sample — 83,333 µs away at 12 fps — and is always seen by the
-  sample it was written for; one ULP late loses the frame. This is the same asymmetry
-  the rule above turns on, one grid step further in.
+  stepped timeline, write a time a little below `T` — `T − 1e-6` still works, at
+  any magnitude — rather than `T`.** What makes it work is not the size of the step:
+  any time below `T` is stored on a float below `T`, because a time that names a
+  float is stored at that float and one that does not steps down, and the float
+  below `T` is below the accumulated sample too (one float step is 3.0e-8 s at
+  0.5 s and 4.8e-7 s at 6.5 s, against the few-ULP shortfall of the sampler). What
+  bounds it from the other side is the frame: `T − 1e-6` cannot reach the previous
+  sample, 83,333 µs away at 12 fps. One ULP late loses the frame. This is the same
+  asymmetry the rule above turns on, one float further in.
 - **No key may land past the animation's `duration`.** Nothing that plays the
   animation for the duration it declares ever reaches such a key, so it is a
   compile error — checked on **every timeline**, not just on the latest key in the
-  animation. The tolerance is 1e-6 s, which is one step of the grid rigc rounds key
-  times onto, so a key you put exactly *on* a duration that is not a round number
-  of microseconds is fine. R7's frame of slack does not apply in this direction and
+  animation, against the float the key is stored at. The tolerance is one float32
+  step at the duration — 4.8e-7 s at 5 s, 3.8e-6 s at 32 s — which is the most a
+  key you put exactly *on* a duration the float cannot hold is stored past it, so
+  such a key is fine. R7's frame of slack does not apply in this direction and
   would not see this: rung 6 rounded its key times to 4 dp somewhere upstream, its
   one-frame reveal landed 0.000034 s past a 68/12 s duration, another track was
   already sitting on the declared duration so the animation's *longest* key time
@@ -3823,7 +3837,7 @@ group members  (the per-member values of one track, side by side — issue #295)
             t = 0.20944 rad
             cos t − 1 = -0.021852
             sin t = 0.207912
-            shift the parent carries = −carried·sin t = -35.344987
+            shift the parent carries = −carried·sin t = -35.344986
             eye_l       5.513083  <- -62 at depth 150
             eye_r       2.803385  <-  62 at depth 150
             brow_l      3.849789  <- -62 at depth 158
@@ -4479,15 +4493,15 @@ bun cli.ts explain --rig gallery/portrait/rig.json \
                  t = 0.20944 rad
                  cos t − 1 = -0.021852
                  sin t = 0.207912
-                 centre shift = −radius·sin t = -35.344987
-               25 vertices, largest offset 35.344987px at vertex 2
-                 v  0 (-7.17493, 0)  v  1 (-22.413595, 0)  v  2 (-35.344987, 0)  v  3 (-27.658171, 0)
+                 centre shift = −radius·sin t = -35.344986
+               25 vertices, largest offset 35.344986px at vertex 2
+                 v  0 (-7.17493, 0)  v  1 (-22.413595, 0)  v  2 (-35.344986, 0)  v  3 (-27.65817, 0)
                  v  4 (-14.255108, 0)  v  5 (-14.255108, 0)  v  6 (-14.255108, 0)  v  7 (-14.255108, 0)
-                 v  8 (-14.255108, 0)  v  9 (-27.658171, 0)  v 10 (-35.344987, 0)  v 11 (-22.413595, 0)
+                 v  8 (-14.255108, 0)  v  9 (-27.65817, 0)  v 10 (-35.344986, 0)  v 11 (-22.413595, 0)
                  v 12 (-7.17493, 0)  v 13 (-7.17493, 0)  v 14 (-7.17493, 0)  v 15 (-7.17493, 0)
-                 v 16 (-22.413595, 0)  v 17 (-35.344987, 0)  v 18 (-27.658171, 0)  v 19 (-22.413595, 0)
-                 v 20 (-35.344987, 0)  v 21 (-27.658171, 0)  v 22 (-22.413595, 0)  v 23 (-35.344987, 0)
-                 v 24 (-27.658171, 0)
+                 v 16 (-22.413595, 0)  v 17 (-35.344986, 0)  v 18 (-27.65817, 0)  v 19 (-22.413595, 0)
+                 v 20 (-35.344986, 0)  v 21 (-27.65817, 0)  v 22 (-22.413595, 0)  v 23 (-35.344986, 0)
+                 v 24 (-27.65817, 0)
 ```
 
 The curve reads `stepped` where the spec says `"ease": "swell"`, and that is
@@ -4495,12 +4509,17 @@ The curve reads `stepped` where the spec says `"ease": "swell"`, and that is
 offsets, so the segment between them would draw nothing and is written the way
 the editor writes it.
 
-📌 **Float behaviour, stated.** The closed forms are evaluated in float64 and
-quantised to six decimals like every other emitted number, so the same spec emits
-the same bytes and `A18_DETERMINISTIC_EMIT` proves it on a second compile. The
-runtime then loads those decimals into a `Float32Array`, which is equally true of
-a hand-written table — the difference the generator makes is that the decimals
-now agree with a stated model instead of with a transcription.
+📌 **Float behaviour, stated.** The closed forms are evaluated in float64,
+quantised onto the model's own 1e-6 grid and emitted as that value's float32 name
+like every other number, so the same spec emits the same bytes and
+`A18_DETERMINISTIC_EMIT` proves it on a second compile. The grid is absolute on
+purpose: a model's identities — a wave sampled on its zero crossings, a whole
+revolution — are exact zeros float64 misses by ~1e-16, and the refusal of a key
+that states a deformation and evaluates to nothing is decided on it (issue #350);
+a float32 alone is relative and has no zero to land on. The runtime then loads
+the numbers into a `Float32Array`, which is equally true of a hand-written table —
+the difference the generator makes is that the numbers now agree with a stated
+model instead of with a transcription.
 
 🔭 **Both adjacent asks have since landed.**
 [#295](https://github.com/firejune/rigc/issues/295) was the same complaint about
@@ -7880,11 +7899,14 @@ under 4.3.26 (`[152.7006, 305.4012, 458.1019, 610.8025]`) and on an open one und
 ⚠️ **That last reading settles the model and cannot settle the spelling.** A
 4-sample chord sum agrees with the runtime's forward difference to about **nine
 significant digits** — *below* what float32 can hold, which is why both spellings
-reproduce both exports exactly, and *above* the six decimals rigc emits, which is
-why the file can tell them apart. On both rigs above they round apart on the
-**last** curve, where the running total has accumulated most: `610.802519` against
-`610.802520`, `1127.735817` against `1127.735818`. So the editor is the evidence
-for *what* is computed, and only `PathConstraint` itself is evidence for *how*.
+reproduce both exports exactly, and since issue #716 below what rigc's own file
+holds too, because rigc now writes each number as its float32. Under the six fixed
+decimals it wrote until then the file could tell them apart: on both rigs above
+they rounded apart on the **last** curve, where the running total has accumulated
+most — `610.802519` against `610.802520`, `1127.735817` against `1127.735818`. So
+the editor is the evidence for *what* is computed, and only `PathConstraint`
+itself is evidence for *how* — `PS67`/`PS68` compare the transcription with it at
+double precision.
 
 ⭐ **rigc emits the forward difference itself** since
 [#560](https://github.com/firejune/rigc/issues/560) — `pathCurveLengths` in

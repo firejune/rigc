@@ -86,7 +86,7 @@ import {
   type AtlasRegion,
 } from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
-import { KEY_TIME_EPSILON } from './src/timelines.ts';
+import { float32Step } from './src/timelines.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
 import {
   DEFAULT_MAX_RESIDUAL,
@@ -761,12 +761,14 @@ function deformKeyName(key: DeformKeyMeasure): string {
  * The report's is the spec's own `t`; the survey's came back through
  * `Float32Array`, because that is what `spine-core` reads a timeline's frames
  * into — a key written `0.62` arrives as `0.6200000047683716`. So the tolerance
- * is the compiler's own key-time grid plus one float32 ulp at this magnitude,
- * which is narrower than any key spacing the format can hold and wide enough for
- * both roundings.
+ * is one float32 step at this magnitude (`float32Step`): the compiler emits a
+ * key time as a float's name — the spec's own time when it names one, the float
+ * below it when it does not (issue #716) — so the loaded float is within one
+ * step of the spec's `t` either way, which is narrower than any key spacing the
+ * format can hold.
  */
 function sameKeyTime(specTime: number, loaded: number): boolean {
-  return Math.abs(specTime - loaded) <= KEY_TIME_EPSILON + Math.abs(loaded) * 2 ** -23;
+  return Math.abs(specTime - loaded) <= float32Step(loaded);
 }
 
 /**

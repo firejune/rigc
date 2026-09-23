@@ -11143,6 +11143,206 @@ function runStaticRigSuite(): number {
         'repeat\'s value there and name it in the line',
     );
   }
+
+  // --- S93-S97: every emitted number is its float32's shortest name (issue #716)
+  //
+  // `spine-core` keeps what it samples in a `Float32Array` and the editor writes
+  // each number as the shortest decimal that parses back to its float, so that is
+  // what the compiler writes too. Six fixed decimals — `r6`, until #716 — kept
+  // less than a float below 16 and more than one above it, so a rebuild of an
+  // editor export was not the export. Each case below states its inputs and
+  // derives the property they are chosen for, so a probe that stopped
+  // discriminating says so instead of passing: a value six decimals already
+  // spell exactly, or two values that are one float, would measure nothing.
+  {
+    const sixDecimals = (n: number): number => Math.round(n * 1e6) / 1e6;
+    const floatProbe = (bones: Array<Record<string, unknown>>, motion: Record<string, unknown>): CompileResult => {
+      const probe = writeProbeRig({ bones: [{ name: 'root' }, ...bones] });
+      const motionPath = join(probe.dir, 'probe.motion.json');
+      writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+      return compile({ rigPath: probe.rigPath, motionPath, outDir: probe.outDir, imagesDir: probe.dir });
+    };
+    const blockOf = (result: CompileResult): Record<string, unknown> =>
+      (result.skeleton.bones as unknown as Array<Record<string, unknown>>).find((b) => b.name === 'block') ?? {};
+
+    // S93 — the card's red-first: an authored number with more significant
+    // digits than six decimals keep. The three are the editor's own spellings
+    // quoted in #716, so each is a float's shortest name by the editor's
+    // construction, and each is written back as the same text.
+    const authored = { x: 0.20835066, y: 1.0185547, rotation: 1.4333333 };
+    const authoredBuild = floatProbe([{ name: 'block', parent: 'root', ...authored, length: 12 }], STATIC_MOTION);
+    const authoredBone = blockOf(authoredBuild);
+    const authoredProbes = Object.entries(authored).flatMap(([field, value]) => [
+      ...(sixDecimals(value) === value ? [`${field} ${value} is already six decimals, so it measures nothing`] : []),
+      ...(authoredBone[field] === value ? [] : [`${field}: authored ${value}, emitted ${String(authoredBone[field])}`]),
+      ...(authoredBuild.skeletonText.includes(`"${field}": ${JSON.stringify(value)}`)
+        ? []
+        : [`the file does not spell ${field} as ${JSON.stringify(value)}`]),
+    ]);
+    const authoredHeld = authoredProbes.length === 0;
+    say(
+      'S93_AN_AUTHORED_NUMBER_WITH_MORE_DIGITS_THAN_SIX_DECIMALS_IS_EMITTED_AS_ITS_FLOATS_SHORTEST_NAME',
+      authoredHeld,
+      probeDetail(
+        authoredHeld,
+        authoredProbes,
+        `bone "block" authored ${Object.entries(authored).map(([f, v]) => `${f} ${v}`).join(', ')} and emitted ` +
+          `${Object.keys(authored).map((f) => `"${f}": ${JSON.stringify(authoredBone[f])}`).join(', ')} — six ` +
+          `decimals would have written ${Object.values(authored).map(sixDecimals).join(', ')}`,
+      ),
+      'issue #716: the editor writes every number as the shortest text naming its float32 and rigc wrote six fixed ' +
+        'decimals, so every number an example export spells with more digits came back rewritten, by up to 7e-7, ' +
+        'with no LOSS line, and a rebuild of an editor export was not the export',
+    );
+
+    // S94 — the defect six decimals made OBSERVABLE: two values it spells alike
+    // are one value in the file, so a named easing between them was emitted as a
+    // hold (`isHold` compares as emitted) and the animation stood still.
+    const [near, far] = [0.20835066, 0.20835071];
+    const mergedBuild = floatProbe([{ name: 'block', parent: 'root', length: 12 }], {
+      ...STATIC_MOTION,
+      easings: { soft: [0.42, 0, 0.58, 1] },
+      animations: {
+        drift: {
+          duration: 1,
+          loop: false,
+          tracks: [{ bone: 'block', property: 'rotate', keys: [{ t: 0, v: [near], ease: 'soft' }, { t: 1, v: [far] }] }],
+        },
+      },
+    });
+    const driftKeys = emittedBoneKeys(mergedBuild, 'drift', 'block', 'rotate');
+    const mergedProbes = [
+      ...(sixDecimals(near) === sixDecimals(far) ? [] : [`six decimals already tell ${near} from ${far}, so this measures nothing`]),
+      ...(Math.fround(near) !== Math.fround(far) ? [] : [`${near} and ${far} are one float32, so the file cannot tell them apart either`]),
+      ...(driftKeys.length === 2 ? [] : [`the track emitted ${driftKeys.length} key(s), not 2`]),
+      ...(driftKeys[0]?.curve === 'stepped' ? [`the first key was emitted "stepped" — a hold between ${near} and ${far}`] : []),
+      ...(Math.fround(Number(driftKeys[0]?.value)) === Math.fround(near) && Math.fround(Number(driftKeys[1]?.value)) === Math.fround(far)
+        ? []
+        : [`the keys hold ${String(driftKeys[0]?.value)} and ${String(driftKeys[1]?.value)}, not the floats of ${near} and ${far}`]),
+    ];
+    const mergedHeld = mergedProbes.length === 0;
+    say(
+      'S94_TWO_VALUES_SIX_DECIMALS_WOULD_MERGE_STAY_TWO_AND_A_NAMED_EASING_BETWEEN_THEM_IS_NOT_A_HOLD',
+      mergedHeld,
+      probeDetail(
+        mergedHeld,
+        mergedProbes,
+        `rotate keys ${near} → ${far} (six decimals spell both ${sixDecimals(near)}; they are two floats) emitted as ` +
+          `${String(driftKeys[0]?.value)} → ${String(driftKeys[1]?.value)} with curve ${JSON.stringify(driftKeys[0]?.curve)}`,
+      ),
+      'a hold is decided on the emitted values, because the file is what the runtime interpolates. When the ' +
+        'emitted values were six decimals, two distinct floats an author wrote became one number and the easing ' +
+        'between them became `stepped` — a motion the file could have carried, dropped by the compiler\'s spelling',
+    );
+
+    // S95 — `-0` is never emitted, from an authored `-0` (a JSON text can state
+    // one; `JSON.stringify` cannot) or from a value the float rounds to zero from
+    // below. The emitted text prints "0" either way, so the object is read.
+    const signedProbe = writeProbeRig({ bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0.5, rotation: -1e-50, length: 12 }] });
+    writeFileSync(signedProbe.rigPath, readFileSync(signedProbe.rigPath, 'utf8').replace('"x": 0.5', '"x": -0'));
+    const signedMotion = join(signedProbe.dir, 'probe.motion.json');
+    writeFileSync(signedMotion, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    const signedBone = blockOf(compile({ rigPath: signedProbe.rigPath, motionPath: signedMotion, outDir: signedProbe.outDir, imagesDir: signedProbe.dir }));
+    const signedProbes = [
+      ...(Object.is(Math.fround(-1e-50), -0) ? [] : ['-1e-50 does not round to -0 as a float, so the second half measures nothing']),
+      ...(Object.is(signedBone.x, 0) ? [] : [`x: authored -0, emitted ${Object.is(signedBone.x, -0) ? '-0' : String(signedBone.x)}`]),
+      ...(Object.is(signedBone.rotation, 0) ? [] : [`rotation: authored -1e-50, emitted ${Object.is(signedBone.rotation, -0) ? '-0' : String(signedBone.rotation)}`]),
+    ];
+    const signedHeld = signedProbes.length === 0;
+    say(
+      'S95_A_NEGATIVE_ZERO_IS_NEVER_EMITTED_WHETHER_AUTHORED_OR_ROUNDED_ONTO',
+      signedHeld,
+      probeDetail(signedHeld, signedProbes, 'an authored `-0` and a rotation of -1e-50 (float32 -0) are both +0 on the emitted bone'),
+      'the one rule the old quantiser\'s header named besides its grid, carried rather than retired: one value, ' +
+        'one number, so a comparison with Object.is or a sign test downstream cannot tell two spellings of zero apart',
+    );
+
+    // S96 — a value the compiler COMPUTES takes the same formatter: a region
+    // lifted out of a pack declaring `scale:` is `originalWidth / scale` wide,
+    // and 2 / 0.3 is 6.666666666666667 in doubles. The file says the float it
+    // lands on; six decimals said something else.
+    const packDir = mkdtempSync(join(tmpdir(), 'rigc-float-pack-'));
+    writeProbePng(join(packDir, 'pack.png'), 16, 16, [40, 60, 90, 255]);
+    const texels = { w: 1, h: 2 };
+    const packScale = 0.3;
+    const packPath = join(packDir, 'pack.atlas');
+    writeFileSync(
+      packPath,
+      `pack.png\n\tsize: 16, 16\n\tfilter: Linear, Linear\n\tscale: ${packScale}\nshade\n\tbounds: 0, 0, ${texels.w}, ${texels.h}\n`,
+    );
+    const packRig = join(packDir, 'rig.json');
+    writeFileSync(
+      packRig,
+      `${JSON.stringify({
+        spec: 'rigc-rig/1',
+        name: 'static_probe',
+        skeleton: { width: 64, height: 64 },
+        bones: [{ name: 'root' }],
+        slots: [{ name: 'shade', bone: 'root', attachment: 'shade' }],
+        skins: { default: { shade: { shade: { image: 'shade.png' } } } },
+      }, null, 2)}\n`,
+    );
+    const packMotion = join(packDir, 'motion.json');
+    writeFileSync(packMotion, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    let region: Record<string, unknown> = {};
+    let packRefused: string | null = null;
+    try {
+      const built = compile({ rigPath: packRig, motionPath: packMotion, outDir: join(packDir, 'spine'), atlasInPath: packPath });
+      region = ((built.skeleton.skins as unknown as Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }>)[0]
+        ?.attachments.shade?.shade ?? {});
+    } catch (err) {
+      packRefused = (err as Error).message;
+    }
+    const computedProbes = [
+      ...(packRefused === null ? [] : [`the pack probe was refused: ${packRefused}`]),
+      ...([['width', texels.w], ['height', texels.h]] as const).flatMap(([field, count]) => {
+        const exact = count / packScale;
+        const emitted = Number(region[field]);
+        return [
+          ...(Math.fround(exact) === exact ? [`${count} / ${packScale} is already a float, so ${field} measures nothing`] : []),
+          ...(Math.fround(sixDecimals(exact)) === Math.fround(exact) ? [`six decimals of ${exact} land on its float, so ${field} measures nothing`] : []),
+          ...(Math.fround(emitted) === Math.fround(exact) ? [] : [`${field}: emitted ${String(region[field])}, which is not the float of ${exact}`]),
+          ...(emitted !== exact ? [] : [`${field}: emitted the double ${exact} itself`]),
+        ];
+      }),
+    ];
+    const computedHeld = computedProbes.length === 0;
+    say(
+      'S96_A_SIZE_THE_COMPILER_DIVIDES_OUT_OF_A_SCALED_PAGE_IS_EMITTED_AS_THE_FLOAT_IT_LANDS_ON',
+      computedHeld,
+      probeDetail(
+        computedHeld,
+        computedProbes,
+        `a ${texels.w}x${texels.h}-texel region on a page at \`scale: ${packScale}\` is ${texels.w / packScale} x ` +
+          `${texels.h / packScale} in doubles, and is emitted ${String(region.width)} x ${String(region.height)} — the ` +
+          `floats it lands on, where six decimals wrote ${sixDecimals(texels.w / packScale)} x ${sixDecimals(texels.h / packScale)}`,
+      ),
+      'the formatter is the one decision about an emitted number, not a property of carried ones: a computed value ' +
+        'that took a second rounding, or none, would be the place a rebuild and its source drift apart first',
+    );
+
+    // S97 — the other side of the same rule: above 16 six decimals keep MORE
+    // than the float can hold, so the file stated digits the parser throws away.
+    const wide = 1234.567891;
+    const wideBone = blockOf(floatProbe([{ name: 'block', parent: 'root', x: wide, length: 12 }], STATIC_MOTION));
+    const wideProbes = [
+      ...(sixDecimals(wide) === wide ? [] : [`${wide} is not six decimals, so it states nothing about them`]),
+      ...(Math.fround(wide) !== wide ? [] : [`${wide} is a float already, so this measures nothing`]),
+      ...(Math.fround(Number(wideBone.x)) === Math.fround(wide) ? [] : [`x: emitted ${String(wideBone.x)}, which is not the float of ${wide}`]),
+      ...(wideBone.x !== wide ? [] : [`x: emitted ${wide} verbatim, digits the float cannot hold`]),
+      ...(String(wideBone.x).replace(/[-.]|e.*$/g, '').replace(/^0+/, '').length <= 9
+        ? []
+        : [`x: emitted ${String(wideBone.x)}, more significant digits than any float32 needs`]),
+    ];
+    const wideHeld = wideProbes.length === 0;
+    say(
+      'S97_A_NUMBER_SIX_DECIMALS_WOULD_OVERSTATE_IS_EMITTED_AT_THE_PRECISION_THE_FLOAT_HOLDS',
+      wideHeld,
+      probeDetail(wideHeld, wideProbes, `x authored ${wide} is emitted ${String(wideBone.x)}, the shortest name of the float the parser stores`),
+      'the half of #716 a rebuild cannot show, because an editor never writes such a number: the text is the ' +
+        'claim the file makes, and a claim to precision nothing downstream keeps is one a reader takes on trust',
+    );
+  }
   return bad;
 }
 
@@ -11946,13 +12146,14 @@ function runDrawOrderSuite(): number {
 // only re-rendering the animation and diffing the last two frames showed it
 // (issue #54).
 //
-// The probe declares 68/12 s on purpose: a duration no number of microseconds
-// lands on. Rounding a key placed exactly there to NEAREST put it 3.3e-7 s past
-// the end — legal only because `KEY_TIME_EPSILON` is a step of the grid and not
-// zero. Since #99 the compiler rounds key times DOWN (`keyTime`), so that case
-// now rides on the grid rather than on the tolerance, and K04 is where the
-// epsilon is still load-bearing: a key read back through a Float32Array can land
-// past its own declared duration by more than a whole step of the 1e-6 grid.
+// The probe declares 68/12 s on purpose: a duration no number of microseconds,
+// and no float, lands on. Rounding a key placed exactly there to NEAREST put it
+// 3.3e-7 s past the end on the 1e-6 grid rigc emitted until #716 — legal only
+// because the tolerance was a step of that grid and not zero. Since #99 the
+// compiler has rounded key times DOWN (`keyTime`), and since #716 onto the float
+// below, so that case rides on the grid rather than on the tolerance, and K04 is
+// where the tolerance — one float32 step at the duration, `float32Step` — is
+// still load-bearing: a key whose own time names a float can be stored past it.
 //
 // K05/K06 are the other half of the same rule, from the player's side rather than
 // the duration's: 2/12 s and 5/30 s are both 0.16666666…, nearest emits 0.166667,
@@ -12069,12 +12270,12 @@ function runKeyTimeSuite(): number {
     'CONTROL_A_KEY_ON_THE_DECLARED_DURATION_IS_GREEN',
     green.failures.length === 0 && green.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC'),
     green.failures.length === 0
-      ? `both tracks key ${SIXTY_EIGHT_TWELFTHS}s, a duration no microsecond lands on — keyTime emits 5.666666, and ` +
+      ? `both tracks key ${SIXTY_EIGHT_TWELFTHS}s, a duration no float lands on — keyTime stores it on the float below, and ` +
         `A09_ANIMATION_DURATION_MATCHES_SPEC ${
           green.passed.includes('A09_ANIMATION_DURATION_MATCHES_SPEC') ? 'ran and held' : 'did NOT run'
         }`
       : `[${green.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
-    'a key the author put ON a duration that is not a round number of microseconds must compile; before #99 it was the epsilon that allowed it, and now it is the grid',
+    'a key the author put ON a duration that is not a float must compile; before #99 it was the epsilon that allowed it, and now it is the grid',
   );
 
   const rounded = refusal(dirs, keyTimeMotion(SIXTY_EIGHT_TWELFTHS, SIXTY_EIGHT_TWELFTHS, ROUNDED_TO_4DP));
@@ -12117,13 +12318,13 @@ function runKeyTimeSuite(): number {
     'only the OVERSHOOT arm is about the sample grid; tightening both would make R7 a frame-accurate duration rule',
   );
 
-  // The compiler works in doubles on its own 1e-6 grid; the validator reads times
-  // back out of a Float32Array, whose steps grow with the value. 972 frames at 30
-  // fps is 32.4 s exactly — a time the 1e-6 grid holds exactly, so `keyTime`
-  // changes nothing — and float32 stores it as 32.400001525878906: a legal key on
-  // the declared duration, arriving 1.5e-6 s late, half again the compiler's whole
-  // epsilon. A flat epsilon here would fail correct data for being long, which is
-  // why A09 adds one float32 step at the duration.
+  // The runtime reads times back out of a Float32Array, whose steps grow with the
+  // value. 972 frames at 30 fps is 32.4 s — a time that names a float, so
+  // `keyTime` writes it unchanged — and float32 stores it as 32.400001525878906:
+  // a legal key on the declared duration, arriving 1.5e-6 s late, half again the
+  // flat 1e-6 epsilon that stood here until #716. A flat epsilon would fail
+  // correct data for being long, which is why the tolerance, in the compiler's
+  // Rule 4 and in A09 alike, is one float32 step at the duration.
   //
   // ⚠️ It used to be 971/30, and #99 made that vacuous: 32.366666… now emits as
   // 32.366666 and lands 1.8e-6 s BEFORE the declared duration, so the case passed
@@ -12166,6 +12367,102 @@ function runKeyTimeSuite(): number {
       ? 'a reveal keyed at 2.5/12 s is drawn at sample 3 and not at sample 2 — rounding down is not "always one sample earlier"'
       : `sample 2 shows ${String(markerShows(offSample, 2))}, sample 3 shows ${String(markerShows(offSample, 3))}`,
     "K05's negative control: a probe that answered \"drawn\" for every frame would pass K05 while measuring nothing",
+  );
+
+  // --- K07-K09: #99's doctrine on the float32 grid (issue #716) -------------
+  //
+  // Key times are emitted as float names like every other number, and they keep
+  // the one rule that is theirs: never stored LATER than the time the author
+  // meant. A time that already names a float is written back unchanged — that
+  // is every time an editor export carries — and a time off that grid steps to
+  // the largest float not above it. The retired grid is restated here only to
+  // prove each case discriminates against it.
+  const oldKeyGrid = (t: number): number => {
+    let units = Math.round(t * 1e6);
+    if (units / 1e6 > t) units -= 1;
+    return units / 1e6;
+  };
+  const floatAbove = (f: number): number => {
+    const bits = new Uint32Array(new Float32Array([f]).buffer);
+    bits[0] += f >= 0 ? 1 : -1;
+    return new Float32Array(bits.buffer)[0];
+  };
+  const revealBuild = (revealAt: number, duration: number): CompileResult => {
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(steppedRevealMotion(revealAt, duration), null, 2)}\n`);
+    return compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+  };
+  const revealTimeOf = (result: CompileResult): number => {
+    const slots = (result.skeleton.animations.reveal as { slots?: Record<string, Record<string, Array<{ time?: number }>>> }).slots;
+    return Number(slots?.marker?.attachment?.[1]?.time);
+  };
+
+  const named = [1.4333333, 0.2, 0.5];
+  const namedEmitted = named.map((t) => revealTimeOf(revealBuild(t, 2)));
+  const namedProbes = [
+    ...(named.some((t) => oldKeyGrid(t) !== t) ? [] : ['every time is already on the 1e-6 grid, so the case cannot tell the two grids apart']),
+    ...named.flatMap((t, i) => (namedEmitted[i] === t ? [] : [`a reveal at ${t} was emitted at ${namedEmitted[i]}`])),
+  ];
+  const namedHeld = namedProbes.length === 0;
+  say(
+    'K07_a_key_time_that_names_a_float_is_emitted_unchanged',
+    namedHeld,
+    probeDetail(
+      namedHeld,
+      namedProbes,
+      `reveals at ${named.join(', ')} were emitted at ${namedEmitted.join(', ')} — the 1e-6 grid moved ` +
+        `${named.filter((t) => oldKeyGrid(t) !== t).map((t) => `${t} to ${oldKeyGrid(t)}`).join(', ')}`,
+    ),
+    'an editor export writes every key time as its float\'s shortest name, and `keyTime` rounded every one with more ' +
+      'than six decimals down onto the 1e-6 grid on a rebuild — a correct stored time, and not the file it was read from',
+  );
+
+  const offGrid = TWO_TWELFTHS;
+  const offBuild = revealBuild(offGrid, 4 / 12);
+  const offEmitted = revealTimeOf(offBuild);
+  const offStored = Math.fround(offEmitted);
+  const offFrames = sampleAnimation(posableFromText(offBuild.skeletonText, offBuild.atlasText, dirs.outDir).data, 'reveal', PROTOCOL_FPS);
+  const offProbes = [
+    ...(Math.fround(offGrid) > offGrid ? [] : [`the float nearest ${offGrid} is not above it, so rounding to nearest would be right and this measures nothing`]),
+    ...(offStored <= offGrid ? [] : [`${offGrid} was stored at ${offStored}, later than the time it was written for`]),
+    ...(floatAbove(offStored) > offGrid ? [] : [`${offGrid} was stored at ${offStored}, and ${floatAbove(offStored)} is a later float still not above it`]),
+    ...(markerShows(offFrames, 2) && !markerShows(offFrames, 1) ? [] : ['the reveal is not drawn at sample 2 and only from there']),
+  ];
+  const offHeld = offProbes.length === 0;
+  say(
+    'K08_a_key_time_off_the_float_grid_is_stored_at_the_largest_float_not_above_it_and_fires_on_its_sample',
+    offHeld,
+    probeDetail(
+      offHeld,
+      offProbes,
+      `2/12 s (${offGrid}) is emitted ${offEmitted} and stored at ${offStored}, the float below the nearest one ` +
+        `(${Math.fround(offGrid)}, which is later); the reveal is drawn at sample 2 of ${PROTOCOL_FPS} fps and not before`,
+    ),
+    'issue #99 on the new grid: 2/12 s is the spineboy flare\'s own time, and its nearest float is LATER than it, so ' +
+      'a formatter that rounded key times like any other number would put the flare a frame late in exactly the ' +
+      'way six decimals did',
+  );
+
+  // The plant for K08: the same file with the key stored ONE float later, at
+  // the nearest float instead of the one below. What it proves is that the
+  // direction still decides a frame at float granularity, so K08 is not green
+  // because no single step could matter.
+  const lateSkeleton = JSON.parse(offBuild.skeletonText) as { animations: Record<string, { slots: Record<string, Record<string, Array<{ time?: number }>>> }> };
+  lateSkeleton.animations.reveal.slots.marker.attachment[1].time = Math.fround(offGrid);
+  const lateFrames = sampleAnimation(
+    posableFromText(`${JSON.stringify(lateSkeleton, null, 2)}\n`, offBuild.atlasText, dirs.outDir).data,
+    'reveal',
+    PROTOCOL_FPS,
+  );
+  const lateHeld = floatAbove(offStored) === Math.fround(offGrid) && !markerShows(lateFrames, 2) && markerShows(lateFrames, 3);
+  say(
+    'K09_the_same_key_stored_one_float_later_fires_a_frame_late',
+    lateHeld,
+    `stored at ${Math.fround(offGrid)} — ${floatAbove(offStored) === Math.fround(offGrid) ? 'one float' : 'NOT one float'} ` +
+      `above K08's ${offStored} — the reveal is drawn at sample 2: ${String(markerShows(lateFrames, 2))}, at sample 3: ` +
+      `${String(markerShows(lateFrames, 3))}`,
+    'K08\'s negative control: one float step is all that separates the right frame from the next one here, so a ' +
+      'key-time rule that rounded to nearest float would be the #99 defect again, one decimal place further in',
   );
   return bad;
 }
@@ -15490,10 +15787,14 @@ const PATH_LENGTH_MOTION = {
   },
 };
 
-/** The compiler's six-decimal quantiser, restated — `src/compile.ts`'s `r6`, which is not exported. */
-function pathR6(n: number): number {
-  const v = Math.round(n * 1e6) / 1e6;
-  return v === 0 ? 0 : v;
+/**
+ * The float the file carries for `n`: since issue #716 every emitted number is
+ * the shortest name of its float32, so an emitted length and a measured one
+ * agree exactly when they land on the same float. Compared as floats rather
+ * than as text so the compiler's formatter is not what judges its own output.
+ */
+function pathFloat(n: number): number {
+  return Math.fround(n);
 }
 
 /**
@@ -18148,21 +18449,28 @@ function runPathAndSliderSuite(): number {
     }
     let separated = 0;
     for (let i = 0; i < Math.min(read.emitted.length, want.length); i++) {
-      if (read.emitted[i] !== pathR6(want[i])) {
+      if (pathFloat(read.emitted[i]) !== pathFloat(want[i])) {
         probes.push(
-          `${what}: curve ${i} was emitted as ${read.emitted[i]} where PathConstraint's forward difference ` +
-            `measures ${pathR6(want[i])} (${want[i].toPrecision(17)}) — a 4-chord sum would give ${pathR6(chord4[i])} ` +
-            `and a 64-chord sum ${pathR6(chord64[i])}`,
+          `${what}: curve ${i} was emitted as ${read.emitted[i]} (float ${pathFloat(read.emitted[i])}) where ` +
+            `PathConstraint's forward difference measures ${want[i].toPrecision(17)} (float ${pathFloat(want[i])}) — ` +
+            `a 4-chord sum would give ${chord4[i].toPrecision(17)} and a 64-chord sum ${chord64[i].toPrecision(17)}`,
         );
       }
-      if (pathR6(want[i]) !== pathR6(chord4[i])) separated++;
+      if (pathFloat(want[i]) !== pathFloat(chord64[i])) separated++;
     }
-    // 3. The fixture still discriminates: a control that cannot tell the two
-    //    spellings apart in the emitted six decimals is checking nothing.
+    // 3. The fixture still discriminates: a control that cannot tell the
+    //    runtime's computation from the sampler #560 replaced, at the precision
+    //    the file carries, is checking nothing. ⚠️ The 64-chord sum and not the
+    //    4-chord one, since issue #716: the 4-chord sum agrees with the forward
+    //    difference to about nine significant digits, below a float32's, so an
+    //    emitted file — the editor's or, now, rigc's — separates the two only
+    //    where they straddle a float's boundary, and clause 1 is what pins the
+    //    transcription at double precision.
     if (separated === 0) {
       probes.push(
-        `${what}: no curve of this fixture separates the forward difference from a 4-chord sum in the emitted six ` +
-          'decimals, so the comparison above would pass on a sampler as well — the fixture has stopped discriminating',
+        `${what}: no curve of this fixture separates the forward difference from a 64-chord sum at the emitted ` +
+          'float precision, so the comparison above would pass on that sampler as well — the fixture has stopped ' +
+          'discriminating',
       );
     }
     return probes;
@@ -18172,12 +18480,13 @@ function runPathAndSliderSuite(): number {
     'it is not given one, and the consumer is `PathConstraint`. rigc ran a 64-chord sum instead — closer to ' +
     'calculus, 0.70 % away from the runtime, and worth 4.96 px mean MAE on the round trip of a rig with a path ' +
     'constraint on it. ⭐ The negative half is the point: a 4-chord sum agrees with the forward difference to ' +
-    'about nine significant digits, which no editor export can resolve because float32 cannot hold it — so this ' +
-    'is asserted against the runtime, and on a fixture large enough that the emitted six decimals can';
+    'about nine significant digits, which no emitted file can resolve because float32 cannot hold it — so the ' +
+    'transcription is asserted against the runtime\'s own chain at double precision, and the emitted lengths at the ' +
+    'float the file carries (issue #716: under the six decimals rigc emitted until then, the file could resolve it)';
   const ARC_LENGTH_CLEAN =
     'the transcription of PathConstraint.js:301-320 reproduces PathConstraint.curves bit for bit on the runtime\'s ' +
-    'own posed chain, and every emitted length is that same computation on the compiler\'s chain rounded to six ' +
-    'decimals — with at least one curve where a 4-chord sum would have rounded somewhere else';
+    'own posed chain, and every emitted length is that same computation on the compiler\'s chain, on the same ' +
+    'float32 — with at least one curve where the 64-chord sum #560 replaced lands on a different float';
   const openArc = arcLengthProbes('open path', false);
   const openArcHeld = openArc.length === 0;
   say(
@@ -19328,7 +19637,7 @@ function runPathAndSliderSuite(): number {
   }
   /** Both fixture animations are one second long, which is what makes `time` and `t` the same number. */
   const GRID_DURATION = 1;
-  /** Exact at six decimals, deliberately: `PS131` is where a `scale` that is not takes its own measurement. */
+  /** Each its own float's shortest name, so the file states it exactly: `PS131` is where a `scale` that is not takes its own measurement. */
   const GRID_YAW: SliderDial = { from: -50, to: 0, scale: 0.01 };
   const GRID_PITCH: SliderDial = { from: -25, to: 0, scale: 0.02 };
   /** The two ramps the two sliders apply — rotation and translation, so no claim below is one property's. */
@@ -19461,22 +19770,25 @@ function runPathAndSliderSuite(): number {
 
   // 🔒 **The two floors, both derived and neither measured.**
   //
-  //  * `GRID_EMIT_FLOOR` — rigc rounds every number it emits to six decimals, so
-  //    an emitted `scale` can sit half a unit of the sixth decimal from the one
-  //    the spec states. That moves the slider's time by at most
-  //    `(top - from) x 5e-7` and the pose by that times the ramp's own rate, and
-  //    the two sliders add. It is the most the emit can cost an author who
-  //    reasons from the numbers they wrote.
+  //  * `GRID_EMIT_FLOOR` — rigc emits every number as its float32's shortest
+  //    name (issue #716), so an emitted `scale` can sit half a float32 step from
+  //    the one the spec states. That moves the slider's time by at most
+  //    `(top - from) x half a step` and the pose by that times the ramp's own
+  //    rate, and the two sliders add. It is the most the emit can cost an author
+  //    who reasons from the numbers they wrote. ⚠️ It was half a unit of the
+  //    sixth decimal (5e-7, absolute) while rigc emitted six decimals, which `PS131`'s
+  //    name said until #716 renamed it; at `1/90` the float's half step is
+  //    4.7e-10, so the bound tightened a thousandfold and still holds.
   //  * `GRID_FLOAT_FLOOR` — float64 noise over the same chain: the largest
   //    magnitude it carries times an op count. A comparison whose tolerance were
   //    the emit floor would pass a rig whose interior was wrong by a thousandth
   //    of a degree, so the cells are held to THIS one and the emit floor is
   //    reported beside them — and driven, by `PS131`, where it is what stands
   //    between the authored mapping and the pose.
-  const GRID_HALF_ULP6 = 0.5e-6;
+  const halfFloatStep = (n: number): number => (n === 0 ? 0 : 2 ** (Math.floor(Math.log2(Math.abs(n))) - 24));
   const gridEmitFloor = (yawDial: SliderDial, yawAmplitude: number, pitchAmplitude: number): number =>
-    ((dialTop(yawDial) - yawDial.from) * GRID_HALF_ULP6 * Math.abs(yawAmplitude)) / GRID_DURATION +
-    ((dialTop(GRID_PITCH) - GRID_PITCH.from) * GRID_HALF_ULP6 * Math.abs(pitchAmplitude)) / GRID_DURATION;
+    ((dialTop(yawDial) - yawDial.from) * halfFloatStep(yawDial.scale) * Math.abs(yawAmplitude)) / GRID_DURATION +
+    ((dialTop(GRID_PITCH) - GRID_PITCH.from) * halfFloatStep(GRID_PITCH.scale) * Math.abs(pitchAmplitude)) / GRID_DURATION;
   const gridEmitBound = (yawDial: SliderDial): number =>
     Math.max(
       gridEmitFloor(yawDial, GRID_YAW_ROTATE, GRID_PITCH_ROTATE),
@@ -19513,7 +19825,7 @@ function runPathAndSliderSuite(): number {
         `at scale ${GRID_YAW.scale}, pitch ${GRID_PITCHES[0].toFixed(3)}°..${GRID_PITCHES[GRID_PITCHES.length - 1].toFixed(3)}° ` +
         `at scale ${GRID_PITCH.scale}): flag rotate and flag x are the closed-form sum at every one of them, worst ` +
         `${cellError(worstCell(gridCells)).toExponential(3)} against a float64 floor of ` +
-        `${GRID_FLOAT_FLOOR.toExponential(3)} and a six-decimal emit bound of ${gridEmitBound(GRID_YAW).toExponential(3)}. ` +
+        `${GRID_FLOAT_FLOOR.toExponential(3)} and a float32 emit bound of ${gridEmitBound(GRID_YAW).toExponential(3)}. ` +
         `The worst cell is ${cellSays(worstCell(gridCells))}`,
       (count) => `${count} of the grid's cells are not the arithmetic:`,
     ),
@@ -19693,11 +20005,11 @@ function runPathAndSliderSuite(): number {
       'of itself as a side effect of the later one, which is in no document and is a number rather than an opinion',
   );
 
-  // --- what the six-decimal emit costs an author (issue #399) ---------------
+  // --- what the emit costs an author (issue #399) ----------------------------
   //
-  // ⭐ `FACE.md` §8 says `scale` is chosen FOR THE ENDPOINT, because rigc rounds
-  // every emitted number to six decimals and a `scale` that is not exact there
-  // moves the top of the dial. `PS128`'s fixture takes that advice, which is
+  // ⭐ `FACE.md` §8 says `scale` is chosen FOR THE ENDPOINT, because rigc emits
+  // every number as its float32 (six decimals until issue #716) and a `scale`
+  // the file cannot state exactly moves the top of the dial. `PS128`'s fixture takes that advice, which is
   // exactly why it cannot measure the cost of not taking it — so this one states
   // the same rig at `1/90`, the shape §3.5.2's own example uses, and asks what
   // the whole gap between the numbers an author wrote and the pose they get is.
@@ -19729,16 +20041,17 @@ function runPathAndSliderSuite(): number {
   const authoredWorst = cellError(worstCell(asAuthored));
   const emittedWorst = cellError(worstCell(asEmitted));
   const inexactBound = gridEmitBound(GRID_INEXACT_YAW);
-  // The plant: the same comparison on `PS128`'s own fixture, whose `scale` IS
-  // exact at six decimals. Its gap has to vanish, or the lower bound below is
-  // measuring something other than the rounding.
+  // The plant: the same comparison on `PS128`'s own fixture, whose `scale` is
+  // its own float's shortest name, so the file states it exactly. Its gap has
+  // to vanish, or the lower bound below is measuring something other than the
+  // rounding.
   const exactGap = cellError(worstCell(gridCells));
   const emitRows = [
     ...(authoredWorst <= inexactBound
       ? []
       : [
           `predicted from the \`scale\` the spec states, the grid is off by ${authoredWorst.toExponential(3)}, past the ` +
-            `${inexactBound.toExponential(3)} a six-decimal emit can account for — so something other than the rounding moved it`,
+            `${inexactBound.toExponential(3)} a float32 emit can account for — so something other than the rounding moved it`,
         ]),
     ...(authoredWorst > GRID_FLOAT_FLOOR
       ? []
@@ -19755,13 +20068,13 @@ function runPathAndSliderSuite(): number {
     ...(exactGap <= GRID_FLOAT_FLOOR
       ? []
       : [
-          `PS128's fixture, whose \`scale\` is exact at six decimals, shows a gap of ${exactGap.toExponential(3)} under ` +
+          `PS128's fixture, whose \`scale\` the file states exactly, shows a gap of ${exactGap.toExponential(3)} under ` +
             'the same comparison — so the lower bound above is not the rounding speaking',
         ]),
   ];
   const emitHeld = emitRows.length === 0;
   say(
-    'PS131_THE_WHOLE_GAP_BETWEEN_THE_MAPPING_AN_AUTHOR_WROTE_AND_THE_POSE_IS_THE_SIX_DECIMAL_EMIT',
+    'PS131_THE_WHOLE_GAP_BETWEEN_THE_MAPPING_AN_AUTHOR_WROTE_AND_THE_POSE_IS_THE_EMITTED_SCALES_HALF_FLOAT32_STEP',
     emitHeld,
     probeDetail(
       emitHeld,
@@ -19771,12 +20084,13 @@ function runPathAndSliderSuite(): number {
         `${authoredWorst.toExponential(3)}, inside the ${inexactBound.toExponential(3)} the rounding can account for ` +
         `and well above the ${GRID_FLOAT_FLOOR.toExponential(3)} float64 floor; against the \`scale\` rigc EMITTED it ` +
         `is off by ${emittedWorst.toExponential(3)}. ⇒ the rounding is the whole of the gap and none of it is the ` +
-        `composition. The plant is PS128's own fixture, exact at six decimals, whose gap is ${exactGap.toExponential(3)}`,
+        `composition. The plant is PS128's own fixture, whose \`scale\` the file states exactly, whose gap is ${exactGap.toExponential(3)}`,
       (count) => `${count} clause(s) of the emit-cost measurement did not hold:`,
     ),
-    'FACE §8 tells an author to pick a `scale` that is exact at six decimals and says why, and the number it costs ' +
-      'to ignore that was nowhere in the tree — the page states the consequence (`1/60` ships as `0.016667`, and a ' +
-      '60° turn then applies at 1.00002 s) without a reading of what it does to the pose. This is that reading, and ' +
+    'FACE §8 tells an author to pick a `scale` the file can state exactly and says why, and the number it costs ' +
+      'to ignore that was nowhere in the tree — the page states the consequence (`1/60` ships as `0.016666668`, and a ' +
+      '60° turn then applies at 1.00000008 s; `0.016667` and 1.00002 s under the six decimals rigc emitted until ' +
+      '#716) without a reading of what it does to the pose. This is that reading, and ' +
       'it is what makes PS128\'s exactness mean something: a grid that agreed to a thousandth of a degree would be ' +
       'reported the same way by a runtime that composed sliders correctly and by one that did not quite, so the ' +
       'question "how much of the residue is ours" has to have an answer. Here it is all of it, and the fixture that ' +
@@ -19963,12 +20277,13 @@ function runPathAndSliderSuite(): number {
   /** Float64 noise over the chain: the largest magnitude it carries times `PS128`'s own op count. */
   const dialFloatFloor = (dials: ComposedDial[]): number =>
     dials.reduce((sum, dial) => sum + Math.abs(dial.rotate) + Math.abs(dial.x), 0) * Number.EPSILON * GRID_FLOAT_OPS;
-  /** What the six-decimal emit can cost these dials, reported beside the cells and never used as a tolerance (`PS131` owns it). */
+  /** What the float32 emit can cost these dials, reported beside the cells and never used as a tolerance (`PS131` owns it). */
   const dialEmitBound = (dials: ComposedDial[]): number =>
     Math.max(
       ...(['rotate', 'x'] as const).map((field) =>
         dials.reduce(
-          (sum, dial) => sum + ((dialTop(dial.dial) - dial.dial.from) * GRID_HALF_ULP6 * Math.abs(dial[field])) / GRID_DURATION,
+          (sum, dial) =>
+            sum + ((dialTop(dial.dial) - dial.dial.from) * halfFloatStep(dial.dial.scale) * Math.abs(dial[field])) / GRID_DURATION,
           0,
         ),
       ),
@@ -20263,7 +20578,7 @@ function runPathAndSliderSuite(): number {
       `${trioAxes.map((axis) => axis.length).join(' x ')} = ${trioCells.length} readings of three dials, each from the bottom of ` +
         `its own mapping to the top: flag rotate and flag x are the closed-form sum at every one of them, worst ` +
         `${composedError(worstComposedCell(trioCells)).toExponential(3)} against a float64 floor of ${trioFloor.toExponential(3)} and a ` +
-        `six-decimal emit bound of ${dialEmitBound(SLIDER_TRIO).toExponential(3)}. The two plants: the MIDDLE slider at the format ` +
+        `float32 emit bound of ${dialEmitBound(SLIDER_TRIO).toExponential(3)}. The two plants: the MIDDLE slider at the format ` +
         `default moves ${middleMoved.length} of ${middleAsSum.length} cells away from the sum and lands on the erasing ` +
         `arithmetic — the first dial dead, the third still adding — at every one of them to ` +
         `${composedError(worstComposedCell(middleAsErasing)).toExponential(3)}; an \`"ease": "${GRID_EASE}"\` on that same middle animation moves ` +
@@ -21760,7 +22075,7 @@ function runPathAndSliderSuite(): number {
       `${quadAxes.map((axis) => axis.length).join(' x ')} = ${quadCells.length} readings of four dials, each from the bottom of ` +
         `its own mapping to the top: flag rotate and flag x are the closed-form sum at every one of them, worst ` +
         `${composedError(worstComposedCell(quadCells)).toExponential(3)} against a float64 floor of ${quadFloor.toExponential(3)} and a ` +
-        `six-decimal emit bound of ${dialEmitBound(QUAD_DIALS).toExponential(3)}. The two plants: the slider at index 1 at the format ` +
+        `float32 emit bound of ${dialEmitBound(QUAD_DIALS).toExponential(3)}. The two plants: the slider at index 1 at the format ` +
         `default moves ${quadAsSum.filter((cell) => composedError(cell) > quadFloor).length} of ${quadAsSum.length} cells away from the sum and lands on the ` +
         `erasing arithmetic — the first dial dead, the third and fourth still adding — to ` +
         `${composedError(worstComposedCell(quadAsErasing)).toExponential(3)}; an \`"ease": "${GRID_EASE}"\` on the third dial's animation moves ` +
@@ -31847,7 +32162,10 @@ function runGroupMemberSuite(): number {
   const gotPitch = emittedMemberValues(pitched, 'translatey', 1);
   say(
     'GM03_PITCH_READS_THE_OTHER_SETUP_COORDINATE',
-    gotPitch.every((v, i) => v === wantPitch[i]) && gotPitch.some((v, i) => v !== gotShift[i]),
+    // Compared as floats (issue #716): the file carries each value as its
+    // float32's shortest name, so -30.858968 on the model's grid is emitted as
+    // -30.858969, the name of the same float.
+    gotPitch.every((v, i) => Math.fround(v) === Math.fround(wantPitch[i])) && gotPitch.some((v, i) => v !== gotShift[i]),
     `a nod of ${DEG}° reads each member's setup y [${MEMBER_BONES.map((b) => b.y).join(', ')}] and gives ` +
       `[${gotPitch.join(', ')}] against this file's [${wantPitch.join(', ')}]`,
     'a kind that read the same coordinate under both names would pass every check that only ever turned a face ' +
@@ -57915,6 +58233,8 @@ function runIngestSuite(): number {
   // corpus is a green run by design (CLAUDE.md *The selftest and its fixtures*),
   // and nothing here changes that.
   const corpus = corpusExports();
+  /** Every export's source and rebuild, kept for IG73–IG75's text-level reading at the end of this suite. */
+  const corpusRebuilds: Array<{ label: string; sourceText: string; skeletonText: string }> = [];
   if (corpus.length === 0) {
     console.log(`  SKIP  IG16–IG21 did not run: no editor export under ${INGEST_CORPUS_ROOT}.`);
     console.log('          run `bun run fetch-examples` and re-run this suite.');
@@ -58051,6 +58371,7 @@ function runIngestSuite(): number {
         held.values += m.total;
         valueCoverage.set(m.id, held);
       }
+      if (built !== null) corpusRebuilds.push({ label: entry.label, sourceText, skeletonText: built.skeletonText });
       if (built !== null && plant === null && plantable(built.skeletonText)) {
         plant = {
           label: entry.label,
@@ -58270,10 +58591,10 @@ function runIngestSuite(): number {
           `against. ${admitted} grid step(s) of ${VALUE_EMITTED_GRID} moved [${under.moved.join(', ')}]; ` +
           `${refused} moved [${over.moved.join(', ')}]\n          ${over.note}`,
       'a tolerance is a claim about what a gate REFUSES, and one nobody has watched refuse anything could be a ' +
-        'mile wide. Both terms of it are derived — rigc quantises every emitted number onto a 1e-6 grid (`r6`, ' +
-        'and `keyTime`, which rounds DOWN over the same step) and spine-core holds frames, curves and vertices in ' +
-        'a Float32Array — so the step that must be admitted is the grid itself and the smallest one that must not ' +
-        'be is the next. ⭐ It plants on a bone the file gives no rotation at all, which makes the case say a ' +
+        'mile wide. Both terms of it are derived — rigc evaluates its closed-form models onto a 1e-6 grid ' +
+        '(`onModelGrid`, the one absolute grid it still emits on since #716 made every other number its float\'s ' +
+        'shortest name) and spine-core holds frames, curves and vertices in a Float32Array — so the step that must ' +
+        'be admitted is the grid itself and the smallest one that must not be is the next. ⭐ It plants on a bone the file gives no rotation at all, which makes the case say a ' +
         'second thing: the value it is compared against is the parser\'s default, and no table here states it',
     );
   }
@@ -61589,6 +61910,170 @@ function runIngestSuite(): number {
       'issue #771: every probe the selftest builds is gated green by the profile it targets, or the suite says why ' +
         'not. This one carries a dark colour and a clipping attachment on purpose — the coverage it exists for — so ' +
         'the renderer\'s rulebook refuses it by design, and that is the one refusal it may carry',
+    );
+  }
+
+  // --- IG73-IG75: the corpus rebuild read as TEXT (issue #716) --------------
+  //
+  // IG16 reads the rebuild through `diff`, which compares values within a
+  // tolerance; this reads the two files as text, in canonical form —
+  // `JSON.stringify(JSON.parse(text), null, 2)` of each, which keeps every number
+  // as parsed, every key in its order and every omitted key omitted, and drops
+  // only whitespace and exponent spelling. Whitespace is an export setting (the
+  // examples are tab-indented; a command-line export of the same editor is one
+  // line), so it is not a property of the rig and not compared.
+  //
+  //   IG73  every number        the rebuild spells each one as its source does
+  //   IG74  every key time      #99's side of the same rule, counted apart
+  //   IG75  everything else     what still differs is one of the kinds #716's
+  //                             later tranches own, counted by kind
+  if (corpus.length === 0) {
+    console.log(`  SKIP  IG73–IG75 did not run: no editor export under ${INGEST_CORPUS_ROOT}.`);
+  } else {
+    /** Every number of `source`, each against what `rebuild` holds at the same path. */
+    const numberPairs = (source: unknown, rebuild: unknown, path: string, out: Array<{ path: string; a: number; b: unknown }>): void => {
+      if (typeof source === 'number') {
+        out.push({ path, a: source, b: rebuild });
+        return;
+      }
+      if (Array.isArray(source)) {
+        source.forEach((v, i) => numberPairs(v, Array.isArray(rebuild) ? rebuild[i] : undefined, `${path}[${i}]`, out));
+        return;
+      }
+      if (source !== null && typeof source === 'object') {
+        const other = rebuild !== null && typeof rebuild === 'object' && !Array.isArray(rebuild) ? (rebuild as Record<string, unknown>) : {};
+        for (const [k, v] of Object.entries(source as Record<string, unknown>)) numberPairs(v, other[k], `${path}.${k}`, out);
+      }
+    };
+    const spelled = (n: unknown): string => (typeof n === 'number' ? JSON.stringify(n) : `(${n === undefined ? 'absent' : typeof n})`);
+    const rows = corpusRebuilds.map((r) => {
+      const source = JSON.parse(r.sourceText) as unknown;
+      const rebuild = JSON.parse(r.skeletonText) as unknown;
+      const pairs: Array<{ path: string; a: number; b: unknown }> = [];
+      numberPairs(source, rebuild, '', pairs);
+      const times = pairs.filter((p) => p.path.startsWith('.animations.') && p.path.endsWith('.time'));
+      return {
+        label: r.label,
+        source,
+        rebuild,
+        pairs,
+        differing: pairs.filter((p) => spelled(p.a) !== spelled(p.b)),
+        times,
+        timesMoved: times.filter((p) => spelled(p.a) !== spelled(p.b)),
+      };
+    });
+    const numbersTotal = rows.reduce((n, r) => n + r.pairs.length, 0);
+    const numbersMoved = rows.flatMap((r) => r.differing.map((p) => `${r.label}${p.path}: ${spelled(p.a)} vs ${spelled(p.b)}`));
+    const numberProbes = [
+      ...(rows.length === corpus.length ? [] : [`${corpus.length - rows.length} export(s) did not rebuild, so their numbers were never read`]),
+      ...(numbersTotal > 0 ? [] : ['the corpus carried no number at all, so this measured nothing']),
+      ...numbersMoved.slice(0, 12),
+      ...(numbersMoved.length > 12 ? [`…and ${numbersMoved.length - 12} more`] : []),
+    ];
+    const numbersHeld = numberProbes.length === 0;
+    say(
+      'IG73_EVERY_NUMBER_AN_EDITOR_EXPORT_CARRIES_IS_SPELLED_BY_ITS_REBUILD_AS_THE_EXPORT_SPELLS_IT',
+      numbersHeld,
+      probeDetail(
+        numbersHeld,
+        numberProbes,
+        `${numbersTotal} number(s) over ${rows.length} export(s), each paired with the rebuild's number at the same ` +
+          `path and each spelled alike in canonical form: ` +
+          rows.map((r) => `${r.label.slice(r.label.indexOf('/') + 1)} ${r.pairs.length}`).join(' · '),
+        () => `${numbersMoved.length} of ${numbersTotal} number(s) the rebuild spells differently from the export (canonical form):`,
+      ),
+      'issue #716: the editor writes each number as the shortest decimal naming its float32, and a rebuild that wrote ' +
+        'six fixed decimals rewrote every number with more digits — a loss of up to 7e-7 per value with no LOSS line, ' +
+        'so `ingest -> build -> ingest` did not have to be a fixed point, and A18, whose two compiles round alike, ' +
+        'could not say so. A number the rebuild does not carry at the same path is counted here too: a pairing that ' +
+        'skipped it would call a dropped value agreement',
+    );
+
+    const timesTotal = rows.reduce((n, r) => n + r.times.length, 0);
+    const timesMoved = rows.flatMap((r) => r.timesMoved.map((p) => `${r.label}${p.path}: ${spelled(p.a)} vs ${spelled(p.b)}`));
+    const timeProbes = [
+      ...(timesTotal > 0 ? [] : ['the corpus carried no key time, so this measured nothing']),
+      ...timesMoved.slice(0, 12),
+      ...(timesMoved.length > 12 ? [`…and ${timesMoved.length - 12} more`] : []),
+    ];
+    const timesHeld = timeProbes.length === 0;
+    say(
+      'IG74_EVERY_KEY_TIME_AN_EDITOR_EXPORT_CARRIES_IS_EMITTED_UNCHANGED',
+      timesHeld,
+      probeDetail(
+        timesHeld,
+        timeProbes,
+        `${timesTotal} key time(s) over ${rows.length} export(s), every one written back as the export wrote it`,
+        () => `${timesMoved.length} of ${timesTotal} key time(s) the rebuild moved:`,
+      ),
+      'counted apart from IG73 because key times have a quantiser of their own (#99): a time is never stored later ' +
+        'than the author meant, and a time the editor wrote already names a float, so that rule and byte identity ' +
+        'agree on every carried time — this is the measurement of that, and K07 the probe',
+    );
+
+    // IG75 — what still differs, by kind. Each kind is taken off both sides —
+    // the three header keys, keys the rebuild writes and the export omits, and
+    // key order — and what is left must be the same text. So a difference of
+    // any other kind is red by name, and the counts are the measured baseline
+    // the later tranches of #716 start from.
+    const headerExceptions = ['hash', 'audio', 'spine'];
+    const kinds = new Map<string, number>();
+    const tally = (kind: string): void => {
+      kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+    };
+    const strip = (source: unknown, rebuild: unknown, path: string): [unknown, unknown] => {
+      if (Array.isArray(source) && Array.isArray(rebuild)) {
+        const pairs = source.map((v, i) => strip(v, rebuild[i], `${path}[${i}]`));
+        return [pairs.map((p) => p[0]), [...pairs.map((p) => p[1]), ...rebuild.slice(source.length)]];
+      }
+      const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
+      if (!isRecord(source) || !isRecord(rebuild)) return [source, rebuild];
+      const shared = Object.keys(source).filter((k) => k in rebuild);
+      if (shared.join('\u0000') !== Object.keys(rebuild).filter((k) => k in source).join('\u0000')) tally('key order');
+      const outA: Record<string, unknown> = {};
+      const outB: Record<string, unknown> = {};
+      for (const k of Object.keys(source).sort()) {
+        if (path === '.skeleton' && headerExceptions.includes(k)) {
+          tally(`header \`${k}\``);
+          continue;
+        }
+        if (!(k in rebuild)) {
+          outA[k] = source[k];
+          continue;
+        }
+        [outA[k], outB[k]] = strip(source[k], rebuild[k], `${path}.${k}`);
+      }
+      for (const k of Object.keys(rebuild).sort()) {
+        if (k in source || (path === '.skeleton' && headerExceptions.includes(k))) continue;
+        tally(rebuild[k] === null ? `\`${k}: null\` written` : 'a key the export omits, written');
+      }
+      return [outA, outB];
+    };
+    const residue: string[] = [];
+    for (const r of rows) {
+      const [a, b] = strip(r.source, r.rebuild, '');
+      const left = JSON.stringify(a, null, 2);
+      const right = JSON.stringify(b, null, 2);
+      if (left === right) continue;
+      const at = [...left].findIndex((ch, i) => ch !== right[i]);
+      residue.push(`${r.label}: the remainder differs at character ${at}: ${JSON.stringify(left.slice(Math.max(0, at - 40), at + 40))}`);
+    }
+    const kindsSaid = [...kinds].sort((x, y) => x[0].localeCompare(y[0])).map(([k, n]) => `${k} ${n}`).join(' · ');
+    const kindProbes = [...(rows.length > 0 ? [] : ['no export rebuilt, so there was nothing to read']), ...residue];
+    const kindsHeld = kindProbes.length === 0;
+    say(
+      'IG75_WHAT_STILL_DIFFERS_BETWEEN_AN_EXPORT_AND_ITS_REBUILD_IS_ONE_OF_THE_KINDS_ISSUE_716_NAMES',
+      kindsHeld,
+      probeDetail(
+        kindsHeld,
+        kindProbes,
+        `over ${rows.length} export(s), with the three header keys, the keys only the rebuild writes and key order ` +
+          `taken off both sides, every export and its rebuild are the same text — by kind: ${kindsSaid}`,
+        (n) => `${n} export(s) with a difference of no kind #716 names:`,
+      ),
+      'the rest of #716 is key order, restated defaults, `"name": null` and the header, and those are later ' +
+        'tranches: this is their measured starting point, and the guarantee that no number hides among them. A ' +
+        'difference of any other kind reaches the remainder and is red with the place it starts',
     );
   }
   return bad;

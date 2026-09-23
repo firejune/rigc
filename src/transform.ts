@@ -54,12 +54,6 @@ export function cropToSpineY(cropY: number, cropHeight: number): number {
   return cropHeight - cropY;
 }
 
-/** Round to 6 decimals and never emit "-0" (byte-stable output). */
-function r6(n: number): number {
-  const v = Math.round(n * 1e6) / 1e6;
-  return v === 0 ? 0 : v;
-}
-
 /**
  * World transform of every bone, in declaration order.
  *
@@ -102,7 +96,15 @@ export function computeWorldTransforms(bones: SpineBone[]): Map<string, BoneTran
   return out;
 }
 
-/** World point -> the bone's local space. Used for bind coordinates and offsets. */
+/**
+ * World point -> the bone's local space. Used for bind coordinates and offsets.
+ *
+ * ⚠️ **Not rounded**, since issue #716. It used to round to six decimals here,
+ * which made this file a second emitter: `buildBone` and the region placement
+ * wrote its result straight into the skeleton. The emitted number's precision
+ * is one decision, `f32` in `compile.ts`, so the callers quantise what they
+ * emit and this returns the double.
+ */
 export function toBoneLocal(m: BoneTransform, worldX: number, worldY: number): [number, number] {
   const det = m.a * m.d - m.b * m.c;
   if (!Number.isFinite(det) || Math.abs(det) < 1e-9) {
@@ -110,7 +112,7 @@ export function toBoneLocal(m: BoneTransform, worldX: number, worldY: number): [
   }
   const px = worldX - m.worldX;
   const py = worldY - m.worldY;
-  return [r6((px * m.d - py * m.b) / det), r6((py * m.a - px * m.c) / det)];
+  return [(px * m.d - py * m.b) / det, (py * m.a - px * m.c) / det];
 }
 
 /**
@@ -150,11 +152,17 @@ export function toWorld(m: BoneTransform, localX: number, localY: number): [numb
   return [m.a * localX + m.b * localY + m.worldX, m.c * localX + m.d * localY + m.worldY];
 }
 
-/** Normalise degrees into (-180, 180], which is how an editor shows a rotation. */
+/**
+ * Normalise degrees into (-180, 180], which is how an editor shows a rotation.
+ *
+ * Not rounded, for `toBoneLocal`'s reason: a caller that emits the angle
+ * quantises it with `f32`, and one that compares or measures with it wants the
+ * double.
+ */
 export function normaliseDegrees(deg: number): number {
   let v = ((deg % 360) + 360) % 360;
   if (v > 180) v -= 360;
-  return r6(v);
+  return v;
 }
 
 /**

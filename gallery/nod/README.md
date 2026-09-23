@@ -112,9 +112,9 @@ left), so the top row is `v 0`/`v 1` and every row below it pairs `v r` with
                  sin t = 0.207912
                  centre shift = −radius·sin t = -31.186754
                10 vertices, largest offset 31.186754px at vertex 3
-                 v  0 (0, -14.255723)  v  1 (0, -14.255723)  v  2 (0, -24.566299)  v  3 (0, -31.186754)
+                 v  0 (0, -14.255723)  v  1 (0, -14.255723)  v  2 (0, -24.5663)  v  3 (0, -31.186754)
                  v  4 (0, -19.977295)  v  5 (0, -8.137051)  v  6 (0, -8.137051)  v  7 (0, -19.977295)
-                 v  8 (0, -31.186754)  v  9 (0, -24.566299)
+                 v  8 (0, -31.186754)  v  9 (0, -24.5663)
 ```
 
 **Uneven rows, dense at the crown and the chin.** `−140, −105, 0, 105, 140` puts
@@ -468,7 +468,7 @@ and is cut here, because it is a different string on every machine:
 rigc compile error: animation "idle" deform default/ear_l/ear_l (t=0): transform wave states
 amplitude=10 wavelength=80 phase=0 along=y axis=x, and every one of this attachment's 22
 vertices evaluates to an offset of 0 — the largest value the closed form reached at any of them
-is 1.225e-14, which quantises to 0 at the six decimals every emitted number carries. So the key
+is 1.225e-14, which quantises to 0 on the 1e-6 grid a model is evaluated on. So the key
 states a deformation and emits the identity, and nothing downstream can tell it apart from a
 key that meant the setup pose. The closest two distinct y coordinates in this attachment are 40
 apart, and a sinusoid has to be sampled to exist: a wavelength of at least 4x that (160) to

@@ -206,11 +206,16 @@ Three properties, and each is the reason for the one after it:
   skeleton whose attachments carry a `sequence` cannot be parsed without the
   pack that resolves it, and half the corpus does.
 - **Its tolerance is derived, never fitted.** `valueTolerance(m) = 1e-6 +
-  2⁻²³·m`: the first term is rigc's own quantiser (`r6` in `src/compile.ts`, and
-  `keyTime`, which rounds a key time *down* over the same step), the second is
-  one float32 ULP, because `spine-core` stores frames, curves and vertices in a
-  `Float32Array`. Over the twelve editor exports in `examples/` the widest gap
-  between a rebuild and the file it was read from reaches **0.81** of that bound.
+  2⁻²³·m`: the first term is the one absolute grid rigc still emits on — the
+  1e-6 its closed-form models (a deform `transform`, a track `derive`) are
+  evaluated onto, `onModelGrid` in `src/compile.ts` — and the second is one
+  float32 ULP, because `spine-core` stores frames, curves and vertices in a
+  `Float32Array` and every other number rigc emits is its float32's shortest
+  name. Over the twelve editor exports in `examples/` the widest gap between a
+  rebuild and the file it was read from is **0**: not one of 188,339 numeric
+  values differs, because the rebuild spells every number as the editor did
+  (`IG73`). It was **0.81** of the bound, over 56,951 values that differed,
+  while rigc wrote six fixed decimals (issue #716).
   ⛔ It is also the floor of what the measure can see at all: a difference
   smaller than one float32 step is invisible to the parser and so to this.
 

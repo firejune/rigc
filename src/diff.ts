@@ -1316,8 +1316,8 @@ function stageFacts(root: Json): StageFacts {
  *
  * ⭐ `diffSkeletonValues` (issue #615) is the second tolerance in the file and
  * it does not weaken this one. It compares positions, so it needs one; both its
- * terms are read off other code — rigc's own 1e-6 quantiser and the parser's
- * float32 storage — rather than chosen here; and the four numbers above are the
+ * terms are read off other code — the 1e-6 grid rigc's closed-form models are
+ * evaluated on and the parser's float32 storage — rather than chosen here; and the four numbers above are the
  * one place the two overlap, where `stage_box` stays the stricter reading and
  * says so by staying exact.
  */
@@ -1427,11 +1427,22 @@ export function movedReportedMeasures(report: DiffReport): string[] {
 // ---------------------------------------------------------------------------
 
 /**
- * rigc's own emitted grid. `r6` in [`compile.ts`](compile.ts) rounds every
- * emitted number to 1e-6 and `keyTime` rounds a key time DOWN over the same
- * step, so a rebuild of a file written with more decimals than that may sit up
- * to one whole step from where it started — through no fault of anything this
- * measure is looking for.
+ * The one absolute grid rigc still emits on: `onModelGrid` in
+ * [`compile.ts`](compile.ts), 1e-6 in a closed-form model's own unit, which a
+ * deform `transform` and a track `derive` are evaluated onto before they are
+ * written. So a value a model produced may sit up to one step of it from a
+ * reading that evaluated the same model in float64 — through no fault of
+ * anything this measure is looking for.
+ *
+ * ⚠️ **Restated, not retired, by issue #716.** This said `r6` until then — the
+ * six fixed decimals every emitted number took, and `keyTime` rounding a key
+ * time down over the same step. Both are gone: every number is now its
+ * float32's shortest name, whose distance from its double the second term
+ * already covers, and a key time steps at most one float down. What survives
+ * is the models' grid, which is absolute because a model's identities are
+ * exact zeros and a float's grid is relative. On the corpus, where nothing is
+ * a model, the term is idle: the twelve rebuilds read identical to their
+ * sources, value for value (`valueTolerance`'s figure).
  */
 export const VALUE_EMITTED_GRID = 1e-6;
 
@@ -1450,11 +1461,14 @@ export const VALUE_PARSED_ULP = 2 ** -23;
 /**
  * What two readings of one number are allowed to differ by, and nothing more.
  *
- * Both terms are derived rather than fitted: the first is rigc's own quantiser,
+ * Both terms are derived rather than fitted: the first is rigc's models' grid,
  * the second is the parser's storage. Measured over the twelve editor exports
  * in `examples/`, the widest gap between a rebuild and the file it was read
- * from reaches **0.81** of this — so the corpus sits inside a bound that was
- * not drawn around it.
+ * from is **0** — none of 188,339 numeric values differs at all, since issue
+ * #716 made every emitted number its float's own name (it was 0.81 of this
+ * bound, over 56,951 values that differed, while rigc emitted six decimals) —
+ * so the corpus sits inside a bound that was not drawn around it, and no
+ * longer tests its width: `IG21` does.
  */
 export function valueTolerance(magnitude: number): number {
   return VALUE_EMITTED_GRID + VALUE_PARSED_ULP * magnitude;

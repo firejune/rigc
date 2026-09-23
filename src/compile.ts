@@ -101,7 +101,7 @@ import {
   type ParsedAtlas,
 } from './atlas.ts';
 import {
-  KEY_TIME_EPSILON,
+  float32Step,
   physicsKeyRefusal,
   physicsRuleFor,
   SLOT_COLOR_CHANNELS,
@@ -689,55 +689,193 @@ function refuseNamesTheEditorCouldKeyDifferently(
 // number formatting — deterministic, and free of "-0"
 // ---------------------------------------------------------------------------
 
-function r6(n: number): number {
-  const v = Math.round(n * 1e6) / 1e6;
-  return v === 0 ? 0 : v;
+/** Scratch for the two float32 helpers below: one float, and its bits. Written and read within one call. */
+const FLOAT32_SCRATCH = new Float32Array(1);
+const FLOAT32_BITS = new Uint32Array(FLOAT32_SCRATCH.buffer);
+
+/**
+ * Every emitted number: the double whose text is the **shortest decimal that
+ * names the number's float32** — the precision the format carries and the text
+ * the editor writes — and never `-0`.
+ *
+ * ## Why float32 and not a decimal grid
+ *
+ * `spine-core` keeps every number it samples per frame — key times, curve
+ * points, vertices, uvs — in a `Float32Array` (`Utils.newFloatArray`), and the
+ * editor that defines the format writes each number as the shortest decimal
+ * that parses back to its float (`1.0185547`, `0.20835066`, `1.4333333`). Six
+ * fixed decimals — this function's predecessor, `r6` — is neither. Below 16 it
+ * keeps less than a float holds (`0.2897798` came back as `0.28978`), so a
+ * rebuild of an editor export was not the export and `ingest → build → ingest`
+ * did not have to be a fixed point: issue #716 measured 16,134 of the 61,645
+ * numbers in the twelve example exports rewritten, by up to 7e-7 each, with no
+ * `LOSS` line. Above 16 it keeps more than a float holds, text the parser
+ * discards on read. Emitting the float's own name loses nothing the runtime can
+ * see and states nothing it cannot.
+ *
+ * ## The text, and why this returns a number
+ *
+ * `JSON.stringify` prints a double as the shortest text naming THAT double, so
+ * the job is to find the double whose text is the float's shortest name: the
+ * fewest significant digits (1–9) whose decimal parses back through `JSON.parse`
+ * and `Math.fround` — the runtime's own read — to the same float, and among the
+ * candidates of that length the one closest to the float, a tie going to the
+ * even last digit. That is `Float.toString`'s rule, and it is measured rather
+ * than assumed: over the twelve example exports a rebuild reproduces the
+ * editor's text on every number (`IG73` in `selftest.ts` holds it there), and
+ * the two a round-half-up tie-break gets wrong (`-1897.4062`, `-1.6289062`,
+ * both exactly half-way between two candidates) are why the tie clause is here. The distance is compared in exact
+ * integer arithmetic, because two decimals equidistant from a float are not
+ * reliably equidistant once each has been rounded to a double.
+ *
+ * ⚠️ **A computed value takes this too, not only a carried one.** `55 / 0.4` is
+ * `137.49999999999997` in doubles and is emitted as the float it lands on,
+ * `137.5`. What this does NOT do is snap a double's residue to zero: `r6`'s grid
+ * was absolute and swallowed anything under 5e-7, a float's is relative, so a
+ * residue of 1e-15 is a float in its own right and is emitted as one.
+ */
+function f32(n: number): number {
+  const f = Math.fround(n);
+  if (f === 0 || !Number.isFinite(f)) return f === 0 ? 0 : f;
+  const magnitude = Math.abs(f);
+  const sign = f < 0 ? '-' : '';
+  for (let p = 1; p <= 9; p++) {
+    const [mantissa, exponent] = magnitude.toExponential(p - 1).split('e');
+    const nearest = BigInt(mantissa.replace('.', ''));
+    const scale = Number(exponent) - (p - 1);
+    // The nearest p-digit decimal and its two neighbours: a float's interval is
+    // asymmetric at a power of two, so the nearest can miss where a neighbour
+    // lands, and a neighbour can land beside it for a tie.
+    const named = [nearest - 1n, nearest, nearest + 1n].filter(
+      (digits) => digits > 0n && Math.fround(Number(`${digits}e${scale}`)) === magnitude,
+    );
+    if (named.length === 0) continue;
+    const chosen = named.reduce((a, b) => closerDecimal(a, b, scale, magnitude));
+    return Number(`${sign}${chosen}e${scale}`);
+  }
+  // Unreachable — nine significant digits name every float32. Stated rather than
+  // assumed, because a fallback here would be a number nobody chose.
+  throw new CompileError(`no decimal of at most 9 significant digits names the float32 of ${n}`);
 }
 
 /**
- * A **key time** on that same 1e-6 s grid — rounded DOWN rather than to nearest.
+ * A closed-form model's own resolution: 1e-6 in the model's unit. The rounder
+ * the two evaluators are handed (`evaluateDeformTransform`,
+ * `evaluateTrackDerive`), and nothing else.
+ *
+ * ⭐ **It is not the file's precision**, which is `f32` and only `f32`: this
+ * ends in `f32`, so what a model evaluates to is a float's shortest name like
+ * every other emitted number, and the audit a model prints is the file's number
+ * to the digit. What the grid does is one step earlier.
+ * The models are trigonometry — a sinusoid, a turn, `cos t − 1`, `sin t` — and
+ * their identities are exact values float64 misses by ~1e-16: a wave sampled on
+ * its zero crossings, a whole revolution (`sin 2π` is −2.4e−16), a pitch of 0.
+ * The refusal issue #350 added, *a stated model that evaluates to an all-zero
+ * run*, and the identity it is held apart from are both statements about that
+ * zero, so the model needs a resolution at which a zero IS a zero.
+ *
+ * Measured, because the brief for #716 retired this with `r6` and it did not
+ * survive contact: handed `f32` instead, the `gallery/nod` build emitted **90**
+ * deform offsets like `-1.2246468e-15` on its ears where the model meant 0, and
+ * `DT07`/`DT08` in `selftest.ts` went red — the zero-crossing wave and the
+ * too-short bend were no longer refused, and `degrees: 360` no longer emitted
+ * the identity. A float32 grid is relative and has no zero to land on; this
+ * one is absolute, and 1e-6 of a pixel or a degree is below anything the art
+ * or the pose can state.
+ */
+function onModelGrid(n: number): number {
+  return f32(Math.round(n * 1e6) / 1e6);
+}
+
+/**
+ * Of the decimals `a·10^scale` and `b·10^scale` (`a < b`), the one closer to
+ * the positive float `f`, compared exactly; a tie goes to the even digit.
+ */
+function closerDecimal(a: bigint, b: bigint, scale: number, f: number): bigint {
+  FLOAT32_SCRATCH[0] = f;
+  const bits = FLOAT32_BITS[0];
+  const biased = (bits >>> 23) & 0xff;
+  const fraction = BigInt(bits & 0x7fffff);
+  const significand = biased === 0 ? fraction : fraction | 0x800000n;
+  // f = significand·2^power, so the midpoint (a + b)·10^scale / 2 compares with
+  // f exactly as (a + b)·10^scale compares with significand·2^(power + 1).
+  const doubled = (biased === 0 ? -149 : biased - 150) + 1;
+  let midpoint = a + b;
+  let float = significand;
+  if (scale >= 0) midpoint *= 10n ** BigInt(scale);
+  else float *= 10n ** BigInt(-scale);
+  if (doubled >= 0) float <<= BigInt(doubled);
+  else midpoint <<= BigInt(-doubled);
+  if (midpoint < float) return b;
+  if (midpoint > float) return a;
+  return a % 2n === 0n ? a : b;
+}
+
+/** The largest float32 below the float `f`. */
+function float32Below(f: number): number {
+  FLOAT32_SCRATCH[0] = f;
+  if (f > 0) FLOAT32_BITS[0] -= 1;
+  else if (f < 0) FLOAT32_BITS[0] += 1;
+  else FLOAT32_BITS[0] = 0x80000001;
+  return FLOAT32_SCRATCH[0];
+}
+
+/**
+ * A **key time**, on the same float32 grid — but never rounded UP.
  *
  * ## Why key times get their own quantiser
  *
  * Every other emitted number is a quantity, and for a quantity nearest is the
  * least wrong answer. A key time is not a quantity: it is a **position against a
  * sample grid a player will step**, and the two directions of a half-step error
- * are not equally wrong. Rounded down, a key fires on the sample it was written
- * for, half a millionth of a second early, and nothing can see it. Rounded up, it
+ * are not equally wrong. Stored below its time, a key fires on the sample it was
+ * written for, a float step early, and nothing can see it. Stored above, it
  * fires on the NEXT sample — a whole frame late — and on a stepped timeline that
  * is the wrong picture rather than a slightly wrong value.
  *
  * The arithmetic is not exotic, it is the common case: `2/12 s` and `5/30 s` are
- * both 0.16666666…, `r6` emits 0.166667, and 0.166667 is larger than either. The
- * spineboy run's muzzle flare fired one 12 fps frame late for exactly that, with
- * no error and no warning, until the run's own frame self-check caught it (issue
- * #99). ⚠️ An attachment timeline is inherently stepped, so it is where this
- * surfaces first — but a rotate key rounded up is a frame late too; it just hides
- * inside the interpolation.
+ * both 0.16666666…, the nearest float to that is 0.1666666716337204, and that is
+ * larger than either. On the old 1e-6 grid the same thing happened one digit
+ * sooner — `r6` emitted 0.166667 — and the spineboy run's muzzle flare fired one
+ * 12 fps frame late for exactly that, with no error and no warning, until the
+ * run's own frame self-check caught it (issue #99). ⚠️ An attachment timeline is
+ * inherently stepped, so it is where this surfaces first — but a rotate key
+ * stored late is a frame late too; it just hides inside the interpolation.
  *
- * ## Why this is not `Math.floor(n * 1e6)`
+ * ## The two cases
  *
- * `n * 1e6` is itself a rounded double: `0.7 * 1e6` is 699999.9999999999, and
- * flooring it would move a time the grid represents **exactly** a whole step down.
- * So the value is rounded to nearest first and stepped back only when the result
- * genuinely overshoots the time it came from. A time already on the grid is
- * therefore emitted unchanged, which is what keeps `A18_DETERMINISTIC_EMIT` and
- * every committed artifact where they were.
+ * - **A time that already names a float** — `f32(n) === n`, the text of `n` is a
+ *   float's shortest name — is emitted unchanged. That is every key time an
+ *   editor export carries (`1.4333333`), so a rebuild writes back the bytes it
+ *   read, and every round time an author types (`0.5`, `0.2`). ⚠️ Unchanged is
+ *   not the same as stored below: `0.2` is stored at 0.20000000298023224, later
+ *   than 0.2, exactly as it is when the editor writes it. That is the format's
+ *   own spelling of a round time, and stepping it down would rewrite the
+ *   editor's bytes to repair a difference no rigc-built sample grid has at that
+ *   time (`S91` in `selftest.ts` is where the gate learned to pose such a key).
+ * - **A time off that grid** — `2/12` computed in doubles, a lag or stagger
+ *   added to a key — steps to the **largest float32 not above it**, and is
+ *   emitted as that float's name. So the float the runtime stores is never
+ *   later than the time the author meant. The text may read a hair above the
+ *   double it came from (the shortest name of a float is anywhere in its
+ *   interval); what is stored is the float, which is below.
  *
- * ## What it means for `KEY_TIME_EPSILON`
+ * This is not a second rounding of an emitted number: a time is quantised here
+ * once, and `f32` of the result returns it unchanged.
  *
- * The tolerance's job narrows rather than moves: an authored key can no longer
- * land past its own `duration` by the compiler's own rounding, so `checkKeyTime`
- * only refuses a key the author really did put past the end. The epsilon stays,
- * because A09 re-checks the same rule on an emitted file read back through a
- * Float32Array — where the grid is coarser and rounds both ways — and because a
- * `duration` is not required to be on the grid either.
+ * ## What it means for Rule 4
+ *
+ * `checkKeyTime` compares the float a key is stored at, and its tolerance is
+ * one float32 step at the duration — `float32Step`, the same function `A09`
+ * adds when it re-checks the rule on an emitted file. The fixed 1e-6 epsilon
+ * that stood here was a step of `r6`'s grid, and that grid is gone.
  */
 function keyTime(n: number): number {
-  let units = Math.round(n * 1e6);
-  if (units / 1e6 > n) units -= 1;
-  const v = units / 1e6;
-  return v === 0 ? 0 : v;
+  const named = f32(n);
+  if (named === n) return named;
+  let f = Math.fround(n);
+  if (f > n) f = float32Below(f);
+  return f32(f);
 }
 
 /**
@@ -746,14 +884,15 @@ function keyTime(n: number): number {
  * Rule 4 itself compares one number per animation — the largest key time across
  * every track — so a single track sitting on the declared duration answers for
  * all of them, and a key past the end on some *other* track is invisible to it.
- * That is exactly how rung 6 lost a one-frame attachment reveal; the tolerance
- * story is in `KEY_TIME_EPSILON`.
+ * That is exactly how rung 6 lost a one-frame attachment reveal.
  *
- * ⚠️ It compares the **emitted** time, not the authored one, and since `keyTime`
- * rounds down that can only be more forgiving than comparing the author's number
- * — by less than one step of the grid. That is the honest side to err on: the
- * emitted time is the one a player samples, and refusing a key that will in fact
- * be reached would be refusing a correct animation.
+ * ⚠️ It compares the float a key is **stored** at, not the authored time and not
+ * the emitted double: the stored float is the one a player samples. A key that
+ * names a float can be stored up to half a step past its own double — `0.2` is
+ * — so the tolerance is one float32 step at the duration (`float32Step`), which
+ * is the most a correct key placed ON the duration can overshoot it by. Anything
+ * further past was authored there: rung 6's 4 dp rounding put a key 3.3e-5 s
+ * past a 68/12 s duration, about 70 steps of the float at 5.67 s.
  *
  * This is a refusal rather than an assertion because the key is the thing to
  * change and the motion spec is the file it lives in: the message has to name
@@ -761,11 +900,11 @@ function keyTime(n: number): number {
  * carries no declared duration at all, which is why Rule 4 exists.
  */
 function checkKeyTime(where: string, time: number, authored: number, duration: number): void {
-  const past = time - duration;
-  if (past <= KEY_TIME_EPSILON) return;
+  const past = Math.fround(time) - duration;
+  if (past <= float32Step(duration)) return;
   const at = time === authored ? `${time}s` : `t=${authored}, ${time}s after lag/stagger`;
   throw new CompileError(
-    `${where}: key at ${at} is ${r6(past)}s past the declared duration ${duration}s — nothing that plays this ` +
+    `${where}: key at ${at} is ${f32(past)}s past the declared duration ${duration}s — nothing that plays this ` +
       `animation for the duration it declares ever reaches it. Move the key to ${duration}, or declare the ` +
       `duration you meant.`,
   );
@@ -836,7 +975,7 @@ type SlotColourShape = 'rgba' | 'rgb' | 'alpha' | 'rgba2' | 'rgb2';
 const COLOUR_KEYS: Record<SlotColourShape, { channels: number; spelling: string; write: (v: number[]) => Record<string, string | number> }> = {
   rgba: { channels: 4, spelling: '[r,g,b,a]', write: (v) => ({ color: rgbaHex(v) }) },
   rgb: { channels: 3, spelling: '[r,g,b]', write: (v) => ({ color: v.map(channelHex).join('') }) },
-  alpha: { channels: 1, spelling: '[a]', write: (v) => ({ value: r6(v[0]) }) },
+  alpha: { channels: 1, spelling: '[a]', write: (v) => ({ value: f32(v[0]) }) },
   rgba2: { channels: 7, spelling: '[lr,lg,lb,la,dr,dg,db]', write: (v) => rgba2Hex(v) },
   rgb2: {
     channels: 6,
@@ -1216,24 +1355,24 @@ export function bezierForChannel(
 ): [number, number, number, number] {
   const [hx1, hy1, hx2, hy2] = handles;
   return [
-    r6(t1 + (t2 - t1) * hx1),
-    r6(v1 + (v2 - v1) * hy1),
-    r6(t1 + (t2 - t1) * hx2),
-    r6(v1 + (v2 - v1) * hy2),
+    f32(t1 + (t2 - t1) * hx1),
+    f32(v1 + (v2 - v1) * hy1),
+    f32(t1 + (t2 - t1) * hx2),
+    f32(v1 + (v2 - v1) * hy2),
   ];
 }
 
 /**
  * True when a key's value channels, AS EMITTED, equal the next key's — a hold.
  *
- * The comparison is on the six-decimal values the file will hold (`r6`), not on
- * the authored numbers: two values that round to the same figure are one value
- * in the file, and the file is what the runtime interpolates and what the editor
+ * The comparison is on the values the file will hold (`f32`, each number's
+ * float32), not on the authored numbers: two values that land on the same float
+ * are one value in the file, and the file is what the runtime interpolates and what the editor
  * compares. A multi-channel key holds only when EVERY channel does — a `translate`
  * whose x moves and whose y does not is a moving key.
  */
 function isHold(from: number[], to: number[]): boolean {
-  return from.length === to.length && from.every((v, c) => r6(v) === r6(to[c]));
+  return from.length === to.length && from.every((v, c) => f32(v) === f32(to[c]));
 }
 
 /**
@@ -1257,7 +1396,7 @@ function isHold(from: number[], to: number[]): boolean {
  * format holds, which is the blocker `rawCurve` exists to remove. An easing names
  * a SHAPE, and on a hold the editor's encoding of that shape is `stepped`.
  *
- * `hold` is a parameter because "as emitted" is not always `r6` of a number: an
+ * `hold` is a parameter because "as emitted" is not always `f32` of a number: an
  * rgba key emits a hex string and a deform key emits a run, and each site says
  * what its file value is.
  */
@@ -1690,11 +1829,12 @@ function resolveFromAtlas(
     region,
     page,
     absPath,
-    // `r6` for the same reason every other emitted number takes it: 55 / 0.4 is
-    // 137.49999999999997 in binary floating point, and a size is a number the
-    // artifact states rather than one it accumulates.
-    width: r6(found.region.originalWidth / scale),
-    height: r6(found.region.originalHeight / scale),
+    // `f32` for the same reason every other emitted number takes it: 55 / 0.4 is
+    // 137.49999999999997 in binary floating point, and the float it lands on is
+    // 137.5 — a size is a number the artifact states rather than one it
+    // accumulates.
+    width: f32(found.region.originalWidth / scale),
+    height: f32(found.region.originalHeight / scale),
     hasAlpha: info.hasAlpha,
     isBase,
     atlas: found.region,
@@ -2616,7 +2756,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       for (const comp of PHYSICS_COMPONENTS) {
         const v = spec[comp];
         if (v === undefined || v === 0) continue;
-        entry[comp] = r6(v);
+        entry[comp] = f32(v);
         components.push(comp);
       }
       if (!components.length) {
@@ -2629,7 +2769,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       for (const [param, dflt] of PHYSICS_PARAMS) {
         const v = spec[param as keyof typeof spec] as number | undefined;
         if (v === undefined || v === dflt) continue;
-        entry[param] = r6(v);
+        entry[param] = f32(v);
       }
       constraints.push(entry);
       physicsReport.push({
@@ -3039,11 +3179,11 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   for (const [name, def] of Object.entries(rig.events ?? {})) {
     const entry: SpineEvent = {};
     if (def.int !== undefined) entry.int = def.int;
-    if (def.float !== undefined) entry.float = r6(def.float);
+    if (def.float !== undefined) entry.float = f32(def.float);
     if (def.string !== undefined) entry.string = def.string;
     if (def.audio !== undefined) entry.audio = def.audio;
-    if (def.volume !== undefined) entry.volume = r6(def.volume);
-    if (def.balance !== undefined) entry.balance = r6(def.balance);
+    if (def.volume !== undefined) entry.volume = f32(def.volume);
+    if (def.balance !== undefined) entry.balance = f32(def.balance);
     events[name] = entry;
   }
 
@@ -3137,7 +3277,7 @@ interface BoneContext {
 function buildBone(spec: RigBone, soFar: SpineBone[], ctx: BoneContext): SpineBone {
   const bone: SpineBone = { name: spec.name };
   if (spec.parent !== undefined) bone.parent = spec.parent;
-  if (spec.length !== undefined) bone.length = r6(spec.length);
+  if (spec.length !== undefined) bone.length = f32(spec.length);
 
   const crop = cropPointOf(spec, ctx);
   if (crop) {
@@ -3146,26 +3286,26 @@ function buildBone(spec: RigBone, soFar: SpineBone[], ctx: BoneContext): SpineBo
     // bone, a grip) is handled once rather than per call site.
     const world: [number, number] = [crop[0], cropToSpineY(crop[1], ctx.cropH)];
     if (spec.parent === undefined) {
-      bone.x = r6(world[0]);
-      bone.y = r6(world[1]);
+      bone.x = f32(world[0]);
+      bone.y = f32(world[1]);
     } else {
       const parent = computeWorldTransforms(soFar).get(spec.parent);
       if (!parent) throw new CompileError(`bone "${spec.name}" names parent "${spec.parent}", which is declared after it`);
       const [lx, ly] = toBoneLocal(parent, world[0], world[1]);
-      bone.x = lx;
-      bone.y = ly;
+      bone.x = f32(lx);
+      bone.y = f32(ly);
     }
   } else {
-    if (spec.x !== undefined) bone.x = r6(spec.x);
-    if (spec.y !== undefined) bone.y = r6(spec.y);
+    if (spec.x !== undefined) bone.x = f32(spec.x);
+    if (spec.y !== undefined) bone.y = f32(spec.y);
   }
 
   const rotation = rotationOf(spec, ctx);
-  if (rotation !== null) bone.rotation = r6(rotation);
-  if (spec.scaleX !== undefined) bone.scaleX = r6(spec.scaleX);
-  if (spec.scaleY !== undefined) bone.scaleY = r6(spec.scaleY);
-  if (spec.shearX !== undefined) bone.shearX = r6(spec.shearX);
-  if (spec.shearY !== undefined) bone.shearY = r6(spec.shearY);
+  if (rotation !== null) bone.rotation = f32(rotation);
+  if (spec.scaleX !== undefined) bone.scaleX = f32(spec.scaleX);
+  if (spec.scaleY !== undefined) bone.scaleY = f32(spec.scaleY);
+  if (spec.shearX !== undefined) bone.shearX = f32(spec.shearX);
+  if (spec.shearY !== undefined) bone.shearY = f32(spec.shearY);
   if (spec.inherit !== undefined) bone.inherit = spec.inherit;
   if (spec.skin !== undefined) bone.skin = spec.skin;
   if (spec.color !== undefined) bone.color = spec.color;
@@ -3766,7 +3906,7 @@ function buildVertexGeometry(att: RigVertexGeometry, where: string, ctx: Attachm
   for (const n of raw) {
     if (!Number.isFinite(n)) throw new CompileError(`${where}: the vertex array holds a non-finite value ${String(n)}`);
   }
-  return raw.map(r6);
+  return raw.map(f32);
 }
 
 function buildRigBoundingBox(
@@ -3900,10 +4040,11 @@ function pathChain(points: Array<[number, number]>, closed: boolean): Array<[num
  * not: 0.70 % high, uniformly, worth **4.96 px mean MAE** on the round trip of a
  * rig whose path constraint reads the field. A 4-chord sum is *also* not the
  * repair — it agrees with the forward difference only to about nine significant
- * digits, which is below what float32 can hold (so no editor export can tell the
- * two apart) and above rigc's own six-decimal rounding (so the emitted file can):
- * on both measured rigs the two spellings differ in `r6` on the LAST curve, where
- * the accumulated difference is largest. `PS67`–`PS69` in `selftest.ts` compare
+ * digits, which is below what float32 can hold, so no editor export can tell the
+ * two apart and since issue #716 rigc's own file can only where the two land on
+ * either side of a float's boundary. Under the six-decimal rounding that stood
+ * until then it could: on both measured rigs the two spellings differed on the
+ * LAST curve, where the accumulated difference is largest. `PS67`–`PS69` in `selftest.ts` compare
  * this against `PathConstraint`'s own `curves` array read off a posed skeleton,
  * which is the only oracle that can see that gap.
  *
@@ -4006,7 +4147,7 @@ function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentCont
     ...(att.constantSpeed !== undefined ? { constantSpeed: att.constantSpeed } : {}),
     vertexCount: count,
     vertices,
-    lengths: lengths.map(r6),
+    lengths: lengths.map(f32),
     ...(att.color !== undefined ? { color: att.color } : {}),
   };
 }
@@ -4190,13 +4331,13 @@ function buildRigRegion(
 ): SpineRegionAttachment {
   if (att.sequence !== undefined) {
     const size = sequenceFrameSize(sequenceFrames(att, placeholder, where, ctx), att, where);
-    const out: SpineRegionAttachment = { width: r6(size.width!), height: r6(size.height!) };
+    const out: SpineRegionAttachment = { width: f32(size.width!), height: f32(size.height!) };
     if (att.path !== undefined) out.path = att.path;
-    if (att.x !== undefined) out.x = r6(att.x);
-    if (att.y !== undefined) out.y = r6(att.y);
-    if (att.rotation !== undefined) out.rotation = r6(att.rotation);
-    if (att.scaleX !== undefined) out.scaleX = r6(att.scaleX);
-    if (att.scaleY !== undefined) out.scaleY = r6(att.scaleY);
+    if (att.x !== undefined) out.x = f32(att.x);
+    if (att.y !== undefined) out.y = f32(att.y);
+    if (att.rotation !== undefined) out.rotation = f32(att.rotation);
+    if (att.scaleX !== undefined) out.scaleX = f32(att.scaleX);
+    if (att.scaleY !== undefined) out.scaleY = f32(att.scaleY);
     if (att.color !== undefined) out.color = att.color;
     out.sequence = emitSequence(att.sequence);
     return out;
@@ -4225,7 +4366,7 @@ function buildRigRegion(
             (img.atlasScale === undefined
               ? ''
               : ` in the page's texels, which its scale: ${img.atlasScale} makes a ` +
-                `${img.width}x${img.height} drawing (+/- ${r6(0.5 / img.atlasScale)}px, the pack's rounding)`) +
+                `${img.width}x${img.height} drawing (+/- ${f32(0.5 / img.atlasScale)}px, the pack's rounding)`) +
             ')',
         );
       }
@@ -4240,14 +4381,14 @@ function buildRigRegion(
       `${where}: a region needs width and height — give them, or give an "image" and rigc will measure the PNG`,
     );
   }
-  const out: SpineRegionAttachment = { width: r6(width), height: r6(height) };
+  const out: SpineRegionAttachment = { width: f32(width), height: f32(height) };
   const path = attachmentPath(att, placeholder);
   if (path !== undefined) out.path = path;
-  if (att.x !== undefined) out.x = r6(att.x);
-  if (att.y !== undefined) out.y = r6(att.y);
-  if (att.rotation !== undefined) out.rotation = r6(att.rotation);
-  if (att.scaleX !== undefined) out.scaleX = r6(att.scaleX);
-  if (att.scaleY !== undefined) out.scaleY = r6(att.scaleY);
+  if (att.x !== undefined) out.x = f32(att.x);
+  if (att.y !== undefined) out.y = f32(att.y);
+  if (att.rotation !== undefined) out.rotation = f32(att.rotation);
+  if (att.scaleX !== undefined) out.scaleX = f32(att.scaleX);
+  if (att.scaleY !== undefined) out.scaleY = f32(att.scaleY);
   if (att.color !== undefined) out.color = att.color;
   return out;
 }
@@ -4280,7 +4421,7 @@ function encodeNamedWeights(weights: RigMeshBinding[][], where: string, ctx: Att
           `${where}: vertex ${i} binds bone ${JSON.stringify(binding.bone)}, which the rig does not declare as a bone`,
         );
       }
-      out.push(index, r6(binding.x), r6(binding.y), r6(binding.weight));
+      out.push(index, f32(binding.x), f32(binding.y), f32(binding.weight));
     }
   });
   return out;
@@ -4361,7 +4502,7 @@ function measureAuthoredFit(
  * drawing — so the figure is the one it always was, to the bit.
  */
 function drawingOvershoot(overshoot: number, pageScale: number | undefined): { overshoot: number; pageScale?: number } {
-  return pageScale === undefined ? { overshoot } : { overshoot: r6(overshoot / pageScale), pageScale };
+  return pageScale === undefined ? { overshoot } : { overshoot: f32(overshoot / pageScale), pageScale };
 }
 
 /**
@@ -4470,7 +4611,7 @@ function buildRigMesh(
           'or say "boneIndexing": "raw" on this attachment to keep the index form deliberately.',
       );
     }
-    vertices = raw.map(r6);
+    vertices = raw.map(f32);
     if (weighted) {
       const names = new Set<string>();
       for (let i = 0; i < raw.length; ) {
@@ -4502,13 +4643,13 @@ function buildRigMesh(
   }
   const out: SpineMeshAttachment = {
     type: 'mesh',
-    uvs: att.uvs.map(r6),
+    uvs: att.uvs.map(f32),
     triangles: att.triangles,
     vertices,
     hull,
     edges,
-    width: r6(width),
-    height: r6(height),
+    width: f32(width),
+    height: f32(height),
   };
   const path = attachmentPath(att, placeholder);
   if (path !== undefined) out.path = path;
@@ -4528,7 +4669,7 @@ function buildRigMesh(
     vertices: uvCount / 2,
     triangles: att.triangles.length / 3,
     bones: boundBones.length ? boundBones : [ctx.anchorBone],
-    coverage: fit === null ? undefined : r6(fit.coverage),
+    coverage: fit === null ? undefined : f32(fit.coverage),
     ...(fit === null ? {} : drawingOvershoot(fit.overshoot, fit.pageScale)),
     ...(measured !== null && 'withheld' in measured ? { fitWithheld: measured.withheld } : {}),
   });
@@ -4618,7 +4759,7 @@ function buildRigLinkedMesh(
       `${where}: a linked mesh needs width and height — give them, or give an "image" and rigc will measure the PNG`,
     );
   }
-  const out: SpineLinkedMeshAttachment = { type: 'linkedmesh', source, width: r6(width), height: r6(height) };
+  const out: SpineLinkedMeshAttachment = { type: 'linkedmesh', source, width: f32(width), height: f32(height) };
   const path = attachmentPath(att, placeholder);
   if (path !== undefined) out.path = path;
   // Only where they differ from the parser's own defaults. Writing `timelines:
@@ -4774,10 +4915,11 @@ function buildGeneratedMesh(
   }
   const vertices = encodeWeightedVertices(
     geometry,
-    (px, py) => {
-      const [wx, wy] = place(px, py);
-      return [r6(wx), r6(wy)];
-    },
+    // The world point is an INTERMEDIATE — `toBind` makes it local and the
+    // result is what is emitted, through `f32` below — so it carries the double.
+    // Quantising it here rounded a point near 300 world units to its float, 4
+    // float steps of the LOCAL coordinate emitted from it (issue #716).
+    (px, py) => place(px, py),
     { anchor: refFor(ctx.anchorBone), controls: controls.map(refFor) },
   );
   ctx.meshBones.add(ctx.anchorBone);
@@ -4792,12 +4934,12 @@ function buildGeneratedMesh(
   });
   const out: SpineMeshAttachment = {
     type: 'mesh',
-    uvs: geometry.uvs,
+    uvs: geometry.uvs.map(f32),
     triangles: geometry.triangles,
-    vertices,
+    vertices: vertices.map(f32),
     ...generatedHullAndEdges(geometry, where),
-    width: r6(w),
-    height: r6(h),
+    width: f32(w),
+    height: f32(h),
   };
   const path = attachmentPath(att, placeholder);
   if (path !== undefined) out.path = path;
@@ -4994,7 +5136,7 @@ function sampleMeshDepth(
         // is the drawing's (issue #762), so the pixel of the sheet is named too.
         (grid.scaled === undefined
           ? ''
-          : ` in the page's texels, pixel (${r6(points[first][0] * toSheetX)}, ${r6(points[first][1] * toSheetY)}) of ` +
+          : ` in the page's texels, pixel (${f32(points[first][0] * toSheetX)}, ${f32(points[first][1] * toSheetY)}) of ` +
             'the drawing-sized sheet') +
         `. ${why} ` +
         'Sampling anyway would give those vertices the sheet\'s background depth and fold them away from the turn.',
@@ -5022,7 +5164,7 @@ function sampleMeshDepth(
       near: spec.near,
       zScale: spec.zScale,
       tone,
-      range: [r6(lo), r6(hi)],
+      range: [f32(lo), f32(hi)],
       ...(partAlpha instanceof Uint8Array ? { undrawn } : { undrawn: null, unlocated: partAlpha.unlocated }),
       ceiling: turnCeiling(
         points.map(([px, py]) => toBind(px, py)),
@@ -5128,7 +5270,7 @@ function readGreySheet(
             'resample the sheet, or point at the one that was made for this part.'
         : `${where}: the ${noun} "${image}" is ${sheet.width}x${sheet.height} and the part is a ` +
             `${scaled.width}x${scaled.height} drawing — ${grid.partWidth}x${grid.partHeight} texels on a page that ` +
-            `declares scale: ${scaled.scale}, which makes a texel ${r6(1 / scaled.scale)}px of the drawing. It is ` +
+            `declares scale: ${scaled.scale}, which makes a texel ${f32(1 / scaled.scale)}px of the drawing. It is ` +
             "sampled in the part's own pixel grid, which is the drawing's, at each vertex's texel position over " +
             `that scale — so the sheet is ${scaled.width}x${scaled.height}, the size of the loose art, whatever the ` +
             'page holds. Resample the sheet, or point at the one that was made for this part.',
@@ -5335,7 +5477,7 @@ function buildGridAttachment(
   if (bound) geometry = { ...geometry, weights: bound.weights };
   const vertices = encodeWeightedVertices(
     geometry,
-    (px, py) => [r6(anchor.worldX + px * toArt - w / 2), r6(anchor.worldY + h / 2 - py * toArt)],
+    (px, py) => [anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt],
     {
       anchor: { index, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) },
       controls: bound ? [meshBoneRef(bound.bone, where, ctx)] : [],
@@ -5359,12 +5501,12 @@ function buildGridAttachment(
   });
   const out: SpineMeshAttachment = {
     type: 'mesh',
-    uvs: geometry.uvs,
+    uvs: geometry.uvs.map(f32),
     triangles: geometry.triangles,
-    vertices,
+    vertices: vertices.map(f32),
     ...generatedHullAndEdges(geometry, where),
-    width: r6(w),
-    height: r6(h),
+    width: f32(w),
+    height: f32(h),
   };
   const path = attachmentPath(att, placeholder);
   if (path !== undefined) out.path = path;
@@ -5476,7 +5618,7 @@ function buildContourAttachment(
   if (index < 0) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
   const vertices = encodeWeightedVertices(
     geometry,
-    (px, py) => [r6(anchor.worldX + px * toArt - w / 2), r6(anchor.worldY + h / 2 - py * toArt)],
+    (px, py) => [anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt],
     { anchor: { index, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) }, controls: [] },
   );
   ctx.meshBones.add(ctx.anchorBone);
@@ -5518,12 +5660,12 @@ function buildContourAttachment(
   });
   const out: SpineMeshAttachment = {
     type: 'mesh',
-    uvs: geometry.uvs,
+    uvs: geometry.uvs.map(f32),
     triangles: geometry.triangles,
-    vertices,
+    vertices: vertices.map(f32),
     ...generatedHullAndEdges(geometry, where),
-    width: r6(w),
-    height: r6(h),
+    width: f32(w),
+    height: f32(h),
   };
   // Same rule a region attachment follows: the atlas region is the PNG's
   // basename, so a placeholder named anything else needs `path` written down or
@@ -5619,7 +5761,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
   const copy = (fields: readonly string[]) => {
     for (const field of fields) {
       const v = spec[field];
-      if (v !== undefined) out[field] = typeof v === 'number' ? r6(v) : v;
+      if (v !== undefined) out[field] = typeof v === 'number' ? f32(v) : v;
     }
   };
   const boneList = (): string[] => {
@@ -5709,7 +5851,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
       if (spec[field] !== undefined) out[field] = needEnum(spec[field], field, allowed);
     }
     for (const field of ['rotation', 'position', 'spacing', 'mixRotate', 'mixX', 'mixY'] as const) {
-      if (spec[field] !== undefined) out[field] = r6(needNumber(spec[field], field));
+      if (spec[field] !== undefined) out[field] = f32(needNumber(spec[field], field));
     }
     copy(['skin']);
     return out;
@@ -5737,7 +5879,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
     for (const field of ['additive', 'loop'] as const) {
       if (spec[field] !== undefined) out[field] = spec[field];
     }
-    if (spec.mix !== undefined) out.mix = r6(needNumber(spec.mix, 'mix'));
+    if (spec.mix !== undefined) out.mix = f32(needNumber(spec.mix, 'mix'));
     // `bone` is the switch between the two models, so the fields of the model
     // that was NOT chosen are refused rather than emitted: the parser reads
     // `time` only in the `else` branch and the property fields only in the `if`,
@@ -5755,7 +5897,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
       }
       out.property = property;
       for (const field of ['from', 'to', 'scale', 'max'] as const) {
-        if (spec[field] !== undefined) out[field] = r6(needNumber(spec[field], field));
+        if (spec[field] !== undefined) out[field] = f32(needNumber(spec[field], field));
       }
       if (spec.local !== undefined) out.local = spec.local;
       if (spec.scale !== undefined && spec.scale === 0) {
@@ -6092,7 +6234,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
         }
       }
     } else {
-      if (spec.time !== undefined) out.time = r6(needNumber(spec.time, 'time'));
+      if (spec.time !== undefined) out.time = f32(needNumber(spec.time, 'time'));
       for (const field of boneSide) {
         if (spec[field] !== undefined) {
           throw new CompileError(
@@ -6202,7 +6344,8 @@ function buildRigInfo(
   // with travel along the axis.
   const spineDeg = manifest?.axis ? screenToSpineDegrees(manifest.axis.deg) : null;
   const inwardUnit: [number, number] | null =
-    spineDeg === null ? null : [r6(Math.cos((spineDeg * Math.PI) / 180)), r6(Math.sin((spineDeg * Math.PI) / 180))];
+    // Not quantised: a direction the checks below project onto, never emitted.
+    spineDeg === null ? null : [Math.cos((spineDeg * Math.PI) / 180), Math.sin((spineDeg * Math.PI) / 180)];
   const contactDepth = manifest?.stroke?.contact_depth ?? null;
   if (contactDepth !== null && !(contactDepth > 0)) {
     throw new CompileError(`manifest stroke.contact_depth is ${contactDepth}; it must be a positive number of axis pixels`);
@@ -6250,7 +6393,7 @@ function checkAxisSelfConsistency(manifest: FaceManifest): void {
   const ey = Math.sin((deg * Math.PI) / 180);
   if (Math.hypot(unit[0] - ex, unit[1] - ey) > 1e-3) {
     throw new CompileError(
-      `manifest axis.unit [${unit[0]}, ${unit[1]}] does not match axis.deg ${deg} (expected [${r6(ex)}, ${r6(ey)}])`,
+      `manifest axis.unit [${unit[0]}, ${unit[1]}] does not match axis.deg ${deg} (expected [${f32(ex)}, ${f32(ey)}])`,
     );
   }
 }
@@ -6280,10 +6423,10 @@ function placeRegion(
   // width/height are NOT optional: omitting them loads as NaN with no error.
   // The compiler fills them from the PNG.
   const att: SpineRegionAttachment = { width: img.width, height: img.height };
-  const [ax, ay] = toBoneLocal(bone, win.x + win.w / 2, cropToSpineY(win.y + win.h / 2, manifest.crop.h));
+  const [ax, ay] = toBoneLocal(bone, win.x + win.w / 2, cropToSpineY(win.y + win.h / 2, manifest.crop.h)).map(f32);
   if (ax !== 0) att.x = ax;
   if (ay !== 0) att.y = ay;
-  const rotation = normaliseDegrees(-bone.worldRotation);
+  const rotation = f32(normaliseDegrees(-bone.worldRotation));
   if (rotation !== 0) att.rotation = rotation;
   return att;
 }
@@ -6356,7 +6499,7 @@ function buildMesh(
 
   const vertices = encodeWeightedVertices(
     geometry,
-    (px, py) => [r6(win.x + px), r6(cropToSpineY(win.y + py, cropH))],
+    (px, py) => [win.x + px, cropToSpineY(win.y + py, cropH)],
     { anchor: refFor(anchorName), controls: controls.map(refFor) },
   );
 
@@ -6364,9 +6507,9 @@ function buildMesh(
     kind: geometry.kind,
     attachment: {
       type: 'mesh',
-      uvs: geometry.uvs,
+      uvs: geometry.uvs.map(f32),
       triangles: geometry.triangles,
-      vertices,
+      vertices: vertices.map(f32),
       ...generatedHullAndEdges(geometry, `slot "${part.slot}" mesh`),
       width: win.w,
       height: win.h,
@@ -6411,7 +6554,7 @@ function rawCurve(curve: number[] | 'stepped', channels: number, where: string, 
       throw new CompileError(`${where} (t=${at}): raw curve holds a non-finite value ${JSON.stringify(n)}`);
     }
   }
-  return curve.map(r6);
+  return curve.map(f32);
 }
 
 /**
@@ -6484,7 +6627,7 @@ function compileValueTrack(
       // `A23` because this is a spec somebody wrote and the key is the thing to
       // change — the same division `compileConstraintTrack`'s `range` makes for
       // an ik mix, and the same criterion `A23` applies to a file rigc did not
-      // write (issue #610). Note the value is judged BEFORE `r6`: a number
+      // write (issue #610). Note the value is judged BEFORE `f32`: a number
       // rounding onto a bound would be refused for the rounding rather than for
       // what the author wrote.
       const bound = shape.bounds?.[c];
@@ -6497,7 +6640,7 @@ function compileValueTrack(
         const at = shape.fields.length > 1 ? `${field} at t=${key.t}` : `key at t=${key.t}`;
         if (refusal !== null) throw new CompileError(`${where} ${at} is ${refusal}`);
       }
-      entry[field] = r6(v[c]);
+      entry[field] = f32(v[c]);
     });
     if (key.ease !== undefined && key.curve !== undefined) {
       throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
@@ -6679,7 +6822,7 @@ function compileEvents(
       if (!Number.isFinite(key.float)) {
         throw new CompileError(`${where} at t=${key.t}: float ${String(key.float)} is not finite`);
       }
-      entry.float = r6(key.float);
+      entry.float = f32(key.float);
     }
     if (key.string !== undefined) {
       if (typeof key.string !== 'string') {
@@ -6697,7 +6840,7 @@ function compileEvents(
         );
       }
       if (!Number.isFinite(v)) throw new CompileError(`${where} at t=${key.t}: ${field} ${String(v)} is not finite`);
-      entry[field] = r6(v);
+      entry[field] = f32(v);
     }
     out.push(entry);
   }
@@ -6831,7 +6974,7 @@ function compileConstraintTrack(
           } — the runtime documents it as ${channel.field === 'mix' ? 'a percentage 0-1' : 'a distance'}`,
         );
       }
-      entry[channel.field] = r6(v);
+      entry[channel.field] = f32(v);
     }
     for (const flag of shape.flags) {
       const v = read(key, flag.field);
@@ -7240,7 +7383,7 @@ function compileSequenceTrack(
     const entry: SpineTimelineKey = { time };
     if (key.mode !== undefined) entry.mode = key.mode;
     if (key.index !== undefined) entry.index = key.index;
-    if (key.delay !== undefined) entry.delay = r6(key.delay);
+    if (key.delay !== undefined) entry.delay = f32(key.delay);
     out.push(entry);
   }
   return out;
@@ -7302,7 +7445,7 @@ function compileDeformTrack(
             'yourself and start the run with "offset".',
         );
       }
-      const report = evaluateDeformTransform(key.transform, geometry.setup, r6, `${where} (t=${key.t})`, geometry.depth);
+      const report = evaluateDeformTransform(key.transform, geometry.setup, onModelGrid, `${where} (t=${key.t})`, geometry.depth);
       if (report.offsets.length !== geometry.vertexCount * 2) {
         // Unreachable while `setup` is one pair per vertex, which is the whole
         // reason both are derived from the same walk. Stated rather than
@@ -7426,7 +7569,7 @@ function compileDeformTrack(
     // authored 0, an authored `fromVertex: 0` and an absent start all emit the
     // same bytes — one meaning, one file.
     if (start !== 0) entry.offset = start;
-    entry.vertices = run.map(r6);
+    entry.vertices = run.map(f32);
     out.push(entry);
   }
   // Curves go on in a second pass because a key's curve depends on the NEXT key's
@@ -7466,7 +7609,7 @@ function expandDeformToInfluences(displacements: number[], geometry: DeformGeome
     const dy = displacements[2 * v + 1];
     for (let n = 0; n < counts[v]; n++, k++) {
       const [bx, by] = toBoneLocalVector(perInfluence[k], dx, dy);
-      out.push(r6(bx), r6(by));
+      out.push(f32(bx), f32(by));
     }
   }
   return out;
@@ -7587,7 +7730,7 @@ function deformKeyCurve(
  * parser reads everything outside the run, and a key with no `vertices` at all,
  * as zero offset from the setup pose. So a run of zeros, a shorter run and no run
  * are three spellings of one geometry, and the comparison expands both keys onto
- * the same index range before reading them. The runs are already `r6`'d.
+ * the same index range before reading them. The runs are already `f32`'d.
  */
 function sameDeform(a: SpineTimelineKey, b: SpineTimelineKey): boolean {
   const runOf = (k: SpineTimelineKey): { start: number; run: number[] } => ({
@@ -7881,7 +8024,7 @@ function resolveMemberTrack(
           'measured from different origins. Split the track by parent, or state the values as a "v" map.',
       );
     }
-    const report = evaluateTrackDerive(key.derive, track.property, members, r6, where);
+    const report = evaluateTrackDerive(key.derive, track.property, members, onModelGrid, where);
     const row: Array<{ member: string; value: number[] | string | null }> = [];
     report.members.forEach((m, i) => {
       perTarget.get(members[i].name)!.push({ ...key, v: [m.value] });
