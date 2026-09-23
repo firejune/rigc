@@ -531,14 +531,23 @@ at the policy rather than implying the file was read.
 
 **Two values are not in a skeleton**, so `ingest` asks rather than guesses:
 
-- **the stage** (`skeleton.width`/`height`) — `--stage x,y,w,h` is how you supply one
-  when the file has none. ⚠️ **This page said an editor export carries none until
+- **the stage** (`skeleton.width`/`height`) — a file that declares none is **carried as
+  declaring none**: the rig spec states `"width": null, "height": null` (§2.1 step 3's
+  spelling, [#578](https://github.com/firejune/rigc/issues/578)), the rebuild emits a
+  header with none of `x`/`y`/`width`/`height`, and it is the file that was read, byte
+  for byte. No finding is recorded, because nothing was lost and nobody decided
+  anything ([#714](https://github.com/firejune/rigc/issues/714)). `--stage x,y,w,h` is how
+  a caller *adds* a box to such a file, and that is a `NO_STAGE` **judgement**. Until
+  #714 the absence was a blocker and the flag the only road through it — a number the
+  source never stated, on the shape #714 counts in 48 of 48 production exports.
+  ⚠️ **This page said an editor export carries none until
   [#594](https://github.com/firejune/rigc/issues/594) measured it: all twelve exports in
   the fetched corpus carry a stage**, `ingest` reads it straight through, and not one of
   them needed the flag. What holds without qualification is that the box cannot be
   *derived* — posing the rig gives the *animated* extent, which is a different number
-  from the setup box — so a skeleton that really declares none is a `NO_STAGE` blocker
-  rather than a guess. It is also the value that costs least to get wrong: `diff`
+  from the setup box. 🔸 **Half a stage is still a `NO_STAGE` blocker**: an origin with no
+  extent, or one extent without the other, declares no stage and is not the absence
+  either, and the rig spec holds a stage as four fields or none. It is also the value that costs least to get wrong: `diff`
   reports it as two measures of its own (`stage_present`, `stage_box`, since
   [#578](https://github.com/firejune/rigc/issues/578)) and they are `(reported)`, so
   nothing on the ladder reads them and an absurd box is green nearly everywhere. The
@@ -609,7 +618,7 @@ is the one failure a comparison of two sets cannot show you.
 | `HEADER_ORIGIN` | `LOSS` | 0 | the source declares an extent and omits `x`/`y`. Inside a declared extent an omitted origin **is** 0, so the spec states it — and the rebuild then spells two fields the source did not | nothing. Same box, different bytes — which is why byte identity is not the claim for an export that takes this branch |
 | `HEADER_REDERIVED` | `LOSS` | 0 | `skeleton.spine`: the rebuild writes the version of the runtime rigc links. The line says whether that is the same string the source states | nothing — but read the line: a 4.2 export rebuilds as 4.3 in that one field, and a source from another generation raises `GENERATION_UNSUPPORTED` beside it, which is the blocker about the DATA rather than about the string |
 | `IK_KEY_FIELD` | `BLOCK` | 1 | a key field on an `ik` timeline that is not part of its shape | check the spelling; an unknown field is dropped from the rebuilt track |
-| `NO_STAGE` | `BLOCK` `JUDGE` | 1 | the skeleton declares no stage. It is a blocker with no `--stage`, and a **judgement** — exit 0 — when `--stage x,y,w,h` supplies one, because nothing measured the box you gave it | supply the box from the project the file came from. It cannot be derived: posing the rig gives the animated extent, which is a different number |
+| `NO_STAGE` | `BLOCK` `JUDGE` | 1 | the skeleton declares no stage, and one of two things follows. A **judgement** — exit 0 — when `--stage x,y,w,h` supplied a box, because nothing measured the box you gave it. A **blocker** when the header states **half** a stage — an origin with no extent, or one extent without the other — which the rig spec cannot hold; the detail names the fields it states. A header with **none** of the four is not a finding at all: it is carried as `"width": null, "height": null` and rebuilds byte for byte ([#714](https://github.com/firejune/rigc/issues/714)) | for the judgement, nothing if the box came from the project the file came from. For the blocker, supply the box with `--stage`, or take the stray field(s) out of the source and the absence is carried. It cannot be derived: posing the rig gives the animated extent, which is a different number |
 | `PATH_LENGTHS` | `LOSS` | 0 | the source states a path attachment's `lengths` and rigc re-measures it as `PathConstraint` does | nothing. Dropping it is the correct reading: the field is the runtime's own four-sample forward difference, not an arc length |
 | `PATH_TIMELINE` | `BLOCK` | 1 | a path-constraint timeline the motion spec has no track for — it carries position, spacing and mix | transcribe it, or accept that the rebuild plays nothing there |
 | `PHYSICS_DRIVES_NOTHING` | `LOSS` | 0 | a physics constraint none of whose `x`, `y`, `rotate`, `scaleX`, `shearX` is above 0 — absent, or stated at 0 or below. `PhysicsConstraint.update` applies a component only above 0 (`PhysicsConstraint.js:112`), so it moves no bone, and `build` refuses exactly that shape by name at `A23_PHYSICS_CONSTRAINT_EFFECTIVE` — which, until [#731](https://github.com/firejune/rigc/issues/731), meant the whole rebuild of a file an editor exports was refused over a constraint that did nothing in it. The rig spec **omits** it, together with every timeline keyed to it (a track naming it would be an unknown constraint to the rebuild, refused at compile) and its place on any skin's `physics` list; the detail names each, and the values it did state. Measured on a generated rig through spine-core, posing the source with and without such a constraint differs by **0** on every bone world value — and by at most 9e-8 when it sits on the root, which is the runtime's `modifyWorld` recomputing a local transform it had no reason to, not a component. ⚠️ **One thing does move:** a duration is the last key an animation has left, so an omitted timeline that held the last key shortens the rebuilt animation, and the detail says which animation and both lengths | nothing, if it was meant to do nothing. If it was meant to jiggle, the file never said so: give it the component it should drive and it is carried like any other. Where the detail names a shortened animation and the length matters to whatever loops it, key something at the length it had |
@@ -693,7 +702,8 @@ it, and the only differing paths were the name and the `note`.
    the file: `attachment` simply absent.
 
    ⚠️ **If the export's `skeleton` block carries no `x`/`y`/`width`/`height`, write
-   `"width": null, "height": null` and do not invent one** (issue #578). That shape is
+   `"width": null, "height": null` and do not invent one** (issue #578) — which is
+   also what `rigc ingest` writes for such a file since #714. That shape is
    common — the twelve exports in `examples/` all carry the four, and 37 of 37 exports
    in one production corpus carry none of them — and until the `null` pair existed the
    only two moves were a made-up stage or a file that could not be transcribed. The
@@ -1389,7 +1399,7 @@ clean page:
 exists to make explicit".** The clause was not wrong that a decompiler meets an
 invention — it was wrong about *which*, and wrong that it is unavoidable: a refusal
 naming the field is what this repository does with a missing number everywhere else,
-and it is what `ingest` does here (§2.0). ⚠️ Not to be confused with the *atlas*
+and a stated absence is what `ingest` writes where the skeleton has none (§2.0, #714). ⚠️ Not to be confused with the *atlas*
 importer below, which is a different direction and also exists.
 
 ⚠️ **What `ingest` is still not.** It reads skeleton JSON and writes two spec files.

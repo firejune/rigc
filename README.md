@@ -516,7 +516,7 @@ commands take it and what its default is.
 | `build … --pack` | the same build with every part arranged onto **shared** atlas pages, written into `--out` — losslessly, and gated a second time as the pair that ships. `--page-size` and `--padding` tune it |
 | `build … --atlas-in <file.atlas>` | the same build with every part resolved to a **region of an existing pack** instead of a loose PNG; a name the atlas lacks, a size the spec disagrees with or a rectangle off its page is refused by name |
 | `validate <dir>` | re-gates artifacts already on disk |
-| `ingest <skeleton.json> --out <dir>` | `build` run backwards: reads a Spine 4.3 skeleton and writes the rig spec and motion spec that **rebuild it**, plus a findings report naming everything it could not carry. `--stage x,y,w,h` supplies the stage for a skeleton that declares none — and is refused, rather than ignored, beside one that declares a box — and `--images <dir>` writes the spec's own images directory — the opposite direction from `build --images`, which overrides it — so the rebuild carries no flag at all |
+| `ingest <skeleton.json> --out <dir>` | `build` run backwards: reads a Spine 4.3 skeleton and writes the rig spec and motion spec that **rebuild it**, plus a findings report naming everything it could not carry. a skeleton that declares no stage is carried as declaring none, `--stage x,y,w,h` adds a box to one — and is refused, rather than ignored, beside one that declares a box — and `--images <dir>` writes the spec's own images directory — the opposite direction from `build --images`, which overrides it — so the rebuild carries no flag at all |
 | `explain --rig … --motion …` | the compiled rig as a table — every bone with its resolved parent, the slots in draw order, every timeline key by key. Writes nothing. What to reach for when a rig compiles and still looks wrong |
 | `render --candidate <dir>` | PNG frames plus a contact sheet, in `render/` |
 | `preview --candidate <dir>` | one self-contained `.html` that plays it |
@@ -595,10 +595,12 @@ One thing it drops on purpose and says so: a path attachment's `lengths`, which 
 
 ⚠️ **Two values are not in a skeleton at all.**
 
-- **The stage.** `skeleton.width`/`height`: rigc always writes one, and a skeleton that
-  carries none is refused by name unless `--stage x,y,w,h` supplies it. It is not
-  derivable — posing the rig gives the *animated* extent, which is a different number
-  from the setup box. ⛔ **And `--stage` beside a box the file already states is refused
+- **The stage.** `skeleton.width`/`height`. A skeleton that declares none is carried as
+  declaring none — the rig spec states `"width": null, "height": null` and the rebuild
+  carries no box either, byte for byte
+  ([#714](https://github.com/firejune/rigc/issues/714)) — and `--stage x,y,w,h` is how a
+  caller *adds* one, recorded as a judgement. It is not derivable — posing the rig gives
+  the *animated* extent, which is a different number from the setup box. ⛔ **And `--stage` beside a box the file already states is refused
   too**, for the opposite reason: two sources for one value, where the file is the record
   of what was measured. It used to be read after the box and therefore never
   ([#626](https://github.com/firejune/rigc/issues/626)). ⚠️ This said *"an editor export carries none"* until #594 measured

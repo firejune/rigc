@@ -24,9 +24,11 @@
  * something nobody wrote. Where the skeleton cannot answer, this records a
  * **finding** with a code and writes nothing: `findings` is the product, not a
  * log. Exactly two values are not in a skeleton at all (the stage and an
- * animation's duration) and both are `judgement` findings; every construct the
- * spec format cannot hold is a `blocker`; everything rigc re-derives rather than
- * carries is `lossy`. The one thing it refuses outright rather than recording is
+ * animation's duration), and a value somebody supplies for either is a
+ * `judgement` finding — a stage the file does not declare is carried as the
+ * absence it is, and only a caller's `--stage` is somebody deciding (issue
+ * #714); every construct the spec format cannot hold is a `blocker`; everything
+ * rigc re-derives rather than carries is `lossy`. The one thing it refuses outright rather than recording is
  * an OPTION that contradicts the file — see `IngestError`.
  *
  * ## What it does not read
@@ -120,8 +122,8 @@ export class IngestSpecRefused extends Error {
  *
  * - `blocker` — the spec format cannot say this, so the rebuilt skeleton will
  *   NOT be the one that was read. Non-zero exit.
- * - `judgement` — the skeleton does not carry it and somebody has to decide.
- *   There are exactly two: the stage, and an animation's duration.
+ * - `judgement` — the skeleton does not carry it and somebody decided. There
+ *   are exactly two: a stage the caller supplied, and an animation's duration.
  * - `lossy` — the skeleton's spelling and rigc's differ, on purpose, and the
  *   difference is named: a value rigc re-derives rather than takes (`lengths`,
  *   the `spine` version), a field the spec has no home for (`hash`, `audio`), or
@@ -646,8 +648,8 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
   // -- header ---------------------------------------------------------------
   // 🚨 THE SEAM. One function decides the rig spec's `skeleton` block, and the
   // stage is the only value in this whole module that a skeleton cannot answer
-  // for. Issue #578 is landing a way for a rig spec to SAY that a skeleton
-  // declares no stage; when it does, this is the one place that changes.
+  // for. Since #578 a rig spec can SAY that a skeleton declares no stage, and
+  // since #714 this is where a file that declares none is carried as saying so.
   const rigHeader = ingestHeader(obj(root.skeleton), opts, note);
 
   // -- physics constraints that drive nothing (issue #731) ------------------
@@ -1014,6 +1016,9 @@ function readGeneration(root: JsonObject, note: Note): void {
   );
 }
 
+/** The four fields a stage is, in the order the editor and `compile` write them. */
+const STAGE_FIELDS = ['x', 'y', 'width', 'height'] as const;
+
 /**
  * Does this header declare a stage?
  *
@@ -1043,18 +1048,28 @@ function spellStage(x: unknown, y: unknown, width: unknown, height: unknown): st
 /**
  * The rig spec's `skeleton` block — and the one judgement in this module.
  *
- * 🚨 **A skeleton JSON need not carry the stage, and it cannot be derived.** rigc
- * always emits `x`/`y`/`width`/`height`, so a rigc build round-trips with nothing
- * to decide. `compile` refuses without one, and there is no derivation: posing
- * the rig gives the ANIMATED extent, which is a different number from the
- * editor's setup box. So with no `--stage` this records a blocker naming the
- * field and writes nothing plausible.
+ * 🚨 **A skeleton JSON need not carry the stage, and it cannot be derived.**
+ * Posing the rig gives the ANIMATED extent, which is a different number from the
+ * editor's setup box. So a file that declares none is written as declaring none
+ * — `"width": null, "height": null`, the rig spec's spelling for that claim since
+ * issue #578 — and `compile` then emits a header with none of the four fields,
+ * which is the file that was read, byte for byte. No finding: nothing was lost,
+ * nothing re-derived and nobody decided anything, and a line saying so would be
+ * a finding about a file that rebuilds exactly (issue #714).
  *
- * ⚠️ This said an editor export's `skeleton` block is `hash`, `spine`, `images`,
- * `audio` **and no box at all** until issue #594 measured the corpus: all twelve
- * exports under `examples/` carry `x`/`y`/`width`/`height`, and the declared-stage
- * branch below is the one they take. The blocker is for a file that really has
- * none, and this module has no example of one.
+ * ⚠️ **That is the shape of a whole production corpus, not a corner.** Until
+ * #714 this branch was a `NO_STAGE` blocker and the only road through it was a
+ * caller's `--stage` — a number the source never stated. Issue #714 counts 48 of
+ * 48 production exports at 4.3.26 carrying no box; all twelve exports under
+ * `examples/` carry all four fields, and take the declared branch below.
+ *
+ * 🔸 **Half a stage is still a blocker, and keeps the code.** A header that
+ * states an origin with no extent, or one extent without the other, declares no
+ * stage — the extent is what declares one — but it is not the absence either:
+ * the rig spec holds a stage as four fields or none (`parseRigSpec` refuses the
+ * pair `null` beside an `x`, and one extent alone is `compile`'s `no stage size`),
+ * so the rebuild cannot carry what the file states. No export measured here has
+ * that shape; the blocker names the fields it does state.
  *
  * ⭐ It is still the judgement that costs least to get wrong. `diff` does report
  * the box — `stage_present` and `stage_box`, since issue #578 — but they sit in
@@ -1135,13 +1150,28 @@ function ingestHeader(head: JsonObject, opts: IngestOptions, note: Note): JsonOb
     return out;
   }
   if (opts.stage === undefined) {
+    const stated = STAGE_FIELDS.filter((field) => head[field] !== undefined);
+    if (stated.length === 0) {
+      // The absence, carried: the pair goes where `RIG_KEYS` orders it, so the
+      // spec reads like one a transcriber would have written by hand.
+      const carried: JsonObject = {};
+      for (const field of RIG_KEYS.RigSkeletonHeader) {
+        if (field === 'width' || field === 'height') carried[field] = null;
+        else if (out[field] !== undefined) carried[field] = out[field];
+      }
+      return carried;
+    }
+    const unstated = STAGE_FIELDS.filter((field) => head[field] === undefined);
     note(
       'blocker',
       'NO_STAGE',
       'skeleton.width/height',
-      'the skeleton declares no stage; give --stage x,y,w,h — the value is the caller\'s, not derived. Posing the ' +
-        'rig would give the ANIMATED extent, which is a different number from the setup box, so rigc refuses rather ' +
-        'than measuring the wrong thing (or state the absence once the spec can)',
+      `the skeleton states ${stated.map((field) => `"${field}"`).join(', ')} and no ` +
+        `${unstated.map((field) => `"${field}"`).join(', ')}, so it declares no stage — a width and a height are ` +
+        'what declare one — and it is not the absence either. A rig spec holds a stage as four fields or none, so ' +
+        'the rebuild cannot carry what this header states. Give --stage x,y,w,h if the box is known — the value is ' +
+        'the caller\'s, not derived: posing the rig would give the ANIMATED extent, which is a different number from ' +
+        'the setup box — or take the stray field(s) out of the source, and the absence is then carried as it stands',
     );
     return out;
   }
@@ -1151,8 +1181,9 @@ function ingestHeader(head: JsonObject, opts: IngestOptions, note: Note): JsonOb
     'NO_STAGE',
     'skeleton.width/height',
     `the skeleton declares no stage and the caller supplied ${opts.stage.x},${opts.stage.y},${opts.stage.width},` +
-      `${opts.stage.height}. Nothing measured it: no gate in this tree reads the skeleton header, so a wrong box is ` +
-      'green everywhere (or state the absence once the spec can)',
+      `${opts.stage.height}. Nothing measured it against the art: \`A14\` and \`A19\` measure the art against it ` +
+      'and `diff` reports it, so a wrong box is green everywhere. Without --stage the absence is carried instead, ' +
+      'and the rebuild declares no stage either',
   );
   return out;
 }

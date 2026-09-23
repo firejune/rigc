@@ -36,11 +36,12 @@ rigc build --rig specs/rig.json --motion specs/motion.json --images parts/ --out
 It reads the skeleton — **only** the skeleton — and writes the rig spec and motion
 spec that rebuild it: **byte for byte for a skeleton rigc emitted**, and for an editor
 export the weaker claim `diff` measures, with three kinds of benign difference left —
-INGEST §2.3. Two values it refuses rather than guessing: the
-**stage** (`--stage`, for a skeleton that declares none — an editor export *may* be
-one, though every one in the example corpus carries a box, and passing the flag at a
-file that declares a box is refused rather than ignored) and each animation's
-**duration** (the largest key time, recorded as a finding).
+INGEST §2.3. Two values it will not guess: the
+**stage** (a skeleton that declares none is carried as declaring none, and `--stage`
+adds a box to one — an editor export *may* be such a file, though every one in the
+example corpus carries a box, and passing the flag at a file that declares a box is
+refused rather than ignored) and each animation's **duration** (the largest key time,
+recorded as a finding).
 Read `findings.json`: a `BLOCK` line means the rebuild will be missing something and
 the command exits non-zero. Every code it can print — gutter, exit, meaning, what to
 do — is the finding-code table in INGEST §2.0. Keep the `note` both specs carry.

@@ -414,6 +414,39 @@ function optsForFixture(fixture: Fixture): Options {
   };
 }
 
+/** The four fields a setup stage is, as the editor and `compile` write them. */
+const STAGE_BOX_FIELDS = ['x', 'y', 'width', 'height'] as const;
+
+/**
+ * A fixture's options with its rig spec copied into `root` stating that the
+ * skeleton declares no stage — `"width": null, "height": null` — and nothing
+ * else changed. The manifest stays where it is, so every part resolves exactly
+ * as the fixture's own build does and the crop is still there to be beaten.
+ */
+function stagelessOptionsFor(fixture: Fixture, root: string, outName: string): Options {
+  const rig = JSON.parse(readFileSync(fixture.rigPath, 'utf8')) as Record<string, unknown>;
+  const header = (rig.skeleton ?? {}) as Record<string, unknown>;
+  rig.skeleton = { ...header, width: null, height: null };
+  const rigPath = join(root, `${basename(fixture.rigPath, '.rig.json')}.stageless.rig.json`);
+  writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+  const outDir = join(root, outName);
+  mkdirSync(outDir, { recursive: true });
+  return { ...optsForFixture(fixture), rigPath, outDir };
+}
+
+/** A skeleton's text with every stage field taken out of its header — the shape issue #714 counts in production. */
+function withoutStageBox(skeletonText: string): string {
+  const root = JSON.parse(skeletonText) as { skeleton?: Record<string, unknown> };
+  for (const field of STAGE_BOX_FIELDS) delete root.skeleton?.[field];
+  return `${JSON.stringify(root, null, 2)}\n`;
+}
+
+/** Which of the four stage fields a skeleton's header states as numbers. */
+function stageFieldsOf(skeletonText: string): string[] {
+  const header = ((JSON.parse(skeletonText) as { skeleton?: Record<string, unknown> }).skeleton ?? {}) as Record<string, unknown>;
+  return STAGE_BOX_FIELDS.filter((field) => typeof header[field] === 'number');
+}
+
 /**
  * The overlay fixture: a base plate, two slots that fade, and one ring mesh.
  * Everything the region, timeline, atlas, mesh and physics assertions look at.
@@ -1345,6 +1378,22 @@ const MUTANTS: Mutant[] = [
         throw new Error('the fixture keys no advancing sequence for the mutant to misspell');
       }),
     }),
+  },
+  // ─── the stage box taken off: the shape of a production export (issue #714) ─
+  //
+  // An edit the gate has to ACCEPT. A skeleton that declares no stage is valid
+  // Spine data — the runtime copies the four fields across unconditionally and
+  // reads none of them — and it is what 48 of 48 production exports look like.
+  // `A14` has nothing to measure on it and SKIPs by name; a rule that refused it
+  // would be refusing correct data, and one that passed it would be certifying
+  // a full frame nobody declared.
+  {
+    name: 'M74_the_stage_box_taken_off_is_a_skeleton_the_gate_accepts',
+    origin:
+      'every production export issue #714 counts carries no `skeleton.x`/`y`/`width`/`height`, and none of the ' +
+      'runtime\'s own readers needs them — so a gate that refused the shape would refuse the corpus it exists to read',
+    expect: null,
+    mutate: (a) => ({ ...a, skeletonText: withoutStageBox(a.skeletonText) }),
   },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -5206,6 +5255,53 @@ function runCheckSuite(): number | null {
       ),
       'a correlation that dropped every sample would clear the floor on every rig in the tree and say nothing about ' +
         'any of them — the two cases above are only worth their green beside this one',
+    );
+  }
+
+  // --- C31: a candidate that declares no stage is framed as one that does ----
+  //
+  // Issue #714 asks every reader of the stage what it does without one, and
+  // `check` never read it: the candidate's world box is fitted from what it
+  // draws. So the absence moves no figure, and the one thing that changes is a
+  // note saying so — measured, rather than taken from the comment that says it.
+  {
+    const say = (name: string, ok: boolean, detail: string, why: string): void => {
+      bad += reportCase(name, ok, detail, why);
+    };
+    const STAGELESS_NOTE = /declares no stage/;
+    const stagelessReport = checkAgainstFrames({
+      ...faithful,
+      skeletonText: withoutStageBox(faithful.skeletonText),
+      framesDir: CHECK_FRAMES,
+    });
+    const figuresOf = (report: CheckReport): string =>
+      JSON.stringify({ ...report, notes: report.notes.filter((n) => !STAGELESS_NOTE.test(n)) });
+    const stagedNotes = faithfulReport.notes.filter((n) => STAGELESS_NOTE.test(n));
+    const stagelessNotes = stagelessReport.notes.filter((n) => STAGELESS_NOTE.test(n));
+    const frameProbes = [
+      ...(stageFieldsOf(faithful.skeletonText).length === 4
+        ? []
+        : ['the transcription states no full stage of its own, so taking it off measures nothing']),
+      ...(stagedNotes.length === 0 ? [] : [`the staged candidate carries ${stagedNotes.length} no-stage note(s)`]),
+      ...(stagelessNotes.length === 1 ? [] : [`the stageless candidate carries ${stagelessNotes.length} no-stage note(s), not 1`]),
+      ...(figuresOf(stagelessReport) === figuresOf(faithfulReport)
+        ? []
+        : ['a figure moved when the stage came off, so something in `check` reads the stage']),
+    ];
+    const frameHeld = frameProbes.length === 0;
+    say(
+      'C31_A_CANDIDATE_THAT_DECLARES_NO_STAGE_IS_FRAMED_BY_WHAT_IT_DRAWS_AND_SAYS_SO',
+      frameHeld,
+      probeDetail(
+        frameHeld,
+        frameProbes,
+        `the rung-3 transcription with its stage taken off reports the staged run's figures exactly ` +
+          `(${checkExtremes(stagelessReport).sets} set(s), whole-frame MAE ${checkExtremes(stagelessReport).frameMae.toFixed(3)}), ` +
+          `and one note: ${stagelessNotes[0] ?? '(none)'}`,
+        (count) => `${count} thing(s) the stageless candidate did not do:`,
+      ),
+      'a reader of a stageless report can ask what box stood in for the stage, and the honest answer is none — ' +
+        'so it is said, on that report and no other, and the figures are compared whole to show it is true',
     );
   }
   return bad;
@@ -10749,6 +10845,72 @@ function runStaticRigSuite(): number {
         'the same pair in a foreign file — so it has to be the runtime\'s fact and not a reading of it. The format ' +
         'side is checked too: a sixth colour timeline added to the catalogue and not to this table would be a pair ' +
         'neither refusal could see',
+    );
+  }
+
+  // --- S90: a stated absence beats a manifest's crop (issue #714) ----------
+  //
+  // AUTHORING §3.1 has said since #578 that `"width": null, "height": null`
+  // BEATS a manifest's crop, and nothing measured it: S36's probe has no
+  // manifest, so the crop was never there to be beaten. The articulated fixture
+  // states no stage of its own, so its crop IS its stage — which makes it the
+  // one rig here where the precedence decides a byte.
+  {
+    const root = mkdtempSync(join(tmpdir(), 'rigc-stageless-crop-'));
+    const crop = (JSON.parse(readFileSync(ARTICULATED.manifestPath, 'utf8')) as { crop?: { w?: unknown; h?: unknown } }).crop;
+    const stagedOpts: Options = { ...optsForFixture(ARTICULATED), outDir: join(root, 'staged') };
+    mkdirSync(stagedOpts.outDir, { recursive: true });
+    const stagelessOpts = stagelessOptionsFor(ARTICULATED, root, 'stageless');
+    const staged = compile(stagedOpts);
+    const stageless = compile(stagelessOpts);
+    const stagedHeader = (JSON.parse(staged.skeletonText) as { skeleton: Record<string, unknown> }).skeleton;
+    const gate = validate({
+      skeletonText: stageless.skeletonText,
+      atlasText: stageless.atlasText,
+      atlasDir: stagelessOpts.outDir,
+      declaredDurations: stageless.declaredDurations,
+      rig: stageless.rig,
+      profile: 'spine-html',
+    });
+    const bodyOf = (text: string): string => {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      delete parsed.skeleton;
+      return JSON.stringify(parsed);
+    };
+    const cropProbes = [
+      ...(typeof crop?.w === 'number' && typeof crop?.h === 'number'
+        ? []
+        : ['the fixture\'s manifest states no crop, so there is nothing for the absence to beat']),
+      ...(stagedHeader.width === crop?.w && stagedHeader.height === crop?.h
+        ? []
+        : [`the fixture's own build reads ${String(stagedHeader.width)}x${String(stagedHeader.height)}, not its crop — the crop is not its stage and this case measures no precedence`]),
+      ...(stageFieldsOf(stageless.skeletonText).length === 0
+        ? []
+        : [`the stageless build still carries [${stageFieldsOf(stageless.skeletonText).join(', ')}] — the crop won over the stated absence`]),
+      ...gate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 120)}`),
+      ...(gate.skipped.some((s) => s.assertion === 'A14_NO_FULL_FRAME_MESH') ? [] : ['A14 did not SKIP on the stageless build']),
+      ...(stageless.atlasText === staged.atlasText ? [] : ['the atlas moved, and the stage is not an atlas fact']),
+      ...(bodyOf(stageless.skeletonText) === bodyOf(staged.skeletonText)
+        ? []
+        : ['something outside the header moved between the two builds, and the stage is only a header fact']),
+    ];
+    const cropHeld = cropProbes.length === 0;
+    say(
+      'S90_A_STATED_ABSENCE_BEATS_THE_MANIFEST_CROP_AND_MOVES_NOTHING_BUT_THE_HEADER',
+      cropHeld,
+      probeDetail(
+        cropHeld,
+        cropProbes,
+        `the fixture's crop ${String(crop?.w)}x${String(crop?.h)} is its stage when the rig states none; with ` +
+          `\`"width": null, "height": null\` the header is {${Object.keys(JSON.parse(stageless.skeletonText).skeleton).join(', ')}}, ` +
+          `the gate ran ${gate.passed.length} assertion(s) with 0 failures under spine-html and A14 skipped, and ` +
+          'the atlas and every section below the header are the staged build\'s, byte for byte',
+        (count) => `${count} thing(s) the stated absence did not do against a crop:`,
+      ),
+      'the rig spec is where a claim about the skeleton is made and the manifest records what the art measured, ' +
+        'so a claim beats a record — AUTHORING §3.1 said so and no case put a crop in front of it. The body ' +
+        'comparison is the half that keeps the claim narrow: a stage is four header fields, so declaring none ' +
+        'may move those and nothing else',
     );
   }
   return bad;
@@ -35610,6 +35772,60 @@ function runPackerSuite(): number {
       'spoken about, so silence here is a verdict rather than an absence',
   );
 
+
+  // --- PK67: `--pack` never reads the stage (issue #714) -------------------
+  //
+  // The packer's inputs are a region name, a path and a size per part, so the
+  // stage is not reachable from it at all. Measured on the articulated fixture,
+  // whose crop is its stage: the same rig with the absence stated packs to the
+  // same atlas and the same page bytes, and the packed pair gates green with no
+  // box in its header.
+  {
+    const root = mkdtempSync(join(tmpdir(), 'rigc-pack-stageless-'));
+    const stagedResult = compile(optsForFixture(ARTICULATED));
+    const stagelessOpts = stagelessOptionsFor(ARTICULATED, root, 'packed');
+    const stagelessResult = compile(stagelessOpts);
+    const stagedPack = packAtlas(packInputsOf(stagedResult.images), { padding: DEFAULT_PADDING });
+    const stagelessPack = packAtlas(packInputsOf(stagelessResult.images), { padding: DEFAULT_PADDING });
+    for (const page of stagelessPack.pages) page.plate.writePng(join(stagelessOpts.outDir, page.name));
+    const stagedPagesDir = join(root, 'staged-pages');
+    mkdirSync(stagedPagesDir, { recursive: true });
+    for (const page of stagedPack.pages) page.plate.writePng(join(stagedPagesDir, page.name));
+    // Under `spine`: the question is validity. Under `spine-html` this pack is
+    // refused by A19 — its base plate is opaque on a shared page and
+    // A19's one exemption is the image that covers the STAGE, which this rig
+    // declares none of; that is A19's own sentence about the absence.
+    const packGate = gatePacked(stagelessOpts.outDir, stagelessPack.atlasText, stagelessResult, 'spine');
+    const packProbes = [
+      ...(stageFieldsOf(stagedResult.skeletonText).length === 4
+        ? []
+        : ['the fixture\'s own build declares no stage, so the pack is not compared against a staged one']),
+      ...(stageFieldsOf(stagelessResult.skeletonText).length === 0
+        ? []
+        : [`the stageless pack's header carries [${stageFieldsOf(stagelessResult.skeletonText).join(', ')}]`]),
+      ...(stagelessPack.atlasText === stagedPack.atlasText ? [] : ['the packed atlas moved with the stage']),
+      ...(stagelessPack.pages.length === stagedPack.pages.length ? [] : ['the page count moved with the stage']),
+      ...stagelessPack.pages
+        .filter((page) => !readFileSync(join(stagelessOpts.outDir, page.name)).equals(readFileSync(join(stagedPagesDir, page.name))))
+        .map((page) => `page "${page.name}" differs from the staged pack's`),
+      ...packGate.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 120)}`),
+    ];
+    const packHeld = packProbes.length === 0;
+    say(
+      'PK67_A_STAGELESS_RIG_PACKS_TO_THE_SAME_PAGES_AND_GATES_GREEN_WITH_NO_BOX',
+      packHeld,
+      probeDetail(
+        packHeld,
+        packProbes,
+        `${stagelessPack.pages.length} page(s) and ${stagelessPack.placements.length} placement(s), atlas and page bytes ` +
+          `identical to the staged pack's; the packed pair gated ${packGate.passed.length} assertion(s) with 0 ` +
+          'failures under spine, header carrying none of x/y/width/height',
+        (count) => `${count} thing(s) the stageless pack did not do:`,
+      ),
+      'issue #714 asks what `--pack` does without a stage, and the answer is structural — the packer never sees ' +
+        'one — so it is measured as bytes rather than restated as a property of its signature',
+    );
+  }
   return bad;
 }
 
@@ -39846,6 +40062,144 @@ function runCliSuite(): number {
     if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
 
+
+  // --- CLI91–CLI93: the stageless skeleton through the commands (issue #714) -
+  //
+  //   CLI91  ingest   exit 0, no BLOCK line, the absence written as the null pair
+  //   CLI92  render   one line saying the framing is the posed extent; frames
+  //                   byte-identical to the staged twin's; no such line on it
+  //   CLI93  preview  the same line for the player; none on the staged twin
+  //
+  // The twin is the articulated fixture compiled twice, once as it is (its crop
+  // is its stage) and once stating the absence, so the two artifacts differ in
+  // the header and nowhere else (S90 measures that).
+  {
+    const say = (name: string, ok: boolean, detail: string, why: string): void => {
+      bad += reportCase(name, ok, detail, why);
+    };
+    const root = mkdtempSync(join(tmpdir(), 'rigc-cli-stageless-'));
+    const stagedOpts: Options = { ...optsForFixture(ARTICULATED), outDir: join(root, 'staged') };
+    mkdirSync(stagedOpts.outDir, { recursive: true });
+    const stagelessOpts = stagelessOptionsFor(ARTICULATED, root, 'stageless');
+    for (const opts of [stagedOpts, stagelessOpts]) {
+      const result = compile(opts);
+      writeFileSync(join(opts.outDir, 'skeleton.json'), result.skeletonText);
+      writeFileSync(join(opts.outDir, 'skeleton.atlas'), result.atlasText);
+    }
+    const outputLines = (stdout: string): string[] => stdout.split('\n');
+    const framingLines = (stdout: string): string[] => outputLines(stdout).filter((line) => /^ {2}\.\. {4}framing /.test(line));
+
+    // CLI91
+    const specs = join(root, 'specs');
+    const ingested = runCli(['ingest', join(stagelessOpts.outDir, 'skeleton.json'), '--out', specs, '--art', 'none']);
+    const writtenRig = existsSync(join(specs, 'rig.json'))
+      ? ((JSON.parse(readFileSync(join(specs, 'rig.json'), 'utf8')) as Record<string, unknown>).skeleton as Record<string, unknown> | undefined)
+      : undefined;
+    const blockLines = outputLines(ingested.stdout).filter((line) => /^ {2}BLOCK /.test(line));
+    const ingestProbes = [
+      ...(stageFieldsOf(readFileSync(join(stagelessOpts.outDir, 'skeleton.json'), 'utf8')).length === 0
+        ? []
+        : ['the stageless build carries a stage field, so ingest was not handed the shape this case is about']),
+      ...(ingested.status === 0 ? [] : [`rigc ingest exited ${String(ingested.status)}: ${ingested.stderr.slice(0, 160)}`]),
+      ...blockLines.map((line) => `a blocker was printed: ${line.trim().slice(0, 140)}`),
+      ...(writtenRig?.width === null && writtenRig?.height === null
+        ? []
+        : [`the written rig spec's skeleton is ${JSON.stringify(writtenRig)}, not the stated absence`]),
+    ];
+    const ingestHeld = ingestProbes.length === 0;
+    say(
+      'CLI91_INGEST_OF_A_STAGELESS_SKELETON_EXITS_ZERO_AND_WRITES_THE_ABSENCE',
+      ingestHeld,
+      probeDetail(
+        ingestHeld,
+        ingestProbes,
+        `rigc ingest on the stageless build exited 0 with no BLOCK line, and rig.json states skeleton ` +
+          `${JSON.stringify(writtenRig)}`,
+        (count) => `${count} thing(s) the command did not do:`,
+      ),
+      'the exit code is what a census counts, so the absence has to leave it at 0 at the command and not only in ' +
+        'the function IG06 calls — a blocker there was the exam\'s round trip failing on every production file',
+    );
+
+    // CLI92
+    const renderedStaged = runCli(['render', '--candidate', stagedOpts.outDir, '--out', join(root, 'render-staged')]);
+    const renderedStageless = runCli(['render', '--candidate', stagelessOpts.outDir, '--out', join(root, 'render-stageless')]);
+    const frameFiles = (dir: string): string[] =>
+      existsSync(dir)
+        ? readdirSync(dir, { recursive: true })
+            .map(String)
+            .filter((file) => file.endsWith('.png'))
+            .sort()
+        : [];
+    const stagedFrames = frameFiles(join(root, 'render-staged'));
+    const stagelessFrames = frameFiles(join(root, 'render-stageless'));
+    const renderProbes = [
+      ...(renderedStaged.status === 0 && renderedStageless.status === 0
+        ? []
+        : [`render exited ${String(renderedStaged.status)} (staged) and ${String(renderedStageless.status)} (stageless)`]),
+      ...(framingLines(renderedStageless.stdout).length === 1
+        ? []
+        : [`the stageless render printed ${framingLines(renderedStageless.stdout).length} framing line(s), not 1`]),
+      ...framingLines(renderedStageless.stdout)
+        .filter((line) => !line.includes('posed extent') || !line.includes('declares no stage'))
+        .map((line) => `the framing line does not say the posed extent stands for no stage: ${line.trim()}`),
+      ...(framingLines(renderedStaged.stdout).length === 0 ? [] : ['the staged render printed a framing line too']),
+      ...(stagedFrames.length > 0 && stagedFrames.join('|') === stagelessFrames.join('|')
+        ? []
+        : [`the two renders wrote ${stagedFrames.length} and ${stagelessFrames.length} frame file(s) under different names`]),
+      ...stagedFrames
+        .filter((file) => existsSync(join(root, 'render-stageless', file)))
+        .filter((file) => !readFileSync(join(root, 'render-staged', file)).equals(readFileSync(join(root, 'render-stageless', file))))
+        .slice(0, 3)
+        .map((file) => `${file} differs between the staged and the stageless render`),
+    ];
+    const renderHeld = renderProbes.length === 0;
+    say(
+      'CLI92_RENDER_OF_A_STAGELESS_SKELETON_SAYS_IT_FRAMES_THE_POSED_EXTENT_AND_DRAWS_THE_SAME_FRAMES',
+      renderHeld,
+      probeDetail(
+        renderHeld,
+        renderProbes,
+        `${stagedFrames.length} frame file(s), byte-identical between the staged and the stageless render; the ` +
+          `stageless run printed "${framingLines(renderedStageless.stdout)[0]?.trim() ?? ''}", the staged run no such line`,
+        (count) => `${count} thing(s) the stageless render did not do:`,
+      ),
+      'issue #714 asks the framing to label the animated extent where a stage is absent, never a default. The ' +
+        'frames are compared byte for byte because the label is only honest if nothing stood in for the stage — ' +
+        'and the staged twin is held to printing nothing, so its output stays what it always was',
+    );
+
+    // CLI93
+    const previewStaged = runCli(['preview', '--candidate', stagedOpts.outDir, '--out', join(root, 'staged.html')]);
+    const previewStageless = runCli(['preview', '--candidate', stagelessOpts.outDir, '--out', join(root, 'stageless.html')]);
+    const previewProbes = [
+      ...(previewStaged.status === 0 && previewStageless.status === 0
+        ? []
+        : [`preview exited ${String(previewStaged.status)} (staged) and ${String(previewStageless.status)} (stageless)`]),
+      ...(framingLines(previewStageless.stdout).length === 1
+        ? []
+        : [`the stageless preview printed ${framingLines(previewStageless.stdout).length} framing line(s), not 1`]),
+      ...framingLines(previewStageless.stdout)
+        .filter((line) => !line.includes('posed extent') || !line.includes('declares no stage'))
+        .map((line) => `the framing line does not say the posed extent stands for no stage: ${line.trim()}`),
+      ...(framingLines(previewStaged.stdout).length === 0 ? [] : ['the staged preview printed a framing line too']),
+    ];
+    const previewHeld = previewProbes.length === 0;
+    say(
+      'CLI93_PREVIEW_OF_A_STAGELESS_SKELETON_SAYS_THE_PLAYER_FRAMES_THE_POSED_EXTENT',
+      previewHeld,
+      probeDetail(
+        previewHeld,
+        previewProbes,
+        `the stageless preview printed "${framingLines(previewStageless.stdout)[0]?.trim() ?? ''}", the staged one no such line`,
+        (count) => `${count} thing(s) the stageless preview did not do:`,
+      ),
+      'the page states no viewport, so the Spine Web Player frames the animation it plays by its own posed ' +
+        'bounds on every skeleton; on one with no stage that has to be said rather than left for a reader to ' +
+        'guess which rectangle the page used',
+    );
+    rmSync(root, { recursive: true, force: true });
+  }
   return bad;
 }
 
@@ -54863,14 +55217,28 @@ function runIngestSuite(): number {
   );
 
   // --- IG06: the stage, which is the one value that is not in a skeleton -----
+  //
+  // Four states, and #714 moved one of them: a header with NONE of the four
+  // fields — the shape issue #714 counts on 48 of 48 production exports — is
+  // carried as the absence it is (`"width": null, "height": null`) with no
+  // finding, where it used to be a blocker that only a caller's number could
+  // clear. Half a stage (an origin with no extent) is still the blocker, because
+  // the rig spec cannot hold it; a supplied one is still the judgement.
+  const bareSource = JSON.parse(trips.get('ingest_probe')!.a.skeletonText) as Record<string, unknown>;
+  const bareHeader = bareSource.skeleton as Record<string, unknown>;
+  const boxStated = ['x', 'y', 'width', 'height'].filter((field) => typeof bareHeader[field] === 'number');
+  for (const field of ['x', 'y', 'width', 'height']) delete bareHeader[field];
   const stripped = JSON.parse(trips.get('ingest_probe')!.a.skeletonText) as Record<string, unknown>;
   const header = stripped.skeleton as Record<string, unknown>;
   delete header.width;
   delete header.height;
+  const carried = ingest(bareSource, { name: 'p', art: 'none', source: 's.json', version: '0' });
   const withoutStage = ingest(stripped, { name: 'p', art: 'none', source: 's.json', version: '0' });
   const supplied = { x: 1, y: 2, width: 64, height: 48 };
-  const withStage = ingest(stripped, { name: 'p', art: 'none', source: 's.json', version: '0', stage: supplied });
+  const withStage = ingest(bareSource, { name: 'p', art: 'none', source: 's.json', version: '0', stage: supplied });
   const blockerless = trips.get('ingest_probe')!.findings.filter((f) => f.code === 'NO_STAGE');
+  const carriedFindings = carried.findings.filter((f) => f.code === 'NO_STAGE');
+  const carriedHeader = (carried.rig.skeleton ?? {}) as Record<string, unknown>;
   const refused = withoutStage.findings.filter((f) => f.code === 'NO_STAGE' && f.kind === 'blocker');
   const judged = withStage.findings.filter((f) => f.code === 'NO_STAGE' && f.kind === 'judgement');
   const wrote = withStage.rig.skeleton as Record<string, unknown> | undefined;
@@ -54882,10 +55250,27 @@ function runIngestSuite(): number {
   // fires and `width` survives into the rig, it printed `no --stage: 1 NO_STAGE
   // blocker and no width written` on the run where one was.
   const stageProbes = [
-    ...(refused.length === 1 ? [] : [`no --stage raised ${refused.length} NO_STAGE blocker(s), and this skeleton wants exactly 1`]),
+    ...(boxStated.length === 4
+      ? []
+      : [`the probe's own build states ${boxStated.length} of the four stage fields, so no state below is a reading of anything`]),
+    ...(carriedFindings.length === 0
+      ? []
+      : [`a header with no stage field at all raised ${carriedFindings.length} NO_STAGE finding(s) — ` +
+          `${carriedFindings.map((f) => `${f.kind}: ${f.detail.slice(0, 80)}`).join('; ')} — and is owed none`]),
+    ...(carriedHeader.width === null && carriedHeader.height === null
+      ? []
+      : [`a header with no stage field at all was written as width ${JSON.stringify(carriedHeader.width)}, height ` +
+          `${JSON.stringify(carriedHeader.height)} rather than the stated absence, null and null`]),
+    ...('x' in carriedHeader || 'y' in carriedHeader
+      ? [`the carried absence also wrote an origin: ${JSON.stringify(carriedHeader)}`]
+      : []),
+    ...(refused.length === 1 ? [] : [`an origin with no extent raised ${refused.length} NO_STAGE blocker(s), and this skeleton wants exactly 1`]),
+    ...(refused.every((f) => f.detail.includes('"x"') && f.detail.includes('"y"'))
+      ? []
+      : [`the half-stage blocker does not name the fields the header states: ${refused.map((f) => f.detail.slice(0, 100)).join('; ')}`]),
     ...(wroteWithout === undefined
       ? []
-      : [`no --stage still wrote a stage into the rig: width ${JSON.stringify(wroteWithout)} — a refusal writes nothing plausible`]),
+      : [`an origin with no extent still wrote a stage into the rig: width ${JSON.stringify(wroteWithout)} — a refusal writes nothing plausible`]),
     ...(judged.length === 1 ? [] : [`--stage raised ${judged.length} NO_STAGE judgement(s), and this skeleton wants exactly 1`]),
     ...(withStage.findings.every((f) => f.kind !== 'blocker')
       ? []
@@ -54901,22 +55286,23 @@ function runIngestSuite(): number {
   ];
   const stageHeld = stageProbes.length === 0;
   say(
-    'IG06_A_SKELETON_WITH_NO_STAGE_IS_A_BLOCKER_AND_A_SUPPLIED_ONE_IS_A_JUDGEMENT',
+    'IG06_A_SKELETON_WITH_NO_STAGE_IS_CARRIED_HALF_A_STAGE_IS_A_BLOCKER_AND_A_SUPPLIED_ONE_IS_A_JUDGEMENT',
     stageHeld,
     probeDetail(
       stageHeld,
       stageProbes,
-      `no --stage: ${refused.length} NO_STAGE blocker and no width written. --stage ${JSON.stringify(supplied)}: ` +
-        `${judged.length} NO_STAGE judgement, header ${JSON.stringify(wrote)}. A skeleton that HAS a stage: ` +
-        `${blockerless.length} NO_STAGE finding(s)`,
-      (count) => `${count} of the three states the stage is read in did not hold:`,
+      `no stage field at all: ${carriedFindings.length} NO_STAGE finding(s), rig skeleton ` +
+        `${JSON.stringify(carriedHeader)}. An origin with no extent: ${refused.length} NO_STAGE blocker and no ` +
+        `width written. --stage ${JSON.stringify(supplied)}: ${judged.length} NO_STAGE judgement, header ` +
+        `${JSON.stringify(wrote)}. A skeleton that HAS a stage: ${blockerless.length} NO_STAGE finding(s)`,
+      (count) => `${count} of the four states the stage is read in did not hold:`,
     ),
-    'the one value a decompiler cannot read out of a skeleton, and the one that costs least to get wrong — ' +
-      'this sentence said `diff` has no skeleton-header measure at all until #594 read the report: since #578 it ' +
-      'carries `stage_present` and `stage_box`, and they are `(reported)`, so nothing on the ladder consults them ' +
-      'and an absurd box is green everywhere a rung is scored. Three-sided because the middle state is the trap: ' +
-      'recording it as a JUDGEMENT rather than silently accepting the caller\'s number is the whole difference ' +
-      'between a transcription and an invention',
+    'the one value a decompiler cannot read out of a skeleton. Until #714 its absence was a blocker, so the only ' +
+      'road through a stageless file was a caller\'s number — the invention this module exists to refuse, moved ' +
+      'one flag earlier. The absence is a claim the rig spec can state (#578), so it is carried and nothing is ' +
+      'recorded: nothing was lost and nobody decided. Four-sided because two of the states are traps: an origin ' +
+      'with no extent looks like "no stage" and is not something the spec can hold, and a supplied box recorded ' +
+      'as anything but a JUDGEMENT is the whole difference between a transcription and an invention',
   );
 
   // --- IG07: the other judgement, and the one thing rigc re-derives ----------
@@ -55904,7 +56290,7 @@ function runIngestSuite(): number {
     // worth having: a second restatement of the stage-less contract anywhere in
     // this file is two gates that have to agree.
     const suiteSource = readFileSync(join(import.meta.dir, 'selftest.ts'), 'utf8');
-    const IG06_NAME = 'IG06_A_SKELETON_WITH_NO_STAGE_IS_A_BLOCKER_AND_A_SUPPLIED_ONE_IS_A_JUDGEMENT';
+    const IG06_NAME = 'IG06_A_SKELETON_WITH_NO_STAGE_IS_CARRIED_HALF_A_STAGE_IS_A_BLOCKER_AND_A_SUPPLIED_ONE_IS_A_JUDGEMENT';
     const ig06At = suiteSource.indexOf(`// --- IG06:`);
     const ig07At = suiteSource.indexOf(`// --- IG07:`);
     const ig06Block = ig06At >= 0 && ig07At > ig06At ? suiteSource.slice(ig06At, ig07At) : '';
@@ -55915,7 +56301,8 @@ function runIngestSuite(): number {
     const stageReads = [...suiteSource.matchAll(NO_STAGE_READ)].map((m) => m.index ?? -1);
     const outside = stageReads.filter((at) => at < ig06At || at >= ig07At);
     const IG06_CLAUSES: ReadonlyArray<{ what: string; test: RegExp }> = [
-      { what: 'the blocker with no --stage', test: /kind === 'blocker'/ },
+      { what: 'the absence carried with no finding', test: /carriedFindings\.length === 0/ },
+      { what: 'the blocker on half a stage', test: /kind === 'blocker'/ },
       { what: 'the judgement with one', test: /kind === 'judgement'/ },
       { what: 'a rig that HAS a stage recording neither', test: /blockerless/ },
     ];
@@ -58888,6 +59275,121 @@ function runIngestSuite(): number {
     );
   }
 
+
+  // --- IG71: a stageless skeleton comes back byte for byte (issue #714) -----
+  //
+  // What IG06 records about the absence is only worth having if the rebuild is
+  // the file that was read. The exam's byte round-trip subject was 0 of 42 on
+  // this alone, so the equality is measured here on the shape it counted — a
+  // header with none of the four fields — and `diff` is asked the question the
+  // card put to it: both sides absent is agreement, `stage_present` 1/1, and
+  // `stage_box` has no two boxes to compare.
+  {
+    const probe = candidates.find((c) => c.name === 'ingest_probe')!;
+    const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-stageless-'));
+    const dirA = join(root, 'A');
+    const dirB = join(root, 'B');
+    for (const dir of [dirA, dirB]) mkdirSync(dir, { recursive: true });
+    const built = compile({
+      rigPath: probe.rigPath,
+      motionPath: probe.motionPath,
+      outDir: dirA,
+      manifestPath: probe.manifestPath,
+      imagesDir: probe.imagesDir,
+    });
+    writeFileSync(join(dirA, 'skeleton.atlas'), built.atlasText);
+    const sourceText = withoutStageBox(built.skeletonText);
+    const read = ingest(JSON.parse(sourceText) as Record<string, unknown>, {
+      name: 'p',
+      art: 'none',
+      source: 's.json',
+      version: '0',
+    });
+    writeFileSync(join(root, 'rig.json'), `${JSON.stringify(read.rig, null, 2)}\n`);
+    writeFileSync(join(root, 'motion.json'), `${JSON.stringify(read.motion, null, 2)}\n`);
+    let rebuilt: CompileResult | null = null;
+    let refusedWith = '';
+    try {
+      rebuilt = compile({
+        rigPath: join(root, 'rig.json'),
+        motionPath: join(root, 'motion.json'),
+        outDir: dirB,
+        atlasInPath: join(dirA, 'skeleton.atlas'),
+      });
+    } catch (err) {
+      refusedWith = err instanceof Error ? err.message : String(err);
+    }
+    const rebuiltGate =
+      rebuilt === null
+        ? null
+        : validate({
+            skeletonText: rebuilt.skeletonText,
+            atlasText: rebuilt.atlasText,
+            atlasDir: dirA,
+            declaredDurations: rebuilt.declaredDurations,
+            rig: rebuilt.rig,
+            // The probe is a validity probe — dark colours, a clipping
+            // attachment — so the renderer's rulebook refuses it staged or not;
+            // A14's SKIP on a stageless build is S36's measurement.
+            profile: 'spine',
+          });
+    // The probe is a coverage probe that no suite gates, so the rebuild is held
+    // to the verdicts of the STAGED source it came from rather than to green:
+    // taking the stage off may move no assertion either way.
+    const stagedGate = validate({
+      skeletonText: built.skeletonText,
+      atlasText: built.atlasText,
+      atlasDir: dirA,
+      declaredDurations: built.declaredDurations,
+      rig: built.rig,
+      profile: 'spine',
+    });
+    const verdictsOf = (gate: ReturnType<typeof validate>): string =>
+      JSON.stringify({
+        passed: [...gate.passed].sort(),
+        failed: gate.failures.map((f) => `${f.assertion} ${f.detail}`).sort(),
+        skipped: gate.skipped.map((sk) => sk.assertion).sort(),
+      });
+    const report = rebuilt === null ? null : diffSkeletons(JSON.parse(sourceText), JSON.parse(rebuilt.skeletonText));
+    const present = report?.header.measures.find((m) => m.id === 'skeleton.stage_present');
+    const box = report?.header.measures.find((m) => m.id === 'skeleton.stage_box');
+    const blockers = read.findings.filter((f) => f.kind === 'blocker');
+    const tripProbes = [
+      ...(stageFieldsOf(built.skeletonText).length === 4
+        ? []
+        : ['the probe\'s own build declares no full stage, so taking it off tests nothing']),
+      ...blockers.map((f) => `ingest recorded a blocker: ${f.code} — ${f.detail.slice(0, 120)}`),
+      ...(rebuilt === null ? [`the specs ingest wrote were refused by build: ${refusedWith.slice(0, 200)}`] : []),
+      ...(rebuilt !== null && rebuilt.skeletonText !== sourceText
+        ? ['the rebuild is not the stageless source byte for byte']
+        : []),
+      ...(rebuiltGate === null || verdictsOf(rebuiltGate) === verdictsOf(stagedGate)
+        ? []
+        : ['the rebuild\'s verdicts differ from the staged source\'s, so the absence moved an assertion']),
+      ...(report === null || (present?.matched === 1 && present.total === 1)
+        ? []
+        : [`stage_present read ${present ? `${present.matched}/${present.total}` : 'nothing'}, not 1/1`]),
+      ...(report === null || box?.total === 0 ? [] : [`stage_box read ${box ? `${box.matched}/${box.total}` : 'nothing'}, not 0/0`]),
+    ];
+    const tripHeld = tripProbes.length === 0;
+    say(
+      'IG71_A_STAGELESS_SKELETON_INGESTS_WITH_NO_BLOCKER_AND_REBUILDS_BYTE_FOR_BYTE',
+      tripHeld,
+      probeDetail(
+        tripHeld,
+        tripProbes,
+        `ingest_probe's build with x/y/width/height taken off: ${read.findings.length} finding(s), 0 blockers; ` +
+          `build(ingest(A)) === A over ${sourceText.length} bytes; under spine the rebuild's ${rebuiltGate?.passed.length ?? 0} ` +
+          `pass(es), ${rebuiltGate?.failures.length ?? 0} failure(s) and ${rebuiltGate?.skipped.length ?? 0} skip(s) are the ` +
+          `staged source's own; diff reads stage_present ${present?.matched}/${present?.total} ` +
+          `and stage_box ${box?.matched}/${box?.total} — ${box?.note ?? 'no note'}`,
+        (count) => `${count} thing(s) the stageless round trip did not do:`,
+      ),
+      'issue #714: every production export of one corpus declares no stage, so a round trip that needed a caller\'s ' +
+        'box was a round trip that could only succeed by inventing one. Byte identity is the claim because it is ' +
+        'the only one strong enough — a rebuild with a plausible stage would pass every figure a rung reads',
+    );
+  }
   return bad;
 }
 
