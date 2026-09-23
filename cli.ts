@@ -623,8 +623,30 @@ function meshFit(m: CompileResult['meshes'][number]): string {
   // why, in the place the figures stood, and prints no figure.
   if (m.fitWithheld !== undefined) return `  fit not measured: ${m.fitWithheld}. ${PAGE_GRID_UNLOCATED}`;
   if (m.coverage === undefined) return '';
-  const hole = m.holePixels ? `, enclosing ${m.holePixels}px of hole` : '';
-  return `  covers ${(m.coverage * 100).toFixed(2)}% of the art, reaching ${m.overshoot?.toFixed(2) ?? '?'}px past it${hole}`;
+  // A count of the plate's own cells, so on a `scale:` page it is texels and
+  // says so rather than borrowing the overshoot's unit beside it (issue #762).
+  const hole = m.holePixels ? `, enclosing ${m.holePixels}${m.pageScale === undefined ? 'px' : ' texel(s)'} of hole` : '';
+  return `  covers ${(m.coverage * 100).toFixed(2)}% of the art, reaching ${m.overshoot?.toFixed(2) ?? '?'}px past it${meshFitGrid(m)}${hole}`;
+}
+
+/**
+ * The grid a fit was taken on, when it is not the drawing's own (issue #762).
+ *
+ * The overshoot is stated in the drawing's pixels on every route — the unit an
+ * attachment's size is in — and on a page that declares a `scale:` other than
+ * 1 it was measured on the page's texels and divided by that scale. So it
+ * carries the coarser grid's step: on `scale: 0.5` a figure moves in steps of
+ * 2.00px of the drawing, and it need not equal the figure the page it was
+ * packed from reads except where the distance falls on whole texels. Said
+ * beside the figure, and nothing at all on a loose part or a page at scale 1,
+ * where the line is the one it always was.
+ */
+function meshFitGrid(m: CompileResult['meshes'][number]): string {
+  if (m.pageScale === undefined) return '';
+  return (
+    ` (the drawing's pixels, measured on the page's texels at scale: ${m.pageScale} — a texel is ` +
+    `${(1 / m.pageScale).toFixed(2)}px of the drawing)`
+  );
 }
 
 /**

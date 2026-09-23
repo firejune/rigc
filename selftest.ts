@@ -26967,6 +26967,96 @@ function runContourMeshSuite(): number {
       'and not one of the three was the thing to change',
   );
 
+  // --- DP08–DP09: the depth sheet's grid on a `scale:` page, and off one (#762)
+  //
+  // PKR57–PKR59 hold what a `scale:` page reads; these hold the two refusals
+  // the sheet's grid decides. A sheet cut to the art on a `scale:` page is
+  // refused for the vertices it misses, and names the pixel of the sheet it
+  // missed at — which is the same pixel the declared-size page names, because
+  // the lattice sits at the same fraction of the window on both. And off a
+  // `scale:` page the size refusal is the sentence it always was.
+  {
+    const packs = halvedMeshPacks();
+    if (typeof packs === 'string') {
+      console.log(`  SKIP  the sheet-grid refusal cases (DP08, DP09) did not run: ${packs}.`);
+    } else {
+      const refusalOn = (rig: string, images: string, atlasIn: string | null): string | null => {
+        try {
+          compile({
+            rigPath: rig,
+            motionPath: packs.motionPath,
+            outDir: join(packs.dir, 'depth-grid'),
+            imagesDir: images,
+            ...(atlasIn === null ? {} : { atlasInPath: atlasIn }),
+          });
+          return null;
+        } catch (err) {
+          return err instanceof Error ? err.message : String(err);
+        }
+      };
+      // DP08 — the coverage refusal names the sheet's pixel, the declared-size page's pixel.
+      const onDeclared = refusalOn(packs.rigs.tightSheet, packs.parts, packs.declared);
+      const onScaled = refusalOn(packs.rigs.tightSheet, packs.parts, packs.honest);
+      const declaredAt = onDeclared === null ? null : /does not cover (\d+) of the mesh's (\d+) vertices — the first is vertex (\d+) at \(([^)]*)\)\./.exec(onDeclared);
+      const scaledAt =
+        onScaled === null
+          ? null
+          : /does not cover (\d+) of the mesh's (\d+) vertices — the first is vertex (\d+) at \(([^)]*)\) in the page's texels, pixel \(([^)]*)\) of the drawing-sized sheet\./.exec(onScaled);
+      const coverProbes = [
+        ...(declaredAt === null ? [`the declared-size page does not refuse the tight sheet by coverage: ${String(onDeclared).slice(0, 200)}`] : []),
+        ...(scaledAt === null ? [`the \`scale: ${packs.ratio}\` page does not refuse it by coverage at a named sheet pixel: ${String(onScaled).slice(0, 260)}`] : []),
+        ...(declaredAt !== null && scaledAt !== null && declaredAt.slice(1, 4).join() !== scaledAt.slice(1, 4).join()
+          ? [`the two pages miss different vertices: ${declaredAt.slice(1, 4).join('/')} against ${scaledAt.slice(1, 4).join('/')}`]
+          : []),
+        ...(declaredAt !== null && scaledAt !== null && declaredAt[4] !== scaledAt[5]
+          ? [`the \`scale:\` page names sheet pixel (${scaledAt[5]}) where the declared-size page's vertex is at (${declaredAt[4]})`]
+          : []),
+      ];
+      const coverHeld = coverProbes.length === 0;
+      say(
+        'DP08_A_SHEET_CUT_TO_THE_ART_ON_A_SCALE_PAGE_IS_REFUSED_AT_THE_SHEET_PIXEL_THE_DECLARED_PAGE_NAMES',
+        coverHeld,
+        probeDetail(
+          coverHeld,
+          coverProbes,
+          `both pages refuse ${declaredAt?.[1] ?? '?'} of ${declaredAt?.[2] ?? '?'} vertices, first vertex ` +
+            `${declaredAt?.[3] ?? '?'}: at (${declaredAt?.[4] ?? '?'}) on the declared-size page, and at ` +
+            `(${scaledAt?.[4] ?? '?'}) texels = sheet pixel (${scaledAt?.[5] ?? '?'}) on \`scale: ${packs.ratio}\``,
+        ),
+        'the coverage footprint is taken on the sheet at the drawing\'s position, so a vertex the sheet misses is ' +
+          'missed at a pixel of the file the author made — and a position quoted in the page\'s texels alone would ' +
+          'send them to the wrong pixel of it',
+      );
+
+      // DP09 — a route with no `scale:` keeps the sentence it had, word for word.
+      const loose = refusalOn(packs.rigs.texelSheet, packs.parts, null);
+      const declared = refusalOn(packs.rigs.texelSheet, packs.parts, packs.declared);
+      const sheet = readPngInfo(join(packs.parts, 'lattice_texels.png'));
+      const part = readPngInfo(join(packs.parts, 'lattice.png'));
+      const sentence =
+        `the depth map "lattice_texels.png" is ${sheet.width}x${sheet.height} and the part is ${part.width}x${part.height}. ` +
+        "It is sampled in the part's own pixel grid, so the two are the same size — resample the sheet, or point at the " +
+        'one that was made for this part.';
+      const plainProbes = [
+        ...[
+          ['the loose parts', loose],
+          ['the declared-size page', declared],
+        ].flatMap(([label, got]) =>
+          got !== null && got.endsWith(`: ${sentence}`) ? [] : [`${label} refused with ${JSON.stringify(String(got).slice(0, 260))}`],
+        ),
+      ];
+      const plainHeld = plainProbes.length === 0;
+      say(
+        'DP09_OFF_A_SCALE_PAGE_THE_SHEET_SIZE_REFUSAL_IS_THE_SENTENCE_IT_WAS',
+        plainHeld,
+        probeDetail(plainHeld, plainProbes, `both routes refuse with: ${sentence}`),
+        'the scale clause is for the one route where the part has two grids; on the loose parts and on a page at ' +
+          'scale 1 the texels are the drawing, and a sentence about a ratio of 1 would be a sentence about nothing',
+      );
+    }
+    if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
+  }
+
   return bad;
 }
 
@@ -38036,6 +38126,134 @@ function runAtlasReaderSuite(): number | null {
     if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
 
+  // --- PKR57–PKR59: a sheet made at the art's size, on a `scale:` page (#762) ---
+  //
+  // A depth sheet or a soft mask is read "in the part's own pixel grid", and on
+  // a page that declares a `scale:` that grid was the page's texels — so the
+  // sheet made beside the art, at the size the loose `image` is, was refused
+  // on the very restatement `A06` prints, and a texel-sized one was accepted.
+  // The part's grid is now the drawing's on every route: the sheet is compared
+  // to `CompiledImage.width/height` and read at each vertex's texel position
+  // over the stated scale. Every size below is read off a file or the atlas.
+  {
+    const packs = halvedMeshPacks();
+    if (typeof packs === 'string') {
+      console.log(`  SKIP  the sheet-grid cases (PKR57, PKR58, PKR59) did not run: ${packs}.`);
+    } else {
+      const compileOn = (rig: string, atlasIn: string): CompileResult | string => {
+        try {
+          return compile({ rigPath: rig, motionPath: packs.motionPath, outDir: join(packs.dir, 'sheet'), imagesDir: packs.parts, atlasInPath: atlasIn });
+        } catch (err) {
+          return err instanceof Error ? err.message : String(err);
+        }
+      };
+      const pages = [
+        ['the declared-size page', packs.declared],
+        [`\`scale: ${packs.ratio}\``, packs.honest],
+        [`\`scale: ${1 / packs.ratio}\``, packs.twice],
+      ] as const;
+      const latticeOf = (result: CompileResult | string): CompileResult['meshes'][number] | string =>
+        typeof result === 'string' ? result : (result.meshes.find((m) => m.slot === 'lattice') ?? 'no lattice mesh was compiled');
+
+      // PKR57 — the depth sheet at the art's size is read on every page, and reads the same surface.
+      const depthOf = (mesh: CompileResult['meshes'][number] | string): string =>
+        typeof mesh === 'string'
+          ? `REFUSED: ${mesh.slice(0, 200)}`
+          : mesh.depth === undefined
+            ? 'no depth block'
+            : JSON.stringify({ digest: mesh.depth.digest, range: mesh.depth.range, ceiling: mesh.depth.ceiling });
+      const depths = pages.map(([label, atlas]) => [label, depthOf(latticeOf(compileOn(packs.rigs.measured, atlas)))] as const);
+      const depthProbes = [
+        ...depths.filter(([, read]) => read.startsWith('REFUSED') || read === 'no depth block').map(([label, read]) => `${label}: ${read}`),
+        ...depths
+          .slice(1)
+          .filter(([, read]) => read !== depths[0][1])
+          .map(([label, read]) => `${label} reads the sheet as ${read.slice(0, 240)} where the declared-size page reads ${depths[0][1].slice(0, 240)}`),
+      ];
+      const depthHeld = depthProbes.length === 0;
+      say(
+        'PKR57_A_DEPTH_SHEET_AT_THE_ARTS_SIZE_READS_THE_SAME_SURFACE_ON_A_SCALE_PAGE',
+        depthHeld,
+        probeDetail(
+          depthHeld,
+          depthProbes,
+          `the grid's depth block — digest, sampled range and turn ceiling — is ${depths[0][1].slice(0, 160)}… on all ` +
+            `${depths.length} pages, the sheet made at the art's size`,
+        ),
+        'one rig spec resolves against loose parts and a pack of the same parts with no edit, and a sheet is part ' +
+          'of the spec. The lattice sits at the same fractions of the window on every page, so read at the drawing\'s ' +
+          'position it samples the same pixels of the sheet — which is what makes the whole block comparable, and ' +
+          'what a sheet read at the texel position (the left half of it on `scale: 0.5`) fails',
+      );
+
+      // PKR58 — a sheet at the page's texel size is refused on that page, by the ratio and every size in play.
+      const declaredImage = (() => {
+        const result = compileOn(packs.rigs.measured, packs.declared);
+        return typeof result === 'string' ? null : (result.images.find((img) => img.region === 'lattice') ?? null);
+      })();
+      const texelRegion = parseAtlasText(readFileSync(packs.honest, 'utf8')).regions.find((r) => r.name === 'lattice') ?? null;
+      const texelSheet = readPngInfo(join(packs.parts, 'lattice_texels.png'));
+      const texelRefusal = compileOn(packs.rigs.texelSheet, packs.honest);
+      const sheetProbes =
+        declaredImage === null || texelRegion === null
+          ? ['the lattice was not found on the declared-size page or in the `scale:` atlas']
+          : (() => {
+              const drawing = `${declaredImage.width}x${declaredImage.height}`;
+              const texels = `${texelRegion.originalWidth}x${texelRegion.originalHeight}`;
+              const wants = [
+                `the depth map "lattice_texels.png" is ${texelSheet.width}x${texelSheet.height} and the part is a ${drawing} drawing`,
+                `${texels} texels on a page that declares scale: ${packs.ratio}`,
+                `a texel ${1 / packs.ratio}px of the drawing`,
+                `so the sheet is ${drawing}, the size of the loose art`,
+              ];
+              return typeof texelRefusal !== 'string'
+                ? [`a ${texelSheet.width}x${texelSheet.height} sheet was accepted for a ${drawing} drawing on the \`scale: ${packs.ratio}\` page`]
+                : wants.filter((want) => !texelRefusal.includes(want)).map((want) => `the refusal does not say ${JSON.stringify(want)}: ${texelRefusal.slice(0, 260)}`);
+            })();
+      const sheetHeld = sheetProbes.length === 0;
+      say(
+        'PKR58_A_SHEET_AT_THE_PAGES_TEXEL_SIZE_IS_REFUSED_NAMING_THE_SCALE_AND_THE_DRAWING_IT_WOULD_FIT',
+        sheetHeld,
+        probeDetail(
+          sheetHeld,
+          sheetProbes,
+          `refused: ${typeof texelRefusal === 'string' ? texelRefusal.slice(texelRefusal.indexOf('the depth map')) : ''}`,
+        ),
+        'a sheet the size of the page\'s texels matches only the one pack it was cut from, and was the only size the ' +
+          '`scale:` page accepted — so an author who resampled to satisfy the old refusal got a spec that the loose ' +
+          'parts then refuse. The message names the ratio and all three sizes, because the texel count is in the ' +
+          'atlas and the drawing\'s is in neither file',
+      );
+
+      // PKR59 — the soft mask is the same reader, and carries the same vertices on every page.
+      const softOf = (mesh: CompileResult['meshes'][number] | string): string =>
+        typeof mesh === 'string'
+          ? `REFUSED: ${mesh.slice(0, 200)}`
+          : mesh.soft === undefined
+            ? 'no soft block'
+            : `${mesh.soft.digest} ${mesh.soft.carried} carried / ${mesh.soft.ramped} in the falloff`;
+      const softs = pages.map(([label, atlas]) => [label, softOf(latticeOf(compileOn(packs.rigs.softened, atlas)))] as const);
+      const softProbes = [
+        ...softs.filter(([, read]) => read.startsWith('REFUSED') || read === 'no soft block').map(([label, read]) => `${label}: ${read}`),
+        ...softs
+          .slice(1)
+          .filter(([, read]) => read !== softs[0][1])
+          .map(([label, read]) => `${label} reads the mask as ${read} where the declared-size page reads ${softs[0][1]}`),
+        ...(softs[0][1].includes(' 0 carried / 0 ') ? ['the mask carries nothing on the declared-size page, so the comparison is between two empty readings'] : []),
+      ];
+      const softHeld = softProbes.length === 0;
+      say(
+        'PKR59_A_SOFT_MASK_AT_THE_ARTS_SIZE_CARRIES_THE_SAME_VERTICES_ON_A_SCALE_PAGE',
+        softHeld,
+        probeDetail(softHeld, softProbes, `the mask reads ${softs[0][1]} on all ${softs.length} pages`),
+        'the soft mask and the depth sheet share one reader and one size rule, so a repair made to one and not the ' +
+          'other would leave the same spec half-resolving — and a mask read at the texel position carries the wrong ' +
+          'vertices with every gate green',
+      );
+    }
+    if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
+  }
+
   return bad;
 }
 
@@ -39085,12 +39303,25 @@ interface HalvedMeshPacks {
   dir: string;
   parts: string;
   motionPath: string;
-  /** Every part (`all`), the two whose figures are withheld (`measured`), the fan alone, and the contour alone. */
-  rigs: { all: string; measured: string; fan: string; traced: string };
+  /**
+   * Every part (`all`), the two whose figures are withheld (`measured`), the fan alone, and the contour alone —
+   * and three readers of a sheet made at the art's size beside the grid (issue #762): a soft mask (`softened`), a
+   * depth sheet cut to the art (`tightSheet`), and a depth sheet at the half page's texel size (`texelSheet`).
+   */
+  rigs: { all: string; measured: string; fan: string; traced: string; softened: string; tightSheet: string; texelSheet: string };
   /** The three `.atlas` files — the declared-size pack, the half-resolution one, and its `scale:` restatement. */
   declared: string;
   half: string;
   honest: string;
+  /** The declared-size page doubled texel for texel, under `scale: 2` — a finer grid for the same drawings. */
+  twice: string;
+  /**
+   * Every region lifted off the half-resolution page at the `scale:` atlas's coordinates and written as a loose
+   * part: the texels a `scale: 0.5` page measures on, handed over by a route that has no scale to divide by.
+   */
+  halfParts: string;
+  /** The ratio the `honest` pack's header states, which is every other ratio here. */
+  ratio: number;
   /** `A06`'s opening clause for each half-resolution page, derived from the atlas text and the file. */
   said: string[];
 }
@@ -39103,6 +39334,15 @@ function halvedMeshPacks(): HalvedMeshPacks | string {
   writeContourArt(join(parts, 'blob.png'), contourBlob, CONTOUR_W, CONTOUR_H);
   writeContourArt(join(parts, 'lattice.png'), contourBlob, CONTOUR_W, CONTOUR_H);
   writeDepthSheet(join(parts, 'lattice_depth.png'), 'ramp', CONTOUR_W, CONTOUR_H, contourBlob);
+  const ratio = 0.5;
+  writeDepthSheet(join(parts, 'lattice_soft.png'), 'softmask', CONTOUR_W, CONTOUR_H, contourBlob);
+  writeDepthSheet(join(parts, 'lattice_tight.png'), 'tight', CONTOUR_W, CONTOUR_H, contourBlob);
+  writeDepthSheet(join(parts, 'lattice_texels.png'), 'ramp', CONTOUR_W * ratio, CONTOUR_H * ratio, contourBlob);
+  const latticeWith = (extra: Record<string, unknown>): Record<string, unknown> => ({
+    type: 'mesh',
+    image: 'lattice.png',
+    generator: { kind: 'grid', cols: 4, rows: 3, ...extra },
+  });
   const attachments: Record<string, Record<string, unknown>> = {
     fan: { ...fanMeshAttachment(FAN_RIM_COVERING, FAN_SIZE), image: 'fan.png' },
     lattice: {
@@ -39112,7 +39352,12 @@ function halvedMeshPacks(): HalvedMeshPacks | string {
     },
     blob: CONTOUR_ATTACHMENT,
   };
-  const writeRig = (file: string, slots: readonly string[]): string => {
+  const writeRig = (
+    file: string,
+    slots: readonly string[],
+    lattice?: Record<string, unknown>,
+    extraBones: ReadonlyArray<Record<string, unknown>> = [],
+  ): string => {
     const path = join(dir, file);
     writeFileSync(
       path,
@@ -39122,9 +39367,17 @@ function halvedMeshPacks(): HalvedMeshPacks | string {
           name: 'contour_probe',
           skeleton: { width: 512, height: 512 },
           invariants: { meshSlots: slots.length, meshTriangles: 200 },
-          bones: [{ name: 'root' }, ...slots.map((slot, i) => ({ name: slot, parent: 'root', x: CONTOUR_BONE[0] + i * FAN_SIZE, y: CONTOUR_BONE[1] }))],
+          bones: [
+            { name: 'root' },
+            ...slots.map((slot, i) => ({ name: slot, parent: 'root', x: CONTOUR_BONE[0] + i * FAN_SIZE, y: CONTOUR_BONE[1] })),
+            ...extraBones,
+          ],
           slots: slots.map((slot) => ({ name: slot, bone: slot, attachment: slot })),
-          skins: { default: Object.fromEntries(slots.map((slot) => [slot, { [slot]: attachments[slot] }])) },
+          skins: {
+            default: Object.fromEntries(
+              slots.map((slot) => [slot, { [slot]: slot === 'lattice' && lattice !== undefined ? lattice : attachments[slot] }]),
+            ),
+          },
         },
         null,
         2,
@@ -39137,6 +39390,19 @@ function halvedMeshPacks(): HalvedMeshPacks | string {
     measured: writeRig('measured.rig.json', ['fan', 'lattice']),
     fan: writeRig('fan.rig.json', ['fan']),
     traced: writeRig('traced.rig.json', ['blob']),
+    softened: writeRig('softened.rig.json', ['lattice'], latticeWith({ soft: { bone: 'wobble', mask: 'lattice_soft.png' } }), [
+      { name: 'wobble', parent: 'lattice', x: 0, y: 0 },
+    ]),
+    tightSheet: writeRig(
+      'tight.rig.json',
+      ['lattice'],
+      latticeWith({ depth: { image: 'lattice_tight.png', near: 'white', zScale: DEPTH_Z_SCALE } }),
+    ),
+    texelSheet: writeRig(
+      'texels.rig.json',
+      ['lattice'],
+      latticeWith({ depth: { image: 'lattice_texels.png', near: 'white', zScale: DEPTH_Z_SCALE } }),
+    ),
   };
   const motionPath = join(dir, 'probe.motion.json');
   writeFileSync(motionPath, `${JSON.stringify(CONTOUR_MOTION, null, 2)}\n`);
@@ -39161,7 +39427,27 @@ function halvedMeshPacks(): HalvedMeshPacks | string {
   }
   writeFileSync(join(declaredDir, 'skeleton.atlas'), packed.atlasText);
   writeFileSync(join(halfDir, 'skeleton.atlas'), packed.atlasText);
-  writeFileSync(join(halfDir, 'honest.atlas'), atlasOnItsFilesOwnGrid(packed.atlasText, 0.5));
+  writeFileSync(join(halfDir, 'honest.atlas'), atlasOnItsFilesOwnGrid(packed.atlasText, ratio));
+  // The same page on a finer grid: every texel doubled, and the header saying so.
+  const twiceDir = join(dir, 'twice');
+  const halfParts = join(dir, 'half-parts');
+  mkdirSync(twiceDir);
+  mkdirSync(halfParts);
+  const upscale = 1 / ratio;
+  for (const page of packed.pages) {
+    const full = page.plate;
+    const fine = new Plate(full.width * upscale, full.height * upscale);
+    for (let y = 0; y < fine.height; y++) {
+      for (let x = 0; x < fine.width; x++) fine.set(x, y, full.get(Math.floor(x / upscale), Math.floor(y / upscale)));
+    }
+    fine.writePng(join(twiceDir, page.name));
+  }
+  writeFileSync(join(twiceDir, 'skeleton.atlas'), atlasOnItsFilesOwnGrid(packed.atlasText, upscale));
+  const honestAtlas = parseAtlasText(readFileSync(join(halfDir, 'honest.atlas'), 'utf8'));
+  for (const page of honestAtlas.pages) {
+    const texels = readPlate(join(halfDir, page.name));
+    for (const region of page.regions) extractRegion(texels, region).writePng(join(halfParts, `${region.name}.png`));
+  }
   for (const page of parseAtlasText(packed.atlasText).pages) {
     const file = readPngInfo(join(halfDir, page.name));
     said.push(
@@ -39178,6 +39464,9 @@ function halvedMeshPacks(): HalvedMeshPacks | string {
     declared: join(declaredDir, 'skeleton.atlas'),
     half: join(halfDir, 'skeleton.atlas'),
     honest: join(halfDir, 'honest.atlas'),
+    twice: join(twiceDir, 'skeleton.atlas'),
+    halfParts,
+    ratio,
     said,
   };
 }
@@ -40818,8 +41107,8 @@ function runCliSuite(): number {
             `${String(coverageOf(honest.stdout))}% coverage, as the declared-size pack does, and nothing is withheld`,
         ),
         'the repair the refusal hands over has to bring the figures back, or withholding would be a second ' +
-          'refusal with no way out. Coverage and not overshoot is compared: the overshoot is counted in the ' +
-          "page's own texels, which a `scale: 0.5` page has half as many of",
+          'refusal with no way out. Coverage and not overshoot is compared here: the overshoot is measured on the ' +
+          "page's own texels, and whether its drawing-pixel figure matches is CLI94's question",
       );
     }
     if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
@@ -40962,6 +41251,150 @@ function runCliSuite(): number {
         'guess which rectangle the page used',
     );
     rmSync(root, { recursive: true, force: true });
+  }
+
+  // --- CLI94–CLI96: a fit's overshoot is stated in the drawing's pixels (#762) ---
+  //
+  // `explain`'s fit line says `px`, and on a page that declares a `scale:` the
+  // distance behind it was taken on the page's texels: one mesh over one
+  // drawing read 16.00px on the declared-size page, 8.00px on its `scale: 0.5`
+  // restatement and 32.00px on a `scale: 2` one. The figure is now the texel
+  // distance over the stated scale, and the line names the grid it was taken
+  // on. The relation is measured against the texels themselves: `halfParts`
+  // hands the `scale: 0.5` page's own texels over as loose parts, a route with
+  // no scale to divide by, so what the scaled page prints has to be that
+  // figure over the scale — derived, not typed.
+  {
+    const packs = halvedMeshPacks();
+    if (typeof packs === 'string') {
+      console.log(`  SKIP  the overshoot-unit cases (CLI94, CLI95, CLI96) did not run: ${packs}.`);
+    } else {
+      const explainOn = (rig: string, images: string, atlasIn: string | null): ReturnType<typeof runCli> =>
+        runCli([
+          'explain', '--rig', rig, '--motion', packs.motionPath, '--images', images,
+          ...(atlasIn === null ? [] : ['--atlas-in', atlasIn]),
+          '--out', join(packs.dir, 'explain-unit'),
+        ]);
+      const lineOf = (stdout: string, slot: string, kind: string): string =>
+        stdout.split('\n').find((line) => new RegExp(`^  ${slot} +${kind} `).test(line)) ?? '';
+      const reachOf = (line: string): string | null => /reaching (\d+\.\d+)px past it/.exec(line)?.[1] ?? null;
+      const gridClause = (scale: number): string =>
+        `(the drawing's pixels, measured on the page's texels at scale: ${scale} — a texel is ${(1 / scale).toFixed(2)}px of the drawing)`;
+      const anyGridClause = "measured on the page's texels at scale:";
+      // The texel figure, off the route that has no scale: what the `scale: 0.5` page measures on, undivided.
+      const texelFigure = (rig: string): number | string => {
+        try {
+          const result = compile({ rigPath: rig, motionPath: packs.motionPath, outDir: join(packs.dir, 'texels'), imagesDir: packs.halfParts });
+          return result.meshes[0]?.overshoot ?? 'the loose texel parts compiled no fit';
+        } catch (err) {
+          return err instanceof Error ? err.message : String(err);
+        }
+      };
+      const agreesWith = (printed: string | null, figure: number | string): boolean =>
+        printed !== null && typeof figure === 'number' && printed === (figure / packs.ratio).toFixed(2);
+
+      // CLI94 — the authored fan, on the two `scale:` pages and the declared-size one.
+      const onDeclared = lineOf(explainOn(packs.rigs.fan, packs.parts, packs.declared).stdout, 'fan', 'authored');
+      const coarse = explainOn(packs.rigs.fan, packs.parts, packs.honest);
+      const fine = explainOn(packs.rigs.fan, packs.parts, packs.twice);
+      const onCoarse = lineOf(coarse.stdout, 'fan', 'authored');
+      const onFine = lineOf(fine.stdout, 'fan', 'authored');
+      const fanTexels = texelFigure(packs.rigs.fan);
+      const fanProbes = [
+        ...(coarse.status === 0 && fine.status === 0
+          ? []
+          : [`explain exited ${String(coarse.status)} on the \`scale: ${packs.ratio}\` pack and ${String(fine.status)} on the \`scale: ${1 / packs.ratio}\` one`]),
+        ...(reachOf(onDeclared) === null ? [`the declared-size pack's fan line prints no overshoot: ${JSON.stringify(onDeclared.slice(0, 160))}`] : []),
+        ...(
+          [
+            [packs.ratio, onCoarse],
+            [1 / packs.ratio, onFine],
+          ] as const
+        ).flatMap(([scale, line]) => [
+          ...(reachOf(line) === reachOf(onDeclared)
+            ? []
+            : [`the \`scale: ${scale}\` page reads the fan ${String(reachOf(line))}px past its art where the declared-size page reads ${String(reachOf(onDeclared))}px`]),
+          ...(line.includes(gridClause(scale))
+            ? []
+            : [`the \`scale: ${scale}\` page's fan line does not name the grid it was measured on: ${JSON.stringify(line.slice(0, 200))}`]),
+        ]),
+        ...(agreesWith(reachOf(onCoarse), fanTexels)
+          ? []
+          : [`the \`scale: ${packs.ratio}\` page's ${String(reachOf(onCoarse))}px is not its own texels' ${String(fanTexels)} over the scale`]),
+        ...(onDeclared.includes(anyGridClause) ? [`the declared-size page names a texel grid: ${JSON.stringify(onDeclared.slice(0, 200))}`] : []),
+      ];
+      const fanHeld = fanProbes.length === 0;
+      say(
+        'CLI94_A_SCALE_PAGE_STATES_AN_AUTHORED_OVERSHOOT_IN_THE_DRAWINGS_PIXELS_AND_NAMES_THE_GRID_IT_WAS_TAKEN_ON',
+        fanHeld,
+        probeDetail(
+          fanHeld,
+          fanProbes,
+          `the fan reaches ${String(reachOf(onDeclared))}px past its art on the declared-size page, ${String(reachOf(onCoarse))}px on ` +
+            `\`scale: ${packs.ratio}\` and ${String(reachOf(onFine))}px on \`scale: ${1 / packs.ratio}\`, each scaled line naming its ` +
+            `texel; the \`scale: ${packs.ratio}\` page's own texels read ${String(fanTexels)} undivided`,
+        ),
+        'the figure said `px` on every page and was counted in whichever grid it was taken on, so the same mesh ' +
+          'over the same drawing read three different distances, and an author reading 8.00px against the art they ' +
+          'drew would be off by the page\'s scale. The drawing\'s pixels are the unit every attachment size is in',
+      );
+
+      // CLI95 — the contour's figure is converted too, and the trace it measures is the page's own.
+      const tracedCoarse = explainOn(packs.rigs.traced, packs.parts, packs.honest);
+      const onTracedCoarse = lineOf(tracedCoarse.stdout, 'blob', 'contour');
+      const onTracedTexels = lineOf(explainOn(packs.rigs.traced, packs.halfParts, null).stdout, 'blob', 'contour');
+      const onTracedDeclared = lineOf(explainOn(packs.rigs.traced, packs.parts, packs.declared).stdout, 'blob', 'contour');
+      const blobTexels = texelFigure(packs.rigs.traced);
+      const tracedProbes = [
+        ...(tracedCoarse.status === 0 ? [] : [`explain exited ${String(tracedCoarse.status)} tracing the contour on the \`scale:\` page`]),
+        ...(onTracedCoarse.includes(gridClause(packs.ratio))
+          ? []
+          : [`the contour's line does not name the grid it was measured on: ${JSON.stringify(onTracedCoarse.slice(0, 200))}`]),
+        ...(agreesWith(reachOf(onTracedCoarse), blobTexels)
+          ? []
+          : [`the contour reads ${String(reachOf(onTracedCoarse))}px where its own texels read ${String(blobTexels)} — not that over the scale`]),
+        ...[onTracedTexels, onTracedDeclared]
+          .filter((line) => line === '' || line.includes(anyGridClause))
+          .map((line) => `a route with no scale names a texel grid, or printed no contour line: ${JSON.stringify(line.slice(0, 200))}`),
+      ];
+      const tracedHeld = tracedProbes.length === 0;
+      say(
+        'CLI95_A_CONTOURS_OVERSHOOT_ON_A_SCALE_PAGE_IS_ITS_TEXEL_DISTANCE_OVER_THE_SCALE_AND_SAYS_SO',
+        tracedHeld,
+        probeDetail(
+          tracedHeld,
+          tracedProbes,
+          `the contour on \`scale: ${packs.ratio}\` reads ${String(reachOf(onTracedCoarse))}px, its own texels ${String(blobTexels)} ` +
+            `undivided, and the loose texel route and the declared-size page name no grid`,
+        ),
+        'a contour is traced on the texels the page has, so on a `scale:` page its geometry is the coarser grid\'s ' +
+          'and need not equal the declared-size page\'s — which is why the relation is held to the page\'s own texels ' +
+          'rather than to the finer page, and why the line has to say which grid it counted',
+      );
+
+      // CLI96 — `build`'s MESH line is the same fit in the same unit.
+      const built = runCli([
+        'build', '--rig', packs.rigs.fan, '--motion', packs.motionPath, '--images', packs.parts,
+        '--atlas-in', packs.honest, '--out', join(packs.dir, 'build-unit'),
+      ]);
+      const meshLine = built.stdout.split('\n').find((line) => /^  MESH  fan +authored /.test(line)) ?? '';
+      const fitOf = (line: string): string => line.slice(line.indexOf('covers '));
+      const buildProbes = [
+        ...(built.status === 0 ? [] : [`build exited ${String(built.status)} on the \`scale: ${packs.ratio}\` pack`]),
+        ...(meshLine !== '' && onCoarse.includes('covers ') && fitOf(meshLine) === fitOf(onCoarse)
+          ? []
+          : [`the MESH line's fit ${JSON.stringify(fitOf(meshLine).slice(0, 200))} is not explain's ${JSON.stringify(fitOf(onCoarse).slice(0, 200))}`]),
+      ];
+      const buildHeld = buildProbes.length === 0;
+      say(
+        'CLI96_BUILDS_MESH_LINE_STATES_THE_SCALE_PAGES_FIT_AS_EXPLAIN_DOES',
+        buildHeld,
+        probeDetail(buildHeld, buildProbes, `build exits ${String(built.status)} and its MESH line reads ${JSON.stringify(fitOf(meshLine))}, explain's words`),
+        'the two commands print one fit, and a unit fixed on one of them would leave the other printing the texel ' +
+          'figure beside a green gate',
+      );
+    }
+    if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
   return bad;
 }
@@ -48877,6 +49310,122 @@ function runCurrencySuite(): number {
         'is the name to scan for because no other word in the format contains it, and zero occurrences — the ' +
         'list moved or renamed — is as red as two',
     );
+  }
+
+  // --- CUR72–CUR73: what the guide teaches about a `scale:` page's units is what rigc prints (#762)
+  //
+  // `CUR67`'s question asked of the two sentences #762 changed: §0.2 quotes the
+  // fit line a `scale:` page prints, and §4's depth table quotes the refusal a
+  // texel-sized sheet gets there. Each quote is compared — digits and quoted
+  // names blanked, cut at every `…` — against what this build prints for the
+  // same fixture, and a plant exchanges the word each one turns on.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const guide = readFileSync(join(root, guidePath), 'utf8');
+    const packs = halvedMeshPacks();
+    const shape = (text: string): string =>
+      text
+        .replace(/^[ \t]*#+ ?/gm, ' ')
+        .replace(/"[^"]*"/g, '""')
+        .replace(/\d+(\.\d+)?/g, '#')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const pieces = (quote: string | null): string[] =>
+      quote === null
+        ? []
+        : quote
+            .split('…')
+            .map((piece) => shape(piece))
+            .filter((piece) => piece.length > 0);
+    const compare = (
+      name: string,
+      printed: string | null,
+      quoteOf: (text: string) => string | null,
+      plant: readonly [string, string],
+      floor: number,
+      where: string,
+      why: string,
+    ): void => {
+      const taught = pieces(quoteOf(guide));
+      const shaped = printed === null ? '' : printed.split('\n').map(shape).join('\n');
+      const missing = taught.filter((piece) => !shaped.includes(piece));
+      // Planted inside the quote itself, so the exchange cannot land on the same words elsewhere on the page.
+      const quote = quoteOf(guide);
+      const planted = pieces(quote === null ? null : quote.replace(plant[0], plant[1]));
+      const plantedMissing = planted.filter((piece) => !shaped.includes(piece));
+      const probes = [
+        ...(typeof packs === 'string' ? [`the fixture was not built: ${packs}`] : []),
+        ...(printed === null ? ['the build printed nothing to compare against'] : []),
+        ...firstFew(
+          missing.map((piece) => `${guidePath} ${where} quotes a clause rigc does not print: ${JSON.stringify(piece.slice(0, 110))}`),
+          'clause(s)',
+        ),
+        ...(plantedMissing.length > missing.length
+          ? []
+          : [`the quote with ${JSON.stringify(plant[0])} exchanged is faulted no more often than the real one, so this reader is not reading the words`]),
+        ...floorProbes([[taught.length, floor, `${taught.length} piece(s) of the quote were read`]], 'a reader that found fewer is comparing part of the quote'),
+      ];
+      const held = probes.length === 0;
+      say(
+        name,
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${taught.length} piece(s) of ${where}'s quote, digits and quoted names blanked, are clauses of what this build ` +
+            `prints; the quote with ${JSON.stringify(plant[0])} exchanged is faulted`,
+          (count) => `${count} clause(s) the page teaches that rigc does not print:`,
+        ),
+        why,
+      );
+    };
+
+    // CUR72 — §0.2's `scale:` fit line.
+    const fitPrinted =
+      typeof packs === 'string'
+        ? null
+        : runCli([
+            'explain', '--rig', packs.rigs.fan, '--motion', packs.motionPath, '--images', packs.parts,
+            '--atlas-in', packs.honest, '--out', join(packs.dir, 'explain-doc'),
+          ]).stdout;
+    compare(
+      'CUR72_THE_SCALE_PAGE_FIT_LINE_THE_GUIDE_QUOTES_IS_THE_LINE_EXPLAIN_PRINTS',
+      fitPrinted,
+      (text) => /```bash\n((?:#.*\n)*?#[^\n]*measured on the page's texels at scale:[^\n]*\n(?:#.*\n)*?)```/.exec(text)?.[1] ?? null,
+      ["the drawing's pixels, measured", "the page's texels, measured"],
+      1,
+      '§0.2',
+      'the section is where an author learns which unit the figure is in, and a quote that names the wrong grid ' +
+        'is the defect #762 removed, restated in prose',
+    );
+
+    // CUR73 — §4's depth-table row for a texel-sized sheet on a `scale:` page.
+    let refusal: string | null = null;
+    if (typeof packs !== 'string') {
+      try {
+        compile({
+          rigPath: packs.rigs.texelSheet,
+          motionPath: packs.motionPath,
+          outDir: join(packs.dir, 'refusal-doc'),
+          imagesDir: packs.parts,
+          atlasInPath: packs.honest,
+        });
+      } catch (err) {
+        refusal = err instanceof Error ? err.message : String(err);
+      }
+    }
+    compare(
+      'CUR73_THE_SCALE_PAGE_SHEET_REFUSAL_THE_GUIDE_QUOTES_IS_THE_ONE_THE_COMPILER_RAISES',
+      refusal,
+      (text) => /^\| a sheet at the page's texel size, on a page that declares a `scale:` \| `([^`]*)`/m.exec(text)?.[1] ?? null,
+      ['the part is a', 'the part is the'],
+      2,
+      '§4 (depth table)',
+      'the table is the guide\'s index of refusals, and the row for this one is where an author finds out that ' +
+        'the sheet is the art\'s size on a `scale:` page — a row quoting the texel-sized answer would send them to ' +
+        'resample the file the compiler asks them to keep',
+    );
+    if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
 
   // --- CUR74–CUR75: the base-plate sentence the pages quote is the one A19 prints (issue #770)

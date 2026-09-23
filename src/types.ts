@@ -1282,9 +1282,15 @@ export interface CompiledImage {
    * The `scale:` of the page the region above sits on, when it declares one
    * other than 1. Absent otherwise, and absent for a loose PNG.
    *
-   * Present only so a message can show its work: `width`/`height` are already
+   * Present so a message can show its work: `width`/`height` are already
    * descaled, and a refusal that says "region X is 746" without saying it read
    * 373 texels at `scale: 0.5` names a number that is in neither file.
+   *
+   * And so a figure taken off the lifted texels can be stated in the drawing's
+   * pixels, which is what `width`/`height` are in (issue #762): a distance
+   * measured on this page's grid is `texels / atlasScale` pixels of the drawing,
+   * and a sheet made at the drawing's size is read at the same ratio. It is the
+   * value the atlas states, never one rigc measured.
    */
   atlasScale?: number;
   /**
@@ -1476,8 +1482,25 @@ export interface CompileResult {
      * comes from the spec rather than from art.
      */
     coverage?: number;
-    /** How far past the silhouette that mesh reaches, in part pixels. */
+    /**
+     * How far past the silhouette that mesh reaches, in the DRAWING's pixels —
+     * the unit `CompiledImage.width` is in, and the one an author draws in.
+     *
+     * The distance is measured on the grid the part's alpha is read off, and on
+     * a page that declares a `scale:` that grid is the page's texels, so it is
+     * divided by the stated scale here (issue #762). It printed 8.00px on a
+     * `scale: 0.5` page for a mesh that reaches 16.00px past the same drawing
+     * on the page it was packed from. `pageScale` says when that happened.
+     */
     overshoot?: number;
+    /**
+     * The `scale:` of the page the fit above was measured on, when it is not 1
+     * (`CompiledImage.atlasScale`). Absent on a loose part and on a page at
+     * scale 1, where the texel grid is the drawing's. Carried so the report can
+     * say the figure was taken on a grid whose step is `1 / pageScale` pixels
+     * of the drawing, which is the precision it has.
+     */
+    pageScale?: number;
     /**
      * Why `coverage` and `overshoot` are absent on a mesh that names an image:
      * its part sits on a packed page whose file is not the size the atlas
