@@ -196,6 +196,9 @@ export interface MotionKey {
    *   translate  -> [x, y] in pixels, relative to the bone's setup position
    *   scale      -> [x, y] as multipliers (1 = setup)
    *   rotate     -> [degrees]
+   *   inherit    -> a mode name (`normal`, `onlyTranslation`,
+   *                 `noRotationOrReflection`, `noScale`, `noScaleOrReflection`);
+   *                 stepped by the format, so no `ease` and no `curve`
    *   mix        -> [0..1] physics authority
    *   inertia / strength / damping / mass / wind / gravity
    *              -> [value]; the physics constraint's own setting, over time
@@ -259,7 +262,8 @@ export type BoneProperty =
   | 'shear'
   | 'shearx'
   | 'sheary'
-  | 'rotate';
+  | 'rotate'
+  | 'inherit';
 
 /**
  * Physics timelines the compiler emits — all eight `SkeletonJson`'s physics
