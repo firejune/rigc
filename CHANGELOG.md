@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.33.1](https://github.com/firejune/rigc/compare/v0.33.0...v0.33.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **validate:** `A45`, `A43` and `A46` pose a key at the time spine-core stores it rather than one float step before it, so the selftest's own `ingest_probe` is green and `IG72` holds it there ([#771](https://github.com/firejune/rigc/issues/771)) ([#772](https://github.com/firejune/rigc/issues/772)) ([d62d8e2](https://github.com/firejune/rigc/commit/d62d8e24bfc0dacc30fbe7e8840ed4002f66e2e2))
+* **validate:** `A47`/`A48` ask the muted-at-rest question of an ik and a transform constraint, live by the runtime's own `!== 0` and, for a transform, on the mixes of the properties it drives ([#774](https://github.com/firejune/rigc/issues/774)) ([0e12588](https://github.com/firejune/rigc/commit/0e125881ecbde490cfaa1cf95d999047e8094b92))
+
 ## [0.33.0](https://github.com/firejune/rigc/compare/v0.32.0...v0.33.0) (2026-09-23)
 
 
