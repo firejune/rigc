@@ -4408,8 +4408,22 @@ function emitSequence(seq: RigSequence): SpineSequence {
  * measures the same: that is the one number the frames state. Frames of
  * different sizes state several, and picking one — the first, the setup frame,
  * the largest — would be the compiler choosing a value the spec did not.
- * Under `--atlas-in` a stated size that disagrees with a frame is refused as it
- * is for a single region, for the same reason: the pack's rectangle is fixed.
+ *
+ * ⭐ A STATED size is emitted as stated and compared with no frame, on either
+ * route. It is the quad, and the frames are what is drawn into it:
+ * `computeUVs` scales each region by `width / region.originalWidth`, so a frame
+ * of another size is drawn at the attachment's size, filling it (issue #795,
+ * measured on spine-core 4.3.13: frames of 40, 60 and 80 under a stated 40 give
+ * every frame the same ±20 quad, each with its own region's UVs). That is the
+ * shape an editor exports whenever a series mixes image sizes — it writes the
+ * setup frame's size and leaves the others as they are.
+ *
+ * ⚠️ The single-region rule in `buildRigRegion` does not transfer, though it
+ * reads the same. There the attachment has one region, the editor always writes
+ * that region's own size, and a spec stating another is contradicting the pack
+ * it is resolved against. Here the attachment has `count` regions and one size,
+ * so every frame but the setup frame differing from it is the ordinary case, and
+ * refusing it refused correct editor exports.
  */
 function sequenceFrameSize(
   frames: readonly CompiledImage[],
@@ -4420,14 +4434,6 @@ function sequenceFrameSize(
   for (const field of ['width', 'height'] as const) {
     const sizes = [...new Set(frames.map((img) => img[field]))];
     if (stated[field] !== undefined) {
-      const packed = frames.find((img) => img.atlas !== undefined && img[field] !== stated[field]);
-      if (packed !== undefined) {
-        throw new CompileError(
-          `${where}: the spec says ${field} ${stated[field]} and sequence frame "${packed.region}" of the imported ` +
-            `atlas is ${packed[field]}; a packed frame's rectangle is fixed, so the two would produce a quad the ` +
-            'pack cannot fill',
-        );
-      }
       out[field] = stated[field];
     } else if (sizes.length === 1) {
       out[field] = sizes[0];

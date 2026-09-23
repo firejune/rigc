@@ -2506,11 +2506,18 @@ other than what was written (measured on spine-core 4.3.13,
   only on the three kinds that draw a region, so it would be dropped in silence. The
   refusal names region, mesh and linkedmesh.
 
-`width` and `height` are the attachment's one size, every frame drawn into it. Omit
-them and rigc takes the frames' size — **only when every frame measures the same**;
-frames of different sizes are refused until you state the size, because picking one
-of them would be the compiler choosing a value. Under `--atlas-in` a stated size that
-disagrees with a packed frame is refused, as it is for one region.
+`width` and `height` are the attachment's one size, every frame drawn into it. The
+frames **may differ in size**: the runtime scales each frame's region into the
+attachment's size (`RegionAttachment.computeUVs`, `width / region.originalWidth`), so a
+stated size is emitted as stated and compared with no frame, on the loose route and
+under `--atlas-in` alike. That is what an editor exports for a series that mixes image
+sizes — the setup frame's size, the other frames as they are
+([#795](https://github.com/firejune/rigc/issues/795)). Omit them and rigc takes the
+frames' size — **only when every frame measures the same**; frames of different sizes
+are refused until you state the size, because picking one of them would be the
+compiler choosing a value. ⚠️ One region is different: its `width` is its image's size
+in every editor export, so under `--atlas-in` a stated size that disagrees with its
+packed region is still refused.
 `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` (§5.2) holds the block and
 every frame the timelines show against the file.
 
