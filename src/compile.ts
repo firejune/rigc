@@ -39,7 +39,7 @@ import { parseJsonWithPosition } from './json-position.ts';
 // of it — the same search serves `refuseUnknownKeys`, and a second copy here with
 // a threshold edited is how such a pair drifts apart.
 import { nearMisses } from './keys.ts';
-import { inEditorKeyOrder } from './keyorder.ts';
+import { inEditorKeyOrder, withoutParserDefaults } from './keyorder.ts';
 import { EVERY_GLOBAL_PHYSICS, parseMotionSpec } from './motion.ts';
 import {
   BONE_INHERIT_KNOWN,
@@ -3218,6 +3218,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   if (rig.skeleton?.referenceScale !== undefined) header.referenceScale = rig.skeleton.referenceScale;
   const imagesPath = skeletonImagesPath(rig.skeleton?.images, opts, outDir, partDirs);
   if (imagesPath !== undefined) header.images = imagesPath;
+  if (rig.skeleton?.audio !== undefined) header.audio = rig.skeleton.audio;
 
   // Event definitions. Emitted in the order the rig spec declares them — object
   // key order is the spec's, not a set's, so A18 stays a contract.
@@ -3287,7 +3288,16 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // are free to build in whatever order reads best and none of them states the
   // order a second time. It moves positions and nothing else: no key is added,
   // dropped or re-valued, and what the gate and `A18` read is this object's text.
-  inEditorKeyOrder(skeleton);
+  //
+  // Before it, and on the same finished object: every key whose value is the
+  // one the 4.3 parser reads in its absence is left out, the way the editor
+  // leaves it out (issue #716 tranche 3). One pass beside the other rather than
+  // folded into it, because each has its own table and the selftest plants a
+  // wrong row into each on its own; both walk the object through
+  // `forEachKindedObject`, so what a kind is stays said in one place. The spec
+  // is untouched — an author may still write `x: 0`, and it is still the record
+  // of what was written — and what the parser loads does not move (`S103`).
+  inEditorKeyOrder(withoutParserDefaults(skeleton));
 
   return {
     skeleton,

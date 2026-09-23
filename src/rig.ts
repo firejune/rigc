@@ -126,6 +126,15 @@ export interface RigSkeletonHeader {
    * written (issue #370).
    */
   images?: string;
+  /**
+   * Nonessential: where the editor looks for the skeleton's audio files, as a
+   * path from the skeleton file — or `null`, which is what an editor export
+   * writes when no audio folder is set. Carried verbatim, `null` included, and
+   * written only when stated: rigc has no audio to point at, so this is a value
+   * a spec states or does not (issue #716 — every one of the twelve editor
+   * exports under `examples/` writes `"audio": null`, and `ingest` carries it).
+   */
+  audio?: string | null;
 }
 
 /**
@@ -1628,7 +1637,7 @@ function isObj(v: unknown): v is Record<string, unknown> {
  */
 export const RIG_KEYS = {
   RigSpec: ['spec', 'name', 'note', 'skeleton', 'images', 'bones', 'slots', 'skins', 'constraints', 'events', 'invariants'],
-  RigSkeletonHeader: ['x', 'y', 'width', 'height', 'fps', 'referenceScale', 'images'],
+  RigSkeletonHeader: ['x', 'y', 'width', 'height', 'fps', 'referenceScale', 'images', 'audio'],
   RigBone: ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inherit', 'skin', 'color', 'icon', 'from'],
   RigBoneFrom: ['anchor', 'slotWindow', 'meshCenter', 'rotation'],
   RigSlot: ['name', 'bone', 'attachment', 'color', 'dark', 'blend'],
@@ -1982,6 +1991,12 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   // and a compiler that picks one is inventing a number (issue #578).
   const header = spec.skeleton;
   if (header !== undefined) {
+    if (header.audio !== undefined && header.audio !== null && typeof header.audio !== 'string') {
+      throw new CompileError(
+        `${where}: "skeleton" states audio ${JSON.stringify(header.audio)}; it is a path from the skeleton file to ` +
+          'its audio folder, or null for none — a string or null',
+      );
+    }
     const noWidth = header.width === null;
     const noHeight = header.height === null;
     if (noWidth !== noHeight) {

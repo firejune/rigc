@@ -63,6 +63,7 @@ import {
   TOPLEVEL_CONSTRAINT_ARRAYS,
 } from './generation.ts';
 import { EVERY_GLOBAL_PHYSICS, MOTION_SPEC_VERSION, parseMotionSpec } from './motion.ts';
+import { PARSER_DEFAULTS, parserOmits } from './keyorder.ts';
 import { constraintAt, parseRigSpec, resolveBoneInherit, RIG_KEYS, RIG_SPEC_VERSION, type RigSpec } from './rig.ts';
 import type { MotionSpec } from './types.ts';
 
@@ -126,7 +127,7 @@ export class IngestSpecRefused extends Error {
  *   are exactly two: a stage the caller supplied, and an animation's duration.
  * - `lossy` — the skeleton's spelling and rigc's differ, on purpose, and the
  *   difference is named: a value rigc re-derives rather than takes (`lengths`,
- *   the `spine` version), a field the spec has no home for (`hash`, `audio`), or
+ *   the `spine` version), a field the spec has no home for (`hash`), or
  *   a default the source left to the format and the rebuild writes out
  *   (`HEADER_ORIGIN`, issue #622). The rebuilt file is a different file in that
  *   field; it is not a different rig.
@@ -1657,20 +1658,25 @@ function ingestAnimation(
   /**
    * A value track of any of the four families. Inverts `compileValueTrack`.
    *
-   * ⚠️ `compileValueTrack` never omits a channel, so a rigc-built key states all
-   * of them and this reads them straight back. An EDITOR omits a channel that
-   * equals the parser's default, and the spec's `v` is positional — so an
-   * omission is filled at that channel's default, which is the value the runtime
-   * reads there. Reported once per track, because it is a restatement rather
-   * than a copy and a reader should know which.
+   * ⚠️ An EDITOR omits a channel that equals the parser's default, and the
+   * spec's `v` is positional — so an omission is filled at that channel's
+   * default, which is the value the runtime reads there. The emitter leaves
+   * the same channel out again wherever `PARSER_DEFAULTS` has a row for the
+   * key's kind (issue #716), so the rebuild is the source's own text there and
+   * nothing is said. What is reported, once per track, is a filled channel the
+   * emitter WILL write — a kind with no measured row — because that one is a
+   * restatement rather than a copy and a reader should know which.
    */
   const valueTrack = (target: JsonObject, property: string, keys: readonly unknown[], shape: TrackShape, where: string): void => {
     const fields = shape.map(([field]) => field);
     const out: JsonObject[] = [];
     let restated = 0;
+    const family = Object.keys(target)[0];
+    const row = PARSER_DEFAULTS[`${family} ${property} key`];
     for (const raw of keys) {
       const key = obj(raw);
       const entry: JsonObject = { t: timeOf(key) };
+      const filled: string[] = [];
       // The zero-field branch: `reset` IS the event, so the key carries no value
       // and the spec spells that `null`.
       entry.v =
@@ -1678,13 +1684,21 @@ function ingestAnimation(
           ? null
           : shape.map(([field, dflt]) => {
               if (key[field] !== undefined) return key[field];
-              restated++;
+              filled.push(field);
               // A string default names another field of THIS key (`mixY` ->
               // `mixX`); when that one is absent too the chain ends at 1, which
               // is what `ConstraintChannel.dflt` holds for both.
               if (typeof dflt !== 'string') return dflt;
               return key[dflt] === undefined ? 1 : key[dflt];
             });
+      if (filled.length > 0) {
+        // The key as the emitter will hold it — every channel stated — asked
+        // the one question the emitter asks of it.
+        const emitted: JsonObject = { ...key };
+        shape.forEach(([field], i) => (emitted[field] = (entry.v as JsonObject[string][])[i]));
+        const site = { object: emitted, previous: () => null };
+        restated += filled.filter((field) => row === undefined || !parserOmits(row, site, field)).length;
+      }
       easing(key, entry);
       for (const field of Object.keys(key)) {
         if (field === 'time' || field === 'curve' || fields.includes(field)) continue;
@@ -1699,7 +1713,8 @@ function ingestAnimation(
         where,
         `${restated} channel value(s) the source omits are written out at the parser's default (${shape
           .map(([field, dflt]) => `${field}=${String(dflt)}`)
-          .join(', ')}), because the motion spec's \`v\` is positional — the same values the runtime reads`,
+          .join(', ')}), because the motion spec's \`v\` is positional and the emitter has no measured row ` +
+          `for "${family} ${property}" keys to leave them out by — the same values the runtime reads`,
       );
     }
     tracks.push({ ...target, property, keys: out });
@@ -2094,7 +2109,10 @@ function ingestAnimation(
  *    not all name the same fields — *"state it on every key or on none"*. An
  *    export does not obey that: it omits a field wherever it equals the default.
  *    So a field ANY key states is written on EVERY key, at the value the parser
- *    would have read there. Identical semantics, larger file.
+ *    would have read there. Identical semantics — and, since issue #716, the
+ *    same file wherever `PARSER_DEFAULTS` has the key's row, because the
+ *    emitter leaves each such value out again. What is still reported is a
+ *    value the emitter writes back.
  * 2. 🚨 **`rigFlags`.** `compileConstraintTrack` stamps the rig constraint's
  *    non-default `bendPositive`/`compress`/`stretch` onto a key that omits one
  *    (issue #273). On rigc's own output that is self-consistent — rigc already
@@ -2132,19 +2150,16 @@ function constraintGroup(
         }
       }
     }
-    if (stated.size > 0 && stated.size < fields.length) {
-      note(
-        'lossy',
-        'CONSTRAINT_KEY_RESTATED',
-        where,
-        `${fields.length - stated.size} field(s) the source omits are restated at the parser's default on every key, ` +
-          'because the motion spec requires one field set per track — the same values the runtime reads, spelled out',
-      );
-    }
+    // A field filled on a key the source left it off is said only where the
+    // emitter will write it: where `PARSER_DEFAULTS`' row for the key would
+    // leave it out again, the rebuild is the source's own text (issue #716).
+    const row = PARSER_DEFAULTS[`${group} key`];
+    let restated = 0;
     const ks = keys.map((raw) => {
       const key = obj(raw);
       const entry: JsonObject = { t: typeof key.time === 'number' ? key.time : 0 };
       seeT(entry.t as number);
+      const filled: string[] = [];
       for (const field of fields) {
         if (!stated.has(field)) continue;
         if (key[field] !== undefined) entry[field] = key[field];
@@ -2153,7 +2168,14 @@ function constraintGroup(
           // `mixY`'s default is the same key's own `mixX`, spelled as that field
           // name in the table above.
           entry[field] = typeof dflt === 'string' ? (key[dflt] !== undefined ? key[dflt] : defaults[dflt]) : dflt;
+          filled.push(field);
         }
+      }
+      if (filled.length > 0) {
+        const emitted: JsonObject = { ...key };
+        for (const field of fields) if (entry[field] !== undefined) emitted[field] = entry[field];
+        const site = { object: emitted, previous: () => null };
+        restated += filled.filter((field) => row === undefined || !parserOmits(row, site, field)).length;
       }
       if (key.curve === 'stepped') entry.ease = 'stepped';
       else if (key.curve !== undefined) entry.curve = key.curve;
@@ -2163,6 +2185,16 @@ function constraintGroup(
       }
       return entry;
     });
+    if (restated > 0) {
+      note(
+        'lossy',
+        'CONSTRAINT_KEY_RESTATED',
+        where,
+        `${restated} value(s) the source omits are restated at the parser's default, because the motion spec ` +
+          'requires one field set per track and the emitter writes them back — the same values the runtime reads, ' +
+          'spelled out',
+      );
+    }
     out.push({ constraint: name, keys: ks });
   }
   return out;
