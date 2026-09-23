@@ -5199,8 +5199,9 @@ export function validate(input: ValidateInput): ValidateReport {
   // An overlay part must be able to draw a transparent pixel or it cannot be an
   // overlay: it would paint a solid rectangle over the untouched base, and an
   // overlay formation's whole claim is that the still frame has no seam. The base
-  // plate itself is the one page allowed to be opaque, and it identifies
-  // itself structurally — it is the region that covers the whole stage.
+  // plate itself is the one page allowed to be opaque: the one the rig names
+  // (a cut manifest's part whose window is the crop), or, when the build names
+  // none, the region that covers the whole stage.
   //
   // ⭐ Transparency is not the same thing as an alpha CHANNEL, and this assertion
   // used to conflate them (#215). Colour types 4 and 6 store alpha per pixel;
@@ -5224,25 +5225,57 @@ export function validate(input: ValidateInput): ValidateReport {
     if (atlas.pages.length === 0) return skip('A19_OVERLAY_PNGS_HAVE_ALPHA', SKIP_NO_ATLAS_PAGE);
     const stageW = skeletonData?.width ?? 0;
     const stageH = skeletonData?.height ?? 0;
+    // 🔒 **Which image is the base plate is decided ONCE, and the rig's own
+    // statement decides it** (issue #770). A cut manifest names its base plate
+    // — the part whose window IS the crop — and that needs no stage box; the
+    // size of an attachment against the stage is read only when the build
+    // names none, because it is then the only statement there is (every build
+    // from a rig spec, and `validate <dir>`, which has no rig at all). Both
+    // routes below read the same two sets, so they cannot disagree about it.
+    //
+    // ⚠️ Before this, "at least the stage's size" was the only reading, and a
+    // stageless manifest rig came out with no base plate: the packed build was
+    // refused for its plate's opaque texels while the loose build of the same
+    // rig passed on the file's colour type. The order is a rule rather than a
+    // coincidence of the fixtures, where the two readings agree: a stage stated
+    // small enough for an overlay to "cover" is exactly where they part.
+    const named = input.rig?.basePlates ?? [];
     const basePages = new Set<string>();
     const baseRegions = new Set<string>();
-    for (const att of regionAttachments) {
-      if (stageW && stageH && att.width >= stageW && att.height >= stageH) {
-        const region = atlas.findRegion(att.path || att.name);
-        if (region) {
-          basePages.add(region.page.name);
-          baseRegions.add(region.name);
-        }
+    const exempt = (name: string): void => {
+      const region = atlas.findRegion(name);
+      if (region) {
+        basePages.add(region.page.name);
+        baseRegions.add(region.name);
+      }
+    };
+    if (named.length > 0) {
+      for (const name of named) exempt(name);
+    } else {
+      for (const att of regionAttachments) {
+        if (stageW && stageH && att.width >= stageW && att.height >= stageH) exempt(att.path || att.name);
       }
     }
-    // The escape hatch is only worth naming when it is reachable: with no stage
-    // size to measure against, `basePages` is empty and no image can qualify, so
-    // pointing at it would send the reader after a door that is not there.
+    // The escape hatch is named the way it is reachable. With a base plate the
+    // rig names, that plate; with none but a stage, the size reading; and with
+    // neither, nothing here decides which image is the plate — so the sentence
+    // says what would, rather than pointing at a door that is not there.
+    const undecided =
+      'Only a base plate may be opaque, and nothing here decides which image that is: this skeleton declares no ' +
+      'stage size to measure one against, and ';
     const exemption =
-      stageW && stageH
-        ? `Only the one image big enough to cover the whole stage (${stageW}x${stageH}) may be opaque.`
-        : 'The one image that covers the whole stage may be opaque, but this skeleton declares no stage size, so ' +
-          'nothing here qualifies.';
+      named.length > 0
+        ? `Only the base plate the rig names (${named.map((name) => JSON.stringify(name)).join(', ')}, the part ` +
+          "whose window is the cut manifest's crop) may be opaque."
+        : stageW && stageH
+          ? `Only the one image big enough to cover the whole stage (${stageW}x${stageH}) may be opaque.`
+          : input.rig
+            ? `${undecided}the build names no base plate. Either would decide it: give the rig spec a "skeleton" ` +
+              'stage the plate covers, or build from a cut manifest, whose base plate is the part whose window is ' +
+              'the crop.'
+            : `${undecided}no rig was given to name one. Either would decide it: state a "skeleton" stage the plate ` +
+              'covers, or validate with the specs it was built from (--rig, --motion and the --manifest, whose base ' +
+              'plate is the part whose window is the crop).';
     // 🚨 Counted per page for the unpacked convention and per REGION on a shared
     // page, and the split is not a convenience (issue #266, follow-up 2). A
     // packed page's own file all but always declares transparency — the gutter
@@ -5405,7 +5438,7 @@ export function validate(input: ValidateInput): ValidateReport {
       }
       const info = header.info;
       if (info.hasTransparency) continue;
-      if (basePages.has(page.name)) continue; // full-stage base plate: opaque is correct
+      if (basePages.has(page.name)) continue; // the base plate: opaque is correct
       fail(
         'A19_OVERLAY_PNGS_HAVE_ALPHA',
         `part image "${page.name}" cannot be transparent anywhere: it is colour type ${info.colourType} ` +

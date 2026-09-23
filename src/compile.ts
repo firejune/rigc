@@ -3109,7 +3109,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     physics: physicsReport,
     deformTransforms,
     trackDerivations,
-    rig: buildRigInfo(rig, bones, meshes, manifest),
+    rig: buildRigInfo(rig, bones, meshes, manifest, images),
   };
 }
 
@@ -6057,6 +6057,7 @@ function buildRigInfo(
   bones: SpineBone[],
   meshes: CompileResult['meshes'],
   manifest: FaceManifest | null,
+  images: CompiledImage[],
 ): RigInfo {
   const axisBone = rig.invariants?.axisBone ?? null;
   if (axisBone !== null && !bones.some((b) => b.name === axisBone)) {
@@ -6119,6 +6120,8 @@ function buildRigInfo(
     meshSoftBones,
     deformMayFold,
     editorRoundTrip: rig.invariants?.editorRoundTrip === true,
+    // `isBase` is set on the manifest route only; every other image says false.
+    basePlates: images.filter((img) => img.isBase).map((img) => img.region),
     meshSlotBudget: rig.invariants?.meshSlots ?? null,
     meshTriangleBudget: rig.invariants?.meshTriangles ?? null,
     contactDepth,

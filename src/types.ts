@@ -1376,6 +1376,18 @@ export interface RigInfo {
    * SKIP still names anything a round trip would drop.
    */
   editorRoundTrip: boolean;
+  /**
+   * The atlas region(s) the build names as its base plate — the one image
+   * `A19_OVERLAY_PNGS_HAVE_ALPHA` lets be opaque — in compile order.
+   *
+   * A cut manifest states it: the part whose window IS the crop
+   * (`CompiledImage.isBase`), with no stage box involved. A rig spec has no way
+   * to state it, so a build from one names none and this is empty. `A19` reads
+   * this first and falls back to "an attachment at least the stage's size" only
+   * when it is empty (issue #770) — two readings that can disagree need an
+   * order, and the statement outranks the measurement.
+   */
+  basePlates: string[];
   /** Mesh slots this rig budgets for, or null when it declares no budget. */
   meshSlotBudget: number | null;
   /** Triangles one mesh may carry, or null when the rig declares no budget. */
