@@ -1395,6 +1395,31 @@ const MUTANTS: Mutant[] = [
     expect: null,
     mutate: (a) => ({ ...a, skeletonText: withoutStageBox(a.skeletonText) }),
   },
+  // ─── an ik constraint muted at rest that nothing switches on (issue #765) ──
+  //
+  // The overlay fixture declares no ik constraint, so one is forged onto it:
+  // the first bone hanging off the root reaches for the root, at `mix` 0, and
+  // no animation keys it. It loads clean and `IkConstraint.update` returns on
+  // its first line every frame.
+  {
+    name: 'M75_an_ik_constraint_forged_at_mix_0_that_no_animation_keys',
+    origin:
+      'the constraint parses, sits in the update cache and moves nothing — and before issue #765 no assertion asked the ' +
+      'muted-at-rest question of an ik constraint at all',
+    expect: 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const bones = (j as any).bones;
+        const bone = bones.find((b: any) => b.parent === bones[0].name);
+        if (bone === undefined) throw new Error('the fixture hangs no bone off its root for the mutant to constrain');
+        (j as any).constraints = [
+          ...((j as any).constraints ?? []),
+          { type: 'ik', name: 'forged_reach', bones: [bone.name], target: bones[0].name, mix: 0 },
+        ];
+      }),
+    }),
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -12227,6 +12252,13 @@ function runConstraintAndDeformSuite(): number {
     ],
   });
   const gate = gateProbe(dirs, everything);
+  // The two constraint tracks of the control, for the deform-only cases below
+  // that gate a whole file: `TIMELINE_RIG` rests both constraints muted, and
+  // since issue #765 a rig resting one muted with nothing switching it on is
+  // refused (A47, A48). Taken from `everything` rather than restated, so the
+  // two cannot become two different rescues.
+  const everythingMove = (everything.animations as Record<string, Record<string, unknown>>).move;
+  const switchedOn = { ik: everythingMove.ik, transform: everythingMove.transform };
   say(
     'CONTROL_ALL_THREE_TIMELINE_FAMILIES_ARE_GREEN',
     gate.failures.length === 0 &&
@@ -12621,7 +12653,7 @@ function runConstraintAndDeformSuite(): number {
   const oddOffset = gateProbeOrRefusal(
     dirs,
     timelineMotion({
-      duration: 1, loop: false, tracks: [],
+      duration: 1, loop: false, tracks: [], ...switchedOn,
       deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, offset: 3, vertices: [1, 1] }] }],
     }),
     oddOffsetEmitted,
@@ -12748,7 +12780,7 @@ function runConstraintAndDeformSuite(): number {
   const oddRun = gateProbeOrRefusal(
     dirs,
     timelineMotion({
-      duration: 1, loop: false, tracks: [],
+      duration: 1, loop: false, tracks: [], ...switchedOn,
       // Three numbers at an even start: the card's own shape. The values are
       // exact in binary so that "byte for byte the spec's" is a comparison of
       // the emitted text and not of a rounding tolerance.
@@ -12767,7 +12799,7 @@ function runConstraintAndDeformSuite(): number {
   const byVertex = gateProbeOrRefusal(
     dirs,
     timelineMotion({
-      duration: 1, loop: false, tracks: [],
+      duration: 1, loop: false, tracks: [], ...switchedOn,
       deform: [{ slot: 'flat', attachment: 'flat', keys: [{ t: 0 }, { t: 1, fromVertex: 1, vertices: [1.5, -2.25, 0.125] }] }],
     }),
     byVertexEmitted,
@@ -14210,6 +14242,222 @@ function runConstraintAndDeformSuite(): number {
     'a rig tried at 60 fps sees an exponent of exactly 1, where a negative damping only flips the velocity and comes ' +
       'back — which is how a keyed −0.5 looked like the case #727 widened. The bound is right at every rate and the ' +
       'sentence has to say why, or an author who plays the rig at 60 will read the refusal as over-cautious',
+  );
+
+  // --- an ik or a transform constraint muted for good (issue #765) ----------
+  //
+  // The question `A23`, `A36` and `A37` ask of their own kinds, asked of the
+  // two kinds that had no rule. One rig per kind, a third with no constraint at
+  // all, and one animation that moves the ik target and the transform source so
+  // that a constraint which runs has something to follow. Every clause compares
+  // two poses of this run for equality or inequality, so no measured number is
+  // typed: `LIFT` is the handle #752's controls chose, and −1 is the value the
+  // editor's own example exports rest their inverted transforms at.
+  const MUTED_BONES = [
+    { name: 'root' },
+    { name: 'block', parent: 'root', x: 0, y: 0, length: 12 },
+    { name: 'upper', parent: 'root', x: 0, y: 0, length: 20 },
+    { name: 'goal', parent: 'root', x: 10, y: 30 },
+    { name: 'follower', parent: 'root', x: 40, y: 0, length: 20 },
+    { name: 'source', parent: 'root', x: 60, y: 0, rotation: 45, length: 20 },
+  ];
+  const REACH = { name: 'reach', type: 'ik', bones: ['upper'], target: 'goal', mix: 0 };
+  const FOLLOW = { name: 'follow', type: 'transform', bones: ['follower'], source: 'source', properties: { rotate: { to: { rotate: {} } } }, mixRotate: 0 };
+  const mutedRig = (constraints: Array<Record<string, unknown>>): ProbeDirs =>
+    writeProbeRig({ bones: MUTED_BONES, constraints });
+  const reachDirs = mutedRig([REACH]);
+  const followDirs = mutedRig([FOLLOW]);
+  const unconstrainedDirs = mutedRig([]);
+  const followMotion = (extra: Record<string, unknown>): Record<string, unknown> =>
+    timelineMotion({
+      duration: 1,
+      loop: false,
+      tracks: [
+        { bone: 'goal', property: 'translate', keys: [{ t: 0, v: [10, 30] }, { t: 1, v: [30, 10] }] },
+        { bone: 'source', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [60] }] },
+      ],
+      ...extra,
+    });
+  const ikTrack = (from: number, to: number): Record<string, unknown> => ({
+    ik: [{ constraint: 'reach', keys: [{ t: 0, mix: from }, { t: 1, mix: to }] }],
+  });
+  const transformTrack = (from: Record<string, number>, to: Record<string, number> = from): Record<string, unknown> => ({
+    transform: [{ constraint: 'follow', keys: [{ t: 0, ...from }, { t: 1, ...to }] }],
+  });
+  const SIX_ZERO = { mixRotate: 0, mixX: 0, mixY: 0, mixScaleX: 0, mixScaleY: 0, mixShearY: 0 };
+  const IK_NAME = 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT';
+  const TRANSFORM_NAME = 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT';
+  const unconstrainedSeries = moveSeries(timelinePosable(unconstrainedDirs, followMotion({})).data);
+  const skipOf = (report: ReturnType<typeof validate>, assertion: string): string | undefined =>
+    report.skipped.find((entry) => entry.assertion === assertion)?.reason;
+  const unconstrainedGate = gateProbe(unconstrainedDirs, followMotion({}));
+  /**
+   * The clauses a muted case has to meet: refused once by `assertion` with both
+   * halves, and posing every bone at every sample exactly where the rig with no
+   * constraint does — which is what makes "muted" a fact about the runtime.
+   */
+  const mutedProbes = (label: string, dirs: ProbeDirs, motion: Record<string, unknown>, assertion: string, subject: string): string[] => {
+    const report = gateProbe(dirs, motion);
+    const details = detailsOf(report, assertion);
+    return [
+      ...(details.length === 1 ? [] : [`${label}: ${assertion} drew ${details.length} failure(s), not one`]),
+      ...details.flatMap((detail) => (saysBothHalves(detail, subject) ? [] : [`${label}: names only one half: ${detail}`])),
+      ...(sameSeries(moveSeries(timelinePosable(dirs, motion).data), unconstrainedSeries)
+        ? []
+        : [`${label}: does not pose exactly where the rig with no constraint does, so it is not muted`]),
+    ];
+  };
+
+  const reachProbes = [
+    ...mutedProbes('nothing keys it', reachDirs, followMotion({}), IK_NAME, 'ik constraint "reach"'),
+    ...mutedProbes('keyed to mix 0 only', reachDirs, followMotion(ikTrack(0, 0)), IK_NAME, 'ik constraint "reach"'),
+    ...(gateProbe(mutedRig([{ ...REACH, mix: 1 }]), followMotion({})).passed.includes(IK_NAME) ? [] : [`${IK_NAME} did not pass on the rig that rests at mix 1`]),
+    ...(skipOf(unconstrainedGate, IK_NAME) === 'the skeleton declares no ik constraint'
+      ? []
+      : [`the rig with no constraint did not SKIP ${IK_NAME} by name: ${skipOf(unconstrainedGate, IK_NAME) ?? 'no skip'}`]),
+  ];
+  const reachHeld = reachProbes.length === 0 && unconstrainedSeries.length > 0;
+  say(
+    'T102_AN_IK_CONSTRAINT_MUTED_AT_REST_THAT_NOTHING_OR_ONLY_A_ZERO_KEY_SWITCHES_ON_IS_REFUSED_BY_NAME_AND_POSES_AS_NONE',
+    reachHeld,
+    probeDetail(
+      reachHeld,
+      reachProbes,
+      `an ik resting at mix 0, with nothing keying it and keyed to 0 only, poses every bone at every sample exactly where ` +
+        `the same rig with no constraint does (${unconstrainedSeries.length} readings each) and is refused once, with both ` +
+        `halves — "${detailsOf(gateProbe(reachDirs, followMotion({})), IK_NAME)[0] ?? '(none)'}" — while the rig resting at ` +
+        `1 passes and the rig with none SKIPs by name`,
+      (count) => `${count} clause(s) of the muted ik did not hold:`,
+    ),
+    '`IkConstraint.update` opens with `if (p.mix === 0) return`, so a constraint resting there that nothing keys away ' +
+      'from 0 is in the update cache and moves nothing — the silence `A23`, `A36` and `A37` name for their kinds, and ' +
+      'before issue #765 a rig carrying it gated green with 0 failures',
+  );
+
+  // The transform half. `mixRotate: 0` alone on a key is the case the six-mix
+  // early return gets wrong: the parser reads each omitted mix as 1, so five
+  // mixes are live on a constraint that reads only `mixRotate`.
+  const noPropertyGate = gateProbe(mutedRig([{ ...FOLLOW, properties: {} }]), followMotion({}));
+  const noPropertySays = detailsOf(noPropertyGate, TRANSFORM_NAME);
+  const followProbes = [
+    ...mutedProbes('nothing keys it', followDirs, followMotion({}), TRANSFORM_NAME, 'transform constraint "follow"'),
+    ...mutedProbes('keyed to all six mixes 0', followDirs, followMotion(transformTrack(SIX_ZERO)), TRANSFORM_NAME, 'transform constraint "follow"'),
+    ...mutedProbes('keyed to mixRotate 0 alone', followDirs, followMotion(transformTrack({ mixRotate: 0 })), TRANSFORM_NAME, 'transform constraint "follow"'),
+    ...mutedProbes(
+      'keyed to mixRotate 0 and mixX 1, on a constraint that drives no x',
+      followDirs,
+      followMotion(transformTrack({ ...SIX_ZERO, mixX: 1 })),
+      TRANSFORM_NAME,
+      'transform constraint "follow"',
+    ),
+    ...(noPropertySays.length === 1 && noPropertySays[0].includes('drives no property') && !noPropertySays[0].includes('above 0')
+      ? []
+      : [`a transform that drives no property is not refused once with its own sentence: ${noPropertySays.join('; ') || '(none)'}`]),
+    ...(gateProbe(mutedRig([{ ...FOLLOW, mixRotate: 1 }]), followMotion({})).passed.includes(TRANSFORM_NAME)
+      ? []
+      : [`${TRANSFORM_NAME} did not pass on the rig that rests at mixRotate 1`]),
+    ...(skipOf(unconstrainedGate, TRANSFORM_NAME) === 'the skeleton declares no transform constraint'
+      ? []
+      : [`the rig with no constraint did not SKIP ${TRANSFORM_NAME} by name: ${skipOf(unconstrainedGate, TRANSFORM_NAME) ?? 'no skip'}`]),
+  ];
+  const followHeld = followProbes.length === 0 && unconstrainedSeries.length > 0;
+  say(
+    'T103_A_TRANSFORM_MUTED_ON_EVERY_MIX_IT_READS_IS_REFUSED_BY_NAME_THOUGH_A_KEY_LIFTS_A_MIX_IT_NEVER_READS',
+    followHeld,
+    probeDetail(
+      followHeld,
+      followProbes,
+      `a rotate-only transform resting at mixRotate 0 poses exactly where no constraint does with nothing keying it, keyed ` +
+        `to six zeros, keyed to mixRotate 0 alone (the parser's 1 on the other five) and keyed to mixX 1 — and each is ` +
+        `refused once, with both halves: "${detailsOf(gateProbe(followDirs, followMotion({})), TRANSFORM_NAME)[0] ?? '(none)'}". ` +
+        `One that drives no property: "${noPropertySays[0] ?? '(none)'}"`,
+      (count) => `${count} clause(s) of the muted transform did not hold:`,
+    ),
+    '`TransformConstraint.update` returns early only when all six mixes are 0, but what applies a property is its own ' +
+      'mix (`to.mix(pose) !== 0`), and a key that omits a mix is read as 1 — so the early return would take a key of ' +
+      '`mixRotate: 0` alone as a rescue for a constraint it leaves exactly as muted as no key does',
+  );
+
+  // The rescue, read the way the runtime reads it: a key above 0 on the mix the
+  // constraint reads, and every value a key POSES — a Bezier between two keys
+  // of 0 whose handles lie above 0 is a curve the runtime interpolates through.
+  const reachFlat = followMotion(ikTrack(0, 0));
+  const followFlat = followMotion(transformTrack(SIX_ZERO));
+  const liftIk = (skeleton: Record<string, unknown>): void => {
+    const move = (skeleton.animations as Record<string, Record<string, Record<string, Array<Record<string, unknown>>>>>).move;
+    move.ik.reach[0].curve = [0.25, LIFT, 0.75, LIFT, 0.25, 0, 0.75, 0];
+  };
+  const liftTransform = (skeleton: Record<string, unknown>): void => {
+    const move = (skeleton.animations as Record<string, Record<string, Record<string, Array<Record<string, unknown>>>>>).move;
+    const flat = [0.25, 0, 0.75, 0];
+    move.transform.follow[0].curve = [0.25, LIFT, 0.75, LIFT, ...flat, ...flat, ...flat, ...flat, ...flat];
+  };
+  const rescues: Array<[label: string, report: ReturnType<typeof validate>, series: number[], against: number[]]> = [
+    ['an ik keyed up to mix 1', gateProbe(reachDirs, followMotion(ikTrack(0, 1))), moveSeries(timelinePosable(reachDirs, followMotion(ikTrack(0, 1))).data), unconstrainedSeries],
+    [
+      'a transform keyed up on mixRotate alone, the other five 0',
+      gateProbe(followDirs, followMotion(transformTrack(SIX_ZERO, { ...SIX_ZERO, mixRotate: 1 }))),
+      moveSeries(timelinePosable(followDirs, followMotion(transformTrack(SIX_ZERO, { ...SIX_ZERO, mixRotate: 1 }))).data),
+      unconstrainedSeries,
+    ],
+    ['an ik 0 → 0 lifted by its curve', gateProbeArtifacts(reachDirs, reachFlat, liftIk), moveSeries(editedPosable(reachDirs, reachFlat, liftIk)), moveSeries(timelinePosable(reachDirs, reachFlat).data)],
+    [
+      'a transform 0 → 0 lifted by its mixRotate curve',
+      gateProbeArtifacts(followDirs, followFlat, liftTransform),
+      moveSeries(editedPosable(followDirs, followFlat, liftTransform)),
+      moveSeries(timelinePosable(followDirs, followFlat).data),
+    ],
+  ];
+  const rescueProbesOf = rescues.flatMap(([label, report, series, against]) => [
+    ...(report.failures.length === 0 ? [] : [`${label} is refused: ${refusedWith(report)}`]),
+    ...(sameSeries(series, against) ? [`${label} poses exactly where its muted twin does, so it proves nothing`] : []),
+  ]);
+  const rescuedHeld = rescueProbesOf.length === 0;
+  say(
+    'T104_ONE_KEY_ABOVE_ZERO_ON_A_MIX_THE_CONSTRAINT_READS_OR_A_CURVE_LIFTING_TWO_ZERO_KEYS_IS_THE_RESCUE_FOR_IK_AND_TRANSFORM',
+    rescuedHeld,
+    probeDetail(
+      rescuedHeld,
+      rescueProbesOf,
+      `${rescues.map(([label]) => label).join('; ')} — each gates green and poses away from its muted twin`,
+      (count) => `${count} clause(s) of the rescue did not hold:`,
+    ),
+    'a constraint resting at 0 and keyed up by the animation that needs it is the idiom rather than a defect — ' +
+      "spineboy's aim rig is exactly that — and a curve's samples count because `getBezierValue` interpolates through " +
+      'them rather than between the keys, which is the reading `A23`, `A36` and `A37` share (#752)',
+  );
+
+  // Live is `!== 0`, the runtime's own test, and not `> 0`: a transform resting
+  // negative runs. The editor's example exports rest five inverted transforms
+  // at mixX = mixY = −1 that nothing keys, so a `> 0` reading refuses them.
+  const INVERTED = { ...FOLLOW, properties: { x: { to: { x: {} } }, y: { to: { y: {} } } }, mixRotate: 0 };
+  const invertedDirs = mutedRig([{ ...INVERTED, mixX: -1, mixY: -1 }]);
+  const invertedGate = gateProbe(invertedDirs, followMotion({}));
+  const invertedSeries = moveSeries(timelinePosable(invertedDirs, followMotion({})).data);
+  const zeroedDirs = mutedRig([{ ...INVERTED, mixX: 0, mixY: 0 }]);
+  const zeroedGate = gateProbe(zeroedDirs, followMotion({}));
+  const zeroedSeries = moveSeries(timelinePosable(zeroedDirs, followMotion({})).data);
+  const invertedProbes = [
+    ...(invertedGate.failures.length === 0 && invertedGate.passed.includes(TRANSFORM_NAME)
+      ? []
+      : [`the transform resting at mixX = mixY = -1 is not green on ${TRANSFORM_NAME}: ${refusedWith(invertedGate) || 'it did not run'}`]),
+    ...(sameSeries(invertedSeries, zeroedSeries) ? ['resting at -1 poses exactly where resting at 0 does, so the negative mix proves nothing'] : []),
+    ...(detailsOf(zeroedGate, TRANSFORM_NAME).length === 1 ? [] : [`its twin resting at 0 drew ${detailsOf(zeroedGate, TRANSFORM_NAME).length} failure(s), not one`]),
+  ];
+  const invertedHeld = invertedProbes.length === 0;
+  say(
+    'T105_A_TRANSFORM_RESTING_AT_A_NEGATIVE_MIX_RUNS_AND_IS_NOT_REFUSED_WHERE_ITS_TWIN_AT_ZERO_IS',
+    invertedHeld,
+    probeDetail(
+      invertedHeld,
+      invertedProbes,
+      `an x/y transform resting at mixX = mixY = -1 with nothing keying it gates green and poses away from the same rig ` +
+        `resting at 0, which is refused once: "${detailsOf(zeroedGate, TRANSFORM_NAME)[0] ?? '(none)'}"`,
+      (count) => `${count} clause(s) of the negative rest did not hold:`,
+    ),
+    "the runtime's test is `!== 0` (`IkConstraint.update`'s early return, and `to.mix(pose) !== 0` in the transform's " +
+      'loop), so a negative mix runs the constraint inverted — the shape the editor\'s own example exports rest five ' +
+      'transforms in. A `> 0` reading, the one `A36` and `A37` use, refuses every one of them',
   );
 
   return bad;
@@ -43734,17 +43982,17 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
   {
     row: 'README: the benchmark-dossier row (#359)',
     stale: 'the run viewer, the 36 named assertions with their profiles, and the selftest\n',
-    clean: 'the run viewer, the 47 named assertions with their profiles, and the selftest\n',
+    clean: 'the run viewer, the 49 named assertions with their profiles, and the selftest\n',
   },
   {
     row: 'AUTHORING: the `--profile` row (#359)',
     stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |\n',
-    clean: '| `--profile` | `spine` = the 32 validity rules (**the default**) · `spine-html` = all 47, opt-in |\n',
+    clean: '| `--profile` | `spine` = the 34 validity rules (**the default**) · `spine-html` = all 49, opt-in |\n',
   },
   {
     row: 'BENCHMARK: the profiles paragraph (#359)',
     stale: 'Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this\n',
-    clean: 'Not all 47 rules are about Spine. Some are about **spine-html**, the renderer this\n',
+    clean: 'Not all 49 rules are about Spine. Some are about **spine-html**, the renderer this\n',
   },
   {
     row: 'BENCHMARK: the profile table\'s own row (#359)',
@@ -43753,7 +44001,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       '| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
     clean:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      '| `spine-html` | all 47 — those 32 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
+      '| `spine-html` | all 49 — those 34 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
   },
   {
     row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',
@@ -54660,6 +54908,20 @@ const INGEST_PROBE_RIG: Record<string, unknown> = {
       type: 'transform',
       bones: ['block'],
       source: 'aim',
+      // Each of the six properties driving itself (issue #765). With no
+      // `properties` the parser reads none of the six mixes below and the
+      // constraint moves nothing — [measured] this shape, keyed as `move` keys
+      // it, poses every bone exactly where no constraint does, and `A48`
+      // refuses it by name. Declaring all six is what makes every mix here,
+      // and every channel of the `transform` track, data the runtime reads.
+      properties: {
+        rotate: { to: { rotate: {} } },
+        x: { to: { x: {} } },
+        y: { to: { y: {} } },
+        scaleX: { to: { scaleX: {} } },
+        scaleY: { to: { scaleY: {} } },
+        shearY: { to: { shearY: {} } },
+      },
       rotation: 10,
       mixRotate: 1,
       mixX: 1,

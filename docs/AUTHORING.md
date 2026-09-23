@@ -169,7 +169,7 @@ What the flags mean:
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--cut` | `build`, `explain` and `validate`: look up a named cut in `--cuts <cuts.json>`, **instead of** `--rig`/`--motion`/`--out` — the two spellings are one build stated two ways and are refused together. A `cuts.json` is `{ "<name>": { "rig": …, "motion": …, "out": …, "manifest"?: … } }`, every path in it relative to the table's own file, so the table lives with the project that owns the art |
 | `--cuts` | the `cuts.json` `--cut` names. Required beside it — `--cut` alone is refused, with no guess at where the table lives |
-| `--profile` | `spine` = the 32 validity rules (**the default**) · `spine-html` = all 47, opt-in |
+| `--profile` | `spine` = the 34 validity rules (**the default**) · `spine-html` = all 49, opt-in |
 | `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview`, and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote`, so is a name that only *some* candidates have |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
@@ -4086,7 +4086,11 @@ exactly what a mix that was 0 at setup needs said.
   above 1 is a real editor idiom rather than a mistake.
 - ⚠️ A mix is only read by the runtime if the constraint declares the matching
   `properties` mapping (§3.5). Keying `mixScaleY` on a constraint that maps
-  rotation only is dead data — legal, loaded, and it moves nothing.
+  rotation only is dead data — legal, loaded, and it moves nothing. ⚠️ So is every
+  mix a key **omits**, and that one looks like a rescue: the parser reads an
+  omitted mix as 1, so a key of `mixRotate: 0` alone on a rotate-only constraint
+  carries five mixes of 1 that nothing reads. `A48` judges only the mixes of the
+  properties the constraint drives (§4.12).
 - The refusals are §4.9's, with `transform` in place of `ik`.
 
 ### 4.11 `deform` — moving an attachment's vertices
@@ -4964,6 +4968,35 @@ constraint declaring `mixGlobal`, since only the physics family has one. The ref
 says both halves — `path constraint "P" has mixRotate 0, mixX 0 and mixY 0 at setup
 and none of the 2 animations keys its mix above 0; …` — and names both repairs.
 
+⚠️ **The same question of an `ik` and a `transform` constraint is `A47` and `A48`**
+([#765](https://github.com/firejune/rigc/issues/765)); until then no assertion asked
+it, and a rig resting either kind muted with nothing keying it gated green with 0
+failures. [measured] on generated fixtures, an ik at `mix` 0 and a transform at
+every mix 0, each with nothing keying it and each keyed to 0 only, pose every bone
+exactly where the same rig with no constraint does. They read the timelines through
+the same helper as `A23`/`A36`/`A37`, so a lifted Bezier between two keys of 0 is a
+rescue and a 0-only timeline is not, with two differences that are the runtime's:
+
+- **Live is `!== 0`, not `> 0`.** `IkConstraint.update` returns on `mix === 0`, and
+  a transform applies a property only when its own mix `!== 0`, so a negative mix
+  runs the constraint inverted. [measured] five transform constraints across four of
+  the editor's example exports (`6-arcs-pro`, `8-follow-through-pro-ball`,
+  `sack-pro` twice, `spineboy-pro`) rest at `mixX` = `mixY` = −1 with nothing keying
+  them, each moves its bones against the same constraint at every mix 0, and a
+  `> 0` reading refuses all five. `A36`/`A37` still read `> 0`.
+- **A transform is judged on the mixes of the properties it drives.**
+  `TransformConstraint.update` returns early only when all six mixes are 0, but a
+  property is applied by its own mix, and a key omitting a mix reads it as 1
+  (§4.10). [measured] a rotate-only transform keyed to `mixRotate: 0` alone — five
+  mixes of 1 on the loaded timeline — and one keyed to `mixX: 1` both pose exactly
+  where no constraint does, and both are refused. A transform whose `properties`
+  name no `to` at all is refused with its own sentence: no mix it carries is read.
+
+`ik constraint "reach" has mix 0 at setup and none of the 1 animation keys its mix
+above 0; update() returns on mix 0, so "upper" never reaches for "goal" — rest it
+above 0, or key its mix above 0 in an animation`. A rig resting at 0 and keyed up by
+the animation that needs it — spineboy's aim — is refused by neither.
+
 ### 4.13 `sequence` — which frame of a numbered series shows
 
 The other attachment timeline, beside `deform` and for the same reason: its key is
@@ -5439,6 +5472,8 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN` | both | a **linked mesh** (§3.4) — `type: "linkedmesh"`, or a `type: "mesh"` carrying `source` — that also states `uvs`, `triangles`, `vertices`, `hull` or `edges`. The parser returns from the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`), so those keys are read by **nothing at all** and `setSourceMesh` fills the attachment with the source's arrays instead: the file says one mesh and every runtime draws another, in silence. The detail names the attachment by skin, slot and placeholder, every key it states, the `source` and where the parser looks for it — the two defaults spelled out, because an omitted `skin` is the **default** skin rather than the one the link is written in — and the shape the keys describe beside the shape the attachment loaded. ⚠️ **`width`/`height` are not part of this.** `setSourceMesh` overwrites both with the source's, so they are as dead at runtime — but the parser reads them (`:569-570`), the format carries them on a link and rigc emits them, so refusing them would refuse every link rigc writes (§3.4). `compile.ts` refuses the same shape outright in a rig rigc builds (§5.1); this is that fact held against a skeleton it did not write, and `ingest` reports it as `ATTACHMENT_LINK_GEOMETRY` ([INGEST §2.0](INGEST.md)). **SKIP** when no attachment in the skeleton takes its geometry from another — which is almost every skeleton, so a pass here means a link was read ([#710](https://github.com/firejune/rigc/issues/710)) |
 | `A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN` | both | an `rgb` or `alpha` timeline (§4.4) the runtime does not hold as the file states it, in one of two shapes that both parse in silence. **A channel keyed twice**: another colour timeline of the same slot in the same animation poses a channel this one poses — `rgba` beside `alpha` is the shape a converter leaves when it writes a separable `rgb` back as `rgba` next to the `alpha` it kept. Every colour timeline poses its channels at every time, the setup value before its first key included, so the one the file states later overwrites the other everywhere; the detail names both timelines, the channel, and which one survives. **A key not posed as written**: the animation is stepped to each key's own time — at the key **as the runtime stores it**: spine-core keeps key times as 32-bit floats, so a key at `0.2` is posed at `0.20000000298…`, the later of the two, and not one float step before it, where a first key still shows the setup value and a stepped key the one before (a correct file was refused that way until [#771](https://github.com/firejune/rigc/issues/771)), and the posed r g b (for `rgb`, against the hex, to half a quantisation step) or alpha (for `alpha`, against `value`, whose absence the parser reads as 0) is compared — a colour that is not six hex digits loads as NaN, and a key whose time another key repeats is read by nothing. ⚠️ An `rgb` alone written as an `rgba` holding the setup alpha is **not** caught and cannot be from the file: it is a correct `rgba`, and the difference shows only under another track that moves the alpha. The loaded timeline class and the channels a separable timeline leaves alone are measured in the selftest (`S83`–`S85`) rather than here, because against the linked parser neither can come out wrong. The channel table is `SLOT_COLOR_CHANNELS` in `src/timelines.ts`, shared with the compiler's refusal and held to the runtime's own property ids (`S89`). **SKIP** when no animation keys an `rgb` or `alpha` — there is then no separable slot colour to read back |
 | `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` | both | a **numbered series** (§3.4.3, §4.13) that the runtime does not show as the file states it. Every shape below loads without a word, measured on spine-core 4.3.13 ([#729](https://github.com/firejune/rigc/issues/729)). **The block**: a `sequence` with no `count` (`readSequence` reads 0, and the attachment holds no region) or a `setup` at or past `count` (`Sequence.resolveIndex` clamps it to the last frame). **The keys**: a `mode` outside the seven — `hold`, `once`, `loop`, `pingpong`, `onceReverse`, `loopReverse`, `pingpongReverse` — loads as `hold`; an `index` that is fractional (`index << 4` truncates it) or past the end (clamped); an advancing mode at an effective delay of 0 (the parser carries a key's `delay` from the key before; `(time - keyTime) / 0` is Infinity and `Infinity \| 0` is 0, so it never advances); a timeline on an attachment that carries no block (the parser gives every region a one-region series, so every mode shows it). **The pose**: every key is stepped to mid-frame sample times — enough to wrap every mode, and a `hold` key to its own time as the runtime stores it, a 32-bit float ([#771](https://github.com/firejune/rigc/issues/771)) — and the region the slot shows is held to the frame the file's own statement gives, the arithmetic of `SequenceTimeline.applyToSlot` and the names of `Sequence.getPath` transcribed rather than read off the loaded timeline, so the check is not the runtime agreeing with itself. Before the first key the frame is `setup`. ⚠️ A sample where the slot shows another attachment is not compared, because the runtime writes nothing there; a timeline with no comparable sample is counted in `stats.sequenceSamplesUnshown`. `compile.ts` refuses every one of these shapes in a spec (§5.1); this is them held against a skeleton it did not write. **SKIP** when no attachment carries a `sequence` block and no animation keys a `sequence` timeline |
+| `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | an ik constraint resting at `mix` 0 that no animation keys **away from 0** (§4.9, §4.12). `IkConstraint.update` returns on `mix === 0`, so it sits in the update cache and moves nothing. The keys are read the way `A23`/`A36`/`A37` read theirs — every value the loaded timeline poses on its `mix` channel, Bezier samples included — so a timeline keying 0 only is no rescue: [measured] it poses every bone exactly where the same rig with no constraint does, and before [#765](https://github.com/firejune/rigc/issues/765) it passed. Live is the runtime's `!== 0`, so a negative mix is not refused. `ik constraint "C" has mix 0 at setup and none of the 1 animation keys its mix above 0; update() returns on mix 0, so "upper" never reaches for "goal" — rest it above 0, or key its mix above 0 in an animation`. **SKIP** when the skeleton declares no ik constraint |
+| `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | a transform constraint none of whose mixes **for a property it drives** is away from 0 at setup or on any value an animation poses (§4.10, §4.12), or one whose `properties` name no `to` at all. A property is applied only when its own mix `!== 0`, and a key that omits a mix reads it as 1, so the six-mix early return of `TransformConstraint.update` would take a key of `mixRotate: 0` alone as a rescue — [measured] that key, and one keying `mixX` 1 on a rotate-only constraint, pose every bone exactly where no constraint does ([#765](https://github.com/firejune/rigc/issues/765)). A negative mix runs, and five transforms in the editor's example exports rest at −1. `transform constraint "C" drives rotate and has mixRotate 0 at setup, and none of the 1 animation keys its mix above 0; a mix is read only for a property the constraint drives, and update() skips each one at 0, so nothing ever moves "follower" — rest mixRotate above 0, or key its mix above 0 in an animation`. **SKIP** when the skeleton declares no transform constraint |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
