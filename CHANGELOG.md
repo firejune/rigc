@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.1](https://github.com/firejune/rigc/compare/v0.35.0...v0.35.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **compile:** a mesh writes its `path` and `color` right after `type`, and a skin's slot keys are compared with U+3000 and the full-width digits folded, so the two production shapes the public exports never carry come out in the editor's order ([#792](https://github.com/firejune/rigc/issues/792)) ([bb2dd64](https://github.com/firejune/rigc/commit/bb2dd648d9bb428fbd3a15be8389597ec19cf4b3))
+
 ## [0.35.0](https://github.com/firejune/rigc/compare/v0.34.0...v0.35.0) (2026-09-23)
 
 
