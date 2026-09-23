@@ -360,6 +360,39 @@ it hits instead of leaving it to be discovered:
   says so rather than offering one, and the repair is to re-export the page at the
   size the atlas declares, or repack.
 
+📐 **`explain` does not refuse such a page — it withholds what it would have
+measured off it** ([#750](https://github.com/firejune/rigc/issues/750)). It never
+gates, a runtime draws the page, and most of its report — bones, slots, timelines
+— reads no texel at all, so the pack still compiles and the report still prints.
+What it no longer prints is a figure taken at the coordinates the atlas states,
+because on such a file those are another part of the picture: measured on a pack
+at half resolution, an authored mesh that covers 100.00% of its art and reaches
+16.00px past it printed **68.49%** and **76.24px**, and a `grid` whose depth sheet
+reads 10 of its 12 vertices on undrawn texels printed **12 of 12**. The page is
+named once where the report starts, with the ratio `A06` refuses it by, and every
+withheld figure says so where it would have stood:
+
+```bash
+#   ..    page "hero.png" declares 4096x4096 and its PNG is 2048x2048 — 0.5000 of the declared width and 0.5000
+#         of the declared height: every figure below taken off this page's texels is withheld, and says so where
+#         it would have stood. …
+#   fan          authored 9 vertices / 8 triangles  (budget 64)  bones=[fan]  fit not measured: page "hero.png" …
+#         the count of vertices on undrawn texels is not measured: page "hero.png" …
+```
+
+`build`'s `MESH` lines withhold the same figures in the same words and print no
+page line of their own, because `A06` is `build`'s statement of that fact and a
+second one would be two refusals of one page. A **`contour`** is the one reading
+that cannot be withheld, because its outline *is* its geometry: it is refused as a
+compile error carrying `A06`'s whole sentence — ratio and repair — on `explain`
+and on `build` alike, where on `build` it arrives before the gate would have said
+it. Carry out the repair and every figure comes back. ⚠️ They come back measured
+on the **coarser** texels the page really has, so they need not equal the figures
+of the pack the page was halved from: on the same fixture the `scale: 0.5`
+restatement reads the authored mesh at 100.00% coverage reaching **8.00px** past
+it (the overshoot is counted in the page's own texels), and traces the contour as
+11 vertices where the full-resolution page traced 15.
+
 🚨 **A page that is not a PNG is refused by name, before anything is compiled
 against it** ([#732](https://github.com/firejune/rigc/issues/732)). rigc reads PNG
 and nothing else — the size `A06` judges, the alpha `A19` judges, the renderer and
@@ -660,6 +693,16 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   ([#697](https://github.com/firejune/rigc/issues/697), §5.1). ⚠️ `--profile`,
   `--pack`, `--page-size`, `--padding` and `--copy-images` are `build`'s and are
   not here: four of them decide what is *written*, and this command writes nothing.
+
+  📐 **What it will not measure: the texels of a page that is not its declared
+  size** ([#750](https://github.com/firejune/rigc/issues/750)). Under
+  `--atlas-in`, a page whose PNG is not the `size:` its atlas states is named once
+  at the top of the report, and the figures that would have been read off it — an
+  authored mesh's `covers …% of the art, reaching …px past it`, a depth sheet's
+  count of vertices on undrawn texels — are replaced by `fit not measured: …` and
+  `… is not measured: …` naming the page and the ratio. A `contour` on such a page
+  is refused, since its outline is read off those texels. Why, the quoted lines,
+  and the repair: §0.2.
 - **`diff`** compares two skeletons and reports **a ratio per measure** in six
   sections (bones, slots, attachments, constraints, animations, events). It
   deliberately does not combine them into a score: a rig with the right skeleton
@@ -4968,6 +5011,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `vertex N binds bone "X", which the rig does not declare as a bone` | §3.4 — an authored mesh's `weights` bind by NAME, like everything else in a rig spec. Fix the spelling, or declare the bone. The message names the skin, the slot, the placeholder and the vertex, because an index would name none of them |
 | `image "X.png" is not on disk at …` | fix the name, or point `--images` at the right directory |
 | `image "X.png": /…/X.png is a WebP image (…), not a PNG: its first 12 byte(s) are …` | the file is there and is not a PNG — the name ends in `.png` and the bytes decide. Re-export it as PNG; the same sentence says **truncated** for a PNG that runs out before its `IEND`, and then the repair is a whole copy (§0.2, [#732](https://github.com/firejune/rigc/issues/732)) |
+| `a "contour" generator traces the part's own alpha, and "X.png" is lifted off a packed page at the coordinates the atlas states, which on this file are not where its texels are — so there is no silhouette here to trace, only another part of the page. page "p.png" declares …` | the page's PNG is not the size its atlas declares, and the rest of the message is `A06`'s sentence for it: re-declare the page with the `scale:` header it names, or re-export the page at its declared size (§0.2, [#750](https://github.com/firejune/rigc/issues/750)) |
 | `--atlas-in <pack>.atlas: N of its M page(s) cannot be read as PNG, and nothing was compiled against the pack — page "p.png": …` | the same, for every page of the pack at once, before the compile: re-export each named page as PNG under the name the atlas gives it (§0.2) |
 | `parts/iris_open.png is 96x64 but slot "iris" declares 96x60` | R5 — a manifest `states:` entry whose art is not the window the part declares. Re-export the PNG, or fix the part's `size`; a quad sized against art of another size is the silence `A06` exists for, and the window is what the quad is built from |
 | `plates/00_stage.png is 256x256 but the manifest window for "stage" is 250x256` | R5 — the same check on the part's unconditional `image`, against the window the crop gives it |

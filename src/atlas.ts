@@ -1070,3 +1070,183 @@ export function extractRegion(page: Plate, region: AtlasRegion): Plate {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// a page against the file it names
+// ---------------------------------------------------------------------------
+
+/**
+ * The one page rectangle every region on a page shares: the size the atlas
+ * declares for it against the size of the file it names.
+ *
+ * ⭐ **What a size that disagrees with the file is and is not**, measured rather
+ * than assumed (issue #715). `TextureAtlas` computes every region's UVs as a
+ * fraction of the DECLARED size — `region.u = region.x / page.width`, spine-core
+ * 4.3.13 `dist/TextureAtlas.js:162-171` — `MeshAttachment.computeUVs` takes its
+ * `textureWidth` from the same field (`dist/attachments/MeshAttachment.js:125`),
+ * `RegionAttachment.computeUVs` reads nothing but `u/v/u2/v2`
+ * (`dist/attachments/RegionAttachment.js:152-167`), and `TextureAtlasPage.setTexture`
+ * never writes `width`/`height`. So **nothing in the region mapping reads the
+ * texture's own size**, and a page whose PNG is the declared page RESCALED is
+ * addressed at the same fraction of the picture whatever size the file is:
+ * measured on a coordinate-ramp page where every texel names its own position,
+ * rigc's own rasteriser drew 116,480 pixels in both and 0 in exactly one at a
+ * uniform 0.5.
+ *
+ * ⇒ That is why this is a clause about **texel** readers rather than about
+ * drawing, and why it is nevertheless not renderer policy. Three readers address
+ * the page at the coordinates the atlas states, and two of them are rigc's own:
+ * `A19`'s alpha scan in [`src/validate.ts`](validate.ts), the region lift
+ * `partPlate` traces a mesh generator over in [`src/compile.ts`](compile.ts), and `spine-html`'s region tier, which
+ * cuts each part with `drawImage(image, x, y, w, h, …)` and says in its own
+ * comment that it tests against the image rather than the `size:` line. Measured
+ * on the same page: the lift returned 768 of 768 texels from somewhere else.
+ *
+ * 🔑 And the format already states coarser texels honestly — `scale:`, which
+ * rigc reads (`AtlasPage.scale`) and `--atlas-in` divides by. The same art
+ * declared that way builds green and renders identically, so this refusal names
+ * a repair the format provides rather than one rigc invented.
+ */
+export interface PageGridReading {
+  /** file width / declared width, and the same for height. Both 1 when they agree. */
+  readonly x: number;
+  readonly y: number;
+  /** One ratio for both axes — the only relation a `scale:` line can state. */
+  readonly uniform: boolean;
+}
+
+/** `null` when the page declares no positive size for the ratios to divide by. */
+export function pageGridReading(
+  declared: { width: number; height: number },
+  file: { width: number; height: number },
+): PageGridReading | null {
+  if (declared.width <= 0 || declared.height <= 0) return null;
+  return {
+    x: file.width / declared.width,
+    y: file.height / declared.height,
+    // Cross-multiplied rather than compared as two divisions: the question is
+    // whether one rational number describes both axes, and two floats that
+    // round to the same digits are not that.
+    uniform: file.width * declared.height === file.height * declared.width,
+  };
+}
+
+/** A ratio, printed the one way every message here prints one. */
+function gridRatio(n: number): string {
+  return n.toFixed(4);
+}
+
+/**
+ * The first number on this page that a `scale:` re-declaration could not carry,
+ * or `null` when every one of them lands on a whole texel of the file.
+ *
+ * Every number in a region block is in the page's own texel units — `bounds` and
+ * `offsets` alike — so re-declaring the page at the file's size means scaling all
+ * eight by the same ratio, and a region that then lands between texels is one no
+ * reader could cut out. Stated as integer arithmetic (`n * file % declared`)
+ * rather than as a float test, so the answer does not depend on how the ratio
+ * rounded. ⚠️ One ratio for both axes, so this is the UNIFORM case's question
+ * and is only ever asked there — a page whose two axes differ has no `scale:`
+ * line to be re-declared with at all.
+ */
+function firstNumberOffTheCoarseGrid(
+  regions: ReadonlyArray<{
+    name: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    offsetX: number;
+    offsetY: number;
+    originalWidth: number;
+    originalHeight: number;
+  }>,
+  declared: number,
+  file: number,
+): string | null {
+  for (const region of regions) {
+    const numbers: Array<[string, number]> = [
+      ['bounds x', region.x],
+      ['bounds y', region.y],
+      ['bounds width', region.width],
+      ['bounds height', region.height],
+      ['offsets offsetX', region.offsetX],
+      ['offsets offsetY', region.offsetY],
+      ['offsets originalWidth', region.originalWidth],
+      ['offsets originalHeight', region.originalHeight],
+    ];
+    for (const [field, value] of numbers) {
+      if ((value * file) % declared === 0) continue;
+      return (
+        `region ${JSON.stringify(region.name.trim())}'s \`${field}\` of ${value} becomes ` +
+        `${((value * file) / declared).toFixed(4)} on the file's own grid, which is not a whole texel`
+      );
+    }
+  }
+  return null;
+}
+
+/** What every size-mismatch sentence says before it says what to do about it. */
+const PAGE_GRID_PREAMBLE =
+  'A runtime does not read the file\'s own size anywhere in the region mapping — `TextureAtlas` computes every ' +
+  "region's UVs as a fraction of the DECLARED size (`region.u = region.x / page.width`, spine-core " +
+  '`dist/TextureAtlas.js:162-171`) — so a page whose PNG is the declared page RESCALED draws the same picture at ' +
+  "the file's resolution, and one whose PNG is anything else draws whatever sits at those fractions. What a " +
+  'declared size that disagrees with the file breaks is every reader that addresses the page in TEXELS: this ' +
+  "validator's own `A19` alpha scan, the region lift rigc's mesh generators trace, and a canvas renderer that " +
+  'cuts each part out of the page by source rectangle.';
+
+/**
+ * What a page that is not its declared size is, stated as the page, both sizes
+ * and the two ratios — the clause every message about it opens with.
+ *
+ * `A06`'s refusal starts with it, and so does every line in which a reader that
+ * addresses the page in texels declines to (issue #750): `explain` and `build`
+ * print it where they withhold a mesh's fit, and the contour generator's refusal
+ * carries the whole of `pageGridSentence` below. One derivation, so a page is
+ * never described two ways by the two halves of one run.
+ */
+export function pageGridSaid(
+  page: { name: string; width: number; height: number },
+  file: { width: number; height: number },
+): string {
+  const said = `page "${page.name}" declares ${page.width}x${page.height} and its PNG is ${file.width}x${file.height}`;
+  const grid = pageGridReading(page, file);
+  return grid === null
+    ? said
+    : `${said} — ${gridRatio(grid.x)} of the declared width and ${gridRatio(grid.y)} of the declared height`;
+}
+
+/**
+ * `A06`'s whole sentence for a page whose file is not its declared size, or
+ * `null` when the two agree: the page and its ratios (`pageGridSaid`), why a
+ * runtime still draws it and which readers it breaks, and the repair the format
+ * offers — or why it offers none.
+ *
+ * It lives here rather than in [`src/validate.ts`](validate.ts) because the
+ * compiler states it too, and `src/compile.ts` must not link the runtime that
+ * file links. `regions` is the page's own regions; only the uniform case reads
+ * them, to find a number a `scale:` re-declaration could not carry.
+ */
+export function pageGridSentence(
+  page: { name: string; width: number; height: number },
+  file: { width: number; height: number },
+  regions: Parameters<typeof firstNumberOffTheCoarseGrid>[0],
+): string | null {
+  if (page.width === file.width && page.height === file.height) return null;
+  const said = pageGridSaid(page, file);
+  const grid = pageGridReading(page, file);
+  if (grid === null) return `${said}. ${PAGE_GRID_PREAMBLE}`;
+  const off = grid.uniform ? firstNumberOffTheCoarseGrid(regions, page.width, file.width) : null;
+  const repair = !grid.uniform
+    ? 'The `scale:` header states one ratio for both axes, so a page whose axes differ cannot be ' +
+      `declared honestly at all: re-export the page at ${page.width}x${page.height}, or repack it.`
+    : off !== null
+      ? 'The format states coarser texels with the `scale:` header, but this page cannot be re-declared ' +
+        `that way: ${off}. Re-export the page at ${page.width}x${page.height}, or repack it.`
+      : 'The format states coarser texels with the `scale:` header and rigc builds that: declare ' +
+        `\`size: ${file.width}, ${file.height}\` with \`scale: ${gridRatio(grid.x)}\` and multiply every ` +
+        `\`bounds\`/\`offsets\` on this page by ${gridRatio(grid.x)}, and every part keeps the size it ` +
+        'has now.';
+  return `${said}. ${PAGE_GRID_PREAMBLE} ${repair}`;
+}

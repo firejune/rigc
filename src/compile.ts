@@ -91,6 +91,8 @@ import { Plate, readPlate } from '../tools/plate.ts';
 import {
   extractRegion,
   pageFootprint,
+  pageGridSaid,
+  pageGridSentence,
   parseAtlasText,
   rewritePageNames,
   writeAtlasText,
@@ -1524,6 +1526,11 @@ interface AtlasSource {
   parsed: ParsedAtlas;
   /** Trimmed region name -> the region, first occurrence wins (as `findRegion` does). */
   byName: Map<string, { region: AtlasRegion; page: ParsedAtlas['pages'][number] }>;
+  /**
+   * Page name -> what its file is against what the atlas declares, for every
+   * page on disk whose PNG is not the declared size, in page order (issue #750).
+   */
+  grids: Map<string, NonNullable<CompiledImage['pageGrid']>>;
 }
 
 function readAtlasIn(path: string): AtlasSource {
@@ -1546,12 +1553,28 @@ function readAtlasIn(path: string): AtlasSource {
   // one sentence, rather than one region at a time or at `A06` after the whole
   // compile. A page that is not on disk is left to the region that sits on it,
   // which already names it; saying so twice would be two refusals of one fact.
+  //
+  // 📐 **What each page MEASURES, read in the same pass and not refused here**
+  // (issue #750). A page whose PNG is not the size the atlas declares is a
+  // file every runtime still draws — the region mapping is a fraction of the
+  // declared size — and the only readers it breaks are the ones that address
+  // it in texels. Refusing it here would refuse every pack that has one,
+  // including a pack of region attachments nothing reads a texel of, and on
+  // `build` it would replace `A06`'s verdict with a compile error for the same
+  // fact: `A06` already refuses the pack, names the ratio and prints the
+  // `scale:` repair, before anything is written. So the page is RECORDED, as
+  // `pageGridSentence` states it, and the readers that would take a figure off
+  // its texels decline to on the part that asks (`partTexels` below).
   const unread: string[] = [];
+  const grids: AtlasSource['grids'] = new Map();
   for (const page of parsed.pages) {
     const abs = resolve(dirname(path), page.name);
     if (!existsSync(abs)) continue;
-    const { problem } = readPngHeader(abs);
+    const { info, problem } = readPngHeader(abs);
     if (problem !== null) unread.push(`page "${page.name}": ${problem}`);
+    if (info === null) continue;
+    const sentence = pageGridSentence(page, info, page.regions);
+    if (sentence !== null) grids.set(page.name, { said: pageGridSaid(page, info), sentence });
   }
   if (unread.length > 0) {
     throw new CompileError(
@@ -1559,7 +1582,7 @@ function readAtlasIn(path: string): AtlasSource {
         `nothing was compiled against the pack — ${unread.join('; ')}`,
     );
   }
-  return { path, dir: dirname(path), parsed, byName };
+  return { path, dir: dirname(path), parsed, byName, grids };
 }
 
 /**
@@ -1653,6 +1676,7 @@ function resolveFromAtlas(
   const info = readPngInfo(absPath);
   const page = relative(outDir, absPath).split('\\').join('/');
   const scale = found.page.scale;
+  const grid = atlas.grids.get(found.page.name);
   return {
     region,
     page,
@@ -1666,6 +1690,7 @@ function resolveFromAtlas(
     isBase,
     atlas: found.region,
     ...(scale === 1 ? {} : { atlasScale: scale }),
+    ...(grid === undefined ? {} : { pageGrid: grid }),
   };
 }
 
@@ -2950,6 +2975,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
     atlasText,
     images,
+    pageGrids: atlasIn === null ? [] : [...atlasIn.grids].map(([page, grid]) => ({ page, said: grid.said })),
     droppedStates,
     absentParts,
     declaredDurations,
@@ -4049,11 +4075,20 @@ function encodeNamedWeights(weights: RigMeshBinding[][], where: string, ctx: Att
  * what `extractRegion` does, so there is no unmeasurable case left for this
  * function to report and no catch here to keep reachable.
  */
-function measureAuthoredFit(att: RigMeshAttachment, ctx: AttachmentContext): MeshFitReport | null {
+function measureAuthoredFit(
+  att: RigMeshAttachment,
+  ctx: AttachmentContext,
+): MeshFitReport | { withheld: string } | null {
   if (att.image === undefined || att.uvs === undefined || att.triangles === undefined) return null;
   const region = basename(att.image, '.png');
   const img = ctx.images.find((im) => im.region === region);
   if (!img) return null;
+  // A third case, and neither of the two above (issue #750): there IS art to
+  // compare against, and its texels cannot be located, because its page's file
+  // is not the size the atlas declares. Withheld and said, rather than measured
+  // over whatever the declared coordinates land on — on a half-resolution pack
+  // that read 68.49% where the page it was packed from reads 100.00%.
+  if (img.pageGrid !== undefined) return { withheld: img.pageGrid.said };
   const plate = partPlate(img);
   const alpha = new Uint8Array(plate.width * plate.height);
   for (let i = 0; i < alpha.length; i++) alpha[i] = plate.data[i * 4 + 3];
@@ -4222,7 +4257,8 @@ function buildRigMesh(
   // read this and skip rather than measuring a ring that was never a ring.
   ctx.meshBones.add(ctx.anchorBone);
   for (const name of boundBones) ctx.meshBones.add(name);
-  const fit = measureAuthoredFit(att, ctx);
+  const measured = measureAuthoredFit(att, ctx);
+  const fit = measured === null || 'withheld' in measured ? null : measured;
   ctx.meshes.push({
     slot: ctx.slotName,
     kind: 'authored',
@@ -4232,6 +4268,7 @@ function buildRigMesh(
     bones: boundBones.length ? boundBones : [ctx.anchorBone],
     coverage: fit === null ? undefined : r6(fit.coverage),
     overshoot: fit?.overshoot,
+    ...(measured !== null && 'withheld' in measured ? { fitWithheld: measured.withheld } : {}),
   });
   return out;
 }
@@ -4589,8 +4626,13 @@ function sampleMeshDepth(
    *
    * The two are different questions and the header says why. This one has no
    * refusal behind it: it is counted, reported, and left to the author.
+   *
+   * `unlocated` in its place when the part's texels cannot be located — a
+   * region lifted off a page whose file is not its declared size (issue #750),
+   * carrying `pageGridSaid`'s clause — and the count is then `null` with that
+   * clause beside it: withheld, rather than taken off another part of the page.
    */
-  partAlpha: Uint8Array,
+  partAlpha: Uint8Array | { unlocated: string },
   partWidth: number,
   partHeight: number,
   where: string,
@@ -4650,7 +4692,7 @@ function sampleMeshDepth(
       // Zero, not a threshold: "the part image draws nothing here" is a fact
       // about the file, and any other cut-off would be rigc deciding how faint
       // a texel has to be before it stops counting as art.
-      if (partAlpha[at] === 0) drawn = false;
+      if (partAlpha instanceof Uint8Array && partAlpha[at] === 0) drawn = false;
     }
     if (!opaqueEverywhere && !covered) uncovered.push(v);
     if (!drawn) undrawn++;
@@ -4695,7 +4737,7 @@ function sampleMeshDepth(
       zScale: spec.zScale,
       tone,
       range: [r6(lo), r6(hi)],
-      undrawn,
+      ...(partAlpha instanceof Uint8Array ? { undrawn } : { undrawn: null, unlocated: partAlpha.unlocated }),
       ceiling: turnCeiling(
         points.map(([px, py]) => toBind(px, py)),
         z,
@@ -4933,7 +4975,11 @@ function buildGridAttachment(
           geometry.points,
           geometry.triangles,
           (px, py) => toBoneLocal(anchor, anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt),
-          plateAlpha(plate),
+          // The lattice's geometry takes nothing off the texels — its window is
+          // the plate's size, which is the atlas's own `offsets` — so a page
+          // whose file is not its declared size costs a grid only this one
+          // count, and the count is what is withheld (issue #750).
+          img.pageGrid === undefined ? plateAlpha(plate) : { unlocated: img.pageGrid.said },
           plate.width,
           plate.height,
           where,
@@ -5022,6 +5068,24 @@ function buildContourAttachment(
     );
   }
   const img = atlasedImage(att.image, where, ctx);
+  // 🔒 **A trace needs the part's texels, and on a page that is not its
+  // declared size the lift does not have them** (issue #750). `extractRegion`
+  // addresses the page at the coordinates the atlas states; on a file of any
+  // other size those are a different part of the picture — measured on a
+  // half-resolution pack, the lift came back with no pixel above alpha 0 and
+  // the build refused with "there is no silhouette to trace", a true sentence
+  // about the wrong texels. Unlike an authored mesh's fit, which is a
+  // measurement and is withheld, this outline IS the geometry: there is no mesh
+  // to build without it, and the compiler invents none. So it is refused, with
+  // `A06`'s own sentence, which names the ratio and the repair — on `build`
+  // this refusal arrives before the gate, where `A06` would have said it.
+  if (img.pageGrid !== undefined) {
+    throw new CompileError(
+      `${where}: a "contour" generator traces the part's own alpha, and "${att.image}" is lifted off a packed ` +
+        'page at the coordinates the atlas states, which on this file are not where its texels are — so there is ' +
+        `no silhouette here to trace, only another part of the page. ${img.pageGrid.sentence}`,
+    );
+  }
   // ⚠️ Nothing here reads the PNG's colour type. `hasAlpha` answers "where does
   // this file keep its alpha", not "is any pixel of it transparent" — a tRNS
   // chunk is real transparency (issue #215) and an all-255 alpha channel is

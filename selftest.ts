@@ -1249,7 +1249,7 @@ const MUTANTS: Mutant[] = [
     // file under it — the shape a production pack ships when its pages were
     // halved after packing — and the factor comes off the line rather than out
     // of this table. A runtime draws such a page (`pageGridReading` in
-    // `src/validate.ts` has the routines and the figures); every reader that
+    // `src/atlas.ts` has the routines and the figures); every reader that
     // addresses it in texels does not.
     name: 'M66_page_declares_a_uniform_double_of_its_own_file',
     origin: 'the picture still draws, and every reader that cuts the page by texel coordinates cuts the wrong rectangle',
@@ -36343,6 +36343,121 @@ function runAtlasReaderSuite(): number | null {
     rmSync(pressRoot, { recursive: true, force: true });
   }
 
+  // PKR55–PKR56: the region lift on a page that is not its declared size, at
+  // the compiler (issue #750).
+  //
+  // `A06` judges the page (PKR45–PKR48). These are the readers under it that
+  // take texels off the lift: a contour, whose outline IS those texels and so
+  // cannot be withheld, and `build`'s `MESH` line, which prints a fit before
+  // the gate runs.
+  {
+    const packs = halvedMeshPacks();
+    if (typeof packs === 'string') {
+      console.log(`  SKIP  the region-lift page-grid cases (PKR55, PKR56) did not run: ${packs}.`);
+    } else {
+      const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+      const compiled = (rig: string, atlasIn: string): CompileResult | string => {
+        try {
+          return compile({ rigPath: rig, motionPath: packs.motionPath, outDir: join(packs.dir, 'lift'), imagesDir: packs.parts, atlasInPath: atlasIn });
+        } catch (err) {
+          return err instanceof Error ? err.message : String(err);
+        }
+      };
+      // `A06`'s own sentence for the half-resolution page, from the gate rather than from a copy of it.
+      const full = compiled(packs.rigs.all, packs.declared);
+      const gateSaid =
+        typeof full === 'string'
+          ? null
+          : (validate({
+              skeletonText: full.skeletonText,
+              atlasText: readFileSync(packs.half, 'utf8'),
+              atlasDir: dirname(packs.half),
+              declaredDurations: full.declaredDurations,
+              rig: full.rig,
+              profile: 'spine',
+            }).failures.find((f) => f.assertion === A06)?.detail ?? null);
+
+      // PKR55 — the contour is refused, with the gate's sentence, and the repair builds it.
+      const traced = compiled(packs.rigs.traced, packs.half);
+      const repaired = compiled(packs.rigs.traced, packs.honest);
+      const liftProbes = [
+        ...(typeof full === 'string' ? [`the declared-size pack does not compile: ${full}`] : []),
+        ...(gateSaid === null ? [`${A06} raised no failure on the half-resolution page, so there is no sentence to compare`] : []),
+        ...(typeof traced === 'string'
+          ? [
+              ...(traced.includes('a "contour" generator traces the part\'s own alpha, and "blob.png" is lifted off a packed page')
+                ? []
+                : [`the refusal is not the page-grid one: ${traced.slice(0, 160)}`]),
+              ...(gateSaid !== null && traced.endsWith(gateSaid) ? [] : [`the refusal does not end with ${A06}'s sentence for the page`]),
+            ]
+          : ['a contour was traced off the half-resolution page and compiled']),
+        ...(typeof repaired === 'string'
+          ? [`the \`scale:\` restatement does not compile the same contour: ${repaired.slice(0, 160)}`]
+          : repaired.meshes.some((m) => m.kind === 'contour')
+            ? []
+            : ['the `scale:` restatement compiled no contour mesh']),
+      ];
+      const liftHeld = liftProbes.length === 0;
+      say(
+        'PKR55_A_CONTOUR_ON_A_PAGE_THAT_IS_NOT_ITS_DECLARED_SIZE_IS_REFUSED_WITH_A06S_SENTENCE_AND_ITS_REPAIR_BUILDS',
+        liftHeld,
+        probeDetail(
+          liftHeld,
+          liftProbes,
+          `the contour is refused as a compile error naming the part and ending with the ${String(gateSaid?.length ?? 0)}-` +
+            `character sentence ${A06} prints for the page, and the same file under the \`scale:\` header that ` +
+            'sentence names compiles it',
+        ),
+        'on the branch point the lift came back with no pixel above alpha 0 and the build said "there is no ' +
+          'silhouette to trace" — a true sentence about the wrong texels, pointing at the art. A contour is its ' +
+          'outline, so it cannot be withheld the way a fit is; and on `build` this refusal arrives before the gate ' +
+          'would have said the same thing, which is why it carries the gate\'s sentence whole rather than a summary',
+      );
+
+      // PKR56 — `build` withholds the fit on its MESH line, says nothing of its own about the page, and A06 still refuses.
+      const out = join(packs.dir, 'build');
+      const built = runCli([
+        'build', '--rig', packs.rigs.measured, '--motion', packs.motionPath, '--images', packs.parts,
+        '--atlas-in', packs.half, '--out', out,
+      ]);
+      const meshLine = built.stdout.split('\n').find((line) => /^  MESH  fan +authored /.test(line)) ?? '';
+      const buildProbes = [
+        ...(built.status === 1 ? [] : [`build exited ${String(built.status)} on the half-resolution pack`]),
+        // The page's NAME differs between the two by design — the gate reads the atlas this build emits, whose
+        // pages are re-anchored relative to --out — so what is compared is everything the clause says after it.
+        ...(built.stdout.split('\n').some((line) => line.startsWith(`  FAIL  ${A06}: page "`) && line.includes(packs.said[0].slice(packs.said[0].indexOf(' declares '))))
+          ? []
+          : [`${A06} does not refuse the page by the sizes and ratios the MESH line withholds by`]),
+        ...(meshLine.includes(`fit not measured: ${packs.said[0]}`) && !meshLine.includes('covers ')
+          ? []
+          : [`the MESH line does not withhold the fit: ${JSON.stringify(meshLine.slice(0, 160))}`]),
+        ...firstFew(
+          built.stdout
+            .split('\n')
+            .filter((line) => line.includes("taken off this page's texels is withheld"))
+            .map((line) => `build printed a page line of its own beside A06's: ${line.trim().slice(0, 120)}`),
+          'line(s)',
+        ),
+        ...(existsSync(join(out, 'skeleton.json')) ? [`${join(out, 'skeleton.json')} was written`] : []),
+      ];
+      const buildHeld = buildProbes.length === 0;
+      say(
+        'PKR56_BUILD_WITHHOLDS_THE_FIT_ON_ITS_MESH_LINE_AND_LEAVES_THE_PAGE_TO_A06',
+        buildHeld,
+        probeDetail(
+          buildHeld,
+          buildProbes,
+          `build exits ${String(built.status)}, ${A06} refuses the page, the MESH line withholds the fit by the same ` +
+            'clause, no second statement of the page is printed, and nothing is written',
+        ),
+        '`build` prints its MESH lines before the gate, so the fit taken off the wrong texels reached the console ' +
+          'there too, above the refusal that explained it. One statement of the page is the gate\'s; the MESH line ' +
+          'only says which figure that statement costs',
+      );
+    }
+    if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
+  }
+
   return bad;
 }
 
@@ -37320,6 +37435,143 @@ function runCli(args: string[]): { status: number | null; stdout: string; stderr
     encoding: 'utf8',
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/**
+ * One page of three mesh parts whose figures come off their texels, packed and
+ * then written three ways — at the size the atlas declares, at half resolution
+ * under the same atlas text, and at half resolution re-declared with the
+ * `scale:` header `A06` prints for it.
+ *
+ * The three parts are the three readers of a lifted part: an authored mesh that
+ * names an `image` (its fit is measured against the art), a `grid` with a depth
+ * sheet (the sheet's undrawn count reads the part's alpha), and a `contour`
+ * (its outline IS the part's alpha). The art is the checkered placeholder shapes
+ * the mesh suites already trace — the fan's disc and the contour blob — so no
+ * figure here is about how anything looks.
+ *
+ * Built rather than found for PKR45's reason: every page of the example corpus
+ * is the size its atlas says, so the corpus is the negative control and cannot
+ * be the subject. The factor comes off the page edges `packAtlas` chose, and a
+ * page with an odd edge has no exact half, which is returned as the reason
+ * rather than measured around.
+ */
+interface HalvedMeshPacks {
+  dir: string;
+  parts: string;
+  motionPath: string;
+  /** Every part (`all`), the two whose figures are withheld (`measured`), the fan alone, and the contour alone. */
+  rigs: { all: string; measured: string; fan: string; traced: string };
+  /** The three `.atlas` files — the declared-size pack, the half-resolution one, and its `scale:` restatement. */
+  declared: string;
+  half: string;
+  honest: string;
+  /** `A06`'s opening clause for each half-resolution page, derived from the atlas text and the file. */
+  said: string[];
+}
+
+function halvedMeshPacks(): HalvedMeshPacks | string {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-halved-mesh-'));
+  const parts = join(dir, 'parts');
+  mkdirSync(parts);
+  writeContourArt(join(parts, 'fan.png'), discArt(FAN_ART_R, FAN_SIZE), FAN_SIZE, FAN_SIZE);
+  writeContourArt(join(parts, 'blob.png'), contourBlob, CONTOUR_W, CONTOUR_H);
+  writeContourArt(join(parts, 'lattice.png'), contourBlob, CONTOUR_W, CONTOUR_H);
+  writeDepthSheet(join(parts, 'lattice_depth.png'), 'ramp', CONTOUR_W, CONTOUR_H, contourBlob);
+  const attachments: Record<string, Record<string, unknown>> = {
+    fan: { ...fanMeshAttachment(FAN_RIM_COVERING, FAN_SIZE), image: 'fan.png' },
+    lattice: {
+      type: 'mesh',
+      image: 'lattice.png',
+      generator: { kind: 'grid', cols: 4, rows: 3, depth: { image: 'lattice_depth.png', near: 'white', zScale: DEPTH_Z_SCALE } },
+    },
+    blob: CONTOUR_ATTACHMENT,
+  };
+  const writeRig = (file: string, slots: readonly string[]): string => {
+    const path = join(dir, file);
+    writeFileSync(
+      path,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-rig/1',
+          name: 'contour_probe',
+          skeleton: { width: 512, height: 512 },
+          invariants: { meshSlots: slots.length, meshTriangles: 200 },
+          bones: [{ name: 'root' }, ...slots.map((slot, i) => ({ name: slot, parent: 'root', x: CONTOUR_BONE[0] + i * FAN_SIZE, y: CONTOUR_BONE[1] }))],
+          slots: slots.map((slot) => ({ name: slot, bone: slot, attachment: slot })),
+          skins: { default: Object.fromEntries(slots.map((slot) => [slot, { [slot]: attachments[slot] }])) },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return path;
+  };
+  const rigs = {
+    all: writeRig('all.rig.json', ['fan', 'lattice', 'blob']),
+    measured: writeRig('measured.rig.json', ['fan', 'lattice']),
+    fan: writeRig('fan.rig.json', ['fan']),
+    traced: writeRig('traced.rig.json', ['blob']),
+  };
+  const motionPath = join(dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(CONTOUR_MOTION, null, 2)}\n`);
+  const loose = compile({ rigPath: rigs.all, motionPath, outDir: join(dir, 'loose'), imagesDir: parts });
+  const packed = packAtlas(packInputsOf(loose.images), { padding: DEFAULT_PADDING });
+  const declaredDir = join(dir, 'declared');
+  const halfDir = join(dir, 'half');
+  mkdirSync(declaredDir);
+  mkdirSync(halfDir);
+  const said: string[] = [];
+  for (const page of packed.pages) {
+    const full = page.plate;
+    if (full.width % 2 !== 0 || full.height % 2 !== 0) {
+      return `the packer put these parts on a ${full.width}x${full.height} page, which has no exact half`;
+    }
+    full.writePng(join(declaredDir, page.name));
+    const half = new Plate(full.width / 2, full.height / 2);
+    for (let y = 0; y < half.height; y++) {
+      for (let x = 0; x < half.width; x++) half.set(x, y, full.get(x * 2, y * 2));
+    }
+    half.writePng(join(halfDir, page.name));
+  }
+  writeFileSync(join(declaredDir, 'skeleton.atlas'), packed.atlasText);
+  writeFileSync(join(halfDir, 'skeleton.atlas'), packed.atlasText);
+  writeFileSync(join(halfDir, 'honest.atlas'), atlasOnItsFilesOwnGrid(packed.atlasText, 0.5));
+  for (const page of parseAtlasText(packed.atlasText).pages) {
+    const file = readPngInfo(join(halfDir, page.name));
+    said.push(
+      `page "${page.name}" declares ${page.width}x${page.height} and its PNG is ${file.width}x${file.height} — ` +
+        `${(file.width / page.width).toFixed(4)} of the declared width and ${(file.height / page.height).toFixed(4)} ` +
+        'of the declared height',
+    );
+  }
+  return {
+    dir,
+    parts,
+    motionPath,
+    rigs,
+    declared: join(declaredDir, 'skeleton.atlas'),
+    half: join(halfDir, 'skeleton.atlas'),
+    honest: join(halfDir, 'honest.atlas'),
+    said,
+  };
+}
+
+/** `explain` over one of those packs — or over the loose parts, with no pack at all. */
+function explainHalvedMesh(packs: HalvedMeshPacks, rig: string, atlasIn: string | null): ReturnType<typeof runCli> {
+  return runCli([
+    'explain', '--rig', rig, '--motion', packs.motionPath, '--images', packs.parts,
+    ...(atlasIn === null ? [] : ['--atlas-in', atlasIn]),
+    '--out', join(packs.dir, 'explain'),
+  ]);
+}
+
+/** The report's `meshes` block, from its heading to the next blank line — where every figure off a texel lands. */
+function meshesBlock(stdout: string): string {
+  const at = stdout.indexOf('\nmeshes\n');
+  if (at < 0) return '';
+  const end = stdout.indexOf('\n\n', at + 1);
+  return stdout.slice(at + 1, end < 0 ? undefined : end);
 }
 
 function runCliSuite(): number {
@@ -38810,6 +39062,142 @@ function runCliSuite(): number {
         'same file question asked one step earlier',
     );
     for (const root of [renderRoot, looseRoot, webpPack.dir, honestPack.dir]) rmSync(root, { recursive: true, force: true });
+  }
+
+  // --- CLI88-CLI90: `explain` on a page that is not its declared size (#750) ---
+  //
+  // `explain` never gates, so on a pack whose PNG is not the size its atlas
+  // declares nothing stood between the region lift and the figures it printed:
+  // the lift addresses the page at the atlas's coordinates, and on such a file
+  // those are another part of the picture. The gate's half of the same fact is
+  // `A06` (PKR45–PKR48); these are the report's. The contour, which cannot be
+  // withheld, is PKR55's.
+  {
+    const packs = halvedMeshPacks();
+    if (typeof packs === 'string') {
+      console.log(`  SKIP  the explain page-grid cases (CLI88, CLI89, CLI90) did not run: ${packs}.`);
+    } else {
+      const lines = (stdout: string): string[] => stdout.split('\n');
+      const fanLine = (stdout: string): string => lines(stdout).find((line) => /^  fan +authored /.test(line)) ?? '';
+      const figureLines = (stdout: string): string[] =>
+        lines(stdout).filter((line) => /covers \d+\.\d+% of the art|\d+ of \d+ vertices sample a texel/.test(line));
+
+      // CLI88 — the card's own case: the page is named, and no figure taken off it is printed.
+      const half = explainHalvedMesh(packs, packs.rigs.measured, packs.half);
+      const heading = (said: string): string => `  ..    ${said}: every figure below taken off this page's texels is withheld`;
+      const withheld = lines(half.stdout).filter((line) => line.includes('not measured: page "'));
+      const halfProbes = [
+        ...(half.status === 0 ? [] : [`explain exited ${String(half.status)} on the half-resolution pack: ${half.stderr.slice(0, 160)}`]),
+        ...packs.said
+          .filter((said) => !half.stdout.includes(heading(said)))
+          .map((said) => `no line names the page the way A06 does, at the top of the report: ${said}`),
+        ...(fanLine(half.stdout).includes(`fit not measured: ${packs.said[0]}`)
+          ? []
+          : [`the authored mesh's line does not withhold its fit by the page: ${JSON.stringify(fanLine(half.stdout).slice(0, 160))}`]),
+        ...(half.stdout.includes(`the count of vertices on undrawn texels is not measured: ${packs.said[0]}`)
+          ? []
+          : ["the grid's depth block does not withhold its undrawn count by the page"]),
+        ...firstFew(
+          figureLines(half.stdout).map((line) => `a figure taken off the page's texels was printed: ${line.trim().slice(0, 160)}`),
+          'line(s)',
+        ),
+        ...floorProbes(
+          [[withheld.length, 2, `${withheld.length} line(s) withhold a figure by the page`]],
+          'the fixture carries one mesh whose fit is measured and one whose depth count is, so fewer means one of ' +
+            'the two readers was not reached at all',
+        ),
+      ];
+      const halfHeld = halfProbes.length === 0;
+      say(
+        'CLI88_EXPLAIN_NAMES_A_PAGE_THAT_IS_NOT_ITS_DECLARED_SIZE_AND_PRINTS_NO_FIGURE_TAKEN_OFF_ITS_TEXELS',
+        halfHeld,
+        probeDetail(
+          halfHeld,
+          halfProbes,
+          `explain exits ${String(half.status)} on the half-resolution pack, names ${packs.said.length} page(s) with ` +
+            `both sizes and both ratios where the report starts, and withholds ${withheld.length} figure(s) by the ` +
+            'page where they would have stood; no fit and no undrawn count is printed',
+        ),
+        'on the branch point this report printed a fit of 68.49% reaching 76.24px, and a depth sheet with 12 of 12 ' +
+          'vertices on undrawn texels, for parts that measure 100.00%, 16.00px and 10 of 12 on the page they were ' +
+          'packed from — and no line said why. The report is the UI too',
+      );
+
+      // CLI89 — the positive control: a pack whose page is its declared size is read through the same texels as
+      // the loose parts it was packed from, so its mesh block is the loose route's, figure for figure.
+      const declared = explainHalvedMesh(packs, packs.rigs.measured, packs.declared);
+      const viaLoose = explainHalvedMesh(packs, packs.rigs.measured, null);
+      const declaredMeshes = meshesBlock(declared.stdout);
+      const looseMeshes = meshesBlock(viaLoose.stdout);
+      const declaredProbes = [
+        ...(declared.status === 0 && viaLoose.status === 0
+          ? []
+          : [`explain exited ${String(declared.status)} on the declared-size pack and ${String(viaLoose.status)} on the loose parts`]),
+        ...(declaredMeshes !== '' && declaredMeshes === looseMeshes
+          ? []
+          : [
+              `the declared-size pack's mesh block is not the loose parts': ${JSON.stringify(declaredMeshes.slice(0, 120))} ` +
+                `against ${JSON.stringify(looseMeshes.slice(0, 120))}`,
+            ]),
+        ...firstFew(
+          lines(declared.stdout)
+            .filter((line) => line.includes('not measured: page "') || line.includes("taken off this page's texels"))
+            .map((line) => `a page-grid line on a page that is its declared size: ${line.trim().slice(0, 140)}`),
+          'line(s)',
+        ),
+        ...floorProbes(
+          [[figureLines(declared.stdout).length, 2, `${figureLines(declared.stdout).length} figure line(s) printed`]],
+          'both readers the half-resolution case withholds have to print here, or the comparison is between two ' +
+            'blocks that measured nothing',
+        ),
+      ];
+      const declaredHeld = declaredProbes.length === 0;
+      say(
+        'CLI89_A_PACK_WHOSE_PAGE_IS_ITS_DECLARED_SIZE_PRINTS_THE_FIGURES_THE_LOOSE_PARTS_MEASURE',
+        declaredHeld,
+        probeDetail(
+          declaredHeld,
+          declaredProbes,
+          `the declared-size pack's mesh block is the loose parts', ${figureLines(declared.stdout).length} figure ` +
+            'line(s) and all, and no line anywhere in its report withholds anything',
+        ),
+        'withholding is only worth having if a page that is the size it says is left exactly alone — and "exactly" ' +
+          'is measurable here, because a truthful pack lifts the same texels the loose parts hold',
+      );
+
+      // CLI90 — the honest restatement is measured, not withheld.
+      const honest = explainHalvedMesh(packs, packs.rigs.fan, packs.honest);
+      const fullFan = explainHalvedMesh(packs, packs.rigs.fan, packs.declared);
+      const coverageOf = (stdout: string): string | null => /covers (\d+\.\d+)% of the art/.exec(fanLine(stdout))?.[1] ?? null;
+      const honestProbes = [
+        ...(honest.status === 0 ? [] : [`explain exited ${String(honest.status)} on the \`scale:\` pack: ${honest.stderr.slice(0, 160)}`]),
+        ...(coverageOf(honest.stdout) === null ? [`the \`scale:\` pack's fan line prints no fit: ${JSON.stringify(fanLine(honest.stdout).slice(0, 160))}`] : []),
+        ...(coverageOf(honest.stdout) === coverageOf(fullFan.stdout)
+          ? []
+          : [`the \`scale:\` pack reads coverage ${String(coverageOf(honest.stdout))}% where the declared-size pack reads ${String(coverageOf(fullFan.stdout))}%`]),
+        ...firstFew(
+          lines(honest.stdout)
+            .filter((line) => line.includes('not measured: page "') || line.includes("taken off this page's texels"))
+            .map((line) => `a page-grid line on the re-declared pack: ${line.trim().slice(0, 140)}`),
+          'line(s)',
+        ),
+      ];
+      const honestHeld = honestProbes.length === 0;
+      say(
+        'CLI90_THE_SCALE_RESTATEMENT_OF_THE_SAME_FILE_IS_MEASURED_AND_NOT_WITHHELD',
+        honestHeld,
+        probeDetail(
+          honestHeld,
+          honestProbes,
+          `the half-resolution file under the \`size:\`/\`scale:\` pair A06 prints reads the fan at ` +
+            `${String(coverageOf(honest.stdout))}% coverage, as the declared-size pack does, and nothing is withheld`,
+        ),
+        'the repair the refusal hands over has to bring the figures back, or withholding would be a second ' +
+          'refusal with no way out. Coverage and not overshoot is compared: the overshoot is counted in the ' +
+          "page's own texels, which a `scale: 0.5` page has half as many of",
+      );
+    }
+    if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
 
   return bad;
@@ -46620,6 +47008,73 @@ function runCurrencySuite(): number {
           'told a mode does not exist; read off the sentence, the page is compared against the code rather than a copy',
       );
     }
+  }
+
+  // --- CUR67: the withheld lines the guide quotes are the ones `explain` prints (#750)
+  //
+  // `CUR61`'s question asked of the report rather than of the gate: §0.2 quotes
+  // what `explain` prints on a pack whose page is not its declared size, and the
+  // quote is compared — digits and quoted names blanked — against what this
+  // build prints for the half-resolution fixture. The plant exchanges the one
+  // word the section turns on.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const guide = readFileSync(join(root, guidePath), 'utf8');
+    const packs = halvedMeshPacks();
+    const live = typeof packs === 'string' ? null : explainHalvedMesh(packs, packs.rigs.measured, packs.half);
+    const shape = (text: string): string =>
+      text
+        .replace(/^[ \t]*#+ ?/gm, ' ')
+        .replace(/"[^"]*"/g, '""')
+        .replace(/\d+/g, '#')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const quoted = (text: string): string[] => {
+      const block = /```bash\n((?:#.*\n)*?#[^\n]*taken off this page's texels is withheld[\s\S]*?)```/.exec(text);
+      if (block === null) return [];
+      return block[1]
+        .split('…')
+        .map((piece) => shape(piece))
+        .filter((piece) => piece.length > 0);
+    };
+    // Shaped a line at a time: a quote left open on one line of a report would otherwise pair with the next
+    // line's and blank everything between them.
+    const printed = live === null ? '' : live.stdout.split('\n').map(shape).join('\n');
+    const taught = quoted(guide);
+    const missing = taught.filter((piece) => !printed.includes(piece));
+    const planted = quoted(guide.replace('fit not measured: page', 'fit not refused: page'));
+    const plantedMissing = planted.filter((piece) => !printed.includes(piece));
+    const probes = [
+      ...(typeof packs === 'string' ? [`the fixture was not built: ${packs}`] : []),
+      ...(live !== null && live.status !== 0 ? [`explain exited ${String(live.status)} on the half-resolution pack`] : []),
+      ...firstFew(
+        missing.map((piece) => `${guidePath} §0.2 quotes a clause explain does not print: ${JSON.stringify(piece.slice(0, 110))}`),
+        'clause(s)',
+      ),
+      ...(plantedMissing.length > missing.length
+        ? []
+        : ['the same block with its verb exchanged is faulted no more often than the real one, so this reader is not reading the words']),
+      ...floorProbes(
+        [[taught.length, 3, `${taught.length} piece(s) of the quoted block were read`]],
+        'the block quotes the page line, a withheld fit and a withheld count, and a reader that found fewer is ' +
+          'comparing part of the quote',
+      ),
+    ];
+    const held = probes.length === 0;
+    say(
+      'CUR67_THE_WITHHELD_FIGURES_THE_GUIDE_QUOTES_ARE_THE_LINES_EXPLAIN_PRINTS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${taught.length} piece(s) of §0.2's quoted explain lines, digits and quoted names blanked, are clauses of ` +
+          'what this build prints for the half-resolution fixture; the same block with its verb exchanged is faulted',
+        (count) => `${count} clause(s) the page teaches that explain does not print:`,
+      ),
+      'the page is where an author learns what a withheld figure looks like, and a quote the report no longer ' +
+        'prints teaches them to look for a number that is not coming',
+    );
+    if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
 
   return bad;
