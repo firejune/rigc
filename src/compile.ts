@@ -4317,7 +4317,7 @@ function encodeNamedWeights(weights: RigMeshBinding[][], where: string, ctx: Att
 function measureAuthoredFit(
   att: RigMeshAttachment,
   ctx: AttachmentContext,
-): MeshFitReport | { withheld: string } | null {
+): (MeshFitReport & { pageScale: number | undefined }) | { withheld: string } | null {
   if (att.image === undefined || att.uvs === undefined || att.triangles === undefined) return null;
   const region = basename(att.image, '.png');
   const img = ctx.images.find((im) => im.region === region);
@@ -4340,7 +4340,28 @@ function measureAuthoredFit(
     points.push([att.uvs[i] * plate.width, att.uvs[i + 1] * plate.height]);
   }
   const fit = measureAuthoredMeshFit({ width: plate.width, height: plate.height, alpha }, 1, points, att.triangles);
-  return fit.artPixels === 0 ? null : fit;
+  return fit.artPixels === 0 ? null : { ...fit, pageScale: img.atlasScale };
+}
+
+/**
+ * A mesh's overshoot in the drawing's pixels, and the page grid it was taken on.
+ *
+ * 📐 Both fit readers measure on the grid the part's alpha is read off — the
+ * plate — and on a page that declares a `scale:` other than 1 that grid is the
+ * page's texels, not the drawing's pixels (issue #762). Coverage is a share and
+ * carries no unit; the overshoot is a distance, and it was printed as `px` in
+ * whatever grid it was taken on: 16.00px on the declared-size page, 8.00px on
+ * its `scale: 0.5` restatement, 32.00px on a `scale: 2` one, for one mesh over
+ * one drawing. Divided by the scale the atlas STATES it is the drawing's figure
+ * on all three, which is the unit `CompiledImage.width` and every attachment
+ * size is already in. The stated scale travels with it, because a distance
+ * taken on a coarser grid carries that grid's step and the report says so.
+ *
+ * On a loose part and a page at scale 1 nothing is divided — the plate IS the
+ * drawing — so the figure is the one it always was, to the bit.
+ */
+function drawingOvershoot(overshoot: number, pageScale: number | undefined): { overshoot: number; pageScale?: number } {
+  return pageScale === undefined ? { overshoot } : { overshoot: r6(overshoot / pageScale), pageScale };
 }
 
 /**
@@ -4508,7 +4529,7 @@ function buildRigMesh(
     triangles: att.triangles.length / 3,
     bones: boundBones.length ? boundBones : [ctx.anchorBone],
     coverage: fit === null ? undefined : r6(fit.coverage),
-    overshoot: fit?.overshoot,
+    ...(fit === null ? {} : drawingOvershoot(fit.overshoot, fit.pageScale)),
     ...(measured !== null && 'withheld' in measured ? { fitWithheld: measured.withheld } : {}),
   });
   return out;
@@ -4876,8 +4897,8 @@ function sampleMeshDepth(
    * clause beside it: withheld, rather than taken off another part of the page.
    */
   partAlpha: Uint8Array | { unlocated: string },
-  partWidth: number,
-  partHeight: number,
+  /** The plate's grid the points and `partAlpha` are in, and on a `scale:` page the drawing's the sheet is in. */
+  grid: SheetGrid,
   where: string,
   ctx: AttachmentContext,
 ): {
@@ -4908,7 +4929,12 @@ function sampleMeshDepth(
     throw err;
   }
 
-  const { map, cover, opaqueEverywhere } = readGreySheet(spec.image, 'depth', partWidth, partHeight, where, ctx);
+  const { map, cover, opaqueEverywhere } = readGreySheet(spec.image, 'depth', grid, where, ctx);
+  const { partWidth, partHeight } = grid;
+  // Where each vertex lands on the sheet: its own position, or on a `scale:`
+  // page the same point of the drawing (issue #762). `[1, 1]` everywhere else,
+  // and a product with 1 is the operand, so those routes read what they read.
+  const [toSheetX, toSheetY] = sheetRatio(grid);
 
   // Every texel a bilinear tap touches has to be covered, not just the nearest
   // one: a vertex half a pixel outside the sheet blends real depth with the
@@ -4919,19 +4945,29 @@ function sampleMeshDepth(
   // deliberately the same four taps and the same clamp — the second is the
   // first's instinct applied to the other input (issue #449), and writing it as
   // a second loop is how the two would come to disagree about which texels a
-  // vertex reads.
-  const cx = (i: number): number => (i < 0 ? 0 : i > partWidth - 1 ? partWidth - 1 : i);
-  const cy = (j: number): number => (j < 0 ? 0 : j > partHeight - 1 ? partHeight - 1 : j);
+  // vertex reads. On a `scale:` page the two inputs are on two grids (#762),
+  // so the one footprint is placed on each: the sheet's at the vertex's
+  // drawing position, the part's at its texel position — the same point of
+  // the picture. Everywhere else the two placements are one.
+  const sheetWidth = map.width;
+  const sheetHeight = map.height;
+  const clampTo = (n: number) => (i: number): number => (i < 0 ? 0 : i > n - 1 ? n - 1 : i);
+  const cx = clampTo(partWidth);
+  const cy = clampTo(partHeight);
+  const sx = clampTo(sheetWidth);
+  const sy = clampTo(sheetHeight);
   const uncovered: number[] = [];
   let undrawn = 0;
   for (let v = 0; v < points.length; v++) {
     const x0 = Math.floor(points[v][0] - 0.5);
     const y0 = Math.floor(points[v][1] - 0.5);
+    const sx0 = Math.floor(points[v][0] * toSheetX - 0.5);
+    const sy0 = Math.floor(points[v][1] * toSheetY - 0.5);
     let covered = true;
     let drawn = true;
     for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
       const at = cy(y0 + dy) * partWidth + cx(x0 + dx);
-      if (cover[at] !== 255) covered = false;
+      if (cover[sy(sy0 + dy) * sheetWidth + sx(sx0 + dx)] !== 255) covered = false;
       // Zero, not a threshold: "the part image draws nothing here" is a fact
       // about the file, and any other cut-off would be rigc deciding how faint
       // a texel has to be before it stops counting as art.
@@ -4953,7 +4989,14 @@ function sampleMeshDepth(
           'state "us"/"vs" that keep the lattice inside the art.';
     throw new CompileError(
       `${where}: the depth map "${spec.image}" does not cover ${uncovered.length} of the mesh's ${points.length} ` +
-        `vertices — the first is vertex ${first} at (${points[first][0]}, ${points[first][1]}). ${why} ` +
+        `vertices — the first is vertex ${first} at (${points[first][0]}, ${points[first][1]})` +
+        // On a `scale:` page that position is in the page's texels and the sheet
+        // is the drawing's (issue #762), so the pixel of the sheet is named too.
+        (grid.scaled === undefined
+          ? ''
+          : ` in the page's texels, pixel (${r6(points[first][0] * toSheetX)}, ${r6(points[first][1] * toSheetY)}) of ` +
+            'the drawing-sized sheet') +
+        `. ${why} ` +
         'Sampling anyway would give those vertices the sheet\'s background depth and fold them away from the turn.',
     );
   }
@@ -4963,7 +5006,7 @@ function sampleMeshDepth(
   let lo = Infinity;
   let hi = -Infinity;
   for (const [x, y] of points) {
-    const n = toneLevel(sampleLevel(map, x, y), spec.near as DepthNear, tone);
+    const n = toneLevel(sampleLevel(map, x * toSheetX, y * toSheetY), spec.near as DepthNear, tone);
     const d = n * spec.zScale;
     nearness.push(n);
     z.push(d);
@@ -5000,6 +5043,44 @@ function meshBoneRef(name: string, where: string, ctx: AttachmentContext): MeshB
 }
 
 /**
+ * The grid a mesh's vertices are in, and the grid a sheet made for its part is in.
+ *
+ * The vertices are in the PLATE's grid — the texels the part's alpha is read
+ * off (`partPlate`). A sheet is made beside the art, at the drawing's size,
+ * which is what `CompiledImage.width/height` are on every route. The two are
+ * one grid on a loose part and on a page at scale 1; on a page that declares a
+ * `scale:` other than 1 the plate is the drawing times that scale, and `scaled`
+ * carries the drawing's size and the stated scale (issue #762).
+ */
+interface SheetGrid {
+  /** The plate's size, in the grid the vertices are in. */
+  partWidth: number;
+  partHeight: number;
+  /** The drawing's size and the page's stated `scale:`, when that is not 1. */
+  scaled?: { width: number; height: number; scale: number };
+}
+
+/** The grid a sheet for this part is read in: the plate's, and the drawing's beside it on a `scale:` page. */
+function sheetGridOf(img: CompiledImage, plate: Plate): SheetGrid {
+  return img.atlasScale === undefined
+    ? { partWidth: plate.width, partHeight: plate.height }
+    : { partWidth: plate.width, partHeight: plate.height, scaled: { width: img.width, height: img.height, scale: img.atlasScale } };
+}
+
+/**
+ * Where a vertex at a plate position lands on a sheet read in `grid` — the
+ * position itself, or on a `scale:` page the same point of the drawing: the
+ * texel position times the ratio of the drawing to the plate, which is the
+ * atlas's stated scale undone. Two numbers the compiler was handed, divided;
+ * nothing resampled, nothing chosen.
+ */
+function sheetRatio(grid: SheetGrid): readonly [number, number] {
+  return grid.scaled === undefined
+    ? [1, 1]
+    : [grid.scaled.width / grid.partWidth, grid.scaled.height / grid.partHeight];
+}
+
+/**
  * Read a one-channel sheet in a part's own pixel grid.
  *
  * Two callers want the same three refusals — the depth map and the soft-region
@@ -5009,15 +5090,27 @@ function meshBoneRef(name: string, where: string, ctx: AttachmentContext): MeshB
  *
  * `purpose` only spells the messages. It is not a mode: the checks are the same
  * either way, and a reader has to be told which of their inputs is at fault.
+ *
+ * 📐 **The part's own pixel grid is the drawing's** (issue #762). On a page
+ * that declares a `scale:` it used to be the page's texels, so a sheet made at
+ * the art's size — the size this attachment's loose `image` is, and the one
+ * `docs/AUTHORING.md` asks for — was refused on the restatement `A06` itself
+ * prints (`is 96x64 and the part is 48x32`), and the same rig spec stopped
+ * resolving against a pack of the same parts. The sheet is now compared to the
+ * drawing and read at each vertex's drawing position (`sheetRatio`), so one
+ * sheet serves every route. A drawing whose descaled size is not whole — the
+ * pack's rounding — has no sheet of its size, and the refusal says both sizes.
  */
 function readGreySheet(
   image: string,
   purpose: 'depth' | 'soft',
-  partWidth: number,
-  partHeight: number,
+  grid: SheetGrid,
   where: string,
   ctx: AttachmentContext,
 ): { map: DepthMap; cover: Uint8Array; opaqueEverywhere: boolean } {
+  const { scaled } = grid;
+  const sheetWidth = scaled === undefined ? grid.partWidth : scaled.width;
+  const sheetHeight = scaled === undefined ? grid.partHeight : scaled.height;
   const noun = purpose === 'depth' ? 'depth map' : 'soft mask';
   if (typeof image !== 'string' || image.length === 0) {
     throw new CompileError(`${where}: the "${purpose}" block has no image to read`);
@@ -5027,16 +5120,23 @@ function readGreySheet(
     throw new CompileError(`${where}: the ${noun} "${image}" is not at ${relative(process.cwd(), path)}`);
   }
   const sheet = readPlate(path);
-  if (sheet.width !== partWidth || sheet.height !== partHeight) {
+  if (sheet.width !== sheetWidth || sheet.height !== sheetHeight) {
     throw new CompileError(
-      `${where}: the ${noun} "${image}" is ${sheet.width}x${sheet.height} and the part is ` +
-        `${partWidth}x${partHeight}. It is sampled in the part's own pixel grid, so the two are the same size — ` +
-        'resample the sheet, or point at the one that was made for this part.',
+      scaled === undefined
+        ? `${where}: the ${noun} "${image}" is ${sheet.width}x${sheet.height} and the part is ` +
+            `${grid.partWidth}x${grid.partHeight}. It is sampled in the part's own pixel grid, so the two are the same size — ` +
+            'resample the sheet, or point at the one that was made for this part.'
+        : `${where}: the ${noun} "${image}" is ${sheet.width}x${sheet.height} and the part is a ` +
+            `${scaled.width}x${scaled.height} drawing — ${grid.partWidth}x${grid.partHeight} texels on a page that ` +
+            `declares scale: ${scaled.scale}, which makes a texel ${r6(1 / scaled.scale)}px of the drawing. It is ` +
+            "sampled in the part's own pixel grid, which is the drawing's, at each vertex's texel position over " +
+            `that scale — so the sheet is ${scaled.width}x${scaled.height}, the size of the loose art, whatever the ` +
+            'page holds. Resample the sheet, or point at the one that was made for this part.',
     );
   }
   // One channel, proved rather than assumed.
-  const level = new Uint8Array(partWidth * partHeight);
-  const cover = new Uint8Array(partWidth * partHeight);
+  const level = new Uint8Array(sheet.width * sheet.height);
+  const cover = new Uint8Array(sheet.width * sheet.height);
   let opaqueEverywhere = true;
   for (let i = 0; i < level.length; i++) {
     const r = sheet.data[i * 4];
@@ -5044,7 +5144,7 @@ function readGreySheet(
     const b = sheet.data[i * 4 + 2];
     if (r !== g || g !== b) {
       throw new CompileError(
-        `${where}: the ${noun} "${image}" is not greyscale — pixel (${i % partWidth}, ${Math.floor(i / partWidth)}) ` +
+        `${where}: the ${noun} "${image}" is not greyscale — pixel (${i % sheet.width}, ${Math.floor(i / sheet.width)}) ` +
           `is rgb(${r}, ${g}, ${b}). It is one channel; reading red out of a colour file would use whatever that ` +
           'channel happened to hold.',
       );
@@ -5054,7 +5154,7 @@ function readGreySheet(
     cover[i] = a;
     if (a !== 255) opaqueEverywhere = false;
   }
-  return { map: { width: partWidth, height: partHeight, level }, cover, opaqueEverywhere };
+  return { map: { width: sheet.width, height: sheet.height, level }, cover, opaqueEverywhere };
 }
 
 /**
@@ -5074,8 +5174,7 @@ function readGreySheet(
 function softRegionWeights(
   spec: RigSoftRegion,
   points: ReadonlyArray<readonly [number, number]>,
-  partWidth: number,
-  partHeight: number,
+  grid: SheetGrid,
   where: string,
   ctx: AttachmentContext,
 ): { weights: MeshVertexWeight[][]; bone: string; mask: string; digest: string; carried: number; ramped: number } {
@@ -5097,11 +5196,13 @@ function softRegionWeights(
         'which is what a physics constraint is put on.',
     );
   }
-  const { map: sheet } = readGreySheet(spec.mask, 'soft', partWidth, partHeight, where, ctx);
+  const { map: sheet } = readGreySheet(spec.mask, 'soft', grid, where, ctx);
+  // Read at the drawing's position on a `scale:` page, as the depth map is (issue #762).
+  const [toSheetX, toSheetY] = sheetRatio(grid);
   let carried = 0;
   let ramped = 0;
   const weights = points.map(([x, y]) => {
-    const w = sampleLevel(sheet, x, y) / 255;
+    const w = sampleLevel(sheet, x * toSheetX, y * toSheetY) / 255;
     if (w >= 1) carried++;
     else if (w > 0) ramped++;
     if (w <= 0) return [{ bone: 'anchor', weight: 1 }] as MeshVertexWeight[];
@@ -5223,15 +5324,14 @@ function buildGridAttachment(
           // whose file is not its declared size costs a grid only this one
           // count, and the count is what is withheld (issue #750).
           img.pageGrid === undefined ? plateAlpha(plate) : { unlocated: img.pageGrid.said },
-          plate.width,
-          plate.height,
+          sheetGridOf(img, plate),
           where,
           ctx,
         );
   const bound =
     generator.soft === undefined
       ? undefined
-      : softRegionWeights(generator.soft, geometry.points, plate.width, plate.height, where, ctx);
+      : softRegionWeights(generator.soft, geometry.points, sheetGridOf(img, plate), where, ctx);
   if (bound) geometry = { ...geometry, weights: bound.weights };
   const vertices = encodeWeightedVertices(
     geometry,
@@ -5380,9 +5480,11 @@ function buildContourAttachment(
     { anchor: { index, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) }, controls: [] },
   );
   ctx.meshBones.add(ctx.anchorBone);
-  // The depth map is sampled on the TRACED grid — the plate's — because that is
-  // the grid the vertices are in. `toArt` scales positions into world units
-  // afterwards and does not touch `z`, which carries its own stated scale.
+  // The vertices are on the TRACED grid — the plate's — and the depth map is
+  // read at the same point of the drawing, which on a `scale:` page is that
+  // position over the stated scale (`sheetRatio`, issue #762). `toArt` scales
+  // positions into world units afterwards and does not touch `z`, which
+  // carries its own stated scale.
   const depth =
     generator.depth === undefined
       ? undefined
@@ -5394,8 +5496,7 @@ function buildContourAttachment(
           geometry.triangles,
           (px, py) => toBoneLocal(anchor, anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt),
           alpha,
-          plate.width,
-          plate.height,
+          sheetGridOf(img, plate),
           where,
           ctx,
         );
@@ -5408,7 +5509,10 @@ function buildContourAttachment(
     triangles: geometry.triangles.length / 3,
     bones: [ctx.anchorBone],
     coverage: geometry.contour?.coverage,
-    overshoot: geometry.contour?.overshoot,
+    // In the drawing's pixels, like the authored fit's (issue #762). The trace
+    // itself — margin, tolerance, the refusals inside `buildContourMesh` — runs
+    // on the plate's grid and speaks in it; only the reported distance moves.
+    ...(geometry.contour === undefined ? {} : drawingOvershoot(geometry.contour.overshoot, img.atlasScale)),
     holePixels: geometry.contour?.holePixels,
     depth: depth?.summary,
   });

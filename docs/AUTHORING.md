@@ -324,6 +324,14 @@ texel count beside it so both numbers are visible:
 measures the PNG. Reach for `--atlas-in` when the pack is what you were handed, or
 when drawing through the pack's own texels is the point.
 
+📐 **What you make beside the art stays at the art's size**
+([#762](https://github.com/firejune/rigc/issues/762)). A depth sheet or a soft
+mask is read in the drawing's pixels on a `scale:` page as on loose parts — each
+vertex's texel position over the stated scale — and a mesh fit's overshoot is
+printed in them, with the texel it was measured on named beside it. What stays
+in texels is what is taken off them: a `contour`'s trace, whose `margin` and
+`tolerance` are applied on the texels there are (below).
+
 🚨 **A page that declares a size it does not have is a different thing, and it is
 refused** ([#715](https://github.com/firejune/rigc/issues/715)). The common shape
 is a pack whose `4096x4096` pages ship as `2048x2048` PNGs with the atlas
@@ -387,11 +395,34 @@ that cannot be withheld, because its outline *is* its geometry: it is refused as
 compile error carrying `A06`'s whole sentence — ratio and repair — on `explain`
 and on `build` alike, where on `build` it arrives before the gate would have said
 it. Carry out the repair and every figure comes back. ⚠️ They come back measured
-on the **coarser** texels the page really has, so they need not equal the figures
-of the pack the page was halved from: on the same fixture the `scale: 0.5`
-restatement reads the authored mesh at 100.00% coverage reaching **8.00px** past
-it (the overshoot is counted in the page's own texels), and traces the contour as
-11 vertices where the full-resolution page traced 15.
+on the **coarser** texels the page really has, so a figure that depends on the
+grid need not equal the one the pack the page was halved from reads: on the same
+fixture the `scale: 0.5` restatement traces the contour as 11 vertices where the
+full-resolution page traced 15, because a trace runs on the texels there are and
+its `margin` and `tolerance` are applied on them.
+
+📐 **A fit's overshoot is stated in the drawing's pixels on every page**
+([#762](https://github.com/firejune/rigc/issues/762)). It is a distance, and on a
+page that declares a `scale:` it is taken on the page's texels — so it used to be
+printed in them, under the same `px`: one mesh over one drawing read 16.00px on
+the declared-size page, **8.00px** on its `scale: 0.5` restatement and **32.00px**
+on a `scale: 2` one. It is now the texel distance over the scale the atlas states,
+which is the unit an attachment's `width` is in and the one you drew in, and the
+line says which grid it was taken on — a texel of a `scale: 0.5` page is 2.00px of
+the drawing, so that is the step the figure moves in:
+
+```bash
+#   fan          authored 9 vertices / 8 triangles  (budget 200)  bones=[fan]  covers 100.00% of the art, reaching 16.00px
+#         past it (the drawing's pixels, measured on the page's texels at scale: 0.5 — a texel is 2.00px of the drawing)
+```
+
+All three pages read the fan at 16.00px, because its rim lands on whole texels of
+each. A figure that does not is exact only to that step — the contour above reads
+6.00px on the `scale: 0.5` page (3.00 texels) against the full page's 3.16px, a
+different outline measured on a coarser grid, and the line's clause is what says
+so. On a loose part and a page at scale 1 the texels are the drawing, and the line
+is the one it always was. A `contour`'s hole count is a count of those cells and
+says `texel(s)` on such a page.
 
 🚨 **A page that is not a PNG is refused by name, before anything is compiled
 against it** ([#732](https://github.com/firejune/rigc/issues/732)). rigc reads PNG
@@ -707,7 +738,10 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   count of vertices on undrawn texels — are replaced by `fit not measured: …` and
   `… is not measured: …` naming the page and the ratio. A `contour` on such a page
   is refused, since its outline is read off those texels. Why, the quoted lines,
-  and the repair: §0.2.
+  and the repair: §0.2. On a page that **does** declare a `scale:`, the overshoot
+  in that line is the drawing's pixels and the line names the texel it was taken
+  on (`… measured on the page's texels at scale: 0.5 — a texel is 2.00px of the
+  drawing`, [#762](https://github.com/firejune/rigc/issues/762)).
 - **`diff`** compares two skeletons and reports **a ratio per measure** in six
   sections (bones, slots, attachments, constraints, animations, events). It
   deliberately does not combine them into a score: a rig with the right skeleton
@@ -1869,7 +1903,7 @@ off a greyscale sheet in the part's own pixel grid:
 
 | Field | Meaning |
 | --- | --- |
-| `image` | **required.** The sheet, relative to the rig's `images` directory, and the **same pixel size as this attachment's `image`**. It is not packed into the atlas — it is a measurement rigc reads at compile time, not art anything draws |
+| `image` | **required.** The sheet, relative to the rig's `images` directory, and the **same pixel size as this attachment's `image`**. It is not packed into the atlas — it is a measurement rigc reads at compile time, not art anything draws. Under `--atlas-in` that is still the drawing's size, on a page that declares a `scale:` too: the sheet is read at each vertex's texel position over the scale the atlas states, so one sheet serves the loose parts and every pack of them ([#762](https://github.com/firejune/rigc/issues/762)) |
 | `near` | **required.** `"white"` or `"black"` — which end of the range is closest to the viewer. Stated rather than defaulted: both conventions are in use, and a sheet read with the wrong one turns the part inside out with every gate still green |
 | `zScale` | **required.** How many world units the map's full range spans, in the attachment's own units — the number `radius` used to carry. 8 bits of level say nothing about scale, so this is authored, never measured |
 | `gamma`, `contrast`, `bias` | the tone curve applied to the nearness, defaults `1` / `1` / `0`. State them when a consumer's own renderer curves the same sheet, so the mesh and that renderer describe one surface |
@@ -2034,6 +2068,8 @@ refuses it instead:
 | a sheet cut to the art's alpha, on a **contour** | `does not cover 12 of the mesh's 12 vertices … A contour mesh puts every vertex ON the silhouette and pushes it out by the margin … Dilate the sheet past the mesh margin, or lower the margin.` |
 | a sheet cut to the art's alpha, on a **grid** | `does not cover 36 of the mesh's 81 vertices … A grid spans the whole part window, corners included … Dilate the sheet to the window, or state "us"/"vs" that keep the lattice inside the art.` — the two topologies run out of sheet for different reasons, and the message says which |
 | a sheet that is not the part's size | `the depth map … is 32x32 and the part is 64x64. A depth map is sampled in the part's own pixel grid` |
+| a sheet at the page's texel size, on a page that declares a `scale:` | `the depth map "lattice_texels.png" is 48x32 and the part is a 96x64 drawing — 48x32 texels on a page that declares scale: 0.5, which makes a texel 2px of the drawing. … so the sheet is 96x64, the size of the loose art, whatever the page holds.` — the part's own pixel grid is the drawing's on every route, and the message names the ratio and all three sizes, because the drawing's is in neither file |
+| a sheet cut to the art, on a `scale:` page | the coverage refusal above, with the vertex's position in the page's texels **and** `pixel (x, y) of the drawing-sized sheet` — the pixel of the file you made |
 | a colour sheet | `the depth map … is not greyscale — pixel (0, 0) is rgb(10, 200, 10)` |
 | `zScale` at or below 0 | `it is how many units the map's full range spans, so a positive number. To put the near end at the back, say "near": "black"` |
 | `gamma` or `contrast` at or below 0 | `collapses the range onto the midpoint … so the map would describe a flat part` |
@@ -2101,7 +2137,7 @@ hanging sleeve.
 | Field | Meaning |
 | --- | --- |
 | `bone` | **required.** The bone the region is carried by. It has to already exist — a bone a physics constraint targets is part of the skeleton, not a side effect of a mesh |
-| `mask` | **required.** A greyscale sheet in the part's own pixel grid: the level IS the weight, black still and white fully carried, sampled at each vertex. Alpha is not read — a transparent pixel is black |
+| `mask` | **required.** A greyscale sheet in the part's own pixel grid: the level IS the weight, black still and white fully carried, sampled at each vertex. Alpha is not read — a transparent pixel is black. The grid is the drawing's, as for a depth map: on a `scale:` page the mask is still the art's size ([#762](https://github.com/firejune/rigc/issues/762)) |
 
 The remainder always stays on the slot bone, so every vertex closes at 1 by
 construction rather than by `A20` catching it later. `build` and `explain` report
@@ -2131,7 +2167,7 @@ bone, must close at 1, and at least one must actually be carried.
 | the slot's own bone | `moves nothing — a soft region needs a bone that can move independently` |
 | a mask that is black everywhere | `carries no vertex of this mesh — every one of its 49 vertices samples black` |
 | a colour mask | `is not greyscale — pixel (0, 0) is rgb(10, 200, 10)` |
-| a mask that is not the part's size | `is 48x32 and the part is 96x64` |
+| a mask that is not the part's size | `is 48x32 and the part is 96x64` — on a `scale:` page, `and the part is a 96x64 drawing — 48x32 texels on a page that declares scale: 0.5` |
 | a mask that is not on disk | `the soft mask "x.png" is not at …` |
 
 ⭐ **One depth pass buys both, on one part.** A carried mesh has two bones on the
