@@ -776,11 +776,19 @@ export interface MotionMix {
 // ---------------------------------------------------------------------------
 
 /**
- * Field order here is the order the emitter writes them, and it is rigc's, not
- * the editor's: Spine writes `length, rotation, x, y` and rigc writes
- * `length, x, y, rotation`. Both load identically — key order carries no meaning
- * in JSON — and rigc's order is the one every artifact on disk already has, so
- * changing it would be a byte-level diff that says nothing.
+ * Field order here is the EDITOR's, for every field its exports write — the
+ * order `src/keyorder.ts`'s `EDITOR_KEY_ORDER` states per kind and the emitter
+ * writes since issue #716 (`length, rotation, x, y` on a bone, `x, y, …, width,
+ * height` on a region, `type` before `name` on a constraint). `CUR84` in
+ * `selftest.ts` holds each interface below to its row, so this is a checked
+ * claim rather than a description. A field no export writes (`shearX`, a
+ * region's `name` and `path`) sits where it reads best: the table leaves such a
+ * key at the position its constructor gives it.
+ *
+ * ⚠️ This comment said the opposite until #716 — *"rigc's, not the editor's …
+ * changing it would be a byte-level diff that says nothing"*. It says something:
+ * a rebuild of an editor export is the export only if it is the same text, and
+ * 269 objects over the twelve exports under `examples/` were not.
  *
  * A field is present exactly when the rig spec declared it; see `src/rig.ts`.
  */
@@ -788,10 +796,10 @@ export interface SpineBone {
   name: string;
   parent?: string;
   length?: number;
-  x?: number;
-  y?: number;
   /** Spine degrees, CCW in a y-up world. */
   rotation?: number;
+  x?: number;
+  y?: number;
   scaleX?: number;
   scaleY?: number;
   shearX?: number;
@@ -807,8 +815,8 @@ export interface SpineBone {
 export interface SpineSlot {
   name: string;
   bone: string;
-  attachment?: string;
   color?: string;
+  attachment?: string;
   dark?: string;
   blend?: string;
 }
@@ -846,19 +854,19 @@ export interface SpineSlot {
 export interface SpineRegionAttachment {
   name?: string;
   path?: string;
-  /** Required. Omitting these yields NaN with no error. */
-  width: number;
-  height: number;
   x?: number;
   y?: number;
+  scaleX?: number;
+  scaleY?: number;
   /**
    * Cancels the bone's world rotation so a plate authored in screen space stays
    * screen-upright under a rotated bone. Without it every slot hanging off the
    * `axis` bone would render tilted by the axis angle.
    */
   rotation?: number;
-  scaleX?: number;
-  scaleY?: number;
+  /** Required. Omitting these yields NaN with no error. */
+  width: number;
+  height: number;
   color?: string;
   sequence?: SpineSequence;
 }
@@ -892,9 +900,6 @@ export interface SpineMeshAttachment {
    * (`traceOutline` in mesh.ts) and never 0.
    */
   hull: number;
-  /** Nonessential, but they make the mesh budget assertions readable. */
-  width: number;
-  height: number;
   /**
    * Nonessential edge list the editor draws: vertex index pairs, each index
    * TIMES TWO (`meshEdges` in mesh.ts). Always written — authored edges are
@@ -902,6 +907,9 @@ export interface SpineMeshAttachment {
    * without one imports with its interior edges reported lost.
    */
   edges: number[];
+  /** Nonessential, but they make the mesh budget assertions readable. */
+  width: number;
+  height: number;
   color?: string;
   sequence?: SpineSequence;
 }
@@ -1068,7 +1076,7 @@ export type SpineTimelineKey = Record<string, unknown>;
  * (`physics: [...]`, `ik: [...]`) are not read at all — the constraint vanishes
  * with no error, which is assertion A01.
  */
-export type SpineConstraint = { name: string; type: string } & Record<string, unknown>;
+export type SpineConstraint = { type: string; name: string } & Record<string, unknown>;
 
 export interface SpineSkeletonJson {
   skeleton: {

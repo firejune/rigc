@@ -816,7 +816,7 @@ does **not** cover, in the same breath:
 | `version` and `hash` | the rig spec has no field for either, and `ingest` reports both as findings — the header row above, unchanged |
 | anything below one float32 step | the parser stores frames, curves and vertices in a `Float32Array`, so a difference it cannot represent is invisible to any reading of the parsed form |
 | a Bezier's handles *as written* | the parser samples them into the curve, so a moved handle arrives as moved samples rather than as the handle it was |
-| how the file is **spelled** | field order and an omitted default written out — the second row of the table above is values that agree, and this measure says so. A number's spelling is `IG73`'s, which reads the rebuild as text |
+| how the file is **spelled** | an omitted default written out — the second row of the table above is values that agree, and this measure says so. A number's spelling and a key's position are not on this list any more: since [#716](https://github.com/firejune/rigc/issues/716) the rebuild spells every number as the export does (`IG73`) and writes every object's keys in the export's order (`IG76`, [AUTHORING §10.6b](AUTHORING.md)), both read off the rebuild as text |
 | how it **looks** | that is `check`, and `--texture-from` is how its figure is attributed |
 
 The geometric row needs a real number, because a naive reading of `check` makes an
