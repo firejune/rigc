@@ -95,7 +95,14 @@ import {
   type AtlasRegion,
   type ParsedAtlas,
 } from './atlas.ts';
-import { KEY_TIME_EPSILON, physicsKeyRefusal, physicsRuleFor, type PhysicsPoseRule } from './timelines.ts';
+import {
+  KEY_TIME_EPSILON,
+  physicsKeyRefusal,
+  physicsRuleFor,
+  SLOT_COLOR_CHANNELS,
+  type PhysicsPoseRule,
+  type SlotColorChannel,
+} from './timelines.ts';
 import { evaluateDeformTransform } from './deformgen.ts';
 import { evaluateTrackDerive, TRACK_DERIVE_PROJECTIONS, type TrackDeriveMember } from './trackgen.ts';
 import {
@@ -783,6 +790,60 @@ function rgba2Hex(v: number[]): { light: string; dark: string } {
   return { light: v.slice(0, 4).map(channelHex).join(''), dark: v.slice(4, 7).map(channelHex).join('') };
 }
 
+/** The five slot colour timelines, which are every `SLOT_TRACKS` shape but `attachment`. */
+type SlotColourShape = 'rgba' | 'rgb' | 'alpha' | 'rgba2' | 'rgb2';
+
+/**
+ * How one colour key is written, per timeline: how many channels its `v`
+ * carries, how the refusal spells that `v`, and the JSON fields the emitted key
+ * states them as.
+ *
+ * ⭐ **Every row is the parser's own reading, and the `v` is always the
+ * channels in the order `readCurve` indexes a curve array by** — which is what
+ * keeps a key and its raw curve parallel on every shape:
+ *
+ * - `rgba` → `color: "rrggbbaa"`, four channels (`RGBATimeline`, `frames << 2`).
+ * - `rgb` → `color: "rrggbb"`, three. `SkeletonJson`'s `rgb` branch reads the
+ *   same `Color.fromString(keyMap.color)` and hands `setFrame` r, g and b alone,
+ *   so an alpha pair written there would be read into a colour and dropped one
+ *   line later — six digits is emitting what is read.
+ * - `alpha` → `value: a`, one channel, read by `readTimeline1` with a per-key
+ *   default of **0**. It is a number rather than hex because the format stores
+ *   it as one, so it is not quantised onto a byte the way the four hex shapes
+ *   are.
+ * - `rgba2` → `light: "rrggbbaa"`, `dark: "rrggbb"`, seven (see `rgba2Hex`).
+ * - `rgb2` → `light: "rrggbb"`, `dark: "rrggbb"`, six: `RGB2Timeline.setFrame`
+ *   takes r g b and r2 g2 b2, and neither colour's alpha.
+ *
+ * The count is checked before anything is written, with one sentence for all
+ * five (`rgba value needs 4 channels, got 3`), because `rgbaHex` and `rgba2Hex`
+ * already said exactly that for their two and a family whose members refuse in
+ * different words is a family an author has to learn twice.
+ */
+const COLOUR_KEYS: Record<SlotColourShape, { channels: number; spelling: string; write: (v: number[]) => Record<string, string | number> }> = {
+  rgba: { channels: 4, spelling: '[r,g,b,a]', write: (v) => ({ color: rgbaHex(v) }) },
+  rgb: { channels: 3, spelling: '[r,g,b]', write: (v) => ({ color: v.map(channelHex).join('') }) },
+  alpha: { channels: 1, spelling: '[a]', write: (v) => ({ value: r6(v[0]) }) },
+  rgba2: { channels: 7, spelling: '[lr,lg,lb,la,dr,dg,db]', write: (v) => rgba2Hex(v) },
+  rgb2: {
+    channels: 6,
+    spelling: '[lr,lg,lb,dr,dg,db]',
+    write: (v) => ({ light: v.slice(0, 3).map(channelHex).join(''), dark: v.slice(3, 6).map(channelHex).join('') }),
+  },
+};
+
+/** The colour of one key, as its timeline writes it — after the channel count the whole family refuses in one sentence. */
+function colourKey(shape: SlotColourShape, v: number[]): Record<string, string | number> {
+  const { channels, write } = COLOUR_KEYS[shape];
+  if (v.length !== channels) {
+    throw new CompileError(`${shape} value needs ${channels} channel${channels === 1 ? '' : 's'}, got ${v.length}`);
+  }
+  return write(v);
+}
+
+/** A slot colour channel as a sentence names it. */
+const CHANNEL_WORDS: Record<SlotColorChannel, string> = { rgb: 'light rgb', alpha: 'alpha', dark: 'dark colour' };
+
 /**
  * One timeline a `MotionValueTrack` can name: the JSON fields a key carries, the
  * per-key default the parser uses for each, and — where the runtime has one — the
@@ -940,8 +1001,18 @@ const SLIDER_TRACKS: Record<string, ValueTrackShape> = {
  * ⚠️ The KEY is the timeline name as the file carries it, and the VALUE names
  * the branch below that writes its keys — so an entry added here without a
  * branch to write it is an entry emitted in some other timeline's shape, which
- * is the defect this table closed rather than a new affordance. The format has
- * three more (`rgb`, `alpha`, `rgb2`) and rigc emits none of them.
+ * is the defect this table closed rather than a new affordance.
+ *
+ * 🎨 `rgb`, `alpha` and `rgb2` joined in issue #730, which makes this the
+ * format's whole slot switch (`SkeletonJson.readAnimation`'s six cases, in its
+ * order). They are the SEPARABLE colour timelines — each poses a subset of the
+ * slot's channels and leaves the rest where they were (`SLOT_COLOR_CHANNELS`)
+ * — and they are not spellings of `rgba`. Folding an `rgb` and an `alpha` with
+ * their own key times into one `rgba` would have to state each channel at the
+ * other's key times, which is a value nobody keyed; and a lone `alpha` has no
+ * `rgba` spelling at all, because an `rgba` key poses the light rgb too. So
+ * each is emitted as itself, and two tracks of one slot that pose a shared
+ * channel are refused rather than layered (see the claim check in `compile`).
  *
  * 🎨 `rgba2` joined in issue #690, and what it adds is the half of the two-colour
  * tint that moves: a slot's `dark` has been an emitted setup field all along
@@ -952,10 +1023,13 @@ const SLIDER_TRACKS: Record<string, ValueTrackShape> = {
  * never applies it; `--profile spine-html` is where it fires. Emitting a
  * construct one consumer drops is exactly what a profile is for.
  */
-export const SLOT_TRACKS: Record<string, 'attachment' | 'rgba' | 'rgba2'> = {
+export const SLOT_TRACKS: Record<string, 'attachment' | SlotColourShape> = {
   attachment: 'attachment',
   rgba: 'rgba',
+  rgb: 'rgb',
+  alpha: 'alpha',
   rgba2: 'rgba2',
+  rgb2: 'rgb2',
 };
 
 /**
@@ -2534,6 +2608,30 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
             );
           }
           claimed.add(claim);
+          // Two colour timelines of one slot that pose a shared channel are not
+          // two layers of it: each poses its channels at every time, the setup
+          // value before its first key included, so the one the file states
+          // later overwrites the other everywhere (`SLOT_COLOR_CHANNELS`). The
+          // claim above cannot see it — `rgba` and `alpha` are two properties —
+          // and before issue #730 nothing could reach it, because `rgba` and
+          // `rgba2` were the only two and a slot keying both was already a
+          // slot keying its light colour twice. Raised before any key is shaped:
+          // the fault is the pair, not a key.
+          if (family === null && !isBoneTrack) {
+            const mine = SLOT_COLOR_CHANNELS[track.property] ?? [];
+            for (const other of Object.keys(slotTimelines[target] ?? {})) {
+              const shared = (SLOT_COLOR_CHANNELS[other] ?? []).filter((channel) => mine.includes(channel));
+              if (shared.length === 0) continue;
+              throw new CompileError(
+                `animation "${animName}" slot "${target}": tracks "${other}" and "${track.property}" both key the slot's ` +
+                  `${shared.map((channel) => CHANNEL_WORDS[channel]).join(' and ')} — a colour timeline poses its ` +
+                  'channels at every time, its setup value before its first key included, so the one the file states ' +
+                  'later overwrites the other everywhere and the first one\'s keys there are read by nothing. Key each ' +
+                  'channel once: "rgb" and "alpha" move the light colour\'s two halves on their own key times, "rgba" ' +
+                  'moves them together, and "rgb2" / "rgba2" add the dark colour',
+              );
+            }
+          }
 
           const shift = (track.lag ?? 0) + (track.stagger ?? 0) * index;
           const keys =
@@ -7282,12 +7380,18 @@ function compileTrack(
   // …')` inside `RGBA2Timeline.apply1`. That is a crash in the consumer's
   // process, from a file every parser accepts — the exact silence this compiler
   // exists to convert into a name (issue #690).
-  if (shape === 'rgba2' && !darkSlots.has(target)) {
+  //
+  // `rgb2` is the same pairing and was measured the same way before it joined
+  // this refusal (issue #730): the forged file loads, `setupPose.darkColor` is
+  // `null`, and `state.apply` throws `TypeError: null is not an object
+  // (evaluating 'dark.r = …')` inside `RGB2Timeline.apply1`. The way out it
+  // names is its own light-only sibling, which for `rgb2` is `rgb`.
+  if ((shape === 'rgba2' || shape === 'rgb2') && !darkSlots.has(target)) {
     throw new CompileError(
-      `${where}: slot "${target}" declares no setup "dark", and an "rgba2" timeline poses a slot's dark colour — ` +
+      `${where}: slot "${target}" declares no setup "dark", and an "${shape}" timeline poses a slot's dark colour — ` +
         'the runtime allocates one only for a slot whose setup pose has it, so applying this animation throws ' +
         `instead of tinting. Give slot "${target}" a \`dark\` in the rig spec (the colour it holds at rest), or ` +
-        'key "rgba" if only the light colour moves',
+        `key "${shape === 'rgba2' ? 'rgba' : 'rgb'}" if only the light colour moves`,
     );
   }
   if (!track.keys.length) throw new CompileError(`${where}: no keys`);
@@ -7328,21 +7432,33 @@ function compileTrack(
       continue;
     }
 
-    // rgba / rgba2 — the two colour shapes `SLOT_TRACKS` names, and between them
-    // the only ways left to reach here: `attachment` returned above and a
-    // property the table does not carry was refused before any key was shaped.
+    // The five colour shapes `SLOT_TRACKS` names, and between them the only ways
+    // left to reach here: `attachment` returned above and a property the table
+    // does not carry was refused before any key was shaped.
     //
-    // ⚠️ The two differ in three places and nowhere else, so they are read out of
-    // `shape` rather than forked into two loops: how many channels a `v` carries,
-    // which FIELDS the emitted key spells them as (`color`, or `light` + `dark`),
-    // and therefore how long a raw curve array is. Everything else — the
-    // ease/curve exclusivity, the stepped case, the hold test, the last-key
-    // refusals — is one rule, and a second copy of it is a second thing to keep
-    // in step.
-    const spelling = shape === 'rgba2' ? '[lr,lg,lb,la,dr,dg,db]' : '[r,g,b,a]';
-    const channels = shape === 'rgba2' ? 7 : 4;
-    const colourOf = (v: number[]): Record<string, string> => (shape === 'rgba2' ? rgba2Hex(v) : { color: rgbaHex(v) });
+    // ⚠️ The five differ in three places and nowhere else, so they are read out
+    // of `COLOUR_KEYS` rather than forked into five loops: how many channels a
+    // `v` carries, which FIELDS the emitted key spells them as (`color`,
+    // `value`, or `light` + `dark`), and therefore how long a raw curve array
+    // is. Everything else — the ease/curve exclusivity, the stepped case, the
+    // hold test, the last-key refusals — is one rule, and a second copy of it is
+    // a second thing to keep in step.
+    const { spelling, channels } = COLOUR_KEYS[shape];
+    const colourOf = (v: number[]): Record<string, string | number> => colourKey(shape, v);
     if (!Array.isArray(key.v)) throw new CompileError(`${where}: ${shape} key value must be ${spelling}`);
+    if (shape === 'alpha' && key.v.length === 1 && !(Number.isFinite(key.v[0]) && key.v[0] >= 0 && key.v[0] <= 1)) {
+      // The one colour shape written as a number rather than a byte, so the one
+      // that is not clamped onto 0..1 by `channelHex` on the way out. The
+      // runtime clamps the POSED alpha (`AlphaTimeline.apply`: `color.a = a < 0
+      // ? 0 : a > 1 ? 1 : a`) but interpolates the stored value first, so a key
+      // of 1.5 reaches 1 at a different time from a key of 1 — a curve nobody
+      // keyed, from a value no pose ever holds. Refused rather than clamped:
+      // clamping is choosing the value.
+      throw new CompileError(
+        `${where}: key at t=${key.t} is ${String(key.v[0])}; an alpha is a number from 0 to 1 — the runtime clamps ` +
+          'the posed alpha to that range after interpolating, so a value outside it is one no pose ever holds',
+      );
+    }
     const entry: SpineTimelineKey = { time, ...colourOf(key.v) };
     if (key.ease !== undefined && key.curve !== undefined) {
       throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
@@ -7364,8 +7480,9 @@ function compileTrack(
         }
         const t2 = keyTime(next.t + shift);
         // 4 numbers per channel, in the format's own channel order — 16 for
-        // `rgba` (r g b a), 28 for `rgba2` (light r g b a, then dark r g b, which
-        // is the order `readCurve` indexes them in). Short arrays become NaN
+        // `rgba` (r g b a), 12 for `rgb`, 4 for `alpha`, 28 for `rgba2` (light r
+        // g b a, then dark r g b, which is the order `readCurve` indexes them in)
+        // and 24 for `rgb2`. Short arrays become NaN
         // curves with no error. The hold test reads the emitted hex rather than
         // the authored floats: two colours that quantise to one byte are one
         // colour in the file, and for `rgba2` that has to be true of BOTH — a key
