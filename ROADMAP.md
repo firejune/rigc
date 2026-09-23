@@ -199,6 +199,67 @@ a dispatch and not a judgement. What the goal still asks for is the half no
 workflow holds: that the wait stays a measured figure rather than an assumed
 one.
 
+## 1.0 — claimed on 2026-09-24
+
+The owner claimed the number on v0.36.1's tree, on a six-subject exam run against
+a private production corpus — 3,608 shipped skeletons from twelve games across
+Spine 3.8, 4.0, 4.1, 4.2 and 4.3. The rigs that sat were chosen by a generated
+feature-cover set and a 2.5D-face census over that corpus, not by hand: **67
+production rigs from ten shipped games**, every one measured by machine and none
+by eye. Grading was a pose oracle — the source posed under its own generation's
+`spine-core` (4.0.31, 4.1.56, 4.2.120), the editor's 4.3.26 export and rigc's
+rebuild both posed under 4.3.13, every bone's world matrix compared at 27 sample
+times per animation — beside `ingest → build → diff` and the gate.
+
+| subject | material | result on v0.36.1 |
+| --- | --- | --- |
+| depth: one character rig | 4.2, 264 bones, 16 skins, all four constraint kinds, 87 physics constraints | ingest 0 blockers · gate green · the rebuild poses identically to the editor's export on every bone to six decimals, attachment names included |
+| breadth: the cover set | seven rigs that between them use all 37 production features (4.0, 4.2 JSON, 4.2 binary), plus three earlier ones | 10/10 ingest with 0 blockers · 10/10 build · 10/10 pose-identical to the export · physics parameters carried 885/885 |
+| byte round trip | 42 production 4.3.26 exports | `build(ingest(A)) ≡ A` in canonical form (hash and version string exempt) on **42/42**, 1,398,785 numbers with 0 differing, on two machines |
+| scale | 901 bones, 452 physics constraints | builds in 4.9 s, second compile byte-identical, 6.5 MB |
+| 2.5D face | ten candidates across all five generations | 15/15 (with the next row) build and pose identically to the export; every bone the face census names is exact |
+| path motion track and staged scenes | five 4.1 rigs | motion-track positions of 2, −4 and 8 laps survive verbatim, constraint order survives, pose-identical to the export |
+
+Against the **sources** — a generation older than the export — every rebuild poses
+within the editor's own migration noise, measured per rig. 3.8 has no runtime on
+npm, so its one rig is graded against the export alone.
+
+What the exam found, this repository fixed between v0.35.1 and v0.36.1: two
+refusals of correct production data, three values a rebuild changed that no gate
+measured, a path length measured on the wrong geometry, a pack shape refused for
+its whitespace. Nine cards opened, eight closed, each with its measurement in the
+changelog; the one open (#810) is the wording of a message on a path no build
+reaches.
+
+### The four goals, as they stood when the number was claimed
+
+- **Real art has used the new surface — reinterpreted by the owner, not met as
+  written.** The goal named one project's art, and that art does not exist yet:
+  the project waits on this number. What was exercised instead is shipped
+  production art from ten games across five generations, none of it chosen after
+  the fact. The owner's call is that this is the stronger measurement of whether
+  the spec holds still under real rigs, and that 1.0 is the **signal for that
+  project to start** rather than a claim that its art has been through. The three
+  bets stand exactly where the section above leaves them.
+- **The spec has stopped growing on its own initiative — met this week, and not
+  before.** The last two additions to the rig spec (an attachment's `name`, a path's
+  `lengths`) came from production exports the rebuild did not reproduce — needs
+  measured, not explorations — and each removed a derivation the compiler used to
+  make on the author's behalf.
+- **Every claim is derived — met where it is load-bearing.** The selftest's currency
+  suite holds the guide's quoted sentences, intervals and tables to the code, and
+  the run's figures are counted off its own case lines rather than typed.
+- **The published package works cold — met.** `release.yml` confirms the registry
+  serves each cut and installs it clean; it did so on every cut this week, waiting
+  between 1.5 and 4.6 minutes for the registry to serve the version.
+
+### What the number now costs
+
+From 1.0.0 the promise at the top of this section is in force: a change to the
+rig or motion spec that an existing spec cannot survive is a **major** version, a
+new construct is a minor one, and a repair is a patch. `Release-As` chose the
+number for this cut and is not how the next one is chosen.
+
 ## Not in 1.0
 
 - **A second oracle, and the backend behind it.** Not because Spine is the
