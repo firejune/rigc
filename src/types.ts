@@ -1103,6 +1103,8 @@ export interface SpineSkeletonJson {
     fps?: number;
     referenceScale?: number;
     images?: string;
+    /** Nonessential, carried from `RigSkeletonHeader.audio` as stated — `null` included. */
+    audio?: string | null;
   };
   bones: SpineBone[];
   slots: SpineSlot[];

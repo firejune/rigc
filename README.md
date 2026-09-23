@@ -578,11 +578,11 @@ is in no field of the skeleton.
 **And over twelve skeletons nobody here wrote.** The same run ingests every editor
 export in the fetched example corpus, rebuilds it through the pack beside it and
 `diff`s the result against the source: **12 of 12, no blockers, 1.000 on every measure
-the report carries.** Byte identity is not the claim there and the reason is the input
-rather than the round trip — an editor header carries `hash` and `audio`, which the rig
-spec has no field for — so the contract is the structural one `diff` measures.
-[INGEST.md §2.3](docs/INGEST.md) has the three kinds of difference that remain, with
-what each is worth.
+the report carries** — and each rebuild is its export's own text in canonical form,
+apart from the header's `hash` and `spine`: the editor's project hash and the runtime
+version rigc stamps, the two keys the rig spec has no field for by design (`IG83`,
+12 of 12). [INGEST.md §2.3](docs/INGEST.md) states that pass line and why those two
+are the exceptions.
 
 **What it reads is skeleton JSON and nothing else** — no `.spine` project, no binary
 `.skel`, no atlas, no art. So it never invents, and the things it cannot get out of

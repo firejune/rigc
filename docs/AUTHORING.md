@@ -937,11 +937,27 @@ one A09 does compare.
 
 ## 2. The rules that decide what lands in the file
 
-**R1 — A field is emitted exactly when you declare it.** Not "when it differs from
-the default". Spine's own exporter omits anything equal to a default; rigc cannot,
-because a rig may need to say `x: 0` out loud and because deciding emission from
-the *value* would make the file depend on arithmetic rather than on what you wrote.
-Omit a field and Spine's default stands; write it and it is in the file.
+**R1 — A field is emitted when you declare it, and left out where the parser would
+read the same value without it.** Omit a field and Spine's default stands; write it
+and it reaches the file — unless what you wrote **is** that default, in which case
+the emitter leaves it out, the way the editor's own exporter does (issue
+[#716](https://github.com/firejune/rigc/issues/716)). Writing `x: 0` is still
+legitimate, and your spec still says it: the spec is the record of what you wrote,
+and the file is what the runtime reads. The two cannot disagree about a value,
+because a key is left out only where the 4.3 parser loads the same `SkeletonData`
+without it — exact equality with the float the file would hold, so `x: 1e-45` is
+written — and the selftest loads every build both ways to hold that (§10.6c).
+
+⚠️ This rule said *"not 'when it differs from the default'"* until #716, on two
+grounds: that a rig may need to say `x: 0` out loud, and that deciding emission from
+the value would make the file depend on arithmetic. Neither survived being measured.
+What reads the file is the 4.3 parser, which reads the absent key as the same number,
+and the editor, whose own export leaves the same key out — so there is nobody to say
+it out loud *to*; and the decision is an exact comparison with the parser's fallback,
+which is not arithmetic in any sense a reader has to redo. What the
+old rule cost was concrete: a rebuild of an editor export restated **2,338** keys the
+export leaves to the parser, so `ingest → build` could never give an editor's file
+back.
 
 **R2 — The compiler never invents a value.** No defaults guessed from the art, no
 re-measured plates, no reasonable fallbacks. A missing number is a `CompileError`
@@ -1115,6 +1131,7 @@ is recorded in `bench/runs/README.md`, *What a run may read*.)
 | `fps` | nonessential editor hint | `SkeletonData.fps` stays 30 |
 | `referenceScale` | 4.2+ physics/scale reference | parser default 100 |
 | `images` | where the editor's import looks for the part PNGs, as a path from the skeleton file | **written for you**: under `--copy-images` the `--out` directory itself, spelled `../<its basename>/` (a literal `./` is dropped by the editor on import; a named directory is kept and every part is found — measured on 4.3.23); otherwise the relative path from `--out` to the one directory the spec names every part PNG in (the rig's images directory, or the manifest's plates). A declared value is carried through verbatim — and overridden by `--copy-images`, which moved the parts. Parts spread over several directories have no single true path, so nothing is written (issue #370) |
+| `audio` | nonessential: where the editor looks for the skeleton's audio files, as a path from the skeleton file — a string, or `null` for none | **not written unless you state it.** rigc has no audio to point at, so this is a value a spec states or does not; stated, it is carried verbatim, `null` included, because `null` is what an editor export writes when no audio folder is set (all twelve under `examples/` do) and `ingest` carries it from there ([#716](https://github.com/firejune/rigc/issues/716)). Anything but a string or `null` is a compile error naming the value |
 
 `spine` and `hash` are not yours to write: rigc emits its own version label
 (`A16` re-checks it is on the 4.3 line) and inventing a hash would claim an export
@@ -4128,8 +4145,11 @@ here was measured off a real rig. Copy the shape, not the values.
   rebuilds with `bendPositive: false` on every key if the flag is left silent,
   and with `true` — what the source plays — when `ingest` writes it out. So
   `ingest` restates every field any key of a track names, at the parser's default
-  where the source omits one, and records a `CONSTRAINT_KEY_RESTATED` finding. On
-  rigc's own output the two agree and the round trip is byte-identical.
+  where the source omits one — in the **spec**. The emitter then leaves each such
+  value out of the file again wherever it is the one the parser reads without it
+  (§10.6c), so the rebuild is the source's own text, and `CONSTRAINT_KEY_RESTATED`
+  is printed only for a value the file would still carry. On rigc's own output the
+  two agree and the round trip is byte-identical.
 - `mix` outside `0..1` is a compile error: `IkConstraintPose.mix` is documented as
   a percentage. A **transform** mix is documented *unbounded*, which is why §4.10
   has no such rule — the asymmetry is the runtime's, not ours.
@@ -7274,8 +7294,9 @@ about your bone tree rather than about a hole in your figure.
 
 Every reference in this repository was made in the Spine editor by a person, and a
 rig authored here is measured against one. rigc's own defaults are deliberately
-*absent* rather than opinionated (R1: a field is emitted exactly when you declare
-it), so nothing in the compiler will push you toward the shape an editor rig has.
+*absent* rather than opinionated (R1: a field reaches the file when you declare it,
+and nothing you did not declare is supplied), so nothing in the compiler will push you
+toward the shape an editor rig has.
 This section is that push, and it comes from **Spine's public documentation only** —
 what the editor does when nobody tells it otherwise, and what its user guide
 recommends.
@@ -7921,11 +7942,20 @@ either.
 *"assume … if omitted"* default — the same fact R5 states from the parser's side:
 omit them in raw JSON and every UV collapses, in silence. Name an `image`.
 
-⚠️ **Do not imitate the exporter's omissions.** Spine's exporter drops fields equal
-to their default, which is why the format page is a long list of *"assume 0 if
-omitted"* — and **rigc deliberately does the opposite** (R1, §2). Writing `x: 0` is
-legitimate here. The habit worth carrying over is not *omit defaults*, it is
-*declare only what the shot needs*.
+✅ **You need not imitate the exporter's omissions — the emitter does it for you.**
+Spine's exporter drops fields equal to their default, which is why the format page is
+a long list of *"assume 0 if omitted"*, and since
+[#716](https://github.com/firejune/rigc/issues/716) rigc's emitter drops the same
+ones (R1, §2; the table is §10.6c). So an author may still state a default — `x: 0`
+in a rig spec is legitimate and stays in the spec — and the file leaves it out.
+⚠️ This paragraph said *"do not imitate the exporter's omissions … rigc deliberately
+does the opposite"* until then. The advice was re-derived rather than kept: **the
+round trip is the reason.** A rebuild of an editor export that writes back every
+default the export left out is a different file from the export in 2,338 places over
+the twelve under `examples/`, and one that leaves them out is the export's own text
+apart from the header's `hash` and `spine` (`IG83`, and [INGEST §2.3](INGEST.md)).
+The habit worth carrying over is still not *omit defaults* — it is *declare only what
+the shot needs*; what changed is that stating a default costs nothing in the file.
 
 ### 10.6 What a round trip gives back
 
@@ -7947,7 +7977,12 @@ comes back `48.0`) and **omitted defaults** — the export drops any field equal
 its parser default, so the header loses `x: 0` and `y: 0`, a bone loses `x: 0`, and
 a key at t=0 loses its `"time": 0`. Every name-keyed object is also re-sorted, per
 §10.1. None of those is a loss of information, and each is worth knowing before
-you read a `diff`.
+you read a `diff`. 🔁 Since [#716](https://github.com/firejune/rigc/issues/716) the
+bone's `x: 0` and the key's `"time": 0` are left out by rigc as well (§10.6c); the
+header's origin is not, because the 4.3 JSON reader has no default for it
+(`skeletonData.x = skeletonMap.x`, `SkeletonJson.js:70`), so an absent origin loads
+as `undefined` where a written one loads as `0` — writing it is exact for both
+readers, and leaving it out would move a loaded value.
 
 ⚠️ Read every line below as *this construct survived*, never as *this construct is
 recommended*. §10.1–§10.5 are the recommendations; this subsection is only the
@@ -8139,9 +8174,115 @@ the rig's own order.
 key order is yours to state — a rig spec is read by name, and its field order
 still means nothing. What changed is that a canonical-form comparison of an
 export's rebuild against the export no longer finds an object whose keys sit
-elsewhere (`IG76`). What it still finds is the defaults the export leaves out
-and rigc writes (§10.5), `"name": null`, and the three header keys — and
-nothing else (`IG78`).
+elsewhere (`IG76`). What it found next was the defaults the export leaves out
+and rigc wrote, `"name": null`, and the three header keys (`IG78`) — and since
+§10.6c it finds the header's `hash` and `spine` and nothing else (`IG83`).
+
+### 10.6c The keys it leaves out
+
+The editor writes a key only where its value is not the one the parser reads in its
+absence, and since [#716](https://github.com/firejune/rigc/issues/716) rigc's emitter
+does the same, in one pass over the finished skeleton (`withoutParserDefaults` in
+`src/keyorder.ts`, run just before §10.6b's). A key is left out when its value is
+**exactly** the one below — the float the file would hold, not a value near it — so a
+rotation of `1e-45` is written and a rotation of `0` is not. The table is
+`PARSER_DEFAULTS`, and every row is the linked `spine-core` parser's own fallback
+(`getValue(map, key, default)` in `SkeletonJson.js`); the selftest loads an object of
+each kind with the key at that value and without it, and requires the two to be the
+same `SkeletonData` (`S103` on the in-tree builds, `IG82` on the corpus), and deletes
+every key of every in-tree build in turn to find one the table is missing (`S101`):
+
+| Kind | Left out when it is |
+| --- | --- |
+| `header` | `referenceScale` 100 |
+| `bone` | `length` 0 · `rotation` 0 · `x` 0 · `y` 0 · `scaleX` 1 · `scaleY` 1 · `shearX` 0 · `shearY` 0 · `inherit` "normal" · `skin` false · `iconSize` 1 · `iconRotation` 0 |
+| `slot` | `color` "ffffffff" · `attachment` null · `blend` "normal" · `visible` true |
+| `ik constraint` | `skin` false · `mix` 1 · `softness` 0 · `bendPositive` true · `compress` false · `stretch` false |
+| `transform constraint` | `skin` false · `localSource` false · `localTarget` false · `additive` false · `clamp` false · `rotation` 0 · `x` 0 · `y` 0 · `scaleX` 0 · `scaleY` 0 · `shearY` 0 · `mixRotate` 1 · `mixX` 1 · `mixScaleX` 1 · `mixShearY` 1 |
+| `path constraint` | `skin` false · `positionMode` "percent" · `spacingMode` "length" · `rotateMode` "tangent" · `rotation` 0 · `position` 0 · `spacing` 0 · `mixRotate` 1 · `mixX` 1 · `mixY` `mixX`'s, only at 1 |
+| `physics constraint` | `skin` false · `x` 0 · `y` 0 · `rotate` 0 · `scaleX` 0 · `shearX` 0 · `limit` 5000 · `fps` 60 · `inertia` 0.5 · `strength` 100 · `damping` 0.85 · `mass` 1 · `wind` 0 · `gravity` 0 · `mix` 1 · `inertiaGlobal` false · `strengthGlobal` false · `dampingGlobal` false · `massGlobal` false · `windGlobal` false · `gravityGlobal` false · `mixGlobal` false |
+| `slider constraint` | `skin` false · `additive` false · `loop` false · `mix` 1 · `from` 0 · `to` 0 · `scale` 1 · `max` 0 · `local` false |
+| `region attachment` | `x` 0 · `y` 0 · `scaleX` 1 · `scaleY` 1 · `rotation` 0 · `color` "ffffffff" |
+| `mesh attachment` | `color` "ffffffff" · `hull` 0 · `width` 0 · `height` 0 |
+| `path attachment` | `closed` false · `constantSpeed` true |
+| `clipping attachment` | `convex` false · `inverse` false |
+| `sequence` | `start` 1 · `setup` 0 |
+| `event` | `int` 0 · `float` 0 · `string` "" · `audio` null |
+| `bone rotate key` | `time` 0 · `value` 0 |
+| `bone translate key` | `time` 0 · `x` 0 · `y` 0 |
+| `bone translatex key` | `time` 0 · `value` 0 |
+| `bone translatey key` | `time` 0 · `value` 0 |
+| `bone scale key` | `time` 0 · `x` 1 · `y` 1 |
+| `bone scalex key` | `time` 0 · `value` 1 |
+| `bone scaley key` | `time` 0 · `value` 1 |
+| `bone shear key` | `time` 0 · `x` 0 · `y` 0 |
+| `slot attachment key` | `time` 0 · `name` null |
+| `slot rgba key` | `time` 0 |
+| `ik key` | `time` 0 · `mix` 1 · `softness` 0 · `bendPositive` true · `compress` false · `stretch` false |
+| `transform key` | `time` 0 · `mixRotate` 1 · `mixX` 1 · `mixY` `mixX`'s, only at 1 · `mixScaleX` 1 · `mixScaleY` 1 · `mixShearY` 1 |
+| `path position key` | `time` 0 · `value` 0 |
+| `physics damping key` | `time` 0 · `value` 0 |
+| `physics inertia key` | `time` 0 · `value` 0 |
+| `physics mass key` | `time` 0 · `value` 0 |
+| `physics strength key` | `time` 0 · `value` 0 |
+| `physics wind key` | `time` 0 · `value` 0 |
+| `physics mix key` | `time` 0 · `value` 1 |
+| `attachment deform key` | `time` 0 · `offset` 0 |
+| `attachment sequence key` | `time` 0 · `index` 0 · `mode` "hold" · `delay` the key before's, 0 on key 0 |
+| `drawOrder key` | `time` 0 |
+| `event key` | `time` 0 |
+
+Read a row as *"left out when it is"*: `x` 0 is a key left out at `0`; `mixY` `mixX`'s
+is a key left out where it equals the same object's `mixX` as the parser reads it,
+and *only at 1* narrows that to the one value the editor leaves it out at — measured:
+`sack-pro` writes `"mixX": 0, "mixY": 0` on six transform keys, where the parser would
+read an absent `mixY` as that same `0`. *The key before's* is a sequence key's
+`delay`, which the parser carries from the previous key (`lastDelay`).
+
+⚠️ **What is not a row, and why.**
+
+- **The header's `x`, `y` and `fps`.** The 4.3 JSON reader assigns them raw
+  (`skeletonData.x = skeletonMap.x`, `SkeletonJson.js:70`), so an absent origin loads
+  as `undefined` and a written `0` as `0`: there is no fallback for them to equal, and
+  rigc keeps writing the origin of a declared stage. The editor leaves it out
+  (§10.6's round trip 6), so a rebuild of an export whose stage sits at `0,0` spells
+  two fields the export does not — `LOSS HEADER_ORIGIN` says so on `ingest`.
+- **A transform constraint's `mixY` and `mixScaleY`.** Their fallback is the
+  constraint's `mixX` / `mixScaleX` — but the parser reads those only for a property
+  the constraint drives, so on one that drives `y` alone the fallback is the pose's
+  initial `0`, not `1`. A row there was tried and measured wrong: it left out
+  `8-follow-through-pro-ball`'s `"mixY": 1` on two such constraints, they loaded at
+  `0`, and `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` refused the rebuild.
+- **A region's `path`, an attachment's `name`, an event key's payload.** Their
+  fallbacks are another value — the attachment's own name, its placeholder, the event
+  definition's — which rigc writes only where it differs.
+- **A slider's `time` and a sequence's `digits`.** The parser has a fallback for
+  both, and nothing here can load it: `time` is read only on a slider with no `bone`,
+  which no build or export carries, and `digits` renames every frame of the series,
+  so no atlas a build resolves against loads it either way. Both are written as
+  stated.
+- **Every kind with no row** — the keys of a `shearx`, `sheary`, `inherit`, `alpha`,
+  `rgb`, `rgb2`, `rgba2`, path `spacing`/`mix`, physics `gravity`/`reset` or slider
+  timeline, a linked mesh, a point attachment. No build the selftest loads and no
+  export carries an object of those kinds, and a row nothing loads is a claim about
+  the parser nobody has checked — where a missing row only costs a key the parser
+  reads the same either way. `S101` names such a key the day a build emits one.
+
+⚠️ **Why 4.3's defaults, when #706 row 4 says they are not every generation's.**
+An omitted physics `inertia` is 0.5 to the 4.3 parser and 1 to the 4.2 one, and that
+is exactly why a key is left out only against the parser rigc links: the file states
+`"spine": "4.3.13"`, and the parser it is gated against is that one. Writing the
+default out would not make the file safe for a 4.2 reader: that reader applies its
+own defaults to every *other* key the file leaves out as well — every one the editor's
+own 4.3 export leaves out, too — and #706 rows 1, 2 and 6 measure what reading one
+generation's data on another generation's runtime does, none of it repaired by one
+key written out. That misread is refused where it can be seen, on the reading side
+(`GENERATION_UNSUPPORTED` in `ingest`), rather than written for on the emitting one.
+
+⇒ **What this means for you: nothing to write, and nothing to stop writing.** A
+default you state stays in your spec and leaves the file; `explain` prints a bone
+key's channels as the parser reads them, so a key that left the file still shows its
+value there.
 
 ### 10.7 What this section does not claim
 

@@ -86,6 +86,7 @@ import {
   type AtlasRegion,
 } from './src/atlas.ts';
 import { parseJsonWithPosition } from './src/json-position.ts';
+import { PARSER_DEFAULTS, parserReading } from './src/keyorder.ts';
 import { float32Step } from './src/timelines.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from './src/ladder.ts';
 import {
@@ -1183,6 +1184,30 @@ const SCALE_PRODUCT_NOTE =
  * foreign data. There is no honest SKIP either: an absent declaration is not
  * "nothing to measure", it is "no way to know what was meant".
  */
+/**
+ * An emitted key as the 4.3 parser reads it: every field its kind's
+ * `PARSER_DEFAULTS` row lists and the key leaves out, at the row's value, then
+ * the key's own fields. The emitter leaves a field at its parser default out
+ * (issue #716), so a report that reads the file needs the row to say what the
+ * runtime reads there — and reads it from the one table the emitter used.
+ */
+function asParsed(kind: string, key: Record<string, unknown>): Record<string, unknown> {
+  const row = PARSER_DEFAULTS[kind];
+  if (row === undefined) return key;
+  const site = { object: key, previous: () => null };
+  const filled: Record<string, unknown> = {};
+  for (const field of Object.keys(row)) {
+    const value = parserReading(row, site, field);
+    if (value !== undefined) filled[field] = value;
+  }
+  return { ...filled, ...key };
+}
+
+/** An emitted key's time as the parser reads it — `0` where the key leaves it out. */
+function keyTimeOf(kind: string, key: Record<string, unknown>): unknown {
+  return asParsed(kind, key).time;
+}
+
 function scaleProduct(timelineName: string, key: Record<string, unknown>): string {
   if (timelineName !== 'scale') return '';
   const x = key.x;
@@ -2830,7 +2855,11 @@ function cmdExplain(flags: Record<string, string>): void {
       for (const [timelineName, keys] of Object.entries(timelines)) {
         console.log(`    ${boneName}.${timelineName}  ${keys.length} key(s)${drives}`);
         if (timelineName === 'scale') console.log(`      ${SCALE_PRODUCT_NOTE}`);
-        for (const key of keys) {
+        for (const emitted of keys) {
+          // Every channel, as the parser reads it: a channel at its parser
+          // default is not in the file (issue #716), and this list shows the
+          // value a reader has to reason about rather than the bytes.
+          const key = asParsed(`bone ${timelineName} key`, emitted);
           const fields = Object.entries(key)
             .filter(([k]) => k !== 'time' && k !== 'curve')
             .map(([k, v]) => `${k}=${String(v)}`)
@@ -2847,7 +2876,8 @@ function cmdExplain(flags: Record<string, string>): void {
     for (const [slotName, timelines] of Object.entries(anim.slots ?? {})) {
       for (const [timelineName, keys] of Object.entries(timelines)) {
         console.log(`    ${slotName}.${timelineName}  ${keys.length} key(s)`);
-        for (const key of keys) {
+        for (const emitted of keys) {
+          const key = asParsed(`slot ${timelineName} key`, emitted);
           const curve = key.curve;
           const shape = Array.isArray(curve)
             ? `bezier[${curve.length}] ${curve.slice(12).join(', ')}  <- alpha channel, absolute (t,v)`
@@ -2875,7 +2905,7 @@ function cmdExplain(flags: Record<string, string>): void {
             .map(([k, v]) => `${k}=${String(v)}`)
             .join(' ');
           const curve = Array.isArray(key.curve) ? `bezier[${key.curve.length}]` : key.curve === 'stepped' ? 'stepped' : 'linear';
-          console.log(`      t=${String(key.time).padEnd(7)} ${(fields || '(all defaults)').padEnd(46)} ${curve}`);
+          console.log(`      t=${String(keyTimeOf(`${group} key`, key)).padEnd(7)} ${(fields || '(all defaults)').padEnd(46)} ${curve}`);
         }
       }
     }
@@ -2892,7 +2922,7 @@ function cmdExplain(flags: Record<string, string>): void {
               .map(([k, v]) => `${k}=${String(v)}`)
               .join(' ');
             const curve = Array.isArray(key.curve) ? `bezier[${key.curve.length}]` : key.curve === 'stepped' ? 'stepped' : 'linear';
-            console.log(`      t=${String(key.time).padEnd(7)} ${(fields || '(all defaults)').padEnd(46)} ${curve}`);
+            console.log(`      t=${String(keyTimeOf(`${group} ${timelineName} key`, key)).padEnd(7)} ${(fields || '(all defaults)').padEnd(46)} ${curve}`);
           }
         }
       }
@@ -2906,7 +2936,8 @@ function cmdExplain(flags: Record<string, string>): void {
         for (const [attName, timelines] of Object.entries(attMap)) {
           for (const [timelineName, keys] of Object.entries(timelines)) {
             console.log(`    ${skinName}/${slotName}/${attName}.${timelineName}  ${keys.length} key(s)`);
-            for (const key of keys) {
+            for (const emitted of keys) {
+              const key = asParsed(`attachment ${timelineName} key`, emitted);
               const run = Array.isArray(key.vertices) ? (key.vertices as number[]) : null;
               const offset = typeof key.offset === 'number' ? key.offset : 0;
               const span = run
@@ -2972,7 +3003,7 @@ function cmdExplain(flags: Record<string, string>): void {
               .map((o) => `${o.slot}${o.offset >= 0 ? '+' : ''}${o.offset}`)
               .join(' ')
           : 'back to the setup order';
-        console.log(`      t=${String(key.time).padEnd(7)} ${offsets}`);
+        console.log(`      t=${String(keyTimeOf('drawOrder key', key)).padEnd(7)} ${offsets}`);
       }
     }
   }

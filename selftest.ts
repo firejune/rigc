@@ -118,6 +118,7 @@ import {
   type TextureAtlasRegion,
   TransformConstraint,
   TransformConstraintData,
+  VertexAttachment,
   type SkeletonData,
 } from '@esotericsoftware/spine-core';
 import {
@@ -163,7 +164,19 @@ import {
   type IngestFinding,
   type IngestResult,
 } from './src/ingest.ts';
-import { EDITOR_KEY_ORDER, forEachKindedObject, inEditorKeyOrder, type KeyOrderTable } from './src/keyorder.ts';
+import {
+  EDITOR_KEY_ORDER,
+  forEachKindedObject,
+  inEditorKeyOrder,
+  type KeyOrderTable,
+  PARSER_DEFAULTS,
+  type ParserDefault,
+  type ParserDefaultTable,
+  type ParserReadingSite,
+  parserOmits,
+  parserReading,
+  withoutParserDefaults,
+} from './src/keyorder.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
 import { BONE_INHERIT_KNOWN, RIG_BONE_INHERIT, RIG_KEYS, RIG_SPEC_VERSION, parseRigSpec, resolveBoneInherit } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
@@ -305,6 +318,7 @@ import {
 import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
 import {
   CHANNELS_BY_KIND,
+  float32Step,
   PHYSICS_POSE_RULES,
   physicsKeyRefusal,
   physicsOutsideSays,
@@ -7216,15 +7230,20 @@ function runRigSuite(): number {
      * The four timelines this motion spec states, under whatever the rig calls
      * each kind: the keys as the emitter writes them, typed rather than read off
      * a build, so a control that compares against this is comparing with the
-     * interface and not with the tool's current opinion of it.
+     * interface and not with the tool's current opinion of it. The first key
+     * of three of them is `{}`: its `time` and its mix are the values the 4.3
+     * parser reads in their absence, so the emitter leaves them out the way the
+     * editor does (issue #716). The path `mix` key has no row in
+     * `PARSER_DEFAULTS` — no build or export carries one — so it is still
+     * written whole.
      */
     const wantTracks = (named: Record<string, string>): Record<string, string> => ({
-      [`ik.${named.ik}`]: JSON.stringify([{ time: 0, mix: 1 }, { time: 1, mix: 0.25 }]),
-      [`transform.${named.transform}`]: JSON.stringify([{ time: 0, mixRotate: 1 }, { time: 1, mixRotate: 0.5 }]),
+      [`ik.${named.ik}`]: JSON.stringify([{}, { time: 1, mix: 0.25 }]),
+      [`transform.${named.transform}`]: JSON.stringify([{}, { time: 1, mixRotate: 0.5 }]),
       [`path.${named.path}`]: JSON.stringify({
         mix: [{ time: 0, mixRotate: 1, mixX: 1, mixY: 1 }, { time: 1, mixRotate: 0.5, mixX: 1, mixY: 1 }],
       }),
-      [`physics.${named.physics}`]: JSON.stringify({ mix: [{ time: 0, value: 1 }, { time: 1, value: 0.25 }] }),
+      [`physics.${named.physics}`]: JSON.stringify({ mix: [{}, { time: 1, value: 0.25 }] }),
     });
     const sharedWanted = wantTracks(oneName);
     const trackProbes = [
@@ -8009,8 +8028,11 @@ function runRigSuite(): number {
     const green = buildSeriesProbe(writeSeriesProbe({}, [{ t: 0, mode: 'loop', delay: 0.1 }, { t: 0.5, mode: 'pingpong', index: 1, delay: 0.1 }]));
     const skin = green.built === null ? null : (JSON.parse(green.built.skeletonText) as { skins: Array<{ attachments: Record<string, Record<string, unknown>> }> }).skins[0].attachments.glint.glint;
     const keyed = green.built === null ? null : (JSON.parse(green.built.skeletonText) as { animations: Record<string, { attachments?: unknown }> }).animations.spark.attachments;
-    const wantSkin = { width: 16, height: 16, path: 'glint_', sequence: { count: SERIES_COUNT, start: 1, digits: 4 } };
-    const wantKeys = { default: { glint: { glint: { sequence: [{ time: 0, mode: 'loop', delay: 0.1 }, { time: 0.5, mode: 'pingpong', index: 1, delay: 0.1 }] } } } };
+    // As stated, less what the 4.3 parser reads the same way without it (issue
+    // #716): the block's `start: 1`, the first key's `time: 0`, and the second
+    // key's `delay`, which is the first key's — the parser's `lastDelay`.
+    const wantSkin = { width: 16, height: 16, path: 'glint_', sequence: { count: SERIES_COUNT, digits: 4 } };
+    const wantKeys = { default: { glint: { glint: { sequence: [{ mode: 'loop', delay: 0.1 }, { time: 0.5, mode: 'pingpong', index: 1 }] } } } };
     const seqPassed = green.report?.passed.includes('A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES') ?? false;
     const samples = Number(green.report?.stats.sequenceSamples ?? 0);
     bad += reportCase(
@@ -11397,14 +11419,25 @@ function runStaticRigSuite(): number {
     const signedBone = blockOf(compile({ rigPath: signedProbe.rigPath, motionPath: signedMotion, outDir: signedProbe.outDir, imagesDir: signedProbe.dir }));
     const signedProbes = [
       ...(Object.is(Math.fround(-1e-50), -0) ? [] : ['-1e-50 does not round to -0 as a float, so the second half measures nothing']),
-      ...(Object.is(signedBone.x, 0) ? [] : [`x: authored -0, emitted ${Object.is(signedBone.x, -0) ? '-0' : String(signedBone.x)}`]),
-      ...(Object.is(signedBone.rotation, 0) ? [] : [`rotation: authored -1e-50, emitted ${Object.is(signedBone.rotation, -0) ? '-0' : String(signedBone.rotation)}`]),
+      // Either +0 or left out: a bone's `x` and `rotation` at 0 are the values
+      // the 4.3 parser reads in their absence, so since issue #716 the emitter
+      // leaves them out — and what must never appear is a `-0`.
+      ...(signedBone.x === undefined || Object.is(signedBone.x, 0) ? [] : [`x: authored -0, emitted ${Object.is(signedBone.x, -0) ? '-0' : String(signedBone.x)}`]),
+      ...(signedBone.rotation === undefined || Object.is(signedBone.rotation, 0)
+        ? []
+        : [`rotation: authored -1e-50, emitted ${Object.is(signedBone.rotation, -0) ? '-0' : String(signedBone.rotation)}`]),
     ];
     const signedHeld = signedProbes.length === 0;
+    const spelled = (v: unknown): string => (v === undefined ? 'left out (the parser\'s default)' : Object.is(v, 0) ? '+0' : String(v));
     say(
       'S95_A_NEGATIVE_ZERO_IS_NEVER_EMITTED_WHETHER_AUTHORED_OR_ROUNDED_ONTO',
       signedHeld,
-      probeDetail(signedHeld, signedProbes, 'an authored `-0` and a rotation of -1e-50 (float32 -0) are both +0 on the emitted bone'),
+      probeDetail(
+        signedHeld,
+        signedProbes,
+        `an authored \`-0\` and a rotation of -1e-50 (float32 -0) are neither -0 on the emitted bone: x ${spelled(signedBone.x)}, ` +
+          `rotation ${spelled(signedBone.rotation)}`,
+      ),
       'the one rule the old quantiser\'s header named besides its grid, carried rather than retired: one value, ' +
         'one number, so a comparison with Object.is or a sign test downstream cannot tell two spellings of zero apart',
     );
@@ -11666,6 +11699,177 @@ function runStaticRigSuite(): number {
         'and requires the reading to name every object that row moved, by kind',
     );
   }
+
+  // --- S101-S103: a key at its parser default is left out (#716 tranche 3) --
+  //
+  // `src/keyorder.ts`'s `PARSER_DEFAULTS` is what the emitter leaves out by,
+  // and it is a transcription of the parser — so the parser is what these
+  // read it against, never the table itself:
+  //
+  //   S101  the builds     every key of every in-tree build deleted in turn
+  //                        and loaded: none reads back the same, so no key is
+  //                        written at its parser default — table-free
+  //   S102  the pass       each row at its value is left out; one float32
+  //                        step off it, the other boolean, another string, is
+  //                        written — on synthetic objects, so every row counts
+  //   S103  the rows       each row's value is what the parser loads for an
+  //                        absent key, on an object of its kind that reads it,
+  //                        and every build loads the same with every row's
+  //                        value written back
+  {
+    const builds = omissionBuilds();
+    const keysOf = (b: OmissionBuild): number => {
+      let n = 0;
+      forEachKindedObject(JSON.parse(b.skeletonText), (_kind, object) => {
+        for (const value of Object.values(object)) if (value === null || typeof value !== 'object') n++;
+      });
+      return n;
+    };
+    const probed = builds.reduce((n, b) => n + keysOf(b), 0);
+    const standing = builds.flatMap((b) => restatedDefaults(b).map((line) => `${b.label}${line}`));
+    // The plant: one default written back — the first object of the first build
+    // that lacks a field its row gives a constant for, at that constant. The
+    // same reading of the planted file must name that key and nothing else.
+    let plantSaid = '';
+    const plantProbes: string[] = [];
+    const first = builds[0];
+    if (first !== undefined) {
+      const skeleton = JSON.parse(first.skeletonText) as Record<string, unknown>;
+      let planted: string | null = null;
+      forEachKindedObject(skeleton, (kind, object, path) => {
+        if (planted !== null) return;
+        const row = PARSER_DEFAULTS[kind];
+        if (row === undefined) return;
+        for (const [field, rule] of Object.entries(row)) {
+          if (field in object || (rule !== null && typeof rule === 'object')) continue;
+          object[field] = rule;
+          planted = `${path}.${field} = ${JSON.stringify(rule)}`;
+          return;
+        }
+      });
+      if (planted === null) plantProbes.push(`${first.label} has no object lacking a field its row states a constant for, so nothing was planted`);
+      else {
+        const raised = raisedBy(
+          restatedDefaults({ ...first, skeletonText: JSON.stringify(skeleton) }).map((line) => `${first.label}${line}`),
+          { was: standing },
+        );
+        if (raised.length !== 1 || !raised[0].startsWith(`${first.label}${(planted as string).split(' = ')[0]} `)) {
+          plantProbes.push(`${first.label}${planted as string} written back raised ${raised.length} fault(s) and this control requires that one`);
+        } else plantSaid = `${first.label}${planted as string} written back is named: "${raised[0]}"`;
+      }
+    }
+    const restatedProbes = [
+      ...floorProbes(
+        [
+          [builds.length, 1, `${builds.length} in-tree build(s)`],
+          [probed, 1, `${probed} scalar key(s) in them`],
+        ],
+        'so the deletion probe loaded nothing',
+      ),
+      ...standing.slice(0, 12),
+      ...(standing.length > 12 ? [`…and ${standing.length - 12} more`] : []),
+      ...plantProbes,
+    ];
+    const restatedHeld = restatedProbes.length === 0;
+    say(
+      'S101_NO_KEY_A_BUILD_EMITS_IS_ONE_THE_PARSER_READS_THE_SAME_WITHOUT',
+      restatedHeld,
+      probeDetail(
+        restatedHeld,
+        restatedProbes,
+        `${probed} scalar key(s) of ${builds.length} build(s) (${builds.map((b) => b.label).join(', ')}) each deleted in ` +
+          `turn and loaded through spine-core: every one changes what SkeletonData holds — and ${plantSaid}`,
+        () => `${standing.length} emitted key(s) the parser reads back the same without — a default written out:`,
+      ),
+      'issue #716: the editor leaves out every key at the value the parser reads in its absence, and rigc wrote ' +
+        'them — 2,338 over the twelve rebuilds, and 87 `"name": null`. This reading takes the defaults from the ' +
+        'parser rather than from `PARSER_DEFAULTS`, so it is also what finds a row the table is missing',
+    );
+
+    // S102 — the pass, row by row, on objects built for it.
+    const passCases = parserDefaultPassCases(PARSER_DEFAULTS);
+    const passProbes = [
+      ...floorProbes([[passCases.cases, 1, `${passCases.cases} case(s)`]], 'so the pass decided nothing'),
+      ...passCases.faults.slice(0, 12),
+      ...(passCases.faults.length > 12 ? [`…and ${passCases.faults.length - 12} more`] : []),
+    ];
+    const passHeld = passProbes.length === 0;
+    say(
+      'S102_A_KEY_AT_ITS_ROWS_VALUE_IS_LEFT_OUT_AND_ONE_STEP_OFF_IT_IS_WRITTEN',
+      passHeld,
+      probeDetail(
+        passHeld,
+        passProbes,
+        `${passCases.cases} case(s) over ${passCases.rows} field(s) of ${Object.keys(PARSER_DEFAULTS).length} kind(s): ` +
+          `each at its row's value left out, and one float32 step off it (the other boolean, another string, a ` +
+          `name for a null) written; ${passCases.only} \`only\` case(s) written where the parser's fallback agrees ` +
+          `and the editor writes it, ${passCases.previous} \`previous\` case(s) read off the key before`,
+        () => `${passCases.faults.length} decision(s) the pass got wrong:`,
+      ),
+      'the pass decides on exact equality with the float the file holds, so a key one step off a default is a ' +
+        'value the author stated and the parser keeps; a pass that compared within a tolerance would leave it out ' +
+        'and move a loaded value by a step, with every other control here green',
+    );
+
+    // S103 — the rows against the parser, and every build restated whole.
+    const verdict = parserDefaultRowsHeld(builds, PARSER_DEFAULTS);
+    const restatedWhole = builds.flatMap((b) => {
+      const skeleton = JSON.parse(b.skeletonText) as Record<string, unknown>;
+      const written = withParserDefaultsWrittenBack(skeleton, PARSER_DEFAULTS);
+      const same = loadedSkeletonForm(JSON.stringify(skeleton), b.atlasText) === loadedSkeletonForm(b.skeletonText, b.atlasText);
+      return same ? [] : [`${b.label}: with its ${written} left-out key(s) written back it loads another SkeletonData`];
+    });
+    const writtenBack = builds.reduce((n, b) => n + withParserDefaultsWrittenBack(JSON.parse(b.skeletonText) as object, PARSER_DEFAULTS), 0);
+    // The plant: the first row held here, one step off — the table is the data
+    // this control reads, so a wrong value in it has to be named as that row.
+    const heldFirst = [...verdict.verified.keys()][0];
+    let rowPlantSaid = '';
+    const rowPlantProbes: string[] = [];
+    if (heldFirst === undefined) rowPlantProbes.push('no row was held on these builds, so nothing was planted');
+    else {
+      const [kind, field] = heldFirst.split('\u0000');
+      const rule = PARSER_DEFAULTS[kind][field];
+      if (rule !== null && typeof rule === 'object') rowPlantProbes.push(`the first held row, ${kind}.${field}, is not a constant to plant into`);
+      else {
+        const planted: ParserDefaultTable = { ...PARSER_DEFAULTS, [kind]: { ...PARSER_DEFAULTS[kind], [field]: offByOneStep(rule) as ParserDefault } };
+        const after = parserDefaultRowsHeld(builds, planted, [heldFirst]);
+        if (after.contradicted.length !== 1 || !after.contradicted[0].startsWith(`${kind}.${field}:`)) {
+          rowPlantProbes.push(`${kind}.${field} planted at ${JSON.stringify(offByOneStep(rule))} raised ${after.contradicted.length} contradiction(s), not that one`);
+        } else rowPlantSaid = `${kind}.${field} planted one step off is named: "${after.contradicted[0]}"`;
+      }
+    }
+    const rowProbes = [
+      ...floorProbes(
+        [
+          [verdict.verified.size, 1, `${verdict.verified.size} row field(s) held`],
+          [writtenBack, 1, `${writtenBack} key(s) written back`],
+        ],
+        'so the parser was asked about nothing',
+      ),
+      ...verdict.contradicted,
+      ...restatedWhole,
+      ...rowPlantProbes,
+    ];
+    const rowsHeld = rowProbes.length === 0;
+    say(
+      'S103_EACH_ROW_IS_WHAT_THE_PARSER_LOADS_FOR_AN_ABSENT_KEY_AND_A_BUILD_RESTATED_WHOLE_LOADS_THE_SAME',
+      rowsHeld,
+      probeDetail(
+        rowsHeld,
+        rowProbes,
+        `${verdict.verified.size} of ${verdict.total} row field(s) held on an object of their kind that reads them, ` +
+          `loading the same at the row's value as without the key where another value loads differently; ${builds.length} ` +
+          `build(s) with ${writtenBack} left-out key(s) written back load the SkeletonData they load as emitted; ` +
+          `${verdict.unreached.length} row field(s) no in-tree object reads, held over the corpus by IG82 — and ` +
+          rowPlantSaid,
+        (count) => `${count} thing(s) the parser does not read the way the table says:`,
+      ),
+      'the table is the emitter\'s only knowledge of the parser, and a wrong row changes a loaded value in silence ' +
+        '— a transform constraint\'s `mixY` falling back to its `mixX` is such a row, measured on the corpus: on a ' +
+        'constraint that drives `y` alone the parser never reads `mixX`, so the fallback is 0, and `A48` refused ' +
+        'the rebuild the row produced',
+    );
+  }
   return bad;
 }
 
@@ -11696,6 +11900,373 @@ function keyOrderReading(
     if (listed.join('\u0000') !== want.join('\u0000')) faults.push(`${path}: ${kind} keys ${listed.join(', ')} — its row orders them ${want.join(', ')}`);
   });
   return { faults, named, ordered, orderedByKind };
+}
+
+// ---------------------------------------------------------------------------
+// what the 4.3 parser loads, whole — the oracle of issue #716's third tranche
+// ---------------------------------------------------------------------------
+
+/** One emitted skeleton the omission controls load: a label, its text and the atlas it resolves against. */
+interface OmissionBuild {
+  label: string;
+  skeletonText: string;
+  atlasText: string;
+}
+
+/**
+ * Everything `SkeletonJson` loads from a skeleton, as one text: every own
+ * field of the `SkeletonData` it returns, recursively and sorted by name, with
+ * an object met a second time written as the path it was first met at.
+ *
+ * ⭐ **Whole, and that is the point of it.** `skeletonValues` is the value walk
+ * `diff` gates on, and it is built for pairing two files, so it skips what a
+ * pairing cannot use — a field named `local` (for "derived by the runtime"),
+ * which is also a slider's own setting, and every value under a named object.
+ * Measured while this was written: deleting a fixture slot's `color:
+ * "ffffff00"` and a slider's `local: true` left it unchanged, so a reading of
+ * defaults through it would have called both defaults. This reads everything.
+ *
+ * ⚠️ The two process-wide counters — `VertexAttachment.nextID` and
+ * `Sequence._nextID` — are started at 0 for the parse and put back after it, so
+ * one text always loads as one form (two parses of a build otherwise differ in
+ * 13 fields, all of them ids). The loaded data is thrown away, so no id it took
+ * can meet a live one.
+ */
+function loadedSkeletonForm(skeletonText: string, atlasText: string): string {
+  const vertices = VertexAttachment as unknown as { nextID: number };
+  const series = Sequence as unknown as { _nextID: number };
+  const saved = [vertices.nextID, series._nextID];
+  vertices.nextID = 0;
+  series._nextID = 0;
+  let data: SkeletonData;
+  try {
+    data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(JSON.parse(skeletonText));
+  } catch (err) {
+    return `(the parser threw: ${(err as Error).message})`;
+  } finally {
+    [vertices.nextID, series._nextID] = saved;
+  }
+  const seen = new Map<object, string>();
+  const lines: string[] = [];
+  const walk = (value: unknown, path: string): void => {
+    if (typeof value === 'function') return;
+    if (value === null || typeof value !== 'object') {
+      lines.push(`${path}=${typeof value === 'number' ? (Object.is(value, -0) ? '-0' : String(value)) : String(JSON.stringify(value))}`);
+      return;
+    }
+    const at = seen.get(value);
+    if (at !== undefined) {
+      lines.push(`${path}->${at}`);
+      return;
+    }
+    seen.set(value, path);
+    if (ArrayBuffer.isView(value) || Array.isArray(value)) {
+      const list = value as unknown as ArrayLike<unknown>;
+      lines.push(`${path}#${list.length}`);
+      for (let i = 0; i < list.length; i++) walk(list[i], `${path}[${i}]`);
+      return;
+    }
+    if (value instanceof Map) {
+      for (const [key, entry] of value) walk(entry, `${path}{${String(key)}}`);
+      return;
+    }
+    lines.push(`${path}:${value.constructor?.name ?? 'Object'}`);
+    const record = value as Record<string, unknown>;
+    for (const key of Object.keys(record).sort()) walk(record[key], `${path}.${key}`);
+  };
+  walk(data, '');
+  return lines.join('\n');
+}
+
+/** The in-tree builds, compiled once per run: the three fixtures and every gallery example. */
+let omissionBuildsHeld: OmissionBuild[] | null = null;
+
+/**
+ * The builds the omission controls read: every in-tree rig this repository can
+ * compile with no corpus — the three generated fixtures and every gallery
+ * example `galleryExampleNames` finds. Compiled once and kept, because `S101`
+ * to `S103` and `IG82` all read them.
+ */
+function omissionBuilds(): OmissionBuild[] {
+  if (omissionBuildsHeld !== null) return omissionBuildsHeld;
+  const root = mkdtempSync(join(tmpdir(), 'rigc-omitdefaults-'));
+  const galleryRoot = resolve(import.meta.dir, 'gallery');
+  const sources: Array<{ label: string; opts: Omit<Options, 'outDir'> }> = [
+    // Labelled by directory: two of the three fixtures share a rig `name`.
+    ...[OVERLAY, ARTICULATED, CONTAINED].map((fixture) => ({ label: basename(fixture.dir), opts: optsForFixture(fixture) })),
+    ...galleryExampleNames(galleryRoot).map((name) => ({
+      label: `gallery/${name}`,
+      opts: { rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json') },
+    })),
+  ];
+  omissionBuildsHeld = sources.map(({ label, opts }, i) => {
+    const outDir = join(root, String(i));
+    mkdirSync(outDir, { recursive: true });
+    const built = compile({ ...opts, outDir });
+    return { label, skeletonText: built.skeletonText, atlasText: built.atlasText };
+  });
+  return omissionBuildsHeld;
+}
+
+/** The object of `skeleton` at a kinded `path`, as `forEachKindedObject` names it; null where there is none. */
+function kindedObjectAt(skeleton: unknown, path: string): Record<string, unknown> | null {
+  let found: Record<string, unknown> | null = null;
+  forEachKindedObject(skeleton, (_kind, object, at) => {
+    if (found === null && at === path) found = object;
+  });
+  return found;
+}
+
+/** The parser-reading site of the object at `path`: it, and the timeline's key before it. */
+function readingSiteAt(skeleton: unknown, path: string, object: Record<string, unknown>): ParserReadingSite {
+  return {
+    object,
+    previous: () => {
+      const m = /^(.*)\[(\d+)\]$/.exec(path);
+      if (m === null || m[2] === '0') return null;
+      const at = `${m[1]}[${Number(m[2]) - 1}]`;
+      const before = kindedObjectAt(skeleton, at);
+      return before === null ? null : readingSiteAt(skeleton, at, before);
+    },
+  };
+}
+
+/**
+ * Every scalar key of a build the parser reads back the same without: each is
+ * deleted in turn and the file loaded, and a load equal to the build's own is a
+ * key written at its parser default. The defaults come from the parser, never
+ * from `PARSER_DEFAULTS`, so this is also what finds a row the table lacks.
+ */
+function restatedDefaults(build: OmissionBuild): string[] {
+  const baseline = loadedSkeletonForm(build.skeletonText, build.atlasText);
+  const skeleton = JSON.parse(build.skeletonText) as Record<string, unknown>;
+  const sites: Array<{ kind: string; object: Record<string, unknown>; path: string; key: string }> = [];
+  forEachKindedObject(skeleton, (kind, object, path) => {
+    for (const [key, value] of Object.entries(object)) if (value === null || typeof value !== 'object') sites.push({ kind, object, path, key });
+  });
+  const out: string[] = [];
+  for (const { kind, object, path, key } of sites) {
+    const value = object[key];
+    const keys = Object.keys(object);
+    delete object[key];
+    if (loadedSkeletonForm(JSON.stringify(skeleton), build.atlasText) === baseline) {
+      out.push(`${path}.${key} = ${JSON.stringify(value)} (${kind})`);
+    }
+    // Put back where it was, so the next deletion reads the build and not a reordering of it.
+    const entries = keys.map((k) => [k, k === key ? value : object[k]] as const);
+    for (const k of Object.keys(object)) delete object[k];
+    for (const [k, v] of entries) object[k] = v;
+  }
+  return out;
+}
+
+/** A value one step off `value`: the next float32 up, the other boolean, another string, a name for a null. */
+function offByOneStep(value: unknown): unknown {
+  if (typeof value === 'number') return value === 0 ? 2 ** -149 : value + float32Step(value);
+  if (typeof value === 'boolean') return !value;
+  if (typeof value === 'string') return /^[0-9a-f]{8}$/.test(value) ? `${value.slice(0, 7)}${value[7] === 'f' ? 'e' : 'f'}` : `${value}x`;
+  return 'x';
+}
+
+/**
+ * A skeleton holding `objects` where `forEachKindedObject` names them `kind` —
+ * the objects themselves, not copies, so the pass's decision is read off them —
+ * or null for a kind this cannot place.
+ */
+function kindHost(kind: string, objects: Array<Record<string, unknown>>): Record<string, unknown> | null {
+  const [first] = objects;
+  if (kind === 'header') return { skeleton: first };
+  if (kind === 'bone') return { bones: objects };
+  if (kind === 'slot') return { slots: objects };
+  if (kind === 'event') return { events: { e: first } };
+  if (kind === 'sequence') return { skins: [{ name: 'default', attachments: { s: { p: { sequence: first } } } }] };
+  const constraint = /^(\w+) constraint$/.exec(kind);
+  if (constraint !== null) {
+    for (const object of objects) object.type = constraint[1];
+    return { constraints: objects };
+  }
+  const attachment = /^(\w+) attachment$/.exec(kind);
+  if (attachment !== null) {
+    if (attachment[1] !== 'region') first.type = attachment[1];
+    return { skins: [{ name: 'default', attachments: { s: { p: first } } }] };
+  }
+  const keyed = /^(bone|slot|path|physics|slider|attachment) (\w+) key$/.exec(kind);
+  if (keyed !== null) {
+    const timelines = { [keyed[2]]: objects };
+    if (keyed[1] === 'attachment') return { animations: { a: { attachments: { default: { s: { p: timelines } } } } } };
+    return { animations: { a: { [`${keyed[1] === 'bone' || keyed[1] === 'slot' ? `${keyed[1]}s` : keyed[1]}`]: { t: timelines } } } };
+  }
+  if (kind === 'ik key' || kind === 'transform key') return { animations: { a: { [kind.split(' ')[0]]: { c: objects } } } };
+  if (kind === 'drawOrder key') return { animations: { a: { drawOrder: objects } } };
+  if (kind === 'event key') return { animations: { a: { events: objects } } };
+  return null;
+}
+
+/**
+ * The pass, asked about every row of `table` on objects built for it: at the
+ * row's value the key is left out, one step off it the key stays, and the two
+ * reference shapes decide as the parser reads them.
+ */
+function parserDefaultPassCases(table: ParserDefaultTable): { cases: number; rows: number; only: number; previous: number; faults: string[] } {
+  const faults: string[] = [];
+  let cases = 0;
+  let rows = 0;
+  let only = 0;
+  let previous = 0;
+  /** Run the pass over `objects` of `kind`; which of them kept `field`. */
+  const kept = (kind: string, objects: Array<Record<string, unknown>>, field: string): boolean[] | null => {
+    const host = kindHost(kind, objects);
+    if (host === null) return null;
+    const named: Array<Record<string, unknown>> = [];
+    forEachKindedObject(host, (k, object) => {
+      if (k === kind) named.push(object);
+    });
+    if (named.length !== objects.length || named.some((object, i) => object !== objects[i])) return null;
+    withoutParserDefaults(host, table);
+    return objects.map((object) => field in object);
+  };
+  const expect = (kind: string, field: string, objects: Array<Record<string, unknown>>, want: boolean[], what: string): void => {
+    cases++;
+    const said = JSON.stringify(objects);
+    const got = kept(kind, objects, field);
+    if (got === null) faults.push(`${kind}.${field}: no skeleton places an object of this kind, so the pass was not asked`);
+    else if (got.join() !== want.join()) {
+      faults.push(`${kind}.${field}, ${what}: ${said} kept ${got.map(String).join('/')} where it had to keep ${want.map(String).join('/')}`);
+    }
+  };
+  for (const [kind, row] of Object.entries(table)) {
+    for (const [field, rule] of Object.entries(row)) {
+      rows++;
+      if (rule === null || typeof rule !== 'object') {
+        expect(kind, field, [{ [field]: rule }], [false], 'at its value');
+        expect(kind, field, [{ [field]: offByOneStep(rule) }], [true], 'one step off');
+      } else if ('field' in rule) {
+        const fallback = parserReading(row, { object: {}, previous: () => null }, rule.field);
+        expect(kind, field, [{ [field]: fallback }], [false], `at the reading of an absent "${rule.field}"`);
+        expect(kind, field, [{ [field]: offByOneStep(fallback) }], [true], 'one step off');
+        if (rule.only !== undefined) {
+          // The parser would read it the same — its fallback agrees — and the
+          // editor writes it anyway, which is what `only` is for.
+          const other = offByOneStep(rule.only);
+          expect(kind, field, [{ [rule.field]: other, [field]: other }], [true], `equal to "${rule.field}" away from ${rule.only}`);
+          only++;
+        }
+      } else {
+        const stated = 0.25;
+        expect(kind, field, [{ [field]: rule.first }], [false], 'at `first` on key 0');
+        expect(kind, field, [{ [field]: stated }, { [field]: stated }], [true, false], 'equal to the key before');
+        expect(kind, field, [{ [field]: stated }, { [field]: offByOneStep(stated) }], [true, true], 'one step off the key before');
+        previous += 2;
+      }
+    }
+  }
+  return { cases, rows, only, previous, faults };
+}
+
+/** Every row value of `table` written onto each object of `skeleton` that lacks it — in place; how many were written. */
+function withParserDefaultsWrittenBack(skeleton: object, table: ParserDefaultTable): number {
+  const found: Array<{ object: Record<string, unknown>; field: string; value: unknown }> = [];
+  forEachKindedObject(skeleton, (kind, object, path) => {
+    const row = table[kind];
+    if (row === undefined) return;
+    const site = readingSiteAt(skeleton, path, object);
+    for (const field of Object.keys(row)) {
+      if (field in object) continue;
+      const value = parserReading(row, site, field);
+      if (value !== undefined) found.push({ object, field, value });
+    }
+  });
+  for (const { object, field, value } of found) object[field] = value;
+  return found.length;
+}
+
+/**
+ * Each row field of `table`, held to the parser on the builds: on the first
+ * object of its kind that READS the field — some other value loads differently
+ * from absent — the row's value must load exactly as absent. A row no object
+ * reads is unreached here, which is not a pass; `names` narrows the rows asked.
+ */
+function parserDefaultRowsHeld(
+  builds: readonly OmissionBuild[],
+  table: ParserDefaultTable,
+  names?: readonly string[],
+): { verified: Map<string, string>; contradicted: string[]; unreached: string[]; total: number } {
+  const verified = new Map<string, string>();
+  const contradicted: string[] = [];
+  const unreached: string[] = [];
+  const rows = Object.entries(table)
+    .flatMap(([kind, row]) => Object.keys(row).map((field) => `${kind}\u0000${field}`))
+    .filter((name) => names === undefined || names.includes(name));
+  const pathsOf = new Map<OmissionBuild, Map<string, string[]>>();
+  const kindPaths = (build: OmissionBuild): Map<string, string[]> => {
+    let held = pathsOf.get(build);
+    if (held === undefined) {
+      held = new Map();
+      const into = held;
+      forEachKindedObject(JSON.parse(build.skeletonText), (kind, _object, path) => into.set(kind, [...(into.get(kind) ?? []), path]));
+      pathsOf.set(build, held);
+    }
+    return held;
+  };
+  /** The build with the object at `path` edited, loaded. */
+  const loadedWith = (build: OmissionBuild, path: string, edit: (object: Record<string, unknown>, skeleton: unknown) => void): string => {
+    const skeleton = JSON.parse(build.skeletonText) as Record<string, unknown>;
+    const object = kindedObjectAt(skeleton, path);
+    if (object !== null) edit(object, skeleton);
+    return loadedSkeletonForm(JSON.stringify(skeleton), build.atlasText);
+  };
+  /** Every value a field of a kind takes in the builds — the other spellings a read test can try. */
+  const observed = new Map<string, unknown[]>();
+  for (const build of builds) {
+    forEachKindedObject(JSON.parse(build.skeletonText), (kind, object) => {
+      for (const [field, value] of Object.entries(object)) {
+        if (value !== null && typeof value === 'object') continue;
+        const seen = observed.get(`${kind}\u0000${field}`) ?? [];
+        if (!seen.some((v) => Object.is(v, value))) seen.push(value);
+        observed.set(`${kind}\u0000${field}`, seen);
+      }
+    });
+  }
+  for (const name of rows) {
+    const [kind, field] = name.split('\u0000');
+    const row = table[kind];
+    let decided = false;
+    for (const build of builds) {
+      for (const path of kindPaths(build).get(kind) ?? []) {
+        let value: unknown;
+        const absent = loadedWith(build, path, (object, skeleton) => {
+          delete object[field];
+          value = parserReading(row, readingSiteAt(skeleton, path, object), field);
+        });
+        if (value === undefined) continue;
+        // Whether this object READS the field: some other value has to load
+        // differently from the key left out. One float32 step first; a whole
+        // step where the parser truncates (an index, a count); then every
+        // other value the field takes in these files, which is how an enum —
+        // where an unknown spelling reads as the default — is told apart.
+        const others = [
+          offByOneStep(value),
+          ...(typeof value === 'number' ? [value + 1] : []),
+          ...(observed.get(name) ?? []).filter((v) => !Object.is(v, value)),
+        ];
+        const reads = others.some((other) => loadedWith(build, path, (object) => (object[field] = other)) !== absent);
+        if (!reads) continue;
+        const stated = loadedWith(build, path, (object) => (object[field] = value));
+        if (stated === absent) verified.set(name, `${build.label}${path}`);
+        else {
+          contradicted.push(
+            `${kind}.${field}: the row reads an absent key as ${JSON.stringify(value)}, and ${build.label}${path} ` +
+              'loads differently with that value written than with the key left out',
+          );
+        }
+        decided = true;
+        break;
+      }
+      if (decided) break;
+    }
+    if (!decided) unreached.push(`${kind}.${field}`);
+  }
+  return { verified, contradicted, unreached, total: rows.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -14010,7 +14581,14 @@ function runConstraintAndDeformSuite(): number {
   const wrongKeys = PHYSICS_TRACK_KEYS.flatMap(([property, from, to]) => {
     const keys = physicsTimelines[property];
     if (!Array.isArray(keys) || keys.length !== 2) return [`${property}: ${keys === undefined ? 'no timeline' : `${keys?.length} key(s)`}`];
-    const got = keys.map((key) => (key as Record<string, unknown>).value);
+    // Read as the parser reads it: a key at the value the 4.3 parser reads in
+    // its absence carries none since issue #716, and `PARSER_DEFAULTS` is the
+    // row the emitter left it out by (`S103` holds that row to the parser).
+    const row = PARSER_DEFAULTS[`physics ${property} key`];
+    const got = keys.map((key) => {
+      const site = { object: key as Record<string, unknown>, previous: () => null };
+      return row === undefined ? site.object.value : parserReading(row, site, 'value');
+    });
     return got[0] === from && got[1] === to ? [] : [`${property}: [${String(got[0])}, ${String(got[1])}] not [${from}, ${to}]`];
   });
   const resetKeys = physicsTimelines.reset as Array<Record<string, unknown>> | undefined;
@@ -14096,6 +14674,8 @@ function runConstraintAndDeformSuite(): number {
   // back — which is the same question `TIMELINE_KEY_RESTATED` answers for
   // `ingest`, asked of the runtime instead of of a table.
   let strippedFields = 0;
+  /** Keys the emitter already left the value off — at its parser default, since issue #716. */
+  let leftOut = 0;
   let strippedRead: Record<string, number> = {};
   if (physicsGate.refused === null) {
     const strippedMotion = join(physicsDirs.dir, 'stripped.motion.json');
@@ -14107,9 +14687,14 @@ function runConstraintAndDeformSuite(): number {
       imagesDir: physicsDirs.dir,
     });
     const strippedSkeleton = JSON.parse(strippedBuild.skeletonText) as Record<string, unknown>;
-    for (const keys of Object.values(emittedPhysicsTimelines(strippedSkeleton))) {
+    const valueTracks = new Set(PHYSICS_TRACK_KEYS.map(([property]) => property));
+    for (const [property, keys] of Object.entries(emittedPhysicsTimelines(strippedSkeleton))) {
       for (const key of (keys ?? []) as Array<Record<string, unknown>>) {
-        if (key.value === undefined) continue;
+        if (key.value === undefined) {
+          // `reset` carries no value by nature; only a value track's key counts.
+          if (valueTracks.has(property)) leftOut++;
+          continue;
+        }
         delete key.value;
         strippedFields++;
       }
@@ -14124,10 +14709,10 @@ function runConstraintAndDeformSuite(): number {
   const defaultWrong = PHYSICS_TRACK_KEYS.filter(([property]) => !near(strippedRead[property], property === 'mix' ? 1 : 0));
   say(
     'T64_A_PHYSICS_KEY_THAT_OMITS_ITS_VALUE_READS_ZERO_ON_SIX_TRACKS_AND_ONE_ON_MIX',
-    strippedFields === PHYSICS_TRACK_KEYS.length * 2 && defaultWrong.length === 0,
+    strippedFields > 0 && strippedFields + leftOut === PHYSICS_TRACK_KEYS.length * 2 && defaultWrong.length === 0,
     physicsGate.refused !== null
       ? `nothing was stripped — the compile was refused with: ${physicsGate.refused}`
-      : `${strippedFields} emitted "value" field(s) deleted; posed back as ` +
+      : `${strippedFields} emitted "value" field(s) deleted, ${leftOut} already left out by the emitter; posed back as ` +
         `${PHYSICS_TRACK_KEYS.map(([property]) => `${property}=${strippedRead[property]}`).join(', ')}` +
         (defaultWrong.length === 0 ? '' : ` — WRONG on ${defaultWrong.map(([property]) => property).join(', ')}`),
     'the per-key default is NOT the constraint default, and the two tables sit forty lines apart in one parser: ' +
@@ -51494,6 +52079,178 @@ function runCurrencySuite(): number {
     if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
 
+  // --- CUR87-CUR88: the defaults left out, as the docs state them (#716) ----
+  //
+  // `PARSER_DEFAULTS` is the one table and the guide prints it; the guide's
+  // advice and INGEST.md's pass line are sentences about what `build` and
+  // `ingest` do, so both are read against a build and an ingest, not a copy.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const guideRaw = readFileSync(join(root, guidePath), 'utf8').split('\n');
+    const HEAD = '| Kind | Left out when it is |';
+    const spell = (rule: ParserDefault): string => {
+      if (rule === null || typeof rule !== 'object') return JSON.stringify(rule);
+      if ('field' in rule) return `\`${rule.field}\`'s${rule.only === undefined ? '' : `, only at ${JSON.stringify(rule.only)}`}`;
+      return `the key before's, ${JSON.stringify(rule.first)} on key 0`;
+    };
+    const scanGuide = (lines: readonly string[]): string[] => {
+      const at = lines.indexOf(HEAD);
+      if (at < 0) return [`${guidePath} carries no table headed ${JSON.stringify(HEAD)}, so the defaults it teaches are unchecked`];
+      const printed: Array<[string, string]> = [];
+      for (let i = at + 2; i < lines.length && lines[i].startsWith('|'); i++) {
+        const cells = lines[i].split('|').slice(1, -1).map((cell) => cell.trim());
+        printed.push([/^`([^`]+)`$/.exec(cells[0] ?? '')?.[1] ?? `(unreadable row ${i + 1})`, cells[1] ?? '']);
+      }
+      const faults: string[] = [];
+      for (const [kind, cell] of printed) {
+        const row = PARSER_DEFAULTS[kind];
+        const want = row === undefined ? '' : Object.entries(row).map(([field, rule]) => `\`${field}\` ${spell(rule)}`).join(' · ');
+        if (row === undefined) faults.push(`${guidePath} prints a row for "${kind}", which the table does not have`);
+        else if (cell !== want) faults.push(`${guidePath} prints "${kind}" as ${cell} and the table says ${want}`);
+      }
+      for (const kind of Object.keys(PARSER_DEFAULTS)) if (!printed.some(([k]) => k === kind)) faults.push(`${guidePath} prints no row for "${kind}"`);
+      const inOrder = printed.map(([k]) => k).filter((k) => PARSER_DEFAULTS[k] !== undefined);
+      const wantOrder = Object.keys(PARSER_DEFAULTS).filter((k) => inOrder.includes(k));
+      if (inOrder.join(',') !== wantOrder.join(',')) faults.push(`${guidePath} prints the rows in another order than the table holds them`);
+      return faults;
+    };
+    const standing = scanGuide(guideRaw);
+    // The guide's advice, measured: the base probe rig states a bone at `x: 0,
+    // y: 0`; the spec keeps both and the build leaves both out.
+    const probe = writeProbeRig();
+    const probeMotion = join(probe.dir, 'probe.motion.json');
+    writeFileSync(probeMotion, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    const specBone = (JSON.parse(readFileSync(probe.rigPath, 'utf8')) as { bones: Array<Record<string, unknown>> }).bones.find((b) => b.name === 'block');
+    const builtBone = (JSON.parse(compile({ rigPath: probe.rigPath, motionPath: probeMotion, outDir: probe.outDir, imagesDir: probe.dir }).skeletonText) as {
+      bones: Array<Record<string, unknown>>;
+    }).bones.find((b) => b.name === 'block');
+    const advice = [
+      ...(specBone?.x === 0 && specBone?.y === 0 ? [] : ['the probe rig states no bone at x: 0, y: 0, so the advice was not measured']),
+      ...(builtBone !== undefined && !('x' in builtBone) && !('y' in builtBone)
+        ? []
+        : [`the probe's bone stated at x: 0, y: 0 is emitted ${JSON.stringify(builtBone)} — §10.5 says the file leaves both out`]),
+      ...(guideRaw.some((line) => line.includes('in a rig spec is legitimate and stays in the spec — and the file leaves it out'))
+        ? []
+        : [`${guidePath} §10.5 no longer says a stated default stays in the spec and leaves the file, so this measures a sentence that is gone`]),
+    ];
+    const probes = [...standing, ...advice];
+    const head = guideRaw.indexOf(HEAD);
+    let note = '';
+    if (head >= 0 && standing.length === 0) {
+      const first = head + 2;
+      const cells = guideRaw[first].split('|');
+      const planted = guideRaw.map((line, i) => (i === first ? [...cells.slice(0, 2), ` ${cells[2].trim()} · \`planted\` 0 `, ...cells.slice(3)].join('|') : line));
+      const raised = raisedBy(scanGuide(planted), { was: standing });
+      if (raised.length !== 1) probes.push(`a key added to the first printed row raised ${raised.length} fault(s) and this control requires one`);
+      else note = `a key added to the first printed row: "${raised[0]}"`;
+    }
+    const held = probes.length === 0;
+    say(
+      'CUR87_THE_DEFAULTS_THE_GUIDE_SAYS_THE_FILE_LEAVES_OUT_ARE_THE_ONES_A_BUILD_LEAVES_OUT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${guidePath} prints ${Object.keys(PARSER_DEFAULTS).length} row(s), each the table's own in the table's ` +
+          `order; §10.5's advice measured — a bone the spec states at x: 0, y: 0 is emitted with neither — and ${note}`,
+      ),
+      'the guide is what an agent reads to know which keys a rebuild will not carry, and §10.5 told it until #716 ' +
+        'that rigc does the opposite of the exporter; a row or a sentence copied by hand is the one that is stale ' +
+        'the day the table changes',
+    );
+  }
+  {
+    const ingestPath = 'docs/INGEST.md';
+    const ingestText = readFileSync(join(root, ingestPath), 'utf8');
+    const declared = EDITOR_KEY_ORDER.header.filter((k) => !(RIG_KEYS.RigSkeletonHeader as readonly string[]).includes(k));
+    // What `ingest` says about each header key, off a header carrying every key
+    // the editor writes — and what the rebuild then writes.
+    const headerProbe = {
+      skeleton: { hash: 'probe-hash', spine: SPINE_VERSION, x: -10, y: -10, width: 20, height: 20, images: './images/', audio: null },
+      bones: [{ name: 'root' }],
+      slots: [],
+      skins: [{ name: 'default', attachments: {} }],
+      animations: {},
+    };
+    const read = ingest(headerProbe, { name: 'header_probe', art: 'none', source: 'skeleton.json', version: '0' });
+    const codeFor = new Map<string, string>();
+    for (const f of read.findings) {
+      const key = /^skeleton\.(\w+)$/.exec(f.where)?.[1];
+      if (key !== undefined && (f.code === 'HEADER_BOOKKEEPING' || f.code === 'HEADER_REDERIVED')) codeFor.set(key, f.code);
+    }
+    const scanIngest = (text: string): string[] => {
+      const faults: string[] = [];
+      const pass = /\*\*The pass line of the byte round trip, stated once:\*\*([\s\S]*?)\n\n/.exec(text)?.[1] ?? null;
+      if (pass === null) return [`${ingestPath} states no pass line of the byte round trip, so what it promises is unchecked`];
+      const apart = /apart from ((?:`[^`]+`(?:,\s*|\s+and\s+)?)+)/.exec(pass.replace(/\s+/g, ' '))?.[1] ?? '';
+      const named = [...apart.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+      if (named.join(',') !== declared.join(',')) {
+        faults.push(`${ingestPath}'s pass line is stated apart from ${named.join(', ') || 'nothing'}, and the declared exceptions are ${declared.join(', ')}`);
+      }
+      const lines = text.split('\n');
+      const at = lines.indexOf('| Header key | Example, rebuild vs export | Why it is an exception |');
+      const rows: Array<[string, string]> = [];
+      for (let i = at + 2; at >= 0 && i < lines.length && lines[i].startsWith('|'); i++) {
+        const cells = lines[i].split('|').slice(1, -1).map((cell) => cell.trim());
+        rows.push([/^`([^`]+)`$/.exec(cells[0] ?? '')?.[1] ?? '', [...(cells[2] ?? '').matchAll(/`(HEADER_[A-Z_]+)`/g)].map((m) => m[1]).join(',')]);
+      }
+      if (at < 0) faults.push(`${ingestPath} carries no table of the declared exceptions`);
+      else if (rows.map(([k]) => k).join(',') !== declared.join(',')) {
+        faults.push(`${ingestPath}'s exceptions table lists ${rows.map(([k]) => k).join(', ')}, and the declared exceptions are ${declared.join(', ')}`);
+      }
+      for (const [key, code] of rows) {
+        if (code !== (codeFor.get(key) ?? '')) faults.push(`${ingestPath} names ${code || 'no finding'} for \`${key}\`, and ingest reports ${codeFor.get(key) ?? 'none'}`);
+      }
+      return faults;
+    };
+    const standing = scanIngest(ingestText);
+    // The rebuild side of the same sentence: every header key but the
+    // declared ones comes back, `audio: null` included.
+    const probeDir = mkdtempSync(join(tmpdir(), 'rigc-header-probe-'));
+    writeFileSync(join(probeDir, 'rig.json'), `${JSON.stringify(read.rig, null, 2)}\n`);
+    writeFileSync(join(probeDir, 'motion.json'), `${JSON.stringify(read.motion, null, 2)}\n`);
+    let rebuilt: Record<string, unknown> | null = null;
+    const refused = refusalOf(() => {
+      rebuilt = (JSON.parse(compile({ rigPath: join(probeDir, 'rig.json'), motionPath: join(probeDir, 'motion.json'), outDir: join(probeDir, 'B') }).skeletonText) as {
+        skeleton: Record<string, unknown>;
+      }).skeleton;
+    });
+    const header = headerProbe.skeleton as Record<string, unknown>;
+    const back = rebuilt as Record<string, unknown> | null;
+    const lost = back === null ? [] : Object.keys(header).filter((k) => !declared.includes(k) && JSON.stringify(back[k]) !== JSON.stringify(header[k]));
+    const probes = [
+      ...standing,
+      ...(refused === null ? [] : [`the header probe's rebuild was refused: ${refused}`]),
+      ...(codeFor.has('audio') ? [`ingest reports ${codeFor.get('audio')} for \`audio\`, which the rig spec carries`] : []),
+      ...lost.map((k) => `the rebuild writes \`${k}\` as ${JSON.stringify(back?.[k])} where the source states ${JSON.stringify(header[k])}`),
+    ];
+    let note = '';
+    if (standing.length === 0) {
+      const passAt = ingestText.indexOf('**The pass line of the byte round trip, stated once:**');
+      const planted =
+        passAt < 0 ? ingestText : ingestText.slice(0, passAt) + ingestText.slice(passAt).replace(/apart from `hash` and\s+`spine`/, 'apart from `hash`, `audio` and `spine`');
+      const raised = planted === ingestText ? [] : raisedBy(scanIngest(planted), { was: standing });
+      if (raised.length !== 1) probes.push(`\`audio\` added back to the pass line raised ${raised.length} fault(s) and this control requires one`);
+      else note = `\`audio\` added back to the pass line: "${raised[0]}"`;
+    }
+    const held = probes.length === 0;
+    say(
+      'CUR88_INGESTS_PASS_LINE_NAMES_THE_DECLARED_EXCEPTIONS_AND_THE_FINDINGS_INGEST_PRINTS_FOR_THEM',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${ingestPath}'s pass line is stated apart from ${declared.map((k) => `\`${k}\``).join(' and ')} — the ` +
+          `header keys the editor writes and the rig spec has no field for — and its table names the finding ` +
+          `ingest prints for each (${declared.map((k) => `${k} ${codeFor.get(k) ?? 'none'}`).join(', ')}); a header ` +
+          `carrying every key the editor writes rebuilds with every other one as stated — and ${note}`,
+      ),
+      'the pass line is the promise #716 was opened to keep, and the reader who needs it is one comparing a ' +
+        'rebuild with an export by hand: an exception the page names and the tools do not, or the reverse, is a ' +
+        'difference that reader is told to ignore or told to chase for nothing',
+    );
+  }
+
   return bad;
 }
 
@@ -59446,7 +60203,13 @@ function runIngestSuite(): number {
     const decompiled = decompiledValues.get(property) as Array<{ v?: unknown }> | undefined;
     if (decompiled === undefined) return [`${property}: no track in the decompiled motion spec`];
     if (decompiled.length !== keys.length) return [`${property}: ${decompiled.length} key(s) against ${keys.length}`];
-    const mismatch = keys.filter((key, i) => JSON.stringify(decompiled[i].v) !== JSON.stringify(key.value === undefined ? null : [key.value]));
+    // A value the emitter left out is the parser's default for the key's kind
+    // (issue #716), which is what `ingest` fills it with; `reset` has no row
+    // and no value, and is `null`.
+    const row = PARSER_DEFAULTS[`physics ${property} key`];
+    const valueOf = (key: Record<string, unknown>): unknown =>
+      key.value !== undefined ? key.value : row === undefined ? undefined : parserReading(row, { object: key, previous: () => null }, 'value');
+    const mismatch = keys.filter((key, i) => JSON.stringify(decompiled[i].v) !== JSON.stringify(valueOf(key) === undefined ? null : [valueOf(key)]));
     return mismatch.length === 0 ? [] : [`${property}: ${mismatch.length} key(s) differ`];
   });
   const physicsBlockers = probeTrip.findings.filter((f) => f.kind === 'blocker');
@@ -59716,7 +60479,7 @@ function runIngestSuite(): number {
   // and nothing here changes that.
   const corpus = corpusExports();
   /** Every export's source and rebuild, kept for IG73–IG75's text-level reading at the end of this suite. */
-  const corpusRebuilds: Array<{ label: string; sourceText: string; skeletonText: string }> = [];
+  const corpusRebuilds: Array<{ label: string; sourceText: string; skeletonText: string; packText: string; findings: string[] }> = [];
   if (corpus.length === 0) {
     console.log(`  SKIP  IG16–IG21 did not run: no editor export under ${INGEST_CORPUS_ROOT}.`);
     console.log('          run `bun run fetch-examples` and re-run this suite.');
@@ -59853,7 +60616,15 @@ function runIngestSuite(): number {
         held.values += m.total;
         valueCoverage.set(m.id, held);
       }
-      if (built !== null) corpusRebuilds.push({ label: entry.label, sourceText, skeletonText: built.skeletonText });
+      if (built !== null) {
+        corpusRebuilds.push({
+          label: entry.label,
+          sourceText,
+          skeletonText: built.skeletonText,
+          packText: readFileSync(packPath, 'utf8'),
+          findings: decompiled.findings.map((f) => f.code),
+        });
+      }
       if (built !== null && plant === null && plantable(built.skeletonText)) {
         plant = {
           label: entry.label,
@@ -60672,7 +61443,11 @@ function runIngestSuite(): number {
   const PATH_DEFORM_RUN = [0, 40, 0, 40];
   const forgedTimeline = {
     default: {
-      track: { track: { deform: [{ time: 0 }, { time: 1, offset: PATH_DEFORM_OFFSET, vertices: PATH_DEFORM_RUN }] } },
+      // The first key is `{}`, as the editor writes it: its `time` is 0, the
+      // value the parser reads in its absence, and since issue #716 the
+      // emitter leaves it out too — so a forgery that spelled it would be a
+      // file no rebuild reproduces, for a reason that is not the deform.
+      track: { track: { deform: [{}, { time: 1, offset: PATH_DEFORM_OFFSET, vertices: PATH_DEFORM_RUN }] } },
     },
   };
   // ⚠️ Inserted where the group BELONGS and not appended, which is a property of
@@ -63117,10 +63892,15 @@ function runIngestSuite(): number {
     const carriedProbes = [
       ...(source === null ? ['the series probe did not compile, so nothing was ingested'] : []),
       ...blocked.map((f) => `${f.kind} ${f.code} @ ${f.where}: ${f.detail}`),
-      ...(JSON.stringify(rigEntry) === JSON.stringify({ path: 'glint_', width: 16, height: 16, x: 3, sequence: { count: SERIES_COUNT, start: 1, digits: 4 } })
+      // As the FILE states them, and the file is the build's: it leaves out the
+      // block's `start: 1` and the second key's `delay` (the first key's, the
+      // parser's `lastDelay`) because the 4.3 parser reads both the same way
+      // without them (issue #716) — so neither is in the specs either.
+      ...(JSON.stringify(rigEntry) === JSON.stringify({ path: 'glint_', width: 16, height: 16, x: 3, sequence: { count: SERIES_COUNT, digits: 4 } })
         ? []
         : [`the rig spec's entry is ${JSON.stringify(rigEntry)}`]),
-      ...(JSON.stringify(motionTrack) === JSON.stringify([{ slot: 'glint', attachment: 'glint', keys: seriesKeys }])
+      ...(JSON.stringify(motionTrack) ===
+      JSON.stringify([{ slot: 'glint', attachment: 'glint', keys: [seriesKeys[0], { t: 0.5, mode: 'pingpong', index: 1 }] }])
         ? []
         : [`the motion spec's sequence family is ${JSON.stringify(motionTrack)}`]),
     ];
@@ -63494,11 +64274,17 @@ function runIngestSuite(): number {
     );
 
     // IG75 — what still differs, by kind. Each kind is taken off both sides —
-    // the three header keys, keys the rebuild writes and the export omits, and
-    // key order — and what is left must be the same text. So a difference of
-    // any other kind is red by name, and the counts are the measured baseline
-    // the later tranches of #716 start from.
-    const headerExceptions = ['hash', 'audio', 'spine'];
+    // the header's declared exceptions, keys the rebuild writes and the export
+    // omits, and key order — and what is left must be the same text. So a
+    // difference of any other kind is red by name, and the counts are the
+    // measured line #716's tranches drove to zero.
+    //
+    // ⭐ The exceptions are derived, not listed: the header keys the editor
+    // writes (`EDITOR_KEY_ORDER.header`, read off the twelve exports) that the
+    // rig spec has no field for (`RIG_KEYS.RigSkeletonHeader`) — `hash`, the
+    // editor's project hash, and `spine`, the runtime's version by design.
+    // `audio` left this list when the rig spec gained the field (tranche 3).
+    const headerExceptions = EDITOR_KEY_ORDER.header.filter((k) => !(RIG_KEYS.RigSkeletonHeader as readonly string[]).includes(k));
     const kinds = new Map<string, number>();
     const tally = (kind: string): void => {
       kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
@@ -63516,7 +64302,7 @@ function runIngestSuite(): number {
       const outB: Record<string, unknown> = {};
       for (const k of Object.keys(source).sort()) {
         if (path === '.skeleton' && headerExceptions.includes(k)) {
-          tally(`header \`${k}\``);
+          tally(`header \`${k}\` — by design`);
           continue;
         }
         if (!(k in rebuild)) {
@@ -63549,8 +64335,8 @@ function runIngestSuite(): number {
       probeDetail(
         kindsHeld,
         kindProbes,
-        `over ${rows.length} export(s), with the three header keys, the keys only the rebuild writes and key order ` +
-          `taken off both sides, every export and its rebuild are the same text — by kind: ${kindsSaid}`,
+        `over ${rows.length} export(s), with the header's declared exceptions, the keys only the rebuild writes and ` +
+          `key order taken off both sides, every export and its rebuild are the same text — by kind: ${kindsSaid || 'none'}`,
         (n) => `${n} export(s) with a difference of no kind #716 names:`,
       ),
       'the rest of #716 is key order, restated defaults, `"name": null` and the header, and those are later ' +
@@ -63719,7 +64505,7 @@ function runIngestSuite(): number {
       probeDetail(
         textHeld,
         textProbes,
-        `${rows.length} export(s): with the three header keys and the keys only the rebuild writes taken off both ` +
+        `${rows.length} export(s): with the header's declared exceptions and the keys only the rebuild writes taken off both ` +
           'sides and nothing re-sorted, each rebuild is the same canonical text as its export',
         (count) => `${count} export(s) whose rebuild is another text once the third tranche's kinds are gone:`,
       ),
@@ -63727,6 +64513,182 @@ function runIngestSuite(): number {
         'numbers (IG73) and key order (IG76), what stands between them is the restated defaults, `"name": null` and ' +
         'the header — tranche 3 — and this is where anything else would surface first, in the text rather than in ' +
         'a count',
+    );
+
+    // --- IG81-IG83: the restated defaults, read against the exports (#716 tranche 3)
+    //
+    //   IG81  the counts     IG75's restated keys and `"name": null` at zero,
+    //                        its header kinds exactly the declared exceptions,
+    //                        and ingest restating nothing on any export
+    //   IG82  the table      every row of `PARSER_DEFAULTS` held by the parser
+    //                        on an export object that reads it, or on an
+    //                        in-tree one (S103) — a row held by neither is one
+    //                        nothing has checked
+    //   IG83  the text       each rebuild is its export's canonical text with
+    //                        nothing taken off but the declared exceptions
+    const restatedWritten = kinds.get('a key the export omits, written') ?? 0;
+    const nullWritten = [...kinds].filter(([k]) => k.endsWith(': null` written')).reduce((n, [, c]) => n + c, 0);
+    const headerKinds = [...kinds.keys()].filter((k) => k.startsWith('header ')).sort();
+    const headerWanted = headerExceptions.map((k) => `header \`${k}\` — by design`).sort();
+    const restatingFindings = rows.flatMap((r) =>
+      (corpusRebuilds.find((c) => c.label === r.label)?.findings ?? [])
+        .filter((code) => code === 'TIMELINE_KEY_RESTATED' || code === 'CONSTRAINT_KEY_RESTATED')
+        .map((code) => `${r.label}: ingest reports ${code}`),
+    );
+    const countProbes = [
+      ...(rows.length > 0 ? [] : ['no export rebuilt, so there was nothing to count']),
+      ...(restatedWritten === 0 ? [] : [`${restatedWritten} key(s) the export omits are written by the rebuild`]),
+      ...(nullWritten === 0 ? [] : [`${nullWritten} \`"name": null\` written by the rebuild`]),
+      ...(headerKinds.join(',') === headerWanted.join(',')
+        ? []
+        : [`the header differs in ${headerKinds.join(', ') || 'nothing'}, where the declared exceptions are ${headerWanted.join(', ')}`]),
+      ...restatingFindings.slice(0, 12),
+    ];
+    const countsHeld = countProbes.length === 0;
+    say(
+      'IG81_NO_REBUILD_WRITES_A_KEY_ITS_EXPORT_LEAVES_TO_THE_PARSER',
+      countsHeld,
+      probeDetail(
+        countsHeld,
+        countProbes,
+        `over ${rows.length} export(s): 0 key(s) the export omits written, 0 \`"name": null\`, the header differing in ` +
+          `${headerExceptions.map((k) => `\`${k}\``).join(' and ')} alone — the declared exceptions, by design — and no export ingested with a ` +
+          'TIMELINE_KEY_RESTATED or CONSTRAINT_KEY_RESTATED line',
+        (count) => `${count} thing(s) a rebuild still restates:`,
+      ),
+      'issue #716 tranche 3: the twelve rebuilds wrote 2,338 keys at the value the parser reads without them, and ' +
+        '87 `"name": null`, and `ingest` said so on 341 value tracks and 20 constraint tracks. These are IG75\'s own ' +
+        'counts at zero, and the ingest lines are the same fact said by the reader',
+    );
+
+    const exportBuilds: OmissionBuild[] = rows.flatMap((r) => {
+      const held = corpusRebuilds.find((c) => c.label === r.label);
+      return held === undefined ? [] : [{ label: r.label, skeletonText: held.sourceText, atlasText: held.packText }];
+    });
+    // Smallest first: the first object that reads a row decides it, and a small
+    // export reaches it for the fewest loads.
+    exportBuilds.sort((a, b) => a.skeletonText.length - b.skeletonText.length || a.label.localeCompare(b.label));
+    const overExports = parserDefaultRowsHeld(exportBuilds, PARSER_DEFAULTS);
+    const inTree = parserDefaultRowsHeld(omissionBuilds(), PARSER_DEFAULTS);
+    const heldByNeither = (exports: typeof overExports, tree: typeof inTree): string[] =>
+      exports.unreached.filter((name) => tree.unreached.includes(name)).map((name) => `${name}: no export and no in-tree object reads it`);
+    const neither = heldByNeither(overExports, inTree);
+    // The plant: a field the parser never reads, given a row. Loaded through the
+    // parser it is unreached everywhere, and it must be named as held by neither.
+    const PLANTED_FIELD = 'unreadField';
+    const plantedTable: ParserDefaultTable = { ...PARSER_DEFAULTS, bone: { ...PARSER_DEFAULTS.bone, [PLANTED_FIELD]: 0 } };
+    const plantName = `bone\u0000${PLANTED_FIELD}`;
+    const plantedNeither = heldByNeither(parserDefaultRowsHeld(exportBuilds, plantedTable, [plantName]), parserDefaultRowsHeld(omissionBuilds(), plantedTable, [plantName]));
+    const rowTableProbes = [
+      ...(exportBuilds.length > 0 ? [] : ['no export rebuilt, so the parser was asked about nothing']),
+      ...overExports.contradicted,
+      ...neither,
+      ...(plantedNeither.length === 1 && plantedNeither[0].startsWith(`bone.${PLANTED_FIELD}:`)
+        ? []
+        : [`a row for a field the parser never reads raised ${plantedNeither.length} held-by-neither line(s), not that one`]),
+    ];
+    const rowTableHeld = rowTableProbes.length === 0;
+    say(
+      'IG82_EVERY_ROW_OF_THE_DEFAULTS_TABLE_IS_WHAT_THE_PARSER_LOADS_ON_AN_EXPORT_OR_AN_IN_TREE_BUILD',
+      rowTableHeld,
+      probeDetail(
+        rowTableHeld,
+        rowTableProbes,
+        `${overExports.verified.size} of ${overExports.total} row field(s) held on an export object that reads them, ` +
+          `${inTree.verified.size} on an in-tree build (S103), ${overExports.total - neither.length} by one or the ` +
+          `other and none by neither; a row given to \`bone.${PLANTED_FIELD}\` is named as held by neither`,
+        (count) => `${count} row field(s) the parser contradicts, or that nothing loads:`,
+      ),
+      'the rows are the emitter\'s knowledge of the parser, and the exports are the one population here nobody in ' +
+        'this repository wrote: a transform constraint and its keys, the physics keys and the draw-order and event ' +
+        'keys reach no in-tree build at all, so this is the only place their rows are held',
+    );
+
+    // IG83 — the headline: nothing taken off but the declared exceptions.
+    const firstDifference = (a: unknown, b: unknown, path: string): string | null => {
+      if (Array.isArray(a) && Array.isArray(b)) {
+        if (a.length !== b.length) return `${path}: ${a.length} entries vs ${b.length}`;
+        for (let i = 0; i < a.length; i++) {
+          const inner = firstDifference(a[i], b[i], `${path}[${i}]`);
+          if (inner !== null) return inner;
+        }
+        return null;
+      }
+      if (isRecord(a) && isRecord(b)) {
+        const ka = Object.keys(a);
+        const kb = Object.keys(b);
+        if (ka.join('\u0000') !== kb.join('\u0000')) return `${path}: keys ${ka.join(', ')} vs ${kb.join(', ')}`;
+        for (const k of ka) {
+          const inner = firstDifference(a[k], b[k], `${path}.${k}`);
+          if (inner !== null) return inner;
+        }
+        return null;
+      }
+      return JSON.stringify(a) === JSON.stringify(b) ? null : `${path}: ${JSON.stringify(a)} vs ${JSON.stringify(b)}`;
+    };
+    const withoutExceptions = (text: string): Record<string, unknown> => {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      if (isRecord(parsed.skeleton)) for (const k of headerExceptions) delete parsed.skeleton[k];
+      return parsed;
+    };
+    const canonicalDifferences = (pairs: ReadonlyArray<{ label: string; source: string; rebuild: Record<string, unknown> }>): string[] =>
+      pairs.flatMap(({ label, source, rebuild }) => {
+        const a = withoutExceptions(source);
+        if (JSON.stringify(a, null, 2) === JSON.stringify(rebuild, null, 2)) return [];
+        return [`${label}: first differs at ${firstDifference(a, rebuild, '') ?? '(no path: the texts differ in spacing alone)'}`];
+      });
+    const pairs = rows.flatMap((r) => {
+      const held = corpusRebuilds.find((c) => c.label === r.label);
+      return held === undefined ? [] : [{ label: r.label, source: held.sourceText, rebuild: withoutExceptions(held.skeletonText) }];
+    });
+    const canonicalStanding = canonicalDifferences(pairs);
+    // The plant: one default written back into the first rebuild — the first
+    // object lacking a field its row gives a constant for, at that constant.
+    let canonicalPlantSaid = '';
+    const canonicalPlantProbes: string[] = [];
+    const firstPair = pairs[0];
+    if (firstPair !== undefined) {
+      const rebuild = JSON.parse(JSON.stringify(firstPair.rebuild)) as Record<string, unknown>;
+      let planted: string | null = null;
+      forEachKindedObject(rebuild, (kind, object, path) => {
+        if (planted !== null) return;
+        for (const [field, rule] of Object.entries(PARSER_DEFAULTS[kind] ?? {})) {
+          if (field in object || (rule !== null && typeof rule === 'object')) continue;
+          object[field] = rule;
+          planted = `${path}: keys`;
+          return;
+        }
+      });
+      const raised =
+        planted === null
+          ? []
+          : raisedBy(canonicalDifferences([{ ...firstPair, rebuild }, ...pairs.slice(1)]), { was: canonicalStanding });
+      if (planted === null) canonicalPlantProbes.push(`${firstPair.label}'s rebuild has no object to write a default back onto`);
+      else if (raised.length !== 1 || !raised[0].startsWith(`${firstPair.label}: first differs at ${planted as string}`)) {
+        canonicalPlantProbes.push(`one default written back into ${firstPair.label} raised ${raised.length} line(s), not that one`);
+      } else canonicalPlantSaid = `one default written back is named: "${raised[0]}"`;
+    }
+    const canonicalProbes = [
+      ...(pairs.length > 0 ? [] : ['no export rebuilt, so there was no text to read']),
+      ...canonicalStanding,
+      ...canonicalPlantProbes,
+    ];
+    const canonicalHeld = canonicalProbes.length === 0;
+    say(
+      'IG83_EACH_REBUILD_IS_ITS_EXPORTS_CANONICAL_TEXT_APART_FROM_THE_DECLARED_EXCEPTIONS',
+      canonicalHeld,
+      probeDetail(
+        canonicalHeld,
+        canonicalProbes,
+        `${pairs.length - canonicalStanding.length} of ${pairs.length} export(s): with the header's ` +
+          `${headerExceptions.map((k) => `\`${k}\``).join(' and ')} taken off both sides and nothing else, each ` +
+          `rebuild is the same canonical text as its export — and ${canonicalPlantSaid}`,
+        () => `${canonicalStanding.length} of ${pairs.length} export(s) whose rebuild is another text:`,
+      ),
+      'the pass line #716 was opened for: an editor export ingested and rebuilt is the export, in canonical form ' +
+        '(`JSON.stringify(JSON.parse(text), null, 2)`), apart from the editor\'s project hash and the runtime ' +
+        'version rigc stamps. Nothing is sorted, stripped or tallied away here, so a difference of any kind is ' +
+        'named with the first path it starts at',
     );
   }
 
