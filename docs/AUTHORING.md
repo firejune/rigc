@@ -169,7 +169,7 @@ What the flags mean:
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--cut` | `build`, `explain` and `validate`: look up a named cut in `--cuts <cuts.json>`, **instead of** `--rig`/`--motion`/`--out` — the two spellings are one build stated two ways and are refused together. A `cuts.json` is `{ "<name>": { "rig": …, "motion": …, "out": …, "manifest"?: … } }`, every path in it relative to the table's own file, so the table lives with the project that owns the art |
 | `--cuts` | the `cuts.json` `--cut` names. Required beside it — `--cut` alone is refused, with no guess at where the table lives |
-| `--profile` | `spine` = the 31 validity rules (**the default**) · `spine-html` = all 46, opt-in |
+| `--profile` | `spine` = the 32 validity rules (**the default**) · `spine-html` = all 47, opt-in |
 | `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview`, and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote`, so is a name that only *some* candidates have |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
@@ -627,7 +627,7 @@ the first:
 
 | gutter | meaning |
 | --- | --- |
-| `BLOCK` | the spec format cannot say it, so the rebuild will **not** be the file that was read — `point`, an attachment `sequence`, an unknown field on a bone, slot or constraint, a timeline family the motion spec has no track for. The command exits non-zero **and still writes both specs**, because a spec plus a list of what is missing from it beats no spec |
+| `BLOCK` | the spec format cannot say it, so the rebuild will **not** be the file that was read — `point`, a `sequence` block the parser would read as some other series, an unknown field on a bone, slot or constraint, a timeline family the motion spec has no track for. The command exits non-zero **and still writes both specs**, because a spec plus a list of what is missing from it beats no spec |
 | `JUDGE` | the skeleton cannot answer and somebody has to: the stage, and each animation's duration |
 | `LOSS` | the skeleton's spelling and rigc's differ, on purpose, and the line says how. A path attachment's `lengths` is the one that matters — it is `PathConstraint`'s own four-sample measurement rather than an arc length (#560), so a transcribed one would freeze whatever produced the source. The header ones are cheaper: `HEADER_BOOKKEEPING` for a field the spec has no home for, `HEADER_REDERIVED` for the version string, `HEADER_ORIGIN` for an origin the source left to the format and the rebuild writes out (#622) |
 
@@ -1223,13 +1223,15 @@ the default `type`:
 | `x`, `y` | offset from the bone, in the bone's local space |
 | `rotation` | degrees; cancels a rotated bone for a plate authored screen-upright |
 | `scaleX`, `scaleY`, `color` | as Spine |
+| `sequence` | a **numbered image series** instead of one region: `{ "count", "start"?, "digits"?, "setup"? }`, and `path` (or the placeholder) is the series' stem. No `image` beside it — the frames are the images. §3.4.3 |
 
 **Mesh attachment** ([Spine: meshes](http://esotericsoftware.com/spine-meshes)) —
 either authored geometry (`uvs` + `triangles` + geometry) **or** a `generator`,
 never both. `hull`, `edges`, `width` and `height` may be stated; whichever is
 omitted, rigc derives — `hull` and `edges` from the triangles, the size from the
-PNG — and the rules are a few paragraphs down. `type`, `image`, `path` and `color`
-mean exactly what they mean on a region.
+PNG — and the rules are a few paragraphs down. `type`, `image`, `path`, `color` and
+`sequence` mean exactly what they mean on a region (a sequence mesh takes authored
+geometry, never a `generator` — §3.4.3).
 
 🔑 **`path` is one rule for both kinds.** A mesh derives it from `image` the way a
 region does: stated wins, otherwise the PNG's basename when that differs from the
@@ -2331,6 +2333,69 @@ nothing at all. `check` then compares blank against blank and reports a perfect
 `--skin <name>` to both, once per skin (**§9**); `tools/editor_roundtrip.ts`
 loops over every skin the build declares for the same reason.
 
+#### 3.4.3 `sequence` — a numbered image series on one attachment
+
+A region, a mesh or a linked mesh can draw one of a **series** of atlas regions
+instead of one: a flame, a blink, a spinning coin. The attachment says how many
+frames there are and how they are named, and a `sequence` timeline (§4.13) says
+which one shows. The format's own block, spelled as the file spells it
+(`readSequence`, `SkeletonJson.js:641-649`):
+
+| Field | Meaning |
+| --- | --- |
+| `count` | how many frames. **Required** — the parser's default is 0, and a series of no frames loads holding no region and draws nothing, without an error |
+| `start` | the number the first frame's name carries. Parser default 1 |
+| `digits` | zero-pad the frame number to at least this many digits. Parser default 0 (no padding) |
+| `setup` | the frame the setup pose shows, 0-based. Parser default 0. ⚠️ Spelled `setup`, as the file spells it — `setupIndex` is the runtime's field name and is refused as a key this compiler does not read |
+
+```json
+"glint": { "glint": { "path": "glint_", "sequence": { "count": 4, "start": 1, "digits": 4 } } }
+```
+
+Frame `i` is the atlas region **`<stem><start + i>`**, the number left-padded with
+zeros to `digits` (`Sequence.getPath`) — so the four frames above are `glint_0001`
+to `glint_0004`. The stem is `path`, or the placeholder when no `path` is stated
+(`path` defaults to the attachment's name, exactly as for one region). Each frame is
+resolved **by name**: on the loose route it is the PNG `<images>/<frame>.png`, and
+under `--atlas-in` it is the pack's region of that name. A region name may carry a
+folder — an editor's `fx/flame_0001` is `images/fx/flame_0001.png` — and it is the
+full name that is looked up.
+
+🚫 **A missing frame is refused by name, with its number and the name looked for** —
+the compiler never draws one frame in place of another:
+
+```
+skin "default" slot "glint" attachment "glint": sequence frame 4 of 5 (number 5) is the region "glint_0005", and there is no PNG for it at …/glint_0005.png
+```
+
+The loader's own miss would be `Region not found in atlas: glint_0005 (attachment:
+glint)`, which says neither that the region was a frame nor of which series.
+
+⚠️ **The rest of what is refused**, each a series the parser would load as something
+other than what was written (measured on spine-core 4.3.13,
+[#729](https://github.com/firejune/rigc/issues/729)):
+
+- a `setup` at or past `count` — `Sequence.resolveIndex` clamps it to the last frame
+  (`setup: 7` on four frames showed frame 4);
+- a fractional `count`, `start`, `digits` or `setup` — `start: 1.5` would ask the
+  atlas for `glint_1.5`;
+- an `image` beside `sequence` — one file names one region, and the series names
+  `count` of them;
+- a `generator` beside it on a mesh — a generator traces one plate, and which frame
+  it should trace is not something the spec says. Author the geometry; every frame
+  shares it;
+- a `sequence` on a `boundingbox`, `clipping` or `path` — the parser reads the key
+  only on the three kinds that draw a region, so it would be dropped in silence. The
+  refusal names region, mesh and linkedmesh.
+
+`width` and `height` are the attachment's one size, every frame drawn into it. Omit
+them and rigc takes the frames' size — **only when every frame measures the same**;
+frames of different sizes are refused until you state the size, because picking one
+of them would be the compiler choosing a value. Under `--atlas-in` a stated size that
+disagrees with a packed frame is refused, as it is for one region.
+`A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` (§5.2) holds the block and
+every frame the timelines show against the file.
+
 ### 3.5 `constraints` — 4.3's single typed array
 
 Spine 4.3 folds every constraint into one `constraints` array with a `type`
@@ -3106,6 +3171,7 @@ time puts it here.
 | `ik` | IK constraint timelines — §4.9. Not a track: its keys carry named fields, not one `v` |
 | `transform` | transform constraint timelines — §4.10. Same reason |
 | `deform` | deform timelines — §4.11. Same reason |
+| `sequence` | which frame of an attachment's numbered series shows — §4.13. Same reason |
 
 `groups` (`name → [member, …]`) lets one track target several bones, slots or
 physics constraints at once; `lag` shifts every key of a track, and `stagger`
@@ -3281,8 +3347,8 @@ needs 4 channels, got 1`, a message about a key you had not written.
   here, and would be refused by the runtime's own reader too (`Invalid timeline
   type for a slot`). `A12_NO_DARK_COLOR` refuses `rgb2` — and `rgba2`, and the
   slot field — in a file under the `spine-html` profile (SPEC_COVERAGE §2.1).
-  `sequence` is a timeline on an **attachment**, not on a slot, and rigc does
-  not emit that one.
+  `sequence` is a timeline on an **attachment**, not on a slot — it is the
+  family beside `deform`, §4.13.
 
 ⚠️ **A `group` track's `property` is one of those two lists or the physics one,
 and anything else is a compile error** — `animation "A" group "G" has no timeline
@@ -4876,6 +4942,66 @@ constraint declaring `mixGlobal`, since only the physics family has one. The ref
 says both halves — `path constraint "P" has mixRotate 0, mixX 0 and mixY 0 at setup
 and none of the 2 animations keys its mix above 0; …` — and names both repairs.
 
+### 4.13 `sequence` — which frame of a numbered series shows
+
+The other attachment timeline, beside `deform` and for the same reason: its key is
+three named fields rather than one `v`, and it is aimed at an attachment rather than
+a slot, so it is a family of its own
+(`animations.<a>.attachments.<skin>.<slot>.<attachment>.sequence` in the file):
+
+```json
+"sequence": [
+  { "slot": "glint", "attachment": "glint", "keys": [
+      { "t": 0, "mode": "loop", "delay": 0.1 },
+      { "t": 0.5, "mode": "pingpong", "index": 1, "delay": 0.1 } ] }
+]
+```
+
+| Field | Meaning |
+| --- | --- |
+| `skin` | the skin the attachment lives in; absent means `"default"` |
+| `slot`, `attachment` | the slot and the attachment's placeholder — the attachment must carry a `sequence` block (§3.4.3) |
+| `keys[].t` | seconds |
+| `keys[].mode` | one of `hold`, `once`, `loop`, `pingpong`, `onceReverse`, `loopReverse`, `pingpongReverse`. Parser default `hold` — **per key**, not carried |
+| `keys[].index` | the frame the key starts on, 0-based. Parser default 0 |
+| `keys[].delay` | seconds per frame. Parser default: **the previous key's** `delay`, 0 on the first |
+
+From the key's time on, the frame shown is `index` advanced by one every `delay`
+seconds and folded back into the series by `mode` — `SequenceTimeline.applyToSlot`,
+with `i = index + floor((time - keyTime) / delay + 0.00001)` and `n = 2 * count - 2`:
+
+| `mode` | frame shown |
+| --- | --- |
+| `hold` | `index`, never advancing |
+| `once` | `min(count - 1, i)` — stops on the last frame |
+| `loop` | `i % count` |
+| `pingpong` | `i % n`, then `n - that` once it reaches `count` — bounces off both ends |
+| `onceReverse` | `max(count - 1 - i, 0)` |
+| `loopReverse` | `count - 1 - (i % count)` |
+| `pingpongReverse` | `(i + count - 1) % n`, then folded as `pingpong` |
+
+Measured on four frames at `delay: 0.1` from t = 0 (frames numbered 0–3):
+`loop` shows 0, 1, 2, 3, 0, 1 at t = 0.05, 0.15 … 0.55; `pingpong` 0, 1, 2, 3, 2, 1, 0;
+`onceReverse` 3, 2, 1, 0, 0. Before the first key the frame is the block's `setup`.
+
+⚠️ **A sequence timeline does not lengthen an animation.** A loop keyed once at t=0
+in an animation nothing else extends has a duration of 0, and a player that does
+not loop the animation shows frame `index` forever (measured). The animation's
+`duration` is its last key, as everywhere (R7), so key something to the length you
+mean.
+
+🚫 Refused by name, each measured to load without a word: a `mode` outside the seven
+(it loads as `hold`); an `index` that is fractional, negative, or at or past the
+series' `count` (truncated, clamped); an advancing mode at an **effective** delay of
+0 — stated, or carried from the key before — where `(time - keyTime) / 0` is
+Infinity, `Infinity | 0` is 0, and the key shows its first frame throughout; a track
+on an attachment with no `sequence` block (the parser gives every region a series of
+one, so every mode shows it); and a track on a **linked mesh that plays its source's
+timelines** (`timelines` absent or true), whose `timelineAttachment` is the source,
+so a key aimed at the link is applied to nothing — key the source instead, and the
+link steps its own series by it, or set `"timelines": false`. Only the fields the
+key states are emitted: the compiler writes no `mode`, `index` or `delay` for you.
+
 ---
 
 ## 5. Reading a failure
@@ -5010,6 +5136,11 @@ same hole issue #307 closed for the motion spec.)
 | `…ik[i]`, `…transform[i]`, `…deform[i]` | an object | `null` in one of these lists crashed with a raw `TypeError` on `track.constraint` / `track.skin` |
 | `…ik[i].constraint`, `…transform[i].constraint` | a non-empty string | 4.3 writes the group as `ik.<constraint>`, so the name is the only target there is |
 | `…deform[i].slot`, `.attachment`, `.skin` | a string (`skin` optional) | — |
+| `…sequence` | an array | §4.13 — one entry per skin/slot/attachment triple |
+| `…sequence[i].slot`, `.attachment`, `.skin` | a string (`skin` optional) | — |
+| `…sequence[i].keys[j].mode` | one of the seven — `hold`, `once`, `loop`, `pingpong`, `onceReverse`, `loopReverse`, `pingpongReverse` | `SequenceMode[mode]` is `undefined` for anything else and the mode bits store 0: the key loads without a word and plays as `hold` |
+| `…sequence[i].keys[j].index` | a whole number ≥ 0 | stored as `index << 4`, which truncates a fraction (1.5 showed frame 1). Whether it is inside the series' `count` is the compile-time row below |
+| `…sequence[i].keys[j].delay` | a finite number ≥ 0 — and **above 0 wherever the mode advances**, counting a delay carried from the key before | `(time - keyTime) / 0` is Infinity and `Infinity \| 0` is 0, so a `loop` at delay 0 shows its first frame throughout. The message reads `` `…keys[j]` plays "loop" at a delay of 0 … which is "hold" spelt as "loop" `` |
 
 The second wave is everything that needed the **other** file, the property table
 or the key's position in its own track. These are the frequent ones, verbatim:
@@ -5039,6 +5170,14 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `"slot" is "X", which the rig does not declare as a slot` / `"skin" is "X", … the rig declares no such skin` | §3.4 — a link resolves both by name. Left to the round trip these are the runtime's `Source mesh slot not found` and `Skin not found`, which name neither the attachment nor where it looked |
 | `"source" is "X", which is itself a linked mesh, and a chain of them is refused` | §3.4 — point `source` at the mesh. A chain resolves in file order and loads nothing at all in one of the two orders, silently |
 | `"source" is "X", which is a "region" attachment and not a mesh` | §3.4 — a link takes another MESH's geometry; off any other type the runtime reads `undefined` and says nothing |
+| `… is a boundingbox and states a "sequence". A sequence is a numbered series of atlas regions, and only the 3 kinds that draw a region carry one — region, mesh, linkedmesh …` | §3.4.3 — put the series on a region or a mesh, or remove it |
+| `… "sequence" states no "count" …` / `… "sequence".setup is N, and a C-frame series has frames 0 to C-1 …` / `… "sequence".F is V; it is a whole number …` | §3.4.3 — the parser reads an omitted count as 0 frames and clamps a setup past the end; state the count, and a 0-based `setup` inside it |
+| `… states "image" beside "sequence" …` / `… states "generator" beside "sequence" …` | §3.4.3 — the frames are the images; remove `image`. A sequence mesh takes authored geometry |
+| `… sequence frame I of C (number N) is the region "R", and there is no PNG for it at P …` (or `… which the atlas at A does not have …` under `--atlas-in`) | §3.4.3 — add the frame, or state the `count` the series really has. The compiler draws no frame in place of another |
+| `… the N frames of this sequence measure W1, W2 in width … State "width"` | §3.4.3 — frames of different sizes; state the attachment's size |
+| `animation "A" sequence S/X/P: attachment "P" carries no "sequence" block, so there is no series to step …` | §4.13 — give the attachment a `sequence`, or remove the track |
+| `animation "A" sequence S/X/P (t=T): index I is past the end of a C-frame series …` | §4.13 — `index` is 0-based |
+| `animation "A" sequence S/X/P: attachment "P" is a linked mesh that plays its source's timelines …` | §4.13 — key the source (the link steps its own series by it), or set `"timelines": false` on the link |
 | `a linked mesh needs width and height — give them, or give an "image" and rigc will measure the PNG` | §3.4 — the mesh rule, on a link. Its art is its own |
 | `hull N disagrees with the triangles, whose outline has K vertices (0 → …)` | §3.4 — delete `hull`, or state K |
 | `hull vertices must come first; vertex i is on the boundary and vertex j is not. The triangles' outline runs …: list those K vertices first, in that order, then the M interior vertices` | §3.4 — renumber the vertices: the printed walk first, then the interior |
@@ -5277,6 +5416,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN` | both | a slot's `dark` (§3.3) or an `rgba2` / `rgb2` timeline (§4.4) that the runtime does not hold as the file states it. Three shapes, all of which parse in silence: a `dark` the slot reader **drops** — it takes the field through a truthiness test, so `""` is discarded without a word and the slot renders with one colour; a `dark` that is **not six hex digits** — `Color.setFromString` slices fixed offsets and stores whatever `parseInt` gives back, so `"4020"` loads a channel of `NaN`; and an `rgba2` or `rgb2` timeline on a slot with **no `dark` at all**, where the runtime allocates no dark colour and the first `state.apply` throws in the consumer's process. The keyed half is read by posing: the animation is stepped to each key's own time and the posed `color` and `darkColor` are compared against the hex the key states, to half a quantisation step (`1/510`). The detail names the slot, the value found and the value required. ⚠️ The required value is parsed **here** and not through `Color.fromString`, because a check that read it out of the parser it is checking would agree with that parser whatever it did. `compile.ts` refuses the third shape outright in a rig rigc builds; this is the same fact held against a skeleton it did not write. An `rgb2` key's light colour is compared over its three channels only: the light alpha is not its to state, and that it is left where it was is measured in the selftest (`S85`). **SKIP** when no slot declares a `dark` and no animation keys an `rgba2` or `rgb2` — there is then no two-colour tint to read back |
 | `A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN` | both | a **linked mesh** (§3.4) — `type: "linkedmesh"`, or a `type: "mesh"` carrying `source` — that also states `uvs`, `triangles`, `vertices`, `hull` or `edges`. The parser returns from the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`), so those keys are read by **nothing at all** and `setSourceMesh` fills the attachment with the source's arrays instead: the file says one mesh and every runtime draws another, in silence. The detail names the attachment by skin, slot and placeholder, every key it states, the `source` and where the parser looks for it — the two defaults spelled out, because an omitted `skin` is the **default** skin rather than the one the link is written in — and the shape the keys describe beside the shape the attachment loaded. ⚠️ **`width`/`height` are not part of this.** `setSourceMesh` overwrites both with the source's, so they are as dead at runtime — but the parser reads them (`:569-570`), the format carries them on a link and rigc emits them, so refusing them would refuse every link rigc writes (§3.4). `compile.ts` refuses the same shape outright in a rig rigc builds (§5.1); this is that fact held against a skeleton it did not write, and `ingest` reports it as `ATTACHMENT_LINK_GEOMETRY` ([INGEST §2.0](INGEST.md)). **SKIP** when no attachment in the skeleton takes its geometry from another — which is almost every skeleton, so a pass here means a link was read ([#710](https://github.com/firejune/rigc/issues/710)) |
 | `A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN` | both | an `rgb` or `alpha` timeline (§4.4) the runtime does not hold as the file states it, in one of two shapes that both parse in silence. **A channel keyed twice**: another colour timeline of the same slot in the same animation poses a channel this one poses — `rgba` beside `alpha` is the shape a converter leaves when it writes a separable `rgb` back as `rgba` next to the `alpha` it kept. Every colour timeline poses its channels at every time, the setup value before its first key included, so the one the file states later overwrites the other everywhere; the detail names both timelines, the channel, and which one survives. **A key not posed as written**: the animation is stepped to each key's own time and the posed r g b (for `rgb`, against the hex, to half a quantisation step) or alpha (for `alpha`, against `value`, whose absence the parser reads as 0) is compared — a colour that is not six hex digits loads as NaN, and a key whose time another key repeats is read by nothing. ⚠️ An `rgb` alone written as an `rgba` holding the setup alpha is **not** caught and cannot be from the file: it is a correct `rgba`, and the difference shows only under another track that moves the alpha. The loaded timeline class and the channels a separable timeline leaves alone are measured in the selftest (`S83`–`S85`) rather than here, because against the linked parser neither can come out wrong. The channel table is `SLOT_COLOR_CHANNELS` in `src/timelines.ts`, shared with the compiler's refusal and held to the runtime's own property ids (`S89`). **SKIP** when no animation keys an `rgb` or `alpha` — there is then no separable slot colour to read back |
+| `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` | both | a **numbered series** (§3.4.3, §4.13) that the runtime does not show as the file states it. Every shape below loads without a word, measured on spine-core 4.3.13 ([#729](https://github.com/firejune/rigc/issues/729)). **The block**: a `sequence` with no `count` (`readSequence` reads 0, and the attachment holds no region) or a `setup` at or past `count` (`Sequence.resolveIndex` clamps it to the last frame). **The keys**: a `mode` outside the seven — `hold`, `once`, `loop`, `pingpong`, `onceReverse`, `loopReverse`, `pingpongReverse` — loads as `hold`; an `index` that is fractional (`index << 4` truncates it) or past the end (clamped); an advancing mode at an effective delay of 0 (the parser carries a key's `delay` from the key before; `(time - keyTime) / 0` is Infinity and `Infinity \| 0` is 0, so it never advances); a timeline on an attachment that carries no block (the parser gives every region a one-region series, so every mode shows it). **The pose**: every key is stepped to mid-frame sample times — enough to wrap every mode — and the region the slot shows is held to the frame the file's own statement gives, the arithmetic of `SequenceTimeline.applyToSlot` and the names of `Sequence.getPath` transcribed rather than read off the loaded timeline, so the check is not the runtime agreeing with itself. Before the first key the frame is `setup`. ⚠️ A sample where the slot shows another attachment is not compared, because the runtime writes nothing there; a timeline with no comparable sample is counted in `stats.sequenceSamplesUnshown`. `compile.ts` refuses every one of these shapes in a spec (§5.1); this is them held against a skeleton it did not write. **SKIP** when no attachment carries a `sequence` block and no animation keys a `sequence` timeline |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
@@ -5324,12 +5464,14 @@ Two more limits that are not errors but will shape what you can attempt:
   `--profile spine-html` over a packed atlas. The default is still **one part per
   page** with `pma: false` and every region covering its whole page, and nothing
   about a build changes unless one of those flags is given.
-- **`sequence` timelines and `drawOrderFolder`** are walked by the validator (so
-  `A05` checks their curves and `diff` counts their keys) and cannot be *written*:
-  there is no motion-spec property for either. Everything a motion spec **can** key
-  is §4.4's track table — which now includes the `path` and `slider` groups (§4.12)
-  — plus the five families that sit beside `tracks`: `drawOrder` (§4.7), `events`
-  (§4.8), `ik` (§4.9), `transform` (§4.10) and `deform` (§4.11).
+- **`drawOrderFolder`** is walked by the validator (so `A05` checks its curves and
+  `diff` counts its keys) and cannot be *written*: there is no motion-spec property
+  for it. Everything a motion spec **can** key is §4.4's track table — which now
+  includes the `path` and `slider` groups (§4.12) — plus the six families that sit
+  beside `tracks`: `drawOrder` (§4.7), `events` (§4.8), `ik` (§4.9), `transform`
+  (§4.10), `deform` (§4.11) and `sequence` (§4.13). `sequence` stood beside
+  `drawOrderFolder` in this sentence until
+  [#729](https://github.com/firejune/rigc/issues/729) made it writable.
 
 ---
 

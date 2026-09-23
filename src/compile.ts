@@ -63,6 +63,7 @@ import {
   type RigMeshBinding,
   type RigPathAttachment,
   type RigRegionAttachment,
+  type RigSequence,
   type RigSkinParts,
   type RigSpec,
   type RigVertexGeometry,
@@ -132,6 +133,7 @@ import type {
   MotionEventKey,
   MotionIkTrack,
   MotionMemberValues,
+  MotionSequenceTrack,
   MotionSpec,
   MotionTrack,
   MotionTransformTrack,
@@ -148,6 +150,7 @@ import type {
   SpineMeshAttachment,
   SpinePathAttachment,
   SpineRegionAttachment,
+  SpineSequence,
   SpineSkeletonJson,
   SpineSlot,
   SpineTimelineKey,
@@ -1877,8 +1880,17 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   /** The pre-packed atlas `--atlas-in` named, parsed once, or null. */
   const atlasIn = opts.atlasInPath === undefined ? null : readAtlasIn(resolve(opts.atlasInPath));
 
-  const addImage = (relPath: string, baseDir: string, isBase: boolean): CompiledImage => {
-    const region = basename(relPath, '.png');
+  const addImage = (
+    relPath: string,
+    baseDir: string,
+    isBase: boolean,
+    region: string = basename(relPath, '.png'),
+    /**
+     * The directory this part counts as named in, for `skeletonImagesPath`, or
+     * `null` for none. Default: the file's own directory, as it always was.
+     */
+    partDir: string | null = dirname(resolve(baseDir, relPath)),
+  ): CompiledImage => {
     if (seenRegions.has(region)) {
       throw new CompileError(`duplicate region name "${region}" (${relPath})`);
     }
@@ -1889,7 +1901,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         : resolveFromAtlas(relPath, region, isBase, outDir, atlasIn);
     seenRegions.add(region);
     regionSource.set(region, loosePath);
-    partDirs.add(dirname(loosePath));
+    if (partDir !== null) partDirs.add(partDir);
     images.push(img);
     return img;
   };
@@ -1933,6 +1945,63 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         `${wanted} and ${already}. An atlas region is named by its PNG's basename, so only one of the two can ` +
         'hold that name and this attachment would draw the other file\'s pixels. Rename one of the PNGs.',
     );
+  };
+
+  /**
+   * Measure and atlas every frame of one attachment's `sequence` — by NAME, the
+   * way the loader will ask for them (issue #729).
+   *
+   * Frame `i` is the region `sequenceFrameRegion(stem, …, i)`; on the loose
+   * route its pixels are the PNG of that name under the images directory, and
+   * under `--atlas-in` they are the pack's region of that name. A frame that is
+   * not there is refused with its number and the name looked for: the loader's
+   * own miss is `Region not found in atlas: <name> (attachment: <name>)`, which
+   * says neither that the region was frame 3 of a series nor which series.
+   *
+   * ⚠️ The region is the frame's FULL name, not a basename — an editor names a
+   * series in an images subfolder `fx/flame_0001`, and that string is what the
+   * loader looks up. A frame another attachment already atlased from the same
+   * file is the same region on purpose, as `addSkinImage` allows for one PNG.
+   */
+  const addSequenceFrames = (stem: string, seq: RigSequence, where: string): void => {
+    for (let i = 0; i < seq.count; i++) {
+      const region = sequenceFrameRegion(stem, seq, i);
+      const relPath = `${region}.png`;
+      const wanted = resolve(imagesDir, relPath);
+      const frame = `frame ${i} of ${seq.count} (number ${(seq.start ?? 1) + i})`;
+      if (atlasIn === null && !existsSync(wanted)) {
+        throw new CompileError(
+          `${where}: sequence ${frame} is the region "${region}", and there is no PNG for it at ${wanted}. A ` +
+            `sequence's frames are the regions "<stem><start + i>", zero-padded to "digits" — here stem ` +
+            `${JSON.stringify(stem)}, start ${seq.start ?? 1}, digits ${seq.digits ?? 0} — and the compiler draws ` +
+            'no frame in place of another. Add the file, or state the "count" the series really has.',
+        );
+      }
+      if (atlasIn !== null && !atlasIn.byName.has(region)) {
+        const near = nearMisses(region, atlasIn.byName.keys());
+        throw new CompileError(
+          `${where}: sequence ${frame} is the region "${region}", which the atlas at ${atlasIn.path} does not have. ` +
+            (near.length ? `Did you mean ${near.map((n) => JSON.stringify(n)).join(', ')}? ` : '') +
+            `A sequence's frames are the regions "<stem><start + i>", zero-padded to "digits" — here stem ` +
+            `${JSON.stringify(stem)}, start ${seq.start ?? 1}, digits ${seq.digits ?? 0} — and the compiler draws ` +
+            'no frame in place of another.',
+        );
+      }
+      const already = regionSource.get(region);
+      if (already === wanted) continue;
+      if (already !== undefined) {
+        throw new CompileError(
+          `${where}: sequence ${frame} is the region "${region}", and the art already atlased under that name is ` +
+            `${already}, not ${wanted}. One region name is one set of pixels, so this frame would draw the other ` +
+            "file's. Rename one of them.",
+        );
+      }
+      // The directory the frame NAMES are relative to — the images root, not
+      // the frame's own subfolder, because the region name carries the folder —
+      // and only on the loose route: under `--atlas-in` the spec names no file
+      // for a frame, where an `image` is still a file the spec names.
+      addImage(relPath, imagesDir, false, region, atlasIn === null ? imagesDir : null);
+    }
   };
 
   // A manifest may name a part the cut does not carry. A formation can declare
@@ -2121,6 +2190,19 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         const image = (att as RigRegionAttachment).image;
         if (typeof image === 'string') {
           addSkinImage(image, `skin "${skinName}" slot "${slotName}" attachment "${placeholder}"`);
+        }
+        // `parseRigSpec` has refused a sequence on any kind but these three and
+        // proved its shape, so what is left is whether its frames exist. The stem
+        // is the region `path` the attachment resolves through, which with no
+        // `path` stated is the placeholder (`nameSkinAttachment` pins exactly that
+        // where a placeholder is contested).
+        const sequence = (att as RigRegionAttachment).sequence;
+        if (sequence !== undefined) {
+          addSequenceFrames(
+            (att as RigRegionAttachment).path ?? placeholder,
+            sequence,
+            `skin "${skinName}" slot "${slotName}" attachment "${placeholder}"`,
+          );
         }
       }
       rigAttachmentNames.set(slotName, names);
@@ -2851,6 +2933,43 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         );
         for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
         ((deformTimelines[skinName] ??= {})[track.slot] ??= {})[track.attachment] = { deform: keys };
+      }
+
+      // -- sequence timelines: the other attachment timeline (issue #729) -----
+      // Same triple, same table: `readAnimation` reads both names out of one
+      // attachment map, and one attachment may carry both. `deform` is written
+      // first where both exist, which is the order the parser tests them in.
+      const sequenceTracks: MotionSequenceTrack[] = anim.sequence ?? [];
+      for (const track of sequenceTracks) {
+        const skinName = track.skin ?? 'default';
+        const at = `animation "${animName}" sequence ${skinName}/${String(track.slot)}/${String(track.attachment)}`;
+        const table = skinTables.get(skinName);
+        if (!table) {
+          throw new CompileError(
+            `${at}: this rig emits no skin called "${skinName}" (it emits: ${[...skinTables.keys()].join(', ')})`,
+          );
+        }
+        const perSlot = table[track.slot];
+        if (!perSlot) {
+          throw new CompileError(
+            `${at}: skin "${skinName}" gives slot "${String(track.slot)}" no attachments` +
+              (slotNames.has(track.slot) ? '' : ', and this rig does not declare that slot at all'),
+          );
+        }
+        const attachment = perSlot[track.attachment];
+        if (!attachment) {
+          throw new CompileError(
+            `${at}: slot "${track.slot}" in skin "${skinName}" has no attachment "${String(track.attachment)}" ` +
+              `(it has: ${Object.keys(perSlot).join(', ')})`,
+          );
+        }
+        const keys = compileSequenceTrack(track, anim.duration, attachment, at);
+        for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
+        const slot = ((deformTimelines[skinName] ??= {})[track.slot] ??= {});
+        if (slot[track.attachment]?.sequence) {
+          throw new CompileError(`${at}: two sequence timelines on one attachment; merge them into one`);
+        }
+        slot[track.attachment] = { ...(slot[track.attachment] ?? {}), sequence: keys };
       }
 
       const drawOrder = anim.drawOrder ? compileDrawOrder(anim.drawOrder, animName, anim.duration, slots) : null;
@@ -3968,12 +4087,120 @@ function attachmentPath(att: { path?: string; image?: string }, placeholder: str
   return region === placeholder ? undefined : region;
 }
 
+/**
+ * The atlas region frame `i` of a sequence resolves to — `Sequence.getPath`
+ * (`Sequence.js:124-132`) transcribed: the stem, then `start + i` left-padded
+ * with zeros to `digits`. `start` and `digits` take the parser's own defaults
+ * (`readSequence`: 1 and 0), which are the format's, not a guess.
+ *
+ * ⚠️ A second transcription of the rule exists in `validate.ts`
+ * (`attachmentRegionLookups`, the walk `A08` joins the atlas with), and that is
+ * deliberate: this module links no runtime, and the two are held to the loader
+ * independently — the one by `A08`, both by `A00`'s round trip, which asks the
+ * runtime's own `getPath` for every frame.
+ */
+function sequenceFrameRegion(stem: string, seq: RigSequence, i: number): string {
+  const frame = String((seq.start ?? 1) + i);
+  return `${stem}${'0'.repeat(Math.max(0, (seq.digits ?? 0) - frame.length))}${frame}`;
+}
+
+/** The emitted `sequence` block: the four fields exactly as the spec stated them. */
+function emitSequence(seq: RigSequence): SpineSequence {
+  const out: SpineSequence = { count: seq.count };
+  if (seq.start !== undefined) out.start = seq.start;
+  if (seq.digits !== undefined) out.digits = seq.digits;
+  if (seq.setup !== undefined) out.setup = seq.setup;
+  return out;
+}
+
+/**
+ * What a sequence attachment's frames measure, for the `width`/`height` a spec
+ * leaves out — or the refusal when they do not agree.
+ *
+ * An attachment has ONE size and every frame is mapped into it
+ * (`RegionAttachment.computeUVs(regions[i], … width, height …)` for each `i` in
+ * `Sequence.update`), so an omitted size is derivable only when every frame
+ * measures the same: that is the one number the frames state. Frames of
+ * different sizes state several, and picking one — the first, the setup frame,
+ * the largest — would be the compiler choosing a value the spec did not.
+ * Under `--atlas-in` a stated size that disagrees with a frame is refused as it
+ * is for a single region, for the same reason: the pack's rectangle is fixed.
+ */
+function sequenceFrameSize(
+  frames: readonly CompiledImage[],
+  stated: { width?: number; height?: number },
+  where: string,
+): { width?: number; height?: number } {
+  const out: { width?: number; height?: number } = {};
+  for (const field of ['width', 'height'] as const) {
+    const sizes = [...new Set(frames.map((img) => img[field]))];
+    if (stated[field] !== undefined) {
+      const packed = frames.find((img) => img.atlas !== undefined && img[field] !== stated[field]);
+      if (packed !== undefined) {
+        throw new CompileError(
+          `${where}: the spec says ${field} ${stated[field]} and sequence frame "${packed.region}" of the imported ` +
+            `atlas is ${packed[field]}; a packed frame's rectangle is fixed, so the two would produce a quad the ` +
+            'pack cannot fill',
+        );
+      }
+      out[field] = stated[field];
+    } else if (sizes.length === 1) {
+      out[field] = sizes[0];
+    } else {
+      throw new CompileError(
+        `${where}: the ${frames.length} frames of this sequence measure ${sizes.join(', ')} in ${field} ` +
+          `(${frames.map((img) => `"${img.region}" ${img[field]}`).join(', ')}), and an attachment has one ` +
+          `${field} every frame is drawn into. State "${field}" — the frames do not agree on one`,
+      );
+    }
+  }
+  return out;
+}
+
+/** Every frame of `att`'s sequence, already atlased by the gather pass. */
+function sequenceFrames(att: { path?: string; sequence?: RigSequence }, placeholder: string, where: string, ctx: AttachmentContext): CompiledImage[] {
+  const seq = att.sequence!;
+  const stem = att.path ?? placeholder;
+  const frames: CompiledImage[] = [];
+  for (let i = 0; i < seq.count; i++) {
+    // By the frame's FULL region name — `atlasedImage` takes a basename, and a
+    // series in an images subfolder is named `fx/flame_0001`.
+    const region = sequenceFrameRegion(stem, seq, i);
+    const img = ctx.images.find((im) => im.region === region);
+    if (img === undefined) {
+      // Unreachable while the gather pass atlases every frame of every sequence
+      // or refuses the missing one by name; stated so that a gather that stops
+      // doing so is a sentence rather than a quad with no region.
+      throw new CompileError(
+        `${where}: sequence frame ${i} is the region "${region}", which was never added to the atlas — every frame ` +
+          'of a sequence is atlased or refused by name before any attachment is built, so reaching this means rigc ' +
+          'skipped one',
+      );
+    }
+    frames.push(img);
+  }
+  return frames;
+}
+
 function buildRigRegion(
   att: RigRegionAttachment,
   placeholder: string,
   where: string,
   ctx: AttachmentContext,
 ): SpineRegionAttachment {
+  if (att.sequence !== undefined) {
+    const size = sequenceFrameSize(sequenceFrames(att, placeholder, where, ctx), att, where);
+    const out: SpineRegionAttachment = { width: r6(size.width!), height: r6(size.height!) };
+    if (att.path !== undefined) out.path = att.path;
+    if (att.x !== undefined) out.x = r6(att.x);
+    if (att.y !== undefined) out.y = r6(att.y);
+    if (att.rotation !== undefined) out.rotation = r6(att.rotation);
+    if (att.scaleX !== undefined) out.scaleX = r6(att.scaleX);
+    if (att.scaleY !== undefined) out.scaleY = r6(att.scaleY);
+    if (att.color !== undefined) out.color = att.color;
+    out.sequence = emitSequence(att.sequence);
+    return out;
+  }
   const img = att.image === undefined ? null : atlasedImage(att.image, where, ctx);
   // ⭐ An IMPORTED region's size is not a default the spec may override. On the
   // loose path `att.width` and the PNG's width are two legitimate numbers — "draw
@@ -4244,8 +4471,9 @@ function buildRigMesh(
   // spec stated, and the editor shows whatever is written here as the image's
   // dimensions (it showed 32x32, its missing-image placeholder, for a 0x0 mesh).
   const img = att.image === undefined ? undefined : atlasedImage(att.image, where, ctx);
-  const width = att.width ?? img?.width;
-  const height = att.height ?? img?.height;
+  const seqSize = att.sequence === undefined ? null : sequenceFrameSize(sequenceFrames(att, placeholder, where, ctx), att, where);
+  const width = seqSize !== null ? seqSize.width : (att.width ?? img?.width);
+  const height = seqSize !== null ? seqSize.height : (att.height ?? img?.height);
   if (width === undefined || height === undefined) {
     throw new CompileError(
       `${where}: a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG`,
@@ -4264,6 +4492,7 @@ function buildRigMesh(
   const path = attachmentPath(att, placeholder);
   if (path !== undefined) out.path = path;
   if (att.color !== undefined) out.color = att.color;
+  if (att.sequence !== undefined) out.sequence = emitSequence(att.sequence);
   // Register it as `authored`: geometry rigc did not build and whose topology it
   // therefore gets to assume nothing about. The generator-topology assertions
   // read this and skip rather than measuring a ring that was never a ring.
@@ -4360,8 +4589,9 @@ function buildRigLinkedMesh(
   // The art side is a mesh's, unchanged: a link draws its OWN region, which is
   // the reason the type exists — one triangulation, one outfit's pixels each.
   const img = att.image === undefined ? undefined : atlasedImage(att.image, where, ctx);
-  const width = att.width ?? img?.width;
-  const height = att.height ?? img?.height;
+  const seqSize = att.sequence === undefined ? null : sequenceFrameSize(sequenceFrames(att, placeholder, where, ctx), att, where);
+  const width = seqSize !== null ? seqSize.width : (att.width ?? img?.width);
+  const height = seqSize !== null ? seqSize.height : (att.height ?? img?.height);
   if (width === undefined || height === undefined) {
     throw new CompileError(
       `${where}: a linked mesh needs width and height — give them, or give an "image" and rigc will measure the PNG`,
@@ -4377,6 +4607,7 @@ function buildRigLinkedMesh(
   if (att.skin !== undefined && att.skin !== 'default') out.skin = att.skin;
   if (att.timelines === false) out.timelines = false;
   if (att.color !== undefined) out.color = att.color;
+  if (att.sequence !== undefined) out.sequence = emitSequence(att.sequence);
   // 🚫 NOT registered in `ctx.meshes`, and that is a decision rather than an
   // omission. `meshKinds` is keyed by SLOT and the commonest linked mesh shares
   // its source's slot from another skin, so an entry here would overwrite the
@@ -6833,6 +7064,81 @@ function deformGeometryOf(
  * nothing guessed. What survives is the one case the identity does not cover: a
  * vertex whose weights do not close at 1.
  */
+/**
+ * One sequence timeline — `animations.<a>.attachments.<skin>.<slot>.<attachment>.sequence`
+ * — keyed on an attachment that carries a numbered series (issue #729).
+ *
+ * The key's own shape (`mode` among the seven, a whole `index`, a delay the
+ * parser will not divide by zero) is `parseMotionSpec`'s; what is refused here
+ * needs the emitted attachment:
+ *
+ *   - an attachment with no `sequence` block. The parser gives every region and
+ *     mesh a one-region series (`readSequence(null)` is `new Sequence(1,
+ *     false)`), so the timeline loads and every mode shows that one region —
+ *     measured: a `loop` key on a plain region showed it at every time.
+ *   - an `index` at or past the series' `count`. `Sequence.resolveIndex` clamps
+ *     it to the last frame (measured: `hold` at index 5 of 4 showed frame 4).
+ *   - a linked mesh that plays its source's timelines (`timelines` absent or
+ *     true). Its `timelineAttachment` is the SOURCE (`SkeletonJson.js:437-448`),
+ *     and `SequenceTimeline.applyToSlot` returns unless the slot's attachment's
+ *     `timelineAttachment` is the one the timeline was built for — so a key
+ *     aimed at the link itself is applied to nothing.
+ *
+ * Fields are emitted exactly as stated: an omitted `mode` is the parser's
+ * `"hold"`, an omitted `index` its 0, an omitted `delay` the previous key's —
+ * none of which the compiler writes for the spec.
+ */
+function compileSequenceTrack(
+  track: MotionSequenceTrack,
+  duration: number,
+  attachment: SpineAttachment,
+  where: string,
+): SpineTimelineKey[] {
+  const type = (attachment as { type?: string }).type ?? 'region';
+  const series = (attachment as { sequence?: SpineSequence }).sequence;
+  if (series === undefined) {
+    throw new CompileError(
+      `${where}: attachment "${track.attachment}" carries no "sequence" block, so there is no series to step. The ` +
+        'parser gives every region and mesh a series of ONE region (`readSequence(null)` is `new Sequence(1, ' +
+        'false)`), so this timeline would load and show that region under every mode at every time. Give the ' +
+        'attachment a "sequence" in the rig spec, or remove the track.',
+    );
+  }
+  if (type === 'linkedmesh' && (attachment as SpineLinkedMeshAttachment).timelines !== false) {
+    const source = (attachment as SpineLinkedMeshAttachment).source;
+    throw new CompileError(
+      `${where}: attachment "${track.attachment}" is a linked mesh that plays its source's timelines ("timelines" ` +
+        `is not false), so its \`timelineAttachment\` is "${source}" (\`SkeletonJson.js:437-448\`) and ` +
+        '`SequenceTimeline` applies only where the slot\'s attachment\'s `timelineAttachment` is the one it was ' +
+        `built for — a key aimed at the link is applied to nothing. Key "${source}" instead (the link steps its own ` +
+        'series by it), or set "timelines": false on the link.',
+    );
+  }
+  if (track.keys.length === 0) throw new CompileError(`${where}: no keys`);
+  const out: SpineTimelineKey[] = [];
+  for (let i = 0; i < track.keys.length; i++) {
+    const key = track.keys[i];
+    const time = keyTime(key.t);
+    if (i > 0 && time <= (out[i - 1].time as number)) {
+      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
+    }
+    checkKeyTime(where, time, key.t, duration);
+    if (key.index !== undefined && key.index >= series.count) {
+      throw new CompileError(
+        `${where} (t=${key.t}): index ${key.index} is past the end of a ${series.count}-frame series (frames 0 to ` +
+          `${series.count - 1}). \`Sequence.resolveIndex\` clamps it to the last frame, so the key would start on a ` +
+          'frame it does not name. `index` is 0-based.',
+      );
+    }
+    const entry: SpineTimelineKey = { time };
+    if (key.mode !== undefined) entry.mode = key.mode;
+    if (key.index !== undefined) entry.index = key.index;
+    if (key.delay !== undefined) entry.delay = r6(key.delay);
+    out.push(entry);
+  }
+  return out;
+}
+
 function compileDeformTrack(
   track: MotionDeformTrack,
   motion: MotionSpec,

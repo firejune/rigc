@@ -156,6 +156,15 @@ export function overlayFixture(): Fixture {
   writePlate(join(dir, 'parts', 'lens_r_shut.png'), 64, 40, 'lens r');
   writePlate(join(dir, 'parts', 'iris_open.png'), 96, 64, 'iris open');
   writePlate(join(dir, 'parts', 'iris_wide.png'), 96, 64, 'iris wide');
+  // A numbered image series: four frames one attachment steps through, named
+  // the way `Sequence.getPath` asks for them — the stem, then the frame number
+  // zero-padded to four digits. The stem sorts after every manifest part in
+  // `parts/`, because `CLI87` corrupts the FIRST part there and measures the
+  // manifest's `image "parts/…"` refusal — a frame sorting first would answer it
+  // with the frame's sentence instead.
+  for (let frame = 1; frame <= 4; frame++) {
+    writePlate(join(dir, 'parts', `spark_${String(frame).padStart(4, '0')}.png`), 32, 32, `spark ${frame}`);
+  }
 
   const irisWindow = { x: 80, y: 150, w: 96, h: 64 };
   const manifestPath = join(dir, 'manifest.json');
@@ -216,6 +225,9 @@ export function overlayFixture(): Fixture {
     // it out, so the same run also exercises the SKIP that names a loss nobody
     // asked to be gated on.
     invariants: { meshSlots: 3, meshTriangles: 80, editorRoundTrip: true },
+    // Where the rig's OWN skin finds its art — the numbered series below, which
+    // no manifest part can state, in the directory the manifest's parts are in.
+    images: 'parts',
     bones: [
       { name: 'root' },
       { name: 'panel', parent: 'root', x: 0, y: 0 },
@@ -230,7 +242,16 @@ export function overlayFixture(): Fixture {
       { name: 'lens_l', bone: 'lens_l' },
       { name: 'lens_r', bone: 'lens_r' },
       { name: 'iris', bone: 'iris' },
+      { name: 'spark', bone: 'panel' },
     ],
+    // ⭐ The one slot the RIG fills rather than the manifest, because a
+    // `sequence` is a rig-spec construct: a region whose frames are the four
+    // `spark_0001`…`spark_0004` plates, stepped by `cycle` below. It is here
+    // rather than on a probe of its own so the whole mutant table runs over a
+    // skeleton that carries one (issue #729).
+    skins: {
+      default: { spark: { spark: { path: 'spark_', x: 40, y: 40, sequence: { count: 4, start: 1, digits: 4 } } } },
+    },
   });
 
   const fade = (t: number, a: number, ease?: string): Record<string, unknown> => ({
@@ -250,6 +271,7 @@ export function overlayFixture(): Fixture {
       lens_l: { attachment: 'lens_l_shut', color: [1, 1, 1, 0] },
       lens_r: { attachment: 'lens_r_shut', color: [1, 1, 1, 0] },
       iris: { attachment: null },
+      spark: { attachment: 'spark' },
     },
     physics: {
       iris_settle: {
@@ -292,6 +314,18 @@ export function overlayFixture(): Fixture {
               { t: 0, v: 'iris_open' },
               { t: 0.5, v: 'iris_wide' },
               { t: 1, v: 'iris_open' },
+            ],
+          },
+        ],
+        // The series, looped and then bounced: two modes whose frames differ
+        // from the second pass on, so a `pingpong` played as a `loop` shows.
+        sequence: [
+          {
+            slot: 'spark',
+            attachment: 'spark',
+            keys: [
+              { t: 0, mode: 'loop', delay: 0.1 },
+              { t: 0.5, mode: 'pingpong', index: 1, delay: 0.1 },
             ],
           },
         ],

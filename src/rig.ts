@@ -590,6 +590,50 @@ export interface RigRegionAttachment {
   height?: number;
   /** `rrggbbaa`. */
   color?: string;
+  /** A numbered image series in place of one region — see `RigSequence`. */
+  sequence?: RigSequence;
+}
+
+/**
+ * A numbered image series drawn by ONE attachment — `readSequence`
+ * (`SkeletonJson.js:641-649`), on a region, a mesh or a linked mesh.
+ *
+ * The attachment's `path` (or, with none, its placeholder) is the series'
+ * **stem**, and frame `i` is the atlas region `stem + (start + i)` left-padded
+ * with zeros to `digits` — `Sequence.getPath` (`Sequence.js:124-132`), which
+ * `AtlasAttachmentLoader.findRegions` walks for every `i` below `count`. A
+ * `sequence` timeline (the motion spec's `sequence` family) chooses which frame
+ * shows; without one, the frame is `setup`.
+ *
+ * ⭐ **The frames resolve by name and a missing one is refused by name.** On the
+ * loose route frame `i` is the PNG `<images>/<region>.png`; under `--atlas-in`
+ * it is the pack's region of that name. The compiler looks each one up and names
+ * the frame number and the region it looked for when one is absent — it never
+ * stands one frame in for another, and the loader's own miss
+ * (`Region not found in atlas`) names neither the frame nor the series.
+ *
+ * ⚠️ An attachment carrying a sequence states no `image`: an image names one
+ * region and a sequence names `count` of them, so the pair would be two claims
+ * about what the attachment draws. And no `generator`: a generator traces one
+ * plate, and which frame it should trace is not something the spec says.
+ */
+export interface RigSequence {
+  /**
+   * How many frames. **Required** — the parser's default is 0
+   * (`new Sequence(getValue(map, "count", 0), true)`), which loads an attachment
+   * holding no region at all and draws nothing, with no error.
+   */
+  count: number;
+  /** The number the first frame's name carries. Parser default 1. */
+  start?: number;
+  /** Zero-pad the frame number to at least this many digits. Parser default 0 (no padding). */
+  digits?: number;
+  /**
+   * The frame the setup pose shows, 0-based. Parser default 0. Spelled as the
+   * FILE spells it (`getValue(map, "setup", 0)`); `setupIndex` is the runtime's
+   * field name and is not a key the format has.
+   */
+  setup?: number;
 }
 
 /**
@@ -667,6 +711,8 @@ export interface RigMeshAttachment {
   color?: string;
   /** Build the geometry instead of authoring it — see `RigMeshGenerator`. */
   generator?: RigMeshGenerator;
+  /** A numbered image series over this one triangulation — see `RigSequence`. */
+  sequence?: RigSequence;
 }
 
 /**
@@ -731,6 +777,8 @@ export interface RigLinkedMeshAttachment {
   width?: number;
   height?: number;
   color?: string;
+  /** The link's OWN numbered series — see `RigSequence`. */
+  sequence?: RigSequence;
   /**
    * 🚫 Every geometry field a mesh may state, refused by name on a link. They
    * are declared for the reason `RigPathAttachment.lengths` is: a key the shape
@@ -1573,17 +1621,18 @@ export const RIG_KEYS = {
   ],
   RigTransformProperty: ['offset', 'to'],
   RigTransformTo: ['offset', 'max', 'scale'],
-  RigRegionAttachment: ['type', 'path', 'image', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'width', 'height', 'color'],
+  RigRegionAttachment: ['type', 'path', 'image', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'width', 'height', 'color', 'sequence'],
   RigMeshAttachment: [
     'type', 'path', 'image', 'uvs', 'triangles', 'vertices', 'weights', 'boneIndexing', 'hull', 'edges',
-    'width', 'height', 'color', 'generator',
+    'width', 'height', 'color', 'generator', 'sequence',
   ],
   RigLinkedMeshAttachment: [
-    'type', 'path', 'image', 'source', 'slot', 'skin', 'timelines', 'width', 'height', 'color',
+    'type', 'path', 'image', 'source', 'slot', 'skin', 'timelines', 'width', 'height', 'color', 'sequence',
     // Declared so the refusal can name them — see `RigLinkedMeshAttachment`.
     'uvs', 'triangles', 'vertices', 'weights', 'boneIndexing', 'hull', 'edges', 'generator',
   ],
   RigMeshBinding: ['bone', 'x', 'y', 'weight'],
+  RigSequence: ['count', 'start', 'digits', 'setup'],
   RigBoundingBoxAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type'],
   RigClippingAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type', 'end', 'convex', 'inverse'],
   RigPathAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type', 'closed', 'constantSpeed', 'lengths'],
@@ -1628,6 +1677,83 @@ const GENERATOR_SHAPE: Record<string, keyof typeof RIG_KEYS> = {
   contour: 'RigContourGenerator',
   grid: 'RigGridGenerator',
 };
+
+/**
+ * The attachment kinds that carry a `sequence` — the three `readAttachment`
+ * branches that call `readSequence` (`SkeletonJson.js:530`, `:561`; `mesh` and
+ * `linkedmesh` share the second).
+ */
+export const SEQUENCE_ATTACHMENT_TYPES = ['region', 'mesh', 'linkedmesh'] as const;
+
+/**
+ * One attachment's `sequence` block, refused by name where the parser would read
+ * it into a series that is not the one the spec states.
+ *
+ * Every refusal here is a silence measured on spine-core 4.3.13 (issue #729):
+ *
+ *   - no `count` — the parser's default is 0, and the attachment loads holding
+ *     no region at all;
+ *   - a `setup` at or past `count` — `Sequence.resolveIndex` clamps it to the
+ *     last frame (`setup: 7` on a four-frame series showed frame 4), and a
+ *     negative one indexes `regions[-1]`;
+ *   - a fractional `count`, `start`, `digits` or `setup` — `start: 1.5` makes
+ *     `Sequence.getPath` ask the atlas for `stem1.5`;
+ *   - an `image` beside it — one file names one region, and the series names
+ *     `count` of them;
+ *   - a `generator` beside it — a generator traces one plate, and which frame it
+ *     should trace is not something the spec says.
+ */
+function checkRigSequence(att: Record<string, unknown>, who: string, where: string): void {
+  const seq = att.sequence;
+  const at = `${who} "sequence"`;
+  if (!isObj(seq)) {
+    throw new CompileError(
+      `${where}: ${at} is ${JSON.stringify(seq) ?? String(seq)}, and a sequence is an object: ` +
+        '`{ "count": <frames>, "start"?: <first number>, "digits"?: <zero padding>, "setup"?: <setup frame> }`',
+    );
+  }
+  const whole = (field: string, min: number): void => {
+    const value = seq[field];
+    if (value === undefined) return;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < min) {
+      throw new CompileError(
+        `${where}: ${at}.${field} is ${JSON.stringify(value) ?? String(value)}; it is a whole number` +
+          (min > 0 ? ` of at least ${min}` : min === 0 ? ' of at least 0' : '') +
+          ' — `Sequence.getPath` writes `start + i` into the region name digit for digit, so a fraction names a ' +
+          'region like `stem1.5` and a non-number names none',
+      );
+    }
+  };
+  if (seq.count === undefined) {
+    throw new CompileError(
+      `${where}: ${at} states no "count". The parser reads \`getValue(map, "count", 0)\` ` +
+        '(`SkeletonJson.js:644`), so an omitted count is a series of NO frames: the attachment loads holding no ' +
+        'region and draws nothing, without an error. State how many frames the series has.',
+    );
+  }
+  whole('count', 1);
+  whole('start', 0);
+  whole('digits', 0);
+  whole('setup', 0);
+  const count = seq.count as number;
+  if (typeof seq.setup === 'number' && seq.setup >= count) {
+    throw new CompileError(
+      `${where}: ${at}.setup is ${seq.setup}, and a ${count}-frame series has frames 0 to ${count - 1}. ` +
+        '`Sequence.resolveIndex` clamps an index at or past the end to the LAST frame (measured: `setup: 7` on ' +
+        'four frames showed frame 4), so this would show a frame the spec does not name. `setup` is 0-based.',
+    );
+  }
+  for (const [field, why] of [
+    ['image', 'an image names ONE region and a sequence names `count` of them — the frames are the regions ' +
+      '`<path><number>`, and on the loose route each is the PNG of that name in the images directory'],
+    ['generator', 'a generator traces one plate, and which frame of the series it should trace is not something ' +
+      'the spec says — author the geometry, which every frame shares'],
+  ] as const) {
+    if (att[field] !== undefined) {
+      throw new CompileError(`${where}: ${who} states "${field}" beside "sequence"; ${why}. Remove "${field}".`);
+    }
+  }
+}
 
 /**
  * Refuse every key of this rig spec that no shape above declares.
@@ -1719,7 +1845,23 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
         const type = stated === 'mesh' && att.source !== undefined ? 'linkedmesh' : stated;
         const shape = ATTACHMENT_SHAPE[type];
         if (shape === undefined) continue;
+        // Before the key check, so a `sequence` on a kind that has no texture is
+        // named as that — "a key this compiler does not read … fix the spelling"
+        // would send the author hunting for a typo in a word spelled right.
+        if (att.sequence !== undefined && !(SEQUENCE_ATTACHMENT_TYPES as readonly string[]).includes(type)) {
+          throw new CompileError(
+            `${where}: ${who} is a ${type} and states a "sequence". A sequence is a numbered series of atlas ` +
+              `regions, and only the ${SEQUENCE_ATTACHMENT_TYPES.length} kinds that draw a region carry one — ` +
+              `${SEQUENCE_ATTACHMENT_TYPES.join(', ')} (\`readAttachment\` calls \`readSequence\` in exactly those ` +
+              `branches, \`SkeletonJson.js:530\` and \`:561\`); on a ${type} the parser never reads the key, so the ` +
+              'series would be dropped in silence. Remove it, or put it on a region or a mesh.',
+          );
+        }
         at(att, shape, `${who} (${type})`);
+        if (att.sequence !== undefined) {
+          at(att.sequence, 'RigSequence', `${who} "sequence"`);
+          checkRigSequence(att, who, where);
+        }
         for (const [i, vertex] of (Array.isArray(att.weights) ? att.weights : []).entries()) {
           for (const [j, binding] of (Array.isArray(vertex) ? vertex : []).entries()) {
             at(binding, 'RigMeshBinding', `${who} weights[${i}][${j}]`);

@@ -571,3 +571,26 @@ export const SLOT_COLOR_CHANNELS: Record<string, readonly SlotColorChannel[]> = 
   rgba2: ['rgb', 'alpha', 'dark'],
   rgb2: ['rgb', 'dark'],
 };
+
+/**
+ * The seven modes a `sequence` key may state, in the runtime's own enum order
+ * (`SequenceMode` in `attachments/Sequence.js`: `hold` 0 … `pingpongReverse` 6).
+ *
+ * 🚨 **The parser does not refuse a mode it does not know.** `readAnimation`
+ * reads `SequenceMode[getValue(keyMap, "mode", "hold")]`, which is `undefined`
+ * for a spelling outside the seven (and for a NUMBER, because the enum's reverse
+ * mapping turns `3` into the string `"pingpong"`), and `setFrame` then stores
+ * `undefined | (index << 4)` — mode bits 0, which is `hold`. Measured: a key
+ * spelled `"pingPong"` loads without a word and shows its `index` frame for
+ * the whole key. So every reader of a mode refuses anything outside this list,
+ * by this list.
+ *
+ * It lives here for `SLOT_COLOR_CHANNELS`' reason: the motion parser refuses an
+ * unknown mode in a spec, `A46` names one in a file rigc did not write, `ingest`
+ * carries one, and the four have to be one list. The compiler links no runtime,
+ * so a selftest control asks the linked one for its enum and holds this to it.
+ */
+export const SEQUENCE_MODES = ['hold', 'once', 'loop', 'pingpong', 'onceReverse', 'loopReverse', 'pingpongReverse'] as const;
+
+/** One of `SEQUENCE_MODES`. */
+export type SequenceModeName = (typeof SEQUENCE_MODES)[number];
