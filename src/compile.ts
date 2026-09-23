@@ -400,7 +400,11 @@ function editorSkinOrder<T extends { name: string }>(skins: readonly T[]): T[] {
  * partly sorted:
  *
  * - a pair the comparator leaves open (`editorNameOrder`'s number, separator and
- *   folder cases);
+ *   folder cases). Since #791 a name carrying U+3000 or a full-width digit is
+ *   not one: the comparator folds both first (`EDITOR_NAME_FOLD`), which is
+ *   what a production map of 95 slot keys was measured to need, so such a map
+ *   is sorted where it used to be kept whole — or, with only full-width digits
+ *   in it, sorted with the digits at their code points;
  * - any slot name holding `/`. The folder rule was measured on skin and
  *   animation names, which the editor files in folders; slots it files under
  *   bones, and no round trip carried a slot name with a `/` in it.
@@ -465,10 +469,59 @@ interface ReadName {
   skipped: number;
 }
 
+/**
+ * The characters the editor folds before it compares two names, as
+ * `[first, last, to]` code point ranges: each of `first`…`last` is read as
+ * `to` plus its offset from `first` (issue #791).
+ *
+ * 🔬 **Measured on a production set, not on the probes or `examples/`.** One
+ * skin's `attachments` map of 95 slot keys, 7 of them carrying U+3000
+ * IDEOGRAPHIC SPACE or a full-width digit (U+FF12, U+FF14), came back in an
+ * order this comparator reproduces **95 of 95** once U+3000 is read as U+0020
+ * and U+FF10–U+FF19 as `0`–`9` — an order neither a plain codepoint sort nor a
+ * case-insensitive sort without the fold reproduces. No name in the five probes, the
+ * twelve exports or any spec in this tree carries either character, so the set
+ * is the only measurement of them there is.
+ *
+ * ⚠️ **Exactly those two classes, and not `normalize('NFKC')`, although NFKC
+ * folds both the same way.** Three readings reproduce the measurement and
+ * disagree past it: NFKC (which also turns `ﬁ` into `fi`, `²` and `①` into
+ * digits, U+00A0 and U+2000–U+200A into a space, and composes `e` + U+0301
+ * into `é`); a classifier that reads every Unicode decimal digit as a digit and
+ * every space separator as a space (which also reads `٣` as 3, and does none
+ * of NFKC's other folds); and a width fold alone (which also reads `Ａ` as `A`,
+ * and folds no other space). What all three agree on is exactly U+3000 and the
+ * ten full-width digits — the ten are one class under every reading, so the
+ * eight the set did not carry are folded with the two it did — and that
+ * intersection is what is applied. Every other character is compared at its own
+ * code point as before, and a whitespace character that is not a space is still
+ * `leafOrder`'s `separator`.
+ *
+ * One comparator (#728), so the fold reaches `skins` and `animations` too: an
+ * animation name with a full-width digit was compared at the digit's code point,
+ * the order the only measurement of such a name contradicts, and a pair that
+ * U+3000 decided was refused as `separator` and is now ordered.
+ */
+export const EDITOR_NAME_FOLD: ReadonlyArray<readonly [number, number, number]> = [
+  [0x3000, 0x3000, 0x0020],
+  [0xff10, 0xff19, 0x0030],
+];
+
+/** `name` with every character `EDITOR_NAME_FOLD` covers read as the character it folds to. */
+function foldBeforeComparing(name: string): string {
+  let out = '';
+  for (const char of name) {
+    const code = char.codePointAt(0) ?? 0;
+    const range = EDITOR_NAME_FOLD.find(([first, last]) => code >= first && code <= last);
+    out += range === undefined ? char : String.fromCodePoint(range[2] + code - range[0]);
+  }
+  return out;
+}
+
 function readName(name: string, skip: RegExp): ReadName {
   const chars: string[] = [];
   let skipped = 0;
-  for (const char of foldUp(name)) {
+  for (const char of foldUp(foldBeforeComparing(name))) {
     if (skip.test(char)) skipped++;
     else chars.push(char);
   }
@@ -4293,6 +4346,33 @@ function attachmentPath(att: { path?: string; image?: string }, placeholder: str
 }
 
 /**
+ * A mesh attachment's `path` and `color`, in that order — the two keys every
+ * mesh constructor spreads right after `type` (issue #791).
+ *
+ * 🔬 The editor writes a mesh `type, path, color, uvs, …`: right after `type`,
+ * `path` before `color` — measured on a production set (#791), not on
+ * `examples/`. There 18 meshes whose `path` differs from their name wrote it
+ * second and 1 mesh with a `color` wrote that second; no object carried both, so
+ * `path` before `color` is the order the two measured positions leave, not a
+ * third measurement. The twelve exports carry neither key on a mesh, which is
+ * why `EDITOR_KEY_ORDER`'s `mesh attachment` row does not list them: an unlisted
+ * key keeps its constructor's index, so the position is stated HERE, and the
+ * row stays what the public exports derive.
+ *
+ * ⚠️ Not a linked mesh's, and not a region's. Neither was in the measured set —
+ * a region's `path` stays where `buildRigRegion` puts it, a linked mesh's
+ * keys where `buildRigLinkedMesh` does — because the analogy to a mesh is
+ * obvious and it is not a measurement.
+ */
+function meshTextureKeys(att: { path?: string; image?: string; color?: string }, placeholder: string): Pick<SpineMeshAttachment, 'path' | 'color'> {
+  const out: Pick<SpineMeshAttachment, 'path' | 'color'> = {};
+  const path = attachmentPath(att, placeholder);
+  if (path !== undefined) out.path = path;
+  if (att.color !== undefined) out.color = att.color;
+  return out;
+}
+
+/**
  * The atlas region frame `i` of a sequence resolves to — `Sequence.getPath`
  * (`Sequence.js:124-132`) transcribed: the stem, then `start + i` left-padded
  * with zeros to `digits`. `start` and `digits` take the parser's own defaults
@@ -4707,6 +4787,7 @@ function buildRigMesh(
   }
   const out: SpineMeshAttachment = {
     type: 'mesh',
+    ...meshTextureKeys(att, placeholder),
     uvs: att.uvs.map(f32),
     triangles: att.triangles,
     vertices,
@@ -4715,9 +4796,6 @@ function buildRigMesh(
     width: f32(width),
     height: f32(height),
   };
-  const path = attachmentPath(att, placeholder);
-  if (path !== undefined) out.path = path;
-  if (att.color !== undefined) out.color = att.color;
   if (att.sequence !== undefined) out.sequence = emitSequence(att.sequence);
   // Register it as `authored`: geometry rigc did not build and whose topology it
   // therefore gets to assume nothing about. The generator-topology assertions
@@ -4998,6 +5076,7 @@ function buildGeneratedMesh(
   });
   const out: SpineMeshAttachment = {
     type: 'mesh',
+    ...meshTextureKeys(att, placeholder),
     uvs: geometry.uvs.map(f32),
     triangles: geometry.triangles,
     vertices: vertices.map(f32),
@@ -5005,9 +5084,6 @@ function buildGeneratedMesh(
     width: f32(w),
     height: f32(h),
   };
-  const path = attachmentPath(att, placeholder);
-  if (path !== undefined) out.path = path;
-  if (att.color !== undefined) out.color = att.color;
   return out;
 }
 
@@ -5565,6 +5641,7 @@ function buildGridAttachment(
   });
   const out: SpineMeshAttachment = {
     type: 'mesh',
+    ...meshTextureKeys(att, placeholder),
     uvs: geometry.uvs.map(f32),
     triangles: geometry.triangles,
     vertices: vertices.map(f32),
@@ -5572,9 +5649,6 @@ function buildGridAttachment(
     width: f32(w),
     height: f32(h),
   };
-  const path = attachmentPath(att, placeholder);
-  if (path !== undefined) out.path = path;
-  if (att.color !== undefined) out.color = att.color;
   return out;
 }
 
@@ -5726,8 +5800,15 @@ function buildContourAttachment(
     holePixels: geometry.contour?.holePixels,
     depth: depth?.summary,
   });
+  // Same rule a region attachment follows: the atlas region is the PNG's
+  // basename, so a placeholder named anything else needs `path` written down or
+  // the loader resolves nothing. Stated once in `attachmentPath` since #577 —
+  // this comment used to be the rule's only statement, beside four emit sites
+  // that disagreed with it — and spread right after `type` by
+  // `meshTextureKeys` since #791.
   const out: SpineMeshAttachment = {
     type: 'mesh',
+    ...meshTextureKeys(att, placeholder),
     uvs: geometry.uvs.map(f32),
     triangles: geometry.triangles,
     vertices: vertices.map(f32),
@@ -5735,14 +5816,6 @@ function buildContourAttachment(
     width: f32(w),
     height: f32(h),
   };
-  // Same rule a region attachment follows: the atlas region is the PNG's
-  // basename, so a placeholder named anything else needs `path` written down or
-  // the loader resolves nothing. Stated once in `attachmentPath` since #577 —
-  // this comment used to be the rule's only statement, beside four emit sites
-  // that disagreed with it.
-  const path = attachmentPath(att, placeholder);
-  if (path !== undefined) out.path = path;
-  if (att.color !== undefined) out.color = att.color;
   return out;
 }
 

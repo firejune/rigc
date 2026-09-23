@@ -1045,6 +1045,15 @@ page:
 | leaves a remaining **tie in the order your file declares it** | `turn` before `Turn`; `Mango` before `mango` — each given in that order and returned in it |
 | writes **leaves then folders at the root**, and **sub-folders then leaves inside a folder** | `h` before `f/sub1/deep/q`; `f/sub1/x` before `f/leafA` |
 
+🔸 **One clause of the rule is not from those files.** Before comparing, the
+comparator reads U+3000 IDEOGRAPHIC SPACE as a space and the full-width digits
+U+FF10–U+FF19 as `0`–`9`. No probe carried either; the fold was measured on a
+production skin's slot keys ([#791](https://github.com/firejune/rigc/issues/791),
+§10.6b says what was measured and why it is those two classes and not NFKC), and
+it applies here because R10, R11 and a skin's slot keys are one comparator. So
+`shot２` sorts before `shot10`, and a pair an ideographic space decides is
+ordered rather than refused as `separator`.
+
 ⭐ **A tie is not an ambiguity, and that is what retired most of this rule's
 refusals.** Two names the comparator cannot separate come back in the order the
 file gave them, so the order rigc emits for such a pair is **your own declaration
@@ -8160,6 +8169,33 @@ says which.**
   rejected on a measured case: the corpus's physics `strength` keys are all at
   t=0, so the editor wrote them `value` alone, and that rule would have moved
   `time` — first in every other key kind the editor writes — behind `value`.
+
+🔬 **Two positions and one fold are measured on a production set, not on
+`examples/`** ([#791](https://github.com/firejune/rigc/issues/791)). The twelve
+exports carry no mesh `path` or `color` and no slot name outside ASCII — `IG84`
+and `IG85` count both on every run with a corpus — so the table cannot learn
+either, and what rigc writes for them was read off 42 production exports
+instead:
+
+- **A mesh attachment writes `path` and `color` right after `type`, `path` before `color` — measured on a production set (#791), not on `examples/`.**
+  18 meshes whose `path` differs from their name wrote it second, and 1 with a
+  `color` wrote that second; no mesh carried both. The row does not list them,
+  so the position is the constructor's — `meshTextureKeys` in
+  [`src/compile.ts`](../src/compile.ts), which every mesh route spreads right
+  after `type` (`S104`). A region's `path` and a linked mesh's keys stay where
+  they were: neither was in the set, and an analogy is not a measurement.
+- **A skin's slot keys are compared after `foldBeforeComparing`, which reads U+3000 as U+0020 and U+FF10–U+FF19 as U+0030–U+0039** —
+  the ideographic space as a space, the full-width digits as `0`–`9`
+  (`EDITOR_NAME_FOLD`). One map of 95 slot keys, 7 of them carrying those
+  characters, came back in an order this reproduces 95 of 95 and neither a
+  codepoint sort nor the comparator without the fold does (`S105`). It is **not**
+  `normalize('NFKC')`, though NFKC folds both the same way: NFKC, a classifier
+  that reads every Unicode digit as a digit and every space separator as a space,
+  and a width fold alone all reproduce that map and disagree past it (on `ﬁ`,
+  `²`, `٣`, `Ａ`, a no-break space), and what all three agree on is exactly
+  these two classes. The comparator is R10's, so animation and skin names are
+  compared after the fold too. A pair the fold does not close — a tab, a
+  no-break space — still keeps the map in rigc's order, whole (`S106`).
 
 🔸 **An object keyed by NAMES is not a field order**, and the table does not
 touch one. A bone's or a slot's timelines, and a transform constraint's

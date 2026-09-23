@@ -143,6 +143,7 @@ import {
   buildAtlasText,
   compile,
   CompileError,
+  EDITOR_NAME_FOLD,
   editorNamesInOrder,
   relativeImagesPath,
   SPINE_VERSION,
@@ -11870,7 +11871,220 @@ function runStaticRigSuite(): number {
         'the rebuild the row produced',
     );
   }
+
+  // --- S104-S106: the key order the public exports could not teach (#791) ---
+  //
+  // Two measurements taken on a production set, held here on generated rigs
+  // because no export under `examples/` carries either shape (`IG84` and
+  // `IG85` count them there):
+  //
+  //   S104  mesh routes   a mesh with a `path`, and one with a `color`, writes
+  //                       it right after `type` on every mesh constructor route
+  //   S105  the fold      a skin map whose slot names carry U+3000 and
+  //                       full-width digits is keyed in the folded order
+  //   S106  still open    a pair the fold does not close keeps the map whole
+  {
+    // S104 — one slot per route and key: `renamed` draws `block.png`, so its
+    // `path` differs from its name; `block` does not, so it carries `color` alone.
+    const TINT = '336699cc';
+    const routes: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+      ['authored', gridMesh(3, 3, 'outline-first')],
+      ['ring or ribbon', { type: 'mesh', image: 'block.png', generator: { kind: 'ribbon', size: [12, 8], rows: 3, chain: ['block', 'tip'] } }],
+      ['grid', { type: 'mesh', image: 'block.png', generator: { kind: 'grid', cols: 2, rows: 2 } }],
+      ['contour', { type: 'mesh', image: 'block.png', generator: { kind: 'contour', tolerance: 1 } }],
+    ];
+    const carried = [
+      { key: 'path', placeholder: 'renamed', extra: {} },
+      { key: 'color', placeholder: 'block', extra: { color: TINT } },
+    ] as const;
+    const meshSlots = routes.flatMap(([route, mesh], r) =>
+      carried.map((c) => ({ slot: `mesh_route_${r}_${c.key}`, route, key: c.key, placeholder: c.placeholder, mesh: { ...mesh, ...c.extra } })),
+    );
+    const meshDirs = writeProbeRig({
+      invariants: { meshSlots: meshSlots.length, meshTriangles: 200 },
+      bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }, { name: 'tip', parent: 'block', x: 6 }],
+      slots: meshSlots.map((m) => ({ name: m.slot, bone: 'block', attachment: m.placeholder })),
+      skins: { default: Object.fromEntries(meshSlots.map((m) => [m.slot, { [m.placeholder]: m.mesh }])) },
+    });
+    let meshBuilt: Record<string, Record<string, Record<string, unknown>>> = {};
+    let meshRefused = '';
+    try {
+      const skeleton = JSON.parse(compileProbe(meshDirs).skeletonText) as { skins: Array<{ attachments: typeof meshBuilt }> };
+      meshBuilt = skeleton.skins[0]?.attachments ?? {};
+    } catch (err) {
+      meshRefused = (err as Error).message.split('\n')[0];
+    }
+    const textureKeyFaults = (built: typeof meshBuilt): string[] =>
+      meshSlots.flatMap((m) => {
+        const att = built[m.slot]?.[m.placeholder];
+        if (att === undefined) return [`${m.slot}/${m.placeholder} (${m.route}): not emitted`];
+        const keys = Object.keys(att);
+        const carriedKeys = ['path', 'color'].filter((k) => k in att);
+        const faults: string[] = [];
+        if (!(m.key in att)) faults.push(`${m.slot}/${m.placeholder} (${m.route}): emitted without the \`${m.key}\` it was built to carry`);
+        if (keys[0] !== 'type' || keys.slice(1, 1 + carriedKeys.length).join(',') !== carriedKeys.join(',')) {
+          faults.push(`${m.slot}/${m.placeholder} (${m.route}): keys ${keys.join(', ')} — \`${carriedKeys.join('`, `')}\` ${carriedKeys.length === 1 ? 'belongs' : 'belong'} right after \`type\``);
+        }
+        return faults;
+      });
+    const meshStanding = textureKeyFaults(meshBuilt);
+    // The plant: the first slot's `path` moved to the end, where the branch
+    // point wrote it. The same reading must name that slot and nothing else.
+    let meshPlantSaid = '';
+    const meshPlantProbes: string[] = [];
+    const firstMesh = meshSlots[0];
+    const firstAtt = meshBuilt[firstMesh.slot]?.[firstMesh.placeholder];
+    if (firstAtt === undefined || !(firstMesh.key in firstAtt)) meshPlantProbes.push(`${firstMesh.slot} carries no \`${firstMesh.key}\` to move, so nothing was planted`);
+    else {
+      const { [firstMesh.key]: moved, ...rest } = firstAtt;
+      const planted = { ...meshBuilt, [firstMesh.slot]: { ...meshBuilt[firstMesh.slot], [firstMesh.placeholder]: { ...rest, [firstMesh.key]: moved } } };
+      const raised = raisedBy(textureKeyFaults(planted), { was: meshStanding });
+      if (raised.length !== 1 || !raised[0].startsWith(`${firstMesh.slot}/`)) meshPlantProbes.push(`\`${firstMesh.key}\` moved last on ${firstMesh.slot} raised ${raised.length} fault(s), not that one`);
+      else meshPlantSaid = `\`${firstMesh.key}\` moved last is named: "${raised[0]}"`;
+    }
+    const meshProbes = [
+      ...(meshRefused === '' ? [] : [`the probe was refused: ${meshRefused}`]),
+      ...firstFew(meshStanding, 'mesh(es)'),
+      ...meshPlantProbes,
+    ];
+    const meshHeld = meshProbes.length === 0;
+    say(
+      'S104_A_MESH_WRITES_ITS_PATH_AND_ITS_COLOR_RIGHT_AFTER_TYPE_ON_EVERY_CONSTRUCTOR_ROUTE',
+      meshHeld,
+      probeDetail(
+        meshHeld,
+        meshProbes,
+        `${meshSlots.length} mesh(es) over ${routes.length} route(s) (${routes.map(([route]) => route).join(', ')}), one ` +
+          `carrying a \`path\` and one a \`color\` on each, each written \`type\` and then the key it carries — and ${meshPlantSaid}`,
+        (count) => `${count} mesh(es) whose \`path\` or \`color\` is not right after \`type\`:`,
+      ),
+      'issue #791: 18 meshes whose `path` differs from their name and 1 with a `color`, in a production set, were ' +
+        'written `type, path, uvs, …` / `type, color, uvs, …` by the editor and last by rigc. The table\'s row cannot ' +
+        'place them — no export under `examples/` carries either key on a mesh — so the constructors do',
+    );
+
+    // S105 — slot names built from code points, never pasted: the expected
+    // order is the rule stated here — U+3000 read as U+0020, U+FF10–U+FF19 as
+    // 0–9 — applied to each name, then the probe-certified comparator on the
+    // ASCII that leaves.
+    const ideographicSpace = String.fromCodePoint(0x3000);
+    const wideDigit = (d: number): string => String.fromCodePoint(0xff10 + d);
+    const foldedByRule = (name: string): string =>
+      [...name]
+        .map((ch) => {
+          const code = ch.codePointAt(0) ?? 0;
+          if (code === 0x3000) return ' ';
+          if (code >= 0xff10 && code <= 0xff19) return String.fromCodePoint(0x30 + code - 0xff10);
+          return ch;
+        })
+        .join('');
+    /** A name list with every character outside printable ASCII spelled as its code point, so a detail shows it. */
+    const spelled = (names: readonly string[] | undefined): string =>
+      JSON.stringify((names ?? []).map((name) => name.replace(/[^\x20-\x7e]/gu, (ch) => `<U+${(ch.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}>`)));
+    const byRule = (names: readonly string[]): string[] => {
+      const back = new Map(names.map((name) => [foldedByRule(name), name]));
+      return editorNamesInOrder([...back.keys()], 'animations').map((folded) => back.get(folded) as string);
+    };
+    const spaced = `lid${ideographicSpace}a`;
+    const wideTen = `lid${wideDigit(1)}${wideDigit(0)}`;
+    const wideFour = `lid${wideDigit(4)}`;
+    const drawn = [spaced, wideTen, 'lid2', 'lidb', wideFour];
+    const digitsOnly = [wideTen, 'lid2', 'lidb', wideFour];
+    const foldBuilt = slotKeyOrderProbe(drawn, { default: drawn, digits: digitsOnly });
+    const foldProbes: string[] = [];
+    if (typeof foldBuilt === 'string') foldProbes.push(`the probe was refused: ${foldBuilt}`);
+    else {
+      for (const [skin, names] of [['default', drawn], ['digits', digitsOnly]] as const) {
+        const want = byRule(names);
+        const got = foldBuilt[skin] ?? [];
+        if (got.join('\u0000') !== want.join('\u0000')) {
+          foldProbes.push(`skin "${skin}": keyed ${spelled(got)} — the folded order is ${spelled(want)}`);
+        }
+        // The fixture has to tell the fold from the two things it replaces: the
+        // map kept whole, and the names sorted at their own code points.
+        if (want.join('\u0000') === names.join('\u0000')) foldProbes.push(`skin "${skin}": the folded order is its draw order, so a map kept whole would pass`);
+      }
+      if (byRule(digitsOnly).join('\u0000') === [...digitsOnly].sort().join('\u0000')) {
+        foldProbes.push('skin "digits": the folded order is the codepoint order, so an unfolded sort would pass');
+      }
+    }
+    const foldHeld = foldProbes.length === 0;
+    say(
+      'S105_A_SKINS_SLOT_KEYS_CARRYING_AN_IDEOGRAPHIC_SPACE_OR_A_FULL_WIDTH_DIGIT_ARE_KEYED_IN_THE_FOLDED_ORDER',
+      foldHeld,
+      probeDetail(
+        foldHeld,
+        foldProbes,
+        `skin "default" keyed ${spelled(typeof foldBuilt === 'string' ? [] : foldBuilt.default)} and skin ` +
+          `"digits" ${spelled(typeof foldBuilt === 'string' ? [] : foldBuilt.digits)} — each the order U+3000 read ` +
+          'as a space and U+FF10–U+FF19 as 0–9 give, and neither its draw order nor, for "digits", the codepoint order',
+        (count) => `${count} map(s) not keyed in the folded order:`,
+      ),
+      'issue #791: one production map of 95 slot keys, 7 carrying U+3000 or a full-width digit, came back in an order ' +
+        'this fold reproduces 95 of 95 and nothing unfolded does. Without it an ideographic space left a pair open, ' +
+        'so rigc kept the map in draw order, and a full-width digit sorted at its code point',
+    );
+
+    // S106 — a pair the fold does not close. A no-break space is whitespace
+    // that is not a space, and the fold leaves it alone, so the pair it decides
+    // is still `separator` and the map keeps rigc's order whole — an
+    // ideographic-space name beside it included.
+    const noBreak = `lid${String.fromCodePoint(0xa0)}a`;
+    const openDrawn = ['lidb', noBreak, 'lid2', `lid${ideographicSpace}c`];
+    const openBuilt = slotKeyOrderProbe(openDrawn, { default: openDrawn });
+    const openProbes: string[] = [];
+    if (typeof openBuilt === 'string') openProbes.push(`the probe was refused: ${openBuilt}`);
+    else {
+      if ((openBuilt.default ?? []).join('\u0000') !== openDrawn.join('\u0000')) {
+        openProbes.push(`keyed ${spelled(openBuilt.default)} — a map with an open pair keeps its draw order ${spelled(openDrawn)}`);
+      }
+      if (byRule(openDrawn.filter((name) => name !== noBreak)).join('\u0000') === openDrawn.filter((name) => name !== noBreak).join('\u0000')) {
+        openProbes.push('the names beside the no-break space are already in their folded order, so a sorted map would pass');
+      }
+    }
+    const openHeld = openProbes.length === 0;
+    say(
+      'S106_A_PAIR_THE_FOLD_DOES_NOT_CLOSE_STILL_KEEPS_THE_SKINS_SLOT_KEYS_WHOLE',
+      openHeld,
+      probeDetail(
+        openHeld,
+        openProbes,
+        `${openDrawn.length} slot key(s), one carrying U+00A0 and one U+3000, keyed ${spelled(typeof openBuilt === 'string' ? [] : openBuilt.default)} — the ` +
+          'draw order, whole, because the fold closes the ideographic space and not the no-break one',
+        (count) => `${count} thing(s) the open pair did not keep:`,
+      ),
+      'the fold is two measured classes and not NFKC, which would read U+00A0 as a space too: a pair the production ' +
+        'set did not measure stays a pair the comparator leaves open, and a slot key is no ordinal, so the map is ' +
+        'kept whole rather than refused',
+    );
+  }
   return bad;
+}
+
+/**
+ * A rig whose slots are `slotNames`, in that draw order, all on one bone, and
+ * whose skins hold a region for the slots each lists — built to read back how
+ * each skin's `attachments` map is keyed. The default skin's region is the
+ * slot's setup attachment; every other skin's is its own placeholder, so no
+ * placeholder is shared with the default skin. Returns each skin's slot keys in
+ * emitted order, or the refusal's first line.
+ */
+function slotKeyOrderProbe(slotNames: readonly string[], skins: Record<string, readonly string[]>): Record<string, string[]> | string {
+  const dirs = writeProbeRig({
+    slots: slotNames.map((name) => ({ name, bone: 'block', attachment: 'marker' })),
+    skins: Object.fromEntries(
+      Object.entries(skins).map(([skin, names]) => [
+        skin,
+        Object.fromEntries(names.map((name) => [name, { [skin === 'default' ? 'marker' : 'alternate']: { image: 'marker.png' } }])),
+      ]),
+    ),
+  });
+  try {
+    const skeleton = JSON.parse(compileProbe(dirs).skeletonText) as { skins: Array<{ name: string; attachments?: Record<string, unknown> }> };
+    return Object.fromEntries(skeleton.skins.map((skin) => [skin.name, Object.keys(skin.attachments ?? {})]));
+  } catch (err) {
+    return (err as Error).message.split('\n')[0];
+  }
 }
 
 /**
@@ -52251,6 +52465,140 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR93-CUR94: §10.6b's two production-set sentences, held to the code (#791)
+  //
+  // The guide says where a mesh's `path`/`color` go and which characters the
+  // comparator folds, and that both come from a production set rather than
+  // from `examples/`. Neither is a table a control can re-derive from the
+  // public tree, so each sentence is held to the code that implements it.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const compilePath = 'src/compile.ts';
+    const guideText = readFileSync(join(root, guidePath), 'utf8');
+    const compileText = readFileSync(join(root, compilePath), 'utf8');
+    const flat = (text: string): string => text.replace(/\s+/g, ' ');
+    const sectionOf = (text: string): string | null => {
+      const at = text.indexOf('\n### 10.6b ');
+      const end = at < 0 ? -1 : text.indexOf('\n### ', at + 1);
+      return at < 0 ? null : text.slice(at, end < 0 ? undefined : end);
+    };
+    /** A doc comment's text with its ` * ` gutters taken off, flattened. */
+    const commentAbove = (text: string, declaration: string): string | null => {
+      const at = text.indexOf(declaration);
+      if (at < 0) return null;
+      const close = text.lastIndexOf('*/', at);
+      const open = text.lastIndexOf('/**', close);
+      if (close < 0 || open < 0 || text.slice(close + 2, at).trim() !== '') return null;
+      return flat(text.slice(open + 3, close).replace(/^\s*\* ?/gm, ''));
+    };
+
+    // CUR93 — the mesh sentence, in the guide and above `meshTextureKeys`, and
+    // every mesh literal spreading it right after `type`.
+    const MESH_SENTENCE = 'right after `type`, `path` before `color` — measured on a production set (#791), not on `examples/`';
+    const scanMesh = (guide: string, code: string): { faults: string[]; literals: number } => {
+      const faults: string[] = [];
+      const section = sectionOf(guide);
+      if (section === null) faults.push(`${guidePath} has no §10.6b`);
+      else if (!flat(section).includes(MESH_SENTENCE)) faults.push(`${guidePath} §10.6b does not say ${JSON.stringify(MESH_SENTENCE)}`);
+      const comment = commentAbove(code, 'function meshTextureKeys(');
+      if (comment === null) faults.push(`${compilePath} has no doc comment directly above \`function meshTextureKeys(\``);
+      else if (!comment.includes(MESH_SENTENCE)) faults.push(`${compilePath}'s comment above \`meshTextureKeys\` does not say ${JSON.stringify(MESH_SENTENCE)}`);
+      const lines = code.split('\n');
+      let literals = 0;
+      lines.forEach((line, i) => {
+        if (!/: SpineMeshAttachment = \{\s*$/.test(line)) return;
+        literals++;
+        const next = lines.slice(i + 1, i + 3).map((l) => l.trim());
+        if (next[0] !== "type: 'mesh'," || !next[1].startsWith('...meshTextureKeys(')) {
+          faults.push(`${compilePath}:${i + 1}: a mesh literal opens ${JSON.stringify(next.join(' '))} — \`type\` then \`...meshTextureKeys(\` is the order §10.6b states`);
+        }
+      });
+      return { faults, literals };
+    };
+    const meshScan = scanMesh(guideText, compileText);
+    const meshProbes = [
+      ...meshScan.faults,
+      ...floorProbes([[meshScan.literals, 1, `${meshScan.literals} mesh literal(s) found`]], 'so no constructor was read'),
+    ];
+    let meshNote = '';
+    if (meshProbes.length === 0) {
+      // Plant 1: the first literal's spread moved after `height`. Plant 2: the
+      // guide's sentence with the set it names exchanged.
+      const lines = compileText.split('\n');
+      const open = lines.findIndex((line) => /: SpineMeshAttachment = \{\s*$/.test(line));
+      const spread = lines[open + 2];
+      const moved = [...lines.slice(0, open + 2), ...lines.slice(open + 3)];
+      const close = moved.findIndex((line, i) => i > open && line.trim() === '};');
+      moved.splice(close, 0, spread);
+      const codeRaised = raisedBy(scanMesh(guideText, moved.join('\n')).faults, { was: meshScan.faults });
+      const guideRaised = raisedBy(scanMesh(guideText.replace('measured on a production set (#791), not on', 'measured on a public set (#791), not on'), compileText).faults, {
+        was: meshScan.faults,
+      });
+      if (codeRaised.length !== 1) meshProbes.push(`the first mesh literal's spread moved after \`height\` raised ${codeRaised.length} fault(s) and this control requires one`);
+      if (guideRaised.length !== 1) meshProbes.push(`the guide's set exchanged raised ${guideRaised.length} fault(s) and this control requires one`);
+      if (codeRaised.length === 1 && guideRaised.length === 1) meshNote = `the first literal's spread moved last: "${codeRaised[0]}"; the guide's set exchanged: "${guideRaised[0]}"`;
+    }
+    const meshHeld = meshProbes.length === 0;
+    say(
+      'CUR93_THE_GUIDES_MESH_PATH_AND_COLOR_SENTENCE_IS_THE_CONSTRUCTORS_AND_EVERY_MESH_LITERAL_KEEPS_IT',
+      meshHeld,
+      probeDetail(
+        meshHeld,
+        meshProbes,
+        `${guidePath} §10.6b and the comment above \`meshTextureKeys\` both say ${JSON.stringify(MESH_SENTENCE)}, and ` +
+          `each of the ${meshScan.literals} mesh literal(s) in ${compilePath} opens \`type\`, \`...meshTextureKeys(\` — and ${meshNote}`,
+      ),
+      'the position is a production measurement no row carries, so the constructor is the only place it lives: a ' +
+        'mesh literal that builds the two keys anywhere else, or a guide that says they come from `examples/`, is ' +
+        'the claim drifting from the one place it is kept',
+    );
+
+    // CUR94 — the fold's sentence: its name, and the code points it states.
+    const foldTokens = (table: ReadonlyArray<readonly [number, number, number]>): string[] =>
+      table.flatMap(([first, last, to]) =>
+        (last === first ? [first, to] : [first, last, to, to + last - first]).map((code) => `U+${code.toString(16).toUpperCase().padStart(4, '0')}`),
+      );
+    const scanFold = (guide: string, code: string, table: ReadonlyArray<readonly [number, number, number]>): string[] => {
+      const faults: string[] = [];
+      const section = sectionOf(guide);
+      const sentence = section === null ? null : (section.split('\n').find((line) => line.includes('`foldBeforeComparing`')) ?? null);
+      if (sentence === null) faults.push(`${guidePath} §10.6b names no \`foldBeforeComparing\``);
+      else {
+        const stated = [...sentence.matchAll(/U\+[0-9A-F]{4}/g)].map((m) => m[0]);
+        const want = foldTokens(table);
+        if (stated.join(',') !== want.join(',')) faults.push(`${guidePath} §10.6b states the fold as ${stated.join(', ')} and \`EDITOR_NAME_FOLD\` holds ${want.join(', ')}`);
+      }
+      if (!/\nfunction foldBeforeComparing\(/.test(code)) faults.push(`${compilePath} declares no \`foldBeforeComparing\``);
+      const readName = /\nfunction readName\([\s\S]*?\n\}/.exec(code)?.[0] ?? '';
+      if (!readName.includes('foldBeforeComparing(')) faults.push(`${compilePath}'s \`readName\` does not call \`foldBeforeComparing\`, so the comparator compares unfolded`);
+      return faults;
+    };
+    const foldStanding = scanFold(guideText, compileText, EDITOR_NAME_FOLD);
+    const foldProbes = [...foldStanding, ...floorProbes([[EDITOR_NAME_FOLD.length, 1, `${EDITOR_NAME_FOLD.length} fold range(s)`]], 'so there is nothing to state')];
+    let foldNote = '';
+    if (foldProbes.length === 0) {
+      const narrowed = EDITOR_NAME_FOLD.map(([first, last, to], i) => (i === EDITOR_NAME_FOLD.length - 1 ? ([first, last - 1, to] as const) : ([first, last, to] as const)));
+      const tableRaised = raisedBy(scanFold(guideText, compileText, narrowed), { was: foldStanding });
+      const unwired = raisedBy(scanFold(guideText, compileText.replace('foldUp(foldBeforeComparing(name))', 'foldUp(name)'), EDITOR_NAME_FOLD), { was: foldStanding });
+      if (tableRaised.length !== 1) foldProbes.push(`the table's last range narrowed by one raised ${tableRaised.length} fault(s) and this control requires one`);
+      if (unwired.length !== 1) foldProbes.push(`\`readName\` without the fold raised ${unwired.length} fault(s) and this control requires one`);
+      if (tableRaised.length === 1 && unwired.length === 1) foldNote = `the last range narrowed: "${tableRaised[0]}"; the fold unwired: "${unwired[0]}"`;
+    }
+    const foldHeld = foldProbes.length === 0;
+    say(
+      'CUR94_THE_FOLD_THE_GUIDE_NAMES_IS_THE_ONE_THE_COMPARATOR_APPLIES',
+      foldHeld,
+      probeDetail(
+        foldHeld,
+        foldProbes,
+        `${guidePath} §10.6b names \`foldBeforeComparing\` and states ${foldTokens(EDITOR_NAME_FOLD).join(', ')}, ` +
+          `\`EDITOR_NAME_FOLD\`'s own ranges, and \`readName\` calls it — and ${foldNote}`,
+      ),
+      'the fold is measured on one production map and no public file can re-take it, so the guide\'s statement of ' +
+        'which characters it covers is only as good as its agreement with the table the comparator reads',
+    );
+  }
+
   return bad;
 }
 
@@ -64841,6 +65189,132 @@ function runIngestSuite(): number {
       'an aim rig rests its constraints muted and keys them up in the animation that needs them — the idiom, not ' +
         'the shape — and a declaration written there would be the rebuild claiming a dial the file already turns, ' +
         'which the gate refuses as exempting nothing',
+    );
+  }
+
+  // --- IG84-IG85: what the corpus cannot teach about key order (issue #791) --
+  //
+  // §10.6b says a mesh's `path`/`color` position and the slot-name fold are
+  // measured on a production set because the twelve exports carry neither
+  // shape. These count both, so the sentence is held to the files: an export
+  // that gained one would turn the count red and the corpus into the place the
+  // rule is derived from. Each count is planted once to show it can see one.
+  if (corpus.length === 0) {
+    console.log(`  SKIP  IG84–IG85 did not run: no editor export under ${INGEST_CORPUS_ROOT}.`);
+  } else {
+    type ExportSkins = Array<{ name?: string; attachments?: Record<string, Record<string, Record<string, unknown>>> }>;
+    const sources = corpus.map((entry) => ({ label: entry.label, skeleton: JSON.parse(readFileSync(entry.path, 'utf8')) as Record<string, unknown> }));
+    const skinsOf = (skeleton: Record<string, unknown>): ExportSkins => (Array.isArray(skeleton.skins) ? (skeleton.skins as ExportSkins) : []);
+    const meshTextureCarriers = (label: string, skeleton: Record<string, unknown>): { meshes: number; carriers: string[] } => {
+      let meshes = 0;
+      const carriers: string[] = [];
+      for (const skin of skinsOf(skeleton)) {
+        for (const [slot, byName] of Object.entries(skin.attachments ?? {})) {
+          for (const [name, att] of Object.entries(byName)) {
+            if (att.type !== 'mesh' || !Array.isArray(att.uvs)) continue;
+            meshes++;
+            const keys = ['path', 'color'].filter((k) => k in att);
+            if (keys.length) carriers.push(`${label}: skin "${skin.name}" mesh ${slot}/${name} carries ${keys.join(' and ')}`);
+          }
+        }
+      }
+      return { meshes, carriers };
+    };
+    const meshReadings = sources.map((s) => meshTextureCarriers(s.label, s.skeleton));
+    const meshCount = meshReadings.reduce((n, r) => n + r.meshes, 0);
+    const meshCarriers = meshReadings.flatMap((r) => r.carriers);
+    // The plant: `path` written onto the first mesh of the first export that has one.
+    let meshPlantSaid = '';
+    const meshPlantProbes: string[] = [];
+    const withMesh = sources.find((s, i) => meshReadings[i].meshes > 0);
+    if (withMesh === undefined) meshPlantProbes.push('no export carries a mesh, so nothing was planted');
+    else {
+      const planted = JSON.parse(JSON.stringify(withMesh.skeleton)) as Record<string, unknown>;
+      let done = false;
+      for (const skin of skinsOf(planted)) {
+        for (const byName of Object.values(skin.attachments ?? {})) {
+          for (const att of Object.values(byName)) {
+            if (done || att.type !== 'mesh' || !Array.isArray(att.uvs)) continue;
+            att.path = 'planted';
+            done = true;
+          }
+        }
+      }
+      const raised = raisedBy(meshTextureCarriers(withMesh.label, planted).carriers, { was: meshCarriers });
+      if (raised.length !== 1) meshPlantProbes.push(`\`path\` written onto one mesh of ${withMesh.label} was counted ${raised.length} time(s), not once`);
+      else meshPlantSaid = `\`path\` written onto one mesh is counted: "${raised[0]}"`;
+    }
+    const meshProbes = [
+      ...floorProbes([[meshCount, 1, `${meshCount} mesh attachment(s) read`]], 'so there was nothing to count on'),
+      ...firstFew(meshCarriers, 'mesh(es)'),
+      ...meshPlantProbes,
+    ];
+    const meshHeld = meshProbes.length === 0;
+    say(
+      'IG84_NO_EXPORT_MESH_CARRIES_A_PATH_OR_A_COLOR_SO_THEIR_POSITION_IS_THE_CONSTRUCTORS',
+      meshHeld,
+      probeDetail(
+        meshHeld,
+        meshProbes,
+        `${meshCount} mesh attachment(s) over ${sources.length} export(s), 0 carrying \`path\` or \`color\` — so the ` +
+          '`mesh attachment` row has no position for them and theirs is `meshTextureKeys`\'s, measured on a production ' +
+          `set (#791) and held by S104 — and ${meshPlantSaid}`,
+        (count) => `${count} export mesh(es) carrying a key §10.6b says the corpus cannot teach — derive its position here:`,
+      ),
+      'the row is read off these files and says nothing about a key they do not write; a `path` or `color` appearing ' +
+        'on one of their meshes would make the production measurement checkable against the public corpus, and the ' +
+        'guide\'s sentence that it is not false',
+    );
+
+    const foldCovers = (name: string): boolean =>
+      [...name].some((ch) => EDITOR_NAME_FOLD.some(([first, last]) => (ch.codePointAt(0) ?? 0) >= first && (ch.codePointAt(0) ?? 0) <= last));
+    const slotNameReadings = (label: string, skeleton: Record<string, unknown>): { slots: number; odd: string[] } => {
+      const slots = Array.isArray(skeleton.slots) ? (skeleton.slots as Array<{ name?: unknown }>) : [];
+      const odd: string[] = [];
+      for (const slot of slots) {
+        const name = String(slot.name);
+        const nonAscii = [...name].some((ch) => (ch.codePointAt(0) ?? 0) > 0x7f);
+        if (nonAscii || foldCovers(name)) {
+          odd.push(`${label}: slot ${JSON.stringify(name)} carries ${foldCovers(name) ? 'a character the fold covers' : 'a character outside ASCII'}`);
+        }
+      }
+      return { slots: slots.length, odd };
+    };
+    const nameReadings = sources.map((s) => slotNameReadings(s.label, s.skeleton));
+    const slotCount = nameReadings.reduce((n, r) => n + r.slots, 0);
+    const oddNames = nameReadings.flatMap((r) => r.odd);
+    // The plant: the first slot of the first export renamed with U+3000 in it.
+    let namePlantSaid = '';
+    const namePlantProbes: string[] = [];
+    const withSlots = sources.find((s, i) => nameReadings[i].slots > 0);
+    if (withSlots === undefined) namePlantProbes.push('no export carries a slot, so nothing was planted');
+    else {
+      const planted = JSON.parse(JSON.stringify(withSlots.skeleton)) as { slots: Array<{ name: string }> };
+      planted.slots[0].name = `${planted.slots[0].name}${String.fromCodePoint(EDITOR_NAME_FOLD[0][0])}`;
+      const raised = raisedBy(slotNameReadings(withSlots.label, planted as unknown as Record<string, unknown>).odd, { was: oddNames });
+      if (raised.length !== 1 || !raised[0].includes('the fold covers')) namePlantProbes.push(`one slot renamed with the fold's first character was counted ${raised.length} time(s), not once as covered`);
+      else namePlantSaid = `one slot renamed with U+${EDITOR_NAME_FOLD[0][0].toString(16).toUpperCase()} in it is counted: "${raised[0]}"`;
+    }
+    const nameProbes = [
+      ...floorProbes([[slotCount, 1, `${slotCount} slot name(s) read`]], 'so there was nothing to count on'),
+      ...firstFew(oddNames, 'slot name(s)'),
+      ...namePlantProbes,
+    ];
+    const nameHeld = nameProbes.length === 0;
+    say(
+      'IG85_NO_EXPORT_SLOT_NAME_CARRIES_A_CHARACTER_OUTSIDE_ASCII_SO_THE_FOLD_IS_THE_PRODUCTION_SETS',
+      nameHeld,
+      probeDetail(
+        nameHeld,
+        nameProbes,
+        `${slotCount} slot name(s) over ${sources.length} export(s), 0 outside ASCII and 0 carrying a character ` +
+          '`EDITOR_NAME_FOLD` covers — so the fold a skin\'s slot keys are compared under is measured on a production ' +
+          `set (#791) and held by S105 — and ${namePlantSaid}`,
+        (count) => `${count} export slot name(s) the fold's measurement could now be re-taken on:`,
+      ),
+      'the twelve reproduce every skin map under the comparator with or without the fold, so they can neither ' +
+        'confirm nor refute it; a slot name outside ASCII appearing in one would, and the guide\'s sentence that ' +
+        'the corpus cannot would then be false',
     );
   }
 
