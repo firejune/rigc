@@ -60,6 +60,24 @@ import type { MotionSpec } from './types.ts';
 export const MOTION_SPEC_VERSION = 'rigc-motion/1';
 
 /**
+ * A track's `physics` target for the timeline that names NO constraint (issue
+ * #726) — the one the runtime applies to every physics constraint whose own data
+ * declares the keyed property global (`"strengthGlobal": true` for `strength`,
+ * and so on; `reset` resets every physics constraint and asks no flag).
+ * `compile` emits it under the empty name, which is the skeleton file's own
+ * spelling of it (`SkeletonJson.js:1048-1054`).
+ *
+ * 🔑 Not the empty string itself, and that is the choice rather than a detail:
+ * `""` is the likeliest shape of a value somebody forgot to fill in, and a
+ * forgotten target that silently became "every global constraint" is the exact
+ * silence this format exists to name. So `"physics": ""` is refused by name and
+ * points here, and `"*"` is reserved the other way round: `compile` refuses a
+ * physics constraint that is CALLED `"*"`, because a track naming it could not
+ * say which of the two it meant.
+ */
+export const EVERY_GLOBAL_PHYSICS = '*';
+
+/**
  * The six fields that pick a track's target family. Listed here as well as in
  * `compile`'s `resolveTargets` because the two ask different questions of it:
  * this one asks whether each is a string, that one asks whether exactly one is
@@ -292,7 +310,15 @@ function parsePhysics(raw: unknown, where: string): void {
   const table = needObj(raw, where, 'physics', 'it is a table keyed by constraint name, `{ "<name>": { "bone": … } }`');
   for (const [name, entry] of Object.entries(table)) {
     const key = `physics."${name}"`;
-    const spec = needObj(entry, where, key, 'a physics constraint is an object naming the bone it drives and the components it drives it in');
+    if (name === EVERY_GLOBAL_PHYSICS) {
+      throw new CompileError(
+        `${where}: \`${key}\` names a physics constraint "${EVERY_GLOBAL_PHYSICS}", and that name is reserved: a ` +
+          `track's \`"physics": "${EVERY_GLOBAL_PHYSICS}"\` is the timeline that names no constraint and drives ` +
+          'every one declaring the keyed property global, so a constraint called ' +
+          `"${EVERY_GLOBAL_PHYSICS}" could not be keyed by name. Give it another name`,
+      );
+    }
+    const spec = needObj(entry, where, key,'a physics constraint is an object naming the bone it drives and the components it drives it in');
     known(spec, 'MotionPhysics', where, key);
     needString(spec.bone, where, `${key}.bone`, 'a physics constraint drives one bone, named here');
     for (const field of PHYSICS_NUMBERS) {
@@ -377,6 +403,17 @@ function parseTracks(raw: unknown, where: string, at: string): void {
     needString(track.property, where, `${key}.property`, 'a track states the property it keys — the table is AUTHORING §4.4');
     for (const field of TARGET_FIELDS) {
       optString(track[field], where, `${key}.${field}`, `a track's "${field}" is the name of the ${field === 'slot' || field === 'bone' ? field : `${field} it targets`}`);
+    }
+    if (track.physics === '') {
+      refuse(
+        where,
+        `${key}.physics`,
+        track.physics,
+        'the empty name is how a skeleton file spells a physics timeline that names no constraint, and a motion ' +
+          `spec spells that "${EVERY_GLOBAL_PHYSICS}" — it drives every physics constraint that declares the keyed ` +
+          'property global (`"strengthGlobal": true` for `strength`). Name one constraint, or write ' +
+          `"${EVERY_GLOBAL_PHYSICS}"`,
+      );
     }
     optFinite(track.lag, where, `${key}.lag`, '"lag" is seconds added to every key time of this track, so a finite number — a string is CONCATENATED onto each time and a boolean adds 1');
     optFinite(track.stagger, where, `${key}.stagger`, '"stagger" is the extra per-member delay inside a group, in seconds, so a finite number');

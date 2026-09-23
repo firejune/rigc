@@ -514,6 +514,53 @@ export const PHYSICS_TIMELINE_NAMES: Record<number, string> = {
 };
 
 /**
+ * Which physics constraints a physics timeline that names NO constraint writes
+ * into — the one reading of the unnamed form, for every rule that has to answer
+ * it (`A23`, `A34`, `A42`; issue #726).
+ *
+ * `SkeletonJson` gives a physics group keyed by the empty name `constraintIndex
+ * -1` (`SkeletonJson.js:1048-1054`), and the runtime reads that two ways. A
+ * value timeline writes every active physics constraint whose own data declares
+ * that property global — `PhysicsConstraintTimeline.apply` asks each subclass's
+ * `global` (`Animation.js:2067-2075`). `reset` resets every active one and asks
+ * no flag at all (`:2234-2238`). Activity is a skin question and is not asked
+ * here: a constraint a skin switches on is still one the timeline can reach.
+ *
+ * 🔑 `constraints` may be the FILE's objects rather than loaded data, and that
+ * is what makes this one reading rather than two: `SkeletonJson` copies each
+ * `…Global` field onto the data verbatim (`:313-319`), so the runtime's own
+ * `global`, asked of the raw object, reads exactly what it would read of the
+ * loaded one — a string `"false"` included, which is truthy to both. A rule that
+ * spelled `<property>Global` itself would be a second copy of the runtime's
+ * table, free to disagree with it.
+ */
+export function unnamedPhysicsReach<C extends object>(timeline: Timeline, constraints: readonly C[]): C[] {
+  if (timeline instanceof PhysicsConstraintResetTimeline) return [...constraints];
+  if (!(timeline instanceof PhysicsConstraintTimeline)) return [];
+  return constraints.filter((one) => Boolean(timeline.global(one as unknown as PhysicsConstraintData)));
+}
+
+/**
+ * The timeline the runtime builds for one physics timeline NAME, read by the
+ * runtime's own parser off a skeleton that holds nothing else — or null for a
+ * name its physics branch skips (`SkeletonJson.js:1094`).
+ *
+ * ⚠️ This is how a raw-JSON rule gets the runtime's class for a name without a
+ * table of the eight: a hand-kept map from `"strength"` to
+ * `PhysicsConstraintStrengthTimeline` is the copy this avoids, and the parser's
+ * `switch` is already that map. The probe skeleton declares no constraint, so
+ * the only group it can carry is the unnamed one, and one key is all
+ * `readTimeline1` needs to build the object.
+ */
+export function unnamedPhysicsTimeline(name: string): Timeline | null {
+  const probe = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(''))).readSkeletonData({
+    skeleton: {},
+    animations: { probe: { physics: { '': { [name]: [{}] } } } },
+  });
+  return probe.animations[0]?.timelines[0] ?? null;
+}
+
+/**
  * One step of the **float32** grid at `t`, which is the grid a loaded key time
  * actually sits on: `spine-core` reads every timeline's frames into a
  * `Float32Array`, so a time the compiler wrote as `32.366667` comes back as
@@ -1518,6 +1565,10 @@ export function validate(input: ValidateInput): ValidateReport {
         kindsOf.set(entry.name, [...(kindsOf.get(entry.name) ?? []), String(entry.type)]);
       }
     }
+    /** The file's physics constraints, which the unnamed physics group is read against. */
+    const rawPhysics = (Array.isArray(raw.constraints) ? (raw.constraints as unknown[]) : []).filter(
+      (entry): entry is Json => isObj(entry) && entry.type === 'physics',
+    );
     let sawATimeline = false;
     /** One target of one group: the name resolves, the type matches, keys exist. */
     const checkTarget = (at: string, group: string, name: string, keyArrays: Array<[string, unknown]>): void => {
@@ -1539,6 +1590,10 @@ export function validate(input: ValidateInput): ValidateReport {
         );
         return;
       }
+      checkKeys(at, keyArrays);
+    };
+    /** The key arrays of one group entry that resolved: each one is walked, so each has to hold a key. */
+    const checkKeys = (at: string, keyArrays: Array<[string, unknown]>): void => {
       if (keyArrays.length === 0) {
         fail(
           'A34_CONSTRAINT_TIMELINE_TARGETS',
@@ -1578,6 +1633,36 @@ export function validate(input: ValidateInput): ValidateReport {
                 `(${Object.keys(CHANNELS_BY_KIND[group]).join('/')}), and this one holds ${JSON.stringify(timelines)} — ` +
                 'a bare key array here is the ik/transform shape and is walked as an object',
             );
+            continue;
+          }
+          // The empty name is not a miss: it is the physics group's global form,
+          // which `SkeletonJson` loads as `constraintIndex -1` rather than looking
+          // anything up (`:1048-1054`), and which writes every physics constraint
+          // that declares the timeline's property global (issue #726). Refusing
+          // it as "no constraint called ''" was a sentence that is false about
+          // the file. What CAN be wrong with it is that it reaches nobody: the
+          // parser accepts it, the runtime walks every constraint, and none of
+          // them takes the key.
+          if (group === 'physics' && name === '') {
+            sawATimeline = true;
+            for (const [timelineName] of Object.entries(timelines)) {
+              const timeline = unnamedPhysicsTimeline(timelineName);
+              // A name the parser skips is skipped here too: no timeline exists
+              // to reach anybody, and whether the NAME is right is not a target
+              // question.
+              if (timeline === null || unnamedPhysicsReach(timeline, rawPhysics).length > 0) continue;
+              const resets = timeline instanceof PhysicsConstraintResetTimeline;
+              fail(
+                'A34_CONSTRAINT_TIMELINE_TARGETS',
+                `${at} timeline "${timelineName}": a physics group that names no constraint writes every physics ` +
+                  `constraint ${resets ? 'the skeleton has' : `declaring "${timelineName}Global": true`}, and ` +
+                  (rawPhysics.length === 0
+                    ? 'the skeleton has no physics constraint'
+                    : `none of ${rawPhysics.map((one) => `"${String(one.name)}"`).join(', ')} does`) +
+                  ' — the parser loads it, the runtime walks every constraint, and no constraint takes the key',
+              );
+            }
+            checkKeys(at, Object.entries(timelines));
             continue;
           }
           checkTarget(at, group, name, Object.entries(timelines));
@@ -3055,14 +3140,17 @@ export function validate(input: ValidateInput): ValidateReport {
           if (!keysInside) continue;
           // -1 is the global form: the timeline names no constraint and the
           // runtime applies it to every physics constraint whose own data
-          // declares that property global (`Animation.js:2067-2075`). No rig
-          // spec can reach it — the compiler refuses a track naming a constraint
-          // the skeleton has not got, the empty name among them — but a file
-          // rigc did not write can carry one, and `timeline.global` is the
-          // runtime's own answer to which constraints it reaches.
+          // declares that property global (`Animation.js:2067-2075`). A motion
+          // spec reaches it with `"physics": "*"` (issue #726), a file rigc did
+          // not write with the empty name, and `unnamedPhysicsReach` is the one
+          // answer to which constraints it reaches.
+          const reach =
+            timeline.constraintIndex === -1
+              ? unnamedPhysicsReach(timeline, data.constraints.filter((one) => one instanceof PhysicsConstraintData))
+              : [data.constraints[timeline.constraintIndex]];
           for (const one of data.constraints) {
             if (!(one instanceof PhysicsConstraintData)) continue;
-            if (timeline.constraintIndex === -1 ? !timeline.global(one) : data.constraints[timeline.constraintIndex] !== one) continue;
+            if (!reach.includes(one)) continue;
             const by = unmuted.get(one) ?? new Set<string>();
             by.add(rule.timeline);
             unmuted.set(one, by);
@@ -3709,15 +3797,16 @@ export function validate(input: ValidateInput): ValidateReport {
        * A physics timeline whose animation names no constraint carries
        * `constraintIndex -1`, and `PhysicsConstraintTimeline.apply` reads that
        * as every ACTIVE physics constraint whose own data declares that property
-       * global. No rig spec reaches it — the compiler refuses a track naming an
-       * unknown physics constraint, the empty name among them — but a file rigc
-       * did not write can carry one, and this is the only assertion that would
-       * have to guess at it.
+       * global. A motion spec spells it `"physics": "*"` (issue #726) and a
+       * foreign file the empty name; `unnamedPhysicsReach` is the one reading
+       * of it, shared with `A23` and `A34`.
        */
       const drivenBy = (timeline: Timeline & ConstraintTimeline): number[] => {
         if (timeline.constraintIndex >= 0) return [timeline.constraintIndex];
-        if (!(timeline instanceof PhysicsConstraintTimeline)) return [];
-        return data.constraints.flatMap((one, index) => (one instanceof PhysicsConstraintData && timeline.global(one) ? [index] : []));
+        return unnamedPhysicsReach(
+          timeline,
+          data.constraints.filter((one) => one instanceof PhysicsConstraintData),
+        ).map((one) => data.constraints.indexOf(one));
       };
       let pairs = 0;
       let resets = 0;

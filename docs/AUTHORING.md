@@ -2338,14 +2338,20 @@ carrying here:
   `true` and leaves the rest alone (`Animation.js:2066-2072`). So the flag is one
   constraint's **opt-in to being driven in bulk**, per tuning value, and it does
   nothing on its own. The parser's default for all seven is `false`.
-  ⚠️ **rigc emits them and cannot emit the timeline that reads them.** Every
-  physics track in a motion spec names its constraint and that name is resolved
-  against the rig — the empty name is refused, `animation "A" keys unknown physics
-  constraint "" (the rig declares: …)` — so the flags are for a player, or a
-  later hand-edit, that supplies one. What rigc does with them is **pass them
-  through**, `false` included: measured, a constraint stating none emits none, and
-  one stating `"windGlobal": false` emits `"windGlobal": false` rather than
-  dropping it the way the motion spec's `physics` table drops a default (§4.6).
+  The motion spec keys that timeline as **`"physics": "*"`** (§4.4,
+  [#726](https://github.com/firejune/rigc/issues/726)), and rigc writes it under
+  the empty name. Until then rigc emitted the flags and could not emit the
+  timeline that reads them: every physics track named its constraint and the
+  empty name was refused as `keys unknown physics constraint ""`. What rigc does
+  with the flags is **pass them through**, `false` included: measured, a
+  constraint stating none emits none, and one stating `"windGlobal": false` emits
+  `"windGlobal": false` rather than dropping it the way the motion spec's
+  `physics` table drops a default (§4.6). ⚠️ That table has **no** `…Global`
+  field, so a constraint a `"*"` track is meant to reach is declared here, in the
+  rig spec's `constraints`.
+- `"*"` is **reserved** as a physics constraint's name, in the rig spec and in
+  §4.6's table alike: a track naming it could mean either. `compile` refuses one
+  by name.
 - ⚠️ `src/rig.ts` called the physics `ScaleYMode` key **`scaleYMode`** until
   issue #545 — the runtime's field name rather than the format's key — and nothing
   read it, so a spec that wrote `scaleYMode` set no mode and said nothing. A rig
@@ -3118,6 +3124,7 @@ a deform). Folding them in would make `v` mean four different things depending o
 | `physics` | `inertia`, `strength`, `damping`, `mass`, `wind`, `gravity` | `[value]` — the constraint's own tuning, keyed over time |
 | `physics` | `mix` | `[mix]`, **0 or more** — the constraint's authority |
 | `physics` | `reset` | `null` — the key *is* the event |
+| `physics: "*"` | any of the eight above | as above — the timeline that names **no** constraint. The value timelines write every physics constraint whose rig-spec entry declares that property global (`"strengthGlobal": true` for `strength`; §3.5) and leave every other one alone; `reset` resets every physics constraint and asks no flag |
 | `path` | `position`, `spacing` | `[value]` — see §4.12 |
 | `path` | `mix` | `[mixRotate, mixX, mixY]` — one timeline, three channels |
 | `slider` | `time` | `[seconds]` — where in its animation the slider sits |
@@ -3321,6 +3328,28 @@ a delta from the constraint's own setting.
   reason `mass` keeps the narrow bound on a key: a keyed `mass` of `0` is NaN from
   the first sub-step and **still NaN after the restoring key**, and a keyed
   `damping` of `2` was still 6.9e4 two seconds later.
+
+**`"physics": "*"` is the physics timeline that names no constraint**
+([#726](https://github.com/firejune/rigc/issues/726)). The skeleton file writes it
+under the empty name — `animations.<a>.physics[""]`, which `SkeletonJson` loads as
+constraint index `-1` without looking anything up — and the runtime then applies it
+to every active physics constraint whose own data declares the keyed property
+global (`Animation.js:2067-2075`). So what it drives is decided in the **rig spec**,
+by the seven `…Global` flags of §3.5, one per value timeline; `reset` is the
+exception and resets every physics constraint. [measured] over three constraints of
+which two declare `strengthGlobal`, a `"*"` `strength` track keyed to 35 poses those
+two at 35 and leaves the third at its setup 100.
+
+- ⚠️ **A `"*"` track that reaches no constraint is a compile error**, naming the flag
+  and the constraints that do not declare it: the runtime would walk every
+  constraint, skip each, and the file would parse and do nothing. Set the flag on
+  the constraints the track is for, or key one by name.
+- 🚫 **`"physics": ""` is refused**, and deliberately: the empty string is the
+  likeliest shape of a target somebody forgot to fill in, and a forgotten target
+  that quietly meant "every global constraint" is the silence this format exists to
+  name. The refusal points at `"*"`.
+- ⚠️ `"*"` is a track's `physics` field and nothing else — a `group` that lists it
+  is refused, and so is a constraint called `"*"` (§3.5).
 
 On a track that names a `group`, one key's `v` may instead be a **map keyed by
 member name**, whose entries are each exactly the `v` above — or a `derive`
@@ -4948,6 +4977,10 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `animation "A" slot "X" attachment: key at Ns is Ms past the declared duration Ds` | §4.5 — the key is past the end of the animation and nothing will sample it. Move the key onto `duration`, or raise `duration` |
 | `animation "A" slot "X" attachment: attachment "N" is not in slot "X" under any skin (searched: default, alt) — the slot has: plain, trim` | §4.4 — the keyed name is in **no** skin, and the two clauses say where the compiler looked and what it would have taken. Fix the spelling, or give some skin a placeholder called `N`. A name only a NAMED skin fills is not this error and never was one to fix — it compiles, and the slot shows nothing under the skins that lack it. Before [#695](https://github.com/firejune/rigc/issues/695) the message read `attachment "N" is not in slot "X"` and was raised against the **default skin alone**, so it fired on correct rigs: any key into named-skin art, and every key in a rig with no default skin. `the slot has no attachments at all` is the same message where nothing fills the slot |
 | `animation "A" keys unknown bone "X"` | the track's `bone` is not in the rig |
+| `animation "A" keys physics "*" P, the timeline that names no constraint and drives every physics constraint declaring "PGlobal": true, and none of "C", … does — it would parse and move nothing` | §4.4 — set `"PGlobal": true` on the constraints the track is for (§3.5), or key one by name. For `reset` it reads *every physics constraint the rig has*, and fires only on a rig with none |
+| `` `animations."A".tracks[i].physics` is the string ""; the empty name is how a skeleton file spells a physics timeline that names no constraint, and a motion spec spells that "*" … `` | §4.4 — name one constraint, or write `"*"` |
+| `physics constraint "*": the name is reserved — …` / `` `physics."*"` names a physics constraint "*", and that name is reserved … `` | §3.5 — `"*"` is the target of the timeline that names no constraint; rename the constraint |
+| `animation "A": group "G" lists "*", which is not a constraint but the target that names none …` | §4.4 — write `"*"` as the track's `physics` field |
 | `animation "A" bone "X" translatex: key value must be an array of 1 number(s)` | the value shape must match the property (§4.4) |
 | `animation "A" physics constraint "C" mass key at t=… is 0 (massInverse Infinity); must be > 0 — …` | §4.4 — a keyed physics value the runtime cannot use. The message names the bound and the `PhysicsConstraint.js` lines that make it one: `mass` is `> 0`, `damping` is inside `(0, 1)`, `mix` and `strength` are `0` or more, and `inertia`/`wind`/`gravity` are bounded nowhere ([#610](https://github.com/firejune/rigc/issues/610)). ⚠️ Those are the bounds a **key** is held to. A setup `strength` of `0` is refused too, but by `A23` rather than here, and with its own sentence — `physics "C" has strength 0; nothing pulls it back` ([#727](https://github.com/firejune/rigc/issues/727)) |
 | `a key carries both a named easing and a raw curve; pick one` | R6 |
@@ -5146,7 +5179,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | a draw-order key names a slot the skeleton does not have, offsets one slot twice, puts a slot outside the slots array, or lists its offsets out of slot order (§4.7). The only assertion that runs **before** `A00` — the last of those shapes makes the loader spin rather than return, so the round trip is refused instead of attempted |
 | `A32_EVENT_KEYS_RESOLVE` | both | an event key fires a name the skeleton's `events` block does not declare, sits earlier in time than the key before it, or sets `volume`/`balance` on an event with no `audio` (§4.8). **SKIP** when no animation carries an event timeline |
 | `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | a bounding box, clipping polygon or path whose `vertexCount` is missing or disagrees with its vertex array, a weighted run that decodes to the wrong number of vertices or an out-of-range bone index, a clipping `end` naming a slot the skeleton does not have, a path whose vertex count is not a multiple of 3, or a path `lengths` array that does not strictly increase (§3.4). **SKIP** when the skeleton carries none of the three |
-| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | an `ik`, `transform`, `path`, `physics` or `slider` timeline names a constraint the skeleton does not declare, names one of another type, or carries no keys at all (§4.4, §4.9, §4.10, §4.12). The last is silent: the parser reads key 0, finds nothing, and skips the timeline. **SKIP** when no animation carries one |
+| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | an `ik`, `transform`, `path`, `physics` or `slider` timeline names a constraint the skeleton does not declare, names one of another type, or carries no keys at all (§4.4, §4.9, §4.10, §4.12). The last is silent: the parser reads key 0, finds nothing, and skips the timeline. The **empty** name under `physics` is not a miss — it is the timeline that names no constraint (§4.4's `"*"`), and it is refused only when it reaches none: `animation "A" physics constraint "" timeline "P": a physics group that names no constraint writes every physics constraint declaring "PGlobal": true, and none of "C", … does — the parser loads it, the runtime walks every constraint, and no constraint takes the key` ([#726](https://github.com/firejune/rigc/issues/726)). Who it reaches is asked of the runtime's own `PhysicsConstraintTimeline.global` on the file's constraints — the reading `A23` and `A42` share. **SKIP** when no animation carries one |
 | `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | both | a deform key's run runs past the end of the attachment's deform array, holds a non-finite number, has an empty key array, or names a skin/slot/attachment triple that does not resolve (§4.11). The overrun is the quiet one — the parser copies into a `Float32Array` and drops the tail. ⛔ It does **not** require pair alignment: the runtime has no such rule and a trimmed editor run legitimately starts and ends mid-pair (§4.11, issue #262). **SKIP** when no animation carries a deform timeline |
 | `A36_PATH_CONSTRAINT_EFFECTIVE` | both | a path constraint whose slot has no path attachment in any skin, one that constrains no bone, or one whose three mixes are all 0 at setup with no animation keying its `mix` (§3.5.1). The first is the quiet one: `update()` returns on its first line and the constraint reports mixes it never applies. **SKIP** when the skeleton declares no path constraint |
 | `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` (§3.5.2). **SKIP** when the skeleton declares no slider |
