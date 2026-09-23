@@ -151,7 +151,12 @@ export const DEFAULT_HINGE_MIN = -180;
 export const DEFAULT_HINGE_MAX = 180;
 
 /**
- * The hinge sweep's step, in degrees.
+ * The CEILING on the hinge sweep's step, in degrees — not the step itself.
+ *
+ * `hingeLadder` divides the window into whole steps no coarser than this, so a
+ * window whose span this does not divide is walked at an even, finer step, and
+ * the step the report states is read off that ladder. The full turn divides it
+ * exactly, which is why the default report carries this number.
  *
  * A full turn at this step is 120 evaluations of one bone, which is what a single
  * degree of freedom buys: `pose` cannot afford an exhaustive rotation ladder at
@@ -1177,8 +1182,27 @@ function polishHinge(
   return cur;
 }
 
-/** The hinge ladder, with a full turn's duplicate endpoint dropped. */
-function hingeLadder(minDeg: number, maxDeg: number): number[] {
+/**
+ * The hinge ladder, with a full turn's duplicate endpoint dropped.
+ *
+ * ⭐ `pose`'s `rotationLadder` is the shape this follows, and for the same reason
+ * (issue #738). This one used to march `HINGE_STEP` off the floor and then append
+ * the ceiling, so any window whose span is not a whole number of steps got a
+ * short final gap — `--hinge -20,20` walked thirteen gaps of 3° and one of 1° —
+ * while the report printed `step 3°` and every part's note said `in 3° steps`.
+ * Now the window is divided into `Math.ceil(span / HINGE_STEP)` equal steps,
+ * endpoints included, and the step reported is `hingeLadderStep` of what this returns.
+ *
+ * ⚠️ The count is a CEILING rather than a rounding: rounding down would give a
+ * window like 4° one step of 4°, and the constant would stop bounding the step.
+ * With the ceiling the rung count is the march's own — `ceil(span / step) + 1`
+ * either way — so the repair moves where the rungs sit and never how many there
+ * are, and a span the constant divides gets the same rungs it always had.
+ *
+ * Exported because `CF19` and `CUR82` read the printed step back against it: the
+ * run walks exactly this, so it is the ladder a report line is a promise about.
+ */
+export function hingeLadder(minDeg: number, maxDeg: number): number[] {
   const span = maxDeg - minDeg;
   if (span <= 0) return [minDeg];
   if (span >= 360 - 1e-9) {
@@ -1187,10 +1211,35 @@ function hingeLadder(minDeg: number, maxDeg: number): number[] {
     for (let i = 0; i < count; i++) out.push(minDeg + (i * 360) / count);
     return out;
   }
+  const steps = Math.ceil(span / HINGE_STEP - 1e-9);
   const out: number[] = [];
-  for (let deg = minDeg; deg <= maxDeg + 1e-9; deg += HINGE_STEP) out.push(deg);
-  if (out[out.length - 1] < maxDeg - 1e-9) out.push(maxDeg);
+  for (let i = 0; i <= steps; i++) out.push(minDeg + (span * i) / steps);
   return out;
+}
+
+/** The step a hinge ladder walks, read off the ladder rather than off the constant it was capped at. */
+export function hingeLadderStep(degrees: readonly number[]): number {
+  return degrees.length > 1 ? degrees[1] - degrees[0] : 0;
+}
+
+/** How a chain part's note says the hinge was walked — the same step the `search` line states. */
+export function hingeWalkPhrase(stepDeg: number): string {
+  // A shut window walks one rung and has no step, so the old `in 3° steps` on a
+  // `--hinge 12,12` note was a claim about a ladder that did not exist.
+  return stepDeg > 0 ? `in ${roundTo(stepDeg, 3)}° steps` : 'at its one rung';
+}
+
+/**
+ * The `search` line's hinge clause.
+ *
+ * ⭐ Exported for the reason `pose`'s `searchRotationClause` is: `docs/AUTHORING.md`
+ * quotes this clause, and `CUR82` builds it here over the window the page names
+ * and looks for it in the page, so the two go stale together or not at all.
+ * Rounded for the console alone — `search.hinge.stepDeg` in the JSON is the
+ * ladder's own step, unrounded.
+ */
+export function searchHingeClause(hinge: ChainFitReport['search']['hinge']): string {
+  return `hinge ${hinge.minDeg}°–${hinge.maxDeg}° step ${roundTo(hinge.stepDeg, 3)}° (${hinge.steps} rungs)`;
 }
 
 function stretchLadder(bounds: { min: number; max: number }): number[] {
@@ -1439,6 +1488,10 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
   const hingeMin = options.hinge?.minDeg ?? DEFAULT_HINGE_MIN;
   const hingeMax = options.hinge?.maxDeg ?? DEFAULT_HINGE_MAX;
   const hinges = hingeLadder(hingeMin, hingeMax);
+  // One derivation of the step, read off the ladder the run walks: the report's
+  // `search.hinge`, every part's `window` and every part's note all take it
+  // from here, and none of them from `HINGE_STEP`, which only caps it.
+  const hingeStep = hingeLadderStep(hinges);
   const wraps = hingeMax - hingeMin >= 360 - 1e-9;
   const stretchRatio = options.stretch ?? DEFAULT_STRETCH_RATIO;
   const stretchEverywhere = options.stretch !== undefined;
@@ -2120,7 +2173,7 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
       },
     },
     search: {
-      hinge: { minDeg: hingeMin, maxDeg: hingeMax, stepDeg: HINGE_STEP, steps: hinges.length },
+      hinge: { minDeg: hingeMin, maxDeg: hingeMax, stepDeg: hingeStep, steps: hinges.length },
       stretch: {
         ratio: stretchRatio,
         steps: STRETCH_STEPS,
@@ -2235,7 +2288,7 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
     shareAtFit,
     level,
     material: material.plate,
-    hinge: { minDeg: hingeMin, maxDeg: hingeMax },
+    hinge: { minDeg: hingeMin, maxDeg: hingeMax, stepDeg: hingeStep },
     stretchRatio,
     stretchEverywhere,
     minVisible,
@@ -2261,7 +2314,7 @@ interface FinishContext {
   shareAtFit: Map<string, number>;
   level: Level;
   material: Plate;
-  hinge: { minDeg: number; maxDeg: number };
+  hinge: { minDeg: number; maxDeg: number; stepDeg: number };
   stretchRatio: number;
   stretchEverywhere: boolean;
   minVisible: number;
@@ -2294,7 +2347,7 @@ function finishPart(state: PartState, ctx: FinishContext): ChainFitPart {
     window: {
       hingeMinDeg: ctx.hinge.minDeg,
       hingeMaxDeg: ctx.hinge.maxDeg,
-      hingeStepDeg: HINGE_STEP,
+      hingeStepDeg: ctx.hinge.stepDeg,
       stretchMin: stretchFree ? roundTo(1 / ctx.stretchRatio, 5) : 1,
       stretchMax: stretchFree ? ctx.stretchRatio : 1,
     },
@@ -2437,7 +2490,7 @@ function finishPart(state: PartState, ctx: FinishContext): ChainFitPart {
     const dof = view.dof.stretch ? 'a hinge and a stretch' : 'one hinge';
     out.notes.push(
       `${name} was read by walking ${view.depth} link(s) out from ${view.anchoredTo ?? 'an anchor'} and searching ` +
-        `${dof} over ${ctx.hinge.minDeg}°…${ctx.hinge.maxDeg}° in ${HINGE_STEP}° steps — not the four degrees of ` +
+        `${dof} over ${ctx.hinge.minDeg}°…${ctx.hinge.maxDeg}° ${hingeWalkPhrase(ctx.hinge.stepDeg)} — not the four degrees of ` +
         'freedom `pose` has to search.',
     );
   }
@@ -2626,8 +2679,7 @@ export function chainFitLines(report: ChainFitReport): string[] {
         : `${report.inward.determined.length} bone(s) determined from anchored descendants: ` +
           report.inward.determined.join(', ')
     }`,
-    `  ..    search    hinge ${report.search.hinge.minDeg}°–${report.search.hinge.maxDeg}° step ` +
-      `${report.search.hinge.stepDeg}° (${report.search.hinge.steps} rungs) · stretch free from ` +
+    `  ..    search    ${searchHingeClause(report.search.hinge)} · stretch free from ` +
       `${report.search.stretch.freeFrom} · refuse below visible ${report.search.minVisible} or above residual ` +
       `${report.search.maxResidual} · ${report.search.passes} pass(es)`,
   ];
