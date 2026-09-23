@@ -238,12 +238,45 @@ export interface PoseRefusal {
   detail: string;
 }
 
+/**
+ * One wall of the search window a reported placement stands ON.
+ *
+ * ⭐ A fact about the search, not about the picture: the refinement is clamped
+ * to the window, so a value held by a wall is the bound itself — which is what
+ * lets "on" be told from "near". A placement that settled inside stops short of
+ * the wall by at least the polish's last step; one that was held by it sits on
+ * it exactly (issue #737).
+ */
+export interface PoseWall {
+  axis: 'scale' | 'rotation';
+  edge: 'floor' | 'ceiling';
+  /** The window as its flag spells it, `min,max` — `--scale 0.5,2`'s is `"0.5,2"`. */
+  window: string;
+}
+
 export interface PosePart {
   /** The PNG's file name — how the report names the part everywhere. */
   part: string;
   path: string;
   width: number;
   height: number;
+  /**
+   * The walls of the search window `placement` stands on — empty when it settled
+   * inside the window, and always empty when there is no placement.
+   *
+   * 🔒 Set whatever the verdict, and read by one function (`placementWalls`) for
+   * both: a `no-match` quotes these in its `refusal.detail`, an accepted part
+   * carries them on its console line. Until issue #737 only the refusal said so,
+   * and an accepted `scale=2.000` under `--scale 0.5,2` over a part whose truth
+   * was 2.30 carried no mark at all.
+   *
+   * ⚠️ A wall here is not a claim about which side the truth is on. Measured over
+   * the rendered corpus, a floor holds two kinds of answer — a truth below the
+   * window, and a part shrunk into the region it came from while its truth sits
+   * inside the window — and nothing in one frame separates them. What is certain
+   * is that the value is where the search was held, not where it came to rest.
+   */
+  walls: PoseWall[];
   /**
    * Why this part's answer should not be taken at face value, or `null`.
    *
@@ -1099,9 +1132,62 @@ export function searchRotationClause(rotation: PoseSearch['rotation']): string {
  */
 export function windowEdgeNote(axis: 'scale' | 'rotation', edge: 'floor' | 'ceiling', at: string, window: string): string {
   return (
-    `best placement at ${axis} ${at}, the ${edge} of --${axis} ${window} — ` +
+    `best placement at ${axis} ${at}, ${wallClause(axis, edge, window)} — ` +
     `the truth may lie ${edge === 'floor' ? 'below' : 'above'} the window`
   );
+}
+
+/**
+ * The wall named on its own — `the ceiling of --scale 0.5,2` — which is the part
+ * of `windowEdgeNote` an ACCEPTED placement's console line carries (issue #737).
+ *
+ * ⭐ One clause, two sentences, so the refusal and the accepted line cannot spell
+ * the same wall two ways. The accepted line carries the wall and not the "truth
+ * may lie" half on purpose: measured over the corpus, a floor holds truths below
+ * the window and parts shrunk into their own region alike, so which side the
+ * truth is on is exactly what an accepted placement does not know.
+ */
+export function wallClause(axis: 'scale' | 'rotation', edge: 'floor' | 'ceiling', window: string): string {
+  return `the ${edge} of --${axis} ${window}`;
+}
+
+/**
+ * The walls of the window one placement stands on — the single reading both a
+ * refusal and an accepted placement are marked from (issue #737).
+ *
+ * 🔑 Read off the UNROUNDED candidate, because the clamp writes the bound itself
+ * and so "on" is an equality — while the reported `scale` is rounded to five
+ * places and a window need not be: under `--scale 0.0931424…,0.3725…` the report
+ * prints `0.09314`, below its own floor, for a candidate the clamp put exactly on
+ * it. The `1e-9` is float slack on a ladder rung computed as `min + span·i/steps`,
+ * not a notion of "near": the nearest correct placement that settled inside the
+ * window was measured 0.125% off its wall, the polish's last scale step.
+ *
+ * A window with no interior — `min === max` — has no wall to be at: being at the
+ * only value there is says nothing about where the answer is (issue #719). A
+ * window spanning a full turn has none either, and neither has the rotation of a
+ * `rotationFree` part, whose `0°` is a placeholder the search never moved.
+ */
+export function placementWalls(
+  scale: number,
+  rotationDeg: number,
+  scaleBounds: { min: number; max: number },
+  rotationBounds: { min: number; max: number; wraps: boolean },
+  rotationFree: boolean,
+): PoseWall[] {
+  const walls: PoseWall[] = [];
+  const at = (value: number, bound: number): boolean => Math.abs(value - bound) <= 1e-9 * Math.max(1, Math.abs(bound));
+  if (scaleBounds.max > scaleBounds.min) {
+    const window = `${scaleBounds.min},${scaleBounds.max}`;
+    if (at(scale, scaleBounds.min)) walls.push({ axis: 'scale', edge: 'floor', window });
+    else if (at(scale, scaleBounds.max)) walls.push({ axis: 'scale', edge: 'ceiling', window });
+  }
+  if (!rotationFree && !rotationBounds.wraps && rotationBounds.max > rotationBounds.min) {
+    const window = `${rotationBounds.min},${rotationBounds.max}`;
+    if (at(rotationDeg, rotationBounds.min)) walls.push({ axis: 'rotation', edge: 'floor', window });
+    else if (at(rotationDeg, rotationBounds.max)) walls.push({ axis: 'rotation', edge: 'ceiling', window });
+  }
+  return walls;
 }
 
 /** The PNGs in a directory, in name order — the parts, and the order the report lists them. */
@@ -1199,9 +1285,11 @@ export function estimatePose(options: PoseOptions): PoseReport {
         'only inside the frame canvas. ⚠️ A window that does not contain the true value does NOT reliably ' +
         'refuse: a part shrunk inside the region it came from still explains those pixels, so the answer is the ' +
         'best placement available INSIDE the window and its residual can look reasonable. That is why the window ' +
-        'is a reported field — if the numbers surprise you, check it before you trust them. A refused part whose ' +
-        'best placement stopped ON a wall of the window says so in its own `refusal.detail`, which is the case ' +
-        'where the window is the first thing to move.',
+        'is a reported field — if the numbers surprise you, check it before you trust them. A part whose placement ' +
+        'stopped ON a wall of the window lists it in `walls`, whatever its verdict: a refused one also names it in ' +
+        '`refusal.detail`, an accepted one beside the value on its console line. That value is where the search was ' +
+        'held rather than where it came to rest, and the window is the first thing to move. An empty `walls` is ' +
+        'not evidence the truth is inside the window — a placement can settle inside it on another optimum.',
     ],
     parts: [],
   };
@@ -1253,6 +1341,7 @@ function placePart(
       height: 0,
       refusal: { reason: 'empty-part', detail: `cannot decode ${name}: ${(err as Error).message}` },
       placement: null,
+      walls: [],
       alternates: [],
       ambiguous: false,
       rotationFree: false,
@@ -1268,6 +1357,7 @@ function placePart(
     height: part.height,
     refusal: null,
     placement: null,
+    walls: [],
     alternates: [],
     ambiguous: false,
     rotationFree: false,
@@ -1501,6 +1591,12 @@ function placePart(
         'its own silhouette at more than one angle.',
     );
   }
+  // 🔒 Which walls the answer stands on, read once and for every verdict — the
+  // refusal below quotes them and an accepted line carries them (issue #737).
+  // The candidate rather than the rounded placement, and in the window's own
+  // spelling: the clamp holds `rotDeg` inside `170,190` as written, so its
+  // ceiling is 190 there even though the report normalises it to −170°.
+  base.walls = placementWalls(distinct[0].cand.scale, distinct[0].cand.rotDeg, scaleBounds, rotationBounds, rotationFree);
   if (best.residual > maxResidual) {
     // ⭐ The wall the answer stopped against, named in the refusal that reports
     // it (issue #719). A refusal that states only the residual and the threshold
@@ -1509,33 +1605,17 @@ function placePart(
     // window that could not reach the truth was a line further up the report
     // nobody was told to read.
     //
-    // ⚠️ On a refusal and on nothing else. An accepted placement at a wall is an
-    // author who chose the window to bracket the answer, which is the flag
-    // working; saying "the truth may lie outside" over every one of those is how
-    // a warning stops being read. And a window with no interior — `min === max`
-    // — has no wall to be at, so it gets no sentence: being at the only value
-    // there is says nothing about where the truth is.
-    const edges: string[] = [];
-    if (scaleBounds.max > scaleBounds.min) {
-      const window = `${scaleBounds.min},${scaleBounds.max}`;
-      if (best.scale <= scaleBounds.min * (1 + 1e-9)) {
-        edges.push(windowEdgeNote('scale', 'floor', best.scale.toFixed(3), window));
-      } else if (best.scale >= scaleBounds.max * (1 - 1e-9)) {
-        edges.push(windowEdgeNote('scale', 'ceiling', best.scale.toFixed(3), window));
-      }
-    }
-    if (!rotationBounds.wraps && rotationBounds.max > rotationBounds.min) {
-      const window = `${rotationBounds.min},${rotationBounds.max}`;
-      const said = `${best.rotationDeg.toFixed(1)}°`;
-      // Compared through `normaliseDegrees` because the reported angle is
-      // normalised into (-180, 180] and a window need not be: `--rotation
-      // 170,190` has a ceiling the report spells −170°.
-      if (Math.abs(normaliseDegrees(best.rotationDeg - rotationBounds.min)) <= 1e-6) {
-        edges.push(windowEdgeNote('rotation', 'floor', said, window));
-      } else if (Math.abs(normaliseDegrees(best.rotationDeg - rotationBounds.max)) <= 1e-6) {
-        edges.push(windowEdgeNote('rotation', 'ceiling', said, window));
-      }
-    }
+    // A window with no interior — `min === max` — has no wall to be at, so it
+    // gets no sentence: being at the only value there is says nothing about
+    // where the truth is. `placementWalls` holds that rule for both verdicts.
+    const edges = base.walls.map((wall) =>
+      windowEdgeNote(
+        wall.axis,
+        wall.edge,
+        wall.axis === 'scale' ? best.scale.toFixed(3) : `${best.rotationDeg.toFixed(1)}°`,
+        wall.window,
+      ),
+    );
     base.refusal = {
       reason: 'no-match',
       detail:
@@ -1552,6 +1632,26 @@ function placePart(
           `${edges.join('; ')}.`,
       );
     }
+  } else if (base.walls.length > 0) {
+    // ⭐ And an ACCEPTED placement on a wall says so too (issue #737), which
+    // #719 had declined on the grounds that a window chosen to bracket the
+    // answer puts correct placements near its edges. Near, measured, is not on:
+    // the refinement is clamped, so a value held by a wall IS the bound, while
+    // correct placements that settled inside stopped short of their wall by at
+    // least the polish's last step. The mark is on the placements whose number
+    // is the window's rather than the picture's, and not on the ones a
+    // well-chosen window merely brackets closely.
+    //
+    // ⚠️ It names the wall and nothing more — not "the truth may lie beyond",
+    // which a refusal says. Measured on the rendered corpus under a window
+    // bracketing every truth, the floor held parts shrunk into their own region
+    // whose truth was inside the window, so which side the truth is on is the one
+    // thing an accepted placement on a wall does not know.
+    base.notes.push(
+      `${name} was accepted, but its placement stopped ON a wall of the search window rather than settling inside ` +
+        'it, so that value is where the search was held and not where it came to rest: ' +
+        `${base.walls.map((wall) => wallClause(wall.axis, wall.edge, wall.window)).join('; ')}.`,
+    );
   }
   if (best.unexplained > 0.25 && best.residual <= maxResidual) {
     base.notes.push(
@@ -1569,10 +1669,22 @@ function placePart(
 // the console report
 // ---------------------------------------------------------------------------
 
-function placementLine(p: PosePlacement): string {
+/**
+ * One placement as the console prints it, with the wall each value stands on
+ * written beside that value (issue #737) — `scale=2.000 (the ceiling of --scale
+ * 0.5,2)` — so the number and the fact that the window chose it are read
+ * together. Only an accepted part's own placement is passed walls: a refusal
+ * already prints the whole sentence on the line below it.
+ */
+function placementLine(p: PosePlacement, walls: readonly PoseWall[] = []): string {
+  const beside = (axis: PoseWall['axis']): string =>
+    walls
+      .filter((wall) => wall.axis === axis)
+      .map((wall) => ` (${wallClause(wall.axis, wall.edge, wall.window)})`)
+      .join('');
   return (
-    `x=${p.x.toFixed(1).padStart(7)}  y=${p.y.toFixed(1).padStart(7)}  rot=${p.rotationDeg.toFixed(1).padStart(7)}°  ` +
-    `scale=${p.scale.toFixed(3)}  residual=${p.residual.toFixed(4)}  unexplained=${(p.unexplained * 100).toFixed(0).padStart(3)}%`
+    `x=${p.x.toFixed(1).padStart(7)}  y=${p.y.toFixed(1).padStart(7)}  rot=${p.rotationDeg.toFixed(1).padStart(7)}°${beside('rotation')}  ` +
+    `scale=${p.scale.toFixed(3)}${beside('scale')}  residual=${p.residual.toFixed(4)}  unexplained=${(p.unexplained * 100).toFixed(0).padStart(3)}%`
   );
 }
 
@@ -1604,7 +1716,7 @@ export function poseLines(report: PoseReport): string[] {
       continue;
     }
     const tag = part.refusal !== null ? 'REFUSE' : part.ambiguous ? 'AMBIG ' : 'PLACE ';
-    lines.push(`  ${tag} ${label}  ${placementLine(part.placement)}`);
+    lines.push(`  ${tag} ${label}  ${placementLine(part.placement, part.refusal === null ? part.walls : [])}`);
     if (part.coarse !== null) {
       lines.push(
         `         ${' '.repeat(width)}  found on a ${part.coarse.cols}x${part.coarse.rows} anchor grid, ` +

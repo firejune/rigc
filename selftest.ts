@@ -223,6 +223,7 @@ import {
   estimatePose,
   levelOf,
   normaliseDegrees,
+  placementWalls,
   POSE_SPEC,
   poseLines,
   ROTATION_FREE_TOLERANCE,
@@ -230,6 +231,7 @@ import {
   searchRotationClause,
   windowEdgeNote,
   type PosePlacement,
+  type PoseWall,
   type PoseReport,
 } from './src/pose.ts';
 import {
@@ -49482,6 +49484,138 @@ function runCurrencySuite(): number {
     }
   }
 
+  // --- CUR80–CUR81: the accepted-on-a-wall mark the guide teaches is the one `pose` prints (issue #737)
+  //
+  // Both read off the module: the console fragment comes out of `poseLines` over
+  // a one-part report whose `walls` came out of `placementWalls`, at the default
+  // ceiling, and the field row's keys are the keys that function returns. The
+  // page is where an author learns which words mark a held value; a paraphrase
+  // reads correct and sends nobody to the right line.
+  {
+    const guideFile = 'docs/AUTHORING.md';
+    const guideText = readFileSync(join(root, guideFile), 'utf8');
+    const guideLines = guideText.split('\n');
+    const window = { min: DEFAULT_SCALE_MIN, max: DEFAULT_SCALE_MAX };
+    const fullTurn = { min: -180, max: 180, wraps: true };
+    const walls = placementWalls(DEFAULT_SCALE_MAX, 0, window, fullTurn, false);
+    const onCeiling: PosePlacement = {
+      x: 0,
+      y: 0,
+      rotationDeg: 0,
+      scale: DEFAULT_SCALE_MAX,
+      residual: 0,
+      unexplained: 0,
+      offCanvas: 0,
+      footprint: 0,
+      bbox: { x: 0, y: 0, width: 0, height: 0 },
+    };
+    const oneHeld: PoseReport = {
+      spec: POSE_SPEC,
+      space: '',
+      images: '',
+      frame: { path: '', width: 0, height: 0, background: { kind: 'unknown', colour: null, borderShare: 0, materialShare: 0 } },
+      search: {
+        scale: { min: window.min, max: window.max, steps: 0 },
+        rotation: { minDeg: -180, maxDeg: 180, stepDeg: 0, steps: 0, degrees: [] },
+        coarse: { frameLongSide: 0, partSpan: 0, strideFraction: 0, framePyramid: 0 },
+        maxResidual: DEFAULT_MAX_RESIDUAL,
+        ambiguity: { absolute: 0, relative: 0 },
+      },
+      caveats: [],
+      parts: [
+        {
+          part: 'held.png',
+          path: '',
+          width: 0,
+          height: 0,
+          refusal: null,
+          placement: onCeiling,
+          walls,
+          alternates: [],
+          ambiguous: false,
+          rotationFree: false,
+          rotationSelfSimilarity: 1,
+          coarse: null,
+          notes: [],
+        },
+      ],
+    };
+    const printed = poseLines(oneHeld).find((row) => row.includes('held.png')) ?? '';
+    const from = printed.indexOf('scale=');
+    const to = printed.indexOf('  residual=');
+    const fragment = from >= 0 && to > from ? printed.slice(from, to) : '';
+
+    // CUR80: the console fragment.
+    {
+      const scan = (lines: readonly string[]): string[] =>
+        fragment === '' || lines.some((line) => line.includes(fragment))
+          ? []
+          : [`${guideFile} does not quote the fragment an accepted placement on the default ceiling prints: ${JSON.stringify(fragment)}`];
+      const standing = scan(guideLines);
+      const probes = [...standing];
+      if (fragment === '') probes.push(`\`poseLines\` printed no scale field for a placement on the ceiling: ${JSON.stringify(printed)}`);
+      if (walls.length !== 1) probes.push(`\`placementWalls\` found ${walls.length} wall(s) for a scale on the default ceiling`);
+      const at = guideLines.findIndex((line) => fragment !== '' && line.includes(fragment));
+      let note = '';
+      if (at >= 0) {
+        const plant = (what: string, line: string): void => {
+          const planted = [...guideLines];
+          planted[at] = line;
+          if (raisedBy(scan(planted), { was: standing }).length === 0) probes.push(`${what} was not caught`);
+          else note = `${note}${note === '' ? '' : ' · '}${what} is faulted`;
+        };
+        plant('the wall named as the floor instead of the ceiling', guideLines[at].replace('(the ceiling of', '(the floor of'));
+        plant('the clause dropped from the quoted line', guideLines[at].replace(/ \(the ceiling of --scale [^)]*\)/, ''));
+      }
+      const held = probes.length === 0;
+      say(
+        'CUR80_THE_ACCEPTED_WALL_CLAUSE_THE_GUIDE_QUOTES_IS_THE_ONE_POSE_PRINTS',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${guideFile} §11.4 quotes ${JSON.stringify(fragment)}, which \`poseLines\` prints for a placement ` +
+            `\`placementWalls\` puts on the default ceiling — and ${note}`,
+        ),
+        'the clause is how an author tells a value the window held from one the picture gave, so the page has to ' +
+          'teach the words the report actually prints',
+      );
+    }
+
+    // CUR81: the field row names every key of a wall.
+    {
+      const keys = walls.length > 0 ? Object.keys(walls[0]) : [];
+      const rowOf = (lines: readonly string[]): string => lines.find((line) => line.startsWith('| `walls` |')) ?? '';
+      const scan = (lines: readonly string[]): string[] => {
+        const row = rowOf(lines);
+        if (row === '') return [`${guideFile} §11.3 has no \`walls\` row`];
+        return keys.filter((key) => !row.includes(`\`${key}\``)).map((key) => `${guideFile}'s \`walls\` row does not name the key \`${key}\``);
+      };
+      const standing = scan(guideLines);
+      const probes = [...standing];
+      if (keys.length === 0) probes.push('`placementWalls` returned no wall to read keys off');
+      const at = guideLines.findIndex((line) => line.startsWith('| `walls` |'));
+      if (at >= 0) {
+        const planted = [...guideLines];
+        planted[at] = planted[at].split(`\`${keys[1] ?? keys[0] ?? 'edge'}\``).join('`side`');
+        if (raisedBy(scan(planted), { was: standing }).length === 0) probes.push('a row with one key renamed was not caught');
+      }
+      const held = probes.length === 0;
+      say(
+        'CUR81_THE_WALLS_ROW_THE_GUIDE_CARRIES_NAMES_EVERY_KEY_A_WALL_HAS',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${guideFile} §11.3's \`walls\` row names ${keys.map((k) => `\`${k}\``).join(', ')}, the keys \`placementWalls\` ` +
+            'returns — and the same row with one key renamed is faulted',
+        ),
+        'the JSON is what an agent reads, so a field row that names a key the report does not carry is a field ' +
+          'nobody can find',
+      );
+    }
+  }
+
   // --- CUR82: the hinge step the guide teaches is the one the ladder produces (issue #738)
   //
   // `CUR47`'s question asked of §12.4. The page calls `HINGE_STEP` a ceiling and
@@ -52599,8 +52733,14 @@ function poseSay(d: { translate: number; rotateDeg: number; scaleRatio: number }
  * The two arms carry the SAME plate at mirrored angles. That is the ambiguity
  * control: one PNG, two places in the picture that explain it equally well, and
  * the instrument must report both rather than pick.
+ *
+ * `headScale`, when given, draws the head's attachment at that `scaleX`/`scaleY`
+ * — the frame #719's landing measured and #737 is about: one picture at 1.15
+ * frame pixels per unit whose parts do NOT all share that scale, so one part's
+ * truth can sit outside a window that holds the rest. Absent, the rig spec is
+ * the one this fixture has always written, byte for byte.
  */
-function buildPoseFixture(): {
+function buildPoseFixture(headScale?: number): {
   dir: string;
   parts: string;
   framePath: string;
@@ -52660,7 +52800,12 @@ function buildPoseFixture(): {
         skins: {
           default: {
             torso: { torso: { image: 'torso.png' } },
-            head: { head: { image: 'head.png' } },
+            head: {
+              head:
+                headScale === undefined
+                  ? { image: 'head.png' }
+                  : { image: 'head.png', scaleX: headScale, scaleY: headScale },
+            },
             arm_l: { arm_l: { image: 'arm.png' } },
             arm_r: { arm_r: { image: 'arm.png' } },
             ball: { ball: { image: 'ball.png' } },
@@ -53461,6 +53606,276 @@ function runPoseSuite(): number {
         'scan cannot see the second — so the seeds are added by hand, outside the ladder. That is exactly why they ' +
         'reached a report whose window excluded them, and why taking them out of a narrowed window is a different ' +
         'change from clamping the polish',
+    );
+  }
+
+  // --- PO17–PO19: an ACCEPTED placement on a wall says so (#737) ------------
+  //
+  // ⭐ #719 put the wall on a refusal and kept it off an accepted placement, on
+  // the argument that a window chosen to bracket the answer puts correct
+  // placements NEAR its edges. Near is not on, and that is measured rather than
+  // argued: the refinement is clamped, so a value the window held IS the bound,
+  // while a correct placement that settled inside stops short of it. These three
+  // hold the mark to exactly the placements that stand on a wall — the card's
+  // own frame, where the truth is past the ceiling; the closely bracketed ones,
+  // which must stay unmarked; and a window with no interior, which has no wall.
+
+  /**
+   * The walls one reported placement stands on, derived here from the reported
+   * numbers and the caller's own window — never from `placementWalls`, which is
+   * the thing being checked. Equality is the whole test for the reason `wallsOf`
+   * gives, and a `rotationFree` part's `0°` is a placeholder no window held.
+   */
+  const marksOf = (
+    part: PoseReport['parts'][number],
+    scale: { min: number; max: number },
+    rotation: { minDeg: number; maxDeg: number },
+  ): PoseWall[] => {
+    const p = part.placement;
+    if (p === null) return [];
+    const out: PoseWall[] = [];
+    if (scale.max > scale.min) {
+      if (p.scale === scale.min) out.push({ axis: 'scale', edge: 'floor', window: `${scale.min},${scale.max}` });
+      else if (p.scale === scale.max) out.push({ axis: 'scale', edge: 'ceiling', window: `${scale.min},${scale.max}` });
+    }
+    if (!part.rotationFree && rotation.maxDeg > rotation.minDeg && rotation.maxDeg - rotation.minDeg < 360) {
+      const window = `${rotation.minDeg},${rotation.maxDeg}`;
+      if (p.rotationDeg === rotation.minDeg) out.push({ axis: 'rotation', edge: 'floor', window });
+      else if (p.rotationDeg === rotation.maxDeg) out.push({ axis: 'rotation', edge: 'ceiling', window });
+    }
+    return out;
+  };
+  const sayWall = (w: PoseWall): string => `the ${w.edge} of --${w.axis} ${w.window}`;
+  /** The console line a part's own placement is printed on. */
+  const placedLine = (lines: readonly string[], file: string): string =>
+    lines.find((row) => /^ {2}(PLACE|AMBIG|REFUSE)/.test(row) && row.slice(9).startsWith(`${file} `)) ?? '';
+
+  /**
+   * Every part of one run against the walls its own placement stands on, in the
+   * field, beside the value on the console line, and in the notes — two-sided,
+   * so a mark missing from a wall and a mark on a placement that settled inside
+   * are both faults.
+   */
+  const markFaults = (
+    what: string,
+    run: PoseReport,
+    lines: readonly string[],
+    scale: { min: number; max: number },
+    rotation: { minDeg: number; maxDeg: number },
+  ): string[] => {
+    const faults: string[] = [];
+    for (const part of run.parts) {
+      const want = marksOf(part, scale, rotation);
+      const got = part.walls ?? [];
+      if (JSON.stringify(got) !== JSON.stringify(want)) {
+        faults.push(`${what}: ${part.part} stands on ${want.length} wall(s) and its \`walls\` is ${JSON.stringify(got)}`);
+      }
+      if (part.placement === null || part.refusal !== null) continue;
+      const line = placedLine(lines, part.part);
+      const beside = (line.match(/ \(the (floor|ceiling) of --/g) ?? []).length;
+      if (beside !== want.length) {
+        faults.push(`${what}: ${part.part} stands on ${want.length} wall(s) and its console line names ${beside} — ${JSON.stringify(line.trim())}`);
+      }
+      for (const wall of want) {
+        const value = wall.axis === 'scale' ? `scale=${part.placement.scale.toFixed(3)}` : `°`;
+        if (!line.includes(`${value} (${sayWall(wall)})`)) {
+          faults.push(`${what}: ${part.part}'s console line does not carry "(${sayWall(wall)})" beside its ${wall.axis} — ${JSON.stringify(line.trim())}`);
+        }
+      }
+      const noted = part.notes.filter((n) => n.includes('stopped ON a wall')).length;
+      if (noted !== (want.length > 0 ? 1 : 0)) {
+        faults.push(`${what}: ${part.part} stands on ${want.length} wall(s) and ${noted} note(s) say it stopped on one`);
+      }
+    }
+    return faults;
+  };
+
+  const doubledHead = 2;
+  const doubled = buildPoseFixture(doubledHead);
+  const doubledOut = join(doubled.dir, 'pose-doubled.json');
+  const doubledRun = runCli(['pose', '--images', doubled.parts, '--frame', doubled.framePath, '--out', doubledOut]);
+  const doubledReport = existsSync(doubledOut) ? (JSON.parse(readFileSync(doubledOut, 'utf8')) as PoseReport) : null;
+  const doubledLines = doubledRun.stdout.split('\n');
+  const defaultWindow = { min: DEFAULT_SCALE_MIN, max: DEFAULT_SCALE_MAX };
+
+  // --- PO17: the card's frame marks the part the ceiling held ---------------
+  {
+    const probes: string[] = [];
+    const truthHead = doubled.truth.get('head')?.scale ?? NaN;
+    const reading = (run: PoseReport | null, lines: readonly string[]): string[] => {
+      const faults: string[] = [];
+      if (run === null) return [`no report was written to ${doubledOut}`];
+      const head = run.parts.find((p) => p.part === 'head.png');
+      if (head === undefined || head.placement === null) return ['head.png has no placement in the doubled frame'];
+      if (head.refusal !== null) {
+        faults.push(`head.png was refused rather than accepted, which is #719's case and not this one — ${head.refusal.detail}`);
+      }
+      const want = { axis: 'scale', edge: 'ceiling', window: `${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX}` };
+      if (JSON.stringify(head.walls ?? []) !== JSON.stringify([want])) {
+        faults.push(`head.png at scale ${head.placement.scale} carries walls ${JSON.stringify(head.walls ?? null)}`);
+      }
+      const line = placedLine(lines, 'head.png');
+      const clause = `scale=${DEFAULT_SCALE_MAX.toFixed(3)} (the ceiling of --scale ${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX})`;
+      if (!line.includes(clause)) faults.push(`the console line does not carry ${JSON.stringify(clause)} — ${JSON.stringify(line.trim())}`);
+      if (!head.notes.some((n) => n.includes('stopped ON a wall') && n.includes(`the ceiling of --scale ${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX}`))) {
+        faults.push(`no note on head.png says its placement stopped on the ceiling — ${JSON.stringify(head.notes)}`);
+      }
+      return faults;
+    };
+    if (doubledRun.status !== 0) probes.push(`pose on the doubled frame exited ${String(doubledRun.status)}`);
+    if (!(truthHead > DEFAULT_SCALE_MAX)) {
+      probes.push(`the doubled head's truth ${truthHead} is not above the default ceiling ${DEFAULT_SCALE_MAX}, so this frame no longer poses the case`);
+    }
+    const standing = reading(doubledReport, doubledLines);
+    probes.push(...standing);
+    // Two plants on the DATA the reading is taken from: the field emptied, and
+    // the console line printed as the branch point printed it.
+    if (doubledReport !== null) {
+      const unmarked = structuredClone(doubledReport);
+      for (const part of unmarked.parts) part.walls = [];
+      if (raisedBy(reading(unmarked, doubledLines), { was: standing }).length === 0) {
+        probes.push('a report whose head.png carries no `walls` was not caught');
+      }
+      const bare = doubledLines.map((row) => row.replace(/ \(the (floor|ceiling) of --\w+ [^)]*\)/g, ''));
+      if (raisedBy(reading(doubledReport, bare), { was: standing }).length === 0) {
+        probes.push('a console line with the wall clause stripped was not caught');
+      }
+    }
+    const head = doubledReport?.parts.find((p) => p.part === 'head.png');
+    const held = probes.length === 0;
+    say(
+      'PO17_AN_ACCEPTED_PLACEMENT_THE_WINDOW_HELD_ON_ITS_CEILING_SAYS_SO',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `one frame at 1.15 px/unit with the head drawn at scaleX/scaleY ${doubledHead}: truth ${to3(truthHead)}, ` +
+          `accepted at residual ${head?.placement?.residual ?? 'n/a'} and printed ${JSON.stringify(placedLine(doubledLines, 'head.png').trim())}; ` +
+          'the same report with `walls` emptied, and the same line with its clause stripped, are each faulted',
+      ),
+      'the report had the fact in hand and printed `PLACE head.png scale=2.000` over a part whose truth was 2.30 — ' +
+        'an author reading it had no reason to suspect the number was the window\'s rather than the picture\'s',
+    );
+  }
+
+  // --- PO18: the mark is on the wall and not near it -------------------------
+  //
+  // 🔒 The half that decides whether the mark is worth reading. A window whose
+  // CEILING is each part's own truth brackets the answer as closely as a window
+  // can, and the estimator settles a fraction inside it (its scale bias is low):
+  // those are the legitimate near-edge placements #719 feared marking, and they
+  // must carry nothing. Every part of every run is held two-sided — a missing
+  // mark and a mark on a placement that settled inside are both faults.
+  {
+    const probes: string[] = [];
+    const runs: { what: string; run: PoseReport; lines: string[]; scale: { min: number; max: number }; rotation: { minDeg: number; maxDeg: number } }[] = [
+      { what: 'the fixture under the default window', run: report, lines: poseLines(report), scale: defaultWindow, rotation: FULL_TURN },
+    ];
+    if (doubledReport !== null) {
+      runs.push({ what: 'the doubled frame under the default window', run: doubledReport, lines: doubledLines, scale: defaultWindow, rotation: FULL_TURN });
+    }
+    const near: string[] = [];
+    for (const [file, slot] of [
+      ['torso.png', 'torso'],
+      ['head.png', 'head'],
+      ['ball.png', 'ball'],
+    ] as const) {
+      const truth = want(slot).scale;
+      const capped = { min: to3(truth / 1.5), max: to3(truth) };
+      const run = estimatePose({ imagesDir: fixture.parts, framePath: fixture.framePath, parts: [partPath(file)], scale: capped });
+      runs.push({ what: `${file} under --scale ${capped.min},${capped.max}, whose ceiling is its truth`, run, lines: poseLines(run), scale: capped, rotation: FULL_TURN });
+      const p = run.parts[0]?.placement;
+      if (run.parts[0]?.refusal === null && p != null && poseWithin(poseDelta(p, want(slot))) && p.scale < capped.max) {
+        near.push(`${file} ${p.scale} (${((1 - p.scale / capped.max) * 100).toFixed(2)}% short of ${capped.max})`);
+      }
+    }
+    if (near.length === 0) {
+      probes.push('no correct placement settled close under a ceiling at its own truth, so this run cannot say "near" is left alone');
+    }
+    const standing = runs.flatMap((r) => markFaults(r.what, r.run, r.lines, r.scale, r.rotation));
+    probes.push(...standing);
+    // The two mutants the card names, planted on the reports rather than on the
+    // reading: a module that marks every placement, and one that marks none.
+    if (doubledReport !== null) {
+      const everyone = structuredClone(doubledReport);
+      for (const part of everyone.parts) {
+        if (part.placement !== null) part.walls = [{ axis: 'scale', edge: 'ceiling', window: `${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX}` }];
+      }
+      const loud = markFaults('every placement marked', everyone, poseLines(everyone), defaultWindow, FULL_TURN);
+      if (raisedBy(loud, { at: 'every placement marked' }).length === 0) probes.push('a report marking every placement was not caught');
+      const none = structuredClone(doubledReport);
+      for (const part of none.parts) part.walls = [];
+      const quiet = markFaults('no placement marked', none, poseLines(none), defaultWindow, FULL_TURN);
+      if (raisedBy(quiet, { at: 'no placement marked' }).length === 0) probes.push('a report marking no placement was not caught');
+    }
+    const marked = runs.reduce((n, r) => n + r.run.parts.filter((p) => (p.walls ?? []).length > 0).length, 0);
+    const placed = runs.reduce((n, r) => n + r.run.parts.filter((p) => p.placement !== null).length, 0);
+    const held = probes.length === 0;
+    say(
+      'PO18_A_PLACEMENT_THAT_SETTLED_INSIDE_THE_WINDOW_CARRIES_NO_MARK_HOWEVER_CLOSE_TO_A_WALL',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${marked} of ${placed} placement(s) over ${runs.length} run(s) carry a wall, each the one its numbers stand on; ` +
+          `under a ceiling at the part's own truth ${near.join(', ')} — correct, close, and unmarked; a report marking ` +
+          'every placement and one marking none are each faulted',
+      ),
+      'a mark on every placement near an edge is a mark nobody reads, and a window chosen to bracket the answer puts ' +
+        'correct placements there on purpose. The mark is worth reading only if it is on the wall and nowhere else',
+    );
+  }
+
+  // --- PO19: a window with no interior has no wall to be at ------------------
+  //
+  // #719's rule, now held for an accepted placement too: being at the only value
+  // a window has says nothing about where the answer is. The plant is the same
+  // part at the same value as the FLOOR of a window that has an interior —
+  // which the estimator's low scale bias holds there, and which is marked.
+  {
+    const probes: string[] = [];
+    const truth = to3(want('head').scale);
+    const pinned = { min: truth, max: truth };
+    const upright = { minDeg: 0, maxDeg: 0 };
+    const single = estimatePose({
+      imagesDir: fixture.parts,
+      framePath: fixture.framePath,
+      parts: [partPath('head.png'), partPath('torso.png')],
+      scale: pinned,
+      rotation: upright,
+    });
+    probes.push(...markFaults(`--scale ${truth},${truth} --rotation 0,0`, single, poseLines(single), pinned, upright));
+    const onBoth = single.parts.filter((p) => p.placement?.scale === truth && p.placement.rotationDeg === 0).length;
+    if (onBoth !== single.parts.length) {
+      probes.push(`only ${onBoth} of ${single.parts.length} part(s) sit at the window's one value, so the case is not the one named`);
+    }
+    const floored = { min: truth, max: to3(truth * 1.5) };
+    const opened = estimatePose({
+      imagesDir: fixture.parts,
+      framePath: fixture.framePath,
+      parts: [partPath('head.png')],
+      scale: floored,
+    });
+    const openedWalls = opened.parts[0]?.walls ?? [];
+    if (!openedWalls.some((w) => w.axis === 'scale' && w.edge === 'floor')) {
+      probes.push(
+        `head.png at the same value as the floor of --scale ${floored.min},${floored.max} was not marked on the floor ` +
+          `(scale ${opened.parts[0]?.placement?.scale ?? 'n/a'}, walls ${JSON.stringify(openedWalls)}), so the plant was not caught`,
+      );
+    }
+    const held = probes.length === 0;
+    say(
+      'PO19_A_WINDOW_WITH_NO_INTERIOR_MARKS_NOTHING',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `under --scale ${truth},${truth} --rotation 0,0 ${onBoth} part(s) sit at the window's only value and none is ` +
+          `marked; the head at the same value as the floor of --scale ${floored.min},${floored.max} is marked ` +
+          `${JSON.stringify(openedWalls.map((w) => sayWall(w)))}`,
+      ),
+      'a window that is one value is a caller fixing that value, not a search that ran into a bound — marking it ' +
+        'would print a warning over the one placement the caller asked for exactly',
     );
   }
 
