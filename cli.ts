@@ -75,6 +75,7 @@ import {
   type DiffReport,
 } from './src/diff.ts';
 import { ingest, IngestError, IngestSpecRefused, INGEST_GUTTERS, type IngestFinding, type IngestStage } from './src/ingest.ts';
+import { NotAPngError } from './src/png.ts';
 import { copyAtlasPages } from './src/emit.ts';
 import {
   DEFAULT_PADDING,
@@ -3780,6 +3781,15 @@ try {
   if (err instanceof IngestError) {
     console.error(`rigc ingest: ${err.message}`);
     process.exit(2);
+  }
+  // A page or frame that is not a PNG rigc can read, from any command that
+  // opens one (`render`, `check`, `preview`, …) — issue #732. The sentence is
+  // the one reader's and already names the file, what it is and what rigc
+  // reads; a stack under it is the tool describing its own internals instead.
+  // Exit 1, like a compile error: the invocation was fine, a file was not.
+  if (err instanceof NotAPngError) {
+    console.error(`rigc: ${err.message}`);
+    process.exit(1);
   }
   throw err;
 }

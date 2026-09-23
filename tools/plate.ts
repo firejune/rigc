@@ -15,6 +15,7 @@
 import { deflateSync, inflateSync } from 'node:zlib';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { drawText, textWidth } from './font5x7.ts';
+import { assertPng } from '../src/png.ts';
 
 export type RGBA = [number, number, number, number];
 
@@ -421,6 +422,11 @@ export function readPlate(path: string): Plate {
   // rewording an ENOENT as a decoding problem would mislabel the commonest
   // failure of all.
   const buf = readFileSync(path);
+  // What the file IS comes first, and from the one reader that says so (issue
+  // #732): `decodePng` walks chunks from byte 8 whatever the first eight were,
+  // so a WebP page reached it and came back as "unexpected end of file" — an
+  // inflate error about a file that was never a PNG.
+  assertPng(buf, path);
   try {
     return decodePng(buf);
   } catch (err) {

@@ -19,7 +19,7 @@
  */
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
-import { readPngInfo } from './png.ts';
+import { readPngHeader, readPngInfo } from './png.ts';
 import {
   DEPTH_TONE_IDENTITY,
   DepthError,
@@ -1410,7 +1410,12 @@ function fromLoosePng(
     // the rig. The validator's messages are the UI, and so are these.
     throw new CompileError(`image "${relPath}" is not on disk at ${absPath}`);
   }
-  const info = readPngInfo(absPath);
+  // A loose part IS a page of the atlas this route emits, so it is refused the
+  // way a pack's page is (issue #732): by the one reader's sentence, as a
+  // CompileError, rather than as that reader's throw with a stack under it.
+  const header = readPngHeader(absPath);
+  if (header.problem !== null) throw new CompileError(`image "${relPath}": ${header.problem}`);
+  const info = header.info;
   // Page name is the PNG path *relative to the atlas file*, so the viewer
   // resolves it the way every Spine consumer does: against the atlas URL.
   // The PNGs are not copied: they pass through untouched, and the atlas points
@@ -1442,6 +1447,25 @@ function readAtlasIn(path: string): AtlasSource {
     }
   }
   if (byName.size === 0) throw new CompileError(`--atlas-in ${path} declares no regions`);
+  // 🔒 **What each page IS, where the pack is opened** (issue #732). Every page
+  // the pack names reaches the gate — the atlas this build emits is the pack's
+  // own text — so a page no reader can open is refused here, all of them in
+  // one sentence, rather than one region at a time or at `A06` after the whole
+  // compile. A page that is not on disk is left to the region that sits on it,
+  // which already names it; saying so twice would be two refusals of one fact.
+  const unread: string[] = [];
+  for (const page of parsed.pages) {
+    const abs = resolve(dirname(path), page.name);
+    if (!existsSync(abs)) continue;
+    const { problem } = readPngHeader(abs);
+    if (problem !== null) unread.push(`page "${page.name}": ${problem}`);
+  }
+  if (unread.length > 0) {
+    throw new CompileError(
+      `--atlas-in ${path}: ${unread.length} of its ${parsed.pages.length} page(s) cannot be read as PNG, and ` +
+        `nothing was compiled against the pack — ${unread.join('; ')}`,
+    );
+  }
   return { path, dir: dirname(path), parsed, byName };
 }
 
