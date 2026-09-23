@@ -683,6 +683,12 @@ interface AttachmentFact {
   edgesPresent: boolean | null;
   /** `<width>x<height>` as stated, or `unstated` — see `attachments.region_size`. */
   size: string;
+  /**
+   * The name the runtime gives the attachment: its stated `name`, else its
+   * placeholder key (`getValue(map, "name", placeholder)`, `SkeletonJson.js:526`)
+   * — see `attachments.runtime_name`.
+   */
+  runtimeName: string;
 }
 
 function attachmentFacts(root: Json): { skins: Set<string>; byKey: Map<string, AttachmentFact> } {
@@ -718,6 +724,7 @@ function attachmentFacts(root: Json): { skins: Set<string>; byKey: Map<string, A
           // "has edges" means.
           edgesPresent: type === 'mesh' ? 'edges' in att : null,
           size: num(att.width) !== null && num(att.height) !== null ? `${num(att.width)}x${num(att.height)}` : 'unstated',
+          runtimeName: str(att.name) ?? attName,
         });
       }
     }
@@ -820,7 +827,59 @@ function diffAttachments(c: Json, r: Json): DiffSection {
       bm,
       (x, y) => x.edgesPresent === y.edgesPresent,
     ),
+    // ── issue #796 ───────────────────────────────────────────────────────────
+    //
+    // The name the RUNTIME gives each attachment — `name` if stated, else the
+    // placeholder key — agreed per skin/slot/placeholder. Every measure above is
+    // keyed by the placeholder, so a rebuild that renamed every attachment while
+    // keeping every key read 1.000 across this whole section: that is what a
+    // rebuild did on two production rigs (a stated name respelled as `path`, and
+    // `<skin>/<placeholder>` composed over a name the file never stated), and it
+    // took a pose oracle comparing `slot.attachment.name` to see it.
+    //
+    // 🚫 Reported rather than in the mean, by the same test as `mesh_edges`: a
+    // name draws no pixel, so no reading of the frames could decide it. It is
+    // still a value a consumer reads — `slot.attachment.name` — which is why it
+    // is measured at all.
+    //
+    // ⚠️ Over the keys BOTH sides hold, not over the larger roster, and that is
+    // the one departure from `agreement` here. A key one side lacks is already
+    // `attachments.names` and `attachments.count`; scored again here it would
+    // move this measure on every rename of a key and every dropped attachment,
+    // and "the same key answers to another name" — the only thing nothing else
+    // reads — would be one term among many. The denominator this reports is the
+    // number of keys compared, so a report over few shared keys says so.
+    runtimeNames(a.byKey, b.byKey),
   ]);
+}
+
+/**
+ * `attachments.runtime_name`: of the skin/slot/placeholder keys both sides
+ * hold, how many answer to the same runtime name — see the note at its call.
+ */
+function runtimeNames(a: Map<string, AttachmentFact>, b: Map<string, AttachmentFact>): DiffMeasure {
+  let shared = 0;
+  let agree = 0;
+  const differ: string[] = [];
+  for (const [key, fact] of a) {
+    const other = b.get(key);
+    if (other === undefined) continue;
+    shared++;
+    if (fact.runtimeName === other.runtimeName) agree++;
+    else if (differ.length < 3) differ.push(`${key} "${fact.runtimeName}" vs "${other.runtimeName}"`);
+  }
+  const missed = shared - agree;
+  return measure(
+    'attachments.runtime_name',
+    'each attachment both sides hold answers to the same name at runtime (`name` if stated, else its placeholder)',
+    agree,
+    shared,
+    shared === 0
+      ? 'no skin/slot/placeholder key is on both sides, so no name was compared'
+      : missed === 0
+        ? undefined
+        : `${missed} renamed: ${differ.join('; ')}${missed > differ.length ? `; …and ${missed - differ.length} more` : ''}`,
+  );
 }
 
 interface ConstraintFact {

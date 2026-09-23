@@ -533,7 +533,13 @@ export function diffSummaryLines(reportPath: string): string[] {
 function checkFigures(reportPath: string): string[] {
   if (!existsSync(reportPath)) return ['(no check report was written, so nothing was read from one)'];
   interface Anim {
-    animation: string;
+    /**
+     * `null` on the row `check` writes for the SETUP pose (`dir: "setup"`) — which
+     * is the only row a rig with no animations gets. Read as a string, that report
+     * threw at step 5 on every animation-less build (issue #796's two editor fixtures).
+     */
+    animation: string | null;
+    dir?: string;
     compared: number;
     meanMae: number;
     worstMae: number;
@@ -546,7 +552,7 @@ function checkFigures(reportPath: string): string[] {
   if (animations.length === 0) return ['(the check report carried no animations — read it before believing this run)'];
   return animations.map(
     (a) =>
-      `  ${a.animation.padEnd(12)} ${a.compared} frame(s)  mean MAE ${a.meanMae.toFixed(4)}  worst ${a.worstMae.toFixed(4)}` +
+      `  ${(a.animation ?? `(${a.dir ?? 'setup'})`).padEnd(12)} ${a.compared} frame(s)  mean MAE ${a.meanMae.toFixed(4)}  worst ${a.worstMae.toFixed(4)}` +
       `  worst drift ${a.worstDrift.toFixed(3)}px${a.worstDriftSlot ? ` on ${a.worstDriftSlot} @ f${a.worstDriftFrame}` : ''}`,
   );
 }
@@ -844,7 +850,7 @@ function main(): void {
   {
     interface ImagesProbe {
       skeleton?: { images?: string };
-      skins?: Array<{ attachments?: Record<string, Record<string, { type?: string; path?: string }>> }>;
+      skins?: Array<{ attachments?: Record<string, Record<string, { type?: string; name?: string; path?: string }>> }>;
     }
     const probe = JSON.parse(readFileSync(source, 'utf8')) as ImagesProbe;
     const declared = probe.skeleton?.images;
@@ -858,7 +864,10 @@ function main(): void {
         for (const slot of Object.values(skin.attachments ?? {})) {
           for (const [placeholder, att] of Object.entries(slot)) {
             if (att.type !== undefined && att.type !== 'mesh') continue;
-            wanted.add(att.path ?? placeholder);
+            // The parser's own defaults: `path`, else the attachment's `name`,
+            // else its placeholder (`SkeletonJson.js:526`, `:529`, `:560`) — a
+            // stated `name` is the file the editor looks for (issue #796).
+            wanted.add(att.path ?? att.name ?? placeholder);
           }
         }
       }

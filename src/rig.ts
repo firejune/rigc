@@ -575,9 +575,36 @@ export type RigMeshGenerator = RigRingGenerator | RigRibbonGenerator | RigContou
 /** The four `kind` names a generator may carry, and the order `RIG_KEYS` takes them in. */
 export const RIG_GENERATOR_KINDS = ['ring', 'ribbon', 'contour', 'grid'] as const;
 
+/**
+ * The attachment's own NAME, as distinct from the placeholder key it is filed
+ * under — one field, the same on every attachment type (issue #796).
+ *
+ * `readAttachment` reads `name = getValue(map, "name", placeholder)`
+ * (`SkeletonJson.js:526`) for every type, so this is the runtime's
+ * `Attachment.name` — what a consumer reads off `slot.attachment.name` — and,
+ * on the three types that draw, the default of `path` (`:529`, `:560`). Absent,
+ * the runtime names the attachment by its placeholder.
+ *
+ * 🔑 Nothing in the format resolves BY it. A skin's table, a slot's setup
+ * `attachment`, an attachment or deform timeline and a linked mesh's `source`
+ * are all keyed by the placeholder (`:415-418`, `:433`, `:1140`) — measured: a
+ * link whose `source` spells its source's name rather than its key throws
+ * `Source mesh not found`. So two skins may give one placeholder two
+ * attachments of one name, and the runtime keeps both.
+ *
+ * ⭐ rigc writes this field exactly when the spec states it and never derives
+ * one. Until #796 it composed `<skin>/<placeholder>` for a placeholder several
+ * skins fill, and a transcribed name had no field to live in — so a rebuild of
+ * an editor export answered to other names than its source did, which a
+ * consumer reading `attachment.name` can see and no gate could.
+ */
+export type RigAttachmentName = string;
+
 /** `SkeletonJson.ts:540-559`. `type` defaults to `region` (`:539`). */
 export interface RigRegionAttachment {
   type?: 'region';
+  /** The runtime's attachment name — see `RigAttachmentName`. Absent, it is the placeholder. */
+  name?: RigAttachmentName;
   /** The atlas region to resolve. Defaults to the attachment's own name. */
   path?: string;
   /**
@@ -675,6 +702,8 @@ export interface RigMeshBinding {
 
 export interface RigMeshAttachment {
   type: 'mesh';
+  /** The runtime's attachment name — see `RigAttachmentName`. Absent, it is the placeholder. */
+  name?: RigAttachmentName;
   path?: string;
   image?: string;
   /** Its length defines `worldVerticesLength`; required with authored geometry. */
@@ -735,8 +764,11 @@ export interface RigMeshAttachment {
  * under in its skin — and not its `name`.** The resolution is
  * `skin.getAttachment(sourceSlotIndex, source)` (`SkeletonJson.js:433`), and a
  * skin's table is keyed by the JSON key `readSkin` iterated (`:415-418`), so a
- * contested placeholder rigc gives an attachment `name` of `<skin>/<placeholder>`
- * is still found under the placeholder alone.
+ * source that states a `name` of its own is still found under its placeholder
+ * alone — and a `source` spelling that name throws `Source mesh not found`.
+ * Two skins each filling the source's placeholder are told apart by `skin`,
+ * never by a name (issue #796, which retired #541's reading that a link
+ * resolves its source by name).
  *
  * 🚨 **A linked mesh states no geometry of its own, and the parser is silent
  * about one that does.** The `source` branch returns before `readVertices`
@@ -756,6 +788,8 @@ export interface RigMeshAttachment {
  */
 export interface RigLinkedMeshAttachment {
   type: 'linkedmesh';
+  /** The runtime's attachment name — see `RigAttachmentName`. Absent, it is the placeholder. */
+  name?: RigAttachmentName;
   /** The art this link draws, exactly as a mesh's: its own region. */
   path?: string;
   image?: string;
@@ -853,6 +887,8 @@ export interface RigVertexGeometry {
  */
 export interface RigBoundingBoxAttachment extends RigVertexGeometry {
   type: 'boundingbox';
+  /** The runtime's attachment name — see `RigAttachmentName`. Absent, it is the placeholder. */
+  name?: RigAttachmentName;
 }
 
 /**
@@ -869,6 +905,8 @@ export interface RigBoundingBoxAttachment extends RigVertexGeometry {
  */
 export interface RigClippingAttachment extends RigVertexGeometry {
   type: 'clipping';
+  /** The runtime's attachment name — see `RigAttachmentName`. Absent, it is the placeholder. */
+  name?: RigAttachmentName;
   /**
    * The last slot this clip applies to, by name. Absent leaves `endSlot` null,
    * which is the parser's own encoding for "clip everything after this one".
@@ -915,6 +953,8 @@ export interface RigClippingAttachment extends RigVertexGeometry {
  */
 export interface RigPathAttachment extends RigVertexGeometry {
   type: 'path';
+  /** The runtime's attachment name — see `RigAttachmentName`. Absent, it is the placeholder. */
+  name?: RigAttachmentName;
   /** Default false. When true the last knot joins the first. */
   closed?: boolean;
   /**
@@ -1672,21 +1712,21 @@ export const RIG_KEYS = {
   ],
   RigTransformProperty: ['offset', 'to'],
   RigTransformTo: ['offset', 'max', 'scale'],
-  RigRegionAttachment: ['type', 'path', 'image', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'width', 'height', 'color', 'sequence'],
+  RigRegionAttachment: ['type', 'name', 'path', 'image', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'width', 'height', 'color', 'sequence'],
   RigMeshAttachment: [
-    'type', 'path', 'image', 'uvs', 'triangles', 'vertices', 'weights', 'boneIndexing', 'hull', 'edges',
+    'type', 'name', 'path', 'image', 'uvs', 'triangles', 'vertices', 'weights', 'boneIndexing', 'hull', 'edges',
     'width', 'height', 'color', 'generator', 'sequence',
   ],
   RigLinkedMeshAttachment: [
-    'type', 'path', 'image', 'source', 'slot', 'skin', 'timelines', 'width', 'height', 'color', 'sequence',
+    'type', 'name', 'path', 'image', 'source', 'slot', 'skin', 'timelines', 'width', 'height', 'color', 'sequence',
     // Declared so the refusal can name them — see `RigLinkedMeshAttachment`.
     'uvs', 'triangles', 'vertices', 'weights', 'boneIndexing', 'hull', 'edges', 'generator',
   ],
   RigMeshBinding: ['bone', 'x', 'y', 'weight'],
   RigSequence: ['count', 'start', 'digits', 'setup'],
-  RigBoundingBoxAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type'],
-  RigClippingAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type', 'end', 'convex', 'inverse'],
-  RigPathAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type', 'closed', 'constantSpeed', 'lengths'],
+  RigBoundingBoxAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type', 'name'],
+  RigClippingAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type', 'name', 'end', 'convex', 'inverse'],
+  RigPathAttachment: ['vertexCount', 'vertices', 'weights', 'boneIndexing', 'color', 'type', 'name', 'closed', 'constantSpeed', 'lengths'],
   RigRingGenerator: ['kind', 'hull', 'center', 'inner', 'size', 'bias', 'controls'],
   RigRibbonGenerator: ['kind', 'size', 'rows', 'chain'],
   RigContourGenerator: ['kind', 'tolerance', 'margin', 'maxVertices', 'alpha', 'depth', 'soft'],

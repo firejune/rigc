@@ -47,8 +47,6 @@
  * spec.
  */
 import {
-  composeSkinAttachmentName,
-  DEFAULT_SKIN,
   PHYSICS_COMPONENTS,
   SLOT_TRACKS as EMITTED_SLOT_TRACKS,
   SPINE_VERSION,
@@ -682,34 +680,6 @@ function hexToRgb(hex: string): number[] {
 }
 
 /**
- * Which placeholders more than one skin fills, per slot.
- *
- * 🔒 Inverts `contestedPlaceholders` + `nameSkinAttachment`: rigc writes an
- * attachment `name` exactly where a placeholder is contested, and the rig spec
- * has no field for one. So the name is DROPPED and re-derived — which is right
- * where the contest survives the round trip, and a loss anywhere else. This is
- * what lets that difference be reported rather than assumed.
- */
-function contestedPlaceholders(skins: readonly unknown[]): Map<string, Set<string>> {
-  const fillers = new Map<string, Map<string, number>>();
-  for (const skin of skins) {
-    for (const [slot, placeholders] of objEntries(obj(skin).attachments)) {
-      const perSlot = fillers.get(slot) ?? new Map<string, number>();
-      for (const placeholder of Object.keys(placeholders)) {
-        perSlot.set(placeholder, (perSlot.get(placeholder) ?? 0) + 1);
-      }
-      fillers.set(slot, perSlot);
-    }
-  }
-  const contested = new Map<string, Set<string>>();
-  for (const [slot, perSlot] of fillers) {
-    const shared = new Set([...perSlot].filter(([, count]) => count > 1).map(([placeholder]) => placeholder));
-    if (shared.size) contested.set(slot, shared);
-  }
-  return contested;
-}
-
-/**
  * Read a skeleton, write the two specs that rebuild it.
  *
  * Pure: the same skeleton and the same options give the same specs, every time.
@@ -791,7 +761,6 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
   });
 
   // -- skins and attachments ------------------------------------------------
-  const contested = contestedPlaceholders(arr(root.skins));
   const skins: JsonObject = {};
   for (const skin of arr(root.skins)) {
     const entry = obj(skin);
@@ -801,8 +770,6 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
       for (const [placeholder, att] of Object.entries(placeholders)) {
         perSlot[placeholder] = ingestAttachment(obj(att), placeholder, boneNames, opts, note, {
           where: `skin "${nameOf(entry)}" slot "${slot}" attachment "${placeholder}"`,
-          contested: contested.get(slot)?.has(placeholder) === true,
-          skin: nameOf(entry),
         });
       }
       table[slot] = perSlot;
@@ -1331,7 +1298,7 @@ function ingestAttachment(
   boneNames: readonly string[],
   opts: IngestOptions,
   note: Note,
-  at: { where: string; contested: boolean; skin: string },
+  at: { where: string },
 ): JsonObject {
   // `readAttachment` reads no `type` as `region` (`SkeletonJson:539`), and so
   // does `checkRigSpecKeys`. Both defaults are the parser's, not a guess.
@@ -1347,125 +1314,26 @@ function ingestAttachment(
   // construct the file does not contain (issue #691).
   const linked = (type === 'mesh' || type === 'linkedmesh') && typeof att.source === 'string' && att.source.length > 0;
 
-  // The three types the parser gives a texture `path` to, which is exactly the
-  // three that call `carryArt` below. `readAttachment` reaches
-  // `getValue(map, "path", name)` in the `region` branch (`SkeletonJson.js:529`)
-  // and in the shared `mesh`/`linkedmesh` branch (`:560`); `boundingbox`,
-  // `path`, `point` and `clipping` are constructed from the name alone and
-  // resolve no region at all.
+  // The three types the parser gives a texture `path` to — and reads a
+  // `sequence` on. `readAttachment` reaches `getValue(map, "path", name)` in the
+  // `region` branch (`SkeletonJson.js:529`) and in the shared `mesh`/`linkedmesh`
+  // branch (`:560`); `boundingbox`, `path`, `point` and `clipping` are
+  // constructed from the name alone and resolve no region at all.
   const resolvesRegion = linked || type === 'region' || type === 'mesh';
-
-  /**
-   * The atlas region a dropped `name` was carrying, which the rebuild has to
-   * state as `path` or lose.
-   *
-   * 🚨 **The name is not bookkeeping — it is the region key** (issue #742).
-   * `readAttachment` reads `name = getValue(map, "name", placeholder)` and then
-   * `path = getValue(map, "path", name)`, so `path` defaults to the NAME and not
-   * to the placeholder. A source that states a `name` and no `path` therefore
-   * draws the region that name spells; rigc drops the name (the rig spec has no
-   * field for one — see below) and used to write no `path` either, so the
-   * rebuild asked the atlas for the PLACEHOLDER. Measured on a forged export
-   * whose three attachments state `name` and no `path`: the source loads against
-   * its own pack and the rebuild failed `A08_REGION_NAMES_MATCH_ATTACHMENTS`
-   * three times and `A00_ROUNDTRIP_PARSE` with it.
-   *
-   * ⚠️ A name EQUAL to the placeholder resolves the same region either way, so
-   * nothing is written for it — the rebuild would otherwise spell a field the
-   * source did not, and `A18`'s reference is the source file.
-   *
-   * 🔑 This is not `at.contested`'s business, and that is the half the card
-   * nearly missed. Where a placeholder is contested rigc composes a name of its
-   * own and `nameSkinAttachment` pins `path` at the PLACEHOLDER — so a contested
-   * source naming its own regions lost them with no finding at all, which is
-   * quieter than the uncontested case rather than safer.
-   */
-  const keptPath =
-    att.path === undefined && resolvesRegion && typeof att.name === 'string' && att.name !== placeholder
-      ? att.name
-      : undefined;
-
-  /** What became of the atlas region once the name is gone — the same four shapes wherever the name is lost. */
-  const regionFate =
-    keptPath !== undefined
-      ? `That name was also the ATLAS REGION this attachment resolves, because \`path\` defaults to the name and ` +
-        `not to the placeholder (\`SkeletonJson.js:526\`, \`:529\`, \`:560\`) — so the region key is KEPT as ` +
-        `"path": ${JSON.stringify(keptPath)} and the name alone is lost`
-      : att.path !== undefined
-        ? `The region key is the source's own \`path\` ${JSON.stringify(att.path)}, carried unchanged, so the ` +
-          'name alone is lost'
-        : resolvesRegion
-          ? at.contested
-            ? 'The region is the placeholder\'s either way — the compiler pins a composed name\'s `path` at the ' +
-              'placeholder — so the name alone is lost'
-            : 'The name is the placeholder itself, so the rebuild resolves the same atlas region and no `path` is ' +
-              'written for it'
-          : `An attachment of type ${JSON.stringify(type)} resolves no atlas region — the parser builds it from ` +
-            'the name alone — so there is no region key to keep and the name is the whole loss';
-
-  // `name` is DERIVED by rigc — `composeSkinAttachmentName` writes one exactly
-  // where a placeholder is contested — so the rig spec has no field for it and
-  // it is dropped. Where one skin fills the placeholder every stated name is a
-  // loss, because the rebuild writes none.
-  if (att.name !== undefined && !at.contested) {
-    note(
-      'lossy',
-      'ATTACHMENT_NAME',
-      at.where,
-      `the attachment states name ${JSON.stringify(att.name)} and only ONE skin fills this placeholder, so rigc ` +
-        'writes no name on the rebuild — it composes "<skin>/<placeholder>" only for a contested placeholder (#541). ' +
-        regionFate,
-    );
-  }
-
-  /**
-   * 🚨 Where a placeholder IS contested the name is re-derived, and re-derived is
-   * not the same as kept (issue #746). The rebuild's attachment answers to what
-   * `composeSkinAttachmentName` returns; the source's answers to what it states,
-   * or to its placeholder where it states nothing (`readAttachment`'s
-   * `getValue(map, "name", placeholder)`, `SkeletonJson.js:526`). Only where
-   * those two strings differ is anything renamed, so only there is a line.
-   *
-   * ⚠️ Comparing is the whole rule, and its cheap neighbour was measured and
-   * rejected on #742: firing whenever a contested entry states a name puts a
-   * `LOSS` on every contested round trip of rigc's own emits, which state
-   * exactly the composed name and rebuild byte for byte.
-   *
-   * ⚠️ A contested placeholder the DEFAULT skin fills gets no line here: the
-   * compiler composes nothing for it — `refuseDefaultSkinContest` refuses the
-   * rebuild by name — so a line claiming a composed name would state one no
-   * build will ever emit.
-   */
-  const composed = composeSkinAttachmentName(at.skin, placeholder, at.contested);
-  const sourceName = att.name === undefined ? placeholder : att.name;
-  if (composed !== null && at.skin !== DEFAULT_SKIN && sourceName !== composed) {
-    note(
-      'lossy',
-      'ATTACHMENT_NAME',
-      at.where,
-      (att.name === undefined
-        ? `the attachment states no name, so the source names it by its placeholder ${JSON.stringify(placeholder)} ` +
-          '(`SkeletonJson.js:526`)'
-        : `the attachment states name ${JSON.stringify(att.name)}`) +
-        `, and more than one skin fills this placeholder, so rigc composes the name ${JSON.stringify(composed)} ` +
-        `on the rebuild (#541) — the rig spec has no field for a name, so the rebuilt attachment answers to ` +
-        `${JSON.stringify(composed)} where the source's answered to ${JSON.stringify(sourceName)}. ` +
-        regionFate,
-    );
-  }
 
   /** The texture side, which the skeleton does not encode. Inverts `buildRigRegion`'s tail. */
   const carryArt = (): void => {
     if (att.path !== undefined) out.path = att.path;
-    else if (keptPath !== undefined) out.path = keptPath;
     // `buildRigRegion` writes `path` when the image basename differs from the
-    // placeholder, so naming the image after the region this attachment RESOLVES
-    // reproduces the same `path` decision AND the same atlas region name. Read
-    // off `out.path` rather than off `att.path`, so that the region a dropped
-    // `name` was carrying names the loose PNG too — otherwise `path` and `image`
-    // would disagree and `attachmentPath` would emit the first while the atlas
-    // was packed under the second.
-    if (opts.art === 'loose') out.image = `${out.path === undefined ? placeholder : String(out.path)}.png`;
+    // name the attachment carries — its stated `name`, else the placeholder —
+    // so naming the image after the region this attachment RESOLVES
+    // (`path ?? name ?? placeholder`, the parser's own defaults at
+    // `SkeletonJson.js:526`, `:529`, `:560`) reproduces the same `path`
+    // decision AND the same atlas region name.
+    if (opts.art === 'loose') {
+      const region = att.path ?? (typeof att.name === 'string' ? att.name : placeholder);
+      out.image = `${String(region)}.png`;
+    }
     if (att.width !== undefined) out.width = att.width;
     if (att.height !== undefined) out.height = att.height;
   };
@@ -1592,7 +1460,17 @@ function ingestAttachment(
       );
     }
   }
-  return out;
+  // 🔑 The attachment's own `name`, carried VERBATIM wherever the source states
+  // one — and nowhere else (issue #796). It is the runtime's `Attachment.name`
+  // (`getValue(map, "name", placeholder)`, `SkeletonJson.js:526`) and, with no
+  // `path`, the region the attachment draws; the rig spec has a field for it
+  // and `compile` writes exactly what that field states, so nothing about it is
+  // lost and nothing is re-derived. A name equal to its placeholder is carried
+  // too: the source spelled it, and the rebuild is held to the source's text.
+  // Put right after `type`, the order `RIG_KEYS` gives the field.
+  if (att.name === undefined) return out;
+  const { type: carriedType, ...rest } = out;
+  return carriedType === undefined ? { name: att.name, ...rest } : { type: carriedType, name: att.name, ...rest };
 }
 
 /**

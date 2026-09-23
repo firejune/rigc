@@ -1103,12 +1103,14 @@ names the same comparator puts ahead of it — `default` before `2`, `default`
 before `A` — so renaming a skin away from `default` makes it an ordinary name that
 sorts like one.
 
-**R12 — A placeholder that more than one skin fills gets a per-skin attachment
-`name`, and the `default` skin may not be one of those skins.** rigc writes
-`"name": "<skin>/<placeholder>"` on each of those entries and restates `path`
-beside it so the texture still resolves where it did; you do not author that and
-there is nothing to do about it, but it is visible in the emitted file, so §3.4.2
-says what it is and why. What you *do* author is where the shared art lives: a
+**R12 — An attachment's `name` is written exactly when the spec states it, and
+the `default` skin may not share a placeholder with a named skin.** rigc derives
+no name. A placeholder several skins fill is emitted under that placeholder in
+each skin, carrying the `name` each entry states and none where it states none —
+which is the shape the editor itself exports (§3.4.2). Until
+[#796](https://github.com/firejune/rigc/issues/796) rigc composed
+`"<skin>/<placeholder>"` there, which renamed every such attachment at runtime.
+What you *do* author is where the shared art lives: a
 placeholder the `default` skin shares with a named skin is a **compile error**,
 because the Spine editor has no representation for it in either spelling (#567,
 measured on 4.3.26 — named, the export re-keys it and the default skin draws
@@ -1332,25 +1334,26 @@ the default `type`:
 | Field | Meaning |
 | --- | --- |
 | `type` | `"region"`, or omit |
+| `name` | the attachment's **own name**, when it is not the placeholder: what the runtime calls it (`Attachment.name`, which is what `slot.attachment.name` returns) and what `path` defaults to. Optional — absent, the runtime names the attachment by its placeholder. Written **verbatim**, as the attachment's first key, exactly when you state it; rigc never makes one up (R12, §3.4.2). Nothing resolves an attachment *by* it: a slot's setup `attachment`, every timeline and a linked mesh's `source` use the placeholder. Every type takes it. Not a string is refused — `"name" is 7, which is not a string` |
 | `image` | **rigc extension.** A PNG relative to the rig's `images` directory; rigc measures it (R5) |
 | `width`, `height` | required by the format — give them, or give an `image` |
-| `path` | the atlas region to resolve; defaults to the attachment's own name. rigc sets it for you when the PNG basename differs from the placeholder, and whenever it composes a `name` because more than one skin fills this placeholder (§3.4.2). **One rule, both kinds** — see the note under *Mesh attachment* |
+| `path` | the atlas region to resolve; defaults to the attachment's name — its `name`, else the placeholder. rigc sets it for you when the PNG basename differs from that name. **One rule, both kinds** — see the note under *Mesh attachment* |
 | `x`, `y` | offset from the bone, in the bone's local space |
 | `rotation` | degrees; cancels a rotated bone for a plate authored screen-upright |
 | `scaleX`, `scaleY`, `color` | as Spine |
-| `sequence` | a **numbered image series** instead of one region: `{ "count", "start"?, "digits"?, "setup"? }`, and `path` (or the placeholder) is the series' stem. No `image` beside it — the frames are the images. §3.4.3 |
+| `sequence` | a **numbered image series** instead of one region: `{ "count", "start"?, "digits"?, "setup"? }`, and `path` (or, with none, the `name`, or the placeholder) is the series' stem. No `image` beside it — the frames are the images. §3.4.3 |
 
 **Mesh attachment** ([Spine: meshes](http://esotericsoftware.com/spine-meshes)) —
 either authored geometry (`uvs` + `triangles` + geometry) **or** a `generator`,
 never both. `hull`, `edges`, `width` and `height` may be stated; whichever is
 omitted, rigc derives — `hull` and `edges` from the triangles, the size from the
-PNG — and the rules are a few paragraphs down. `type`, `image`, `path`, `color` and
-`sequence` mean exactly what they mean on a region (a sequence mesh takes authored
+PNG — and the rules are a few paragraphs down. `type`, `name`, `image`, `path`,
+`color` and `sequence` mean exactly what they mean on a region (a sequence mesh takes authored
 geometry, never a `generator` — §3.4.3).
 
 🔑 **`path` is one rule for both kinds.** A mesh derives it from `image` the way a
 region does: stated wins, otherwise the PNG's basename when that differs from the
-placeholder, otherwise nothing. The parser reads `path` off both with the same line
+attachment's name — its `name`, else the placeholder — otherwise nothing. The parser reads `path` off both with the same line
 (`getValue(map, "path", name)`, `SkeletonJson.ts:541` and `:570`), and `path`
 defaults to the attachment's **name** rather than to the placeholder — so a mesh
 with `image: hair_short.png` under a placeholder called `hair` resolves the region
@@ -1515,11 +1518,11 @@ them (`SkeletonJson.ts:568-569`, `:582`), so rigc reads them the same way.
 
 | Field | Meaning |
 | --- | --- |
-| `source` | **required.** The **placeholder** of the mesh whose geometry this one draws — the key it is filed under in its skin, not its `name`. A miss is refused naming the skin, the slot and what that slot holds |
+| `source` | **required.** The **placeholder** of the mesh whose geometry this one draws — the key it is filed under in its skin, not its `name`. A miss is refused naming the skin, the slot and what that slot holds; a `source` that spells the source's `name` instead is that miss, because the runtime looks the source up by skin, slot and key and never by name — measured, it throws `Source mesh not found` |
 | `slot` | the slot the source lives in. Default: **this attachment's own slot**. Resolved by name against the rig's slots |
 | `skin` | the skin the source lives in. Default: **`default`** — the default skin, *not* the skin this link is written in. Resolved by name |
 | `timelines` | default **`true`**: the link plays the source's `deform` keys. `false` makes it its own timeline target, so only keys written against the link move it |
-| `image`, `path`, `width`, `height`, `color` | exactly as on a mesh — the link resolves **its own** region, which is the point of the type |
+| `name`, `image`, `path`, `width`, `height`, `color` | exactly as on a mesh — the link resolves **its own** region, which is the point of the type |
 
 ```json
 "skins": {
@@ -1605,6 +1608,7 @@ region, a trigger volume — that moves with the skeleton and draws nothing.
 | Field | Meaning |
 | --- | --- |
 | `type` | `"boundingbox"`. **Required**: an omitted `type` is `"region"`, and a region has nowhere to put these keys — measured, the refusal reads `attachment "mask" (region) has 2 keys this compiler does not read: "vertexCount", "vertices"` |
+| `name` | as on a region: the runtime's name for the attachment, written only when stated. A polygon resolves no region, so here it is the name and nothing else |
 | `vertexCount` | **required**, 3 or more. No default — the paragraph above is why |
 | `vertices` | the unweighted `x, y` run, in the slot bone's local space; or the index-encoded weighted run, behind `boneIndexing` |
 | `weights` | the by-name form: one entry per vertex, each a list of `{ "bone": …, "x": …, "y": …, "weight": … }`, each pair in that bone's local space. Never beside `vertices` |
@@ -1619,7 +1623,7 @@ attachment rather than a second set of art.
 | Field | Meaning |
 | --- | --- |
 | `type` | `"clipping"`. **Required** |
-| `vertexCount`, `vertices`, `weights`, `boneIndexing`, `color` | exactly as on a bounding box |
+| `name`, `vertexCount`, `vertices`, `weights`, `boneIndexing`, `color` | exactly as on a bounding box |
 | `end` | the last slot the clip applies to, **by name**. Absent is the parser's own encoding for *clip everything after this one*, which is why a typo cannot be told from an omission once the file is loaded: `findSlot` returns null on a miss and the parser assigns that null without a word, so the clip runs to the bottom of the draw order and takes every slot below it with it. rigc refuses a name the rig does not declare — `end names slot "X", which this rig does not declare` — and `A33` refuses it again on a skeleton rigc did not write |
 | `convex` | default **false**. True tells the runtime the polygon is convex so it can clip without triangulating it, and a polygon that deforms concave is clipped by its convex hull instead (`ClippingAttachment.convex`). Nothing here checks that the polygon is in fact convex |
 | `inverse` | default **false**. True makes everything **outside** the polygon visible instead of everything inside, and inverse clipping is always treated as convex (`ClippingAttachment.inverse`) |
@@ -1637,7 +1641,7 @@ other vertex attachment.
 | Field | Meaning |
 | --- | --- |
 | `type` | `"path"`. **Required** |
-| `vertexCount`, `vertices`, `weights`, `boneIndexing`, `color` | as on a bounding box — except that these vertices are knots **and** their handles, which the count rule below is about |
+| `name`, `vertexCount`, `vertices`, `weights`, `boneIndexing`, `color` | as on a bounding box — except that these vertices are knots **and** their handles, which the count rule below is about |
 | `closed` | default **false**. True joins the last knot back to the first |
 | `constantSpeed` | default **true** — note the direction. Leaving it out asks for the expensive-and-correct traversal, in which the runtime re-measures the path every frame and `lengths` is never read. `false` makes the runtime trust the emitted `lengths` instead: cheaper, exact only while the path holds its setup shape, and the reason a deformed path wants the default |
 | `lengths` | 🚫 **refused by name.** rigc measures the setup length of each curve off the geometry and emits it, the way it measures a region's size off its PNG: `"lengths" is not authored — rigc measures the setup arc length of each curve…`. The field is declared only so the refusal can say that rather than report a misspelt key. What the numbers are — and why *arc length* is the wrong name for them — is §10.6 |
@@ -2312,40 +2316,63 @@ beside them is refused rather than ignored (an ignored slot is an attachment tha
 vanishes), and a rig with a *slot* of one of those names is refused too, because
 there the two forms are genuinely ambiguous. Rename the slot.
 
-#### 3.4.2 Two skins, one placeholder — the `name` rigc writes for you
+#### 3.4.2 Two skins, one placeholder — and the `name` you may state
 
-Two skins putting different art under one placeholder is what a skin is *for*, and
-it is the one shape rigc emitted wrongly until
-[#541](https://github.com/firejune/rigc/issues/541). Without a `name` field an
-attachment's name **is** its placeholder (`SkeletonJson.ts:526`), so four skins
-filling `patch` are four different attachments all called `patch`. spine-core never
-notices — its skin table is keyed by placeholder, so the two never meet — and the
-whole gate is green. The Spine editor refuses the import outright:
-
-```
-ERROR: Unable to import skeleton.
-[error] Error reading skeleton: skins
-Cause: [error] Error reading attachment: patch (MOw)
-Cause: [error] Multiple attachments have the same name: patch patch
-```
-
-⇒ rigc now writes each of those entries a name of its own, composed from the two
-names you already gave it:
+Two skins putting different art under one placeholder is what a skin is *for*. Each
+entry is its own attachment, filed under that placeholder in its own skin, and with
+no `name` field the runtime names every one of them by the placeholder
+(`getValue(map, "name", placeholder)`, `SkeletonJson.js:526`). That is legal Spine
+data, and it is the shape the editor exports: rigc emits it exactly as you wrote it.
 
 ```json
 "skins": {
   "default": { "block": { "block": { "image": "block.png" } } },
   "base":    { "patch": { "patch": { "image": "patch_a.png" } } },
-  "zulu":    { "patch": { "patch": { "image": "patch_a.png", "x": 4 } } }
+  "zulu":    { "patch": { "patch": { "image": "patch_b.png", "x": 4 } } }
 }
 ```
 
-emits, for slot `patch`
+emits two `patch` attachments in slot `patch`, one per skin, each with the `path` its
+image gives it (`patch_a`, `patch_b`) and **no `name`** — both answer to `patch` at
+runtime, and each is the one its skin shows.
+
+🔑 **State a `name` when the attachment's own name is not its placeholder.** A
+transcription of an export that carries one — `ingest` writes it for you — or any
+rig whose consumer reads `slot.attachment.name`. It is written verbatim, and `path`
+defaults to it, so an image named after it needs no `path`:
 
 ```json
-{ "name": "base/patch", "path": "patch", "width": 64, "height": 64 }
-{ "name": "zulu/patch", "path": "patch", "width": 64, "height": 64, "x": 4 }
+"base": { "patch": { "patch": { "name": "patch-base", "image": "patch-base.png" } } }
 ```
+
+emits `"name": "patch-base"` first and no `path`, and the runtime draws region
+`patch-base` for an attachment it calls `patch-base`, filed under `patch`.
+
+🔬 **Until [#796](https://github.com/firejune/rigc/issues/796) rigc composed a name
+here, and the reason it did was measured wrong.**
+[#541](https://github.com/firejune/rigc/issues/541) read the editor's refusal of a
+four-skin rig — `Multiple attachments have the same name: patch patch` — as "one
+name over several attachments, because a linked mesh resolves its parent by name",
+and [#552](https://github.com/firejune/rigc/issues/552) wrote
+`"<skin>/<placeholder>"` on every contested entry. Both halves fail a measurement:
+
+- **A linked mesh finds its source by skin, slot and KEY.** Through spine-core
+  4.3.13, two skins each fill `C` with a different mesh and no `name`, both load
+  named `C`, and a link with `source: "C"` binds the mesh of the skin its own
+  `skin` names. A `source` that spells a source's `name` instead throws
+  `Source mesh not found` — which rigc refuses by name before that (§3.4, *Linked
+  mesh*).
+- **The editor imports the uncomposed shape.** A production rig whose placeholders
+  are each filled by two named skins, meshes and linked meshes among them, imported
+  through Spine 4.3.26 with every composed name stripped. It is the file that editor
+  exported.
+
+What #541 had bisected was a rig whose **default** skin filled the contested
+placeholder beside the named ones — its smallest refusing variant was `default` plus
+one named skin — and that shape is refused on measurements of its own, below. The
+composition renamed every contested attachment of every multi-skin export at
+runtime, which `slot.attachment.name` shows a consumer and no gate could see; `diff`
+now reads it as `attachments.runtime_name`.
 
 🚨 **Every skin that shares a placeholder has to be a named one — the default
 skin may not be among them, and rigc refuses the rig if it is.** That is not a
@@ -2377,18 +2404,9 @@ style rule; it is the editor's model, and two round trips through Spine
   are the same namespace, and both are `patch`.
 
 ⇒ **The rule: move the shared art into a named skin.** Call it `base`. Every
-filler of that placeholder is then a named skin, rigc composes all of them, and
-the names are unique within the slot — which is all
-[#541](https://github.com/firejune/rigc/issues/541) needed: `base/patch`,
-`zulu/patch` and `mike/patch` are three names. That shape is the one the editor
-does hold: the same three fillers in named skins imported, exported and measured
-**0.00 mean MAE** with names and paths intact.
-
-📎 **The earlier reading, kept because it was reasonable and wrong.** Between the
-two trips this guide said *compose off the default skin only* — keep the default
-skin's entry as its placeholder and name the others. Trip 7 supported it and trip
-8 refuted it: that is the spelling the editor refuses at the door. There is no
-third spelling, which is why this is a refusal rather than a naming scheme.
+filler of that placeholder is then a named skin, which is the shape the editor
+holds. Stating a `name` on the default skin's entry does not lift the refusal: that
+is the first of the two spellings above.
 
 What to know about it, and nothing to author:
 
@@ -2408,39 +2426,27 @@ What to know about it, and nothing to author:
   restated as the join the renderer actually performs it was a tautology over
   the resolve check beside it
   ([#574](https://github.com/firejune/rigc/issues/574)).
-- **`path` is restated, and it has to be.** `path` defaults to the attachment's
-  **name**, not to its placeholder, so an entry given a name and no path would
-  resolve its texture at `zulu/patch` and find no such region.
-  `A08_REGION_NAMES_MATCH_ATTACHMENTS` says so if it is ever dropped, naming the
-  skin, the slot, the placeholder and the path
-  ([#589](https://github.com/firejune/rigc/issues/589)); `A00_ROUNDTRIP_PARSE`
-  reported it in the parser's own words until then, and now defers to A08.
-- **Only contested placeholders are touched.** One skin filling a placeholder, or
-  two skins filling a slot under *different* placeholders, emit exactly what they
-  always did — every rig in this repository is byte-identical across the change.
-- **A composed name that collides is a compile error, not a surprise.** If some
-  other placeholder in the same slot is literally called `zulu/patch`, rigc refuses
-  and names both sites rather than emitting two attachments with one name again.
-  The walk covers every *uncontested* entry's plain name too, the default skin's
-  included — a name that composed nothing can still be the one another skin
-  composes.
-  (`/` is the separator because it appears in **0** of the 160 placeholder names and
-  159 atlas region names in `examples/` and `gallery/`, where `-` appears in 85 and
-  `_` in 37.)
+- **A stated `name` with no `path` resolves the region the name spells.** `path`
+  defaults to the attachment's **name**, not to its placeholder, so an entry naming
+  `patch-base` and drawing `patch_a.png` needs a `path` — and gets one, because the
+  image basename differs from the name. `A08_REGION_NAMES_MATCH_ATTACHMENTS` names
+  the skin, the slot, the placeholder and the path if the region is not there
+  ([#589](https://github.com/firejune/rigc/issues/589)).
 - **Each skin's art is measured and atlased on its own.** The example above points
-  both skins at one PNG, so there is one region; point them at two and there are
-  two, each attachment's `path` resolving to the file that attachment named and its
-  `width`/`height` measured off that file. Until
-  [#555](https://github.com/firejune/rigc/issues/555) only the first skin's PNG was
-  ever opened, and the second skin's art reached neither the atlas nor the
-  measurement — so name the two files **distinctly**, because the region name is
-  the basename and `a/patch.png` beside `b/patch.png` is refused (R5).
+  the two skins at two PNGs, so there are two regions, each attachment's `path`
+  resolving to the file that attachment named and its `width`/`height` measured off
+  that file. Until [#555](https://github.com/firejune/rigc/issues/555) only the
+  first skin's PNG was ever opened, and the second skin's art reached neither the
+  atlas nor the measurement — so name the two files **distinctly**, because the
+  region name is the basename and `a/patch.png` beside `b/patch.png` is refused
+  (R5).
 
-⚠️ **The uniqueness scope is the slot, not the skeleton.** `spineboy-pro.json`,
-which the editor wrote, gives the name `head` to a region in slot `head` and to a
-bounding box in slot `head-bb`, and reuses `hoverglow-small` across eight slots. So
-a name shared between slots is normal and rigc leaves it alone; what #541 refused
-was one slot holding two.
+⚠️ **Nothing measured says the editor wants names unique within a slot.**
+`spineboy-pro.json`, which the editor wrote, gives the name `head` to a region in
+slot `head` and to a bounding box in slot `head-bb`, and reuses `hoverglow-small`
+across eight slots; the production rig above holds same-named attachments in one
+slot across its named skins. The one refusal the editor was measured making is the
+default-skin share, and that is the rule rigc enforces.
 
 🚨 **Once a rig has named skins, no instrument here can see them until you say
 which one** ([#571](https://github.com/firejune/rigc/issues/571)). `render` and
@@ -5547,7 +5553,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `N pair(s) of animation names have no one order: … "Fx/a" / "fx/b" (folder) — "Fx/a" and "fx/b" sit in the sibling folders "Fx" and "fx", which the comparator leaves in one place …; rename one of the two folders so they differ by more than letter case, spacing or a leading zero` | **R10** — rename until no pair is left. The kind in brackets says which of the three things the five stored round trips leave open decides the pair: `number` (two digit runs that are each one number written twice, pointing opposite ways), `separator` (a whitespace character that is not a space) or `folder` (two sibling folders the comparator cannot separate). rigc keys `animations` in the editor's own comparator, read off `fixtures/editor-order/probe{1..5}.{in,out}.json` ([#728](https://github.com/firejune/rigc/issues/728)) — so a pair those files settle is emitted rather than refused, **including a pair that differs only in case**, whose order is then the one your spec declared. On the three that are left, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
 | `N pair(s) of skin names have no one order: … "Fx/a" / "fx/b" (folder) — …` | **R11** — rename until no pair is left. The same shape and the same three kinds as the row above, because it is the same comparator: two of the five round trips carried one name list as both collections and both came back in one order ([#728](https://github.com/firejune/rigc/issues/728)). ⚠️ This row was **wider** than R10's until then — `Zulu`/`mike` and `mike10`/`mike2` built as animation names and were refused as skin names ([#541](https://github.com/firejune/rigc/issues/541)) — and both build now |
 | `slot "patch": placeholder "patch" is filled by the "default" skin AND by skins "zulu", "mike", and the Spine editor has no way to hold that … Move the default skin's entry for this slot into a named skin — call it "base"` | **R12** — do what it says: move that entry out of `default` into a named skin. The editor has no representation for a placeholder the default skin shares with a named one, in either spelling, and §3.4.2 has both measurements. Renaming the placeholder does not help; the shape is what is refused |
-| `N attachment name collision(s): a placeholder that more than one skin fills is emitted with the name "<skin>/<placeholder>" … slot "patch": skin "base" placeholder "zulu/patch" and skin "zulu" placeholder "patch" would both be named "zulu/patch"` | **R12** — rename the placeholder or the skin. rigc composes an attachment name for every placeholder more than one skin fills (§3.4.2), and this fires when a composed name is one another entry in the same slot already answers to — including a plain name in the default skin, which composed nothing. Both sites are named; either rename ends it |
+| `skin "S" slot "X" attachment "P": "name" is V, which is not a string. An attachment's name is the runtime's `Attachment.name` …` | §3.4 — write the name as a string, or leave the key out and the attachment is named by its placeholder. It is written verbatim and `path` defaults to it, so a number there would reach the atlas as a region name nobody spelled |
 
 ⚠️ **One refusal in this section is not a `CompileError`, and it is `explain`'s.**
 `explain` prints the `DEFORM` block by **posing** the rig, and a pose resolves every
