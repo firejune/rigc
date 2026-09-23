@@ -135,7 +135,7 @@ every reader of every other section would then have to handle.
 | `skeleton` (the header) | — | — | **`stage_present`** · **`stage_box`** |
 | `bones` | `count` · `names` · `parent_by_name` · `order` · `length_present` · `inherit_present` · `depth_histogram` · `degree_sequence` | `count` · `depth_histogram` · `degree_sequence` · `shape_histogram` · `order_shape` | — |
 | `slots` | `count` · `names` · `order` · `bone` · `attachment` · `blend` · `color_present` | `count` · `attachment_types_by_position` · `bone_binding_shape` · `order_shape` | — |
-| `attachments` | `skins` · `count` · `names` · `type_counts` · `mesh_vertices` · `mesh_triangles` · `mesh_weighted` · `mesh_hull` · `region_size` | — | **`mesh_edges`** |
+| `attachments` | `skins` · `count` · `names` · `type_counts` · `mesh_vertices` · `mesh_triangles` · `mesh_weighted` · `mesh_hull` · `region_size` | — | **`mesh_edges`** · **`runtime_name`** |
 | `constraints` | `count` · `names` · `type_counts` · `type_by_name` · `refs` | — | — |
 | `animations` | `count` · `names` · `duration` · `timeline_kinds` · `key_counts` · `curve_kinds` · `event_keys` · `draw_order` · `deform` | over the paired shots, and only where something pairs them: `duration` · `timeline_kinds` · `key_counts` · `curve_kinds` · `draw_order` · `deform` | **`key_density`** · **`keys_per_timeline`** |
 | `events` | `names` · `payloads` | — | — |
@@ -144,12 +144,20 @@ every reader of every other section would then have to handle.
 
 `docs/GATE.md`'s *What never gates* seals off "anything unobservable by
 construction", and its test is not *is this measure hard?* but **could any
-reading of the frames have decided it?** For the five measures in the last
+reading of the frames have decided it?** For the six measures in the last
 column the answer is no, whatever the frames are:
 
 - **`attachments.mesh_edges`** — *each mesh declares an edge list, or declares
   none, alike.* `edges` constrains triangulation in the editor and has **no
   runtime effect at all**; it draws no pixel.
+- **`attachments.runtime_name`** — *each attachment both sides hold answers to the
+  same name at runtime*: its `name` if stated, else its placeholder
+  (`SkeletonJson.js:526`). A name draws no pixel, and it is a value a consumer
+  reads off `slot.attachment.name`, which is why it is measured at all: two
+  production rebuilds renamed attachments under every key while every other
+  measure here read 1.000 ([#796](https://github.com/firejune/rigc/issues/796)).
+  Scored over the keys **both** sides hold, so a key one side lacks moves
+  `names` and `count` and not this.
 - **`animations.key_density`** and **`animations.keys_per_timeline`** — two
   keyings of one curve render the same pictures at every rate, which is measured
   under *Key density* below.

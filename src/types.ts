@@ -826,18 +826,19 @@ export interface SpineSlot {
  *
  * `readAttachment` reads `const name = getValue(map, "name", placeholder)`
  * (`SkeletonJson.ts:526`), so an absent field means "the placeholder is also the
- * name" — which is what rigc emitted for every attachment until issue #541, and
- * what makes several skins' entries under one placeholder **several attachments
- * with one name**. spine-core does not care; the Spine editor refuses the import
- * outright, naming the section, the attachment and the rule.
+ * name". Nothing in the format resolves by it — skins, setup attachments,
+ * attachment and deform timelines and a linked mesh's `source` are keyed by the
+ * placeholder — so several skins' entries under one placeholder may carry one
+ * name, which is what the editor itself exports (issue #796).
  *
- * 🚨 Writing it moves a second field with it. For the two types that carry
+ * 🚨 It moves a second field's default with it. For the three types that carry
  * texture art, `path` defaults to **`name`**, not to the placeholder
- * (`:529`, `:559`), so an attachment given a name and no path resolves its region
- * at the new name and the atlas lookup misses. `nameSkinAttachment` in
- * `compile.ts` is the one place that writes either, and it always writes both.
+ * (`:529`, `:559`), so an attachment given a name and no path resolves the region
+ * that name spells. rigc emits it exactly when the rig spec states it
+ * (`RigAttachmentName` in `rig.ts`); from #541 to #796 it composed
+ * `<skin>/<placeholder>` for a placeholder several skins fill, and that is gone.
  *
- * ⚠️ And the **`default` skin may never be one of the skins sharing that
+ * ⚠️ And the **`default` skin may never be one of the skins sharing a
  * placeholder** — a fact about the editor rather than about the format (issue
  * #567, Spine 4.3.26, round trips 7 and 8), and a `CompileError` rather than a
  * spelling. The editor's named skins hold *skin placeholders*, a key holding a
@@ -848,8 +849,7 @@ export interface SpineSlot {
  * makes that attachment's name collide with the named skins' placeholder of the
  * same name, which the editor refuses at import (trip 8). Both spellings are
  * measured, so there is no third; `refuseDefaultSkinContest` in `compile.ts` is
- * where that lives, and `composeSkinAttachmentName` beside it decides the name
- * for the skins that are left.
+ * where that lives.
  */
 export interface SpineRegionAttachment {
   name?: string;

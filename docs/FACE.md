@@ -1474,7 +1474,9 @@ is the card for having left the sentence standing:
   names. ⚠️ **The editor was never silent**: it named the section, the attachment
   and the rule, and `tools/editor_roundtrip.ts` had discarded its stdout and
   stderr. What changed is [#552](https://github.com/firejune/rigc/issues/552) —
-  the composed `<skin>/<placeholder>` name, with `default` pinned first — and what
+  the composed `<skin>/<placeholder>` name, with `default` pinned first; the
+  composition was retired by [#796](https://github.com/firejune/rigc/issues/796),
+  which measured that it was never what the editor objected to — and what
   still binds is [#567](https://github.com/firejune/rigc/issues/567): a
   `CompileError` when the default skin shares a placeholder with a named one. ⇒
   Skins are not the reason to stay at one, and every figure on this page was

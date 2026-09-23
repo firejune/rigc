@@ -319,13 +319,14 @@ export function editorNamesInOrder(names: readonly string[], collection: 'animat
 }
 
 /**
- * The skin the editor keeps at index 0 whatever its name sorts as.
+ * The skin the editor keeps at index 0 whatever its name sorts as — and the one
+ * skin that may not share a placeholder with a named skin
+ * (`refuseDefaultSkinContest`).
  *
- * Exported for `ingest`, which has to know that a contested placeholder the
- * default skin fills is refused rather than named (`refuseDefaultSkinContest`),
- * and has no business spelling the name a second time (issue #746).
+ * Not exported since #796: `ingest` read it to know which contested entries got
+ * no composed name, and nothing is composed any more.
  */
-export const DEFAULT_SKIN = 'default';
+const DEFAULT_SKIN = 'default';
 
 /**
  * The order the emitted `skins` array is written in: **`default` first, then the
@@ -2433,12 +2434,12 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         // `parseRigSpec` has refused a sequence on any kind but these three and
         // proved its shape, so what is left is whether its frames exist. The stem
         // is the region `path` the attachment resolves through, which with no
-        // `path` stated is the placeholder (`nameSkinAttachment` pins exactly that
-        // where a placeholder is contested).
+        // `path` stated is the attachment's NAME — its stated `name`, else the
+        // placeholder (`path = getValue(map, "path", name)`, issue #796).
         const sequence = (att as RigRegionAttachment).sequence;
         if (sequence !== undefined) {
           addSequenceFrames(
-            (att as RigRegionAttachment).path ?? placeholder,
+            (att as RigRegionAttachment).path ?? (att as RigRegionAttachment).name ?? placeholder,
             sequence,
             `skin "${skinName}" slot "${slotName}" attachment "${placeholder}"`,
           );
@@ -2447,11 +2448,11 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       rigAttachmentNames.set(slotName, names);
     }
   }
-  // Which (slot, placeholder) pairs more than one skin fills — the pairs whose
-  // entries have to carry an attachment `name` of their own. Computed here, off
-  // the normalised skin table, so the slot loop below reads a decision rather
-  // than re-deriving one per attachment.
-  const contested = contestedPlaceholders(skinNames, skinParts);
+  // The one contested shape the editor cannot hold — a placeholder the default
+  // skin shares with a named skin — refused here, off the normalised skin
+  // table, before anything is built. Every other contested placeholder is
+  // emitted exactly as the spec states it (issue #796).
+  refuseDefaultSkinContests(skinNames, skinParts);
 
   // -- 2. atlas --------------------------------------------------------------
   //
@@ -2677,7 +2678,6 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       const placeholders = skinParts.get(skinName)!.attachments[rigSlot.name];
       if (!placeholders) continue;
       const perSlot: Record<string, SpineAttachment> = {};
-      const shared = contested.get(rigSlot.name);
       for (const [placeholder, att] of Object.entries(placeholders)) {
         const where = `skin "${skinName}" slot "${rigSlot.name}" attachment "${placeholder}"`;
         const built = buildRigAttachment(att, placeholder, where, {
@@ -2694,15 +2694,11 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           slotNames: new Set(rig.slots.map((s) => s.name)),
           links: pendingLinks,
         });
-        // The name is put on AFTER the builder rather than inside it: five
-        // builders write five shapes, the rule is one rule, and a rule that has
-        // to be remembered in five places is a rule that will be kept in four.
-        // `null` is an entry that carries no `name` field, which is every
-        // uncontested placeholder. A contested one the DEFAULT skin fills never
-        // reaches here: it is refused above (issue #567), because the editor
-        // holds no such shape in either spelling.
-        const composed = composeSkinAttachmentName(skinName, placeholder, shared?.has(placeholder) === true);
-        perSlot[placeholder] = composed === null ? built : nameSkinAttachment(built, composed, placeholder);
+        // The name is put on AFTER the builder rather than inside it: six
+        // builders write six shapes, the rule is one rule, and a rule that has
+        // to be remembered in six places is a rule that will be kept in five.
+        // It is the spec's own `name`, or nothing (issue #796).
+        perSlot[placeholder] = withStatedName(built, att);
       }
       tableFor(skinName)[rigSlot.name] = perSlot;
     }
@@ -3497,49 +3493,63 @@ function rotationOf(spec: RigBone, ctx: BoneContext): number | null {
 }
 
 // ---------------------------------------------------------------------------
-// attachment names, where one placeholder holds several attachments
+// attachment names, and the one placeholder shape the editor cannot hold
 // ---------------------------------------------------------------------------
 
 /**
- * What separates a skin's name from a placeholder's inside an attachment name.
+ * An attachment as the builder made it, with the spec's own `name` put on it —
+ * or unchanged, where the spec states none.
  *
- * ⚠️ A separator is the one part of this that could collide with a name somebody
- * wrote, so it is measured rather than picked: across the **160** distinct
- * placeholder names and **159** distinct atlas region names in `examples/` and
- * `gallery/` — every editor-authored name this repository has — `/` occurs in
- * **0**, while `-` occurs in 85 / 86 and `_` in 37 / 37. It is also the character
- * the format already has a structure for, since an attachment's name doubles as
- * its texture path and a path is what `/` separates.
+ * ## rigc derives no name (issue #796)
  *
- * 🔒 And the choice is not load-bearing anyway, which is the point of stating it
- * this way: `contestedPlaceholders` refuses the build if the name it composes is
- * one some other placeholder in the same slot already answers to. A separator
- * nobody uses makes that refusal rare; the refusal is what makes it safe.
+ * `readAttachment` reads `name = getValue(map, "name", placeholder)`
+ * (`SkeletonJson.js:526`), so an entry that states no `name` is named by its
+ * placeholder and one that states a name is named by it: the runtime's
+ * `Attachment.name`, which a consumer reads off `slot.attachment.name`. That is
+ * the whole of what the field does. Nothing in the format resolves by it — a
+ * skin's table, a slot's setup `attachment`, an attachment or deform timeline and
+ * a linked mesh's `source` are keyed by the placeholder (`:415-418`, `:433`,
+ * `:1140`) — so the field is emitted exactly when the spec states it, verbatim,
+ * and never composed.
+ *
+ * 🚨 **It used to be composed, and the composition was measured wrong on
+ * production data.** Issue #541 (landed by #552) wrote `"<skin>/<placeholder>"`
+ * for every placeholder more than one skin fills, on the reading that *"the
+ * editor requires attachment names to be unique — because a linked mesh resolves
+ * its parent by name"*. Both halves fail a measurement:
+ *
+ * - **A linked mesh resolves its source by skin, slot and KEY.** Measured through
+ *   spine-core 4.3.13: two skins each fill placeholder `C` with a different mesh
+ *   and no `name`, both load named `C`, and a link in the second skin with
+ *   `source: "C", skin: <second>` binds the SECOND skin's mesh; the same link
+ *   with `skin: <first>` binds the first. A link whose `source` spells its
+ *   source's stated name rather than its key throws `Source mesh not found`.
+ * - **The editor imports the uncomposed shape.** A production rig whose
+ *   placeholders are each filled by two named skins, meshes and linked meshes
+ *   among them, imported through Spine 4.3.26 with every composed name stripped
+ *   — exit 0 and a project written (#796). It is the shape that editor exported
+ *   in the first place.
+ *
+ * What #541 actually bisected was a rig whose DEFAULT skin filled the contested
+ * placeholder beside the named ones (`default` + one named skin was its smallest
+ * refusing variant), and that shape is refused here on its own measurement —
+ * `refuseDefaultSkinContest` — which never depended on the composition.
+ *
+ * ⚠️ `path` is not touched. It stays the builder's — stated, or derived from
+ * `image` against the name the attachment will carry (`attachmentPath`) — and
+ * its default is the parser's, `path = getValue(map, "path", name)`
+ * (`:529`, `:560`), so a stated name with no `path` resolves the region that
+ * name spells.
+ *
+ * 🔸 `name` is written FIRST: the editor writes it ahead of `type` on every
+ * named attachment of the production set #796 was measured on (all of them
+ * meshes), and it is the key the parser reads first. No region, polygon or link
+ * with a name was in that set, so for those types the position is the same
+ * choice rather than a second measurement.
  */
-const SKIN_ATTACHMENT_SEPARATOR = '/';
-
-function skinAttachmentName(skinName: string, placeholder: string): string {
-  return `${skinName}${SKIN_ATTACHMENT_SEPARATOR}${placeholder}`;
-}
-
-/**
- * The `name` one skin's entry for a placeholder is emitted with, or `null` for
- * the entries that carry no `name` field at all.
- *
- * Stated once, and called by both the emit and `contestedPlaceholders`'
- * collision walk, because two readings of one rule is how issue #567 happened.
- * By the time either caller runs, a contested placeholder the **default** skin
- * fills has already been refused — see `refuseDefaultSkinContest` — so every
- * entry this composes for is a named skin's.
- *
- * 🔒 A third caller reads it from outside: `ingest` compares the name a source
- * states against the one this returns, and reports the rename where the two
- * differ (issue #746). It calls this rather than `skinAttachmentName` so that
- * WHETHER a name is composed is read off the same line as WHAT it is — the
- * separator and the contest test are each stated once, here.
- */
-export function composeSkinAttachmentName(skinName: string, placeholder: string, contested: boolean): string | null {
-  return contested ? skinAttachmentName(skinName, placeholder) : null;
+function withStatedName(att: SpineAttachment, stated: RigAttachment): SpineAttachment {
+  const name = (stated as { name?: string }).name;
+  return name === undefined ? att : ({ name, ...att } as SpineAttachment);
 }
 
 /**
@@ -3590,12 +3600,13 @@ export function composeSkinAttachmentName(skinName: string, placeholder: string,
  * other. There is no third spelling to find, so this is a `CompileError` and not
  * a scheme, in the shape issue #543 used: refuse by name and say what to do.
  *
- * ⚠️ What this does NOT touch, and the trips measured that half too: a
- * placeholder that two or more NAMED skins fill keeps #552's composition
- * exactly. Trip 8's second rig — two named skins filling `patch`, the default
- * skin holding `block` only — imported, exported and measured **0.0000 mean
- * MAE**, names and paths intact. The remedy this refusal states is that rig:
- * move the default skin's entry into a named skin.
+ * 🔒 **Why it outlived the composition it was written beside (#796).** Both
+ * trips are about the default skin's entry, and neither needs a name to be
+ * composed for anything to fail: trip 8 is the uncomposed spelling, and trip 7
+ * is exactly what a spec stating a `name` on that entry would now emit. So the
+ * refusal stands on its own two measurements, and a stated `name` does not lift
+ * it. What it never covered — two or more NAMED skins filling one placeholder —
+ * is the shape the editor exports itself, and it is emitted as stated.
  */
 function refuseDefaultSkinContest(slotName: string, placeholder: string, skins: readonly string[]): never {
   const named = skins.filter((skin) => skin !== DEFAULT_SKIN);
@@ -3603,78 +3614,28 @@ function refuseDefaultSkinContest(slotName: string, placeholder: string, skins: 
     `slot "${slotName}": placeholder "${placeholder}" is filled by the "${DEFAULT_SKIN}" skin AND by ` +
       `${named.length === 1 ? 'skin' : 'skins'} ${named.map((skin) => `"${skin}"`).join(', ')}, and the Spine ` +
       'editor has no way to hold that. Measured on 4.3.26 in both spellings: give the default skin\'s attachment a ' +
-      `name of its own ("${DEFAULT_SKIN}${SKIN_ATTACHMENT_SEPARATOR}${placeholder}") and the editor re-keys it by ` +
-      `that name on export, so the slot's setup attachment "${placeholder}" resolves in no default-skin key and the ` +
-      'default skin draws nothing; leave it as the placeholder and the import is refused outright with ' +
+      'name of its own and the editor re-keys it by that name on export, so the slot\'s setup attachment ' +
+      `"${placeholder}" resolves in no default-skin key and the default skin draws nothing; leave it as the ` +
+      'placeholder and the import is refused outright with ' +
       `"Multiple attachments have the same name: ${placeholder} ${placeholder}", because a default-skin attachment ` +
       "hangs on the slot beside the named skins' placeholder of that name. Move the default skin's entry for this " +
       `slot into a named skin — call it "base" — so every skin filling "${placeholder}" is a named one. Two or more ` +
-      'named skins sharing a placeholder is the shape the editor does hold, and rigc composes their names for them ' +
-      '(#541, #552).',
+      'named skins sharing a placeholder is the shape the editor exports itself, and it needs no `name` (#796).',
   );
 }
 
 /**
- * Which `(slot, placeholder)` pairs more than one skin fills — and, on the way,
- * the refusal that keeps the composed names from colliding with authored ones.
+ * Walk every `(slot, placeholder)` pair more than one skin fills, and refuse the
+ * one shape among them the editor has no representation for: a pair the
+ * **default** skin is one of the fillers of (`refuseDefaultSkinContest`).
  *
- * ## The defect this exists for
- *
- * Two skins putting different art under one placeholder is what a skin IS, and
- * until issue #541 rigc emitted both entries with no `name`, which makes the
- * placeholder the name of both (`SkeletonJson.ts:526`). spine-core is happy —
- * its skin table is keyed by placeholder, so the two never meet. The Spine
- * editor refuses the whole import, and says exactly why:
- *
- *     ERROR: Unable to import skeleton.
- *     [error] Error reading skeleton: skins
- *     Cause: [error] Error reading attachment: patch (MOw)
- *     Cause: [error] Multiple attachments have the same name: patch patch
- *
- * Bisected on the emitted file: four skins REFUSED, deform timelines removed
- * REFUSED, `default` + one skin REFUSED, `default` alone IMPORTS, the second skin
- * given a distinct placeholder IMPORTS, and the same placeholder with **each
- * entry given its own `name`** IMPORTS — all four skins. So it is neither the
- * skin count nor the timelines; it is one name over several attachments.
- *
- * ## Only the contested pairs are named, and the default skin may not contest
- *
- * A placeholder one skin fills keeps the emitted shape it has always had: no
- * `name`, no `path` it did not already carry. Every rig in this tree declares
- * exactly one skin, so **no emitted byte in the tree moves** — and a
- * multi-skin rig whose skins use distinct placeholders does not move either,
- * because nothing there is ambiguous to begin with.
- *
- * ⚠️ A contested placeholder the **default** skin fills is refused before any
- * of this runs — `refuseDefaultSkinContest`, issue #567 — because two editor
- * round trips showed the editor holds no such shape in either spelling. So
- * every entry the walk below composes for belongs to a named skin, and the
- * emitted name comes off `composeSkinAttachmentName`, which this function calls
- * rather than restates: the emit and the refusal disagreeing about one name is
- * the defect both of them exist to prevent.
- *
- * ⚠️ The scope of the editor's uniqueness rule is **not** skeleton-wide, and the
- * corpus proves it rather than a hypothesis doing so: `spineboy-pro.json`, which
- * the editor wrote, gives the name `head` to a region in slot `head` and to a
- * bounding box in slot `head-bb`, and names one `hoverglow-small` across eight
- * slots. What #541 refused was one slot. Composing from the skin makes the names
- * unique within the slot, which satisfies that scope and every narrower one;
- * nothing here claims to know which of them the editor actually applies, and an
- * assertion that policed the emitted artifact would have to.
- *
- * ## Why a composed name is not the compiler inventing a value
- *
- * rigc has always decided this attachment's name — it decided it was the
- * placeholder, silently, and that decision is the defect. What changes is the
- * derivation, not who makes it, and the new one is a function of two names the
- * spec wrote. Nothing is read off the art, and `path` — the field that says
- * which texture to draw — stays exactly what the spec stated or what the
- * attachment already resolved to.
+ * Every other contested pair is legal as it stands and is emitted exactly as
+ * the spec states it — the same placeholder key in each skin, each entry named
+ * by its own `name` or by that key (issue #796). This function decides nothing
+ * about names; until #796 it also composed and collision-checked
+ * `<skin>/<placeholder>`, and both went with the composition.
  */
-function contestedPlaceholders(
-  skinNames: readonly string[],
-  skinParts: Map<string, RigSkinParts>,
-): Map<string, Set<string>> {
+function refuseDefaultSkinContests(skinNames: readonly string[], skinParts: Map<string, RigSkinParts>): void {
   /** slot -> placeholder -> the skins that fill it, in declaration order. */
   const fillers = new Map<string, Map<string, string[]>>();
   for (const skinName of skinNames) {
@@ -3686,82 +3647,11 @@ function contestedPlaceholders(
       fillers.set(slotName, perSlot);
     }
   }
-  const contested = new Map<string, Set<string>>();
-  const collisions: string[] = [];
   for (const [slotName, perSlot] of fillers) {
-    const shared = new Set([...perSlot].filter(([, skins]) => skins.length > 1).map(([placeholder]) => placeholder));
-    // 🚨 Before anything is composed: a contested placeholder the DEFAULT skin
-    // fills has no representation in the editor at all, in either spelling
-    // (issue #567, round trips 7 and 8). It is refused here rather than emitted,
-    // and the refusal comes first because renaming cannot repair it — the
-    // remedy is a different rig, not a different string.
-    for (const placeholder of shared) {
-      const skins = perSlot.get(placeholder)!;
-      if (skins.includes(DEFAULT_SKIN)) refuseDefaultSkinContest(slotName, placeholder, skins);
-    }
-    if (shared.size) contested.set(slotName, shared);
-    /** Emitted attachment name -> the first entry that claimed it. */
-    const claimed = new Map<string, string>();
     for (const [placeholder, skins] of perSlot) {
-      for (const skinName of skins) {
-        // The emitted name, read off the one function that decides it — so the
-        // refusal and the emit cannot drift into two readings. An UNCONTESTED
-        // entry is claimed under its bare placeholder, the default skin's
-        // included: a named skin whose composed name equals it is a collision,
-        // and one this walk sees for the same reason it sees every other.
-        const name = composeSkinAttachmentName(skinName, placeholder, shared.has(placeholder)) ?? placeholder;
-        const site = `skin "${skinName}" placeholder "${placeholder}"`;
-        const taken = claimed.get(name);
-        if (taken === undefined) claimed.set(name, site);
-        else collisions.push(`slot "${slotName}": ${taken} and ${site} would both be named "${name}"`);
-      }
+      if (skins.length > 1 && skins.includes(DEFAULT_SKIN)) refuseDefaultSkinContest(slotName, placeholder, skins);
     }
   }
-  if (collisions.length) {
-    throw new CompileError(
-      `${collisions.length} attachment name collision(s): a placeholder that more than one skin fills is emitted ` +
-        `with the name "<skin>${SKIN_ATTACHMENT_SEPARATOR}<placeholder>", because the Spine editor refuses an import ` +
-        'in which one slot holds two attachments of one name (#541) — and here that composed name is one another ' +
-        'entry in the same slot already answers to. Rename the placeholder or the skin so the two differ. ' +
-        `${collisions.join('. ')}`,
-    );
-  }
-  return contested;
-}
-
-/**
- * Give one attachment its own `name`, and pin the texture `path` that name would
- * otherwise have taken with it.
- *
- * 🚨 The second half is the whole hazard. `readAttachment` reads
- * `const name = getValue(map, "name", placeholder)` and then
- * `const path = getValue(map, "path", name)` (`SkeletonJson.ts:526-529`, and
- * again at `:559` for a mesh) — so `path` defaults to the NAME, not to the
- * placeholder. Writing a name and leaving `path` alone silently repoints the
- * attachment's texture lookup at a region no atlas has. Restating `path` at what
- * the attachment already resolved to makes the name change invisible to
- * everything but the editor's own uniqueness rule, which is the only thing it is
- * for.
- *
- * ⚠️ `region` and `mesh` are exactly the two types that read `path`; the polygon
- * types (`boundingbox`, `clipping`, `path`) have no texture and get the name
- * alone. The list is the parser's own two `getValue(map, "path", …)` sites
- * rather than a judgement about which attachments "have art".
- */
-function nameSkinAttachment(att: SpineAttachment, name: string, placeholder: string): SpineAttachment {
-  const kind = (att as { type?: string }).type ?? 'region';
-  // Key order is the parser's reading order — `name`, then `path`, then the rest
-  // as the builder wrote it — for the same reason every other emitted object
-  // follows it: the file is read by people and diffed against references.
-  //
-  // ⚠️ The three kinds here are the three the parser gives a texture `path` to,
-  // and `linkedmesh` is one of them (`SkeletonJson.ts:541`, `:570` — the mesh
-  // branch is shared). Leaving it out would write a `name` and no `path`, and
-  // `path` defaults to `name`, so a contested link would resolve the region
-  // "<skin>/<placeholder>", which no atlas holds.
-  if (kind !== 'region' && kind !== 'mesh' && kind !== 'linkedmesh') return { name, ...att };
-  const { path, ...rest } = att as SpineRegionAttachment | SpineMeshAttachment | SpineLinkedMeshAttachment;
-  return { name, path: path ?? placeholder, ...rest } as SpineAttachment;
 }
 
 // ---------------------------------------------------------------------------
@@ -3898,6 +3788,20 @@ function buildRigAttachment(
     );
   }
   const type = stated ?? 'region';
+  // `name` is the runtime's `Attachment.name` and, on a type that draws, what
+  // `path` defaults to — so it is written verbatim and has to be a string the
+  // parser can hold as one (issue #796). An empty string is a string: it names
+  // the attachment "" and, with no `path`, asks the atlas for region "", which
+  // `A08` names by region like any other miss.
+  const statedName = (att as { name?: unknown }).name;
+  if (statedName !== undefined && typeof statedName !== 'string') {
+    throw new CompileError(
+      `${where}: "name" is ${JSON.stringify(statedName) ?? String(statedName)}, which is not a string. An ` +
+        "attachment's name is the runtime's `Attachment.name` — `getValue(map, \"name\", placeholder)`, " +
+        '`SkeletonJson.js:526` — and on a region, mesh or linked mesh it is also what `path` defaults to. Write it ' +
+        'as a string, or leave the key out and the attachment is named by its placeholder.',
+    );
+  }
   // A linked mesh in the format's OTHER spelling. `type: "mesh"` and `type:
   // "linkedmesh"` share one branch and the `source` key is what decides between
   // them (`:568-569`, `:582`; SPEC_COVERAGE part 1-6) — so a mesh carrying
@@ -4338,11 +4242,15 @@ function atlasedImage(image: string, where: string, ctx: AttachmentContext): Com
  * through one line of parser, and it would have had to contradict §3.4 rather
  * than satisfy it.
  */
-function attachmentPath(att: { path?: string; image?: string }, placeholder: string): string | undefined {
+function attachmentPath(att: { name?: string; path?: string; image?: string }, placeholder: string): string | undefined {
   if (att.path !== undefined) return att.path;
   if (att.image === undefined) return undefined;
   const region = basename(att.image, '.png');
-  return region === placeholder ? undefined : region;
+  // Against the NAME the attachment will carry, because that is what `path`
+  // defaults to — the stated `name`, else the placeholder (issue #796). Read
+  // against the placeholder alone, an image named after a stated name would
+  // restate it as `path`, a field the source never wrote.
+  return region === (att.name ?? placeholder) ? undefined : region;
 }
 
 /**
@@ -4364,7 +4272,7 @@ function attachmentPath(att: { path?: string; image?: string }, placeholder: str
  * keys where `buildRigLinkedMesh` does — because the analogy to a mesh is
  * obvious and it is not a measurement.
  */
-function meshTextureKeys(att: { path?: string; image?: string; color?: string }, placeholder: string): Pick<SpineMeshAttachment, 'path' | 'color'> {
+function meshTextureKeys(att: { name?: string; path?: string; image?: string; color?: string }, placeholder: string): Pick<SpineMeshAttachment, 'path' | 'color'> {
   const out: Pick<SpineMeshAttachment, 'path' | 'color'> = {};
   const path = attachmentPath(att, placeholder);
   if (path !== undefined) out.path = path;
@@ -4451,7 +4359,8 @@ function sequenceFrameSize(
 /** Every frame of `att`'s sequence, already atlased by the gather pass. */
 function sequenceFrames(att: { path?: string; sequence?: RigSequence }, placeholder: string, where: string, ctx: AttachmentContext): CompiledImage[] {
   const seq = att.sequence!;
-  const stem = att.path ?? placeholder;
+  // `path`, else what `path` defaults to: the stated `name`, else the placeholder (issue #796).
+  const stem = att.path ?? (att as { name?: string }).name ?? placeholder;
   const frames: CompiledImage[] = [];
   for (let i = 0; i < seq.count; i++) {
     // By the frame's FULL region name — `atlasedImage` takes a basename, and a

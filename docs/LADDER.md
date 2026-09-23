@@ -107,7 +107,7 @@ instead of a reader noticing:
   validate   green  (profile spine)
   ess        bones=0.567  slots=0.476  attachments=0.926  constraints=1.000  animations=0.936  events=1.000
              bones 0.567 (name-matched) · 1.000 (name-agnostic)   slots 0.476 (name-matched) · 1.000 (name-agnostic)
-             reported: mesh_edges 1.000 · key_density 0.710 · keys_per_timeline 0.710 · stage_present 1.000 · stage_box 0.000
+             reported: mesh_edges 1.000 · runtime_name 1.000 · key_density 0.710 · keys_per_timeline 0.710 · stage_present 1.000 · stage_box 0.000
 ```
 
 ⭐ **`stage_box 0.000` is this rung's oldest invisible finding, and it is one line
@@ -8242,7 +8242,7 @@ reason and gate for neither.
   validate   green  (profile spine)
   ess        bones=1.000  slots=1.000  attachments=1.000  constraints=1.000  animations=1.000  events=1.000
              bones 1.000 (name-matched) · 1.000 (name-agnostic)   slots 1.000 (name-matched) · 1.000 (name-agnostic)
-             reported: mesh_edges 1.000 · key_density 1.000 · keys_per_timeline 1.000 · stage_present 1.000 · stage_box 1.000
+             reported: mesh_edges 1.000 · runtime_name 1.000 · key_density 1.000 · keys_per_timeline 1.000 · stage_present 1.000 · stage_box 1.000
 ```
 
 ```
@@ -8289,8 +8289,9 @@ reason and gate for neither.
         1.000  mesh_hull                    0/0         each mesh declares the same hull length  — neither side has any
         1.000  region_size                  2/2         NAME-AGNOSTIC: as many regions of each stated size (`unstated` is its own size)
 
-    attachments (reported) (no mean)   over 1 measure  — unobservable from the frames, so reported and folded into nothing
+    attachments (reported) (no mean)   over 2 measures  — unobservable from the frames, so reported and folded into nothing
         1.000  mesh_edges                   0/0         each mesh declares an edge list, or declares none, alike  — neither side has any
+        1.000  runtime_name                 2/2         each attachment both sides hold answers to the same name at runtime (`name` if stated, else its placeholder)
 
     constraints           mean 1.000  over 5 measures
         1.000  count                        0/0         how many constraints  — neither side has any

@@ -1553,8 +1553,59 @@ const MUTANTS: Mutant[] = [
       return { ...a, atlasText };
     },
   },
+  // ─── an attachment filed under another key, its `name` carrying the region (issue #796) ───
+  //
+  // The pair is one edit with and without the `name`. A region whose key IS its
+  // region name is moved to a new key: stating the old key as `name` is how a
+  // rebuild writes an export whose attachment answers to a name that is not its
+  // key, and `path` then defaults to that name, so the art is found (M82).
+  // Dropping the `name` — what `ingest` + `compile` did to such an export before
+  // #796 wrote the field — leaves `path` defaulting to the new KEY, which no
+  // atlas has (M83). Found structurally: the first region with no `path` whose
+  // key no animation mentions, so moving it repoints nothing but its slot.
+  {
+    name: 'M82_a_region_filed_under_another_key_with_its_name_stating_the_region_is_accepted',
+    origin:
+      'issue #796: `name` is the runtime\'s `Attachment.name` and what `path` defaults to, so a file stating it is ' +
+      'one the gate must take — a gate that refused it would refuse every editor export whose names are not its keys',
+    expect: null,
+    mutate: (a) => ({ ...a, skeletonText: editJson(a.skeletonText, (j) => rekeyFirstRegion(j, true)) }),
+  },
+  {
+    name: 'M83_the_same_region_with_its_name_dropped_asks_the_atlas_for_the_key',
+    origin:
+      'the branch point of issue #796: a stated name had no rig-spec field, so the rebuild wrote none, and with no ' +
+      '`path` the parser asks the atlas for the placeholder — a region nobody packed',
+    expect: 'A08_REGION_NAMES_MATCH_ATTACHMENTS',
+    mutate: (a) => ({ ...a, skeletonText: editJson(a.skeletonText, (j) => rekeyFirstRegion(j, false)) }),
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+/**
+ * Move the first region attachment that states no `path` — and whose key no
+ * animation mentions — to the key `<key>_filed`, re-pointing its slot's setup
+ * attachment, and state the old key as its `name` or not (M82, M83).
+ */
+function rekeyFirstRegion(j: Record<string, unknown>, keepName: boolean): void {
+  const skins = (Array.isArray(j.skins) ? j.skins : []) as Array<{ attachments?: Record<string, Record<string, Record<string, unknown>>> }>;
+  const animations = JSON.stringify(j.animations ?? {});
+  const slots = (Array.isArray(j.slots) ? j.slots : []) as Array<{ name: string; attachment?: string }>;
+  for (const skin of skins) {
+    for (const [slotName, table] of Object.entries(skin.attachments ?? {})) {
+      for (const [key, att] of Object.entries(table)) {
+        if ((att.type ?? 'region') !== 'region' || att.path !== undefined || att.name !== undefined) continue;
+        if (animations.includes(JSON.stringify(key))) continue;
+        const filed = `${key}_filed`;
+        delete table[key];
+        table[filed] = keepName ? { name: key, ...att } : att;
+        for (const slot of slots) if (slot.name === slotName && slot.attachment === key) slot.attachment = filed;
+        return;
+      }
+    }
+  }
+  throw new Error('the fixture has no region with no `path` that no animation names — the mutant would prove nothing');
+}
 
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -2279,6 +2330,54 @@ const DIFF_CASES: DiffCase[] = [
       throw new Error('no bone keys both `rotate` (twice over) and `translatex` — the case would prove nothing');
     },
   },
+  {
+    name: 'D45_give_one_attachment_a_name_that_is_not_its_key',
+    why:
+      'issue #796, and the shape two production rebuilds had: every key in place, the texture unchanged, and the ' +
+      'attachment answering to another name at runtime. Every other attachments measure is keyed by the ' +
+      'placeholder, so this read 1.000 across the section before `runtime_name` existed. The `path` is pinned to ' +
+      'the region the entry already resolved, so nothing about the art moves — only the name the runtime gives it',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: ['attachments.runtime_name'],
+    mutate: (j) => {
+      for (const skin of (j as any).skins ?? []) {
+        for (const table of Object.values(skin.attachments ?? {}) as any[]) {
+          for (const [placeholder, att] of Object.entries(table) as Array<[string, any]>) {
+            if ((att.type ?? 'region') !== 'region' || att.name !== undefined) continue;
+            att.path = att.path ?? placeholder;
+            att.name = `${placeholder}-renamed`;
+            return;
+          }
+        }
+      }
+      throw new Error('fixture carries no unnamed region attachment to rename — the case would prove nothing');
+    },
+  },
+  {
+    name: 'D46_state_every_attachments_own_key_as_its_name',
+    why:
+      'the tolerance half of D45: a stated `name` equal to the key is the name the runtime would have given it ' +
+      'anyway (`getValue(map, "name", placeholder)`), so the measure reads the RUNTIME name and not the field — a ' +
+      'measure that moved here would be a text comparison wearing a runtime one\'s name, and would score an export ' +
+      'that spells its names out against one that leaves them to the parser',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      let stated = 0;
+      for (const skin of (j as any).skins ?? []) {
+        for (const table of Object.values(skin.attachments ?? {}) as any[]) {
+          for (const [placeholder, att] of Object.entries(table) as Array<[string, any]>) {
+            if (att.name !== undefined) continue;
+            att.name = placeholder;
+            stated++;
+          }
+        }
+      }
+      if (stated === 0) throw new Error('fixture carries no unnamed attachment — the case would prove nothing');
+    },
+  },
 ];
 
 /**
@@ -2335,9 +2434,9 @@ const DIFF_ANIMATION_AGNOSTIC_MEASURES = 6;
  * are reported for the same reason the others are and are reached through the
  * same `movedReportedMeasures`, so a second constant would be a second place to
  * forget, and a block that stopped being emitted is exactly what this number is
- * here to catch.
+ * here to catch. It went from 5 to 6 with `attachments.runtime_name` (issue #796).
  */
-const DIFF_REPORTED_MEASURES = 5;
+const DIFF_REPORTED_MEASURES = 6;
 
 /** The four identity controls, over one fixture. Returns the failure count. */
 function runDiffIdentityControls(label: string, text: string): number {
@@ -19762,15 +19861,18 @@ function runPathAndSliderSuite(): number {
 
   // --- skins: one placeholder, several attachments, and the array's order ----
   //
-  // 🚨 Issue #541, and it is two defects that were one symptom. A four-skin rig
-  // built green, parsed in spine-core, and the Spine editor refused the import
-  // outright — because rigc emitted several structurally distinct attachments
-  // all named `patch`, and a linked mesh resolves its parent BY NAME. spine-core
-  // never notices: its skin table is keyed by placeholder, so the two never
-  // meet, and this is the exact shape of a claim no gate in this repository can
-  // see. With the import unblocked, the export answered the other question the
-  // wrong way: `default, zulu, mike, alpha` came back `default, alpha, mike,
-  // zulu`, which makes `skins` the first array measured NOT preserved.
+  // 🚨 Issue #541, and it was read as two defects that were one symptom. A
+  // four-skin rig built green, parsed in spine-core, and the Spine editor refused
+  // the import outright; #541 read that as "several attachments named `patch`,
+  // and a linked mesh resolves its parent BY NAME", and #552 composed
+  // `<skin>/<placeholder>` for it. ⚠️ Issue #796 measured both halves false: a
+  // link resolves its source by skin, slot and KEY (`PS175`), the editor imports
+  // same-named attachments across named skins, and what the rig had was a
+  // DEFAULT skin filling the contested placeholder — refused on its own
+  // measurement since #567 (`PS70`). The composition is gone (`PS174`). With the
+  // import unblocked, the export answered the other question the wrong way:
+  // `default, zulu, mike, alpha` came back `default, alpha, mike, zulu`, which
+  // makes `skins` the first array measured NOT preserved.
   interface EmittedSkin {
     name: string;
     // `width`/`height` are here for #555's controls and they are the load-bearing
@@ -19846,96 +19948,6 @@ function runPathAndSliderSuite(): number {
   const markerFillers = Object.values(FOUR_SKINS).filter((skin) => 'marker' in skin).length;
 
   const four = skinEmit(FOUR_SKINS);
-  const fourNames = typeof four === 'string' ? new Map<string, string>() : namesOf(four);
-  const fourShared = typeof four === 'string' ? ['(refused)'] : sharedNames(four);
-  /** The `name` FIELD, as emitted — `undefined` where none was written at all. */
-  const nameFieldsOf = (skins: EmittedSkin[]): Map<string, string | undefined> => {
-    const out = new Map<string, string | undefined>();
-    for (const skin of skins) {
-      for (const [slot, table] of Object.entries(skin.attachments)) {
-        for (const [placeholder, att] of Object.entries(table)) out.set(`${skin.name}/${slot}/${placeholder}`, att.name);
-      }
-    }
-    return out;
-  };
-  const fourFields = typeof four === 'string' ? new Map<string, string | undefined>() : nameFieldsOf(four);
-  say(
-    'PS54_EVERY_SKIN_FILLING_ONE_PLACEHOLDER_GETS_ITS_OWN_ATTACHMENT_NAME',
-    typeof four !== 'string' &&
-      fourShared.length === 0 &&
-      [...fourNames].filter(([site]) => site.endsWith('/marker/marker')).length === markerFillers &&
-      fourNames.get('zulu/marker/marker') === 'zulu/marker' &&
-      fourNames.get('mike/marker/marker') === 'mike/marker' &&
-      fourNames.get('alpha/marker/marker') === 'alpha/marker' &&
-      // The default skin fills nothing in that slot, which is what makes this rig
-      // legal at all after #567 — see `PS70` for the shape it replaced.
-      fourFields.get('default/marker/marker') === undefined &&
-      fourNames.get('default/marker/marker') === undefined &&
-      // The placeholder `block`, which only `default` fills, is untouched — this
-      // is the clause that keeps every single-skin rig in the tree byte-identical.
-      fourNames.get('default/block/block') === 'block' &&
-      four.every((s) => s.attachments.block === undefined || s.attachments.block.block.name === undefined),
-    typeof four === 'string'
-      ? `the four-skin rig was refused: ${four}`
-      : `${markerFillers} skin(s) of the ${Object.keys(FOUR_SKINS).length} declared fill slot "marker", which ` +
-        `holds ${[...fourNames].filter(([s]) => s.endsWith('/marker/marker')).length} attachment(s) named ` +
-        `[${[...fourNames].filter(([s]) => s.endsWith('/marker/marker')).map(([, n]) => n).join(', ')}]; ` +
-        `${fourShared.length} name(s) are held twice in any slot, the default skin holds ` +
-        `${fourNames.get('default/marker/marker') === undefined ? 'nothing' : 'something'} there, and the ` +
-        `uncontested "block" is still named "${fourNames.get('default/block/block')}" with no \`name\` field`,
-    'the editor refuses an import where one slot holds two attachments of one name, and spine-core cannot see it — ' +
-      'its skin table is keyed by placeholder, so the two attachments never meet. The last clause is the half that ' +
-      'costs nothing: a placeholder one skin fills is emitted exactly as it always was. ⚠️ The default skin used ' +
-      'to be one of the fillers here and is not any more: issue #567 measured that the editor holds no placeholder ' +
-      'the default skin and a named skin share, in either spelling, so that rig is now a refusal (`PS70`) rather ' +
-      'than an emit. The four skin NAMES are unchanged because `PS59`-`PS61` measure the editor\'s skin order on ' +
-      'exactly them',
-  );
-
-  // 🌱 The plant is the emit this repair replaced — the same four skins with the
-  // `name` field taken back off, which is what rigc wrote until #541. It is
-  // tested by the fault it raises, and the fault is the editor's own sentence:
-  // four attachments, one slot, one name.
-  const stripped: EmittedSkin[] =
-    typeof four === 'string'
-      ? []
-      : four.map((skin) => ({
-          name: skin.name,
-          attachments: Object.fromEntries(
-            Object.entries(skin.attachments).map(([slot, table]) => [
-              slot,
-              Object.fromEntries(
-                Object.entries(table).map(([placeholder, att]) => {
-                  const { name: _dropped, ...rest } = att;
-                  return [placeholder, rest];
-                }),
-              ),
-            ]),
-          ),
-        }));
-  const strippedShared = sharedNames(stripped);
-  say(
-    'PS55_WITHOUT_THE_NAMES_THE_SAME_SKINS_ARE_SEVERAL_ATTACHMENTS_CALLED_ONE_THING',
-    stripped.length === Object.keys(FOUR_SKINS).length &&
-      strippedShared.length === 1 &&
-      strippedShared[0] === `marker: "marker" x${markerFillers}`,
-    // ⚠️ The anti-vacuity floor is on the line rather than only in the verdict.
-    // `stripped` is empty whenever the four-skin rig was REFUSED, and the
-    // sentence then reported "0 collision(s)" about a skeleton that was never
-    // emitted — measured by pointing the emit at a directory with no art
-    // (issue #498).
-    `${stripped.length} of the ${Object.keys(FOUR_SKINS).length} declared skin(s) were stripped and re-read; fewer ` +
-      'than all of them means the rig was refused and there is no skeleton here to report on. With the ' +
-      `\`name\` field removed the same skeleton reports ${strippedShared.length} collision(s)` +
-      (strippedShared.length ? `: ${strippedShared.join('; ')}` : '') +
-      `, against ${fourShared.length} for the emit as it ships — over ${markerFillers} filler(s) of "marker" read ` +
-      'off the fixture rather than counted',
-    'a detector that never fires is not a detector. This reader is the editor\'s rule stated as arithmetic, and ' +
-      'the two cases together say it can tell the shipped emit from the one that was refused at the door. ' +
-      '⚠️ The multiplicity is derived: it was the literal `x4` until #567 took the default skin out of the ' +
-      'fillers, which is the only thing about this case that moved',
-  );
-
   const distinct = skinEmit({
     default: { ...PROBE_DEFAULT_SKIN },
     zulu: { marker: { fancy: { image: 'marker.png', x: 1 } } },
@@ -19956,88 +19968,6 @@ function runPathAndSliderSuite(): number {
           .join(', ')}] and the emitted names are [${[...distinctNames].filter(([s]) => s.includes('/marker/')).map(([, n]) => n).join(', ')}]`,
     'the rule is about a NAME that two attachments answer to, not about a rig having more than one skin — a ' +
       'multi-skin rig whose skins disagree about the placeholder was never ambiguous and must not be rewritten',
-  );
-
-  // ⚠️ The entry that collides sits in a NAMED skin `base` rather than in the
-  // default skin, which is where this fixture had it until issue #567. It is the
-  // same collision — a composed name against a placeholder somebody wrote — and
-  // it had to move for the reason the refusal states: a placeholder the default
-  // skin shares with a named skin is refused before any name is composed, so the
-  // old spelling would have measured that refusal instead of this one.
-  const collided = skinEmit({
-    default: { ...PROBE_BLOCK_ONLY_SKIN },
-    base: { marker: { marker: { image: 'marker.png' }, 'zulu/marker': { image: 'marker.png', x: 5 } } },
-    zulu: markerSkin(1),
-  });
-  const notCollided = skinEmit({
-    default: { ...PROBE_BLOCK_ONLY_SKIN },
-    base: { marker: { marker: { image: 'marker.png' }, 'zulu.marker': { image: 'marker.png', x: 5 } } },
-    zulu: markerSkin(1),
-  });
-  say(
-    'PS57_A_COMPOSED_NAME_A_PLACEHOLDER_ALREADY_ANSWERS_TO_IS_REFUSED_BY_BOTH_SITES',
-    typeof collided === 'string' &&
-      collided.includes('attachment name collision(s)') &&
-      collided.includes('skin "base" placeholder "zulu/marker"') &&
-      collided.includes('skin "zulu" placeholder "marker"') &&
-      collided.includes('would both be named "zulu/marker"') &&
-      typeof notCollided !== 'string',
-    typeof collided !== 'string'
-      ? 'a rig whose composed name is already taken compiled'
-      : `refused with: ${collided.slice(collided.indexOf('slot "marker"'))}` +
-        `; the same rig with the placeholder spelled "zulu.marker" instead ${
-          typeof notCollided === 'string' ? `was ALSO refused: ${notCollided}` : 'compiles'
-        }`,
-    'composing a name out of two names the spec wrote can collide with a third the spec also wrote, and a scheme ' +
-      'that collides in silence is a new defect rather than a fix. The second rig is one character away and must ' +
-      'build, or this would be a rule against slashes in placeholders. ⚠️ Both rigs put the shared art in a named ' +
-      'skin, which is exactly what #567\'s refusal tells an author to do — a fixture that could not follow its own ' +
-      'message would be measuring the wrong refusal',
-  );
-
-  // The `path` half, gated on the artifact rather than argued. `path` defaults
-  // to the NAME and not to the placeholder (`SkeletonJson.ts:529`), so an
-  // attachment given a name and no path resolves its region at the new name.
-  //
-  // ⚠️ Which assertion says so MOVED, and this case recorded the old answer:
-  // until issue #589 the loader threw first and `A00_ROUNDTRIP_PARSE` reported
-  // it in the parser's own words — words that name the attachment's `name` and
-  // neither the placeholder nor the skin. A08 now performs the join on the raw
-  // file, before the loader is asked, so the miss is named by the assertion
-  // whose subject it is and A00 defers to it rather than restating it. Both
-  // halves are asserted here, because "A08 names it" and "A00 stopped naming
-  // it" are two facts and a case that checked one of them would have passed
-  // over a report that printed the miss twice.
-  const pathless = gateProbeArtifacts(writeProbeRig({ skins: FOUR_SKINS }), STATIC_MOTION, (skeleton) => {
-    const skins = skeleton.skins as EmittedSkin[];
-    for (const skin of skins) delete skin.attachments.marker?.marker.path;
-  });
-  const pathlessGreen = gateProbe(writeProbeRig({ skins: FOUR_SKINS }), STATIC_MOTION);
-  const pathlessDetail = (assertion: string): string[] =>
-    pathless.failures.filter((f) => f.assertion === assertion).map((f) => f.detail);
-  say(
-    'PS58_A_NAMED_ATTACHMENT_THAT_DOES_NOT_RESTATE_ITS_PATH_LOSES_ITS_REGION',
-    pathlessDetail('A08_REGION_NAMES_MATCH_ATTACHMENTS').some(
-      (detail) => detail.includes('wants region') && detail.includes('placeholder "marker"'),
-    ) &&
-      pathlessDetail('A00_ROUNDTRIP_PARSE').some(
-        (detail) => detail.includes('A08_REGION_NAMES_MATCH_ATTACHMENTS') && !detail.includes('Region not found in atlas'),
-      ) &&
-      pathlessGreen.failures.length === 0,
-    pathless.failures.length === 0
-      ? 'deleting `path` from every named attachment gated GREEN, so the restatement is decoration'
-      : `${pathless.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')} — and the same rig with its ` +
-        // ⚠️ The green half's clause is conditioned on its own failure count
-        // (issue #638). It read `gated green (N assertions ran, M failed)` with
-        // the refutation inside its own parentheses.
-        (pathlessGreen.failures.length === 0
-          ? `paths intact gated green (${pathlessGreen.passed.length} assertions ran, ${pathlessGreen.failures.length} failed)`
-          : `paths intact did NOT gate green — ${pathlessGreen.passed.length} assertion(s) passed and ` +
-            `${pathlessGreen.failures.length} failed (${pathlessGreen.failures.map((f) => f.assertion).join(', ')}), ` +
-            'so the control half proves nothing'),
-    'this is the one part of the naming change an existing gate CAN see, and it sees it because the parser resolves ' +
-      'a texture by `path` and `path` defaults to `name`. The green half is the control: without it the case would ' +
-      'pass on a rig that was broken before anything was deleted',
   );
 
   // --- the order the array is written in ------------------------------------
@@ -20204,14 +20134,14 @@ function runPathAndSliderSuite(): number {
     // The skeleton half: each attachment draws the region it named, at the size
     // that was measured off ITS file rather than off the other skin's.
     //
-    // ⚠️ The `name` column is stated per row rather than reusing the key, which
-    // is `skin/placeholder` and only LOOKS like the composed name. Here the two
-    // strings do coincide, because both fillers are named skins — which is
-    // exactly why reusing the key would be a coincidence rather than a
-    // measurement, and the column says so out loud.
+    // ⚠️ The `name` column is `undefined` on both rows: the spec states no name,
+    // so the emit writes none and the runtime names each attachment by its
+    // placeholder (issue #796). It said `base/marker` and `zulu/marker` until
+    // then — the composed names — and is kept as a column so that a name the
+    // emit invented would be a row here rather than a field nothing reads.
     for (const [key, name, path, size] of [
-      ['base/marker', 'base/marker', 'art_a', '14x9'],
-      ['zulu/marker', 'zulu/marker', 'art_b', '22x11'],
+      ['base/marker', undefined, 'art_a', '14x9'],
+      ['zulu/marker', undefined, 'art_b', '22x11'],
     ] as const) {
       const att = twoFileAtts.get(key);
       const found =
@@ -20302,7 +20232,7 @@ function runPathAndSliderSuite(): number {
     ),
     'the repair moves the measurement out from behind a `continue` that was deduplicating something else, and the ' +
       'hazard in doing that is the opposite defect: `addImage` refuses any repeat of a region name, so a compiler ' +
-      'that simply called it per attachment would refuse `PS54`\'s four-skin rig — which is every existing skin ' +
+      'that simply called it per attachment would refuse `PS174`\'s four-skin rig — which is every existing skin ' +
       'fixture in this file — with `duplicate region name "marker"`. The dedup that had to stay is by FILE, and ' +
       'these are the two sides of it measured in one place',
   );
@@ -20583,10 +20513,12 @@ function runPathAndSliderSuite(): number {
   // named skin's placeholder name are the same namespace. So this is a refusal
   // and not a scheme — #543's shape: refuse by name and say what to do.
   //
-  // ⚠️ The other half of trip 8 is the positive control below: two NAMED skins
-  // filling one placeholder, the default skin holding `block` only, imported and
-  // exported at **0.0000 mean MAE** with names and paths intact. #552's
-  // composition is correct for that shape and is untouched.
+  // ⚠️ The other half of trip 8 was a positive control: two NAMED skins filling
+  // one placeholder, the default skin holding `block` only, imported and
+  // exported at **0.0000 mean MAE** — then with #552's composed names on them.
+  // Issue #796 retired the composition (the editor imports that shape without
+  // names — it is the shape it exports), and `PS176` is the remedy building
+  // green as the spec states it.
   const threeSkinDirs = (defaultSkinFills: boolean): ProbeDirs => {
     const shared = { marker: { marker: { image: 'art_a.png' } } };
     const dirs = writeProbeRig({
@@ -20666,7 +20598,7 @@ function runPathAndSliderSuite(): number {
       'filled by the "default" skin',
       '"zulu", "mike"',
       'Multiple attachments have the same name: marker marker',
-      'default/marker',
+      'a name of its own',
       'resolves in no default-skin key',
       'Move the default skin\'s entry for this slot into a named skin',
       '"base"',
@@ -20695,142 +20627,9 @@ function runPathAndSliderSuite(): number {
       'readings, because an author who has only seen one of them will otherwise go looking for the other',
   );
 
-  const baseVariant = buildSkinTexts(threeSkinDirs(false));
-  const baseProbes: string[] = [];
-  if (baseVariant.refused !== null) {
-    baseProbes.push(`the same three fillers in named skins were refused: ${baseVariant.refused}`);
-  } else {
-    for (const [skin, name, path] of [
-      ['base', 'base/marker', 'art_a'],
-      ['zulu', 'zulu/marker', 'art_b'],
-      ['mike', 'mike/marker', 'art_c'],
-    ] as const) {
-      const att = markerOf(baseVariant, skin);
-      if (att?.name !== name || att.path !== path) {
-        baseProbes.push(
-          `skin "${skin}" holds name=${JSON.stringify(att?.name ?? null)} path=${JSON.stringify(att?.path ?? null)} ` +
-            `and it has to hold name="${name}" path="${path}"`,
-        );
-      }
-    }
-    if (markerOf(baseVariant, 'default') !== undefined) {
-      baseProbes.push('the default skin holds an attachment under "marker", and this rig is the one where it must not');
-    }
-    if (baseVariant.skins.find((s) => s.name === 'default')?.attachments.block?.block.name !== undefined) {
-      baseProbes.push('the default skin\'s uncontested "block" carries a `name`, and an uncontested attachment carries none');
-    }
-    if (sharedNames(baseVariant.skins).length) {
-      baseProbes.push(`slot "marker" holds ${sharedNames(baseVariant.skins).join('; ')} — the editor refuses that import`);
-    }
-    if (baseVariant.gate === null || baseVariant.gate.failures.length > 0) {
-      baseProbes.push(
-        `the gate said ${baseVariant.gate?.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ') ?? 'nothing at all'}`,
-      );
-    }
-  }
-  const baseHeld = baseProbes.length === 0;
-  say(
-    'PS71_THE_SAME_THREE_FILLERS_IN_NAMED_SKINS_BUILD_GREEN_WITH_THREE_COMPOSED_NAMES',
-    baseHeld,
-    probeDetail(
-      baseHeld,
-      baseProbes,
-      `moving the default skin's entry into a named "base" — the remedy PS70's message states — builds: slot ` +
-        `"marker" holds [${baseVariant.skins
-          .flatMap((s) => (s.attachments.marker ? [`${markerOf(baseVariant, s.name)?.name} path="${markerOf(baseVariant, s.name)?.path}"`] : []))
-          .join(', ')}], the default skin holds "block" only with no \`name\`, the atlas holds ` +
-        `[${baseVariant.atlasRegions.join(', ')}], and ${baseVariant.gate?.passed.length} assertion(s) are green`,
-    ),
-    'a refusal whose remedy does not build is a dead end rather than a message, so the two cases are one pair: ' +
-      'PS70 is the rig the editor cannot hold and this is the same art in the shape it can. It is also the whole ' +
-      'of what #552 got right — a placeholder two or more NAMED skins fill is composed exactly as it landed, and ' +
-      'round trip 8 measured that half at 0.0000 mean MAE with names and paths intact',
-  );
-
-  const twoNonDefault = buildSkinTexts(
-    (() => {
-      const dirs = writeProbeRig({
-        skins: {
-          default: { ...PROBE_BLOCK_ONLY_SKIN },
-          zulu: { marker: { marker: { image: 'art_b.png' } } },
-          mike: { marker: { marker: { image: 'art_c.png' } } },
-        },
-      });
-      for (const [rel, size] of [
-        ['art_b.png', [22, 11]],
-        ['art_c.png', [18, 18]],
-      ] as Array<[string, [number, number]]>) {
-        writeProbePng(join(dirs.dir, rel), size[0], size[1], [60, 90, 200, 255]);
-      }
-      return dirs;
-    })(),
-  );
-  const twoNonDefaultHeld =
-    twoNonDefault.refused === null &&
-    markerOf(twoNonDefault, 'zulu')?.name === 'zulu/marker' &&
-    markerOf(twoNonDefault, 'mike')?.name === 'mike/marker' &&
-    markerOf(twoNonDefault, 'default') === undefined &&
-    twoNonDefault.skins.find((s) => s.name === 'default')?.attachments.marker === undefined &&
-    sharedNames(twoNonDefault.skins).length === 0;
-  say(
-    'PS72_WITH_NOTHING_IN_THE_DEFAULT_SKINS_SLOT_BOTH_FILLERS_STILL_COMPOSE',
-    twoNonDefaultHeld,
-    twoNonDefault.refused !== null
-      ? `refused: ${twoNonDefault.refused}`
-      : `the default skin holds ${twoNonDefault.skins.find((s) => s.name === 'default')?.attachments.marker === undefined ? 'nothing' : 'something'} ` +
-        `in slot "marker" and the two skins that do fill it write \`name\` ` +
-        `${JSON.stringify(markerOf(twoNonDefault, 'zulu')?.name ?? null)} and ` +
-        `${JSON.stringify(markerOf(twoNonDefault, 'mike')?.name ?? null)}, with ` +
-        `${sharedNames(twoNonDefault.skins).length} name(s) held twice in any slot`,
-    'this is the rig round trip 8 measured at **0.0000 mean MAE** through Spine 4.3.26, names and paths back ' +
-      'intact — so it is the one shape in this family with an editor measurement behind it rather than a ' +
-      'derivation. It also separates the rule from a near miss: written as "the first filler keeps the ' +
-      'placeholder" instead of "the default skin may not be a filler", a compiler would pass PS70 and PS71 and ' +
-      'emit two attachments of one name here',
-  );
-
-  /**
-   * The collision the composition can still make, now that a default-skin filler
-   * is refused outright: an UNCONTESTED entry — the default skin's included —
-   * whose plain name is a name some named skin composes. `PS57` is the same
-   * refusal with the uncontested entry in a named skin; this is the default-skin
-   * half, which is legal to author and has to be caught by the same walk.
-   */
-  const defaultPlainCollides = skinEmit({
-    default: { ...PROBE_BLOCK_ONLY_SKIN, marker: { 'zulu/marker': { image: 'marker.png', x: 5 } } },
-    zulu: markerSkin(1),
-    mike: markerSkin(2),
-  });
-  const defaultPlainApart = skinEmit({
-    default: { ...PROBE_BLOCK_ONLY_SKIN, marker: { 'zulu.marker': { image: 'marker.png', x: 5 } } },
-    zulu: markerSkin(1),
-    mike: markerSkin(2),
-  });
-  say(
-    'PS73_AN_UNCONTESTED_DEFAULT_SKIN_NAME_IS_CLAIMED_IN_THE_SAME_WALK_AS_EVERY_COMPOSED_ONE',
-    typeof defaultPlainCollides === 'string' &&
-      defaultPlainCollides.includes('attachment name collision(s)') &&
-      defaultPlainCollides.includes('skin "default" placeholder "zulu/marker"') &&
-      defaultPlainCollides.includes('skin "zulu" placeholder "marker"') &&
-      defaultPlainCollides.includes('would both be named "zulu/marker"') &&
-      typeof defaultPlainApart !== 'string',
-    typeof defaultPlainCollides !== 'string'
-      ? "a rig whose default-skin placeholder is another skin's composed name compiled"
-      : `refused with: ${defaultPlainCollides.slice(defaultPlainCollides.indexOf('slot "marker"'))}` +
-        `; the same rig with that placeholder spelled "zulu.marker" instead ${
-          typeof defaultPlainApart === 'string' ? `was ALSO refused: ${defaultPlainApart}` : 'compiles'
-        }`,
-    'the default skin may not SHARE a placeholder (PS70), and it may still hold one of its own in the same slot — ' +
-      'so its plain name is a name the slot carries that composed nothing, and a walk that only claimed the ' +
-      'composed ones would not see this. The refusal walks `composeSkinAttachmentName` for every ' +
-      '(placeholder, skin) pair in the slot, which is the same call the emit makes, so it claims whatever the ' +
-      'emit would write. The second rig is one character away and must build, or this would be a rule against ' +
-      'slashes in placeholders',
-  );
-
   // --- A08 is one assertion again, under both profiles (issue #574) ---------
   //
-  // 🚨 `PS71` above builds the very rig #574 was filed on — three fillers of one
+  // 🚨 `PS176` builds the very rig #574 was filed on — three fillers of one
   // placeholder, in named skins — and gates it under `spine`. That is the
   // profile A08's retired policy clause was invisible under, which is how the
   // defect reached a consumer with this file green. The clause required a skin
@@ -20848,7 +20647,7 @@ function runPathAndSliderSuite(): number {
   // `region` came off the attachment — resolved by `AtlasAttachmentLoader`
   // through `path`. No published version of that renderer reads a placeholder.
   //
-  // ⇒ These three ask what `PS70`–`PS73` do not: is A08 the same assertion
+  // ⇒ These three ask what `PS70` and `PS176` do not: is A08 the same assertion
   // under both profiles now? The middle one is also the first mutant A08 has
   // ever had — it shipped its whole life with no case in this file that made it
   // fire, which is the gate this repository says is not a gate.
@@ -20908,13 +20707,16 @@ function runPathAndSliderSuite(): number {
     ...(a08Fillers.length >= 2
       ? []
       : [`slot "marker" holds ${a08Fillers.length} filler(s), and a contested placeholder needs at least two`]),
+    // ⚠️ The shape judged moved with issue #796: the fillers carry NO name
+    // (nothing is composed) over a `path` that differs from the placeholder,
+    // which is what makes A08's join a join and not the placeholder read twice.
     ...a08Fillers.flatMap(([skin, placeholder, att]) =>
-      att.name === `${skin}/${placeholder}` && att.path !== undefined && att.path !== placeholder
+      att.name === undefined && att.path !== undefined && att.path !== placeholder
         ? []
         : [
             `skin "${skin}" fills "${placeholder}" with name=${JSON.stringify(att.name ?? null)} ` +
-              `path=${JSON.stringify(att.path ?? null)}, which is not a composed name over a path that differs from ` +
-              'the placeholder — the shape this control exists to judge',
+              `path=${JSON.stringify(att.path ?? null)}, which is not an unnamed entry over a path that differs ` +
+              'from the placeholder — the shape this control exists to judge',
           ],
     ),
   ];
@@ -20926,7 +20728,7 @@ function runPathAndSliderSuite(): number {
       a08SharedHeld,
       a08SharedProbes,
       `slot "marker" holds [${a08Fillers
-        .map(([skin, placeholder, att]) => `${skin}: name="${att.name}" path="${att.path}" under placeholder "${placeholder}"`)
+        .map(([skin, placeholder, att]) => `${skin}: name=${JSON.stringify(att.name ?? null)} path="${att.path}" under placeholder "${placeholder}"`)
         .join(', ')}] and A08 says ${a08SharedVerdicts.map(([p, v]) => `${v} under ${p}`).join(', ')}`,
     ),
     'the consumer in #574 measured the same shape drawn correctly by `spine-html` — three skins, one placeholder, ' +
@@ -21055,6 +20857,23 @@ function runPathAndSliderSuite(): number {
   // padded path prints unquoted — `…atlas:  marker  (attachment: marker)` — so
   // the defect is invisible in the only sentence that mentioned it.
   const a08A00 = 'A00_ROUNDTRIP_PARSE';
+  // ⚠️ The rig these cases weaken STATES a name on every named-skin entry. Until
+  // issue #796 PS89's rig served, because rigc composed `<skin>/<placeholder>`
+  // on it; nothing is composed any more, so the three-different-strings entry
+  // these cases need is one the spec writes — `<skin>-art` over the `path` its
+  // image derives — and the probe states it rather than inheriting it.
+  const a08NamedProbe = threeSkinDirs(false);
+  {
+    const spec = JSON.parse(readFileSync(a08NamedProbe.rigPath, 'utf8')) as {
+      skins: Record<string, Record<string, Record<string, Record<string, unknown>>>>;
+    };
+    for (const [skin, table] of Object.entries(spec.skins)) {
+      if (skin === 'default') continue;
+      for (const perSlot of Object.values(table)) for (const att of Object.values(perSlot)) att.name = `${skin}-art`;
+    }
+    writeFileSync(a08NamedProbe.rigPath, `${JSON.stringify(spec, null, 2)}\n`);
+  }
+  const a08NamedBuilt = a08Compile(a08NamedProbe);
   /** The same four texts judged by every profile, as whole reports. */
   const a08ReportsFor = (
     texts: { skeletonText?: string; atlasText?: string },
@@ -21062,11 +20881,11 @@ function runPathAndSliderSuite(): number {
     VALIDATE_PROFILES.map((profile): [ValidateProfile, ReturnType<typeof validate>] => [
       profile,
       validate({
-        skeletonText: texts.skeletonText ?? a08SharedBuilt.skeletonText,
-        atlasText: texts.atlasText ?? a08SharedBuilt.atlasText,
-        atlasDir: a08SharedProbe.outDir,
-        declaredDurations: a08SharedBuilt.declaredDurations,
-        rig: a08SharedBuilt.rig,
+        skeletonText: texts.skeletonText ?? a08NamedBuilt.skeletonText,
+        atlasText: texts.atlasText ?? a08NamedBuilt.atlasText,
+        atlasDir: a08NamedProbe.outDir,
+        declaredDurations: a08NamedBuilt.declaredDurations,
+        rig: a08NamedBuilt.rig,
         profile,
       }),
     ]);
@@ -21089,7 +20908,7 @@ function runPathAndSliderSuite(): number {
    * the defect the card names beside the reachability one.
    */
   const a08Target = ((): { skin: string; slot: string; placeholder: string; name: string; path: string } | null => {
-    const skel = JSON.parse(a08SharedBuilt.skeletonText) as { skins: EmittedSkin[] };
+    const skel = JSON.parse(a08NamedBuilt.skeletonText) as { skins: EmittedSkin[] };
     for (const skin of skel.skins) {
       for (const [slot, entries] of Object.entries(skin.attachments)) {
         for (const [placeholder, att] of Object.entries(entries)) {
@@ -21104,7 +20923,7 @@ function runPathAndSliderSuite(): number {
   })();
   /** That one entry's `path` rewritten, and nothing else in the file touched. */
   const a08Repath = (path: string): string => {
-    const skel = JSON.parse(a08SharedBuilt.skeletonText) as { skins: EmittedSkin[] };
+    const skel = JSON.parse(a08NamedBuilt.skeletonText) as { skins: EmittedSkin[] };
     for (const skin of skel.skins) {
       if (a08Target === null || skin.name !== a08Target.skin) continue;
       skin.attachments[a08Target.slot][a08Target.placeholder].path = path;
@@ -21113,7 +20932,7 @@ function runPathAndSliderSuite(): number {
   };
   /** The atlas with one region name padded on both sides — `PS90`'s edit, aimed. */
   const a08PadRegion = (region: string): string =>
-    `${a08SharedBuilt.atlasText
+    `${a08NamedBuilt.atlasText
       .trimEnd()
       .split('\n')
       .map((line) => (line === region ? ` ${line} ` : line))
@@ -21250,7 +21069,7 @@ function runPathAndSliderSuite(): number {
   }
   /** Every candidate here whose round trip succeeds, so the recording is complete. */
   const a08JoinCandidates: Array<[string, string, string]> = [
-    ['the shared-placeholder probe', a08SharedBuilt.skeletonText, a08SharedBuilt.atlasText],
+    ['the shared-placeholder probe', a08NamedBuilt.skeletonText, a08NamedBuilt.atlasText],
     ['the renamed-placeholder probe', a08RenamedBuilt.skeletonText, a08RenamedBuilt.atlasText],
   ];
   const a08CorpusDir = resolve(import.meta.dir, 'examples');
@@ -26630,7 +26449,413 @@ function runPathAndSliderSuite(): number {
       'pinning deleted',
   );
 
+  // --- PS173–PS178: an attachment's `name` is the spec's, never composed (#796) ---
+  //
+  // 🚨 **Measured on the branch point, through spine-core 4.3.13.** A rig spec
+  // had no field for an attachment's own name, so a transcribed `name` was
+  // respelled as `path` and the runtime answered to the placeholder instead; and
+  // a placeholder several skins fill was renamed `<skin>/<placeholder>` in every
+  // skin, which is a value the file never stated. Both were `slot.attachment.name`
+  // moving under a green gate — the pose oracle saw it on two production rigs and
+  // nothing in this tree did. The field now exists on every attachment type the
+  // parser reads it for, `compile` writes it exactly when it is stated, and the
+  // composition is gone.
+  //
+  // ⚠️ The premise the composition was built on is the third case here, measured
+  // rather than argued: a linked mesh resolves its source by skin, slot and KEY
+  // (`SkeletonJson.js:433`), so two skins' same-named meshes are never ambiguous
+  // to the runtime.
+  interface NamedBuild {
+    skeletonText: string;
+    atlasText: string;
+    gate: ReturnType<typeof validate> | null;
+    refused: string | null;
+  }
+  /** Compile a probe and gate it — or the message the compiler refused it with. */
+  const namedBuild = (dirs: ProbeDirs, motionPath?: string): NamedBuild => {
+    const motion = motionPath ?? join(dirs.dir, 'probe.motion.json');
+    if (motionPath === undefined) writeFileSync(motion, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    const opts: Options = { rigPath: dirs.rigPath, motionPath: motion, outDir: dirs.outDir, imagesDir: dirs.dir };
+    try {
+      const built = compile(opts);
+      return {
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        gate: validate({
+          skeletonText: built.skeletonText,
+          atlasText: built.atlasText,
+          atlasDir: opts.outDir,
+          declaredDurations: built.declaredDurations,
+          rig: built.rig,
+          profile: 'spine',
+        }),
+        refused: null,
+      };
+    } catch (err) {
+      return {
+        skeletonText: '',
+        atlasText: '',
+        gate: null,
+        refused: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`,
+      };
+    }
+  };
+  /** `skin/slot/placeholder -> the emitted entry`, off the file as written. */
+  const emittedEntries = (text: string): Map<string, Record<string, unknown>> => {
+    const out = new Map<string, Record<string, unknown>>();
+    if (text === '') return out;
+    const file = JSON.parse(text) as { skins: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }> };
+    for (const skin of file.skins) {
+      for (const [slot, table] of Object.entries(skin.attachments)) {
+        for (const [placeholder, att] of Object.entries(table)) out.set(`${skin.name}/${slot}/${placeholder}`, att);
+      }
+    }
+    return out;
+  };
+  /** A build's own refusal or red gate, as probe rows — every case below starts from a green build. */
+  const buildRows = (build: NamedBuild, what: string): string[] => [
+    ...(build.refused === null ? [] : [`${what} was refused: ${build.refused}`]),
+    ...(build.gate === null ? [] : build.gate.failures.map((f) => `${what}: ${f.assertion}: ${f.detail}`)),
+  ];
+  const namedQuad = (image: string, x: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    type: 'mesh',
+    image,
+    uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+    triangles: [0, 1, 2, 0, 2, 3],
+    vertices: [x, 0, x + 6, 0, x + 6, 6, x, 6],
+    hull: 4,
+    ...extra,
+  });
+
+  // -- PS173: a stated name, on every type that carries one -----------------
+  /** What each entry of skin `dress` states as its name — the fixture's own table, read by the case. */
+  const STATED_NAMES: Record<string, string> = {
+    block: 'block-art',
+    marker: 'badge',
+    echo: 'echo-link',
+    hull: 'hit-box',
+    mask: 'window',
+    rail: 'track',
+  };
+  const namedDirs = writeProbeRig({
+    slots: Object.keys(STATED_NAMES).map((slot) => ({ name: slot, bone: 'block', attachment: slot })),
+    skins: {
+      default: {},
+      dress: {
+        // A region whose image is NOT named after its name: `path` is derived
+        // from the image as always, so it is written.
+        block: { block: { name: STATED_NAMES.block, image: 'block.png' } },
+        // A mesh whose image IS named after its name: `path` defaults to the
+        // name, so none is written and the region is still found.
+        marker: { marker: namedQuad('badge.png', 0, { name: STATED_NAMES.marker }) },
+        echo: { echo: { type: 'linkedmesh', name: STATED_NAMES.echo, image: 'marker.png', source: 'marker', slot: 'marker', skin: 'dress' } },
+        hull: { hull: { type: 'boundingbox', name: STATED_NAMES.hull, vertexCount: 3, vertices: [0, 0, 8, 0, 8, 8] } },
+        mask: { mask: { type: 'clipping', name: STATED_NAMES.mask, vertexCount: 3, vertices: [0, 0, 20, 0, 0, 20] } },
+        rail: { rail: { type: 'path', name: STATED_NAMES.rail, vertexCount: 6, vertices: [0, 0, 4, 0, 8, 0, 12, 4, 16, 4, 20, 4] } },
+      },
+    },
+  });
+  writeOverlayProbePng(join(namedDirs.dir, 'badge.png'), 6, 6, [60, 160, 90, 255]);
+  const statedRig = namedBuild(namedDirs);
+  const namedEntries = emittedEntries(statedRig.skeletonText);
+  const namedLoaded = statedRig.refused === null ? loadedAttachments(statedRig.skeletonText, statedRig.atlasText) : 'not built';
+  const namedProbes = [
+    ...buildRows(statedRig, 'the six-type rig'),
+    ...(typeof namedLoaded === 'string' ? [`the runtime did not load it: ${namedLoaded}`] : []),
+    ...Object.entries(STATED_NAMES).flatMap(([slot, name]) => {
+      const at = `dress/${slot}/${slot}`;
+      const entry = namedEntries.get(at);
+      const loaded = typeof namedLoaded === 'string' ? undefined : namedLoaded.get(at);
+      return [
+        ...(entry === undefined ? [`${at} was not emitted`] : []),
+        ...(entry !== undefined && entry.name !== name ? [`${at} is emitted with name ${JSON.stringify(entry.name ?? null)}, and the spec states ${JSON.stringify(name)}`] : []),
+        ...(entry !== undefined && Object.keys(entry)[0] !== 'name' ? [`${at} writes its keys [${Object.keys(entry).join(', ')}], and \`name\` is the first key the editor writes`] : []),
+        ...(loaded !== undefined && loaded.name !== name ? [`${at} loads named ${JSON.stringify(loaded.name)}, and the spec states ${JSON.stringify(name)}`] : []),
+      ];
+    }),
+    ...(namedEntries.get('dress/block/block')?.path === 'block' ? [] : [`the region's image is "block.png" under name "${STATED_NAMES.block}", so its \`path\` is "block" — it was emitted ${JSON.stringify(namedEntries.get('dress/block/block')?.path ?? null)}`]),
+    ...(namedEntries.get('dress/marker/marker')?.path === undefined ? [] : [`the mesh's image is named after its name, so no \`path\` is owed — it was emitted ${JSON.stringify(namedEntries.get('dress/marker/marker')?.path)}`]),
+    ...(typeof namedLoaded === 'string' || namedLoaded.get('dress/marker/marker')?.region === STATED_NAMES.marker
+      ? []
+      : [`the mesh resolves region ${JSON.stringify(namedLoaded.get('dress/marker/marker')?.region ?? null)}, and a stated name with no \`path\` resolves the region the name spells`]),
+    ...(typeof namedLoaded === 'string' || namedLoaded.get('dress/echo/echo')?.source === 'dress/marker/marker'
+      ? []
+      : [`the link binds ${JSON.stringify(namedLoaded.get('dress/echo/echo')?.source ?? null)}, and it names skin "dress" slot "marker" key "marker"`]),
+  ];
+  const namedHeld = namedProbes.length === 0;
+  say(
+    'PS173_A_STATED_NAME_IS_EMITTED_VERBATIM_FIRST_ON_EVERY_TYPE_AND_IS_THE_NAME_THE_RUNTIME_GIVES',
+    namedHeld,
+    probeDetail(
+      namedHeld,
+      namedProbes,
+      `${Object.keys(STATED_NAMES).length} attachments — region, mesh, linked mesh, bounding box, clipping, path — ` +
+        `each state a name and each loads under it: [${Object.values(STATED_NAMES).join(', ')}]; the region derives ` +
+        '`path` "block" from its image, the mesh writes none and resolves region "badge", the link binds its own ' +
+        `skin's mesh, and ${statedRig.gate?.passed.length ?? 0} assertion(s) are green`,
+      (count) => `${count} thing(s) the stated names did not survive:`,
+    ),
+    '`name` is the one field of an attachment every branch of `readAttachment` reads, so it is stated on all six ' +
+      'types the compiler emits rather than on the two that draw. The region/mesh pair is the half that matters to ' +
+      'the art: `path` defaults to the NAME, so an image named after the name owes no `path` and one named ' +
+      'otherwise owes one — the same rule `attachmentPath` applied against the placeholder before there was a name',
+  );
+
+  // -- PS174: several skins, one placeholder, no name -----------------------
+  const fourBuild = namedBuild(writeProbeRig({ skins: FOUR_SKINS }));
+  const fourEntries = emittedEntries(fourBuild.skeletonText);
+  const fourLoaded = fourBuild.refused === null ? loadedAttachments(fourBuild.skeletonText, fourBuild.atlasText) : 'not built';
+  const fourMarkers = [...fourEntries].filter(([at]) => at.endsWith('/marker/marker'));
+  const fourXs = typeof fourLoaded === 'string' ? [] : fourMarkers.map(([at]) => fourLoaded.get(at)?.x ?? null);
+  const fourProbes = [
+    ...buildRows(fourBuild, 'the four-skin rig'),
+    ...(typeof fourLoaded === 'string' ? [`the runtime did not load it: ${fourLoaded}`] : []),
+    ...(fourMarkers.length === markerFillers ? [] : [`${fourMarkers.length} entr(ies) fill "marker" and the fixture has ${markerFillers} filler(s)`]),
+    ...[...fourEntries].filter(([, att]) => 'name' in att).map(([at, att]) => `${at} is emitted with name ${JSON.stringify(att.name)}, which no spec stated`),
+    ...(typeof fourLoaded === 'string'
+      ? []
+      : fourMarkers.filter(([at]) => fourLoaded.get(at)?.name !== 'marker').map(([at]) => `${at} loads named ${JSON.stringify(fourLoaded.get(at)?.name ?? null)}, not by its placeholder`)),
+    ...(new Set(fourXs).size === fourMarkers.length ? [] : [`the ${fourMarkers.length} fillers load at x [${fourXs.join(', ')}], so they are not ${fourMarkers.length} attachments`]),
+  ];
+  const fourHeld = fourProbes.length === 0;
+  say(
+    'PS174_SEVERAL_SKINS_FILLING_ONE_PLACEHOLDER_WITH_NO_NAME_ARE_EMITTED_WITH_NONE_AND_ALL_ANSWER_TO_IT',
+    fourHeld,
+    probeDetail(
+      fourHeld,
+      fourProbes,
+      `${fourMarkers.length} skin(s) fill slot "marker" under one placeholder, no entry anywhere carries a \`name\`, ` +
+        `each loads named "marker", and they are ${new Set(fourXs).size} distinct attachments (x ${fourXs.join(', ')})`,
+      (count) => `${count} thing(s) the emit invented or lost:`,
+    ),
+    'the #796 reading: an editor export states no `name` on a placeholder two named skins fill, the runtime names ' +
+      'every one of them by the placeholder, and the rebuild used to rename them `<skin>/<placeholder>` — a value ' +
+      'the file never stated, which `slot.attachment.name` shows a consumer. The last clause is what keeps "no ' +
+      'name" from meaning "one attachment": the three still load as three',
+  );
+
+  // -- PS175: a linked mesh finds its source by skin, slot and key ----------
+  const linkDirs = writeProbeRig({
+    slots: [
+      { name: 'block', bone: 'block', attachment: 'block' },
+      { name: 'marker', bone: 'block', attachment: 'marker' },
+      { name: 'echo', bone: 'block', attachment: 'echo' },
+    ],
+    skins: {
+      default: { ...PROBE_BLOCK_ONLY_SKIN },
+      base: {
+        marker: { marker: namedQuad('marker.png', 0) },
+        echo: { echo: { type: 'linkedmesh', image: 'marker.png', source: 'marker', slot: 'marker', skin: 'base' } },
+      },
+      alt: {
+        marker: { marker: namedQuad('marker.png', 20) },
+        echo: { echo: { type: 'linkedmesh', image: 'marker.png', source: 'marker', slot: 'marker', skin: 'alt' } },
+      },
+    },
+  });
+  const linkBuild = namedBuild(linkDirs);
+  const linkLoaded = linkBuild.refused === null ? loadedAttachments(linkBuild.skeletonText, linkBuild.atlasText) : 'not built';
+  // The same rig with one source given a NAME of its own and the link pointed at
+  // that name: refused by the compiler, because the runtime would not find it.
+  const byNameDirs = writeProbeRig({
+    slots: [
+      { name: 'block', bone: 'block', attachment: 'block' },
+      { name: 'marker', bone: 'block', attachment: 'marker' },
+      { name: 'echo', bone: 'block', attachment: 'echo' },
+    ],
+    skins: {
+      default: { ...PROBE_BLOCK_ONLY_SKIN },
+      alt: {
+        marker: { marker: namedQuad('marker.png', 20, { name: 'alt-marker', path: 'marker' }) },
+        echo: { echo: { type: 'linkedmesh', image: 'marker.png', source: 'alt-marker', slot: 'marker', skin: 'alt' } },
+      },
+    },
+  });
+  const byName = namedBuild(byNameDirs);
+  const linkProbes = [
+    ...buildRows(linkBuild, 'the two-skin link rig'),
+    ...(typeof linkLoaded === 'string' ? [`the runtime did not load it: ${linkLoaded}`] : []),
+    ...(typeof linkLoaded === 'string'
+      ? []
+      : (['base', 'alt'] as const).flatMap((skin) => {
+          const link = linkLoaded.get(`${skin}/echo/echo`);
+          const own = linkLoaded.get(`${skin}/marker/marker`);
+          return [
+            ...(link?.source === `${skin}/marker/marker` ? [] : [`skin "${skin}"'s link binds ${JSON.stringify(link?.source ?? null)}, not its own skin's "marker"`]),
+            ...(own?.name === 'marker' ? [] : [`skin "${skin}"'s mesh loads named ${JSON.stringify(own?.name ?? null)}`]),
+          ];
+        })),
+    ...(typeof linkLoaded !== 'string' && linkLoaded.get('base/marker/marker')?.vertices === linkLoaded.get('alt/marker/marker')?.vertices
+      ? ['the two skins\' meshes load with the same vertices, so this rig cannot tell which one a link bound']
+      : []),
+    ...(byName.refused !== null && byName.refused.includes('"source" is "alt-marker"') && byName.refused.includes("not by the attachment's `name`")
+      ? []
+      : [`a link whose \`source\` spells its source's stated name was not refused by name: ${byName.refused ?? 'it compiled'}`]),
+  ];
+  const linkHeld = linkProbes.length === 0;
+  say(
+    'PS175_A_LINKED_MESH_BINDS_ITS_OWN_SKINS_SOURCE_BY_KEY_WHEN_TWO_SKINS_SHARE_THE_NAME',
+    linkHeld,
+    probeDetail(
+      linkHeld,
+      linkProbes,
+      'skins "base" and "alt" each fill "marker" with a mesh of its own and no `name` — both load named "marker" — ' +
+        'and each skin\'s link binds its own skin\'s mesh; a link pointed at a source\'s stated name instead of its ' +
+        'key is refused with the key rule quoted',
+      (count) => `${count} thing(s) the key-resolution reading did not survive:`,
+    ),
+    '#541 composed `<skin>/<placeholder>` on the reading that "a linked mesh resolves its parent by name", so two ' +
+      'same-named meshes would be ambiguous to it. The runtime says otherwise: `skin.getAttachment(slotIndex, ' +
+      'source)` (`SkeletonJson.js:433`) looks the source up by skin, slot and KEY, and a name plays no part — which ' +
+      'is also why the compiler refuses a `source` that spells one',
+  );
+
+  // -- PS176: #567's remedy builds green as stated --------------------------
+  const remedy = buildSkinTexts(threeSkinDirs(false));
+  const namedDefaultDirs = writeProbeRig({
+    skins: {
+      default: { ...PROBE_BLOCK_ONLY_SKIN, marker: { marker: { image: 'marker.png', name: 'default-marker', path: 'marker' } } },
+      zulu: { marker: { marker: { image: 'marker.png', x: 1 } } },
+    },
+  });
+  const namedDefault = namedBuild(namedDefaultDirs);
+  const remedyProbes = [
+    ...(remedy.refused === null ? [] : [`the three fillers in named skins were refused: ${remedy.refused}`]),
+    ...(remedy.gate === null ? [] : remedy.gate.failures.map((f) => `the remedy: ${f.assertion}: ${f.detail}`)),
+    ...([['base', 'art_a'], ['zulu', 'art_b'], ['mike', 'art_c']] as const).flatMap(([skin, path]) => {
+      const att = markerOf(remedy, skin);
+      return att?.name === undefined && att?.path === path
+        ? []
+        : [`skin "${skin}" holds name=${JSON.stringify(att?.name ?? null)} path=${JSON.stringify(att?.path ?? null)}, and it has to hold no name over path "${path}"`];
+    }),
+    ...(markerOf(remedy, 'default') === undefined ? [] : ['the default skin holds an attachment under "marker"']),
+    ...(namedDefault.refused !== null && namedDefault.refused.includes('filled by the "default" skin AND by skin "zulu"')
+      ? []
+      : [`a default-skin entry that STATES a name still shares the placeholder, and it was not refused: ${namedDefault.refused ?? 'it compiled'}`]),
+  ];
+  const remedyHeld = remedyProbes.length === 0;
+  say(
+    'PS176_THE_DEFAULT_CONTESTS_REMEDY_BUILDS_GREEN_WITH_NO_NAME_AND_A_STATED_NAME_DOES_NOT_LIFT_THE_REFUSAL',
+    remedyHeld,
+    probeDetail(
+      remedyHeld,
+      remedyProbes,
+      `three named skins fill "marker" with no \`name\` over paths [${['base', 'zulu', 'mike'].map((skin) => markerOf(remedy, skin)?.path).join(', ')}] ` +
+        `and ${remedy.gate?.passed.length ?? 0} assertion(s) are green; the default skin sharing the placeholder is ` +
+        'still refused when its entry states a name',
+      (count) => `${count} thing(s) the remedy or the refusal did not do:`,
+    ),
+    'a refusal whose remedy does not build is a dead end, so PS70 and this are one pair — and the second clause is ' +
+      'the half #796 had to keep: round trip 7 measured a NAMED default-skin entry re-keyed by the editor, so the ' +
+      'field that now lets a spec state a name must not become a way past the one shape the editor cannot hold',
+  );
+
+  // -- PS177: a name that is not a string -----------------------------------
+  const numericName = skinEmit({ default: { ...PROBE_BLOCK_ONLY_SKIN }, dress: { marker: { marker: { image: 'marker.png', name: 7 } } } });
+  const stringName = skinEmit({ default: { ...PROBE_BLOCK_ONLY_SKIN }, dress: { marker: { marker: { image: 'marker.png', name: '7' } } } });
+  const stringNamed = typeof stringName === 'string' ? undefined : stringName.find((skin) => skin.name === 'dress')?.attachments.marker?.marker;
+  say(
+    'PS177_A_NAME_THAT_IS_NOT_A_STRING_IS_REFUSED_BY_THE_FIELD_AND_THE_VALUE',
+    typeof numericName === 'string' &&
+      numericName.includes('skin "dress" slot "marker" attachment "marker": "name" is 7, which is not a string') &&
+      stringNamed?.name === '7' &&
+      stringNamed.path === 'marker',
+    typeof numericName !== 'string'
+      ? 'a numeric `name` compiled'
+      : `refused with: ${numericName}; the same entry naming "7" ${stringNamed === undefined ? `was ALSO refused: ${String(stringName)}` : `emits name ${JSON.stringify(stringNamed.name)} path ${JSON.stringify(stringNamed.path ?? null)}`}`,
+    'the field is written verbatim, so its type is the one thing the compiler has to hold: the parser would take a ' +
+      'number as the name and then as the region `path` defaults to, and the miss would surface as a region nobody ' +
+      'spelled. The string twin is the control — the same value quoted builds, and derives `path` from its image',
+  );
+
+  // -- PS178: a sequence with no `path` steps its stated name ---------------
+  const namedSeries = writeSeriesProbe({ path: undefined, name: 'glint_' });
+  const seriesBuild = namedBuild(namedSeries.dirs, namedSeries.motionPath);
+  const seriesEntry = emittedEntries(seriesBuild.skeletonText).get('default/glint/glint');
+  const seriesLoaded = seriesBuild.refused === null ? loadedAttachments(seriesBuild.skeletonText, seriesBuild.atlasText) : 'not built';
+  const bareSeries = writeSeriesProbe({ path: undefined });
+  const bareBuild = namedBuild(bareSeries.dirs, bareSeries.motionPath);
+  const seriesProbes = [
+    ...buildRows(seriesBuild, 'the named series'),
+    ...(seriesEntry?.name === 'glint_' && seriesEntry.path === undefined
+      ? []
+      : [`the series is emitted name=${JSON.stringify(seriesEntry?.name ?? null)} path=${JSON.stringify(seriesEntry?.path ?? null)}`]),
+    ...(typeof seriesLoaded !== 'string' && seriesLoaded.get('default/glint/glint')?.region === seriesFrame(0)
+      ? []
+      : [`frame 0 resolves ${JSON.stringify(typeof seriesLoaded === 'string' ? seriesLoaded : seriesLoaded.get('default/glint/glint')?.region ?? null)}, not "${seriesFrame(0)}"`]),
+    ...(bareBuild.refused !== null && bareBuild.refused.includes('"glint0001"')
+      ? []
+      : [`the same series with neither \`path\` nor \`name\` steps the placeholder and must miss "glint0001": ${bareBuild.refused ?? 'it compiled'}`]),
+  ];
+  const seriesHeld = seriesProbes.length === 0;
+  say(
+    'PS178_A_SEQUENCE_WITH_NO_PATH_STEPS_ITS_STATED_NAME_AND_NOT_ITS_PLACEHOLDER',
+    seriesHeld,
+    probeDetail(
+      seriesHeld,
+      seriesProbes,
+      `a ${SERIES_COUNT}-frame series stating name "glint_" and no \`path\` builds green and loads frame 0 as ` +
+        `"${seriesFrame(0)}"; the same series stating neither steps "glint" and is refused naming "glint0001"`,
+      (count) => `${count} thing(s) the series stem did not follow:`,
+    ),
+    'the frames are `path + number`, and `path` defaults to the NAME — so a stated name is the stem wherever no ' +
+      '`path` is, and a compiler that still read the placeholder there would go looking for frames the atlas does ' +
+      'not have. The bare twin is what shows the stem moved rather than happening to agree',
+  );
+
   return bad;
+}
+
+/** One loaded attachment, as spine-core built it — see `loadedAttachments`. */
+interface LoadedAttachment {
+  /** `Attachment.name`: the stated `name`, else the placeholder (`SkeletonJson.js:526`). */
+  name: string;
+  /** The atlas region the first frame resolved, on a region or a mesh; `null` on the other types. */
+  region: string | null;
+  /** A linked mesh's source, as the `skin/slot/placeholder` it is filed under; `null` for anything else. */
+  source: string | null;
+  /** A region's `x` — what tells two skins' regions under one placeholder apart. */
+  x: number | null;
+  /** A mesh's own vertex run, as text; `null` on a link or a non-mesh. */
+  vertices: string | null;
+}
+
+/**
+ * Every attachment of a skeleton as spine-core loads it, keyed
+ * `skin/slot/placeholder` — the name the runtime gives it, the region it drew
+ * and, for a linked mesh, which filed attachment it bound (issue #796).
+ *
+ * 🔑 Read off the runtime, not off the JSON, because the defect this exists for
+ * was a file stating plausible fields while the loaded `Attachment.name`
+ * differed from the source's — and the question #541 answered wrongly, which
+ * mesh a link binds when two skins share a name, is only answered by the loader.
+ */
+function loadedAttachments(skeletonText: string, atlasText: string): Map<string, LoadedAttachment> | string {
+  try {
+    const data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(
+      JSON.parse(skeletonText),
+    );
+    const filed = new Map<unknown, string>();
+    for (const skin of data.skins) {
+      for (const entry of skin.getAttachments()) filed.set(entry.attachment, `${skin.name}/${data.slots[entry.slotIndex].name}/${entry.placeholder}`);
+    }
+    const out = new Map<string, LoadedAttachment>();
+    for (const [attachment, at] of filed) {
+      const drawn = attachment instanceof RegionAttachment || attachment instanceof MeshAttachment ? attachment : null;
+      const region = drawn?.sequence.regions[0] as TextureAtlasRegion | null | undefined;
+      const source = attachment instanceof MeshAttachment ? attachment.getSourceMesh() : null;
+      out.set(at, {
+        name: (attachment as { name: string }).name,
+        region: drawn === null ? null : (region?.name ?? null),
+        source: source === null ? null : (filed.get(source) ?? '(unfiled)'),
+        x: attachment instanceof RegionAttachment ? attachment.x : null,
+        vertices: attachment instanceof MeshAttachment && source === null ? JSON.stringify(Array.from(attachment.vertices ?? [])) : null,
+      });
+    }
+    return out;
+  } catch (err) {
+    return `the loader refused it: ${(err as Error).message}`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -42634,13 +42859,20 @@ function runCliSuite(): number {
   // would have gone green on a flag that broke something else in the skeleton,
   // which is how this hole survived the first time.
   {
-    const skinOf = (x: number): Record<string, unknown> => ({ marker: { marker: { image: 'marker.png', x } } });
+    /**
+     * Each skin's entry STATES a name of its own. Until issue #796 the names
+     * here were the ones rigc composed (`<skin>/marker`); nothing is composed any
+     * more, and a stated `name` is now the newest field on the emit — which is
+     * the property this rig was chosen for.
+     */
+    const skinOf = (skin: string, x: number): Record<string, unknown> => ({
+      marker: { marker: { name: `${skin}-marker`, image: 'marker.png', x } },
+    });
     /**
      * The non-default skins, named once so the expected names are DERIVED from
-     * the fixture rather than counted by hand. `default` fills the same
-     * placeholder and composes nothing (#567), so it is deliberately not in here
-     * — a count would have been one literal to retune when that rule changed,
-     * and it was.
+     * the fixture rather than counted by hand. `default` holds `block` only
+     * (#567), so it is deliberately not in here — a count would have been one
+     * literal to retune when that rule changed, and it was.
      */
     const contestingSkins = { zulu: 1, mike: 2, alpha: 3 };
     const dirs = writeProbeRig({
@@ -42650,7 +42882,7 @@ function runCliSuite(): number {
         // shares with a named skin — so the fixture follows the refusal's own
         // remedy rather than asserting a shape the editor cannot hold.
         default: { block: { block: { image: 'block.png' } } },
-        ...Object.fromEntries(Object.entries(contestingSkins).map(([name, x]) => [name, skinOf(x)])),
+        ...Object.fromEntries(Object.entries(contestingSkins).map(([name, x]) => [name, skinOf(name, x)])),
       },
     });
     const motionPath = join(dirs.dir, 'probe.motion.json');
@@ -42676,8 +42908,8 @@ function runCliSuite(): number {
     };
     const imagesOf = (skeleton: Record<string, unknown> | null): unknown =>
       skeleton === null ? null : (skeleton.skeleton as Record<string, unknown>).images;
-    /** The composed names the four-skin rig must carry, in BOTH builds. */
-    const composed = (skeleton: Record<string, unknown> | null): string[] => {
+    /** The stated names the four-skin rig must carry, in BOTH builds. */
+    const namesIn = (skeleton: Record<string, unknown> | null): string[] => {
       if (skeleton === null) return [];
       const skins = skeleton.skins as Array<{ attachments: Record<string, Record<string, { name?: string }>> }>;
       return skins
@@ -42688,9 +42920,9 @@ function runCliSuite(): number {
     };
     const sameBody = a !== null && b !== null && withoutImages(a) === withoutImages(b);
     const movedImages = imagesOf(a) !== imagesOf(b);
-    const names = composed(a);
+    const names = namesIn(a);
     const wantNames = Object.keys(contestingSkins)
-      .map((skin) => `${skin}/marker`)
+      .map((skin) => `${skin}-marker`)
       .sort();
     say(
       'CLI13_COPY_IMAGES_MOVES_SKELETON_IMAGES_AND_NOTHING_ELSE_IN_THE_SKELETON',
@@ -42699,19 +42931,21 @@ function runCliSuite(): number {
         sameBody &&
         movedImages &&
         JSON.stringify(names) === JSON.stringify(wantNames) &&
-        JSON.stringify(names) === JSON.stringify(composed(b)),
+        JSON.stringify(names) === JSON.stringify(namesIn(b)),
       plain.status !== 0 || copied.status !== 0
         ? `a build refused: no-flag exit=${String(plain.status)}, --copy-images exit=${String(copied.status)} — ` +
           `${(copied.stderr || plain.stderr).trim().split('\n').pop() ?? ''}`
         : `both builds green; skeleton.images ${JSON.stringify(imagesOf(a))} -> ${JSON.stringify(imagesOf(b))} ` +
           `(${movedImages ? 'moved, as the flag is for' : 'DID NOT MOVE, so this case is vacuous'}), and every ` +
-          `other byte ${sameBody ? 'identical' : 'DIFFERS'}; the composed attachment names are [${names.join(', ')}] ` +
+          `other byte ${sameBody ? 'identical' : 'DIFFERS'}; the stated attachment names are [${names.join(', ')}] ` +
           `in both, against [${wantNames.join(', ')}] derived from the fixture's non-default skins`,
       'the second clause is what stops it being vacuous — a flag that moved nothing at all would satisfy "the ' +
         'skeletons agree" without doing its job. The four-skin rig is deliberate: the fields most recently added ' +
         'to the emit are the ones least likely to be reached by every path that writes it. ⚠️ The expected names ' +
         'are derived from the skin table rather than counted: this case said `4` until #567 stopped the DEFAULT ' +
-        "skin composing, and a count cannot tell \"the flag dropped a name\" from \"the emitter's rule moved\"",
+        "skin filling `marker`, and a count cannot tell \"the flag dropped a name\" from \"the emitter's rule moved\". " +
+        'Since #796 the names are the spec\'s own rather than composed ones, so the emitter has no rule of its own ' +
+        'about them left to move',
     );
   }
 
@@ -45477,6 +45711,127 @@ function runEditorRoundtripSuite(): number {
         'survives a machine with no Spine on it — and the case prints which machine it ran on rather than ' +
         'assuming. ⚠️ A SKIP here would report "not measured" on a fact that is measured and in the tree',
     );
+  }
+
+  // --- ERT71–ERT72: the two shapes #796 left for the editor to decide --------
+  //
+  // 🔬 Issue #541 read the editor's refusal of a four-skin rig as "several
+  // attachments of one name" and #552 composed `<skin>/<placeholder>` for it;
+  // #796 retired the composition on two measurements — a linked mesh resolves
+  // its source by KEY (`PS175`), and a production rig of named skins sharing
+  // placeholders imported with the composed names stripped. What neither
+  // settles is #541's own fixture without the names, so these two rigs are built
+  // here and handed to the licensed editor:
+  //
+  //   ERT71  four NAMED skins fill one placeholder, a differently shaped mesh in
+  //          each, no `name` — #541's shape minus the default skin, which the
+  //          compiler refuses on its own measurement (#567)
+  //   ERT72  the production shape: two named skins, a mesh each under one
+  //          placeholder, and a linked mesh per skin in a second slot whose
+  //          source is its own skin's mesh, no `name`
+  //
+  // ⚠️ They run only against an editor NAMED in `RIGC_ERT_EDITOR`, never the
+  // platform default, because a selftest on a machine that has Spine installed
+  // must not start it unasked — the rest of this suite drives stubs for the same
+  // reason. Unnamed, each is a SKIP that says so: nothing was measured, and a
+  // PASS here would be the one verdict that looked like the editor agreeing. If
+  // the editor refuses ERT71, the trigger is something other than "the same name
+  // in two skins", and that is a card rather than a rule.
+  {
+    const namedEditor = process.env.RIGC_ERT_EDITOR ?? '';
+    const shapeRoot = join(root, 'shapes');
+    mkdirSync(shapeRoot, { recursive: true });
+    for (const [file, colour] of [
+      ['block.png', [40, 60, 90, 255]],
+      ['panel.png', [90, 40, 60, 255]],
+      ['plate.png', [30, 120, 40, 255]],
+      ['echo.png', [180, 70, 50, 255]],
+    ] as Array<[string, RGBA]>) {
+      writeProbePng(join(shapeRoot, file), 12, 12, colour);
+    }
+    /** A quad mesh over one image, `shape` pulling one corner so the skins' meshes differ. */
+    const shapedQuad = (image: string, shape: number): Record<string, unknown> => ({
+      type: 'mesh',
+      image,
+      uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+      triangles: [0, 1, 2, 0, 2, 3],
+      vertices: [0, 0, 12 + shape, 0, 12, 12 + shape, 0, 12],
+      hull: 4,
+    });
+    const shapes: Array<{ code: string; name: string; slots: Array<Record<string, unknown>>; skins: Record<string, unknown>; asks: string }> = [
+      {
+        code: 'ERT71_FOUR_NAMED_SKINS_FILLING_ONE_PLACEHOLDER_WITH_NO_NAME_IMPORT_THROUGH_THE_EDITOR',
+        name: 'four_skins_one_placeholder',
+        slots: [
+          { name: 'block', bone: 'root', attachment: 'block' },
+          { name: 'patch', bone: 'root', attachment: 'patch' },
+        ],
+        skins: {
+          default: { block: { block: { image: 'block.png' } } },
+          north: { patch: { patch: shapedQuad('panel.png', 0) } },
+          south: { patch: { patch: shapedQuad('plate.png', 2) } },
+          east: { patch: { patch: shapedQuad('panel.png', 4) } },
+          west: { patch: { patch: shapedQuad('plate.png', 6) } },
+        },
+        asks: "#541's four-skin shape with no composed names — whether the editor's refusal was ever about a name",
+      },
+      {
+        code: 'ERT72_TWO_SKINS_SHARING_A_MESH_PLACEHOLDER_AND_LINKING_TO_IT_IMPORT_THROUGH_THE_EDITOR',
+        name: 'two_skins_linked',
+        // ⚠️ The default skin draws `block`, as ERT71's does, and that is not
+        // decoration: the editor's export DROPS an empty default skin (measured
+        // on 4.3.26 — three skins in, two out), and step 5 then renders a skin
+        // the export no longer declares. A drawable default keeps this case on
+        // the placeholder question.
+        slots: [
+          { name: 'block', bone: 'root', attachment: 'block' },
+          { name: 'panel', bone: 'root', attachment: 'panel' },
+          { name: 'echo', bone: 'root', attachment: 'echo' },
+        ],
+        skins: {
+          default: { block: { block: { image: 'block.png' } } },
+          base: {
+            panel: { panel: shapedQuad('panel.png', 0) },
+            echo: { echo: { type: 'linkedmesh', image: 'echo.png', source: 'panel', slot: 'panel', skin: 'base' } },
+          },
+          alt: {
+            panel: { panel: shapedQuad('plate.png', 4) },
+            echo: { echo: { type: 'linkedmesh', image: 'echo.png', source: 'panel', slot: 'panel', skin: 'alt' } },
+          },
+        },
+        asks: 'the production shape — same-named meshes and links across two named skins, each link bound by its skin',
+      },
+    ];
+    for (const shape of shapes) {
+      if (namedEditor === '' || !existsSync(namedEditor)) {
+        console.log(
+          `  SKIP  ${shape.code}  (${
+            namedEditor === '' ? 'no editor is named in RIGC_ERT_EDITOR' : `RIGC_ERT_EDITOR names ${namedEditor}, and nothing is there`
+          } — ${shape.asks} is a question only the licensed editor answers, and this run did not ask it)`,
+        );
+        continue;
+      }
+      const rigPath = join(shapeRoot, `${shape.name}.rig.json`);
+      const motionPath = join(shapeRoot, `${shape.name}.motion.json`);
+      writeFileSync(
+        rigPath,
+        `${JSON.stringify({ spec: 'rigc-rig/1', name: shape.name, skeleton: { width: 64, height: 64 }, bones: [{ name: 'root' }], slots: shape.slots, skins: shape.skins }, null, 2)}\n`,
+      );
+      writeFileSync(motionPath, `${JSON.stringify({ ...STATIC_MOTION, archetype: shape.name, cut: shape.name }, null, 2)}\n`);
+      const buildDir = join(shapeRoot, shape.name, 'build');
+      const built = runCli(['build', '--rig', rigPath, '--motion', motionPath, '--images', shapeRoot, '--out', buildDir, '--copy-images']);
+      const trip = built.status === 0 ? runRoundtrip(['--build', buildDir, '--out', join(shapeRoot, shape.name, 'roundtrip'), '--editor', namedEditor]) : null;
+      const said = trip === null ? '' : `${trip.stdout}\n${trip.stderr}`.trim().split('\n').slice(-12).join(' | ');
+      say(
+        shape.code,
+        built.status === 0 && trip !== null && trip.status === 0,
+        built.status !== 0
+          ? `the build was refused (exit ${String(built.status)}): ${(built.stderr || built.stdout).trim().split('\n').pop() ?? ''}`
+          : `editor ${namedEditor}: round trip exit ${String(trip?.status)} — ${said}`,
+        `${shape.asks}. Built by rigc with no \`name\` on any entry and handed to the editor named in RIGC_ERT_EDITOR; ` +
+          'the tool quotes the editor\'s own words on a failed step, so a red line here carries the reason',
+      );
+    }
   }
 
   rmSync(root, { recursive: true, force: true });
@@ -59742,7 +60097,7 @@ function runLoopSeamSuite(): number {
       `(first at or above 12 fps: ${wave?.nextAtOrAbove}), 1.5 on multiples of ${gaze?.every} ` +
       // ⚠️ `on every integer rate` was printed whatever the multiple in its own
       // parentheses said (issue #638) — the operand refuting the clause four
-      // words after it, which is `PS58`'s shape.
+      // words after it, which was `PS58`'s shape (that case retired with #796).
       `(first at or above 25 fps: ${gaze?.nextAtOrAbove}), 4 on ` +
       `${whole?.every === 1 ? 'every integer rate' : `multiples of ${String(whole?.every)} and NOT every integer rate`} ` +
       `(${whole?.every}); ` +
@@ -61070,11 +61425,10 @@ function runIngestSuite(): number {
   // so the plant is the one shape the rig spec still cannot say: the parser
   // reads the omitted count as 0 and the attachment loads holding no region.
   (blockAttachments.block as Record<string, unknown>).sequence = { start: 1 };
-  // An attachment `name` on a placeholder only ONE skin fills: rigc composes a
-  // name exactly where a placeholder is contested, so this one it will not
-  // re-derive. Lossy rather than a blocker — the rebuild resolves, it is simply
-  // called something else.
-  (blockAttachments.block as Record<string, unknown>).name = 'renamed_block';
+  // ⚠️ An attachment `name` was planted here as `ATTACHMENT_NAME` until issue
+  // #796: the rig spec had no field for one, so it was dropped. It has one now
+  // and `ingest` carries it verbatim, so there is no loss left to plant and the
+  // code is gone — `IG86` is the carry measured instead.
   // The two header fields the editor writes and the rig spec has no room for.
   const plantedHeader = planted.skeleton as Record<string, unknown>;
   plantedHeader.hash = 'Kx9plantedhash';
@@ -61114,7 +61468,6 @@ function runIngestSuite(): number {
     ['SLOT_TIMELINE', 'blocker'],
     ['BONE_TIMELINE', 'blocker'],
     ['HEADER_BOOKKEEPING', 'lossy'],
-    ['ATTACHMENT_NAME', 'lossy'],
   ];
   const missed = expected.filter(([code, kind]) => !plantedResult.findings.some((f) => f.code === code && f.kind === kind));
   const cleanCodes = new Set(probeTrip.findings.map((f) => f.code));
@@ -63401,440 +63754,6 @@ function runIngestSuite(): number {
     );
   }
 
-  // --- IG51–IG53: a dropped `name` was the atlas region key (issue #742) ----
-  //
-  // 🚨 **Measured on the branch point, on forged exports and nothing else.**
-  // `readAttachment` reads `name = getValue(map, "name", placeholder)` and then
-  // `path = getValue(map, "path", name)` (`SkeletonJson.js:526`, `:529`, `:560`),
-  // so a source that states a `name` and NO `path` draws the region that name
-  // spells. `ingest` dropped the name — correctly; the rig spec derives names —
-  // and wrote no `path` either, so the rebuild asked the atlas for the
-  // PLACEHOLDER. On the probe below that was three `FAIL
-  // A08_REGION_NAMES_MATCH_ATTACHMENTS` and an `A00_ROUNDTRIP_PARSE` under them,
-  // against a source the runtime loads.
-  //
-  // ⭐ The CONTESTED half was quieter and not safer, which is why it has a case
-  // of its own. There rigc composes `<skin>/<placeholder>` and
-  // `nameSkinAttachment` pins `path` at the placeholder — so two skins naming
-  // two regions came back asking for ONE region, neither of them the source's,
-  // and `ATTACHMENT_NAME` says nothing at all there because that is exactly
-  // where the name is re-derived. `IG53` is that half.
-  //
-  // 🌱 The plant is DATA, not source: every `path` the repair writes is deleted
-  // out of the decompiled spec before the rebuild, which is the branch point
-  // reproduced inside the run. Its own count is read off the spec, so a plant
-  // that removed nothing reports itself instead of passing.
-  {
-    // ⚠️ Three of the four PNGs are named after the placeholder that draws them,
-    // and that is load-bearing rather than tidy: `attachmentPath` emits a `path`
-    // whenever a basename differs, so a probe whose art was named otherwise would
-    // start out with a `path` already on it — and the case below that asks
-    // whether a redundant `name` moves a byte would be comparing against an emit
-    // the forge had changed for another reason. It was measured wrong that way
-    // first: `1 field path(s) of the original emit` moved, and the field was the
-    // `path` the probe's own art had put there.
-    const namedDir = mkdtempSync(join(tmpdir(), 'rigc-attachmentname-'));
-    writeProbePng(join(namedDir, 'block.png'), 12, 8, [40, 60, 90, 255]);
-    writeProbePng(join(namedDir, 'panel.png'), 10, 10, [90, 40, 60, 255]);
-    writeProbePng(join(namedDir, 'echo.png'), 6, 6, [180, 70, 50, 255]);
-    writeProbePng(join(namedDir, 'plate.png'), 10, 10, [30, 120, 40, 255]);
-
-    /** A four-corner authored mesh over one image, so a mesh and a link each draw a region. */
-    const quad = (image: string): Record<string, unknown> => ({
-      type: 'mesh',
-      image,
-      uvs: [0, 0, 1, 0, 1, 1, 0, 1],
-      triangles: [0, 1, 2, 0, 2, 3],
-      vertices: [0, 0, 10, 0, 10, 10, 0, 10],
-      hull: 4,
-    });
-
-    /** Compile one probe rig out of this block's own art, and keep its pack beside it. */
-    const buildProbe = (
-      name: string,
-      slots: Array<Record<string, unknown>>,
-      skinTable: Record<string, unknown>,
-    ): { skeletonText: string; atlasText: string; dir: string } => {
-      const rigPath = join(namedDir, `${name}.rig.json`);
-      const motionPath = join(namedDir, `${name}.motion.json`);
-      writeFileSync(
-        rigPath,
-        `${JSON.stringify(
-          {
-            spec: 'rigc-rig/1',
-            name,
-            skeleton: { width: 64, height: 64 },
-            bones: [{ name: 'root' }, { name: 'pin', parent: 'root', length: 12 }],
-            slots,
-            skins: skinTable,
-          },
-          null,
-          2,
-        )}\n`,
-      );
-      writeFileSync(motionPath, `${JSON.stringify({ ...STATIC_MOTION, archetype: name, cut: name }, null, 2)}\n`);
-      const outDir = join(namedDir, name);
-      mkdirSync(outDir, { recursive: true });
-      const built = compile({ rigPath, motionPath, outDir, imagesDir: namedDir });
-      return { skeletonText: built.skeletonText, atlasText: built.atlasText, dir: outDir };
-    };
-
-    /**
-     * An emitted export rewritten into the shape a hand-made one has: each
-     * attachment states a `name` of its own, and a `path` only where `pathFor`
-     * gives it one — with the pack re-keyed to whichever of the two the parser
-     * will resolve, so the forged pair is one the runtime loads.
-     *
-     * ⚠️ Nothing is invented. The region each attachment resolved BEFORE the
-     * rewrite is read off the file by the parser's own `path ?? name ??
-     * placeholder`, and it is that string the atlas line is renamed from, so the
-     * forge cannot quietly point somewhere the pack has nothing.
-     */
-    const forgeNames = (
-      source: { skeletonText: string; atlasText: string },
-      nameFor: (skin: string, placeholder: string) => string,
-      pathFor?: (skin: string, placeholder: string) => string,
-    ): { skeletonText: string; atlasText: string; wanted: Map<string, string> } => {
-      const file = JSON.parse(source.skeletonText) as {
-        skins: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }>;
-      };
-      const wanted = new Map<string, string>();
-      let atlasText = source.atlasText;
-      for (const skin of file.skins) {
-        for (const [slot, perSlot] of Object.entries(skin.attachments)) {
-          for (const [placeholder, att] of Object.entries(perSlot)) {
-            const was = typeof att.path === 'string' ? att.path : typeof att.name === 'string' ? att.name : placeholder;
-            const now = nameFor(skin.name, placeholder);
-            const stated = pathFor === undefined ? undefined : pathFor(skin.name, placeholder);
-            if (stated === undefined) delete att.path;
-            else att.path = stated;
-            att.name = now;
-            // What `getValue(map, "path", name)` will ask the atlas for, which is
-            // the string the pack has to be keyed by and the string the rebuild
-            // has to reproduce.
-            const resolves = stated ?? now;
-            // A polygon type resolves no region at all, so it wants none and is
-            // not counted among what the rebuild has to find.
-            const kind = att.type === undefined ? 'region' : String(att.type);
-            if (kind === 'region' || kind === 'mesh' || kind === 'linkedmesh') {
-              wanted.set(`${skin.name}/${slot}/${placeholder}`, resolves);
-            }
-            if (resolves !== was) atlasText = atlasText.replace(new RegExp(`^${was}$`, 'm'), resolves);
-          }
-        }
-      }
-      return { skeletonText: `${JSON.stringify(file, null, 2)}\n`, atlasText, wanted };
-    };
-
-    /** Every `path` a decompiled spec states, deleted — the branch point, as data. */
-    const dropPaths = (rig: Record<string, unknown>): number => {
-      let removed = 0;
-      const skins = (rig.skins ?? {}) as Record<string, Record<string, unknown>>;
-      for (const skin of Object.values(skins)) {
-        const table = (skin.attachments ?? skin) as Record<string, Record<string, Record<string, unknown>>>;
-        for (const perSlot of Object.values(table)) {
-          if (typeof perSlot !== 'object' || perSlot === null) continue;
-          for (const att of Object.values(perSlot)) {
-            if (typeof att !== 'object' || att === null || att.path === undefined) continue;
-            delete att.path;
-            removed++;
-          }
-        }
-      }
-      return removed;
-    };
-
-    /** `ingest --art none`, then the rebuild against the forged pack, with an optional plant. */
-    const rebuild = (
-      name: string,
-      forged: { skeletonText: string; atlasText: string },
-      tag: string,
-      plant?: (rig: Record<string, unknown>) => number,
-    ): {
-      findings: IngestFinding[];
-      rig: Record<string, unknown>;
-      skeletonText: string;
-      atlasText: string;
-      outDir: string;
-      refusal: string | null;
-      planted: number;
-    } => {
-      const got = ingest(JSON.parse(forged.skeletonText), { name, art: 'none', source: 'skeleton.json', version: '0' });
-      const rig = got.rig as unknown as Record<string, unknown>;
-      const planted = plant === undefined ? 0 : plant(rig);
-      const specDir = join(namedDir, `${name}-${tag}`);
-      const outDir = join(specDir, 'out');
-      mkdirSync(outDir, { recursive: true });
-      const packPath = join(specDir, 'in.atlas');
-      writeFileSync(packPath, forged.atlasText);
-      writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
-      writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(got.motion, null, 2)}\n`);
-      try {
-        const built = compile({
-          rigPath: join(specDir, 'rig.json'),
-          motionPath: join(specDir, 'motion.json'),
-          outDir,
-          atlasInPath: packPath,
-        });
-        return { findings: got.findings, rig, skeletonText: built.skeletonText, atlasText: built.atlasText, outDir, refusal: null, planted };
-      } catch (err) {
-        return { findings: got.findings, rig, skeletonText: '', atlasText: '', outDir, refusal: (err as Error).message, planted };
-      }
-    };
-
-    /**
-     * The atlas region each LOADED attachment resolved, per `skin/slot/placeholder`.
-     *
-     * 🔑 Read off the runtime rather than off the JSON, because the whole card is
-     * that a file can state the right-looking fields and resolve the wrong
-     * region: `AtlasAttachmentLoader` fills `sequence.regions` at load time, so
-     * this is the join the renderer will make and not a second reading of `path`.
-     */
-    const loadedRegions = (skeletonText: string, atlasText: string): Map<string, string> | string => {
-      try {
-        const data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(
-          JSON.parse(skeletonText),
-        );
-        const out = new Map<string, string>();
-        for (const skin of data.skins) {
-          for (const entry of skin.getAttachments()) {
-            const att = entry.attachment;
-            if (!(att instanceof RegionAttachment) && !(att instanceof MeshAttachment)) continue;
-            const region = att.sequence.regions[0];
-            out.set(
-              `${skin.name}/${data.slots[entry.slotIndex].name}/${entry.placeholder}`,
-              region == null ? '(no region)' : (region as TextureAtlasRegion).name,
-            );
-          }
-        }
-        return out;
-      } catch (err) {
-        return `the loader refused the pair: ${(err as Error).message}`;
-      }
-    };
-
-    /** Every row on which the resolved regions and the wanted ones disagree. */
-    const regionRows = (got: Map<string, string> | string, wanted: Map<string, string>, whose: string): string[] => {
-      if (typeof got === 'string') return [`${whose}: ${got}`];
-      return [...wanted]
-        .filter(([at, region]) => got.get(at) !== region)
-        .map(([at, region]) => `${whose} resolves "${at}" as ${JSON.stringify(got.get(at) ?? '(absent)')} and the pack keys it ${JSON.stringify(region)}`);
-    };
-
-    const failuresOf = (
-      built: { skeletonText: string; atlasText: string; outDir: string; refusal: string | null },
-      assertion: string,
-    ): string[] => {
-      if (built.refusal !== null) return [];
-      return validate({
-        skeletonText: built.skeletonText,
-        atlasText: built.atlasText,
-        atlasDir: built.outDir,
-        profile: 'spine',
-      })
-        .failures.filter((f) => f.assertion === assertion)
-        .map((f) => f.detail);
-    };
-
-    // -- IG51: the three types that resolve a region --------------------------
-    const soloSlots = [
-      { name: 'block', bone: 'pin', attachment: 'block' },
-      { name: 'panel', bone: 'root', attachment: 'panel' },
-      { name: 'echo', bone: 'root', attachment: 'echo' },
-    ];
-    const soloSkins = {
-      default: {
-        block: { block: { image: 'block.png' } },
-        panel: { panel: quad('panel.png') },
-        echo: { echo: { type: 'linkedmesh', image: 'echo.png', source: 'panel', slot: 'panel' } },
-      },
-    };
-    const solo = buildProbe('attachment_names', soloSlots, soloSkins);
-    const soloForged = forgeNames(solo, (_skin, placeholder) => `art_${placeholder}`);
-    const soloBuilt = rebuild('attachment_names', soloForged, 'kept');
-    const soloPlanted = rebuild('attachment_names', soloForged, 'plant', dropPaths);
-    const soloNamed = soloBuilt.findings.filter((f) => f.code === 'ATTACHMENT_NAME');
-    const plantFailures = failuresOf(soloPlanted, 'A08_REGION_NAMES_MATCH_ATTACHMENTS');
-    const soloProbes = [
-      ...regionRows(loadedRegions(soloForged.skeletonText, soloForged.atlasText), soloForged.wanted, 'the forged source'),
-      ...(soloBuilt.refusal === null ? [] : [`the rebuild was refused: ${soloBuilt.refusal}`]),
-      ...failuresOf(soloBuilt, 'A08_REGION_NAMES_MATCH_ATTACHMENTS').map((d) => `A08 still fires: ${d}`),
-      ...failuresOf(soloBuilt, 'A00_ROUNDTRIP_PARSE').map((d) => `A00 still fires: ${d}`),
-      ...regionRows(loadedRegions(soloBuilt.skeletonText, soloBuilt.atlasText), soloForged.wanted, 'the rebuild'),
-      ...(soloNamed.length === soloForged.wanted.size
-        ? []
-        : [`${soloNamed.length} ATTACHMENT_NAME finding(s) over ${soloForged.wanted.size} attachment(s) that resolve a region`]),
-      ...[...soloForged.wanted]
-        .filter(([at, region]) => {
-          const found = soloNamed.find((f) => f.where.includes(`"${at.split('/')[2]}"`));
-          return found === undefined || !found.detail.includes(`"path": ${JSON.stringify(region)}`);
-        })
-        .map(([at, region]) => `the finding for "${at}" does not say the region key was kept as "path": ${JSON.stringify(region)}`),
-      ...(soloPlanted.planted > 0 ? [] : ['the plant deleted no `path` at all, so it is not the branch point']),
-      ...(soloPlanted.refusal !== null || plantFailures.length > 0
-        ? []
-        : ['the plant that drops every new `path` rebuilt GREEN, so this control cannot fail']),
-    ];
-    const soloHeld = soloProbes.length === 0;
-    say(
-      'IG51_A_DROPPED_NAME_LEAVES_ITS_ATLAS_REGION_BEHIND_AS_PATH_AND_THE_REBUILD_RESOLVES_IT',
-      soloHeld,
-      probeDetail(
-        soloHeld,
-        soloProbes,
-        `${soloForged.wanted.size} attachment(s) — region, mesh and linked mesh — state a name and no path: the ` +
-          `source resolves [${[...soloForged.wanted.values()].join(', ')}], the rebuild resolves the same through ` +
-          `\`path\` with A08 and A00 silent, and dropping the ${soloPlanted.planted} path(s) the repair wrote leaves ` +
-          `${plantFailures.length} A08 failure(s)${soloPlanted.refusal === null ? '' : ` and a refused compile`}`,
-        (count) => `${count} thing(s) the region key did not survive:`,
-      ),
-      'the card\'s own shape, and the region is read off the LOADED attachment rather than off the file: `path` is ' +
-        'the only field that carries an attachment\'s art once the name is gone, and a rebuild that states a ' +
-        'plausible one still has to make the join the renderer makes. The plant is the branch point put back as ' +
-        'DATA — every `path` the repair wrote, deleted out of the decompiled spec — so what goes red here is the ' +
-        'defect itself and not a predicate somebody weakened',
-    );
-
-    // -- IG52: the two shapes that must write nothing new ---------------------
-    const statedForged = forgeNames(
-      solo,
-      (_skin, placeholder) => `alias_${placeholder}`,
-      (_skin, placeholder) => `kept_${placeholder}`,
-    );
-    const statedBuilt = rebuild('attachment_names', statedForged, 'stated');
-    const statedSpec = (statedBuilt.rig.skins as Record<string, Record<string, Record<string, Record<string, unknown>>>>).default;
-    const echoingForged = forgeNames(solo, (_skin, placeholder) => placeholder);
-    const echoingBuilt = rebuild('attachment_names', echoingForged, 'echoing');
-    const echoingSpec = (echoingBuilt.rig.skins as Record<string, Record<string, Record<string, Record<string, unknown>>>>).default;
-    const boxProbe = buildProbe(
-      'attachment_names_box',
-      [{ name: 'hull', bone: 'root', attachment: 'hull' }],
-      { default: { hull: { hull: { type: 'boundingbox', vertexCount: 3, vertices: [0, 0, 8, 0, 8, 8] } } } },
-    );
-    const boxForged = forgeNames(boxProbe, () => 'art_hull');
-    const boxIngested = ingest(JSON.parse(boxForged.skeletonText), {
-      name: 'attachment_names_box',
-      art: 'none',
-      source: 'skeleton.json',
-      version: '0',
-    });
-    const boxSpec = (boxIngested.rig as unknown as { skins: Record<string, Record<string, Record<string, Record<string, unknown>>>> })
-      .skins.default;
-    const boxNamed = boxIngested.findings.filter((f) => f.code === 'ATTACHMENT_NAME');
-    const statedNamed = statedBuilt.findings.filter((f) => f.code === 'ATTACHMENT_NAME');
-    const statedProbes = [
-      ...regionRows(
-        loadedRegions(statedForged.skeletonText, statedForged.atlasText),
-        statedForged.wanted,
-        'the stated-path source',
-      ),
-      ...(statedBuilt.refusal === null ? [] : [`the stated-path rebuild was refused: ${statedBuilt.refusal}`]),
-      ...regionRows(loadedRegions(statedBuilt.skeletonText, statedBuilt.atlasText), statedForged.wanted, 'the stated-path rebuild'),
-      ...[...statedForged.wanted]
-        .filter(([at, region]) => statedSpec[at.split('/')[1]]?.[at.split('/')[2]]?.path !== region)
-        .map(([at, region]) => `the spec writes "${at}" with path ${JSON.stringify(statedSpec[at.split('/')[1]]?.[at.split('/')[2]]?.path)} and the source stated ${JSON.stringify(region)}`),
-      ...statedNamed
-        .filter((f) => !f.detail.includes("the source's own `path`"))
-        .map((f) => `a source that states \`path\` is reported as if the name carried the region: ${f.where}`),
-      ...(echoingBuilt.refusal === null ? [] : [`the placeholder-name rebuild was refused: ${echoingBuilt.refusal}`]),
-      ...Object.entries(echoingSpec)
-        .flatMap(([slot, perSlot]) => Object.entries(perSlot).map(([placeholder, att]) => [slot, placeholder, att] as const))
-        .filter(([, , att]) => att.path !== undefined)
-        .map(([slot, placeholder, att]) => `a name equal to its placeholder wrote path ${JSON.stringify(att.path)} on "${slot}/${placeholder}"`),
-      ...(echoingBuilt.skeletonText === solo.skeletonText
-        ? []
-        : [
-            `a name equal to its placeholder moved ${
-              differingJsonPaths(JSON.parse(solo.skeletonText), JSON.parse(echoingBuilt.skeletonText || '{}')).length
-            } field path(s) of the original emit`,
-          ]),
-      ...Object.entries(boxSpec.hull ?? {})
-        .filter(([, att]) => att.path !== undefined)
-        .map(([placeholder, att]) => `a bounding box got path ${JSON.stringify(att.path)} on "${placeholder}", which the rig spec has no field for`),
-      ...(boxNamed.length === 1 && boxNamed[0].detail.includes('resolves no atlas region')
-        ? []
-        : [`the bounding box's finding does not say the type resolves no region: ${boxNamed.map((f) => f.detail).join('; ') || '(no finding)'}`]),
-      ...boxIngested.findings.filter((f) => f.code === 'SPEC_REFUSED').map((f) => `SPEC_REFUSED: ${f.detail}`),
-    ];
-    const statedHeld = statedProbes.length === 0;
-    say(
-      'IG52_A_STATED_PATH_IS_CARRIED_UNCHANGED_AND_A_NAME_THAT_IS_ITS_PLACEHOLDER_WRITES_NOTHING',
-      statedHeld,
-      probeDetail(
-        statedHeld,
-        statedProbes,
-        `a source stating both a differing name and a \`path\` keeps the \`path\` on all ` +
-          `${statedForged.wanted.size} attachment(s) and resolves [${[...statedForged.wanted.values()].join(', ')}]; a ` +
-          `name equal to its placeholder writes no \`path\` and rebuilds the original emit\'s ` +
-          `${solo.skeletonText.length} B byte for byte; and a bounding box naming itself gets no \`path\` at all`,
-        (count) => `${count} thing(s) the repair wrote that the source did not say:`,
-      ),
-      'the other side of the repair, and the side a one-sided control would miss: a rule that wrote the NAME into ' +
-        '`path` unconditionally would overwrite a `path` the source stated — a different region, silently — and one ' +
-        'that ignored the placeholder comparison would spell a field on every attachment of every export, which ' +
-        'moves bytes of a round trip that was already exact. The bounding box is the third: the parser builds it ' +
-        'from its name alone, so a `path` there is a field `parseRigSpec` refuses and the decompiler would be ' +
-        'handing back a spec the tree\'s own reader will not take',
-    );
-
-    // -- IG53: the contested placeholder, which said nothing at all -----------
-    const contested = buildProbe(
-      'attachment_names_skins',
-      [
-        { name: 'block', bone: 'pin', attachment: 'block' },
-        { name: 'panel', bone: 'root', attachment: 'panel' },
-      ],
-      {
-        default: { block: { block: { image: 'block.png' } } },
-        base: { panel: { panel: quad('panel.png') } },
-        alt: { panel: { panel: quad('plate.png') } },
-      },
-    );
-    const contestedForged = forgeNames(contested, (skin, placeholder) => `art_${skin}_${placeholder}`);
-    const contestedBuilt = rebuild('attachment_names_skins', contestedForged, 'kept');
-    const contestedPlanted = rebuild('attachment_names_skins', contestedForged, 'plant', dropPaths);
-    const contestedRegions = loadedRegions(contestedBuilt.skeletonText, contestedBuilt.atlasText);
-    const contestedPlantFailures = failuresOf(contestedPlanted, 'A08_REGION_NAMES_MATCH_ATTACHMENTS');
-    const distinct =
-      typeof contestedRegions === 'string'
-        ? 0
-        : new Set([...contestedForged.wanted.keys()].map((at) => contestedRegions.get(at))).size;
-    const contestedProbes = [
-      ...regionRows(loadedRegions(contestedForged.skeletonText, contestedForged.atlasText), contestedForged.wanted, 'the forged source'),
-      ...(contestedBuilt.refusal === null ? [] : [`the rebuild was refused: ${contestedBuilt.refusal}`]),
-      ...failuresOf(contestedBuilt, 'A08_REGION_NAMES_MATCH_ATTACHMENTS').map((d) => `A08 still fires: ${d}`),
-      ...regionRows(contestedRegions, contestedForged.wanted, 'the rebuild'),
-      ...(distinct === contestedForged.wanted.size
-        ? []
-        : [`${contestedForged.wanted.size} attachment(s) came back on ${distinct} region(s), so at least two share one`]),
-      ...(contestedPlanted.planted > 0 ? [] : ['the plant deleted no `path` at all, so it is not the branch point']),
-      ...(contestedPlanted.refusal !== null || contestedPlantFailures.length > 0
-        ? []
-        : ['the plant that drops every new `path` rebuilt GREEN on the contested half too']),
-    ];
-    const contestedHeld = contestedProbes.length === 0;
-    say(
-      'IG53_TWO_SKINS_THAT_NAME_THEIR_OWN_REGIONS_REBUILD_ONTO_TWO_REGIONS_AND_NOT_ONE',
-      contestedHeld,
-      probeDetail(
-        contestedHeld,
-        contestedProbes,
-        `${contestedForged.wanted.size} attachment(s) across ${
-          new Set([...contestedForged.wanted.keys()].map((at) => at.split('/')[0])).size
-        } skin(s) resolve ${distinct} distinct region(s) — [${[...contestedForged.wanted.values()].join(', ')}] — and ` +
-          `dropping the ${contestedPlanted.planted} path(s) the repair wrote leaves ${contestedPlantFailures.length} ` +
-          `A08 failure(s)`,
-        (count) => `${count} thing(s) the contested rebuild lost:`,
-      ),
-      'the half with no finding behind it. `ATTACHMENT_NAME` is silenced where a placeholder is contested, because ' +
-        'that is where rigc composes a name of its own — and `nameSkinAttachment` then pins `path` at the ' +
-        'PLACEHOLDER, so on the branch point both skins came back asking for one region and neither was the art ' +
-        'the source drew. The count of DISTINCT regions is the clause that matters: every row could name a region ' +
-        'the pack has and still be one region doing the work of two, which is the whole of what a contested ' +
-        'placeholder exists to avoid',
-    );
-  }
-
   // --- IG54-IG56: the separable colour timelines, carried (issue #730) --------
   //
   // ⭐ `SLOT_TIMELINE` was the blocker for all three: an exam rig of the private
@@ -64550,311 +64469,6 @@ function runIngestSuite(): number {
         'number, so the next timeline 4.x adds turns this red on whichever side forgot it',
     );
   }
-
-  // --- IG68–IG70: a contested attachment renamed without a finding (issue #746) ---
-  //
-  // 🚨 **Measured on the branch point, on a forged export.** Where two skins
-  // fill one placeholder rigc composes `<skin>/<placeholder>` for each, and
-  // `ATTACHMENT_NAME` was silenced there wholesale — so a source whose contested
-  // attachments were called anything else came back renamed with no line in
-  // `findings.json`. Forging the names of two contested entries printed one
-  // finding (`HEADER_REDERIVED`), and the rebuild named them "alt/panel" and
-  // "base/panel". The fix COMPARES — the source's name, or its placeholder
-  // where it states none, against what `composeSkinAttachmentName` returns —
-  // because the cheap neighbour, "fire on every stated name", was measured on
-  // #742 to put a `LOSS` on every contested round trip rigc already gets right.
-  //
-  // 🔑 The composed names are read off rigc's OWN EMIT of the probe rig, never
-  // spelled here: a control that restated the separator would agree with a
-  // decompiler that restated it the same wrong way.
-  {
-    const nameDir = mkdtempSync(join(tmpdir(), 'rigc-contestedname-'));
-    writeProbePng(join(nameDir, 'block.png'), 12, 8, [40, 60, 90, 255]);
-    writeProbePng(join(nameDir, 'badge.png'), 8, 8, [60, 90, 40, 255]);
-    writeProbePng(join(nameDir, 'panel.png'), 10, 10, [90, 40, 60, 255]);
-    writeProbePng(join(nameDir, 'plate.png'), 10, 10, [30, 120, 40, 255]);
-    const nameRigPath = join(nameDir, 'skins.rig.json');
-    const nameMotionPath = join(nameDir, 'skins.motion.json');
-    // `panel` is contested by two NAMED skins — the shape the editor holds — and
-    // `block` (default skin) and `badge` (a named skin) are each filled once, so
-    // the uncontested reading is measured in both kinds of skin.
-    writeFileSync(
-      nameRigPath,
-      `${JSON.stringify(
-        {
-          spec: 'rigc-rig/1',
-          name: 'contested_names',
-          skeleton: { width: 64, height: 64 },
-          bones: [{ name: 'root' }],
-          slots: [
-            { name: 'block', bone: 'root', attachment: 'block' },
-            { name: 'badge', bone: 'root', attachment: null },
-            { name: 'panel', bone: 'root', attachment: 'panel' },
-          ],
-          skins: {
-            default: { block: { block: { image: 'block.png' } } },
-            base: { panel: { panel: { image: 'panel.png' } }, badge: { badge: { image: 'badge.png' } } },
-            alt: { panel: { panel: { image: 'plate.png' } } },
-          },
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    writeFileSync(
-      nameMotionPath,
-      `${JSON.stringify({ ...STATIC_MOTION, archetype: 'contested_names', cut: 'contested_names' }, null, 2)}\n`,
-    );
-    const nameOut = join(nameDir, 'emit');
-    mkdirSync(nameOut, { recursive: true });
-    const emitted = compile({ rigPath: nameRigPath, motionPath: nameMotionPath, outDir: nameOut, imagesDir: nameDir });
-    const packPath = join(nameDir, 'emit.atlas');
-    writeFileSync(packPath, emitted.atlasText);
-
-    type SkinFile = { skins: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }> };
-    type Entry = { skin: string; slot: string; placeholder: string; att: Record<string, unknown> };
-    const entriesOf = (file: SkinFile): Entry[] =>
-      file.skins.flatMap((skin) =>
-        Object.entries(skin.attachments).flatMap(([slot, perSlot]) =>
-          Object.entries(perSlot).map(([placeholder, att]) => ({ skin: skin.name, slot, placeholder, att })),
-        ),
-      );
-    const keyOf = (e: { skin: string; slot: string; placeholder: string }): string => `${e.skin}\u0000${e.slot}\u0000${e.placeholder}`;
-    const whereOf = (at: string): string => {
-      const [skin, slot, placeholder] = at.split('\u0000');
-      return `skin "${skin}" slot "${slot}" attachment "${placeholder}"`;
-    };
-    const shown = (at: string): string => at.split('\u0000').join(' / ');
-    /** skin/slot/placeholder -> the name rigc's own emit gave it, for every entry that carries one. */
-    const composedOf = new Map(
-      entriesOf(JSON.parse(emitted.skeletonText) as SkinFile)
-        .filter((e) => typeof e.att.name === 'string')
-        .map((e) => [keyOf(e), String(e.att.name)] as const),
-    );
-    /** The emit, with `edit` applied to every entry — the forge is data, so nothing is invented about the art. */
-    const forge = (edit: (e: Entry) => void): SkinFile => {
-      const file = JSON.parse(emitted.skeletonText) as SkinFile;
-      for (const e of entriesOf(file)) edit(e);
-      return file;
-    };
-    /** `ingest --art none`, then the rebuild against the emit's own pack. */
-    const roundTrip = (tag: string, file: SkinFile): { named: IngestFinding[]; rebuiltText: string | null; refusal: string } => {
-      const got = ingest(JSON.parse(JSON.stringify(file)), {
-        name: 'contested_names',
-        art: 'none',
-        source: 'skeleton.json',
-        version: '0',
-      });
-      const specDir = join(nameDir, tag);
-      mkdirSync(join(specDir, 'out'), { recursive: true });
-      writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(got.rig, null, 2)}\n`);
-      writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(got.motion, null, 2)}\n`);
-      const named = got.findings.filter((f) => f.code === 'ATTACHMENT_NAME');
-      try {
-        const built = compile({
-          rigPath: join(specDir, 'rig.json'),
-          motionPath: join(specDir, 'motion.json'),
-          outDir: join(specDir, 'out'),
-          atlasInPath: packPath,
-        });
-        return { named, rebuiltText: built.skeletonText, refusal: '' };
-      } catch (err) {
-        return { named, rebuiltText: null, refusal: (err as Error).message };
-      }
-    };
-    /** skin/slot/placeholder -> the name the rebuilt file gives it — the placeholder where it states none, as the parser reads it. */
-    const rebuiltNames = (text: string | null): Map<string, string> =>
-      text === null
-        ? new Map()
-        : new Map(
-            entriesOf(JSON.parse(text) as SkinFile).map(
-              (e) => [keyOf(e), typeof e.att.name === 'string' ? e.att.name : e.placeholder] as const,
-            ),
-          );
-    const floor = floorProbes(
-      [[composedOf.size, 2, `rigc's emit of the probe named ${composedOf.size} contested entr(ies)`]],
-      'or no contested placeholder was built and every clause below is vacuous',
-    );
-
-    // -- IG68: the rename is said, with both strings --------------------------
-    // Two shapes of source: contested entries that state a name of their own,
-    // and contested entries that state none, so the parser names them by the
-    // placeholder. The rebuild renames both, so both are a line.
-    const ownName = (at: string): string => {
-      const [skin, , placeholder] = at.split('\u0000');
-      return `art_${skin}_${placeholder}`;
-    };
-    const shapes: Array<[string, SkinFile, (at: string) => string]> = [
-      [
-        'names of their own',
-        forge((e) => {
-          if (composedOf.has(keyOf(e))) e.att.name = ownName(keyOf(e));
-        }),
-        ownName,
-      ],
-      [
-        'no names at all',
-        forge((e) => {
-          delete e.att.name;
-        }),
-        (at) => at.split('\u0000')[2],
-      ],
-    ];
-    const renameProbes = [
-      ...floor,
-      ...shapes.flatMap(([shape, file, sourceName], index) => {
-        const trip = roundTrip(`renamed-${index}`, file);
-        const names = rebuiltNames(trip.rebuiltText);
-        return [
-          ...(trip.rebuiltText === null ? [`${shape}: the rebuild was refused: ${trip.refusal}`] : []),
-          ...[...composedOf].flatMap(([at, composed]) => {
-            const lines = trip.named.filter((f) => f.where === whereOf(at));
-            const was = sourceName(at);
-            return [
-              ...(lines.length === 1
-                ? []
-                : [`${shape}: "${shown(at)}" has ${lines.length} ATTACHMENT_NAME line(s), and the rebuild renames it`]),
-              ...lines
-                .filter((f) => !f.detail.includes(JSON.stringify(was)) || !f.detail.includes(JSON.stringify(composed)))
-                .map(
-                  (f) =>
-                    `${shape}: the line for "${shown(at)}" does not state both ${JSON.stringify(was)} and ` +
-                    `${JSON.stringify(composed)}: ${f.detail}`,
-                ),
-              ...(names.get(at) === composed
-                ? []
-                : [
-                    `${shape}: the rebuild names "${shown(at)}" ${JSON.stringify(names.get(at) ?? '(absent)')}, not ` +
-                      `the ${JSON.stringify(composed)} the line would claim`,
-                  ]),
-            ];
-          }),
-          // An uncontested entry the forge left without a name is renamed by
-          // nothing, so it may not gain a line from this rule either.
-          ...trip.named
-            .filter((f) => ![...composedOf.keys()].some((at) => f.where === whereOf(at)))
-            .map((f) => `${shape}: an entry the rebuild does not rename got a line: ${f.where}`),
-        ];
-      }),
-    ];
-    const renameHeld = renameProbes.length === 0;
-    say(
-      'IG68_A_CONTESTED_ATTACHMENT_WHOSE_SOURCE_NAME_IS_NOT_THE_COMPOSED_ONE_IS_REPORTED_WITH_BOTH_NAMES',
-      renameHeld,
-      probeDetail(
-        renameHeld,
-        renameProbes,
-        `${composedOf.size} contested entr(ies), in ${shapes.length} source shape(s) — ${shapes.map(([shape]) => shape).join(', and ')} — ` +
-          `each get one ATTACHMENT_NAME line stating the source's name and the composed one ` +
-          `[${[...composedOf.values()].join(', ')}], and the rebuild answers to the composed one`,
-        (count) => `${count} rename(s) the findings did not say:`,
-      ),
-      'issue #746: the rebuild of a contested placeholder answers to `<skin>/<placeholder>` whatever the source ' +
-        'called it, so a consumer looking an attachment up by the name the source gave it finds a different string. ' +
-        "The line is checked against the REBUILT file's names, so it cannot claim a composed name the compiler did " +
-        'not emit, and the composed names are read off rigc\'s own emit rather than spelled in this control',
-    );
-
-    // -- IG69: rigc's own contested emit round-trips with no new line --------
-    const own = roundTrip('own', JSON.parse(emitted.skeletonText) as SkinFile);
-    const ownProbes = [
-      ...floor,
-      ...own.named.map((f) => `rigc's own emit got an ATTACHMENT_NAME line: ${f.where} — ${f.detail}`),
-      ...(own.rebuiltText === null ? [`the rebuild of rigc's own emit was refused: ${own.refusal}`] : []),
-      ...(own.rebuiltText !== null && own.rebuiltText !== emitted.skeletonText
-        ? [
-            `the rebuild of rigc's own emit differs at ${differingJsonPaths(
-              JSON.parse(emitted.skeletonText),
-              JSON.parse(own.rebuiltText),
-            ).join('; ')}`,
-          ]
-        : []),
-    ];
-    const ownHeld = ownProbes.length === 0;
-    say(
-      'IG69_A_CONTESTED_PAIR_RIGC_ITSELF_EMITTED_ROUND_TRIPS_BYTE_FOR_BYTE_WITH_NO_NAME_LINE',
-      ownHeld,
-      probeDetail(
-        ownHeld,
-        ownProbes,
-        `rigc's own emit states ${composedOf.size} composed name(s) on its contested entries; ingest prints ` +
-          `${own.named.length} ATTACHMENT_NAME line(s) and the rebuild is the emit ` +
-          `(${emitted.skeletonText.length} B identical)`,
-        (count) => `${count} line(s) or byte(s) the exact round trip gained:`,
-      ),
-      'the other direction, and the one the cheap version fails: a rule that fired on every stated name would be ' +
-        'right about the forged file and wrong about this one, which is every contested round trip rigc does. What ' +
-        'is compared is the two strings, so where they are equal nothing is lost and nothing is said',
-    );
-
-    // -- IG70: the shapes the comparison leaves alone -------------------------
-    // (a) An uncontested entry, in the default skin and in a named one, states a
-    //     name: it keeps the one line it always had, which says the region was
-    //     kept as `path` — and gains no second, since nothing is composed there.
-    // (b) The DEFAULT skin joins the contest: the compiler composes nothing for
-    //     it and refuses the rebuild, so no line may claim a composed name there.
-    const uncontested = entriesOf(JSON.parse(emitted.skeletonText) as SkinFile)
-      .filter((e) => !composedOf.has(keyOf(e)))
-      .map((e) => keyOf(e));
-    const soloTrip = roundTrip(
-      'solo',
-      forge((e) => {
-        if (!composedOf.has(keyOf(e))) e.att.name = `art_${e.placeholder}`;
-      }),
-    );
-    const withDefault = JSON.parse(emitted.skeletonText) as SkinFile;
-    const defaultSkin = withDefault.skins.find((skin) => skin.name === 'default');
-    const [, contestedSlot, contestedPlaceholder] = ([...composedOf.keys()][0] ?? '').split('\u0000');
-    const defaultAt = `default\u0000${contestedSlot}\u0000${contestedPlaceholder}`;
-    if (defaultSkin !== undefined && contestedPlaceholder !== undefined) {
-      const panel = entriesOf(withDefault).find((e) => keyOf(e) === [...composedOf.keys()][0]);
-      defaultSkin.attachments[contestedSlot] = {
-        [contestedPlaceholder]: { width: panel?.att.width, height: panel?.att.height },
-      };
-    }
-    const defaultTrip = roundTrip('default-contest', withDefault);
-    const aloneProbes = [
-      ...floorProbes(
-        [[uncontested.length, 2, `${uncontested.length} uncontested entr(ies) in the probe`]],
-        'or the uncontested reading is measured in fewer than both kinds of skin',
-      ),
-      ...uncontested.flatMap((at) => {
-        const lines = soloTrip.named.filter((f) => f.where === whereOf(at));
-        const kept = `"path": ${JSON.stringify(`art_${at.split('\u0000')[2]}`)}`;
-        return [
-          ...(lines.length === 1 ? [] : [`"${shown(at)}" states a name and has ${lines.length} ATTACHMENT_NAME line(s), not 1`]),
-          ...lines.filter((f) => !f.detail.includes(kept)).map((f) => `the line for "${shown(at)}" does not say ${kept} was kept: ${f.detail}`),
-        ];
-      }),
-      ...(defaultSkin === undefined || contestedPlaceholder === undefined
-        ? ['the emit has no default skin, or no contested placeholder, to put into the contest']
-        : []),
-      ...defaultTrip.named
-        .filter((f) => f.where === whereOf(defaultAt))
-        .map((f) => `the default skin's contested entry got a line quoting a composed name no build emits: ${f.detail}`),
-      ...(defaultTrip.rebuiltText === null
-        ? []
-        : ['the default-skin contest REBUILT, so the premise that the compiler composes nothing for it is false']),
-    ];
-    const aloneHeld = aloneProbes.length === 0;
-    say(
-      'IG70_AN_UNCONTESTED_NAME_KEEPS_ITS_ONE_LINE_AND_A_DEFAULT_SKIN_CONTEST_GETS_NONE',
-      aloneHeld,
-      probeDetail(
-        aloneHeld,
-        aloneProbes,
-        `${uncontested.length} uncontested entr(ies) stating a name — [${uncontested.map(shown).join(', ')}] — keep ` +
-          `one line each, naming the region kept; the default skin joining "${shown(defaultAt)}" gets none, and ` +
-          'its rebuild is refused by the compiler',
-        (count) => `${count} thing(s) the comparison changed where it had no business:`,
-      ),
-      'the half the comparison must not touch. Where one skin fills a placeholder the rebuild writes no name at ' +
-        'all, which the existing line already says, and a second line composed there would state a name the ' +
-        "compiler never writes. The default skin's contest is the same: `refuseDefaultSkinContest` refuses it, so " +
-        'the composed name the comparison would quote does not exist',
-    );
-  }
-
 
   // --- IG65–IG67: a numbered series and the track that steps it (issue #729) --
   //
@@ -65950,6 +65564,403 @@ function runIngestSuite(): number {
       'the twelve reproduce every skin map under the comparator with or without the fold, so they can neither ' +
         'confirm nor refute it; a slot name outside ASCII appearing in one would, and the guide\'s sentence that ' +
         'the corpus cannot would then be false',
+    );
+  }
+
+  // --- IG86–IG89: an attachment's `name` is carried, not lost (issue #796) -----
+  //
+  // 🚨 **Measured on the branch point, on forged exports and on two production
+  // rigs.** The rig spec had no field for an attachment's own name, so `ingest`
+  // dropped every one: a stated name on a placeholder one skin fills was kept
+  // only as `path` (#742) and the runtime answered to the placeholder, and a
+  // contested placeholder was renamed `<skin>/<placeholder>` by the compiler
+  // (#541) whatever the source said — both reported as `ATTACHMENT_NAME`, a
+  // loss by construction. The field exists now, `ingest` carries it verbatim,
+  // and the code is gone with the loss it named.
+  //
+  // 🌱 The plant is DATA: every `name` deleted out of the decompiled spec before
+  // the rebuild, which is the branch point's spec reproduced inside the run.
+  {
+    const nameDir = mkdtempSync(join(tmpdir(), 'rigc-attachment-name-'));
+    writeProbePng(join(nameDir, 'block.png'), 12, 8, [40, 60, 90, 255]);
+    writeProbePng(join(nameDir, 'panel.png'), 10, 10, [90, 40, 60, 255]);
+    writeProbePng(join(nameDir, 'plate.png'), 10, 10, [30, 120, 40, 255]);
+    writeProbePng(join(nameDir, 'echo.png'), 6, 6, [180, 70, 50, 255]);
+
+    const quad = (image: string, x: number): Record<string, unknown> => ({
+      type: 'mesh',
+      image,
+      uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+      triangles: [0, 1, 2, 0, 2, 3],
+      vertices: [x, 0, x + 10, 0, x + 10, 10, x, 10],
+      hull: 4,
+    });
+    /** Write one rig spec and its static motion into this block's art directory, as a round-trip candidate. */
+    const candidateOf = (name: string, slots: Array<Record<string, unknown>>, skins: Record<string, unknown>): IngestCandidate => {
+      const rigPath = join(nameDir, `${name}.rig.json`);
+      const motionPath = join(nameDir, `${name}.motion.json`);
+      writeFileSync(
+        rigPath,
+        `${JSON.stringify(
+          {
+            spec: 'rigc-rig/1',
+            name,
+            skeleton: { width: 64, height: 64 },
+            bones: [{ name: 'root' }, { name: 'pin', parent: 'root', length: 12 }],
+            slots,
+            skins,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      writeFileSync(motionPath, `${JSON.stringify({ ...STATIC_MOTION, archetype: name, cut: name }, null, 2)}\n`);
+      return { name, rigPath, motionPath, imagesDir: nameDir };
+    };
+    /** Compile a candidate on its own, for a forge to start from. */
+    const emitOf = (candidate: IngestCandidate): { skeletonText: string; atlasText: string } => {
+      const outDir = join(nameDir, `${candidate.name}-emit`);
+      mkdirSync(outDir, { recursive: true });
+      const built = compile({ rigPath: candidate.rigPath, motionPath: candidate.motionPath, outDir, imagesDir: nameDir });
+      return { skeletonText: built.skeletonText, atlasText: built.atlasText };
+    };
+
+    type SkinFile = { skins: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }> };
+    /**
+     * An emitted skeleton rewritten into the shape an editor export has: every
+     * entry `nameFor` answers for STATES that name — as its first key, where the
+     * editor writes it — and no `path`, with the pack re-keyed to the region the
+     * name now resolves (`path = getValue(map, "path", name)`), so the forged
+     * pair is one the runtime loads. Nothing is invented about the art: the
+     * region each entry resolved before the rewrite is read off the file by the
+     * parser's own `path ?? name ?? placeholder`, and it is that line of the pack
+     * that is renamed.
+     */
+    const forgeNames = (
+      source: { skeletonText: string; atlasText: string },
+      nameFor: (skin: string, placeholder: string) => string | undefined,
+    ): { skeletonText: string; atlasText: string; forged: number } => {
+      const file = JSON.parse(source.skeletonText) as SkinFile;
+      let atlasText = source.atlasText;
+      let forged = 0;
+      for (const skin of file.skins) {
+        for (const perSlot of Object.values(skin.attachments)) {
+          for (const [placeholder, att] of Object.entries(perSlot)) {
+            const name = nameFor(skin.name, placeholder);
+            if (name === undefined) continue;
+            forged++;
+            const kind = att.type === undefined ? 'region' : String(att.type);
+            const drawn = kind === 'region' || kind === 'mesh' || kind === 'linkedmesh';
+            const was = typeof att.path === 'string' ? att.path : typeof att.name === 'string' ? att.name : placeholder;
+            const { path: _path, name: _name, ...rest } = att;
+            perSlot[placeholder] = drawn ? { name, ...rest } : { name, ...att };
+            if (drawn && was !== name) atlasText = atlasText.replace(new RegExp(`^${was}$`, 'm'), name);
+          }
+        }
+      }
+      return { skeletonText: `${JSON.stringify(file, null, 2)}\n`, atlasText, forged };
+    };
+    /** Every `name` the decompiled spec states, deleted — the branch point's spec, as data. */
+    const dropNames = (rig: Record<string, unknown>): number => {
+      let removed = 0;
+      for (const skin of Object.values((rig.skins ?? {}) as Record<string, Record<string, unknown>>)) {
+        const table = (skin.attachments ?? skin) as Record<string, Record<string, Record<string, unknown>>>;
+        for (const perSlot of Object.values(table)) {
+          if (typeof perSlot !== 'object' || perSlot === null) continue;
+          for (const att of Object.values(perSlot)) {
+            if (typeof att !== 'object' || att === null || att.name === undefined) continue;
+            delete att.name;
+            removed++;
+          }
+        }
+      }
+      return removed;
+    };
+    /** `ingest --art none` of a forged file, then the rebuild against its own pack, with an optional plant. */
+    const rebuild = (
+      label: string,
+      forged: { skeletonText: string; atlasText: string },
+      plant?: (rig: Record<string, unknown>) => number,
+    ): { findings: IngestFinding[]; rig: Record<string, unknown>; skeletonText: string; atlasText: string; refusal: string | null; planted: number } => {
+      const got = ingest(JSON.parse(forged.skeletonText), { name: label, art: 'none', source: 'skeleton.json', version: '0' });
+      const rig = got.rig as unknown as Record<string, unknown>;
+      const planted = plant === undefined ? 0 : plant(rig);
+      const specDir = join(nameDir, `${label}-${plant === undefined ? 'kept' : 'plant'}`);
+      mkdirSync(join(specDir, 'out'), { recursive: true });
+      writeFileSync(join(specDir, 'in.atlas'), forged.atlasText);
+      writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+      writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(got.motion, null, 2)}\n`);
+      try {
+        const built = compile({
+          rigPath: join(specDir, 'rig.json'),
+          motionPath: join(specDir, 'motion.json'),
+          outDir: join(specDir, 'out'),
+          atlasInPath: join(specDir, 'in.atlas'),
+        });
+        return { findings: got.findings, rig, skeletonText: built.skeletonText, atlasText: built.atlasText, refusal: null, planted };
+      } catch (err) {
+        return { findings: got.findings, rig, skeletonText: '', atlasText: '', refusal: (err as Error).message, planted };
+      }
+    };
+    /** `skin/slot/placeholder -> what the decompiled spec states for it`. */
+    const specEntries = (rig: Record<string, unknown>): Map<string, Record<string, unknown>> => {
+      const out = new Map<string, Record<string, unknown>>();
+      for (const [skin, entry] of Object.entries((rig.skins ?? {}) as Record<string, Record<string, unknown>>)) {
+        const table = (entry.attachments ?? entry) as Record<string, Record<string, Record<string, unknown>>>;
+        for (const [slot, perSlot] of Object.entries(table)) {
+          if (typeof perSlot !== 'object' || perSlot === null || Array.isArray(perSlot)) continue;
+          for (const [placeholder, att] of Object.entries(perSlot)) {
+            if (typeof att === 'object' && att !== null) out.set(`${skin}/${slot}/${placeholder}`, att);
+          }
+        }
+      }
+      return out;
+    };
+    /** Every row on which two loads disagree about a name, a region or a link's source. */
+    const loadRows = (
+      got: Map<string, LoadedAttachment> | string,
+      want: Map<string, LoadedAttachment> | string,
+      whose: string,
+    ): string[] => {
+      if (typeof want === 'string') return [`the source: ${want}`];
+      if (typeof got === 'string') return [`${whose}: ${got}`];
+      return [...want].flatMap(([at, w]) => {
+        const g = got.get(at);
+        if (g === undefined) return [`${whose} has no "${at}"`];
+        return (['name', 'region', 'source'] as const)
+          .filter((field) => g[field] !== w[field])
+          .map((field) => `${whose} loads "${at}" ${field} ${JSON.stringify(g[field])} where the source loads ${JSON.stringify(w[field])}`);
+      });
+    };
+
+    const skinSlots = [
+      { name: 'block', bone: 'pin', attachment: 'block' },
+      { name: 'panel', bone: 'root', attachment: 'panel' },
+      { name: 'echo', bone: 'root', attachment: 'echo' },
+    ];
+    const skinTable = {
+      default: { block: { block: { image: 'block.png' } } },
+      base: {
+        panel: { panel: quad('panel.png', 0) },
+        echo: { echo: { type: 'linkedmesh', image: 'echo.png', source: 'panel', slot: 'panel', skin: 'base' } },
+      },
+      alt: { panel: { panel: quad('plate.png', 20) } },
+    };
+    const skinned = candidateOf('attachment_names', skinSlots, skinTable);
+    /** How many entries the NAMED skins hold — read off the fixture, never counted by hand. */
+    const namedSkinEntries = Object.entries(skinTable)
+      .filter(([skin]) => skin !== 'default')
+      .flatMap(([, table]) => Object.values(table).flatMap((perSlot) => Object.keys(perSlot))).length;
+    const skinnedEmit = emitOf(skinned);
+
+    // -- IG86: a stated name ≠ its key, contested and not ---------------------
+    const statedFor = (skin: string, placeholder: string): string | undefined => (skin === 'default' ? undefined : `art_${skin}_${placeholder}`);
+    const stated = forgeNames(skinnedEmit, statedFor);
+    const statedBuilt = rebuild('attachment_names', stated);
+    const statedPlanted = rebuild('attachment_names', stated, dropNames);
+    const statedSpec = specEntries(statedBuilt.rig);
+    const sourceLoaded = loadedAttachments(stated.skeletonText, stated.atlasText);
+    const plantLoaded = statedPlanted.refusal === null ? loadedAttachments(statedPlanted.skeletonText, statedPlanted.atlasText) : statedPlanted.refusal;
+    const statedProbes = [
+      ...(stated.forged === namedSkinEntries && namedSkinEntries > 0
+        ? []
+        : [`the forge stated ${stated.forged} name(s), and the probe has ${namedSkinEntries} named-skin entr(ies)`]),
+      ...[...statedSpec].flatMap(([at, att]) => {
+        const [skin, , placeholder] = at.split('/');
+        const want = statedFor(skin, placeholder);
+        return [
+          ...(att.name === want ? [] : [`the spec writes "${at}" with name ${JSON.stringify(att.name ?? null)} and the source states ${JSON.stringify(want ?? null)}`]),
+          ...(att.path === undefined ? [] : [`the spec writes "${at}" with path ${JSON.stringify(att.path)}, which the source never stated`]),
+        ];
+      }),
+      ...statedBuilt.findings.filter((f) => f.code === 'ATTACHMENT_NAME').map((f) => `an ATTACHMENT_NAME line is still raised: ${f.where} — ${f.detail}`),
+      ...(statedBuilt.refusal === null ? [] : [`the rebuild was refused: ${statedBuilt.refusal}`]),
+      ...(statedBuilt.refusal === null ? loadRows(loadedAttachments(statedBuilt.skeletonText, statedBuilt.atlasText), sourceLoaded, 'the rebuild') : []),
+      ...(statedBuilt.skeletonText === stated.skeletonText
+        ? []
+        : [`the rebuild moves ${differingJsonPaths(JSON.parse(stated.skeletonText), JSON.parse(statedBuilt.skeletonText || '{}')).length} field path(s) of the source`]),
+      ...(statedPlanted.planted === namedSkinEntries ? [] : [`the plant deleted ${statedPlanted.planted} name(s), so it is not the branch point's spec`]),
+      ...(typeof plantLoaded === 'string' || loadRows(plantLoaded, sourceLoaded, 'the plant').length > 0
+        ? []
+        : ['the plant that drops every carried name rebuilt to the same loaded names and regions, so this control cannot fail']),
+    ];
+    const statedHeld = statedProbes.length === 0;
+    say(
+      'IG86_A_STATED_NAME_IS_CARRIED_VERBATIM_CONTESTED_OR_NOT_AND_THE_REBUILD_LOADS_THE_SOURCES_NAMES',
+      statedHeld,
+      probeDetail(
+        statedHeld,
+        statedProbes,
+        `${stated.forged} named-skin entr(ies) — a contested mesh in two skins and an uncontested link — state names ` +
+          'that are not their keys and no `path`: the spec carries each `name` verbatim and writes no `path`, no ' +
+          `ATTACHMENT_NAME line is raised, the rebuild is the source's ${stated.skeletonText.length} B byte for byte ` +
+          `and loads its names, regions and link, and dropping the ${statedPlanted.planted} carried name(s) ` +
+          `${statedPlanted.refusal === null ? 'rebuilds to a load that differs' : 'is refused by the compiler'}`,
+        (count) => `${count} thing(s) the name did not survive:`,
+      ),
+      'both shapes the branch point lost, in one file: a name on a placeholder one skin fills (kept only as `path`, ' +
+        'the runtime answering to the key) and a name on a contested placeholder (renamed `<skin>/<placeholder>`). ' +
+        'The loaded names are the clause that matters, because `Attachment.name` is what a consumer reads — and the ' +
+        'plant is the branch point\'s spec put back as data, so what goes red here is the loss itself',
+    );
+
+    // -- IG87: a name equal to its key is carried exactly as the source has it --
+    const echoing = forgeNames(skinnedEmit, (_skin, placeholder) => placeholder);
+    const echoingBuilt = rebuild('attachment_names_echo', echoing);
+    const plainBuilt = rebuild('attachment_names_plain', skinnedEmit);
+    const echoingSpec = specEntries(echoingBuilt.rig);
+    const plainSpec = specEntries(plainBuilt.rig);
+    let exportAttachments = 0;
+    let exportNamed = 0;
+    for (const entry of corpus) {
+      const file = JSON.parse(readFileSync(entry.path, 'utf8')) as Partial<SkinFile>;
+      for (const skin of file.skins ?? []) {
+        for (const perSlot of Object.values(skin.attachments ?? {})) {
+          for (const att of Object.values(perSlot)) {
+            exportAttachments++;
+            if ('name' in att) exportNamed++;
+          }
+        }
+      }
+    }
+    const echoProbes = [
+      ...[...echoingSpec].filter(([at, att]) => att.name !== at.split('/')[2]).map(([at, att]) => `the spec writes "${at}" with name ${JSON.stringify(att.name ?? null)}, and the source states its key`),
+      ...(echoingBuilt.skeletonText === echoing.skeletonText ? [] : [`a name equal to its key does not rebuild the source byte for byte: ${echoingBuilt.refusal ?? `${differingJsonPaths(JSON.parse(echoing.skeletonText), JSON.parse(echoingBuilt.skeletonText)).length} path(s) moved`}`]),
+      ...[...plainSpec].filter(([, att]) => 'name' in att).map(([at, att]) => `the spec writes "${at}" with name ${JSON.stringify(att.name)}, and the source states none`),
+      ...(plainBuilt.skeletonText === skinnedEmit.skeletonText ? [] : [`a source stating no name does not rebuild byte for byte: ${plainBuilt.refusal ?? 'the text moved'}`]),
+      ...(exportNamed === 0 ? [] : [`${exportNamed} of the ${exportAttachments} export attachment(s) state a name, so the corpus can now say which spelling the editor uses`]),
+    ];
+    const echoHeld = echoProbes.length === 0;
+    say(
+      'IG87_A_NAME_EQUAL_TO_ITS_KEY_IS_WRITTEN_EXACTLY_WHERE_THE_SOURCE_WRITES_ONE',
+      echoHeld,
+      probeDetail(
+        echoHeld,
+        echoProbes,
+        `${echoing.forged} entr(ies) stating their own key as \`name\` carry it and rebuild byte for byte, and the ` +
+          `unforged emit carries none and rebuilds byte for byte; ${
+            corpus.length === 0
+              ? 'no editor export is on disk, so the corpus half was not read'
+              : `${exportNamed} of the ${exportAttachments} attachment(s) across ${corpus.length} editor export(s) state a \`name\` at all`
+          }`,
+        (count) => `${count} thing(s) the source's own spelling did not survive:`,
+      ),
+      'the rule is decided by the source and not by a normal form, because the twelve exports cannot decide it: none ' +
+        'of their attachments states a name, equal to its key or not, so there is no editor spelling to normalise ' +
+        'towards — and a rebuild is held to the text it was read from. The last clause turns red the day an export ' +
+        'does state one, which is the day the corpus can say more',
+    );
+
+    // -- IG88: a rigc build stating names on all six types round-trips ----------
+    const sixSlots = [
+      { name: 'block', bone: 'pin', attachment: 'block' },
+      { name: 'panel', bone: 'root', attachment: 'panel' },
+      { name: 'echo', bone: 'root', attachment: 'echo' },
+      { name: 'hull', bone: 'root', attachment: 'hull' },
+      { name: 'mask', bone: 'root', attachment: 'mask' },
+      { name: 'rail', bone: 'root', attachment: 'rail' },
+    ];
+    const sixNames = { block: 'plate-a', panel: 'panel', echo: 'echo-link', hull: 'hit-box', mask: 'window', rail: 'track' };
+    const sixCandidate = candidateOf('attachment_names_six', sixSlots, {
+      default: {},
+      base: {
+        block: { block: { name: sixNames.block, image: 'plate.png' } },
+        panel: { panel: { ...quad('panel.png', 0), name: sixNames.panel } },
+        echo: { echo: { type: 'linkedmesh', name: sixNames.echo, image: 'echo.png', source: 'panel', slot: 'panel', skin: 'base' } },
+        hull: { hull: { type: 'boundingbox', name: sixNames.hull, vertexCount: 3, vertices: [0, 0, 8, 0, 8, 8] } },
+        mask: { mask: { type: 'clipping', name: sixNames.mask, vertexCount: 3, vertices: [0, 0, 20, 0, 0, 20] } },
+        rail: { rail: { type: 'path', name: sixNames.rail, vertexCount: 6, vertices: [0, 0, 4, 0, 8, 0, 12, 4, 16, 4, 20, 4] } },
+      },
+    });
+    const sixTrips = (['none', 'loose'] as const).map((art) => {
+      try {
+        return { art, trip: ingestRoundTrip(sixCandidate, art), refusal: null };
+      } catch (err) {
+        return { art, trip: null, refusal: (err as Error).message };
+      }
+    });
+    const sixProbes = sixTrips.flatMap(({ art, trip, refusal }) => {
+      if (trip === null) return [`--art ${art}: ${refusal ?? 'the round trip was skipped'}`];
+      const spec = specEntries(trip.rig);
+      return [
+        ...(trip.a.skeletonText === trip.b.skeletonText
+          ? []
+          : [`--art ${art}: ${differingJsonPaths(JSON.parse(trip.a.skeletonText), JSON.parse(trip.b.skeletonText)).join('; ')}`]),
+        ...(art === 'none' && trip.a.atlasText !== trip.b.atlasText ? ['--art none: the rebuilt atlas differs'] : []),
+        ...Object.entries(sixNames)
+          .filter(([slot, name]) => spec.get(`base/${slot}/${slot}`)?.name !== name)
+          .map(([slot, name]) => `--art ${art}: the spec writes "base/${slot}/${slot}" with name ${JSON.stringify(spec.get(`base/${slot}/${slot}`)?.name ?? null)}, not ${JSON.stringify(name)}`),
+        ...trip.findings.filter((f) => f.kind === 'blocker').map((f) => `--art ${art}: a blocker: ${f.code} ${f.where}`),
+      ];
+    });
+    const sixHeld = sixProbes.length === 0;
+    say(
+      'IG88_A_BUILD_STATING_A_NAME_ON_EVERY_TYPE_INGESTS_AND_REBUILDS_BYTE_FOR_BYTE',
+      sixHeld,
+      probeDetail(
+        sixHeld,
+        sixProbes,
+        `a skin stating a name on a region, a mesh (its own key), a linked mesh, a bounding box, a clipping mask and ` +
+          `a path round-trips under --art none and --art loose: skeleton ${sixTrips[0].trip?.a.skeletonText.length ?? 0} B ` +
+          'identical each time, every name carried, no blocker',
+        (count) => `${count} thing(s) the round trip did not hold:`,
+      ),
+      'the contract the suite is built on, asked of the new field on every type that has it — and of the mesh whose ' +
+        'name is its own key, which is the spelling a normalising decompiler would drop. `--art loose` is the half ' +
+        'that reads the name as art: the loose PNG is named after the region the attachment resolves, which with no ' +
+        '`path` is its name',
+    );
+
+    // -- IG89: the production shape — two skins, one placeholder, a link each ---
+    const production = candidateOf(
+      'attachment_names_shared',
+      [
+        { name: 'panel', bone: 'root', attachment: 'panel' },
+        { name: 'echo', bone: 'root', attachment: 'echo' },
+      ],
+      {
+        default: {},
+        base: {
+          panel: { panel: quad('panel.png', 0) },
+          echo: { echo: { type: 'linkedmesh', image: 'echo.png', source: 'panel', slot: 'panel', skin: 'base' } },
+        },
+        alt: {
+          panel: { panel: quad('plate.png', 20) },
+          echo: { echo: { type: 'linkedmesh', image: 'echo.png', source: 'panel', slot: 'panel', skin: 'alt' } },
+        },
+      },
+    );
+    const productionTrip = ingestRoundTrip(production, 'none');
+    const productionLoaded = productionTrip === null ? 'skipped' : loadedAttachments(productionTrip.b.skeletonText, productionTrip.b.atlasText);
+    const productionProbes = [
+      ...(productionTrip === null ? ['the round trip was skipped'] : []),
+      ...(productionTrip !== null && productionTrip.a.skeletonText !== productionTrip.b.skeletonText
+        ? [`${differingJsonPaths(JSON.parse(productionTrip.a.skeletonText), JSON.parse(productionTrip.b.skeletonText)).join('; ')}`]
+        : []),
+      ...(productionTrip === null ? [] : [...specEntries(productionTrip.rig)].filter(([, att]) => 'name' in att).map(([at]) => `the spec writes a name on "${at}", and the file states none`)),
+      ...(productionTrip === null ? [] : productionTrip.findings.filter((f) => f.code.includes('NAME')).map((f) => `a name finding: ${f.code} ${f.where}`)),
+      ...(typeof productionLoaded === 'string'
+        ? [`the rebuild did not load: ${productionLoaded}`]
+        : (['base', 'alt'] as const).flatMap((skin) => [
+            ...(productionLoaded.get(`${skin}/panel/panel`)?.name === 'panel' ? [] : [`skin "${skin}"'s mesh loads named ${JSON.stringify(productionLoaded.get(`${skin}/panel/panel`)?.name ?? null)}`]),
+            ...(productionLoaded.get(`${skin}/echo/echo`)?.source === `${skin}/panel/panel` ? [] : [`skin "${skin}"'s link binds ${JSON.stringify(productionLoaded.get(`${skin}/echo/echo`)?.source ?? null)}`]),
+          ])),
+    ];
+    const productionHeld = productionProbes.length === 0;
+    say(
+      'IG89_TWO_SKINS_SHARING_A_PLACEHOLDER_AND_A_LINK_EACH_INGEST_AND_REBUILD_WITH_NO_NAME_ANYWHERE',
+      productionHeld,
+      probeDetail(
+        productionHeld,
+        productionProbes,
+        `two named skins fill "panel" with a mesh each and "echo" with a link to their own mesh, no \`name\` anywhere: ` +
+          `the spec states none, the rebuild is the file's ${productionTrip?.a.skeletonText.length ?? 0} B byte for byte, ` +
+          'both meshes load named "panel" and each link binds its own skin\'s',
+        (count) => `${count} thing(s) the shared placeholder did not survive:`,
+      ),
+      'the shape the editor exported on the production rig #796 was found on, and the one the branch point renamed ' +
+        'in both skins. It is also the shape #541 claimed the editor could not hold because a link resolves by name; ' +
+        'what holds it together is the link\'s `skin`, which the round trip carries and this case reads back',
     );
   }
 
