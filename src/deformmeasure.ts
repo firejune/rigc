@@ -94,6 +94,7 @@ import {
   type Attachment,
   AtlasAttachmentLoader,
   type Bone,
+  type CurveTimeline,
   DeformTimeline,
   FromProperty,
   FromRotate,
@@ -1937,7 +1938,7 @@ function curveLegs(timeline: DeformTimeline, frame: number): { kind: DeformSpanC
 }
 
 /** Points `CurveTimeline.setBezier` stores per curve — `BEZIER_SIZE / 2`. */
-const BEZIER_POINTS = 9;
+export const BEZIER_POINTS = 9;
 
 /**
  * `CurveTimeline.curves`, which is `protected` and is read anyway.
@@ -1956,8 +1957,12 @@ const BEZIER_POINTS = 9;
  *
  * `A05` already gates the emitted curve arrays, and `DW18` is the control that
  * the reading here matches what the runtime does with them.
+ *
+ * Exported for `validate.ts`'s `curveChannelValues` (issue #752), which asks the
+ * same array what values a constraint's `mix` timeline poses between its keys —
+ * so the reach into protected storage stays one reach, in this file.
  */
-function curveStorage(timeline: DeformTimeline): ArrayLike<number> {
+export function curveStorage(timeline: CurveTimeline): ArrayLike<number> {
   return (timeline as unknown as { curves: ArrayLike<number> }).curves;
 }
 

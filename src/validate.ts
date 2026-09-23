@@ -23,6 +23,7 @@ import {
   BoundingBoxAttachment,
   ClippingAttachment,
   type ConstraintTimeline,
+  type CurveTimeline,
   DeformTimeline,
   Inherit,
   isBoneTimeline,
@@ -32,6 +33,7 @@ import {
   MixFrom,
   PathAttachment,
   PathConstraintData,
+  PathConstraintMixTimeline,
   Physics,
   PhysicsConstraintData,
   PhysicsConstraintPose,
@@ -42,6 +44,7 @@ import {
   Skeleton,
   SkeletonJson,
   SliderData,
+  SliderMixTimeline,
   TextureAtlas,
   type TextureAtlasRegion,
   type Timeline,
@@ -53,6 +56,8 @@ import {
 import { readPlate } from '../tools/plate.ts';
 import { pageFootprint, pageGridSentence } from './atlas.ts';
 import {
+  BEZIER_POINTS,
+  curveStorage,
   surveyDeformKeys,
   unreachableWhy,
   type DeformDialDispute,
@@ -73,7 +78,9 @@ import {
   KEY_TIME_EPSILON,
   PHYSICS_POSE_RULES,
   physicsKeyRefusal,
+  physicsOutsideSays,
   physicsRuleFor,
+  type PhysicsPoseRule,
   SLOT_COLOR_CHANNELS,
   walkTimelines,
 } from './timelines.ts';
@@ -461,6 +468,55 @@ const PHYSICS_COMPONENTS = ['x', 'y', 'rotate', 'scaleX', 'shearX'] as const;
 const EDITOR_PHYSICS_COMPONENTS: ReadonlySet<(typeof PHYSICS_COMPONENTS)[number]> = new Set(['x', 'y'] as const);
 
 /**
+ * The half of a muted-at-rest refusal that says what was searched, and how
+ * widely — one text for `A23`, `A36` and `A37`, which ask one question of three
+ * constraint kinds (issues #743, #752). A rig with no animation at all says
+ * "none of the 0 animations" rather than implying somebody keyed something.
+ */
+function noneKeysItsMixAbove0(animations: number): string {
+  return `none of the ${animations} animation${animations === 1 ? '' : 's'} keys its mix above 0`;
+}
+
+/** The two repairs a muted-at-rest refusal names, since either one is a rig the runtime plays. */
+const REST_OR_KEY_ITS_MIX = 'rest it above 0, or key its mix above 0 in an animation';
+
+/**
+ * Every value one channel of a curve timeline can pose while it plays: each
+ * key's own value, and every sample of each Bezier segment the parser built
+ * between two keys (issue #752).
+ *
+ * ⚠️ The samples are the half a reading of the keys alone misses. The runtime
+ * interpolates a Bezier segment between the points `setBezier` stored
+ * (`Animation.js:257-298`), not between the two keys, so two keys of 0 joined
+ * by a curve whose handles lie above 0 pose values above 0 in between.
+ * [measured] on generated fixtures, a `mix` pair of 0 → 0 with its handles at
+ * 0.8 poses a path constraint's bone up to 32.69 away from the flat pair, a
+ * slider's by 0.54 and a physics constraint's by 3.81. Between two stored
+ * points the runtime is linear, so nothing it poses lies outside this list's
+ * range — which is what makes "is any of these above 0" the whole question.
+ *
+ * Channel `c` of frame `f` is `frames[f * entries + 1 + c]`. `curves[f]` is 0
+ * for linear, 1 for stepped and `2 + i` for a Bezier whose points start at `i`
+ * (`Animation.js:259-261`); `readCurve` stores one segment per channel in
+ * order, so channel `c`'s points start `2 * BEZIER_POINTS * c` further on, as
+ * `(time, value)` pairs. The storage is read through `curveStorage`, the one
+ * reach into that protected array, which `deformmeasure.ts` owns.
+ */
+function curveChannelValues(timeline: CurveTimeline, channel: number): number[] {
+  const entries = timeline.getFrameEntries();
+  const curves = curveStorage(timeline);
+  const values: number[] = [];
+  for (let i = 0, frame = 0; i < timeline.frames.length; i += entries, frame++) {
+    values.push(timeline.frames[i + 1 + channel]);
+    const code = curves[frame];
+    if (!(code >= 2)) continue;
+    const start = code - 2 + 2 * BEZIER_POINTS * channel;
+    for (let point = 0; point < BEZIER_POINTS; point++) values.push(curves[start + 2 * point + 1]);
+  }
+  return values;
+}
+
+/**
  * What A23 says about a SETUP pose outside its bound, per property.
  *
  * The predicate lives in `PHYSICS_POSE_RULES` and the sentence lives here, and
@@ -483,13 +539,21 @@ const EDITOR_PHYSICS_COMPONENTS: ReadonlySet<(typeof PHYSICS_COMPONENTS)[number]
  * other half was looked for and how wide the search was. A rig with no animation
  * at all then says "none of the 0 animations" rather than implying somebody
  * keyed something.
+ *
+ * `rule` is the row the value was judged by, and only the `strength` sentence
+ * reads it: its two arms live on the row (`outside`), beside the key's own
+ * sentence, so what the setup pose and a key say about one number is one text.
  */
-const SETUP_POSE_SAYS: Record<string, (pose: PhysicsConstraintPose, animations: number) => string> = {
-  mix: (pose, animations) =>
-    `has mix ${pose.mix} and none of the ${animations} animation${animations === 1 ? '' : 's'} keys its mix above 0; ` +
-    'it is muted — rest it above 0, or key its mix above 0 in an animation',
+const SETUP_POSE_SAYS: Record<
+  string,
+  (pose: PhysicsConstraintPose, animations: number, rule: PhysicsPoseRule) => string
+> = {
+  mix: (pose, animations) => `has mix ${pose.mix} and ${noneKeysItsMixAbove0(animations)}; it is muted — ${REST_OR_KEY_ITS_MIX}`,
   mass: (pose) => `has massInverse ${pose.massInverse} (mass must be > 0)`,
-  strength: (pose) => `has strength ${pose.strength}; nothing pulls it back`,
+  // Two arms, read off the row (issue #748): 0 is a constraint nothing pulls
+  // back and below 0 one that is pushed away, and the row's `why` — the key's
+  // sentence — quotes the second from the same object.
+  strength: (pose, _animations, rule) => `has strength ${pose.strength}; ${physicsOutsideSays(rule, pose.strength)}`,
   damping: (pose) => `has damping ${pose.damping}; outside (0,1) it never settles`,
 };
 
@@ -2947,6 +3011,58 @@ export function validate(input: ValidateInput): ValidateReport {
       if (survey.spansUnconfirmed) stats.deformSpansUnconfirmed = survey.spansUnconfirmed;
     });
 
+    /**
+     * The constraints some animation keys to a value `live` accepts, on any
+     * channel of a timeline `owns` claims — the one answer to "does anything
+     * switch this on" for `A23`, `A36`, `A37` and `A40` (issues #743, #752).
+     *
+     * ⭐ It replaced `keyedBy`, which read the raw JSON and took a non-empty key
+     * array as the answer, and it did so rather than teaching that one to read
+     * values, because the raw file is the wrong place to read a value: a path
+     * `mix` key that omits `mixRotate` means 1 (`SkeletonJson.js:1011-1013`), a
+     * `mixY` it omits means that key's `mixX`, and a Bezier between two keys
+     * poses values neither key states. A raw reader would restate the parser's
+     * defaults and re-derive its curves — a second opinion on the runtime's own
+     * numbers — so this reads the loaded timelines instead, with
+     * `curveChannelValues` for the curves. [measured] the reading `keyedBy` gave
+     * was wrong in the accepting direction: a path constraint and a slider,
+     * both muted at rest and keyed to 0 only, pose every bone exactly where the
+     * same rig with no timeline does (max |Δ| 0.000000 over 60 steps at 60 fps) and both
+     * passed.
+     *
+     * A timeline naming no constraint is the physics family's global form and
+     * `unnamedPhysicsReach` answers who it reaches; every other constraint
+     * timeline names its one constraint by index.
+     */
+    const keyedLive = <T extends CurveTimeline & ConstraintTimeline>(
+      owns: (timeline: Timeline) => timeline is T,
+      live: (timeline: T, value: number) => boolean,
+    ): Set<object> => {
+      const reached = new Set<object>();
+      for (const animation of data.animations) {
+        for (const timeline of animation.timelines) {
+          if (!owns(timeline)) continue;
+          let keysLive = false;
+          for (let channel = 0; channel < timeline.getFrameEntries() - 1 && !keysLive; channel++) {
+            keysLive = curveChannelValues(timeline, channel).some((value) => live(timeline, value));
+          }
+          if (!keysLive) continue;
+          const reach =
+            timeline.constraintIndex === -1
+              ? unnamedPhysicsReach(timeline, data.constraints.filter((one) => one instanceof PhysicsConstraintData))
+              : [data.constraints[timeline.constraintIndex]];
+          for (const one of reach) if (one) reached.add(one);
+        }
+      }
+      return reached;
+    };
+
+    /**
+     * The one predicate a path or slider mix is judged by, at setup and on every
+     * value a key poses: above 0, where `update()` does anything at all.
+     */
+    const mixLive = (value: number): boolean => value > 0;
+
     // --- A23: a physics constraint that does nothing, quietly ---------------
     //
     // Every failure mode here is silent. The five component fields default to
@@ -3002,40 +3118,30 @@ export function validate(input: ValidateInput): ValidateReport {
       // [measured] at rest it reads NaN on every frame although an animation
       // keys `mass` to 1. A key cannot rescue a value that has already broken
       // the rig it is resting in.
+      //
+      // The keys are read by `keyedLive`, the one reading A36 and A37 share
+      // (issue #752), through the runtime's own accessor: the pose field is
+      // where the integrator reads the number, and for `mass` that is not the
+      // number the key states. It counts the unnamed global form through
+      // `unnamedPhysicsReach` and a Bezier segment's samples as well as its keys.
       const unmuted = new Map<PhysicsConstraintData, Set<string>>();
       const raised = new PhysicsConstraintPose();
-      for (const animation of data.animations) {
-        for (const timeline of animation.timelines) {
-          if (!(timeline instanceof PhysicsConstraintTimeline)) continue;
-          const rule = physicsRuleFor(PHYSICS_TIMELINE_NAMES[Number(timeline.getPropertyIds()[0].split('|')[0])] ?? '');
-          if (rule === undefined || !rule.inertAtSetup) continue;
-          const entries = timeline.getFrameEntries();
-          let keysInside = false;
-          for (let i = 0; i < timeline.frames.length && !keysInside; i += entries) {
-            // The runtime's own accessor, for the reason the second arm uses it:
-            // the pose field is where the integrator reads the number, and for
-            // `mass` that is not the number the key states.
-            timeline.set(raised, timeline.frames[i + 1]);
-            keysInside = rule.poseOk(raised[rule.field]);
-          }
-          if (!keysInside) continue;
-          // -1 is the global form: the timeline names no constraint and the
-          // runtime applies it to every physics constraint whose own data
-          // declares that property global (`Animation.js:2067-2075`). A motion
-          // spec reaches it with `"physics": "*"` (issue #726), a file rigc did
-          // not write with the empty name, and `unnamedPhysicsReach` is the one
-          // answer to which constraints it reaches.
-          const reach =
-            timeline.constraintIndex === -1
-              ? unnamedPhysicsReach(timeline, data.constraints.filter((one) => one instanceof PhysicsConstraintData))
-              : [data.constraints[timeline.constraintIndex]];
-          for (const one of data.constraints) {
-            if (!(one instanceof PhysicsConstraintData)) continue;
-            if (!reach.includes(one)) continue;
-            const by = unmuted.get(one) ?? new Set<string>();
-            by.add(rule.timeline);
-            unmuted.set(one, by);
-          }
+      for (const rule of PHYSICS_POSE_RULES) {
+        if (!rule.inertAtSetup) continue;
+        const reached = keyedLive(
+          (timeline): timeline is PhysicsConstraintTimeline =>
+            timeline instanceof PhysicsConstraintTimeline &&
+            PHYSICS_TIMELINE_NAMES[Number(timeline.getPropertyIds()[0].split('|')[0])] === rule.timeline,
+          (timeline, value) => {
+            timeline.set(raised, value);
+            return rule.poseOk(raised[rule.field]);
+          },
+        );
+        for (const one of data.constraints) {
+          if (!(one instanceof PhysicsConstraintData) || !reached.has(one)) continue;
+          const by = unmuted.get(one) ?? new Set<string>();
+          by.add(rule.timeline);
+          unmuted.set(one, by);
         }
       }
       let mutedUntilKeyed = 0;
@@ -3061,7 +3167,7 @@ export function validate(input: ValidateInput): ValidateReport {
           const drivesAMesh = rule.timeline === 'damping' && meshBoneNames.has(constraint.bone.name);
           fail(
             'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
-            `${where} ${SETUP_POSE_SAYS[rule.timeline](pose, data.animations.length)}` +
+            `${where} ${SETUP_POSE_SAYS[rule.timeline](pose, data.animations.length, rule)}` +
               (drivesAMesh ? ' — and this bone drives a mesh, so the canvas never rests' : ''),
           );
         }
@@ -3215,7 +3321,9 @@ export function validate(input: ValidateInput): ValidateReport {
     });
 
     /**
-     * Does any animation key `<group>.<constraint>.<timeline>`?
+     * Which path constraints and sliders an animation switches ON — `keyedLive`
+     * over their `mix` timelines, judged by `mixLive`, the predicate their setup
+     * pose is judged by below.
      *
      * ⭐ The reason the two assertions below need this: a constraint whose mixes
      * are all 0 at setup is **the idiom**, not a defect — spineboy's aim rig is
@@ -3223,30 +3331,23 @@ export function validate(input: ValidateInput): ValidateReport {
      * "muted" is only a finding when nothing turns it on, and that question
      * lives in the animations rather than in the constraint.
      *
-     * ⚠️ This comment used to add "and the reason they are not A23 with a
-     * different type name", which said the idiom stops at path and slider
-     * constraints. It does not: a production rig rests 87 of its 87 physics
-     * constraints at `mix` 0 and keys them up in four of its six animations
-     * (issue #743), so A23 asks the same question now — and does NOT ask it
-     * here. Two reasons, both measured: this reads the raw JSON and takes a
-     * non-empty key array as a rescue, so a `mix` timeline that keys **0 only**
-     * counts, and [measured] such a rig poses its bone exactly where one with no
-     * timeline at all does; and it cannot see the unnamed global form, which the
-     * runtime applies to every constraint declaring that property global. A23's
-     * arm reads the key VALUES through the runtime's own accessor and asks
-     * `PhysicsConstraintTimeline.global` who they reach.
+     * 🔑 "Turns it on" is a VALUE question, and until issue #752 these two asked
+     * a weaker one than `A23` — whether a `mix` key array was non-empty — so a
+     * timeline keying 0 only was a rescue for a constraint it leaves exactly as
+     * muted as no timeline does. Now a path constraint is switched on by a key
+     * posing any of its three mixes above 0, which is the runtime's own
+     * condition: `PathConstraint.update` returns when `mixRotate`, `mixX` and
+     * `mixY` are all 0 (`PathConstraint.js:73-75`), and `Slider.update` when
+     * `mix` is (`Slider.js:53-54`).
      */
-    const keyedBy = (group: string, name: string, timeline: string): boolean => {
-      if (!raw || !isObj(raw.animations)) return false;
-      for (const anim of Object.values(raw.animations as Json)) {
-        if (!isObj(anim) || !isObj(anim[group])) continue;
-        const timelines = (anim[group] as Json)[name];
-        if (!isObj(timelines)) continue;
-        const keys = timelines[timeline];
-        if (Array.isArray(keys) && keys.length > 0) return true;
-      }
-      return false;
-    };
+    const pathSwitchedOn = keyedLive(
+      (timeline): timeline is PathConstraintMixTimeline => timeline instanceof PathConstraintMixTimeline,
+      (_timeline, value) => mixLive(value),
+    );
+    const sliderSwitchedOn = keyedLive(
+      (timeline): timeline is SliderMixTimeline => timeline instanceof SliderMixTimeline,
+      (_timeline, value) => mixLive(value),
+    );
 
     // --- A36: a path constraint that follows nothing, quietly ---------------
     //
@@ -3262,9 +3363,9 @@ export function validate(input: ValidateInput): ValidateReport {
     // slot exists, the constraint resolves, the mixes are 1.
     //
     // The rest are the same shape as A23's: a constraint that parses and does
-    // nothing. All three mixes at 0 is only a finding when no animation keys the
-    // `mix` timeline (see `keyedBy`), and a chain with no bones on it is one
-    // whether or not anything is keyed.
+    // nothing. All three mixes at 0 is only a finding when no animation keys one
+    // of them above 0 (see `pathSwitchedOn`), and a chain with no bones on it is
+    // one whether or not anything is keyed.
     check('A36_PATH_CONSTRAINT_EFFECTIVE', () => {
       const constraints = data.constraints.filter((c) => c instanceof PathConstraintData);
       if (!constraints.length) return skip('A36_PATH_CONSTRAINT_EFFECTIVE', 'the skeleton declares no path constraint');
@@ -3291,12 +3392,13 @@ export function validate(input: ValidateInput): ValidateReport {
           );
         }
         const pose = constraint.setupPose;
-        const muted = !(pose.mixRotate > 0) && !(pose.mixX > 0) && !(pose.mixY > 0);
-        if (muted && !keyedBy('path', constraint.name, 'mix')) {
+        const muted = ![pose.mixRotate, pose.mixX, pose.mixY].some(mixLive);
+        if (muted && !pathSwitchedOn.has(constraint)) {
           fail(
             'A36_PATH_CONSTRAINT_EFFECTIVE',
-            `${where} has mixRotate ${pose.mixRotate}, mixX ${pose.mixX} and mixY ${pose.mixY} at setup and no ` +
-              'animation keys its mix timeline; update() returns on all-zero mixes, so nothing ever puts a bone on the path',
+            `${where} has mixRotate ${pose.mixRotate}, mixX ${pose.mixX} and mixY ${pose.mixY} at setup and ` +
+              `${noneKeysItsMixAbove0(data.animations.length)}; update() returns on all-zero mixes, so nothing ever ` +
+              'puts a bone on the path — rest one of the three above 0, or key its mix above 0 in an animation',
           );
         }
       }
@@ -3353,10 +3455,11 @@ export function validate(input: ValidateInput): ValidateReport {
           );
         }
         const mix = slider.setupPose.mix;
-        if (!(mix > 0) && !keyedBy('slider', slider.name, 'mix')) {
+        if (!mixLive(mix) && !sliderSwitchedOn.has(slider)) {
           fail(
             'A37_SLIDER_CONSTRAINT_EFFECTIVE',
-            `${where} has mix ${mix} at setup and no animation keys its mix timeline; update() returns on mix 0`,
+            `${where} has mix ${mix} at setup and ${noneKeysItsMixAbove0(data.animations.length)}; update() returns ` +
+              `on mix 0 — ${REST_OR_KEY_ITS_MIX}`,
           );
         }
       }
@@ -3479,7 +3582,15 @@ export function validate(input: ValidateInput): ValidateReport {
         );
       }
       // Clause 1 of the "could this be correct?" list above.
-      const authoritative = sliders.filter((s) => s.setupPose.mix >= 1 && !keyedBy('slider', s.name, 'mix'));
+      // "Keyed at all" rather than "keyed live", and on purpose: this clause asks
+      // whether the mix can MOVE from its setup value, so any mix timeline
+      // disqualifies it — the question `keyedBy` answered here, through the one
+      // reading `keyedLive` gives, and unchanged by issue #752.
+      const mixKeyed = keyedLive(
+        (timeline): timeline is SliderMixTimeline => timeline instanceof SliderMixTimeline,
+        () => true,
+      );
+      const authoritative = sliders.filter((s) => s.setupPose.mix >= 1 && !mixKeyed.has(s));
       if (authoritative.length < 2) {
         return skip(
           'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET',
