@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.34.0](https://github.com/firejune/rigc/compare/v0.33.1...v0.34.0) (2026-09-23)
+
+
+### Bug Fixes
+
+* **chainfit:** the hinge ladder divides its window, so the step `search` prints, each part's `window` and each chain note are the step the run walked ([#780](https://github.com/firejune/rigc/issues/780)) ([ba4be02](https://github.com/firejune/rigc/commit/ba4be02c5d33864295dccd72d4c1fd3e01c4fa0d))
+* **compile:** a mesh fit's overshoot is stated in the drawing's pixels on a `scale:` page, and a depth sheet or soft mask made at the art's size is read there by the ratio the atlas states ([#778](https://github.com/firejune/rigc/issues/778)) ([c668c66](https://github.com/firejune/rigc/commit/c668c66aacd65770e0055be0decd0188083ad94f))
+* **compile:** every emitted number is its float32's shortest name, so an editor export's rebuild spells every number as the export does ([#782](https://github.com/firejune/rigc/issues/782)) ([b00228a](https://github.com/firejune/rigc/commit/b00228ae0a62020b22fd0172ffd1fc01b15bfe3f))
+* **pose:** an accepted placement that stopped on a wall of the search window names the wall beside the value it holds, and `walls` records it for every verdict ([#781](https://github.com/firejune/rigc/issues/781)) ([c58e498](https://github.com/firejune/rigc/commit/c58e49892a7d58ba9a1f0dec563088260a6c5907))
+* **validate:** `A19` exempts the base plate the rig names before it measures one against the stage, so a stageless manifest rig's pack gates green and a stageless rig-spec build says what would decide its plate ([#775](https://github.com/firejune/rigc/issues/775)) ([9572726](https://github.com/firejune/rigc/commit/9572726ff9964776db0bbea14a4a0c35acc77778))
+
+
+### Miscellaneous Chores
+
+* **release:** ship the float32 number formatting as 0.34.0, not a patch ([#783](https://github.com/firejune/rigc/issues/783)) ([dcb8a9b](https://github.com/firejune/rigc/commit/dcb8a9be9618f5a371ce1a4ab5a6bacfc364b42d))
+
 ## [0.33.1](https://github.com/firejune/rigc/compare/v0.33.0...v0.33.1) (2026-09-23)
 
 
