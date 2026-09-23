@@ -314,8 +314,14 @@ export function editorNamesInOrder(names: readonly string[], collection: 'animat
   return [...names].sort((a, b) => verdicts.get(a)?.get(b) ?? 0);
 }
 
-/** The skin the editor keeps at index 0 whatever its name sorts as. */
-const DEFAULT_SKIN = 'default';
+/**
+ * The skin the editor keeps at index 0 whatever its name sorts as.
+ *
+ * Exported for `ingest`, which has to know that a contested placeholder the
+ * default skin fills is refused rather than named (`refuseDefaultSkinContest`),
+ * and has no business spelling the name a second time (issue #746).
+ */
+export const DEFAULT_SKIN = 'default';
 
 /**
  * The order the emitted `skins` array is written in: **`default` first, then the
@@ -3149,8 +3155,14 @@ function skinAttachmentName(skinName: string, placeholder: string): string {
  * By the time either caller runs, a contested placeholder the **default** skin
  * fills has already been refused — see `refuseDefaultSkinContest` — so every
  * entry this composes for is a named skin's.
+ *
+ * 🔒 A third caller reads it from outside: `ingest` compares the name a source
+ * states against the one this returns, and reports the rename where the two
+ * differ (issue #746). It calls this rather than `skinAttachmentName` so that
+ * WHETHER a name is composed is read off the same line as WHAT it is — the
+ * separator and the contest test are each stated once, here.
  */
-function composeSkinAttachmentName(skinName: string, placeholder: string, contested: boolean): string | null {
+export function composeSkinAttachmentName(skinName: string, placeholder: string, contested: boolean): string | null {
   return contested ? skinAttachmentName(skinName, placeholder) : null;
 }
 

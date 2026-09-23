@@ -57770,6 +57770,310 @@ function runIngestSuite(): number {
     );
   }
 
+  // --- IG68–IG70: a contested attachment renamed without a finding (issue #746) ---
+  //
+  // 🚨 **Measured on the branch point, on a forged export.** Where two skins
+  // fill one placeholder rigc composes `<skin>/<placeholder>` for each, and
+  // `ATTACHMENT_NAME` was silenced there wholesale — so a source whose contested
+  // attachments were called anything else came back renamed with no line in
+  // `findings.json`. Forging the names of two contested entries printed one
+  // finding (`HEADER_REDERIVED`), and the rebuild named them "alt/panel" and
+  // "base/panel". The fix COMPARES — the source's name, or its placeholder
+  // where it states none, against what `composeSkinAttachmentName` returns —
+  // because the cheap neighbour, "fire on every stated name", was measured on
+  // #742 to put a `LOSS` on every contested round trip rigc already gets right.
+  //
+  // 🔑 The composed names are read off rigc's OWN EMIT of the probe rig, never
+  // spelled here: a control that restated the separator would agree with a
+  // decompiler that restated it the same wrong way.
+  {
+    const nameDir = mkdtempSync(join(tmpdir(), 'rigc-contestedname-'));
+    writeProbePng(join(nameDir, 'block.png'), 12, 8, [40, 60, 90, 255]);
+    writeProbePng(join(nameDir, 'badge.png'), 8, 8, [60, 90, 40, 255]);
+    writeProbePng(join(nameDir, 'panel.png'), 10, 10, [90, 40, 60, 255]);
+    writeProbePng(join(nameDir, 'plate.png'), 10, 10, [30, 120, 40, 255]);
+    const nameRigPath = join(nameDir, 'skins.rig.json');
+    const nameMotionPath = join(nameDir, 'skins.motion.json');
+    // `panel` is contested by two NAMED skins — the shape the editor holds — and
+    // `block` (default skin) and `badge` (a named skin) are each filled once, so
+    // the uncontested reading is measured in both kinds of skin.
+    writeFileSync(
+      nameRigPath,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-rig/1',
+          name: 'contested_names',
+          skeleton: { width: 64, height: 64 },
+          bones: [{ name: 'root' }],
+          slots: [
+            { name: 'block', bone: 'root', attachment: 'block' },
+            { name: 'badge', bone: 'root', attachment: null },
+            { name: 'panel', bone: 'root', attachment: 'panel' },
+          ],
+          skins: {
+            default: { block: { block: { image: 'block.png' } } },
+            base: { panel: { panel: { image: 'panel.png' } }, badge: { badge: { image: 'badge.png' } } },
+            alt: { panel: { panel: { image: 'plate.png' } } },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    writeFileSync(
+      nameMotionPath,
+      `${JSON.stringify({ ...STATIC_MOTION, archetype: 'contested_names', cut: 'contested_names' }, null, 2)}\n`,
+    );
+    const nameOut = join(nameDir, 'emit');
+    mkdirSync(nameOut, { recursive: true });
+    const emitted = compile({ rigPath: nameRigPath, motionPath: nameMotionPath, outDir: nameOut, imagesDir: nameDir });
+    const packPath = join(nameDir, 'emit.atlas');
+    writeFileSync(packPath, emitted.atlasText);
+
+    type SkinFile = { skins: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }> };
+    type Entry = { skin: string; slot: string; placeholder: string; att: Record<string, unknown> };
+    const entriesOf = (file: SkinFile): Entry[] =>
+      file.skins.flatMap((skin) =>
+        Object.entries(skin.attachments).flatMap(([slot, perSlot]) =>
+          Object.entries(perSlot).map(([placeholder, att]) => ({ skin: skin.name, slot, placeholder, att })),
+        ),
+      );
+    const keyOf = (e: { skin: string; slot: string; placeholder: string }): string => `${e.skin}\u0000${e.slot}\u0000${e.placeholder}`;
+    const whereOf = (at: string): string => {
+      const [skin, slot, placeholder] = at.split('\u0000');
+      return `skin "${skin}" slot "${slot}" attachment "${placeholder}"`;
+    };
+    const shown = (at: string): string => at.split('\u0000').join(' / ');
+    /** skin/slot/placeholder -> the name rigc's own emit gave it, for every entry that carries one. */
+    const composedOf = new Map(
+      entriesOf(JSON.parse(emitted.skeletonText) as SkinFile)
+        .filter((e) => typeof e.att.name === 'string')
+        .map((e) => [keyOf(e), String(e.att.name)] as const),
+    );
+    /** The emit, with `edit` applied to every entry — the forge is data, so nothing is invented about the art. */
+    const forge = (edit: (e: Entry) => void): SkinFile => {
+      const file = JSON.parse(emitted.skeletonText) as SkinFile;
+      for (const e of entriesOf(file)) edit(e);
+      return file;
+    };
+    /** `ingest --art none`, then the rebuild against the emit's own pack. */
+    const roundTrip = (tag: string, file: SkinFile): { named: IngestFinding[]; rebuiltText: string | null; refusal: string } => {
+      const got = ingest(JSON.parse(JSON.stringify(file)), {
+        name: 'contested_names',
+        art: 'none',
+        source: 'skeleton.json',
+        version: '0',
+      });
+      const specDir = join(nameDir, tag);
+      mkdirSync(join(specDir, 'out'), { recursive: true });
+      writeFileSync(join(specDir, 'rig.json'), `${JSON.stringify(got.rig, null, 2)}\n`);
+      writeFileSync(join(specDir, 'motion.json'), `${JSON.stringify(got.motion, null, 2)}\n`);
+      const named = got.findings.filter((f) => f.code === 'ATTACHMENT_NAME');
+      try {
+        const built = compile({
+          rigPath: join(specDir, 'rig.json'),
+          motionPath: join(specDir, 'motion.json'),
+          outDir: join(specDir, 'out'),
+          atlasInPath: packPath,
+        });
+        return { named, rebuiltText: built.skeletonText, refusal: '' };
+      } catch (err) {
+        return { named, rebuiltText: null, refusal: (err as Error).message };
+      }
+    };
+    /** skin/slot/placeholder -> the name the rebuilt file gives it — the placeholder where it states none, as the parser reads it. */
+    const rebuiltNames = (text: string | null): Map<string, string> =>
+      text === null
+        ? new Map()
+        : new Map(
+            entriesOf(JSON.parse(text) as SkinFile).map(
+              (e) => [keyOf(e), typeof e.att.name === 'string' ? e.att.name : e.placeholder] as const,
+            ),
+          );
+    const floor = floorProbes(
+      [[composedOf.size, 2, `rigc's emit of the probe named ${composedOf.size} contested entr(ies)`]],
+      'or no contested placeholder was built and every clause below is vacuous',
+    );
+
+    // -- IG68: the rename is said, with both strings --------------------------
+    // Two shapes of source: contested entries that state a name of their own,
+    // and contested entries that state none, so the parser names them by the
+    // placeholder. The rebuild renames both, so both are a line.
+    const ownName = (at: string): string => {
+      const [skin, , placeholder] = at.split('\u0000');
+      return `art_${skin}_${placeholder}`;
+    };
+    const shapes: Array<[string, SkinFile, (at: string) => string]> = [
+      [
+        'names of their own',
+        forge((e) => {
+          if (composedOf.has(keyOf(e))) e.att.name = ownName(keyOf(e));
+        }),
+        ownName,
+      ],
+      [
+        'no names at all',
+        forge((e) => {
+          delete e.att.name;
+        }),
+        (at) => at.split('\u0000')[2],
+      ],
+    ];
+    const renameProbes = [
+      ...floor,
+      ...shapes.flatMap(([shape, file, sourceName], index) => {
+        const trip = roundTrip(`renamed-${index}`, file);
+        const names = rebuiltNames(trip.rebuiltText);
+        return [
+          ...(trip.rebuiltText === null ? [`${shape}: the rebuild was refused: ${trip.refusal}`] : []),
+          ...[...composedOf].flatMap(([at, composed]) => {
+            const lines = trip.named.filter((f) => f.where === whereOf(at));
+            const was = sourceName(at);
+            return [
+              ...(lines.length === 1
+                ? []
+                : [`${shape}: "${shown(at)}" has ${lines.length} ATTACHMENT_NAME line(s), and the rebuild renames it`]),
+              ...lines
+                .filter((f) => !f.detail.includes(JSON.stringify(was)) || !f.detail.includes(JSON.stringify(composed)))
+                .map(
+                  (f) =>
+                    `${shape}: the line for "${shown(at)}" does not state both ${JSON.stringify(was)} and ` +
+                    `${JSON.stringify(composed)}: ${f.detail}`,
+                ),
+              ...(names.get(at) === composed
+                ? []
+                : [
+                    `${shape}: the rebuild names "${shown(at)}" ${JSON.stringify(names.get(at) ?? '(absent)')}, not ` +
+                      `the ${JSON.stringify(composed)} the line would claim`,
+                  ]),
+            ];
+          }),
+          // An uncontested entry the forge left without a name is renamed by
+          // nothing, so it may not gain a line from this rule either.
+          ...trip.named
+            .filter((f) => ![...composedOf.keys()].some((at) => f.where === whereOf(at)))
+            .map((f) => `${shape}: an entry the rebuild does not rename got a line: ${f.where}`),
+        ];
+      }),
+    ];
+    const renameHeld = renameProbes.length === 0;
+    say(
+      'IG68_A_CONTESTED_ATTACHMENT_WHOSE_SOURCE_NAME_IS_NOT_THE_COMPOSED_ONE_IS_REPORTED_WITH_BOTH_NAMES',
+      renameHeld,
+      probeDetail(
+        renameHeld,
+        renameProbes,
+        `${composedOf.size} contested entr(ies), in ${shapes.length} source shape(s) — ${shapes.map(([shape]) => shape).join(', and ')} — ` +
+          `each get one ATTACHMENT_NAME line stating the source's name and the composed one ` +
+          `[${[...composedOf.values()].join(', ')}], and the rebuild answers to the composed one`,
+        (count) => `${count} rename(s) the findings did not say:`,
+      ),
+      'issue #746: the rebuild of a contested placeholder answers to `<skin>/<placeholder>` whatever the source ' +
+        'called it, so a consumer looking an attachment up by the name the source gave it finds a different string. ' +
+        "The line is checked against the REBUILT file's names, so it cannot claim a composed name the compiler did " +
+        'not emit, and the composed names are read off rigc\'s own emit rather than spelled in this control',
+    );
+
+    // -- IG69: rigc's own contested emit round-trips with no new line --------
+    const own = roundTrip('own', JSON.parse(emitted.skeletonText) as SkinFile);
+    const ownProbes = [
+      ...floor,
+      ...own.named.map((f) => `rigc's own emit got an ATTACHMENT_NAME line: ${f.where} — ${f.detail}`),
+      ...(own.rebuiltText === null ? [`the rebuild of rigc's own emit was refused: ${own.refusal}`] : []),
+      ...(own.rebuiltText !== null && own.rebuiltText !== emitted.skeletonText
+        ? [
+            `the rebuild of rigc's own emit differs at ${differingJsonPaths(
+              JSON.parse(emitted.skeletonText),
+              JSON.parse(own.rebuiltText),
+            ).join('; ')}`,
+          ]
+        : []),
+    ];
+    const ownHeld = ownProbes.length === 0;
+    say(
+      'IG69_A_CONTESTED_PAIR_RIGC_ITSELF_EMITTED_ROUND_TRIPS_BYTE_FOR_BYTE_WITH_NO_NAME_LINE',
+      ownHeld,
+      probeDetail(
+        ownHeld,
+        ownProbes,
+        `rigc's own emit states ${composedOf.size} composed name(s) on its contested entries; ingest prints ` +
+          `${own.named.length} ATTACHMENT_NAME line(s) and the rebuild is the emit ` +
+          `(${emitted.skeletonText.length} B identical)`,
+        (count) => `${count} line(s) or byte(s) the exact round trip gained:`,
+      ),
+      'the other direction, and the one the cheap version fails: a rule that fired on every stated name would be ' +
+        'right about the forged file and wrong about this one, which is every contested round trip rigc does. What ' +
+        'is compared is the two strings, so where they are equal nothing is lost and nothing is said',
+    );
+
+    // -- IG70: the shapes the comparison leaves alone -------------------------
+    // (a) An uncontested entry, in the default skin and in a named one, states a
+    //     name: it keeps the one line it always had, which says the region was
+    //     kept as `path` — and gains no second, since nothing is composed there.
+    // (b) The DEFAULT skin joins the contest: the compiler composes nothing for
+    //     it and refuses the rebuild, so no line may claim a composed name there.
+    const uncontested = entriesOf(JSON.parse(emitted.skeletonText) as SkinFile)
+      .filter((e) => !composedOf.has(keyOf(e)))
+      .map((e) => keyOf(e));
+    const soloTrip = roundTrip(
+      'solo',
+      forge((e) => {
+        if (!composedOf.has(keyOf(e))) e.att.name = `art_${e.placeholder}`;
+      }),
+    );
+    const withDefault = JSON.parse(emitted.skeletonText) as SkinFile;
+    const defaultSkin = withDefault.skins.find((skin) => skin.name === 'default');
+    const [, contestedSlot, contestedPlaceholder] = ([...composedOf.keys()][0] ?? '').split('\u0000');
+    const defaultAt = `default\u0000${contestedSlot}\u0000${contestedPlaceholder}`;
+    if (defaultSkin !== undefined && contestedPlaceholder !== undefined) {
+      const panel = entriesOf(withDefault).find((e) => keyOf(e) === [...composedOf.keys()][0]);
+      defaultSkin.attachments[contestedSlot] = {
+        [contestedPlaceholder]: { width: panel?.att.width, height: panel?.att.height },
+      };
+    }
+    const defaultTrip = roundTrip('default-contest', withDefault);
+    const aloneProbes = [
+      ...floorProbes(
+        [[uncontested.length, 2, `${uncontested.length} uncontested entr(ies) in the probe`]],
+        'or the uncontested reading is measured in fewer than both kinds of skin',
+      ),
+      ...uncontested.flatMap((at) => {
+        const lines = soloTrip.named.filter((f) => f.where === whereOf(at));
+        const kept = `"path": ${JSON.stringify(`art_${at.split('\u0000')[2]}`)}`;
+        return [
+          ...(lines.length === 1 ? [] : [`"${shown(at)}" states a name and has ${lines.length} ATTACHMENT_NAME line(s), not 1`]),
+          ...lines.filter((f) => !f.detail.includes(kept)).map((f) => `the line for "${shown(at)}" does not say ${kept} was kept: ${f.detail}`),
+        ];
+      }),
+      ...(defaultSkin === undefined || contestedPlaceholder === undefined
+        ? ['the emit has no default skin, or no contested placeholder, to put into the contest']
+        : []),
+      ...defaultTrip.named
+        .filter((f) => f.where === whereOf(defaultAt))
+        .map((f) => `the default skin's contested entry got a line quoting a composed name no build emits: ${f.detail}`),
+      ...(defaultTrip.rebuiltText === null
+        ? []
+        : ['the default-skin contest REBUILT, so the premise that the compiler composes nothing for it is false']),
+    ];
+    const aloneHeld = aloneProbes.length === 0;
+    say(
+      'IG70_AN_UNCONTESTED_NAME_KEEPS_ITS_ONE_LINE_AND_A_DEFAULT_SKIN_CONTEST_GETS_NONE',
+      aloneHeld,
+      probeDetail(
+        aloneHeld,
+        aloneProbes,
+        `${uncontested.length} uncontested entr(ies) stating a name — [${uncontested.map(shown).join(', ')}] — keep ` +
+          `one line each, naming the region kept; the default skin joining "${shown(defaultAt)}" gets none, and ` +
+          'its rebuild is refused by the compiler',
+        (count) => `${count} thing(s) the comparison changed where it had no business:`,
+      ),
+      'the half the comparison must not touch. Where one skin fills a placeholder the rebuild writes no name at ' +
+        'all, which the existing line already says, and a second line composed there would state a name the ' +
+        "compiler never writes. The default skin's contest is the same: `refuseDefaultSkinContest` refuses it, so " +
+        'the composed name the comparison would quote does not exist',
+    );
+  }
+
   return bad;
 }
 
