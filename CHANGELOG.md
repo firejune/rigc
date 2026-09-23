@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.32.0](https://github.com/firejune/rigc/compare/v0.31.0...v0.32.0) (2026-09-23)
+
+
+### Features
+
+* **compile:** a sequence attachment draws a numbered image series resolved frame by frame by name, a `sequence` track steps it, `A46` poses every key against the file's own statement, and `ingest` carries both instead of blocking ([#729](https://github.com/firejune/rigc/issues/729)) ([#767](https://github.com/firejune/rigc/issues/767)) ([a1dc6fb](https://github.com/firejune/rigc/commit/a1dc6fbc17ad3bbef169efd9b919e51a41ccf43e))
+
+
+### Bug Fixes
+
+* **ingest:** a contested attachment whose source name is not the one rigc composes is reported under `ATTACHMENT_NAME` with both strings, read off `composeSkinAttachmentName` rather than a second copy of the separator ([#746](https://github.com/firejune/rigc/issues/746)) ([#763](https://github.com/firejune/rigc/issues/763)) ([40dfa29](https://github.com/firejune/rigc/commit/40dfa2954d4c31e7eb009b3421bedde8bbd51994))
+* **validate:** `A36`/`A37` read the `mix` values a timeline poses, through the one reading `A23` now shares, and `A23`'s setup sentence says a negative `strength` is pushed away while `damping`'s refusal names its `fps` dependence ([#752](https://github.com/firejune/rigc/issues/752), [#748](https://github.com/firejune/rigc/issues/748)) ([#766](https://github.com/firejune/rigc/issues/766)) ([641456c](https://github.com/firejune/rigc/commit/641456c84312ea6a5437c09b630aa63515a22a1a))
+
 ## [0.31.0](https://github.com/firejune/rigc/compare/v0.30.0...v0.31.0) (2026-09-23)
 
 
