@@ -5494,15 +5494,54 @@ export function validate(input: ValidateInput): ValidateReport {
         continue;
       }
       const info = header.info;
-      if (info.hasTransparency) continue;
       if (basePages.has(page.name)) continue; // the base plate: opaque is correct
+      // The header is the FAST NEGATIVE and only that (#215's rule, unchanged):
+      // a colour type 0, 2 or 3 file with no tRNS chunk has nowhere to keep a
+      // transparent texel, so it is refused without opening it.
+      if (!info.hasTransparency) {
+        fail(
+          'A19_OVERLAY_PNGS_HAVE_ALPHA',
+          `part image "${page.name}" cannot be transparent anywhere: it is colour type ${info.colourType} ` +
+            `(${colourTypeName(info.colourType)}) with no tRNS chunk, so it would paint a solid rectangle over ` +
+            'whatever is drawn behind it. Re-export it with transparency — as RGBA, or as an indexed or greyscale ' +
+            `PNG that keeps its tRNS chunk. ${exemption} This is renderer policy, and it belongs to --profile ` +
+            'spine-html: the default --profile spine does not run this check.',
+        );
+        continue;
+      }
+      // 🚨 **A header that says "could be transparent" is not an answer, and
+      // the texels decide it exactly as they do on a shared page** (issue
+      // #777). Until this the loose route stopped here, so a part saved as
+      // RGBA passed whether or not any texel used the channel: on the
+      // articulated fixture, stageless, an overlay rewritten as colour type 6
+      // with 0 of its 16,000 texels below full alpha PASSED loose and was
+      // refused by `--pack` of the same rig, over the same texels. The runtime
+      // draws those texels, not the file's declaration, so the loose verdict
+      // was the false green. The rectangle is the whole decoded image — on a
+      // loose page the file IS the part, so no atlas coordinate is read and
+      // #705's and #715's non-measurements cannot arise here — and the scan
+      // stops at the first clear texel, as the shared page's does.
+      const plate = readPlate(abs);
+      let transparent = false;
+      for (let y = 0; y < plate.height && !transparent; y++) {
+        for (let x = 0; x < plate.width; x++) {
+          if (plate.get(x, y)[3] < 255) {
+            transparent = true;
+            break;
+          }
+        }
+      }
+      if (transparent) continue;
+      const holds = info.hasAlpha
+        ? `colour type ${info.colourType} (${colourTypeName(info.colourType)}) carries an alpha channel`
+        : `colour type ${info.colourType} (${colourTypeName(info.colourType)}) carries a tRNS chunk`;
       fail(
         'A19_OVERLAY_PNGS_HAVE_ALPHA',
-        `part image "${page.name}" cannot be transparent anywhere: it is colour type ${info.colourType} ` +
-          `(${colourTypeName(info.colourType)}) with no tRNS chunk, so it would paint a solid rectangle over ` +
-          'whatever is drawn behind it. Re-export it with transparency — as RGBA, or as an indexed or greyscale ' +
-          `PNG that keeps its tRNS chunk. ${exemption} This is renderer policy, and it belongs to --profile ` +
-          'spine-html: the default --profile spine does not run this check.',
+        `part image "${page.name}" is opaque in every one of its ${plate.width}x${plate.height} texels, so it ` +
+          `would paint a solid rectangle over whatever is drawn behind it: its file can hold transparency — ${holds} ` +
+          '— and no texel uses it. Re-export the part with the transparency it is meant to have. ' +
+          `${exemption} This is renderer policy, and it belongs to --profile spine-html: the default --profile ` +
+          'spine does not run this check.',
       );
     }
   });
