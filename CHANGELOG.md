@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.31.0](https://github.com/firejune/rigc/compare/v0.30.0...v0.31.0) (2026-09-23)
+
+
+### Features
+
+* **compile:** a bone's `inherit` mode is keyable — the motion spec gains a stepped `inherit` track, `ingest` carries it, and `A10` names a key the runtime resolves to no mode ([#733](https://github.com/firejune/rigc/issues/733)) ([#760](https://github.com/firejune/rigc/issues/760)) ([63b75ef](https://github.com/firejune/rigc/commit/63b75efcf3cb6776eb52cce6f68d990f6c44f435))
+
+
+### Bug Fixes
+
+* **cli:** `explain` and `build` withhold the figures they would take off a page that is not its declared size, and a contour there is refused with `A06`'s sentence ([#750](https://github.com/firejune/rigc/issues/750)) ([#761](https://github.com/firejune/rigc/issues/761)) ([f5fbf43](https://github.com/firejune/rigc/commit/f5fbf433ca7f66e3b0a510ed2cacab62b5550793))
+* **ingest:** the physics timeline that names no constraint is spelled `"physics": "*"`, emitted under the empty name, read by `A34` as every constraint declaring that property global, and carried by `ingest` byte for byte ([#726](https://github.com/firejune/rigc/issues/726)) ([#758](https://github.com/firejune/rigc/issues/758)) ([9a6661e](https://github.com/firejune/rigc/commit/9a6661e887b7750748d9548f2b753a6359c0174b))
+
 ## [0.30.0](https://github.com/firejune/rigc/compare/v0.29.0...v0.30.0) (2026-09-23)
 
 
