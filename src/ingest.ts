@@ -487,8 +487,11 @@ const SLOT_TRACKS = Object.keys(EMITTED_SLOT_TRACKS);
 
 /**
  * The slot timelines the FORMAT has and the motion spec has no track for —
- * `rgb`, `alpha` and `rgb2` as this is written, and whatever is left the next
- * time the spec grows one.
+ * **none** since issue #730 spelled `rgb`, `alpha` and `rgb2`, which were the
+ * last three. It stays derived rather than deleted, because an empty
+ * difference of two tables is a measurement and a deleted one is a claim: the
+ * day the format grows a seventh slot timeline, this is where it appears, and
+ * the blocker's sentence names it without an edit.
  *
  * ⭐ Both sides are derived, and that is the whole reason it exists rather than
  * being spelled into the blocker's sentence. `docs/INGEST.md`'s row for this
@@ -1537,14 +1540,58 @@ function ingestAnimation(
             return entry;
           }),
         });
+      } else if (property === 'alpha') {
+        // Inverts `compileTrack`'s alpha branch, whose key is `{time, value}` —
+        // the one colour shape the format stores as a number, read by
+        // `readTimeline1` with a per-key default of **0**. That is a value
+        // track's shape exactly, so it goes through the same inversion and
+        // inherits its two findings: an omitted `value` is written out at 0 and
+        // reported as `TIMELINE_KEY_RESTATED`, and a field the shape has no
+        // place for is a `TIMELINE_FIELD` blocker (issue #730).
+        valueTrack({ slot }, property, keys, [['value', 0]], where);
+      } else if (property === 'rgb' || property === 'rgb2') {
+        // Inverts `compileTrack`'s other two separable shapes (issue #730):
+        // `rgb` is `{time, color: "rrggbb"}` and `rgb2` is `{time, light:
+        // "rrggbb", dark: "rrggbb"}`, and the spec's `v` is their channels in
+        // `readCurve`'s order. Each keeps its own name and its own key times:
+        // folding an `rgb` and an `alpha` into one `rgba` would state each
+        // channel at the other's key times, a value nobody keyed.
+        tracks.push({
+          slot,
+          property,
+          keys: keys.map((raw) => {
+            const key = obj(raw);
+            const v =
+              property === 'rgb'
+                ? hexToRgb(String(key.color))
+                : [...hexToRgb(String(key.light)), ...hexToRgb(String(key.dark))];
+            const entry: JsonObject = { t: timeOf(key), v };
+            easing(key, entry);
+            return entry;
+          }),
+        });
       } else {
+        // 🔒 Composed from both tables, so it says the true thing whichever of
+        // two states it is reached in. A name the FORMAT has and the spec does
+        // not is the first; since issue #730 carried the last three there is no
+        // such name (`UNSPELT_SLOT_TRACKS` is empty), and what still reaches
+        // here is a name the format does not have at all — which
+        // `SkeletonJson.readAnimation` throws on (`Invalid timeline type for a
+        // slot`), so the sentence says so instead of printing an empty
+        // "remaining" list about a file no runtime loads.
+        const inFormat = property in CHANNELS_BY_KIND.slot;
         note(
           'blocker',
           'SLOT_TIMELINE',
           where,
-          `timeline "${property}" is in the format and the motion spec has no track for it — a slot track is ` +
-            `${SLOT_TRACKS.join(' or ')} and nothing else, so the rebuild plays nothing here. The format's ` +
-            `remaining slot timelines are ${UNSPELT_SLOT_TRACKS.join(', ')}`,
+          (inFormat
+            ? `timeline "${property}" is in the format and the motion spec has no track for it`
+            : `timeline "${property}" is not a slot timeline the format has — the runtime's reader throws ` +
+              '"Invalid timeline type for a slot" on it, so no player loads this file') +
+            ` — a slot track is ${SLOT_TRACKS.join(' or ')} and nothing else, so the rebuild plays nothing here` +
+            (UNSPELT_SLOT_TRACKS.length > 0
+              ? `. The format's remaining slot timelines are ${UNSPELT_SLOT_TRACKS.join(', ')}`
+              : ''),
         );
       }
     }

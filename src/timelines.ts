@@ -472,3 +472,37 @@ export function physicsKeyRefusal(rule: PhysicsPoseRule, value: number, posedBy?
   const shown = posed === value ? '' : ` (${rule.field} ${posed})`;
   return `${value}${shown}; must be ${rule.statesKeyed} — ${rule.why}`;
 }
+
+/** One of the three colours a slot poses: the light colour's rgb, its alpha, and the dark colour. */
+export type SlotColorChannel = 'rgb' | 'alpha' | 'dark';
+
+/**
+ * Which of a slot's colour channels each of the format's five colour timelines
+ * poses — the `propertyIds` each class registers in `Animation.js`
+ * (`Property.rgb`, `Property.alpha`, `Property.rgb2`), under the names an author
+ * reads them by.
+ *
+ * ⭐ **It is the whole of what makes `rgb` + `alpha` a different thing from
+ * `rgba`**, and the reason it is a table rather than a fact every reader knows:
+ * `RGBTimeline.apply1` writes `color.r/g/b` and never touches `color.a`,
+ * `AlphaTimeline.apply` writes `color.a` alone, and `RGB2Timeline` writes the
+ * light rgb and the dark colour and leaves the light alpha where it was. A
+ * timeline that poses a channel poses it at EVERY time — before its first key
+ * it writes the setup value (`MixFrom.setup`) — so two timelines of one slot
+ * that share a channel are not two layers of one colour: the one applied later,
+ * which is the one the file states later, overwrites the other everywhere, and
+ * the earlier one's keys on that channel are read by nothing.
+ *
+ * It lives here, beside the catalogue, for `PHYSICS_POSE_RULES`' reason:
+ * `compile.ts` refuses two tracks that share a channel, `A45` names the same
+ * pair on a file rigc did not write, and the two have to be one criterion. The
+ * compiler links no runtime, so it cannot ask a timeline for its ids; a selftest
+ * control asks the linked runtime instead and holds this table to what it says.
+ */
+export const SLOT_COLOR_CHANNELS: Record<string, readonly SlotColorChannel[]> = {
+  rgba: ['rgb', 'alpha'],
+  rgb: ['rgb'],
+  alpha: ['alpha'],
+  rgba2: ['rgb', 'alpha', 'dark'],
+  rgb2: ['rgb', 'dark'],
+};

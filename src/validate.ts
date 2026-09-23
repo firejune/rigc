@@ -72,6 +72,7 @@ import {
   PHYSICS_POSE_RULES,
   physicsKeyRefusal,
   physicsRuleFor,
+  SLOT_COLOR_CHANNELS,
   walkTimelines,
 } from './timelines.ts';
 import type { RigInfo } from './types.ts';
@@ -195,6 +196,7 @@ const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
   A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER: 'validity',
   A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN: 'validity',
   A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN: 'validity',
+  A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN: 'validity',
 };
 
 /**
@@ -297,7 +299,9 @@ export const SKIP_NO_ATLAS_REGION = 'the atlas declares no region';
 export const SKIP_NO_ATTACHMENT_REGION_JOIN =
   'no attachment names a region and the atlas declares none, so there is no attachment-to-region join to hold';
 export const SKIP_NO_TWO_COLOR_TINT =
-  'no slot declares a "dark" colour and no animation keys an "rgba2" timeline, so there is no two-colour tint to read back';
+  'no slot declares a "dark" colour and no animation keys an "rgba2" or "rgb2" timeline, so there is no two-colour tint to read back';
+export const SKIP_NO_SEPARABLE_COLOR =
+  'no animation keys an "rgb" or "alpha" timeline, so there is no separable slot colour to read back';
 export const SKIP_NO_LINKED_MESH = 'no attachment in this skeleton takes its geometry from another one';
 /**
  * A09's, which predates this list and joins it rather than being rewritten: it
@@ -3988,7 +3992,8 @@ export function validate(input: ValidateInput): ValidateReport {
     //      `parseInt` over fixed offsets and stores whatever comes back, so
     //      `"4020"` loads `b = NaN` — a colour that is neither the author's nor
     //      an error.
-    //   3. An `rgba2` timeline on a slot with no `dark` at all. `Slot`'s
+    //   3. An `rgba2` (or, since issue #730, `rgb2`) timeline on a slot with no
+    //      `dark` at all. `Slot`'s
     //      constructor allocates `SlotPose.darkColor` only `if
     //      (data.setupPose.darkColor != null)`, and `RGBA2Timeline.apply1` then
     //      writes `dark.r` unconditionally — so the file parses, and the first
@@ -4029,20 +4034,31 @@ export function validate(input: ValidateInput): ValidateReport {
       for (const slot of Array.isArray(raw?.slots) ? (raw.slots as unknown[]) : []) {
         if (isObj(slot) && typeof slot.dark === 'string') declared.set(String(slot.name), slot.dark);
       }
-      const keyed: Array<{ anim: string; slot: string; keys: unknown[] }> = [];
+      // `rgb2` joined in issue #730, and it is this rule's subject rather than a
+      // new one's because it is the same tint with the light alpha left out:
+      // `RGB2Timeline` writes the light rgb and the dark colour, and on a slot
+      // with no dark colour it throws in `apply1` exactly as `RGBA2Timeline`
+      // does (measured on a forged file: `TypeError: null is not an object
+      // (evaluating 'dark.r = …')`). The one thing it does differently is the
+      // alpha it does NOT pose, which is `A45`'s question, not this one's.
+      const keyed: Array<{ anim: string; slot: string; timeline: 'rgba2' | 'rgb2'; keys: unknown[] }> = [];
       const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
       for (const [animName, anim] of Object.entries(rawAnimations)) {
         if (!isObj(anim) || !isObj(anim.slots)) continue;
         for (const [slotName, timelines] of Object.entries(anim.slots)) {
-          if (!isObj(timelines) || !Array.isArray(timelines.rgba2)) continue;
-          keyed.push({ anim: animName, slot: slotName, keys: timelines.rgba2 });
+          if (!isObj(timelines)) continue;
+          for (const timeline of ['rgba2', 'rgb2'] as const) {
+            const keys = timelines[timeline];
+            if (Array.isArray(keys)) keyed.push({ anim: animName, slot: slotName, timeline, keys });
+          }
         }
       }
       if (declared.size === 0 && keyed.length === 0) {
         return skip('A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', SKIP_NO_TWO_COLOR_TINT);
       }
       stats.darkSlots = declared.size;
-      stats.rgba2Timelines = keyed.length;
+      stats.rgba2Timelines = keyed.filter((t) => t.timeline === 'rgba2').length;
+      stats.rgb2Timelines = keyed.filter((t) => t.timeline === 'rgb2').length;
 
       // -- clause 1: the setup pose ----------------------------------------
       for (const [name, hex] of declared) {
@@ -4082,7 +4098,7 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
 
-      // -- clauses 2 and 3: every rgba2 timeline ----------------------------
+      // -- clauses 2 and 3: every rgba2 and rgb2 timeline --------------------
       //
       // ⚠️ Clause 2 poisons its whole ANIMATION, not only its own timeline: the
       // throw happens inside `state.apply`, which applies every timeline of the
@@ -4090,13 +4106,14 @@ export function validate(input: ValidateInput): ValidateReport {
       // same animation would take this assertion down with a `threw:` line
       // instead of the two named failures it has already worked out.
       const cannotPose = new Set(keyed.filter((t) => !declared.has(t.slot)).map((t) => t.anim));
-      for (const { anim: animName, slot: slotName, keys } of keyed) {
-        const where = `animation "${animName}" slot "${slotName}" rgba2`;
+      for (const { anim: animName, slot: slotName, timeline, keys } of keyed) {
+        const where = `animation "${animName}" slot "${slotName}" ${timeline}`;
         if (!declared.has(slotName)) {
           fail(
             'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
             `${where}: slot "${slotName}" declares no setup "dark", so the runtime allocates no dark colour for ` +
-              'it and applying this animation throws instead of tinting — give the slot a `dark`, or key "rgba"',
+              `it and applying this animation throws instead of tinting — give the slot a \`dark\`, or key ` +
+              `"${timeline === 'rgba2' ? 'rgba' : 'rgb'}"`,
           );
           continue;
         }
@@ -4143,16 +4160,21 @@ export function validate(input: ValidateInput): ValidateReport {
             fail(
               'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
               `${where} (t=${time}): the key states light ${JSON.stringify(rawKey.light)} and dark ` +
-                `${JSON.stringify(rawKey.dark)} — an rgba2 key needs both, each six or eight hex digits — and the ` +
+                `${JSON.stringify(rawKey.dark)} — an ${timeline} key needs both, each six or eight hex digits — and the ` +
                 `runtime poses light (${show(foundLight)}), dark (${show(foundDark)})`,
             );
             continue;
           }
-          if (foundLight.some((n, i) => off(n, wantLight[i]))) {
+          // An `rgb2` key's light colour is three channels, and the posed alpha
+          // is not its to state — `RGB2Timeline` leaves it where it was — so the
+          // comparison is over the channels the timeline writes. For `rgba2`
+          // that is all four, and the line reads as it always did.
+          const lightChannels = timeline === 'rgba2' ? 4 : 3;
+          if (foundLight.slice(0, lightChannels).some((n, i) => off(n, wantLight[i]))) {
             fail(
               'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
-              `${where} (t=${time}): light posed (${show(foundLight)}), the key states ${JSON.stringify(rawKey.light)} ` +
-                `= (${show(wantLight)})`,
+              `${where} (t=${time}): light posed (${show(foundLight.slice(0, lightChannels))}), the key states ` +
+                `${JSON.stringify(rawKey.light)} = (${show(wantLight.slice(0, lightChannels))})`,
             );
           }
           if (foundDark.some((n, i) => off(n, wantDark[i]))) {
@@ -4161,6 +4183,175 @@ export function validate(input: ValidateInput): ValidateReport {
               `${where} (t=${time}): dark posed (${show(foundDark)}), the key states ${JSON.stringify(rawKey.dark)} ` +
                 `= (${show(wantDark)})`,
             );
+          }
+        }
+      }
+    });
+
+    // --- A45: the separable colour timelines own their channels ------------
+    //
+    // ⭐ **Why this is its own rule and not a clause on `A43`.** `rgb` and
+    // `alpha` pose no dark colour, so under A43's name a failure would be a
+    // verdict saying "two-colour tint" about a file that states one colour —
+    // the name would say something other than what it decides (the rule #712
+    // applied to A43 itself, against a clause on A10). And the SKIP is the
+    // sharper half: a rig with a `dark` and no separable timeline has A43's
+    // subject present, so a clause there could only PASS on it, which is a pass
+    // for an absent subject.
+    //
+    // 🚨 **What it decides is what makes `rgb` + `alpha` not `rgba`**, and both
+    // clauses are about the file against the runtime:
+    //
+    //   1. **One channel, one timeline.** Each colour timeline poses its
+    //      channels at EVERY time — before its first key it writes the setup
+    //      value — so when two of one slot share a channel, the one applied
+    //      later (the one the file states later) overwrites the other
+    //      everywhere and the first one's keys on it are read by nothing
+    //      (`SLOT_COLOR_CHANNELS`). It is the shape a converter that writes a
+    //      separable `rgb` as `rgba` leaves beside the `alpha` it kept, and it
+    //      loads without a word.
+    //   2. **Posed as written.** Stepped to each key's own time, the channels
+    //      the timeline writes are the key's: a colour that is not six hex
+    //      digits loads as NaN, and a key whose time another key repeats is
+    //      read by nothing, and both parse in silence.
+    //
+    // ⚠️ An `rgb` timeline alone that a converter wrote as `rgba` with the
+    // setup alpha is NOT this rule's to see, and nothing that reads only the
+    // file can see it: the result is a correct `rgba`, which is also what an
+    // author keying the light colour and holding its alpha would write. What
+    // differs is what happens UNDER another track that moves the alpha, which
+    // is the consumer's composing rather than the object (CLAUDE.md). That
+    // file SKIPs here — it keys no `rgb` or `alpha` — and says so.
+    //
+    // ⚠️ The required values are parsed HERE, as A43's are, and the channel
+    // table is `timelines.ts`'s rather than the loaded timelines' property ids:
+    // a check that asked the parser what a timeline writes would agree with it
+    // whatever it did. A selftest control holds that table to the runtime's ids.
+    check('A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN', () => {
+      const NAME = 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN';
+      /** `rrggbb`, or `rrggbbaa` whose alpha an `rgb` key cannot pose. Null for anything else. */
+      const readRgbHex = (hex: unknown): [number, number, number] | null => {
+        if (typeof hex !== 'string') return null;
+        const body = hex.startsWith('#') ? hex.slice(1) : hex;
+        if (!/^[\da-fA-F]{6}([\da-fA-F]{2})?$/.test(body)) return null;
+        return [0, 2, 4].map((i) => Number.parseInt(body.slice(i, i + 2), 16) / 255) as [number, number, number];
+      };
+      /** Half a byte step for a hex channel; a stored `Float32` for an alpha `value`. */
+      const HEX_STEP = 1 / 510;
+      const FLOAT_STEP = 1e-6;
+      const off = (found: number, want: number, step: number): boolean => !Number.isFinite(found) || Math.abs(found - want) > step;
+      const show = (c: readonly number[]): string => c.map((n) => (Number.isFinite(n) ? n.toFixed(4) : 'NaN')).join(', ');
+
+      // -- the subjects, read off the FILE ---------------------------------
+      const subjects: Array<{ anim: string; slot: string; timelines: Record<string, unknown> }> = [];
+      const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
+      for (const [animName, anim] of Object.entries(rawAnimations)) {
+        if (!isObj(anim) || !isObj(anim.slots)) continue;
+        for (const [slotName, timelines] of Object.entries(anim.slots)) {
+          if (!isObj(timelines)) continue;
+          if (Array.isArray(timelines.rgb) || Array.isArray(timelines.alpha)) {
+            subjects.push({ anim: animName, slot: slotName, timelines });
+          }
+        }
+      }
+      if (subjects.length === 0) return skip(NAME, SKIP_NO_SEPARABLE_COLOR);
+      stats.separableColorTimelines = subjects.reduce(
+        (n, s) => n + (Array.isArray(s.timelines.rgb) ? 1 : 0) + (Array.isArray(s.timelines.alpha) ? 1 : 0),
+        0,
+      );
+
+      for (const { anim: animName, slot: slotName, timelines } of subjects) {
+        const at = `animation "${animName}" slot "${slotName}"`;
+        // In FILE order, which is the order `readAnimation` pushes them and so
+        // the order they apply in.
+        const colour = Object.keys(timelines).filter((name) => name in SLOT_COLOR_CHANNELS && Array.isArray(timelines[name]));
+
+        // -- clause 1: one channel, one timeline ---------------------------
+        let shared = false;
+        for (const channel of ['rgb', 'alpha', 'dark'] as const) {
+          const writers = colour.filter((name) => SLOT_COLOR_CHANNELS[name].includes(channel));
+          if (writers.length < 2 || !writers.some((name) => name === 'rgb' || name === 'alpha')) continue;
+          shared = true;
+          const last = writers[writers.length - 1];
+          fail(
+            NAME,
+            `${at}: ${writers.map((name) => `"${name}"`).join(' and ')} ${writers.length === 2 ? 'both' : 'all'} key the ${channel === 'rgb' ? 'light rgb' : channel === 'alpha' ? 'alpha' : 'dark colour'} ` +
+              `— each poses it at every time, its setup value before its first key included, so "${last}", which the ` +
+              `file states last, overwrites ${writers.length === 2 ? `"${writers[0]}"` : 'the others'} everywhere and ` +
+              'those keys are read by nothing. Key each channel once: "rgb" and "alpha" on their own key times, or one "rgba"',
+          );
+        }
+        if (shared) continue;
+
+        // -- clause 2: posed as written ------------------------------------
+        //
+        // ⚠️ Two things this does NOT do, both measured rather than skipped:
+        // it does not read the loaded timeline's CLASS back, and it does not
+        // hold a channel the timeline leaves alone to the setup pose. Against
+        // the linked parser neither can fail — every `rgb` / `alpha` array that
+        // loads at all loads as an `RGBTimeline` / `AlphaTimeline`, and the
+        // three other outcomes (an empty array, a slot the skeleton lacks, a
+        // name outside the switch) throw at `A00` — so either would be a clause
+        // nobody can see fire. The selftest reads both off spine-core directly
+        // (`S82`–`S84`), where they are measurements of the runtime rather than
+        // checks on a file.
+        if (!data.findAnimation(animName)) {
+          fail(NAME, `${at}: the loaded skeleton has no animation "${animName}"`);
+          continue;
+        }
+        for (const name of ['rgb', 'alpha'] as const) {
+          const keys = timelines[name];
+          if (!Array.isArray(keys)) continue;
+          const where = `${at} ${name}`;
+          for (const rawKey of keys) {
+            if (!isObj(rawKey)) continue;
+            const time = typeof rawKey.time === 'number' ? rawKey.time : 0;
+            const skeleton = new Skeleton(data);
+            const state = new AnimationState(new AnimationStateData(data));
+            state.setAnimation(0, animName, false);
+            skeleton.setupPose();
+            skeleton.update(0);
+            skeleton.updateWorldTransform(Physics.reset);
+            state.update(time);
+            state.apply(skeleton);
+            const posed = skeleton.slots.find((s) => s.data.name === slotName)?.appliedPose;
+            if (!posed) {
+              fail(NAME, `${where} (t=${time}): the posed skeleton has no slot "${slotName}" to read`);
+              continue;
+            }
+            const light = [posed.color.r, posed.color.g, posed.color.b, posed.color.a];
+            if (name === 'rgb') {
+              const stated = readRgbHex(rawKey.color);
+              if (stated === null) {
+                fail(
+                  NAME,
+                  `${where} (t=${time}): the key states color ${JSON.stringify(rawKey.color)} — an rgb key is six hex ` +
+                    `digits — and the runtime poses (${show(light.slice(0, 3))})`,
+                );
+              } else if (light.slice(0, 3).some((n, i) => off(n, stated[i], HEX_STEP))) {
+                fail(
+                  NAME,
+                  `${where} (t=${time}): rgb posed (${show(light.slice(0, 3))}), the key states ` +
+                    `${JSON.stringify(rawKey.color)} = (${show(stated)})`,
+                );
+              }
+            } else {
+              // `readTimeline1(…, 0, 1)`: an absent `value` IS 0, and an editor
+              // omits it there, so absence is read the parser's way rather than
+              // as a malformed key.
+              const stated = rawKey.value === undefined ? 0 : rawKey.value;
+              if (typeof stated !== 'number' || off(light[3], stated, FLOAT_STEP)) {
+                fail(
+                  NAME,
+                  `${where} (t=${time}): alpha posed ${show([light[3]])}, the key states value ${JSON.stringify(rawKey.value)}` +
+                    (typeof stated !== 'number'
+                      ? ' — an alpha key\'s value is a number'
+                      : stated < 0 || stated > 1
+                        ? ' — the runtime clamps a posed alpha to 0..1'
+                        : ''),
+                );
+              }
+            }
           }
         }
       }

@@ -362,7 +362,7 @@ export interface MotionTrack {
   path?: string;
   /** ...or one slider, by name. */
   slider?: string;
-  property: 'rgba' | 'attachment' | BoneProperty | PhysicsProperty | PathProperty | SliderProperty;
+  property: 'rgba' | 'rgb' | 'alpha' | 'rgba2' | 'rgb2' | 'attachment' | BoneProperty | PhysicsProperty | PathProperty | SliderProperty;
   /** Seconds added to every key time of this track. */
   lag?: number;
   /** Extra per-member delay inside a group, in member order. */
