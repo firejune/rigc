@@ -55099,6 +55099,87 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR105: every name and verdict GENERATIONS.md quotes is the tree's (#706) ---
+  //
+  // The page quotes four kinds of thing from the code, and each is read off the
+  // page and compared with the code rather than typed here: its export table
+  // against what `src/generation.ts` exports (one set, compared whole), its
+  // version table against what `spineGeneration` answers for each string, every
+  // `GENERATION_*` code against the codes `src/ingest.ts` raises, and every
+  // assertion name against the registry. Held both ways: one misspelling planted
+  // into a copy of the page per kind, and each raises exactly one fault.
+  {
+    const page = readFileSync(join(root, 'docs/GENERATIONS.md'), 'utf8');
+    const moduleSource = readFileSync(join(root, 'src/generation.ts'), 'utf8');
+    const ingestSource = readFileSync(join(root, 'src/ingest.ts'), 'utf8');
+    const exported = [...moduleSource.matchAll(/^export (?:type|const|function) (\w+)/gm)].map((m) => m[1]).sort();
+    const raisedCodes = new Set([...ingestSource.matchAll(/'(GENERATION_[A-Z_]+)'/g)].map((m) => m[1]));
+    const tableAfter = (text: string, header: string): string[] => {
+      const lines = text.split('\n');
+      const at = lines.indexOf(header);
+      if (at < 0) return [];
+      const rows: string[] = [];
+      for (let k = at + 2; k < lines.length && lines[k].startsWith('|'); k++) rows.push(lines[k]);
+      return rows;
+    };
+    const EXPORT_HEADER = '| export | what it is |';
+    const VERSION_HEADER = '| `skeleton.spine` | generation |';
+    const faultsOf = (text: string): string[] => {
+      const listed = tableAfter(text, EXPORT_HEADER).flatMap((row) => /^\| `(\w+)` \|/.exec(row)?.[1] ?? []).sort();
+      const vectors = tableAfter(text, VERSION_HEADER).flatMap((row) => {
+        const m = /^\| `([^`]+)` \| `([^`]+)` \|$/.exec(row);
+        return m === null ? [] : [[m[1], m[2]] as const];
+      });
+      const codes = [...new Set([...text.matchAll(/\bGENERATION_[A-Z_]+\b/g)].map((m) => m[0]))];
+      const assertions = [...new Set([...text.matchAll(/\bA\d\d_[A-Z0-9_]+\b/g)].map((m) => m[0]))];
+      return [
+        ...(listed.join(',') === exported.join(',') ? [] : [`the export table lists [${listed.join(', ')}] and src/generation.ts exports [${exported.join(', ')}]`]),
+        ...vectors.flatMap(([version, stated]) => {
+          const read = String(spineGeneration(version));
+          return read === stated ? [] : [`the page reads ${JSON.stringify(version)} as ${stated} and spineGeneration reads it as ${read}`];
+        }),
+        ...codes.filter((code) => !raisedCodes.has(code)).map((code) => `the page quotes ${code} and src/ingest.ts raises no such code`),
+        ...assertions.filter((name) => !ASSERTION_NAMES.includes(name)).map((name) => `the page quotes ${name} and the registry has no such assertion`),
+        ...floorProbes(
+          [
+            [listed.length, 1, `${listed.length} export row(s) read`],
+            [vectors.length, 9, `${vectors.length} version row(s) read`],
+            [codes.length, 2, `${codes.length} GENERATION_* code(s) quoted`],
+            [assertions.length, 1, `${assertions.length} assertion name(s) quoted`],
+          ],
+          'so the page was not read the way this control reads it',
+        ),
+      ];
+    };
+    const standing = faultsOf(page);
+    const firstOf = (pattern: RegExp): string => pattern.exec(page)?.[0] ?? '';
+    const PLANTS: ReadonlyArray<readonly [string, string, string]> = [
+      ['an export name misspelled in the export table', firstOf(/^\| `\w+` \| /m), firstOf(/^\| `\w+` \| /m).replace(/` \| $/, 'S` | ')],
+      ['a version read as another generation', firstOf(/^\| `[^`]+` \| `4\.3` \|$/m), firstOf(/^\| `[^`]+` \| `4\.3` \|$/m).replace('`4.3`', '`4.2`')],
+      ['a GENERATION_* code misspelled', firstOf(/\bGENERATION_[A-Z_]+\b/), `${firstOf(/\bGENERATION_[A-Z_]+\b/)}S`],
+      ['an assertion name misspelled', firstOf(/\bA\d\d_[A-Z0-9_]+\b/), `${firstOf(/\bA\d\d_[A-Z0-9_]+\b/)}S`],
+    ];
+    const plantProbes = PLANTS.flatMap(([what, from, to]) => {
+      if (from === '') return [`${what}: nothing on the page to plant into`];
+      const raised = faultsOf(page.replace(from, to)).length - standing.length;
+      return raised === 1 ? [] : [`${what} raised ${raised} fault(s), and one is required`];
+    });
+    const probes = [...standing, ...plantProbes];
+    say(
+      'CUR105_EVERY_NAME_AND_VERDICT_THE_GENERATIONS_PAGE_QUOTES_IS_THE_TREES',
+      probes.length === 0,
+      probeDetail(
+        probes.length === 0,
+        probes,
+        `docs/GENERATIONS.md quotes ${exported.length} export(s), ${tableAfter(page, VERSION_HEADER).length} version verdict(s), ` +
+          `${[...raisedCodes].length} ingest code(s) and its assertion names as the tree has them, and each of ${PLANTS.length} plants is named`,
+      ),
+      'the page is the policy an agent reads before it hands rigc a file from another generation; a name it quotes ' +
+        'that the code does not carry is a search that finds nothing, and a verdict it states that the reader does ' +
+        'not give is a generation handed to the wrong runtime',
+    );
+  }
+
   return bad;
 }
 

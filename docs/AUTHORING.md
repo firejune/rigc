@@ -727,6 +727,8 @@ is a `BLOCK GENERATION_UNKNOWN`, never rounded to the nearest: a catalog that ro
 handed 19 skeletons labelled `3.8.99` a 4.2 runtime and every one of them posed as NaN
 (row 7). Reading a file with *that generation's own* defaults is #706's item 2 and is
 not in this tool — re-export as 4.3, or transcribe by hand ([INGEST.md](INGEST.md) §2).
+[GENERATIONS.md](https://github.com/firejune/rigc/blob/main/docs/GENERATIONS.md) is
+the whole policy, and the editor migration it names.
 
 📝 **Do not delete the `note`.** Both written specs carry one saying the file is
 decompiled and naming the skeleton it came from. A decompiled spec is

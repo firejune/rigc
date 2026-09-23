@@ -674,6 +674,11 @@ before it was a hand-edit of emitted JSON with nothing checking it. That is now 
 `ingest` hands you in one command; the sections below are how to read and change what
 it hands you, and every rule in them applies to a spec `ingest` wrote.
 
+A file from another Spine generation is the one case where transcription is not the
+first fallback: migrate it through the editor of its own generation first, as
+[GENERATIONS.md](https://github.com/firejune/rigc/blob/main/docs/GENERATIONS.md) §4
+states.
+
 📌 **The cost this section used to warn about is measured, and it is why §5 changed.**
 The smallest skeleton of the corpus behind [#569](https://github.com/firejune/rigc/issues/569)
 transcribed to a **257,422-byte** rig spec, of which 91.8 % is the six geometry
