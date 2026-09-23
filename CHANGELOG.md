@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.36.0](https://github.com/firejune/rigc/compare/v0.35.1...v0.36.0) (2026-09-23)
+
+
+### Features
+
+* **compile:** an attachment states its own `name` in the rig spec, written verbatim and never composed, so a rebuild answers to the names its export does ([#802](https://github.com/firejune/rigc/issues/802)) ([6d0c86a](https://github.com/firejune/rigc/commit/6d0c86a67387277cf362e50de82b09c5b01513b7))
+
+
+### Bug Fixes
+
+* **compile:** a sequence whose frames differ in size builds at the size it states, because the runtime draws every frame into the attachment's one size ([#797](https://github.com/firejune/rigc/issues/797)) ([ef698f5](https://github.com/firejune/rigc/commit/ef698f5bb23c450986c6f59673668e99e7727a66))
+* **timelines:** physics `damping` is bounded on the closed `[0, 1]`, so a setup or keyed 1 (4.2's own default) and a 0 build, and only the values past either end are refused ([#800](https://github.com/firejune/rigc/issues/800)) ([11bc29f](https://github.com/firejune/rigc/commit/11bc29f08bd991df6e68770e3b8a39983250c2ba))
+
 ## [0.35.1](https://github.com/firejune/rigc/compare/v0.35.0...v0.35.1) (2026-09-23)
 
 
