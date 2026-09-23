@@ -591,12 +591,26 @@ export interface ContourSpecInput {
   mask: AlphaMask;
   /** Alpha at or above this counts as art. 1 means "any pixel that is not fully transparent". */
   threshold: number;
-  /** Douglas-Peucker tolerance, in part-local pixels. */
+  /** Douglas-Peucker tolerance, in the drawing's pixels. */
   tolerance: number;
-  /** How far the outline is pushed out past the traced silhouette, in pixels. */
+  /** How far the outline is pushed out past the traced silhouette, in the drawing's pixels. */
   margin: number;
   /** Refuse rather than emit more outline vertices than this. */
   maxVertices: number;
+  /**
+   * The `scale:` the page the mask was lifted off STATES, when that is not 1 —
+   * texels per pixel of the drawing. Absent, the mask is the drawing and
+   * `tolerance` and `margin` are applied as they are.
+   *
+   * 📐 Present, the mask is the page's texels, and the two distances are
+   * applied as `value × pageScale` texels (issue #779): they are the author's
+   * statement, written in the unit every other size in the spec is in, and
+   * applying them on a finer or coarser grid unconverted asked a different
+   * question of each page — one spec traced 15, 11 and 66 vertices on the
+   * declared-size, `scale: 0.5` and `scale: 2` restatements of one drawing.
+   * Never a measured ratio: the page's header is what says how big a texel is.
+   */
+  pageScale?: number;
 }
 
 /** What the contour builder measured while building — reported, not asserted in prose. */
@@ -1422,8 +1436,25 @@ function squaredDistanceToSet(inside: Uint8Array, w: number, h: number): Float64
  * model and what to reach for instead when a bone has to bend the art.
  */
 export function buildContourMesh(input: ContourSpecInput): MeshGeometry {
-  const { mask, threshold, tolerance, margin, maxVertices } = input;
+  const { mask, threshold, tolerance, margin, maxVertices, pageScale } = input;
   const [w, h] = [mask.width, mask.height];
+  // The grid the trace runs on, and what the spec's two distances are on it.
+  // Off a `scale:` page nothing is multiplied — the mask IS the drawing — so
+  // the operands below are the spec's own numbers, to the bit.
+  const onGrid = (value: number): number => (pageScale === undefined ? value : value * pageScale);
+  const texelTolerance = onGrid(tolerance);
+  const texelMargin = onGrid(margin);
+  /**
+   * The texel figures the trace actually ran at, for a refusal to say beside the spec's own. Handed the operands
+   * themselves rather than recomputing them, so the clause cannot state a conversion the trace did not make.
+   */
+  const applied = (texels: readonly number[]): string =>
+    pageScale === undefined
+      ? ''
+      : ` (the drawing's pixels — applied as ${texels.map((v) => String(r6(v))).join(' and ')} texel(s) of ` +
+        `this page, whose scale: ${pageScale} makes a texel ${(1 / pageScale).toFixed(2)}px of the drawing)`;
+  /** A count of mask cells: pixels of the drawing, or texels of a `scale:` page. */
+  const cells = pageScale === undefined ? 'px' : 'texels';
   if (!Number.isInteger(threshold) || threshold < 1 || threshold > 255) {
     throw new MeshError(`the alpha threshold must be a whole number in 1..255, got ${threshold}`);
   }
@@ -1460,8 +1491,8 @@ export function buildContourMesh(input: ContourSpecInput): MeshGeometry {
         'strays are feathering, or give each island its own slot',
     );
   }
-  const simplified = simplifyClosedPolygon(traced.outline, tolerance);
-  const pushed = offsetPolygon(simplified, margin);
+  const simplified = simplifyClosedPolygon(traced.outline, texelTolerance);
+  const pushed = offsetPolygon(simplified, texelMargin);
   // Clamped to the part window, because a uv outside 0..1 is a different failure
   // (A22) and because there is no art out there to reach for anyway.
   const clamped = pushed.map(
@@ -1470,40 +1501,46 @@ export function buildContourMesh(input: ContourSpecInput): MeshGeometry {
   const points = prunePolygon(clamped).map(([x, y]) => [r6(x), r6(y)] as [number, number]);
   if (points.length < 3) {
     throw new MeshError(
-      `the ${w}x${h} silhouette simplified to ${points.length} distinct vertices at tolerance ${tolerance}; ` +
-        'lower the tolerance',
+      `the ${w}x${h} silhouette simplified to ${points.length} distinct vertices at tolerance ${tolerance}` +
+        `${applied([texelTolerance])}; lower the tolerance`,
     );
   }
   if (points.length > maxVertices) {
     throw new MeshError(
-      `the silhouette simplified to ${points.length} vertices at tolerance ${tolerance}, past the ${maxVertices} ` +
-        'this mesh allows — raise the tolerance to spend fewer vertices, or raise maxVertices if the shape needs them',
+      `the silhouette simplified to ${points.length} vertices at tolerance ${tolerance}${applied([texelTolerance])}, ` +
+        `past the ${maxVertices} this mesh allows — raise the tolerance to spend fewer vertices, or raise ` +
+        'maxVertices if the shape needs them',
     );
   }
   const crossing = findSelfIntersection(points);
   if (crossing) {
     throw new MeshError(
-      `the outline crosses itself: edge ${crossing[0]} meets edge ${crossing[1]} after a margin of ${margin}px ` +
-        'was pushed out of a silhouette narrower than that — lower the margin, or the art has a neck too thin to mesh',
+      `the outline crosses itself: edge ${crossing[0]} meets edge ${crossing[1]} after a margin of ${margin}px` +
+        `${applied([texelMargin])} was pushed out of a silhouette narrower than that — lower the margin, or the art ` +
+        'has a neck too thin to mesh',
     );
   }
   const triangles = earClip(points);
 
-  const allowed = contourOvershootBound(margin, tolerance);
+  // The bound on the grid the fit is measured on: its last term is one cell of
+  // that grid, which is why it is derived from the texel figures rather than
+  // converted from the drawing's bound afterwards.
+  const allowed = contourOvershootBound(texelMargin, texelTolerance);
   const fit = measureContourFit(mask, threshold, traced.filled, points, triangles, allowed + 1);
   if (fit.coverage < CONTOUR_MIN_COVERAGE) {
     throw new MeshError(
-      `the mesh covers ${(fit.coverage * 100).toFixed(2)}% of the art (${fit.coveredArt} of ${fit.artPixels} px), ` +
+      `the mesh covers ${(fit.coverage * 100).toFixed(2)}% of the art (${fit.coveredArt} of ${fit.artPixels} ${cells}), ` +
         `under the ${(CONTOUR_MIN_COVERAGE * 100).toFixed(1)}% a contour mesh guarantees — raise the margin ` +
         `(now ${margin}px) above the tolerance (${tolerance}px), which is how far simplification is allowed to ` +
-        'cut inward, or lower the tolerance',
+        `cut inward, or lower the tolerance${applied([texelMargin, texelTolerance])}`,
     );
   }
   if (fit.overshoot > allowed) {
     throw new MeshError(
-      `the mesh reaches ${fit.overshoot.toFixed(2)}px past the silhouette, past the ${allowed.toFixed(2)}px that a ` +
-        `margin of ${margin} and a tolerance of ${tolerance} can produce — the outline is not the one this builder ` +
-        'promises, which is a defect in the builder rather than in the art',
+      `the mesh reaches ${(pageScale === undefined ? fit.overshoot : fit.overshoot / pageScale).toFixed(2)}px past ` +
+        `the silhouette, past the ${(pageScale === undefined ? allowed : allowed / pageScale).toFixed(2)}px that a ` +
+        `margin of ${margin} and a tolerance of ${tolerance}${applied([texelMargin, texelTolerance])} can produce — the ` +
+        'outline is not the one this builder promises, which is a defect in the builder rather than in the art',
     );
   }
 

@@ -28114,6 +28114,155 @@ function runContourMeshSuite(): number {
     if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
 
+  // --- CT11–CT13: a contour's margin and tolerance on a `scale:` page (#779)
+  //
+  // The two distances are the drawing's pixels, and on a `scale:` page the
+  // trace runs on texels, so they are applied as `value × scale` of them — the
+  // scale the header states. A finer page then traces the declared page's
+  // outline; a coarser one traces its own texels at the converted figures; and
+  // off a `scale:` page the refusals are the sentences they always were.
+  {
+    const packs = halvedMeshPacks();
+    if (typeof packs === 'string') {
+      console.log(`  SKIP  the traced-grid cases (CT11, CT12, CT13) did not run: ${packs}.`);
+    } else {
+      const outcome = (result: CompileResult | string): string =>
+        typeof result === 'string' ? `REFUSED: ${result.slice(0, 220)}` : `${result.meshes[0]?.vertices ?? '?'} vertices`;
+
+      // CT11 — the finer page: the declared page's outline, and the same count under the same maxVertices.
+      const declared = compileHalvedMesh(packs, packs.rigs.traced, packs.parts, packs.declared);
+      const fine = compileHalvedMesh(packs, packs.rigs.traced, packs.parts, packs.twice);
+      const declaredOutline = typeof declared === 'string' ? null : emittedOutline(declared, 'blob');
+      const fineOutline = typeof fine === 'string' ? null : emittedOutline(fine, 'blob');
+      // The coarser of the two grids is the declared page's, whose cell is one pixel of the drawing; the finer
+      // page's texel is `ratio` of one.
+      const fineStep = Math.max(1, packs.ratio);
+      const fineApart = declaredOutline === null || fineOutline === null ? null : outlineHausdorff(declaredOutline.points, fineOutline.points, fineStep);
+      const fineProbes = [
+        ...(typeof declared === 'string' ? [`the declared-size page does not build the contour: ${declared.slice(0, 200)}`] : []),
+        ...(typeof fine === 'string' ? [`the \`scale: ${1 / packs.ratio}\` page does not build the spec the declared page accepts: ${fine.slice(0, 220)}`] : []),
+        ...(typeof declared !== 'string' && typeof fine !== 'string' && declared.meshes[0]?.vertices !== fine.meshes[0]?.vertices
+          ? [`the \`scale: ${1 / packs.ratio}\` page traces ${outcome(fine)} where the declared page traces ${outcome(declared)}`]
+          : []),
+        ...(fineApart !== null && fineApart > fineStep
+          ? [`the two outlines are ${fineApart.toFixed(2)}px apart, past the ${fineStep}px of the coarser grid's step`]
+          : []),
+        ...(typeof declared !== 'string' && typeof fine !== 'string' && fineApart === null ? ['an emitted contour carries no outline to compare'] : []),
+      ];
+      const fineHeld = fineProbes.length === 0;
+      say(
+        'CT11_ON_A_FINER_SCALE_PAGE_A_CONTOUR_TRACES_THE_DECLARED_PAGES_OUTLINE',
+        fineHeld,
+        probeDetail(
+          fineHeld,
+          fineProbes,
+          `the declared-size page traces ${outcome(declared)} and the \`scale: ${1 / packs.ratio}\` page ${outcome(fine)}, ` +
+            `the emitted outlines ${fineApart?.toFixed(2) ?? '?'}px apart in the drawing's pixels (the coarser grid's step ` +
+            `is ${fineStep}px); reaching ${typeof declared === 'string' ? '?' : (declared.meshes[0]?.overshoot ?? NaN).toFixed(2)}px ` +
+            `past the art against ${typeof fine === 'string' ? '?' : (fine.meshes[0]?.overshoot ?? NaN).toFixed(2)}px`,
+        ),
+        'on the branch point the margin and tolerance were applied in the page\'s texels, so on a page twice as fine ' +
+          'the same spec asked for half the smoothing and was refused: "simplified to 66 vertices at tolerance 1.5, past ' +
+          'the 48 this mesh allows", for a drawing the declared page traces in 15',
+      );
+
+      // CT12 — the coarser page: its own texels, traced at the spec's distances times the scale.
+      const coarse = compileHalvedMesh(packs, packs.rigs.coarseTraced, packs.parts, packs.honest);
+      const texels = compileHalvedMesh(packs, packs.rigs.traced, packs.halfParts, null);
+      const coarseDeclared = compileHalvedMesh(packs, packs.rigs.coarseTraced, packs.parts, packs.declared);
+      const coarseOutline = typeof coarse === 'string' ? null : emittedOutline(coarse, 'blob');
+      const texelOutline = typeof texels === 'string' ? null : emittedOutline(texels, 'blob');
+      const coarseDeclaredOutline = typeof coarseDeclared === 'string' ? null : emittedOutline(coarseDeclared, 'blob');
+      const coarseStep = 1 / packs.ratio;
+      const coarseApart =
+        coarseOutline === null || coarseDeclaredOutline === null ? null : outlineHausdorff(coarseOutline.points, coarseDeclaredOutline.points, coarseStep);
+      const coarseProbes = [
+        ...[
+          [`the \`scale: ${packs.ratio}\` page`, coarse],
+          ['the half page\'s texels handed over loose', texels],
+          ['the declared-size page', coarseDeclared],
+        ].flatMap(([label, got]) => (typeof got === 'string' ? [`${String(label)} does not build its contour: ${got.slice(0, 200)}`] : [])),
+        ...(coarseOutline !== null && texelOutline !== null && JSON.stringify(coarseOutline.uvs) !== JSON.stringify(texelOutline.uvs)
+          ? [
+              `the \`scale: ${packs.ratio}\` page traces ${outcome(coarse)} with uvs unlike the ${outcome(texels)} its own ` +
+                'texels trace at the converted distances',
+            ]
+          : []),
+      ];
+      const coarseHeld = coarseProbes.length === 0;
+      say(
+        'CT12_ON_A_COARSER_SCALE_PAGE_A_CONTOUR_TRACES_ITS_OWN_TEXELS_AT_THE_SPECS_DISTANCES_TIMES_THE_SCALE',
+        coarseHeld,
+        probeDetail(
+          coarseHeld,
+          coarseProbes,
+          `the \`scale: ${packs.ratio}\` page traces ${outcome(coarse)}, the uvs its own texels trace loose at the spec's ` +
+            `distances times ${packs.ratio}; the declared-size page traces the same spec as ${outcome(coarseDeclared)}, the ` +
+            `outlines ${coarseApart?.toFixed(2) ?? '?'}px apart in the drawing's pixels, where a texel of the coarser page is ` +
+            `${coarseStep}px; reaching ${typeof coarse === 'string' ? '?' : (coarse.meshes[0]?.overshoot ?? NaN).toFixed(2)}px ` +
+            `past the art against ${typeof coarseDeclared === 'string' ? '?' : (coarseDeclared.meshes[0]?.overshoot ?? NaN).toFixed(2)}px`,
+        ),
+        'a coarser page holds less than the drawing, so its outline is the coarser silhouette and need not be the ' +
+          'declared page\'s — what the spec decides is how far that trace may stray and be pushed, and those are the ' +
+          'drawing\'s pixels whatever the grid, which is the one relation this page can be held to exactly',
+      );
+
+      // CT13 — off a `scale:` page, the two refusals the distances decide are the sentences they were.
+      const count = typeof declared === 'string' ? null : (declared.meshes[0]?.vertices ?? null);
+      const tight = count === null ? null : tracedRigWith(packs, 'tight-vertices.rig.json', { maxVertices: count - 1 });
+      // Under a pixel the outline keeps more vertices than the suite's budget, so the budget is the count the
+      // tighter tolerance simplifies to — read off its own refusal — and what remains is the crossing.
+      const underFirst = tracedRigWith(packs, 'under-a-pixel.rig.json', { tolerance: CONTOUR_TOLERANCE * packs.ratio });
+      const firstSaid = compileHalvedMesh(packs, underFirst, packs.parts, null);
+      const underCount = typeof firstSaid === 'string' ? /simplified to (\d+) vertices/.exec(firstSaid)?.[1] : undefined;
+      const underPixel =
+        underCount === undefined
+          ? underFirst
+          : tracedRigWith(packs, 'under-a-pixel.rig.json', { tolerance: CONTOUR_TOLERANCE * packs.ratio, maxVertices: Number(underCount) });
+      const plainProbes: string[] = [];
+      const said: string[] = [];
+      for (const [label, atlasIn] of [
+        ['the loose parts', null],
+        ['the declared-size page', packs.declared],
+      ] as const) {
+        const tooMany = tight === null ? 'no count to tighten' : compileHalvedMesh(packs, tight, packs.parts, atlasIn);
+        const wantMany =
+          `the silhouette simplified to ${String(count)} vertices at tolerance ${CONTOUR_TOLERANCE}, past the ${String((count ?? 0) - 1)} ` +
+          'this mesh allows — raise the tolerance to spend fewer vertices, or raise maxVertices if the shape needs them';
+        if (typeof tooMany !== 'string' || !tooMany.endsWith(`: ${wantMany}`)) {
+          plainProbes.push(`${label} refused the tight maxVertices with ${JSON.stringify(outcome(tooMany))}`);
+        }
+        const crossed = compileHalvedMesh(packs, underPixel, packs.parts, atlasIn);
+        const edges = typeof crossed === 'string' ? /edge (\d+) meets edge (\d+)/.exec(crossed) : null;
+        const wantCrossed =
+          edges === null
+            ? null
+            : `the outline crosses itself: edge ${edges[1]} meets edge ${edges[2]} after a margin of ${CONTOUR_MARGIN}px was pushed ` +
+              'out of a silhouette narrower than that — lower the margin, or the art has a neck too thin to mesh';
+        if (typeof crossed !== 'string' || wantCrossed === null || !crossed.endsWith(`: ${wantCrossed}`)) {
+          plainProbes.push(`${label} refused a tolerance of ${CONTOUR_TOLERANCE * packs.ratio}px with ${JSON.stringify(outcome(crossed))}`);
+        } else said.push(`${label}: edges ${edges?.[1] ?? '?'}/${edges?.[2] ?? '?'}`);
+        for (const got of [tooMany, crossed]) {
+          if (typeof got === 'string' && got.includes('texel')) plainProbes.push(`${label} names a texel grid: ${got.slice(0, 200)}`);
+        }
+      }
+      const plainHeld = plainProbes.length === 0;
+      say(
+        'CT13_OFF_A_SCALE_PAGE_A_CONTOURS_REFUSALS_ARE_THE_SENTENCES_THEY_WERE',
+        plainHeld,
+        probeDetail(
+          plainHeld,
+          plainProbes,
+          `both routes refuse a maxVertices of ${String((count ?? 0) - 1)} at ${String(count)} vertices and a tolerance of ` +
+            `${CONTOUR_TOLERANCE * packs.ratio}px by the crossing it leaves (${said.join('; ')}), in the branch point's words`,
+        ),
+        'the texel clause is for the one route where the trace runs on a grid that is not the drawing; off it nothing is ' +
+          'multiplied, and the second refusal is the one a coarser page raises at the tolerance it converts to',
+      );
+    }
+    if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
+  }
+
   return bad;
 }
 
@@ -39109,7 +39258,10 @@ function runAtlasReaderSuite(): number | null {
 
       // PKR55 — the contour is refused, with the gate's sentence, and the repair builds it.
       const traced = compiled(packs.rigs.traced, packs.half);
-      const repaired = compiled(packs.rigs.traced, packs.honest);
+      // The repair is held on the spec a `scale: 0.5` page's texels can trace: since issue #779 the suite's
+      // own spec is applied there in the drawing's pixels, which is under one texel, and CT12 and PKR60 hold
+      // what that page does with it.
+      const repaired = compiled(packs.rigs.coarseTraced, packs.honest);
       const liftProbes = [
         ...(typeof full === 'string' ? [`the declared-size pack does not compile: ${full}`] : []),
         ...(gateSaid === null ? [`${A06} raised no failure on the half-resolution page, so there is no sentence to compare`] : []),
@@ -39311,6 +39463,100 @@ function runAtlasReaderSuite(): number | null {
         'the soft mask and the depth sheet share one reader and one size rule, so a repair made to one and not the ' +
           'other would leave the same spec half-resolving — and a mask read at the texel position carries the wrong ' +
           'vertices with every gate green',
+      );
+    }
+    if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
+  }
+
+  // --- PKR60–PKR61: a contour's distances and budget on a `scale:` page (#779) ---
+  //
+  // CT11–CT13 hold the trace. These hold what the page says when the trace is
+  // refused, and which outline `maxVertices` is judged on: the refusal states
+  // the spec's figure in the drawing's pixels with the texels it was applied as
+  // and the scale that converted it, and a budget the declared page's outline
+  // fits exactly is the budget a finer page's outline fits too.
+  {
+    const packs = halvedMeshPacks();
+    if (typeof packs === 'string') {
+      console.log(`  SKIP  the contour-budget cases (PKR60, PKR61) did not run: ${packs}.`);
+    } else {
+      const traceOf = (result: CompileResult | string): string =>
+        typeof result === 'string' ? `REFUSED: ${result.slice(0, 240)}` : `${String(result.meshes[0]?.vertices)} vertices`;
+      const declared = compileHalvedMesh(packs, packs.rigs.traced, packs.parts, packs.declared);
+      const count = typeof declared === 'string' ? null : (declared.meshes[0]?.vertices ?? null);
+      const fineScale = 1 / packs.ratio;
+      const clause = (value: number, scale: number): string =>
+        `(the drawing's pixels — applied as ${value * scale} texel(s) of this page, whose scale: ${scale} makes a texel ` +
+        `${(1 / scale).toFixed(2)}px of the drawing)`;
+      const exact = count === null ? null : tracedRigWith(packs, 'exact-budget.rig.json', { maxVertices: count });
+      const short = count === null ? null : tracedRigWith(packs, 'short-budget.rig.json', { maxVertices: count - 1 });
+
+      // PKR60 — the two refusals on the two `scale:` pages, in the drawing's pixels and naming the scale.
+      const crossed = compileHalvedMesh(packs, packs.rigs.traced, packs.parts, packs.honest);
+      const tooMany = short === null ? 'no count to tighten' : compileHalvedMesh(packs, short, packs.parts, packs.twice);
+      const wantCrossed = `after a margin of ${CONTOUR_MARGIN}px ${clause(CONTOUR_MARGIN, packs.ratio)} was pushed out of a silhouette`;
+      const wantMany =
+        `the silhouette simplified to ${String(count)} vertices at tolerance ${CONTOUR_TOLERANCE} ` +
+        `${clause(CONTOUR_TOLERANCE, fineScale)}, past the ${String((count ?? 0) - 1)} this mesh allows`;
+      const sayProbes = [
+        ...(count === null ? [`the declared-size page does not build the contour: ${traceOf(declared)}`] : []),
+        ...(typeof crossed === 'string' && crossed.includes(wantCrossed)
+          ? []
+          : [`the \`scale: ${packs.ratio}\` page does not refuse the spec by the margin it states: ${JSON.stringify(traceOf(crossed))}`]),
+        ...(typeof tooMany === 'string' && tooMany.includes(wantMany)
+          ? []
+          : [`the \`scale: ${fineScale}\` page does not refuse the tight budget by the tolerance it states: ${JSON.stringify(traceOf(tooMany))}`]),
+      ];
+      const sayHeld = sayProbes.length === 0;
+      say(
+        'PKR60_A_CONTOURS_REFUSAL_ON_A_SCALE_PAGE_STATES_ITS_DISTANCE_IN_THE_DRAWINGS_PIXELS_AND_THE_TEXELS_IT_WAS_APPLIED_AS',
+        sayHeld,
+        probeDetail(
+          sayHeld,
+          sayProbes,
+          `\`scale: ${packs.ratio}\` refuses the spec "… ` +
+            `${typeof crossed === 'string' ? (/edge \d+ meets edge \d+/.exec(crossed)?.[0] ?? '?') : '?'} ${wantCrossed} …"; ` +
+            `\`scale: ${fineScale}\` refuses a budget of ` +
+            `${String((count ?? 0) - 1)} with "${wantMany}"`,
+        ),
+        'the figure in a contour refusal is the spec\'s own, which is the drawing\'s pixels; on a page whose texel is ' +
+          'another size, the number the trace actually ran at is the one an author needs beside it to see why a ' +
+          'spec the loose parts accept is refused here',
+      );
+
+      // PKR61 — maxVertices is judged on the outline the spec asks for, on the declared page and the finer one.
+      const budgets = [
+        ['the declared-size page', packs.declared],
+        [`\`scale: ${fineScale}\``, packs.twice],
+      ] as const;
+      const budgetProbes = [
+        ...(count === null ? [`the declared-size page does not build the contour: ${traceOf(declared)}`] : []),
+        ...budgets.flatMap(([label, atlas]) => {
+          const fits = exact === null ? 'no count' : compileHalvedMesh(packs, exact, packs.parts, atlas);
+          const over = short === null ? 'no count' : compileHalvedMesh(packs, short, packs.parts, atlas);
+          return [
+            ...(typeof fits !== 'string' && fits.meshes[0]?.vertices === count
+              ? []
+              : [`${label} with maxVertices ${String(count)}: ${traceOf(fits)}`]),
+            ...(typeof over === 'string' && over.includes(`simplified to ${String(count)} vertices`) && over.includes(`past the ${String((count ?? 0) - 1)} `)
+              ? []
+              : [`${label} with maxVertices ${String((count ?? 0) - 1)}: ${traceOf(over)}`]),
+          ];
+        }),
+      ];
+      const budgetHeld = budgetProbes.length === 0;
+      say(
+        'PKR61_MAXVERTICES_IS_JUDGED_ON_THE_OUTLINE_THE_SPEC_ASKS_FOR_ON_EVERY_PAGE',
+        budgetHeld,
+        probeDetail(
+          budgetHeld,
+          budgetProbes,
+          `a budget of ${String(count)} builds ${String(count)} vertices on both pages and a budget of ` +
+            `${String((count ?? 0) - 1)} is refused at ${String(count)} on both`,
+        ),
+        'a budget is the author\'s statement about the outline they asked for; judged on the one a finer page ' +
+          'happened to trace, the same spec over the same drawing was refused on a `scale: 2` restatement for 66 ' +
+          'vertices the declared page never needed',
       );
     }
     if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
@@ -40369,8 +40615,20 @@ interface HalvedMeshPacks {
    * Every part (`all`), the two whose figures are withheld (`measured`), the fan alone, and the contour alone —
    * and three readers of a sheet made at the art's size beside the grid (issue #762): a soft mask (`softened`), a
    * depth sheet cut to the art (`tightSheet`), and a depth sheet at the half page's texel size (`texelSheet`).
+   * `coarseTraced` is the contour alone at the tolerance and margin the `scale:` page's texels were traced at
+   * before issue #779 — the suite's own two figures over the ratio — so on that page it is applied as exactly the
+   * texel figures `traced` is applied as on the half page's texels handed over loose (`halfParts`).
    */
-  rigs: { all: string; measured: string; fan: string; traced: string; softened: string; tightSheet: string; texelSheet: string };
+  rigs: {
+    all: string;
+    measured: string;
+    fan: string;
+    traced: string;
+    coarseTraced: string;
+    softened: string;
+    tightSheet: string;
+    texelSheet: string;
+  };
   /** The three `.atlas` files — the declared-size pack, the half-resolution one, and its `scale:` restatement. */
   declared: string;
   half: string;
@@ -40414,10 +40672,15 @@ function halvedMeshPacks(): HalvedMeshPacks | string {
     },
     blob: CONTOUR_ATTACHMENT,
   };
+  const coarseContour = {
+    ...CONTOUR_ATTACHMENT,
+    generator: { ...CONTOUR_ATTACHMENT.generator, tolerance: CONTOUR_TOLERANCE / ratio, margin: CONTOUR_MARGIN / ratio },
+  };
   const writeRig = (
     file: string,
     slots: readonly string[],
-    lattice?: Record<string, unknown>,
+    /** The attachment the rig's one mesh slot carries instead of its default — a lattice's or the contour's. */
+    replaced?: Record<string, unknown>,
     extraBones: ReadonlyArray<Record<string, unknown>> = [],
   ): string => {
     const path = join(dir, file);
@@ -40437,7 +40700,10 @@ function halvedMeshPacks(): HalvedMeshPacks | string {
           slots: slots.map((slot) => ({ name: slot, bone: slot, attachment: slot })),
           skins: {
             default: Object.fromEntries(
-              slots.map((slot) => [slot, { [slot]: slot === 'lattice' && lattice !== undefined ? lattice : attachments[slot] }]),
+              slots.map((slot) => [
+                slot,
+                { [slot]: (slot === 'lattice' || slot === 'blob') && replaced !== undefined ? replaced : attachments[slot] },
+              ]),
             ),
           },
         },
@@ -40452,6 +40718,7 @@ function halvedMeshPacks(): HalvedMeshPacks | string {
     measured: writeRig('measured.rig.json', ['fan', 'lattice']),
     fan: writeRig('fan.rig.json', ['fan']),
     traced: writeRig('traced.rig.json', ['blob']),
+    coarseTraced: writeRig('coarse-traced.rig.json', ['blob'], coarseContour),
     softened: writeRig('softened.rig.json', ['lattice'], latticeWith({ soft: { bone: 'wobble', mask: 'lattice_soft.png' } }), [
       { name: 'wobble', parent: 'lattice', x: 0, y: 0 },
     ]),
@@ -40540,6 +40807,86 @@ function explainHalvedMesh(packs: HalvedMeshPacks, rig: string, atlasIn: string 
     ...(atlasIn === null ? [] : ['--atlas-in', atlasIn]),
     '--out', join(packs.dir, 'explain'),
   ]);
+}
+
+/**
+ * The fixture's contour-only rig with its generator's fields replaced, written beside the others — so a case can
+ * state a `maxVertices` read off a build rather than typed.
+ */
+function tracedRigWith(packs: HalvedMeshPacks, file: string, generator: Record<string, unknown>): string {
+  interface TracedRig {
+    skins: { default: { blob: { blob: { generator: Record<string, unknown> } } } };
+  }
+  const rig = JSON.parse(readFileSync(packs.rigs.traced, 'utf8')) as TracedRig;
+  rig.skins.default.blob.blob.generator = { ...rig.skins.default.blob.blob.generator, ...generator };
+  const path = join(packs.dir, file);
+  writeFileSync(path, `${JSON.stringify(rig, null, 2)}\n`);
+  return path;
+}
+
+/** Compile one of those rigs against the fixture's parts, loose or through a pack; a refusal comes back as its message. */
+function compileHalvedMesh(packs: HalvedMeshPacks, rig: string, images: string, atlasIn: string | null): CompileResult | string {
+  try {
+    return compile({
+      rigPath: rig,
+      motionPath: packs.motionPath,
+      outDir: join(packs.dir, 'traced-grid'),
+      imagesDir: images,
+      ...(atlasIn === null ? {} : { atlasInPath: atlasIn }),
+    });
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+/**
+ * A compiled contour's outline in the drawing's pixels, read off the emitted skeleton: each hull vertex's uv times
+ * the attachment's `width`/`height`, which are the drawing's size on every route. The artifact, not the report.
+ */
+function emittedOutline(result: CompileResult, slot: string): { uvs: number[]; points: Array<[number, number]> } | null {
+  interface EmittedMesh {
+    uvs?: number[];
+    hull?: number;
+    width?: number;
+    height?: number;
+  }
+  const skel = JSON.parse(result.skeletonText) as { skins?: Array<{ attachments?: Record<string, Record<string, EmittedMesh>> }> };
+  const mesh = skel.skins?.[0]?.attachments?.[slot]?.[slot];
+  if (mesh?.uvs === undefined || mesh.hull === undefined || mesh.width === undefined || mesh.height === undefined) return null;
+  const points: Array<[number, number]> = [];
+  for (let v = 0; v < mesh.hull; v++) points.push([mesh.uvs[2 * v] * mesh.width, mesh.uvs[2 * v + 1] * mesh.height]);
+  return { uvs: mesh.uvs, points };
+}
+
+/**
+ * The Hausdorff distance between two closed outlines: the furthest any point of either lies from the other.
+ *
+ * Each edge is walked in steps no longer than `step` and every sample measured to the other outline's nearest
+ * edge; a polygon's farthest point from a set of segments lies on a vertex or along an edge, so a walk fine against
+ * the answer's own resolution reads it. `step` is the caller's grid step over a hundred.
+ */
+function outlineHausdorff(a: ReadonlyArray<readonly [number, number]>, b: ReadonlyArray<readonly [number, number]>, step: number): number {
+  const toSegment = (p: readonly [number, number], s: readonly [number, number], e: readonly [number, number]): number => {
+    const [dx, dy] = [e[0] - s[0], e[1] - s[1]];
+    const len = dx * dx + dy * dy;
+    const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - s[0]) * dx + (p[1] - s[1]) * dy) / len));
+    return Math.hypot(p[0] - (s[0] + t * dx), p[1] - (s[1] + t * dy));
+  };
+  const directed = (from: ReadonlyArray<readonly [number, number]>, to: ReadonlyArray<readonly [number, number]>): number => {
+    let worst = 0;
+    for (let i = 0; i < from.length; i++) {
+      const [s, e] = [from[i], from[(i + 1) % from.length]];
+      const samples = Math.max(1, Math.ceil(Math.hypot(e[0] - s[0], e[1] - s[1]) / (step / 100)));
+      for (let k = 0; k < samples; k++) {
+        const p: [number, number] = [s[0] + ((e[0] - s[0]) * k) / samples, s[1] + ((e[1] - s[1]) * k) / samples];
+        let best = Infinity;
+        for (let j = 0; j < to.length; j++) best = Math.min(best, toSegment(p, to[j], to[(j + 1) % to.length]));
+        worst = Math.max(worst, best);
+      }
+    }
+    return worst;
+  };
+  return Math.max(directed(a, b), directed(b, a));
 }
 
 /** The report's `meshes` block, from its heading to the next blank line — where every figure off a texel lands. */
@@ -42402,7 +42749,9 @@ function runCliSuite(): number {
       );
 
       // CLI95 — the contour's figure is converted too, and the trace it measures is the page's own.
-      const tracedCoarse = explainOn(packs.rigs.traced, packs.parts, packs.honest);
+      // Since issue #779 the scaled page applies its spec's distances times its scale, so the spec that
+      // traces there what `traced` traces on the loose texel parts is `traced`'s over the ratio.
+      const tracedCoarse = explainOn(packs.rigs.coarseTraced, packs.parts, packs.honest);
       const onTracedCoarse = lineOf(tracedCoarse.stdout, 'blob', 'contour');
       const onTracedTexels = lineOf(explainOn(packs.rigs.traced, packs.halfParts, null).stdout, 'blob', 'contour');
       const onTracedDeclared = lineOf(explainOn(packs.rigs.traced, packs.parts, packs.declared).stdout, 'blob', 'contour');
@@ -42429,9 +42778,10 @@ function runCliSuite(): number {
           `the contour on \`scale: ${packs.ratio}\` reads ${String(reachOf(onTracedCoarse))}px, its own texels ${String(blobTexels)} ` +
             `undivided, and the loose texel route and the declared-size page name no grid`,
         ),
-        'a contour is traced on the texels the page has, so on a `scale:` page its geometry is the coarser grid\'s ' +
-          'and need not equal the declared-size page\'s — which is why the relation is held to the page\'s own texels ' +
-          'rather than to the finer page, and why the line has to say which grid it counted',
+        'a contour is traced on the texels the page has, so on a coarser `scale:` page its geometry is the coarser ' +
+          'grid\'s and need not equal the declared-size page\'s — which is why the relation is held to the page\'s ' +
+          'own texels, traced at the spec\'s distances times the scale (issue #779), and why the line has to say ' +
+          'which grid it counted',
       );
 
       // CLI96 — `build`'s MESH line is the same fit in the same unit.
@@ -51059,6 +51409,89 @@ function runCurrencySuite(): number {
           'print teaches a sentence nobody will meet',
       );
     }
+  }
+
+  // --- CUR91–CUR92: the contour refusal the guide quotes for a `scale:` page is the one the compiler raises (#779)
+  //
+  // §0.2 quotes the whole refusal a `scale: 0.5` page raises for the suite's
+  // contour spec, and §3.4's refusal table quotes the clause of it that says
+  // which unit the figure is in. Each quote — digits and quoted names blanked,
+  // cut at every `…` — is compared against what this build raises on the same
+  // fixture, and a plant exchanges the word the unit clause turns on.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const guide = readFileSync(join(root, guidePath), 'utf8');
+    const packs = halvedMeshPacks();
+    const refused = typeof packs === 'string' ? null : compileHalvedMesh(packs, packs.rigs.traced, packs.parts, packs.honest);
+    const raised = typeof refused === 'string' ? `rigc compile error: ${refused}` : null;
+    const shape = (text: string): string =>
+      text
+        .replace(/^[ \t]*#+ ?/gm, ' ')
+        .replace(/"[^"]*"/g, '""')
+        .replace(/\d+(\.\d+)?/g, '#')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const pieces = (quote: string | null): string[] =>
+      quote === null
+        ? []
+        : quote
+            .split('…')
+            .map((piece) => shape(piece))
+            .filter((piece) => piece.length > 0);
+    const cases: Array<[string, string, (text: string) => string | null, number, string]> = [
+      [
+        'CUR91_THE_SCALE_PAGE_CONTOUR_REFUSAL_THE_GUIDE_QUOTES_IN_SECTION_0_2_IS_THE_ONE_THE_COMPILER_RAISES',
+        '§0.2',
+        (text) => /```bash\n(# rigc compile error:[^\n]*the outline crosses itself[^\n]*\n(?:#.*\n)*?)```/.exec(text)?.[1] ?? null,
+        1,
+        'the section is where an author learns that a contour\'s distances are the drawing\'s pixels on a `scale:` ' +
+          'page, and the quote is the sentence they will meet there — a quote naming the texels as the unit is the ' +
+          'reading #779 removed, restated in prose',
+      ],
+      [
+        'CUR92_THE_SCALE_PAGE_ROW_OF_THE_CONTOUR_REFUSAL_TABLE_IS_A_CLAUSE_OF_THE_COMPILERS_REFUSAL',
+        '§3.4 (contour refusal table)',
+        (text) => /^\| any of the three above, on a packed page that declares a `scale:` \| `([^`]*)`/m.exec(text)?.[1] ?? null,
+        1,
+        'the table is the guide\'s index of contour refusals, and this row is where an author finds which unit the ' +
+          'figure on a `scale:` page is in',
+      ],
+    ];
+    for (const [name, where, quoteOf, floor, why] of cases) {
+      const quote = quoteOf(guide);
+      const taught = pieces(quote);
+      const shaped = raised === null ? '' : shape(raised);
+      const missing = taught.filter((piece) => !shaped.includes(piece));
+      const planted = pieces(quote === null ? null : quote.replace('applied as', 'measured as'));
+      const plantedMissing = planted.filter((piece) => !shaped.includes(piece));
+      const probes = [
+        ...(typeof packs === 'string' ? [`the fixture was not built: ${packs}`] : []),
+        ...(raised === null ? ['the `scale:` page built the contour, so there is no refusal to compare against'] : []),
+        ...(quote === null ? [`${guidePath} ${where} carries no quote of the refusal`] : []),
+        ...firstFew(
+          missing.map((piece) => `${guidePath} ${where} quotes a clause rigc does not raise: ${JSON.stringify(piece.slice(0, 110))}`),
+          'clause(s)',
+        ),
+        ...(plantedMissing.length > missing.length
+          ? []
+          : ['the quote with "applied as" exchanged is faulted no more often than the real one, so this reader is not reading the words']),
+        ...floorProbes([[taught.length, floor, `${taught.length} piece(s) of the quote were read`]], 'a reader that found none compared nothing'),
+      ];
+      const held = probes.length === 0;
+      say(
+        name,
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${taught.length} piece(s) of ${where}'s quote, digits and quoted names blanked, are clauses of the refusal the ` +
+            '`scale:` page raises; the quote with "applied as" exchanged is faulted',
+          (count) => `${count} clause(s) the page teaches that rigc does not raise:`,
+        ),
+        why,
+      );
+    }
+    if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
 
   return bad;

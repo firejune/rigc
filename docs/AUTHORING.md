@@ -328,9 +328,12 @@ when drawing through the pack's own texels is the point.
 ([#762](https://github.com/firejune/rigc/issues/762)). A depth sheet or a soft
 mask is read in the drawing's pixels on a `scale:` page as on loose parts — each
 vertex's texel position over the stated scale — and a mesh fit's overshoot is
-printed in them, with the texel it was measured on named beside it. What stays
-in texels is what is taken off them: a `contour`'s trace, whose `margin` and
-`tolerance` are applied on the texels there are (below).
+printed in them, with the texel it was measured on named beside it. So are a
+`contour`'s `margin` and `tolerance`
+([#779](https://github.com/firejune/rigc/issues/779)): the trace runs on the
+texels there are, and the two distances are applied on them as `value × scale`
+texels — the scale the header states, never a measured one (below). What stays
+in texels is only what is counted off them: a contour's hole count.
 
 🚨 **A page that declares a size it does not have is a different thing, and it is
 refused** ([#715](https://github.com/firejune/rigc/issues/715)). The common shape
@@ -396,10 +399,8 @@ compile error carrying `A06`'s whole sentence — ratio and repair — on `expla
 and on `build` alike, where on `build` it arrives before the gate would have said
 it. Carry out the repair and every figure comes back. ⚠️ They come back measured
 on the **coarser** texels the page really has, so a figure that depends on the
-grid need not equal the one the pack the page was halved from reads: on the same
-fixture the `scale: 0.5` restatement traces the contour as 11 vertices where the
-full-resolution page traced 15, because a trace runs on the texels there are and
-its `margin` and `tolerance` are applied on them.
+grid need not equal the one the pack the page was halved from reads — and a
+contour's outline is one of them, below.
 
 📐 **A fit's overshoot is stated in the drawing's pixels on every page**
 ([#762](https://github.com/firejune/rigc/issues/762)). It is a distance, and on a
@@ -417,12 +418,44 @@ the drawing, so that is the step the figure moves in:
 ```
 
 All three pages read the fan at 16.00px, because its rim lands on whole texels of
-each. A figure that does not is exact only to that step — the contour above reads
-6.00px on the `scale: 0.5` page (3.00 texels) against the full page's 3.16px, a
-different outline measured on a coarser grid, and the line's clause is what says
-so. On a loose part and a page at scale 1 the texels are the drawing, and the line
-is the one it always was. A `contour`'s hole count is a count of those cells and
-says `texel(s)` on such a page.
+each. A figure that does not is exact only to that step — a contour at
+`tolerance: 3`, `margin: 4` reads 6.00px on the `scale: 0.5` page (3.00 texels)
+against the full page's 5.39px, a different outline measured on a coarser grid,
+and the line's clause is what says so. On a loose part and a page at scale 1 the
+texels are the drawing, and the line is the one it always was. A `contour`'s hole
+count is a count of those cells and says `texel(s)` on such a page.
+
+📐 **A `contour`'s `margin` and `tolerance` are the drawing's pixels on every
+page** ([#779](https://github.com/firejune/rigc/issues/779)). They are your
+statement, in the unit every other size in the spec is in, so on a `scale:` page
+the trace applies them as `margin × scale` and `tolerance × scale` texels, and
+`maxVertices` is judged on the outline that asks for. They used to be applied in
+texels unconverted, which asked each page a different question. Measured on
+`halvedMeshPacks`, one spec — `tolerance: 1.5`, `margin: 2`, `maxVertices: 48`:
+
+| page | applied in texels (before) | applied as the drawing's pixels (now) |
+| --- | --- | --- |
+| declared size | 15 vertices | **15** vertices, the same mesh |
+| `scale: 2` | refused: `simplified to 66 vertices at tolerance 1.5, past the 48` | **15** vertices, the declared outline to 0.00px |
+| `scale: 0.5` | 11 vertices, 4.20px from the declared outline | refused: the outline crosses itself after a margin of 2px, applied as 1 texel |
+
+A **finer** page resolves everything the declared one does, so it traces the
+declared outline, vertex for vertex. A **coarser** one holds less: its silhouette
+is a staircase of texels 2px of the drawing apart, and a tolerance under one texel
+keeps the steps — which is what the declared page does too at a tolerance under
+one of *its* pixels (at `tolerance: 0.75` it keeps 66 vertices, and given the
+budget for them it is refused by the same crossing). So
+on a coarser page, ask for a tolerance of at least a texel, or supply the loose
+art; the spec above at twice its figures traces 11 vertices there against the
+declared page's 10, 3.69px apart. Every refusal a trace raises on a `scale:` page
+names the figure the spec states, the texels it was applied as and the scale:
+
+```bash
+# rigc compile error: skin "default" slot "blob" attachment "blob": the outline crosses itself: edge 8 meets edge 10
+#   after a margin of 2px (the drawing's pixels — applied as 1 texel(s) of this page, whose scale: 0.5 makes a texel
+#   2.00px of the drawing) was pushed out of a silhouette narrower than that — lower the margin, or the art has a
+#   neck too thin to mesh
+```
 
 🚨 **A page that is not a PNG is refused by name, before anything is compiled
 against it** ([#732](https://github.com/firejune/rigc/issues/732)). rigc reads PNG
@@ -1769,9 +1802,9 @@ included, because without it the generator is refused (issue #274). The
 
 | Field | Meaning |
 | --- | --- |
-| `tolerance` | **required.** Douglas-Peucker tolerance, in part pixels. Bigger spends fewer vertices and cuts more corners |
-| `margin` | how far the outline is pushed out past the traced silhouette, in pixels. Default `1` |
-| `maxVertices` | refuse rather than emit more outline vertices than this. Default `64` |
+| `tolerance` | **required.** Douglas-Peucker tolerance, in the drawing's pixels — on a packed page that declares a `scale:`, applied as `tolerance × scale` of its texels (§0.2, [#779](https://github.com/firejune/rigc/issues/779)). Bigger spends fewer vertices and cuts more corners |
+| `margin` | how far the outline is pushed out past the traced silhouette, in the drawing's pixels (`margin × scale` texels on a `scale:` page). Default `1` |
+| `maxVertices` | refuse rather than emit more outline vertices than this — judged on the outline the two distances above ask for, so a finer `scale:` page of the same art needs no bigger budget. Default `64` |
 | `alpha` | the alpha at or above which a pixel counts as art, `1`..`255`. Default `1` — any pixel that is not fully transparent |
 
 The numbers above are invented, and the pair that matters is `tolerance` and
@@ -1821,6 +1854,7 @@ mesh rather than a rim prefix, and `A28_RIBBON_ROWS_SHARE_WEIGHTS` **SKIPs** wit
 | a neck narrower than `margin` | `the outline crosses itself: edge 0 meets edge 3 after a margin of 3px was pushed out of a silhouette narrower than that` |
 | more outline than `maxVertices` | `the silhouette simplified to 15 vertices at tolerance 1.5, past the 4 this mesh allows` — refused, never silently decimated |
 | a `margin` too small for the `tolerance` | `the mesh covers 91.81% of the art (2936 of 3198 px), under the 99.5% a contour mesh guarantees` |
+| any of the three above, on a packed page that declares a `scale:` | `…after a margin of 2px (the drawing's pixels — applied as 1 texel(s) of this page, whose scale: 0.5 makes a texel 2.00px of the drawing) was pushed out…` — the spec's figure, the texels the trace ran it at, and the scale that converted it; a count of the part's cells says `texels` there. A tolerance under one texel of a coarser page keeps its stair steps, as one under a pixel does on the declared page (§0.2) |
 
 That last one is the guarantee: **the emitted triangles cover at least 99.5% of
 the art**, measured by rasterising them back over the mask, and a build that would

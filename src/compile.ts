@@ -5644,6 +5644,10 @@ function buildContourAttachment(
       tolerance: generator.tolerance,
       margin,
       maxVertices,
+      // The spec's two distances are the drawing's pixels; on a `scale:` page
+      // the trace runs on texels, and the STATED scale is what converts them
+      // (issue #779). Off one, `atlasScale` is absent and nothing is multiplied.
+      ...(img.atlasScale === undefined ? {} : { pageScale: img.atlasScale }),
     });
   } catch (err) {
     if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
@@ -5706,8 +5710,8 @@ function buildContourAttachment(
     bones: [ctx.anchorBone],
     coverage: geometry.contour?.coverage,
     // In the drawing's pixels, like the authored fit's (issue #762). The trace
-    // itself — margin, tolerance, the refusals inside `buildContourMesh` — runs
-    // on the plate's grid and speaks in it; only the reported distance moves.
+    // runs on the plate's grid with the spec's margin and tolerance converted
+    // onto it by the stated scale (issue #779), and its refusals state both.
     ...(geometry.contour === undefined ? {} : drawingOvershoot(geometry.contour.overshoot, img.atlasScale)),
     holePixels: geometry.contour?.holePixels,
     depth: depth?.summary,

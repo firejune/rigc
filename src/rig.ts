@@ -488,14 +488,17 @@ export interface RigRibbonGenerator {
 export interface RigContourGenerator {
   kind: 'contour';
   /**
-   * Douglas-Peucker tolerance in part-local pixels. Bigger spends fewer
-   * vertices and cuts more corners; the builder measures how much of the art
-   * the result still covers and refuses a mesh that clips it.
+   * Douglas-Peucker tolerance in the drawing's pixels — the unit every other
+   * size here is in, on a packed page that declares a `scale:` as on loose
+   * parts: there the trace runs on the page's texels and this is applied as
+   * `tolerance × scale` of them (issue #779). Bigger spends fewer vertices
+   * and cuts more corners; the builder measures how much of the art the
+   * result still covers and refuses a mesh that clips it.
    */
   tolerance: number;
   /**
-   * How far the outline is pushed out past the traced silhouette, in pixels.
-   * Default 1. Simplification may bite `tolerance` pixels INTO the art, so
+   * How far the outline is pushed out past the traced silhouette, in the
+   * drawing's pixels (`margin × scale` texels on a `scale:` page). Default 1. Simplification may bite `tolerance` pixels INTO the art, so
    * `margin >= tolerance` is the setting that survives the coverage check.
    */
   margin?: number;
