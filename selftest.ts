@@ -8099,6 +8099,131 @@ function runRigSuite(): number {
     );
   }
 
+  // --- invariants.consumerDrivenMix, read and refused by name (issue #784) --
+  //
+  // The second field in `invariants` that turns a check off, so its shape is
+  // held to `deformMayFold`'s standard: every way an entry can exempt nothing
+  // while reading like it worked is a refusal naming the entry.
+  {
+    const DRIVEN_BONES = [
+      { name: 'root' },
+      { name: 'block', parent: 'root', x: 0, y: 0, length: 12 },
+      { name: 'upper', parent: 'root', x: 0, y: 0, length: 20 },
+      { name: 'goal', parent: 'root', x: 10, y: 30 },
+    ];
+    const reach = { name: 'reach', type: 'ik', bones: ['upper'], target: 'goal', mix: 0 };
+    const aim = { name: 'reach', type: 'transform', bones: ['block'], source: 'goal', properties: { rotate: { to: { rotate: {} } } }, mixRotate: 0 };
+    const drivenRig = (constraints: unknown[], entries: unknown): ProbeDirs =>
+      writeProbeRig({ bones: DRIVEN_BONES, constraints, invariants: { consumerDrivenMix: entries } });
+    const compiledWith = (dirs: ProbeDirs): { rig: CompileResult['rig'] | null; message: string | null } => {
+      const motionPath = join(dirs.dir, 'probe.motion.json');
+      writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+      try {
+        return { rig: compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir }).rig, message: null };
+      } catch (err) {
+        return { rig: null, message: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}` };
+      }
+    };
+
+    const both = compiledWith(
+      drivenRig([reach, aim], [
+        { constraint: 'reach', type: 'ik', why: 'turned on from code' },
+        { constraint: 'reach', type: 'transform', why: 'turned on from code' },
+      ]),
+    );
+    const carried = both.rig?.consumerDrivenMix ?? [];
+    const parsed =
+      carried.length === 2 &&
+      carried[0].type === 'ik' &&
+      carried[1].type === 'transform' &&
+      carried.every((entry) => entry.constraint === 'reach' && entry.why === 'turned on from code');
+    bad += reportCase(
+      'RF77_A_CONSUMER_DRIVEN_DECLARATION_PARSES_AND_REACHES_THE_GATE_ONE_ENTRY_PER_KIND',
+      parsed,
+      both.message ?? `an ik and a transform both called "reach", each declared: the rig info carries ${JSON.stringify(carried)}`,
+      'the entry names the constraint AND its type because a constraint resolves by name and type (#692) — an ik and ' +
+        'a transform may share a name, and a declaration keyed by name alone would exempt both or guess which',
+    );
+
+    const refusals: Array<{ what: string; message: string | null; wants: string[] }> = [
+      {
+        what: 'a name no constraint has',
+        message: compiledWith(drivenRig([reach], [{ constraint: 'raech', type: 'ik', why: 'x' }])).message,
+        wants: ['invariants.consumerDrivenMix names ik constraint "raech"', 'does not declare', 'exempts nothing'],
+      },
+      {
+        what: 'a name declared under the other kind',
+        message: compiledWith(drivenRig([reach], [{ constraint: 'reach', type: 'transform', why: 'x' }])).message,
+        wants: ['names transform constraint "reach"', '"reach" is declared as an ik constraint', 'by name AND type'],
+      },
+      {
+        what: 'the same entry twice',
+        message: compiledWith(
+          drivenRig([reach], [{ constraint: 'reach', type: 'ik', why: 'x' }, { constraint: 'reach', type: 'ik', why: 'x' }]),
+        ).message,
+        wants: ['names ik constraint "reach" twice'],
+      },
+      {
+        what: 'a blank why',
+        message: compiledWith(drivenRig([reach], [{ constraint: 'reach', type: 'ik', why: '  ' }])).message,
+        wants: ['entry for ik constraint "reach" needs a "why"', 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT'],
+      },
+      {
+        what: 'a key nothing reads',
+        message: compiledWith(drivenRig([reach], [{ constraint: 'reach', type: 'ik', why: 'x', mix: 1 }])).message,
+        wants: ['invariants.consumerDrivenMix[0]', '"mix"'],
+      },
+    ];
+    const missed = refusals.filter(({ message, wants }) => message === null || !wants.every((w) => message.includes(w)));
+    bad += reportCase(
+      'RF78_A_CONSUMER_DRIVEN_ENTRY_THAT_RESOLVES_TO_NOTHING_IS_REFUSED_BY_NAME',
+      missed.length === 0,
+      probeDetail(
+        missed.length === 0,
+        missed.map(({ what, message, wants }) => `${what} does not say ${JSON.stringify(wants)}: ${message ?? 'it compiled'}`),
+        refusals.map(({ what, message }) => `${what}: ${message}`).join('\n          '),
+        (count) => `${count} entry shape(s) not refused as themselves:`,
+      ),
+      'a typo in a constraint name would exempt nothing and gate everything, which reads exactly like the exemption ' +
+        'working; and an exemption with no reason is unreviewable the next time somebody reads the rig',
+    );
+
+    // Per kind, and the argument is the same for all three: each has its own
+    // muted-at-rest rule (A23 physics, A36 path, A37 slider), none of them reads
+    // this declaration, so an entry naming one would switch nothing off. The
+    // physics rig is the tree's own, so the constraint exists and the refusal is
+    // about the kind rather than a missing name.
+    const kinds = ['physics', 'path', 'slider'].map((type) => ({
+      type,
+      message: compiledWith(
+        writeProbeRig({ ...PHYSICS_TIMELINE_RIG, invariants: { consumerDrivenMix: [{ constraint: 'jiggle', type, why: 'x' }] } }),
+      ).message,
+    }));
+    const kindMissed = kinds.filter(
+      ({ type, message }) =>
+        message === null ||
+        !message.includes(`has type "${type}"`) ||
+        !message.includes('only "ik" and "transform" read this declaration') ||
+        !message.includes('exempt nothing'),
+    );
+    const physicsNamed = kinds[0].message?.includes('the rig declares "jiggle" as a physics constraint') === true;
+    bad += reportCase(
+      'RF79_A_CONSUMER_DRIVEN_ENTRY_ON_A_PHYSICS_PATH_OR_SLIDER_CONSTRAINT_IS_REFUSED_AS_EXEMPTING_NOTHING',
+      kindMissed.length === 0 && physicsNamed,
+      probeDetail(
+        kindMissed.length === 0 && physicsNamed,
+        [
+          ...kindMissed.map(({ type, message }) => `type "${type}": ${message ?? 'it compiled'}`),
+          ...(physicsNamed ? [] : ['the physics refusal does not say what the rig declares "jiggle" as']),
+        ],
+        kinds.map(({ type, message }) => `${type}: ${message}`).join('\n          '),
+        (count) => `${count} kind(s) not refused:`,
+      ),
+      'each of the three has a mix and its own muted-at-rest rule, so "has no mix" is not the argument — the argument ' +
+        'is that A23, A36 and A37 read no declaration, and an entry the gate never reads is a key nothing reads (#545)',
+    );
+  }
+
   return bad;
 }
 
@@ -15229,6 +15354,203 @@ function runConstraintAndDeformSuite(): number {
     "the runtime's test is `!== 0` (`IkConstraint.update`'s early return, and `to.mix(pose) !== 0` in the transform's " +
       'loop), so a negative mix runs the constraint inverted — the shape the editor\'s own example exports rest five ' +
       'transforms in. A `> 0` reading, the one `A36` and `A37` use, refuses every one of them',
+  );
+
+  // --- a muted constraint the consumer drives (issue #784) ------------------
+  //
+  // The same two muted fixtures, and the statement the file cannot make about
+  // itself: `invariants.consumerDrivenMix`. Undeclared, each is still refused,
+  // and the refusal names the third door with the entry to write. Declared, the
+  // constraint is not measured, and what the gate prints is a SKIP naming the
+  // constraint, the declaration and its `why` — never a pass, since the file
+  // still shows nothing moving it. Declared beside a live constraint of the same
+  // kind, the live one is measured and the rule passes with the declared one on
+  // the stats line: a SKIP there would say "nothing measured" over a rule that
+  // measured. The declaration is a statement to the gate, so it changes no
+  // emitted byte, and that is a clause rather than an assumption.
+  const WHY = 'a game turns it on from code';
+  const declaring = (entries: Array<[string, 'ik' | 'transform']>): Record<string, unknown> => ({
+    invariants: { consumerDrivenMix: entries.map(([constraint, type]) => ({ constraint, type, why: WHY })) },
+  });
+  const declaredRig = (constraints: Array<Record<string, unknown>>, entries: Array<[string, 'ik' | 'transform']>): ProbeDirs =>
+    writeProbeRig({ bones: MUTED_BONES, constraints, ...declaring(entries) });
+  /** A compile refusal as a report with one red row, so a rig the compiler refuses reaches `say` rather than ending the suite. */
+  const refusedAs = (err: unknown): ReturnType<typeof validate> => ({
+    failures: [{ assertion: 'COMPILE', detail: err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}` }],
+    passed: [],
+    skipped: [],
+    profileSkipped: [],
+    profile: 'spine',
+    stats: {},
+  });
+  const gateDeclared = (dirs: ProbeDirs, motion: Record<string, unknown>): ReturnType<typeof validate> => {
+    try {
+      return gateProbe(dirs, motion);
+    } catch (err) {
+      return refusedAs(err);
+    }
+  };
+  const emittedOf = (dirs: ProbeDirs, motion: Record<string, unknown>): string => {
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+    try {
+      return compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir }).skeletonText;
+    } catch (err) {
+      return `refused: ${(err as Error).message}`;
+    }
+  };
+  const DOOR = 'invariants.consumerDrivenMix';
+  const REACH_LIVE = { ...REACH, name: 'reach_live', bones: ['follower'], mix: 1 };
+  const FOLLOW_LIVE = { ...FOLLOW, name: 'follow_live', bones: ['block'], mixRotate: 1 };
+  const consumerCases: Array<{ kind: string; assertion: string; muted: Record<string, unknown>; live: Record<string, unknown>; type: 'ik' | 'transform'; stat: string }> = [
+    { kind: 'ik', assertion: IK_NAME, muted: REACH, live: REACH_LIVE, type: 'ik', stat: 'ikConsumerDriven' },
+    { kind: 'transform', assertion: TRANSFORM_NAME, muted: FOLLOW, live: FOLLOW_LIVE, type: 'transform', stat: 'transformConsumerDriven' },
+  ];
+  /** What a declared case's report must say: not a PASS, and a SKIP naming the constraint. T108 plants it. */
+  const consumerVerdictFaults = (report: ReturnType<typeof validate>, assertion: string, name: string): string[] => [
+    ...(report.passed.includes(assertion) ? [`${assertion} PASSed "${name}", a constraint it did not measure`] : []),
+    ...((skipOf(report, assertion) ?? '').includes(`"${name}"`) ? [] : [`${assertion}'s SKIP does not name "${name}"`]),
+  ];
+  const declaredProbes: string[] = [];
+  const declaredSeen: string[] = [];
+  for (const { kind, assertion, muted, live, type, stat } of consumerCases) {
+    const name = String(muted.name);
+    const subject = `${kind} constraint "${name}"`;
+    const entry = `[{ "constraint": "${name}", "type": "${type}", "why": … }]`;
+    const bare = gateProbe(mutedRig([muted]), followMotion({}));
+    const bareSays = detailsOf(bare, assertion);
+    if (bareSays.length !== 1 || !saysBothHalves(bareSays[0], subject) || !bareSays[0].includes(DOOR) || !bareSays[0].includes(entry)) {
+      declaredProbes.push(`undeclared ${kind}: not refused once with the three doors and the entry: ${bareSays.join('; ') || '(none)'}`);
+    }
+    const declaredDirs = declaredRig([muted], [[name, type]]);
+    const declared = gateDeclared(declaredDirs, followMotion({}));
+    const reason = skipOf(declared, assertion) ?? '';
+    if (declared.failures.length !== 0) declaredProbes.push(`declared ${kind}: refused: ${refusedWith(declared).slice(0, 400)}`);
+    declaredProbes.push(...consumerVerdictFaults(declared, assertion, name).map((fault) => `declared ${kind}: ${fault}`));
+    if (!reason.includes(DOOR) || !reason.includes(WHY)) {
+      declaredProbes.push(`declared ${kind}: the SKIP does not name the declaration and its why: ${reason || 'no skip'}`);
+    }
+    if (declared.stats[stat] !== name) declaredProbes.push(`declared ${kind}: stats ${stat} is ${String(declared.stats[stat])}, not "${name}"`);
+    if (emittedOf(declaredDirs, followMotion({})) !== emittedOf(mutedRig([muted]), followMotion({}))) {
+      declaredProbes.push(`declared ${kind}: the declaration moved an emitted byte`);
+    }
+    const mixed = gateDeclared(declaredRig([muted, live], [[name, type]]), followMotion({}));
+    if (mixed.failures.length !== 0 || !mixed.passed.includes(assertion) || mixed.stats[stat] !== name) {
+      declaredProbes.push(
+        `declared ${kind} beside a live one: not a PASS with "${name}" on the stats line — ${refusedWith(mixed) || `skip: ${skipOf(mixed, assertion) ?? 'none'}`}, stats ${String(mixed.stats[stat])}`,
+      );
+    }
+    declaredSeen.push(`${kind}: "${bareSays[0] ?? '(none)'}" → declared: "${reason}"`);
+  }
+  const declaredHeld = declaredProbes.length === 0;
+  say(
+    'T106_A_MUTED_IK_OR_TRANSFORM_THE_RIG_DECLARES_CONSUMER_DRIVEN_SKIPS_BY_NAME_AND_AN_UNDECLARED_ONE_NAMES_THE_THIRD_DOOR',
+    declaredHeld,
+    probeDetail(
+      declaredHeld,
+      declaredProbes,
+      `${declaredSeen.join('\n          ')}\n          beside a live constraint of its kind each declared one is on the ` +
+        'stats line of a PASS, and the declaration changes no emitted byte',
+      (count) => `${count} clause(s) of the consumer-driven declaration did not hold:`,
+    ),
+    'issue #784: a muted constraint nothing in the file switches on is a leftover or a dial a game turns from code, ' +
+      'and the two export as the same bytes — so the refusal offers the statement, and the statement buys a SKIP that ' +
+      'names it rather than a pass that would claim the constraint moves',
+  );
+
+  // Declared, and switched on by the file as well. [measured] on this run: code
+  // writing the mix before `state.apply` is overwritten by the key and code
+  // writing it after replaces the key, so which author holds a frame is the
+  // order of the consumer's own loop — and the declaration exempts nothing,
+  // because the gate would pass the constraint without it. Refused, as
+  // `deformMayFold` on a slot with no mesh is refused for exempting nothing.
+  const KEYED = 0.5;
+  const CODE = 1;
+  const keyedDirs = declaredRig([REACH], [['reach', 'ik']]);
+  const keyedMotion = followMotion(ikTrack(KEYED, KEYED));
+  const codeWrites = (when: 'before' | 'after'): number => {
+    let data: SkeletonData;
+    try {
+      data = timelinePosable(keyedDirs, keyedMotion).data;
+    } catch {
+      return Number.NaN;
+    }
+    const skeleton = new Skeleton(data);
+    const state = new AnimationState(new AnimationStateData(data));
+    state.setAnimation(0, 'move', false);
+    skeleton.setupPose();
+    const ik = skeleton.findConstraint('reach', IkConstraint)!;
+    if (when === 'before') ik.pose.mix = CODE;
+    state.apply(skeleton);
+    if (when === 'after') ik.pose.mix = CODE;
+    skeleton.update(0);
+    skeleton.updateWorldTransform(Physics.reset);
+    return ik.appliedPose.mix;
+  };
+  const [before, after] = [codeWrites('before'), codeWrites('after')];
+  const bothRefusals = [
+    ['an ik declared and keyed up', gateDeclared(keyedDirs, keyedMotion), IK_NAME, 'ik constraint "reach"', 'an animation keys its mix above 0'],
+    ['an ik declared and resting at mix 1', gateDeclared(declaredRig([{ ...REACH, mix: 1 }], [['reach', 'ik']]), followMotion({})), IK_NAME, 'ik constraint "reach"', 'it rests at mix 1'],
+    [
+      'a transform declared and keyed up on mixRotate',
+      gateDeclared(declaredRig([FOLLOW], [['follow', 'transform']]), followMotion(transformTrack(SIX_ZERO, { ...SIX_ZERO, mixRotate: 1 }))),
+      TRANSFORM_NAME,
+      'transform constraint "follow"',
+      'an animation keys its mix above 0',
+    ],
+  ] as const;
+  const bothProbes = [
+    ...(before === KEYED && after === CODE
+      ? []
+      : [`code writing ${CODE} over a key of ${KEYED}: applied mix ${before} when written before the apply and ${after} after, not the key and then the code`]),
+    ...bothRefusals.flatMap(([label, report, assertion, subject, how]) => {
+      const says = detailsOf(report, assertion);
+      return says.length === 1 && says[0].includes(subject) && says[0].includes(how) && says[0].includes('exempts nothing') && says[0].includes(DOOR)
+        ? []
+        : [`${label}: not refused once as a declaration that exempts nothing: ${says.join('; ') || refusedWith(report) || '(none)'}`];
+    }),
+  ];
+  const bothHeld = bothProbes.length === 0;
+  say(
+    'T107_A_CONSTRAINT_DECLARED_CONSUMER_DRIVEN_THAT_THE_FILE_ALSO_SWITCHES_ON_IS_REFUSED_AS_AN_EXEMPTION_OF_NOTHING',
+    bothHeld,
+    probeDetail(
+      bothHeld,
+      bothProbes,
+      `code writing mix ${CODE} over a key of ${KEYED}: applied ${before} when written before \`state.apply\`, ${after} after it; ` +
+        `refused: "${detailsOf(bothRefusals[0][1], IK_NAME)[0] ?? '(none)'}"`,
+      (count) => `${count} clause(s) of the declared-and-switched-on case did not hold:`,
+    ),
+    'two authors of one value, and which of them holds a frame is decided by the order of the consumer\'s own loop ' +
+      'rather than by anything in the file — so the file cannot be judged on it, and the declaration exempts a ' +
+      'constraint the gate already passes. An exemption of nothing reads exactly like an exemption that worked',
+  );
+
+  // T108 is this judge's own red-first: planted onto the real report, a gate
+  // that read the declaration as "live" and one whose SKIP no longer names the
+  // constraint are each faulted by name.
+  const plantProbes: string[] = [];
+  const plantSeen: string[] = [];
+  for (const { assertion, muted, type } of consumerCases) {
+    const name = String(muted.name);
+    const real = gateDeclared(declaredRig([muted], [[name, type]]), followMotion({}));
+    const standing = consumerVerdictFaults(real, assertion, name);
+    plantProbes.push(...standing);
+    const readAsLive = { ...real, passed: [...real.passed, assertion], skipped: real.skipped.filter((s) => s.assertion !== assertion) };
+    const unnamed = { ...real, skipped: real.skipped.map((s) => (s.assertion === assertion ? { ...s, reason: s.reason.split(`"${name}"`).join('it') } : s)) };
+    for (const [what, planted] of [['the declaration read as live', readAsLive], ['the SKIP stripped of the name', unnamed]] as const) {
+      const raised = raisedBy(consumerVerdictFaults(planted, assertion, name), { was: standing });
+      if (raised.length === 0) plantProbes.push(`${assertion}: ${what} was not faulted`);
+      else plantSeen.push(`${assertion} ${what}: "${raised[0]}"`);
+    }
+  }
+  const plantHeld = plantProbes.length === 0;
+  say(
+    'T108_A_GATE_THAT_READ_A_CONSUMER_DRIVEN_DECLARATION_AS_LIVE_OR_SKIPPED_WITHOUT_THE_NAME_IS_FAULTED',
+    plantHeld,
+    probeDetail(plantHeld, plantProbes, plantSeen.join(' · '), (count) => `${count} plant(s) of the declared verdict went unfaulted:`),
+    'a declared constraint is a constraint the gate did not measure, so the verdict it earns is SKIP — a PASS in the ' +
+      'same row is the silence #580 closed, and a SKIP that does not say which constraint is a SKIP nobody can act on',
   );
 
   return bad;
@@ -50343,6 +50665,127 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR85-CUR86: the consumer-driven sentences the guide quotes (issue #784)
+  //
+  // The two texts an agent meets when a muted constraint is the question — the
+  // SKIP a declared one earns and the third door a refusal offers — are read
+  // off the validator's own report on a generated rig, never typed here, and
+  // the guide is held to carry them: `CUR85` the §5.2 rows' SKIP, `CUR86` the
+  // door in the rows and the §4.12 quote whole. Each is planted on a copy of
+  // the page and has to be faulted.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const guideText = readFileSync(join(root, guidePath), 'utf8');
+    const flat = (text: string): string => text.replace(/\s+/g, ' ');
+    const bones = [
+      { name: 'root' },
+      { name: 'block', parent: 'root', x: 0, y: 0, length: 12 },
+      { name: 'upper', parent: 'root', x: 0, y: 0, length: 20 },
+      { name: 'goal', parent: 'root', x: 10, y: 30 },
+      { name: 'follower', parent: 'root', x: 40, y: 0, length: 20 },
+      { name: 'source', parent: 'root', x: 60, y: 0, rotation: 45, length: 20 },
+    ];
+    const constraintsOf = {
+      ik: { name: 'reach', type: 'ik', bones: ['upper'], target: 'goal', mix: 0 },
+      transform: { name: 'follow', type: 'transform', bones: ['follower'], source: 'source', properties: { rotate: { to: { rotate: {} } } }, mixRotate: 0 },
+    } as const;
+    const motion = {
+      spec: 'rigc-motion/1',
+      archetype: 'static_probe',
+      cut: 'static_probe',
+      easings: {},
+      animations: { move: { duration: 1, loop: false, tracks: [{ bone: 'goal', property: 'translate', keys: [{ t: 0, v: [10, 30] }, { t: 1, v: [30, 10] }] }] } },
+    };
+    const gateOf = (kind: 'ik' | 'transform', declared: boolean): ReturnType<typeof validate> => {
+      const constraint = constraintsOf[kind];
+      const dirs = writeProbeRig({
+        bones,
+        constraints: [constraint],
+        ...(declared ? { invariants: { consumerDrivenMix: [{ constraint: constraint.name, type: kind, why: 'read off the gate' }] } } : {}),
+      });
+      try {
+        return gateProbe(dirs, motion);
+      } catch {
+        // A rig the compiler refuses has nothing to quote, and the row says so rather than ending the suite.
+        return { failures: [], passed: [], skipped: [], profileSkipped: [], profile: 'spine', stats: {} };
+      }
+    };
+    const assertionOf = { ik: 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', transform: 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT' } as const;
+    const said = (['ik', 'transform'] as const).map((kind) => {
+      const assertion = assertionOf[kind];
+      const name = constraintsOf[kind].name;
+      const refusal = gateOf(kind, false).failures.find((f) => f.assertion === assertion)?.detail ?? '';
+      const reason = gateOf(kind, true).skipped.find((s) => s.assertion === assertion)?.reason ?? '';
+      const at = refusal.indexOf(', or declare');
+      return {
+        kind,
+        assertion,
+        refusal,
+        // The row speaks of a constraint "C", so the name is the one thing substituted.
+        door: at < 0 ? '' : refusal.slice(at + 2).split(`"${name}"`).join('"C"'),
+        skip: reason.includes(' — ') ? reason.slice(0, reason.indexOf(' — ')) : '',
+      };
+    });
+    const rowOf = (text: string, assertion: string): string => text.split('\n').find((line) => line.startsWith(`| \`${assertion}\` |`)) ?? '';
+
+    // CUR85: the SKIP a declared constraint earns, in its §5.2 row.
+    {
+      const scan = (text: string): string[] =>
+        said.flatMap(({ assertion, skip }) =>
+          skip !== '' && rowOf(text, assertion).includes(skip) ? [] : [`${guidePath}'s ${assertion} row does not quote the SKIP it prints: ${JSON.stringify(skip)}`],
+        );
+      const standing = scan(guideText);
+      const probes = [...standing, ...said.filter((s) => s.skip === '').map((s) => `${s.assertion} printed no consumer-driven SKIP to read`)];
+      let note = '';
+      for (const { assertion, skip } of said) {
+        const row = rowOf(guideText, assertion);
+        const planted = guideText.replace(row, row.replace(skip, skip.replace('is declared', 'is marked')));
+        const raised = raisedBy(scan(planted), { was: standing });
+        if (raised.length !== 1) probes.push(`${assertion}'s row with its SKIP reworded was faulted ${raised.length} time(s), not once`);
+        else note = `${note}${note === '' ? '' : ' · '}${raised[0]}`;
+      }
+      const held = probes.length === 0;
+      say(
+        'CUR85_THE_GUIDE_ROWS_QUOTE_THE_SKIP_A_CONSUMER_DRIVEN_CONSTRAINT_EARNS',
+        held,
+        probeDetail(held, probes, `${said.map((s) => `${s.assertion}: "${s.skip}"`).join(' · ')} — and, planted: ${note}`),
+        'the SKIP is what a build prints over a declared constraint, so the row that explains the rule has to teach ' +
+          'the words the run prints — or an agent reading a SKIP cannot find which declaration produced it',
+      );
+    }
+
+    // CUR86: the third door, in both rows and in the §4.12 quote.
+    {
+      const scan = (text: string): string[] => {
+        const faults = said.flatMap(({ assertion, door }) =>
+          door !== '' && rowOf(text, assertion).includes(door) ? [] : [`${guidePath}'s ${assertion} row does not offer the third door as the refusal does: ${JSON.stringify(door)}`],
+        );
+        const ik = said[0].refusal;
+        if (ik === '' || !flat(text).includes(flat(ik))) faults.push(`${guidePath} §4.12 does not quote the ik refusal as this build prints it: ${JSON.stringify(ik)}`);
+        return faults;
+      };
+      const standing = scan(guideText);
+      const probes = [...standing, ...said.filter((s) => s.door === '').map((s) => `${s.assertion} printed no third door to read`)];
+      let note = '';
+      const plant = (what: string, text: string): void => {
+        const raised = raisedBy(scan(text), { was: standing });
+        if (raised.length === 0) probes.push(`${what} was not faulted`);
+        else note = `${note}${note === '' ? '' : ' · '}${what}: ${raised.length} fault(s)`;
+      };
+      const ikRow = rowOf(guideText, said[0].assertion);
+      plant('the ik row with its third door dropped', guideText.replace(ikRow, ikRow.replace(`, ${said[0].door}`, '')));
+      plant('the §4.12 quote with its third door dropped', guideText.replace('or key its mix above 0 in an animation, or declare that the consumer drives\nits mix', 'or key its mix above 0 in an animation'));
+      const held = probes.length === 0;
+      say(
+        'CUR86_THE_GUIDE_OFFERS_THE_THIRD_DOOR_AS_THE_REFUSAL_PRINTS_IT',
+        held,
+        probeDetail(held, probes, `both rows and the §4.12 quote carry the refusal's third door as printed — and, planted: ${note}`),
+        'the third door is a spelling an agent has to type, so the page that teaches it has to carry it the way the ' +
+          'refusal prints it; a door the guide words differently is one nobody can copy',
+      );
+    }
+  }
+
   return bad;
 }
 
@@ -62578,6 +63021,159 @@ function runIngestSuite(): number {
         'a count',
     );
   }
+
+  // --- IG79-IG80: a muted constraint is carried as the consumer's (issue #784)
+  //
+  // The production shape the card reproduces on a generated rig: an ik and a
+  // transform resting muted that no animation keys up, which `A47` / `A48`
+  // refuse. `ingest` writes the declaration the file cannot make and prints a
+  // judgement naming each constraint; the rebuild is the same bytes and gates
+  // green under both profiles, with each constraint SKIPped by name. Taking the
+  // declaration back off the written spec is the control that it is the
+  // declaration, and not something else, that turns the rebuild green.
+  {
+    const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-consumer-'));
+    const dirs = writeProbeRig({
+      bones: [
+        { name: 'root' },
+        { name: 'block', parent: 'root', x: 0, y: 0, length: 12 },
+        { name: 'upper', parent: 'root', x: 0, y: 0, length: 20 },
+        { name: 'goal', parent: 'root', x: 10, y: 30 },
+        { name: 'follower', parent: 'root', x: 40, y: 0, length: 20 },
+        { name: 'source', parent: 'root', x: 60, y: 0, rotation: 45, length: 20 },
+      ],
+      constraints: [
+        { name: 'reach', type: 'ik', bones: ['upper'], target: 'goal', mix: 0 },
+        { name: 'follow', type: 'transform', bones: ['follower'], source: 'source', properties: { rotate: { to: { rotate: {} } } }, mixRotate: 0 },
+      ],
+    });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify(
+        timelineMotion({
+          duration: 1,
+          loop: false,
+          tracks: [
+            { bone: 'goal', property: 'translate', keys: [{ t: 0, v: [10, 30] }, { t: 1, v: [30, 10] }] },
+            { bone: 'source', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [60] }] },
+          ],
+        }),
+        null,
+        2,
+      )}\n`,
+    );
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    mkdirSync(dirs.outDir, { recursive: true });
+    const atlasPath = join(dirs.outDir, 'skeleton.atlas');
+    writeFileSync(atlasPath, built.atlasText);
+    const gateOf = (result: CompileResult, profile: ValidateProfile, atlasDir: string): ReturnType<typeof validate> =>
+      validate({
+        skeletonText: result.skeletonText,
+        atlasText: result.atlasText,
+        atlasDir,
+        declaredDurations: result.declaredDurations,
+        rig: result.rig,
+        profile,
+      });
+    const read = ingest(JSON.parse(built.skeletonText) as Record<string, unknown>, { name: 'p', art: 'none', source: 's.json', version: '0' });
+    const rebuildFrom = (rig: unknown, tag: string): CompileResult => {
+      const dir = join(root, tag);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+      writeFileSync(join(dir, 'motion.json'), `${JSON.stringify(read.motion, null, 2)}\n`);
+      return compile({ rigPath: join(dir, 'rig.json'), motionPath: join(dir, 'motion.json'), outDir: join(dir, 'out'), atlasInPath: atlasPath });
+    };
+    const rebuilt = rebuildFrom(read.rig, 'S');
+    const { invariants: _written, ...undeclared } = read.rig as unknown as Record<string, unknown>;
+    const withoutIt = rebuildFrom(undeclared, 'U');
+    const expected = [
+      ['reach', 'ik', 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT'],
+      ['follow', 'transform', 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT'],
+    ] as const;
+    const written = read.rig.invariants?.consumerDrivenMix ?? [];
+    const judged = read.findings.filter((f) => f.code === 'CONSUMER_DRIVEN_MIX');
+    const gates = (['spine', 'spine-html'] as const).map((profile) => [profile, gateOf(rebuilt, profile, join(root, 'S', 'out'))] as const);
+    const bareGate = gateOf(withoutIt, 'spine', join(root, 'U', 'out'));
+    const carryProbes = [
+      ...read.findings.filter((f) => f.kind === 'blocker').map((f) => `ingest recorded a blocker: ${f.code} — ${f.detail.slice(0, 120)}`),
+      ...(written.length === expected.length ? [] : [`the rig spec declares ${written.length} constraint(s), not ${expected.length}`]),
+      ...(judged.length === expected.length ? [] : [`${judged.length} CONSUMER_DRIVEN_MIX finding(s), not ${expected.length}`]),
+      ...expected.flatMap(([name, type, assertion]) => [
+        ...(written.some((e) => e.constraint === name && e.type === type && e.why.trim().length > 0)
+          ? []
+          : [`the rig spec does not declare ${type} constraint "${name}" with a why`]),
+        ...(judged.some((f) => f.kind === 'judgement' && f.where === `constraint "${name}" (${type})` && f.detail.includes(assertion))
+          ? []
+          : [`no judgement names ${type} constraint "${name}" and ${assertion}`]),
+        ...gates.flatMap(([profile, gate]) =>
+          (gate.skipped.find((s) => s.assertion === assertion)?.reason ?? '').includes(`"${name}"`)
+            ? []
+            : [`under ${profile} ${assertion} did not SKIP "${name}" by name`],
+        ),
+        ...(bareGate.failures.some((f) => f.assertion === assertion && f.detail.includes(`"${name}"`))
+          ? []
+          : [`with the declaration taken off, ${assertion} did not refuse "${name}", so the declaration is not what turned it green`]),
+      ]),
+      ...gates.flatMap(([profile, gate]) => gate.failures.map((f) => `under ${profile} ${f.assertion}: ${f.detail.slice(0, 200)}`)),
+      ...(rebuilt.skeletonText === built.skeletonText ? [] : ['the rebuild is not the source byte for byte']),
+      ...(String(read.rig.note).includes('consumerDrivenMix') ? [] : ['the rig spec\'s note still says `invariants` is absent']),
+    ];
+    const carryHeld = carryProbes.length === 0;
+    say(
+      'IG79_A_MUTED_CONSTRAINT_INGEST_CANNOT_TELL_FROM_A_DIAL_IS_DECLARED_THE_CONSUMERS_AND_THE_REBUILD_GATES_GREEN',
+      carryHeld,
+      probeDetail(
+        carryHeld,
+        carryProbes,
+        `${judged.map((f) => `${f.code}: ${f.where} — ${f.detail}`).join('\n          ')}\n          build(ingest(A)) === A over ` +
+          `${built.skeletonText.length} bytes; ${gates.map(([profile, gate]) => `${profile} ${gate.failures.length} failure(s)`).join(', ')}; ` +
+          `with the declaration off, refused by ${[...new Set(bareGate.failures.map((f) => f.assertion))].join(', ')}`,
+        (count) => `${count} thing(s) the consumer-driven carry did not do:`,
+      ),
+      'issue #784: the one refusal a production corpus drew at v0.34.0 was an ik its game turns on from code — the ' +
+        'rebuild of a correct file refused because the spec had no spelling for what it is. A declaration written ' +
+        'without a line would be the rebuild claiming something in silence, which is why the finding is the half that matters',
+    );
+  }
+
+  // IG80: the twelve editor exports carry no such constraint, so `ingest`
+  // writes no declaration and prints no line — the byte identity of every
+  // decompiled rig spec, stated as a measurement rather than assumed.
+  if (corpus.length === 0) {
+    console.log(`  SKIP  IG80 did not run: no editor export under ${INGEST_CORPUS_ROOT}.`);
+  } else {
+    let constraintsRead = 0;
+    const quietProbes: string[] = [];
+    for (const entry of corpus) {
+      const source = JSON.parse(readFileSync(entry.path, 'utf8')) as Record<string, unknown>;
+      constraintsRead += (Array.isArray(source.constraints) ? source.constraints : []).filter(
+        (c) => typeof c === 'object' && c !== null && ['ik', 'transform'].includes(String((c as Record<string, unknown>).type)),
+      ).length;
+      const decompiled = ingest(source, { name: entry.name, art: 'none', source: basename(entry.path), version: packageVersion() });
+      const lines = decompiled.findings.filter((f) => f.code === 'CONSUMER_DRIVEN_MIX');
+      if (lines.length) quietProbes.push(`${entry.label}: ${lines.map((f) => f.where).join(', ')}`);
+      if (decompiled.rig.invariants !== undefined) quietProbes.push(`${entry.label}: the rig spec carries invariants ${JSON.stringify(decompiled.rig.invariants)}`);
+      if (!String(decompiled.rig.note).includes('deliberately absent')) quietProbes.push(`${entry.label}: the rig spec's note changed`);
+    }
+    if (constraintsRead === 0) quietProbes.push('the corpus carried no ik or transform constraint, so this measured nothing');
+    const quietHeld = quietProbes.length === 0;
+    say(
+      'IG80_AN_EXPORT_WITH_NO_MUTED_CONSTRAINT_IS_DECOMPILED_WITH_NO_DECLARATION_AND_NO_LINE',
+      quietHeld,
+      probeDetail(
+        quietHeld,
+        quietProbes,
+        `${corpus.length} export(s), ${constraintsRead} ik and transform constraint(s) among them: no CONSUMER_DRIVEN_MIX ` +
+          'line, no `invariants` written, and every rig spec\'s note unchanged',
+        (count) => `${count} export(s) where the declaration appeared:`,
+      ),
+      'an aim rig rests its constraints muted and keys them up in the animation that needs them — the idiom, not ' +
+        'the shape — and a declaration written there would be the rebuild claiming a dial the file already turns, ' +
+        'which the gate refuses as exempting nothing',
+    );
+  }
+
   return bad;
 }
 

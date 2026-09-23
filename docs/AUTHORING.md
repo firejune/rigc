@@ -2526,6 +2526,13 @@ carrying here:
 Every constraint may also carry `skin: true`, which makes it run only under the skin
 that lists it — see §3.4.1, and note that the flag alone does nothing.
 
+🎛️ **An ik or transform whose mix a game sets from code has no field here**, and
+that is deliberate. Every key on a constraint object is a Spine field the emitter
+writes; a statement to the gate about who turns the dial is what the artifact cannot
+say about itself, so it lives in `invariants.consumerDrivenMix` (§3.7), beside
+`deformMayFold` — the one other exemption from a named rule, which names its subject
+the same way ([#784](https://github.com/firejune/rigc/issues/784)).
+
 #### 3.5.1 `path` — bones that travel along a curve
 
 **When you need one:** anything that moves *along* something rather than around a
@@ -3075,7 +3082,8 @@ is not an array. Every field is optional and each is the payload a firing
 
 Optional with one exception, and only meaningful for rigc's own formations:
 `meshSlots` and `meshTriangles` (the two halves of the mesh budget `A13` measures
-against), `axisBone`, `massBone`, `detached`, `deformMayFold`, `editorRoundTrip`.
+against), `axisBone`, `massBone`, `detached`, `deformMayFold`, `editorRoundTrip`,
+`consumerDrivenMix`.
 Nothing in skeleton
 JSON records that a
 bone carries a cut's axis or that a parentage is forbidden, so the rig spec says it
@@ -3083,7 +3091,10 @@ and the validator's archetype assertions read it. **An assertion whose field is
 absent reports SKIP, never a pass.** If you are reproducing a foreign skeleton,
 leave this out entirely and run `--profile spine` — and expect `PROF` rather than
 that SKIP, because the profile excludes an archetype assertion before its body
-could notice the missing field (§5.2).
+could notice the missing field (§5.2). The one field `ingest` writes is
+`consumerDrivenMix`, and only for a constraint the file rests muted and never keys
+up, each with a `CONSUMER_DRIVEN_MIX` finding ([INGEST.md](INGEST.md) §2.0) — see
+the last block of this section.
 
 🚨 **The exception: `meshSlots` is required by a rig that invokes a mesh
 generator** (`ring`, `ribbon`, `contour`, `grid` — §3.4), and it is a **compile-time**
@@ -3108,8 +3119,9 @@ loads and still animates and merely lies — something released into the world t
 must not ride the part that released it. [RIGGING.md](RIGGING.md) §10.3 has a
 worked one.
 
-🚨 **`deformMayFold` is the one field here that turns a check OFF**, so it is the
-one field whose own shape is refused rather than skipped. It is
+🚨 **`deformMayFold` is one of the two fields here that turn a check OFF**
+(`consumerDrivenMix`, below, is the other), so it is held to a shape that is
+refused rather than skipped. It is
 `[{ "slot": …, "why": … }]`, it exempts that slot from
 `A39_DEFORM_KEEPS_TRIANGLE_WINDING`, and three shapes are compile errors: a slot
 the rig does not declare, a slot that carries no mesh, and a missing or blank
@@ -3165,6 +3177,29 @@ key **before** the folding key rather than on it — the frames in between are
 drawn and are gated (§4.11.3); this used to be a rule you had to follow and is
 now one the gate keeps
 ([#403](https://github.com/firejune/rigc/issues/403)).
+
+🎛️ **`consumerDrivenMix` names the ik and transform constraints whose mix the
+CONSUMER sets** — from code, at runtime — rather than any animation in this file
+([#784](https://github.com/firejune/rigc/issues/784)). It is
+`[{ "constraint": …, "type": "ik" | "transform", "why": … }]`, and it exempts that
+constraint from `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` or
+`A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` (§4.12). A constraint resting muted
+that nothing keys up is either a leftover or a dial a game turns, the two export as
+the same bytes, and the gate refuses the shape because nothing *in the file* ever
+moves it — this is the statement that something outside it does, the rig-side
+spelling of `gallery/look`'s rule that a face angle is a value rather than a time.
+
+- `type` is required because a constraint's name is unique **per kind** — an ik and
+  a transform may share one — so a name alone could exempt two constraints.
+- Five shapes are compile errors, each by name: a constraint the rig does not
+  declare under that `type`, a `type` other than `ik` or `transform` (a physics,
+  path or slider constraint has its own muted-at-rest rule — `A23`, `A36`, `A37` —
+  and none of them reads this declaration, so the entry would exempt nothing), the
+  same constraint twice, a missing or blank `why`, and a key the entry does not have.
+- ⛔ A declared constraint the file **also** switches on — resting live, or keyed
+  above 0 — is refused at the gate: the declaration exempts nothing there.
+- What it buys is a **SKIP by name, never a pass** (§4.12 has the line). The
+  declaration is a statement to the gate and changes no emitted byte.
 
 ---
 
@@ -4082,6 +4117,13 @@ rigc refuses four things here:
 | `softness` on the first key only | `key 0 names "softness" and key 1 (t=…) does not … it would snap to 0` |
 | `mix: 1.5` | `mix is 1.5, outside 0..1 — the runtime documents it as a percentage 0-1` |
 
+🎛️ **A constraint this section never keys** — resting at `mix` 0 with no `ik` track
+in any animation lifting it — is refused by `A47` with three doors: rest it above 0,
+key it here, or declare that the consumer drives its mix in the rig spec's
+`invariants.consumerDrivenMix` (§3.7), for an ik a game turns on from code. The
+third is a statement about the object, not a way past the gate: what it buys is a
+SKIP by name (§4.12).
+
 The type check matters because the parser resolves a timeline's target by name
 **and** type: `findConstraint(name, IkConstraintData)` misses a transform
 constraint of the same name, returns null, and `readAnimation` throws — in the
@@ -4141,7 +4183,10 @@ exactly what a mix that was 0 at setup needs said.
   omitted mix as 1, so a key of `mixRotate: 0` alone on a rotate-only constraint
   carries five mixes of 1 that nothing reads. `A48` judges only the mixes of the
   properties the constraint drives (§4.12).
-- The refusals are §4.9's, with `transform` in place of `ik`.
+- The refusals are §4.9's, with `transform` in place of `ik` — and so is the third
+  door: a transform resting muted on every mix it reads that no key here lifts is
+  refused by `A48` with *rest it above 0, key it, or declare that the consumer drives
+  its mix* in `invariants.consumerDrivenMix` (§3.7, §4.12).
 
 ### 4.11 `deform` — moving an attachment's vertices
 
@@ -5049,8 +5094,36 @@ rescue and a 0-only timeline is not, with two differences that are the runtime's
 
 `ik constraint "reach" has mix 0 at setup and none of the 1 animation keys its mix
 above 0; update() returns on mix 0, so "upper" never reaches for "goal" — rest it
-above 0, or key its mix above 0 in an animation`. A rig resting at 0 and keyed up by
-the animation that needs it — spineboy's aim — is refused by neither.
+above 0, or key its mix above 0 in an animation, or declare that the consumer drives
+its mix, in the rig spec as invariants.consumerDrivenMix: [{ "constraint": "reach",
+"type": "ik", "why": … }]`. A rig resting at 0 and keyed up by the animation that
+needs it — spineboy's aim — is refused by neither.
+
+🎛️ **The third door is for a dial the file cannot show turning**
+([#784](https://github.com/firejune/rigc/issues/784)). A constraint resting muted
+that nothing keys up is either a leftover or a mix a game sets from code, and the two
+export as the same bytes — a production skeleton's rebuild was refused for exactly
+that, over an ik its game switches on at runtime. `invariants.consumerDrivenMix`
+(§3.7) is the statement the file cannot make, and what it buys is a **SKIP by name,
+never a pass**: the file still shows nothing moving the constraint.
+
+```
+  SKIP  A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT: every ik constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the consumer's to set and nothing in this file shows it moving — "reach" (why: a game turns it on from code): it rests muted and none of the 1 animation keys its mix above 0
+```
+
+- **Beside a live constraint of the same kind** the live one is still measured, so
+  the rule PASSes and the build's stats line names the declared one
+  (`ikConsumerDriven=reach`, `transformConsumerDriven=…`) — `A39`'s shape for
+  `deformMayFold`. A SKIP there would print "nothing measured" over a rule that
+  measured one.
+- ⛔ **A declared constraint the file also switches on is refused** — resting live,
+  or keyed above 0 by any animation — because the declaration exempts nothing
+  there: the gate passes it without one. [measured] an ik keyed at mix 0.5 with code
+  writing 1: written before `state.apply` it is overwritten (applied 0.5), written
+  after it wins (1.0). Which of the two authors holds a frame is the order of the
+  consumer's own loop, which is the scene's, not the object's.
+- `validate <dir>` has no rig spec and so no declaration: a muted constraint there
+  is refused with all three doors.
 
 ### 4.13 `sequence` — which frame of a numbered series shows
 
@@ -5527,8 +5600,8 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | `A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN` | both | a **linked mesh** (§3.4) — `type: "linkedmesh"`, or a `type: "mesh"` carrying `source` — that also states `uvs`, `triangles`, `vertices`, `hull` or `edges`. The parser returns from the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`), so those keys are read by **nothing at all** and `setSourceMesh` fills the attachment with the source's arrays instead: the file says one mesh and every runtime draws another, in silence. The detail names the attachment by skin, slot and placeholder, every key it states, the `source` and where the parser looks for it — the two defaults spelled out, because an omitted `skin` is the **default** skin rather than the one the link is written in — and the shape the keys describe beside the shape the attachment loaded. ⚠️ **`width`/`height` are not part of this.** `setSourceMesh` overwrites both with the source's, so they are as dead at runtime — but the parser reads them (`:569-570`), the format carries them on a link and rigc emits them, so refusing them would refuse every link rigc writes (§3.4). `compile.ts` refuses the same shape outright in a rig rigc builds (§5.1); this is that fact held against a skeleton it did not write, and `ingest` reports it as `ATTACHMENT_LINK_GEOMETRY` ([INGEST §2.0](INGEST.md)). **SKIP** when no attachment in the skeleton takes its geometry from another — which is almost every skeleton, so a pass here means a link was read ([#710](https://github.com/firejune/rigc/issues/710)) |
 | `A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN` | both | an `rgb` or `alpha` timeline (§4.4) the runtime does not hold as the file states it, in one of two shapes that both parse in silence. **A channel keyed twice**: another colour timeline of the same slot in the same animation poses a channel this one poses — `rgba` beside `alpha` is the shape a converter leaves when it writes a separable `rgb` back as `rgba` next to the `alpha` it kept. Every colour timeline poses its channels at every time, the setup value before its first key included, so the one the file states later overwrites the other everywhere; the detail names both timelines, the channel, and which one survives. **A key not posed as written**: the animation is stepped to each key's own time — at the key **as the runtime stores it**: spine-core keeps key times as 32-bit floats, so a key at `0.2` is posed at `0.20000000298…`, the later of the two, and not one float step before it, where a first key still shows the setup value and a stepped key the one before (a correct file was refused that way until [#771](https://github.com/firejune/rigc/issues/771)), and the posed r g b (for `rgb`, against the hex, to half a quantisation step) or alpha (for `alpha`, against `value`, whose absence the parser reads as 0) is compared — a colour that is not six hex digits loads as NaN, and a key whose time another key repeats is read by nothing. ⚠️ An `rgb` alone written as an `rgba` holding the setup alpha is **not** caught and cannot be from the file: it is a correct `rgba`, and the difference shows only under another track that moves the alpha. The loaded timeline class and the channels a separable timeline leaves alone are measured in the selftest (`S83`–`S85`) rather than here, because against the linked parser neither can come out wrong. The channel table is `SLOT_COLOR_CHANNELS` in `src/timelines.ts`, shared with the compiler's refusal and held to the runtime's own property ids (`S89`). **SKIP** when no animation keys an `rgb` or `alpha` — there is then no separable slot colour to read back |
 | `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` | both | a **numbered series** (§3.4.3, §4.13) that the runtime does not show as the file states it. Every shape below loads without a word, measured on spine-core 4.3.13 ([#729](https://github.com/firejune/rigc/issues/729)). **The block**: a `sequence` with no `count` (`readSequence` reads 0, and the attachment holds no region) or a `setup` at or past `count` (`Sequence.resolveIndex` clamps it to the last frame). **The keys**: a `mode` outside the seven — `hold`, `once`, `loop`, `pingpong`, `onceReverse`, `loopReverse`, `pingpongReverse` — loads as `hold`; an `index` that is fractional (`index << 4` truncates it) or past the end (clamped); an advancing mode at an effective delay of 0 (the parser carries a key's `delay` from the key before; `(time - keyTime) / 0` is Infinity and `Infinity \| 0` is 0, so it never advances); a timeline on an attachment that carries no block (the parser gives every region a one-region series, so every mode shows it). **The pose**: every key is stepped to mid-frame sample times — enough to wrap every mode, and a `hold` key to its own time as the runtime stores it, a 32-bit float ([#771](https://github.com/firejune/rigc/issues/771)) — and the region the slot shows is held to the frame the file's own statement gives, the arithmetic of `SequenceTimeline.applyToSlot` and the names of `Sequence.getPath` transcribed rather than read off the loaded timeline, so the check is not the runtime agreeing with itself. Before the first key the frame is `setup`. ⚠️ A sample where the slot shows another attachment is not compared, because the runtime writes nothing there; a timeline with no comparable sample is counted in `stats.sequenceSamplesUnshown`. `compile.ts` refuses every one of these shapes in a spec (§5.1); this is them held against a skeleton it did not write. **SKIP** when no attachment carries a `sequence` block and no animation keys a `sequence` timeline |
-| `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | an ik constraint resting at `mix` 0 that no animation keys **away from 0** (§4.9, §4.12). `IkConstraint.update` returns on `mix === 0`, so it sits in the update cache and moves nothing. The keys are read the way `A23`/`A36`/`A37` read theirs — every value the loaded timeline poses on its `mix` channel, Bezier samples included — so a timeline keying 0 only is no rescue: [measured] it poses every bone exactly where the same rig with no constraint does, and before [#765](https://github.com/firejune/rigc/issues/765) it passed. Live is the runtime's `!== 0`, so a negative mix is not refused. `ik constraint "C" has mix 0 at setup and none of the 1 animation keys its mix above 0; update() returns on mix 0, so "upper" never reaches for "goal" — rest it above 0, or key its mix above 0 in an animation`. **SKIP** when the skeleton declares no ik constraint |
-| `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | a transform constraint none of whose mixes **for a property it drives** is away from 0 at setup or on any value an animation poses (§4.10, §4.12), or one whose `properties` name no `to` at all. A property is applied only when its own mix `!== 0`, and a key that omits a mix reads it as 1, so the six-mix early return of `TransformConstraint.update` would take a key of `mixRotate: 0` alone as a rescue — [measured] that key, and one keying `mixX` 1 on a rotate-only constraint, pose every bone exactly where no constraint does ([#765](https://github.com/firejune/rigc/issues/765)). A negative mix runs, and five transforms in the editor's example exports rest at −1. `transform constraint "C" drives rotate and has mixRotate 0 at setup, and none of the 1 animation keys its mix above 0; a mix is read only for a property the constraint drives, and update() skips each one at 0, so nothing ever moves "follower" — rest mixRotate above 0, or key its mix above 0 in an animation`. **SKIP** when the skeleton declares no transform constraint |
+| `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | an ik constraint resting at `mix` 0 that no animation keys **away from 0** (§4.9, §4.12). `IkConstraint.update` returns on `mix === 0`, so it sits in the update cache and moves nothing. The keys are read the way `A23`/`A36`/`A37` read theirs — every value the loaded timeline poses on its `mix` channel, Bezier samples included — so a timeline keying 0 only is no rescue: [measured] it poses every bone exactly where the same rig with no constraint does, and before [#765](https://github.com/firejune/rigc/issues/765) it passed. Live is the runtime's `!== 0`, so a negative mix is not refused. `ik constraint "C" has mix 0 at setup and none of the 1 animation keys its mix above 0; update() returns on mix 0, so "upper" never reaches for "goal" — rest it above 0, or key its mix above 0 in an animation, or declare that the consumer drives its mix, in the rig spec as invariants.consumerDrivenMix: [{ "constraint": "C", "type": "ik", "why": … }]`. A constraint the rig spec declares in `invariants.consumerDrivenMix` (§3.7) is not measured, and one the file also switches on is refused: `ik constraint "C" is declared in the rig spec as invariants.consumerDrivenMix, and the file already switches it on — … — so the declaration exempts nothing; drop the entry` ([#784](https://github.com/firejune/rigc/issues/784)). **SKIP** when the skeleton declares no ik constraint, and **SKIP by name** when every ik constraint it declares is declared consumer-driven: `every ik constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the consumer's to set and nothing in this file shows it moving — "C" (why: …): it rests muted and none of the 1 animation keys its mix above 0`. With a live one beside it the rule measures that one and the stats line names the declared (`ikConsumerDriven`) |
+| `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | a transform constraint none of whose mixes **for a property it drives** is away from 0 at setup or on any value an animation poses (§4.10, §4.12), or one whose `properties` name no `to` at all. A property is applied only when its own mix `!== 0`, and a key that omits a mix reads it as 1, so the six-mix early return of `TransformConstraint.update` would take a key of `mixRotate: 0` alone as a rescue — [measured] that key, and one keying `mixX` 1 on a rotate-only constraint, pose every bone exactly where no constraint does ([#765](https://github.com/firejune/rigc/issues/765)). A negative mix runs, and five transforms in the editor's example exports rest at −1. `transform constraint "C" drives rotate and has mixRotate 0 at setup, and none of the 1 animation keys its mix above 0; a mix is read only for a property the constraint drives, and update() skips each one at 0, so nothing ever moves "follower" — rest mixRotate above 0, or key its mix above 0 in an animation, or declare that the consumer drives its mix, in the rig spec as invariants.consumerDrivenMix: [{ "constraint": "C", "type": "transform", "why": … }]`. A constraint the rig spec declares in `invariants.consumerDrivenMix` (§3.7) is not measured, and one the file also switches on is refused as `A47`'s is; one that drives no property is refused with its own sentence declared or not, since no mix it carries is read by anybody ([#784](https://github.com/firejune/rigc/issues/784)). **SKIP** when the skeleton declares no transform constraint, and **SKIP by name** when every transform constraint it declares is declared consumer-driven: `every transform constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the consumer's to set and nothing in this file shows it moving — "C" (why: …): it rests muted and none of the 1 animation keys its mix above 0`. With a live one beside it the stats line names the declared (`transformConsumerDriven`) |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.

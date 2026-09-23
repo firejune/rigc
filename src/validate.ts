@@ -3546,25 +3546,84 @@ export function validate(input: ValidateInput): ValidateReport {
       },
     );
 
+    // 🔑 **The third door: the consumer drives the mix (issue #784).** A muted
+    // constraint nothing in the file switches on is either a leftover or a dial
+    // a game turns from code, and the two export as the same bytes — so the rig
+    // spec says which, in `invariants.consumerDrivenMix`, and a declared
+    // constraint is not measured here. What that buys is never a pass on it:
+    //
+    //   * every constraint of the kind declared — nothing is left to measure, so
+    //     the rule SKIPs, naming each constraint, the declaration and its `why`;
+    //   * some declared and some not — the rest are measured, and the declared
+    //     ones go on the stats line, which is `A39`'s shape for `deformMayFold`.
+    //     A SKIP there would put "nothing measured" over a rule that measured,
+    //     and the summary would count a measured rule as skipped (`reportLines`'
+    //     four buckets partition the registry, one row per rule).
+    //
+    // ⛔ A declared constraint the file ALSO switches on — resting live, or keyed
+    // above 0 — is refused: the declaration exempts nothing there, which is the
+    // shape `deformMayFold` on a slot with no mesh is refused for. [measured]
+    // (`scratchpad/consumerdriven_runtime.ts`) an ik keyed at mix 0.5 with code
+    // writing 1: code before `state.apply` is overwritten (applied mix 0.5),
+    // code after it wins (1.0) — so which author holds a frame is the order of
+    // the consumer's own loop, a fact about the scene rather than the object.
+    const consumerDriven = (type: 'ik' | 'transform'): Map<string, string> =>
+      new Map((input.rig?.consumerDrivenMix ?? []).filter((e) => e.type === type).map((e) => [e.constraint, e.why]));
+    const declareIt = (type: 'ik' | 'transform', name: string): string =>
+      `or declare that the consumer drives its mix, in the rig spec as invariants.consumerDrivenMix: ` +
+      `[{ "constraint": "${name}", "type": "${type}", "why": … }]`;
+    const declaredButLive = (where: string, how: string): string =>
+      `${where} is declared in the rig spec as invariants.consumerDrivenMix, and the file already switches it on — ` +
+      `${how} — so the declaration exempts nothing; drop the entry. Where code also sets that mix, which of the two ` +
+      'holds on a frame is the order of the consumer\'s own loop: `state.apply` overwrites a mix written before it, ' +
+      'and a mix written after it replaces the key';
+    const consumerSkip = (kind: string, exempt: Array<[string, string]>, animations: number): string =>
+      `every ${kind} constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the ` +
+      `consumer's to set and nothing in this file shows it moving — ${exempt.map(([name, why]) => `"${name}" (why: ${why})`).join('; ')}: ` +
+      `${exempt.length === 1 ? 'it rests' : 'each rests'} muted and ${noneKeysItsMixAbove0(animations)}`;
+
     check('A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', () => {
+      const NAME = 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT';
       const constraints = data.constraints.filter((c) => c instanceof IkConstraintData);
-      if (!constraints.length) return skip('A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', 'the skeleton declares no ik constraint');
+      if (!constraints.length) return skip(NAME, 'the skeleton declares no ik constraint');
+      const declared = consumerDriven('ik');
+      const exempt: Array<[string, string]> = [];
       for (const constraint of constraints) {
         const mix = constraint.setupPose.mix;
-        if (ikLive(mix) || ikSwitchedOn.has(constraint)) continue;
+        const live = ikLive(mix) || ikSwitchedOn.has(constraint);
+        const why = declared.get(constraint.name);
+        if (why !== undefined) {
+          if (!live) exempt.push([constraint.name, why]);
+          else {
+            fail(
+              NAME,
+              declaredButLive(
+                `ik constraint "${constraint.name}"`,
+                ikLive(mix) ? `it rests at mix ${mix}` : 'an animation keys its mix above 0',
+              ),
+            );
+          }
+          continue;
+        }
+        if (live) continue;
         fail(
-          'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT',
+          NAME,
           `ik constraint "${constraint.name}" has mix ${mix} at setup and ${noneKeysItsMixAbove0(data.animations.length)}; ` +
             `update() returns on mix 0, so ${constraint.bones.map((bone) => `"${bone.name}"`).join(' and ')} never ` +
-            `reach${constraint.bones.length === 1 ? 'es' : ''} for "${constraint.target.name}" — ${REST_OR_KEY_ITS_MIX}`,
+            `reach${constraint.bones.length === 1 ? 'es' : ''} for "${constraint.target.name}" — ${REST_OR_KEY_ITS_MIX}, ` +
+            declareIt('ik', constraint.name),
         );
       }
+      if (exempt.length) stats.ikConsumerDriven = exempt.map(([name]) => name).join(',');
+      if (exempt.length === constraints.length) return skip(NAME, consumerSkip('ik', exempt, data.animations.length));
     });
 
     check('A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT', () => {
       const NAME = 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT';
       const constraints = data.constraints.filter((c) => c instanceof TransformConstraintData);
       if (!constraints.length) return skip(NAME, 'the skeleton declares no transform constraint');
+      const declared = consumerDriven('transform');
+      const exempt: Array<[string, string]> = [];
       for (const constraint of constraints) {
         const where = `transform constraint "${constraint.name}"`;
         const reads = transformReads(constraint);
@@ -3579,16 +3638,35 @@ export function validate(input: ValidateInput): ValidateReport {
           );
           continue;
         }
-        if (read.some((field) => pose[field] !== 0) || transformSwitchedOn.has(constraint)) continue;
+        const resting = read.filter((field) => pose[field] !== 0);
+        const live = resting.length > 0 || transformSwitchedOn.has(constraint);
+        const why = declared.get(constraint.name);
+        if (why !== undefined) {
+          if (!live) exempt.push([constraint.name, why]);
+          else {
+            fail(
+              NAME,
+              declaredButLive(
+                where,
+                resting.length ? `it rests at ${resting.map((field) => `${field} ${pose[field]}`).join(', ')}` : 'an animation keys its mix above 0',
+              ),
+            );
+          }
+          continue;
+        }
+        if (live) continue;
         fail(
           NAME,
           `${where} drives ${read.map((field) => field.slice(3).replace(/^./, (c) => c.toLowerCase())).join(', ')} and has ` +
             `${read.map((field) => `${field} ${pose[field]}`).join(', ')} at setup, and ` +
             `${noneKeysItsMixAbove0(data.animations.length)}; a mix is read only for a property the constraint drives, and ` +
             `update() skips each one at 0, so nothing ever moves ${constraint.bones.map((bone) => `"${bone.name}"`).join(', ')} — ` +
-            `rest ${read.length === 1 ? read[0] : `one of ${read.join(', ')}`} above 0, or key its mix above 0 in an animation`,
+            `rest ${read.length === 1 ? read[0] : `one of ${read.join(', ')}`} above 0, or key its mix above 0 in an animation, ` +
+            declareIt('transform', constraint.name),
         );
       }
+      if (exempt.length) stats.transformConsumerDriven = exempt.map(([name]) => name).join(',');
+      if (exempt.length === constraints.length) return skip(NAME, consumerSkip('transform', exempt, data.animations.length));
     });
 
     // --- A40: two sliders on one property, and the later one erases the other -

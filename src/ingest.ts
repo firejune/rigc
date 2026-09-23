@@ -63,7 +63,7 @@ import {
   TOPLEVEL_CONSTRAINT_ARRAYS,
 } from './generation.ts';
 import { EVERY_GLOBAL_PHYSICS, MOTION_SPEC_VERSION, parseMotionSpec } from './motion.ts';
-import { parseRigSpec, resolveBoneInherit, RIG_KEYS, RIG_SPEC_VERSION, type RigSpec } from './rig.ts';
+import { constraintAt, parseRigSpec, resolveBoneInherit, RIG_KEYS, RIG_SPEC_VERSION, type RigSpec } from './rig.ts';
 import type { MotionSpec } from './types.ts';
 
 /**
@@ -327,6 +327,93 @@ function inertPhysics(root: JsonObject): Map<string, string[]> {
       constraint.name,
       stated.map((field) => `${field} ${String(constraint[field])}`),
     );
+  }
+  return out;
+}
+
+/**
+ * The two kinds `A47` / `A48` ask the muted-at-rest question of. An alias rather
+ * than the union written at each use, because `IG25`'s scan resolves a composed
+ * finding code against the nearest `<name>: '…' | '…'` above it, and `type:` is
+ * the identifier `ATTACHMENT_<TYPE>` composes from further down.
+ */
+type MixedConstraintKind = 'ik' | 'transform';
+
+/**
+ * The ik and transform constraints this file rests muted and never switches on
+ * — the shape `A47` / `A48` refuse — with the mixes each one reads (issue #784).
+ *
+ * 🔑 **Read the way the gate reads it, from the raw JSON.** This module does not
+ * link the runtime, so the defaults are the parser's own, spelled here: an ik
+ * `mix` is 1 when absent, on the constraint and on every key; a transform mix
+ * is 1 when absent except `mixY`, which is the same object's `mixX`, and
+ * `mixScaleY`, which is its `mixScaleX` (`SkeletonJson.js`, every
+ * `getValue(…, 1)`). A transform reads only the mixes of the `to` properties it
+ * declares, and one that declares none is `A48`'s other sentence, which no
+ * declaration answers — so it is not a candidate. Live is `!== 0`, the
+ * runtime's test. A key lifts a mix when the value it states is live, or when
+ * its Bezier handles for that channel are — the curve the runtime interpolates
+ * through (`curveChannelValues` in `validate.ts`), which is how a 0 → 0 pair
+ * with raised handles moves the bones.
+ *
+ * ⚠️ A disagreement with the gate is loud either way, never silent: an entry on
+ * a constraint the gate reads as live is refused by name (declared but already
+ * switched on), and a muted one this misses is `A47` / `A48` refusing it.
+ */
+function consumerDrivenCandidates(root: JsonObject): Array<{ type: MixedConstraintKind; name: string; reads: string[] }> {
+  const TO_MIX: Record<string, string> = {
+    rotate: 'mixRotate',
+    x: 'mixX',
+    y: 'mixY',
+    scaleX: 'mixScaleX',
+    scaleY: 'mixScaleY',
+    shearY: 'mixShearY',
+  };
+  /** Frame order of a transform timeline's six curve channels. */
+  const TRANSFORM_ORDER = ['mixRotate', 'mixX', 'mixY', 'mixScaleX', 'mixScaleY', 'mixShearY'];
+  const num = (value: unknown, fallback: number): number => (typeof value === 'number' ? value : fallback);
+  const transformMixes = (m: JsonObject): Record<string, number> => {
+    const mixX = num(m.mixX, 1);
+    const mixScaleX = num(m.mixScaleX, 1);
+    return {
+      mixRotate: num(m.mixRotate, 1),
+      mixX,
+      mixY: num(m.mixY, mixX),
+      mixScaleX,
+      mixScaleY: num(m.mixScaleY, mixScaleX),
+      mixShearY: num(m.mixShearY, 1),
+    };
+  };
+  /** The Bezier handle values of channel `c` on a key's `curve`; none when it is linear or stepped. */
+  const handles = (key: JsonObject, c: number): number[] =>
+    Array.isArray(key.curve) ? [key.curve[4 * c + 1], key.curve[4 * c + 3]].filter((v): v is number => typeof v === 'number') : [];
+  const keysOf = (kind: MixedConstraintKind, name: string): JsonObject[] =>
+    Object.values(obj(root.animations)).flatMap((animation) => arr(obj(obj(animation)[kind])[name]).map(obj));
+  const out: Array<{ type: MixedConstraintKind; name: string; reads: string[] }> = [];
+  for (const raw of arr(root.constraints)) {
+    const constraint = obj(raw);
+    if (typeof constraint.name !== 'string') continue;
+    if (constraint.type === 'ik') {
+      if (num(constraint.mix, 1) !== 0) continue;
+      const lifted = keysOf('ik', constraint.name).some((key) => num(key.mix, 1) !== 0 || handles(key, 0).some((v) => v !== 0));
+      if (!lifted) out.push({ type: 'ik', name: constraint.name, reads: ['mix'] });
+    } else if (constraint.type === 'transform') {
+      const reads = [
+        ...new Set(
+          Object.values(obj(constraint.properties)).flatMap((from) => Object.keys(obj(obj(from).to)).map((to) => TO_MIX[to])),
+        ),
+      ]
+        .filter((mix): mix is string => mix !== undefined)
+        .sort((a, b) => TRANSFORM_ORDER.indexOf(a) - TRANSFORM_ORDER.indexOf(b));
+      if (reads.length === 0) continue;
+      const setup = transformMixes(constraint);
+      if (reads.some((mix) => setup[mix] !== 0)) continue;
+      const lifted = keysOf('transform', constraint.name).some((key) => {
+        const values = transformMixes(key);
+        return reads.some((mix) => values[mix] !== 0 || handles(key, TRANSFORM_ORDER.indexOf(mix)).some((v) => v !== 0));
+      });
+      if (!lifted) out.push({ type: 'transform', name: constraint.name, reads });
+    }
   }
   return out;
 }
@@ -811,11 +898,48 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
     );
   }
 
+  // -- constraints the consumer drives (issue #784) --------------------------
+  // A constraint resting muted that no animation switches on is exactly what
+  // `A47` / `A48` refuse, and the export cannot say whether it is a leftover or
+  // a dial a game turns from code: the two are the same bytes. The rebuild
+  // reads it as the consumer's — the reading under which the file is correct —
+  // and says so twice: in the rig spec, as the declaration the gate reads, and
+  // as a finding naming the constraint, so the author sees what the rebuild is
+  // claiming. It is a `judgement` for `DURATION`'s reason: a statement the
+  // skeleton does not carry, made and printed rather than hidden, with nothing
+  // lost — the rebuilt skeleton is the same bytes either way.
+  const carried = new Set(constraints.map((c) => constraintAt(String(c.type), String(c.name))));
+  const consumerDrivenMix: JsonObject[] = [];
+  const animationCount = Object.keys(obj(root.animations)).length;
+  for (const { type, name, reads } of consumerDrivenCandidates(root)) {
+    if (!carried.has(constraintAt(type, name))) continue;
+    const assertion = type === 'ik' ? 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT' : 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT';
+    consumerDrivenMix.push({
+      constraint: name,
+      type,
+      why:
+        'the source skeleton rests it muted and no animation keys its mix above 0; `rigc ingest` reads it as a mix ' +
+        'the consumer sets, which an export cannot state. Delete this entry if it is a leftover',
+    });
+    note(
+      'judgement',
+      'CONSUMER_DRIVEN_MIX',
+      `constraint "${name}" (${type})`,
+      `rests at ${reads.map((mix) => `${mix} 0`).join(', ')} and none of the ${animationCount} ` +
+        `animation${animationCount === 1 ? '' : 's'} keys its mix above 0, so nothing in this file ever switches it ` +
+        'on — and the file cannot say whether that is a leftover or a mix a game sets from code. `build` refuses the ' +
+        `shape by name (${assertion}) unless the rig spec says which, so the rig spec now says the consumer drives ` +
+        'it, in invariants.consumerDrivenMix, and the gate SKIPs it by name rather than measuring it. If it is a ' +
+        `leftover, delete the entry and rest ${type === 'ik' ? 'its mix' : 'a mix it reads'} above 0 or remove the ` +
+        'constraint, and the gate measures it again',
+    );
+  }
+
   // -- assemble -------------------------------------------------------------
   const rig: JsonObject = {
     spec: RIG_SPEC_VERSION,
     name: opts.name,
-    note: provenanceNote(opts, 'rig'),
+    note: provenanceNote(opts, 'rig', consumerDrivenMix.length > 0),
   };
   if (Object.keys(rigHeader).length) rig.skeleton = rigHeader;
   // Between `skeleton` and `bones`, which is where `RIG_KEYS.RigSpec` puts it —
@@ -826,10 +950,14 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
   if (Object.keys(skins).length) rig.skins = skins;
   if (constraints.length) rig.constraints = constraints;
   if (isObj(root.events)) rig.events = { ...root.events };
-  // `invariants` is deliberately absent. A skeleton states no invariant, and
-  // INGEST §2.1 already says what to do about that: leave the block out, because
-  // an assertion with nothing to measure reports SKIP and never a pass. Writing
-  // an invariant here would be certifying a rig nobody measured.
+  // `invariants` is absent but for one field. A skeleton states no invariant,
+  // and INGEST §2.1 already says what to do about that: leave the block out,
+  // because an assertion with nothing to measure reports SKIP and never a pass.
+  // Writing an invariant that turns a check ON here would be certifying a rig
+  // nobody measured. `consumerDrivenMix` is the other direction — it turns two
+  // checks OFF for the constraints named above, which certifies nothing: what it
+  // buys is a SKIP by name, and a finding says each one out loud (issue #784).
+  if (consumerDrivenMix.length) rig.invariants = { consumerDrivenMix };
 
   const motion: JsonObject = {
     spec: MOTION_SPEC_VERSION,
@@ -2052,11 +2180,21 @@ function constraintGroup(
  * independent compiles byte for byte, and a dated note in a spec would break the
  * first rebuild from it.
  */
-function provenanceNote(opts: IngestOptions, which: 'rig' | 'motion'): string {
+function provenanceNote(opts: IngestOptions, which: 'rig' | 'motion', consumerDriven = false): string {
   const head =
     `DECOMPILED from ${opts.source} by \`rigc ingest\` ${opts.version}. Every number here was read out of that ` +
     'skeleton; nothing was authored, so this file says what the object IS and nothing about why.';
   if (which === 'rig') {
+    // Only where the declaration was written, so every other decompiled rig spec
+    // keeps its note byte for byte.
+    if (consumerDriven) {
+      return (
+        `${head} \`invariants\` holds only \`consumerDrivenMix\`, the constraints this run read as mixes the ` +
+        'consumer sets (each is a CONSUMER_DRIVEN_MIX finding); it turns a refusal into a SKIP and certifies ' +
+        'nothing. A skeleton declares no other invariant, and an assertion with nothing to measure must SKIP ' +
+        'rather than pass.'
+      );
+    }
     return (
       `${head} \`invariants\` is deliberately absent — a skeleton declares none, and an assertion with nothing to ` +
       'measure must SKIP rather than pass.'

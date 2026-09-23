@@ -1501,6 +1501,44 @@ export interface RigInvariants {
    * #545), and leaving it out says the same thing without the ambiguity.
    */
   editorRoundTrip?: boolean;
+  /**
+   * Ik and transform constraints whose mix **the consumer sets**, from code,
+   * rather than any animation in this file — so `A47` / `A48` do not refuse
+   * them for resting muted with nothing keying them up (issue #784).
+   *
+   * 🔑 **The file cannot say this about itself.** A constraint resting at 0
+   * that no animation keys above 0 is either a leftover that moves nothing or a
+   * dial a game turns on at runtime, and the two export as the same bytes. The
+   * gate refuses the shape because nothing *in the file* ever moves it; this is
+   * the statement that something outside it does. It is the rig-side spelling of
+   * `gallery/look`'s rule that a face angle is a value rather than a time: the
+   * object offers the dial and the consumer decides when it turns.
+   *
+   * 🚨 **An opt-OUT, held to `deformMayFold`'s standard.** Each entry names the
+   * constraint AND its `type` — names are unique per kind (issue #692), so a
+   * name alone could mean an ik and a transform at once — and a `why`, required
+   * and non-blank. A name that resolves to nothing, a kind that has no such
+   * rule (a path, physics or slider constraint: `A36`, `A23` and `A37` read no
+   * declaration, so the entry would exempt nothing), a repeat and a blank `why`
+   * are each refused by name. A declared constraint that the file itself
+   * switches on — resting live, or keyed above 0 — is refused at the gate, for
+   * the same reason: the declaration would exempt nothing.
+   *
+   * ⚠️ What it buys is a SKIP, never a pass: a declared constraint is not
+   * measured, and `A47`/`A48` say so by name when nothing else of that kind is
+   * left to measure, and on the build's stats line when something is.
+   */
+  consumerDrivenMix?: RigConsumerDrivenMix[];
+}
+
+/** One constraint whose mix the consumer drives — `invariants.consumerDrivenMix`. */
+export interface RigConsumerDrivenMix {
+  /** The constraint's `name`. */
+  constraint: string;
+  /** Its `type`: `ik` or `transform`, the two kinds `A47`/`A48` read the declaration for. */
+  type: 'ik' | 'transform';
+  /** Required, and blank is refused by name — see `consumerDrivenMix`. */
+  why: string;
 }
 
 /** One forbidden parentage — `invariants.detached` (`A25`). */
@@ -1592,9 +1630,10 @@ export const RIG_KEYS = {
   RigBoneFrom: ['anchor', 'slotWindow', 'meshCenter', 'rotation'],
   RigSlot: ['name', 'bone', 'attachment', 'color', 'dark', 'blend'],
   RigEvent: ['int', 'float', 'string', 'audio', 'volume', 'balance'],
-  RigInvariants: ['meshSlots', 'meshTriangles', 'axisBone', 'massBone', 'detached', 'deformMayFold', 'editorRoundTrip'],
+  RigInvariants: ['meshSlots', 'meshTriangles', 'axisBone', 'massBone', 'detached', 'deformMayFold', 'editorRoundTrip', 'consumerDrivenMix'],
   RigDetachedRule: ['bone', 'notUnder', 'why'],
   RigDeformFoldExemption: ['slot', 'why'],
+  RigConsumerDrivenMix: ['constraint', 'type', 'why'],
   // Not retyped: `RIG_SKIN_KEYS` already IS this set, and it is the set
   // `splitRigSkin` refuses a long-form skin's stray key against. A second
   // spelling of it here would be two lists that have to agree, which is the
@@ -1818,6 +1857,9 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
     for (const [i, rule] of (Array.isArray(raw.invariants.deformMayFold) ? raw.invariants.deformMayFold : []).entries()) {
       at(rule, 'RigDeformFoldExemption', `invariants.deformMayFold[${i}]`);
     }
+    for (const [i, rule] of (Array.isArray(raw.invariants.consumerDrivenMix) ? raw.invariants.consumerDrivenMix : []).entries()) {
+      at(rule, 'RigConsumerDrivenMix', `invariants.consumerDrivenMix[${i}]`);
+    }
   }
 
   for (const [skinName, skin] of Object.entries(isObj(raw.skins) ? raw.skins : {})) {
@@ -2020,8 +2062,9 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
     }
   }
 
-  // `invariants.deformMayFold` — the one field in this file that TURNS A CHECK
-  // OFF, so its own shape is checked harder than the fields that turn one on. A
+  // `invariants.deformMayFold` — one of the two fields in this file that TURN A
+  // CHECK OFF (`consumerDrivenMix`, below, is the other), so its own shape is
+  // checked harder than the fields that turn one on. A
   // typo in a slot name here would silently exempt nothing and gate everything,
   // which reads exactly like the check working; and an exemption with no reason
   // is unreviewable six months later. Both are refused by name.
@@ -2099,6 +2142,55 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
     constraintsDeclared.push(declared);
     constraintFacts.set(constraintAt(declared.type, declared.name), declared);
     constraintKinds.set(declared.name, [...(constraintKinds.get(declared.name) ?? []), declared.type]);
+  }
+
+  // `invariants.consumerDrivenMix` — the second field in `invariants` that TURNS
+  // A CHECK OFF, so it is held to `deformMayFold`'s standard above: every way an
+  // entry could exempt nothing while reading like it worked is refused by name
+  // (issue #784). It resolves against `constraintFacts` because a constraint's
+  // namespace is its kind — the entry says which kind, and the lookup is that key.
+  const consumerDriven = spec.invariants?.consumerDrivenMix;
+  if (consumerDriven !== undefined) {
+    const shape = 'an array of { "constraint": …, "type": "ik" | "transform", "why": … }';
+    if (!Array.isArray(consumerDriven)) {
+      throw new CompileError(`${where}: invariants.consumerDrivenMix is ${JSON.stringify(consumerDriven)}, expected ${shape}`);
+    }
+    const named = new Set<string>();
+    for (const entry of consumerDriven) {
+      if (!isObj(entry) || typeof entry.constraint !== 'string' || entry.constraint.length === 0) {
+        throw new CompileError(`${where}: every invariants.consumerDrivenMix entry needs a "constraint" — ${shape}`);
+      }
+      if (entry.type !== 'ik' && entry.type !== 'transform') {
+        const declaredAs = constraintKinds.get(entry.constraint) ?? [];
+        throw new CompileError(
+          `${where}: invariants.consumerDrivenMix entry for "${entry.constraint}" has type ${JSON.stringify(entry.type)}; ` +
+            'only "ik" and "transform" read this declaration (A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT, ' +
+            'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT). A path, physics or slider constraint resting muted is ' +
+            'A36, A23 or A37, which read no declaration, so the entry would exempt nothing' +
+            (declaredAs.length ? ` — the rig declares "${entry.constraint}" as ${declaredAs.map((t) => `${t === 'ik' ? 'an' : 'a'} ${t}`).join(' and ')} constraint` : ''),
+        );
+      }
+      const key = constraintAt(entry.type, entry.constraint);
+      if (!constraintFacts.has(key)) {
+        const declaredAs = constraintKinds.get(entry.constraint) ?? [];
+        throw new CompileError(
+          `${where}: invariants.consumerDrivenMix names ${key}, which this rig does not declare` +
+            (declaredAs.length
+              ? ` — "${entry.constraint}" is declared as ${declaredAs.map((t) => `${t === 'ik' ? 'an' : 'a'} ${t}`).join(' and ')} constraint, and a constraint resolves by name AND type`
+              : '') +
+            '. A name that resolves to nothing exempts nothing, and reads like the exemption worked',
+        );
+      }
+      if (named.has(key)) throw new CompileError(`${where}: invariants.consumerDrivenMix names ${key} twice`);
+      named.add(key);
+      if (typeof entry.why !== 'string' || entry.why.trim().length === 0) {
+        throw new CompileError(
+          `${where}: invariants.consumerDrivenMix entry for ${key} needs a "why" — this field switches ` +
+            `${entry.type === 'ik' ? 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT' : 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT'} ` +
+            'off for that constraint, and an exemption nobody can date or justify is how a defect ships as a decision',
+        );
+      }
+    }
   }
 
   // --- skins: the attachment table, and what the skin ACTIVATES --------------
