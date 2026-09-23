@@ -34020,6 +34020,53 @@ function atlasOnItsFilesOwnGrid(atlasText: string, ratio: number): string {
 // does not exist. The header is now unconditional and `tallyFaults` refuses the
 // shape outright — a suite that reports it did not run and opened no section is
 // a HOLE nobody can see (issue #451).
+/**
+ * The smallest file that is a WebP by every byte a signature reader looks at: a
+ * RIFF container whose form type is `WEBP`, holding one `VP8L` chunk with the
+ * lossless signature byte and a 14-bit width and height minus one (issue #732).
+ * Hand-written and content-neutral — no encoder produced it and it decodes to
+ * nothing, because the only question put to it is what its first bytes say it
+ * is. The size is the caller's, so the page it replaces keeps the size its
+ * atlas declares and nothing but the format differs.
+ */
+function minimalWebp(width: number, height: number): Uint8Array {
+  const le32 = (n: number): number[] => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
+  const header = ((width - 1) & 0x3fff) | (((height - 1) & 0x3fff) << 14) | (1 << 28);
+  const payload = [0x2f, ...le32(header >>> 0), 0, 0, 0];
+  const body = [...Buffer.from('WEBP'), ...Buffer.from('VP8L'), ...le32(payload.length), ...payload];
+  return new Uint8Array([...Buffer.from('RIFF'), ...le32(body.length), ...body]);
+}
+
+/**
+ * The overlay fixture's shared pack, copied into a directory of its own with
+ * its first page's bytes replaced by what `forge` returns for them. A copy
+ * because several suites walk `packed_p2` for the pages it holds; the atlas
+ * text, the skeleton and every other page are the pack's own, byte for byte.
+ */
+function packWithFirstPageReplaced(forge: (png: Uint8Array, page: { width: number; height: number }) => Uint8Array): {
+  dir: string;
+  atlasPath: string;
+  pagePath: string;
+  page: { name: string; width: number; height: number };
+  atlasText: string;
+  result: CompileResult;
+} {
+  const packed = packFixture(OVERLAY, DEFAULT_PADDING);
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-'));
+  for (const name of [...packed.pages, 'skeleton.atlas', 'skeleton.json']) copyFileSync(join(packed.dir, name), join(dir, name));
+  const page = parseAtlasText(packed.atlasText).pages[0];
+  const pagePath = join(dir, page.name);
+  writeFileSync(pagePath, forge(readFileSync(pagePath), page));
+  return {
+    dir,
+    atlasPath: join(dir, 'skeleton.atlas'),
+    pagePath,
+    page: { name: page.name, width: page.width, height: page.height },
+    atlasText: packed.atlasText,
+    result: packed.result,
+  };
+}
+
 function runAtlasReaderSuite(): number | null {
   const dir = resolve(import.meta.dir, 'examples');
   const atlases: string[] = [];
@@ -35002,6 +35049,251 @@ function runAtlasReaderSuite(): number | null {
         'corpus says the same thing at a larger scale — every page of it matches its `size:` line, which is why ' +
         'none of these cases could be built from it',
     );
+  }
+
+  // PKR49–PKR54: a page whose bytes are not a PNG (issue #732).
+  //
+  // The subjects are FORGED rather than found, for PKR45's reason: every page
+  // of the example corpus is a PNG, so the corpus is this change's negative
+  // control (PKR54) and cannot be its subject. Each forgery replaces the bytes
+  // of the shared pack's first page and nothing else — same name, same `size:`
+  // line, same regions — so whatever the gate says differently is about what
+  // the file IS. Two of the forgeries are signatures only (a WebP container, a
+  // JPEG start-of-image); the truncations are cuts of the real page, placed by
+  // the file's own structure rather than at a byte count typed here.
+  {
+    const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+    const A19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
+    const honestPack = packWithFirstPageReplaced((png) => png);
+    const webpPack = packWithFirstPageReplaced((_png, page) => minimalWebp(page.width, page.height));
+    const jpegPack = packWithFirstPageReplaced(() => new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, ...Buffer.from('JFIF'), 0x00]));
+    // Inside the IHDR chunk: past its eight-byte header, short of its body.
+    const inHeaderPack = packWithFirstPageReplaced((png) => png.subarray(0, PNG_SIGNATURE.length + 8 + 4));
+    // Halfway through the file, which on any page this packer writes is past
+    // the IHDR and inside the pixel data — the cut the old length floor passed.
+    const halfwayPack = packWithFirstPageReplaced((png) => png.subarray(0, Math.floor(png.length / 2)));
+    const gateOf = (pack: ReturnType<typeof packWithFirstPageReplaced>, profile: ValidateProfile): ReturnType<typeof validate> =>
+      validate({
+        skeletonText: pack.result.skeletonText,
+        atlasText: pack.atlasText,
+        atlasDir: pack.dir,
+        declaredDurations: pack.result.declaredDurations,
+        rig: pack.result.rig,
+        profile,
+      });
+    const detailsOf = (report: ReturnType<typeof validate>, code: string): string[] =>
+      report.failures.filter((f) => f.assertion === code).map((f) => f.detail);
+    const honestSpine = gateOf(honestPack, 'spine');
+    const honestHtml = gateOf(honestPack, 'spine-html');
+    const declared = `declares ${webpPack.page.width}x${webpPack.page.height}`;
+
+    // PKR49 — the card's own case, at the gate.
+    const webpSaid = detailsOf(gateOf(webpPack, 'spine'), A06);
+    const webpProbes = [
+      ...(honestSpine.passed.includes(A06) ? [] : ['the same pack with its real page is not green at A06, so a red below is not the forgery\'s']),
+      ...(webpSaid.length === 1 ? [] : [`A06 raised ${webpSaid.length} failure(s) on the WebP page, where one page is one failure`]),
+      ...webpSaid.flatMap((detail) => [
+        ...(detail.startsWith('threw:') ? [`A06 still reports the reader's throw: ${detail.slice(0, 160)}`] : []),
+        ...(detail.includes('is a WebP image') ? [] : [`the detail does not name the format it found: ${detail.slice(0, 160)}`]),
+        ...(detail.includes(webpPack.pagePath) ? [] : ['the detail does not carry the page\'s path']),
+        ...(detail.includes(declared) ? [] : [`the detail does not state the size the atlas declares (${declared})`]),
+        ...(detail.includes('rigc reads PNG') ? [] : ['the detail does not say what rigc reads']),
+      ]),
+    ];
+    const webpHeld = webpProbes.length === 0;
+    say(
+      'PKR49_A_WEBP_PAGE_BEHIND_A_PNG_NAME_IS_REFUSED_AT_A06_BY_ITS_FORMAT_AND_PATH',
+      webpHeld,
+      probeDetail(
+        webpHeld,
+        webpProbes,
+        `one A06 failure on the forged page, naming it a WebP image at its own path, the ${webpPack.page.width}x` +
+          `${webpPack.page.height} the atlas declares, and that rigc reads PNG; the real page beside it passes`,
+      ),
+      'the production pack behind #732 printed `threw: not a PNG (bad signature)` — the verdict right and the ' +
+        'sentence a stack message, sending the author after corruption in a well-formed image of another format',
+    );
+
+    // PKR50 — up front, where `build --atlas-in` opens the pack.
+    const pressRoot = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-build-'));
+    const pressWith = (pack: ReturnType<typeof packWithFirstPageReplaced>, out: string): { status: number | null; stdout: string; stderr: string } =>
+      runCli(['build', '--rig', OVERLAY.rigPath, '--motion', OVERLAY.motionPath, '--manifest', OVERLAY.manifestPath, '--atlas-in', pack.atlasPath, '--out', out]);
+    const honestOut = join(pressRoot, 'honest');
+    const webpOut = join(pressRoot, 'webp');
+    const honestBuild = pressWith(honestPack, honestOut);
+    const webpBuild = pressWith(webpPack, webpOut);
+    const stackLines = webpBuild.stderr.split('\n').filter((line) => /^\s+at /.test(line));
+    const upFrontProbes = [
+      ...(honestBuild.status === 0 ? [] : [`the pack with its real page did not build (exit ${String(honestBuild.status)})`]),
+      ...(webpBuild.status === 1 ? [] : [`the WebP pack's build exited ${String(webpBuild.status)}, where a compile refusal is 1`]),
+      ...(webpBuild.stderr.includes(`rigc compile error: --atlas-in ${webpPack.atlasPath}`) ? [] : ['the refusal is not the compile error that names the pack']),
+      ...(webpBuild.stderr.includes('is a WebP image') && webpBuild.stderr.includes(webpPack.pagePath) ? [] : ['the refusal does not name the page\'s path and its format']),
+      ...firstFew(stackLines.map((line) => `a stack frame reached the author: ${line.trim()}`), 'frame(s)'),
+      ...(webpBuild.stdout.includes('validate (spine-core') ? ['the build reached the gate before saying so, which is not up front'] : []),
+      ...(existsSync(webpOut) ? [`${webpOut} exists after the refusal, which is emit-before-green`] : []),
+    ];
+    const upFrontHeld = upFrontProbes.length === 0;
+    say(
+      'PKR50_BUILD_ATLAS_IN_NAMES_A_PAGE_THAT_IS_NOT_A_PNG_WHERE_IT_OPENS_THE_PACK',
+      upFrontHeld,
+      probeDetail(
+        upFrontHeld,
+        upFrontProbes,
+        'the pack with its real page builds green; with the WebP page it is refused by a compile error naming the ' +
+          `pack, the page's path and its format, exit ${String(webpBuild.status)}, with no stack frame, before the ` +
+          'gate runs, and nothing under --out',
+      ),
+      'the author must not wait for the gate: every page the pack names reaches it (the emitted atlas is the pack\'s ' +
+        'own text), so the pack is where the page can be named first — and on the branch point this run was a raw ' +
+        'stack trace out of the header reader, a line of source code above the message',
+    );
+
+    // PKR51 — a second foreign signature, so the naming is not one special case.
+    const jpegSaid = detailsOf(gateOf(jpegPack, 'spine'), A06);
+    const jpegProbes = [
+      ...(jpegSaid.length === 1 ? [] : [`A06 raised ${jpegSaid.length} failure(s) on the JPEG page`]),
+      ...jpegSaid.flatMap((detail) => [
+        ...(detail.includes('is a JPEG image') ? [] : [`the detail does not name JPEG: ${detail.slice(0, 160)}`]),
+        ...(detail.includes('FF D8 FF') ? [] : ['the detail does not print the bytes it found']),
+        ...(detail.includes(jpegPack.pagePath) ? [] : ['the detail does not carry the page\'s path']),
+      ]),
+    ];
+    const jpegHeld = jpegProbes.length === 0;
+    say(
+      'PKR51_A_JPEG_SIGNATURE_IS_NAMED_AS_JPEG_WITH_THE_BYTES_IT_FOUND',
+      jpegHeld,
+      probeDetail(jpegHeld, jpegProbes, 'one A06 failure naming the page a JPEG image at its own path, its first bytes printed in hex'),
+      'a reader that recognised WebP alone would be the card\'s one production case, special-cased; a second ' +
+        'signature is what shows the sentence comes from the table and not from the example',
+    );
+
+    // PKR52 — a truncated PNG is still called what it is, wherever it was cut.
+    const truncations: Array<[string, ReturnType<typeof packWithFirstPageReplaced>]> = [
+      ['cut inside its IHDR chunk', inHeaderPack],
+      ['cut halfway through the file', halfwayPack],
+    ];
+    const truncationProbes = truncations.flatMap(([label, pack]) => {
+      const said = detailsOf(gateOf(pack, 'spine'), A06);
+      let plateSaid = '';
+      try {
+        readPlate(pack.pagePath);
+        plateSaid = 'decoded';
+      } catch (err) {
+        plateSaid = (err as Error).message;
+      }
+      return [
+        ...(said.length === 1 ? [] : [`${label}: A06 raised ${said.length} failure(s), where the page is one`]),
+        ...said.flatMap((detail) => (detail.includes('is a truncated PNG') && detail.includes(pack.pagePath) ? [] : [`${label}: A06 says ${detail.slice(0, 160)}`])),
+        ...(plateSaid.includes('is a truncated PNG') ? [] : [`${label}: the pixel reader says ${plateSaid.slice(0, 160)}`]),
+      ];
+    });
+    const truncationHeld = truncationProbes.length === 0;
+    say(
+      'PKR52_A_TRUNCATED_PNG_IS_CALLED_TRUNCATED_BY_THE_GATE_AND_THE_PIXEL_READER_WHEREVER_IT_WAS_CUT',
+      truncationHeld,
+      probeDetail(
+        truncationHeld,
+        truncationProbes,
+        `${truncations.length} cuts of the real page — ${truncations.map(([label]) => label).join(', ')} — each one A06 ` +
+          'failure and one pixel-reader refusal, all saying truncated and naming the path',
+      ),
+      'the header reader\'s old floor (26 bytes, "too short") never said truncated, and a cut past the IHDR passed it: ' +
+        'on the branch point the halfway cut was A06 PASS and a default build wrote a skeleton whose page no reader ' +
+        'could decode. Two cuts, because a floor and a walk disagree only on the second',
+    );
+
+    // PKR53 — one reader: every reader of the page states the same sentence.
+    const sentence = (() => {
+      try {
+        readPlate(webpPack.pagePath);
+        return null;
+      } catch (err) {
+        return (err as Error).message;
+      }
+    })();
+    const compileSaid = (() => {
+      try {
+        compile({ ...optsForFixture(OVERLAY), outDir: join(pressRoot, 'library'), atlasInPath: webpPack.atlasPath });
+        return 'compiled';
+      } catch (err) {
+        return (err as Error).message;
+      }
+    })();
+    const alphaSaid = detailsOf(gateOf(webpPack, 'spine-html'), A19);
+    const oneReaderProbes = [
+      ...(sentence === null ? ['the pixel reader decoded a WebP page'] : []),
+      ...(sentence !== null && sentence.includes('is a WebP image') ? [] : [`the pixel reader says ${String(sentence).slice(0, 160)}`]),
+      ...(sentence !== null && webpSaid.every((detail) => detail.endsWith(sentence)) ? [] : ['A06\'s detail does not end with the pixel reader\'s sentence']),
+      ...(sentence !== null && compileSaid.includes(sentence) ? [] : [`the compiler says ${compileSaid.slice(0, 160)}`]),
+      ...(alphaSaid.length > 0 ? [] : ['A19 raised nothing on a page it cannot open under the profile that runs it']),
+      ...alphaSaid.flatMap((detail) => [
+        ...(detail.startsWith('threw:') ? [`A19 still reports a throw: ${detail.slice(0, 160)}`] : []),
+        ...(detail.includes('not measured') && detail.includes(A06) ? [] : [`A19 does not state a non-measurement pointing at A06: ${detail.slice(0, 160)}`]),
+      ]),
+    ];
+    const oneReaderHeld = oneReaderProbes.length === 0;
+    say(
+      'PKR53_EVERY_READER_OF_THE_PAGE_STATES_THE_ONE_READERS_SENTENCE_AND_A19_POINTS_AT_A06',
+      oneReaderHeld,
+      probeDetail(
+        oneReaderHeld,
+        oneReaderProbes,
+        'the pixel reader, A06 and the compiler all state one sentence about the WebP page, and A19 under the ' +
+          `renderer profile raises ${alphaSaid.length} non-measurement(s) naming A06 rather than a throw`,
+      ),
+      'three readers used to say three things about one file — `not a PNG (bad signature)`, `unexpected end of ' +
+        'file` and a stack trace — and none of them what it was. One derivation, the way `pageFootprint` is one, is ' +
+        'what stops the next reader from growing a fourth',
+    );
+
+    // PKR54 — the positive control: every real page is left exactly alone.
+    const corpusPages = [
+      ...new Set(atlases.flatMap((path) => parseAtlasText(readFileSync(path, 'utf8')).pages.map((page) => resolve(dirname(path), page.name)))),
+    ];
+    const corpusRefused = corpusPages.flatMap((path) => {
+      try {
+        readPngInfo(path);
+        return [];
+      } catch (err) {
+        return [(err as Error).message.slice(0, 160)];
+      }
+    });
+    const newWords = ['cannot be read as PNG', 'is a truncated PNG', 'not a PNG'];
+    const positiveProbes = [
+      ...floorProbes([[corpusPages.length, 1, `${corpusPages.length} corpus page(s) found`]], 'a positive control over no page measures nothing'),
+      ...firstFew(corpusRefused.map((said) => `a corpus page is refused: ${said}`), 'page(s)'),
+      ...[
+        ['the real pack', honestSpine],
+        ['the real pack under the renderer profile', honestHtml],
+      ].flatMap(([label, report]) => {
+        const r = report as ReturnType<typeof validate>;
+        return [
+          ...(r.passed.includes(A06) ? [] : [`${String(label)}: A06 is not a PASS`]),
+          ...firstFew(
+            r.failures.filter((f) => newWords.some((word) => f.detail.includes(word))).map((f) => `${String(label)}: ${f.assertion} says ${f.detail.slice(0, 120)}`),
+            'row(s)',
+          ),
+        ];
+      }),
+      ...(honestHtml.passed.includes(A19) ? [] : ['the real pack under the renderer profile: A19 is not a PASS']),
+    ];
+    const positiveHeld = positiveProbes.length === 0;
+    say(
+      'PKR54_EVERY_CORPUS_PAGE_READS_AS_PNG_AND_THE_REAL_PACK_PASSES_A06_AND_A19_UNTOUCHED',
+      positiveHeld,
+      probeDetail(
+        positiveHeld,
+        positiveProbes,
+        `${corpusPages.length} page(s) named by the corpus atlases read as PNG through the one reader, and the pack the ` +
+          'forgeries were made from passes A06 under both profiles and A19 under the renderer\'s, with no row in ' +
+          'either report saying a page is not a PNG',
+      ),
+      'a refusal of a foreign file is worth having only if it leaves every real one alone; the corpus pages are ' +
+        'editor exports this tree did not write, which is what makes them the negative control rather than the ' +
+        'fixture that agreed with the reader it was made for',
+    );
+    for (const pack of [honestPack, webpPack, jpegPack, inHeaderPack, halfwayPack]) rmSync(pack.dir, { recursive: true, force: true });
+    rmSync(pressRoot, { recursive: true, force: true });
   }
 
   return bad;
@@ -37213,6 +37505,93 @@ function runCliSuite(): number {
         'something the reader cannot name — and the heading is where a reader of the console table meets it',
     );
     rmSync(dir, { recursive: true, force: true });
+  }
+
+  // --- CLI86-CLI87: a page that is not a PNG, at the commands that open one (#732)
+  //
+  // The gate's half is PKR49–PKR54. These are the commands that open a page
+  // without the gate in front of them — `render` poses the pack, `explain
+  // --atlas-in` compiles against it, and a loose build reads each part as the
+  // page it becomes — and each of them printed a stack trace out of the reader
+  // on the branch point, one line of rigc's source above the message.
+  {
+    const stackOf = (stderr: string): string[] => stderr.split('\n').filter((line) => /^\s+at /.test(line));
+    const webpPack = packWithFirstPageReplaced((_png, page) => minimalWebp(page.width, page.height));
+    const honestPack = packWithFirstPageReplaced((png) => png);
+    const renderRoot = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-render-'));
+    const honestRender = runCli(['render', '--candidate', honestPack.dir, '--out', join(renderRoot, 'honest')]);
+    const webpRender = runCli(['render', '--candidate', webpPack.dir, '--out', join(renderRoot, 'webp')]);
+    const firstError = webpRender.stderr.split('\n').find((line) => line.startsWith('rigc')) ?? '';
+    const renderProbes = [
+      ...(honestRender.status === 0 ? [] : [`the pack with its real page did not render (exit ${String(honestRender.status)})`]),
+      ...(webpRender.status === 1 ? [] : [`render exited ${String(webpRender.status)} on the WebP page, where a file refusal is 1`]),
+      ...(firstError.startsWith(`rigc: ${webpPack.pagePath} is a WebP image`) ? [] : [`render's refusal reads ${JSON.stringify(firstError.slice(0, 160))}`]),
+      ...firstFew(stackOf(webpRender.stderr).map((line) => `a stack frame reached the author: ${line.trim()}`), 'frame(s)'),
+    ];
+    const renderHeld = renderProbes.length === 0;
+    say(
+      'CLI86_RENDER_NAMES_A_PAGE_THAT_IS_NOT_A_PNG_BY_PATH_AND_FORMAT_WITHOUT_A_STACK',
+      renderHeld,
+      probeDetail(
+        renderHeld,
+        renderProbes,
+        `the real pack renders; the WebP one exits ${String(webpRender.status)} on one line naming the page's path ` +
+          'and its format, with no stack frame',
+      ),
+      'render reads every page to draw it, and on the branch point it said `cannot decode PNG …: unexpected end of ' +
+        'file` under the source line that threw it — an inflate error about a file that was never a PNG',
+    );
+
+    // A loose part, copied out of the fixture so the fixture itself is untouched.
+    const looseRoot = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-loose-'));
+    cpSync(OVERLAY.dir, looseRoot, { recursive: true });
+    const looseParts = readdirSync(join(looseRoot, 'parts')).filter((name) => name.endsWith('.png')).sort();
+    const loosePart = looseParts.length === 0 ? null : join(looseRoot, 'parts', looseParts[0]);
+    if (loosePart !== null) {
+      const info = readPngInfo(loosePart);
+      writeFileSync(loosePart, minimalWebp(info.width, info.height));
+    }
+    const inCopy = (path: string): string => join(looseRoot, basename(path));
+    const looseBuild = runCli([
+      'build', '--rig', inCopy(OVERLAY.rigPath), '--motion', inCopy(OVERLAY.motionPath),
+      '--manifest', inCopy(OVERLAY.manifestPath), '--out', join(looseRoot, 'out'),
+    ]);
+    const explained = runCli([
+      'explain', '--rig', OVERLAY.rigPath, '--motion', OVERLAY.motionPath, '--manifest', OVERLAY.manifestPath,
+      '--atlas-in', webpPack.atlasPath, '--out', join(renderRoot, 'explain'),
+    ]);
+    const openProbes = [
+      ...(loosePart === null ? ['the fixture has no loose part to replace, so the loose route was not measured'] : []),
+      ...(looseBuild.status === 1 ? [] : [`the loose build exited ${String(looseBuild.status)}`]),
+      ...(loosePart !== null && looseBuild.stderr.includes('rigc compile error: image "parts/') && looseBuild.stderr.includes(`${loosePart} is a WebP image`)
+        ? []
+        : [`the loose build's refusal reads ${JSON.stringify(looseBuild.stderr.split('\n').find((l) => l.startsWith('rigc')) ?? looseBuild.stderr.slice(0, 160))}`]),
+      ...(existsSync(join(looseRoot, 'out', 'skeleton.json')) ? ['the loose build wrote a skeleton anyway'] : []),
+      ...(explained.status === 1 ? [] : [`explain --atlas-in exited ${String(explained.status)}`]),
+      ...(explained.stderr.includes(`rigc compile error: --atlas-in ${webpPack.atlasPath}`) && explained.stderr.includes(`${webpPack.pagePath} is a WebP image`)
+        ? []
+        : [`explain's refusal reads ${JSON.stringify(explained.stderr.split('\n').find((l) => l.startsWith('rigc')) ?? explained.stderr.slice(0, 160))}`]),
+      ...firstFew(
+        [...stackOf(looseBuild.stderr), ...stackOf(explained.stderr)].map((line) => `a stack frame reached the author: ${line.trim()}`),
+        'frame(s)',
+      ),
+    ];
+    const openHeld = openProbes.length === 0;
+    say(
+      'CLI87_EXPLAIN_ATLAS_IN_AND_A_LOOSE_BUILD_NAME_THE_FILE_THAT_IS_NOT_A_PNG_AS_A_COMPILE_ERROR',
+      openHeld,
+      probeDetail(
+        openHeld,
+        openProbes,
+        `a loose part replaced by a WebP refuses the build as a compile error naming the image, the path and the ` +
+          `format, exit ${String(looseBuild.status)} and nothing written; explain --atlas-in against the WebP pack ` +
+          `refuses the same way, exit ${String(explained.status)}; no stack frame in either`,
+      ),
+      '`explain` compiles exactly what `build` compiles, so the naming has to reach it through the compiler rather ' +
+        'than be repeated in it — and a loose part is the page of the atlas the default route emits, so it is the ' +
+        'same file question asked one step earlier',
+    );
+    for (const root of [renderRoot, looseRoot, webpPack.dir, honestPack.dir]) rmSync(root, { recursive: true, force: true });
   }
 
   return bad;
@@ -44842,6 +45221,121 @@ function runCurrencySuite(): number {
           'the sentence that argued it',
       );
     }
+  }
+
+  // --- CUR61/CUR62: the page that is not a PNG, against the page that teaches it
+  //
+  // `CUR57`'s question asked of the refusal issue #732 added: the sentence §0.2
+  // quotes is compared, digits, quoted names and absolute paths blanked, against
+  // the one `A06` prints for a forged WebP page; and the formats the guide says
+  // the reader names are read off the reader's own sentence for a file in none
+  // of them, which lists what it would have named. Neither case types a format.
+  {
+    const guidePath = 'docs/AUTHORING.md';
+    const guide = readFileSync(join(root, guidePath), 'utf8');
+    const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+    const gateOn = (pack: ReturnType<typeof packWithFirstPageReplaced>): string | null =>
+      validate({
+        skeletonText: pack.result.skeletonText,
+        atlasText: pack.atlasText,
+        atlasDir: pack.dir,
+        declaredDurations: pack.result.declaredDurations,
+        rig: pack.result.rig,
+        profile: 'spine',
+      }).failures.find((f) => f.assertion === A06)?.detail ?? null;
+    const webpPack = packWithFirstPageReplaced((_png, page) => minimalWebp(page.width, page.height));
+    // Bytes that open no format at all, so the sentence falls through to the list it would have named.
+    const unknownPack = packWithFirstPageReplaced(() => new Uint8Array(Buffer.from('not-a-page')));
+    const webpSaid = gateOn(webpPack);
+    const unknownSaid = gateOn(unknownPack);
+
+    // --- CUR61: the refusal the guide quotes is the refusal the rule prints ---
+    {
+      const shape = (text: string): string =>
+        text
+          .replace(/^[ \t]*#+ ?/gm, ' ')
+          .replace(/(^|\s)\/\S+/g, '$1/')
+          .replace(/"[^"]*"/g, '""')
+          .replace(/\d+/g, '#')
+          .replace(/\s+/g, ' ')
+          .trim();
+      const quoted = (text: string): string[] => {
+        const block = /```bash\n((?:#.*\n)*?#[^\n]*A06_ATLAS_PAGE_SIZE_MATCHES_PNG[^\n]*cannot be read as PNG[\s\S]*?)```/.exec(text);
+        if (block === null) return [];
+        return block[1]
+          .split('…')
+          .map((piece) => shape(piece))
+          .filter((piece) => piece.length > 0);
+      };
+      const live = webpSaid === null ? '' : shape(webpSaid);
+      const taught = quoted(guide);
+      const missing = taught.filter((piece) => !live.includes(piece.replace(/^FAIL [A-Z#_]+: /, '')));
+      const planted = quoted(guide.replace('is a WebP image (a RIFF/WEBP container', 'is a JPEG image (a RIFF/WEBP container'));
+      const plantedMissing = planted.filter((piece) => !live.includes(piece.replace(/^FAIL [A-Z#_]+: /, '')));
+      const quoteProbes = [
+        ...(webpSaid === null ? [`the rule printed no ${A06} failure on a WebP page, so nothing was compared`] : []),
+        ...firstFew(
+          missing.map((piece) => `${guidePath} §0.2 quotes a clause the rule does not print: ${JSON.stringify(piece.slice(0, 110))}`),
+          'clause(s)',
+        ),
+        ...(plantedMissing.length > missing.length
+          ? []
+          : ['the same block with its format exchanged is faulted no more often than the real one, so this reader is not reading the format']),
+        ...floorProbes(
+          [[taught.length, 2, `${taught.length} piece(s) of the quoted block were read`]],
+          'a block that quoted nothing, or only the assertion name, would make this pass over the page rather than over the sentence',
+        ),
+      ];
+      const quoteHeld = quoteProbes.length === 0;
+      say(
+        'CUR61_THE_NOT_A_PNG_REFUSAL_THE_GUIDE_QUOTES_IS_THE_ONE_THE_RULE_PRINTS',
+        quoteHeld,
+        probeDetail(
+          quoteHeld,
+          quoteProbes,
+          `${taught.length} piece(s) of §0.2's quoted refusal, digits, quoted names and paths blanked, are clauses ` +
+            `of the ${String(webpSaid?.length ?? 0)}-character sentence this build prints for a WebP page; the same ` +
+            'block with its format exchanged is faulted',
+          (count) => `${count} clause(s) the page teaches that the rule does not print:`,
+        ),
+        'the page is where an author who was handed a foreign pack learns what the refusal will look like, and a ' +
+          'quoted sentence the rule no longer prints teaches them to look for the wrong line',
+      );
+    }
+
+    // --- CUR62: the formats the guide says are named are the ones the reader names
+    {
+      const liveList = unknownSaid === null ? null : /it names ([^)]*?) when it meets them/.exec(unknownSaid);
+      const named = liveList === null ? [] : liveList[1].split(/,\s*/).map((name) => name.trim()).filter(Boolean);
+      const row = /\| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` \|[^\n]*?one of ([^\n]*?) by its signature/.exec(guide);
+      const listOf = (text: string): string[] => text.split(/,\s*/).map((name) => name.trim()).filter(Boolean);
+      const taught = row === null ? [] : listOf(row[1]);
+      const plantedRow = row === null ? [] : listOf(row[1].replace(/,\s*[^,]+$/, ''));
+      const differ = (a: readonly string[], b: readonly string[]): boolean => [...a].sort().join('|') !== [...b].sort().join('|');
+      const formatProbes = [
+        ...(unknownSaid === null ? [`the rule printed no ${A06} failure on a file in no format, so the reader's list was not read`] : []),
+        ...(liveList === null && unknownSaid !== null ? [`the refusal for a file in no format lists nothing it would have named: ${unknownSaid.slice(0, 160)}`] : []),
+        ...(row === null ? [`${guidePath} §5.2's ${A06} row lists no format it names by signature`] : []),
+        ...(differ(taught, named) ? [`${guidePath} §5.2 teaches [${taught.join(', ')}] and the reader names [${named.join(', ')}]`] : []),
+        ...(differ(plantedRow, named) ? [] : ['the row with its last format dropped still agrees with the reader, so this is not reading the list']),
+        ...floorProbes([[named.length, 2, `${named.length} format(s) read off the reader's sentence`]], 'one format is the card\'s example, not a table'),
+      ];
+      const formatHeld = formatProbes.length === 0;
+      say(
+        'CUR62_THE_FORMATS_THE_GUIDE_SAYS_ARE_NAMED_ARE_THE_ONES_THE_READER_NAMES',
+        formatHeld,
+        probeDetail(
+          formatHeld,
+          formatProbes,
+          `§5.2's ${A06} row and the reader's own sentence for a file in no format both name ` +
+            `[${named.join(', ')}]; the row with its last format dropped is faulted`,
+        ),
+        'a format added to the reader and not to the page is one an author is told rigc does not recognise; the ' +
+          'list is read off the sentence the reader prints for a file in none of them, so the page is compared ' +
+          'against what the code does rather than against a copy of it',
+      );
+    }
+    for (const pack of [webpPack, unknownPack]) rmSync(pack.dir, { recursive: true, force: true });
   }
 
   return bad;

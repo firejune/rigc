@@ -65,7 +65,7 @@ import {
   TOPLEVEL_CONSTRAINT_ARRAYS,
   type SpineGeneration,
 } from './generation.ts';
-import { colourTypeName, readPngInfo } from './png.ts';
+import { colourTypeName, readPngHeader } from './png.ts';
 import {
   CHANNELS_BY_KIND,
   KEY_TIME_EPSILON,
@@ -4271,8 +4271,31 @@ export function validate(input: ValidateInput): ValidateReport {
     for (const page of atlas.pages) {
       const abs = resolve(input.atlasDir, page.name);
       if (!existsSync(abs)) continue; // A17 owns this
-      const info = readPngInfo(abs);
-      if (page.width !== info.width || page.height !== info.height) {
+      // 🔒 **A page that is not a PNG is a named failure, not a throw** (issue
+      // #732). The reader's throw used to reach this rule's catch and print as
+      // `threw: not a PNG (bad signature)`: the verdict right, the sentence a
+      // stack message that named neither what the file was nor what rigc reads.
+      // `pngProblem` ([`src/png.ts`](png.ts)) is the one sentence every reader
+      // of a page states; this rule prefixes the size the atlas declares, the
+      // value the file would have had to carry.
+      //
+      // ⚠️ No size is read off a file rigc cannot decode, deliberately. A WebP
+      // header carries its dimensions in a fixed field, and reading them would
+      // print a number no oracle in this tree has checked (rigc links no WebP
+      // reader to compare a parse against), about a page that is refused here
+      // either way — and measured, the variant that PASSED a WebP page whose
+      // size agreed built green under the default profile and wrote a
+      // directory that `render` then refused.
+      const header = readPngHeader(abs);
+      if (header.problem !== null) {
+        fail(
+          'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+          `page "${page.name}" declares ${page.width}x${page.height} and its file cannot be read as PNG, so the ` +
+            `size was not measured: ${header.problem}`,
+        );
+      }
+      const info = header.info;
+      if (info !== null && (page.width !== info.width || page.height !== info.height)) {
         // 🔒 **Still validity, and now for a measured reason rather than an
         // inherited one** (issue #715). The card that opened this expected the
         // clause to move behind the profile switch once the runtime's mapping
@@ -4499,6 +4522,30 @@ export function validate(input: ValidateInput): ValidateReport {
       const abs = resolve(input.atlasDir, page.name);
       if (!existsSync(abs)) continue;
       const on = sharedPages.get(page.name) ?? [];
+      // 🔒 **A page that is not a PNG is a non-measurement for every part on
+      // it** (issue #732), stated the way #705's and #715's are: a FAIL naming
+      // what was not read, because `skip()` is per assertion and would delete
+      // the verdicts on every other page of the same report. The file's
+      // identity is `A06`'s to judge, and this sentence points there. A page
+      // holding nothing but the full-stage base plate has no part to judge and
+      // says nothing, exactly as a readable one would.
+      const header = readPngHeader(abs);
+      if (header.problem !== null) {
+        const shared = on.length > 1;
+        const parts = shared ? on.filter((region) => !baseRegions.has(region.name)).map((region) => region.name) : [];
+        if (shared ? parts.length === 0 : basePages.has(page.name)) continue;
+        const subject = shared
+          ? `the ${parts.length} part(s) on shared page "${page.name}" (${parts.map((name) => JSON.stringify(name)).join(', ')}) are`
+          : `part image "${page.name}" is`;
+        fail(
+          'A19_OVERLAY_PNGS_HAVE_ALPHA',
+          `${subject} not measured: this rule reads a page's alpha out of its PNG, and the file cannot be read as ` +
+            'one, so it states nothing about whether any of them can draw a transparent pixel. What the file is ' +
+            "belongs to A06_ATLAS_PAGE_SIZE_MATCHES_PNG, which names it. This is renderer policy, and it belongs to " +
+            '--profile spine-html: the default --profile spine does not run this check.',
+        );
+        continue;
+      }
       if (on.length > 1) {
         // 🚨 A rotated region is refused by A06 under this profile, so this
         // reading was assumed to be cosmetic — a rectangle printed beside a
@@ -4616,7 +4663,7 @@ export function validate(input: ValidateInput): ValidateReport {
         }
         continue;
       }
-      const info = readPngInfo(abs);
+      const info = header.info;
       if (info.hasTransparency) continue;
       if (basePages.has(page.name)) continue; // full-stage base plate: opaque is correct
       fail(
