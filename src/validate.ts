@@ -678,6 +678,31 @@ function isObj(v: unknown): v is Json {
 }
 
 /**
+ * The time to pose a key at so that the runtime is AT it: the later of the
+ * file's number and that number as spine-core stores it (issue #771).
+ *
+ * 🚨 Every timeline keeps its key times in a `Float32Array`
+ * (`Utils.newFloatArray`), and a key time the float cannot hold exactly is
+ * stored at the nearest one — for `0.2`, `0.20000000298…`, which is LATER than
+ * the double `0.2`. Stepped to the file's own number, a timeline is then just
+ * BEFORE its key: before a first key it writes the setup value (`time <
+ * frames[0]`), and past a stepped key it still holds the one before
+ * (`frames[i] > time`). That is a pose one float step from the key, not the
+ * key's — measured on the selftest's own `ingest_probe`, whose `alpha` key at
+ * 0.2 posed the setup 1.0 and was refused as `the key states value 0.4`.
+ *
+ * ⚠️ The later of the two rather than `Math.fround` alone: where the float
+ * rounds DOWN, the file's number is already past the stored key, and a runtime
+ * built without typed arrays stores the double itself — in both, the file's
+ * number is the one at or after the key. What a key time rounds to is the
+ * runtime's storage and not the file's statement, so a rule judging what a KEY
+ * states poses at the key; the rounding itself is nothing an author can repair.
+ */
+function atStoredKey(time: number): number {
+  return Math.max(time, Math.fround(time));
+}
+
+/**
  * The atlas region names one raw skin entry will make the loader look up — or
  * `null` when the file states a sequence this walk cannot predict.
  *
@@ -4300,9 +4325,10 @@ export function validate(input: ValidateInput): ValidateReport {
           skeleton.setupPose();
           skeleton.update(0);
           skeleton.updateWorldTransform(Physics.reset);
-          state.update(time);
+          // At the key as the runtime stores it — see `atStoredKey` (#771).
+          state.update(atStoredKey(time));
           state.apply(skeleton);
-          skeleton.update(time);
+          skeleton.update(atStoredKey(time));
           skeleton.updateWorldTransform(Physics.update);
           const posed = skeleton.slots.find((s) => s.data.name === slotName)?.appliedPose;
           const light = posed?.color;
@@ -4472,7 +4498,9 @@ export function validate(input: ValidateInput): ValidateReport {
             skeleton.setupPose();
             skeleton.update(0);
             skeleton.updateWorldTransform(Physics.reset);
-            state.update(time);
+            // At the key as the runtime stores it, not one float step before
+            // it — see `atStoredKey` (issue #771).
+            state.update(atStoredKey(time));
             state.apply(skeleton);
             const posed = skeleton.slots.find((s) => s.data.name === slotName)?.appliedPose;
             if (!posed) {
@@ -4792,7 +4820,10 @@ export function validate(input: ValidateInput): ValidateReport {
                 skeleton.setupPose();
                 skeleton.update(0);
                 skeleton.updateWorldTransform(Physics.reset);
-                state.update(sample.time);
+                // A `hold` sample is AT its key, so it is posed at the key as
+                // the runtime stores it (`atStoredKey`); a mid-frame sample is
+                // half a delay from any key and is posed where it is.
+                state.update(sample.key >= 0 && sample.steps === 0 ? atStoredKey(sample.time) : sample.time);
                 state.apply(skeleton);
                 const pose = skeleton.slots[slotIndex].appliedPose;
                 const shown = pose.attachment;
