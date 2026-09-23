@@ -6421,6 +6421,8 @@ function buildRigInfo(
     meshSoftBones,
     deformMayFold,
     editorRoundTrip: rig.invariants?.editorRoundTrip === true,
+    // `parseRigSpec` resolved every entry against the rig's own constraints.
+    consumerDrivenMix: (rig.invariants?.consumerDrivenMix ?? []).map((e) => ({ type: e.type, constraint: e.constraint, why: e.why })),
     // `isBase` is set on the manifest route only; every other image says false.
     basePlates: images.filter((img) => img.isBase).map((img) => img.region),
     meshSlotBudget: rig.invariants?.meshSlots ?? null,

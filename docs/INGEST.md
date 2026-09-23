@@ -510,7 +510,8 @@ resolved rather than guessed, for §0.2's reason: `spineboy/export` holds two, a
 
 **What it will not do is invent.** Everything the spec format cannot hold is a
 finding with a code — `BLOCK` for a construct the rebuild will be missing, `JUDGE`
-for the two values a skeleton does not carry, `LOSS` wherever the source's spelling and
+for what a skeleton does not carry and the rebuild has to state (the two values
+below, and whether a muted constraint is the consumer's), `LOSS` wherever the source's spelling and
 rigc's differ on purpose (a number rigc re-derives, a field the spec has no home for, or
 a default the source left to the format and the rebuild writes out). A blocker exits
 non-zero and still writes both files. **Every code it can print has a row at the end
@@ -559,6 +560,23 @@ at the policy rather than implying the file was read.
 - **each animation's duration** — the format has no such field. The largest key time
   is used, stated in the motion spec's `note`, and recorded as a finding per
   animation. Edit it if you know the real number.
+
+🎛️ **And one statement is not in a skeleton either: who turns a muted constraint on**
+([#784](https://github.com/firejune/rigc/issues/784)). An ik or transform constraint
+resting at 0 on every mix it reads, that no animation keys above 0, is either a
+leftover that moves nothing or a dial a game sets from code — and the two export as
+the same bytes. `build` refuses the shape by name (`A47`/`A48`), which is how a
+production skeleton's rebuild was refused over an ik its game switches on at runtime.
+So `ingest` reads it the way under which the file is correct: it writes the
+constraint into the rig spec's `invariants.consumerDrivenMix` ([AUTHORING
+§3.7](AUTHORING.md)), with a `why` saying the entry is `ingest`'s reading, and prints a
+`CONSUMER_DRIVEN_MIX` **judgement** naming it. The rebuild is the same bytes — the
+declaration is a statement to the gate, never emitted — and it gates green, with the
+constraint SKIPped by name rather than measured. It is the only field of `invariants`
+`ingest` ever writes, and the rig spec's `note` says so where it is present.
+⚠️ **None of the twelve exports carries the shape**: every constraint they rest muted
+is keyed up by an animation, spineboy's aim rig being the idiom, and the corpus half
+of the `IG` suite holds that no line and no declaration appear on any of them.
 
 And two flags for what the skeleton also does not encode: `--art loose` (the default)
 names an `image` per attachment resolved against loose PNGs, `--art none` states
@@ -610,6 +628,7 @@ is the one failure a comparison of two sets cannot show you.
 | `BONE_TIMELINE` | `BLOCK` | 1 | a bone timeline the motion spec has no track for. The detail names the eleven it has, read off the table. Since [#733](https://github.com/firejune/rigc/issues/733) carried `inherit` — the eleventh case of the runtime's own bone switch, a stepped mode per key — every bone timeline the runtime plays has a track, so this is reachable only for a name the **parser** throws on too (`Invalid timeline type for a bone`), the position `PHYSICS_TIMELINE` is in | check the spelling; there is no bone timeline left for the rebuild to be missing |
 | `CONSTRAINT_FIELD` | `BLOCK` | 1 | as `BONE_FIELD`, on a constraint, with its type named beside it | as `BONE_FIELD` |
 | `CONSTRAINT_KEY_RESTATED` | `LOSS` | 0 | an `ik` or `transform` track whose keys do not all state the same fields. The motion spec takes one field set per track, so a field **any** key states is written on **every** key at the value the parser would have read there | nothing. Same values, larger file — the rebuild plays what the source plays |
+| `CONSUMER_DRIVEN_MIX` | `JUDGE` | 0 | an `ik` or `transform` constraint resting at 0 on every mix it reads — an ik's `mix`; a transform's mixes for the `to` properties it declares — that no animation keys above 0, reading every key the way `A47`/`A48` do: an omitted mix is the parser's 1 and a Bezier handle above 0 lifts a 0 → 0 pair. Nothing in the file ever switches it on, and the file cannot say whether that is a leftover or a mix a game sets from code, so the rig spec **declares** it in `invariants.consumerDrivenMix` ([#784](https://github.com/firejune/rigc/issues/784)) and the rebuild's gate SKIPs it by name. It is a judgement for `DURATION`'s reason: a statement the skeleton does not carry, made and printed — and not a `LOSS`, because the rebuilt skeleton is the source's bytes. A transform that declares no `to` at all is not a candidate: `A48` refuses it with its own sentence, which no declaration answers | nothing, if a game drives that mix. If it is a leftover, delete the entry and rest a mix it reads above 0 — or remove the constraint — and the gate measures it again |
 | `CONSTRAINT_TYPE` | `BLOCK` | 1 | a constraint whose `type` is none rigc knows, so the whole constraint is dropped rather than approximated | the rebuild has no such constraint; check the spelling before assuming the type is unsupported |
 | `DURATION` | `JUDGE` | 0 | skeleton JSON has no duration field at all. The largest key time is used, which is what a runtime plays to — and wrong for an animation that holds its last pose past its last key | if you know the real number, edit `duration` in the motion spec. It costs nothing: the declared duration is checked against the compiled keys |
 | `GENERATION_UNKNOWN` | `BLOCK` | 1 | `skeleton.spine` names no generation rigc knows, or the header states none at all. A version is read as its LEADING `major.minor` token — a down-export writes `4.0-from-4.1.24`, which is 4.0 data from a 4.1 editor — and it is never rounded to the nearest generation: a catalog that rounded handed 19 skeletons labelled `3.8.99` a 4.2 runtime and every one posed as NaN ([#706](https://github.com/firejune/rigc/issues/706) row 7) | check the string against the file you were handed. A real generation rigc does not list belongs on #706 item 1, with the string beside it |
@@ -1000,6 +1019,14 @@ has three possible meanings and the message alone does not separate them:
 2. **the input was wrong** — wrong atlas, missing page, truncated file (§3.1, and
    `A00` above);
 3. **the rule is stricter than the runtime** — fix the rule, or file it.
+
+🎛️ **`A47` / `A48` on a foreign export are a fourth reading, and neither side is
+wrong.** An ik or transform resting muted that no animation keys up moves nothing *in
+the file*, and `validate <file>` has no rig spec and so no way to be told a game turns
+it on from code — it refuses with three doors, the third being that statement. The
+rebuild route makes it for you: `ingest` declares the constraint consumer-driven and
+prints a `CONSUMER_DRIVEN_MIX` judgement (§2.0), and `build` then SKIPs it by name
+([#784](https://github.com/firejune/rigc/issues/784)).
 
 ⇒ Before changing anybody's export because rigc objected, check case 3: does the file
 **parse** (`A00`), **step without NaN** (`A10`), and **render**? If all three, the

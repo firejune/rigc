@@ -1391,6 +1391,15 @@ export interface RigInfo {
    */
   editorRoundTrip: boolean;
   /**
+   * Ik and transform constraints whose mix the consumer sets, from
+   * `invariants.consumerDrivenMix`, in the rig spec's order. `A47` / `A48` do
+   * not measure these: a declared constraint is named on the stats line, and it
+   * is the SKIP's subject when nothing else of its kind is left to measure. A
+   * bare `validate <dir>` has no rig and so no declaration, and refuses every
+   * muted constraint as before (issue #784).
+   */
+  consumerDrivenMix: Array<{ type: 'ik' | 'transform'; constraint: string; why: string }>;
+  /**
    * The atlas region(s) the build names as its base plate — the one image
    * `A19_OVERLAY_PNGS_HAVE_ALPHA` lets be opaque — in compile order.
    *
