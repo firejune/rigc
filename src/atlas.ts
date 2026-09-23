@@ -398,9 +398,10 @@ export function parseAtlasText(text: string): ParsedAtlas {
  * The same atlas text with every page's name line replaced.
  *
  * This is how `--atlas-in` emits: the imported atlas passes through verbatim —
- * every field, every region, every page, in its own order and its own whitespace
- * — and only the page NAMES move, because they are paths and the file has been
- * re-anchored to a new directory. Rewriting by line index rather than by
+ * every field, every region, every page, in its own order — and only the page
+ * NAMES move, because they are paths and the file has been re-anchored to a new
+ * directory. Its blank lines are then put in rigc's own shape by
+ * `canonicalAtlasShape` (issue #803); this function leaves them as they were. Rewriting by line index rather than by
  * re-serialising is the point: a re-serialiser would have to understand every
  * field it re-emits, and the ones it did not understand would quietly vanish
  * (`scale:` is the expensive example — [`atlasScales`](render.ts) reports it, and
@@ -419,6 +420,43 @@ export function rewritePageNames(parsed: ParsedAtlas, rename: (name: string, ind
     out[page.nameLine] = rename(page.name, index);
   });
   return out.join('\n');
+}
+
+/**
+ * The same atlas text in the whitespace shape `writeAtlasText` writes: no blank
+ * line before the first entry, exactly one between two blocks, none after the
+ * last, and one trailing newline. Every non-blank line is kept byte for byte and
+ * in its own order — only blank lines are dropped or collapsed — so a text
+ * already in that shape comes back unchanged.
+ *
+ * This is what `--atlas-in` re-emits (issue #803). A pack's blank lines are its
+ * packer's, not its content: a 3.8-era packer begins every file with one, and
+ * `A07_ATLAS_TEXT_SHAPE` — which checks the text rigc writes — refused the
+ * re-emission at `line 1`. What makes dropping them safe is what they mean to
+ * the reader that owns the format: in `TextureAtlas` a run of blank lines ends a
+ * page block exactly as one blank line does, and a run before the first page is
+ * read as nothing. Measured through the runtime, `"\n" + text`, `"\n\n" + text`
+ * and `text` load to the same pages and regions (`PKR63`, `PKR64`).
+ *
+ * ⚠️ One reading is NOT the same, and it moves toward rigc's: the runtime's
+ * leading-blank loop (`while (line && …)`) stops on an empty string, so a file
+ * that opens `"\n"` and then a header entry (`key: value` before the first page
+ * name) reads the header as a page name there, while `parseAtlasText` — which the
+ * compile took its geometry from — skips the blank and reads it as a header.
+ * Emitting without the blank makes the file say to the runtime what rigc measured.
+ *
+ * A blank line is one the runtime reads as blank: `trim()` is empty. One that
+ * carries only spaces is written as the empty line, because that is the blank
+ * line's one spelling in `writeAtlasText`.
+ */
+export function canonicalAtlasShape(text: string): string {
+  const out: string[] = [];
+  for (const line of text.split(/\r\n|\r|\n/)) {
+    if (line.trim().length > 0) out.push(line);
+    else if (out.length > 0 && out[out.length - 1] !== '') out.push('');
+  }
+  while (out.length > 0 && out[out.length - 1] === '') out.pop();
+  return out.length === 0 ? '' : `${out.join('\n')}\n`;
 }
 
 // ---------------------------------------------------------------------------

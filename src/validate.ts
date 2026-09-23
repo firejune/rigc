@@ -1205,9 +1205,22 @@ export function validate(input: ValidateInput): ValidateReport {
       // for want of a SUBJECT only when its reason is one of those constants.
       return skip('A07_ATLAS_TEXT_SHAPE', SKIP_NO_ATLAS_PAGE);
     }
+    // A blank line before the first page name is named as that (issue #803). It
+    // used to reach the loop below with `expectPage` already true and be read as
+    // a SECOND blank line — `line 1: consecutive blank lines`, where there is no
+    // line 0 to be consecutive with — and a run of k of them printed k findings.
+    // The verdict is unchanged: rigc writes no leading blank line
+    // (`writeAtlasText`, and `--atlas-in` through `canonicalAtlasShape`), so a file
+    // that has one was written by something else and is still refused. What
+    // changed is that the run is one finding, stating what it is and how long.
+    let leading = 0;
+    while (leading < atlasLines.length && atlasLines[leading].trim().length === 0) leading++;
+    if (leading > 0) {
+      fail('A07_ATLAS_TEXT_SHAPE', `line 1: the file begins with ${leading === 1 ? 'a blank line' : `${leading} blank lines`}`);
+    }
     let expectPage = true;
     let sawRegionForPage = false;
-    for (let i = 0; i < atlasLines.length; i++) {
+    for (let i = leading; i < atlasLines.length; i++) {
       const line = atlasLines[i];
       if (line.trim().length === 0) {
         if (expectPage) fail('A07_ATLAS_TEXT_SHAPE', `line ${i + 1}: consecutive blank lines`);
