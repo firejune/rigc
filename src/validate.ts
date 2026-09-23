@@ -87,6 +87,8 @@ import {
   CHANNELS_BY_KIND,
   float32Step,
   PHYSICS_POSE_RULES,
+  physicsBasisFor,
+  physicsBasisSays,
   physicsKeyRefusal,
   physicsOutsideSays,
   physicsRuleFor,
@@ -556,26 +558,45 @@ function curveChannelValues(timeline: CurveTimeline, channel: number): number[] 
  * at all then says "none of the 0 animations" rather than implying somebody
  * keyed something.
  *
- * `rule` is the row the value was judged by, and only the `strength` sentence
- * reads it: its two arms live on the row (`outside`), beside the key's own
- * sentence, so what the setup pose and a key say about one number is one text.
+ * `rule` is the row the value was judged by, and every sentence reads it: the
+ * reason each prints is the row's `basis` arm for the value (issue #798), the
+ * same object the key's sentence quotes, so what the setup pose and a key say
+ * about one number is one text — and whether that reason is the runtime's
+ * arithmetic or rigc's call is stated rather than implied.
  */
 const SETUP_POSE_SAYS: Record<
   string,
   (pose: PhysicsConstraintPose, animations: number, rule: PhysicsPoseRule) => string
 > = {
-  mix: (pose, animations) => `has mix ${pose.mix} and ${noneKeysItsMixAbove0(animations)}; it is muted — ${REST_OR_KEY_ITS_MIX}`,
-  mass: (pose) => `has massInverse ${pose.massInverse} (mass must be > 0)`,
+  // Every reason below is the row's `basis` arm for the value (issue #798): an
+  // arithmetic arm names its expression, a behavioural one says refusing it is
+  // rigc's call and what the value does. ⚠️ Until then a setup mix BELOW 0 was
+  // told "it is muted", which it is not — [measured] it moves the bone by
+  // exactly −1× what +0.5 does — so the two ways out print two sentences.
+  mix: (pose, animations, rule) =>
+    `has mix ${pose.mix} and ${noneKeysItsMixAbove0(animations)}; ${setupBasisSays(rule, pose.mix)} — ${REST_OR_KEY_ITS_MIX}`,
+  mass: (pose, _animations, rule) => `has massInverse ${pose.massInverse}; mass must be ${rule.states} — ${setupBasisSays(rule, pose.massInverse)}`,
   // Two arms, read off the row (issue #748): 0 is a constraint nothing pulls
   // back and below 0 one that is pushed away, and the row's `why` — the key's
-  // sentence — quotes the second from the same object.
-  strength: (pose, _animations, rule) => `has strength ${pose.strength}; ${physicsOutsideSays(rule, pose.strength)}`,
+  // sentence — quotes the second from the same object. The basis sentence ends
+  // on the arm's own words, which `T100` holds.
+  strength: (pose, _animations, rule) => `has strength ${pose.strength}; ${setupBasisSays(rule, pose.strength)}`,
   // The bound is read off the row, so the setup pose and a key cannot state two
-  // intervals; the reason is the two ways out, since the ends are inside (#794).
+  // intervals; the reason is the arm the value took, since the ends are inside (#794).
   damping: (pose, _animations, rule) =>
-    `has damping ${pose.damping}; must be ${rule.states} — above 1 every velocity grows on every step, and below 0 ` +
-    'it is NaN at any fps where 60 / fps is not whole',
+    `has damping ${pose.damping}; must be ${rule.states} — the per-step decay is \`damping ** (60 * step)\`, and ` +
+    setupBasisSays(rule, pose.damping),
 };
+
+/**
+ * The basis sentence for a setup value, or the bound itself where no arm holds
+ * — a pose value the parser handed over that none of the row's arms is about
+ * (a NaN, say), which has no reason to give and must not borrow another's.
+ */
+function setupBasisSays(rule: PhysicsPoseRule, poseValue: number): string {
+  const arm = physicsBasisFor(rule, poseValue);
+  return arm === undefined ? physicsOutsideSays(rule, poseValue) : physicsBasisSays(arm);
+}
 
 /**
  * The skeleton-JSON name of each physics timeline, keyed by the runtime's own
