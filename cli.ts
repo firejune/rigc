@@ -536,7 +536,12 @@ function meshDepthNote(m: CompileResult['meshes'][number]): string {
     // hull against the triangulation's own outline. Without it the line reads
     // as a fault on every correct contour rig, which is a diagnostic authors
     // learn to ignore.
-    if (m.depth.undrawn > 0) {
+    // Withheld, and said where the count would have stood (issue #750): the
+    // part's texels could not be located on its page, so there is no count
+    // that is about this part.
+    if (m.depth.unlocated !== undefined) {
+      parts.push(`the count of vertices on undrawn texels is not measured: ${m.depth.unlocated}. ${PAGE_GRID_UNLOCATED}`);
+    } else if (m.depth.undrawn !== null && m.depth.undrawn > 0) {
       parts.push(
         `${m.depth.undrawn} of ${m.vertices} vertices sample a texel the part image does not draw — ` +
           (m.kind === 'contour'
@@ -582,6 +587,17 @@ const MESH_KIND_NOTES: Record<CompileResult['meshes'][number]['kind'], string> =
 };
 
 /**
+ * Why a figure taken off a part's texels is withheld on a page whose file is
+ * not the size its atlas declares — the tail of every line that withholds one
+ * (issue #750). The page and its ratios come first, from `pageGridSaid`; this
+ * says what that does to the reading and where the repair is named.
+ */
+const PAGE_GRID_UNLOCATED =
+  'rigc lifts a part off its page at the coordinates the atlas states, and on this file those are not where the ' +
+  "part's texels are, so a figure taken there would describe another part of the page. " +
+  '`A06_ATLAS_PAGE_SIZE_MATCHES_PNG` refuses the page by the same ratio and names the `scale:` header that states it';
+
+/**
  * What a mesh measured about its own fit against the art it names, or nothing
  * for a mesh with no art to measure against.
  *
@@ -599,6 +615,13 @@ const MESH_KIND_NOTES: Record<CompileResult['meshes'][number]['kind'], string> =
  * fill over transparent pixels with nothing anywhere saying so (issue #275).
  */
 function meshFit(m: CompileResult['meshes'][number]): string {
+  // The fit is a measurement against the part's texels, and on a page whose
+  // file is not its declared size the region lift does not have them (issue
+  // #750). It printed 68.49% / 76.24px there for a mesh that measures 100.00% /
+  // 16.00px on the page it was packed from — two plausible numbers about
+  // another part of the picture. So the line says what was not measured and
+  // why, in the place the figures stood, and prints no figure.
+  if (m.fitWithheld !== undefined) return `  fit not measured: ${m.fitWithheld}. ${PAGE_GRID_UNLOCATED}`;
   if (m.coverage === undefined) return '';
   const hole = m.holePixels ? `, enclosing ${m.holePixels}px of hole` : '';
   return `  covers ${(m.coverage * 100).toFixed(2)}% of the art, reaching ${m.overshoot?.toFixed(2) ?? '?'}px past it${hole}`;
@@ -2672,6 +2695,21 @@ function cmdExplain(flags: Record<string, string>): void {
   // the sentence saying so scrolled off the top. It is the invocation that has
   // to change, so it is refused before the report it cannot finish (issue #697).
   refuseUnposableArt(result, opts);
+  // 📐 **A page whose file is not its declared size is said where the report
+  // starts, and nothing is refused for it** (issue #750). `explain` never
+  // gates, so on such a pack nothing stood between the region lift and the
+  // figures it fed: the mesh block printed a fit taken off another part of the
+  // page. The pack still compiles — a runtime draws it, and most of this report
+  // (bones, slots, timelines) reads no texel at all — so the page is named
+  // here, once, with the ratio `A06` refuses it by, and every figure that WOULD
+  // have been taken off its texels is withheld on its own line and says so.
+  // `build` prints no such line: `A06` is its statement of the same fact.
+  for (const grid of result.pageGrids) {
+    console.log(
+      `  ..    ${grid.said}: every figure below taken off this page's texels is withheld, and says so where it ` +
+        `would have stood. ${PAGE_GRID_UNLOCATED}`,
+    );
+  }
   // `compile` has already parsed this file, so the read below cannot fail — but
   // it goes through the same parser rather than a cast, because the cast was the
   // last one in the repository and issue #307 was about exactly that.

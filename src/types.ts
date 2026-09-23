@@ -1224,6 +1224,18 @@ export interface CompiledImage {
    * 373 texels at `scale: 0.5` names a number that is in neither file.
    */
   atlasScale?: number;
+  /**
+   * The page this region sits on, when that page's file is not the size the
+   * atlas declares for it (issue #750): `said` is `pageGridSaid`'s clause and
+   * `sentence` is `A06`'s whole sentence (`pageGridSentence`). Absent for a
+   * page whose file agrees, and for a loose PNG, which is its own page.
+   *
+   * Carried because the region lift (`partPlate`) addresses the page at the
+   * coordinates the atlas states, and on such a file those are not where the
+   * part's texels are: every reader of the lift has to know that before it
+   * takes a figure off it.
+   */
+  pageGrid?: { said: string; sentence: string };
 }
 
 /**
@@ -1351,6 +1363,12 @@ export interface CompileResult {
   skeletonText: string;
   atlasText: string;
   images: CompiledImage[];
+  /**
+   * Every page of an `--atlas-in` pack whose file is not the size the atlas
+   * declares, in the pack's page order, each with `pageGridSaid`'s clause.
+   * Empty on the loose and packing routes, and on a pack whose pages agree.
+   */
+  pageGrids: Array<{ page: string; said: string }>;
   /** States listed in the manifest whose PNG is not on disk. */
   droppedStates: DroppedState[];
   /**
@@ -1385,6 +1403,15 @@ export interface CompileResult {
     coverage?: number;
     /** How far past the silhouette that mesh reaches, in part pixels. */
     overshoot?: number;
+    /**
+     * Why `coverage` and `overshoot` are absent on a mesh that names an image:
+     * its part sits on a packed page whose file is not the size the atlas
+     * declares, and this is `pageGridSaid`'s clause for that page (issue #750).
+     * The fit is a measurement between the triangles and the part's texels,
+     * and the coordinates the atlas states do not locate those texels on such
+     * a file, so the figure is withheld rather than taken off the wrong ones.
+     */
+    fitWithheld?: string;
     /**
      * Transparent pixels the traced outline encloses — inside the mesh, drawing
      * nothing. Only a `contour` has one: it is a property of the trace, and an
@@ -1438,9 +1465,18 @@ export interface CompileResult {
        * when the sheet's alpha is cut to the art, and a sheet that is opaque
        * everywhere is a statement rigc has no authority to guess away. Zero is
        * a real answer here rather than an absence — every mesh that names a
-       * depth map also names an image, so the measurement is always taken.
+       * depth map also names an image, so the measurement is taken whenever
+       * the image's texels can be located.
+       *
+       * `null` is the one case they cannot (issue #750): a part lifted off a
+       * packed page whose file is not the size its atlas declares, where the
+       * coordinates the atlas states are not where the part's texels are. The
+       * count is withheld rather than taken off whatever sits there — a
+       * number measured over the wrong pixels reads exactly like a right one.
        */
-      undrawn: number;
+      undrawn: number | null;
+      /** `pageGridSaid`'s clause for the page, exactly when `undrawn` is `null`. */
+      unlocated?: string;
       /**
        * The turn this geometry takes on this sheet before a triangle reverses,
        * per axis and per direction — `src/depth.ts`'s `turnCeiling`.
