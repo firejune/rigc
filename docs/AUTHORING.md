@@ -1281,8 +1281,8 @@ setup pose as `null`.
 
 ### 3.4 `skins` — placeholder → attachment maps
 
-`skins` is `skinName → slotName → placeholderName → attachment`. Give at least
-`default`; it becomes the skeleton's default skin. (No rung of the benchmark ladder
+`skins` is `skinName → slotName → placeholderName → attachment`. A skin called
+`default` becomes the skeleton's default skin. (No rung of the benchmark ladder
 uses a named skin — all twelve official example skeletons have exactly one skin,
 called `default`.)
 
@@ -1290,11 +1290,25 @@ A skin can also say which bones and constraints it **switches on**, and that nee
 one more level, so a skin entry has a second spelling — see §3.4.1. The short one
 above is unchanged and is what almost every rig wants.
 
-🔸 **`default` is a name, not a requirement.** A rig may put every attachment in
-named skins and declare no `default` at all, which is what an editor export of a
-multi-skin character gives back; rigc still emits a `default` skin, empty, because
-it always does. An animation keying such a slot resolves its attachment names
-against every skin there is — §4.4 states that rule and §5.1 the one refusal left.
+🔸 **`default` is a name, not a requirement, and rigc writes one exactly when the
+spec has one** ([#801](https://github.com/firejune/rigc/issues/801)). A rig may put
+every attachment in named skins and declare no `default` at all, which is what an
+editor export of a multi-skin character gives back: the 4.3.26 editor took a build
+declaring `skins: [default, alt, base]` with `default` **empty** and exported
+`[alt, base]`. So the emitted file carries a `default` skin when `skins` has the
+key — `"default": {}` included, which is written back empty — or when a manifest
+part files its states under it, and **none otherwise**. spine-core loads both
+spellings alike (`SkeletonData.defaultSkin` is null or an empty skin, and neither
+fills a slot), and the binary format has no way to hold an empty default skin at
+all. Until #801 rigc wrote an empty `default` into every build whether the spec
+had one or not, so a rebuild of such an export read `attachments.skins 1/2`
+against it. Two things change for a rig with no default skin, and both are
+named: a linked mesh that states no `skin` looks for its source in the default
+skin and is refused (the error table in §5.1), and `rigc explain` says the
+skeleton declares no default skin above its slot list instead of printing
+`attachments=[]` on every slot. An animation keying such a slot resolves its
+attachment names against every skin there is — §4.4 states that rule and §5.1 the
+one refusal left.
 
 🔸 **A skin may fill no slot with anything that needs art, and that build is
 green.** The atlas is built out of what the skins reference, so a rig whose skins
@@ -2455,7 +2469,10 @@ skin alone and the art you just moved into `base`, `zulu` and `mike` draws
 nothing at all. `check` then compares blank against blank and reports a perfect
 `0.0000` — about the very placeholder this subsection is about. Pass
 `--skin <name>` to both, once per skin (**§9**); `tools/editor_roundtrip.ts`
-loops over every skin the build declares for the same reason.
+loops over every skin the build and the export both declare for the same reason,
+and names a skin only one of them declares as **lost** (or **added**) **by the
+export**, quoting `diff`'s `attachments.skins`, without rendering it on either side
+([#801](https://github.com/firejune/rigc/issues/801)).
 
 #### 3.4.3 `sequence` — a numbered image series on one attachment
 
@@ -5442,6 +5459,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `a linked mesh states "uvs", "triangles", …, and a linked mesh has no geometry of its own` | §3.4 — remove them, or remove `source` and author this as a mesh. The parser returns before `readVertices`, so those keys are read by nothing at all |
 | `"source" is "X", and skin "S" … slot "L" … holds 2: "a", "b"` | §3.4 — `source` is the PLACEHOLDER the source is filed under, not its `name`. A clause after the skin and after the slot says whether each was stated or taken from the parser's default — **the default skin** and **this attachment's own slot**, which is the pair that surprises |
 | `"slot" is "X", which the rig does not declare as a slot` / `"skin" is "X", … the rig declares no such skin` | §3.4 — a link resolves both by name. Left to the round trip these are the runtime's `Source mesh slot not found` and `Skin not found`, which name neither the attachment nor where it looked |
+| `no "skin" is stated, so the parser looks for the source "X" in the default skin — and this rig declares no default skin` | §3.4 — state the `skin` the source is filed under. A link with no `skin` resolves through `SkeletonData.defaultSkin`, which is null in a file with no default skin, and the runtime reads `getAttachment` off it with a `TypeError` naming nothing. Before [#801](https://github.com/firejune/rigc/issues/801) every build carried an empty `default`, so the same link failed at the source instead |
 | `"source" is "X", which is itself a linked mesh, and a chain of them is refused` | §3.4 — point `source` at the mesh. A chain resolves in file order and loads nothing at all in one of the two orders, silently |
 | `"source" is "X", which is a "region" attachment and not a mesh` | §3.4 — a link takes another MESH's geometry; off any other type the runtime reads `undefined` and says nothing |
 | `… is a boundingbox and states a "sequence". A sequence is a numbered series of atlas regions, and only the 3 kinds that draw a region carry one — region, mesh, linkedmesh …` | §3.4.3 — put the series on a region or a mesh, or remove it |

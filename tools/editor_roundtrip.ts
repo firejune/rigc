@@ -3,7 +3,9 @@
  *
  * `build` → import into the Spine editor → export back to JSON → gate, `diff`,
  * `render` and `check` the export against the build it came from — the last two
- * **once per skin the build declares** (issue #571; see `skinBlocks`). It is the
+ * **once per skin both files declare** (issue #571; see `skinBlocks`), with a
+ * skin only one of them declares named as lost or added by the export and
+ * rendered on neither side (issue #801; see `skinRoster`). It is the
  * one measurement that answers *"does the editor accept what rigc wrote, and does
  * what comes back still play the same"*, and on its first run it found three
  * emitter defects (#368 `hull`/`edges`, #369 hold curves, #370
@@ -200,6 +202,10 @@ function usage(): never {
       '                       Not a bypass: the editor still produced the file, and every',
       '                       measurement below still runs. It exists so the measuring half',
       '                       can be exercised on a machine with no editor installed.',
+      '',
+      'Step 5 renders and checks once per skin BOTH files declare; a skin only one of them',
+      'declares is a FAIL naming it as lost (or added) by the export, and is rendered on',
+      'neither side.',
       '',
       'Requires a licensed Spine editor on this machine. It drives the documented command',
       'line only, and refuses by name when the editor is not there.',
@@ -684,6 +690,49 @@ export function skinBlocks(skins: string[], out: string, fps: number): SkinBlock
   }));
 }
 
+/**
+ * The two sides' skin rosters, split into the skins both declare and the ones
+ * only one side does (issue #801).
+ *
+ * 🚨 A skin one side does not declare is the finding, not a render. Before this,
+ * step 5 planned its blocks off the build alone and asked the export for a skin
+ * it no longer had: the card's rig — `default` empty, two named skins — came
+ * back from 4.3.26 with `skins: [alt, base]`, and step 5 then printed two
+ * DIFFERENT refusals for the one absent skin (`no skin "default" in this
+ * skeleton` from the export's side, `posed no drawable attachment` from the
+ * build's), so the skin read red for a reason neither line named. A render of a
+ * skin that is not there measures nothing on either side, so a skin only one
+ * side declares is named here, by name, and is rendered on neither.
+ *
+ * Both directions, because they are the same fact about a round trip: a skin
+ * the export ADDS is as much a divergence as one it drops.
+ */
+export function skinRoster(
+  build: string[],
+  exported: string[],
+): { both: string[]; lostByExport: string[]; addedByExport: string[] } {
+  const inExport = new Set(exported);
+  const inBuild = new Set(build);
+  return {
+    both: build.filter((skin) => inExport.has(skin)),
+    lostByExport: build.filter((skin) => !inExport.has(skin)),
+    addedByExport: exported.filter((skin) => !inBuild.has(skin)),
+  };
+}
+
+/**
+ * One measure of a `diff --json` report as `matched/total (ratio)`, or `null`
+ * when the report or the measure is not there — read off the report for the
+ * reason `diffSummaryLines` is.
+ */
+function diffFigure(reportPath: string, id: string): string | null {
+  if (!existsSync(reportPath)) return null;
+  interface Measure { id: string; matched: number; total: number; ratio: number }
+  const report = JSON.parse(readFileSync(reportPath, 'utf8')) as { sections?: Array<{ measures?: Measure[] }> };
+  const found = (report.sections ?? []).flatMap((s) => s.measures ?? []).find((m) => m.id === id);
+  return found === undefined ? null : `${found.matched}/${found.total} (${found.ratio.toFixed(3)})`;
+}
+
 /** The shape of a skeleton file, for the field-by-field comparison. */
 export interface Shape {
   spine: string;
@@ -1023,10 +1072,30 @@ function main(): void {
   // console layout for them would break the first time that layout is tidied.
   for (const line of diffSummaryLines(diffJson)) emit(`  ${line}`);
 
-  // 🔒 The skins come off the BUILD, which is the side under test: a skin the
-  // export dropped altogether then reads as a block whose check fails by name,
-  // where enumerating the export's own skins would quietly stop looking for it.
-  const blocks = skinBlocks(skinsDeclaredBy(source), opts.out, opts.fps);
+  // 🔒 The skins come off BOTH files, compared before anything is rendered
+  // (issue #801). A skin the export dropped is named here as LOST BY THE EXPORT
+  // and fails the run; enumerating the export's skins alone would quietly stop
+  // looking for it, and enumerating the build's alone rendered a skin that was
+  // not there and reported two unrelated refusals for it.
+  const buildSkins = skinsDeclaredBy(source);
+  const roster = skinRoster(buildSkins, skinsDeclaredBy(join(cand, 'skeleton.json')));
+  const skinsFigure = diffFigure(diffJson, 'attachments.skins') ?? '(no `attachments.skins` measure in the diff report)';
+  for (const [side, lost] of [
+    ['lost by the export: the build declares it and the export does not', roster.lostByExport],
+    ['added by the export: the export declares it and the build does not', roster.addedByExport],
+  ] as const) {
+    for (const skin of lost) {
+      emit(
+        `  FAIL  skin ${JSON.stringify(skin)} is ${side} (diff attachments.skins ${skinsFigure}) — it is rendered ` +
+          'on neither side, because a render of a skin one file does not have measures nothing',
+      );
+    }
+  }
+  const rosterClean = roster.lostByExport.length === 0 && roster.addedByExport.length === 0;
+  // The no-skin block is for a skeleton pair that declares no skin on EITHER
+  // side; a build whose every skin the export dropped has nothing left to
+  // render, and that is said above rather than drawn here with no skin set.
+  const blocks = buildSkins.length > 0 && roster.both.length === 0 ? [] : skinBlocks(roster.both, opts.out, opts.fps);
   const checks: Array<{ skin: string | null; verdict: BlockVerdict; status: number | null; mae: number | null }> = [];
   for (const block of blocks) {
     emit('');
@@ -1139,7 +1208,7 @@ function main(): void {
   // The verdict is the gate's and EVERY skin's check, not this tool's opinion of
   // them: one skin coming back wrong is the whole run coming back wrong, which
   // is the half a single un-skinned check could not say.
-  process.exit(gate.status === 0 && checksClean ? 0 : 1);
+  process.exit(gate.status === 0 && checksClean && rosterClean ? 0 : 1);
 }
 
 // ⭐ Guarded so `shapeOf`, `shapeDiff`, `skinsDeclaredBy` and `skinBlocks` can be

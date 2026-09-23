@@ -1631,7 +1631,11 @@ export interface RigSpec {
   bones: RigBone[];
   slots: RigSlot[];
   /**
-   * At least `default`, which becomes `skeletonData.defaultSkin` (`:441`).
+   * `default`, if the rig has one, becomes `skeletonData.defaultSkin` (`:441`).
+   * It is emitted exactly when this map carries the key — an empty `{}` included
+   * — or a manifest part files its states under it; a rig whose art is all in
+   * named skins states no `default` and gets none, which is what the editor's
+   * export of such a rig declares (issue #801).
    *
    * Each entry is either the short form — `slotName -> placeholderName ->
    * attachment` — or the long one, `{ "attachments": {…}, "bones": [...],
