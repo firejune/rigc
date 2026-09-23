@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.35.0](https://github.com/firejune/rigc/compare/v0.34.0...v0.35.0) (2026-09-23)
+
+
+### Bug Fixes
+
+* **compile:** a contour's margin and tolerance are the drawing's pixels on a `scale:` page, applied as the stated scale's worth of texels, so a finer page traces the declared outline and its refusals say what was applied ([#789](https://github.com/firejune/rigc/issues/789)) ([ab1c31b](https://github.com/firejune/rigc/commit/ab1c31b50cd25f85831b4e596254ec5bfe63636a))
+* **compile:** every emitted object's keys come out in the order the editor writes them, from one table read off the twelve editor exports ([#785](https://github.com/firejune/rigc/issues/785)) ([d48c505](https://github.com/firejune/rigc/commit/d48c505afc1e3f5e99f45a3c46c9100b33837347))
+* **compile:** every key an editor export leaves to the 4.3 parser is left out of the file, so a rebuild is its export apart from hash and spine ([#790](https://github.com/firejune/rigc/issues/790)) ([afdf428](https://github.com/firejune/rigc/commit/afdf428fae7fbbaaea2caf190361400a5c54a096))
+* **validate:** `A19` decides a loose part's transparency by its texels, so a fully opaque RGBA overlay is refused loose as it is packed ([#788](https://github.com/firejune/rigc/issues/788)) ([c9ab386](https://github.com/firejune/rigc/commit/c9ab386a903da633149ed00b79c69d96dcdf9b53))
+* **validate:** a muted ik or transform the rig spec declares consumer-driven SKIPs by name at A47/A48, and ingest writes that declaration for the shape an export cannot explain ([#787](https://github.com/firejune/rigc/issues/787)) ([6a159e3](https://github.com/firejune/rigc/commit/6a159e3bd83c499be1a3b8abb0c5314c8e1108bc))
+
 ## [0.34.0](https://github.com/firejune/rigc/compare/v0.33.1...v0.34.0) (2026-09-23)
 
 
