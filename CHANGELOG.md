@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.0](https://github.com/firejune/rigc/compare/v0.36.1...v1.0.0) (2026-09-23)
+
+
+### Documentation
+
+* **roadmap:** 1.0 — what the number was claimed on, and what it now costs ([#811](https://github.com/firejune/rigc/issues/811)) ([922e111](https://github.com/firejune/rigc/commit/922e11130f796adfa9867ef41bb4e863283003a8))
+
 ## [0.36.1](https://github.com/firejune/rigc/compare/v0.36.0...v0.36.1) (2026-09-23)
 
 
