@@ -11,8 +11,8 @@ checked against the code that implements it.
 🚨 **The gate cannot see a wrong animation, and it will not tell you so.** `build`
 is green when the file is *valid* — parseable, steppable, nothing degenerate in it.
 Whether the animation is the one you were asked for is a question it does not ask
-and has no way to answer. This is not a caveat: rung 1's first honest run shipped a
-build with **every easing in the file reversed** and the gate passed it green. If you were given pictures, `check` (**§9**) is the half of the loop
+and has no way to answer. This is not a caveat: a build with **every easing in the
+file reversed** gates green. If you were given pictures, `check` (**§9**) is the half of the loop
 that can see that, and a run that skips it has verified nothing about the motion.
 
 - Formats and CLI reference: [README.md](../README.md)
@@ -52,13 +52,12 @@ property of the tool.
 
 🔒 **A ladder run reads this guide in full and does not follow its references out of
 it.** The guide is allowed reading; not everything it cites is. Citations here are
-provenance for a reader of record — the loop that hit a trap, the issue that closed it —
-and following one can arrive at a stored candidate's own spec, at the corpus inventory,
+provenance for a reader of record, and following one can arrive at a stored candidate's own spec, at the corpus inventory,
 or at the **derivation** of the gate a verdict is read against, none of which a run may
 open. ⭐ The gate's **clause statements** are a different matter and a run may read them:
 they are in
 [GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md), which is
-repository material and not in the published package — item 11 of the allowed list (owner ruling 2026-08-29) — the
+repository material and not in the published package — item 11 of the allowed list — the
 measure, the comparator, the number and the SKIP semantics, with no recorded figure in it.
 So: read the
 document, take its numbered sections as the input, and leave its footprints to whoever
@@ -160,11 +159,11 @@ What the flags mean:
 | `--rig` | the rig spec — skeleton structure |
 | `--motion` | the motion spec — time |
 | `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths and `skeleton.images` are written relative to it |
-| `--copy-images` | `build` only: also copies every page **the emitted atlas names** into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own, and points `skeleton.images` at `--out` itself so the editor's import finds the parts beside the skeleton (issue #370; §3.1 says why it is spelled `../<out>/` and not `./`). Under `--atlas-in` those pages are the pack's, not one per part (issue #693 — **§0.2**). Default is unchanged — page paths still point at the source art (issue #217) |
-| `--pack` | `build` only: arrange every part onto **shared** atlas page(s), written into `--out` as real PNGs, instead of one page per part. Lossless — nothing is resampled, trimmed or rotated. Default is unchanged (issue #4) — **§0.1** |
+| `--copy-images` | `build` only: also copies every page **the emitted atlas names** into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own, and points `skeleton.images` at `--out` itself so the editor's import finds the parts beside the skeleton (§3.1 says why it is spelled `../<out>/` and not `./`). Under `--atlas-in` those pages are the pack's, not one per part (**§0.2**). Without it, page paths point at the source art |
+| `--pack` | `build` only: arrange every part onto **shared** atlas page(s), written into `--out` as real PNGs, instead of one page per part. Lossless — nothing is resampled, trimmed or rotated. The default is one page per part — **§0.1** |
 | `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1** |
 | `--padding` | `build --pack` only: the gutter each region reserves on every side (default `2`), filled by extending the region's own edge pixels outwards. `0` is not a legal-but-tight choice, it is bleed — **§0.1** |
-| `--atlas-in` | `build` and `explain`: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; `build` re-emits the atlas into `--out`, re-anchored, and `explain` writes nothing and poses through it — **§0.2**. On `explain` it is the flag that makes a **size-only** spec readable at all (`ingest --art none`), because posing resolves every attachment against an atlas; without it that pair is refused by name rather than thrown through ([#697](https://github.com/firejune/rigc/issues/697), §5.1) |
+| `--atlas-in` | `build` and `explain`: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; `build` re-emits the atlas into `--out`, re-anchored, and `explain` writes nothing and poses through it — **§0.2**. On `explain` it is the flag that makes a **size-only** spec readable at all (`ingest --art none`), because posing resolves every attachment against an atlas; without it that pair is refused by name rather than thrown through (§5.1) |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order. For `chainfit` it is only where each attachment's image name **resolves**: the candidate decides what the parts are, so extra PNGs are unused and a missing name is refused by name (§12.3) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--cut` | `build`, `explain` and `validate`: look up a named cut in `--cuts <cuts.json>`, **instead of** `--rig`/`--motion`/`--out` — the two spellings are one build stated two ways and are refused together. A `cuts.json` is `{ "<name>": { "rig": …, "motion": …, "out": …, "manifest"?: … } }`, every path in it relative to the table's own file, so the table lives with the project that owns the art |
@@ -202,19 +201,16 @@ unweighted meshes, packed atlases) — reach for it when you are shipping into
 *that* project, not to be thorough. A report always prints which profile ran and
 lists what that profile left out, on `PROF` lines.
 
-🆕 *Packed atlases* used to be in that list twice over: `--pack --profile
-spine-html` was **refused by name**, because `A06`'s coverage clause said "one
-part per page" flat and rigc's own pack could not satisfy it. Since
-[#266](https://github.com/firejune/rigc/issues/266) that clause is **one part per
-page OR a tiling page**, so the combination is an ordinary build — and it is the
-only one that puts the renderer's own rulebook over shared-page sampling. What a
+*Packed atlases* are in that list for what a page may hold, not for being packed:
+under `spine-html`, `A06`'s coverage clause is **one part per page OR a tiling
+page**, so `--pack --profile spine-html` is an ordinary build — and it is the only
+one that puts the renderer's own rulebook over shared-page sampling. What a
 *tiling* page has to satisfy under that profile is stated where the clause is,
-§5.2's `A06` row: no two regions on one page overlapping. Rotation is still
-refused, and that is a separate clause about rigc's packer never turning a region.
+§5.2's `A06` row: no two regions on one page overlapping. Rotation is refused, and
+that is a separate clause about rigc's packer never turning a region.
 
-⚠️ The other half of that sentence — every region wholly inside the page it names
-— left this profile in [#694](https://github.com/firejune/rigc/issues/694). It is
-**validity**, so no profile switches it off: a rectangle outside its page is
+⚠️ The other half of that clause — every region wholly inside the page it names —
+is **validity**, so no profile switches it off: a rectangle outside its page is
 broken for every consumer, while two regions over the same texels is something
 correct, editor-exported data does.
 
@@ -251,7 +247,7 @@ a gap:
 - **no rotation.** `rotate: 0` on every region, and it is a fact rather than a
   field: the runtime transposes `u2/v2` at 90 and not at 270, and
   `RegionAttachment.computeUVs` assigns a different corner order at 90, so a
-  rotated pack is one rigc's own `--atlas` substitution cannot read (issue #199).
+  rotated pack is one rigc's own `--atlas` substitution cannot read.
   Rotation buys page area; a page that runs out of room spills to a second page
   instead.
 - **no re-ordering of anything the skeleton says.** `skeleton.json` from a packed
@@ -310,7 +306,7 @@ drawing at its own size, which is what an attachment's size means.
 `scale: 0.5` holds texels half the size of the drawings it was packed from — the
 line says so, and an attachment's `width` is in world units, which the runtime
 reads straight out of the skeleton JSON with the atlas nowhere in the expression.
-So the scale has to be undone here or never (issue #267). But the packer wrote
+So the scale has to be undone here or never. But the packer wrote
 `round(drawing × scale)`, so a 373-texel region at `scale: 0.5` is consistent with
 a 745- and a 746-pixel drawing and the file does not say which: an imported size
 is right to within `0.5 / scale` source pixels, and the build report prints the
@@ -324,19 +320,17 @@ texel count beside it so both numbers are visible:
 measures the PNG. Reach for `--atlas-in` when the pack is what you were handed, or
 when drawing through the pack's own texels is the point.
 
-📐 **What you make beside the art stays at the art's size**
-([#762](https://github.com/firejune/rigc/issues/762)). A depth sheet or a soft
+📐 **What you make beside the art stays at the art's size.** A depth sheet or a soft
 mask is read in the drawing's pixels on a `scale:` page as on loose parts — each
 vertex's texel position over the stated scale — and a mesh fit's overshoot is
 printed in them, with the texel it was measured on named beside it. So are a
-`contour`'s `margin` and `tolerance`
-([#779](https://github.com/firejune/rigc/issues/779)): the trace runs on the
+`contour`'s `margin` and `tolerance`: the trace runs on the
 texels there are, and the two distances are applied on them as `value × scale`
 texels — the scale the header states, never a measured one (below). What stays
 in texels is only what is counted off them: a contour's hole count.
 
 🚨 **A page that declares a size it does not have is a different thing, and it is
-refused** ([#715](https://github.com/firejune/rigc/issues/715)). The common shape
+refused.** The common shape
 is a pack whose `4096x4096` pages ship as `2048x2048` PNGs with the atlas
 untouched — every region still stated in 4096-space — and that is **not** what a
 `scale:` line says. A runtime draws it anyway: `TextureAtlas` computes every
@@ -372,14 +366,14 @@ it hits instead of leaving it to be discovered:
   size the atlas declares, or repack.
 
 📐 **`explain` does not refuse such a page — it withholds what it would have
-measured off it** ([#750](https://github.com/firejune/rigc/issues/750)). It never
+measured off it.** It never
 gates, a runtime draws the page, and most of its report — bones, slots, timelines
 — reads no texel at all, so the pack still compiles and the report still prints.
-What it no longer prints is a figure taken at the coordinates the atlas states,
+What it does not print is a figure taken at the coordinates the atlas states,
 because on such a file those are another part of the picture: measured on a pack
 at half resolution, an authored mesh that covers 100.00% of its art and reaches
-16.00px past it printed **68.49%** and **76.24px**, and a `grid` whose depth sheet
-reads 10 of its 12 vertices on undrawn texels printed **12 of 12**. The page is
+16.00px past it would print **68.49%** and **76.24px**, and a `grid` whose depth sheet
+reads 10 of its 12 vertices on undrawn texels would print **12 of 12**. The page is
 named once where the report starts, with the ratio `A06` refuses it by, and every
 withheld figure says so where it would have stood:
 
@@ -402,12 +396,11 @@ on the **coarser** texels the page really has, so a figure that depends on the
 grid need not equal the one the pack the page was halved from reads — and a
 contour's outline is one of them, below.
 
-📐 **A fit's overshoot is stated in the drawing's pixels on every page**
-([#762](https://github.com/firejune/rigc/issues/762)). It is a distance, and on a
-page that declares a `scale:` it is taken on the page's texels — so it used to be
-printed in them, under the same `px`: one mesh over one drawing read 16.00px on
-the declared-size page, **8.00px** on its `scale: 0.5` restatement and **32.00px**
-on a `scale: 2` one. It is now the texel distance over the scale the atlas states,
+📐 **A fit's overshoot is stated in the drawing's pixels on every page.** It is a
+distance, and on a page that declares a `scale:` it is taken on the page's texels —
+counted in them, one mesh over one drawing reads 16.00px on the declared-size page,
+**8.00px** on its `scale: 0.5` restatement and **32.00px** on a `scale: 2` one. So
+it is printed as the texel distance over the scale the atlas states,
 which is the unit an attachment's `width` is in and the one you drew in, and the
 line says which grid it was taken on — a texel of a `scale: 0.5` page is 2.00px of
 the drawing, so that is the step the figure moves in:
@@ -426,14 +419,14 @@ texels are the drawing, and the line is the one it always was. A `contour`'s hol
 count is a count of those cells and says `texel(s)` on such a page.
 
 📐 **A `contour`'s `margin` and `tolerance` are the drawing's pixels on every
-page** ([#779](https://github.com/firejune/rigc/issues/779)). They are your
+page.** They are your
 statement, in the unit every other size in the spec is in, so on a `scale:` page
 the trace applies them as `margin × scale` and `tolerance × scale` texels, and
-`maxVertices` is judged on the outline that asks for. They used to be applied in
-texels unconverted, which asked each page a different question. Measured on
-`halvedMeshPacks`, one spec — `tolerance: 1.5`, `margin: 2`, `maxVertices: 48`:
+`maxVertices` is judged on the outline that asks for. Applied in texels
+unconverted, they would ask each page a different question. Measured on one pack
+at three scales, one spec — `tolerance: 1.5`, `margin: 2`, `maxVertices: 48`:
 
-| page | applied in texels (before) | applied as the drawing's pixels (now) |
+| page | applied in texels | applied as the drawing's pixels (what rigc does) |
 | --- | --- | --- |
 | declared size | 15 vertices | **15** vertices, the same mesh |
 | `scale: 2` | refused: `simplified to 66 vertices at tolerance 1.5, past the 48` | **15** vertices, the declared outline to 0.00px |
@@ -458,7 +451,7 @@ names the figure the spec states, the texels it was applied as and the scale:
 ```
 
 🚨 **A page that is not a PNG is refused by name, before anything is compiled
-against it** ([#732](https://github.com/firejune/rigc/issues/732)). rigc reads PNG
+against it.** rigc reads PNG
 and nothing else — the size `A06` judges, the alpha `A19` judges, the renderer and
 the region lift all decode PNG, and rigc links no decoder for any other format —
 and a file's name is not evidence: a production pack shipped WebP pages called
@@ -483,20 +476,16 @@ a page fails `A06` with the same sentence:
 measures it like any other. ⚠️ `A06` deliberately does not read the width and
 height a WebP header carries in a fixed field. Doing so would print a size that no
 reader in this tree can check — the parse would agree only with the forgery it was
-written against — about a page that is refused either way; and the variant that
-let a size-matching WebP page pass was measured building green under the default
-profile and writing a directory whose next `render` refused the page.
+written against — about a page that is refused either way; and a size-matching
+WebP page let through that way builds green under the default profile and writes
+a directory whose next `render` refuses the page.
 
 **What `--out` holds afterwards:** `skeleton.json` and a `skeleton.atlas` that is
 the pack, page paths pointing back at the pack's own PNGs — so `rigc validate
 <that directory>` reads it green with no flags, exactly as it reads a loose
 build's. Add `--copy-images` and the pack's page PNGs are copied in beside the
 skeleton and the page names become their basenames, which is the same directory
-with nothing outside it left to resolve. ⚠️ Until
-[#693](https://github.com/firejune/rigc/issues/693) that flag rebuilt the atlas
-from the parts the rig declared instead of from the pack, and a rebuild through
-`ingest --art none` declares none: the file written was **zero bytes**, on a build
-that printed `PASS` for all four atlas assertions.
+with nothing outside it left to resolve.
 
 The emitted `skeleton.atlas` **is** the imported one, verbatim except for its page
 name lines, which are paths and have to be re-anchored to `--out`. Fields rigc
@@ -505,17 +494,15 @@ because the text passes through by line; regions the rig does not use stay in th
 file, because a real pack is shared between cuts and an importer that quietly
 dropped half of one would make `--out` disagree with the pack it was built from.
 
-🔸 **The one thing not passed through is the pack's blank lines**
-([#803](https://github.com/firejune/rigc/issues/803)). They are written in the
-shape rigc writes its own packs in: none before the first page, exactly one between
-two page blocks, one trailing newline. Every non-blank line keeps its bytes and its
-order, so a pack already in that shape — every editor export in the example corpus,
-and every pack `--pack` writes — is emitted byte for byte as before. What this
-changes is a pack from a 3.8-era packer, which begins with a blank line: the
-runtime reads a run of blank lines before the first page as nothing, so the pack
-loads, and until #803 `build` re-emitted the blank and refused its own emission as
-`A07_ATLAS_TEXT_SHAPE: line 1: consecutive blank lines`. A run of blank lines
-between two page blocks reads as one to the runtime, and is written as one.
+🔸 **The one thing not passed through is the pack's blank lines.** They are
+written in the shape rigc writes its own packs in: none before the first page,
+exactly one between two page blocks, one trailing newline. Every non-blank line
+keeps its bytes and its order, so a pack already in that shape — every editor
+export in the example corpus, and every pack `--pack` writes — is emitted byte for
+byte. A pack from a 3.8-era packer begins with a blank line: the runtime reads a
+run of blank lines before the first page as nothing, so the pack loads, and
+`build` writes it without the blank. A run of blank lines between two page blocks
+reads as one to the runtime, and is written as one.
 
 Five things are refused rather than warned about, because each of them otherwise
 **loads clean and draws wrong** — or, the last, cannot be read back at all:
@@ -525,17 +512,17 @@ Five things are refused rather than warned about, because each of them otherwise
 | a region name the atlas does not have | `AtlasAttachmentLoader` returns null and the part silently does not draw. The refusal lists the near misses — the usual cause is one character |
 | a size the spec disagrees with | the same silence `A06` exists for, one link earlier: a quad sized against a region of another size collapses |
 | a page the atlas names and the disk lacks | nothing to sample; caught on the way in, so the message names the atlas rather than the artifact rigc wrote from it |
-| a rectangle that runs off its page | `x + width` past the page width makes `u2 > 1`, which samples whatever the wrap mode does. The gate names the same rectangle, under every profile, for a pack that reaches it without passing through here — `A06`, §5.2 ([#694](https://github.com/firejune/rigc/issues/694)) |
-| a page file that is not a PNG | nothing in rigc can read it — not the gate, not `render`, not a mesh generator — so a green build over it would certify pixels nobody opened. Named by what its first bytes are, every such page of the pack in one sentence; the gate says the same for a directory that reaches it another way — `A06`, §5.2 ([#732](https://github.com/firejune/rigc/issues/732)) |
+| a rectangle that runs off its page | `x + width` past the page width makes `u2 > 1`, which samples whatever the wrap mode does. The gate names the same rectangle, under every profile, for a pack that reaches it without passing through here — `A06`, §5.2 |
+| a page file that is not a PNG | nothing in rigc can read it — not the gate, not `render`, not a mesh generator — so a green build over it would certify pixels nobody opened. Named by what its first bytes are, every such page of the pack in one sentence; the gate says the same for a directory that reaches it another way — `A06`, §5.2 |
 
 One limit, stated rather than discovered:
 
 - an **optional state** (a manifest `states:` entry) whose region is not in the
-  pack is a `DROP`, not a refusal — the same documented absence a missing PNG has
-  always been, and the line names the atlas rather than a file nobody opened.
+  pack is a `DROP`, not a refusal — the same documented absence a missing PNG is,
+  and the line names the atlas rather than a file nobody opened.
 
-⭐ **The missing PNG it is the same rule as, spelled out**, because it was left
-implicit here and the two halves are read together. A `states:` entry whose PNG is
+⭐ **The missing PNG it is the same rule as, spelled out**, because the two halves
+are read together. A `states:` entry whose PNG is
 not on disk is a `DROP` too, and the line names the file rather than the pack:
 
 ```bash
@@ -552,11 +539,9 @@ with that part missing, at exit 0 and a green gate. Restore the art, or fix the
 path the manifest states.
 
 🔑 **A refused build prints its `DROP` lines too**, under the refusal on stderr,
-and did not before [#671](https://github.com/firejune/rigc/issues/671): they were
-reported from the compile result and a refusal returns none, so the one output
-naming the file was missing from exactly the run that failed over it.
+so the one output naming the file is there on exactly the run that failed over it.
 
-A **turned** region is not one of them, and used to be (issue #570). A pack made
+A **turned** region is not one of them. A pack made
 by somebody else routinely rotates a region to save space — `rotate: 90`,
 `rotate: 180`, `rotate: 270`, or the format's older `rotate: true` — and rigc
 reads all of them: anything that measures a part's pixels sees the same grid it
@@ -582,15 +567,13 @@ means for the numbers beside it, and the pack states none of this:
 
 Each direction there is **measured** rather than reasoned about: it comes off
 `MeshAttachment.computeUVs` in the linked runtime, the one routine there that
-says where a region's texels are for all four values, and the selftest derives
-the words in that list from the same routine instead of reading them. ⚠️ Do not
+says where a region's texels are for all four values. ⚠️ Do not
 take the turn from `TextureAtlas`'s own `u2`/`v2` — those transpose at a quarter
 turn one way and not at the other, so one of the two pairs describes a rectangle
-the page does not have ([#579](https://github.com/firejune/rigc/issues/579)).
+the page does not have.
 
-`build` now prints the page rectangle on the line for a turned region, so the
-report carries the rectangle to cut instead of leaving it to be derived
-([#718](https://github.com/firejune/rigc/issues/718)):
+`build` prints the page rectangle on the line for a turned region, so the
+report carries the rectangle to cut instead of leaving it to be derived:
 
 ```bash
 #   ..      pendulum   105x139  <- ../export/atlas.png @ 710,16 rotate 90, occupies 139x105
@@ -599,7 +582,7 @@ report carries the rectangle to cut instead of leaving it to be derived
 ⚠️ Two limits here are real and neither is about rotation:
 
 - `--atlas-in` cannot recover what a `scale:` quantised away (above), turned or not;
-- the **renderer** profile still refuses a turned region outright
+- the **renderer** profile refuses a turned region outright
   (`A06`, `--profile spine-html`), because that profile is about artifacts rigc
   itself emits and it never packs one turned. Reading a foreign pack and gating
   one under somebody else's renderer policy are different questions.
@@ -648,7 +631,7 @@ repository builds on every run.
 | `--art loose` (default) | name an `image` per attachment — `<path or placeholder>.png` — so the rebuild resolves loose PNGs and rigc measures them |
 | `--art none` | state `width`/`height` only, so the rebuild is `build --atlas-in <pack.atlas>` and every part resolves out of the pack |
 | `--images <dir>` | **write** the rig spec's own `images` directory, spelled relative to `--out`, so the rebuild is a plain `build --rig … --motion … --out …`. Without it the field is left out and every `image` resolves against `--out` itself, which holds the specs and no art — so every rebuild has to repeat `build --images <dir>`. Refused together with `--art none`, which writes no `image` for it to be the base of |
-| `--stage x,y,w,h` | a setup bounding box to **add** to a skeleton that declares none — without it the absence is carried as `"width": null, "height": null` ([#714](https://github.com/firejune/rigc/issues/714)). An editor export *may* be such a file; every export under `examples/` carries a box and `ingest` reads it straight through — so passing the flag at one of them is **refused**, naming both boxes, rather than silently doing nothing ([#626](https://github.com/firejune/rigc/issues/626)) |
+| `--stage x,y,w,h` | a setup bounding box to **add** to a skeleton that declares none — without it the absence is carried as `"width": null, "height": null`. An editor export *may* be such a file; every export under `examples/` carries a box and `ingest` reads it straight through — so passing the flag at one of them is **refused**, naming both boxes, rather than silently doing nothing |
 | `--name <n>` | the rig spec's `name`, which the motion spec's `archetype` must equal (default: the file's basename) |
 
 ⚠️ **`ingest --images` and `build --images` point opposite ways.** `build --images`
@@ -663,8 +646,8 @@ where the parts are in one convention.
 one — posing the rig gives the *animated* extent, which is a different number from the
 editor's setup box. So a file that declares none is **carried as declaring none**: the
 spec states `"width": null, "height": null` (§3.1), the rebuild emits no box, and
-nothing is recorded, because the rebuild is the file that was read
-([#714](https://github.com/firejune/rigc/issues/714)). `--stage x,y,w,h` *adds* a box —
+nothing is recorded, because the rebuild is the file that was read.
+`--stage x,y,w,h` *adds* a box —
 supply it from the project the file came from, or from the editor's own canvas — and
 is recorded as a `NO_STAGE` judgement. A header stating **half** a stage (an origin
 with no extent) is a `NO_STAGE` blocker: the spec holds a stage as four fields or none.
@@ -672,27 +655,20 @@ with no extent) is a `NO_STAGE` blocker: the spec holds a stage as four fields o
 ⛔ **The flag is refused beside a box the file states.** Two sources for one value, and
 the file is the one that was measured — so `ingest` names both boxes and stops rather
 than writing one of them and saying nothing. Drop the flag, or correct `skeleton` in the
-source if its box is wrong ([#626](https://github.com/firejune/rigc/issues/626)). What
-it does **not** do is refuse an *omitted origin*: inside a declared extent an omitted
-`x`/`y` is `0` — the reading `build` emits and `diff` compares
-([#620](https://github.com/firejune/rigc/issues/620)) — so the written spec states it
-and a `LOSS HEADER_ORIGIN` line says the source omitted it and that the rebuild will
-spell it ([#622](https://github.com/firejune/rigc/issues/622)).
+source if its box is wrong. What it does **not** do is refuse an *omitted origin*:
+inside a declared extent an omitted `x`/`y` is `0` — the reading `build` emits and
+`diff` compares — so the written spec states it and a `LOSS HEADER_ORIGIN` line says
+the source omitted it and that the rebuild will spell it.
 
-⚠️ **This said an editor export "never" carries one until
-[#594](https://github.com/firejune/rigc/issues/594) measured the corpus.** All twelve
-exports under `examples/` declare `x`, `y`, `width` and `height`, `ingest` takes the
-early return on every one of them, and not one needs the flag. What an editor export
-*may* do is carry none: a rigc build that declares no stage
-([#578](https://github.com/firejune/rigc/issues/578)) came back from a Spine 4.3.26
-round trip with a header of `hash`, `spine`, `images`, `audio` and **no box at all** —
-the editor preserves the absence rather than inventing a stage
-([#616](https://github.com/firejune/rigc/issues/616)). So `--stage` is for a file that
-really has none, and this repository's corpus holds no example of one; a production
-corpus measured for [#714](https://github.com/firejune/rigc/issues/714) holds 48 of 48. It is still the
-value that costs least to get wrong: `diff` reports the box as `stage_present` and
-`stage_box` ([#578](https://github.com/firejune/rigc/issues/578)) and both are
-`(reported)`, so nothing on the ladder consults them.
+⚠️ **All twelve exports under `examples/` declare `x`, `y`, `width` and `height`**,
+`ingest` reads each box straight through, and not one needs the flag. What an
+editor export *may* do is carry none: a rigc build that declares no stage came back
+from a Spine 4.3.26 round trip with a header of `hash`, `spine`, `images`, `audio`
+and **no box at all** — the editor preserves the absence rather than inventing a
+stage. So `--stage` is for a file that really has none; the example corpus holds no
+such file, and production exports do — 48 of 48 measured. It is the value that
+costs least to get wrong: `diff` reports the box as `stage_present` and
+`stage_box` and both are `(reported)`, so nothing on the ladder consults them.
 
 ⚠️ **The duration is a convention, and it is recorded as one.** Skeleton JSON has no
 duration field. The largest key time is the only derivable answer and it is what a
@@ -709,14 +685,14 @@ the first:
 | --- | --- |
 | `BLOCK` | the spec format cannot say it, so the rebuild will **not** be the file that was read — `point`, a `sequence` block the parser would read as some other series, an unknown field on a bone, slot or constraint, a timeline family the motion spec has no track for. The command exits non-zero **and still writes both specs**, because a spec plus a list of what is missing from it beats no spec |
 | `JUDGE` | the skeleton cannot answer and somebody has to: the stage, and each animation's duration |
-| `LOSS` | the skeleton's spelling and rigc's differ, on purpose, and the line says how: `HEADER_BOOKKEEPING` for a field the spec has no home for, `HEADER_REDERIVED` for the version string, `HEADER_ORIGIN` for an origin the source left to the format and the rebuild writes out (#622) |
+| `LOSS` | the skeleton's spelling and rigc's differ, on purpose, and the line says how: `HEADER_BOOKKEEPING` for a field the spec has no home for, `HEADER_REDERIVED` for the version string, `HEADER_ORIGIN` for an origin the source left to the format and the rebuild writes out |
 
 ⛔ **It reads one generation of the format, and a file from another one ends loud.**
 Spine data is locked to the generation that exported it and a mismatch does not
 throw: 4.3 takes constraints from the top-level `constraints` array alone, so a
 4.0–4.2 file's `ik`/`transform`/`path`/`physics` arrays load as nothing at all — 1,302
 shipped skeletons parsed on a 4.3 runtime and loaded 0 of 8,672 constraints
-([#706](https://github.com/firejune/rigc/issues/706) row 1). So `ingest` reads
+(GENERATIONS.md, row 1). So `ingest` reads
 `skeleton.spine` before it reads a field of the file. A file from another generation is
 a `BLOCK GENERATION_UNSUPPORTED` naming the generation, the string it was read from,
 and what a 4.3 reader loses **on that file**: the constraints parked in those arrays
@@ -725,8 +701,8 @@ the physics constraints omitting `inertia`/`damping`, whose default is not the s
 number in the two. A label naming no generation rigc knows — or a header stating none —
 is a `BLOCK GENERATION_UNKNOWN`, never rounded to the nearest: a catalog that rounded
 handed 19 skeletons labelled `3.8.99` a 4.2 runtime and every one of them posed as NaN
-(row 7). Reading a file with *that generation's own* defaults is #706's item 2 and is
-not in this tool — re-export as 4.3, or transcribe by hand ([INGEST.md](INGEST.md) §2).
+(row 7). Reading a file with *that generation's own* defaults is not in this tool —
+re-export as 4.3, or transcribe by hand ([INGEST.md](INGEST.md) §2).
 [GENERATIONS.md](https://github.com/firejune/rigc/blob/main/docs/GENERATIONS.md) is
 the whole policy, and the editor migration it names.
 
@@ -772,12 +748,12 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   `ingest --art none` states sizes and names no image. So the size-only pair
   `build --atlas-in` gates green is readable here through the same flag, and
   without it the pair is refused by name at exit 2 rather than posed
-  ([#697](https://github.com/firejune/rigc/issues/697), §5.1). ⚠️ `--profile`,
+  (§5.1). ⚠️ `--profile`,
   `--pack`, `--page-size`, `--padding` and `--copy-images` are `build`'s and are
   not here: four of them decide what is *written*, and this command writes nothing.
 
   📐 **What it will not measure: the texels of a page that is not its declared
-  size** ([#750](https://github.com/firejune/rigc/issues/750)). Under
+  size.** Under
   `--atlas-in`, a page whose PNG is not the `size:` its atlas states is named once
   at the top of the report, and the figures that would have been read off it — an
   authored mesh's `covers …% of the art, reaching …px past it`, a depth sheet's
@@ -787,7 +763,7 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   and the repair: §0.2. On a page that **does** declare a `scale:`, the overshoot
   in that line is the drawing's pixels and the line names the texel it was taken
   on (`… measured on the page's texels at scale: 0.5 — a texel is 2.00px of the
-  drawing`, [#762](https://github.com/firejune/rigc/issues/762)).
+  drawing`).
 - **`diff`** compares two skeletons and reports **a ratio per measure** in six
   sections (bones, slots, attachments, constraints, animations, events). It
   deliberately does not combine them into a score: a rig with the right skeleton
@@ -953,24 +929,12 @@ one A09 does compare.
 **R1 — A field is emitted when you declare it, and left out where the parser would
 read the same value without it.** Omit a field and Spine's default stands; write it
 and it reaches the file — unless what you wrote **is** that default, in which case
-the emitter leaves it out, the way the editor's own exporter does (issue
-[#716](https://github.com/firejune/rigc/issues/716)). Writing `x: 0` is still
+the emitter leaves it out, the way the editor's own exporter does. Writing `x: 0` is still
 legitimate, and your spec still says it: the spec is the record of what you wrote,
 and the file is what the runtime reads. The two cannot disagree about a value,
 because a key is left out only where the 4.3 parser loads the same `SkeletonData`
 without it — exact equality with the float the file would hold, so `x: 1e-45` is
-written — and the selftest loads every build both ways to hold that (§10.6c).
-
-⚠️ This rule said *"not 'when it differs from the default'"* until #716, on two
-grounds: that a rig may need to say `x: 0` out loud, and that deciding emission from
-the value would make the file depend on arithmetic. Neither survived being measured.
-What reads the file is the 4.3 parser, which reads the absent key as the same number,
-and the editor, whose own export leaves the same key out — so there is nobody to say
-it out loud *to*; and the decision is an exact comparison with the parser's fallback,
-which is not arithmetic in any sense a reader has to redo. What the
-old rule cost was concrete: a rebuild of an editor export restated **2,338** keys the
-export leaves to the parser, so `ingest → build` could never give an editor's file
-back.
+written (§10.6c).
 
 **R2 — The compiler never invents a value.** No defaults guessed from the art, no
 re-measured plates, no reasonable fallbacks. A missing number is a `CompileError`
@@ -1001,8 +965,7 @@ two files put two regions in it and each attachment draws its own (§3.4.2), whi
 two attachments naming the same file share the one region that file made. What
 cannot be reconciled is two *different* files whose basenames collide — only one of
 them can be region `patch` — so rigc refuses the build and names both paths rather
-than letting one of them silently draw the other's pixels
-([#555](https://github.com/firejune/rigc/issues/555)).
+than letting one of them silently draw the other's pixels.
 
 **R6 — A key carries `ease` or `curve`, never both.** A named easing says "this
 shape, wherever it is used" and is the recommended path. `curve` is the escape
@@ -1034,19 +997,16 @@ reads best; the emit keys them the way the Spine editor does. This is the one pl
 reorders anything you wrote, and it is not cosmetic: a `slider`'s animation is a
 **name** in JSON and an **ordinal** in the format's binary half, so an editor that
 re-sorts the object repoints every slider whose animation moved index — silently,
-in a file that still parses and still gates green (§3.5.2,
-[#535](https://github.com/firejune/rigc/issues/535)). Nothing else moves: each
+in a file that still parses and still gates green (§3.5.2). Nothing else moves: each
 animation's own body is byte-identical either way, and every other collection is
 emitted in the order you gave it.
 
 ⚠️ **What that comparator is, measured rather than inferred.** Five name lists
 went through a licensed 4.3.26 editor as JSON and came back as JSON, and the ten
 answers are in the repository as
-`fixtures/editor-order/probe{1..5}.{in,out}.json`
-([#728](https://github.com/firejune/rigc/issues/728)). Every row below is a clause
+`fixtures/editor-order/probe{1..5}.{in,out}.json`. Every row below is a clause
 of the rule with the pair from those files that shows it — nothing here is a
-guess, and the selftest re-derives each row from the files rather than from this
-page:
+guess:
 
 | The editor | Shown by |
 | --- | --- |
@@ -1061,14 +1021,13 @@ page:
 🔸 **One clause of the rule is not from those files.** Before comparing, the
 comparator reads U+3000 IDEOGRAPHIC SPACE as a space and the full-width digits
 U+FF10–U+FF19 as `0`–`9`. No probe carried either; the fold was measured on a
-production skin's slot keys ([#791](https://github.com/firejune/rigc/issues/791),
-§10.6b says what was measured and why it is those two classes and not NFKC), and
+production skin's slot keys (§10.6b says what was measured and why it is those
+two classes and not NFKC), and
 it applies here because R10, R11 and a skin's slot keys are one comparator. So
 `shot２` sorts before `shot10`, and a pair an ideographic space decides is
 ordered rather than refused as `separator`.
 
-⭐ **A tie is not an ambiguity, and that is what retired most of this rule's
-refusals.** Two names the comparator cannot separate come back in the order the
+⭐ **A tie is not an ambiguity.** Two names the comparator cannot separate come back in the order the
 file gave them, so the order rigc emits for such a pair is **your own declaration
 order** and the editor keeps it. Nothing moves index, so there is nothing to
 refuse: `Turn` beside `turn`, `turn01` beside `turn1`, `1turn` beside `turn`,
@@ -1088,30 +1047,18 @@ So what is left refused is short, and each row is a pair two readings of the
 numbered series that crosses 9 → 10 is keyed **1, 2, … 9, 10, 11, 12**, which is
 what the editor does with it — and is not what a codepoint sort does.
 
-✅ **This rule was a quantifier over comparators until #728, and that is what
-changed.** rigc keyed `animations` codepoint-ascending until
-[#543](https://github.com/firejune/rigc/issues/543) and then emitted a member of
-the "natural, case-insensitive" family, refusing every pair the family could
-disagree about. Both refusals were sound and both over-refused by construction,
-because a quantifier stands in for a measurement: a name with a capital, an
-accent, a space or a folder in it was refused rather than emitted in the order the
-editor returns. Measuring the comparator moves no byte on any set the old rule
-accepted; it stops refusing the ones it did.
-
 **R11 — The `skins` array is written with `default` first and the rest in exactly
 the order R10 describes.** A skin is a **name** in the JSON half of the format and
 an **ordinal** in the binary half — `skins[readInt()]` for an attachment timeline,
 `skins[skinIndex]` for a linked mesh — so an editor that writes the array in
 another order repoints every such reference, silently, in a file that still
 parses. Measured: a rig built `default, zulu, mike, alpha` exported
-`default, alpha, mike, zulu`
-([#541](https://github.com/firejune/rigc/issues/541)).
+`default, alpha, mike, zulu`.
 
 ⚠️ **It is one comparator, and that is measured too.** Two of the five round
 trips carried one name list as **both** collections and both came back in one
-order, which is what retired the wider skin refusal #541 shipped: until #728,
-`Zulu` beside `mike` and `mike10` beside `mike2` built as animation names and were
-refused as skin names. Both build now. `default` is pinned rather than sorted, on
+order, so `Zulu` beside `mike` and `mike10` beside `mike2` build as skin names
+exactly as they do as animation names. `default` is pinned rather than sorted, on
 names the same comparator puts ahead of it — `default` before `2`, `default`
 before `A` — so renaming a skin away from `default` makes it an ordinary name that
 sorts like one.
@@ -1120,16 +1067,14 @@ sorts like one.
 the `default` skin may not share a placeholder with a named skin.** rigc derives
 no name. A placeholder several skins fill is emitted under that placeholder in
 each skin, carrying the `name` each entry states and none where it states none —
-which is the shape the editor itself exports (§3.4.2). Until
-[#796](https://github.com/firejune/rigc/issues/796) rigc composed
-`"<skin>/<placeholder>"` there, which renamed every such attachment at runtime.
+which is the shape the editor itself exports (§3.4.2).
 What you *do* author is where the shared art lives: a
 placeholder the `default` skin shares with a named skin is a **compile error**,
-because the Spine editor has no representation for it in either spelling (#567,
-measured on 4.3.26 — named, the export re-keys it and the default skin draws
+because the Spine editor has no representation for it in either spelling (measured
+on 4.3.26 — named, the export re-keys it and the default skin draws
 nothing; unnamed, the import is refused). Put the shared entry in a named skin —
 `base` — and every filler is a named skin. A placeholder only one skin fills is
-emitted exactly as before, in the default skin or anywhere else.
+emitted as written, in the default skin or anywhere else.
 
 ---
 
@@ -5108,16 +5053,14 @@ first is a **shape** refusal from a spec parser — `parseRigSpec`
 compiled, and ask only what the one file in front of them can answer. Every
 `parseMotionSpec` refusal reads `<file>: \`<key path>\` is <what it actually is>;
 <the spelling that works>`, so its whole wave is **one row per FIELD** rather than
-one per message. (The rig spec's parser predates the convention and its messages
-are prose, so they sit in the second table with everything else.)
+one per message. (The rig spec parser's messages are prose, so they sit in the
+second table with everything else.)
 
 🚨 **A key neither format has is refused by name, in both files.** Not a row in
 the table below, because it is not about one field: every object in a rig spec and
 in a motion spec is checked against the keys its shape actually owns, and a key
-outside that set stops the build. Issue #545 is why — before it, such a key was
-never looked at, never mentioned and never emitted, and the build exited 0 with
-every assertion green. Four keys planted into one physics constraint all vanished,
-and no line of output named any of them.
+outside that set stops the build, because nothing else reads such a key: left
+alone it would be dropped from the emitted skeleton with every assertion green.
 
 ```
 rigc compile error: rig.json: constraint "ctl" (physics) has 4 keys this compiler
@@ -5153,11 +5096,7 @@ nothing and the required-key message below it is what arrives — `a rig spec ne
 **"does not read"** means the key *is* in your file, spelt some other way, and
 **"needs a …"** / **"is absent"** means it is not in the file at all. Where both
 are true at once — a typo beside a key that really is missing — the typo is named
-first, because it is the one you can fix without re-reading the file. Until
-[#672](https://github.com/firejune/rigc/issues/672) the rig spec's required-key
-checks ran *above* its scan, so `"slot"` for `"slots"` printed the sentence asking
-for an array the file already had, one character off, and never named the stray
-key; the motion spec has always had this order.
+first, because it is the one you can fix without re-reading the file.
 
 ⚠️ One check stays above the scan in both parsers: the `spec` version tag. The
 version is what decides *which* key set applies, so a file declaring a version this
@@ -5173,49 +5112,48 @@ one is listed: a rig spec's root, a motion spec's root, an animation, and a
 the compiler tolerates is a key it cannot distinguish from one you meant it to
 read. (The **cut manifest** is deliberately outside this: it is the record of the
 pipeline that produced the art as much as an input, it carries fields the compiler
-states outright that it does not read — `roi` — and the fixtures in this repository
-already give it `note` and `archetype`. It has no shape parse at all, which is the
-same hole issue #307 closed for the motion spec.)
+states outright that it does not read — `roi` — and it may carry `note` and
+`archetype` as well. It has no shape parse at all.)
 
 | Key | Refused when it is not | Why the shape matters |
 | --- | --- | --- |
 | the file itself | a JSON object | the version row below would otherwise report a missing `spec` tag in a file that has no fields at all |
 | `spec` | `"rigc-motion/1"` | §4 |
-| `archetype`, `cut` | a non-empty string | `cut` was read by nothing, so a spec that omitted it compiled green and could not say what it was authored for |
+| `archetype`, `cut` | a non-empty string | a spec with no `cut` cannot say what it was authored for |
 | `note` (at any level) | a string | — |
-| `easings` | an object | it is declared required and nothing asserted it, so an absent table failed at the first key that named an easing instead of at the table |
-| `easings."<name>"` | **four finite numbers** | `bezierForChannel` destructures four handles with no guard: `[0.42, 0, 0.58]` emitted `"curve": [0.42, 0, 0.58, null]` (§4.1) |
-| `groups` | an object keyed by group name | an array compiled green with no group defined. Each group's member LIST stays a compile-time refusal — see the rows further down |
-| `setup` | an object keyed by slot name | every `setup?.[slot]` lookup on an array is `undefined`, so the whole table was silently absent |
-| `setup."<slot>"` | an object of `{ attachment?, color? }` | §4.2 — `"<slot>": "plate"` reads `.attachment` off a string as `undefined` and **hides the slot** (#293) |
+| `easings` | an object | an absent table is refused at the table, not at the first key that names an easing |
+| `easings."<name>"` | **four finite numbers** | `bezierForChannel` destructures four handles with no guard: `[0.42, 0, 0.58]` would emit `"curve": [0.42, 0, 0.58, null]` (§4.1) |
+| `groups` | an object keyed by group name | an array would compile green with no group defined. Each group's member LIST stays a compile-time refusal — see the rows further down |
+| `setup` | an object keyed by slot name | every `setup?.[slot]` lookup on an array is `undefined`, so the whole table would be silently absent |
+| `setup."<slot>"` | an object of `{ attachment?, color? }` | §4.2 — `"<slot>": "plate"` reads `.attachment` off a string as `undefined` and **hides the slot** |
 | `setup."<slot>".attachment` | a string or `null` | whether a string RESOLVES is still the compile-time row below; whether it is a string is this one |
 | `setup."<slot>".color[i]` | a finite number in 0..1 | `channelHex` clamps with `Math.min`/`Math.max`, which pass `NaN` through, and `NaN.toString(16)` is the text `"NaN"` |
 | `physics` | an object keyed by constraint name | as `setup` |
 | `physics."<name>".bone` | a non-empty string | — |
 | `physics."<name>".<tuning field>` | a finite number | rounded to `NaN` and emitted as `null`, which the runtime reads as zero (§4.6) |
 | `mix`, `mix.default`, `mix.pairs[i]` | an object / a number / a `["<from>", "<to>", <seconds>]` triple | not emitted into skeleton JSON, so nothing else ever looks at it (§4.6) |
-| `animations` | an object keyed by animation name | an absent one crashed with a raw `TypeError` that named neither input file; an array compiled green with no animations |
-| `animations."<a>"` | an object | crashed with a raw `TypeError` on `anim.tracks` |
-| `animations."<a>".duration` | a finite number ≥ 0 | R7's check is `Math.abs(compiled − declared) > FRAME`, and a comparison against `NaN` is **false** — so the one guard on the field passed hardest exactly when the field was missing |
+| `animations` | an object keyed by animation name | an absent one would crash with a raw `TypeError` that names neither input file; an array would compile green with no animations |
+| `animations."<a>"` | an object | it would crash with a raw `TypeError` on `anim.tracks` |
+| `animations."<a>".duration` | a finite number ≥ 0 | R7's check is `Math.abs(compiled − declared) > FRAME`, and a comparison against `NaN` is **false** — so the one guard on the field would pass hardest exactly when the field is missing |
 | `animations."<a>".loop` | `true` or `false` | optional; absent means the player decides (§4.3) |
 | `animations."<a>".tracks` | an array | an animation whose timelines are all in the families beside `tracks` still writes `"tracks": []` |
 | `…tracks[i]` | an object | — |
 | `…tracks[i].property` | a non-empty string | which properties exist is the compile-time row below (§4.4) |
 | `…tracks[i].slot`/`.group`/`.bone`/`.physics`/`.path`/`.slider` | a string | whether exactly one is named, and what it resolves to, are compile-time rows below |
-| `…tracks[i].lag`, `.stagger` | a finite number | a string is CONCATENATED onto each key time and a boolean adds 1s, and the resulting refusal blamed the key and the duration for a fault in neither |
+| `…tracks[i].lag`, `.stagger` | a finite number | a string is CONCATENATED onto each key time and a boolean adds 1s, and the resulting refusal would blame the key and the duration for a fault in neither |
 | `…keys[j]` | an object | — |
-| `…keys[j].t` | a finite number | **every** key family, including the three that never had this guard: value tracks, slot tracks and `drawOrder` |
+| `…keys[j].t` | a finite number | **every** key family, value tracks, slot tracks and `drawOrder` included |
 | `…keys[j].ease` | a string | — |
-| `…drawOrder`, `…events`, `…ik`, `…transform`, `…deform` | an array | an object was refused as `no keys`, which is what an EMPTY array says |
-| `…drawOrder[i].offsets` | an array | a key with no offsets is the format's own "back to the setup draw order", and the test for it was true for `{}` — a complete statement of the draw order, made by accident |
+| `…drawOrder`, `…events`, `…ik`, `…transform`, `…deform` | an array | an object would be refused as `no keys`, which is what an EMPTY array says |
+| `…drawOrder[i].offsets` | an array | a key with no offsets is the format's own "back to the setup draw order", and the test for it is true for `{}` — a complete statement of the draw order, made by accident |
 | `…drawOrder[i].offsets[j]` | `{ slot: string, offset: number }` | whether the slot is emitted, and whether the offset is whole and lands inside the array, are compile-time rows below |
-| `…ik[i]`, `…transform[i]`, `…deform[i]` | an object | `null` in one of these lists crashed with a raw `TypeError` on `track.constraint` / `track.skin` |
+| `…ik[i]`, `…transform[i]`, `…deform[i]` | an object | `null` in one of these lists would crash with a raw `TypeError` on `track.constraint` / `track.skin` |
 | `…ik[i].constraint`, `…transform[i].constraint` | a non-empty string | 4.3 writes the group as `ik.<constraint>`, so the name is the only target there is |
 | `…deform[i].slot`, `.attachment`, `.skin` | a string (`skin` optional) | — |
 | `…sequence` | an array | §4.13 — one entry per skin/slot/attachment triple |
 | `…sequence[i].slot`, `.attachment`, `.skin` | a string (`skin` optional) | — |
 | `…sequence[i].keys[j].mode` | one of the seven — `hold`, `once`, `loop`, `pingpong`, `onceReverse`, `loopReverse`, `pingpongReverse` | `SequenceMode[mode]` is `undefined` for anything else and the mode bits store 0: the key loads without a word and plays as `hold` |
-| `…sequence[i].keys[j].index` | a whole number ≥ 0 | stored as `index << 4`, which truncates a fraction (1.5 showed frame 1). Whether it is inside the series' `count` is the compile-time row below |
+| `…sequence[i].keys[j].index` | a whole number ≥ 0 | stored as `index << 4`, which truncates a fraction (1.5 shows frame 1). Whether it is inside the series' `count` is the compile-time row below |
 | `…sequence[i].keys[j].delay` | a finite number ≥ 0 — and **above 0 wherever the mode advances**, counting a delay carried from the key before | `(time - keyTime) / 0` is Infinity and `Infinity \| 0` is 0, so a `loop` at delay 0 shows its first frame throughout. The message reads `` `…keys[j]` plays "loop" at a delay of 0 … which is "hold" spelt as "loop" `` |
 
 The second wave is everything that needed the **other** file, the property table
@@ -5228,13 +5166,13 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `a rig spec needs a "slots" array (it may be empty; its ORDER is the draw order)` | §3.3 — write `[]` for a rig that draws nothing. ⚠️ These three arrive only when the key is really absent: **misspelt**, it is the unknown-key refusal above, naming what you wrote |
 | `bone "X" names parent "Y", which is not declared before it` | move `Y` earlier in `bones` |
 | `two bones are called "X"` | bone names are the join key; rename one |
-| `two ik constraints are called "X" — a constraint resolves by name AND type (\`SkeletonData.findConstraint\`), so names are unique PER KIND: an ik and a transform constraint may share one, two of a kind may not` | §3.5 — rename one of the two. The kind in the sentence is the pair's own, so `two transform constraints are called "X"` is the same refusal on another kind; a name shared **across** kinds is not this error and never was one to fix |
+| `two ik constraints are called "X" — a constraint resolves by name AND type (\`SkeletonData.findConstraint\`), so names are unique PER KIND: an ik and a transform constraint may share one, two of a kind may not` | §3.5 — rename one of the two. The kind in the sentence is the pair's own, so `two transform constraints are called "X"` is the same refusal on another kind; a name shared **across** kinds is not this error |
 | `physics constraint "X" is declared in both the rig spec and the motion spec's physics table` | §4.6 — the rig spec declares a physics constraint's structure and the motion spec's `physics` table declares one outright; pick the file it belongs in. Per kind, like every other constraint name: an `ik` "X" in the rig spec beside a `physics` "X" here is two constraints and is not this error |
-| `skin "S" lists "X" under "transform", but the rig declares it as a "ik" constraint — a skin looks its constraints up by name AND type, so this one is a miss and the loader throws` | §3.4.1 — move the name to the list named after the constraint's own kind. A name the rig declares under **no** kind is the other miss and says so (`skin "S" activates ik constraint "X", which this rig does not declare`). ⚠️ A name listed by **several skins** is not an error and no longer was one as of [#725](https://github.com/firejune/rigc/issues/725): the lists are per-skin sets and a bone or constraint in two of them is active under either |
+| `skin "S" lists "X" under "transform", but the rig declares it as a "ik" constraint — a skin looks its constraints up by name AND type, so this one is a miss and the loader throws` | §3.4.1 — move the name to the list named after the constraint's own kind. A name the rig declares under **no** kind is the other miss and says so (`skin "S" activates ik constraint "X", which this rig does not declare`). ⚠️ A name listed by **several skins** is not an error: the lists are per-skin sets and a bone or constraint in two of them is active under either |
 | `slot "X" names bone "Y", which this rig does not declare` | add the bone, or fix the slot's `bone` |
 | `no setup pose for slot "X": give the motion spec a \`setup\` entry or the rig slot an \`attachment\`` | R3 — pick one file and declare it there. A slot **nothing** fills is exempt: its setup pose can only be "show nothing" and is not asked for |
 | `the setup pose shows attachment "A" on slot "X", which no skin and no manifest part fills` | §3.3 — the slot is emitted empty and nothing was ever going to fill it, so `A` resolves to nothing. Give the slot an attachment (a skin entry or a manifest part), or state the setup pose as `null` |
-| `the setup pose shows attachment "A" on slot "X", and the slot is emitted empty because the one manifest state that fills it has no art: "s" (no PNG at p)` | §0.2 — a **different** fault with a similar shape: a manifest part does fill this slot and its art was not where the manifest pointed, so every state of it was dropped. **Restore the file or fix the path** — posing `null` compiles, but it ships the rig with that part missing and the gate green. The path printed is the one rigc tried, which is what tells a deleted file from a misspelt `states:` entry; `all N manifest states that fill it have no art` is the same message where the part has more than one. Under `--atlas-in` the same sentence reads `no region "R" in <atlas>` and asks you to add the region to the pack — no file was opened ([#671](https://github.com/firejune/rigc/issues/671)) |
+| `the setup pose shows attachment "A" on slot "X", and the slot is emitted empty because the one manifest state that fills it has no art: "s" (no PNG at p)` | §0.2 — a **different** fault with a similar shape: a manifest part does fill this slot and its art was not where the manifest pointed, so every state of it was dropped. **Restore the file or fix the path** — posing `null` compiles, but it ships the rig with that part missing and the gate green. The path printed is the one rigc tried, which is what tells a deleted file from a misspelt `states:` entry; `all N manifest states that fill it have no art` is the same message where the part has more than one. Under `--atlas-in` the same sentence reads `no region "R" in <atlas>` and asks you to add the region to the pack — no file was opened |
 | `a region needs width and height — give them, or give an "image" and rigc will measure the PNG` | add `image`, or both sizes |
 | `a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG` | §3.4 — the same rule for a mesh |
 | `"type" is null, which is not a name. An attachment's type is one of region, mesh, linkedmesh, … or the key is absent and reads as "region"` | §6 — **remove the key**. Absent is the format's own default; present-and-null matches no parser case and the attachment is dropped in silence |
@@ -5244,7 +5182,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `a linked mesh states "uvs", "triangles", …, and a linked mesh has no geometry of its own` | §3.4 — remove them, or remove `source` and author this as a mesh. The parser returns before `readVertices`, so those keys are read by nothing at all |
 | `"source" is "X", and skin "S" … slot "L" … holds 2: "a", "b"` | §3.4 — `source` is the PLACEHOLDER the source is filed under, not its `name`. A clause after the skin and after the slot says whether each was stated or taken from the parser's default — **the default skin** and **this attachment's own slot**, which is the pair that surprises |
 | `"slot" is "X", which the rig does not declare as a slot` / `"skin" is "X", … the rig declares no such skin` | §3.4 — a link resolves both by name. Left to the round trip these are the runtime's `Source mesh slot not found` and `Skin not found`, which name neither the attachment nor where it looked |
-| `no "skin" is stated, so the parser looks for the source "X" in the default skin — and this rig declares no default skin` | §3.4 — state the `skin` the source is filed under. A link with no `skin` resolves through `SkeletonData.defaultSkin`, which is null in a file with no default skin, and the runtime reads `getAttachment` off it with a `TypeError` naming nothing. Before [#801](https://github.com/firejune/rigc/issues/801) every build carried an empty `default`, so the same link failed at the source instead |
+| `no "skin" is stated, so the parser looks for the source "X" in the default skin — and this rig declares no default skin` | §3.4 — state the `skin` the source is filed under. A link with no `skin` resolves through `SkeletonData.defaultSkin`, which is null in a file with no default skin, and the runtime reads `getAttachment` off it with a `TypeError` naming nothing |
 | `"source" is "X", which is itself a linked mesh, and a chain of them is refused` | §3.4 — point `source` at the mesh. A chain resolves in file order and loads nothing at all in one of the two orders, silently |
 | `"source" is "X", which is a "region" attachment and not a mesh` | §3.4 — a link takes another MESH's geometry; off any other type the runtime reads `undefined` and says nothing |
 | `… is a boundingbox and states a "sequence". A sequence is a numbered series of atlas regions, and only the 3 kinds that draw a region carry one — region, mesh, linkedmesh …` | §3.4.3 — put the series on a region or a mesh, or remove it |
@@ -5262,26 +5200,26 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `the triangles do not tile the outline: …` / `the triangles' outline is not one closed loop: …` | §3.4 — a doubled triangle, an unused vertex, a pinch or a hole in `triangles` |
 | `vertex N binds bone "X", which the rig does not declare as a bone` | §3.4 — an authored mesh's `weights` bind by NAME, like everything else in a rig spec. Fix the spelling, or declare the bone. The message names the skin, the slot, the placeholder and the vertex, because an index would name none of them |
 | `image "X.png" is not on disk at …` | fix the name, or point `--images` at the right directory |
-| `image "X.png": /…/X.png is a WebP image (…), not a PNG: its first 12 byte(s) are …` | the file is there and is not a PNG — the name ends in `.png` and the bytes decide. Re-export it as PNG; the same sentence says **truncated** for a PNG that runs out before its `IEND`, and then the repair is a whole copy (§0.2, [#732](https://github.com/firejune/rigc/issues/732)) |
-| `a "contour" generator traces the part's own alpha, and "X.png" is lifted off a packed page at the coordinates the atlas states, which on this file are not where its texels are — so there is no silhouette here to trace, only another part of the page. page "p.png" declares …` | the page's PNG is not the size its atlas declares, and the rest of the message is `A06`'s sentence for it: re-declare the page with the `scale:` header it names, or re-export the page at its declared size (§0.2, [#750](https://github.com/firejune/rigc/issues/750)) |
+| `image "X.png": /…/X.png is a WebP image (…), not a PNG: its first 12 byte(s) are …` | the file is there and is not a PNG — the name ends in `.png` and the bytes decide. Re-export it as PNG; the same sentence says **truncated** for a PNG that runs out before its `IEND`, and then the repair is a whole copy (§0.2) |
+| `a "contour" generator traces the part's own alpha, and "X.png" is lifted off a packed page at the coordinates the atlas states, which on this file are not where its texels are — so there is no silhouette here to trace, only another part of the page. page "p.png" declares …` | the page's PNG is not the size its atlas declares, and the rest of the message is `A06`'s sentence for it: re-declare the page with the `scale:` header it names, or re-export the page at its declared size (§0.2) |
 | `--atlas-in <pack>.atlas: N of its M page(s) cannot be read as PNG, and nothing was compiled against the pack — page "p.png": …` | the same, for every page of the pack at once, before the compile: re-export each named page as PNG under the name the atlas gives it (§0.2) |
 | `parts/iris_open.png is 96x64 but slot "iris" declares 96x60` | R5 — a manifest `states:` entry whose art is not the window the part declares. Re-export the PNG, or fix the part's `size`; a quad sized against art of another size is the silence `A06` exists for, and the window is what the quad is built from |
 | `plates/00_stage.png is 256x256 but the manifest window for "stage" is 250x256` | R5 — the same check on the part's unconditional `image`, against the window the crop gives it |
-| `region "00_stage" of <pack>.atlas (declared 256x256 by its offsets) is 256x256 but the manifest window for "stage" is 250x256` | R5 — the row above under `--atlas-in`, and the prefix is the whole point: it says which of the two rigc **measured**, because the remedy differs. A bare path is a loose PNG it opened and you re-export; a `region … of <pack>` was read out of the pack, and you repack or aim the part at another region. This is the size row of §0.2's four, with the message it actually prints |
+| `region "00_stage" of <pack>.atlas (declared 256x256 by its offsets) is 256x256 but the manifest window for "stage" is 250x256` | R5 — the row above under `--atlas-in`, and the prefix is the whole point: it says which of the two rigc **measured**, because the remedy differs. A bare path is a loose PNG it opened and you re-export; a `region … of <pack>` was read out of the pack, and you repack or aim the part at another region. This is the size row of §0.2's table, with the message it actually prints |
 | `duplicate region name "X"` | two PNGs share a basename; one part, one page, one name |
 | `"b/X.png" and the art already atlased as region "X" are two different files — … Rename one of the PNGs.` | R5 — the region name is the basename, so only one of the two can hold it. Rename a file (not a placeholder: the placeholder is free to repeat) |
 | `the image "X.png" was never added to the atlas, so there is no region "X" …` | nothing in the spec — every image an attachment names is measured and atlased, one per file whichever skin names it, so this says rigc skipped one. Report it on [the tracker](https://github.com/firejune/rigc/issues). The `#555` the message itself cites is the change that made one-per-file an invariant, not a place to file against |
 | `motion spec names archetype "A" but the rig spec at … is called "B"` | make `archetype` equal the rig's `name` |
 | `animation "A" declares duration Ns but its last key is at Ms` | R7 — fix whichever of the two you meant |
 | `animation "A" slot "X" attachment: key at Ns is Ms past the declared duration Ds` | §4.5 — the key is past the end of the animation and nothing will sample it. Move the key onto `duration`, or raise `duration` |
-| `animation "A" slot "X" attachment: attachment "N" is not in slot "X" under any skin (searched: default, alt) — the slot has: plain, trim` | §4.4 — the keyed name is in **no** skin, and the two clauses say where the compiler looked and what it would have taken. Fix the spelling, or give some skin a placeholder called `N`. A name only a NAMED skin fills is not this error and never was one to fix — it compiles, and the slot shows nothing under the skins that lack it. Before [#695](https://github.com/firejune/rigc/issues/695) the message read `attachment "N" is not in slot "X"` and was raised against the **default skin alone**, so it fired on correct rigs: any key into named-skin art, and every key in a rig with no default skin. `the slot has no attachments at all` is the same message where nothing fills the slot |
+| `animation "A" slot "X" attachment: attachment "N" is not in slot "X" under any skin (searched: default, alt) — the slot has: plain, trim` | §4.4 — the keyed name is in **no** skin, and the two clauses say where the compiler looked and what it would have taken. Fix the spelling, or give some skin a placeholder called `N`. A name only a NAMED skin fills is not this error — it compiles, and the slot shows nothing under the skins that lack it. `the slot has no attachments at all` is the same message where nothing fills the slot |
 | `animation "A" keys unknown bone "X"` | the track's `bone` is not in the rig |
 | `animation "A" keys physics "*" P, the timeline that names no constraint and drives every physics constraint declaring "PGlobal": true, and none of "C", … does — it would parse and move nothing` | §4.4 — set `"PGlobal": true` on the constraints the track is for (§3.5), or key one by name. For `reset` it reads *every physics constraint the rig has*, and fires only on a rig with none |
 | `` `animations."A".tracks[i].physics` is the string ""; the empty name is how a skeleton file spells a physics timeline that names no constraint, and a motion spec spells that "*" … `` | §4.4 — name one constraint, or write `"*"` |
 | `physics constraint "*": the name is reserved — …` / `` `physics."*"` names a physics constraint "*", and that name is reserved … `` | §3.5 — `"*"` is the target of the timeline that names no constraint; rename the constraint |
 | `animation "A": group "G" lists "*", which is not a constraint but the target that names none …` | §4.4 — write `"*"` as the track's `physics` field |
 | `animation "A" bone "X" translatex: key value must be an array of 1 number(s)` | the value shape must match the property (§4.4) |
-| `animation "A" physics constraint "C" mass key at t=… is 0 (massInverse Infinity); must be > 0 — …` | §4.4 — a keyed physics value outside its row's bound. The message names the bound and then its basis ([#798](https://github.com/firejune/rigc/issues/798)): where the runtime's arithmetic fails, the expression and its lines (`mass` at 0 is the one here, and `damping` below 0); where the value runs and runs wrongly, that refusing it is rigc's call and what the value does. The bounds: `mass` is `> 0`, `damping` is inside `[0, 1]`, both ends included ([#794](https://github.com/firejune/rigc/issues/794)), `mix` and `strength` are `0` or more, and `inertia`/`wind`/`gravity` are bounded nowhere ([#610](https://github.com/firejune/rigc/issues/610)). ⚠️ Those are the bounds a **key** is held to. A setup `strength` of `0` is refused too, but by `A23` rather than here, and with its own sentence — `physics "C" has strength 0; nothing pulls it back` ([#727](https://github.com/firejune/rigc/issues/727)); a setup `strength` below 0 says the offset is pushed away and grows, the same arm this message quotes for a negative key ([#748](https://github.com/firejune/rigc/issues/748)). A `damping` key's sentence names the exponent `60 * step` and why a negative is NaN at any `fps` where `60 / fps` is not whole (§4.4) |
+| `animation "A" physics constraint "C" mass key at t=… is 0 (massInverse Infinity); must be > 0 — …` | §4.4 — a keyed physics value outside its row's bound. The message names the bound and then its basis: where the runtime's arithmetic fails, the expression and its lines (`mass` at 0 is the one here, and `damping` below 0); where the value runs and runs wrongly, that refusing it is rigc's call and what the value does. The bounds: `mass` is `> 0`, `damping` is inside `[0, 1]`, both ends included, `mix` and `strength` are `0` or more, and `inertia`/`wind`/`gravity` are bounded nowhere. ⚠️ Those are the bounds a **key** is held to. A setup `strength` of `0` is refused too, but by `A23` rather than here, and with its own sentence — `physics "C" has strength 0; nothing pulls it back`; a setup `strength` below 0 says the offset is pushed away and grows, the same arm this message quotes for a negative key. A `damping` key's sentence names the exponent `60 * step` and why a negative is NaN at any `fps` where `60 / fps` is not whole (§4.4) |
 | `a key carries both a named easing and a raw curve; pick one` | R6 |
 | `last key carries an easing but has nothing to ease to` | drop `ease`/`curve` from the final key |
 | `key times must strictly increase (at t=…)` | including after `lag` and `stagger` |
@@ -5343,19 +5281,19 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `animation "A": "position" is a path constraint timeline, and this track names no constraint` | §4.12 — put the name in `"path"` |
 | `rgba value needs 4 channels, got 3` | §4.4 — an `rgba` key is `[r, g, b, a]`. It names no animation, slot or key time, and the only input that reaches it is a slot `rgba` key: the setup pose's `color` is refused earlier, by its own row, with the slot named |
 | `rgba2 value needs 7 channels, got 6` | §4.4 — an `rgba2` key is `[lr, lg, lb, la, dr, dg, db]`: the light colour with its alpha, then the dark colour **without** one. Six is the commonest way to get it wrong, because the dark half looks like it should take an alpha too — the format has no channel for it, and neither does the runtime's `setFrame`. Like the row above it names no animation or key time; the only input that reaches it is a slot `rgba2` key |
-| `rgb value needs 3 channels, got 4` · `alpha value needs 1 channel, got 2` · `rgb2 value needs 6 channels, got 7` | §4.4 — the separable shapes, refused in the words the two above use: an `rgb` key is `[r, g, b]`, an `alpha` key is `[a]`, an `rgb2` key is `[lr, lg, lb, dr, dg, db]`. Four channels on an `rgb` track is the likeliest way to get it wrong — the `rgba` spelling on the timeline that exists to leave the alpha alone — and seven on `rgb2` is the `rgba2` spelling. [#730](https://github.com/firejune/rigc/issues/730) |
+| `rgb value needs 3 channels, got 4` · `alpha value needs 1 channel, got 2` · `rgb2 value needs 6 channels, got 7` | §4.4 — the separable shapes, refused in the words the two above use: an `rgb` key is `[r, g, b]`, an `alpha` key is `[a]`, an `rgb2` key is `[lr, lg, lb, dr, dg, db]`. Four channels on an `rgb` track is the likeliest way to get it wrong — the `rgba` spelling on the timeline that exists to leave the alpha alone — and seven on `rgb2` is the `rgba2` spelling |
 | `animation "A" slot "X" alpha: alpha key value must be [a]` | §4.4 — an alpha key's `v` is a one-element array like every other one-channel track, even though the file writes it bare (`{ time, value }`). The same row exists for each colour shape with its own spelling (`rgb key value must be [r,g,b]`, …) |
 | `animation "A" slot "X" alpha: key at t=T is V; an alpha is a number from 0 to 1 …` | §4.4 — the one colour key stored as a number, so the one nothing clamps on the way out. The runtime clamps the posed alpha only after interpolating, so a key outside 0..1 bends the curve toward a value no pose holds; state the value you mean. 0 and 1 themselves are taken |
 | `animation "A" slot "X": tracks "P" and "Q" both key the slot's alpha — a colour timeline poses its channels at every time …` | §4.4 — two colour tracks of one slot that pose a shared channel (`rgba` + `alpha`, `rgba` + `rgb`, `rgba2` + `rgb2`, …). Each poses its channels at every time, its setup value before its first key included, so the later in the file overwrites the other everywhere and one of them is read by nothing. Key each channel once: `rgb` and `alpha` for two halves on their own key times, `rgba` for both together. The channel named is whichever the two share — `light rgb`, `alpha`, `dark colour` |
-| `animation "A" bone "B" has no timeline "P" (it has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate, inherit)` | §4.4 — a bone has exactly eleven timelines and `P` is none of them. Fix the spelling — the single-axis ones are lower-case (`translatex`, not `translateX`). A **constraint** property is refused first, by its own row, naming the field its constraint's name goes in. When `P` is a slot timeline the message says so and where to put the name: `. "rgba" is a slot timeline — put the name in "slot"`. Before [#656](https://github.com/firejune/rigc/issues/656) all of them read `bone "B" cannot take slot property "P"`, which named the slot family whatever you had written and listed nothing |
-| `animation "A" bone "B" inherit key at t=T carries an easing ("E"), and this timeline is stepped by the format — its reader builds no curve, so the mode changes AT the key and holds until the next one. Remove it` (and `… carries a curve, …` for a raw `curve`) | §4.4 — an `inherit` key is a mode, not a value between two others: the parser's `inherit` branch reads `time` and `inherit` and nothing else, so an easing would be written into a key nobody reads (`A05_CURVE_ARRAY_LENGTH` refuses the same `curve` on a file rigc did not write). `"stepped"` is refused too, for the same reason — the timeline already is. Delete the `ease` or `curve` ([#733](https://github.com/firejune/rigc/issues/733)) |
-| `animation "A" bone "B" inherit key at t=T names mode "M"; known: normal, onlyTranslation, noRotationOrReflection, noScale, noScaleOrReflection — the runtime folds the case of the first letter and of nothing else` | §4.4 — `M` is not one of the five. The list and the rule are the setup field's (§3.2) — one resolver reads both — so `NoScale` compiles (and is written `noScale`, the editor's spelling) while `NOSCALE` and `noscale` do not: the runtime would load either as **no mode**, and the bone would keep whatever world transform it had ([#733](https://github.com/firejune/rigc/issues/733)) |
-| `bone "B" has inherit "M"; known: normal, onlyTranslation, noRotationOrReflection, noScale, noScaleOrReflection — the runtime folds the case of the first letter and of nothing else` | §3.2 — the setup half of the row above, and the same list. Before [#733](https://github.com/firejune/rigc/issues/733) this check was case-insensitive, which is wider than the runtime: `"NOSCALE"` compiled, gated green, and loaded as no mode, so the bone's world rotation, scale and shear were never computed — every attachment on it collapsed to a point. Fix the spelling |
-| `animation "A" group "G" has no timeline "P" (a bone group has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate, inherit; a slot group has: attachment, rgba, rgb, alpha, rgba2, rgb2; a physics constraint group has: inertia, strength, damping, mass, wind, gravity, mix, reset)` | §4.3, §4.4 — a group's family is decided by the property, and `P` is in none of the three tables, so there is no family to resolve the members as. Fix the spelling and the group becomes whichever family the property names. The group is refused before its members are looked up, so a member the rig does not declare is a **later** message; an unknown group NAME is an earlier one. Before [#661](https://github.com/firejune/rigc/issues/661) a group of bones read `animation "A" targets unknown slot "M"` and a group of slots got the slot row below, naming one family out of three |
-| `animation "A" slot "X" has no timeline "P" (it has: attachment, rgba, rgb, alpha, rgba2, rgb2)` | §4.4 — a slot has exactly six timelines — every one the format has — and `P` is none of them. Fix the spelling; a bone or constraint property written on a slot track is refused by its own row instead. Before [#650](https://github.com/firejune/rigc/issues/650) every other name compiled as an **rgba** timeline called `P`, and what you saw was `A00_ROUNDTRIP_PARSE` on the emitted file — or, for the one-channel spelling, `rgba value needs 4 channels, got 1` |
-| `animation "A" slot "X" rgba2: slot "X" declares no setup "dark", and an "rgba2" timeline poses a slot's dark colour …` — and the same with `rgb2` | §3.3, §4.4 — the two-colour tint has a setup half and a keyed half, and the keyed half cannot exist without the other. `Slot`'s constructor allocates a dark colour only for a slot whose setup pose declares one, and `RGBA2Timeline` writes it unconditionally — so without the `dark` the file loads, and the first `state.apply` throws `TypeError: null is not an object` in the consumer's process. Give the slot the `dark` it holds at rest, or key `rgba` (for `rgb2`, `rgb`) if only the light colour moves. `RGB2Timeline` was measured to throw the same way before `rgb2` joined the refusal ([#730](https://github.com/firejune/rigc/issues/730)). Raised before the keys are read, with the slot named, for the same reason the row above is |
-| `N pair(s) of animation names have no one order: … "Fx/a" / "fx/b" (folder) — "Fx/a" and "fx/b" sit in the sibling folders "Fx" and "fx", which the comparator leaves in one place …; rename one of the two folders so they differ by more than letter case, spacing or a leading zero` | **R10** — rename until no pair is left. The kind in brackets says which of the three things the five stored round trips leave open decides the pair: `number` (two digit runs that are each one number written twice, pointing opposite ways), `separator` (a whitespace character that is not a space) or `folder` (two sibling folders the comparator cannot separate). rigc keys `animations` in the editor's own comparator, read off `fixtures/editor-order/probe{1..5}.{in,out}.json` ([#728](https://github.com/firejune/rigc/issues/728)) — so a pair those files settle is emitted rather than refused, **including a pair that differs only in case**, whose order is then the one your spec declared. On the three that are left, the editor's re-key repoints every slider whose animation moves index ([#535](https://github.com/firejune/rigc/issues/535)) |
-| `N pair(s) of skin names have no one order: … "Fx/a" / "fx/b" (folder) — …` | **R11** — rename until no pair is left. The same shape and the same three kinds as the row above, because it is the same comparator: two of the five round trips carried one name list as both collections and both came back in one order ([#728](https://github.com/firejune/rigc/issues/728)). ⚠️ This row was **wider** than R10's until then — `Zulu`/`mike` and `mike10`/`mike2` built as animation names and were refused as skin names ([#541](https://github.com/firejune/rigc/issues/541)) — and both build now |
+| `animation "A" bone "B" has no timeline "P" (it has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate, inherit)` | §4.4 — a bone has exactly eleven timelines and `P` is none of them. Fix the spelling — the single-axis ones are lower-case (`translatex`, not `translateX`). A **constraint** property is refused first, by its own row, naming the field its constraint's name goes in. When `P` is a slot timeline the message says so and where to put the name: `. "rgba" is a slot timeline — put the name in "slot"` |
+| `animation "A" bone "B" inherit key at t=T carries an easing ("E"), and this timeline is stepped by the format — its reader builds no curve, so the mode changes AT the key and holds until the next one. Remove it` (and `… carries a curve, …` for a raw `curve`) | §4.4 — an `inherit` key is a mode, not a value between two others: the parser's `inherit` branch reads `time` and `inherit` and nothing else, so an easing would be written into a key nobody reads (`A05_CURVE_ARRAY_LENGTH` refuses the same `curve` on a file rigc did not write). `"stepped"` is refused too, for the same reason — the timeline already is. Delete the `ease` or `curve` |
+| `animation "A" bone "B" inherit key at t=T names mode "M"; known: normal, onlyTranslation, noRotationOrReflection, noScale, noScaleOrReflection — the runtime folds the case of the first letter and of nothing else` | §4.4 — `M` is not one of the five. The list and the rule are the setup field's (§3.2) — one resolver reads both — so `NoScale` compiles (and is written `noScale`, the editor's spelling) while `NOSCALE` and `noscale` do not: the runtime would load either as **no mode**, and the bone would keep whatever world transform it had |
+| `bone "B" has inherit "M"; known: normal, onlyTranslation, noRotationOrReflection, noScale, noScaleOrReflection — the runtime folds the case of the first letter and of nothing else` | §3.2 — the setup half of the row above, and the same list. The check is exactly as wide as the runtime: `"NOSCALE"` would load as no mode, so the bone's world rotation, scale and shear would never be computed — every attachment on it collapses to a point. Fix the spelling |
+| `animation "A" group "G" has no timeline "P" (a bone group has: translate, translatex, translatey, scale, scalex, scaley, shear, shearx, sheary, rotate, inherit; a slot group has: attachment, rgba, rgb, alpha, rgba2, rgb2; a physics constraint group has: inertia, strength, damping, mass, wind, gravity, mix, reset)` | §4.3, §4.4 — a group's family is decided by the property, and `P` is in none of the three tables, so there is no family to resolve the members as. Fix the spelling and the group becomes whichever family the property names. The group is refused before its members are looked up, so a member the rig does not declare is a **later** message; an unknown group NAME is an earlier one |
+| `animation "A" slot "X" has no timeline "P" (it has: attachment, rgba, rgb, alpha, rgba2, rgb2)` | §4.4 — a slot has exactly six timelines — every one the format has — and `P` is none of them. Fix the spelling; a bone or constraint property written on a slot track is refused by its own row instead |
+| `animation "A" slot "X" rgba2: slot "X" declares no setup "dark", and an "rgba2" timeline poses a slot's dark colour …` — and the same with `rgb2` | §3.3, §4.4 — the two-colour tint has a setup half and a keyed half, and the keyed half cannot exist without the other. `Slot`'s constructor allocates a dark colour only for a slot whose setup pose declares one, and `RGBA2Timeline` writes it unconditionally — so without the `dark` the file loads, and the first `state.apply` throws `TypeError: null is not an object` in the consumer's process. Give the slot the `dark` it holds at rest, or key `rgba` (for `rgb2`, `rgb`) if only the light colour moves. `RGB2Timeline` is measured to throw the same way. Raised before the keys are read, with the slot named, for the same reason the row above is |
+| `N pair(s) of animation names have no one order: … "Fx/a" / "fx/b" (folder) — "Fx/a" and "fx/b" sit in the sibling folders "Fx" and "fx", which the comparator leaves in one place …; rename one of the two folders so they differ by more than letter case, spacing or a leading zero` | **R10** — rename until no pair is left. The kind in brackets says which of the three things the five stored round trips leave open decides the pair: `number` (two digit runs that are each one number written twice, pointing opposite ways), `separator` (a whitespace character that is not a space) or `folder` (two sibling folders the comparator cannot separate). rigc keys `animations` in the editor's own comparator, read off `fixtures/editor-order/probe{1..5}.{in,out}.json` — so a pair those files settle is emitted rather than refused, **including a pair that differs only in case**, whose order is then the one your spec declared. On the three that are left, the editor's re-key repoints every slider whose animation moves index |
+| `N pair(s) of skin names have no one order: … "Fx/a" / "fx/b" (folder) — …` | **R11** — rename until no pair is left. The same shape and the same three kinds as the row above, because it is the same comparator: two of the five round trips carried one name list as both collections and both came back in one order |
 | `slot "patch": placeholder "patch" is filled by the "default" skin AND by skins "zulu", "mike", and the Spine editor has no way to hold that … Move the default skin's entry for this slot into a named skin — call it "base"` | **R12** — do what it says: move that entry out of `default` into a named skin. The editor has no representation for a placeholder the default skin shares with a named one, in either spelling, and §3.4.2 has both measurements. Renaming the placeholder does not help; the shape is what is refused |
 | `skin "S" slot "X" attachment "P": "name" is V, which is not a string. An attachment's name is the runtime's `Attachment.name` …` | §3.4 — write the name as a string, or leave the key out and the attachment is named by its placeholder. It is written verbatim and `path` defaults to it, so a number there would reach the atlas as a region name nobody spelled |
 
@@ -5381,12 +5319,7 @@ Both halves of it are measured rather than fixed text: the count is this pair's,
 where the atlas has a **near miss** the sentence prints that too, in `A08`'s own
 clause and `A08`'s own words. When `--atlas-in` **was** given and the region is still
 absent, the second half names the pack instead and asks you to fix the spec's region
-name or point the flag at the pack that has it. Until
-[#697](https://github.com/firejune/rigc/issues/697) there was no rigc sentence at
-all: the report printed in full and the run then died inside `AtlasAttachmentLoader`
-with `Region not found in atlas: shade (attachment: shade)` and a spine-core stack
-trace, at exit 1 — the runtime's message about rigc's internals standing in for
-rigc's message about your two files.
+name or point the flag at the pack that has it.
 
 ### 5.2 Assertions — the gate
 
@@ -5403,8 +5336,7 @@ The report prints one line per assertion:
 - **PASS** — it ran and held.
 - **SKIP** — it had *nothing to look at*, and the reason says what was missing. A
   skip is never folded into the pass count.
-  🚨 **"Nothing to look at" includes a subject the skeleton does not carry**
-  ([#580](https://github.com/firejune/rigc/issues/580)). A rule named
+  🚨 **"Nothing to look at" includes a subject the skeleton does not carry.** A rule named
   ⟨subject⟩_⟨property⟩ — `A03_REGION_WIDTH_HEIGHT_FINITE`,
   `A04_MESH_TRIANGLES_AND_ENCODING`, `A23_PHYSICS_CONSTRAINT_EFFECTIVE` — walks
   that subject and measures each member, so a skeleton with no region, no mesh or
@@ -5444,59 +5376,59 @@ and with no parse there is nothing for them to look at — so they report `SKIP`
 naming that, *the round trip did not produce a skeleton to measure* or *…an atlas
 to measure*, and the summary's `<S>` goes up while `<M>` collapses. A run in that
 state is not a rig that nearly passed; it is a rig that was measured on one rule.
-Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
+Fix A00 and run it again.
 
 | Assertion | Profile | What tripped it, and where to fix it |
 | --- | --- | --- |
-| `A00_ROUNDTRIP_PARSE` | both | `spine-core` could not parse the skeleton or the atlas. Almost everything else in the report is downstream of this one — fix it first. When it fails, every rule that reads the loaded skeleton or the loaded atlas reports **SKIP** saying so by name, so the row count stays at the full registry and the summary's *measured* figure tells you how little was actually asked ([#568](https://github.com/firejune/rigc/issues/568)). ⚠️ **Two rules run before it and can be upstream of it**: `A31_DRAW_ORDER_OFFSETS_RESOLVE`, because a bad draw-order key makes the loader spin rather than return, and `A08_REGION_NAMES_MATCH_ATTACHMENTS`, because a `path` naming no region makes it throw. The round trip is still attempted either way; when the loader refuses a path A08 has already refused, this row **defers** to A08 by name instead of restating the miss in the parser's poorer words ([#589](https://github.com/firejune/rigc/issues/589)) |
+| `A00_ROUNDTRIP_PARSE` | both | `spine-core` could not parse the skeleton or the atlas. Almost everything else in the report is downstream of this one — fix it first. When it fails, every rule that reads the loaded skeleton or the loaded atlas reports **SKIP** saying so by name, so the row count stays at the full registry and the summary's *measured* figure tells you how little was actually asked. ⚠️ **Two rules run before it and can be upstream of it**: `A31_DRAW_ORDER_OFFSETS_RESOLVE`, because a bad draw-order key makes the loader spin rather than return, and `A08_REGION_NAMES_MATCH_ATTACHMENTS`, because a `path` naming no region makes it throw. The round trip is still attempted either way; when the loader refuses a path A08 has already refused, this row **defers** to A08 by name instead of restating the miss in the parser's poorer words |
 | `A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS` | both | a 4.1/4.2-shaped `ik`/`transform`/`path`/`physics`/`slider` array. rigc emits the 4.3 `constraints` array, so this normally means hand-edited JSON |
 | `A02_NO_BONE_TRANSFORM_KEY` | both | `bone "…" uses "transform", the key 4.0 and 4.1 spelled; 4.2 and 4.3 spell it "inherit"` — rename it `inherit` in the rig spec |
-| `A03_REGION_WIDTH_HEIGHT_FINITE` | both | a region loaded `NaN` or a non-positive size — the attachment has no `image` and no `width`/`height`. **SKIP** when the skeleton carries no region attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
-| `A04_MESH_TRIANGLES_AND_ENCODING` | both | authored mesh geometry: triangle count not a multiple of 3, an index out of range, or a `vertices` length that disagrees with `uvs` (the weighted/unweighted trap) **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
-| `A05_CURVE_ARRAY_LENGTH` | both | a raw `curve` with the wrong number of values, a non-finite number in one, or a curve on a timeline that cannot take one. Four numbers **per value channel**. **SKIP** when no animation carries a timeline at all ([#580](https://github.com/firejune/rigc/issues/580)). Timelines with no `curve` on any key still PASS: every timeline name is checked against the channel table whether or not a curve sits on one |
-| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | the atlas `size:` disagrees with the PNG on disk — the message names the ratio it measured on **each** axis and the header that states the same art truthfully, and §0.2 has the whole of it ([#715](https://github.com/firejune/rigc/issues/715)): a runtime maps a region as a fraction of the DECLARED size and never reads the texture's own, so such a page draws, and what it breaks is every reader that addresses the page in texels. A uniform ratio is a `size:`/`scale:` pair away from honest and the message prints it; two ratios are not, because `scale:` carries one number, and the message says so rather than offering a header that would not work. **Or** a region's rectangle is not inside the page it names — rotation honoured, so a region at `rotate: 90` or `270` occupies `height x width` of the page and a region that fits only because it is turned is inside it. The message names the region, the rectangle it occupies, the page and the page's size. That clause is **validity** and runs under both profiles ([#694](https://github.com/firejune/rigc/issues/694)): a rectangle outside its page makes `u2 > 1` and samples whatever the wrap mode returns, and `--atlas-in` already refuses the same rectangle at compile time (§0.2). Under `spine-html` also: `pma`, rotation, and two regions on one page over the same texels — a packed page must be **one part covering it exactly** (the unpacked convention) or a **tiling** ([#266](https://github.com/firejune/rigc/issues/266)), and what that message names is the pair that shares texels. **Or** the page file is not a PNG at all, and then nothing about its size is measured: the message carries the page's path and the size the atlas declares, and names what the file is by its first bytes — one of WebP, JPEG, GIF, KTX, KTX2 by its signature, or no image format rigc recognises, the bytes in hex either way — or calls it **truncated** when it begins as a PNG and runs out before its `IEND` (§0.2, [#732](https://github.com/firejune/rigc/issues/732)). That clause is validity too: nothing in rigc can read such a page back. **SKIP** when the atlas declares no page ([#580](https://github.com/firejune/rigc/issues/580)) |
-| `A07_ATLAS_TEXT_SHAPE` | both | atlas text: a region name with stray whitespace, or a blank line splitting a page block. rigc writes the atlas, so this means a hand-edited file. Three sentences are about blank lines and name three different repairs ([#803](https://github.com/firejune/rigc/issues/803), [#810](https://github.com/firejune/rigc/issues/810)): `line 1: the file begins with a blank line` (or `with N blank lines` for a run, one finding) is a blank before the first page name — delete it; `line N: the file ends with a blank line` (or `with N blank lines`, one finding) is a blank after the last page block's final line — delete it, since rigc ends the file on one newline; `line N: consecutive blank lines` is two blank lines side by side between the first page and the last — delete one. None of the three is `the last page block declares no region`, which means a page name and its fields with no region after them. rigc writes none of the three: under `--atlas-in` the pack's blank lines are put in rigc's shape on re-emission (§0.2), so any of them means a file rigc did not write, handed to `validate`. ⚠️ An atlas with **no page block at all** — no non-blank line — is not one of those: its subject is absent, so this reports **SKIP** naming the byte count it read, and so do the four rules below whose subject is a page ([#608](https://github.com/firejune/rigc/issues/608)). A rig whose skins need no art writes exactly that file (§3.4), and before #608 this row refused it with two findings naming a page block that was not there. What an empty atlas does **not** excuse is an attachment that wants a region out of it — that is `A08` |
-| `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both | three things, and the message says which: an attachment whose `path` names **no region** of this atlas; a `path` carrying **stray whitespace**, printed quoted so you can see it; an **atlas region name** carrying stray whitespace (`A07` names that same line with its line number). The first two are read off the raw file **before** the loader is asked, so the miss is named here with the skin, the slot, the placeholder and the attachment's own name — the four things `AtlasAttachmentLoader`'s own `Region not found in atlas: <path> (attachment: <name>)` does not carry. Until [#589](https://github.com/firejune/rigc/issues/589) they were unreachable: the loader threw first and the miss arrived as `A00_ROUNDTRIP_PARSE`. There is no `spine-html` clause here any more — a placeholder is free to differ from the region its `path` names ([#574](https://github.com/firejune/rigc/issues/574)) **SKIP** when no attachment names a region *and* the atlas declares none — both of its subjects at once ([#580](https://github.com/firejune/rigc/issues/580)) |
+| `A03_REGION_WIDTH_HEIGHT_FINITE` | both | a region loaded `NaN` or a non-positive size — the attachment has no `image` and no `width`/`height`. **SKIP** when the skeleton carries no region attachment |
+| `A04_MESH_TRIANGLES_AND_ENCODING` | both | authored mesh geometry: triangle count not a multiple of 3, an index out of range, or a `vertices` length that disagrees with `uvs` (the weighted/unweighted trap) **SKIP** when the skeleton carries no mesh attachment |
+| `A05_CURVE_ARRAY_LENGTH` | both | a raw `curve` with the wrong number of values, a non-finite number in one, or a curve on a timeline that cannot take one. Four numbers **per value channel**. **SKIP** when no animation carries a timeline at all. Timelines with no `curve` on any key still PASS: every timeline name is checked against the channel table whether or not a curve sits on one |
+| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | the atlas `size:` disagrees with the PNG on disk — the message names the ratio it measured on **each** axis and the header that states the same art truthfully, and §0.2 has the whole of it: a runtime maps a region as a fraction of the DECLARED size and never reads the texture's own, so such a page draws, and what it breaks is every reader that addresses the page in texels. A uniform ratio is a `size:`/`scale:` pair away from honest and the message prints it; two ratios are not, because `scale:` carries one number, and the message says so rather than offering a header that would not work. **Or** a region's rectangle is not inside the page it names — rotation honoured, so a region at `rotate: 90` or `270` occupies `height x width` of the page and a region that fits only because it is turned is inside it. The message names the region, the rectangle it occupies, the page and the page's size. That clause is **validity** and runs under both profiles: a rectangle outside its page makes `u2 > 1` and samples whatever the wrap mode returns, and `--atlas-in` already refuses the same rectangle at compile time (§0.2). Under `spine-html` also: `pma`, rotation, and two regions on one page over the same texels — a packed page must be **one part covering it exactly** (the unpacked convention) or a **tiling**, and what that message names is the pair that shares texels. **Or** the page file is not a PNG at all, and then nothing about its size is measured: the message carries the page's path and the size the atlas declares, and names what the file is by its first bytes — one of WebP, JPEG, GIF, KTX, KTX2 by its signature, or no image format rigc recognises, the bytes in hex either way — or calls it **truncated** when it begins as a PNG and runs out before its `IEND` (§0.2). That clause is validity too: nothing in rigc can read such a page back. **SKIP** when the atlas declares no page |
+| `A07_ATLAS_TEXT_SHAPE` | both | atlas text: a region name with stray whitespace, or a blank line splitting a page block. rigc writes the atlas, so this means a hand-edited file. Three sentences are about blank lines and name three different repairs: `line 1: the file begins with a blank line` (or `with N blank lines` for a run, one finding) is a blank before the first page name — delete it; `line N: the file ends with a blank line` (or `with N blank lines`, one finding) is a blank after the last page block's final line — delete it, since rigc ends the file on one newline; `line N: consecutive blank lines` is two blank lines side by side between the first page and the last — delete one. None of the three is `the last page block declares no region`, which means a page name and its fields with no region after them. rigc writes none of the three: under `--atlas-in` the pack's blank lines are put in rigc's shape on re-emission (§0.2), so any of them means a file rigc did not write, handed to `validate`. ⚠️ An atlas with **no page block at all** — no non-blank line — is not one of those: its subject is absent, so this reports **SKIP** naming the byte count it read, and so do the four rules below whose subject is a page ([#608](https://github.com/firejune/rigc/issues/608)). A rig whose skins need no art writes exactly that file (§3.4), and before #608 this row refused it with two findings naming a page block that was not there. What an empty atlas does **not** excuse is an attachment that wants a region out of it — that is `A08` |
+| `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both | three things, and the message says which: an attachment whose `path` names **no region** of this atlas; a `path` carrying **stray whitespace**, printed quoted so you can see it; an **atlas region name** carrying stray whitespace (`A07` names that same line with its line number). The first two are read off the raw file **before** the loader is asked, so the miss is named here with the skin, the slot, the placeholder and the attachment's own name — the four things `AtlasAttachmentLoader`'s own `Region not found in atlas: <path> (attachment: <name>)` does not carry. There is no `spine-html` clause here — a placeholder is free to differ from the region its `path` names **SKIP** when no attachment names a region *and* the atlas declares none — both of its subjects at once |
 | `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the loaded duration ≠ the declared one, or the two sides disagree about which animations exist (R7). Asymmetric by design: a frame of slack for an animation that ends early, and none worth the name for a key *past* the declared end, which is the same rule §4.5 states at compile time — held here against a skeleton the compiler never saw. **SKIP** when neither side has an animation at all — a static rig has no duration |
-| `A10_NO_NAN_AFTER_STEPPING` | both | stepping the animation produced a `NaN` pose. Look for a degenerate curve or a zero scale. 🦴 **It also poses every bone `inherit` key at its own time** ([#733](https://github.com/firejune/rigc/issues/733)): the runtime resolves a mode by folding the case of its first letter and nothing else, and a spelling that misses is stored as **NaN** — the world position stays finite, `updateWorldTransform` matches no mode, and the bone keeps the rotation, scale and shear it had. The detail names the animation, the bone, the key's time and its spelling, beside the five. A bone whose *setup* spelling misses poses no mode at all, and is named the same way from the stepping loop. Neither is reachable from a rig spec — `build` refuses both spellings by name (§5.1) — so on a green build this clause is about files rigc did not write. Which mode a correct spelling poses is not judged here, because the lookup that resolved it is the one that would be checked **SKIP** when the skeleton carries no animation ([#580](https://github.com/firejune/rigc/issues/580)): the NaN is produced by stepping, and a static rig is never stepped — the same subject `A09` skips on |
+| `A10_NO_NAN_AFTER_STEPPING` | both | stepping the animation produced a `NaN` pose. Look for a degenerate curve or a zero scale. 🦴 **It also poses every bone `inherit` key at its own time**: the runtime resolves a mode by folding the case of its first letter and nothing else, and a spelling that misses is stored as **NaN** — the world position stays finite, `updateWorldTransform` matches no mode, and the bone keeps the rotation, scale and shear it had. The detail names the animation, the bone, the key's time and its spelling, beside the five. A bone whose *setup* spelling misses poses no mode at all, and is named the same way from the stepping loop. Neither is reachable from a rig spec — `build` refuses both spellings by name (§5.1) — so on a green build this clause is about files rigc did not write. Which mode a correct spelling poses is not judged here, because the lookup that resolved it is the one that would be checked **SKIP** when the skeleton carries no animation: the NaN is produced by stepping, and a static rig is never stepped — the same subject `A09` skips on |
 | `A11_NO_CLIPPING_ATTACHMENTS` | renderer | a clipping attachment; the target renderer skips them silently |
 | `A12_NO_DARK_COLOR` | renderer | a slot `dark` colour or an `rgba2`/`rgb2` timeline; parsed, then ignored |
-| `A13_MESH_BUDGET` | renderer | more mesh slots than the rig's `invariants.meshSlots`, or a mesh over its `invariants.meshTriangles`. Thin the mesh, or raise the budget in the rig spec. **SKIP** when the rig declares neither — which means *unmeasured*, not that the budget is inert: the same `meshSlots` is a **compile-time** refusal for rigc's own generators, before the gate (§3.7, issue #274) **SKIP** also when the rig budgets **only** triangles and the skeleton carries no mesh ([#580](https://github.com/firejune/rigc/issues/580)). A declared slot budget still PASSes there, because zero mesh slots is a count measured against a ceiling |
+| `A13_MESH_BUDGET` | renderer | more mesh slots than the rig's `invariants.meshSlots`, or a mesh over its `invariants.meshTriangles`. Thin the mesh, or raise the budget in the rig spec. **SKIP** when the rig declares neither — which means *unmeasured*, not that the budget is inert: the same `meshSlots` is a **compile-time** refusal for rigc's own generators, before the gate (§3.7) **SKIP** also when the rig budgets **only** triangles and the skeleton carries no mesh. A declared slot budget still PASSes there, because zero mesh slots is a count measured against a ceiling |
 | `A14_NO_FULL_FRAME_MESH` | renderer | a mesh spans the whole stage — a full-frame canvas that can never dirty-skip. **SKIP** when the skeleton declares no stage (§3.1): there is no full frame to span, and *unmeasured* must not print the same green as *measured and clear* |
-| `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | the `idle` animation keys a bone that drives a mesh, directly or as a control bone. **SKIP** when there is no `idle` animation, or when the one there is carries no bone timeline — a rule whose subject does not exist is unmeasured and not satisfied ([#568](https://github.com/firejune/rigc/issues/568)) |
+| `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | the `idle` animation keys a bone that drives a mesh, directly or as a control bone. **SKIP** when there is no `idle` animation, or when the one there is carries no bone timeline — a rule whose subject does not exist is unmeasured and not satisfied |
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` label is not on the 4.3 line (`4.3`, `4.3.N`, `4.3.N-suffix`) |
-| `A17_ATLAS_PAGE_FILES_EXIST` | both | a page the atlas declares is not a file. Check `--images` and `--out`. **SKIP** when the atlas declares no page ([#580](https://github.com/firejune/rigc/issues/580)) — as it is for `A06`, `A19` and `A27`; see `A07` ([#608](https://github.com/firejune/rigc/issues/608)) |
+| `A17_ATLAS_PAGE_FILES_EXIST` | both | a page the atlas declares is not a file. Check `--images` and `--out`. **SKIP** when the atlas declares no page — as it is for `A06`, `A19` and `A27`; see `A07` |
 | `A18_DETERMINISTIC_EMIT` | both | a second compile of the same inputs differed. That is a compiler bug, not a spec bug — report it |
-| `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | an overlay part cannot draw a transparent pixel, so it would paint a solid rectangle over what is behind it. **The texels decide, on both routes** ([#777](https://github.com/firejune/rigc/issues/777)); the file header is only the fast negative. A file with no alpha channel (colour type 4 or 6) and no `tRNS` chunk has nowhere to keep a clear texel and is refused without being opened, by a sentence that names its colour type — so re-export it as RGBA, or as an indexed / greyscale PNG that keeps its `tRNS`. A file whose header says it **could** be transparent is opened and read until its first texel below full alpha; one clear texel passes, and none is refused in the words the packed route uses for a region, naming the file and what it can hold — `is opaque in every one of its 200x80 texels` … `its file can hold transparency — colour type 6 (truecolour + alpha) carries an alpha channel — and no texel uses it`. Saving as RGBA is not the repair: the runtime draws the texels, not the declaration. Until #777 the loose route stopped at the header, so the same fully opaque RGBA part passed a loose build and was refused by `--pack` of the same rig. On a loose page the file is the part, so the whole decoded image is the rectangle and no atlas coordinate is read. Only the base plate may be opaque, and which image that is is decided once for both routes ([#770](https://github.com/firejune/rigc/issues/770)): the plate the build names — on a cut manifest, the part whose window is the crop — and, only when it names none, an image at least the stage's size. The rig's statement comes first because the two can disagree: a stage stated small enough for an overlay to cover would otherwise exempt that overlay. A rig spec cannot name a base plate, so a stageless rig-spec build, and `validate <dir>` on a stageless skeleton, has nothing to decide it; an opaque part there is refused with *"nothing here decides which image that is: this skeleton declares no stage size to measure one against"* and the two ways to decide it — a `skeleton` stage the plate covers, or a cut manifest (for `validate`, the specs it was built from: `--rig`, `--motion` and the `--manifest`). Indexed-with-`tRNS` — the usual output of ImageMagick, "Export as PNG-8", GIMP's indexed mode, aseprite and pngquant — **passes**: it is transparent art. On a **shared** page the question is asked per REGION over the decoded page rather than per file, because a packed page's own file all but always declares transparency — its gutter is transparent — and the file-level question would then be answered by the packing rather than by the art ([#266](https://github.com/firejune/rigc/issues/266)). ⚠️ **That scan states its verdict over the texels it READ, and never over texels that are not on the page** ([#705](https://github.com/firejune/rigc/issues/705)): a rectangle partly on its page is judged over the part that is on it, and the message carries both counts — `opaque in every one of the 77 texels of its 12x8 rectangle at -1,-1 … the other 19 of the 96 it declares are not on the page and are not measured here`. A rectangle with **no** texel on the page is reported **not measured** by name — the region, its rectangle, the page image's size, and the pointer to `A06`, which is the rule that judges a region's rectangle — and no verdict about opacity is printed at all. ⚠️ **A page whose IMAGE is not the size the atlas declares for it is the same non-measurement for every region on it** ([#715](https://github.com/firejune/rigc/issues/715)), and #705's clause does not cover that case: a page rescaled after packing leaves most rectangles partly on it, at coordinates that address a different part of the picture, so the scan came back with a confident verdict over texels nobody had located — on a two-region pack at a uniform 0.5 an opaque part's failure **disappeared**, the scan having found a transparent texel 32 texels away from it. The row names the page's two sizes and points at `A06`, which judges the page grid and prints the header that repairs it (§0.2). It stays a failure rather than becoming a SKIP because a SKIP is per ASSERTION: it would delete the verdicts on every other part of the same page, and an assertion cannot be skipped and failed at once without the report counting it twice. Before #705 the walk was silent about its own reach, so a part nobody could read printed *opaque in every one of its 12x8 texels* over zero of them, which is a refusal pointing at the wrong file: the art it names may be transparent, and the repair is the rectangle in `A06`'s row above. ⚠️ **A page file that cannot be read as PNG at all is the same non-measurement for every part on it** ([#732](https://github.com/firejune/rigc/issues/732)): one row per page naming its parts and pointing at `A06`, which names what the file is — where it used to print `threw: cannot decode PNG …: unexpected end of file`, an inflate error about a file that was never a PNG. **SKIP** when the atlas declares no page ([#580](https://github.com/firejune/rigc/issues/580)) |
-| `A20_MESH_WEIGHTS_COHERENT` | both ◑ | a weighted vertex with no bone, a negative weight, a bone index out of range, or weights that do not sum to 1. Under `spine-html` also: an unweighted mesh, a binding at weight 0, or **a bone the mesh declares that no vertex binds** — `mesh "x" declares bone "grip_b" and none of its 25 vertices binds it; the weights reference "box", "grip_a"`. Those three are one sentence about rigc's own generators: the bone set a generated mesh declares is the bone set its weights reference, so a `controls` or `chain` name that moves nothing is a defect where a foreign mesh's is not ([#684](https://github.com/firejune/rigc/issues/684)). Fix the rig spec's `controls`/`chain`, or the manifest's `control_bones`. **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
+| `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | an overlay part cannot draw a transparent pixel, so it would paint a solid rectangle over what is behind it. **The texels decide, on both routes**; the file header is only the fast negative. A file with no alpha channel (colour type 4 or 6) and no `tRNS` chunk has nowhere to keep a clear texel and is refused without being opened, by a sentence that names its colour type — so re-export it as RGBA, or as an indexed / greyscale PNG that keeps its `tRNS`. A file whose header says it **could** be transparent is opened and read until its first texel below full alpha; one clear texel passes, and none is refused in the words the packed route uses for a region, naming the file and what it can hold — `is opaque in every one of its 200x80 texels` … `its file can hold transparency — colour type 6 (truecolour + alpha) carries an alpha channel — and no texel uses it`. Saving as RGBA is not the repair: the runtime draws the texels, not the declaration. On a loose page the file is the part, so the whole decoded image is the rectangle and no atlas coordinate is read. Only the base plate may be opaque, and which image that is is decided once for both routes: the plate the build names — on a cut manifest, the part whose window is the crop — and, only when it names none, an image at least the stage's size. The rig's statement comes first because the two can disagree: a stage stated small enough for an overlay to cover would otherwise exempt that overlay. A rig spec cannot name a base plate, so a stageless rig-spec build, and `validate <dir>` on a stageless skeleton, has nothing to decide it; an opaque part there is refused with *"nothing here decides which image that is: this skeleton declares no stage size to measure one against"* and the two ways to decide it — a `skeleton` stage the plate covers, or a cut manifest (for `validate`, the specs it was built from: `--rig`, `--motion` and the `--manifest`). Indexed-with-`tRNS` — the usual output of ImageMagick, "Export as PNG-8", GIMP's indexed mode, aseprite and pngquant — **passes**: it is transparent art. On a **shared** page the question is asked per REGION over the decoded page rather than per file, because a packed page's own file all but always declares transparency — its gutter is transparent — and the file-level question would then be answered by the packing rather than by the art. ⚠️ **That scan states its verdict over the texels it READ, and never over texels that are not on the page**: a rectangle partly on its page is judged over the part that is on it, and the message carries both counts — `opaque in every one of the 77 texels of its 12x8 rectangle at -1,-1 … the other 19 of the 96 it declares are not on the page and are not measured here`. A rectangle with **no** texel on the page is reported **not measured** by name — the region, its rectangle, the page image's size, and the pointer to `A06`, which is the rule that judges a region's rectangle — and no verdict about opacity is printed at all. ⚠️ **A page whose IMAGE is not the size the atlas declares for it is the same non-measurement for every region on it**, and the clause above does not cover that case: a page rescaled after packing leaves most rectangles partly on it, at coordinates that address a different part of the picture, so a scan would come back with a confident verdict over texels nobody had located — on a two-region pack at a uniform 0.5 an opaque part's failure **disappears**, the scan finding a transparent texel 32 texels away from it. The row names the page's two sizes and points at `A06`, which judges the page grid and prints the header that repairs it (§0.2). It stays a failure rather than becoming a SKIP because a SKIP is per ASSERTION: it would delete the verdicts on every other part of the same page, and an assertion cannot be skipped and failed at once without the report counting it twice. ⚠️ **A page file that cannot be read as PNG at all is the same non-measurement for every part on it**: one row per page naming its parts and pointing at `A06`, which names what the file is. **SKIP** when the atlas declares no page |
+| `A20_MESH_WEIGHTS_COHERENT` | both ◑ | a weighted vertex with no bone, a negative weight, a bone index out of range, or weights that do not sum to 1. Under `spine-html` also: an unweighted mesh, a binding at weight 0, or **a bone the mesh declares that no vertex binds** — `mesh "x" declares bone "grip_b" and none of its 25 vertices binds it; the weights reference "box", "grip_a"`. Those three are one sentence about rigc's own generators: the bone set a generated mesh declares is the bone set its weights reference, so a `controls` or `chain` name that moves nothing is a defect where a foreign mesh's is not. Fix the rig spec's `controls`/`chain`, or the manifest's `control_bones`. **SKIP** when the skeleton carries no mesh attachment |
 | `A21_MESH_RIM_PINNED` | archetype | a generated ring's rim, a ribbon's entry row, or a contour's outline (which is all of it) is not pinned to its anchor bone at weight 1 |
-| `A22_MESH_UVS_IN_UNIT_RANGE` | both | a mesh UV outside its region, or a UV array that disagrees with the vertex count. **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
-| `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | a physics constraint that drives no component, rests at `mix: 0` with **no timeline in any animation keying that `mix` above 0**, has `mass: 0`, has `strength` at or below 0 — `0` says `nothing pulls it back`, below 0 says the offset `is pushed away and grows with every step`, both read off the row's `outside` arms, which the key's refusal quotes too ([#748](https://github.com/firejune/rigc/issues/748)) — or has `damping` outside `[0, 1]`, which says `` physics "C" has damping 1.5; must be inside [0, 1] — the per-step decay is `damping ** (60 * step)`, and the runtime runs this value finitely, so refusing it is rigc's call rather than the runtime's: above 1 every velocity grows on every step and the offset diverges ``, the bound read off the row the key's refusal reads; `1` and `0` are inside, since both are finite at every rate ([#794](https://github.com/firejune/rigc/issues/794)) — **at rest, and on every physics timeline key** ([#610](https://github.com/firejune/rigc/issues/610), [#743](https://github.com/firejune/rigc/issues/743)). The timeline arm reads each key through the runtime's own `PhysicsConstraint*Timeline.set`, so a keyed `mass` is judged as the `massInverse` it becomes, and the detail names the animation, the constraint, the key time, the value and the bound. Two differences between the two arms, and the runtime is the reason for both: a **key** of `mix: 0` is accepted, because `update` opens with `if (mix === 0) return;` and muting a constraint for a stretch is what a mix timeline is for — the editor's own `sack-pro` example keys it there on 24 of its 36 mix keys — and a **key** of `strength: 0` is accepted, because it releases the constraint for the span with `damping` and `inertia` still applied and the next key pulls the offset back, measured through spine-core at no NaN, a coast to a limit and a return in 54 steps ([#727](https://github.com/firejune/rigc/issues/727)). As a **setup** value `strength: 0` is still refused by the arm above, and `mix: 0` is refused only when nothing keys it above 0. The `mix` branch above is why `mix` is the one setup value a key can answer for: at rest the constraint is **inert** rather than broken, so a rig that rests muted and is keyed above 0 is refused by nothing, while a rig resting at `mass: 0` is `massInverse` Infinity before anything plays and no key reaches back into that. The detail of the refusal says both halves and how many animations were searched: `` physics "C" has mix 0 and none of the 3 animations keys its mix above 0; the runtime runs this value finitely, so refusing it is rigc's call rather than the runtime's: at 0 `update` returns before it does anything (`PhysicsConstraint.js:109-111`), so the constraint is muted — rest it above 0, or key its mix above 0 in an animation ``. ⚠️ Every reason A23 prints for a setup value is that value's row `basis` arm (§4.4's table, [#798](https://github.com/firejune/rigc/issues/798)) — an arithmetic arm names its expression (`physics "C" has massInverse Infinity; mass must be > 0 — at 0 …`), a behavioural one says it is rigc's call and what the value does. A setup `mix` **below** 0 is told the jiggle is applied inverted, not that it is muted: until #798 it read "it is muted", of a constraint measured moving its bone by exactly the opposite of a positive mix (`T115`). The search counts the unnamed global timeline for every constraint whose own `mixGlobal` is set, reads each key through the runtime's accessor, counts every sample of a Bezier between two keys as a value the timeline poses — so two keys of 0 joined by a curve lifted above 0 are a rescue, measured to move the bone — and takes an animation a slider applies like any other. It is the one reading `A36` and `A37` use as well ([#752](https://github.com/firejune/rigc/issues/752)). `inertia`, `wind`, `gravity` and the top of `mix` are bounded nowhere, at rest or keyed. `ingest` does not carry a constraint that drives no component into the spec it writes: it omits it with its timelines and reports `PHYSICS_DRIVES_NOTHING` ([INGEST §2.0](INGEST.md), [#731](https://github.com/firejune/rigc/issues/731)), so this sentence is met on a file, never on a decompiled rebuild. **SKIP** when the skeleton declares no physics constraint ([#580](https://github.com/firejune/rigc/issues/580)) — the same sentence `A36` and `A37` have always printed for their own constraint types |
-| `A24_AXIS_SPACE_STROKE` | archetype | a bone under the rig's `axisBone` was keyed with a screen-space Y component, or the axis bone itself was keyed. **SKIP** when the rig declares no axis bone, and also when no animation keys that bone or anything under it ([#580](https://github.com/firejune/rigc/issues/580)) |
+| `A22_MESH_UVS_IN_UNIT_RANGE` | both | a mesh UV outside its region, or a UV array that disagrees with the vertex count. **SKIP** when the skeleton carries no mesh attachment |
+| `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | a physics constraint that drives no component, rests at `mix: 0` with **no timeline in any animation keying that `mix` above 0**, has `mass: 0`, has `strength` at or below 0 — `0` says `nothing pulls it back`, below 0 says the offset `is pushed away and grows with every step`, both read off the row's `outside` arms, which the key's refusal quotes too — or has `damping` outside `[0, 1]`, which says `` physics "C" has damping 1.5; must be inside [0, 1] — the per-step decay is `damping ** (60 * step)`, and the runtime runs this value finitely, so refusing it is rigc's call rather than the runtime's: above 1 every velocity grows on every step and the offset diverges ``, the bound read off the row the key's refusal reads; `1` and `0` are inside, since both are finite at every rate — **at rest, and on every physics timeline key**. The timeline arm reads each key through the runtime's own `PhysicsConstraint*Timeline.set`, so a keyed `mass` is judged as the `massInverse` it becomes, and the detail names the animation, the constraint, the key time, the value and the bound. Two differences between the two arms, and the runtime is the reason for both: a **key** of `mix: 0` is accepted, because `update` opens with `if (mix === 0) return;` and muting a constraint for a stretch is what a mix timeline is for — the editor's own `sack-pro` example keys it there on 24 of its 36 mix keys — and a **key** of `strength: 0` is accepted, because it releases the constraint for the span with `damping` and `inertia` still applied and the next key pulls the offset back, measured through spine-core at no NaN, a coast to a limit and a return in 54 steps. As a **setup** value `strength: 0` is still refused by the arm above, and `mix: 0` is refused only when nothing keys it above 0. The `mix` branch above is why `mix` is the one setup value a key can answer for: at rest the constraint is **inert** rather than broken, so a rig that rests muted and is keyed above 0 is refused by nothing, while a rig resting at `mass: 0` is `massInverse` Infinity before anything plays and no key reaches back into that. The detail of the refusal says both halves and how many animations were searched: `` physics "C" has mix 0 and none of the 3 animations keys its mix above 0; the runtime runs this value finitely, so refusing it is rigc's call rather than the runtime's: at 0 `update` returns before it does anything (`PhysicsConstraint.js:109-111`), so the constraint is muted — rest it above 0, or key its mix above 0 in an animation ``. ⚠️ Every reason A23 prints for a setup value is that value's row `basis` arm (§4.4's table) — an arithmetic arm names its expression (`physics "C" has massInverse Infinity; mass must be > 0 — at 0 …`), a behavioural one says it is rigc's call and what the value does. A setup `mix` **below** 0 is told the jiggle is applied inverted, not that it is muted: such a constraint is measured moving its bone by exactly the opposite of a positive mix. The search counts the unnamed global timeline for every constraint whose own `mixGlobal` is set, reads each key through the runtime's accessor, counts every sample of a Bezier between two keys as a value the timeline poses — so two keys of 0 joined by a curve lifted above 0 are a rescue, measured to move the bone — and takes an animation a slider applies like any other. It is the one reading `A36` and `A37` use as well. `inertia`, `wind`, `gravity` and the top of `mix` are bounded nowhere, at rest or keyed. `ingest` does not carry a constraint that drives no component into the spec it writes: it omits it with its timelines and reports `PHYSICS_DRIVES_NOTHING` ([INGEST §2.0](INGEST.md)), so this sentence is met on a file, never on a decompiled rebuild. **SKIP** when the skeleton declares no physics constraint — the same sentence `A36` and `A37` print for their own constraint types |
+| `A24_AXIS_SPACE_STROKE` | archetype | a bone under the rig's `axisBone` was keyed with a screen-space Y component, or the axis bone itself was keyed. **SKIP** when the rig declares no axis bone, and also when no animation keys that bone or anything under it |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | a bone the rig declares `detached` is a descendant of the bone it must never hang under |
-| `A26_SLOT_DRAW_ORDER` | archetype | the emitted slots are not the rig's slot table — a slot is out of order, is not in the table at all, or is in the table and missing from the skeleton (§3.3). **SKIP** when the rig declares no canonical slot order. ⚠️ A skeleton with **no** slot beside a rig that declares some is **not** a skip, and it is the one rule in this family where an empty loop is not a vacuous pass ([#580](https://github.com/firejune/rigc/issues/580)): the completeness clause reads it as every declared slot lost and names them, which is the maximal case of what [#575](https://github.com/firejune/rigc/issues/575) filed |
-| `A27_REGION_NAME_MATCHES_PAGE_FILENAME` | renderer | a single-region page whose region name is not the PNG's basename. **SKIP** when the atlas declares no region ([#580](https://github.com/firejune/rigc/issues/580)) |
+| `A26_SLOT_DRAW_ORDER` | archetype | the emitted slots are not the rig's slot table — a slot is out of order, is not in the table at all, or is in the table and missing from the skeleton (§3.3). **SKIP** when the rig declares no canonical slot order. ⚠️ A skeleton with **no** slot beside a rig that declares some is **not** a skip, and it is the one rule in this family where an empty loop is not a vacuous pass: the completeness clause reads it as every declared slot lost and names them |
+| `A27_REGION_NAME_MATCHES_PAGE_FILENAME` | renderer | a single-region page whose region name is not the PNG's basename. **SKIP** when the atlas declares no region |
 | `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | the two vertices of a ribbon row carry different weights, so the strip would change width. **SKIPs** on authored geometry and on a contour mesh — neither has rows rigc paired |
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the animation drives deeper than the manifest's measured contact depth |
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the animation drives past the measured containment ceiling, or scales a bone in the axis subtree |
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | a draw-order key names a slot the skeleton does not have, offsets one slot twice, puts a slot outside the slots array, or lists its offsets out of slot order (§4.7). The only assertion that runs **before** `A00` — the last of those shapes makes the loader spin rather than return, so the round trip is refused instead of attempted |
 | `A32_EVENT_KEYS_RESOLVE` | both | an event key fires a name the skeleton's `events` block does not declare, sits earlier in time than the key before it, or sets `volume`/`balance` on an event with no `audio` (§4.8). **SKIP** when no animation carries an event timeline |
 | `A33_VERTEX_ATTACHMENT_GEOMETRY` | both | a bounding box, clipping polygon or path whose `vertexCount` is missing or disagrees with its vertex array, a weighted run that decodes to the wrong number of vertices or an out-of-range bone index, a clipping `end` naming a slot the skeleton does not have, a path whose vertex count is not a multiple of 3, or a path `lengths` array that does not strictly increase (§3.4). **SKIP** when the skeleton carries none of the three |
-| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | an `ik`, `transform`, `path`, `physics` or `slider` timeline names a constraint the skeleton does not declare, names one of another type, or carries no keys at all (§4.4, §4.9, §4.10, §4.12). The last is silent: the parser reads key 0, finds nothing, and skips the timeline. The **empty** name under `physics` is not a miss — it is the timeline that names no constraint (§4.4's `"*"`), and it is refused only when it reaches none: `animation "A" physics constraint "" timeline "P": a physics group that names no constraint writes every physics constraint declaring "PGlobal": true, and none of "C", … does — the parser loads it, the runtime walks every constraint, and no constraint takes the key` ([#726](https://github.com/firejune/rigc/issues/726)). Who it reaches is asked of the runtime's own `PhysicsConstraintTimeline.global` on the file's constraints — the reading `A23` and `A42` share. **SKIP** when no animation carries one |
-| `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | both | a deform key's run runs past the end of the attachment's deform array, holds a non-finite number, has an empty key array, or names a skin/slot/attachment triple that does not resolve (§4.11). The overrun is the quiet one — the parser copies into a `Float32Array` and drops the tail. ⛔ It does **not** require pair alignment: the runtime has no such rule and a trimmed editor run legitimately starts and ends mid-pair (§4.11, issue #262). **SKIP** when no animation carries a deform timeline |
-| `A36_PATH_CONSTRAINT_EFFECTIVE` | both | a path constraint whose slot has no path attachment in any skin, one that constrains no bone, or one whose three mixes are all 0 at setup with no animation keying any of them **above 0** (§3.5.1, §4.12). The first is the quiet one: `update()` returns on its first line and the constraint reports mixes it never applies. The third reads the values the loaded timeline poses — keys and Bezier samples alike — the way `A23` reads a physics `mix`, so a `mix` timeline keying 0 only is not a rescue: [measured] it poses every bone exactly where no timeline does, and before [#752](https://github.com/firejune/rigc/issues/752) it passed. The detail says both halves: `path constraint "P" has mixRotate 0, mixX 0 and mixY 0 at setup and none of the 2 animations keys its mix above 0; update() returns on all-zero mixes, so nothing ever puts a bone on the path — rest one of the three above 0, or key its mix above 0 in an animation`. **SKIP** when the skeleton declares no path constraint |
-| `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` **above 0** (§3.5.2, §4.12) — the same reading as `A36`'s, so a `mix` timeline keying 0 only is no rescue ([#752](https://github.com/firejune/rigc/issues/752)): `slider "S" has mix 0 at setup and none of the 2 animations keys its mix above 0; update() returns on mix 0 — rest it above 0, or key its mix above 0 in an animation`. **SKIP** when the skeleton declares no slider |
+| `A34_CONSTRAINT_TIMELINE_TARGETS` | both | an `ik`, `transform`, `path`, `physics` or `slider` timeline names a constraint the skeleton does not declare, names one of another type, or carries no keys at all (§4.4, §4.9, §4.10, §4.12). The last is silent: the parser reads key 0, finds nothing, and skips the timeline. The **empty** name under `physics` is not a miss — it is the timeline that names no constraint (§4.4's `"*"`), and it is refused only when it reaches none: `animation "A" physics constraint "" timeline "P": a physics group that names no constraint writes every physics constraint declaring "PGlobal": true, and none of "C", … does — the parser loads it, the runtime walks every constraint, and no constraint takes the key`. Who it reaches is asked of the runtime's own `PhysicsConstraintTimeline.global` on the file's constraints — the reading `A23` and `A42` share. **SKIP** when no animation carries one |
+| `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | both | a deform key's run runs past the end of the attachment's deform array, holds a non-finite number, has an empty key array, or names a skin/slot/attachment triple that does not resolve (§4.11). The overrun is the quiet one — the parser copies into a `Float32Array` and drops the tail. ⛔ It does **not** require pair alignment: the runtime has no such rule and a trimmed editor run legitimately starts and ends mid-pair (§4.11). **SKIP** when no animation carries a deform timeline |
+| `A36_PATH_CONSTRAINT_EFFECTIVE` | both | a path constraint whose slot has no path attachment in any skin, one that constrains no bone, or one whose three mixes are all 0 at setup with no animation keying any of them **above 0** (§3.5.1, §4.12). The first is the quiet one: `update()` returns on its first line and the constraint reports mixes it never applies. The third reads the values the loaded timeline poses — keys and Bezier samples alike — the way `A23` reads a physics `mix`, so a `mix` timeline keying 0 only is not a rescue: [measured] it poses every bone exactly where no timeline does. The detail says both halves: `path constraint "P" has mixRotate 0, mixX 0 and mixY 0 at setup and none of the 2 animations keys its mix above 0; update() returns on all-zero mixes, so nothing ever puts a bone on the path — rest one of the three above 0, or key its mix above 0 in an animation`. **SKIP** when the skeleton declares no path constraint |
+| `A37_SLIDER_CONSTRAINT_EFFECTIVE` | both | a slider whose animation carries no timeline, one that loops a zero-length animation (the applied time is NaN), one driving off a bone at `scale: 0`, or one muted at setup with no animation keying its `mix` **above 0** (§3.5.2, §4.12) — the same reading as `A36`'s, so a `mix` timeline keying 0 only is no rescue: `slider "S" has mix 0 at setup and none of the 2 animations keys its mix above 0; update() returns on mix 0 — rest it above 0, or key its mix above 0 in an animation`. **SKIP** when the skeleton declares no slider |
 | `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED` | both | a bone or constraint a skin activates that is not `skinRequired` (the list changes nothing), or one that is `skinRequired` and no skin activates (it is never active). Two keys in two places, and only together do they mean "this belongs to that skin" (§3.4.1). **SKIP** when no skin activates anything and nothing is `skinRequired` |
-| `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is refused as before. ⚠️ And the **spans between** consecutive keys are scanned too (§4.11.3, issue #403): the runtime interpolates, so a deform inside its fold angle at every key can be past it in between. That refusal is its own sentence — `BETWEEN key 0 (t=0s) and key 1 (t=0.5s), at t=…` — with the time solved for in closed form and then posed and measured like any key, alpha read at that same moment. `deformSpansScanned` says on every green build that the scan ran. ⚠️ And the **frame** it poses in is the one the animation is reached in (§4.11.4, issue #407): on a track when nothing applies it, and otherwise once per **slider**, with that slider's mapping inverted and its bone driven until the runtime selects the key's own time — because a slider picks the time, so the two are one number and posing them independently is a frame that never occurs. The frame is on every `DEFORM` line, on the stats line as `deformFrames`, and in the refusal itself when it is not the track. A key at a time **no dial value selects** is measured in the frame the runtime does land on, left out of `deformKeysMeasured` and named as `deformKeysUnreachable`/`deformUnreachable` — never refused and never silent. ⚠️ And the **skin** it poses in is the one the timeline is keyed on (§4.11.5, issue #583), since a deform's address is a `skin / slot / attachment` triple: the pose wears that skin, which also switches on any `skin: true` bone or constraint it activates, and the "nothing is drawn" sentence names the skin it was read under. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels or is unreachable *and no span between them folds where anything is drawn*, or when there is no rig info at all |
-| `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where a later one is not `additive` — it writes that property outright at `mix: 1` and every earlier slider on it is dead (§3.5.2). Also fires when the shared timeline **cannot** be applied additively (a slot colour, an attachment swap, a draw order, an ik mix, a path's `spacing`, most physics properties), where `"additive": true` is not the fix and one of the two has to go. ⭐ Which of the two it is, is **posed rather than read off `Timeline.additive`**: the shared timeline is applied twice with `add` set and the detail says what it did ([#655](https://github.com/firejune/rigc/issues/655) — two classes declare that flag falsely about themselves, so a path constraint's `mix` and a slider's `time` were refused although they compose). The detail names the bone or slot and the property, every slider keying it in `constraints` order with its flag, which one wins today, and the class that was posed. Four shapes are deliberately not findings: a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, not an overwrite), two `skinRequired` sliders no skin activates together, two sliders on different properties, and a shared timeline that writes **nothing a pose holds** — an `events` timeline fires no event under a slider (`firedEvents` is null), so neither slider has anything there for the other to erase. **SKIP** when fewer than two sliders are at full authority; a PASS means two were compared |
-| `A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP` | both | a physics constraint driving a component the **Spine editor** cannot hold, on a rig that declared `invariants.editorRoundTrip` (§3.7). The editor's physics model holds `x` and `y` only, with no cap on how many at once, so a constraint driving `rotate`, `scaleX` or `shearX` is imported, exported and handed back driving **nothing** — measured over three rigs and twelve constraints with the predictions written first ([#540](https://github.com/firejune/rigc/issues/540)). The detail names the constraint and each component. ⚠️ rigc's own output is correct — every runtime plays a rotation jiggle — so this is opt-in and the default is *not* silence: on a rig that declares nothing it **SKIPs**, and the SKIP names the constraint and the component anyway, so an author learns without having asked. Fix by driving the constraint in `x`/`y`, or by dropping the declaration if the rig never goes near the editor. Disjoint from `A23_PHYSICS_CONSTRAINT_EFFECTIVE` by construction: A23 refuses an **empty** driven set, which is what comes back from the editor, and this refuses a non-empty one that will not survive going in. **SKIP** also when the rig declares the editor and carries no physics constraint at all |
-| `A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER` | both | a slider whose animation keys a property of a constraint **at or before it** in `constraints` (§3.5.2) — a slider's `mix` or `time`, an ik or transform mix, a path `position`, `spacing` or `mix`, any physics value. That array is the update order for every kind, and each constraint reads its own applied pose when its turn comes — `Slider.update` takes `mix` as the alpha it applies with and `time` as the time it applies at, `PhysicsConstraint.update` returns on `mix` 0 before reading the rest — so the key lands after the only read of it and `Posed.resetConstrained` discards it before the next frame: what the driven constraint drives is dead at every position of the driving dial, although its pose still holds the number ([#658](https://github.com/firejune/rigc/issues/658), [#665](https://github.com/firejune/rigc/issues/665)). The detail names the slider, the driven constraint with its kind, both array indices, the property, the runtime class whose `update` reads it, and the animation the key sits in. Fix by moving the driver earlier, or by keying that property from a slider that already is. **The two indices equal is the same failure**: a slider cannot key its own `mix` or `time`, and one muted at setup that keys its own `mix` up never applies anything at all — `A37` is silent there, because it asks whether *an* animation keys the mix and not which one. **Two shapes it deliberately leaves out**, both measured: a `physics` `reset` key, which fires on a crossed frame time and so never fires from a slider at all, in either order — the reorder would repair nothing; and a physics timeline naming no constraint, which is every physics constraint declaring that property global and IS refused for the ones already run. Disjoint from `A40` by construction: `A40` asks who writes a shared property last and excludes every slider whose `mix` is keyed, this asks whether anything reads what was written. **SKIP** when the skeleton declares no slider, and when no slider's animation keys a constraint property — that SKIP names any `reset` keys it found — a pass means a driver and a driven were compared |
-| `A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN` | both | a slot's `dark` (§3.3) or an `rgba2` / `rgb2` timeline (§4.4) that the runtime does not hold as the file states it. Three shapes, all of which parse in silence: a `dark` the slot reader **drops** — it takes the field through a truthiness test, so `""` is discarded without a word and the slot renders with one colour; a `dark` that is **not six hex digits** — `Color.setFromString` slices fixed offsets and stores whatever `parseInt` gives back, so `"4020"` loads a channel of `NaN`; and an `rgba2` or `rgb2` timeline on a slot with **no `dark` at all**, where the runtime allocates no dark colour and the first `state.apply` throws in the consumer's process. The keyed half is read by posing: the animation is stepped to each key's own time — at the key **as the runtime stores it**: spine-core keeps key times as 32-bit floats, so a key at `0.2` is posed at `0.20000000298…`, the later of the two, and not one float step before it, where a first key still shows the setup value and a stepped key the one before (a correct file was refused that way until [#771](https://github.com/firejune/rigc/issues/771)), and the posed `color` and `darkColor` are compared against the hex the key states, to half a quantisation step (`1/510`). The detail names the slot, the value found and the value required. ⚠️ The required value is parsed **here** and not through `Color.fromString`, because a check that read it out of the parser it is checking would agree with that parser whatever it did. `compile.ts` refuses the third shape outright in a rig rigc builds; this is the same fact held against a skeleton it did not write. An `rgb2` key's light colour is compared over its three channels only: the light alpha is not its to state, and that it is left where it was is measured in the selftest (`S85`). **SKIP** when no slot declares a `dark` and no animation keys an `rgba2` or `rgb2` — there is then no two-colour tint to read back |
-| `A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN` | both | a **linked mesh** (§3.4) — `type: "linkedmesh"`, or a `type: "mesh"` carrying `source` — that also states `uvs`, `triangles`, `vertices`, `hull` or `edges`. The parser returns from the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`), so those keys are read by **nothing at all** and `setSourceMesh` fills the attachment with the source's arrays instead: the file says one mesh and every runtime draws another, in silence. The detail names the attachment by skin, slot and placeholder, every key it states, the `source` and where the parser looks for it — the two defaults spelled out, because an omitted `skin` is the **default** skin rather than the one the link is written in — and the shape the keys describe beside the shape the attachment loaded. ⚠️ **`width`/`height` are not part of this.** `setSourceMesh` overwrites both with the source's, so they are as dead at runtime — but the parser reads them (`:569-570`), the format carries them on a link and rigc emits them, so refusing them would refuse every link rigc writes (§3.4). `compile.ts` refuses the same shape outright in a rig rigc builds (§5.1); this is that fact held against a skeleton it did not write, and `ingest` reports it as `ATTACHMENT_LINK_GEOMETRY` ([INGEST §2.0](INGEST.md)). **SKIP** when no attachment in the skeleton takes its geometry from another — which is almost every skeleton, so a pass here means a link was read ([#710](https://github.com/firejune/rigc/issues/710)) |
-| `A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN` | both | an `rgb` or `alpha` timeline (§4.4) the runtime does not hold as the file states it, in one of two shapes that both parse in silence. **A channel keyed twice**: another colour timeline of the same slot in the same animation poses a channel this one poses — `rgba` beside `alpha` is the shape a converter leaves when it writes a separable `rgb` back as `rgba` next to the `alpha` it kept. Every colour timeline poses its channels at every time, the setup value before its first key included, so the one the file states later overwrites the other everywhere; the detail names both timelines, the channel, and which one survives. **A key not posed as written**: the animation is stepped to each key's own time — at the key **as the runtime stores it**: spine-core keeps key times as 32-bit floats, so a key at `0.2` is posed at `0.20000000298…`, the later of the two, and not one float step before it, where a first key still shows the setup value and a stepped key the one before (a correct file was refused that way until [#771](https://github.com/firejune/rigc/issues/771)), and the posed r g b (for `rgb`, against the hex, to half a quantisation step) or alpha (for `alpha`, against `value`, whose absence the parser reads as 0) is compared — a colour that is not six hex digits loads as NaN, and a key whose time another key repeats is read by nothing. ⚠️ An `rgb` alone written as an `rgba` holding the setup alpha is **not** caught and cannot be from the file: it is a correct `rgba`, and the difference shows only under another track that moves the alpha. The loaded timeline class and the channels a separable timeline leaves alone are measured in the selftest (`S83`–`S85`) rather than here, because against the linked parser neither can come out wrong. The channel table is `SLOT_COLOR_CHANNELS` in `src/timelines.ts`, shared with the compiler's refusal and held to the runtime's own property ids (`S89`). **SKIP** when no animation keys an `rgb` or `alpha` — there is then no separable slot colour to read back |
-| `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` | both | a **numbered series** (§3.4.3, §4.13) that the runtime does not show as the file states it. Every shape below loads without a word, measured on spine-core 4.3.13 ([#729](https://github.com/firejune/rigc/issues/729)). **The block**: a `sequence` with no `count` (`readSequence` reads 0, and the attachment holds no region) or a `setup` at or past `count` (`Sequence.resolveIndex` clamps it to the last frame). **The keys**: a `mode` outside the seven — `hold`, `once`, `loop`, `pingpong`, `onceReverse`, `loopReverse`, `pingpongReverse` — loads as `hold`; an `index` that is fractional (`index << 4` truncates it) or past the end (clamped); an advancing mode at an effective delay of 0 (the parser carries a key's `delay` from the key before; `(time - keyTime) / 0` is Infinity and `Infinity \| 0` is 0, so it never advances); a timeline on an attachment that carries no block (the parser gives every region a one-region series, so every mode shows it). **The pose**: every key is stepped to mid-frame sample times — enough to wrap every mode, and a `hold` key to its own time as the runtime stores it, a 32-bit float ([#771](https://github.com/firejune/rigc/issues/771)) — and the region the slot shows is held to the frame the file's own statement gives, the arithmetic of `SequenceTimeline.applyToSlot` and the names of `Sequence.getPath` transcribed rather than read off the loaded timeline, so the check is not the runtime agreeing with itself. Before the first key the frame is `setup`. ⚠️ A sample where the slot shows another attachment is not compared, because the runtime writes nothing there; a timeline with no comparable sample is counted in `stats.sequenceSamplesUnshown`. `compile.ts` refuses every one of these shapes in a spec (§5.1); this is them held against a skeleton it did not write. **SKIP** when no attachment carries a `sequence` block and no animation keys a `sequence` timeline |
-| `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | an ik constraint resting at `mix` 0 that no animation keys **away from 0** (§4.9, §4.12). `IkConstraint.update` returns on `mix === 0`, so it sits in the update cache and moves nothing. The keys are read the way `A23`/`A36`/`A37` read theirs — every value the loaded timeline poses on its `mix` channel, Bezier samples included — so a timeline keying 0 only is no rescue: [measured] it poses every bone exactly where the same rig with no constraint does, and before [#765](https://github.com/firejune/rigc/issues/765) it passed. Live is the runtime's `!== 0`, so a negative mix is not refused. `ik constraint "C" has mix 0 at setup and none of the 1 animation keys its mix above 0; update() returns on mix 0, so "upper" never reaches for "goal" — rest it above 0, or key its mix above 0 in an animation, or declare that the consumer drives its mix, in the rig spec as invariants.consumerDrivenMix: [{ "constraint": "C", "type": "ik", "why": … }]`. A constraint the rig spec declares in `invariants.consumerDrivenMix` (§3.7) is not measured, and one the file also switches on is refused: `ik constraint "C" is declared in the rig spec as invariants.consumerDrivenMix, and the file already switches it on — … — so the declaration exempts nothing; drop the entry` ([#784](https://github.com/firejune/rigc/issues/784)). **SKIP** when the skeleton declares no ik constraint, and **SKIP by name** when every ik constraint it declares is declared consumer-driven: `every ik constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the consumer's to set and nothing in this file shows it moving — "C" (why: …): it rests muted and none of the 1 animation keys its mix above 0`. With a live one beside it the rule measures that one and the stats line names the declared (`ikConsumerDriven`) |
-| `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | a transform constraint none of whose mixes **for a property it drives** is away from 0 at setup or on any value an animation poses (§4.10, §4.12), or one whose `properties` name no `to` at all. A property is applied only when its own mix `!== 0`, and a key that omits a mix reads it as 1, so the six-mix early return of `TransformConstraint.update` would take a key of `mixRotate: 0` alone as a rescue — [measured] that key, and one keying `mixX` 1 on a rotate-only constraint, pose every bone exactly where no constraint does ([#765](https://github.com/firejune/rigc/issues/765)). A negative mix runs, and five transforms in the editor's example exports rest at −1. `transform constraint "C" drives rotate and has mixRotate 0 at setup, and none of the 1 animation keys its mix above 0; a mix is read only for a property the constraint drives, and update() skips each one at 0, so nothing ever moves "follower" — rest mixRotate above 0, or key its mix above 0 in an animation, or declare that the consumer drives its mix, in the rig spec as invariants.consumerDrivenMix: [{ "constraint": "C", "type": "transform", "why": … }]`. A constraint the rig spec declares in `invariants.consumerDrivenMix` (§3.7) is not measured, and one the file also switches on is refused as `A47`'s is; one that drives no property is refused with its own sentence declared or not, since no mix it carries is read by anybody ([#784](https://github.com/firejune/rigc/issues/784)). **SKIP** when the skeleton declares no transform constraint, and **SKIP by name** when every transform constraint it declares is declared consumer-driven: `every transform constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the consumer's to set and nothing in this file shows it moving — "C" (why: …): it rests muted and none of the 1 animation keys its mix above 0`. With a live one beside it the stats line names the declared (`transformConsumerDriven`) |
+| `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | archetype | a `deform` key reverses a triangle's winding, so the mesh has locally turned inside out and draws its texture backwards there (§4.11). The detail names the animation, the slot, the attachment, the key index and time, and each reversed triangle with its vertex triple and its signed area before and after. Measured at the key's **own** time, deformed against the same posed bones undeformed, so a mirrored slot bone cancels and a wrong *projection* with intact winding is correctly silent. A projection past its fold angle is the usual cause — [FACE.md §4.2](FACE.md) has the closed form. Legitimate art does fold, so declare `invariants.deformMayFold` (§3.7) for a slot that folds on purpose. ⚠️ A key whose slot **draws no pixels at that key's own time** — faded to alpha exactly 0, or showing another attachment — is measured and then passed over, because "draws its texture backwards" is false when nothing of it is drawn; the key is named on the stats line (`deformKeysNotDrawn`) and in the `DEFORM` block, never silently. The bar is **exactly 0**: at alpha 0.5 the fold is still refused and the alpha is in the message. It is per key and per time, so the same slot folding at full alpha in another animation is still refused. ⚠️ And the **spans between** consecutive keys are scanned too (§4.11.3): the runtime interpolates, so a deform inside its fold angle at every key can be past it in between. That refusal is its own sentence — `BETWEEN key 0 (t=0s) and key 1 (t=0.5s), at t=…` — with the time solved for in closed form and then posed and measured like any key, alpha read at that same moment. `deformSpansScanned` says on every green build that the scan ran. ⚠️ And the **frame** it poses in is the one the animation is reached in (§4.11.4): on a track when nothing applies it, and otherwise once per **slider**, with that slider's mapping inverted and its bone driven until the runtime selects the key's own time — because a slider picks the time, so the two are one number and posing them independently is a frame that never occurs. The frame is on every `DEFORM` line, on the stats line as `deformFrames`, and in the refusal itself when it is not the track. A key at a time **no dial value selects** is measured in the frame the runtime does land on, left out of `deformKeysMeasured` and named as `deformKeysUnreachable`/`deformUnreachable` — never refused and never silent. ⚠️ And the **skin** it poses in is the one the timeline is keyed on (§4.11.5), since a deform's address is a `skin / slot / attachment` triple: the pose wears that skin, which also switches on any `skin: true` bone or constraint it activates, and the "nothing is drawn" sentence names the skin it was read under. **SKIP** when no animation carries a deform timeline, when nothing keyed has triangles, when every mesh keyed is exempt, when every key measured draws no pixels or is unreachable *and no span between them folds where anything is drawn*, or when there is no rig info at all |
+| `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET` | both | two or more sliders whose animations key the same timeline, where a later one is not `additive` — it writes that property outright at `mix: 1` and every earlier slider on it is dead (§3.5.2). Also fires when the shared timeline **cannot** be applied additively (a slot colour, an attachment swap, a draw order, an ik mix, a path's `spacing`, most physics properties), where `"additive": true` is not the fix and one of the two has to go. ⭐ Which of the two it is, is **posed rather than read off `Timeline.additive`**: the shared timeline is applied twice with `add` set and the detail says what it did (two classes declare that flag falsely about themselves: a path constraint's `mix` and a slider's `time` compose although the flag says they do not). The detail names the bone or slot and the property, every slider keying it in `constraints` order with its flag, which one wins today, and the class that was posed. Four shapes are deliberately not findings: a slider below `mix: 1` or with its `mix` keyed (the apply is then a lerp from the current pose, not an overwrite), two `skinRequired` sliders no skin activates together, two sliders on different properties, and a shared timeline that writes **nothing a pose holds** — an `events` timeline fires no event under a slider (`firedEvents` is null), so neither slider has anything there for the other to erase. **SKIP** when fewer than two sliders are at full authority; a PASS means two were compared |
+| `A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP` | both | a physics constraint driving a component the **Spine editor** cannot hold, on a rig that declared `invariants.editorRoundTrip` (§3.7). The editor's physics model holds `x` and `y` only, with no cap on how many at once, so a constraint driving `rotate`, `scaleX` or `shearX` is imported, exported and handed back driving **nothing** — measured over three rigs and twelve constraints with the predictions written first. The detail names the constraint and each component. ⚠️ rigc's own output is correct — every runtime plays a rotation jiggle — so this is opt-in and the default is *not* silence: on a rig that declares nothing it **SKIPs**, and the SKIP names the constraint and the component anyway, so an author learns without having asked. Fix by driving the constraint in `x`/`y`, or by dropping the declaration if the rig never goes near the editor. Disjoint from `A23_PHYSICS_CONSTRAINT_EFFECTIVE` by construction: A23 refuses an **empty** driven set, which is what comes back from the editor, and this refuses a non-empty one that will not survive going in. **SKIP** also when the rig declares the editor and carries no physics constraint at all |
+| `A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER` | both | a slider whose animation keys a property of a constraint **at or before it** in `constraints` (§3.5.2) — a slider's `mix` or `time`, an ik or transform mix, a path `position`, `spacing` or `mix`, any physics value. That array is the update order for every kind, and each constraint reads its own applied pose when its turn comes — `Slider.update` takes `mix` as the alpha it applies with and `time` as the time it applies at, `PhysicsConstraint.update` returns on `mix` 0 before reading the rest — so the key lands after the only read of it and `Posed.resetConstrained` discards it before the next frame: what the driven constraint drives is dead at every position of the driving dial, although its pose still holds the number. The detail names the slider, the driven constraint with its kind, both array indices, the property, the runtime class whose `update` reads it, and the animation the key sits in. Fix by moving the driver earlier, or by keying that property from a slider that already is. **The two indices equal is the same failure**: a slider cannot key its own `mix` or `time`, and one muted at setup that keys its own `mix` up never applies anything at all — `A37` is silent there, because it asks whether *an* animation keys the mix and not which one. **Two shapes it deliberately leaves out**, both measured: a `physics` `reset` key, which fires on a crossed frame time and so never fires from a slider at all, in either order — the reorder would repair nothing; and a physics timeline naming no constraint, which is every physics constraint declaring that property global and IS refused for the ones already run. Disjoint from `A40` by construction: `A40` asks who writes a shared property last and excludes every slider whose `mix` is keyed, this asks whether anything reads what was written. **SKIP** when the skeleton declares no slider, and when no slider's animation keys a constraint property — that SKIP names any `reset` keys it found — a pass means a driver and a driven were compared |
+| `A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN` | both | a slot's `dark` (§3.3) or an `rgba2` / `rgb2` timeline (§4.4) that the runtime does not hold as the file states it. Three shapes, all of which parse in silence: a `dark` the slot reader **drops** — it takes the field through a truthiness test, so `""` is discarded without a word and the slot renders with one colour; a `dark` that is **not six hex digits** — `Color.setFromString` slices fixed offsets and stores whatever `parseInt` gives back, so `"4020"` loads a channel of `NaN`; and an `rgba2` or `rgb2` timeline on a slot with **no `dark` at all**, where the runtime allocates no dark colour and the first `state.apply` throws in the consumer's process. The keyed half is read by posing: the animation is stepped to each key's own time — at the key **as the runtime stores it**: spine-core keeps key times as 32-bit floats, so a key at `0.2` is posed at `0.20000000298…`, the later of the two, and not one float step before it, where a first key still shows the setup value and a stepped key the one before, and the posed `color` and `darkColor` are compared against the hex the key states, to half a quantisation step (`1/510`). The detail names the slot, the value found and the value required. ⚠️ The required value is parsed **here** and not through `Color.fromString`, because a check that read it out of the parser it is checking would agree with that parser whatever it did. `compile.ts` refuses the third shape outright in a rig rigc builds; this is the same fact held against a skeleton it did not write. An `rgb2` key's light colour is compared over its three channels only: the light alpha is not its to state, and it is left where it was. **SKIP** when no slot declares a `dark` and no animation keys an `rgba2` or `rgb2` — there is then no two-colour tint to read back |
+| `A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN` | both | a **linked mesh** (§3.4) — `type: "linkedmesh"`, or a `type: "mesh"` carrying `source` — that also states `uvs`, `triangles`, `vertices`, `hull` or `edges`. The parser returns from the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`), so those keys are read by **nothing at all** and `setSourceMesh` fills the attachment with the source's arrays instead: the file says one mesh and every runtime draws another, in silence. The detail names the attachment by skin, slot and placeholder, every key it states, the `source` and where the parser looks for it — the two defaults spelled out, because an omitted `skin` is the **default** skin rather than the one the link is written in — and the shape the keys describe beside the shape the attachment loaded. ⚠️ **`width`/`height` are not part of this.** `setSourceMesh` overwrites both with the source's, so they are as dead at runtime — but the parser reads them (`:569-570`), the format carries them on a link and rigc emits them, so refusing them would refuse every link rigc writes (§3.4). `compile.ts` refuses the same shape outright in a rig rigc builds (§5.1); this is that fact held against a skeleton it did not write, and `ingest` reports it as `ATTACHMENT_LINK_GEOMETRY` ([INGEST §2.0](INGEST.md)). **SKIP** when no attachment in the skeleton takes its geometry from another — which is almost every skeleton, so a pass here means a link was read |
+| `A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN` | both | an `rgb` or `alpha` timeline (§4.4) the runtime does not hold as the file states it, in one of two shapes that both parse in silence. **A channel keyed twice**: another colour timeline of the same slot in the same animation poses a channel this one poses — `rgba` beside `alpha` is the shape a converter leaves when it writes a separable `rgb` back as `rgba` next to the `alpha` it kept. Every colour timeline poses its channels at every time, the setup value before its first key included, so the one the file states later overwrites the other everywhere; the detail names both timelines, the channel, and which one survives. **A key not posed as written**: the animation is stepped to each key's own time — at the key **as the runtime stores it**: spine-core keeps key times as 32-bit floats, so a key at `0.2` is posed at `0.20000000298…`, the later of the two, and not one float step before it, where a first key still shows the setup value and a stepped key the one before, and the posed r g b (for `rgb`, against the hex, to half a quantisation step) or alpha (for `alpha`, against `value`, whose absence the parser reads as 0) is compared — a colour that is not six hex digits loads as NaN, and a key whose time another key repeats is read by nothing. ⚠️ An `rgb` alone written as an `rgba` holding the setup alpha is **not** caught and cannot be from the file: it is a correct `rgba`, and the difference shows only under another track that moves the alpha. The loaded timeline class and the channels a separable timeline leaves alone are not measured here, because against the linked parser neither can come out wrong. The channel table is `SLOT_COLOR_CHANNELS` in `src/timelines.ts`, shared with the compiler's refusal and held to the runtime's own property ids. **SKIP** when no animation keys an `rgb` or `alpha` — there is then no separable slot colour to read back |
+| `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` | both | a **numbered series** (§3.4.3, §4.13) that the runtime does not show as the file states it. Every shape below loads without a word, measured on spine-core 4.3.13. **The block**: a `sequence` with no `count` (`readSequence` reads 0, and the attachment holds no region) or a `setup` at or past `count` (`Sequence.resolveIndex` clamps it to the last frame). **The keys**: a `mode` outside the seven — `hold`, `once`, `loop`, `pingpong`, `onceReverse`, `loopReverse`, `pingpongReverse` — loads as `hold`; an `index` that is fractional (`index << 4` truncates it) or past the end (clamped); an advancing mode at an effective delay of 0 (the parser carries a key's `delay` from the key before; `(time - keyTime) / 0` is Infinity and `Infinity \| 0` is 0, so it never advances); a timeline on an attachment that carries no block (the parser gives every region a one-region series, so every mode shows it). **The pose**: every key is stepped to mid-frame sample times — enough to wrap every mode, and a `hold` key to its own time as the runtime stores it, a 32-bit float — and the region the slot shows is held to the frame the file's own statement gives, the arithmetic of `SequenceTimeline.applyToSlot` and the names of `Sequence.getPath` transcribed rather than read off the loaded timeline, so the check is not the runtime agreeing with itself. Before the first key the frame is `setup`. ⚠️ A sample where the slot shows another attachment is not compared, because the runtime writes nothing there; a timeline with no comparable sample is counted in `stats.sequenceSamplesUnshown`. `compile.ts` refuses every one of these shapes in a spec (§5.1); this is them held against a skeleton it did not write. **SKIP** when no attachment carries a `sequence` block and no animation keys a `sequence` timeline |
+| `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | an ik constraint resting at `mix` 0 that no animation keys **away from 0** (§4.9, §4.12). `IkConstraint.update` returns on `mix === 0`, so it sits in the update cache and moves nothing. The keys are read the way `A23`/`A36`/`A37` read theirs — every value the loaded timeline poses on its `mix` channel, Bezier samples included — so a timeline keying 0 only is no rescue: [measured] it poses every bone exactly where the same rig with no constraint does. Live is the runtime's `!== 0`, so a negative mix is not refused. `ik constraint "C" has mix 0 at setup and none of the 1 animation keys its mix above 0; update() returns on mix 0, so "upper" never reaches for "goal" — rest it above 0, or key its mix above 0 in an animation, or declare that the consumer drives its mix, in the rig spec as invariants.consumerDrivenMix: [{ "constraint": "C", "type": "ik", "why": … }]`. A constraint the rig spec declares in `invariants.consumerDrivenMix` (§3.7) is not measured, and one the file also switches on is refused: `ik constraint "C" is declared in the rig spec as invariants.consumerDrivenMix, and the file already switches it on — … — so the declaration exempts nothing; drop the entry`. **SKIP** when the skeleton declares no ik constraint, and **SKIP by name** when every ik constraint it declares is declared consumer-driven: `every ik constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the consumer's to set and nothing in this file shows it moving — "C" (why: …): it rests muted and none of the 1 animation keys its mix above 0`. With a live one beside it the rule measures that one and the stats line names the declared (`ikConsumerDriven`) |
+| `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | a transform constraint none of whose mixes **for a property it drives** is away from 0 at setup or on any value an animation poses (§4.10, §4.12), or one whose `properties` name no `to` at all. A property is applied only when its own mix `!== 0`, and a key that omits a mix reads it as 1, so the six-mix early return of `TransformConstraint.update` would take a key of `mixRotate: 0` alone as a rescue — [measured] that key, and one keying `mixX` 1 on a rotate-only constraint, pose every bone exactly where no constraint does. A negative mix runs, and five transforms in the editor's example exports rest at −1. `transform constraint "C" drives rotate and has mixRotate 0 at setup, and none of the 1 animation keys its mix above 0; a mix is read only for a property the constraint drives, and update() skips each one at 0, so nothing ever moves "follower" — rest mixRotate above 0, or key its mix above 0 in an animation, or declare that the consumer drives its mix, in the rig spec as invariants.consumerDrivenMix: [{ "constraint": "C", "type": "transform", "why": … }]`. A constraint the rig spec declares in `invariants.consumerDrivenMix` (§3.7) is not measured, and one the file also switches on is refused as `A47`'s is; one that drives no property is refused with its own sentence declared or not, since no mix it carries is read by anybody. **SKIP** when the skeleton declares no transform constraint, and **SKIP by name** when every transform constraint it declares is declared consumer-driven: `every transform constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the consumer's to set and nothing in this file shows it moving — "C" (why: …): it rests muted and none of the 1 animation keys its mix above 0`. With a live one beside it the stats line names the declared (`transformConsumerDriven`) |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
@@ -5511,46 +5443,40 @@ own behaviour is worse: an unknown attachment `type` returns `null` and the
 attachment disappears, and a constraint entry with an unrecognised `type` matches no
 case and vanishes.
 
-A deferral carries its reason, and there is one deferred attachment type left:
+A deferral carries its reason, and there is one deferred attachment type:
 **`point` appears nowhere in the benchmark corpus** (SPEC_COVERAGE parts 3-1 and
 4-2), so it is not on the ladder's critical path. The message says so, because a
-deferral without its reason is a wall rather than a work item. `linkedmesh` stood
-beside it until [#691](https://github.com/firejune/rigc/issues/691) and is now
-emitted — §3.4 has its fields.
+deferral without its reason is a wall rather than a work item.
 
 ⚠️ **A spelling the format does not have is a different refusal and says so.**
 `sequence` is not an attachment type, and a `"type"` that is `null` is not an absent
 one — telling either author that "rigc does not emit it yet" promises work that will
 never be done, on a map the parser would have dropped in silence. Those rows below
-are `CompileError`s, and they name what the format actually defines
-([#577](https://github.com/firejune/rigc/issues/577)).
+are `CompileError`s, and they name what the format actually defines.
 
 | You wrote | You get |
 | --- | --- |
 | attachment `type` of `point` | `this attachment is a "point" — a position and an angle with no geometry at all — "x", "y", "rotation" and "color" …. rigc does not emit it yet, deliberately: it emits region, mesh, linkedmesh, boundingbox, clipping, path, and a point appears nowhere in the benchmark corpus …` — the message names the **construct**, not just its type string, and part 1-6 is where the sentence comes from |
-| a mesh carrying `source` (`type: "mesh"` **or** `type: "linkedmesh"`) | **not a refusal any more** — both spellings compile to a linked mesh (§3.4, [#691](https://github.com/firejune/rigc/issues/691)). They share one parser branch and `source` is what decides between them (SPEC_COVERAGE part 1-6), so `source` on a mesh is a linked mesh whatever `type` says. It was once refused as *2 keys this compiler does not read: "source", "skin" … fix the spelling or remove it*, whose remedy destroys the construct ([#577](https://github.com/firejune/rigc/issues/577)) |
+| a mesh carrying `source` (`type: "mesh"` **or** `type: "linkedmesh"`) | **not a refusal** — both spellings compile to a linked mesh (§3.4). They share one parser branch and `source` is what decides between them (SPEC_COVERAGE part 1-6), so `source` on a mesh is a linked mesh whatever `type` says |
 | attachment `type` of anything else — `sequence`, a typo | `attachment type "X" is not one of the 7 the Spine 4.3 format defines (region, mesh, linkedmesh, boundingbox, path, point, clipping). … the attachment is dropped from the skeleton without a word` — a **`CompileError`**, not a deferral: rigc is not going to implement a name the format does not have. (`sequence` is a key on a region or a mesh, not a type of its own.) |
-| `"type": null` | `"type" is null, which is not a name. … PRESENT-and-null is not absent: getValue(map, "type", "region") takes the default only when the key is missing, so this map matches no case, readAttachment returns null, and the attachment is dropped from the skeleton without a word. Remove the key, or name a type.` Leaving the key **out** is legal and reads as `region`; writing it as `null` is not the same thing ([#577](https://github.com/firejune/rigc/issues/577)) |
+| `"type": null` | `"type" is null, which is not a name. … PRESENT-and-null is not absent: getValue(map, "type", "region") takes the default only when the key is missing, so this map matches no case, readAttachment returns null, and the attachment is dropped from the skeleton without a word. Remove the key, or name a type.` Leaving the key **out** is legal and reads as `region`; writing it as `null` is not the same thing |
 | constraint `type` of anything else | `constraint type "X" is not one Spine 4.3 knows. The five are: ik, transform, path, physics, slider.` — all five are emitted, so this is a typo, and a typo is what the parser drops in silence |
 | any key neither format has, anywhere in either file | `<object> has a key this compiler does not read: "x" (did you mean "y"?) … Known here: …` (§5.1). Not a deferral either: a key nothing reads is a value you wrote and the emitted skeleton does not contain |
 
 Two more limits that are not errors but will shape what you can attempt:
 
-- **The atlas packer and importer exist and are narrow** (issue #4). `--pack`
+- **The atlas packer and importer exist and are narrow.** `--pack`
   arranges the parts onto shared pages and `--atlas-in` resolves them against a
   pack somebody else made — **§0.1** and **§0.2** state what each does and, more
-  usefully, what neither does: no trimming, no rotation, no scaling, and no
-  `--profile spine-html` over a packed atlas. The default is still **one part per
-  page** with `pma: false` and every region covering its whole page, and nothing
+  usefully, what neither does: no trimming, no rotation, no scaling. The default is
+  **one part per page** with `pma: false` and every region covering its whole page, and nothing
   about a build changes unless one of those flags is given.
 - **`drawOrderFolder`** is walked by the validator (so `A05` checks its curves and
   `diff` counts its keys) and cannot be *written*: there is no motion-spec property
-  for it. Everything a motion spec **can** key is §4.4's track table — which now
+  for it. Everything a motion spec **can** key is §4.4's track table — which
   includes the `path` and `slider` groups (§4.12) — plus the six families that sit
   beside `tracks`: `drawOrder` (§4.7), `events` (§4.8), `ik` (§4.9), `transform`
-  (§4.10), `deform` (§4.11) and `sequence` (§4.13). `sequence` stood beside
-  `drawOrderFolder` in this sentence until
-  [#729](https://github.com/firejune/rigc/issues/729) made it writable.
+  (§4.10), `deform` (§4.11) and `sequence` (§4.13).
 
 ---
 
@@ -5559,12 +5485,10 @@ Two more limits that are not errors but will shape what you can attempt:
 1. `build --profile <the one you meant>` exits 0 and the report has **no FAIL**.
    Saying nothing means `spine`, so "the one you meant" is a decision either way —
    the report's first line names the profile that judged it.
-   📎 The two profiles judge attachment **naming** identically since
-   [#574](https://github.com/firejune/rigc/issues/574): `spine-html` adds the
-   renderer and archetype rules and has no opinion about how an attachment is
+   📎 The two profiles judge attachment **naming** identically: `spine-html` adds
+   the renderer and archetype rules and has no opinion about how an attachment is
    spelled, so a rig whose named skins share a placeholder (§3.4.2) is green
-   under either. Before that it was green under exactly one of them, and which
-   one was not a property of the rig.
+   under either.
 2. Read the `SKIP` lines. Each one is a check that did *not* run — make sure none of
    them is a check you were relying on. The summary's *measured* figure is the
    shortest version of this step: it is how many of the rules actually looked at
@@ -5578,7 +5502,7 @@ Two more limits that are not errors but will shape what you can attempt:
    of how it reads: if `A00` failed, most of the SKIP lines say the round trip
    denied them a result, and the handful of `PASS` rows beside them were measured
    on the raw text alone. Step 1 already sent you back; do not take anything from
-   the rest of that report on the way ([#568](https://github.com/firejune/rigc/issues/568)).
+   the rest of that report on the way.
 3. Read the `PROF` lines. They are where "was this rig held to that rule at all"
    gets answered for everything the profile left out — the renderer policy *and*
    the archetype rules. A green under `spine` has been held to neither; a green
@@ -5767,9 +5691,8 @@ part's own height**, from four independent fits, which is the quantity that had 
 agree between them and did.
 
 **A value is easier to get right than a curve.** The three traps above are all
-about measuring a *value*, and both ladder runs so far found that the values came
-out right early: rung 1's key values were exact at every keyframe on the second
-build. What was wrong was the *shape between* them — every accelerating segment
+about measuring a *value*, and on the ladder the values come out right early:
+rung 1's key values were exact at every keyframe on the second build. What was wrong was the *shape between* them — every accelerating segment
 had the decelerating curve and vice versa, from one inverted comparison. Nothing
 in a static reading of the file can find that, because both candidates for the
 shape are legal and the file reads fine either way, and a symmetric pair of easings
@@ -6074,8 +5997,7 @@ your candidate under one of its skins (below), `--all-frames` to list
 every frame instead of the worst by MAE, `--json <out>` for the whole per-frame,
 per-slot report.
 
-🚨 **What `check` certifies is the DEFAULT skin, unless you pass `--skin`**
-(issue #571). With no `--skin` no skin is set at all, which is `spine-core`'s own
+🚨 **What `check` certifies is the DEFAULT skin, unless you pass `--skin`.** With no `--skin` no skin is set at all, which is `spine-core`'s own
 initial state: every slot resolves through `SkeletonData.defaultSkin` alone, and a
 slot whose art lives only in a named skin draws **nothing** — on both sides, since
 the reference frames came out of the same renderer. A multi-skin rig checked that
@@ -6115,7 +6037,7 @@ A skin name the candidate does not declare is refused with the ones it does —
 name.** `A39` and the `DEFORM` block pose each key with the skin that key is keyed
 on — a deform timeline's address is a `skin / slot / attachment` triple — so a
 mesh in a named skin is measured in that skin without anything being passed on the
-command line (§4.11.5, issue #583). The difference is where the name comes from,
+command line (§4.11.5). The difference is where the name comes from,
 not which command cares: `check` compares two picture sets and neither of them
 records a skin unless you say so, while a deform key knows its own.
 
@@ -6126,8 +6048,7 @@ frames, and spineboy's `@30fps` sets do the same. The frame table still says
 `frames 2 on disk, candidate samples 311, 2 compared` — those are the files — and a
 **`sheet` line under it** carries the other 309: your candidate sampled at the set's
 own rate, rendered into the same box the frames above were at the sheet's own scale,
-and compared tile by tile (issue #36 — the gap a rung-2 run had already prototyped a
-comparator for, in its own working directory, because the tool could not see its shot).
+and compared tile by tile.
 
 ⚠️ **Read it as a series, not as one number** — §9.2. And note what it does not
 carry: MAE only. The `Δpx` / `ref Δ` thresholds are calibrated at frame scale and a
@@ -6156,8 +6077,8 @@ your shot's length is not a whole number of coarse intervals, expect **both** �
 duration the coarse sidecar understates, and a terminal pose only the finer set shows
 you.
 
-`--fps <n>` exists for frame sets that have no `frames.json` beside them, which are
-sets rendered before the sidecar existed: it gives the rate those frames were
+`--fps <n>` exists for frame sets that have no `frames.json` beside them: it gives
+the rate those frames were
 sampled at, and without it the 12 fps protocol rate is assumed and the report says
 so rather than letting the assumption look like a measurement. Passing `--fps` with
 a value the sidecar contradicts is an error, not an override.
@@ -6174,15 +6095,15 @@ fitting it. Two uses:
   MAE moves by more than a point for a fraction of a pixel, that separation is
   worth more than the absolute number.
 
-There used to be a third — *"you already know your candidate's world coordinates
-match the reference's own, declared in `frames.json`"* — and **`check` now does
-that one for you** (issue #52). Before fitting anything it renders your candidate
+A third use — *"you already know your candidate's world coordinates match the
+reference's own, declared in `frames.json`"* — is one **`check` covers for you.** Before
+fitting anything it renders your candidate
 into the box `frames.json` records and measures where your pixels land. If they
 land on the reference's to within a pixel, that box is yours too, and it is used:
 it is not an *estimate* of where the frames were drawn, it is where they were
 drawn, and the framing line says `frames.json's own box — the candidate measured
 into it`. If they do not, the box is refused and your candidate is framed by its
-own pixels exactly as before — which is the ordinary case, because the reference's
+own pixels — which is the ordinary case, because the reference's
 origin is in a file you are not allowed to open.
 
 That is worth a paragraph rather than a line because of what it costs when it is
@@ -6197,11 +6118,7 @@ author could tell that from a wrong animation without running the pin by hand.
 Pinning to paper over a **real** framing difference — rather than one of the two
 cases above — is the dishonest use: it makes a genuine mismatch between your
 candidate and the reference disappear from the report instead of showing up as
-`content`/`rms`/`union residual`. That used to be easy to do by accident, because
-the old quad-corner framing could be wrong by more than a pixel for reasons that had
-nothing to do with either side's motion — two honest ladder runs measured it costing
-30+ points of MAE with no key changed, which is why framing is now fitted to drawn
-pixels rather than quad corners (issue #34, closed by #39; see §9.2). Pin to a box
+`content`/`rms`/`union residual`. Pin to a box
 you can name a reason for, and read the unpinned framing line first when you are not
 sure whether you have one.
 
@@ -6222,7 +6139,7 @@ Why the split falls there, both halves measured on an 8-shot character (147 fram
   that is not in the frames' coordinates puts the pooled correction over the
   one-pixel threshold and the *whole root* falls back to a fit. Per set, the shots
   that qualify read what pinning by hand reads: `idle` **18.77** where a whole-root
-  run read 41.59, with not one key different (issue #100).
+  run read 41.59, with not one key different.
 - **Fitting per set is worse, so `check` does not.** `fitFraming` registers extent,
   and extent is not alignment (see the ⚠️ in §9.2), so on a shot whose silhouette
   genuinely differs one shot's frames do not constrain the fit enough: `hit` reads
@@ -6230,8 +6147,7 @@ Why the split falls there, both halves measured on an 8-shot character (147 fram
   set reads 101.94 against 42.98. More frames is a better-conditioned fit, so the
   fallback is deliberately the shared one.
 
-`--framing shared` measures **every** set in the shared framing, which is what a
-whole-root run used to do. It answers one question and it is a good one — *does a
+`--framing shared` measures **every** set in the shared framing. It answers one question and it is a good one — *does a
 single box serve every set?* — and it is the wrong number to read as one shot's
 fidelity.
 
@@ -6273,7 +6189,7 @@ and [the ladder's honesty rule](https://github.com/firejune/rigc/blob/main/docs/
 them is a candidate's own reading against rendered frames — the exam question, not the
 answer key — so none of them narrows a reference-side measure, and a guide that censored
 them would be teaching less for no gain in honesty. The criterion is under *The honesty
-rule* in [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) (issue #158); what it *does* seal is a score written
+rule* in [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md); what it *does* seal is a score written
 over a reference's own count, and no such figure appears here.
 
 🚨 **If you drive the runtime yourself, a bone's local transform lives on
@@ -6286,8 +6202,8 @@ first thing it hits is not a subtlety. **spine-core 4.3 keeps a bone's local
 transform on `bone.pose`, not on the bone**, so `bone.rotation = …` — or `.x`,
 `.y`, `.scaleX` — is neither an error nor a rotation: it adds a property nothing
 reads, and every frame renders as the setup pose. Write `bone.pose.rotation`.
-Rung 8 lost a loop to it at a flat 17.3; driven through `bone.pose`, the same
-poses measured **2.76**.
+Written on the bone, rung 8's poses read a flat 17.3; driven through `bone.pose`,
+the same poses measure **2.76**.
 
 🚨 **That trap has a twin one level up: the *setup* transform lives on
 `bone.data.setupPose`, not on `bone.data`.** `BoneData` extends `PosedData`,
@@ -6300,8 +6216,8 @@ trap, because nothing on the path raises: `undefined` propagates to `NaN`, and
 file, the next build reads those as zero, `validate` is green and `check` runs.
 ⇒ **A `null` in your own placements dump is the signature of having read
 `bone.data` directly** — nothing in this format is ever legitimately null. On
-spineboy it cost the candidate MAE 13.0 → 114.6 with a green gate throughout
-(measured in a spineboy attempt's own loop log, §4.1). Note that the two names are not
+spineboy it costs the candidate MAE 13.0 → 114.6 with a green gate throughout.
+Note that the two names are not
 the same thing: `bone.data.setupPose` is
 the setup transform, while `bone.setupPose()` on a `Bone` is the method that
 resets `bone.pose` back to it.
@@ -6311,9 +6227,7 @@ resets `bone.pose` back to it.
 stores; what gets drawn is that stored quad — `computeWorldVertices` reads
 `getOffsets(pose)`, never the fields — so writing them is, again, neither an
 error nor a move. **Call `attachment.updateSequence()` after every write**, or
-every frame renders the quad it was loaded with. A setup fit on spineboy ran
-4,500 renders and reported the same number for all of them before this surfaced
-(the same loop log, §4.2).
+every frame renders the quad it was loaded with.
 
 ⇒ **An MAE that is identical across every pose, and that does not move for any
 parameter you sweep — a bone's local transform, an attachment's offsets — is one
@@ -6490,8 +6404,7 @@ of them.
 ```
 
 **Read the framing block first.** Everything below it is computed on the grid it
-chose, so an error there arrives disguised as motion — which is exactly what
-happened to two honest ladder runs before this was fixed (issue #34).
+chose, so an error there arrives disguised as motion.
 
 Unless the frames' own box already fits you (above), your candidate is framed **by
 its own drawn pixels**. `check` renders it at the frames' own rate and grid, takes
@@ -6525,9 +6438,8 @@ pass count, then one of
 
 That procedure is blind to the two things it must be blind to. **An invisible
 margin cannot move it**: a region's quad runs past its own artwork wherever the art
-is transparent, and that used to set the scale; now nothing outside the drawing is
-looked at (the selftest proves art padded by 20 px on two sides reports numbers
-identical to the last decimal). **A choice of units cannot move it either**: a rig
+is transparent, and nothing outside the drawing is looked at: art padded by 20 px
+on two sides reports numbers identical to the last decimal. **A choice of units cannot move it either**: a rig
 scaled by 2 % renders to the same pixels and reads the same MAE.
 
 The lines, in order:
@@ -6571,11 +6483,11 @@ a difference that would have been cheaper to leave alone. Measured floor: about 
 third of a pixel on the ladder's shots. On most that is invisible; on a small
 high-contrast frame it is worth a point or two of MAE — rung 6 measured five, and
 on the spineboy sets a **constant** one or two pixels was worth 10–30 % of the
-figure (issue #146). This is the floor the frames' own box has no share in, which is
+figure. This is the floor the frames' own box has no share in, which is
 why `check` prefers that box whenever your pixels are measured to land in it;
 `--viewport` is how you stop it in the cases that box does not cover.
 
-⭐ **What a fitted framing now does about it: one final whole-pixel pass.** After
+⭐ **What a fitted framing does about it: one final whole-pixel pass.** After
 the fit settles (or cycles), `check` searches every whole-pixel offset within ±2 px
 for the lowest MAE over the reference's own drawn pixels and moves the box to the
 best one, when that is worth at least 1 % of the figure. So a fitted set's numbers
@@ -6608,10 +6520,7 @@ blunter.
 
 ⚠️ **Half of that denominator is yours, so do not optimise against it.** The union
 is the pixels *either* side drew, and a large, mostly transparent sprite adds many
-cheap pixels to it — so the *mean falls* on a candidate that got worse. That is not
-hypothetical: spineboy-2's muzzle flare walked its own scale to 13x under a fitting
-loop doing exactly this, and cost every set in that run its framing (issue #119).
-So the line under the MAE divides the same difference by the pixels the
+cheap pixels to it — so the *mean falls* on a candidate that got worse. So the line under the MAE divides the same difference by the pixels the
 **reference** drew, a denominator nothing you do can grow. Read the union figure to
 compare two builds of your own rig, where both sides cover about the same ground,
 and the reference-denominator figure when you are deciding whether a change made
@@ -6654,7 +6563,7 @@ appear under the MAE:
   is `|MAE − above| ≤ floor`. So `MAE − above` is what the texture explained on these
   frames and `floor` is the most it could ever explain. **A floor near zero is a proof
   that the texture is not your problem** — which is a finding worth having before a
-  day of key-hunting, and one the old recipe could not give.
+  day of key-hunting.
 
 Measured on rung 3: **6.13 / 6.01** with the candidate's own full-resolution atlas,
 of which **4.45 and 4.10 is texture** — about **70 %** — leaving **1.68 / 1.91** that
@@ -6669,8 +6578,8 @@ pixel* across stopped being visible at half scale, so a substituted run can repo
 frame-change disagreement the graded run does not have. Read it for the floor, never as
 the verdict.
 
-🚨 **Do not run this with `--atlas`, which is what the recipe used to say and which
-substitutes region *geometry* along with the texture.** `--atlas` names **your own**
+🚨 **Do not run this with `--atlas`, which substitutes region *geometry* along with
+the texture.** `--atlas` names **your own**
 atlas for the case where it is not beside your skeleton; point it at a foreign one and
 the skeleton is re-loaded against that atlas. An atlas entry is not only a page and a
 rectangle — it carries **`rotate:`** and the trim offsets that say where the opaque part
@@ -6679,15 +6588,14 @@ your attachments are re-seated and the quads change. Worse, `spine-core` impleme
 region's rotated corner assignment for `rotate: 90` and for nothing else, so a
 270-packed region is sampled from the wrong part of the page outright.
 
-⇒ **The tell was unmistakable and it is the reason this is now a flag of its own: the
-number went the wrong way.** A texture floor can only *explain* error, so a diagnostic
+⇒ **The tell is that the number goes the wrong way.** A texture floor can only *explain* error, so a diagnostic
 that sends the MAE **up** on every set has substituted geometry rather than pixels.
-Rung 7 is that case — its pack is `rotate: 270` — and under `--atlas` it read
-24.93 → 28.84 and 19.17 → 27.75, which had to be recorded as **inconclusive**. Under
+Rung 7 is that case — its pack is `rotate: 270` — and under `--atlas` it reads
+24.93 → 28.84 and 19.17 → 27.75, which cannot be read as a floor at all. Under
 `--texture-from` the same rung measures a floor of **1.7 MAE** on every set, about 2 %
 of each figure: there *is* a floor, it is small, and the rig is the story after all.
 
-⇒ **You no longer have to inspect the atlas for `rotate` or trim before running it.**
+⇒ **You do not have to inspect the atlas for `rotate` or trim before running it.**
 `--texture-from` keeps every world vertex where your own atlas put it and remaps only
 the texture coordinates, through the drawing's own coordinate space, so a rotated or
 trimmed pack lands the same artwork in the same place. If a region of yours is missing
@@ -6726,7 +6634,7 @@ same failure as capturing a guard's expected value from a screen that is already
 broken: the baseline records the defect, and then the *repair* is what looks wrong.
 
 ⚖️ **`frames.json`'s own box, and the `declared` line that says whether you got it.**
-Every set now prints one, taken or refused, with the numbers that decided:
+Every set prints one, taken or refused, with the numbers that decided:
 
 ```
      declared   frames.json's own box: TAKEN, coincident — a fit there asks for 0.08 px, under
@@ -6744,14 +6652,14 @@ correction, which is what a different origin or a different unit looks like, and
 
 ⚠️ **The test is on extent, and extent is not the same claim as coordinates.** A
 candidate authored in the frames' own world units — one whose setup box lands on the
-reference's to the pixel — used to fail it whenever its union content box differed by
-a few per cent at the extremes, because `fitFraming` registers extent and a box 6 %
-narrower reads as 6 % of scale, which is arithmetically what a units error reads as.
-Rung 7 was refused on **all twelve** of its sets that way, and the fitted framing it
-fell back to cost every one of them 0.28–2.01 MAE against the declared box. That cost
-was real and it was **not** a sign the coordinates were wrong.
+reference's to the pixel — fails an extent test whenever its union content box
+differs by a few per cent at the extremes, because `fitFraming` registers extent and a
+box 6 % narrower reads as 6 % of scale, which is arithmetically what a units error
+reads as. On extent alone, rung 7 is refused on **all twelve** of its sets, and the
+fitted framing it falls back to costs every one of them 0.28–2.01 MAE against the
+declared box — a real cost, and **not** a sign the coordinates are wrong.
 
-⇒ **`check` now separates the two by asking whether one similarity can explain the
+⇒ **`check` separates the two by asking whether one similarity can explain the
 disagreement at all.** A difference of units or of origin *is* a similarity, so the fit
 absorbs it exactly and leaves a residual near zero — a rig at 2 % different units leaves
 0.27 px rms. A silhouette differing at the extremes is not a similarity, so the residual
@@ -6794,8 +6702,7 @@ frame and wrong only in the relation between two:
   structure as matching. The column says `the reference moves here and yours holds
   still`.
 
-Both of those were found by that run writing its own render-diff by hand. Read this
-line whenever the MAE is flat and something still looks wrong: a flat MAE says the
+Read this line whenever the MAE is flat and something still looks wrong: a flat MAE says the
 framing and the art agree, and it says nothing at all about whether your shot holds
 and blinks where the reference does.
 
@@ -6814,8 +6721,7 @@ shifts under three world units and comes back, so the two coarse samples land on
 same pose either side of it. So §10.3's *key both ends of the hold* has to be applied
 **at each committed rate separately**, and equal values are not enough — the two
 samples have to be **keys**, or a planner reduces through one of them and an
-interpolant inside its own tolerance is not equality. That cost two builds on that
-run, the second of them for exactly that reason. ⇒ Measure the frames' own
+interpolant inside its own tolerance is not equality. ⇒ Measure the frames' own
 frame-to-frame change **once per committed rate**, and where a rate holds, pin both
 ends as keys whenever a finer rate moves between them.
 
@@ -6859,9 +6765,9 @@ There are two matchers and the `how` column says which one answered:
   much wider than its box, and may not contain another of your parts' ink. The last
   is the one a dominant part slips through otherwise — rung 2's course is 81 % of a
   blob that also holds the water, the panel and both rings, so the blob is only
-  1.24x its ink and no wider than its box, and the reported *"course drift 11.2 px"*
-  was the distance to a five-part centroid (issue #37). It now falls to the matcher
-  below and reads 0.0 px.
+  1.24x its ink and no wider than its box; on size and width alone, *"course drift
+  11.2 px"* would be the distance to a five-part centroid. The third condition sends
+  it to the matcher below, which reads 0.0 px.
 - `tmpl 0.62` — the reference merged your slot into a neighbour (they touch, or one
   is drawn over the other), so the fallback rendered **your slot on its own** and
   correlated it against the reference around where you drew it. The number is the
@@ -6872,9 +6778,9 @@ There are two matchers and the `how` column says which one answered:
   template pixel you draw something over cannot match the reference wherever the
   slot really is, so it adds the same residual at every offset — and, because
   sliding the template moves those samples onto other pixels, their gradient
-  decides the winner wherever the visible basin is shallow. That is not a
-  hypothetical: it is what made four of the seven examples in this repository
-  report 0.8–2.2 px against frames rendered from themselves (issue #698).
+  decides the winner wherever the visible basin is shallow. Correlated with those
+  pixels, four of the seven examples in this repository report 0.8–2.2 px against
+  frames rendered from themselves.
 
 ⚠️ **Both matchers are capped, and a blank is a real answer.** A part can be
 displaced by about its own size and still be that part in the picture; past that,
@@ -6947,24 +6853,17 @@ never against a number from a page about another rig.** A component match prints
 the other sentence — two centroids have no such bound, only the search radius.
 
 🚨 **The clamp bounds the figure only while the whole-pixel winner is the
-identity, and for a while nothing checked that second half.** Issue #698: four of
-the seven examples in this repository read **0.81, 1.11, 2.13 and 2.21 px** against
-frames rendered from themselves, because the template carried the pixels the
-candidate draws *over itself*. Those match nothing wherever the slot really is, so
-they add a residual at every offset — and sliding the template moves them onto
-other pixels, so their gradient walks the winner off the origin wherever the
-visible basin is shallow. The exhaustive whole-pixel field for `flex`'s backdrop
-had its minimum at `(2, 0)` scoring 7.75 against the identity offset's 8.76.
-Correlating only what shows put all seven back on `(0, 0)`, and `C25`–`C30` of
-the repository's own selftest gate that over every example it ships — so the next
-one is gated by arriving.
+identity.** That is why the template carries only what shows: with the pixels the
+candidate draws *over itself* in it, four of the seven examples in this repository
+read **0.81, 1.11, 2.13 and 2.21 px** against frames rendered from themselves.
+Those pixels match nothing wherever the slot really is, so they add a residual at
+every offset — and sliding the template moves them onto other pixels, so their
+gradient walks the winner off the origin wherever the visible basin is shallow. The
+exhaustive whole-pixel field for `flex`'s backdrop then has its minimum at `(2, 0)`
+scoring 7.75 against the identity offset's 8.76. Correlating only what shows puts
+all seven on `(0, 0)`.
 
-🔸 The same page said `3.7 px` before issue #678, for an unrelated reason worth
-keeping: the coarse sweep started at `−radius` and stepped by its stride, so the
-identity offset was on the lattice only when the stride divided the radius, and
-the `±1` refinement around a winner two pixels out could not reach back to it.
-
-**A second example, and the one the repair was measured on.** `gallery/flex` draws
+**A second example, and the one that paragraph was measured on.** `gallery/flex` draws
 a banner and a leaf over a full-stage backdrop, so almost every slot of it reaches
 the template matcher:
 
@@ -6983,8 +6882,6 @@ bun cli.ts check  --candidate <build> --frames <frames>
                 ⤷ bounded by 0.71 px — the correlation put this slot where the candidate drew it, so the whole figure is the sub-pixel step, clamped to 0.5 px on each axis
      per-frame all 29 adjacent pair(s) change by as much as the reference's own frames do
 ```
-
-That figure was **2.21 px** on the same command before #698, on the same slot.
 
 ⭐ **And the same frames plus two deliberately wrong builds are what say which column
 answers which question.** Each differs from the build above in exactly one way —
@@ -7088,9 +6985,9 @@ about your bone tree rather than about a hole in your figure.
 - **A difference smaller than the render scale.** At rung 3's 0.117 px per unit, a
   key 4 units out moves nothing. Author to the frames' precision and record that
   the rest was not checkable.
-- **Whether a mesh is deformed or merely posed.** Since #27 the rasteriser draws
+- **Whether a mesh is deformed or merely posed.** The rasteriser draws
   meshes — weighted, deformed, both — so a rung with meshes is measurable. What it
-  still cannot tell you is *how* a silhouette got its shape: a hull moved by a
+  cannot tell you is *how* a silhouette got its shape: a hull moved by a
   bone chain and the same hull moved by deform keys render to the same pixels, and
   the frames cannot separate them. Choose on what the rig has to do next, not on
   what the frames appear to say. ⚠️ **But `bench` does see it.** Take a disc that
@@ -7124,9 +7021,9 @@ about your bone tree rather than about a hole in your figure.
   was, and the interesting ones are interesting because it left the interval. Rung
   4's ball makes contact entirely inside one twelfth of a second: the sheet puts it
   **40 px below both 12 fps frames that bracket it**, while its x sits within their
-  own range. A search whose reach was scaled from those two frames' own step
-  therefore looked ±9 px for something 40 px away and reported the interpolation
-  back, twice, before the tile was read rather than inferred.
+  own range. A search whose reach is scaled from those two frames' own step
+  therefore looks ±9 px for something 40 px away and reports the interpolation
+  back: read the tile rather than inferring it.
 
 ---
 
@@ -7148,18 +7045,10 @@ frames. Every line is marked with where it comes from:
 - 📗 **stated** — quoted or paraphrased from the page linked in the line.
 - 🧩 **inferred** — this guide's reading of those pages. Spine does not say it.
 - 🔬 **observed** — read off the editor's own export of a rigc build, not from a
-  page. Two round trips stand behind these: [issue
-  #285](https://github.com/firejune/rigc/issues/285) (Spine 4.3.23) and the
-  eight-rig trip of 2026-09-16 (Spine **4.3.26**), whose findings are collected in
-  §10.6. ⚠️ This legend said *"used only where rigc now emits the same thing"*,
-  which was true while every observation had already been adopted; §10.6 then
-  carried one that had **not** been — the path `lengths` disagreement — so an
-  observation is now marked by where it was read, and each says for itself
-  whether rigc agrees with it. ⭐ That outstanding one has since been adopted
-  ([#560](https://github.com/firejune/rigc/issues/560)) and the legend is kept in
-  this shape anyway: the reason to mark an observation by its source rather than
-  by whether rigc follows it is that the second fact goes stale and the first
-  does not.
+  page. Two round trips stand behind these: one through Spine 4.3.23 and an
+  eight-rig trip through Spine **4.3.26**, whose findings are collected in §10.6.
+  An observation is marked by where it was read, and each says for itself whether
+  rigc agrees with it.
 
 ### 10.1 Structure
 
@@ -7200,11 +7089,11 @@ a rig whose names miss reads near zero on all of them however well it is built. 
 carry each part's own name straight through — PNG basename → slot → attachment, and
 the bone that moves it — instead of inventing a scheme of your own.
 
-**Both directions are measured.** The one run whose art shipped a separate PNG per
-body part, each named for the part, applied this deliberately and posted `names`
-measures **an order of magnitude** above anything on the ladder before it — without
-either side seeing the other. Every honest run before it read near zero on the same
-measures. It is the largest single thing any run has got out of a convention.
+**Both directions are measured.** On the ladder, a run whose art ships a separate
+PNG per body part, each named for the part, and that carries those names through,
+posts `names` measures **an order of magnitude** above runs that invent their own —
+without either side seeing the other. It is the largest single thing a convention
+has bought on the ladder.
 
 ⚠️ **And the other half, which matters just as much: when the art is *not* named
 after the parts, no naming strategy beats any other and the measure is noise.** On a
@@ -7225,16 +7114,13 @@ two animations' 16 and 2 bone-timeline keys all came back sorted, while the 30
 `bones`, 24 `slots` and 3 `constraints` — arrays — came back in the build's own
 order, element for element, and each slider kept its place among them.
 
-🚨 **Not every array: `skins` it re-sorts.** That sentence read *"leaves every
-ARRAY alone"* for two releases, on those three arrays and nothing else, and
-`skins` is the one it was wrong about — see the paragraph at the end of this
+🚨 **Not every array: `skins` it re-sorts** — see the paragraph at the end of this
 section.
 
 ⚠️ **The order it sorts them into is natural and case-insensitive, not
-codepoint.** This paragraph said codepoint until
-[#539](https://github.com/firejune/rigc/issues/539) measured it: `Turn, sweep,
-wave` came back `sweep, Turn, wave` and `turn10, turn2, zoom` came back
-`turn2, turn10, zoom`. The corpus says the same thing and always did — of its 105
+codepoint.** `Turn, sweep, wave` came back `sweep, Turn, wave` and
+`turn10, turn2, zoom` came back `turn2, turn10, zoom`. The corpus says the same
+thing — of its 105
 name-keyed collections, 102 are consistent with a codepoint sort and **3 are
 not**: `spineboy-pro.json` keys `portal-flare9` *before* `portal-flare10`, which
 no codepoint sort produces. Every natural comparator reproduces all 105. (The
@@ -7245,54 +7131,34 @@ one key, deform blocks counted at each of their three levels;
 ⇒ in rigc: `animations` is emitted sorted (R10), because it is the one
 object measured here whose ORDER is also an index space — every reference into
 the re-sorted *other* objects is by name on both sides, so nothing moves when
-they are re-keyed. ⚠️ Since [#716](https://github.com/firejune/rigc/issues/716)
-a skin's `attachments` slot keys are emitted sorted too, for the **text** and
-for no reference: a rebuild of an editor export is the export only if it is the
-same text (§10.6b), and 11 of the twelve under `examples/` keyed a skin in draw
-order where the export sorts it. Nothing is refused on that map — a pair the
+they are re-keyed. ⚠️ A skin's `attachments` slot keys are emitted sorted too,
+for the **text** and for no reference: a rebuild of an editor export is the export
+only if it is the same text (§10.6b). Nothing is refused on that map — a pair the
 comparator leaves open, or a slot name with a `/` in it, keeps the whole map in
-rigc's order instead. rigc emits **that comparator's own order**, which
-[#728](https://github.com/firejune/rigc/issues/728) then measured in full off five
-stored round trips (R10) rather than quantifying over a family. Sorting the
-105 collections that way reproduces **105 of 105**, the three codepoint cannot
-included, and refuses none of them; the codepoint rule that stood until
-[#543](https://github.com/firejune/rigc/issues/543) reproduced 102 and refused
-those same 3.
+rigc's order instead. rigc emits **that comparator's own order**, measured in full
+off five stored round trips (R10). Sorting the 105 collections that way reproduces
+**105 of 105**, the three codepoint cannot included, and refuses none of them.
 
-✅ **`events` is re-keyed too, and the references into it survive it.** The same
-session measured it: `zebra, mike, alpha` came back `alpha, mike, zebra`, and the
-firings still resolved **by name** — `0.3 -> mike`, `0.6 -> alpha`, payloads
-intact (#539). So the editor treats `events` and `animations` differently, and
+✅ **`events` is re-keyed too, and the references into it survive it.** Measured:
+`zebra, mike, alpha` came back `alpha, mike, zebra`, and the firings still resolved
+**by name** — `0.3 -> mike`, `0.6 -> alpha`, payloads intact. So the editor treats `events` and `animations` differently, and
 rigc emits events in the order you declare them.
 
-🚨 **`skins` is re-sorted, with `default` pinned first — measured, and it is the
-first array measured to move.** A four-skin rig built `default, zulu, mike, alpha`
-exported `default, alpha, mike, zulu`
-([#541](https://github.com/firejune/rigc/issues/541)), and the deform timelines
+🚨 **`skins` is re-sorted, with `default` pinned first — measured.** A four-skin rig
+built `default, zulu, mike, alpha` exported `default, alpha, mike, zulu`, and the
+deform timelines
 came back keyed `mike, zulu` rather than `zulu, mike` with it. Note `alpha` sorts
 before `default` under every candidate comparator and still came back second: the
 default skin is **pinned**, not sorted. It matters for the same reason `animations`
 does — `skins` carries ordinals in the binary half, `skins[readInt()]` for an
-attachment timeline and `skins[skinIndex]` for a linked mesh — so this is the
-`animations` defect (#535) in the collection nobody had checked. ⇒ in rigc: R11.
+attachment timeline and `skins[skinIndex]` for a linked mesh — so it carries the
+same hazard as `animations`. ⇒ in rigc: R11.
 
-✅ **Which comparator it is was the open half of that, and #728 closed it.**
-`alpha, mike, zulu` is the order codepoint, case-folding and natural order all
-produce, so #541's rig refuted nothing and rigc refused any skin-name pair the
-candidates could disagree about. Two of the five round trips carried one name list
-as **both** collections and both came back in one order, so `skins` and
-`animations` share one comparator — measured, not inferred — and the wider skin
-refusal is gone (R11).
-
-✅ **The two readings this replaces.** A pull request once called `skins` *measured
-preserved*, on the strength of a one-skin rig where a one-element array comes back
-in order whatever the editor does to it;
-[#544](https://github.com/firejune/rigc/issues/544) corrected that to *unmeasured*,
-and added that it could not be measured because the editor refused a four-skin rig
-on import without printing a word. Both readings were the same generalisation — *an
-editor does not move arrays* — off the three arrays that were measured, and the
-"without a word" was rigc's own harness discarding the editor's stderr, which had
-named the cause all along (§3.4.2).
+✅ **Which comparator it is, is measured too.** `alpha, mike, zulu` is the order
+codepoint, case-folding and natural order all produce, so that rig alone decides
+nothing between them. Two of the five round trips carried one name list as
+**both** collections and both came back in one order, so `skins` and `animations`
+share one comparator — measured, not inferred (R11).
 
 ### 10.2 Draw order
 
@@ -7633,15 +7499,15 @@ and a character's body bone almost never has them there, which is the very shape
 paragraph above was written from. Turn the parent by δ and a child *at the origin*
 back by δ and the child is where it was; a child sitting 10 units off swings through
 an arc of that radius first, and the counter-turn only spins it on the spot. The fold
-moves art, so it **changes the picture**. Measured on the second spineboy run, whose
-`hip` carries no attachment and has three children 9–13 units off it: the fold cost
-**3 MAE on every `idle` frame** — mean 23.0 with it against 19.9 without, same search
-— and it was removed. ⇒ Read the children's offsets before you fold. At the origin,
+moves art, so it **changes the picture**. Measured on a spineboy run whose `hip`
+carries no attachment and has three children 9–13 units off it: the fold costs
+**3 MAE on every `idle` frame** — mean 23.0 with it against 19.9 without, same
+search. ⇒ Read the children's offsets before you fold. At the origin,
 fold: it is exact and it is cheap. Off the origin the degeneracy is still there but
 it is **soft**, not exact, and a soft degeneracy is *regularised, not folded* — leave
 the values alone and add a penalty on the gauge direction to the objective instead.
-That run used **2e-5 per squared degree** of hip rotation: invisible at animator-sized
-angles, and still decisive against the +181° against −184° above.
+**2e-5 per squared degree** of hip rotation is enough there: invisible at
+animator-sized angles, and still decisive against the +181° against −184° above.
 
 ### 10.4 Curves
 
@@ -7682,16 +7548,15 @@ by fitting each span's **own** handles, and then writes the nearest entry of a n
 table, has bought a key count at one tolerance and shipped it at another. Nothing in
 the loop can see that: the timeline count, the key count, the curve kinds and the
 duration are all unmoved, so `diff` does not shift and the gate stays green, while
-the rendered result changes by a multiple. Rung 8's first version did exactly this
-and went from **1.07 to 4.65 MAE** — four times its own fit's floor. ⇒ Two passes.
+the rendered result changes by a multiple. Measured on rung 8, that goes from
+**1.07 to 4.65 MAE** — four times the fit's own floor. ⇒ Two passes.
 Pass A fits freely and exists only to *discover* which shapes the shot uses; those
 are clustered into the table; pass B re-plans **every** timeline under the table it
 will actually write. Never fit free handles and substitute the nearest named shape
 after the fact. (The table's size then trades against the key count at a fixed
 tolerance — that shot ran 4 easings/368 keys, 8/314, 12/300, 16/284 — because a
-richer table holds more spans.) This is rung 6's clamp defect in another suit:
-**a constraint that is not enforced where the value is written is not a
-constraint.**
+richer table holds more spans.) **A constraint that is not enforced where the
+value is written is not a constraint.**
 
 🧩 **⇒ A span with no interior sample takes the automatic handles, not linear.** Two
 keys on adjacent samples leave pass B nothing to fit — the samples cannot constrain
@@ -7699,9 +7564,9 @@ that span's shape at all — and a planner with nothing to fit leaves `ease` off
 is linear (§4.5): the one shape this section says to argue for rather than default to.
 "No information" is not an argument for constant speed. Take instead the tangents the
 keys either side imply — the editor's own **automatic handles**, quoted above — and
-snap *those* to the nearest table entry, exactly as you would a fitted span. Rung 8's
-second version did this for its adjacent pairs and the samples barely moved (**17.34 →
-17.26 MAE**) while `curve_kinds` changed wholesale: nil in the frames, large in the
+snap *those* to the nearest table entry, exactly as you would a fitted span. Done for
+rung 8's adjacent pairs, the samples barely move (**17.34 → 17.26 MAE**) while
+`curve_kinds` changes wholesale: nil in the frames, large in the
 structure, which is the signature of a convention rather than a fidelity fix — and
 this section's whole subject.
 
@@ -7723,7 +7588,7 @@ of key does not have a transition, such as slot attachment or event keys"* —
 every key that carried a curve into a segment whose next key holds the same value on
 every channel comes back as `"curve": "stepped"` — 14 keys on the gallery's `nod`
 alone, with every rendered frame byte-identical, because a curve over a flat segment
-draws nothing. rigc emits the same for a **named** easing (§4.5, issue #369), so
+draws nothing. rigc emits the same for a **named** easing (§4.5), so
 `diff`'s `animations.curve_kinds` reads 1.000 between a build and its own export
 rather than charging the hold rewrites against the timing. A raw `curve` stays as
 written: it is the file's own numbers, and the reference corpus has the editor itself
@@ -7751,8 +7616,8 @@ without the box and rebuilds the hull on its own.
 the command line the ⇒ above is the exception rather than the case.** The
 sentence is still true of an export made without the box; what is measured is
 that `-e json` with no export-settings file does not make one. Every field on the
-nonessential list came back present, unchanged and not zero on round trip 6
-(2026-09-16, Spine 4.3.26): the header's `fps` (24 on `fields`, the one rig that
+nonessential list came back present, unchanged and not zero on the eight-rig
+round trip (Spine 4.3.26): the header's `fps` (24 on `fields`, the one rig that
 declares it) and `images`; a mesh's `width`/`height` (64/48) and `edges`
 (16 entries, identical); the editor colours of a **bounding box** (`3cff6bff`), a
 **clipping** polygon (`ff3c6bff`) and a **path** (`ff6b3cff`); and a bone's
@@ -7771,10 +7636,10 @@ binary export is performed using default settings"* —
 those defaults**, so the answer above is measured here and documented nowhere.
 ⇒ In practice: do not plan around fields being dropped. An export you did not
 personally make without the box is an export that has them, and the round trip is
-therefore **richer** than the build rather than poorer — which is why #368's
-hull-and-edges degradation does not return on a second trip (no import warning in
-any of the eight `roundtrip.log`s, and a five-vertex mesh's `hull: 4` came back
-`4` rather than recomputed to `5`). A nonessential-**off** trip would need an
+therefore **richer** than the build rather than poorer — which is why a second
+trip does not degrade a mesh's hull and edges: no import warning on any of the
+eight rigs, and a five-vertex mesh's `hull: 4` came back `4` rather than
+recomputed to `5`. A nonessential-**off** trip would need an
 export-settings JSON, and ❓ the key name inside that file is not documented
 either.
 
@@ -7784,18 +7649,15 @@ omit them in raw JSON and every UV collapses, in silence. Name an `image`.
 
 ✅ **You need not imitate the exporter's omissions — the emitter does it for you.**
 Spine's exporter drops fields equal to their default, which is why the format page is
-a long list of *"assume 0 if omitted"*, and since
-[#716](https://github.com/firejune/rigc/issues/716) rigc's emitter drops the same
-ones (R1, §2; the table is §10.6c). So an author may still state a default — `x: 0`
+a long list of *"assume 0 if omitted"*, and rigc's emitter drops the same ones
+(R1, §2; the table is §10.6c). So an author may still state a default — `x: 0`
 in a rig spec is legitimate and stays in the spec — and the file leaves it out.
-⚠️ This paragraph said *"do not imitate the exporter's omissions … rigc deliberately
-does the opposite"* until then. The advice was re-derived rather than kept: **the
-round trip is the reason.** A rebuild of an editor export that writes back every
-default the export left out is a different file from the export in 2,338 places over
-the twelve under `examples/`, and one that leaves them out is the export's own text
-apart from the header's `hash` and `spine` (`IG83`, and [INGEST §2.3](INGEST.md)).
+**The round trip is the reason.** A rebuild of an editor export that writes back
+every default the export left out is a different file from the export in 2,338
+places over the twelve under `examples/`, and one that leaves them out is the
+export's own text apart from the header's `hash` and `spine` ([INGEST §2.3](INGEST.md)).
 The habit worth carrying over is still not *omit defaults* — it is *declare only what
-the shot needs*; what changed is that stating a default costs nothing in the file.
+the shot needs*; stating a default costs nothing in the file.
 
 ### 10.6 What a round trip gives back
 
@@ -7805,8 +7667,8 @@ is a construct that might vanish there, and an agent cannot see that it did.
 
 🔬 The source is one run: eight discriminator rigs, each built to isolate a group
 of fields, compiled by rigc **0.21.0** (emitting 4.3.13), imported into a licensed
-Spine **4.3.26** through the documented CLI and exported back on 2026-09-16, with
-the predictions written down before anything was opened. **Seven of the eight came
+Spine **4.3.26** through the documented CLI and exported back, with the
+predictions written down before anything was opened. **Seven of the eight came
 back differing from their build in three header fields and nothing else** —
 `hash` and `audio`, which the editor adds, and `spine`, which it stamps with its
 own version. The eighth is the path rig, and it is the last bullet here.
@@ -7817,8 +7679,8 @@ comes back `48.0`) and **omitted defaults** — the export drops any field equal
 its parser default, so the header loses `x: 0` and `y: 0`, a bone loses `x: 0`, and
 a key at t=0 loses its `"time": 0`. Every name-keyed object is also re-sorted, per
 §10.1. None of those is a loss of information, and each is worth knowing before
-you read a `diff`. 🔁 Since [#716](https://github.com/firejune/rigc/issues/716) the
-bone's `x: 0` and the key's `"time": 0` are left out by rigc as well (§10.6c); the
+you read a `diff`. 🔁 rigc leaves out the bone's `x: 0` and the key's `"time": 0`
+as well (§10.6c); the
 header's origin is not, because the 4.3 JSON reader has no default for it
 (`skeletonData.x = skeletonMap.x`, `SkeletonJson.js:70`), so an absent origin loads
 as `undefined` where a written one loads as `0` — writing it is exact for both
@@ -7855,11 +7717,9 @@ evidence that the format will carry what you write.
 - 🔬 **A path attachment's `closed: true` and `constantSpeed: false` survive**, and
   so do its `position`, `spacing` and three-channel `mix` timelines — all three
   channels of every `mix` key, and all twelve curve numbers on each key that
-  carries a curve. ⚠️ Its `lengths` did **not**, which is the last bullet — and
-  since [#560](https://github.com/firejune/rigc/issues/560) they do on that rig,
-  because rigc emits the computation the editor runs rather than one near it.
-  What they are computed ON is a second question, which the round trip could not
-  ask and #804 did: see the end of this section.
+  carries a curve. ⚠️ Its `lengths` came back recomputed — the paragraph after
+  this list says how, and rigc emits that same computation. What they are
+  computed ON is a second question: see the end of this section.
 - 🔬 **`physics.mix` and `physics.reset` timelines survive**, the `reset` key
   included — a key that carries a time and no value at all — and so does the
   physics constraint's setup `mix`.
@@ -7871,8 +7731,7 @@ evidence that the format will carry what you write.
   five-vertex mesh declaring `hull: 4` came back `4`, with its `edges`, `color`,
   `uvs` and `triangles` unchanged. Beside it, on the same rig: the header's
   `referenceScale`, a region's `rotation` / `scaleX` / `scaleY` / `color`, and an
-  attachment whose `path` differs from its placeholder (the mechanism of
-  [#552](https://github.com/firejune/rigc/issues/552)) all survive. A `--pack`
+  attachment whose `path` differs from its placeholder all survive. A `--pack`
   build round-trips too.
 
 🚨 **The one thing that did not come back is a path attachment's `lengths`, and it
@@ -7889,21 +7748,18 @@ under 4.3.26 (`[152.7006, 305.4012, 458.1019, 610.8025]`) and on an open one und
 ⚠️ **That last reading settles the model and cannot settle the spelling.** A
 4-sample chord sum agrees with the runtime's forward difference to about **nine
 significant digits** — *below* what float32 can hold, which is why both spellings
-reproduce both exports exactly, and since issue #716 below what rigc's own file
-holds too, because rigc now writes each number as its float32. Under the six fixed
-decimals it wrote until then the file could tell them apart: on both rigs above
-they rounded apart on the **last** curve, where the running total has accumulated
-most — `610.802519` against `610.802520`, `1127.735817` against `1127.735818`. So
-the editor is the evidence for *what* is computed, and only `PathConstraint`
-itself is evidence for *how* — `PS67`/`PS68` compare the transcription with it at
-double precision.
+reproduce both exports exactly, and below what rigc's own file holds too, because
+rigc writes each number as its float32. At six fixed decimals the two would round
+apart on the **last** curve of both rigs above, where the running total has
+accumulated most — `610.802519` against `610.802520`, `1127.735817` against
+`1127.735818`. So the editor is the evidence for *what* is computed, and only
+`PathConstraint` itself is evidence for *how*.
 
-⭐ **rigc emits the forward difference itself** since
-[#560](https://github.com/firejune/rigc/issues/560) — `pathCurveLengths` in
+⭐ **rigc emits the forward difference itself** — `pathCurveLengths` in
 [`src/compile.ts`](../src/compile.ts) is those runtime lines transcribed, down to
 `Math.sqrt(dx * dx + dy * dy)` rather than `Math.hypot` and `0.16666667` rather
 than `1 / 6`, both of which change the emitted file. All seven entries of the two
-exports above now come back at the precision the editor prints them, so a path rig
+exports above come back at the precision the editor prints them, so a path rig
 built here and one authored in the editor parameterise identically. ⚠️ The
 consequence for you is a vocabulary one: `lengths` is **not** an arc length. It
 sits about 0.5 % below the arc by construction, so a physical quantity — how far a
@@ -7914,31 +7770,26 @@ out of the artifact.
 wrap-around curve even on an open path** — that open path's fourth entry,
 `2136.228`, is the closed-chain cumulative. The parser allocates `vertexCount / 3`
 and copies whatever is there, and `PathConstraint` reads at most
-`lengths[curveCount]`, so the trailing entry is never read — and since
-[#804](https://github.com/firejune/rigc/issues/804) rigc writes it too, measured
-over the closed chain, so the `gallery/ride` build ends on the same `2136.228`.
+`lengths[curveCount]`, so the trailing entry is never read — and rigc writes it
+too, measured over the closed chain, so the `gallery/ride` build ends on the same `2136.228`.
 
-🚨 **"Every digit the editor printed" was true of two rigs and false in
-production** ([#804](https://github.com/firejune/rigc/issues/804)). Both rigs above
-are unweighted, unscaled and unconstrained, and the computation is only half of
-the number — the other half is the geometry it is fed, and there the editor and
-rigc differed twice:
+🚨 **The computation is only half of the number — the other half is the geometry
+it is fed.** Both rigs above are unweighted, unscaled and unconstrained; on a path
+that is not, two things decide what an omitted `lengths` measures:
 
-- **Scale.** rigc blended weighted vertices through setup matrices that ignored
-  bone scale, shear and `inherit`: a 50/50-weighted probe path over a bone at
-  scale 2 measured 0.752× the runtime's own `curves`. The matrices are the
-  runtime's now, and an omitted `lengths` measures within 1e-4 of `curves`
-  (`PS186`).
+- **Scale.** rigc blends weighted vertices through the runtime's own setup
+  matrices — bone scale, shear and `inherit` included — so an omitted `lengths`
+  measures within 1e-4 of the runtime's own `curves`.
 - **Constraints.** The editor measures the pose the first update hands the path
   constraint, with every constraint ordered before it applied; a transform
   constraint on the path's slot bone ordered after it moves nothing. rigc does
   not pose, so it cannot reproduce that — an omitted `lengths` is the
-  **unconstrained** setup figure (`PS190`), and on a path a constraint moves at
+  **unconstrained** setup figure, and on a path a constraint moves at
   rest that is not the editor's number.
 
 ⇒ **A stated `lengths` is carried as stated**, and `ingest` writes the source's
 array into the spec, so a rebuilt export is its export on this field. What rigc
-still measures is an array you left out of a spec you wrote.
+measures is an array you left out of a spec you wrote.
 
 ⇒ **What this means for you.** `lengths` is the one number in a path rig you
 cannot check by looking: `diff` does not compare it, and `A33` asks only that it
@@ -7948,29 +7799,25 @@ path constraint, against **0.0000** on the other seven. If you are comparing a
 path rig against an editor reference and everything structural agrees while the
 picture does not, this is the first place to look.
 
-⚠️ **What decides whether it moves a pixel is the POSITION mode**, and an earlier
-reading of this paragraph put it on `spacingMode: proportional`, which is the one
-mode it cannot be: proportional spacing scales *with* the total, and that is
+⚠️ **What decides whether it moves a pixel is the POSITION mode**, not
+`spacingMode: proportional`, which is the one mode it cannot be: proportional spacing scales *with* the total, and that is
 exactly what cancels. The rig that drifted is `positionMode: fixed`, where an
 absolute `position` is compared against a total that moved. Under
 `positionMode: percent` the position scales with the total too, so a uniform
-change cancels out of both — measured across #560, `gallery/ride` is
-percent/percent and every one of its 74 rendered frames came back **byte
-identical** on an emitted array all three of whose numbers moved. ⇒ Read a
+change cancels out of both — measured: `gallery/ride` is percent/percent, and
+every one of its 74 rendered frames comes back **byte identical** across an
+emitted array all three of whose numbers change. ⇒ Read a
 `lengths` disagreement as *certainly wrong data, and visible only under
 `positionMode: fixed`*.
 
 ### 10.6b The order it writes keys in
 
 🔬 **The editor writes every object's keys in one fixed order per kind of
-object**, and since [#716](https://github.com/firejune/rigc/issues/716) rigc
-writes the same. Read off the twelve exports under `examples/`: for each kind,
+object**, and rigc writes the same. Read off the twelve exports under `examples/`: for each kind,
 every object's key sequence is a subsequence of one order, no two exports
 contradict each other on any kind, and the table below is that order. It lives
 in one place, [`src/keyorder.ts`](../src/keyorder.ts)'s `EDITOR_KEY_ORDER`, and
-the compiler applies it once to the finished skeleton — `CUR83` holds this table
-to that one, and `IG77` holds that one to the exports on every run with a
-corpus.
+the compiler applies it once to the finished skeleton.
 
 | Kind | Keys, in the order the editor writes them |
 | --- | --- |
@@ -8013,8 +7860,8 @@ says which.**
 - **A pair no export carries together has no measured order**, and the row
   places it the way rigc already emitted it — a transform constraint's
   `rotation` before `x`, an ik key's `time` before `mix`, a physics
-  constraint's `x`/`y` before `rotate`. `src/keyorder.ts` lists every such pair.
-  Such a pair did not move, and nothing here says the editor agrees.
+  constraint's `x`/`y` before `rotate`. `src/keyorder.ts` lists every such pair,
+  and nothing here says the editor agrees.
 - **A kind with no row keeps rigc's order whole**: a linked mesh, a path or
   point attachment, a sequence, the path and slider constraints, an event
   definition, and the keys of every timeline the twelve do not key with two
@@ -8028,10 +7875,8 @@ says which.**
   `time` — first in every other key kind the editor writes — behind `value`.
 
 🔬 **Two positions and one fold are measured on a production set, not on
-`examples/`** ([#791](https://github.com/firejune/rigc/issues/791)). The twelve
-exports carry no mesh `path` or `color` and no slot name outside ASCII — `IG84`
-and `IG85` count both on every run with a corpus — so the table cannot learn
-either, and what rigc writes for them was read off 42 production exports
+`examples/`**. The twelve exports carry no mesh `path` or `color` and no slot
+name outside ASCII, so the table cannot learn either, and what rigc writes for them was read off 42 production exports
 instead:
 
 - **A mesh attachment writes `path` and `color` right after `type`, `path` before `color` — measured on a production set (#791), not on `examples/`.**
@@ -8039,51 +7884,46 @@ instead:
   `color` wrote that second; no mesh carried both. The row does not list them,
   so the position is the constructor's — `meshTextureKeys` in
   [`src/compile.ts`](../src/compile.ts), which every mesh route spreads right
-  after `type` (`S104`). A region's `path` and a linked mesh's keys stay where
+  after `type`. A region's `path` and a linked mesh's keys stay where
   they were: neither was in the set, and an analogy is not a measurement.
 - **A skin's slot keys are compared after `foldBeforeComparing`, which reads U+3000 as U+0020 and U+FF10–U+FF19 as U+0030–U+0039** —
   the ideographic space as a space, the full-width digits as `0`–`9`
   (`EDITOR_NAME_FOLD`). One map of 95 slot keys, 7 of them carrying those
   characters, came back in an order this reproduces 95 of 95 and neither a
-  codepoint sort nor the comparator without the fold does (`S105`). It is **not**
+  codepoint sort nor the comparator without the fold does. It is **not**
   `normalize('NFKC')`, though NFKC folds both the same way: NFKC, a classifier
   that reads every Unicode digit as a digit and every space separator as a space,
   and a width fold alone all reproduce that map and disagree past it (on `ﬁ`,
   `²`, `٣`, `Ａ`, a no-break space), and what all three agree on is exactly
   these two classes. The comparator is R10's, so animation and skin names are
   compared after the fold too. A pair the fold does not close — a tab, a
-  no-break space — still keeps the map in rigc's order, whole (`S106`).
+  no-break space — still keeps the map in rigc's order, whole.
 
 🔸 **An object keyed by NAMES is not a field order**, and the table does not
 touch one. A bone's or a slot's timelines, and a transform constraint's
 `properties` and each `to` inside them, are read into the runtime's arrays in the
 order they are keyed — for timelines, the order they are applied in — so their
-order is more than a key's position, and rigc already emits the export's own on
-all twelve. A skin's `attachments` slot keys are the one name-keyed map this
-changed: sorted by the editor's comparator (§10.1). The per-slot maps inside are
+order is more than a key's position, and rigc emits the export's own on all
+twelve. A skin's `attachments` slot keys are the one name-keyed map rigc sorts: by
+the editor's comparator (§10.1). The per-slot maps inside are
 the rig's own order.
 
-⇒ **What this means for you: nothing to write.** No input format changed and no
-key order is yours to state — a rig spec is read by name, and its field order
-still means nothing. What changed is that a canonical-form comparison of an
-export's rebuild against the export no longer finds an object whose keys sit
-elsewhere (`IG76`). What it found next was the defaults the export leaves out
-and rigc wrote, `"name": null`, and the three header keys (`IG78`) — and since
-§10.6c it finds the header's `hash` and `spine` and nothing else (`IG83`).
+⇒ **What this means for you: nothing to write.** No key order is yours to state —
+a rig spec is read by name, and its field order means nothing. A canonical-form
+comparison of an export's rebuild against the export finds no object whose keys
+sit elsewhere, and with §10.6c it finds the header's `hash` and `spine` and
+nothing else.
 
 ### 10.6c The keys it leaves out
 
 The editor writes a key only where its value is not the one the parser reads in its
-absence, and since [#716](https://github.com/firejune/rigc/issues/716) rigc's emitter
-does the same, in one pass over the finished skeleton (`withoutParserDefaults` in
+absence, and rigc's emitter does the same, in one pass over the finished skeleton (`withoutParserDefaults` in
 `src/keyorder.ts`, run just before §10.6b's). A key is left out when its value is
 **exactly** the one below — the float the file would hold, not a value near it — so a
 rotation of `1e-45` is written and a rotation of `0` is not. The table is
 `PARSER_DEFAULTS`, and every row is the linked `spine-core` parser's own fallback
-(`getValue(map, key, default)` in `SkeletonJson.js`); the selftest loads an object of
-each kind with the key at that value and without it, and requires the two to be the
-same `SkeletonData` (`S103` on the in-tree builds, `IG82` on the corpus), and deletes
-every key of every in-tree build in turn to find one the table is missing (`S101`):
+(`getValue(map, key, default)` in `SkeletonJson.js`), and an object of each kind
+loads to the same `SkeletonData` with the key at that value and without it:
 
 | Kind | Left out when it is |
 | --- | --- |
@@ -8138,14 +7978,14 @@ read an absent `mixY` as that same `0`. *The key before's* is a sequence key's
   (`skeletonData.x = skeletonMap.x`, `SkeletonJson.js:70`), so an absent origin loads
   as `undefined` and a written `0` as `0`: there is no fallback for them to equal, and
   rigc keeps writing the origin of a declared stage. The editor leaves it out
-  (§10.6's round trip 6), so a rebuild of an export whose stage sits at `0,0` spells
+  (§10.6), so a rebuild of an export whose stage sits at `0,0` spells
   two fields the export does not — `LOSS HEADER_ORIGIN` says so on `ingest`.
 - **A transform constraint's `mixY` and `mixScaleY`.** Their fallback is the
   constraint's `mixX` / `mixScaleX` — but the parser reads those only for a property
   the constraint drives, so on one that drives `y` alone the fallback is the pose's
-  initial `0`, not `1`. A row there was tried and measured wrong: it left out
-  `8-follow-through-pro-ball`'s `"mixY": 1` on two such constraints, they loaded at
-  `0`, and `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` refused the rebuild.
+  initial `0`, not `1`. Measured: a row there would leave out
+  `8-follow-through-pro-ball`'s `"mixY": 1` on two such constraints, they would load
+  at `0`, and `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` refuses that rebuild.
 - **A region's `path`, an attachment's `name`, an event key's payload.** Their
   fallbacks are another value — the attachment's own name, its placeholder, the event
   definition's — which rigc writes only where it differs.
@@ -8156,19 +7996,21 @@ read an absent `mixY` as that same `0`. *The key before's* is a sequence key's
   stated.
 - **Every kind with no row** — the keys of a `shearx`, `sheary`, `inherit`, `alpha`,
   `rgb`, `rgb2`, `rgba2`, path `spacing`/`mix`, physics `gravity`/`reset` or slider
-  timeline, a linked mesh, a point attachment. No build the selftest loads and no
-  export carries an object of those kinds, and a row nothing loads is a claim about
-  the parser nobody has checked — where a missing row only costs a key the parser
-  reads the same either way. `S101` names such a key the day a build emits one.
+  timeline, a linked mesh, a point attachment. No in-tree build and no export
+  carries an object of those kinds, and a row nothing loads is a claim about the
+  parser nobody has checked — where a missing row only costs a key the parser reads
+  the same either way.
 
-⚠️ **Why 4.3's defaults, when #706 row 4 says they are not every generation's.**
+⚠️ **Why 4.3's defaults, when they are not every generation's** (row 4 of
+[GENERATIONS.md](https://github.com/firejune/rigc/blob/main/docs/GENERATIONS.md)'s
+table).
 An omitted physics `inertia` is 0.5 to the 4.3 parser and 1 to the 4.2 one, and that
 is exactly why a key is left out only against the parser rigc links: the file states
 `"spine": "4.3.13"`, and the parser it is gated against is that one. Writing the
 default out would not make the file safe for a 4.2 reader: that reader applies its
 own defaults to every *other* key the file leaves out as well — every one the editor's
-own 4.3 export leaves out, too — and #706 rows 1, 2 and 6 measure what reading one
-generation's data on another generation's runtime does, none of it repaired by one
+own 4.3 export leaves out, too — and that table's rows 1, 2 and 6 measure what
+reading one generation's data on another generation's runtime does, none of it repaired by one
 key written out. That misread is refused where it can be seen, on the reading side
 (`GENERATION_UNSUPPORTED` in `ingest`), rather than written for on the emitting one.
 
@@ -8186,7 +8028,7 @@ answer read off the exports:
 - any figure for keys per second, or for how key density scales with frame rate;
 - which curve type any particular example project or studio actually shipped;
 - whether a **corpus** export — one somebody else made, out of the editor's own
-  dialog — was made with Nonessential data checked. ⚠️ §10.5 now answers this for
+  dialog — was made with Nonessential data checked. ⚠️ §10.5 answers this for
   the **CLI's** `-e json`, where it is measured; that measurement says nothing
   about an export you were handed, and the two must not be read as one;
 - how many bones, slots or timelines a rig of a given size ought to have;
@@ -8219,21 +8061,10 @@ placements become a rig and a motion, what goes between two key poses when nothi
 was given for the in-betweens, and how to spread candidates so a `vote` ballot
 informs.
 
-📏 **Instrument re-baseline, 2026-09-03 — [#306](https://github.com/firejune/rigc/issues/306),
-and it applies to §12 as well.** The objective behind every `residual` in both
-commands now interpolates the frame in **premultiplied** space: a tap that
-straddles a silhouette weights each texel's colour by how much material is there,
-so a part is no longer charged for disagreeing with the ground it is drawn
-against. Nothing about the fields, the coordinate contract or the refusals
-changed, and no threshold moved — `--max-residual`, `--min-visible` and
-`--anchor-residual` are the numbers they were. ⚠️ **What did move is the residuals
-themselves**, downward and by small amounts, most on the parts whose edges are in
-the frame. ⇒ A residual measured before that date and one measured after are not
-the same measurement; re-read a frame rather than comparing across it. The worked
-figures live in [MOTION.md](MOTION.md) §6 and
-[BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md) —
-repository material, not shipped in the package — each with its own re-baseline
-note.
+📏 **The objective behind every `residual` here and in §12 interpolates the frame in
+premultiplied space**: a tap that straddles a silhouette weights each texel's colour
+by how much material is there, so a part is not charged for disagreeing with the
+ground it is drawn against. The worked figures live in [MOTION.md](MOTION.md) §6.
 
 ### 11.1 It measures an input, so nothing here is a score
 
@@ -8331,9 +8162,7 @@ holds nothing because it already contains every angle.
   an edge of a `--rotation` window narrower than a full turn, the detail names it:
   `best placement at scale 0.500, the floor of --scale 0.5,2 — the truth may lie below the window`.
   That is the case where the window is the first thing to move rather than the
-  frame or the threshold — eleven parts of one frame came back refused at
-  `scale=0.500` against art rendered at `0.311` per part pixel, and the message
-  said only that the residual was above `--max-residual`. The sentence — with its
+  frame or the threshold. The sentence — with its
   *"may lie below"* — is printed on a refusal only.
 - 🔒 **An accepted placement that stopped on a wall says which wall too**, beside
   the value it holds on the console line and in `walls`:
@@ -8385,7 +8214,7 @@ two things.
   with the `visibleShare` it was computed on. ⚠️ **`visibleShare` is a per-frame
   diagnostic and not a summary statistic** — it is measured through the fitted
   placements, so a median or a mean of it is not comparable across fits. §12.3 says
-  what that costs and [the 2026-09-03 study](https://github.com/firejune/rigc/blob/main/bench/studies/2026-09-03-visibleshare/README.md)
+  what that costs and [the `visibleShare` study](https://github.com/firejune/rigc/blob/main/bench/studies/2026-09-03-visibleshare/README.md)
   measures it — repository material, not shipped in the package.
 - **Hierarchy and attachment geometry**, so the search collapses. A child bone
   whose parent is already placed does not have four degrees of freedom: the rig
@@ -8418,7 +8247,7 @@ for the same frame** — `--anchor poseA.json` — and without one it runs that 
 internally, over exactly the parts your candidate draws. A part becomes an anchor
 when `pose` came back **unambiguous** with `residual ≤ 0.16` and
 `unexplained ≤ 0.45`; those two numbers are `--anchor-residual` and a reported
-field, and they are the 2026-09-03 measurement run's own *clean frame* criterion
+field, and they are a measurement run's own *clean frame* criterion
 rather than a line invented here.
 
 An anchored part fixes its **whole bone** — four numbers read off the picture for
@@ -8451,9 +8280,9 @@ one of those placements reading `"inward"` to say what it rests on.
 ⚠️ **Which means the inward step reaches exactly the bones that BRANCH.** A bone
 whose children form a single sub-chain can never be determined, however good the
 anchor below it is: two equations, four unknowns. That is `no-bracket`, and it is
-a fact about your rig's topology rather than about the frame. On the 2026-09-03
-spineboy candidate `torso` is the only bone in the whole rig that branches — and
-it is the bone that recorded 30 `no-anchor` frames, which is why this exists.
+a fact about your rig's topology rather than about the frame. On a spineboy
+candidate `torso` is the only bone in the whole rig that branches — and without
+this step it is the bone that records 30 `no-anchor` frames.
 
 | Field on `bone.inward` | Meaning |
 | --- | --- |
@@ -8511,9 +8340,8 @@ themselves.
 evidence lives on the anchors below it. The bone's own `residual` and
 `visibleShare` say how much of the answer *the frame can independently confirm* —
 and **the visibility floor still refuses it** when the answer is one nothing in
-the picture can check. That is deliberate, and it is the second time this call has
-been made in `chainfit`: exempting a placement nothing searched was tried for
-anchors and reverted, because it prints a part nobody can see as READ. The floor
+the picture can check. That is deliberate: exempting a placement nothing searched
+prints a part nobody can see as READ. The floor
 is about what the picture can confirm, not about how the number was arrived at.
 
 ### 12.3 What the report adds to a `pose` report
@@ -8566,15 +8394,14 @@ the answer landed and is *less* steady, not more (p99 0.6588 against 0.5592). �
 **The field is reporting a bistable fit faithfully.** What is safe: reading it beside
 its own residual, on its own frame — which is what it exists for. What is safe as a
 corpus statistic: a **maximum**, which saturates. Full method and evidence:
-[`bench/studies/2026-09-03-visibleshare`](https://github.com/firejune/rigc/blob/main/bench/studies/2026-09-03-visibleshare/README.md)
-([#323](https://github.com/firejune/rigc/issues/323)).
+[`bench/studies/2026-09-03-visibleshare`](https://github.com/firejune/rigc/blob/main/bench/studies/2026-09-03-visibleshare/README.md).
 
 And per part:
 
 | Field | Meaning |
 | --- | --- |
 | `role` | `anchor` (taken from the anchor pass, not re-fitted), `chain` (fitted through the rig), `inward` (**determined** from two or more anchored descendants, with nothing searched — §12.2b), `unplaced` |
-| — | ⭐ **A refused ANCHOR is not a contradiction, and it is the most useful row in the table.** The anchor pass judged that placement over the part's *whole* footprint — all `pose` can see, and blind to what covers it — while this instrument has just measured how much of the part is visible at all. Both readings are true. A refused anchor means *the placement may well be right and the confirmation is missing*, and every part whose `anchoredTo` names that bone rests on it. Measured on the 2026-09-03 corpus, `rear-bracer` clears `pose`'s criterion on 81 of 147 frames at a median visible share of **0.1%** — suppressing the refusal there was tried and prints that as READ. ⚠️ **That pair of numbers is on the pre-[#306](https://github.com/firejune/rigc/issues/306) objective** and has not been re-derived: the study is the 2026-09-03 run's own, over its own candidate, and re-running it is a run-scale job rather than a docs edit. A four-frame spot check under #306 (`--min-visible 0`, committed `ess` frames `idle/f0000`, `run/f0002`, `walk/f0004`, `aim/f0000`) moved `rear-bracer`'s anchor residual *down* on all four — 0.1564→0.1555, 0.1519→0.1513, 0.1493→0.1488, 0.1537→0.1534 — and flipped its eligibility on none, while `visibleShare` moved materially on one of the four (0.36→0.89). ⇒ Read the **shape** of the row, not those two digits. 🚨 **And that median in particular is one of the ones the 2026-09-03 study found unsafe**: `rear-bracer`'s share swings by **0.87** on `idle/f0001` inside `pose`'s own convergence band when the chain anchors on `pose`'s criterion — the basis this figure was taken on. The count and the shape are the reading; the 0.1 % is not a number |
+| — | ⭐ **A refused ANCHOR is not a contradiction, and it is the most useful row in the table.** The anchor pass judged that placement over the part's *whole* footprint — all `pose` can see, and blind to what covers it — while this instrument has just measured how much of the part is visible at all. Both readings are true. A refused anchor means *the placement may well be right and the confirmation is missing*, and every part whose `anchoredTo` names that bone rests on it. Measured over the 147 committed `ess` frames, `rear-bracer` clears `pose`'s criterion on 81 of 147 frames at a median visible share of **0.1%** — suppressing the refusal there prints that as READ. ⚠️ **That pair of numbers was taken before the objective interpolated in premultiplied space (§11).** A four-frame spot check on the current objective (`--min-visible 0`, committed `ess` frames `idle/f0000`, `run/f0002`, `walk/f0004`, `aim/f0000`) moved `rear-bracer`'s anchor residual *down* on all four — 0.1564→0.1555, 0.1519→0.1513, 0.1493→0.1488, 0.1537→0.1534 — and flipped its eligibility on none, while `visibleShare` moved materially on one of the four (0.36→0.89). ⇒ Read the **shape** of the row, not those two digits. 🚨 **And that median in particular is one of the ones the `visibleShare` study found unsafe**: `rear-bracer`'s share swings by **0.87** on `idle/f0001` inside `pose`'s own convergence band when the chain anchors on `pose`'s criterion — the basis this figure was taken on. The count and the shape are the reading; the 0.1 % is not a number |
 | — | The **other** parts on an anchored bone are refused on their own numbers too, and there they mean something different again: their placement is the **rig's** prediction from that anchor, so their residual is a measurement of the rig (a goggle plate that will not sit on the head it is parented to shows up exactly here) |
 | `bone` | the bone this hangs off: its `parent`, its `setupRotationDeg`, its `depth` in links from the anchor, `anchoredTo`, the `dof` searched, the `window` taken, the other parts `sharedWith` it on that bone, and `carriedBones` |
 | `bone.dof.pivotFree` | your candidate keys a `translate` timeline on this bone, so the arc this answer sits on has a centre the rig itself moves. The placement is still read off pixels; `localRotationDeg` alone will not reproduce it |
@@ -8596,7 +8423,7 @@ simply unused; a name the directory lacks is refused `no-part-image` by name.
 | --- | --- |
 | `--anchor <pose.json>` | use this `rigc pose` report instead of running one. Refused together with `--scale` / `--rotation`, which size the internal pass that then does not happen |
 | `--atlas` | **refused by name.** Every other `--candidate` command takes it, so trying it here is reasonable — but the part art comes from `--images` and the skeleton is all this needs of the candidate, so a flag that silently did nothing would be worse than one that says why |
-| `--hinge <min,max>` | the window each child's local rotation is searched over, in Spine degrees about its setup value. Default `-180,180` — **a full turn, on purpose**: one degree of freedom is cheap enough to sweep exhaustively, and §11.4's warning about a window that does not contain the truth applies here too. The hinge step `3°` is a **ceiling** on the step, not the step: a window it does not divide is divided into whole steps no coarser than it, and `search` states the step that division produced, so `--hinge -20,20` prints `hinge -20°–20° step 2.857° (15 rungs)` and each chain part's note says it was searched `in 2.857° steps`. The full turn divides it exactly, so the default walks the same rungs it always did |
+| `--hinge <min,max>` | the window each child's local rotation is searched over, in Spine degrees about its setup value. Default `-180,180` — **a full turn, on purpose**: one degree of freedom is cheap enough to sweep exhaustively, and §11.4's warning about a window that does not contain the truth applies here too. The hinge step `3°` is a **ceiling** on the step, not the step: a window it does not divide is divided into whole steps no coarser than it, and `search` states the step that division produced, so `--hinge -20,20` prints `hinge -20°–20° step 2.857° (15 rungs)` and each chain part's note says it was searched `in 2.857° steps`. The full turn divides it exactly |
 | `--stretch <ratio>` | also search a uniform bone scale, this ratio either way. Without it, stretch is searched **only where your own animations key a `scale` timeline on that bone** — a rig that never scales a bone is a rig saying that bone does not stretch |
 | `--min-visible <0..1>` | below this visible share a placement is refused `occluded` instead of reported flat (default `0.25`). A reporting threshold, not a pass bar; the placement is still in the JSON. ⚠️ **It is not inert, though**: a bone whose frozen share is under this floor gets one *unmasked* look before its visible set is fixed, so the flag also changes **where parts land** and not only which rows are refused. Two runs at different `--min-visible` are two fits, and their shares are not one column |
 | `--max-residual <0..1>` | as §11, over the visible pixels (default `0.25`) |
