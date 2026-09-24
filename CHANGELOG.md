@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.2](https://github.com/firejune/rigc/compare/v1.0.1...v1.0.2) (2026-09-24)
+
+
+### Bug Fixes
+
+* **compile:** split SPEC_COVERAGE into the format reference and a dated survey, and stop the point refusal citing parts that moved ([#826](https://github.com/firejune/rigc/issues/826)) ([6d4185a](https://github.com/firejune/rigc/commit/6d4185a3255955faf1eabd7e3a9170f4e733f8db))
+* **validate:** A02 names the generations that spelled `transform` — 4.0 and 4.1, not 4.2 ([#819](https://github.com/firejune/rigc/issues/819)) ([889684c](https://github.com/firejune/rigc/commit/889684c71fb6acdc62d077559506a396c8d3c225))
+* **validate:** A07 names a trailing blank line as that, not as a page block with no region ([#820](https://github.com/firejune/rigc/issues/820)) ([109c1f6](https://github.com/firejune/rigc/commit/109c1f664bb50cf7cff470edd71ea363edd09252))
+
+
+### Documentation
+
+* **authoring:** §0–§2 and §5–§12 speak in the present tense, without the tracker, the controls or the runs behind them ([#822](https://github.com/firejune/rigc/issues/822)) ([0e18c4d](https://github.com/firejune/rigc/commit/0e18c4d04840085ee733bfb6f5392553e9a2f1cf))
+* **face:** rigging, motion and face guides state the tool's present, not its history ([#825](https://github.com/firejune/rigc/issues/825)) ([e4e8090](https://github.com/firejune/rigc/commit/e4e80909c9fa6f92198cf93d97e48c05cbf6e18c))
+* **ingest:** the ingest page speaks in the present, and SPEC_COVERAGE loses what a user cannot resolve ([#824](https://github.com/firejune/rigc/issues/824)) ([e6c5dfb](https://github.com/firejune/rigc/commit/e6c5dfb926c7c44f655f8ac6a0d4142cd682ee03))
+* **readme:** README, GENERATIONS and PROMPTING state the tool's present, not the repository's past ([#817](https://github.com/firejune/rigc/issues/817)) ([1d91ebc](https://github.com/firejune/rigc/commit/1d91ebc29940edb89a9b9bd269ce7faf9bbfaaf6))
+
 ## [1.0.1](https://github.com/firejune/rigc/compare/v1.0.0...v1.0.1) (2026-09-23)
 
 
