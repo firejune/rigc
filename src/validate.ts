@@ -1205,22 +1205,27 @@ export function validate(input: ValidateInput): ValidateReport {
       // for want of a SUBJECT only when its reason is one of those constants.
       return skip('A07_ATLAS_TEXT_SHAPE', SKIP_NO_ATLAS_PAGE);
     }
-    // A blank line before the first page name is named as that (issue #803). It
-    // used to reach the loop below with `expectPage` already true and be read as
-    // a SECOND blank line — `line 1: consecutive blank lines`, where there is no
-    // line 0 to be consecutive with — and a run of k of them printed k findings.
-    // The verdict is unchanged: rigc writes no leading blank line
-    // (`writeAtlasText`, and `--atlas-in` through `canonicalAtlasShape`), so a file
-    // that has one was written by something else and is still refused. What
-    // changed is that the run is one finding, stating what it is and how long.
+    // A blank line at either END of the file is named as that end (issues #803,
+    // #810), and a run of them is one finding stating its length. They are taken
+    // off both ends before the walk below, so the walk sees the page blocks and
+    // the blank lines between them and nothing else: a blank line after the last
+    // region is not a page block, and "consecutive blank lines" and "the last
+    // page block declares no region" are about blocks. `TextureAtlas` reads a
+    // blank at either end as nothing (`TextureAtlas.js:98-100` skips the leading
+    // run, `:116-118` ends a page block on each blank line), and rigc writes
+    // neither (`writeAtlasText`, and `--atlas-in` through `canonicalAtlasShape`),
+    // so a file that has one was written by something else and is refused.
     let leading = 0;
     while (leading < atlasLines.length && atlasLines[leading].trim().length === 0) leading++;
     if (leading > 0) {
       fail('A07_ATLAS_TEXT_SHAPE', `line 1: the file begins with ${leading === 1 ? 'a blank line' : `${leading} blank lines`}`);
     }
+    let trailing = 0;
+    while (trailing < atlasLines.length - leading && atlasLines[atlasLines.length - 1 - trailing].trim().length === 0) trailing++;
+    const blockEnd = atlasLines.length - trailing;
     let expectPage = true;
     let sawRegionForPage = false;
-    for (let i = leading; i < atlasLines.length; i++) {
+    for (let i = leading; i < blockEnd; i++) {
       const line = atlasLines[i];
       if (line.trim().length === 0) {
         if (expectPage) fail('A07_ATLAS_TEXT_SHAPE', `line ${i + 1}: consecutive blank lines`);
@@ -1242,8 +1247,9 @@ export function validate(input: ValidateInput): ValidateReport {
       }
       sawRegionForPage = true;
     }
-    if (!sawRegionForPage && atlasLines.length) {
-      fail('A07_ATLAS_TEXT_SHAPE', 'the last page block declares no region');
+    if (!sawRegionForPage) fail('A07_ATLAS_TEXT_SHAPE', 'the last page block declares no region');
+    if (trailing > 0) {
+      fail('A07_ATLAS_TEXT_SHAPE', `line ${blockEnd + 1}: the file ends with ${trailing === 1 ? 'a blank line' : `${trailing} blank lines`}`);
     }
   });
 

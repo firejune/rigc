@@ -12619,6 +12619,86 @@ function runStaticRigSuite(): number {
       'one defect, one finding: on the branch point a run of k leading blanks printed k "consecutive blank lines", each ' +
         'pointing at a line that is only the next of the same run',
     );
+
+    // --- S110–S112: A07 names a trailing blank line as that (issue #810) ---
+    //
+    // The mirror of S108/S109 at the other end of the file. A text ending in two
+    // newlines has a blank line after its last region, and A07 used to read that
+    // blank as closing the last page block and the empty remainder as a page
+    // block with no region — `the last page block declares no region`, of a block
+    // that declares its regions. The verdict is kept; the sentence names the
+    // blank. The first trailing blank sits on 1-based line `lines.length + 1`,
+    // because `lines` is the pack's text without its one final newline.
+    const noRegion = 'the last page block declares no region';
+    const trailingLine = lines.length + 1;
+
+    // S110 — a file ending in a blank line, on disk, through `validate`.
+    const tailDir = mkdtempSync(join(tmpdir(), 'rigc-trailing-blank-'));
+    for (const name of readdirSync(pack.dir)) {
+      if (name.endsWith('.png') || name === 'skeleton.json') copyFileSync(join(pack.dir, name), join(tailDir, name));
+    }
+    writeFileSync(join(tailDir, 'skeleton.atlas'), pack.atlasText);
+    const tailHonestRun = runCli(['validate', tailDir]);
+    writeFileSync(join(tailDir, 'skeleton.atlas'), `${pack.atlasText}\n`);
+    const trailingRun = runCli(['validate', tailDir]);
+    const trailingSentence = `${A07}: line ${trailingLine}: the file ends with a blank line`;
+    const trailingProbes = [
+      ...(tailHonestRun.status === 0 ? [] : [`the same directory without the blank line is not green (exit ${String(tailHonestRun.status)})`]),
+      ...(trailingRun.status === 1 ? [] : [`validate exited ${String(trailingRun.status)} on the trailing blank, where a refusal is 1`]),
+      ...(trailingRun.stdout.includes(trailingSentence) ? [] : [`validate did not print "${trailingSentence}"`]),
+      ...(trailingRun.stdout.includes(noRegion) ? [`validate still calls the trailing blank "${noRegion}"`] : []),
+    ];
+    say(
+      'S110_A_FILE_ENDING_WITH_A_BLANK_LINE_IS_REFUSED_BY_VALIDATE_AS_A_TRAILING_BLANK',
+      trailingProbes.length === 0,
+      probeDetail(
+        trailingProbes.length === 0,
+        trailingProbes,
+        `the directory is green, and with one blank line after the last region validate exits ${String(trailingRun.status)} ` +
+          `printing "${trailingSentence}" and not "${noRegion}"`,
+      ),
+      'a file rigc did not write is where a trailing blank reaches the gate, and the author reading that refusal must be ' +
+        'sent to the blank at the end — not to a page block with no region that the file does not have',
+    );
+    rmSync(tailDir, { recursive: true, force: true });
+
+    // S111 — a last page block with a name and fields and no region: unchanged.
+    // Its header is the pack's own first page, cut off before that page's first
+    // region, and appended as a second block.
+    const firstRegion = pageRegions.length >= 1 ? lines.indexOf(pageRegions[0].name) : -1;
+    const bareProbes: string[] = [...honestProbe];
+    let bareSaid: string[] = [];
+    if (firstRegion < 1) bareProbes.push(`the pack's first page has no region line to cut its header before (index ${firstRegion})`);
+    else {
+      bareSaid = a07Of([...lines, '', ...lines.slice(0, firstRegion)].join('\n') + '\n');
+      if (!bareSaid.includes(noRegion)) bareProbes.push(`A07 said [${bareSaid.join('; ')}], where "${noRegion}" is required`);
+      if (bareSaid.some((detail) => detail.includes('ends with'))) bareProbes.push('A07 called a page block with no region a trailing blank');
+    }
+    say(
+      'S111_A_LAST_PAGE_BLOCK_WITH_FIELDS_AND_NO_REGION_IS_STILL_REFUSED_AS_DECLARING_NO_REGION',
+      bareProbes.length === 0,
+      probeDetail(bareProbes.length === 0, bareProbes, `refused as "${noRegion}", and nothing called it a trailing blank`),
+      'the sentence that used to misname a trailing blank is still the right sentence for the case it describes — a ' +
+        'page name and its fields with no region after them — and narrowing it must not lose that case',
+    );
+
+    // S112 — a run of trailing blanks is one finding that states its length.
+    const tailRun = 2;
+    const tailRunSaid = a07Of(`${pack.atlasText}${'\n'.repeat(tailRun)}`);
+    const tailRunWanted = `line ${trailingLine}: the file ends with ${tailRun} blank lines`;
+    const tailRunProbes = [
+      ...honestProbe,
+      ...(tailRunSaid.length === 1 && tailRunSaid[0] === tailRunWanted
+        ? []
+        : [`A07 said [${tailRunSaid.join('; ')}], where exactly "${tailRunWanted}" is required`]),
+    ];
+    say(
+      'S112_A_RUN_OF_TRAILING_BLANK_LINES_IS_ONE_FINDING_THAT_STATES_ITS_LENGTH',
+      tailRunProbes.length === 0,
+      probeDetail(tailRunProbes.length === 0, tailRunProbes, `${tailRun} trailing blank lines: one finding, "${tailRunWanted}"`),
+      'one defect, one finding: on the branch point a run of k trailing blanks printed k - 1 "consecutive blank lines" ' +
+        'and a page block with no region, none of which the file has',
+    );
     rmSync(pack.dir, { recursive: true, force: true });
   }
   return bad;
@@ -55049,13 +55129,14 @@ function runCurrencySuite(): number {
     );
   }
 
-  // --- CUR104: the guide's A07 row quotes the two blank-line sentences A07 prints (#803) ---
+  // --- CUR104: the guide's A07 row quotes the three blank-line sentences A07 prints (#803, #810) ---
   //
   // The sentences are read off the validator, not typed here: a pack gated once
-  // with a leading blank line and once with a doubled one between two page
-  // blocks, and each detail's `line N: ` stripped. The row is the one an agent
-  // holding either refusal is sent to, so it must tell the two apart in the
-  // words the gate uses. Held both ways: each sentence cut from the row is named.
+  // with a leading blank line, once with a trailing one, and once with a doubled
+  // one between two page blocks, and each detail's `line N: ` stripped. The row
+  // is the one an agent holding any of those refusals is sent to, so it must
+  // tell the three apart in the words the gate uses. Held both ways: each
+  // sentence cut from the row is named.
   {
     const A07 = 'A07_ATLAS_TEXT_SHAPE';
     const pack = packWithFirstPageReplaced((png) => png);
@@ -55073,6 +55154,7 @@ function runCurrencySuite(): number {
     const lines = pack.atlasText.replace(/\n$/, '').split('\n');
     const sentences = [
       ...saidOf(`\n${pack.atlasText}`),
+      ...saidOf(`${pack.atlasText}\n`),
       // the pack's one page block twice, with two blank lines between them
       ...saidOf([...lines, '', '', ...lines].join('\n') + '\n').filter((said) => said === 'consecutive blank lines'),
     ];
@@ -55085,17 +55167,18 @@ function runCurrencySuite(): number {
       return planted.length === standing.length + 1 ? [] : [`"${said}" cut from the row raised ${planted.length - standing.length} fault(s), and one is required`];
     });
     const probes = [
-      ...(sentences.length === 2 ? [] : [`the validator printed ${sentences.length} blank-line sentence(s) over the two forgeries, and two are expected: [${sentences.join('; ')}]`]),
+      ...(sentences.length === 3 ? [] : [`the validator printed ${sentences.length} blank-line sentence(s) over the three forgeries, and three are expected: [${sentences.join('; ')}]`]),
       ...(rowOf(guide) === '' ? ['docs/AUTHORING.md has no A07 row'] : []),
       ...standing,
       ...plantProbes,
     ];
     rmSync(pack.dir, { recursive: true, force: true });
     say(
-      'CUR104_THE_GUIDES_A07_ROW_QUOTES_BOTH_BLANK_LINE_SENTENCES_THE_GATE_PRINTS',
+      'CUR104_THE_GUIDES_A07_ROW_QUOTES_EVERY_BLANK_LINE_SENTENCE_THE_GATE_PRINTS',
       probes.length === 0,
       probeDetail(probes.length === 0, probes, `the A07 row quotes ${sentences.map((said) => `"${said}"`).join(' and ')}, and each cut from it is named`),
-      'the two sentences name two different repairs — delete a leading blank, or a doubled one mid-file — and the row ' +
+      'the three sentences name three different repairs — delete a leading blank, a trailing one, or one of a doubled ' +
+        'pair mid-file — and the row ' +
         'is where an agent holding one of them looks up which it has',
     );
   }
