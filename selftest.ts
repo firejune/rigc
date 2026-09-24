@@ -47224,15 +47224,40 @@ function runEditorRoundtripSuite(): number {
  */
 const NPM_ALWAYS_SHIPS = ['package.json', 'README.md', 'LICENSE'];
 
-/** Every file under `dir` (repo-relative, recursive), the way an npm `files` directory entry expands. */
-function filesUnder(root: string, dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(join(root, dir))) {
-    const path = `${dir}/${entry}`;
-    if (statSync(join(root, path)).isDirectory()) out.push(...filesUnder(root, path));
-    else out.push(path);
+/**
+ * The files the repository tracks and the working tree still has, repo-relative,
+ * in `git ls-files` order.
+ *
+ * ⭐ This is the population of every control that reads the tree's TEXT and
+ * calls it the tree (issue #827). A directory walk reads the machine instead: a
+ * squad's untracked `PR_BODY.md` at the root, describing the part its change
+ * moved, turned `CUR110` red on a commit that contains no such file and that CI
+ * passed. The package is packed from a checkout, so a file git does not track
+ * ships in no release either. A path git tracks and the tree has deleted is left
+ * out, because the tree being measured does not have it.
+ *
+ * git failing to answer is thrown rather than returned as an empty list: every
+ * caller would read an empty universe as a clean one.
+ */
+function trackedFiles(root: string): string[] {
+  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
+  if (listed.error !== undefined || listed.status !== 0) {
+    throw new Error(
+      `git could not list the tracked files under ${root} (${listed.error?.message ?? `exit ${String(listed.status)}: ${listed.stderr.toString('utf8').trim()}`})`,
+    );
   }
-  return out;
+  return listed.stdout
+    .toString('utf8')
+    .split('\u0000')
+    .filter((path) => path !== '' && existsSync(join(root, path)));
+}
+
+/** The tracked files directly inside `dir` (`.` is the root) whose name passes `keep`, repo-relative and sorted. */
+function trackedIn(root: string, dir: string, keep: (name: string) => boolean): string[] {
+  const prefix = dir === '.' ? '' : `${dir}/`;
+  return trackedFiles(root)
+    .filter((path) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/') && keep(path.slice(prefix.length)))
+    .sort();
 }
 
 /** One relative link found in a doc: where it was written and where it points. */
@@ -47316,6 +47341,7 @@ function relativeLinks(root: string, doc: string): DocLink[] {
 function expandShippedSet(root: string, allowlist: string[]): { shipped: Set<string>; unreadable: string[] } {
   const shipped = new Set(NPM_ALWAYS_SHIPS);
   const unreadable: string[] = [];
+  const tracked = trackedFiles(root);
   for (const entry of allowlist) {
     if (/[*?[\]{}!]/.test(entry)) {
       unreadable.push(`${entry} (a pattern this expander does not read — teach it, or the shipped set is wrong)`);
@@ -47325,7 +47351,9 @@ function expandShippedSet(root: string, allowlist: string[]): { shipped: Set<str
       unreadable.push(`${entry} (in \`files\` and not on disk)`);
       continue;
     }
-    if (statSync(join(root, entry)).isDirectory()) for (const file of filesUnder(root, entry)) shipped.add(file);
+    // A directory entry expands to what git tracks under it (issue #827): npm
+    // would pack an untracked file too, but the package is packed from a checkout.
+    if (statSync(join(root, entry)).isDirectory()) for (const file of tracked.filter((path) => path.startsWith(`${entry}/`))) shipped.add(file);
     else shipped.add(entry);
   }
   return { shipped, unreadable };
@@ -47864,8 +47892,7 @@ function skillClaimTruth(root: string): SkillClaimTruth {
   const sections = new Map<string, Set<string>>();
   const docsDir = join(root, 'docs');
   if (existsSync(docsDir)) {
-    for (const file of readdirSync(docsDir).sort()) {
-      if (!file.endsWith('.md')) continue;
+    for (const file of trackedIn(root, 'docs', (name) => name.endsWith('.md')).map((path) => basename(path))) {
       const numbers = new Set<string>();
       for (const line of readFileSync(join(docsDir, file), 'utf8').split('\n')) {
         const head = /^#{2,6}\s+(.*)$/.exec(line);
@@ -49454,7 +49481,7 @@ function galleryIndexFaults(index: GalleryIndex, examples: readonly string[]): s
  */
 function modulesSrcReachesOutsideItself(root: string): string[] {
   const out = new Set<string>();
-  for (const file of readdirSync(join(root, 'src')).filter((name) => name.endsWith('.ts'))) {
+  for (const file of trackedIn(root, 'src', (name) => name.endsWith('.ts')).map((path) => basename(path))) {
     const text = readFileSync(join(root, 'src', file), 'utf8');
     for (const m of text.matchAll(/(?:from|import)\s*'(\.\.?\/[^']+)'/g)) {
       const resolved = relative(root, resolve(join(root, 'src'), m[1])).split('\\').join('/');
@@ -49785,7 +49812,7 @@ function runCurrencySuite(): number {
     // A VALUE import, which is what "links the runtime" means: a type-only
     // import compiles to nothing and cannot pose anything.
     const linkers: string[] = [];
-    const candidates = ['cli.ts', ...readdirSync(join(root, 'src')).filter((f) => f.endsWith('.ts')).map((f) => `src/${f}`)];
+    const candidates = ['cli.ts', ...trackedIn(root, 'src', (f) => f.endsWith('.ts'))];
     for (const rel of candidates) {
       const text = readFileSync(join(root, rel), 'utf8');
       const importsIt = [...text.matchAll(/import\s+(type\s+)?\{[^}]*\}\s*from\s*'@esotericsoftware\/spine-core'/g)];
@@ -50717,12 +50744,7 @@ function runCurrencySuite(): number {
     const examples = galleryExampleNames(galleryRoot);
     const candidates = [
       'README.md',
-      ...(existsSync(galleryRoot)
-        ? readdirSync(galleryRoot)
-            .filter((name) => name.endsWith('.md'))
-            .sort()
-            .map((name) => `gallery/${name}`)
-        : []),
+      ...(existsSync(galleryRoot) ? trackedIn(root, 'gallery', (name) => name.endsWith('.md')) : []),
     ];
     const indexes = candidates
       .filter((path) => existsSync(join(root, path)))
@@ -51287,8 +51309,8 @@ function runCurrencySuite(): number {
     /** The modules the interfaces and the key tables live in — where the declaration itself does not count. */
     const DECLARING = new Set(['src/rig.ts', 'src/motion.ts', 'src/types.ts', 'src/trackgen.ts', 'src/deformgen.ts']);
     const modules = ['cli.ts']
-      .concat(readdirSync(join(root, 'src')).filter((f) => f.endsWith('.ts')).map((f) => `src/${f}`))
-      .concat(readdirSync(join(root, 'tools')).filter((f) => f.endsWith('.ts') || f.endsWith('.mjs')).map((f) => `tools/${f}`));
+      .concat(trackedIn(root, 'src', (f) => f.endsWith('.ts')))
+      .concat(trackedIn(root, 'tools', (f) => f.endsWith('.ts') || f.endsWith('.mjs')));
     // ⭐ The declaring modules keep their CODE and lose only their declarations,
     // rather than being excluded whole. Excluding them entirely was the first
     // shape of this and it was measurably weaker in both directions:
@@ -53752,8 +53774,8 @@ function runCurrencySuite(): number {
 
     // Every other spelling of the seven in `src/`: the one mode no other word
     // shares, so a second table would have to spell it.
-    const spelledIn = readdirSync(join(root, 'src'))
-      .filter((file) => file.endsWith('.ts'))
+    const spelledIn = trackedIn(root, 'src', (file) => file.endsWith('.ts'))
+      .map((path) => basename(path))
       .filter((file) => readFileSync(join(root, 'src', file), 'utf8').includes("'pingpongReverse'"));
     const plantedTree = [...spelledIn, 'compile.ts'];
     const oneList = (files: readonly string[]): boolean => files.length === 1 && files[0] === 'timelines.ts';
@@ -54852,7 +54874,7 @@ function runCurrencySuite(): number {
   // that a finite, deliberate 1 — the value 4.2's parser gives an omitted
   // `damping` — is refused, which is the refusal #794 removed.
   {
-    const docPaths = ['README.md', ...readdirSync(join(root, 'docs')).filter((name) => name.endsWith('.md')).sort().map((name) => `docs/${name}`)];
+    const docPaths = ['README.md', ...trackedIn(root, 'docs', (name) => name.endsWith('.md'))];
     const dampingDocs = docPaths.map((path) => [path, readFileSync(join(root, path), 'utf8')] as const);
     const QUOTED = /`damping`[^.|;]{0,40}?`?([[(]0, ?1[\])])/g;
     const scanDampingBound = (texts: ReadonlyArray<readonly [string, string]>, states: string): { faults: string[]; quotes: number } => {
@@ -55023,7 +55045,7 @@ function runCurrencySuite(): number {
       'an infinite inverse mass — the constraint stops moving',
       'keys its mix above 0; it is muted —',
     ];
-    const scanned = ['README.md', 'src/types.ts', 'src/timelines.ts', 'src/validate.ts', ...readdirSync(join(root, 'docs')).filter((name) => name.endsWith('.md')).sort().map((name) => `docs/${name}`)];
+    const scanned = ['README.md', 'src/types.ts', 'src/timelines.ts', 'src/validate.ts', ...trackedIn(root, 'docs', (name) => name.endsWith('.md'))];
     const texts = scanned.map((path) => [path, readFileSync(join(root, path), 'utf8').replace(/\s+\*?\s*/g, ' ')] as const);
     const scanRetired = (population: ReadonlyArray<readonly [string, string]>): string[] =>
       population.flatMap(([path, text]) => RETIRED.filter((sentence) => text.includes(sentence)).map((sentence) => `${path} still says "${sentence}"`));
@@ -55358,12 +55380,14 @@ function runCurrencySuite(): number {
   // written against the one page names a part by number. After the split a
   // pointer at the reference's name for a part the survey holds is a reader sent
   // to a heading that is not there — the refusal for a deferred point attachment
-  // did exactly that. Every `.ts` and `.md` at the root and directly under
-  // `src/`, `docs/`, `bench/` and `tools/` is read, each pointer is resolved
+  // did exactly that. Every `.ts` and `.md` git tracks at the root and directly
+  // under `src/`, `docs/`, `bench/` and `tools/` is read, each pointer is resolved
   // against the headings of the page it names (`## Part N`, `### N.M`), and a
   // miss is one fault per part, naming every file that cites it. Held both ways:
   // a cited heading deleted from a copy of the reference, and a pointer at the
-  // reference's name for a part only the survey has, each raise exactly one.
+  // reference's name for a part only the survey has, each raise exactly one —
+  // and that pointer raises one from a staged file and none from an untracked
+  // one beside it (#827).
   {
     const PAGES = { SPEC_COVERAGE: 'docs/SPEC_COVERAGE.md', 'SURVEY_2026-08-22': 'docs/SURVEY_2026-08-22.md' } as const;
     type PageName = keyof typeof PAGES;
@@ -55376,11 +55400,12 @@ function runCurrencySuite(): number {
           return sub ? [`${sub[1]}.${sub[2]}`] : [];
         }),
       );
-    const population = ['.', 'src', 'docs', 'bench', 'tools'].flatMap((dir) =>
-      readdirSync(join(root, dir))
-        .filter((name) => /\.(ts|md)$/.test(name) && statSync(join(root, dir, name)).isFile())
-        .map((name) => (dir === '.' ? name : `${dir}/${name}`)),
-    );
+    // The population is what git tracks, not what sits in the directory (#827):
+    // a squad's untracked `PR_BODY.md` describing the part it moved is not a
+    // pointer a reader of the tree can follow.
+    const populationOf = (at: string): string[] =>
+      ['.', 'src', 'docs', 'bench', 'tools'].flatMap((dir) => trackedIn(at, dir, (name) => /\.(ts|md)$/.test(name)));
+    const population = populationOf(root);
     const normal = (text: string): string =>
       text
         .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
@@ -55433,9 +55458,37 @@ function runCurrencySuite(): number {
             texts.map(([path, text], k) => [path, k === 0 ? `${text}\nSPEC_COVERAGE part ${movedOnly.replace('.', '-')}\n` : text] as const),
             pages,
           ).length - standing.length;
-    const plants: ReadonlyArray<readonly [string, number | null]> = [
-      [`deleting the heading of cited part ${String(firstCited)} from a copy of ${PAGES.SPEC_COVERAGE}`, cutRaised],
-      [`a pointer at ${PAGES.SPEC_COVERAGE} for the survey's part ${String(movedOnly)}`, misnamedRaised],
+    // Plants three and four: that pointer written into two files of a throwaway
+    // repository, one of them staged and the other not. The staged one raises
+    // exactly one fault and the untracked one none — and the untracked file is
+    // on disk, where a directory walk would have read it, so the plant that
+    // must stay silent is not silent for want of a file.
+    const repo = mkdtempSync(join(tmpdir(), 'rigc-part-pointer-population-'));
+    let trackedRaised: number | null = null;
+    let untrackedRaised: number | null = null;
+    if (movedOnly !== undefined) {
+      const pointer = `SPEC_COVERAGE part ${movedOnly.replace('.', '-')}\n`;
+      const isolated = ['-c', `core.excludesFile=${join(repo, 'no-such-global-excludes')}`];
+      writeFileSync(join(repo, 'tracked.md'), pointer);
+      writeFileSync(join(repo, 'untracked.md'), pointer);
+      const staged =
+        spawnSync('git', [...isolated, 'init', '-q'], { cwd: repo }).status === 0 &&
+        spawnSync('git', [...isolated, 'add', '-f', 'tracked.md'], { cwd: repo }).status === 0;
+      if (staged && readdirSync(repo).includes('untracked.md')) {
+        const planted = populationOf(repo).map((path) => [path, readFileSync(join(repo, path), 'utf8')] as const);
+        // A fault lists every citing file, so a file is named by membership of that list, not by a substring of it.
+        const citers = (fault: string): string[] => (/ is cited in (.*), and \S+ has no heading for it$/.exec(fault)?.[1] ?? '').split(', ');
+        const naming = (path: string): number => faultsOf(planted, pages).filter((fault) => citers(fault).includes(path)).length;
+        trackedRaised = naming('tracked.md');
+        untrackedRaised = naming('untracked.md');
+      }
+    }
+    rmSync(repo, { recursive: true, force: true });
+    const plants: ReadonlyArray<readonly [string, number | null, number]> = [
+      [`deleting the heading of cited part ${String(firstCited)} from a copy of ${PAGES.SPEC_COVERAGE}`, cutRaised, 1],
+      [`a pointer at ${PAGES.SPEC_COVERAGE} for the survey's part ${String(movedOnly)}`, misnamedRaised, 1],
+      ['that pointer in a file git tracks', trackedRaised, 1],
+      ['that pointer in a file git does not track, on disk beside it', untrackedRaised, 0],
     ];
     const probes = [
       ...standing,
@@ -55448,7 +55501,9 @@ function runCurrencySuite(): number {
         ],
         'so the pointers were not read the way this control reads them',
       ),
-      ...plants.flatMap(([what, raised]) => (raised === 1 ? [] : [`${what} raised ${String(raised)} fault(s), and one is required`])),
+      ...plants.flatMap(([what, raised, required]) =>
+        raised === required ? [] : [`${what} raised ${String(raised)} fault(s), and ${required === 1 ? 'one is' : 'none is'} required`],
+      ),
     ];
     const held = probes.length === 0;
     say(
