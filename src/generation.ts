@@ -115,7 +115,8 @@ export function spineGeneration(version: string): SpineGeneration | null {
 export const TOPLEVEL_CONSTRAINT_ARRAYS: readonly string[] = ['ik', 'transform', 'path', 'physics', 'slider'];
 
 /**
- * The bone key 4.2 spelled `transform` and 4.3 spells `inherit`.
+ * The bone key 4.0 and 4.1 spelled `transform`, renamed `inherit` in 4.2 and
+ * spelled that way by 4.3.
  *
  * The old key does not throw and does not warn — it is an unknown field, so the
  * bone falls back to Normal inheritance (#706 row 6, and

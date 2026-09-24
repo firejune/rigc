@@ -1018,7 +1018,7 @@ the renderer policy*.
 | --- | --- | --- |
 | `A00_ROUNDTRIP_PARSE` | both | `spine-core` parses the skeleton and the atlas without throwing |
 | `A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS` | both | no 4.1/4.2-shaped `physics`/`ik`/… array — 4.3 folds them into one typed `constraints` array, and the old shape loads clean while the constraint vanishes |
-| `A02_NO_BONE_TRANSFORM_KEY` | both | no bone uses 4.2's `transform`; 4.3 renamed it `inherit`, and the old key silently falls back to Normal inheritance |
+| `A02_NO_BONE_TRANSFORM_KEY` | both | no bone uses 4.0/4.1's `transform`; 4.2 renamed it `inherit`, 4.3 kept it, and the old key silently falls back to Normal inheritance |
 | `A03_REGION_WIDTH_HEIGHT_FINITE` | both | every region attachment loaded a finite, positive width and height (a missing field loads as NaN, with no error) |
 | `A04_MESH_TRIANGLES_AND_ENCODING` | both | triangles are a multiple of 3, indices are in range, and the vertex array's encoding agrees with the UV count |
 | `A05_CURVE_ARRAY_LENGTH` | both | curve arrays carry 4 numbers per value channel and hold no non-finite value; timelines that cannot take a curve do not carry one. Covers all eleven 4.3 timeline groups — bone, slot, ik, transform, path, physics, slider, deform, drawOrder, drawOrderFolder, events |

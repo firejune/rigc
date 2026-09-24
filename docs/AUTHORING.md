@@ -720,7 +720,7 @@ shipped skeletons parsed on a 4.3 runtime and loaded 0 of 8,672 constraints
 `skeleton.spine` before it reads a field of the file. A file from another generation is
 a `BLOCK GENERATION_UNSUPPORTED` naming the generation, the string it was read from,
 and what a 4.3 reader loses **on that file**: the constraints parked in those arrays
-counted by kind, the bones carrying 4.2's `transform` where 4.3 spells `inherit`, and
+counted by kind, the bones carrying 4.0/4.1's `transform` where 4.3 spells `inherit`, and
 the physics constraints omitting `inertia`/`damping`, whose default is not the same
 number in the two. A label naming no generation rigc knows — or a header stating none —
 is a `BLOCK GENERATION_UNKNOWN`, never rounded to the nearest: a catalog that rounded
@@ -5713,7 +5713,7 @@ Fix A00 and run it again ([#568](https://github.com/firejune/rigc/issues/568)).
 | --- | --- | --- |
 | `A00_ROUNDTRIP_PARSE` | both | `spine-core` could not parse the skeleton or the atlas. Almost everything else in the report is downstream of this one — fix it first. When it fails, every rule that reads the loaded skeleton or the loaded atlas reports **SKIP** saying so by name, so the row count stays at the full registry and the summary's *measured* figure tells you how little was actually asked ([#568](https://github.com/firejune/rigc/issues/568)). ⚠️ **Two rules run before it and can be upstream of it**: `A31_DRAW_ORDER_OFFSETS_RESOLVE`, because a bad draw-order key makes the loader spin rather than return, and `A08_REGION_NAMES_MATCH_ATTACHMENTS`, because a `path` naming no region makes it throw. The round trip is still attempted either way; when the loader refuses a path A08 has already refused, this row **defers** to A08 by name instead of restating the miss in the parser's poorer words ([#589](https://github.com/firejune/rigc/issues/589)) |
 | `A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS` | both | a 4.1/4.2-shaped `ik`/`transform`/`path`/`physics`/`slider` array. rigc emits the 4.3 `constraints` array, so this normally means hand-edited JSON |
-| `A02_NO_BONE_TRANSFORM_KEY` | both | a bone uses 4.2's `transform`; rename it `inherit` in the rig spec |
+| `A02_NO_BONE_TRANSFORM_KEY` | both | `bone "…" uses "transform", the key 4.0 and 4.1 spelled; 4.2 and 4.3 spell it "inherit"` — rename it `inherit` in the rig spec |
 | `A03_REGION_WIDTH_HEIGHT_FINITE` | both | a region loaded `NaN` or a non-positive size — the attachment has no `image` and no `width`/`height`. **SKIP** when the skeleton carries no region attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A04_MESH_TRIANGLES_AND_ENCODING` | both | authored mesh geometry: triangle count not a multiple of 3, an index out of range, or a `vertices` length that disagrees with `uvs` (the weighted/unweighted trap) **SKIP** when the skeleton carries no mesh attachment ([#580](https://github.com/firejune/rigc/issues/580)) |
 | `A05_CURVE_ARRAY_LENGTH` | both | a raw `curve` with the wrong number of values, a non-finite number in one, or a curve on a timeline that cannot take one. Four numbers **per value channel**. **SKIP** when no animation carries a timeline at all ([#580](https://github.com/firejune/rigc/issues/580)). Timelines with no `curve` on any key still PASS: every timeline name is checked against the channel table whether or not a curve sits on one |

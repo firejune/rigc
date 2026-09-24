@@ -149,6 +149,7 @@ import {
   SPINE_VERSION,
 } from './src/compile.ts';
 import {
+  LEGACY_BONE_INHERIT_KEY,
   PHYSICS_FIELDS_WHOSE_DEFAULT_MOVED,
   SPINE_GENERATIONS,
   spineGeneration,
@@ -55180,6 +55181,55 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR106: the guide's A02 row quotes the sentence A02 prints (#814) ---
+  //
+  // The sentence is read off the validator, not typed here: the pack's own
+  // emit with its last bone given the legacy key, gated, and the bone's name in
+  // the detail put back to the row's `…`. The row is the one an agent holding
+  // the refusal is sent to, and the sentence is where the generations that
+  // spelled the key are stated, so the row must say what the gate says. Held
+  // both ways: the sentence cut from the row is named.
+  {
+    const A02 = 'A02_NO_BONE_TRANSFORM_KEY';
+    const pack = packWithFirstPageReplaced((png) => png);
+    const skeletonText = editJson(pack.result.skeletonText, (j) => {
+      const bones = j.bones as Array<Record<string, unknown>>;
+      bones[bones.length - 1][LEGACY_BONE_INHERIT_KEY] = 'noScale';
+    });
+    const sentences = validate({
+      skeletonText,
+      atlasText: pack.atlasText,
+      atlasDir: pack.dir,
+      declaredDurations: pack.result.declaredDurations,
+      rig: pack.result.rig,
+      profile: 'spine',
+    })
+      .failures.filter((f) => f.assertion === A02)
+      .map((f) => f.detail.replace(/^bone "[^"]*"/, 'bone "…"'));
+    const guide = readFileSync(join(root, 'docs/AUTHORING.md'), 'utf8');
+    const rowOf = (text: string): string => text.split('\n').find((line) => line.startsWith(`| \`${A02}\``)) ?? '';
+    const missingFrom = (row: string): string[] => sentences.filter((said) => !row.includes(said)).map((said) => `the A02 row does not quote "${said}"`);
+    const standing = missingFrom(rowOf(guide));
+    const plantProbes = sentences.flatMap((said) => {
+      const planted = missingFrom(rowOf(guide).split(said).join(''));
+      return planted.length === standing.length + 1 ? [] : [`"${said}" cut from the row raised ${planted.length - standing.length} fault(s), and one is required`];
+    });
+    const probes = [
+      ...(sentences.length === 1 ? [] : [`the validator printed ${sentences.length} A02 sentence(s) over one forged bone, and one is expected: [${sentences.join('; ')}]`]),
+      ...(rowOf(guide) === '' ? ['docs/AUTHORING.md has no A02 row'] : []),
+      ...standing,
+      ...plantProbes,
+    ];
+    rmSync(pack.dir, { recursive: true, force: true });
+    say(
+      'CUR106_THE_GUIDES_A02_ROW_QUOTES_THE_SENTENCE_THE_GATE_PRINTS',
+      probes.length === 0,
+      probeDetail(probes.length === 0, probes, `the A02 row quotes ${sentences.map((said) => `"${said}"`).join(' and ')}, and the sentence cut from it is named`),
+      'the sentence is where the generations that spelled the key are stated; a row that says something else sends ' +
+        'the agent holding the refusal to a different claim about which file it has',
+    );
+  }
+
   return bad;
 }
 
@@ -64886,7 +64936,7 @@ function runIngestSuite(): number {
      * The probe's own emit rewritten into the shape a pre-4.3 export has: the
      * header's version, every constraint moved out of `constraints` into the
      * top-level array of its own kind (#706 row 1), and one bone's `inherit`
-     * spelled 4.2's `transform` (row 6).
+     * spelled 4.0/4.1's `transform` (row 6).
      *
      * ⚠️ Nothing is invented and nothing is deleted: `inertia` and `damping` are
      * left exactly as the compiler wrote them, so row 4's count is the file's
