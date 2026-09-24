@@ -31,8 +31,22 @@
  * Its paths resolve against the cuts.json file itself, so the table travels
  * with the project that owns the art rather than with this repository.
  */
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import {
+  appendFileSync,
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import {
   BallotError,
   buildBallot,
@@ -229,7 +243,7 @@ function repositoryUrl(): string {
  * needs a value` (issue #328). `CLI10`/`CLI11` in `selftest.ts` now hold the two
  * halves together by reading `--help` rather than by naming a flag.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack']);
+const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy']);
 
 /**
  * The flags a command is allowed to spell more than once.
@@ -3271,6 +3285,223 @@ function cmdIngest(flags: Record<string, string>, positional: string[]): void {
 }
 
 // ---------------------------------------------------------------------------
+// skills install — put the shipped skills where an agent host looks (issue #831)
+// ---------------------------------------------------------------------------
+//
+// After `bun add -d spine-rigc` the skills sit at `node_modules/spine-rigc/skills/`,
+// which no host reads. Codex, Gemini CLI and Antigravity all read
+// `<workspace>/.agents/skills/<name>/`, so this links every `skills/<name>/` the
+// package ships into one directory — `.agents/skills` under the working
+// directory unless `--dir` says otherwise.
+//
+// ⭐ The skills are found from THIS FILE's location, never from the working
+// directory: the command installs the package it is, and a cwd that happens to
+// hold some other `skills/` is not a source. That is also why it lives here and
+// not in `src/`: its one input is where the CLI was installed, nothing else
+// calls it, and `src/` is about rigs.
+//
+// A RELATIVE symlink by default, so the directory survives the project being
+// moved or cloned elsewhere and an upgrade of the package is seen with no second
+// run. `--copy` writes the folder instead, for a host that does not follow a
+// linked skill folder.
+//
+// 🔒 **An entry that is already there and is not what this command would write is
+// refused by name, and then nothing at all is written.** The check runs over
+// every skill before the first write, so a refusal never leaves half an install
+// behind. The one entry that is NOT refused is the one this command would have
+// made — a link that already resolves to the same skill folder, however it is
+// spelled, or with `--copy` a folder whose files are byte for byte the package's
+// — and a run over only those says it had nothing to do. No lifecycle script
+// does this on install: a postinstall writing into a consumer's project root is
+// refused as design, and Bun does not run a dependency's lifecycle scripts
+// outside `trustedDependencies`, so half the installs would silently skip it.
+// ---------------------------------------------------------------------------
+
+/** The default `--dir`, resolved against the caller's working directory. */
+const DEFAULT_SKILLS_DIR = '.agents/skills';
+
+/** What `rigc skills` offers. One today; the list is what the refusal of any other word prints. */
+const SKILLS_SUBCOMMANDS = ['install'];
+
+/** An install refused before its first write — nothing to install, or an entry in the way. Exit 1. */
+class SkillsInstallError extends Error {}
+
+type SkillsInstallAction = 'linked' | 'copied' | 'already linked' | 'already copied';
+
+interface SkillsInstallEntry {
+  /** `<dir>/<name>`. */
+  target: string;
+  /** `<package>/skills/<name>`. */
+  source: string;
+  action: SkillsInstallAction;
+  /** The link text, relative to the directory it sits in, when the entry is a link. */
+  link: string;
+}
+
+/** Every `<name>/` under `source` that holds a `SKILL.md`, in name order, so two runs print the same lines. */
+function shippedSkills(source: string): string[] {
+  if (!existsSync(source) || !statSync(source).isDirectory()) return [];
+  return readdirSync(source)
+    .filter((name) => statSync(join(source, name)).isDirectory() && existsSync(join(source, name, 'SKILL.md')))
+    .sort();
+}
+
+/**
+ * The real path of `path` whether or not it exists yet: the real path of its
+ * nearest existing ancestor with the rest appended. A relative link has to be
+ * computed between two paths spelled the same way, and on macOS the temp
+ * directory alone is reached as `/var/…` and is really `/private/var/…`.
+ */
+function realpathAhead(path: string): string {
+  const rest: string[] = [];
+  let at = resolve(path);
+  while (!existsSync(at)) {
+    const up = dirname(at);
+    if (up === at) break;
+    rest.unshift(basename(at));
+    at = up;
+  }
+  return join(realpathSync(at), ...rest);
+}
+
+/** Every file under `root`, relative and sorted, so two trees compare in one order. */
+function filesUnder(root: string, prefix = ''): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(join(root, prefix)).sort()) {
+    const rel = prefix === '' ? name : `${prefix}/${name}`;
+    if (lstatSync(join(root, rel)).isDirectory()) out.push(...filesUnder(root, rel));
+    else out.push(rel);
+  }
+  return out;
+}
+
+/** The first way `copy` differs from `original`, or null when every file is the same bytes. */
+function firstDifference(copy: string, original: string): string | null {
+  const theirs = filesUnder(copy);
+  const ours = filesUnder(original);
+  for (const rel of ours) {
+    if (!theirs.includes(rel)) return `${rel} is missing from it`;
+    if (!readFileSync(join(copy, rel)).equals(readFileSync(join(original, rel)))) return `${rel} differs`;
+  }
+  for (const rel of theirs) if (!ours.includes(rel)) return `${rel} is in it and not in the package`;
+  return null;
+}
+
+/**
+ * Install every shipped skill into `dir`, or refuse and write nothing.
+ *
+ * The plan is made in full before the first write: every entry is classified as
+ * absent, already this command's, or in the way, and one entry in the way
+ * refuses the whole call with every such entry named.
+ */
+function installSkills(source: string, dir: string, copy: boolean): SkillsInstallEntry[] {
+  const names = shippedSkills(source);
+  if (names.length === 0) {
+    throw new SkillsInstallError(
+      `no skill to install: ${source} ${existsSync(source) ? 'holds no <name>/SKILL.md' : 'is not there'}, and it is ` +
+        'the skills/ directory of the package this command ran from; nothing was written',
+    );
+  }
+  if (existsSync(dir) && !statSync(dir).isDirectory()) {
+    throw new SkillsInstallError(`${dir} exists and is not a directory, so no skill can be installed into it; nothing was written`);
+  }
+  const realDir = realpathAhead(dir);
+  const planned: SkillsInstallEntry[] = [];
+  const refused: string[] = [];
+  for (const name of names) {
+    const target = join(dir, name);
+    const from = join(source, name);
+    const realFrom = realpathSync(from);
+    const link = relative(realDir, realFrom);
+    let action: SkillsInstallAction = copy ? 'copied' : 'linked';
+    let found: string | null = null;
+    const stat = existsSync(target) || isLink(target) ? lstatSync(target) : null;
+    if (stat === null) {
+      // absent: this command writes it
+    } else if (stat.isSymbolicLink()) {
+      const text = readlinkSync(target);
+      const pointsAt = resolve(realDir, text);
+      const lands = existsSync(pointsAt) ? realpathSync(pointsAt) : null;
+      if (lands === realFrom && !copy) action = 'already linked';
+      else if (lands === realFrom) found = `a symlink to ${text}, the package's own folder, and --copy asks for a directory in its place`;
+      else found = `a symlink to ${text}, ${lands === null ? 'which resolves to nothing' : `which resolves to ${lands}`}`;
+    } else if (stat.isDirectory()) {
+      const difference = copy ? firstDifference(target, from) : null;
+      if (!copy) found = 'a directory';
+      else if (difference === null) action = 'already copied';
+      else found = `a directory that is not the package's copy (${difference})`;
+    } else {
+      found = 'a plain file';
+    }
+    if (found !== null) refused.push(`${target} is ${found}; ${copy ? `a copy of ${from}` : `a symlink to ${link}`} was required`);
+    else planned.push({ target, source: from, action, link });
+  }
+  if (refused.length > 0) {
+    throw new SkillsInstallError(
+      `${refused.length} of the ${names.length} skill(s) cannot be installed into ${dir}, and nothing was written:\n` +
+        refused.map((line) => `  ${line}`).join('\n') +
+        '\nRemove the entries named above, or pass --dir to install somewhere else.',
+    );
+  }
+  mkdirSync(dir, { recursive: true });
+  for (const entry of planned) {
+    if (entry.action === 'linked') symlinkSync(entry.link, entry.target, 'dir');
+    else if (entry.action === 'copied') cpSync(entry.source, entry.target, { recursive: true, errorOnExist: true, force: false });
+  }
+  return planned;
+}
+
+/** A dangling link is not `existsSync`, and is still an entry in the way. */
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function cmdSkills(flags: Record<string, string>, positional: string[]): void {
+  const [sub, ...extra] = positional;
+  if (sub === undefined) {
+    throw new UsageError(
+      `skills takes a subcommand: ${SKILLS_SUBCOMMANDS.join(', ')} — \`rigc skills install\` links every skill this ` +
+        `package ships into ${DEFAULT_SKILLS_DIR}`,
+    );
+  }
+  if (!SKILLS_SUBCOMMANDS.includes(sub)) {
+    throw new UsageError(`unknown skills subcommand: ${sub} (rigc skills offers ${SKILLS_SUBCOMMANDS.join(', ')})`);
+  }
+  if (extra.length > 0) {
+    throw new UsageError(
+      `skills install takes no positional argument, and ${JSON.stringify(extra[0])} was given — the directory is --dir <path>`,
+    );
+  }
+  const takes = COMMANDS.find((c) => c.name === 'skills')?.flags ?? [];
+  const foreign = Object.keys(flags).filter((flag) => !takes.includes(flag));
+  if (foreign.length > 0) {
+    throw new UsageError(
+      `skills install takes ${takes.map((flag) => `--${flag}`).join(' and ')}; ` +
+        `${foreign.map((flag) => `--${flag}`).join(', ')} is not one of them`,
+    );
+  }
+  const copy = flags.copy !== undefined;
+  const dir = resolve(process.cwd(), flags.dir ?? DEFAULT_SKILLS_DIR);
+  const entries = installSkills(join(import.meta.dir, 'skills'), dir, copy);
+  for (const entry of entries) {
+    const ends = entry.action.endsWith('linked') ? `${entry.target} -> ${entry.link}  (${entry.source})` : `${entry.target} <- ${entry.source}`;
+    console.log(`  ${entry.action.padEnd(14)}  ${ends}`);
+  }
+  const wrote = entries.filter((entry) => entry.action === 'linked' || entry.action === 'copied').length;
+  const verb = copy ? 'copied' : 'linked';
+  console.log(
+    wrote === 0
+      ? `rigc skills install: nothing to do — all ${entries.length} skill(s) are already ${verb} into ${dir}`
+      : `rigc skills install: ${wrote} of ${entries.length} skill(s) ${verb} into ${dir}` +
+          (wrote < entries.length ? `, ${entries.length - wrote} already there` : ''),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // usage / per-command help
 // ---------------------------------------------------------------------------
 
@@ -3368,6 +3599,14 @@ const FLAG_MEANINGS: Record<string, string> = {
   ballot: `the ballot the --record'd vote answers (default \`${DEFAULT_BALLOT}\`); its embedded manifest is what the vote is checked against`,
   ledger: `the append-only JSONL the vote lands in (default \`${DEFAULT_LEDGER}\`)`,
   again: 'record a second vote on a ballot the ledger already has; without it, a repeat is refused rather than doubled',
+  dir:
+    `the directory to install into, resolved against your working directory (default \`${DEFAULT_SKILLS_DIR}\`, the ` +
+    'workspace directory Codex, Gemini CLI and Antigravity read skills from)',
+  copy:
+    'copy each skill folder instead of linking it, for a host that does not follow a linked skill folder. A copy ' +
+    'is not reached by an upgrade of the package, and one that is no longer the package\'s bytes is refused by name ' +
+    'on the next run — remove it and run again (default: a relative symlink, which an upgrade reaches with no ' +
+    'second run)',
   name: "the rig spec's own name, which the motion spec's archetype must match (default: the skeleton file's basename)",
   art: 'how the written spec reaches the art, which a skeleton does not encode: `loose` names an image per ' +
     "attachment, measured out of the rig spec's own images directory (--images writes it; without it, `build " +
@@ -3430,6 +3669,7 @@ const FLAG_VALUES: Record<string, string> = {
   name: '<n>',
   art: 'loose|none',
   stage: '<x,y,w,h>',
+  dir: '<path>',
 };
 
 interface CommandDoc {
@@ -3723,6 +3963,21 @@ const COMMANDS: CommandDoc[] = [
       },
     },
   },
+  {
+    name: 'skills',
+    usage: [`rigc skills install [--dir ${DEFAULT_SKILLS_DIR}] [--copy]   (every skill this package ships, where an agent host looks)`],
+    flags: ['dir', 'copy'],
+    notes: [
+      'the skills installed are the skills/ directory of the package this command runs from,',
+      'never whatever the working directory holds. Each becomes <dir>/<name>: a relative',
+      'symlink into that folder, or with --copy a copy of it. An entry already there that',
+      'is not a link to the same folder — or, with --copy, not the same bytes — is refused',
+      'by name, exit 1, and nothing is written; a run over only what this command made has',
+      'nothing to do and exits 0. Codex, Gemini CLI and Antigravity read',
+      `<workspace>/${DEFAULT_SKILLS_DIR}; Claude Code installs the plugin instead (README,`,
+      '"Install it into your agent").',
+    ],
+  },
 ];
 
 const KNOWN_COMMANDS = COMMANDS.map((c) => c.name);
@@ -3829,6 +4084,13 @@ const USAGE = [
   'answer rather than a missing one, and a result whose hashes are not the ballot\'s is',
   'refused by name instead of appended.',
   '',
+  'skills install puts the agent skills this package ships where an agent host looks',
+  'for them, since none of them reads node_modules:',
+  `  rigc skills install               relative links in ${DEFAULT_SKILLS_DIR}, which Codex, Gemini CLI`,
+  '                                    and Antigravity read; --copy writes the folders instead',
+  'An entry already there that this command did not make is refused by name and',
+  'nothing is written; a second run has nothing to do. See `rigc skills --help`.',
+  '',
   'a cuts.json is { "<name>": { "rig": "...", "motion": "...", "out": "...",',
   '                             "manifest": "..." (optional) } }, with every path',
   'resolved relative to the cuts.json file itself.',
@@ -3870,6 +4132,7 @@ try {
   else if (command === 'pose') cmdPose(flags);
   else if (command === 'chainfit') cmdChainFit(flags);
   else if (command === 'vote') cmdVote(flags, lists.candidate ?? []);
+  else if (command === 'skills') cmdSkills(flags, positional);
 } catch (err) {
   if (err instanceof UsageError) {
     console.error(`rigc: ${err.message}\n\n${USAGE}`);
@@ -3938,6 +4201,14 @@ try {
   // Exit 1, like a compile error: the invocation was fine, a file was not.
   if (err instanceof NotAPngError) {
     console.error(`rigc: ${err.message}`);
+    process.exit(1);
+  }
+  // An install refused before its first write (issue #831): the invocation was
+  // fine and an entry on disk was not what this command would write, so exit 1
+  // like a file that is not a PNG. The message names every such entry, what is
+  // there and what was required; the usage under it would bury that.
+  if (err instanceof SkillsInstallError) {
+    console.error(`rigc skills install: ${err.message}`);
     process.exit(1);
   }
   throw err;

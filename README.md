@@ -146,8 +146,9 @@ to do with it, and it is the one instrument here that can see a wrong animation.
 
 The guides under [Documentation](#documentation) also ship as
 [Agent Skills](https://agentskills.io) — `skills/<name>/SKILL.md`, in this
-repository and in the npm package — so an agent finds rigc the way it finds its
-other tools. Each skill is a router and nothing more: when to load it, the
+repository and in the npm package — which a host reads once they are where it
+looks: Claude Code through the plugin below, Codex, Gemini CLI and Antigravity
+through `rigc skills install`. Each skill is a router and nothing more: when to load it, the
 non-negotiables in a line apiece, and a link to the guide that owns every rule, so
 a rule keeps living in exactly one place. The repository is also a Claude Code
 plugin marketplace:
@@ -161,6 +162,35 @@ With the package already installed, `claude --plugin-dir node_modules/spine-rigc
 loads the same skills without a marketplace. The plugin carries no version of its
 own — `/plugin update` follows `main` commit by commit, and the only version on
 disk stays the one in `package.json`.
+
+Codex, Gemini CLI and Antigravity read skills from one directory in the workspace,
+`.agents/skills/` ([Codex](https://learn.chatgpt.com/docs/build-skills),
+[Gemini CLI](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md),
+[Antigravity](https://antigravity.google/docs/skills/)), and none of them reads
+`node_modules`. With the package installed, one command puts every skill there:
+
+```shell
+bun add -d spine-rigc
+bun rigc skills install          # relative links: .agents/skills/rigc -> ../../node_modules/spine-rigc/skills/rigc
+bun rigc skills install --copy   # the folders themselves, for a host that does not follow a link
+```
+
+Run it through the project's own install, as above: `bunx spine-rigc skills install`
+in a project that has the package was measured running the registry's copy instead
+of the project's. A link reaches every upgrade of the package with no second run,
+and a second run has nothing to do; an entry already there that this command did not
+make is refused by name and nothing is written. Gemini CLI 0.41.1 was measured
+listing a linked skill from both its workspace and its user directory — the
+workspace one only in a folder it trusts. Codex's documentation says it follows a
+symlinked skill folder, which is not measured here, and Antigravity CLI 1.1.9 has no
+way to list skills without starting a session, so what it does with a link is not
+measured either; `--copy` is the shape that asks nothing of a host. Gemini CLI can
+also fetch a skill itself, one folder at a time:
+`gemini skills install https://github.com/firejune/rigc.git --path skills/rigc --scope workspace`.
+The routers are named `rigc-rigging`, `rigc-motion`, `rigc-face` and `rigc-ingest`
+because that directory is flat — beside another tool's `motion`, a bare name is
+whichever one the host picked — and under the Claude Code plugin they read
+`rigc:rigc-motion` and so on.
 
 ## First rig in ten minutes
 
@@ -511,6 +541,7 @@ commands take it and what its default is.
 | `bonedist --candidate … --reference … --bones …` | per-frame, per-bone world-transform distance against another skeleton — the ladder's stage 3, run on its own. `--bones <correspondence.json \| identity>` is required rather than defaulted: a candidate is entitled to its own bone names, so the pairing is stated |
 | `check --candidate <dir> --frames <dir>` | the candidate against reference pictures — the only instrument here that can see a *wrong animation* |
 | `bench <rung> --candidate <dir>` | one rung of the benchmark ladder |
+| `skills install [--dir …] [--copy]` | links every agent skill the package ships into `.agents/skills` (or `--dir`) as relative symlinks, or copies them with `--copy` — where Codex, Gemini CLI and Antigravity look. A second run has nothing to do; an entry already there that is not this command's is refused by name and nothing is written |
 
 `diff`, `bonedist`, `check` and `bench` measure against something you were given; the
 first three work on any reference you have, and `bench` is a repository workflow that needs a clone

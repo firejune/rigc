@@ -34,7 +34,12 @@ whole interface, and this skill only says which of them to open.
 ```shell
 bunx spine-rigc --help       # run it without installing
 bun add -d spine-rigc        # or pin it in the project; the command is `rigc`
+bun rigc skills install      # then link these skills into .agents/skills
 ```
+
+Codex, Gemini CLI and Antigravity read skills from `.agents/skills/` in the
+workspace and none of them reads `node_modules`; `rigc skills install` puts every
+skill the package ships there, and `rigc skills --help` says what it refuses.
 
 ## The loop
 
@@ -61,17 +66,19 @@ AUTHORING §0.
 
 ## Which guide, for which need
 
-Read [AUTHORING.md](../../docs/AUTHORING.md) first, whatever the need: the two
+Read [AUTHORING.md](https://github.com/firejune/rigc/blob/main/docs/AUTHORING.md) first, whatever the need: the two
 spec files field by field, the emission rules, the loop, and the failure map. Then:
 
 | The request is… | Open | Skill |
 | --- | --- | --- |
-| a **skeleton** — how many bones, where each pivot sits, what hangs off what | [RIGGING.md](../../docs/RIGGING.md) | `rigging` |
-| a **movement** — an idle, a loop, from this pose to that one | [MOTION.md](../../docs/MOTION.md) | `motion` |
-| a **face** — a blink, a gaze, a head turn a few degrees off axis | [FACE.md](../../docs/FACE.md) | `face` |
-| a **skeleton.json somebody else authored** — read it, repair it, extend it | [INGEST.md](../../docs/INGEST.md) | `ingest` |
-| you are the **person operating** the agent rather than the agent | [PROMPTING.md](../../docs/PROMPTING.md) | — |
+| a **skeleton** — how many bones, where each pivot sits, what hangs off what | [RIGGING.md](https://github.com/firejune/rigc/blob/main/docs/RIGGING.md) | `rigc-rigging` |
+| a **movement** — an idle, a loop, from this pose to that one | [MOTION.md](https://github.com/firejune/rigc/blob/main/docs/MOTION.md) | `rigc-motion` |
+| a **face** — a blink, a gaze, a head turn a few degrees off axis | [FACE.md](https://github.com/firejune/rigc/blob/main/docs/FACE.md) | `rigc-face` |
+| a **skeleton.json somebody else authored** — read it, repair it, extend it | [INGEST.md](https://github.com/firejune/rigc/blob/main/docs/INGEST.md) | `rigc-ingest` |
+| you are the **person operating** the agent rather than the agent | [PROMPTING.md](https://github.com/firejune/rigc/blob/main/docs/PROMPTING.md) | — |
 
-The same files are in the installed package at `node_modules/spine-rigc/docs/`;
-inside this plugin they are at `${CLAUDE_PLUGIN_ROOT}/docs/`. Formats, the CLI
-reference and the licence chain: [README.md](../../README.md).
+Every guide linked here is in the installed package at `node_modules/spine-rigc/docs/`,
+which is the copy that matches the rigc you run; the links go to the repository's
+`main`. Inside the Claude Code plugin the same files are at `${CLAUDE_PLUGIN_ROOT}/docs/`.
+Formats, the CLI reference and the licence chain:
+[README.md](https://github.com/firejune/rigc/blob/main/README.md), installed at `node_modules/spine-rigc/README.md`.

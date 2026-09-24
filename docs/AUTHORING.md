@@ -186,12 +186,34 @@ What the flags mean:
 | `--min-visible` | `chainfit` only: below this share of a part surviving the parts drawn over it, the placement is refused `occluded` instead of reported flat (default `0.25`) — §12.4 |
 | `--passes` | `chainfit` only: how many times the occluder masks are rebuilt from the answers and the fit rerun (default `2`) — §12.4 |
 | `--anchor-residual` | `chainfit` only: the residual a `pose` placement must be within to anchor a chain (default `0.16`) — §12.2 |
+| `--dir` | `skills install` only: the directory to install the agent skills into, resolved against your working directory (default `.agents/skills`, which Codex, Gemini CLI and Antigravity read). The skills are the `skills/` directory of the package the command runs from, never the working directory's |
+| `--copy` | `skills install` only: copy each skill folder instead of writing a relative symlink to it. A copy is not reached by an upgrade of the package; one that is no longer the package's bytes is refused on the next run, naming the first file that differs |
 
 `render` also takes `--fps <n>` (the rate it samples at, default 12 — the same
 protocol rate the reference frames use) and `--max <px>` (the long side of a
 frame, default 256). Three commands take `--out`: a directory for `render`
 (default `render/`), the `.html` file for `preview` (default `preview.html`) and
 for `vote` (default `ballot.html`).
+
+`skills install` is the one command that is not about a rig: it puts the agent
+skills the package ships where an agent host looks for them. Run it through the
+project's own install — `bun rigc skills install` — so the links point into that
+project's `node_modules/spine-rigc/skills/`. A second run has nothing to do and
+exits 0. An entry already at `<dir>/<name>` that is not a link to the same folder
+(or, under `--copy`, not the same bytes) is refused, exit 1, and **nothing is
+written** — every such entry is named with what is there and what was required:
+
+```text
+rigc skills install: <n> of the <m> skill(s) cannot be installed into <dir>, and nothing was written:
+  <dir>/rigc-motion is a plain file; a symlink to ../../node_modules/spine-rigc/skills/rigc-motion was required
+Remove the entries named above, or pass --dir to install somewhere else.
+```
+
+What is found is one of `a plain file`, `a directory`, `a symlink to <text>, which
+resolves to <path>` (or `to nothing`), and under `--copy` `a directory that is not
+the package's copy (<file> differs)`. A link to the package's own folder is not in
+the way however it is spelled, so an absolute link somebody else made is kept and
+reported `already linked`.
 
 Pick the profile deliberately, and know which one you got by saying nothing. The
 default is `spine`: "is this valid Spine 4.3 that any runtime plays correctly",
