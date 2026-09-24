@@ -20,10 +20,11 @@ that can see that, and a run that skips it has verified nothing about the motion
 - The motion spec and emitted shapes: [`src/types.ts`](../src/types.ts)
 - What the motion spec's own parser proves, and which refusals it deliberately
   leaves to compile time: [`src/motion.ts`](../src/motion.ts)
-- What the format holds and rigc covers: `docs/SPEC_COVERAGE.md` — 🚫 **not an
-  authoring input, and deliberately unlinked**: it inventories the benchmark corpus
-  skeleton by skeleton, so it is on the ladder run's forbidden list. Named here for a
-  maintainer, not offered to a run
+- What the Spine 4.3 format holds, field by field: `docs/SPEC_COVERAGE.md` — 🚫 **not
+  an authoring input, and deliberately unlinked**: it and the dated survey it was split
+  from, `docs/SURVEY_2026-08-22.md`, which inventories the benchmark corpus skeleton by
+  skeleton, are both on the ladder run's forbidden list. Named here for a maintainer,
+  not offered to a run
 - Working with a skeleton **somebody else authored** — what the CLI will and will not
   do with a foreign `skeleton.json`, transcribing one into specs, re-pivoting and
   renaming it: `docs/INGEST.md`. 🚫 **Not an authoring input, and deliberately
@@ -3318,7 +3319,7 @@ attachment, rgba, rgb, alpha, rgba2, rgb2)`, §5.1's row.
 - The six are every slot timeline the format has; anything else is refused
   here, and would be refused by the runtime's own reader too (`Invalid timeline
   type for a slot`). `A12_NO_DARK_COLOR` refuses `rgb2` — and `rgba2`, and the
-  slot field — in a file under the `spine-html` profile (SPEC_COVERAGE §2.1).
+  slot field — in a file under the `spine-html` profile.
   `sequence` is a timeline on an **attachment**, not on a slot — it is the
   family beside `deform`, §4.13.
 
@@ -5444,8 +5445,8 @@ attachment disappears, and a constraint entry with an unrecognised `type` matche
 case and vanishes.
 
 A deferral carries its reason, and there is one deferred attachment type:
-**`point` appears nowhere in the benchmark corpus** (SPEC_COVERAGE parts 3-1 and
-4-2), so it is not on the ladder's critical path. The message says so, because a
+**`point` appears nowhere in the benchmark corpus**, so it is not on the ladder's
+critical path. The message says so, because a
 deferral without its reason is a wall rather than a work item.
 
 ⚠️ **A spelling the format does not have is a different refusal and says so.**

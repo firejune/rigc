@@ -719,7 +719,7 @@ const MUTANTS: Mutant[] = [
   },
   {
     name: 'M13b_editor_pre_release_label_is_accepted',
-    origin: 'SPEC_COVERAGE part 3-0 — all twelve official example exports declare "4.3.75-beta", which the old regex rejected (blocker B2)',
+    origin: 'SURVEY_2026-08-22 part 3-0 — all twelve official example exports declare "4.3.75-beta", which the old regex rejected (blocker B2)',
     expect: null,
     mutate: (a) => ({
       ...a,
@@ -734,7 +734,7 @@ const MUTANTS: Mutant[] = [
     // waved through by the other. One mutant could only ever prove half of it,
     // and the half it proved would look identical either way.
     name: 'M36a_clipping_attachment_is_renderer_policy',
-    origin: 'SPEC_COVERAGE part 2-2 — A11 is renderer-profile: spine-html skips clipping attachments silently, spineboy-pro ships one',
+    origin: 'SURVEY_2026-08-22 part 2-2 — A11 is renderer-profile: spine-html skips clipping attachments silently, spineboy-pro ships one',
     expect: 'A11_NO_CLIPPING_ATTACHMENTS',
     profile: 'spine-html',
     mutate: (a) => ({
@@ -48402,7 +48402,7 @@ function runSkillSurfaceSuite(): number {
 // its own header, in one sentence the page SHOWS its reader — `DATED_RECORD_MARKER`
 // below, which is where it is written and the only place it is written — and the
 // whole file drops out of the scan. One document takes it today,
-// `docs/SPEC_COVERAGE.md`. CUR01 refuses a marker that does not sit beside an ISO
+// `docs/SURVEY_2026-08-22.md`. CUR01 refuses a marker that does not sit beside an ISO
 // date, refuses one on `README.md`, refuses a line that opens with the marker's
 // lead and is then not the sentence, and floors the marked set at one so a marker
 // that has stopped matching goes red rather than quiet. A line-level escape was
@@ -55310,6 +55310,159 @@ function runCurrencySuite(): number {
       probeDetail(probes.length === 0, probes, `the A02 row quotes ${sentences.map((said) => `"${said}"`).join(' and ')}, and the sentence cut from it is named`),
       'the sentence is where the generations that spelled the key are stated; a row that says something else sends ' +
         'the agent holding the refusal to a different claim about which file it has',
+    );
+  }
+
+  // --- CUR107: the guide's quotes of the deferred-point refusal are the one the compiler raises (#823)
+  //
+  // The guide quotes the `point` refusal in the refusal index and in §6's table,
+  // each cut at `…`. The sentence is read off the compiler — a probe rig whose
+  // one marker attachment is a point — and every piece of every quote has to be
+  // a clause of it. Held both ways: each quote with one word exchanged is named.
+  {
+    const guide = readFileSync(join(root, 'docs/AUTHORING.md'), 'utf8');
+    const probe = writeProbeRig({
+      skins: { default: { block: { block: { image: 'block.png' } }, marker: { marker: { type: 'point' } } } },
+    });
+    const raised = refusal(probe, STATIC_MOTION);
+    rmSync(probe.dir, { recursive: true, force: true });
+    const shape = (text: string): string => text.replace(/\s+/g, ' ').trim();
+    const shaped = raised === null ? '' : shape(raised);
+    const pieces = (quote: string): string[] => quote.split('…').map(shape).filter((piece) => piece.length > 0);
+    const missingOf = (quote: string): string[] => pieces(quote).filter((piece) => !shaped.includes(piece));
+    const quotes = [...guide.matchAll(/`(this attachment is a "point"[^`]*)`/g)].map((m) => m[1]);
+    const exchanged = (quote: string): string => quote.replace('this attachment', 'that attachment');
+    const probes = [
+      ...(raised === null ? ['a rig spec with a point attachment compiled'] : []),
+      ...quotes.flatMap((quote) => missingOf(quote).map((piece) => `the guide quotes "${piece}" and the compiler raises "${raised}"`)),
+      ...floorProbes([[quotes.length, 1, `${quotes.length} quote(s) of the point refusal in the guide`]], 'so the guide was not read'),
+      ...quotes.flatMap((quote) =>
+        missingOf(exchanged(quote)).length === missingOf(quote).length + 1
+          ? []
+          : [`one word exchanged in "${quote}" raised ${missingOf(exchanged(quote)).length - missingOf(quote).length} missing piece(s), and one is required`],
+      ),
+    ];
+    const held = probes.length === 0;
+    say(
+      'CUR107_THE_GUIDES_QUOTES_OF_THE_DEFERRED_POINT_REFUSAL_ARE_THE_ONE_THE_COMPILER_RAISES',
+      held,
+      probeDetail(held, probes, `${quotes.length} quote(s), each a clause of: ${raised}`),
+      'the quote is what an author holding the refusal searches the guide for, and the row beside it is where the ' +
+        'deferral is explained; a quote the compiler does not raise is an explanation nobody reaches',
+    );
+  }
+
+  // --- CUR110: every part pointer into the format reference or the survey resolves (#823)
+  //
+  // The format reference and the dated survey were one page, and a pointer
+  // written against the one page names a part by number. After the split a
+  // pointer at the reference's name for a part the survey holds is a reader sent
+  // to a heading that is not there — the refusal for a deferred point attachment
+  // did exactly that. Every `.ts` and `.md` at the root and directly under
+  // `src/`, `docs/`, `bench/` and `tools/` is read, each pointer is resolved
+  // against the headings of the page it names (`## Part N`, `### N.M`), and a
+  // miss is one fault per part, naming every file that cites it. Held both ways:
+  // a cited heading deleted from a copy of the reference, and a pointer at the
+  // reference's name for a part only the survey has, each raise exactly one.
+  {
+    const PAGES = { SPEC_COVERAGE: 'docs/SPEC_COVERAGE.md', 'SURVEY_2026-08-22': 'docs/SURVEY_2026-08-22.md' } as const;
+    type PageName = keyof typeof PAGES;
+    const headingsOf = (text: string): Set<string> =>
+      new Set(
+        text.split('\n').flatMap((line) => {
+          const part = /^## Part (\d+)\b/.exec(line);
+          if (part) return [part[1]];
+          const sub = /^### (\d+)\.(\d+) /.exec(line);
+          return sub ? [`${sub[1]}.${sub[2]}`] : [];
+        }),
+      );
+    const population = ['.', 'src', 'docs', 'bench', 'tools'].flatMap((dir) =>
+      readdirSync(join(root, dir))
+        .filter((name) => /\.(ts|md)$/.test(name) && statSync(join(root, dir, name)).isFile())
+        .map((name) => (dir === '.' ? name : `${dir}/${name}`)),
+    );
+    const normal = (text: string): string =>
+      text
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/`/g, '')
+        .replace(/\s*\*\s+/g, ' ')
+        .replace(/\s+/g, ' ');
+    const POINTER = /\b(SPEC_COVERAGE|SURVEY_2026-08-22)(?:\.md)? (?:[Pp]arts?|§) ?(\d+)(?:[-.](\d+))?((?: and \d+[-.]\d+)*)/g;
+    const citedIn = (texts: ReadonlyArray<readonly [string, string]>): Map<string, Set<string>> => {
+      const cited = new Map<string, Set<string>>();
+      for (const [path, text] of texts) {
+        for (const m of normal(text).matchAll(POINTER)) {
+          const keys = [m[3] === undefined ? m[2] : `${m[2]}.${m[3]}`, ...[...m[4].matchAll(/(\d+)[-.](\d+)/g)].map((k) => `${k[1]}.${k[2]}`)];
+          for (const key of keys) {
+            const id = `${m[1]} ${key}`;
+            if (!cited.has(id)) cited.set(id, new Set());
+            cited.get(id)?.add(path);
+          }
+        }
+      }
+      return cited;
+    };
+    const faultsOf = (texts: ReadonlyArray<readonly [string, string]>, pages: Record<PageName, string>): string[] => {
+      const headings = { SPEC_COVERAGE: headingsOf(pages.SPEC_COVERAGE), 'SURVEY_2026-08-22': headingsOf(pages['SURVEY_2026-08-22']) };
+      return [...citedIn(texts)].flatMap(([id, paths]) => {
+        const [page, key] = id.split(' ') as [PageName, string];
+        return headings[page].has(key)
+          ? []
+          : [`${page} part ${key.replace('.', '-')} is cited in ${[...paths].sort().join(', ')}, and ${PAGES[page]} has no heading for it`];
+      });
+    };
+    const texts = population.map((path) => [path, readFileSync(join(root, path), 'utf8')] as const);
+    const pages = {
+      SPEC_COVERAGE: readFileSync(join(root, PAGES.SPEC_COVERAGE), 'utf8'),
+      'SURVEY_2026-08-22': existsSync(join(root, PAGES['SURVEY_2026-08-22'])) ? readFileSync(join(root, PAGES['SURVEY_2026-08-22']), 'utf8') : '',
+    };
+    const cited = citedIn(texts);
+    const standing = faultsOf(texts, pages);
+    const citedOn = (page: PageName): string[] => [...cited.keys()].filter((id) => id.startsWith(`${page} `)).map((id) => id.split(' ')[1]);
+    // Plant one: the first heading the reference is cited for, deleted from a copy of it.
+    const firstCited = citedOn('SPEC_COVERAGE').find((key) => headingsOf(pages.SPEC_COVERAGE).has(key));
+    const headingLine = (key: string): RegExp => (key.includes('.') ? new RegExp(`^### ${literalPattern(key)} .*$`, 'm') : new RegExp(`^## Part ${key}\\b.*$`, 'm'));
+    const cutRaised =
+      firstCited === undefined ? null : faultsOf(texts, { ...pages, SPEC_COVERAGE: pages.SPEC_COVERAGE.replace(headingLine(firstCited), '') }).length - standing.length;
+    // Plant two: the reference's name on a part only the survey has, appended to the first scanned file.
+    const movedOnly = [...headingsOf(pages['SURVEY_2026-08-22'])].find((key) => key.includes('.') && !headingsOf(pages.SPEC_COVERAGE).has(key));
+    const misnamedRaised =
+      movedOnly === undefined
+        ? null
+        : faultsOf(
+            texts.map(([path, text], k) => [path, k === 0 ? `${text}\nSPEC_COVERAGE part ${movedOnly.replace('.', '-')}\n` : text] as const),
+            pages,
+          ).length - standing.length;
+    const plants: ReadonlyArray<readonly [string, number | null]> = [
+      [`deleting the heading of cited part ${String(firstCited)} from a copy of ${PAGES.SPEC_COVERAGE}`, cutRaised],
+      [`a pointer at ${PAGES.SPEC_COVERAGE} for the survey's part ${String(movedOnly)}`, misnamedRaised],
+    ];
+    const probes = [
+      ...standing,
+      ...floorProbes(
+        [
+          [population.length, 1, `${population.length} file(s) read`],
+          [citedOn('SPEC_COVERAGE').length, 1, `${citedOn('SPEC_COVERAGE').length} part(s) of ${PAGES.SPEC_COVERAGE} cited`],
+          [citedOn('SURVEY_2026-08-22').length, 1, `${citedOn('SURVEY_2026-08-22').length} part(s) of ${PAGES['SURVEY_2026-08-22']} cited`],
+          [headingsOf(pages['SURVEY_2026-08-22']).size, 1, `${headingsOf(pages['SURVEY_2026-08-22']).size} heading(s) read off ${PAGES['SURVEY_2026-08-22']}`],
+        ],
+        'so the pointers were not read the way this control reads them',
+      ),
+      ...plants.flatMap(([what, raised]) => (raised === 1 ? [] : [`${what} raised ${String(raised)} fault(s), and one is required`])),
+    ];
+    const held = probes.length === 0;
+    say(
+      'CUR110_EVERY_PART_POINTER_INTO_THE_FORMAT_REFERENCE_OR_THE_SURVEY_NAMES_A_HEADING_IT_HAS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${cited.size} cited part(s) across ${population.length} file(s) resolve — ` +
+          `${citedOn('SPEC_COVERAGE').sort().join(', ')} on ${PAGES.SPEC_COVERAGE}, ` +
+          `${citedOn('SURVEY_2026-08-22').sort().join(', ')} on ${PAGES['SURVEY_2026-08-22']} — and each of ${plants.length} plants is named`,
+      ),
+      'a refusal and a comment send their reader to a part by number; a number the page it names does not have is ' +
+        'a pointer that resolves to nothing, and the reader cannot tell a moved part from a mistyped one',
     );
   }
 
@@ -68238,7 +68391,7 @@ function corpusExports(): CorpusExport[] {
 
 /**
  * The one public example export that keys physics timelines — five of the six
- * value tracks, over six animations (`docs/SPEC_COVERAGE.md` §3.2).
+ * value tracks, over six animations (`docs/SURVEY_2026-08-22.md` §3.2).
  *
  * Fetched, not tracked, which is why `IG11` reports a HOLE rather than a pass
  * when it is absent: it is the only skeleton this file measures against that

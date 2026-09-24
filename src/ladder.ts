@@ -34,7 +34,7 @@ export interface Rung {
   id: string;
   /** Directory under `examples/`. */
   example: string;
-  /** One line on what this rung is testing, from SPEC_COVERAGE part 4-1. */
+  /** One line on what this rung is testing, from docs/SURVEY_2026-08-22.md part 4-1. */
   gates: string;
   skeletons: RungSkeleton[];
 }

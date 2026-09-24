@@ -4,7 +4,7 @@
 scored, what a pass is (*Operating rules*, gate **v2.4** — the clauses themselves are
 stated in [GATE.md](GATE.md), which this section derives), and where each one stands
 today. The survey behind it is
-[SPEC_COVERAGE.md](SPEC_COVERAGE.md) — that document is a dated research note and
+[SURVEY_2026-08-22.md](SURVEY_2026-08-22.md) — that document is a dated research note and
 does not move; this one does.
 
 The corpus is Spine's own official example projects, fetched by
@@ -663,7 +663,7 @@ each:
   repository's source and README as format documentation; the CLI (`bench` once, at
   the end); and earlier runs' `README.md`/`LOOP.md` for **process** only.
 - 🚫 **Forbidden** — `examples/*/export/*.json`; `bench/transcriptions/`; **this
-  document's status table, its per-rung sections and its *Operating rules***; [SPEC_COVERAGE.md](SPEC_COVERAGE.md);
+  document's status table, its per-rung sections and its *Operating rules***; [SPEC_COVERAGE.md](SPEC_COVERAGE.md) and [SURVEY_2026-08-22.md](SURVEY_2026-08-22.md);
   [`src/ladder.ts`](../src/ladder.ts)'s `gates:` strings; issue bodies carrying counts
   or measures; `bench/render_reference.ts`; git history; and any derived form of any
   of them.
@@ -699,7 +699,7 @@ recorded collisions were waiting on:
     recorded figure changes, this is not a gate release, and rule 5's re-inspection is not
     owed. The status table, the per-rung sections and rule 2's derivations are as sealed as
     they were.
-[SPEC_COVERAGE.md](SPEC_COVERAGE.md) is on the list for the same reason and more
+[SURVEY_2026-08-22.md](SURVEY_2026-08-22.md) is on the list for the same reason and more
 directly: its parts 3 and 4 inventory every example skeleton's bones, slots,
 constraints, attachment kinds and timelines, rung by rung.
 
@@ -3962,7 +3962,7 @@ rung 6's author rendered its own candidate back and diffed it frame by frame,
 catching a dropped one-frame event, a sloped static plateau and a squash clamp
 that never bound — three defects neither `validate` nor `check` had surfaced.
 
-Two facts the table does not repeat, both from SPEC_COVERAGE part 3:
+Two facts the table does not repeat, both from SURVEY_2026-08-22 part 3:
 
 - **No rung uses a named skin.** All twelve example skeletons have exactly one
   skin, called `default`. Named skins, per-skin bones and per-skin constraint

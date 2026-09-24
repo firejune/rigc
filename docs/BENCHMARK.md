@@ -693,7 +693,7 @@ fidelity as well as structure.
 
 #### What the rungs need
 
-[docs/SPEC_COVERAGE.md](SPEC_COVERAGE.md) surveys the full Spine 4.3 export surface against what
+[docs/SURVEY_2026-08-22.md](SURVEY_2026-08-22.md) surveys the full Spine 4.3 export surface against what
 rigc emits and against what the nine examples measurably use (`bun run bench:usage` regenerates the
 counts). Three blockers sat *before* rung 1: **B1**, the bone tree was code in `archetype.ts` rather
 than data, so no example could be expressed at all; **B2**, `A16`'s regex rejected the `"4.3.75-beta"`
@@ -1299,8 +1299,8 @@ viewer/         the run viewer — dev server only, no build (see above)
                   main.ts         the two panes, the transport, the report
 docs/           AUTHORING.md (how to author a rig), BENCHMARK.md (this document),
                 GATE.md (the clause statements a candidate is graded against),
-                LADDER.md (live rung status), SPEC_COVERAGE.md (format survey),
-                feature_matrix.{csv,json}
+                LADDER.md (live rung status), SPEC_COVERAGE.md (format reference),
+                SURVEY_2026-08-22.md (the dated survey), feature_matrix.{csv,json}
 .github/        workflows/ — ci.yml (the gates) and release.yml (release-please)
 CONTRIBUTING.md how to propose a change; RELEASING.md — how a version is cut
 ```
