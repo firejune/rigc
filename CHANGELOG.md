@@ -13,6 +13,7 @@
 ### Documentation
 
 * **authoring:** §0–§2 and §5–§12 speak in the present tense, without the tracker, the controls or the runs behind them ([#822](https://github.com/firejune/rigc/issues/822)) ([0e18c4d](https://github.com/firejune/rigc/commit/0e18c4d04840085ee733bfb6f5392553e9a2f1cf))
+* **authoring:** §3 and §4 state the present rule — the repository's history, the maker's voice and the unresolvable references cut ([#821](https://github.com/firejune/rigc/issues/821)) ([9570415](https://github.com/firejune/rigc/commit/95704152d7b5cfee2a176aa272efa7254aff3d73))
 * **face:** rigging, motion and face guides state the tool's present, not its history ([#825](https://github.com/firejune/rigc/issues/825)) ([e4e8090](https://github.com/firejune/rigc/commit/e4e80909c9fa6f92198cf93d97e48c05cbf6e18c))
 * **ingest:** the ingest page speaks in the present, and SPEC_COVERAGE loses what a user cannot resolve ([#824](https://github.com/firejune/rigc/issues/824)) ([e6c5dfb](https://github.com/firejune/rigc/commit/e6c5dfb926c7c44f655f8ac6a0d4142cd682ee03))
 * **readme:** README, GENERATIONS and PROMPTING state the tool's present, not the repository's past ([#817](https://github.com/firejune/rigc/issues/817)) ([1d91ebc](https://github.com/firejune/rigc/commit/1d91ebc29940edb89a9b9bd269ce7faf9bbfaaf6))
