@@ -27,11 +27,11 @@ behind the policy (the counts are of shipped skeletons outside this repository):
 | 6 | the bone inheritance key | 4.0 and 4.1 spell it `transform`, 4.2 and 4.3 spell it `inherit` (`getValue(boneMap, "transform", "Normal")` at `SkeletonJson.js:91` of `spine-core` 4.1.56, `getValue(boneMap, "inherit", "Normal")` at `:94` of 4.2.120). The old key is an unknown field to the newer reader, so the bone falls back to Normal inheritance without a word |
 | 7 | guessing the generation | a catalog builder handed the "nearest" runtime it had (4.2) to 19 skeletons labelled `3.8.99`; they loaded, and posed as NaN (row 2) |
 
-⚠️ **The detail `A02_NO_BONE_TRANSFORM_KEY` prints attributes the rename to 4.2 → 4.3.**
-The branch parsers cited in row 6 say 4.1 → 4.2, which is also what
-[SPEC_COVERAGE.md](SPEC_COVERAGE.md)'s format-change timeline records. The check is
-unaffected — it refuses the key in 4.3 data, which is true whichever generation last
-wrote it — but the attribution in its sentence is not the parser's.
+Row 6's rename is **4.1 → 4.2**, as [SPEC_COVERAGE.md](SPEC_COVERAGE.md)'s
+format-change timeline also records. `A02_NO_BONE_TRANSFORM_KEY` refuses the key in 4.3
+data whichever generation last wrote it, so its detail names both generations that
+spelled it rather than guessing one: `bone "…" uses "transform", the key 4.0 and 4.1
+spelled; 4.2 and 4.3 spell it "inherit"`.
 
 Rows 1, 2 and 6 each **opened without an error**. That is the whole reason this is a
 policy rather than a compatibility note.

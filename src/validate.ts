@@ -1904,14 +1904,14 @@ export function validate(input: ValidateInput): ValidateReport {
   });
 
   // --- A02: no bone.transform key ------------------------------------------
-  // 4.3 renamed it to `inherit`; the old key loads and silently falls back to
-  // Normal inheritance (case 6b). The key itself is `generation.ts`'s, for
+  // 4.2 renamed it to `inherit`, and 4.3 kept that spelling; the old key loads
+  // and silently falls back to Normal inheritance (case 6b). The key itself is `generation.ts`'s, for
   // A01's reason.
   check('A02_NO_BONE_TRANSFORM_KEY', () => {
     const bones = Array.isArray(raw?.bones) ? (raw.bones as unknown[]) : [];
     for (const bone of bones) {
       if (isObj(bone) && LEGACY_BONE_INHERIT_KEY in bone) {
-        fail('A02_NO_BONE_TRANSFORM_KEY', `bone "${String(bone.name)}" uses 4.2's "transform"; 4.3 wants "inherit"`);
+        fail('A02_NO_BONE_TRANSFORM_KEY', `bone "${String(bone.name)}" uses "transform", the key 4.0 and 4.1 spelled; 4.2 and 4.3 spell it "inherit"`);
       }
     }
   });
