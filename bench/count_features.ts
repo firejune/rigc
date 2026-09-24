@@ -5,7 +5,7 @@
 // need rather than by the spec's alphabet. Reads every skeleton JSON and .atlas
 // under examples/<name>/export/ (put there by scripts/fetch-examples.sh, which
 // must be run first -- examples/ is gitignored) and writes the two derived
-// matrices that docs/SPEC_COVERAGE.md Part 3 tabulates:
+// matrices that docs/SURVEY_2026-08-22.md Part 3 tabulates:
 //
 //   docs/feature_matrix.json  full nested detail, per file
 //   docs/feature_matrix.csv   one row per skeleton JSON, one column per counter

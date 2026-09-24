@@ -989,10 +989,10 @@ export interface RigPathAttachment extends RigVertexGeometry {
  * an unknown `type` and drop the attachment without a word
  * (`SkeletonJson.ts:653`).
  *
- * 🚧 It appears nowhere in the benchmark corpus (SPEC_COVERAGE parts 3-1 and
- * 4-2), so it is not on the ladder's critical path — which is the reason it is
- * deferred rather than an oversight. `linkedmesh` stood here beside it until
- * issue #691; `RigLinkedMeshAttachment` is the shape that replaced it.
+ * 🚧 It appears nowhere in the benchmark corpus, so it is not on the ladder's
+ * critical path — which is the reason it is deferred rather than an oversight.
+ * `linkedmesh` stood here beside it until issue #691; `RigLinkedMeshAttachment`
+ * is the shape that replaced it.
  */
 export interface RigUnimplementedAttachment {
   type: 'point';

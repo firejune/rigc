@@ -30,7 +30,7 @@ invent one.
 - Why the re-pivot in **§4.1** is shaped the way it is, and the child-bone row it
   warns about worked on a bone that actually has one: [RIGGING.md](RIGGING.md) §3.
   Its §2 is how to tell whether the pivot you are moving *to* is identified at all
-- What the format holds and what rigc covers, skeleton by skeleton:
+- What the Spine 4.3 format holds, field by field:
   [SPEC_COVERAGE.md](SPEC_COVERAGE.md)
 - If you are the *person operating* an agent rather than the agent:
   [PROMPTING.md](PROMPTING.md)
@@ -679,7 +679,7 @@ the second is the one that costs a day:
   all, and then you are debugging your own incomplete work rather than the format.
 
 ⚠️ **When a kind turns out not to be expressible, stop and say so — that is a finding,
-not a blocker to route around.** [SPEC_COVERAGE.md](SPEC_COVERAGE.md) is the
+not a blocker to route around.** [SURVEY_2026-08-22.md](https://github.com/firejune/rigc/blob/main/docs/SURVEY_2026-08-22.md) is the
 per-skeleton survey of exactly this. ⇒ Check the survey for your feature before
 concluding either way, and if it is genuinely absent, the shape of the answer is *"this export
 uses X, which the motion spec cannot say"* with a pointer — not a silent

@@ -3869,7 +3869,7 @@ function deferredAttachmentRefusal(type: string, where: string, how: string): st
   return (
     `${where}: this attachment is a "${type}"${how} — ${DEFERRED_ATTACHMENTS[type]}. ` +
     `rigc does not emit it yet, deliberately: it emits ${EMITTED_ATTACHMENT_TYPES.join(', ')}, and a point ` +
-    'appears nowhere in the benchmark corpus (docs/SPEC_COVERAGE.md parts 3-1 and 4-2), so it is not on the ' +
+    'appears nowhere in the benchmark corpus, so it is not on the ' +
     "ladder's critical path. docs/SPEC_COVERAGE.md part 1-6 is the row this sentence reads " +
     'from, and it is what an implementation would have to carry.'
   );

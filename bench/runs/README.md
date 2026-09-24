@@ -360,7 +360,8 @@ closed-under-reading scrub, not a prompt-side choice.
 | `examples/*/export/*.json` | the reference skeleton. This is the answer |
 | `bench/transcriptions/**` | the same answer rewritten by a script that read it |
 | [docs/LADDER.md](../../docs/LADDER.md)'s **status table**, its **per-rung sections** and its **Operating rules** | the table's *New at this rung* column publishes bone, slot and animation counts per skeleton, which the briefs withhold on purpose; the per-rung sections publish every previous run's measures; and *Operating rules* — the pass definition and the current gate — **derives** its thresholds by quoting those measures back, so it carries them too. All three are the ladder's bookkeeping and stay where they are — a run simply does not read them. The two parts of that document a run *should* read are *How a rung is scored* and *The honesty rule*. 🆕 **What a run needs out of *Operating rules* — the clause statements themselves — is item 11 of the allowed list above**, in [docs/GATE.md](../../docs/GATE.md). What stays sealed here is the **derivation**, not the bar |
-| [docs/SPEC_COVERAGE.md](../../docs/SPEC_COVERAGE.md) | all of it. Part 3 inventories what the corpus actually uses and part 4 lists, rung by rung, the bones, slots, constraints, attachment kinds and timelines each example skeleton carries. It is a reference export in prose |
+| [docs/SPEC_COVERAGE.md](../../docs/SPEC_COVERAGE.md) | all of it. It is the format reference split from the survey below, and admitting it is a protocol amendment like any other |
+| [docs/SURVEY_2026-08-22.md](../../docs/SURVEY_2026-08-22.md) | all of it. Part 3 inventories what the corpus actually uses and part 4 lists, rung by rung, the bones, slots, constraints, attachment kinds and timelines each example skeleton carries. It is a reference export in prose |
 | [`src/ladder.ts`](../../src/ladder.ts)'s **gate strings** | the same counts again, in code — `gates:` on each rung entry names the features and the sizes |
 | **issue bodies carrying counts or measures** | the per-rung issues (#10–#18) and any issue quoting a `bench` line. A number reaches an agent the same way whichever file it is in |
 | any **derived form** of the above | bone names, key times, curve handles, timeline listings, however they arrive — a previous session's summary, a commit message, a paste, a chat quote |
@@ -502,7 +503,7 @@ another route, and the rule against derived forms below covers it.
 
 **The forbidden list is the table in *What a run may read* above** — one copy, and
 that is the copy. It names `examples/*/export/*.json`, `bench/transcriptions/`,
-`docs/LADDER.md`'s status table, per-rung sections and *Operating rules*, `docs/SPEC_COVERAGE.md`,
+`docs/LADDER.md`'s status table, per-rung sections and *Operating rules*, `docs/SPEC_COVERAGE.md`, `docs/SURVEY_2026-08-22.md`,
 `src/ladder.ts`'s gate strings, issue bodies carrying counts, `render_reference.ts`,
 git history, and any derived form of any of them.
 
