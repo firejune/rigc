@@ -431,11 +431,12 @@ export function rewritePageNames(parsed: ParsedAtlas, rename: (name: string, ind
  *
  * This is what `--atlas-in` re-emits (issue #803). A pack's blank lines are its
  * packer's, not its content: a 3.8-era packer begins every file with one, and
- * `A07_ATLAS_TEXT_SHAPE` — which checks the text rigc writes — refused the
- * re-emission at `line 1`. What makes dropping them safe is what they mean to
- * the reader that owns the format: in `TextureAtlas` a run of blank lines ends a
- * page block exactly as one blank line does, and a run before the first page is
- * read as nothing. Measured through the runtime, `"\n" + text`, `"\n\n" + text`
+ * `A07_ATLAS_TEXT_SHAPE` — which checks the text rigc writes — refuses a blank
+ * line before the first page block, two side by side, and one after the last
+ * page block, each by its own sentence. What makes dropping them safe is what
+ * they mean to the reader that owns the format: in `TextureAtlas` a run of
+ * blank lines ends a page block exactly as one blank line does, and a run before
+ * the first page is read as nothing. Measured through the runtime, `"\n" + text`, `"\n\n" + text`
  * and `text` load to the same pages and regions (`PKR63`, `PKR64`).
  *
  * ⚠️ One reading is NOT the same, and it moves toward rigc's: the runtime's
@@ -523,9 +524,9 @@ export const PACK_NO_ROTATE = 0;
  * the trailing newline was appended unconditionally. That one byte contradicts
  * the paragraph above it: a blank line is the separator that sits BETWEEN page
  * blocks, so a file consisting of one is a separator with nothing on either side.
- * `A07_ATLAS_TEXT_SHAPE` then read it as a malformed page block and refused the
- * compiler's own output, which is how a rig with nothing to draw became a red
- * gate on a file nobody had written wrong.
+ * `A07_ATLAS_TEXT_SHAPE` reads a file with no non-blank line as having no page
+ * block and reports SKIP, and refuses a blank line that trails a page block as
+ * `the file ends with a blank line`.
  *
  * The runtime cannot tell the two apart — `new TextureAtlas('')`,
  * `new TextureAtlas('\n')` and `new TextureAtlas('\n\n')` all come back with
