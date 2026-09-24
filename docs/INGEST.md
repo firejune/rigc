@@ -12,14 +12,6 @@ it first and keep it open; this page never restates a field it documents.
 question neither of them answers: **what the toolchain will and will not do with
 somebody else's file, and what the honest routes through it are.**
 
-🔓 **Nothing in this repository's benchmark protocol applies to you.** No reading is
-forbidden, no reference is sealed, no attempt is scored, and no rung is being
-attempted. Those rules exist to keep one *measured experiment* honest; you are
-working on somebody's own data. Where this page points at a stored transcription it
-is pointing at **worked precedent you are meant to read**, not at a candidate you are
-not allowed to see. AUTHORING's own exemption line says the same thing from the
-authoring side.
-
 🚨 **The two numbers this page produces are not grades, and they measure different
 things.** `validate`'s red says *this file breaks a stated rule* — a fact about the
 file, not about your work, and sometimes (§3.2) a fact about the rule. `diff`'s
@@ -50,22 +42,14 @@ invent one.
 Two facts decide everything below, and they pull in opposite directions:
 
 1. **rigc reads compiled skeleton JSON in more places than you would guess.**
-   `validate`, `render`, `preview`, `vote`, `check`, `diff` and — since #569 —
-   `ingest` all take a `skeleton.json` path directly, and none of them needs a rig
+   `validate`, `render`, `preview`, `vote`, `check`, `diff` and `ingest` all take a `skeleton.json` path directly, and none of them needs a rig
    spec to do it.
-2. **rigc still cannot EDIT one.** There is no command that opens a skeleton and
+2. **rigc cannot EDIT one.** There is no command that opens a skeleton and
    changes it. The only thing that produces a skeleton is `build`, and `build`'s
    input is a rig spec plus a motion spec.
    ⇒ **Every route that ends in a changed file goes through the specs** — and
-   since #569 there are two ways to get them: write them (§2, transcription) or
-   have `ingest` write them for you from the file itself (§2.0).
-
-   ⚠️ This clause read *"rigc cannot write one back… no route from skeleton JSON
-   to specs"* until 2026-09-17, and the half that was wrong is the second half.
-   The route exists now and its contract is an equality — `build(ingest(x))` is
-   `x`, byte for byte — which is a stronger statement than anything transcription
-   could make. What survives is the first half: nothing **edits** a skeleton, and
-   the specs remain the only thing a change is expressed in.
+   there are two ways to get them: write them (§2, transcription) or have
+   `ingest` write them for you from the file itself (§2.0).
 
 ### 0.1 The table
 
@@ -76,12 +60,12 @@ an upstream `license.txt` (Appendix, and [NOTICE.md](../NOTICE.md)).
 | Command | Takes a foreign `skeleton.json`? | What it needs, and what it gives back |
 | --- | --- | --- |
 | **`validate <skeleton.json>`** | ✅ **yes — this is its foreign-data form** | the `.json`, plus one `.atlas` beside it or named with `--atlas`. Runs the assertions and prints `PASS`/`FAIL`/`SKIP`/`PROF` per rule, naming the profile that judged it. §1.1 |
-| **`render --candidate <skeleton.json>`** | ✅ **yes** | PNG frames plus a contact sheet, per animation. ⭐ **It does not gate** — it drew all seven frames of `spineboy-pro`'s `hoverboard` while `validate` was failing that same file, which is how the rule rather than the file was found to be wrong (§3.2) |
+| **`render --candidate <skeleton.json>`** | ✅ **yes** | PNG frames plus a contact sheet, per animation. ⭐ **It does not gate** — it draws a file `validate` refuses, which is how you tell a red about the file from a red about the rule (§3.2) |
 | **`preview --candidate <skeleton.json>`** | ✅ **yes** | one self-contained `.html` that plays it in the official Spine Web Player. Needs a network the first time it is opened ([NOTICE.md](../NOTICE.md)) |
 | **`vote --candidate <a> --candidate <b>`** | ✅ **yes, on either side** | a ballot page. Pairing a foreign export against your own transcription is a legitimate ballot, and the panes carry no paths |
 | **`check --candidate <skeleton.json> --frames <dir>`** | ✅ **yes** | ⭐ it reads **frames and never a reference skeleton**, so a foreign export enters this one *twice over*: as the candidate, or — via `render` — as the source of the frames. §1.4 |
 | **`diff <candidate.json> <reference.json>`** | ✅ **yes, both sides** | 49 structural measures over bones, slots, attachments, constraints, animations and events. ⛔ **Blind to every coordinate** — §1.3 |
-| **`ingest <skeleton.json> --out <dir>`** | ✅ **yes — and it is the only reader that WRITES specs** | the `.json` alone; no atlas, no art, no project file. Out come `rig.json`, `motion.json` and a findings report, such that `build`ing them reproduces the skeleton it read **byte for byte — for a skeleton rigc emitted**. ⚠️ For an editor export the claim is weaker and measured: `diff` at 1.000 with three kinds of benign difference left, which §2.3 states in full. The seventh reader, and the one that ends §2's hand work — §2.0 and §5 |
+| **`ingest <skeleton.json> --out <dir>`** | ✅ **yes — and it is the only reader that WRITES specs** | the `.json` alone; no atlas, no art, no project file. Out come `rig.json`, `motion.json` and a findings report, such that `build`ing them reproduces the skeleton it read **byte for byte — for a skeleton rigc emitted**. ⚠️ For an editor export the claim is identity in canonical form apart from `hash` and `spine`, which §2.3 states in full. The seventh reader, and the one that ends §2's hand work — §2.0 and §5 |
 | **`pose --images <dir> --frame <png>`** | ⛔ **not the skeleton** | loose part PNGs and one picture. A packed atlas page is not loose parts, and pointing it at one produces a confident answer about nothing — §5 |
 | **`explain --rig … --motion … --out …`** | ⛔ **no** | rig spec + motion spec. It explains **what you wrote**, which makes it a transcription instrument rather than a reading one — §1.5 |
 | **`build --rig … --motion … --images …`** | ⛔ **no** | specs in, skeleton out. The only writer in the toolchain, and the reason §2 exists |
@@ -183,11 +167,7 @@ Read it as three separate statements, because they answer three different questi
   you, without your having opened the JSON, that this export has no draw-order
   timeline, no event timeline, no constraint timeline, no deform timeline, no mesh
   attachment, no physics constraint, and no bounding box, clipping attachment or
-  path. ⭐ Four of those lines used to read `PASS`
-  ([#580](https://github.com/firejune/rigc/issues/580)): a rule that walks the
-  meshes, or the physics constraints, and finds none has measured nothing, and
-  reporting that as held both overstated the gate and cost you the inventory line.
-  What still passes over an empty list is the other kind of rule — `A01`, `A02`,
+  path. ⭐ What passes over an empty list is the other kind of rule — `A01`, `A02`,
   `A11`, `A12`, `A14` ask *how many of this does the file carry*, and **zero is the
   answer**.
 - **`PROF`** — the rule was excluded by the profile before its body ran. §3.3.
@@ -236,8 +216,8 @@ Spine runtime plays it, whatever rigc's own rasteriser or validator thinks.
 
 `diff` takes two compiled skeletons and reports 49 measures in eight groups, plus two
 blocks that report and gate nothing: the `(reported)` measures beside `attachments`
-and `animations`, and the `skeleton` header block at the top, which measures the stage
-(issue #578). A ninth group of six joins them when something has paired the two sides'
+and `animations`, and the `skeleton` header block at the top, which measures the stage.
+A ninth group of six joins them when something has paired the two sides'
 animations — `--as <candidate>=<reference>`, or one animation each side, which pairs by
 position (§1.3.1). Both sides may be foreign; the interesting pairing during ingest is
 **your transcription against the export it came from**:
@@ -290,13 +270,11 @@ units and every one of the 49 measures still reads **1.000**. ⇒ Never take a g
 `diff` as evidence that a geometric edit did not land, and never take it as evidence
 that one did.
 
-⚠️ **The corpus gate has a value-level measure and this command does not expose it**
-(§2.3, and `docs/BENCHMARK.md`'s *The nine value measures*). The reason is an input
-rather than a policy: comparing values means reading both files through `spine-core`,
-and a skeleton whose attachments carry a `sequence` cannot be parsed without the atlas
-that resolves it — so the measure takes two skeletons **and two packs**, which
-`rigc diff <a.json> <b.json>` does not have. The sentence above is about this command
-and stays true of it.
+⚠️ **`diff` has no value-level measure, and the reason is an input rather than a
+policy** (§2.3 says what a value comparison covers): comparing values means reading
+both files through `spine-core`, and a skeleton whose attachments carry a `sequence`
+cannot be parsed without the atlas that resolves it — so the measure takes two
+skeletons **and two packs**, which `rigc diff <a.json> <b.json>` does not have.
 
 ⚠️ **The one exception is the skeleton's own declared box**, and it is an exception to
 the sentence and not to the rule: `skeleton.stage_box` compares four world numbers,
@@ -305,13 +283,11 @@ measured, and the block they sit in gates nothing. Moving a pivot does not move 
 either.
 
 ⭐ **Declared is not the same as written down, and for the origin it is the
-difference between a green round trip and a false finding**
-([#620](https://github.com/firejune/rigc/issues/620)). The editor omits a header
+difference between a green round trip and a false finding.** The editor omits a header
 field at its default, so a stage sitting at `0,0` exports as a `width` and a
 `height` and no `x`/`y` at all — there is no other spelling for it. The measure
-reads that omission as the `0` it means, which is why a rigc build whose stage is at
-the origin and its own export of that build read `stage_box` **4/4**; reading the
-four "exactly as stated" scored the same box **2/4**. The extent is still read
+reads that omission as the `0` it means, so a rigc build whose stage is at the
+origin and the editor's export of that build read `stage_box` **4/4**. The extent is still read
 exactly as stated: it is what decides whether there is a stage at all, so a missing
 `width` is an absent stage rather than a stage of width zero.
 
@@ -491,20 +467,15 @@ rigc diff spine/skeleton.json examples/spineboy/export/spineboy-ess.json
 `motion.json` and `findings.json`. The contract is an equality rather than a
 rulebook: `build(ingest(x))` is `x`, byte for byte on `skeleton.json`, and the
 atlas comes back with the same region blocks (as a multiset — the page order is in
-no field of the file). `bun run selftest` holds every rig this repository builds to
-that on every run, which is the one gate here that compares an emitted file against
-a file rigc did not write.
+no field of the file).
 
-📊 **And it holds the twelve editor exports to the weaker claim that is available for
-them** ([#594](https://github.com/firejune/rigc/issues/594)). Every
-`examples/*/export/*.json` is ingested with `--art none`, rebuilt through the pack
+📊 **For an editor export the claim is weaker, and measured.** Every
+`examples/*/export/*.json` ingested with `--art none`, rebuilt through the pack
 beside it, and `diff`ed against the file it was read from: **12 of 12 come back with 0
-blockers and 1.000 on all 49 ratio-bearing measures and all 5 reported ones** — and,
-since [#615](https://github.com/firejune/rigc/issues/615), on all **nine value
-measures** too, over **193,927** compared values. Byte
+blockers and 1.000 on all 49 ratio-bearing measures and all 5 reported ones** — and on
+all **nine value measures** too, over **193,927** compared values. Byte
 identity is not the claim there and the reason is the input, not the round trip — §2.3
-has the three kinds of difference, measured, and what the value measures do and do not
-reach. ⚠️ Which pack is "the one beside it" is
+has the pass line, and what the value measures do and do not reach. ⚠️ Which pack is "the one beside it" is
 resolved rather than guessed, for §0.2's reason: `spineboy/export` holds two, and
 `spineboy-run.atlas` covers neither skeleton in it.
 
@@ -520,53 +491,40 @@ of this section**, with its gutter, its effect on the exit code and what to do.
 ⛔ **And it reads one generation.** Spine data is locked to the generation that
 exported it, and a mismatch is silent rather than loud: 4.3 takes constraints from the
 top-level `constraints` array alone, so a 4.0–4.2 file's `ik`/`transform`/`path`/
-`physics` arrays load as nothing at all — 1,302 shipped skeletons parsed on a 4.3
-runtime and loaded 0 of 8,672 constraints
-([#706](https://github.com/firejune/rigc/issues/706) row 1). So `ingest` reads
+`physics` arrays load as nothing at all. So `ingest` reads
 `skeleton.spine` before it reads a field of the file, and a file from another
 generation is a blocker naming that generation and counting, **on that file**, what a
 4.3 reader loses by it. Reading such a file with *that generation's own* defaults is a
-different job — #706's item 2, a per-generation table extracted by machine from each
-runtime's `SkeletonJson` — and it is not in this tool, which is why the finding points
+different job, and it is not in this tool, which is why the finding points
 at the policy rather than implying the file was read.
 
 **Two values are not in a skeleton**, so `ingest` asks rather than guesses:
 
 - **the stage** (`skeleton.width`/`height`) — a file that declares none is **carried as
   declaring none**: the rig spec states `"width": null, "height": null` (§2.1 step 3's
-  spelling, [#578](https://github.com/firejune/rigc/issues/578)), the rebuild emits a
-  header with none of `x`/`y`/`width`/`height`, and it is the file that was read, byte
-  for byte. No finding is recorded, because nothing was lost and nobody decided
-  anything ([#714](https://github.com/firejune/rigc/issues/714)). `--stage x,y,w,h` is how
-  a caller *adds* a box to such a file, and that is a `NO_STAGE` **judgement**. Until
-  #714 the absence was a blocker and the flag the only road through it — a number the
-  source never stated, on the shape #714 counts in 48 of 48 production exports.
-  ⚠️ **This page said an editor export carries none until
-  [#594](https://github.com/firejune/rigc/issues/594) measured it: all twelve exports in
-  the fetched corpus carry a stage**, `ingest` reads it straight through, and not one of
-  them needed the flag. What holds without qualification is that the box cannot be
+  spelling), the rebuild emits a header with none of `x`/`y`/`width`/`height`, and it
+  is the file that was read, byte for byte. No finding is recorded, because nothing
+  was lost and nobody decided anything. `--stage x,y,w,h` is how a caller *adds* a box
+  to such a file, and that is a `NO_STAGE` **judgement**. All twelve exports in the
+  fetched corpus carry a stage, and `ingest` reads it straight through. The box cannot be
   *derived* — posing the rig gives the *animated* extent, which is a different number
-  from the setup box. 🔸 **Half a stage is still a `NO_STAGE` blocker**: an origin with no
+  from the setup box. 🔸 **Half a stage is a `NO_STAGE` blocker**: an origin with no
   extent, or one extent without the other, declares no stage and is not the absence
   either, and the rig spec holds a stage as four fields or none. It is also the value that costs least to get wrong: `diff`
-  reports it as two measures of its own (`stage_present`, `stage_box`, since
-  [#578](https://github.com/firejune/rigc/issues/578)) and they are `(reported)`, so
-  nothing on the ladder reads them and an absurd box is green nearly everywhere. The
-  corpus half of the selftest's `IG` suite is the one gate that does read them. ⛔ **The
-  flag is refused beside a box the file states** — two sources for one value, both named,
-  and the file is the record of what was measured
-  ([#626](https://github.com/firejune/rigc/issues/626)). It used to be read only *after*
-  the file's box, so `--stage` at any of the twelve did nothing and said nothing;
+  reports it as two measures of its own (`stage_present`, `stage_box`) and they are
+  `(reported)`, so no score reads them and an absurd box is green nearly everywhere.
+  ⛔ **The flag is refused beside a box the file states** — two sources for one value,
+  both named, and the file is the record of what was measured;
 - **each animation's duration** — the format has no such field. The largest key time
   is used, stated in the motion spec's `note`, and recorded as a finding per
   animation. Edit it if you know the real number.
 
-🎛️ **And one statement is not in a skeleton either: who turns a muted constraint on**
-([#784](https://github.com/firejune/rigc/issues/784)). An ik or transform constraint
+🎛️ **And one statement is not in a skeleton either: who turns a muted constraint on.**
+An ik or transform constraint
 resting at 0 on every mix it reads, that no animation keys above 0, is either a
 leftover that moves nothing or a dial a game sets from code — and the two export as
-the same bytes. `build` refuses the shape by name (`A47`/`A48`), which is how a
-production skeleton's rebuild was refused over an ik its game switches on at runtime.
+the same bytes. `build` refuses the shape by name (`A47`/`A48`), so without a
+statement the rebuild of a file whose game switches that ik on at runtime is refused.
 So `ingest` reads it the way under which the file is correct: it writes the
 constraint into the rig spec's `invariants.consumerDrivenMix` ([AUTHORING
 §3.7](AUTHORING.md)), with a `why` saying the entry is `ingest`'s reading, and prints a
@@ -575,8 +533,8 @@ declaration is a statement to the gate, never emitted — and it gates green, wi
 constraint SKIPped by name rather than measured. It is the only field of `invariants`
 `ingest` ever writes, and the rig spec's `note` says so where it is present.
 ⚠️ **None of the twelve exports carries the shape**: every constraint they rest muted
-is keyed up by an animation, spineboy's aim rig being the idiom, and the corpus half
-of the `IG` suite holds that no line and no declaration appear on any of them.
+is keyed up by an animation, spineboy's aim rig being the idiom, so `ingest` prints no
+such line and writes no declaration for any of them.
 
 And two flags for what the skeleton also does not encode: `--art loose` (the default)
 names an `image` per attachment resolved against loose PNGs, `--art none` states
@@ -584,7 +542,7 @@ names an `image` per attachment resolved against loose PNGs, `--art none` states
 same pack read for a report rather than for an artifact: `explain` **poses** the rig
 to print its `DEFORM` block, a pose resolves every attachment against an atlas, and a
 size-only spec carries none of its own, so without the flag that pair is refused by
-name rather than posed ([#697](https://github.com/firejune/rigc/issues/697)); and
+name rather than posed; and
 under `loose`, `--images <dir>` writes
 the rig spec's own images directory relative to `--out`, so the rebuild is a plain
 `build --rig … --motion … --out …` rather than one carrying `--images` forever. It is
@@ -605,72 +563,55 @@ are on disk either way. (The one thing `ingest` does refuse outright is an optio
 contradicts the file, which is not a finding: `--stage` beside a box the skeleton
 declares.)
 
-🔒 **Derived, not kept by hand.** The ingest suite of `bun run selftest` (`IG25`)
-reads the codes out of [`src/ingest.ts`](../src/ingest.ts) and refuses a row this
-table lacks, a row naming a code nothing emits, and a gutter cell that is not the
-kind the source records — with `IG26` as its red-first, which removes a row, invents
-one and flips a gutter in turn and requires each to be named. Six of these codes are
-**composed** in the source rather than written out: five over a union of three or two
-names, which the scan expands, and `ATTACHMENT_<TYPE>` from the file's own text, which
-it cannot — so that one is a row about a family and says so. The scan counts the
-`note(` calls in the file against the sites it resolved, because a code it cannot read
-is the one failure a comparison of two sets cannot show you.
-
 | code | gutter | exit | what it means | what to do |
 | --- | --- | --- | --- | --- |
 | `ANIMATION_GROUP` | `BLOCK` | 1 | the animation carries a group the motion spec has no home for. The detail names the ten it does carry. `drawOrderFolder` is the group to know about: the runtime reads it and builds a timeline from it, and no export in this corpus carries one | transcribe that group by hand (§2), or accept that the rebuild does not carry it |
-| `ATTACHMENT_<TYPE>` | `BLOCK` | 1 | an attachment of a type rigc does not emit; the code is composed from the type, so on the one type left it reads `ATTACHMENT_POINT`. rigc emits region, mesh, linkedmesh, boundingbox, clipping and path — `linkedmesh` since [#691](https://github.com/firejune/rigc/issues/691), and `point` is the remaining deferred type | the rebuild will not have that attachment at all. `docs/SPEC_COVERAGE.md` part 1-6 says what a deferred type would carry |
-| `ATTACHMENT_LINK_GEOMETRY` | `LOSS` | 0 | a **linked mesh** that also states `uvs`, `triangles`, `vertices`, `hull` or `edges`. The parser returns from the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`), so those keys are read by nothing at all and the attachment draws the geometry its `source` names; the rig spec has no home for them either, because `build` refuses geometry on a link by name. The detail lists the keys and the source. Until [#710](https://github.com/firejune/rigc/issues/710) the rebuild dropped them with no line at all, so an `ingest` that normalised somebody's file said nothing about it | nothing. The rebuild is the mesh the runtime was already drawing — and if those keys were the geometry you meant, take `source` off and author it as a mesh of its own. `A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN` is the same fact at the gate |
-| `ATTACHMENT_SEQUENCE` | `BLOCK` | 1 | a `sequence` block — a numbered image series — that the rig spec cannot say **as written**. Since [#729](https://github.com/firejune/rigc/issues/729) a well-formed block on a region, mesh or linked mesh is carried field for field, with no `image` on the loose route (the frames `<path><number>` are the art), and a `sequence` timeline with it; what is left here is a block the parser reads into a series other than the one written — no `count` (0 regions), a `setup` past the end (clamped), a fraction — or one on a `boundingbox`, `clipping` or `path`, where the parser never reads it. The detail quotes the block and says which | the rebuild draws the single region the attachment names. Fix the block in the source — a `count` is the usual one — and ingest again |
-| `ATTACHMENT_TIMELINE` | `BLOCK` | 1 | an attachment timeline that is neither `deform` nor `sequence`. Both are carried since [#729](https://github.com/firejune/rigc/issues/729), and `readAnimation` tests an attachment timeline for exactly those two names and ignores anything else (`SkeletonJson.js:1147-1201`) — so what reaches this line is a name outside the format, which no player plays either | fix the timeline's name in the source, or accept that the rebuild does not carry it |
+| `ATTACHMENT_<TYPE>` | `BLOCK` | 1 | an attachment of a type rigc does not emit; the code is composed from the type, so on the one type left it reads `ATTACHMENT_POINT`. rigc emits region, mesh, linkedmesh, boundingbox, clipping and path, and `point` is the one deferred type | the rebuild will not have that attachment at all. `docs/SPEC_COVERAGE.md` part 1-6 says what a deferred type would carry |
+| `ATTACHMENT_LINK_GEOMETRY` | `LOSS` | 0 | a **linked mesh** that also states `uvs`, `triangles`, `vertices`, `hull` or `edges`. The parser returns from the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`), so those keys are read by nothing at all and the attachment draws the geometry its `source` names; the rig spec has no home for them either, because `build` refuses geometry on a link by name. The detail lists the keys and the source | nothing. The rebuild is the mesh the runtime was already drawing — and if those keys were the geometry you meant, take `source` off and author it as a mesh of its own. `A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN` is the same fact at the gate |
+| `ATTACHMENT_SEQUENCE` | `BLOCK` | 1 | a `sequence` block — a numbered image series — that the rig spec cannot say **as written**. A well-formed block on a region, mesh or linked mesh is carried field for field, with no `image` on the loose route (the frames `<path><number>` are the art), and a `sequence` timeline with it; what is left here is a block the parser reads into a series other than the one written — no `count` (0 regions), a `setup` past the end (clamped), a fraction — or one on a `boundingbox`, `clipping` or `path`, where the parser never reads it. The detail quotes the block and says which | the rebuild draws the single region the attachment names. Fix the block in the source — a `count` is the usual one — and ingest again |
+| `ATTACHMENT_TIMELINE` | `BLOCK` | 1 | an attachment timeline that is neither `deform` nor `sequence`. Both are carried, and `readAnimation` tests an attachment timeline for exactly those two names and ignores anything else (`SkeletonJson.js:1147-1201`) — so what reaches this line is a name outside the format, which no player plays either | fix the timeline's name in the source, or accept that the rebuild does not carry it |
 | `BONE_FIELD` | `BLOCK` | 1 | a bone field with no rig-spec field, so it is dropped. A 4.0/4.1 export spelling `transform` where 4.3 spells `inherit` lands here; so does a misspelling | check the name against AUTHORING §3 first — a typo and an unsupported field read exactly the same |
-| `BONE_TIMELINE` | `BLOCK` | 1 | a bone timeline the motion spec has no track for. The detail names the eleven it has, read off the table. Since [#733](https://github.com/firejune/rigc/issues/733) carried `inherit` — the eleventh case of the runtime's own bone switch, a stepped mode per key — every bone timeline the runtime plays has a track, so this is reachable only for a name the **parser** throws on too (`Invalid timeline type for a bone`), the position `PHYSICS_TIMELINE` is in | check the spelling; there is no bone timeline left for the rebuild to be missing |
+| `BONE_TIMELINE` | `BLOCK` | 1 | a bone timeline the motion spec has no track for. The detail names the eleven it has, read off the table. Every bone timeline the runtime plays has a track, `inherit` included — the eleventh case of the runtime's own bone switch, a stepped mode per key — so this is reachable only for a name the **parser** throws on too (`Invalid timeline type for a bone`), the position `PHYSICS_TIMELINE` is in | check the spelling; there is no bone timeline left for the rebuild to be missing |
 | `CONSTRAINT_FIELD` | `BLOCK` | 1 | as `BONE_FIELD`, on a constraint, with its type named beside it | as `BONE_FIELD` |
-| `CONSTRAINT_KEY_RESTATED` | `LOSS` | 0 | an `ik` or `transform` track whose keys do not all state the same fields. The motion spec takes one field set per track, so a field **any** key states is written on **every** key of the spec at the value the parser would have read there — and the line is printed only for a value the **file** will still carry. Since [#716](https://github.com/firejune/rigc/issues/716) the emitter leaves a value out wherever it is the one the parser reads without it ([AUTHORING §10.6c](AUTHORING.md)), so a restated default is the source's own text again and says nothing; what is left is a value the table has no row for, or a transform key's `mixY` the source left out beside a `mixX` that is not 1, which the emitter keeps because that is where the editor writes it (§10.6c's *only at 1*). Measured on the twelve exports: 20 tracks printed this before #716, 0 after | nothing. Same values, and where this prints, a larger file — the rebuild plays what the source plays |
-| `CONSUMER_DRIVEN_MIX` | `JUDGE` | 0 | an `ik` or `transform` constraint resting at 0 on every mix it reads — an ik's `mix`; a transform's mixes for the `to` properties it declares — that no animation keys above 0, reading every key the way `A47`/`A48` do: an omitted mix is the parser's 1 and a Bezier handle above 0 lifts a 0 → 0 pair. Nothing in the file ever switches it on, and the file cannot say whether that is a leftover or a mix a game sets from code, so the rig spec **declares** it in `invariants.consumerDrivenMix` ([#784](https://github.com/firejune/rigc/issues/784)) and the rebuild's gate SKIPs it by name. It is a judgement for `DURATION`'s reason: a statement the skeleton does not carry, made and printed — and not a `LOSS`, because the rebuilt skeleton is the source's bytes. A transform that declares no `to` at all is not a candidate: `A48` refuses it with its own sentence, which no declaration answers | nothing, if a game drives that mix. If it is a leftover, delete the entry and rest a mix it reads above 0 — or remove the constraint — and the gate measures it again |
+| `CONSTRAINT_KEY_RESTATED` | `LOSS` | 0 | an `ik` or `transform` track whose keys do not all state the same fields. The motion spec takes one field set per track, so a field **any** key states is written on **every** key of the spec at the value the parser would have read there — and the line is printed only for a value the **file** will still carry. The emitter leaves a value out wherever it is the one the parser reads without it ([AUTHORING §10.6c](AUTHORING.md)), so a restated default is the source's own text again and says nothing; what is left is a value the table has no row for, or a transform key's `mixY` the source left out beside a `mixX` that is not 1, which the emitter keeps because that is where the editor writes it (§10.6c's *only at 1*). Measured on the twelve exports: 0 tracks print it | nothing. Same values, and where this prints, a larger file — the rebuild plays what the source plays |
+| `CONSUMER_DRIVEN_MIX` | `JUDGE` | 0 | an `ik` or `transform` constraint resting at 0 on every mix it reads — an ik's `mix`; a transform's mixes for the `to` properties it declares — that no animation keys above 0, reading every key the way `A47`/`A48` do: an omitted mix is the parser's 1 and a Bezier handle above 0 lifts a 0 → 0 pair. Nothing in the file ever switches it on, and the file cannot say whether that is a leftover or a mix a game sets from code, so the rig spec **declares** it in `invariants.consumerDrivenMix` and the rebuild's gate SKIPs it by name. It is a judgement for `DURATION`'s reason: a statement the skeleton does not carry, made and printed — and not a `LOSS`, because the rebuilt skeleton is the source's bytes. A transform that declares no `to` at all is not a candidate: `A48` refuses it with its own sentence, which no declaration answers | nothing, if a game drives that mix. If it is a leftover, delete the entry and rest a mix it reads above 0 — or remove the constraint — and the gate measures it again |
 | `CONSTRAINT_TYPE` | `BLOCK` | 1 | a constraint whose `type` is none rigc knows, so the whole constraint is dropped rather than approximated | the rebuild has no such constraint; check the spelling before assuming the type is unsupported |
 | `DURATION` | `JUDGE` | 0 | skeleton JSON has no duration field at all. The largest key time is used, which is what a runtime plays to — and wrong for an animation that holds its last pose past its last key | if you know the real number, edit `duration` in the motion spec. It costs nothing: the declared duration is checked against the compiled keys |
-| `GENERATION_UNKNOWN` | `BLOCK` | 1 | `skeleton.spine` names no generation rigc knows, or the header states none at all. A version is read as its LEADING `major.minor` token — a down-export writes `4.0-from-4.1.24`, which is 4.0 data from a 4.1 editor — and it is never rounded to the nearest generation: a catalog that rounded handed 19 skeletons labelled `3.8.99` a 4.2 runtime and every one posed as NaN ([#706](https://github.com/firejune/rigc/issues/706) row 7) | check the string against the file you were handed. A real generation rigc does not list belongs on #706 item 1, with the string beside it |
-| `GENERATION_UNSUPPORTED` | `BLOCK` | 1 | the file is Spine data from another generation and this reader reads 4.3. The detail names the generation, the string it was read from, and what a 4.3 reader loses on **this** file: constraints parked in the top-level `ik` / `transform` / `path` / `physics` / `slider` arrays 4.3 folded into `constraints` and this reader never opens (row 1), bones carrying 4.0/4.1's `transform` where 4.3 spells `inherit` (row 6), and physics constraints omitting `inertia` / `damping`, whose default is not the same number in 4.2 as in 4.3 (row 4) | re-export the file as 4.3 from an editor of its own generation, or transcribe it by hand (§2). Reading it with **that generation's** defaults is #706 item 2 and is not in this tool |
-| `HEADER_BOOKKEEPING` | `LOSS` | 0 | a header field the editor writes and the rig spec has no home for — `hash`, the editor's project hash, which is a value about a file rigc did not write. Dropped, and nothing reads it back. `audio` was on this line until [#716](https://github.com/firejune/rigc/issues/716): the rig spec states it now ([AUTHORING §3.1](AUTHORING.md)) and `ingest` carries it, `null` included | nothing. It is one of the two declared exceptions §2.3's pass line is stated apart from |
+| `GENERATION_UNKNOWN` | `BLOCK` | 1 | `skeleton.spine` names no generation rigc knows, or the header states none at all. A version is read as its LEADING `major.minor` token — a down-export writes `4.0-from-4.1.24`, which is 4.0 data from a 4.1 editor — and it is never rounded to the nearest generation: rounding `3.8.99` up hands 3.8 data to a 4.2 runtime, and it poses as NaN | check the string against the file you were handed. A real generation rigc does not list is worth reporting, with the string beside it |
+| `GENERATION_UNSUPPORTED` | `BLOCK` | 1 | the file is Spine data from another generation and this reader reads 4.3. The detail names the generation, the string it was read from, and what a 4.3 reader loses on **this** file: constraints parked in the top-level `ik` / `transform` / `path` / `physics` / `slider` arrays 4.3 folded into `constraints` and this reader never opens, bones carrying `transform` where 4.3 spells `inherit`, and physics constraints omitting `inertia` / `damping`, whose default is not the same number in 4.2 as in 4.3 | re-export the file as 4.3 from an editor of its own generation, or transcribe it by hand (§2). Reading it with **that generation's** defaults is not in this tool |
+| `HEADER_BOOKKEEPING` | `LOSS` | 0 | a header field the editor writes and the rig spec has no home for — `hash`, the editor's project hash, which is a value about a file rigc did not write. Dropped, and nothing reads it back. `audio` is not on this line: the rig spec states it ([AUTHORING §3.1](AUTHORING.md)) and `ingest` carries it, `null` included | nothing. It is one of the two declared exceptions §2.3's pass line is stated apart from |
 | `HEADER_ORIGIN` | `LOSS` | 0 | the source declares an extent and omits `x`/`y`. Inside a declared extent an omitted origin **is** 0, so the spec states it — and the rebuild then spells two fields the source did not | nothing. Same box, different bytes — which is why byte identity is not the claim for an export that takes this branch |
 | `HEADER_REDERIVED` | `LOSS` | 0 | `skeleton.spine`: the rebuild writes the version of the runtime rigc links. The line says whether that is the same string the source states | nothing — but read the line: a 4.2 export rebuilds as 4.3 in that one field, and a source from another generation raises `GENERATION_UNSUPPORTED` beside it, which is the blocker about the DATA rather than about the string |
 | `IK_KEY_FIELD` | `BLOCK` | 1 | a key field on an `ik` timeline that is not part of its shape | check the spelling; an unknown field is dropped from the rebuilt track |
-| `NO_STAGE` | `BLOCK` `JUDGE` | 1 | the skeleton declares no stage, and one of two things follows. A **judgement** — exit 0 — when `--stage x,y,w,h` supplied a box, because nothing measured the box you gave it. A **blocker** when the header states **half** a stage — an origin with no extent, or one extent without the other — which the rig spec cannot hold; the detail names the fields it states. A header with **none** of the four is not a finding at all: it is carried as `"width": null, "height": null` and rebuilds byte for byte ([#714](https://github.com/firejune/rigc/issues/714)) | for the judgement, nothing if the box came from the project the file came from. For the blocker, supply the box with `--stage`, or take the stray field(s) out of the source and the absence is carried. It cannot be derived: posing the rig gives the animated extent, which is a different number |
+| `NO_STAGE` | `BLOCK` `JUDGE` | 1 | the skeleton declares no stage, and one of two things follows. A **judgement** — exit 0 — when `--stage x,y,w,h` supplied a box, because nothing measured the box you gave it. A **blocker** when the header states **half** a stage — an origin with no extent, or one extent without the other — which the rig spec cannot hold; the detail names the fields it states. A header with **none** of the four is not a finding at all: it is carried as `"width": null, "height": null` and rebuilds byte for byte | for the judgement, nothing if the box came from the project the file came from. For the blocker, supply the box with `--stage`, or take the stray field(s) out of the source and the absence is carried. It cannot be derived: posing the rig gives the animated extent, which is a different number |
 | `PATH_TIMELINE` | `BLOCK` | 1 | a path-constraint timeline the motion spec has no track for — it carries position, spacing and mix | transcribe it, or accept that the rebuild plays nothing there |
-| `PHYSICS_DRIVES_NOTHING` | `LOSS` | 0 | a physics constraint none of whose `x`, `y`, `rotate`, `scaleX`, `shearX` is above 0 — absent, or stated at 0 or below. `PhysicsConstraint.update` applies a component only above 0 (`PhysicsConstraint.js:112`), so it moves no bone, and `build` refuses exactly that shape by name at `A23_PHYSICS_CONSTRAINT_EFFECTIVE` — which, until [#731](https://github.com/firejune/rigc/issues/731), meant the whole rebuild of a file an editor exports was refused over a constraint that did nothing in it. The rig spec **omits** it, together with every timeline keyed to it (a track naming it would be an unknown constraint to the rebuild, refused at compile) and its place on any skin's `physics` list; the detail names each, and the values it did state. Measured on a generated rig through spine-core, posing the source with and without such a constraint differs by **0** on every bone world value — and by at most 9e-8 when it sits on the root, which is the runtime's `modifyWorld` recomputing a local transform it had no reason to, not a component. ⚠️ **One thing does move:** a duration is the last key an animation has left, so an omitted timeline that held the last key shortens the rebuilt animation, and the detail says which animation and both lengths | nothing, if it was meant to do nothing. If it was meant to jiggle, the file never said so: give it the component it should drive and it is carried like any other. Where the detail names a shortened animation and the length matters to whatever loops it, key something at the length it had |
-| `PHYSICS_GLOBAL_REACHES_NOTHING` | `LOSS` | 0 | a physics timeline keyed under the **empty** name — the one that names no constraint, which the runtime applies to every physics constraint declaring that property global (`"strengthGlobal": true` for `strength`; `reset` resets every physics constraint and asks no flag) — in a file where no physics constraint the rebuild carries declares it. The motion spec spells that timeline `"physics": "*"` ([#726](https://github.com/firejune/rigc/issues/726)) and `build` refuses one that reaches nobody by name, so the rig spec **omits** it: in the source it walked every constraint and wrote into none. A constraint `PHYSICS_DRIVES_NOTHING` omitted counts as not carried — it was the only thing such a timeline could reach, and it moved no bone. ⚠️ As with that row, a duration is the last key an animation has left, so an omitted timeline that held the last key shortens the rebuilt animation and the detail says both lengths. An unnamed timeline that **does** reach a constraint is not a finding at all: it is carried as `"*"` and rebuilt under the empty name byte for byte | nothing, if it was meant to do nothing. If it was meant to drive the constraints, the file never said which: set `"<property>Global": true` on them in the rig spec and key it as `"physics": "*"` |
+| `PHYSICS_DRIVES_NOTHING` | `LOSS` | 0 | a physics constraint none of whose `x`, `y`, `rotate`, `scaleX`, `shearX` is above 0 — absent, or stated at 0 or below. `PhysicsConstraint.update` applies a component only above 0 (`PhysicsConstraint.js:112`), so it moves no bone, and `build` refuses exactly that shape by name at `A23_PHYSICS_CONSTRAINT_EFFECTIVE`. The rig spec **omits** it, together with every timeline keyed to it (a track naming it would be an unknown constraint to the rebuild, refused at compile) and its place on any skin's `physics` list; the detail names each, and the values it did state. Measured on a generated rig through spine-core, posing the source with and without such a constraint differs by **0** on every bone world value — and by at most 9e-8 when it sits on the root, which is the runtime's `modifyWorld` recomputing a local transform it had no reason to, not a component. ⚠️ **One thing does move:** a duration is the last key an animation has left, so an omitted timeline that held the last key shortens the rebuilt animation, and the detail says which animation and both lengths | nothing, if it was meant to do nothing. If it was meant to jiggle, the file never said so: give it the component it should drive and it is carried like any other. Where the detail names a shortened animation and the length matters to whatever loops it, key something at the length it had |
+| `PHYSICS_GLOBAL_REACHES_NOTHING` | `LOSS` | 0 | a physics timeline keyed under the **empty** name — the one that names no constraint, which the runtime applies to every physics constraint declaring that property global (`"strengthGlobal": true` for `strength`; `reset` resets every physics constraint and asks no flag) — in a file where no physics constraint the rebuild carries declares it. The motion spec spells that timeline `"physics": "*"` and `build` refuses one that reaches nobody by name, so the rig spec **omits** it: in the source it walked every constraint and wrote into none. A constraint `PHYSICS_DRIVES_NOTHING` omitted counts as not carried — it was the only thing such a timeline could reach, and it moved no bone. ⚠️ As with that row, a duration is the last key an animation has left, so an omitted timeline that held the last key shortens the rebuilt animation and the detail says both lengths. An unnamed timeline that **does** reach a constraint is not a finding at all: it is carried as `"*"` and rebuilt under the empty name byte for byte | nothing, if it was meant to do nothing. If it was meant to drive the constraints, the file never said which: set `"<property>Global": true` on them in the rig spec and key it as `"physics": "*"` |
 | `PHYSICS_TIMELINE` | `BLOCK` | 1 | the same for a physics constraint, whose eight the motion spec carries in full — so this is reachable only for a name the **parser** falls through too | as `PATH_TIMELINE` |
 | `SLIDER_TIMELINE` | `BLOCK` | 1 | the same for a slider, which carries time and mix | as `PATH_TIMELINE` |
 | `SLOT_FIELD` | `BLOCK` | 1 | as `BONE_FIELD`, on a slot | as `BONE_FIELD` |
-| `SLOT_TIMELINE` | `BLOCK` | 1 | a slot timeline the motion spec has no track for. Since [#730](https://github.com/firejune/rigc/issues/730) carried `rgb`, `alpha` and `rgb2` the spec has a track for all six the format has, so what still reaches this line is a name **outside** the format — `sequence` written on a slot rather than an attachment is the likeliest — and the detail says so: the runtime's own reader throws `Invalid timeline type for a slot` on it, so no player loads that file either. The detail names the tracks the spec does have and, when the format has any it lacks, those too, **both read off the tables** rather than listed here: this cell named `rgba2` among the timelines nobody carries until [#690](https://github.com/firejune/rigc/issues/690) made that false, which is what a hand-kept list beside a derived one always comes to. `rgb` and `alpha` are carried under their own names and on their own key times, never folded into one `rgba` — that would state each channel at the other's key times, a value nobody keyed | fix the timeline's name, or accept that the rebuild plays nothing there |
-| `SPEC_REFUSED` | `BLOCK` | 1 | the specs were written and **rigc's own parser refuses one of them** — the detail carries that refusal word for word, after the file and the spec it is about. It is the one finding that is not about a single construct: it is whatever `parseRigSpec` or `parseMotionSpec` names, from a shape the format holds and the spec cannot say (a constraint that is `skinRequired` under no skin) to a defect in this decompiler. Until [#692](https://github.com/firejune/rigc/issues/692) the refusal left through `ingest` itself, so the run exited 1 with no line, no code and no `findings.json` at all | read the quoted sentence against the skeleton: it names the object. Both specs are on disk for exactly that, and `build` will refuse them until the shape has a spelling — [AUTHORING §5.1](AUTHORING.md) is the list of what a parser says |
+| `SLOT_TIMELINE` | `BLOCK` | 1 | a slot timeline the motion spec has no track for. The spec has a track for all six the format has, so what still reaches this line is a name **outside** the format — `sequence` written on a slot rather than an attachment is the likeliest — and the detail says so: the runtime's own reader throws `Invalid timeline type for a slot` on it, so no player loads that file either. The detail names the tracks the spec does have and, when the format has any it lacks, those too, **both read off the tables**. `rgb` and `alpha` are carried under their own names and on their own key times, never folded into one `rgba` — that would state each channel at the other's key times, a value nobody keyed | fix the timeline's name, or accept that the rebuild plays nothing there |
+| `SPEC_REFUSED` | `BLOCK` | 1 | the specs were written and **rigc's own parser refuses one of them** — the detail carries that refusal word for word, after the file and the spec it is about. It is the one finding that is not about a single construct: it is whatever `parseRigSpec` or `parseMotionSpec` names, from a shape the format holds and the spec cannot say (a constraint that is `skinRequired` under no skin) to a defect in this decompiler | read the quoted sentence against the skeleton: it names the object. Both specs are on disk for exactly that, and `build` will refuse them until the shape has a spelling — [AUTHORING §5.1](AUTHORING.md) is the list of what a parser says |
 | `TIMELINE_FIELD` | `BLOCK` | 1 | a key field on a bone, path, physics or slider timeline that is not part of that timeline's shape. On an `inherit` key that includes a `curve`: the parser reads `time` and `inherit` there and nothing else, and `build` refuses a curve on that track by name | check the spelling; the field is dropped from the rebuilt key |
-| `TIMELINE_KEY_RESTATED` | `LOSS` | 0 | an editor omits a channel that equals the parser's default, and the motion spec's `v` is positional, so the omission is written out at that default **in the spec** — and the line is printed only where the **file** will carry it too. It was the commonest line in a real run until [#716](https://github.com/firejune/rigc/issues/716): the emitter now leaves a channel out wherever it is the one the parser reads without it ([AUTHORING §10.6c](AUTHORING.md)), so on every key kind with a row the rebuild is the source's own text and nothing is said — measured on the twelve exports, 341 tracks printed it before and 0 after. What still prints it is a timeline whose keys have no row (`shearx`, `alpha`, path `spacing`, …), and an `inherit` key: one that omits the mode is written as `normal` — the parser's default — and one spelled with a capital first letter (`NoScale`) as the editor's `noScale`, the same mode either way | nothing. The same values the runtime reads, spelled out — a larger file and the same animation |
+| `TIMELINE_KEY_RESTATED` | `LOSS` | 0 | an editor omits a channel that equals the parser's default, and the motion spec's `v` is positional, so the omission is written out at that default **in the spec** — and the line is printed only where the **file** will carry it too. The emitter leaves a channel out wherever it is the one the parser reads without it ([AUTHORING §10.6c](AUTHORING.md)), so on every key kind with a row the rebuild is the source's own text and nothing is said — measured on the twelve exports, 0 tracks print it. What still prints it is a timeline whose keys have no row (`shearx`, `alpha`, path `spacing`, …), and an `inherit` key: one that omits the mode is written as `normal` — the parser's default — and one spelled with a capital first letter (`NoScale`) as the editor's `noScale`, the same mode either way | nothing. The same values the runtime reads, spelled out — a larger file and the same animation |
 | `TRANSFORM_KEY_FIELD` | `BLOCK` | 1 | as `IK_KEY_FIELD`, on a `transform` timeline | as `IK_KEY_FIELD` |
 
-⚠️ **An attachment's `name` has no row, because nothing about it is lost any more.**
-Until [#796](https://github.com/firejune/rigc/issues/796) the rig spec had no field for
-one, so `ATTACHMENT_NAME` reported it as a `LOSS` in two shapes: a stated name on a
-placeholder one skin fills was kept only as `path` and the rebuild answered to the
-placeholder, and a contested placeholder was renamed `<skin>/<placeholder>` by the
-compiler. The field exists now, `ingest` carries a stated `name` verbatim — equal to its
-key or not, exactly as the source spells it — and writes none where the source states
-none, and `compile` emits exactly what the spec states. The code went with the loss it
-named; `IG86`–`IG89` in `bun run selftest` hold the carry, the rebuild's loaded names and
-regions, and the two-skin shape with a link in each.
+⚠️ **An attachment's `name` has no row, because nothing about it is lost.** `ingest`
+carries a stated `name` verbatim — equal to its key or not, exactly as the source spells
+it — and writes none where the source states none, and `compile` emits exactly what the
+spec states.
 
 ### Transcription — the route that made a foreign skeleton yours
 
-⚠️ **The rest of §2 is the route that existed before #569, and it is kept because
-the reading it produces is still the right one** — it is what an author does *after*
+⚠️ **The rest of §2 is transcription by hand, and the reading it produces is the
+right one** — it is what an author does *after*
 `ingest`, and it is what to fall back on for the constructs `ingest` reports as
 blockers. The numbers come out of the JSON into a rig spec and a motion spec by hand,
 and `build` emits a new skeleton from those.
 
 What you get for it is that the file becomes editable by declaration — a pivot move
-is two numbers in a spec (§4.1) and a new animation is an added block (§4.3), where
-before it was a hand-edit of emitted JSON with nothing checking it. That is now what
+is two numbers in a spec (§4.1) and a new animation is an added block (§4.3), rather
+than a hand-edit of emitted JSON with nothing checking it. That is what
 `ingest` hands you in one command; the sections below are how to read and change what
 it hands you, and every rule in them applies to a spec `ingest` wrote.
 
@@ -678,12 +619,6 @@ A file from another Spine generation is the one case where transcription is not 
 first fallback: migrate it through the editor of its own generation first, as
 [GENERATIONS.md](https://github.com/firejune/rigc/blob/main/docs/GENERATIONS.md) §4
 states.
-
-📌 **The cost this section used to warn about is measured, and it is why §5 changed.**
-The smallest skeleton of the corpus behind [#569](https://github.com/firejune/rigc/issues/569)
-transcribed to a **257,422-byte** rig spec, of which 91.8 % is the six geometry
-arrays — numbers, not decisions. A 558-line prototype decompiler reproduced 100 % of
-it, and the only differing paths were the name and the `note`.
 
 ### 2.1 The workflow
 
@@ -698,7 +633,7 @@ it, and the only differing paths were the name and the `note`.
    the loose `pendulum.png` beside it is exactly 745×212. ⚠️ Do **not** take it from
    the atlas region bounds: that page carries `scale: 0.5`, so `pendulum`'s bounds read
    `373, 106`. Two numbers for one part, and the attachment's is the one in world
-   units. `--atlas-in` now does that division for you (§2.3), but it can only land
+   units. `--atlas-in` does that division for you (§2.3), but it can only land
    within the pack's own rounding — by hand, off the attachment, it is exact.
 3. **Transcribe the rig spec: header, bones, slots, skins.** Bones parents-first; the
    `slots` array *is* the draw order (AUTHORING R4), so its order is data you are
@@ -710,25 +645,17 @@ it, and the only differing paths were the name and the `note`.
    Such a slot still holds an index in the array, and everything below it is counted
    from that index. Write it as `{ "name": …, "bone": … }` with no `attachment`, or
    with `"attachment": null` if you prefer to say it out loud; either way it comes
-   back. Before issue #575 it did not: `build` dropped it in silence, so two exports
-   declaring 53 and 61 slots came back at 51 and 57 with a green gate, and `diff`
-   read 0.962 and 0.934 against the file they had been read from. If a
-   transcription's `slots.count` is under 1.000, this is the first thing to check.
+   back. If a transcription's `slots.count` is under 1.000, a missing empty slot is
+   the first thing to check.
 
-   ⚠️ **No skeleton in `examples/` has one**, which is why the corpus never showed
-   this: all twelve exports fill every slot they declare from some skin. What they
+   ⚠️ **No skeleton in `examples/` has one**: all twelve exports fill every slot they declare from some skin. What they
    *do* carry is the neighbouring shape — a slot a skin DOES fill whose setup pose
    shows nothing (34 of `spineboy-pro`'s 52 slots). Both are written the same way in
    the file: `attachment` simply absent.
 
    ⚠️ **If the export's `skeleton` block carries no `x`/`y`/`width`/`height`, write
-   `"width": null, "height": null` and do not invent one** (issue #578) — which is
-   also what `rigc ingest` writes for such a file since #714. That shape is
-   common — the twelve exports in `examples/` all carry the four, and 37 of 37 exports
-   in one production corpus carry none of them — and until the `null` pair existed the
-   only two moves were a made-up stage or a file that could not be transcribed. The
-   made-up stage was the worse one: it is a number nothing in this toolchain could
-   contradict, so it survived every gate and every `diff` in silence. Now it does not —
+   `"width": null, "height": null` and do not invent one** — which is also what
+   `rigc ingest` writes for such a file. A made-up stage is a number no gate refuses;
    `diff`'s header block reports `skeleton.stage_present` and `skeleton.stage_box`
    against the source you are copying. Copy the four numbers when they are there;
    state the absence when they are not.
@@ -753,10 +680,8 @@ the second is the one that costs a day:
 
 ⚠️ **When a kind turns out not to be expressible, stop and say so — that is a finding,
 not a blocker to route around.** [SPEC_COVERAGE.md](SPEC_COVERAGE.md) is the
-per-skeleton survey of exactly this, and it records both directions honestly: rung 6's
-row for weighted meshes reads *"⚠️ **This was wrong.**"* over a struck-out prediction
-that they were inexpressible. ⇒ Check the survey for your feature before concluding
-either way, and if it is genuinely absent, the shape of the answer is *"this export
+per-skeleton survey of exactly this. ⇒ Check the survey for your feature before
+concluding either way, and if it is genuinely absent, the shape of the answer is *"this export
 uses X, which the motion spec cannot say"* with a pointer — not a silent
 approximation.
 
@@ -776,16 +701,15 @@ State the ambition in the right units, because three different things get called
 | --- | --- | --- |
 | **Structural agreement** — same bones, slots, attachments, timelines, key counts, curve kinds | ✅ yes, and `diff` measures it | the 3-timing transcription reads **1.000 on all 49 measures**. Aim here first |
 | **Geometric agreement** — the same drawn pixels, allowing for the atlas | ✅ yes, and `check` measures it | see below |
-| **Byte-identical JSON** | ✅ **for a rebuild, in canonical form, apart from `hash` and `spine`** — the pass line below | a **rebuild** of an editor export (`ingest`, then `build`) is the export. A **transcription** by hand is not held to it: SPEC_COVERAGE's rung-6 count — 49 benign differences, 39 of them explicit defaults — was taken before [#716](https://github.com/firejune/rigc/issues/716) made the emitter leave a default out, and it is a count about what a person chose to write, not about the emitter |
+| **Byte-identical JSON** | ✅ **for a rebuild, in canonical form, apart from `hash` and `spine`** — the pass line below | a **rebuild** of an editor export (`ingest`, then `build`) is the export. A **transcription** by hand is not held to it: what differs there is what a person chose to write, not the emitter |
 
 ⭐ **The pass line of the byte round trip, stated once:** `build(ingest(x))` of an
 editor export `x` is **identical to `x` in canonical form, apart from `hash` and
 `spine`** — canonical form being `JSON.stringify(JSON.parse(text), null, 2)` of each
 file, which keeps every number as parsed, every key in its order and every omitted key
 omitted, and drops only whitespace and the exponent's spelling (an export setting, not
-a property of the rig). `IG83` holds it on all twelve exports under `examples/` every
-run and prints the first differing path when it does not hold; for a skeleton **rigc**
-emitted, `build(ingest(x))` is byte-identical outright (`IG63`, `IG71`).
+a property of the rig). It holds on all twelve exports under `examples/`; for a
+skeleton **rigc** emitted, `build(ingest(x))` is byte-identical outright.
 
 The two **declared exceptions** are the header keys the editor writes and the rig spec
 has no field for, by design, and each has its finding:
@@ -795,50 +719,37 @@ has no field for, by design, and each has its finding:
 | `hash` | `undefined` vs `"VFWbaK2UoCM"` | the editor's project hash — a value about a file rigc did not write, so a spec that carried it would be claiming an export it did not come from. `HEADER_BOOKKEEPING` |
 | `spine` | `"4.3.13"` vs `"4.3.75-beta"` | the version of the runtime rigc links, stamped by design and re-checked by `A16`. `HEADER_REDERIVED` |
 
-🔢 **Two more rows stood in a table here until the third tranche of #716 landed.**
-The **header's `audio`** (`undefined` vs `null`) is a stated value like `images`, and
-the rig spec now carries it ([AUTHORING §3.1](AUTHORING.md)). **An omitted default
-written out** — `…rotate[0].time: 0 vs undefined`, 2,338 keys over the twelve and
-87 `"name": null` — was rigc writing every key it was given where the editor leaves
-out what the parser reads the same way without it; the emitter now leaves out exactly
-those ([AUTHORING §10.6c](AUTHORING.md)), and `IG81` counts 0 of either. One shape of
-it is left and it is deliberate: a stage at the origin, which the editor writes as
+🔢 **The rest of the header, and every omitted default, comes back as the export
+spells it.** The **header's `audio`** is a stated value like `images`, and the rig
+spec carries it ([AUTHORING §3.1](AUTHORING.md)). The emitter leaves out exactly the
+keys the parser reads the same way without them ([AUTHORING §10.6c](AUTHORING.md)).
+One shape is left and it is deliberate: a stage at the origin, which the editor writes as
 `width`/`height` with no `x`/`y` and rigc spells whole. The 4.3 JSON reader has no
 default for the origin — an absent one loads as `undefined`, a written `0` as `0` — so
 it is not a key the parser reads the same way without it, and the row is not in the
-table; `LOSS HEADER_ORIGIN` names it
-([#622](https://github.com/firejune/rigc/issues/622)). No file in this corpus takes that
+table; `LOSS HEADER_ORIGIN` names it. No file in the fetched corpus takes that
 branch: all twelve declare an origin away from 0.
 
-🔢 **A third row stood here until issue #716: the emitted precision** —
-`…curve[0]: 0.066667 vs 0.06666667`, `uvs[0]: 0 vs 2.554152e-7` — because rigc wrote
-six fixed decimals where the editor writes each number as the shortest decimal naming
-its float32. It rewrote every number with more digits than that, by up to 7e-7, with
-no `LOSS` line, and the `uvs[0]` case was that rounding taking a carried value to 0 —
-`ingest` carries every number as the double it parsed, so no derivation was involved.
-rigc now writes the editor's text, and `IG73` holds every number of the twelve
-rebuilds to its source's spelling; `IG75` counts what still differs by kind, and none
-of it is a number. The whitespace of an export is not compared at all — it is an
-export setting, pretty-printed in the examples and one line from the command line.
+🔢 **Numbers are spelled as the editor spells them** — each as the shortest decimal
+naming its float32 — and `ingest` carries every number as the double it parsed. The
+whitespace of an export is not compared at all — it is an export setting,
+pretty-printed in the examples and one line from the command line.
 
-⇒ **So the corpus gate is `diff` at 1.000 rather than a byte comparison**, and it is
-worth being exact about what that does and does not cover. `diff` compares structure —
-counts, names, parentage, order, timeline kinds, key counts, curve kinds — and **not
-the values inside the keys**, which is why a moved value is invisible to it.
-On rigc's own rigs byte identity covers both; on a foreign export it used to be
-`check` (pixels) or nothing, depending on what you render.
+⇒ **`diff` at 1.000 is a statement about structure** — counts, names, parentage,
+order, timeline kinds, key counts, curve kinds — and **not the values inside the
+keys**, which is why a moved value is invisible to it.
 
-⭐ **The values are gated now, and by a second measure rather than by `diff`**
-([issue #615](https://github.com/firejune/rigc/issues/615)). Structure at 1.000 is
-silent about the numbers inside it: a decompiler that halved every rotation, dropped
-every bone's `length` or mirrored every vertex would read 1.000 on all 49 measures and
-on every `(reported)` one. So the corpus round trip also compares **value by value**,
+⭐ **The values are measured by a second comparison rather than by `diff`.**
+Structure at 1.000 is silent about the numbers inside it: a decompiler that halved
+every rotation, dropped every bone's `length` or mirrored every vertex would read
+1.000 on all 49 measures and on every `(reported)` one. So the example round trip is
+also compared **value by value**,
 with the format's defaults taken from the parser rather than from a table — both files
 are read through `spine-core` and the parsed forms are compared path by path, under a
 tolerance that is the sum of the 1e-6 grid rigc's closed-form models are evaluated on
-— the one absolute grid it still emits on — and one float32 step of the runtime's
-storage. Nine measures, printed on `IG16`'s own line and gated there — here
-is the `6-arcs` export's, wrapped to fit this page:
+— the one absolute grid it emits on — and one float32 step of the runtime's
+storage. Nine measures — here is the `6-arcs` export's, wrapped to fit this
+page:
 
 ```
 values: 9/9 measure(s) at 1.000 over 13865 compared value(s); skeleton 1.000 ·
@@ -846,8 +757,8 @@ bones 1.000 · slots 1.000 · attachments 1.000 · constraints 1.000 · events 1
 key_times 1.000 · key_values 1.000 · curves 1.000
 ```
 
-Over the whole corpus that is **193,927 values** compared, and the twelve read 1.000
-on all nine.
+Over the twelve exports that is **193,927 values** compared, and all twelve read
+1.000 on all nine.
 
 `docs/BENCHMARK.md`'s *The nine value measures* is the full statement. What it still
 does **not** cover, in the same breath:
@@ -857,7 +768,7 @@ does **not** cover, in the same breath:
 | `spine` and `hash` | the rig spec has no field for either, by design, and `ingest` reports both as findings — the declared exceptions above |
 | anything below one float32 step | the parser stores frames, curves and vertices in a `Float32Array`, so a difference it cannot represent is invisible to any reading of the parsed form |
 | a Bezier's handles *as written* | the parser samples them into the curve, so a moved handle arrives as moved samples rather than as the handle it was |
-| how the file is **spelled** | nothing, on an editor export, but the declared exceptions: since [#716](https://github.com/firejune/rigc/issues/716) the rebuild spells every number as the export does (`IG73`), writes every object's keys in the export's order (`IG76`, [AUTHORING §10.6b](AUTHORING.md)) and leaves out every key the export leaves to the parser (`IG81`, [AUTHORING §10.6c](AUTHORING.md)), and `IG83` reads the whole text. This row stays because the value measure still cannot see spelling — it compares what the parser loaded — and the pass line above is what can |
+| how the file is **spelled** | nothing, on an editor export, but the declared exceptions: the rebuild spells every number as the export does, writes every object's keys in the export's order ([AUTHORING §10.6b](AUTHORING.md)) and leaves out every key the export leaves to the parser ([AUTHORING §10.6c](AUTHORING.md)). The value measure cannot see spelling — it compares what the parser loaded — and the pass line above is what can |
 | how it **looks** | that is `check`, and `--texture-from` is how its figure is attributed |
 
 The geometric row needs a real number, because a naive reading of `check` makes an
@@ -910,19 +821,11 @@ drawing. rigc states 746, the export says 745, and putting the pixel back by han
 the same build to `x1.0000` / MAE **0.00** — which is how the residual is known to be
 the rounding and nothing else.
 
-⇒ **The routes now differ in what their MAE is MADE OF rather than in whether they are
+⇒ **The routes differ in what their MAE is MADE OF rather than in whether they are
 right.** Loose art or `--pack` gives exact geometry through coarser texels; `--atlas-in`
 gives the reference's texels through geometry good to half a texel. Read `above it`
 before the MAE either way, and read the `in units` line first — it is the line that
 catches a whole-figure scale error, and it is the only one that does.
-
-> 🕰️ **This row used to read `pendulum 373x106`, `square 80x80`, `x0.8092`, MAE
-> 124.97 — the pack's texel counts taken as world sizes, so every attachment came out
-> at half size, green, with nothing in the report saying so.** Found while writing this
-> page and fixed as [issue #267](https://github.com/firejune/rigc/issues/267). The
-> control that isolated it is now a selftest: import a pack with **no** `scale:` line
-> (rigc's own `--pack` output writes none) and the skeleton is byte-identical to the
-> loose build.
 
 ### 2.4 The worked precedent, and what to take from it
 
@@ -973,9 +876,9 @@ they are the whole set an ingest task realistically meets.
 
 📊 **All twelve skeletons in the fetched corpus come back green** under the default
 profile with the right atlas named. That is the baseline, and it is the honest headline:
-**a correct editor export passes.** Getting there took one rule fixed, and the two
-sections below are worth reading in full because the failures they describe mean
-opposite things — the first is still reachable, and the second was the rule's fault.
+**a correct editor export passes.** The two sections below are worth reading in full
+because they mean opposite things — the first is a wrong input, and the second is data
+that looks wrong and is not.
 
 **`A00_ROUNDTRIP_PARSE` — the atlas does not cover the skeleton.**
 
@@ -997,7 +900,7 @@ named attachment, so you can tell "wrong atlas" from "the export is missing a re
 by whether the missing names are a *coherent subset*. Fix by naming the right atlas —
 `spineboy-ess.json` is green against `spineboy.atlas`.
 
-**`A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` — and this one was the rule's fault.**
+**`A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` — a trimmed deform run is not a defect.**
 
 ```bash
 rigc validate examples/spineboy/export/spineboy-pro.json \
@@ -1012,30 +915,18 @@ rigc validate examples/spineboy/export/spineboy-pro.json \
 rigc: green
 ```
 
-**Why it is worth a section anyway.** That line used to be two `FAIL`s on the same key —
-one for an **odd `offset`**, on the reading that the run's x values would land on y slots
-and back again, and one for an **odd-length run**, on the reading that the deform array is
-x, y pairs — and nothing was wrong with the data, so neither sentence exists in the tool
-any more. `hoverboard-board` is an unweighted mesh with 148
-floats; the key carries `offset: 1` and 147 values, covering `1..148` — the whole array
-minus a leading zero the editor trimmed. A trim can land on a y component, so an odd
-offset is what a trimmed run looks like, and Spine's own parser copies the run in at the
-raw index with no alignment requirement anywhere. The proof was in the same report:
-**`A00` and `A10` both PASSed on that file**, and `render` drew the `hoverboard`
-animation.
+`hoverboard-board` is an unweighted mesh with 148 floats; the key carries `offset: 1`
+and 147 values, covering `1..148` — the whole array minus a leading zero the editor
+trimmed. A trim can land on a y component, so an odd offset or an odd-length run is what
+a trimmed run looks like, and Spine's own parser copies the run in at the raw index with
+no alignment requirement anywhere. A35 refuses what does break — a run that does not fit
+inside the deform array, non-finite values, an empty key array, an attachment missing
+from the skin. The over-long run in particular is refused, and it is the quietest
+defect the format has.
 
-⭐ **The lesson survives the fix, and it is the reason to read this.** A validity rule
-stricter than the runtime does not look like a bug — it looks like a finding about
-somebody's file, and the honest reading of that message (*"your x values land on y
-slots"*) sends an agent to change correct data. Fixed as
-[issue #262](https://github.com/firejune/rigc/issues/262): the two parity clauses are
-gone, and the remaining A35 clauses — the run fitting inside the deform array, finite
-values, a non-empty key array, the attachment existing in the skin — are correct and
-catch real breakage. The over-long run in particular is still refused, and still the
-quietest defect the format has.
-
-🚨 **The general lesson matters more than the specific bug.** A `FAIL` on foreign data
-has three possible meanings and the message alone does not separate them:
+🚨 **A validity rule stricter than the runtime does not look like a bug — it looks like
+a finding about somebody's file.** A `FAIL` on foreign data has three possible meanings
+and the message alone does not separate them:
 
 1. **the data is broken** — fix the data;
 2. **the input was wrong** — wrong atlas, missing page, truncated file (§3.1, and
@@ -1047,8 +938,7 @@ wrong.** An ik or transform resting muted that no animation keys up moves nothin
 the file*, and `validate <file>` has no rig spec and so no way to be told a game turns
 it on from code — it refuses with three doors, the third being that statement. The
 rebuild route makes it for you: `ingest` declares the constraint consumer-driven and
-prints a `CONSUMER_DRIVEN_MIX` judgement (§2.0), and `build` then SKIPs it by name
-([#784](https://github.com/firejune/rigc/issues/784)).
+prints a `CONSUMER_DRIVEN_MIX` judgement (§2.0), and `build` then SKIPs it by name.
 
 ⇒ Before changing anybody's export because rigc objected, check case 3: does the file
 **parse** (`A00`), **step without NaN** (`A10`), and **render**? If all three, the
@@ -1075,23 +965,11 @@ size-vs-PNG check is validity; one-part-per-page coverage, rotation and premulti
 alpha are policy. `A20`'s weight coherence is validity; requiring a mesh to be
 weighted at all is policy.
 
-**`A08` was the third until [#574](https://github.com/firejune/rigc/issues/574).** Its
-policy clause required a skin entry's placeholder to be spelled exactly like the region
-it resolves to — a rule the renderer it was gated under never performed, since
-`spine-html` keys its images on the atlas region name reached through the attachment's
-`path` and reads no placeholder at all. Measured before retiring it: the clause fired
-on **0** attachments across the whole example corpus (no export in `examples/` carries
-a `path` field), and on every rigc rig whose placeholder is not its PNG's basename —
-which is what `path` exists for (AUTHORING §2, R5) and what a placeholder two named
-skins share is emitted as. So it was policy that only ever refused this compiler's own
-correct output.
-
 ⚠️ **`--profile spine-html` on foreign data produces a wall of failures that mean
 nothing about the file.** Same `spineboy-pro.json`, same atlas, one flag changed — the
 run ends `rigc: 13 assertion(s) failed`, and this is the tally with one real message
-per rule (re-measured 2026-09-04; it used to read 53, with 40 `A06` rows, until A06
-learned that a page is one part covering it exactly *or a tiling of regions* — #266
-follow-up 2 — so a packed atlas now passes both profiles and the wall is policy only):
+per rule — `A06` takes a page that is one part covering it exactly *or a tiling of
+regions*, so a packed atlas passes both profiles and the wall is policy only:
 
 | Count | Rule | One of its messages |
 | --- | --- | --- |
@@ -1101,10 +979,7 @@ follow-up 2 — so a packed atlas now passes both profiles and the wall is polic
 
 Every one of those is a correct statement about a correct file: a bone *does* key a
 mesh, a mesh *is* unweighted, a clipping attachment *is* present.
-(The tally was 55 before §3.2's A35 was fixed, and that is the one entry that was *not*
-a correct statement — which is why it belonged in a different section from these.)
-And it is not a big-skeleton problem — `3-timing-and-spacing`, with two regions on one
-page, fails `A06` twice for the same reason. ⇒ **Do not run `spine-html` against
+⇒ **Do not run `spine-html` against
 somebody's export unless they asked whether it satisfies this project's renderer
 policy**, which is a different question from whether their file is valid.
 
@@ -1344,11 +1219,7 @@ frames rendered from the original.
 ⚠️ **Do not rename toward what a rule seems to want.** `A27`'s
 region-name-matches-page-filename is `spine-html` policy (§3.3): under the default
 profile it does not fire, and renaming somebody's attachments to satisfy a policy they
-never opted into is a change with no benefit to them. `A08` carried a name-identity
-clause of the same kind until
-[#574](https://github.com/firejune/rigc/issues/574) retired it, and that one is the
-argument's own case study — the rename it seemed to want was one no renderer had ever
-asked for.
+never opted into is a change with no benefit to them.
 
 ### 4.3 Extending a foreign skeleton with a new animation
 
@@ -1437,45 +1308,31 @@ dependency *can* read it and rigc *does not*:
 that already has the reader, not a parser to write. But it is not there, and nothing on
 this page works on a `.skel` today. Re-export as JSON.
 
-✅ **A skeleton-to-spec decompiler exists: `rigc ingest` (§2.0). This entry used to
-refuse one, and all three of its reasons were measured and refuted** — issue
-[#569](https://github.com/firejune/rigc/issues/569), 2026-09-17. The paragraph is
-kept below rather than deleted, because what it got wrong is more useful than a
-clean page:
+✅ **A skeleton-to-spec decompiler exists: `rigc ingest` (§2.0), and it decides
+nothing the skeleton does not state.** A bone's setup transform — the pivot — is in
+the skeleton in full, so it is copied with no decision. `ingest` chooses **no**
+generator: a generator is a *model* (`src/rig.ts`: *"they encode a deformation model …
+and a model is not a table of numbers"*), the skeleton holds geometry, and geometry is
+what the rig spec's authored form takes — so a generator-built mesh comes back as
+authored geometry and rebuilds **byte-identical**. And it writes no `invariants`: an
+absent field makes an archetype assertion SKIP, never pass (§2.1 step 3), so a
+decompiled spec carries no intent and says so instead of certifying something nobody
+measured. Where the skeleton has no value — the stage — `ingest` writes a stated
+absence (§2.0). ⚠️ Not to be confused with the *atlas* importer below, which is a
+different direction and also exists.
 
-> 🚫 ~~**No skeleton-to-spec decompiler.** Nothing turns skeleton JSON back into a rig
-> spec and a motion spec. §2 is hand work, and that is the current state rather than a
-> temporary one: a decompiler would have to invent the things the spec format exists to
-> make explicit — **which pivot, which generator, which invariant** — and the compiler's
-> own rule is that it never invents a value that is not in the spec.~~
-
-| clause | what the measurement said |
-| --- | --- |
-| *which pivot* | ⛔ **refuted.** A bone's setup transform is in the skeleton, in full. 3,951 bones across 37 production exports and 15 rigs built from this tree were transcribed with **zero** decisions, and `diff`'s six bone measures — count, names, `parent_by_name`, order, `length_present`, `inherit_present` — read **1.000** on every file that built |
-| *which generator* | ⛔ **refuted, and the premise is the error.** A decompiler must choose **no** generator. A generator is a *model* (`src/rig.ts`: *"they encode a deformation model … and a model is not a table of numbers"*); the skeleton holds geometry, and geometry is what the rig spec's authored form takes. Inferring a model would be the invention this clause feared; writing the numbers is its opposite. `gallery/look`'s four generator-built meshes came back as authored geometry and the rebuild is **byte-identical** — so a generator can always be flattened, and that is the direction the information flows |
-| *which invariant* | ⛔ **refuted by omission, and this page already said how.** §2.1 step 3: *"Leave `invariants` out entirely — an absent field makes an archetype assertion SKIP, never pass."* `ingest` writes none. A decompiled spec is 91.8 % geometry, 8.2 % structure and **0 % intent**, and it says so instead of certifying something nobody measured |
-
-⇒ **What survives is the stage, and one value is not "the things the spec format
-exists to make explicit".** The clause was not wrong that a decompiler meets an
-invention — it was wrong about *which*, and wrong that it is unavoidable: a refusal
-naming the field is what this repository does with a missing number everywhere else,
-and a stated absence is what `ingest` writes where the skeleton has none (§2.0, #714). ⚠️ Not to be confused with the *atlas*
-importer below, which is a different direction and also exists.
-
-⚠️ **What `ingest` is still not.** It reads skeleton JSON and writes two spec files.
-It does not read a `.spine` project or a binary `.skel` (the two entries above stand
-unchanged), it does not read the atlas or the art, it does not **edit** a skeleton,
+⚠️ **What `ingest` is not.** It reads skeleton JSON and writes two spec files.
+It does not read a `.spine` project or a binary `.skel` (the two entries above), it
+does not read the atlas or the art, it does not **edit** a skeleton,
 and it makes no claim about whether an agent could have *produced* the numbers it
 copied — only that the spec can carry them and `build` reproduces the file from them.
 
-✅ **A packer and an importer both exist now, so do not report them as gaps.** This
-non-goal used to read *"rigc emits one region per page and cannot do otherwise"*, and
-[issue #4](https://github.com/firejune/rigc/issues/4) closed it: `build --pack` writes
-shared pages losslessly and `build --atlas-in` resolves against a pack somebody else
-made (AUTHORING §0.1–§0.2). One-region-per-page is now the **default**, not the only
-shape. `--atlas-in` applies the page's `scale:`, so an imported pack states the
-drawing's size rather than the pack's — to within the pack's own rounding, which is
-§2.3's row and the whole of [issue #267](https://github.com/firejune/rigc/issues/267).
+✅ **A packer and an importer both exist, so do not report them as gaps.**
+`build --pack` writes shared pages losslessly and `build --atlas-in` resolves against a
+pack somebody else made (AUTHORING §0.1–§0.2). One-region-per-page is the **default**,
+not the only shape. `--atlas-in` applies the page's `scale:`, so an imported pack states
+the drawing's size rather than the pack's — to within the pack's own rounding, which is
+§2.3's row.
 
 🚫 **No CLI unpacker, so `pose` needs loose art.** `pose` reads *loose part PNGs*
 against one picture. A foreign export hands you a packed page instead, and pointing
@@ -1497,18 +1354,6 @@ rigc pose
   PLACE  3-timing-and-spacing.png  x=  324.3  y=  188.2  rot=  -91.4°  scale=0.629  residual=0.2083  unexplained= 30%
                                    found on a 7x3 anchor grid, step 4 at 32x reduction
 ```
-
-📏 **Instrument re-baseline, 2026-09-03 — [#306](https://github.com/firejune/rigc/issues/306).**
-Both blocks in this section were re-run and their residuals moved: the packed page
-reads **0.2083** where this page used to print 0.2078, `pendulum.png` **0.0425**
-where it printed 0.0410, and `square.png` **0.0331** where it printed 0.0330.
-`pose`'s objective now interpolates the frame premultiplied, so a tap across a
-silhouette no longer charges a part for the ground's colour — and the frames these
-commands read are rendered by `rigc render`, so #306's arithmetic and
-[#301](https://github.com/firejune/rigc/pull/301)'s renderer fix both moved them.
-⚠️ A residual from before that date and one from after are not the same
-measurement. The reading below does not depend on the digits: the point is that a
-packed page is placed *without* being refused, and it still is.
 
 ⚠️ **`residual=0.2083` is *under* the default 0.25 refusal bar**, so nothing refused
 it, and `PLACE` rather than `AMBIG` means nothing flagged it either. With the same frame
@@ -1541,8 +1386,8 @@ something is drawn over them are readable through its own draw order and hierarc
 
 📎 To be exact about what is missing: rigc *can* lift a region's drawing back off a
 page — `extractRegion` does it, and the contour mesh generator uses it under
-`--atlas-in` — so what is absent is a **command**, not the capability. Since issue
-#570 that includes a region the pack **turned** (`rotate: 90`, `180`, `270`, or the
+`--atlas-in` — so what is absent is a **command**, not the capability. That includes a
+region the pack **turned** (`rotate: 90`, `180`, `270`, or the
 older `rotate: true`), which a foreign pack routinely is and rigc's own never is: the
 lift transcribes `MeshAttachment.computeUVs`, the one routine in spine-core that
 states where a turned region's texels are, so what a generator measures does not
