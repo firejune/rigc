@@ -175,8 +175,7 @@ reconciled before publication: the parser's full `case` label set is identical i
 ### Verified doc-status findings
 
 - **The JSON format page documents 3.8.24.** The only version token anywhere in the page body is
-  `"spine" : "3.8.24"` inside its skeleton example (S7). Plan 04 §1-0 recorded this on 2026-08-21;
-  **it is still true on 2026-08-22.** The page also still shows the 3.8-shaped
+  `"spine" : "3.8.24"` inside its skeleton example (S7), **verified on 2026-08-22.** The page also still shows the 3.8-shaped
   `"ik" : [ { "name" : "left leg" …` top-level array and a `"draworder" : { … }` key spelled
   all-lowercase — the 4.3 parser reads `map.drawOrder`, camel-cased (`SkeletonJson.ts:1209`).
 - **The binary page carries no version token at all** and is otherwise structured like the JSON page.
@@ -413,14 +412,13 @@ placeholder → name → path → atlas region.
 There is no flag. If `vertices.length === verticesLength` (i.e. `uvs.length`, or `vertexCount<<1`)
 it is read as **unweighted** x/y pairs; otherwise as the **weighted** run-length encoding
 `boneCount, (boneIndex, bindX, bindY, weight) × boneCount, …`. A coincidental length match reads
-weight data as coordinates. Plan 04 §1-3 already recorded this; it is restated here because the
-example corpus contains both encodings.
+weight data as coordinates. The example corpus contains both encodings.
 
 🚨 The second risk in the same field is `boneIndex`: it is a position in the emitted bone array,
 so the run means something different the moment the bone list changes, and nothing in the file
 records what it used to mean. A rig spec therefore writes `weights` — the same data with the bones
 **named** — and rigc encodes this run on emit. The raw form stays reachable behind
-`"boneIndexing": "raw"` for transcribing an export verbatim. Issue #45.
+`"boneIndexing": "raw"` for transcribing an export verbatim.
 
 ### 1.7 Events — `root.events` (object, not array) (`:469-484`)
 
@@ -586,8 +584,8 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 | `x`, `y` | ✅ | always literal `0, 0` |
 | `width`, `height` | ✅ | from `manifest.crop.w/h` |
 | `hash` | ❌ | never emitted (harmless; the parser stores it and nothing reads it) |
-| `fps`, `referenceScale` | ✅ | copied from `rig.skeleton` when the rig spec gives them, omitted when it does not (landed in `c5eda3b`) |
-| `images` | ✅ | a declared `rig.skeleton.images` verbatim; otherwise the path from `--out` to the one directory the spec names every part PNG in — `--out` itself, spelled `../<basename>/`, under `--copy-images`, which overrides a declaration — so the editor's import finds them (issue #370). Omitted when the parts are spread over several directories, since no single path is true of all of them |
+| `fps`, `referenceScale` | ✅ | copied from `rig.skeleton` when the rig spec gives them, omitted when it does not |
+| `images` | ✅ | a declared `rig.skeleton.images` verbatim; otherwise the path from `--out` to the one directory the spec names every part PNG in — `--out` itself, spelled `../<basename>/`, under `--copy-images`, which overrides a declaration — so the editor's import finds them. Omitted when the parts are spread over several directories, since no single path is true of all of them |
 | `audio` | ❌ | |
 
 **Bones** (`compile.ts:367-456`; type at `types.ts:285-292`)
@@ -597,7 +595,7 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 | `name`, `parent`, `x`, `y` | ✅ |
 | `rotation` | ✅ — emitted only when non-zero; comes from `manifest.axis.deg` or a per-anchor facing angle, screen→Spine converted (`transform.ts`) |
 | `length`, `scaleX`, `scaleY`, `shearX`, `shearY`, `inherit`, `skin`, `color` | ✅ — copied from the rig spec when it gives them, omitted when it does not |
-| `icon` | ✅ — copied verbatim, unchecked; it is the editor's vocabulary, not rigc's (issue #47) |
+| `icon` | ✅ — copied verbatim, unchecked; it is the editor's vocabulary, not rigc's |
 | `iconSize`, `iconRotation` | ❌ |
 | bone `visible` | ❌ (JSON-inexpressible anyway, §1.10) |
 
@@ -609,7 +607,7 @@ Legend: ✅ emits · 🟡 partial · ❌ not emitted · 🚫 deliberately exclud
 | `attachment` | ✅ — only when the motion spec's `setup` block names one; `null` means "show nothing" and the key is omitted |
 | `color` | ✅ — from `setup.color`, hex-encoded (`compile.ts:63-66`) |
 | `dark` | ✅ — copied from the rig spec's slot when it gives one. 🚫 **A12_NO_DARK_COLOR** still names it, and that is a **renderer-profile** verdict rather than a validity one: `build` runs `--profile spine`, where A12 reports `PROF`. **A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN** reads it back off the runtime |
-| `blend` | ✅ — copied from the rig spec's slot when it gives one (`compile.ts:600`, landed in `c5eda3b`) |
+| `blend` | ✅ — copied from the rig spec's slot when it gives one (`compile.ts:600`) |
 | `visible` | ❌ |
 | draw order = slots array order | ✅, and **A26_SLOT_DRAW_ORDER** pins it to the archetype's `slotOrder` table |
 
@@ -624,29 +622,25 @@ with the member's own `skin: true` — either half alone is refused, because `Sk
 
 | Part-1 type | rigc | Detail |
 | --- | --- | --- |
-| `region` | 🟡 | emits `width`, `height` (always, from PNG measurement — the fix for case 6c), `x`, `y` (only when non-zero), `rotation` (only when non-zero, cancelling the bone's world rotation), `scaleX`/`scaleY` (`compile.ts:1238-1239`), `color`, and `path` — taken from the rig spec, else derived from the image basename and omitted when that basename *is* the attachment name (the region name == attachment name == PNG basename convention **A08** + **A27** enforce). ✅ `sequence` since [#729](https://github.com/firejune/rigc/issues/729) — see the `sequence` block row |
-| `mesh` | 🟡 | emits `type`, `uvs`, `triangles`, `vertices` (**weighted encoding only**), `hull`, `width`, `height`, `edges` (`compile.ts:1343`, and part 4's rung-6 entry measures it byte-identical to the reference), `path`, `color`. ✅ `sequence` since [#729](https://github.com/firejune/rigc/issues/729) — see the `sequence` block row. Unweighted meshes are 🚫 **A20_MESH_WEIGHTS_COHERENT** (`validate.ts:430-433`) |
-| `linkedmesh` | 🟡 | emits `type`, `source`, its own `path`, `width`, `height` and `color`, and `slot`/`skin`/`timelines` **only where they differ from the parser's defaults** (this attachment's slot, the default skin, true). ✅ `sequence` since [#729](https://github.com/firejune/rigc/issues/729) — see the `sequence` block row. Geometry keys on a link are refused by name — the parser returns before `readVertices`, so it reads none of them. A chain (a `source` that is itself a link) and a link to itself are refused: they resolve in file order and load `worldVerticesLength` 0 in one of the two orders, silently. `A21`/`A28` leave a link out (its rim and rows are its source's), `A04`/`A20`/`A22` read it as the mesh it resolves to, `A13` counts it as a mesh slot of its own ([#691](https://github.com/firejune/rigc/issues/691)) |
+| `region` | 🟡 | emits `width`, `height` (always, from PNG measurement — the fix for case 6c), `x`, `y` (only when non-zero), `rotation` (only when non-zero, cancelling the bone's world rotation), `scaleX`/`scaleY` (`compile.ts:1238-1239`), `color`, and `path` — taken from the rig spec, else derived from the image basename and omitted when that basename *is* the attachment name (the region name == attachment name == PNG basename convention **A08** + **A27** enforce). ✅ `sequence` — see the `sequence` block row |
+| `mesh` | 🟡 | emits `type`, `uvs`, `triangles`, `vertices` (**weighted encoding only**), `hull`, `width`, `height`, `edges` (`compile.ts:1343`, and part 4's rung-6 entry measures it byte-identical to the reference), `path`, `color`. ✅ `sequence` — see the `sequence` block row. Unweighted meshes are 🚫 **A20_MESH_WEIGHTS_COHERENT** (`validate.ts:430-433`) |
+| `linkedmesh` | 🟡 | emits `type`, `source`, its own `path`, `width`, `height` and `color`, and `slot`/`skin`/`timelines` **only where they differ from the parser's defaults** (this attachment's slot, the default skin, true). ✅ `sequence` — see the `sequence` block row. Geometry keys on a link are refused by name — the parser returns before `readVertices`, so it reads none of them. A chain (a `source` that is itself a link) and a link to itself are refused: they resolve in file order and load `worldVerticesLength` 0 in one of the two orders, silently. `A21`/`A28` leave a link out (its rim and rows are its source's), `A04`/`A20`/`A22` read it as the mesh it resolves to, `A13` counts it as a mesh slot of its own |
 | `boundingbox` | ✅ | `vertexCount` (required and cross-checked), `vertices` **or** by-name `weights`, `color`. **A33_VERTEX_ATTACHMENT_GEOMETRY** |
-| `path` | ✅ | `vertexCount` (required, and checked as a multiple of 3 — the parser's own `vertexCount / 3` takes a fractional size in silence), `vertices` **or** by-name `weights`, `closed`, `constantSpeed`, `color`, and `lengths` **stated or measured** (#804): a stated array — `vertexCount / 3` entries, which is what `ingest` carries from an export — is emitted as stated; an omitted one is the cumulative setup length at the end of each curve over the closed chain, taken through each influence's own bone on the unconstrained setup pose and measured as `PathConstraint` measures it — its own four-sample forward difference, about 0.5 % below the arc (AUTHORING §10.6). **A33_VERTEX_ATTACHMENT_GEOMETRY** re-checks the structure and the array's monotonicity. A `deform` timeline may key one: the array is the control points, `A39` SKIPs on it (no triangles), and `lengths` stays the setup measurement because the format has nowhere to put a per-key one — which only a `constantSpeed: false` traversal reads (AUTHORING §4.11) |
+| `path` | ✅ | `vertexCount` (required, and checked as a multiple of 3 — the parser's own `vertexCount / 3` takes a fractional size in silence), `vertices` **or** by-name `weights`, `closed`, `constantSpeed`, `color`, and `lengths` **stated or measured**: a stated array — `vertexCount / 3` entries, which is what `ingest` carries from an export — is emitted as stated; an omitted one is the cumulative setup length at the end of each curve over the closed chain, taken through each influence's own bone on the unconstrained setup pose and measured as `PathConstraint` measures it — its own four-sample forward difference, about 0.5 % below the arc (AUTHORING §10.6). **A33_VERTEX_ATTACHMENT_GEOMETRY** re-checks the structure and the array's monotonicity. A `deform` timeline may key one: the array is the control points, `A39` SKIPs on it (no triangles), and `lengths` stays the setup measurement because the format has nowhere to put a per-key one — which only a `constantSpeed: false` traversal reads (AUTHORING §4.11) |
 | `point` | ❌ | deliberately deferred — never appears in the corpus (part 3-1) |
 | `clipping` | ✅ under `--profile spine` · 🚫 under `spine-html` | `end` (refused when it names no slot), `convex`, `inverse`, `vertexCount`, geometry, `color`. **A33**, and **A11_NO_CLIPPING_ATTACHMENTS** is the renderer-profile refusal |
-| `sequence` block | ✅ | on a region, a mesh or a linked mesh: `count` (required — the parser's 0 loads no region), `start`, `digits`, `setup`, emitted as stated. The frames are the regions `<path><start + i>` zero-padded to `digits`, each atlased by name — the loose route's PNG of that name, or `--atlas-in`'s region — and a missing frame is refused with its number and the name looked for. A `setup` past the end (clamped), a fraction, an `image` or a `generator` beside it, and a `sequence` on any other kind are refused by name. **A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES** ([#729](https://github.com/firejune/rigc/issues/729)) |
+| `sequence` block | ✅ | on a region, a mesh or a linked mesh: `count` (required — the parser's 0 loads no region), `start`, `digits`, `setup`, emitted as stated. The frames are the regions `<path><start + i>` zero-padded to `digits`, each atlased by name — the loose route's PNG of that name, or `--atlas-in`'s region — and a missing frame is refused with its number and the name looked for. A `setup` past the end (clamped), a fraction, an `image` or a `generator` beside it, and a `sequence` on any other kind are refused by name. **A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES** |
 
 Across all six types rigc emits, the attachment's own **`name`** is written exactly when the rig
-spec states it, verbatim, as the attachment's first key — and never derived
-([#796](https://github.com/firejune/rigc/issues/796)). Part 1-5 above states why it matters:
+spec states it, verbatim, as the attachment's first key — and never derived. Part 1-5 above states why it matters:
 `name` defaults to the placeholder and `path` defaults to `name`, so it is the runtime's
 `Attachment.name` and, on a type that draws, the region it resolves; nothing resolves an
-attachment by it. From [#541](https://github.com/firejune/rigc/issues/541) to #796 rigc composed
-`<skin>/<placeholder>` for a placeholder several skins fill, on the reading that a linked mesh
-resolves its source by name; it resolves it by skin, slot and key, and the editor imports the
-uncomposed shape. ⚠️ The **`default` skin may not be one of the skins sharing a placeholder**, and
+attachment by it — a linked mesh resolves its source by skin, slot and key — so a placeholder
+several skins fill keeps its own spelling, and the editor imports that shape. ⚠️ The **`default` skin may not be one of the skins sharing a placeholder**, and
 that is a `CompileError` rather than an emission rule: the editor holds no placeholder the default
 skin shares with a named one in either spelling — named, the export re-keys the attachment by its
 name and the slot's setup attachment stops resolving; unnamed, the import is refused with
-`Multiple attachments have the same name` ([#567](https://github.com/firejune/rigc/issues/567),
-Spine 4.3.26, round trips 7 and 8). Of the twelve editor exports in `examples/`, **0**
+`Multiple attachments have the same name` (measured on Spine 4.3.26). Of the twelve editor exports in `examples/`, **0**
 attachments state a `name`, because all twelve declare one skin.
 
 Mesh geometry is generated by exactly three procedural generators (`mesh.ts`): `buildRingMesh`
@@ -662,8 +656,8 @@ editor-made meshes — those arrive as authored `uvs`/`triangles`/`weights`.
 | Part-1 type | rigc |
 | --- | --- |
 | `physics` | ✅ — full field set: `bone`, the five components `x`/`y`/`rotate`/`scaleX`/`shearX`, `scaleY` (ScaleYMode), `inertia`/`strength`/`damping`/`mass`/`wind`/`gravity`/`mix`/`fps`/`limit`, the seven `*Global` flags and `skin` (`compile.ts:1522-1548`). A field the rig spec does not give is **omitted**, never guessed (`compile.ts:1463-1468`), so the parser's own default stands. The motion spec's `physics` tuning table is the second path into this same array and is narrower: no `scaleY`, no `*Global`, no `skin`, and it drops a value that equals the parser default even when the table gives it (`compile.ts:758-761`) |
-| `ik` | ✅ — `bones`, `target`, `scaleY`/`mix`/`softness`/`bendPositive`/`compress`/`stretch`/`skin` (`compile.ts:1425-1430`, landed in `c5eda3b`) |
-| `transform` | ✅ — `bones`, `source`, the 4.3 `properties{from→to}` model, and the full field set (`compile.ts:1431-1462`, landed in `c5eda3b`) |
+| `ik` | ✅ — `bones`, `target`, `scaleY`/`mix`/`softness`/`bendPositive`/`compress`/`stretch`/`skin` (`compile.ts:1425-1430`) |
+| `transform` | ✅ — `bones`, `source`, the 4.3 `properties{from→to}` model, and the full field set (`compile.ts:1431-1462`) |
 | `path` | ✅ — `bones`, `slot`, `positionMode`/`spacingMode`/`rotateMode` (checked against the enum names `Utils.enumValue` can resolve, where only the first letter's case is free), `rotation`, `position`, `spacing`, `mixRotate`/`mixX`/`mixY`, `skin`. The slot must carry a path attachment in some skin: `PathConstraint.update` returns on its first line otherwise, so the constraint loads and moves nothing (**A36_PATH_CONSTRAINT_EFFECTIVE**) |
 | `slider` | ✅ — `animation` (an animation the MOTION spec declares; the parser resolves it in a second pass and throws on a miss), `mix`, `additive`, `loop`, and one of the two models `bone` switches between: `bone` + `property`/`from`/`to`/`scale`/`max`/`local`, or the bone-less `time`. The losing model's fields are refused rather than emitted, because the parser reads each set only inside its own branch (**A37_SLIDER_CONSTRAINT_EFFECTIVE** covers the rest) |
 | flat `constraints[]` shape | ✅ — and **A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS** actively rejects the 4.1/4.2 shape (`validate.ts:225-235`), which is the machine form of case 6a |
@@ -676,14 +670,14 @@ editor-made meshes — those arrive as authored `uvs`/`triangles`/`weights`.
 | `bones.translatex/y`, `scalex/y`, `shear`, `shearx/y`, `inherit` | ❌ emitted (🟡 the **validator** knows their channel counts, `validate.ts:83-95`, so a hand-written file with them would pass A05) |
 | `slots.attachment` | ✅ — value `name`, nullable; easing is refused |
 | `slots.rgba` | ✅ |
-| `slots.rgb`, `alpha` | ✅ — `rgb` is `{time, color}` with `color` in six hex digits and `[r, g, b]` in the motion spec; `alpha` is `{time, value}`, a number, `[a]` in the spec and refused outside 0..1. Each is emitted as itself and never folded into `rgba` ([#730](https://github.com/firejune/rigc/issues/730)); two colour tracks of one slot that share a channel are refused at compile, and **A45** holds the same in a foreign file and poses each key |
-| `slots.rgba2` | ✅ — `{time, light, dark}`, seven channels as `[lr, lg, lb, la, dr, dg, db]` in the motion spec ([#690](https://github.com/firejune/rigc/issues/690)). 🚫 **A12_NO_DARK_COLOR** names it under `spine-html` only; **A43** poses it and compares |
-| `slots.rgb2` | ✅ — `{time, light, dark}`, six hex digits each, `[lr, lg, lb, dr, dg, db]` in the motion spec; the slot must declare a setup `dark` ([#730](https://github.com/firejune/rigc/issues/730)). 🚫 **A12_NO_DARK_COLOR** under `spine-html`; **A43** poses it and compares |
+| `slots.rgb`, `alpha` | ✅ — `rgb` is `{time, color}` with `color` in six hex digits and `[r, g, b]` in the motion spec; `alpha` is `{time, value}`, a number, `[a]` in the spec and refused outside 0..1. Each is emitted as itself and never folded into `rgba`; two colour tracks of one slot that share a channel are refused at compile, and **A45** holds the same in a foreign file and poses each key |
+| `slots.rgba2` | ✅ — `{time, light, dark}`, seven channels as `[lr, lg, lb, la, dr, dg, db]` in the motion spec. 🚫 **A12_NO_DARK_COLOR** names it under `spine-html` only; **A43** poses it and compares |
+| `slots.rgb2` | ✅ — `{time, light, dark}`, six hex digits each, `[lr, lg, lb, dr, dg, db]` in the motion spec; the slot must declare a setup `dark`. 🚫 **A12_NO_DARK_COLOR** under `spine-html`; **A43** poses it and compares |
 | `physics.inertia/strength/damping/mass/wind/gravity`, `physics.mix`, `physics.reset` | ✅ — all eight (`PHYSICS_TRACKS` in `compile.ts`), authored as `tracks` entries naming `physics`. ⚠️ Their per-key defaults are the parser's, and part 1-8 above is the source: 0 on the six, 1 on `mix`. Not the constraint defaults at `:306-312` |
 | `ik`, `transform` | ✅ — one unnamed timeline per constraint, keyed by the motion spec's `ik` / `transform` arrays |
 | `path.position/spacing/mix`, `slider.time/mix` | ✅ (`PATH_TRACKS` / `SLIDER_TRACKS`) — authored as `tracks` entries naming `path` or `slider`, the same shape as `physics`, since both groups put named timelines under a constraint name. `path.mix` is one timeline of three channels |
 | `attachments.<skin>.…deform` | ❌ (validator knows it: 1 channel, `validate.ts:104-107`) |
-| `attachments.…sequence` | ✅ — the motion spec's per-animation `sequence` array of `{ skin?, slot, attachment, keys: [{ t, mode?, index?, delay? }] }`, each field emitted only where stated. A mode outside the seven (read as `hold`), a fractional or out-of-range `index` (truncated, clamped), an advancing mode at an effective delay of 0 (never advances), an attachment with no `sequence` block (every mode shows its one region) and a linked mesh that plays its source's timelines (the key is applied to nothing) are refused by name. **A46** poses every key at mid-frame samples against the file's own statement ([#729](https://github.com/firejune/rigc/issues/729)) |
+| `attachments.…sequence` | ✅ — the motion spec's per-animation `sequence` array of `{ skin?, slot, attachment, keys: [{ t, mode?, index?, delay? }] }`, each field emitted only where stated. A mode outside the seven (read as `hold`), a fractional or out-of-range `index` (truncated, clamped), an advancing mode at an effective delay of 0 (never advances), an attachment with no `sequence` block (every mode shows its one region) and a linked mesh that plays its source's timelines (the key is applied to nothing) are refused by name. **A46** poses every key at mid-frame samples against the file's own statement |
 | `drawOrder` | ✅ — the motion spec's per-animation `drawOrder` array of `{ t, offsets: [{ slot, offset }] }` (`compile.ts:823`, `:850`, `compileDrawOrder` `:1918-1970`). A key with no `offsets`, and a key with an empty one, both emit the parser's reset-to-setup encoding, so two spellings cannot make two files. An unknown slot, a slot offset twice in one key, a non-whole offset and a landing outside the emitted slots are each refused by name, and **A31_DRAW_ORDER_OFFSETS_RESOLVE** re-checks the emitted file |
 | `drawOrderFolder` | ❌ — editor bookkeeping, 4.3-only |
 | `events` (+ the `root.events` block) | ✅ — the rig spec declares the names (`rig.ts` `RigEvent`), the motion spec's per-animation `events` array fires them, and **A32_EVENT_KEYS_RESOLVE** checks the three ways the timeline goes wrong quietly. `int`/`float`/`string` overrides and `audio`/`volume`/`balance` all round-trip |
@@ -733,15 +727,15 @@ This is the split Part 4(c) needs. **Spine-validity** = the file is wrong for an
 | `A16_SKELETON_VERSION_4_3` | validity (portability) | a `spine` string outside `4.3.x` |
 | `A17_ATLAS_PAGE_FILES_EXIST` | validity | a page PNG not on disk |
 | `A18_DETERMINISTIC_EMIT` | tool contract | recompiling differs byte-for-byte |
-| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | **mixed** | size≠PNG is **validity** (case 6h) — measured rather than inherited ([#715](https://github.com/firejune/rigc/issues/715)): the runtime's UVs are a fraction of the DECLARED size, so a rescaled page draws, and the clause stays validity because every texel reader breaks on it (two of them rigc's own, under both profiles) and the format can state the same art truthfully with `scale:`, which the message prints. And so is a region whose rectangle is outside the page it names, rotation honoured ([#694](https://github.com/firejune/rigc/issues/694)); `pma:true`, region rotation, and two regions on one page over the same texels are **renderer-profile** |
+| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | **mixed** | size≠PNG is **validity** (case 6h): the runtime's UVs are a fraction of the DECLARED size, so a rescaled page draws, and the clause stays validity because every texel reader breaks on it (two of them rigc's own, under both profiles) and the format can state the same art truthfully with `scale:`, which the message prints. And so is a region whose rectangle is outside the page it names, rotation honoured; `pma:true`, region rotation, and two regions on one page over the same texels are **renderer-profile** |
 | `A11_NO_CLIPPING_ATTACHMENTS` | **renderer-profile** | clipping attachments — "the renderer skips them silently" |
 | `A12_NO_DARK_COLOR` | **renderer-profile** | slot `dark`, `rgba2`/`rgb2` timelines — "parsed, then ignored". ⚠️ rigc **emits** the first two; a renderer that drops a construct is what a profile is for, not a reason not to emit it |
 | `A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN` | validity | a slot `dark` the parser drops or reads as NaN, an `rgba2` or `rgb2` timeline on a slot with no dark colour to pose, or a key whose posed light/dark is not what it states |
 | `A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN` | validity | a linked mesh, in either spelling, that also states `uvs`, `triangles`, `vertices`, `hull` or `edges` — keys the `source` branch returns before reading, so the file says one mesh and every runtime draws its source's |
 | `A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN` | validity | an `rgb` or `alpha` timeline beside another colour timeline of the slot that poses the same channel — the later in the file overwrites the other at every time — or a key of one the pose does not reproduce |
-| `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` | validity | a numbered series that loads as something other than what the file states — a `sequence` block with no `count` (0 regions) or a `setup` past the end (clamped), or a `sequence` key whose `mode` is outside the seven (read as `hold`), whose `index` is fractional or past the end, whose advancing mode runs at an effective delay of 0, or that steps an attachment with no block — and then the pose: every key sampled mid-frame, the region shown held to the frame the file's statement gives ([#729](https://github.com/firejune/rigc/issues/729)) |
-| `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` | validity | an ik constraint at `mix` 0 at setup that no animation keys away from 0 — `update()` returns on it, and the rig parses and moves nothing ([#765](https://github.com/firejune/rigc/issues/765)) |
-| `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | validity | a transform constraint whose mixes for the properties it drives are all 0 at setup and on every value a key poses, or one that drives no property ([#765](https://github.com/firejune/rigc/issues/765)) |
+| `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` | validity | a numbered series that loads as something other than what the file states — a `sequence` block with no `count` (0 regions) or a `setup` past the end (clamped), or a `sequence` key whose `mode` is outside the seven (read as `hold`), whose `index` is fractional or past the end, whose advancing mode runs at an effective delay of 0, or that steps an attachment with no block — and then the pose: every key sampled mid-frame, the region shown held to the frame the file's statement gives |
+| `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` | validity | an ik constraint at `mix` 0 at setup that no animation keys away from 0 — `update()` returns on it, and the rig parses and moves nothing |
+| `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | validity | a transform constraint whose mixes for the properties it drives are all 0 at setup and on every value a key poses, or one that drives no property |
 | `A13_MESH_BUDGET` | **renderer-profile** | >4 mesh slots, >80 triangles per mesh |
 | `A14_NO_FULL_FRAME_MESH` | **renderer-profile** | a mesh spanning the whole stage |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | **renderer-profile** | an overlay part none of whose texels is below full alpha — refused unopened when the file has no alpha channel and no `tRNS` chunk, and by its texels otherwise, on a loose page and a shared one alike |
@@ -1079,9 +1073,9 @@ Nothing structurally new (attachment timeline, blend, inherit all arrived by run
 | (a) | **Transform constraints** — 🔴 first appearance (4). Full 4.3 `source` + `properties{from→to}` model (§1.4), which is the least-documented constraint in the format. ✅ Expressible and round-trips exactly; `RigTransformConstraint` already carried the 4.3 shape |
 | (a) | **Weighted meshes from authored geometry** — 🔴 first appearance. ~~rigc can emit weighted meshes, but only from `buildRingMesh`/`buildRibbonMesh`. An arbitrary 40-vertex/38-triangle mesh cannot be expressed~~ ⚠️ **This was wrong.** `RigMeshAttachment` takes authored `uvs`/`triangles`/`vertices`/`hull`, and `buildRigMesh` copies them verbatim. Both of 6-arcs' meshes round-trip to 1e-5 |
 | (a) | Mesh **`edges`** key ~~(rigc emits `hull` but not `edges`)~~ ✅ emitted from `RigMeshAttachment.edges` and byte-identical to the reference. 🚨 But **nothing measures it** — deleting `edges` from the rig still scores 1.000 on all nine attachment measures, so this rung's own gating feature is invisible to `bench` (issue #46) |
-| (b) | Mesh geometry as data — vertices, triangles, uvs, per-vertex bone weights — instead of a generator name plus a polygon. ✅ Present. ~~🚨 But the weights bind bones by **index into the emitted bone array**, not by name — inserting a bone rebinds every vertex with the gate still green (issue #45)~~ ✅ **Fixed.** Weights bind **by name** (`weights: [[{ bone, x, y, weight }, …], …]`) and the compiler resolves them at emit; an unknown name is a `CompileError` (selftest `RF08`). Spine's index run survives behind an explicit `"boneIndexing": "raw"`, whose cost — silence — `MR07` still measures |
+| (b) | Mesh geometry as data — vertices, triangles, uvs, per-vertex bone weights — instead of a generator name plus a polygon. ✅ Present. ~~🚨 But the weights bind bones by **index into the emitted bone array**, not by name — inserting a bone rebinds every vertex with the gate still green (issue #45)~~ ✅ **Fixed.** Weights bind **by name** (`weights: [[{ bone, x, y, weight }, …], …]`) and the compiler resolves them at emit; an unknown name is a `CompileError`. Spine's index run survives behind an explicit `"boneIndexing": "raw"`, whose cost is silence |
 | (c) | **A20** (unweighted forbidden) is satisfied here. ~~Under `--profile spine-html` its extra clause fires 11 times instead — the editor writes zero-weight bindings and that profile forbids them~~ ✅ **Fixed with #44**: both of A20's policy clauses are statements about what a rigc *generator* produces, so neither applies to authored geometry. Its coherence clauses — present, in range, summing to 1 — still do, in every profile |
-| (c) | **A21_MESH_RIM_PINNED** and **A28** encode ring/ribbon topology and will fire on an arbitrary mesh. ~~✅ **Confirmed**: A21 fires 40 times on the `tail` mesh under the default profile, because `meshKinds` has no entry for an authored mesh and the lookup falls back to `'ring'`~~ ✅ **Fixed** (issue #44): `meshKinds` has a third state, `authored`, and both assertions SKIP on one with that as the reason. The whole transcription is green under the default profile; selftest `MR08` holds it |
+| (c) | **A21_MESH_RIM_PINNED** and **A28** encode ring/ribbon topology and will fire on an arbitrary mesh. ~~✅ **Confirmed**: A21 fires 40 times on the `tail` mesh under the default profile, because `meshKinds` has no entry for an authored mesh and the lookup falls back to `'ring'`~~ ✅ **Fixed** (issue #44): `meshKinds` has a third state, `authored`, and both assertions SKIP on one with that as the reason. The whole transcription is green under the default profile |
 | (c) | A13's mesh budget (≤4 slots, ≤80 tris) is **satisfied** at this rung (2 slots, max 38 tris) |
 | (d) | none |
 
