@@ -250,6 +250,15 @@ Anything touching an input format, an error message or an assertion also changes
 `bun run selftest` is **self-contained**. It needs no arguments, no art and no
 private repository — a fresh clone can run it, and CI does.
 
+⛔ **The editor round trip (`tools/editor_roundtrip.ts`) is not, and must not
+become, a selftest control.** CI has no editor; a control that needed one would
+report SKIP for ever, which is how a gate comes to look kept while checking
+nothing. Its *refusals* are gated, because they are the half a machine with no
+editor can answer for: the suite points the tool at stubs in a temp directory and
+reads what comes back, including the case that must *not* be refused — an editor
+at an unfamiliar path, which is who `--editor` exists for. The trip itself is run
+by hand, on a machine that has the editor.
+
 Where its fixtures come from, in three tiers:
 
 | Tier | Built by | What it carries |

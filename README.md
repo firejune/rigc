@@ -478,8 +478,8 @@ the shot: both silhouette edges move apart, which a flat slide cannot do, becaus
 feature carries its own depth. The rig guarantees the seams — <code>idle</code> loops
 while <code>gaze</code> and <code>turn</code> return to rest, so the hand-offs meet at 0
 differing pixels — and the composing is the consumer's. Authorable on plain Spine 4.3, no
-plugin, no runtime patch; the split was authoring cost rather than runtime capability, and
-the cost is now one stated expression per key. Compiled and rendered entirely by the
+plugin, no runtime patch; what the turn costs is authoring rather than runtime capability,
+and that cost is one stated expression per key. Compiled and rendered entirely by the
 published package.</em></p>
 
 🎞️ **How the three films on this page were made** is kept with them, one directory per
@@ -553,20 +553,20 @@ holds no art — every rebuild then has to repeat `build --images parts/`.
 
 **`build(ingest(x))` is `x`.** Over the eleven rigs this repository builds — the seven
 gallery examples, the three generated probes and a coverage probe written for the
-purpose — the rebuilt `skeleton.json` is byte for byte the file the decompiler read,
-and `bun run selftest` holds it there on every run. The atlas is held to a weaker
+purpose — the rebuilt `skeleton.json` is byte for byte the file the decompiler read.
+The atlas is held to a weaker
 claim on purpose, and the weakening is measured rather than assumed: it comes back
 equal as a **multiset of region blocks**, because the order the pages are collected in
 is in no field of the skeleton.
 
-**And over twelve skeletons nobody here wrote.** The same run ingests every editor
-export in the fetched example corpus, rebuilds it through the pack beside it and
-`diff`s the result against the source: **12 of 12, no blockers, 1.000 on every measure
-the report carries** — and each rebuild is its export's own text in canonical form,
-apart from the header's `hash` and `spine`: the editor's project hash and the runtime
-version rigc stamps, the two keys the rig spec has no field for by design (`IG83`,
-12 of 12). [INGEST.md §2.3](docs/INGEST.md) states that pass line and why those two
-are the exceptions.
+**And over twelve skeletons nobody here wrote.** Every editor export in the fetched
+example corpus, ingested, rebuilt through the pack beside it and `diff`ed against the
+source, comes back **12 of 12, no blockers, 1.000 on every measure the report
+carries** — and each rebuild is its export's own text in canonical form, apart from
+the header's `hash` and `spine`: the editor's project hash and the runtime version
+rigc stamps, the two keys the rig spec has no field for by design (12 of 12).
+[INGEST.md §2.3](docs/INGEST.md) states that pass line and why those two are the
+exceptions.
 
 **What it reads is skeleton JSON and nothing else** — no `.spine` project, no binary
 `.skel`, no atlas, no art. So it never invents, and the things it cannot get out of
@@ -579,16 +579,13 @@ specs are still written — a spec plus a list of what is missing from it beats 
 
 - **The stage.** `skeleton.width`/`height`. A skeleton that declares none is carried as
   declaring none — the rig spec states `"width": null, "height": null` and the rebuild
-  carries no box either, byte for byte
-  ([#714](https://github.com/firejune/rigc/issues/714)) — and `--stage x,y,w,h` is how a
+  carries no box either, byte for byte — and `--stage x,y,w,h` is how a
   caller *adds* one, recorded as a judgement. It is not derivable — posing the rig gives
   the *animated* extent, which is a different number from the setup box. ⛔ **And `--stage` beside a box the file already states is refused
   too**, for the opposite reason: two sources for one value, where the file is the record
-  of what was measured. It used to be read after the box and therefore never
-  ([#626](https://github.com/firejune/rigc/issues/626)). ⚠️ This said *"an editor export carries none"* until #594 measured
-  it: **all twelve exports in the example corpus carry a stage** and none of them needs
-  the flag. It is still the value that costs least to get wrong, because `diff` reports
-  the box and gates nothing on it.
+  of what was measured. **All twelve exports in the example corpus carry a stage** and
+  none of them needs the flag. It is the value that costs least to get wrong, because
+  `diff` reports the box and gates nothing on it.
 - **An animation's duration.** The format has no such field. The largest key time is
   the only derivable answer and it is what a runtime plays to; it is wrong for an
   animation that holds its last pose past its last key, so it is recorded as a finding
@@ -620,17 +617,14 @@ render-and-check block per skin, with a per-skin roll-up under them, because a
 rig's contested art lives in its named skins and a single un-skinned check draws
 none of it; a skin only one side declares is a FAIL naming it as **lost** (or
 **added**) **by the export**, with `diff`'s `attachments.skins` beside it, and is
-rendered on neither side ([#801](https://github.com/firejune/rigc/issues/801)) — and a
+rendered on neither side — and a
 field-by-field list of what the editor rewrote. Every step quotes what its child
 said when that child did not do what it was for, the renderers included; a skin
 **neither** side can draw — a hit-box rig, say — is a **SKIP** naming that, not a
 red, because `check` had nothing to compare and `diff` and `validate` have
 already measured the rig. One side drawing where the other does not is the
-divergence the trip exists to find and stays a failure. On its first
-run it found three emitter defects — [#368](https://github.com/firejune/rigc/issues/368),
-[#369](https://github.com/firejune/rigc/issues/369),
-[#370](https://github.com/firejune/rigc/issues/370) — and then showed that a
-human edit made in the editor survives the trip back.
+divergence the trip exists to find and stays a failure. A human edit made in the
+editor survives the trip back.
 
 🔒 **It requires a licensed Spine editor on the machine, by construction**, and
 drives only the [documented command line](https://esotericsoftware.com/spine-command-line-interface)
@@ -643,14 +637,8 @@ and failing downstream. Both refusals point at `--exported <file>`, which
 measures an export the editor already made and is the half of this tool that
 needs no editor at all.
 
-⛔ **The round trip is not, and must not become, a selftest control.** `bun run
-selftest` is self-contained and CI has no editor; a control that needed one would
-report SKIP for ever, which is how a gate comes to look kept while checking
-nothing. Run the round trip by hand, on a machine that has the editor. Its
-**refusals** are gated, because they are the half a machine with no editor can
-answer for: the suite points the tool at stubs in a temp directory and reads what
-comes back, including the case that must *not* be refused — an editor at an
-unfamiliar path, which is who `--editor` exists for.
+⛔ **Run the round trip by hand, on a machine that has the editor.** CI has no
+editor, so no automated check runs it.
 
 ⚠️ Build with `--copy-images`. An ordinary build's atlas names its pages by a
 relative path back to the art directory, and the round trip copies that atlas to
@@ -680,7 +668,7 @@ rigc is measured against **Spine's own official example projects** — the
 `1-weight-and-mass` … `8-follow-through` series as a difficulty ladder, with spineboy
 as the graduation exam.
 
-🎓 **The ladder is complete, 2026-08-28.** All eight numbered rungs and the
+🎓 **The ladder is complete.** All eight numbered rungs and the
 spineboy graduation exam are cleared and hold under the current gate, **v2.4**, every clause PASS or SKIP:
 worst attributable slot drift **5.5550 px** against a 6.0 px bar — a **1.0801×**
 margin, the thinnest of the ladder's **G2** figures, and **G5**'s 1.0376× is thinner
@@ -688,24 +676,15 @@ still — and **0 of 124** frame-change disagreements. Recompiling the same spec
 different session reproduced every field of the measurement record **to the digit**.
 The rungs stay in place as regression gates.
 
-🗓️ **One rung's pass was withdrawn and restored on 2026-09-02, and both are dated
-facts.** `check`'s extent tolerance ([PR #254](https://github.com/firejune/rigc/pull/254))
-changed which box a set is measured in, and rung 7's stored candidate failed **G2**
-under it — one of its three slots draws in every set and is attributable in none,
-and no read-down ground survived the framing change. The gate then answered the two
-clause questions that exposed, as **v2.3**: a read-down names the framing of its
-evidence, and a slot whose attributability is **measured** to be capped below the bar
-reads down when everything observable about it is independently verified strict. That
-rung's third attempt clears on those grounds, on the candidate it already had.
-**Rungs 1–6 and 8 and the graduation exam were unaffected throughout**: each keeps its
-pass on the clause, and recompiling a stored candidate reproduces its record **to the
-digit within one gate**. Across an instrument change the digits do move, and the
-record says where — the graduation **G2** figure went 5.5491 → 5.5544 → **5.5550 px**
-over the #301 sampler repair and v2.4's adoption of the re-rendered reference basis,
-while **0 of 124** held throughout. Both verdicts, and the sweep of every candidate under the gate of the day, are in
-[docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md)'s *PR #254 instrument re-inspection* and *gate-v2.3
-re-inspection*; the standing figures quoted above are from its *gate-v2.4
-re-inspection*, which is the current sweep.
+**Rung 7 clears on a read-down.** One of its three slots draws in every set and is
+attributable in none; a read-down names the framing of its evidence, and a slot whose
+attributability is **measured** to be capped below the bar reads down when everything
+observable about it is independently verified strict. Every other rung and the
+graduation exam pass on the clause itself. Recompiling a stored candidate reproduces its
+record **to the digit within one gate**; across an instrument change the digits move,
+and [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) records
+where. The standing figures quoted above are from its *gate-v2.4 re-inspection*, which
+is the current sweep.
 
 ⚠️ **What that certifies, stated exactly.** That **the tool, the guide and the
 protocol reach the bar across a bounded series of honest attempts, each residual
@@ -717,8 +696,7 @@ ladder has not demonstrated that, and each row records which of the two it is.
 🧪 **A separate series measures that harder question, and it has not been kind.**
 From-zero attempts at spineboy — no inherited specs — have landed at **18.2, 18.8,
 19.57, 7.86, 9.33 and 18.98 px** worst drift against the 6.0 px bar, a spread with no
-monotone trend, and the two most recent — both **2026-09-03**, after the ladder's
-2026-08-28 completion — are recorded 🔴 **FAIL**. They move no rung and reopen nothing —
+monotone trend and every figure above the bar. They move no rung and reopen nothing —
 a from-zero run is a tooling-progress measurement rather than a re-climb, which is
 why the certification above is scoped to tool + guide + protocol. One of those
 attempts states the residual in its own words: *"in motion it is not at editor

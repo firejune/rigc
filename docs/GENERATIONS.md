@@ -5,8 +5,7 @@ why.** Spine data is locked to the editor generation that exported it — 3.8, 4
 4.2, 4.3 — and rigc emits and reads 4.3. This page is the public statement of the
 policy that governs everything else: how a generation is detected, what happens to a
 file from another one, how such a file reaches rigc, and what is deliberately not in
-this tree. [#706](https://github.com/firejune/rigc/issues/706) carries the policy's
-full original text, its measurements and its ownership table.
+this tree.
 
 ---
 
@@ -16,8 +15,7 @@ A generation is the `MAJOR.MINOR` pair a runtime is locked to. spine-ts stores t
 version string a file states and never compares it against its own (the comment above
 `A16` in `src/validate.ts` cites where other runtimes do), so a file from another
 generation is read with the wrong reader's rules and nothing says so. The measurements
-behind the policy, from #706 (the corpus figures are that card's, taken on a corpus
-this repository cannot see):
+behind the policy (the counts are of shipped skeletons outside this repository):
 
 | # | combination | what happens |
 | --- | --- | --- |
@@ -29,9 +27,8 @@ this repository cannot see):
 | 6 | the bone inheritance key | 4.0 and 4.1 spell it `transform`, 4.2 and 4.3 spell it `inherit` (`getValue(boneMap, "transform", "Normal")` at `SkeletonJson.js:91` of `spine-core` 4.1.56, `getValue(boneMap, "inherit", "Normal")` at `:94` of 4.2.120). The old key is an unknown field to the newer reader, so the bone falls back to Normal inheritance without a word |
 | 7 | guessing the generation | a catalog builder handed the "nearest" runtime it had (4.2) to 19 skeletons labelled `3.8.99`; they loaded, and posed as NaN (row 2) |
 
-⚠️ **Row 6 corrects its source.** #706 states the rename as 4.2 → 4.3, and so do the
-detail `A02_NO_BONE_TRANSFORM_KEY` prints and the comment on `LEGACY_BONE_INHERIT_KEY`.
-The branch parsers cited in the row say 4.1 → 4.2, which is also what
+⚠️ **The detail `A02_NO_BONE_TRANSFORM_KEY` prints attributes the rename to 4.2 → 4.3.**
+The branch parsers cited in row 6 say 4.1 → 4.2, which is also what
 [SPEC_COVERAGE.md](SPEC_COVERAGE.md)'s format-change timeline records. The check is
 unaffected — it refuses the key in 4.3 data, which is true whichever generation last
 wrote it — but the attribution in its sentence is not the parser's.
@@ -41,7 +38,7 @@ policy rather than a compatibility note.
 
 ## 2. The policy
 
-Five rules, #706's in substance:
+Five rules:
 
 1. **The data states its generation.** It is detected from `skeleton.spine`. **An
    unknown generation gets no runtime** — never the nearest one (row 7) — and is shown
@@ -83,15 +80,15 @@ the only place in the tree that decides a generation, and it exports exactly thi
 `spineGeneration(version)` reads the string by three rules, and nothing else:
 
 - **The leading token is the generation.** `4.0-from-4.1.24` is 4.0 data written by a
-  4.1 editor — a down-export. All 418 plain-or-down-exported 4.0 files and 101 4.1 files
-  in #706's corpus load and render on the 4.0 and 4.1 runtimes with 0 failures; reading
+  4.1 editor — a down-export. Of the shipped files measured, all 418 plain-or-down-exported
+  4.0 files and 101 4.1 files load and render on the 4.0 and 4.1 runtimes with 0 failures; reading
   the trailing token would hand them the wrong runtime.
 - **Every token must be a known generation, and the chain must ascend.** A down-export
   comes *from* a newer editor, so `4.3-from-4.2.1` is not a string this reader can
   account for.
 - **Unknown is `null`, never the nearest.** `null` is what a caller has to act on.
 
-The nine strings #706 found in shipped data, and three this reader refuses:
+Nine strings found in shipped data, and three this reader refuses:
 
 | `skeleton.spine` | generation |
 | --- | --- |
@@ -156,25 +153,23 @@ Spine -u 4.3.26 -i project.spine -o export -e json              # the 4.3 export
 
 The same-generation import is the rule because the alternative was measured.
 **[observed]** A 4.3 editor importing another generation's JSON directly drops
-constraints without a word. The 1.0 exam's inputs were therefore migrated with matching
-import versions before any measurement was called fair, as #706's comment of 2026-09-18
-records.
+constraints without a word.
 
-What the exam measured about that path is in [ROADMAP.md](https://github.com/firejune/rigc/blob/main/ROADMAP.md)
+The path is measured in [ROADMAP.md](https://github.com/firejune/rigc/blob/main/ROADMAP.md)
 §*1.0 — claimed on 2026-09-24*: each source posed under its own generation's
 `spine-core`, the editor's 4.3.26 export and rigc's rebuild posed under 4.3.13, and every
 rebuild posing within the editor's own migration noise against the source. 3.8 has no
-runtime on npm (row 5), so its rig is graded against the export alone.
+runtime on npm (row 5), so a 3.8 rig is compared against the export alone.
 
 ⚠️ **The export step is not neutral, and what it changes is the editor's behaviour, not
 rigc's.** A reader comparing a rebuild against the source it was migrated from should
 expect these, each **[observed]** on the editor's 4.3.26 export:
 
 - a transform constraint that is inert — every mix 0, and never keyed — is dropped;
-- an empty `default` skin is dropped ([#801](https://github.com/firejune/rigc/issues/801),
-  measured on a generated three-skin rig), while an empty *named* skin is kept;
+- an empty `default` skin is dropped (measured on a generated three-skin rig), while an
+  empty *named* skin is kept;
 - a path's `lengths` are re-measured on migration, so the export's array is not the
-  source's ([#804](https://github.com/firejune/rigc/issues/804));
+  source's;
 - slot names of the form `a/b` came back as `a-b` on one 4.1 rig.
 
 rigc reproduces the **export**: `build(ingest(export))` is held to the export, and the
@@ -182,26 +177,20 @@ distance from the export back to the source is the editor's.
 
 ## 5. What rigc does not do, and why
 
-- **Reading pre-4.3 data with that generation's own defaults** (#706 item 2) is not in
-  the tree. It needs the per-generation table rule 3 describes — key renames, array
-  shapes and every `getValue(map, key, default)` default, extracted by machine from each
-  branch's `SkeletonJson` — and that table needs a source of truth for the 4.0, 4.1 and
-  4.2 parsers that the selftest can read offline. The selftest is self-contained: it runs
-  with no network and links one `spine-core`, the 4.3.13 this package pins. The open
-  question is a vendored copy under the runtimes licence or a generated file whose
-  checker runs only where the network is, and it is not answered here. Until it is,
+- **Reading pre-4.3 data with that generation's own defaults** is not in the tree. It
+  needs the per-generation table rule 3 describes — key renames, array shapes and every
+  `getValue(map, key, default)` default, extracted by machine from each branch's
+  `SkeletonJson` — and rigc links one `spine-core`, the 4.3.13 this package pins. So
   `ingest` names what a 4.3 reader loses instead of applying defaults it would have to
   type by hand.
-- **A conversion utility, and the cross-generation pose oracle that gates it** (#706
-  item 4), are not in the tree either. Rule 2 says data is not converted in order to be
-  played, and rule 4 says a converter is trusted only where the oracle passes — so the
-  editor, run with the data's own generation, remains the migration path. The oracle
-  exists as exam tooling outside this repository, beside the corpus it measures; the 1.0
-  exam's pose grading (ROADMAP §1.0) is that tool's output, not a command of this one.
+- **A conversion utility, and the cross-generation pose oracle that gates it**, are not
+  in the tree either. Rule 2 says data is not converted in order to be played, and rule 4
+  says a converter is trusted only where the oracle passes — so the editor, run with the
+  data's own generation, is the migration path. The pose measurements §4 points at come
+  from a tool outside rigc, not from a command of this one.
 
 ## 6. Where the policy is canonical
 
-The source document lives in the owner's private research repository, beside the corpus
-its measurements were taken on. This page is the public statement of it for rigc, and
-[#706](https://github.com/firejune/rigc/issues/706) carries the full original text, so
-nothing here depends on access to that repository.
+This page is rigc's statement of the policy.
+[#706](https://github.com/firejune/rigc/issues/706) carries its full original text, its
+measurements and its ownership table.
