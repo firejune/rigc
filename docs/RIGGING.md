@@ -50,17 +50,7 @@ AUTHORING §0's sense, not as an input to be followed. The figures produced *her
 are re-derived on the fixture in the [appendix](#appendix--the-figure-this-page-measures-on)
 and every command on this page was re-run from it verbatim. Those citations —
 `gallery/…`, `selftest.ts`, the run records — are **repository material and not in
-the npm package**, so they are linked by absolute URL: this page ships, and a
-relative link to them would resolve to nothing inside `node_modules/spine-rigc/`.
-
-🔒 **So this page is not a ladder run's reading, and AUTHORING.md deliberately does
-not link it.** An allowed-reading surface has to be **closed under reading**, and
-the citations below go into `bench/runs/`, which is on a run's forbidden list —
-`bench/runs/README.md`, *What a run may read*, is the copy that binds. Everything
-here that a run needs is in **AUTHORING §8.1**, **§10.3** and **MOTION §3.9**, which
-are allowed; what this page adds is where those rules came from and what they look
-like while they are being broken. If a run is handed this file anyway, that is a
-prompt defect rather than a decision, and the maintainer's call to make.
+the npm package**, so they are linked by absolute URL.
 
 ---
 
@@ -247,8 +237,8 @@ record:
 2. **Drop the diverse rows.** AUTHORING §8.1's: *"re-solve the joint from a subset
    that excludes the diverse configurations and see how far the answer moves. If it
    moves a long way at comparable residuals, the diverse frames were carrying the
-   whole identification."* ⚠️ **No run in the corpus had performed this one as a
-   check as of 2026-09-18** — attempt 5 performed the *unconditional* version of it by accident and
+   whole identification."* ⚠️ **No run in the corpus performs this one as a
+   check** — attempt 5 performed the *unconditional* version of it by accident and
    that is §2.2's 21-unit result, which is what a deliberate subset test is designed
    to produce on purpose. It is prescribed, cheap and unexercised.
 3. **Look at the spread of relative angle directly**, before believing any residual.
@@ -918,10 +908,8 @@ to a movement that happens to be structural: *"the one thing that judges a movem
 is a person's eye, through `rigc vote`."*
 
 ⚠️ **Provenance note, stated because the honest version is short:** the prescription
-*assemble leaves first* comes from the production of this project's first demo film,
-whose artifacts were deliberately kept out of the repository ([#248](https://github.com/firejune/rigc/issues/248)),
-so **there is no repo-side record of it and this page does not present one.** What is
-re-derived here is the mechanism it describes — the compounding in §7.3 — and the
+*assemble leaves first* has **no record in the repository, and this page does not
+present one.** What is re-derived here is the mechanism it describes — the compounding in §7.3 — and the
 measured fact that ordering changes the path and not the extent. The ordering claim
 itself is one person's eye, once.
 
@@ -979,9 +967,7 @@ rigc chainfit --candidate out --images parts --frame pic/home@2fps/f0000.png \
 ⭐ **Two rows for one plate, one per bone, neither ambiguous.** The ambiguity did
 not get resolved by a better objective; it stopped existing, because a child whose
 parent is placed has **one degree of freedom about a pivot the rig declares**
-instead of four (AUTHORING §12). The selftest's own name for this control is
-`CF06_TWO_IDENTICAL_LIMBS_STOP_BEING_AMBIGUOUS_ONCE_THEY_HAVE_PIVOTS`, and its
-stated reason is *"two pivots, two arcs, one answer each."*
+instead of four (AUTHORING §12): two pivots, two arcs, one answer each.
 
 📌 **Read the hinges as the honesty check they are.** The frame *is* the setup pose,
 so the truth is 0°, and the search returned 0.33°, 0.61° and 1.20°. That is the
@@ -1118,9 +1104,8 @@ default failure mode**, because it drives bones rather than drawing anything.
 > `true`, so any IK timeline that did not restate it overwrote the constraint's value
 > for the whole animation, with the field still in the file and the gate green either
 > way."*
-> — [`gallery/walk/README.md`](https://github.com/firejune/rigc/blob/main/gallery/walk/README.md), on
-> [#273](https://github.com/firejune/rigc/issues/273) (fixed: rigc now stamps the
-> rig's value onto every emitted ik key)
+> — [`gallery/walk/README.md`](https://github.com/firejune/rigc/blob/main/gallery/walk/README.md)
+> (rigc stamps the rig's value onto every emitted ik key)
 
 ⇒ **A structural fact stated in the rig can be overwritten by a per-key default in
 the motion.** It took four builds and one bone position to see it; nothing else
@@ -1199,7 +1184,7 @@ under — translating with it, not rotating:
 
 ⇒ The two rules do not conflict. **Re-parent to fix what a part is carried by; key
 draw order to fix what a part is drawn over.** Using either for the other's job is
-the divergence AUTHORING §10 was written after six runs to stop.
+the divergence AUTHORING §10 exists to stop.
 
 ### 10.3 🔒 The one machine guard on parentage, and why it exists
 
@@ -1239,8 +1224,7 @@ see:
 > every index is still in range, every vertex's weights still sum to 1, and `A04`,
 > `A20` and `diff` are all quiet, because an index has no name to be wrong.
 > (Measured, on the rung 6 transcription: union MAE 3.30 → 15.09, worst mesh-slot
-> drift 0.09 px → 9.8 px, with a green gate throughout. Issue
-> [#45](https://github.com/firejune/rigc/issues/45).)"*
+> drift 0.09 px → 9.8 px, with a green gate throughout.)"*
 > — AUTHORING §3.4
 
 ⇒ rigc's `weights` form binds **by name**, like every other reference in a rig spec,

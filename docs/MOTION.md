@@ -355,7 +355,7 @@ cell, because most rows are a sourced word mapped to an unsourced construct.
 | **drag** — *"it should lag"* | 📗 parts take a few frames to catch up when a body starts moving ([twelve principles]) | 🧩 the same offset applied at the **start** rather than at the stop. ⚠️ Convert the source's frames to a **fraction** of the duration — §3.7's offsets are fractions, so a 0.15 s snap and a 2 s idle share one table · §3.7 |
 | **the wave principle** | 📗 Esoteric's own framing: the thing to understand for tails, hair, cloth and flags — anything that follows through (video 4) | 🧩 the offset **compounding down a chain**, so the lag travels: `groups` + `stagger` where the members are a chain. ⚠️ **`wave` already names something else here** — a deform transform kind (AUTHORING §4.11.1) that ripples an attachment's vertices, not a chain's timing |
 | **squash and stretch** | 📗 what gives a drawing weight and flexibility ([twelve principles]); Spine notes the shear tool is used in small amounts for organic squash and stretch ([Tools]) | 🧩 two spellings. **Cheap:** a `scale` key whose two axes differ. **Full:** a `deform` timeline, which is what `gallery/squash` uses. §7 is rigid-first — land the movement, then deform · §4 |
-| **keeping the volume** | 📗 in *realistic* animation a squashed object keeps its volume: stretch it one way and it must narrow the other ([twelve principles]) | 🧩 `x·y ≈ 1` on a `scale` key, which `explain` now prints beside it, and the `area` figure a `deform` key already carried. **A reading, never a rule** — a shadow, a zoom and a cartoon squash all change area on purpose. ⚠️ Say *scale product* in a message: `volume` already means an event's audio and 4.3's `ScaleYMode.Volume` |
+| **keeping the volume** | 📗 in *realistic* animation a squashed object keeps its volume: stretch it one way and it must narrow the other ([twelve principles]) | 🧩 `x·y ≈ 1` on a `scale` key, which `explain` prints beside it, and the `area` figure a `deform` key already carried. **A reading, never a rule** — a shadow, a zoom and a cartoon squash all change area on purpose. ⚠️ Say *scale product* in a message: `volume` already means an event's audio and 4.3's `ScaleYMode.Volume` |
 | **overshoot and settle** | 📗 exaggeration — a motion that imitates reality exactly reads as dull ([twelve principles]) | 🧩 §3.8's interior key past the final value, then back. 🚨 The last key still carries the given end pose exactly |
 | **a moving hold** — *"it should never be fully still"* | 📗 a character that is barely moving still breathes; two nearly-identical poses keep it from going lifeless ([twelve principles]) | 🧩 **not** §3.3's *hold*, which is two EQUAL keys meaning *nothing moves here*. A moving hold is the opposite: §3.3's 1.5–3 s idle band with a small excursion — §0's A=B case |
 | **secondary action** | 📗 a supporting movement that emphasises the main one rather than competing with it ([twelve principles]) | 🧩 a whole extra timeline, and the **first thing to leave out of a first candidate**: a ballot spreading on both primary timing and a secondary action has asked two questions · §3.10 |
@@ -366,13 +366,11 @@ cell, because most rows are a sourced word mapped to an unsourced construct.
 [Graph]: http://esotericsoftware.com/spine-graph
 [Tools]: http://esotericsoftware.com/spine-tools
 
-⚠️ **The eight *Animating with Spine* videos are the obvious source for this
-table and none of it comes from them.** Their captions could not be retrieved —
-the manifest is served and the body is not — so nothing here is presented as
-something said in one. Two rows cite a video's published *description*, which is
-Esoteric's own prose and marked as such; everything else is the twelve
-principles and Spine's written documentation. If the narration becomes readable,
-this table is where it belongs.
+⚠️ **None of this table comes from the narration of the eight *Animating with
+Spine* videos**, so nothing here is presented as something said in one. Two rows
+cite a video's published *description*, which is Esoteric's own prose and marked
+as such; everything else is the twelve principles and Spine's written
+documentation.
 
 ### 3.2 📗 Pose to pose is the normal form, and it is one of two
 
@@ -528,20 +526,16 @@ The table above is a per-part **timing** offset, and in rigc it has a field:
 `groups` names the parts, `stagger` adds the delay in member order, and `gallery/ride`
 keys four wheels and two ears that way (AUTHORING §4.3).
 
-🧩 **The other half of "each part gets its own number" is the value, and until
-[#295](https://github.com/firejune/rigc/issues/295) it had no field at all.** `groups`
+🧩 **The other half of "each part gets its own number" is the value.** `groups`
 keys its members **identically**, which is right for a wheel pair and wrong for a face:
 there, the whole content of the movement is that every part moves a *different* amount.
-`gallery/portrait`'s held 12° yaw was 20 tracks, sixteen of them the same two properties
-on six sibling bones — same times, same easings, six different numbers — and exactly one
-of the twenty was a `groups` entry, the pair that happened to share a value.
 
-🧩 **Two spellings now, and the choice is whether the numbers are decisions or
+🧩 **Two spellings, and the choice is whether the numbers are decisions or
 arithmetic** (AUTHORING §4.5.1 is the field reference):
 
 - a key's `v` may be a **map keyed by member name**, which is the right form when each
   number is a judgement — six hanging locks given six swings. The emitted file is byte
-  for byte the one the six tracks produced, so this is a pure relocation;
+  for byte the one six separate tracks would produce, so this is a pure relocation;
 - a key may state a **`derive` model** instead — `yaw` or `pitch`, an angle, and a
   **depth per member** — and the compiler evaluates each member's value from it. That
   is the right form when the numbers were never judgements: `x·(cos t − 1) − z·sin t` at
@@ -695,7 +689,7 @@ request**, so whichever wins tells you something the next candidate can use.
 | **Segmentation** | one continuous movement | two beats with a hold between them | the prompt has two verbs in it, or a comma doing the work of one |
 | **Key density** | ends plus one interior key | ends plus three or four | the intent names a shape (*"hesitates"*, *"in stages"*) that the ends cannot carry |
 | **Pivot, where it was defaulted** | the art's own joint feature | the parent's far end | §3.9 defaulted it and the two readings are several pixels apart. The ballot is then answering a question the pictures did not |
-| **Deform** (advanced) | rigid throughout | squash/stretch on the extremes via a `deform` timeline (AUTHORING §4.11) | the rigid candidates have already been chosen between. ⚠️ **The base recipe is rigid-first** — see §7. 🧩 A deform key can state its transform rather than a table of offsets (AUTHORING §4.11.1), so this axis is now two numbers to spread on rather than two tables to transcribe |
+| **Deform** (advanced) | rigid throughout | squash/stretch on the extremes via a `deform` timeline (AUTHORING §4.11) | the rigid candidates have already been chosen between. ⚠️ **The base recipe is rigid-first** — see §7. 🧩 A deform key can state its transform rather than a table of offsets (AUTHORING §4.11.1), so this axis is two numbers to spread on rather than two tables to transcribe |
 
 📌 **One axis per ballot.** Two candidates differing on two axes cannot be read: the
 winner tells you the pair was better, not which half of it was. If two axes both look
@@ -752,16 +746,6 @@ Nothing here is an answer to anything.
 
 What *is* real: every command line below was run, and every figure printed in an
 output block is what the command actually printed.
-
-📏 **Instrument re-baseline, 2026-09-03 — [#306](https://github.com/firejune/rigc/issues/306).**
-`pose`'s objective now interpolates its frame in premultiplied space, so a tap
-straddling a silhouette no longer mixes the ground's colour into a part's. Every
-block below was re-run on that arithmetic; **two figures moved**, both in step 2's
-narrowed pose-A block — `arm.png` reads `scale=0.968` (was 0.967) and
-`unexplained= 4%` (was 5%). Nothing in step 3's arithmetic depends on either, and
-the pose-B block is unchanged to the last digit. ⚠️ A residual from before that
-date and one from after are not the same measurement; do not put them in one
-column.
 
 🖼️ **For the same recipe on art that ships, the
 [`gallery/`](https://github.com/firejune/rigc/tree/main/gallery) examples are worked
@@ -1157,7 +1141,7 @@ and a kind the compiler does not know is refused by name rather than evaluated.
 first non-goal above rather than a nuance of it.** AUTHORING §4.11.1 lets a key name a
 model — a yaw, a scale about a point, a wave, a bend — and the compiler evaluates it
 over the attachment's own vertices. What that removes is **transcription of one key's
-arithmetic**, which was never judgement: `gallery/portrait`'s held yaw was 160 floats of
+arithmetic**, which is never judgement: `gallery/portrait`'s held yaw is 160 floats of
 one closed form. What it does not touch is **anything between two keys** — the times,
 the easings, the anticipation, the offset table — because a deform timeline still has
 one 0..1 blend channel and §3 still owns every value on it. ⇒ Sweeping a deform is
