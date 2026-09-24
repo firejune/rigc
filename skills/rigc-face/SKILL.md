@@ -1,5 +1,5 @@
 ---
-name: face
+name: rigc-face
 description: Author a face on plain Spine data with rigc — a blink, a gaze shift, a breathing portrait and a head turn a few degrees off axis, built from deform timelines and per-part parallax. Use when the request is a talking or living portrait, a standing character, an expression or a head turn, such as "rig this face", "make the portrait blink and look around" or "turn the head". Not for Live2D file conversion, cutting a face illustration into parts, or VTuber-style real-time face tracking.
 license: MIT
 compatibility: Requires Bun 1.2 or later and the npm package spine-rigc.
@@ -9,7 +9,7 @@ compatibility: Requires Bun 1.2 or later and the npm package spine-rigc.
 
 Load this when the request is a **head rather than a body**: a drawn face that
 breathes, blinks, moves its eyes and turns a few degrees off axis. Every rule below
-is owned by [FACE.md](../../docs/FACE.md); this file says when to open it and what
+is owned by [FACE.md](https://github.com/firejune/rigc/blob/main/docs/FACE.md); this file says when to open it and what
 it will not do for you.
 
 ## Non-negotiables
@@ -40,17 +40,21 @@ differential audit and the three limits it does not lift.
 
 ## Read, in this order
 
-1. [AUTHORING.md](../../docs/AUTHORING.md) — the `deform` timeline field by field
+1. [AUTHORING.md](https://github.com/firejune/rigc/blob/main/docs/AUTHORING.md) — the `deform` timeline field by field
    and what rigc refuses in it (§4), the failure map (§5–§6), the editor's
    conventions (§10).
-2. [MOTION.md](../../docs/MOTION.md) — timing, easing and the offset table (§3),
+2. [MOTION.md](https://github.com/firejune/rigc/blob/main/docs/MOTION.md) — timing, easing and the offset table (§3),
    candidates and the ballot (§4–§5). A blink and a gaze are ordinary motion work.
-3. [FACE.md](../../docs/FACE.md) — the face's own geometry: the closed form every
+3. [FACE.md](https://github.com/firejune/rigc/blob/main/docs/FACE.md) — the face's own geometry: the closed form every
    number in a turn comes from (§1), the hierarchy underneath (§3), what
    foreshortens (§5), and the deform audit gap (§9).
-4. Then [RIGGING.md](../../docs/RIGGING.md) for the hierarchy as a general rule
-   rather than this closed form, and [INGEST.md](../../docs/INGEST.md) if the head
+4. Then [RIGGING.md](https://github.com/firejune/rigc/blob/main/docs/RIGGING.md) for the hierarchy as a general rule
+   rather than this closed form, and [INGEST.md](https://github.com/firejune/rigc/blob/main/docs/INGEST.md) if the head
    arrived as a compiled skeleton.
+
+Every guide linked here is in the installed package at `node_modules/spine-rigc/docs/`,
+which is the copy that matches the rigc you run; the links go to the repository's
+`main`. Inside the Claude Code plugin the same files are at `${CLAUDE_PLUGIN_ROOT}/docs/`.
 
 The install line and the build → validate → render → check loop are in the `rigc`
 skill.

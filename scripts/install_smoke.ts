@@ -29,9 +29,9 @@
  *
  * 🌱 **The plants are part of the tool, not a story in a pull request.** A smoke
  * that has never been seen to fail proves that a program ran, not that a program
- * was checked, so three of the five cases rebuild the tarball from a PATCHED COPY
+ * was checked, so four of the six cases rebuild the tarball from a PATCHED COPY
  * of the extracted package — an allowlist entry removed, a module removed, a
- * dependency removed — and INVERT the verdict: such a case is green only when the
+ * dependency removed, the skills removed — and INVERT the verdict: such a case is green only when the
  * smoke went red at the step it was supposed to, naming the module that went
  * missing. The worktree is never patched; the patch is applied to the extraction
  * and packed from there, and a plant that removed nothing is itself a fault.
@@ -86,7 +86,7 @@
  * `scripts/` it is read by no gate whose population it can weaken.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -395,7 +395,7 @@ function waitForRegistry(spec: string, minutes: number, cwd: string): RegistryWa
 // The tarball, and the plants that patch a COPY of it
 // ---------------------------------------------------------------------------
 
-type Plant = 'none' | 'drop-plate' | 'drop-src-module' | 'drop-dependency';
+type Plant = 'none' | 'drop-plate' | 'drop-src-module' | 'drop-dependency' | 'drop-skills';
 
 /** The module each plant takes out of the package, and the step whose output has to name it. */
 const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]; what: string }> = {
@@ -413,6 +413,11 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
     names: ['@esotericsoftware/spine-core'],
     steps: ['build'],
     what: '`@esotericsoftware/spine-core` removed from `dependencies`. The tree would not notice — a checkout installs it as a devDependency of nothing and it is already there — and the install is where the round trip has nothing to run',
+  },
+  'drop-skills': {
+    names: ['skills/'],
+    steps: ['skills'],
+    what: '`skills` removed from `files` (issue #831). `rigc skills install` finds the skills from its own location in the install, so a package that ships none is the one place this can be seen — a checkout always has them',
   },
 };
 
@@ -473,6 +478,9 @@ function tarballFor(
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   } else if (plant === 'drop-dependency') {
     delete (pkg.dependencies ?? {})['@esotericsoftware/spine-core'];
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  } else if (plant === 'drop-skills') {
+    pkg.files = (pkg.files ?? []).filter((entry) => entry !== 'skills');
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   } else {
     const victim = join(pkgDir, 'src', 'validate.ts');
@@ -737,6 +745,29 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     fault('validate', `SMOKE_VALIDATE_READS_BACK: \`node_modules/.bin/rigc validate build\` exited ${validate.status}. ${validate.out.trim().slice(0, 4000)}`);
   }
 
+  // The skills, the way an agent host needs them (issue #831): the INSTALLED
+  // package links its own `skills/` into a directory of this install — one with a
+  // space in it, so a link that was not relative-and-quoted-safe would show —
+  // and the entry skill is read back through the link. A checkout cannot see
+  // this: the command finds the skills from where it is installed, and a tree
+  // always has them.
+  const skillsDir = join(home, 'agent skills');
+  const skills = run(bin, ['skills', 'install', '--dir', skillsDir], home);
+  output += skills.out;
+  const entryLink = join(skillsDir, 'rigc');
+  const shippedEntry = join(pkgRoot, 'skills', 'rigc', 'SKILL.md');
+  if (skills.status !== 0) {
+    fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: \`node_modules/.bin/rigc skills install --dir <tmp>\` exited ${skills.status}, so the package's skills/ directory did not reach a host directory. ${skills.out.trim().slice(0, 2000)}`);
+  } else if (!existsSync(join(entryLink, 'SKILL.md')) || !lstatSync(entryLink).isSymbolicLink()) {
+    fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: skills install exited 0 and ${entryLink} is ${existsSync(entryLink) ? 'not a link' : 'not there'}, so rigc/SKILL.md cannot be read through one`);
+  } else if (readlinkSync(entryLink).startsWith('/') || realpathSync(entryLink) !== realpathSync(dirname(shippedEntry))) {
+    fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: ${entryLink} links to ${readlinkSync(entryLink)}, and a relative link to ${dirname(shippedEntry)} was required`);
+  } else if (!readFileSync(join(entryLink, 'SKILL.md')).equals(readFileSync(shippedEntry))) {
+    fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: rigc/SKILL.md read through ${entryLink} is not the bytes of ${shippedEntry}`);
+  } else {
+    notes.push(`skills install linked ${readdirSync(skillsDir).length} skill(s) from the install; rigc/SKILL.md read through ${readlinkSync(entryLink)}`);
+  }
+
   // The shim's own promise, measured rather than assumed: with bun off PATH the
   // `bin` entry has to say so in one sentence instead of dying as `env: bun: No
   // such file or directory`.
@@ -791,11 +822,12 @@ exit codes:
      nothing here says the package is broken
 
 cases:
-  clean          a correct package installs and builds, and the bin shim names Bun when bun is absent
+  clean          a correct package installs and builds, links its skills from the install, and the bin shim names Bun when bun is absent
   unusual-path   the same, installed at an absolute path with spaces and non-ASCII in it
   drop-plate     tools/plate.ts out of \`files\`  — the smoke has to go RED naming it
   drop-src-module  src/validate.ts out of the packed tree — the smoke has to go RED naming it
   drop-dependency  @esotericsoftware/spine-core out of \`dependencies\` — the smoke has to go RED naming it
+  drop-skills      \`skills\` out of \`files\` — \`rigc skills install\` has to go RED naming it
 
 A plant case is green when the smoke failed the way the plant says it must, and
 red when the smoke passed anyway. Nothing is written inside the repository.
@@ -882,6 +914,7 @@ function main(): number {
     { name: 'drop-plate', source, installer, plant: 'drop-plate', dirName: 'planted-plate' },
     { name: 'drop-src-module', source, installer, plant: 'drop-src-module', dirName: 'planted-src' },
     { name: 'drop-dependency', source, installer, plant: 'drop-dependency', dirName: 'planted-dep' },
+    { name: 'drop-skills', source, installer, plant: 'drop-skills', dirName: 'planted-skills' },
   ];
   const chosen = only === null ? battery : battery.filter((c) => c.name === only);
   if (chosen.length === 0) {

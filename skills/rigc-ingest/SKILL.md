@@ -1,5 +1,5 @@
 ---
-name: ingest
+name: rigc-ingest
 description: Work with a Spine skeleton.json somebody else authored — exported from the Spine editor or another tool — using rigc. Read and validate it, understand a complaint rigc raised about it, decompile it into rigc specs with `rigc ingest`, normalise, re-pivot or rename it, and extend it with an animation it does not have. Use when the input is an existing skeleton.json with its .atlas and page images rather than loose part PNGs. Not for Live2D file conversion or runtime tracking.
 license: MIT
 compatibility: Requires Bun 1.2 or later and the npm package spine-rigc.
@@ -10,7 +10,7 @@ compatibility: Requires Bun 1.2 or later and the npm package spine-rigc.
 Load this when what you were handed is **already a skeleton**: a `skeleton.json`
 with its `.atlas` and page images, and a request to understand it, answer a
 complaint about it, re-express it, or extend it. Every rule below is owned by
-[INGEST.md](../../docs/INGEST.md); this file says when to open it and what it will
+[INGEST.md](https://github.com/firejune/rigc/blob/main/docs/INGEST.md); this file says when to open it and what it will
 not do for you.
 
 ## Non-negotiables
@@ -61,14 +61,18 @@ thing to reach for; transcription by hand is what you fall back on for a constru
 
 ## Read, in this order
 
-1. [INGEST.md](../../docs/INGEST.md) — what every command will and will not do with
+1. [INGEST.md](https://github.com/firejune/rigc/blob/main/docs/INGEST.md) — what every command will and will not do with
    a foreign file (§0), `ingest` and transcription (§2), what each validator
    complaint means on an export (§3), and the re-pivot, rename and extend
    recipes (§4).
-2. [AUTHORING.md](../../docs/AUTHORING.md) — the two spec files the transcription
+2. [AUTHORING.md](https://github.com/firejune/rigc/blob/main/docs/AUTHORING.md) — the two spec files the transcription
    targets (§3–§4), the failure map (§5–§6), and the coordinate contract (§11.2).
-3. Then [RIGGING.md](../../docs/RIGGING.md) for why the re-pivot edit has the shape
-   it has, and [MOTION.md](../../docs/MOTION.md) for the animation you are adding.
+3. Then [RIGGING.md](https://github.com/firejune/rigc/blob/main/docs/RIGGING.md) for why the re-pivot edit has the shape
+   it has, and [MOTION.md](https://github.com/firejune/rigc/blob/main/docs/MOTION.md) for the animation you are adding.
+
+Every guide linked here is in the installed package at `node_modules/spine-rigc/docs/`,
+which is the copy that matches the rigc you run; the links go to the repository's
+`main`. Inside the Claude Code plugin the same files are at `${CLAUDE_PLUGIN_ROOT}/docs/`.
 
 The install line and the build → validate → render → check loop are in the `rigc`
 skill.

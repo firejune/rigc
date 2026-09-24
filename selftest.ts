@@ -59,6 +59,8 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -45616,6 +45618,206 @@ function runCliSuite(): number {
     }
     if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
+
+  // --- CLI97–CLI99: `rigc skills install` (issue #831) ----------------------
+  //
+  // Every run below is a real subprocess in its own temp workspace, because the
+  // command's default target is a path under the WORKING DIRECTORY and `runCli`
+  // runs from the repository root — a green run there would write
+  // `.agents/skills/` into the tree this file is measuring. The skills it must
+  // install are read off the tree (`skills/<name>/SKILL.md`, tracked), never
+  // listed here, and the entry the refusals plant is the first of them.
+  {
+    const cli = join(import.meta.dir, 'cli.ts');
+    const inWs = (cwd: string, args: string[]): { status: number | null; stdout: string; stderr: string } => {
+      const ran = spawnSync(process.execPath, [cli, ...args], { cwd, encoding: 'utf8' });
+      return { status: ran.status, stdout: ran.stdout, stderr: ran.stderr };
+    };
+    const shipped = trackedFiles(import.meta.dir)
+      .map((path) => /^skills\/([^/]+)\/SKILL\.md$/.exec(path)?.[1])
+      .filter((name): name is string => name !== undefined)
+      .sort();
+    const realSkill = (name: string): string => realpathSync(join(import.meta.dir, 'skills', name));
+    const work = mkdtempSync(join(tmpdir(), 'rigc-skills-install-'));
+    const ws = (label: string): string => {
+      const dir = join(work, label);
+      mkdirSync(dir, { recursive: true });
+      return realpathSync(dir);
+    };
+    /** Every entry under `dir`, as `name -> "link <text>" | "dir" | "file"`, so two moments compare as one string. */
+    const snapshot = (dir: string): string =>
+      existsSync(dir)
+        ? readdirSync(dir)
+            .sort()
+            .map((name) => {
+              const stat = lstatSync(join(dir, name));
+              return `${name} ${stat.isSymbolicLink() ? `link ${readlinkSync(join(dir, name))}` : stat.isDirectory() ? 'dir' : 'file'}`;
+            })
+            .join('; ')
+        : '(absent)';
+    const first = shipped[0] ?? '';
+    const entry = trackedFiles(import.meta.dir).includes('.claude-plugin/plugin.json')
+      ? (JSON.parse(readFileSync(join(import.meta.dir, '.claude-plugin/plugin.json'), 'utf8')) as { name?: string }).name ?? ''
+      : '';
+
+    // CLI97 — a fresh workspace, the default --dir, and the run after it.
+    const fresh = ws('fresh');
+    const target = join(fresh, '.agents', 'skills');
+    const one = inWs(fresh, ['skills', 'install']);
+    const afterOne = snapshot(target);
+    const two = inWs(fresh, ['skills', 'install']);
+    const freshProbes: string[] = [];
+    if (shipped.length === 0) freshProbes.push('the tree tracks no skills/<name>/SKILL.md, so there is nothing this case can expect');
+    if (one.status !== 0) freshProbes.push(`the first run exited ${String(one.status)}: ${(one.stderr || one.stdout).trim().slice(0, 300)}`);
+    for (const name of shipped) {
+      const at = join(target, name);
+      if (!existsSync(at) || !lstatSync(at).isSymbolicLink()) {
+        freshProbes.push(`${name} is ${existsSync(at) ? 'not a symlink' : 'not there'} after the first run`);
+        continue;
+      }
+      const text = readlinkSync(at);
+      if (text.startsWith('/')) freshProbes.push(`${name} links to the absolute ${text}; a relative link was required`);
+      if (realpathSync(at) !== realSkill(name)) freshProbes.push(`${name} resolves to ${realpathSync(at)}, not ${realSkill(name)}`);
+      // `<target> -> `, because `.agents/skills/rigc` is a prefix of `.agents/skills/rigc-face`.
+      const said = one.stdout.split('\n').filter((line) => line.includes(`${at} -> `) && line.includes(`(${join(import.meta.dir, 'skills', name)})`));
+      if (said.length !== 1) freshProbes.push(`the first run printed ${said.length} line(s) naming both ${at} and its source; one was required`);
+    }
+    if (entry !== '' && existsSync(join(target, entry, 'SKILL.md'))) {
+      if (!readFileSync(join(target, entry, 'SKILL.md')).equals(readFileSync(join(import.meta.dir, 'skills', entry, 'SKILL.md')))) {
+        freshProbes.push(`${entry}/SKILL.md read through the link is not the package's bytes`);
+      }
+    } else {
+      freshProbes.push(`the entry skill "${entry}" is not readable through ${join(target, entry, 'SKILL.md')}`);
+    }
+    if (two.status !== 0) freshProbes.push(`the second run exited ${String(two.status)}: ${(two.stderr || two.stdout).trim().slice(0, 300)}`);
+    if (!/nothing to do/.test(two.stdout)) freshProbes.push(`the second run did not say it had nothing to do: ${JSON.stringify(two.stdout.trim().split('\n').pop() ?? '')}`);
+    const alreadyLines = two.stdout.split('\n').filter((line) => /^ {2}already linked {2}/.test(line)).length;
+    if (alreadyLines !== shipped.length) freshProbes.push(`the second run printed ${alreadyLines} "already linked" line(s) over ${shipped.length} skill(s)`);
+    if (snapshot(target) !== afterOne) freshProbes.push(`the second run changed the directory: ${afterOne} became ${snapshot(target)}`);
+    const freshHeld = freshProbes.length === 0;
+    say(
+      'CLI97_SKILLS_INSTALL_LINKS_EVERY_SHIPPED_SKILL_RELATIVE_INTO_THE_WORKING_DIRECTORY_AND_A_SECOND_RUN_IS_A_NO_OP',
+      freshHeld,
+      probeDetail(
+        freshHeld,
+        freshProbes,
+        `${shipped.length} skill(s) (${shipped.join(', ')}) linked into <cwd>/.agents/skills as relative links that ` +
+          `resolve to the package's own folders, one line each naming both ends, "${entry}/SKILL.md" readable through ` +
+          `its link; the second run exits 0 with ${alreadyLines} "already linked" line(s), says it has nothing to do, ` +
+          'and leaves the directory as it found it',
+      ),
+      'issue #831: after `bun add -d spine-rigc` the skills sat in node_modules, which no host reads, and the README ' +
+        'said an agent would find them. A command that puts them where Codex, Gemini CLI and Antigravity look is only ' +
+        'worth having if running it twice is safe, so both runs are the case',
+    );
+
+    // CLI98 — an entry in the way is refused by name and nothing is written;
+    // a link to the same folder that this command did not make is not in the way.
+    const refusals: string[] = [];
+    const refuse = (label: string, plant: (at: string) => void, found: string): void => {
+      const dir = ws(label);
+      const skills = join(dir, '.agents', 'skills');
+      mkdirSync(skills, { recursive: true });
+      plant(join(skills, first));
+      const before = snapshot(skills);
+      const ran = inWs(dir, ['skills', 'install']);
+      const said = ran.stderr;
+      if (ran.status !== 1) refusals.push(`${label}: exited ${String(ran.status)}; 1 was required`);
+      if (!said.includes(`${join(skills, first)} is ${found}`)) refusals.push(`${label}: stderr does not say "${join(skills, first)} is ${found}": ${JSON.stringify(said.trim().slice(0, 300))}`);
+      if (!said.includes('was required')) refusals.push(`${label}: stderr does not say what was required`);
+      if (!said.includes('nothing was written')) refusals.push(`${label}: stderr does not say nothing was written`);
+      if (snapshot(skills) !== before) refusals.push(`${label}: the refused run changed the directory: ${before} became ${snapshot(skills)}`);
+    };
+    refuse('plain-file', (at) => writeFileSync(at, 'somebody else\n'), 'a plain file');
+    const elsewhere = ws('elsewhere');
+    refuse('foreign-link', (at) => symlinkSync(elsewhere, at, 'dir'), `a symlink to ${elsewhere}`);
+    refuse('directory', (at) => mkdirSync(at), 'a directory');
+    // The case that must NOT be refused: the same folder, linked by somebody
+    // else and spelled absolute — "a link to the same target" is the rule, not
+    // "a link this command spelled".
+    const theirs = ws('same-target');
+    const theirSkills = join(theirs, '.agents', 'skills');
+    mkdirSync(theirSkills, { recursive: true });
+    symlinkSync(realSkill(first), join(theirSkills, first), 'dir');
+    const kept = inWs(theirs, ['skills', 'install']);
+    if (kept.status !== 0) refusals.push(`same-target: a link to the package's own ${first} was refused (exit ${String(kept.status)}): ${kept.stderr.trim().slice(0, 300)}`);
+    if (!kept.stdout.split('\n').some((line) => /^ {2}already linked {2}/.test(line) && line.includes(join(theirSkills, first)))) {
+      refusals.push(`same-target: no "already linked" line for ${first}`);
+    }
+    if (readlinkSync(join(theirSkills, first)) !== realSkill(first)) refusals.push('same-target: the existing link was rewritten');
+    const refusedHeld = refusals.length === 0;
+    say(
+      'CLI98_SKILLS_INSTALL_REFUSES_AN_ENTRY_IN_THE_WAY_BY_NAME_AND_WRITES_NOTHING_AND_KEEPS_A_LINK_TO_THE_SAME_FOLDER',
+      refusedHeld,
+      probeDetail(
+        refusedHeld,
+        refusals,
+        `a plain file, a link to another directory and a directory at .agents/skills/${first} each exit 1 naming the ` +
+          'path, what is there and what was required, and leave the directory as it was; an absolute link to the ' +
+          `package's own ${first} is kept, reported "already linked", and the rest are linked beside it`,
+      ),
+      'a host directory is shared with every other tool that installs skills, so an entry this command did not make ' +
+        'is somebody else\'s, and overwriting it is the silent failure pointed outward — while refusing a link that ' +
+        'already points where this one would is the false refusal that would make a re-run the thing to avoid',
+    );
+
+    // CLI99 — `--copy`, a relative `--dir`, and the invocations that are refused before anything is touched.
+    const copies = ws('copy');
+    const copied = join(copies, 'vendor', 'skills');
+    const copyOne = inWs(copies, ['skills', 'install', '--copy', '--dir', 'vendor/skills']);
+    const copyTwo = inWs(copies, ['skills', 'install', '--copy', '--dir', 'vendor/skills']);
+    const copyProbes: string[] = [];
+    if (copyOne.status !== 0) copyProbes.push(`the --copy run exited ${String(copyOne.status)}: ${(copyOne.stderr || copyOne.stdout).trim().slice(0, 300)}`);
+    for (const name of shipped) {
+      const at = join(copied, name);
+      if (!existsSync(at) || lstatSync(at).isSymbolicLink() || !lstatSync(at).isDirectory()) {
+        copyProbes.push(`${name} is ${existsSync(at) ? 'not a plain directory' : 'not there'} under the relative --dir vendor/skills`);
+      } else if (!readFileSync(join(at, 'SKILL.md')).equals(readFileSync(join(import.meta.dir, 'skills', name, 'SKILL.md')))) {
+        copyProbes.push(`${name}/SKILL.md is not the package's bytes`);
+      }
+    }
+    if (copyTwo.status !== 0 || !/nothing to do/.test(copyTwo.stdout)) {
+      copyProbes.push(`the second --copy run exited ${String(copyTwo.status)} saying ${JSON.stringify(copyTwo.stdout.trim().split('\n').pop() ?? copyTwo.stderr.trim())}`);
+    }
+    if (first !== '' && existsSync(join(copied, first, 'SKILL.md'))) {
+      writeFileSync(join(copied, first, 'SKILL.md'), `${readFileSync(join(copied, first, 'SKILL.md'), 'utf8')}\nedited\n`);
+      const stale = inWs(copies, ['skills', 'install', '--copy', '--dir', 'vendor/skills']);
+      if (stale.status !== 1 || !stale.stderr.includes(`${join(copied, first)} is a directory that is not the package's copy (SKILL.md differs)`)) {
+        copyProbes.push(`an edited copy of ${first} was not refused naming SKILL.md (exit ${String(stale.status)}): ${JSON.stringify(stale.stderr.trim().slice(0, 300))}`);
+      }
+    }
+    const usage = ws('usage');
+    for (const [args, says] of [
+      [['skills'], 'skills takes a subcommand'],
+      [['skills', '--copy'], 'skills takes a subcommand'],
+      [['skills', 'uninstall'], 'unknown skills subcommand: uninstall'],
+      [['skills', 'install', 'here'], 'takes no positional argument'],
+      [['skills', 'install', '--rig', 'x'], '--rig is not one of them'],
+    ] as const) {
+      const ran = inWs(usage, [...args]);
+      if (ran.status !== 2 || !ran.stderr.includes(says)) {
+        copyProbes.push(`\`rigc ${args.join(' ')}\` exited ${String(ran.status)} without saying "${says}": ${JSON.stringify(ran.stderr.split('\n')[0])}`);
+      }
+    }
+    if (readdirSync(usage).length !== 0) copyProbes.push(`the refused invocations wrote into their working directory: ${readdirSync(usage).join(', ')}`);
+    const copyHeld = copyProbes.length === 0;
+    say(
+      'CLI99_SKILLS_INSTALL_COPY_WRITES_THE_PACKAGES_BYTES_A_STALE_COPY_IS_REFUSED_AND_A_BAD_INVOCATION_TOUCHES_NOTHING',
+      copyHeld,
+      probeDetail(
+        copyHeld,
+        copyProbes,
+        `--copy --dir vendor/skills writes ${shipped.length} plain folder(s) under the working directory, byte for ` +
+          'byte the package\'s, and a second run has nothing to do; one edited SKILL.md makes the third run exit 1 ' +
+          'naming the file; `skills` with no subcommand, with an unknown one, with a positional or with another ' +
+          'command\'s flag exits 2 and writes nothing',
+      ),
+      'a copy is the one shape an upgrade does not reach, so a copy that is no longer the package\'s is refused rather ' +
+        'than kept or overwritten; and the refusals are measured to happen before the first write, because CLI10 and ' +
+        'CLI11 run `rigc skills` from the repository root',
+    );
+    rmSync(work, { recursive: true, force: true });
+  }
   return bad;
 }
 
@@ -48099,6 +48301,169 @@ const SKILL_CLAIM_BLIND_SPOTS: ReadonlyArray<{ row: string; stale: string; clean
   },
 ];
 
+// ---------------------------------------------------------------------------
+// the skill surface as a host installs it — one folder, on its own (issue #831)
+// ---------------------------------------------------------------------------
+//
+// ⭐ `SKL03` asks whether a link resolves IN THE REPOSITORY, and every link in
+// the five skills did — `../../docs/AUTHORING.md` from `skills/rigc/`. That is
+// also the one shape no host outside Claude Code installs in. Codex, Gemini CLI
+// and Antigravity read `<workspace>/.agents/skills/<name>/`, and what lands
+// there is one skill folder with nothing around it: a copy, or a link into
+// `node_modules/spine-rigc/skills/<name>`. From there `../../docs/` is
+// `.agents/docs/`, which does not exist, so the router sends its agent to a guide
+// that is not there — and the repository, where SKL03 looks, is the one place
+// that reads as fine.
+//
+// So the shapes are BUILT rather than reasoned about: every skill folder is put,
+// alone, into a temp workspace beside a simulated `node_modules/spine-rigc/`
+// holding exactly the shipped set (`expandShippedSet`, PKG02's derivation), and
+// every guide reference in it is resolved from where it landed. Four forms are
+// read, because each resolves against a different root:
+//
+//   - a relative link, from the SKILL.md's own directory — logically, as a
+//     reader who is handed the path resolves it. ⚠️ The kernel resolves `..`
+//     through a symlink physically, so `.agents/skills/rigc/../../docs/X` DOES
+//     open when the folder is a link into the package; a reader that normalises
+//     the path first gets `.agents/docs/X`. A reference that works for only one
+//     kind of reader is not a reference, so the logical reading is the one held,
+//     and the physical one is printed beside it.
+//   - a repository URL, `https://github.com/firejune/rigc/(blob|tree)/main/<p>`,
+//     read as the tracked path `<p>` — offline, against the tree being measured.
+//   - a package path, `node_modules/spine-rigc/<p>`, against the simulated package.
+//   - a plugin path, `${CLAUDE_PLUGIN_ROOT}/<p>`, against the plugin root of the
+//     shape — the repository for the marketplace, the package for `--plugin-dir`.
+//
+// The four shapes: the **repository** (the marketplace installs the whole tree,
+// so this is its plugin cache as well), the **package as a plugin**
+// (`claude --plugin-dir node_modules/spine-rigc`, whose root is the shipped set
+// and nothing else), a **bare folder** copied into `.agents/skills/`, and a
+// **symlinked folder** there — the relative link `rigc skills install` writes.
+// ---------------------------------------------------------------------------
+
+type SkillInstallShape = 'repository' | 'package as plugin' | 'bare folder' | 'symlinked folder';
+const SKILL_INSTALL_SHAPES: SkillInstallShape[] = ['repository', 'package as plugin', 'bare folder', 'symlinked folder'];
+
+type SkillReferenceForm = 'relative link' | 'repository URL' | 'package path' | 'plugin path';
+
+interface SkillReference {
+  /** `skills/<name>/SKILL.md:<line>`. */
+  where: string;
+  form: SkillReferenceForm;
+  /** As written. */
+  text: string;
+}
+
+interface SkillShapeReading {
+  references: SkillReference[];
+  /** Shape → how many of `references` resolve there. */
+  resolved: Map<SkillInstallShape, number>;
+  /** How many relative links open when `..` is resolved through the symlink rather than over the path. */
+  physical: number;
+  faults: string[];
+}
+
+const SKILL_REPO_URL = /https:\/\/github\.com\/firejune\/rigc\/(?:blob|tree)\/main\/([A-Za-z\d_./-]*[A-Za-z\d_/-])/g;
+const SKILL_PACKAGE_PATH = /\bnode_modules\/spine-rigc\/([A-Za-z\d_./-]*[A-Za-z\d_/-])/g;
+const SKILL_PLUGIN_PATH = /\$\{CLAUDE_PLUGIN_ROOT\}\/([A-Za-z\d_./-]*[A-Za-z\d_/-])/g;
+
+/**
+ * Build the four shapes for every skill under `source` and resolve each of its
+ * references in each. `shipped` is the package's file set and `tracked` the
+ * tree's, both handed in so a planted surface is read by this same code.
+ */
+function readSkillInstallShapes(source: string, skills: string[], shipped: Set<string>, tracked: Set<string>): SkillShapeReading {
+  const references: SkillReference[] = [];
+  const resolved = new Map<SkillInstallShape, number>(SKILL_INSTALL_SHAPES.map((shape) => [shape, 0]));
+  const faults: string[] = [];
+  let physical = 0;
+  const work = mkdtempSync(join(tmpdir(), 'rigc-skill-shapes-'));
+  try {
+    // The package, as npm would lay it down: the shipped set and nothing else.
+    const pkg = join(work, 'package', 'node_modules', 'spine-rigc');
+    for (const path of shipped) {
+      if (!existsSync(join(source, path))) continue;
+      mkdirSync(dirname(join(pkg, path)), { recursive: true });
+      copyFileSync(join(source, path), join(pkg, path));
+    }
+    for (const doc of skills) {
+      const name = basename(dirname(doc));
+      if (!existsSync(join(pkg, 'skills', name, 'SKILL.md'))) {
+        faults.push(`${doc} is not in the shipped set, so no installed shape has it to read`);
+        continue;
+      }
+      // One workspace per skill and per installed shape, so a folder is read
+      // with nothing but the package beside it.
+      const installed = new Map<SkillInstallShape, string>();
+      for (const shape of ['bare folder', 'symlinked folder'] as const) {
+        const ws = join(work, shape.replace(/ /g, '-'), name);
+        mkdirSync(join(ws, '.agents', 'skills'), { recursive: true });
+        symlinkSync(relative(ws, join(work, 'package', 'node_modules')), join(ws, 'node_modules'), 'dir');
+        const at = join(ws, '.agents', 'skills', name);
+        if (shape === 'bare folder') cpSync(join(pkg, 'skills', name), at, { recursive: true });
+        else symlinkSync(relative(dirname(at), join(ws, 'node_modules', 'spine-rigc', 'skills', name)), at, 'dir');
+        installed.set(shape, ws);
+      }
+      const lines = readFileSync(join(source, doc), 'utf8').split('\n');
+      /** Where each shape reads this SKILL.md from, its workspace, and its plugin root. */
+      const shapes: Array<{ shape: SkillInstallShape; root: string; docDir: string; plugin: string | null; pkgRoot: string }> = [
+        { shape: 'repository', root: source, docDir: dirname(doc), plugin: source, pkgRoot: pkg },
+        { shape: 'package as plugin', root: pkg, docDir: `skills/${name}`, plugin: pkg, pkgRoot: pkg },
+        ...(['bare folder', 'symlinked folder'] as const).map((shape) => ({
+          shape,
+          root: installed.get(shape) ?? '',
+          docDir: `.agents/skills/${name}`,
+          plugin: null,
+          pkgRoot: join(installed.get(shape) ?? '', 'node_modules', 'spine-rigc'),
+        })),
+      ];
+      const add = (line: number, form: SkillReferenceForm, text: string, at: (s: (typeof shapes)[number]) => boolean): void => {
+        const where = `${doc}:${String(line)}`;
+        references.push({ where, form, text });
+        for (const s of shapes) {
+          if (at(s)) resolved.set(s.shape, (resolved.get(s.shape) ?? 0) + 1);
+          else faults.push(`${where}  ${form} ${text} resolves to nothing in the ${s.shape}`);
+        }
+      };
+      let fence: string | null = null;
+      lines.forEach((line, i) => {
+        const marker = /^ {0,3}(```+|~~~+)/.exec(line);
+        if (marker !== null) {
+          if (fence === null) fence = marker[1][0];
+          else if (marker[1][0] === fence) fence = null;
+        }
+        // Paths are read in fences too: a command line is where a reader copies one from.
+        for (const m of line.matchAll(SKILL_REPO_URL)) add(i + 1, 'repository URL', m[0], () => tracked.has(m[1]) || [...tracked].some((p) => p.startsWith(`${m[1].replace(/\/$/, '')}/`)));
+        for (const m of line.matchAll(SKILL_PACKAGE_PATH)) add(i + 1, 'package path', m[0], (s) => existsSync(join(s.pkgRoot, m[1])));
+        for (const m of line.matchAll(SKILL_PLUGIN_PATH)) {
+          // The plugin root is a Claude Code line; a shape with no plugin reads it as the package's.
+          add(i + 1, 'plugin path', m[0], (s) => existsSync(join(s.plugin ?? s.pkgRoot, m[1])));
+        }
+        if (fence !== null || marker !== null) return;
+        const targets = [
+          ...[...line.matchAll(/!?\[(?:[^\]\\]|\\.)*\]\(\s*(<[^>]*>|[^()\s]*)/g)].map((m) => m[1]),
+          ...[...line.matchAll(/^ {0,3}\[(?:[^\]\\]|\\.)+\]:\s*(<[^>]*>|\S+)/g)].map((m) => m[1]),
+        ];
+        for (const raw of targets) {
+          const target = raw.startsWith('<') ? raw.slice(1, -1) : raw;
+          if (target === '' || target.startsWith('#') || target.startsWith('//') || /^[a-z][a-z\d+.-]*:/i.test(target)) continue;
+          const path = target.split('#')[0].split('?')[0];
+          if (path === '') continue;
+          add(i + 1, 'relative link', target, (s) => {
+            const logical = resolve(s.root, s.docDir, path);
+            const opens = relative(s.root, logical).startsWith('..') ? false : existsSync(logical);
+            if (!opens && s.shape === 'symlinked folder' && existsSync(`${join(s.root, s.docDir)}/${path}`)) physical += 1;
+            return opens;
+          });
+        }
+      });
+    }
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+  return { references, resolved, physical, faults };
+}
+
 function runSkillSurfaceSuite(): number {
   console.log('\n── the agent-skill surface: skills/ and .claude-plugin/ (issue #366) ──');
   let bad = 0;
@@ -48117,19 +48482,26 @@ function runSkillSurfaceSuite(): number {
   // manifest that failed to parse, a link regex that matched nothing — and each of
   // those makes SKL02–SKL04 pass while reading nothing.
   const structural = of('no-skills', 'manifest-absent', 'manifest-unreadable', 'entry-skill-absent');
+  // A pointer into docs/ is spelled one of two ways: a relative link, which SKL03
+  // resolves in the repository, or since issue #831 a repository URL, which SKL10
+  // resolves in every install shape. The floor is on the two together, so a skill
+  // surface that moved from one spelling to the other is still required to point
+  // somewhere — and one whose reader matched neither is still a fault.
   const intoDocs = surface.links.filter((l) => l.resolved !== null && l.resolved.startsWith('docs/')).length;
+  const urls = surface.skills.flatMap((doc) => [...readFileSync(join(root, doc), 'utf8').matchAll(SKILL_REPO_URL)].map((m) => m[1]));
+  const urlsIntoDocs = urls.filter((path) => path.startsWith('docs/')).length;
   say(
     'SKL01_THE_SKILL_SCAN_READ_BOTH_MANIFESTS_EVERY_SKILL_AND_THEIR_LINKS',
     structural.length === 0 &&
       surface.skills.length > 0 &&
       surface.manifests.length === 2 &&
-      surface.links.length > 0 &&
-      intoDocs > 0,
+      surface.links.length + urls.length > 0 &&
+      intoDocs + urlsIntoDocs > 0,
     structural.length > 0
       ? `the surface is not whole:${listed(structural)}`
       : `${surface.skills.length} skill(s) — ${surface.skills.map((s) => basename(dirname(s))).join(', ')} — under ` +
-        `plugin "${surface.pluginName}"; both manifests read; ${surface.links.length} relative link(s), ${intoDocs} ` +
-        'of them into docs/',
+        `plugin "${surface.pluginName}"; both manifests read; ${surface.links.length} relative link(s) and ` +
+        `${urls.length} repository URL(s), ${intoDocs + urlsIntoDocs} of them into docs/`,
     'SKL02–SKL04 are scans over a derived list, and every step of the derivation can come back empty; a manifest ' +
       'that did not parse or a skills directory that moved would otherwise report a clean surface',
   );
@@ -48377,6 +48749,184 @@ function runSkillSurfaceSuite(): number {
       'list above cannot quietly stop being true',
   );
 
+
+  // --- SKL10: every guide reference resolves in every install shape ---------
+  // SKL03's question asked of the three shapes it cannot see. The shipped set is
+  // PKG02's own derivation, so the package the shapes are built around is the
+  // one npm would install and not a copy of the repository.
+  const allowlist = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { files?: string[] }).files ?? [];
+  const { shipped: shippedSet, unreadable: unexpanded } = expandShippedSet(root, allowlist);
+  const trackedSet = new Set(trackedFiles(root));
+  const shapes = readSkillInstallShapes(root, surface.skills, shippedSet, trackedSet);
+  const perSkill = new Map(surface.skills.map((doc) => [doc, shapes.references.filter((r) => r.where.startsWith(`${doc}:`)).length]));
+  const unreferenced = [...perSkill].filter(([, n]) => n === 0).map(([doc]) => doc);
+  const shapeFloor = [
+    ...(unexpanded.length > 0 ? [`the shipped set did not expand: ${unexpanded.join('; ')}`] : []),
+    ...(surface.skills.length === 0 ? ['no skill was read'] : []),
+    ...unreferenced.map((doc) => `${doc} makes no guide reference in any form this reader knows, so nothing about it was measured`),
+  ];
+  const shapeProbes = [...shapeFloor, ...shapes.faults];
+  const shapesHeld = shapeProbes.length === 0;
+  const byForm = (form: SkillReferenceForm): number => shapes.references.filter((r) => r.form === form).length;
+  say(
+    'SKL10_EVERY_GUIDE_REFERENCE_A_SKILL_MAKES_RESOLVES_IN_ALL_FOUR_INSTALL_SHAPES',
+    shapesHeld,
+    probeDetail(
+      shapesHeld,
+      shapeProbes,
+      `${shapes.references.length} reference(s) across ${surface.skills.length} skill(s) — ${byForm('relative link')} ` +
+        `relative link(s), ${byForm('repository URL')} repository URL(s), ${byForm('package path')} package path(s), ` +
+        `${byForm('plugin path')} plugin path(s) — resolve in each of ` +
+        SKILL_INSTALL_SHAPES.map((shape) => `the ${shape} (${String(shapes.resolved.get(shape) ?? 0)})`).join(', ') +
+        `, with each folder installed alone beside a package of ${shippedSet.size} shipped file(s)`,
+      (n) =>
+        `${n} fault(s) over ${shapes.references.length} reference(s), which resolve ` +
+        SKILL_INSTALL_SHAPES.map((shape) => `${String(shapes.resolved.get(shape) ?? 0)} in the ${shape}`).join(', ') +
+        ` (${shapes.physical} of the relative links open in the symlinked folder only when \`..\` is resolved ` +
+        'through the link):',
+    ),
+    'issue #831: every guide link was `../../docs/…`, which resolves in the repository and in no folder a host other ' +
+      'than Claude Code installs — so SKL03 read green over a router whose every pointer was dead where three of the ' +
+      'four hosts would read it',
+  );
+
+  // --- SKL11: the shapes, planted --------------------------------------------
+  // A planted package through the same reader: each defect is one line, in its
+  // own skill, and is required to fault in exactly the shapes it breaks — the
+  // climbing link in the two installed shapes and nowhere else, which is the
+  // whole of the difference between this reader and SKL03's.
+  const plantRoot = mkdtempSync(join(tmpdir(), 'rigc-skill-shape-plant-'));
+  const plantFiles: Record<string, string> = {
+    'README.md': '# probe\n',
+    'docs/GUIDE.md': '# a shipped guide\n',
+    'docs/UNSHIPPED.md': '# a guide the package leaves out\n',
+    'skills/climbs/SKILL.md': '---\nname: climbs\ndescription: x\n---\n\n[GUIDE.md](../../docs/GUIDE.md)\n',
+    'skills/unshipped/SKILL.md': '---\nname: unshipped\ndescription: x\n---\n\n`node_modules/spine-rigc/docs/UNSHIPPED.md`\n',
+    'skills/deadurl/SKILL.md':
+      '---\nname: deadurl\ndescription: x\n---\n\n[GUIDE.md](https://github.com/firejune/rigc/blob/main/docs/NOWHERE.md)\n',
+    'skills/deadplugin/SKILL.md': '---\nname: deadplugin\ndescription: x\n---\n\n`${CLAUDE_PLUGIN_ROOT}/docs/NOWHERE.md`\n',
+    'skills/clean/SKILL.md':
+      '---\nname: clean\ndescription: x\n---\n\n[GUIDE.md](https://github.com/firejune/rigc/blob/main/docs/GUIDE.md), ' +
+      'installed at `node_modules/spine-rigc/docs/GUIDE.md` and in the plugin at `${CLAUDE_PLUGIN_ROOT}/docs/`, ' +
+      'beside [a file of its own](notes.md).\n',
+    'skills/clean/notes.md': 'notes\n',
+  };
+  for (const [path, text] of Object.entries(plantFiles)) {
+    mkdirSync(join(plantRoot, dirname(path)), { recursive: true });
+    writeFileSync(join(plantRoot, path), text);
+  }
+  const plantTracked = new Set(Object.keys(plantFiles));
+  const plantShipped = new Set([...plantTracked].filter((path) => path !== 'docs/UNSHIPPED.md'));
+  const plantedSkill = (name: string): SkillShapeReading => readSkillInstallShapes(plantRoot, [`skills/${name}/SKILL.md`], plantShipped, plantTracked);
+  const expectShapes: Array<[string, SkillInstallShape[]]> = [
+    ['climbs', ['bare folder', 'symlinked folder']],
+    ['unshipped', SKILL_INSTALL_SHAPES],
+    ['deadurl', SKILL_INSTALL_SHAPES],
+    ['deadplugin', SKILL_INSTALL_SHAPES],
+    ['clean', []],
+  ];
+  const plantProbes: string[] = [];
+  let plantFaults = 0;
+  let climbPhysical = 0;
+  for (const [name, broken] of expectShapes) {
+    const reading = plantedSkill(name);
+    plantFaults += reading.faults.length;
+    if (name === 'climbs') climbPhysical = reading.physical;
+    if (reading.references.length !== (name === 'clean' ? 4 : 1)) {
+      plantProbes.push(`skills/${name} was read as ${reading.references.length} reference(s)`);
+    }
+    for (const shape of SKILL_INSTALL_SHAPES) {
+      const faulted = reading.faults.some((f) => f.endsWith(`in the ${shape}`));
+      if (faulted !== broken.includes(shape)) {
+        plantProbes.push(`skills/${name} ${faulted ? 'faulted' : 'did not fault'} in the ${shape}`);
+      }
+    }
+  }
+  rmSync(plantRoot, { recursive: true, force: true });
+  const plantHeld = plantProbes.length === 0;
+  say(
+    'SKL11_A_CLIMBING_LINK_AN_UNSHIPPED_GUIDE_AND_A_DEAD_URL_FAULT_IN_THE_SHAPES_THEY_BREAK_AND_A_CLEAN_SKILL_IN_NONE',
+    plantHeld,
+    probeDetail(
+      plantHeld,
+      plantProbes,
+      `${plantFaults} fault(s) over five planted skills, each in exactly the shapes its defect breaks: ` +
+        '`../../docs/GUIDE.md` in the bare and the symlinked folder and in neither the repository nor the package as a plugin; a package ' +
+        'path to a guide `files` leaves out, a repository URL to no file and a plugin path to no file in all four; ' +
+        `and none on a skill using each form correctly. The climbing link opens ${climbPhysical} time(s) through the ` +
+        'symlink when `..` is resolved physically, which is why the logical reading is the one held',
+    ),
+    'a gate nobody has seen fail is not a gate, and this one is two-sided on purpose: a climbing link that faulted ' +
+      'in the repository would be SKL03 again, and one that did not fault in the installed shapes would be the defect',
+  );
+
+  // --- SKL12: names that survive a flat directory -----------------------------
+  // `.agents/skills/` has no namespace, so a skill called `motion` beside
+  // somebody else's `motion` is a coin toss — Codex lists both, Gemini CLI takes
+  // the higher-precedence one — and the entry skill's routing table, which names
+  // skills by that bare word, points at whichever won. Every skill carries the
+  // plugin's name, and every name the router hands an agent is a skill that ships.
+  const namingFaults = (skillDocs: string[], plugin: string | null, router: string | null): { faults: string[]; routed: number } => {
+    const faults: string[] = [];
+    const names = skillDocs.map((doc) => basename(dirname(doc)));
+    if (plugin === null) faults.push('no plugin name to hold the skill names to');
+    for (const name of names) {
+      if (plugin !== null && name !== plugin && !name.startsWith(`${plugin}-`)) {
+        faults.push(`skills/${name} is not "${plugin}" and does not start with "${plugin}-", so in a flat skills directory it is anybody's ${name}`);
+      }
+    }
+    let routed = 0;
+    if (router === null) {
+      faults.push('the entry skill could not be read, so no routed name was checked');
+      return { faults, routed };
+    }
+    let column = -1;
+    router.split('\n').forEach((line, i) => {
+      if (!line.startsWith('|')) {
+        column = -1;
+        return;
+      }
+      const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+      if (column === -1) {
+        column = cells.indexOf('Skill');
+        return;
+      }
+      const named = /^`([^`]+)`$/.exec(cells[column] ?? '')?.[1];
+      if (named === undefined) return;
+      routed += 1;
+      if (!names.includes(named)) faults.push(`the router's line ${i + 1} sends an agent to skill \`${named}\`, and no skill of that name ships`);
+    });
+    if (routed === 0) faults.push('the entry skill\'s routing table named no skill, so the router\'s pointers were not read');
+    return { faults, routed };
+  };
+  const entryDoc = surface.pluginName === null ? null : join(root, 'skills', surface.pluginName, 'SKILL.md');
+  const naming = namingFaults(surface.skills, surface.pluginName, entryDoc !== null && existsSync(entryDoc) ? readFileSync(entryDoc, 'utf8') : null);
+  const table = '| The request is… | Open | Skill |\n| --- | --- | --- |\n';
+  const namingPlants: Array<[string, string[], string, number]> = [
+    ['a bare name', ['skills/probe/SKILL.md', 'skills/motion/SKILL.md'], `${table}| a move | x | \`motion\` |\n`, 1],
+    ['a routed name that does not ship', ['skills/probe/SKILL.md', 'skills/probe-motion/SKILL.md'], `${table}| a move | x | \`probe-moves\` |\n`, 1],
+    ['a table that routes nowhere', ['skills/probe/SKILL.md'], `${table}| a person | x | — |\n`, 1],
+    ['a clean surface', ['skills/probe/SKILL.md', 'skills/probe-motion/SKILL.md'], `${table}| a move | x | \`probe-motion\` |\n`, 0],
+  ];
+  const namingProbes = [...naming.faults];
+  for (const [label, docs, router, expected] of namingPlants) {
+    const got = namingFaults(docs, 'probe', router).faults.length;
+    if (got !== expected) namingProbes.push(`the plant "${label}" produced ${got} fault(s); ${expected} was required`);
+  }
+  const namingHeld = namingProbes.length === 0;
+  say(
+    'SKL12_EVERY_SKILL_CARRIES_THE_PLUGIN_NAME_AND_EVERY_SKILL_THE_ROUTER_NAMES_SHIPS',
+    namingHeld,
+    probeDetail(
+      namingHeld,
+      namingProbes,
+      `${surface.skills.length} skill(s) named "${surface.pluginName ?? ''}" or "${surface.pluginName ?? ''}-…", and the ` +
+        `entry skill's table routes to ${naming.routed} of them by name, each one that ships; four planted surfaces — ` +
+        'a bare name, a routed name that does not ship, a table routing nowhere, and a clean one — fault 1, 1, 1 and 0 times',
+    ),
+    'issue #831: `face`, `motion`, `rigging` and `ingest` are namespaced under the Claude plugin and bare everywhere ' +
+      'else, and the router named them by the bare word — a pointer that resolves to whatever else is installed under it',
+  );
   return bad;
 }
 
@@ -50256,6 +50806,15 @@ function runCurrencySuite(): number {
       disagreements: Disagreement[];
       /** git declining to answer, which must not read as a clean tree. */
       gitBroke: string | null;
+      /**
+       * Tracked symlinks whose target is another path of the same universe, left
+       * out of both partitions (issue #831, `AGENTS.md` -> `CLAUDE.md`). git
+       * stores a link as the path it names and `git grep` never lists one, while
+       * a read here follows it into the target — so the two would be judging
+       * different objects, and the target's own bytes are read under its own
+       * name. A link to anything else is read as before.
+       */
+      links: string[];
     };
 
     // The criterion — a file is TEXT when its whole content decodes as UTF-8 —
@@ -50329,8 +50888,22 @@ function runCurrencySuite(): number {
 
     const scanDir = (dir: string, universe: readonly string[], gitArgs: readonly string[]): OpaqueScan => {
       const { text: gitText, broke } = askGit(dir, gitArgs);
-      const out: OpaqueScan = { read: 0, text: 0, opaque: 0, unread: [], sightings: [], disagreements: [], gitBroke: broke };
+      const out: OpaqueScan = { read: 0, text: 0, opaque: 0, unread: [], sightings: [], disagreements: [], gitBroke: broke, links: [] };
+      const members = new Set(universe);
+      /** A link that resolves — a dangling one is read below and reported unreadable, as before. */
+      const isLinkWithin = (path: string): boolean => {
+        try {
+          return lstatSync(path).isSymbolicLink() && existsSync(path);
+        } catch {
+          return false;
+        }
+      };
       for (const rel of universe) {
+        const at = join(dir, rel);
+        if (isLinkWithin(at) && members.has(relative(realpathSync(dir), realpathSync(at)))) {
+          out.links.push(rel);
+          continue;
+        }
         let bytes: Buffer;
         try {
           bytes = readFileSync(join(dir, rel));
@@ -50511,7 +51084,12 @@ function runCurrencySuite(): number {
       probes.length === 0
         ? `${liveScan.read} tracked file(s) read — ${liveScan.text} decode as UTF-8 end to end and ${liveScan.opaque} ` +
           `do not — and not one of the ${liveScan.text} carries a NUL. Git partitions the same ${liveScan.read} the ` +
-          `same way, with no file either of them reads differently. The controls: ${controlNote}`
+          `same way, with no file either of them reads differently` +
+          (liveScan.links.length === 0
+            ? ''
+            : `; ${liveScan.links.length} tracked symlink(s) left out of both, each naming a tracked file read ` +
+              `under its own name (${liveScan.links.join(', ')})`) +
+          `. The controls: ${controlNote}`
         : probes.join('\n          '),
       'a raw NUL two screens into `cli.ts` (#465) made every search over the file that owns rigc\'s report text come ' +
         'back empty with exit 1 — indistinguishable from an absence, and already the source of one wrong conclusion ' +
