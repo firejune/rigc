@@ -84,7 +84,7 @@ Bun strips types and runs, so an agent can call methods that do not exist and
 watch the script fail — or worse, silently misbehave — without ever learning
 the API was imagined. The pilot left behind a helper written against
 spine-core methods that were never real; the repository's `typecheck` gate
-caught it at landing, hours too late to help the run. Say:
+caught it afterwards, hours too late to help the run. Say:
 
 > After writing any helper script, run `bunx tsc --noEmit <file>` (or the
 > project's `typecheck` task) before trusting its output.
