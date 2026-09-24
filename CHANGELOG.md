@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/firejune/rigc/compare/v1.0.2...v1.1.0) (2026-09-24)
+
+
+### Features
+
+* **cli:** `rigc skills install` puts the shipped skills where Codex, Gemini CLI and Antigravity look, and every guide reference survives a per-folder install ([#832](https://github.com/firejune/rigc/issues/832)) ([4fdf650](https://github.com/firejune/rigc/commit/4fdf650da2d638f29527ef57c1e509aa327905b3))
+
+
+### Instrument
+
+* **selftest:** `CUR110` and the tree-text scans read what git tracks, not what sits in the directory ([#829](https://github.com/firejune/rigc/issues/829)) ([27b7de0](https://github.com/firejune/rigc/commit/27b7de0230542ad9f47ebb8bbad8e956e35e4af3))
+
 ## [1.0.2](https://github.com/firejune/rigc/compare/v1.0.1...v1.0.2) (2026-09-24)
 
 
