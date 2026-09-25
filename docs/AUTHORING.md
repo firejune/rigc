@@ -217,7 +217,12 @@ What the flags mean:
 
 `render` also takes `--fps <n>` (the rate it samples at, default 12 — the same
 protocol rate the reference frames use) and `--max <px>` (the long side of a
-frame, default 256). Three commands take `--out`: a directory for `render`
+frame, default 256). A clipping attachment is applied as the runtime applies it —
+spine-core's own `SkeletonClipping`, in spine-webgl's call order — so a slot from
+the clip's through its `end` slot draws only what falls inside the polygon, in
+`render`, `check` and every other picture rigc's own rasteriser draws (`preview`
+plays in Spine's player, which always clipped); the framing box still counts
+what the clip removes, so adding or keying a mask moves no pixel it leaves drawn. Three commands take `--out`: a directory for `render`
 (default `render/`), the `.html` file for `preview` (default `preview.html`) and
 for `vote` (default `ballot.html`).
 

@@ -23,6 +23,13 @@
  *   real runtime would. Each triangle is then filled with barycentric UV
  *   interpolation.
  *
+ * A **clipping attachment** draws no pixel of its own and removes the pixels of
+ * every slot from the one carrying it through its `end` slot. `piecesOf` runs
+ * spine-core's own `SkeletonClipping` beside the draw-order walk, in the call
+ * sequence spine-webgl's `SkeletonRenderer.draw` runs, so a slot inside a clip
+ * reaches the rasteriser as the geometry the runtime draws rather than as the
+ * attachment's whole (issue #844).
+ *
  * ⭐ **Sampling is bilinear on both paths, and the source is straight alpha —
  * so the interpolation is premultiplied.** One filter rather than two is not a
  * detail: `check` measures a candidate against reference frames, and a mesh
@@ -80,14 +87,17 @@ import {
   AnimationState,
   AnimationStateData,
   AtlasAttachmentLoader,
+  ClippingAttachment,
   MeshAttachment,
   Physics,
   RegionAttachment,
   Skeleton,
+  SkeletonClipping,
   SkeletonJson,
   TextureAtlas,
   TextureAtlasRegion,
   type SkeletonData,
+  type Slot,
 } from '@esotericsoftware/spine-core';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -361,6 +371,19 @@ export interface PoseOptions {
   slots?: string[];
   /** Draw every slot but these — see `slots`. */
   hidden?: string[];
+  /**
+   * Pose every attachment whole, with no clipping attachment applied — set by
+   * `framingViewport` and by nothing that draws.
+   *
+   * ⭐ **The framing box counts what a clip removes**, for the reason it counts
+   * what `--slot`/`--hide` leave out: the box is a property of the shot, and a
+   * clip is a statement about which pixels of it are drawn. Framed on the
+   * clipped geometry, a rig's viewport would move the moment a clip is added or
+   * keyed, and every frame set already on disk for it — `frames.json`'s world
+   * box, the grid `check` compares on — would stop describing the frames a
+   * second render writes.
+   */
+  unclipped?: boolean;
 }
 
 /**
@@ -758,6 +781,35 @@ export function sampleAll(data: SkeletonData, fps: number, opts?: PoseOptions): 
  * type that is neither is skipped rather than refused: a bounding box, a point
  * and a clipping attachment are all things a rig legitimately carries and none
  * of them draws a pixel.
+ *
+ * ## A clipping attachment is skipped as a piece and applied as a mask
+ *
+ * It draws nothing, and it removes what every slot from its own through its
+ * `end` slot draws outside its polygon. Skipping it outright drew those pixels —
+ * measured on a port whose eye masks clip the irises: the blink frame read MAE
+ * 1.07 against 0.53 at an open eye, with both irises drawn over closed lids,
+ * where spine-webgl reads 0.16 (issue #844). So spine-core's own
+ * `SkeletonClipping` runs beside the walk, and the call sequence is
+ * spine-webgl's `SkeletonRenderer.draw` (branch `4.3`) step for step: at a
+ * clipping attachment `clipEnd(slot)` then `clipStart(skeleton, slot, clip)` and
+ * nothing drawn; at every other slot, drawn or not, `clipEnd(slot)` after it,
+ * which is what ends a clip AT its end slot rather than before it; `clipEnd()`
+ * after the walk. The polygon, its convex decomposition, `inverse` and `convex`
+ * are the clipper's, so there is no second opinion about any of them here.
+ *
+ * A slot inside a clip hands its world vertices, its triangles — a region's are
+ * the runtime's own `0 1 2 2 3 0` — and its UVs to `clipTrianglesUnpacked`, and
+ * the piece carries what comes back. ⚠️ **Only when the clipper says it clipped**,
+ * exactly as spine-webgl uses the result only when `clipTriangles` returns
+ * true: an attachment wholly inside the polygon draws its own geometry, so a
+ * region there is still a `Quad` and its pixels are the unclipped ones to the
+ * bit. One that is cut becomes a `Mesh` — the clipper's output is a triangle
+ * list — and one wholly outside becomes a mesh with no triangle, which keeps the
+ * slot in the frame, undrawn, rather than absent.
+ *
+ * The clip is applied whatever `slots`/`hidden` draw: a hidden clip still masks
+ * what is shown, so a subset frame is the whole frame's pixels for those slots.
+ * `unclipped` turns it off for the framing box alone — see its note.
  */
 export function piecesOf(skeleton: Skeleton, opts?: PoseOptions): Piece[] {
   // A skin is chosen before a skeleton is posed, and this one is already posed —
@@ -776,63 +828,127 @@ export function piecesOf(skeleton: Skeleton, opts?: PoseOptions): Piece[] {
   // application point is, rather than matching no piece in silence.
   const subset = slotSubsetOf(skeleton.data, opts, skeleton.skin?.name);
   const named = subset === undefined ? undefined : new Set(subset.names);
+  const clipper = opts?.unclipped === true ? null : new SkeletonClipping();
   const pieces: Piece[] = [];
   for (const slot of skeleton.drawOrder.appliedPose) {
-    if (subset !== undefined && named !== undefined && named.has(slot.data.name) !== (subset.mode === 'slots')) continue;
-    const pose = slot.appliedPose;
-    const attachment = pose.attachment;
-    if (!attachment) continue;
-    const isMesh = attachment instanceof MeshAttachment;
-    if (!isMesh && !(attachment instanceof RegionAttachment)) continue;
-
-    const index = attachment.sequence.resolveIndex(pose);
-    const region = attachment.sequence.regions[index];
-    if (!(region instanceof TextureAtlasRegion)) {
-      throw new Error(
-        `slot "${slot.data.name}" attachment "${attachment.name}" resolved to no atlas region; ` +
-          'the attachment names a region the atlas does not have',
-      );
-    }
-    const colour = pose.color;
-    const own = attachment.color;
-    const tint: [number, number, number, number] = [
-      colour.r * own.r,
-      colour.g * own.g,
-      colour.b * own.b,
-      colour.a * own.a,
-    ];
-    // The dark colour is the SLOT's alone — an attachment has a `color` and no
-    // dark one, so there is nothing to multiply it by. Read off `appliedPose`
-    // like the light colour, so an `rgba2` timeline reaches the picture.
-    const darkPose = pose.darkColor;
-    const dark: [number, number, number] | undefined =
-      darkPose === null ? undefined : [darkPose.r, darkPose.g, darkPose.b];
-    const common = { tint, dark, slot: slot.data.name, page: region.page.name };
-    const texture = opts?.texture !== true ? undefined : artUvsOf(attachment, region);
-
-    if (isMesh) {
-      // `worldVerticesLength` is 2 per vertex whether or not the mesh is
-      // weighted — the weight runs live in `vertices`, not here — so this is the
-      // full output length and the whole mesh is computed in one call. Deform
-      // offsets, if the pose carries any, are applied inside it.
-      const world = new Array<number>(attachment.worldVerticesLength).fill(0);
-      attachment.computeWorldVertices(skeleton, slot, 0, attachment.worldVerticesLength, world, 0, 2);
-      pieces.push({
-        kind: 'mesh',
-        ...common,
-        texture,
-        world,
-        uvs: attachment.sequence.getUVs(index),
-        triangles: attachment.triangles,
-      });
+    const attachment = slot.appliedPose.attachment;
+    if (attachment instanceof ClippingAttachment) {
+      if (clipper !== null) {
+        clipper.clipEnd(slot);
+        // spine-webgl ends the clip at a slot whose bone is inactive and starts
+        // none there; the order of the two calls is the same either way.
+        if (slot.bone.active) clipper.clipStart(skeleton, slot, attachment);
+      }
       continue;
     }
+    const drawn = subset === undefined || named === undefined || named.has(slot.data.name) === (subset.mode === 'slots');
+    const piece = drawn ? pieceOf(skeleton, slot, opts, clipper) : null;
+    if (piece !== null) pieces.push(piece);
+    clipper?.clipEnd(slot);
+  }
+  clipper?.clipEnd();
+  return pieces;
+}
 
+/** The runtime's own triangulation of a region's quad — spine-webgl's `QUAD_TRIANGLES`. */
+const QUAD_TRIANGLES = [0, 1, 2, 2, 3, 0];
+
+/**
+ * One slot's posed drawable, or `null` for an attachment that draws nothing —
+ * clipped by `clipper` when a clip is active over it (see `piecesOf`).
+ */
+function pieceOf(
+  skeleton: Skeleton,
+  slot: Slot,
+  opts: PoseOptions | undefined,
+  clipper: SkeletonClipping | null,
+): Piece | null {
+  const pose = slot.appliedPose;
+  const attachment = pose.attachment;
+  if (!attachment) return null;
+  const isMesh = attachment instanceof MeshAttachment;
+  if (!isMesh && !(attachment instanceof RegionAttachment)) return null;
+
+  const index = attachment.sequence.resolveIndex(pose);
+  const region = attachment.sequence.regions[index];
+  if (!(region instanceof TextureAtlasRegion)) {
+    throw new Error(
+      `slot "${slot.data.name}" attachment "${attachment.name}" resolved to no atlas region; ` +
+        'the attachment names a region the atlas does not have',
+    );
+  }
+  const colour = pose.color;
+  const own = attachment.color;
+  const tint: [number, number, number, number] = [
+    colour.r * own.r,
+    colour.g * own.g,
+    colour.b * own.b,
+    colour.a * own.a,
+  ];
+  // The dark colour is the SLOT's alone — an attachment has a `color` and no
+  // dark one, so there is nothing to multiply it by. Read off `appliedPose`
+  // like the light colour, so an `rgba2` timeline reaches the picture.
+  const darkPose = pose.darkColor;
+  const dark: [number, number, number] | undefined =
+    darkPose === null ? undefined : [darkPose.r, darkPose.g, darkPose.b];
+  const common = { tint, dark, slot: slot.data.name, page: region.page.name };
+  const texture = opts?.texture !== true ? undefined : artUvsOf(attachment, region);
+  const uvs = attachment.sequence.getUVs(index);
+
+  let piece: Piece;
+  let triangles: number[];
+  if (isMesh) {
+    // `worldVerticesLength` is 2 per vertex whether or not the mesh is
+    // weighted — the weight runs live in `vertices`, not here — so this is the
+    // full output length and the whole mesh is computed in one call. Deform
+    // offsets, if the pose carries any, are applied inside it.
+    const world = new Array<number>(attachment.worldVerticesLength).fill(0);
+    attachment.computeWorldVertices(skeleton, slot, 0, attachment.worldVerticesLength, world, 0, 2);
+    triangles = attachment.triangles;
+    piece = { kind: 'mesh', ...common, texture, world, uvs, triangles };
+  } else {
     const world = new Array<number>(8).fill(0);
     attachment.computeWorldVertices(slot, attachment.getOffsets(pose), world, 0, 2);
-    pieces.push({ kind: 'region', ...common, texture, world, uvs: attachment.sequence.getUVs(index) });
+    triangles = QUAD_TRIANGLES;
+    piece = { kind: 'region', ...common, texture, world, uvs };
   }
-  return pieces;
+  if (clipper === null || !clipper.isClipping()) return piece;
+  return clippedPiece(piece, triangles, uvs, clipper);
+}
+
+/**
+ * `piece` as the active clip leaves it, or `piece` itself when the clipper cut
+ * nothing — see `piecesOf`.
+ *
+ * The page UVs and the original-art UVs (`PieceTexture`, when the piece carries
+ * them) each go through their own `clipTrianglesUnpacked` call over the same
+ * vertices and triangles. The clipper's geometry depends on the positions alone
+ * and it interpolates a UV set barycentrically inside each source triangle, so
+ * the two calls cut the same polygons and each UV set lands on them — which is
+ * what lets `substituteTexture` re-seat a clipped piece exactly as it re-seats a
+ * whole one, through the drawing's own coordinates. The vertex count is compared
+ * all the same, because a clipped piece whose two UV sets disagreed on it would
+ * sample the wrong texels and say nothing.
+ */
+function clippedPiece(piece: Piece, triangles: number[], uvs: Float32Array, clipper: SkeletonClipping): Piece {
+  if (!clipper.clipTrianglesUnpacked(piece.world, 0, triangles, triangles.length, uvs, 2)) return piece;
+  const world = Array.from(clipper.clippedVerticesTyped);
+  const clippedUvs = Array.from(clipper.clippedUVsTyped);
+  const clipped = Array.from(clipper.clippedTrianglesTyped);
+  let texture = piece.texture;
+  if (texture !== undefined) {
+    clipper.clipTrianglesUnpacked(piece.world, 0, triangles, triangles.length, texture.artUvs, 2);
+    const artUvs = Array.from(clipper.clippedUVsTyped);
+    if (artUvs.length !== clippedUvs.length) {
+      throw new Error(
+        `slot "${piece.slot}": the clip cut ${clippedUvs.length / 2} vertices for the page UVs and ` +
+          `${artUvs.length / 2} for the original-art UVs over the same geometry`,
+      );
+    }
+    texture = { region: texture.region, artUvs };
+  }
+  const { tint, dark, slot, page } = piece;
+  return { kind: 'mesh', tint, dark, slot, page, texture, world, uvs: clippedUvs, triangles: clipped };
 }
 
 // ---------------------------------------------------------------------------
@@ -1227,8 +1343,12 @@ export function framingViewport(data: SkeletonData, maxSide: number, opts?: Pose
   // `--slot`/`--hide` leave out still counts toward the box, so a frame with a
   // part hidden lands on the pixel grid of the frame with it and the two overlay.
   // A subset framed to its own extent would move every pixel it kept.
+  //
+  // A clip is taken off for the same reason (issue #844): what it removes still
+  // counts toward the box, so adding or keying a mask moves no pixel it leaves
+  // drawn — see `PoseOptions.unclipped`.
   const { slots: _drawn, hidden: _hidden, ...whole } = opts ?? {};
-  const framed = opts === undefined ? undefined : whole;
+  const framed: PoseOptions = { ...whole, unclipped: true };
   const sets =
     data.animations.length === 0
       ? [sampleSetupPose(data, framed)]
