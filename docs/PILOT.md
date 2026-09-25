@@ -50,7 +50,7 @@ scratch directory.**
 - Install: `bun add -g spine-rigc`, or `bunx spine-rigc` with no install.
 - Follow [README.md](../README.md)'s *First rig in ten minutes* exactly: three
   plates, the two inline specs, `rigc build`, then `rigc validate spine`.
-- **Pass** = `build` ends `rigc: wrote …skeleton.json` / `…skeleton.atlas`, and
+- **Pass** = `build` prints `rigc: wrote …skeleton.json` / `…skeleton.atlas`, and
   `validate` ends `rigc: green`.
 
 This is a floor, not a skill test. It fails on environment — no Bun, a proxy that

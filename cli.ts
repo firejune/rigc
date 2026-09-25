@@ -133,7 +133,7 @@ import {
   estimateChainFit,
   type ChainFitOptions,
 } from './src/chainfit.ts';
-import { buildPreview, PLAYER_LINE, type PreviewPage } from './src/preview.ts';
+import { buildPreview, buildPreviewPanes, PLAYER_LINE, type PreviewGate, type PreviewInput, type PreviewPage } from './src/preview.ts';
 import {
   atlasPageNames,
   BACKGROUND,
@@ -261,8 +261,9 @@ const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images',
  * The flags a command is allowed to spell more than once.
  *
  * `vote --candidate` is, because a ballot is *by definition* several
- * candidates, and `diff --as` is, because a skeleton has as many shots as it
- * has and one pairing per flag is the only spelling that keeps each pair a pair
+ * candidates; `preview --candidate` is, because a pane per candidate on one
+ * page is what an agent otherwise builds by hand (issue #837); and `diff --as`
+ * is, because a skeleton has as many shots as it has and one pairing per flag is the only spelling that keeps each pair a pair
  * (issue #720). Everywhere else a repeat is a mistake and is refused: `check
  * --candidate a --candidate b` used to take `b` silently, which is a report
  * about a rig the caller did not think they were asking about.
@@ -270,6 +271,7 @@ const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images',
 const REPEATABLE_FLAGS: Record<string, ReadonlySet<string>> = {
   vote: new Set(['candidate']),
   diff: new Set(['as']),
+  preview: new Set(['candidate']),
 };
 
 /**
@@ -1496,6 +1498,12 @@ function cmdBuild(flags: Record<string, string>): void {
   writeFileSync(join(opts.outDir, 'skeleton.atlas'), atlasText);
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.json')}`);
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.atlas')}`);
+  // The next command is part of the message (issue #837). A green build is the
+  // moment somebody wants to see what came out, and the one page rigc writes
+  // for that is `preview` of exactly this directory — so the line names it,
+  // with the path already resolved. Printed only here: a red build wrote
+  // nothing, so there is nothing to look at and no line.
+  console.log(`rigc: look at it: rigc preview --candidate ${opts.outDir}`);
 }
 
 /**
@@ -2070,6 +2078,29 @@ function skeletonAnimationNames(skeletonText: string, path: string): string[] {
 }
 
 /**
+ * The gate's reading of one candidate, taken the way `rigc validate <dir>`
+ * takes it (issue #837).
+ *
+ * ⭐ The same call `cmdValidate` makes on a bare directory: the two texts, the
+ * atlas's own directory, the default profile, and nothing a directory cannot
+ * supply — no rig spec, no declared durations, no second compile. So `A09` and
+ * `A18` report SKIP here exactly as they do there, and the line is the line
+ * that command prints for these files, not the one `build` printed for the
+ * compile that wrote them. Measured on every run, because the page must not
+ * carry a figure this run did not measure.
+ */
+function previewGate(skeletonText: string, atlasText: string, atlasDir: string): PreviewGate {
+  const lines = reportLines(validate({ skeletonText, atlasText, atlasDir, profile: CLI_DEFAULT_PROFILE }));
+  const refusal = lines.find((line) => line.startsWith('  FAIL  '));
+  return {
+    // `reportLines` ends on the summary by construction; the gutter is the
+    // report's layout, not part of what the gate said.
+    summary: lines[lines.length - 1].replace(/^ {2}\.\. {4}/, ''),
+    refusal: refusal === undefined ? null : refusal.trimStart(),
+  };
+}
+
+/**
  * preview — the artifact playing in Esoteric's own web player, as one file.
  *
  * ⚠️ Nothing is rasterised here and nothing is decoded. The pages go into the
@@ -2077,7 +2108,7 @@ function skeletonAnimationNames(skeletonText: string, path: string): string[] {
  * can draw rather than for the ones our own decoder reads — which is the right
  * direction for the command whose whole job is "just show me".
  */
-function cmdPreview(flags: Record<string, string>): void {
+function cmdPreview(flags: Record<string, string>, candidates: string[]): void {
   // Refused rather than ignored: a preview asked to hide `head` that plays the
   // whole rig is a picture that answers a question it was not asked (issue #835).
   for (const flag of ['slot', 'hide'] as const) {
@@ -2088,51 +2119,119 @@ function cmdPreview(flags: Record<string, string>): void {
       );
     }
   }
-  const { skeletonPath, atlasPath, atlasDir } = resolveViewable(flags);
-  const skeletonText = readFileSync(skeletonPath, 'utf8');
-  const atlasText = readFileSync(atlasPath, 'utf8');
-  const animations = skeletonAnimationNames(skeletonText, skeletonPath);
-  const chosen = readAnimationFlag(flags, animations);
+  const several = candidates.length > 1;
+  // `--atlas` names ONE atlas, and with several skeletons there is no
+  // unambiguous thing it could mean — the refusal `vote` makes, for the reason
+  // it makes it.
+  if (several && flags.atlas !== undefined) {
+    throw new UsageError(
+      `--atlas names one atlas and ${candidates.length} --candidate were given; each candidate's atlas has to sit ` +
+        'beside its skeleton, which is what `build --out` leaves behind',
+    );
+  }
+  const found = several
+    ? candidates.map((target) => {
+        const { skeletonPath, atlasPath } = resolveArtifacts(target, undefined);
+        for (const path of [skeletonPath, atlasPath]) {
+          if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
+        }
+        return { target, skeletonPath, atlasPath, atlasDir: dirname(atlasPath) };
+      })
+    : [{ target: flags.candidate, ...resolveViewable(flags) }];
+  // ⚠️ By the FILE each one resolves to, not by the text typed: `build/` and
+  // `build/skeleton.json` are two spellings of one candidate, and so are
+  // `/tmp/x` and `/private/tmp/x` on a machine where one is a link to the other
+  // — `resolve` alone left that pair unrefused, measured on macOS. A page
+  // showing one skeleton twice is two panes that look like a comparison of
+  // nothing. (`vote` accepts a repeat today, exit 0; that is its own card.)
+  const identities = found.map((f) => realpathSync(f.skeletonPath));
+  for (let i = 1; i < found.length; i++) {
+    const first = identities.indexOf(identities[i]);
+    if (first < i) {
+      throw new UsageError(
+        `--candidate ${JSON.stringify(found[i].target)} is ${identities[i]}, which --candidate ` +
+          `${JSON.stringify(found[first].target)} already names (candidates ${first + 1} and ${i + 1}); a pane per ` +
+          'candidate would show the same skeleton twice',
+      );
+    }
+  }
+
+  // Every candidate's texts and animation are read before a line is printed,
+  // so a refusal about any of them comes before the report, as it always has.
+  const loaded = found.map((f, i) => {
+    const skeletonText = readFileSync(f.skeletonPath, 'utf8');
+    const atlasText = readFileSync(f.atlasPath, 'utf8');
+    const animations = skeletonAnimationNames(skeletonText, f.skeletonPath);
+    let chosen: string | undefined;
+    try {
+      chosen = readAnimationFlag(flags, animations);
+    } catch (err) {
+      // With several candidates the refusal has to say WHICH one lacks it.
+      if (several && err instanceof UsageError) {
+        throw new UsageError(`candidate ${i + 1} (${f.skeletonPath}): ${err.message}`);
+      }
+      throw err;
+    }
+    return { ...f, skeletonText, atlasText, animations, chosen };
+  });
 
   // A directory for --out is taken as "put the default name in here", because
   // `--out render/` is what the sibling command means by the same flag and a
   // preview written OVER a directory is not a recoverable mistake.
   const target = resolve(flags.out ?? 'preview.html');
   const out = existsSync(target) && statSync(target).isDirectory() ? join(target, 'preview.html') : target;
+  const version = readVersion();
 
   console.log('rigc preview');
-  console.log(`  ..    skeleton ${skeletonPath}`);
-  console.log(`  ..    atlas    ${atlasPath}`);
-
-  const pages: PreviewPage[] = atlasPageNames(atlasText).map((name) => {
-    const path = join(atlasDir, name);
-    if (!existsSync(path)) {
-      throw new UsageError(
-        `the atlas declares page "${name}", which resolves to ${path} and is not there — ` +
-          'a page a preview cannot embed is a page the player could not have loaded either',
+  const inputs: PreviewInput[] = loaded.map((candidate, i) => {
+    const { skeletonPath, atlasPath, atlasDir, skeletonText, atlasText, animations, chosen } = candidate;
+    if (several) console.log(`  ..    pane ${i + 1} of ${loaded.length}`);
+    console.log(`  ..    skeleton ${skeletonPath}`);
+    console.log(`  ..    atlas    ${atlasPath}`);
+    const pages: PreviewPage[] = atlasPageNames(atlasText).map((name) => {
+      const path = join(atlasDir, name);
+      if (!existsSync(path)) {
+        throw new UsageError(
+          `the atlas declares page "${name}", which resolves to ${path} and is not there — ` +
+            'a page a preview cannot embed is a page the player could not have loaded either',
+        );
+      }
+      return { name, bytes: readFileSync(path) };
+    });
+    for (const page of pages) {
+      console.log(`  ..    page     ${page.name.padEnd(28)} ${(page.bytes.length / 1024).toFixed(1)} KiB`);
+    }
+    if (!declaresSetupStage(skeletonHeaderOf(skeletonText))) console.log(`  ..    ${STAGELESS_FRAMING.preview}`);
+    const gate = previewGate(skeletonText, atlasText, atlasDir);
+    console.log(`  ..    gate     ${gate.summary}`);
+    if (gate.refusal !== null) {
+      console.log(
+        `  ..    gate     refused — ${gate.refusal}. Previewed anyway: looking at a red build is what preview is ` +
+          'for, and the page header says the same',
       );
     }
-    return { name, bytes: readFileSync(path) };
+    return {
+      skeletonText,
+      atlasText,
+      pages,
+      animation: chosen ?? animations[0] ?? null,
+      animations,
+      label: skeletonPath,
+      version,
+      gate,
+    };
   });
-  for (const page of pages) {
-    console.log(`  ..    page     ${page.name.padEnd(28)} ${(page.bytes.length / 1024).toFixed(1)} KiB`);
-  }
-  if (!declaresSetupStage(skeletonHeaderOf(skeletonText))) console.log(`  ..    ${STAGELESS_FRAMING.preview}`);
 
-  const html = buildPreview({
-    skeletonText,
-    atlasText,
-    pages,
-    animation: chosen ?? animations[0] ?? null,
-    animations,
-    label: skeletonPath,
-    version: readVersion(),
-  });
+  const html = several ? buildPreviewPanes(inputs, version) : buildPreview(inputs[0]);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, html);
+  const pageCount = inputs.reduce((n, input) => n + input.pages.length, 0);
   console.log(
-    `  ..    embedded ${pages.length} page(s) + the skeleton and atlas as data URIs; ` +
-      `the player itself loads from unpkg (@${PLAYER_LINE}), so the first open needs a network`,
+    several
+      ? `  ..    embedded ${pageCount} page(s) + ${inputs.length} skeletons and atlases as data URIs, one pane each; ` +
+          `the player itself loads from unpkg (@${PLAYER_LINE}), so the first open needs a network`
+      : `  ..    embedded ${pageCount} page(s) + the skeleton and atlas as data URIs; ` +
+          `the player itself loads from unpkg (@${PLAYER_LINE}), so the first open needs a network`,
   );
   console.log(`rigc: wrote ${out}  (${(html.length / 1024).toFixed(1)} KiB — open it in a browser)`);
 }
@@ -2305,8 +2404,8 @@ function cmdChainFit(flags: Record<string, string>): void {
 // choosing between results — vote
 // ---------------------------------------------------------------------------
 //
-// ⭐ `preview` shows one candidate; this shows two to four of them side by side
-// and takes an answer back. The rest of this toolchain is instruments, and it
+// ⭐ `preview` shows candidates and asks nothing; this shows two to four of them
+// side by side, hides where each came from, and takes an answer back. The rest of this toolchain is instruments, and it
 // should be — the vote opens only where the instruments have already run out.
 // See `src/ballot.ts` for why the ballot is ordered compile-first-vote-last,
 // why the labels are A and B, and why the record is hashes.
@@ -4003,9 +4102,22 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'preview',
-    usage: ['rigc preview --candidate <dir | skeleton.json> [--animation <name>] [--out preview.html]'],
+    usage: ['rigc preview --candidate <dir | skeleton.json> [--candidate <another> …] [--animation <name>] [--out preview.html]'],
     flags: ['candidate', 'atlas', 'animation', 'out'],
     overrides: {
+      candidate: {
+        value: '<dir|skeleton.json>',
+        meaning:
+          'a compiled skeleton: a directory holding skeleton.json + skeleton.atlas, or a skeleton.json path. Repeat it ' +
+          'for one page with a pane per candidate, in the order given; the same skeleton twice is refused. Each ' +
+          'header carries the line `rigc validate <dir>` prints for that candidate, measured when the page is written',
+      },
+      atlas: { meaning: "the candidate's atlas, when it is not beside the skeleton — one candidate only" },
+      animation: {
+        meaning:
+          "the animation to start on (default: each candidate's own first). With several candidates every one of " +
+          'them must have it, or the run is refused naming the one that does not',
+      },
       out: {
         value: '<file>',
         meaning: 'the .html file to write (default `preview.html`); a directory means "the default name in here"',
@@ -4259,7 +4371,7 @@ try {
   else if (command === 'bench') cmdBench(flags, positional);
   else if (command === 'bonedist') cmdBoneDist(flags);
   else if (command === 'render') cmdRender(flags);
-  else if (command === 'preview') cmdPreview(flags);
+  else if (command === 'preview') cmdPreview(flags, lists.candidate ?? []);
   else if (command === 'pose') cmdPose(flags);
   else if (command === 'chainfit') cmdChainFit(flags);
   else if (command === 'vote') cmdVote(flags, lists.candidate ?? []);

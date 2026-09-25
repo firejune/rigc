@@ -323,6 +323,7 @@ the two files:
   ..    pages=3 regions=3 bones=4 slots=3 animations=1 version=4.3.13 regionAttachments=3 meshAttachments=0 physicsConstraints=0 rig=buoy profile=spine
 rigc: wrote …/buoy/spine/skeleton.json
 rigc: wrote …/buoy/spine/skeleton.atlas
+rigc: look at it: rigc preview --candidate …/buoy/spine
 ```
 
 `profile=spine` is the rulebook that judged it: *is this valid Spine 4.3 that any
@@ -533,7 +534,7 @@ commands take it and what its default is.
 | `ingest <skeleton.json> --out <dir>` | `build` run backwards: reads a Spine 4.3 skeleton and writes the rig spec and motion spec that **rebuild it**, plus a findings report naming everything it could not carry. a skeleton that declares no stage is carried as declaring none, `--stage x,y,w,h` adds a box to one — and is refused, rather than ignored, beside one that declares a box — and `--images <dir>` writes the spec's own images directory — the opposite direction from `build --images`, which overrides it — so the rebuild carries no flag at all |
 | `explain --rig … --motion …` | the compiled rig as a table — every bone with its resolved parent, the slots in draw order, every timeline key by key. Writes nothing. What to reach for when a rig compiles and still looks wrong |
 | `render --candidate <dir>` | PNG frames plus a contact sheet, in `render/`. `--hide <slot,…>` or `--slot <slot,…>` draws part of the rig on the **same grid** as the whole, so the two frames overlay and the difference is the part; `frames.json` records the subset and `check` refuses such a set as a reference |
-| `preview --candidate <dir>` | one self-contained `.html` that plays it |
+| `preview --candidate <dir>` | one self-contained `.html` that plays it, headed by the line `validate <dir>` prints for it and the rigc version — a refused candidate is still previewed, and its header says so in the gate's words. Repeat `--candidate` for one page with a pane per candidate, in the order given; a green `build` ends by naming this command for its own `--out` |
 | `vote --candidate a --candidate b` | one `.html` that asks a human which; `vote --record <file>` checks the answer into `votes.jsonl` |
 | `pose --images <dir> --frame <png>` | reads part placements **out of** a picture |
 | `chainfit --candidate <dir> --images <dir> --frame <png>` | reads the parts `pose` refuses, through the candidate's own draw order and hierarchy: masked residuals over **visible** pixels, one hinge per child instead of four degrees of freedom, and the `rotate` key value each answer implies. A bone with two or more anchored descendants is **determined** rather than searched, and the residual that over-determination leaves is reported |

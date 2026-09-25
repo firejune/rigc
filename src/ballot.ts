@@ -63,6 +63,9 @@ import {
   dataUri,
   embeddedJson,
   escapeHtml,
+  PANE_STAGE_CSS,
+  paneGridCss,
+  paneSection,
   PLAYER_LINE,
   PLAYER_SCRIPT_URL,
   PLAYER_STYLE_URL,
@@ -592,14 +595,10 @@ export function buildBallot(input: BallotInput): { html: string; manifest: Ballo
     },
   };
 
-  const panes = manifest.candidates
-    .map(
-      (c) => `<section class="pane">
-  <h2>${c.label}</h2>
-  <div class="stage" id="rigc-player-${c.label}"></div>
-</section>`,
-    )
-    .join('\n');
+  // The pane markup and its grid are `preview.ts`'s since issue #837, which
+  // borrowed them for a page of panes that asks nothing; the bytes here are
+  // the ones this page always wrote.
+  const panes = manifest.candidates.map((c) => paneSection(`rigc-player-${c.label}`, `<h2>${c.label}</h2>`)).join('\n');
 
   const choices = [...labels, TIE]
     .map(
@@ -649,11 +648,9 @@ export function buildBallot(input: BallotInput): { html: string; manifest: Ballo
   button { font: inherit; padding: 4px 12px; border: 1px solid rgba(0, 0, 0, 0.35); border-radius: 4px; background: rgba(255, 255, 255, 0.6); cursor: pointer; }
   button:hover { background: rgba(255, 255, 255, 0.95); }
   button[aria-pressed="true"] { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
-  #panes { display: grid; grid-template-columns: repeat(${manifest.candidates.length}, minmax(0, 1fr)); gap: 1px; background: rgba(0, 0, 0, 0.15); }
-  @media (max-width: 720px) { #panes { grid-template-columns: minmax(0, 1fr); } }
-  .pane { background: ${backgroundHex()}; display: flex; flex-direction: column; min-width: 0; }
+${paneGridCss(manifest.candidates.length)}
   .pane h2 { margin: 0; padding: 6px 14px; font-size: 15px; letter-spacing: 0.12em; }
-  .stage { height: 52vh; min-height: 260px; }
+${PANE_STAGE_CSS}
   #vote { border-top: 1px solid rgba(0, 0, 0, 0.15); display: flex; flex-direction: column; gap: 10px; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .row > label, .caption { opacity: 0.65; }
