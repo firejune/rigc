@@ -198,6 +198,19 @@ export interface FramesSidecar {
    * one it cannot (`skin` absent while the run asked for one).
    */
   skin?: string;
+  /**
+   * The slots these frames draw, when `render --slot` narrowed them to a subset
+   * (issue #835) — in the skeleton's draw order, whatever order they were named in.
+   *
+   * ⭐ Absent on a render of every slot, for the reason `skin` is: that is what
+   * every frame set written before this field existed says too, so the whole-rig
+   * render stays byte-identical and the key's presence is the claim. A frame set
+   * carrying this or `hidden` is a picture of PART of the rig, and `check` refuses
+   * it as a reference by name rather than scoring a whole candidate against it.
+   */
+  slots?: string[];
+  /** The slots these frames leave out, when `render --hide` named them — see `slots`. */
+  hidden?: string[];
   /** The colour the frames were cleared to, straight RGBA 0..255. */
   background: RGBA;
   viewport: {
@@ -329,6 +342,118 @@ export interface PoseOptions {
    * whole flag exists to remove.
    */
   skin?: string;
+  /**
+   * Draw only these slots, by name (issue #835). `hidden` is the same statement
+   * the other way round, and the two together are refused.
+   *
+   * ⭐ **It is a filter on what is DRAWN, never on what is framed.**
+   * `framingViewport` takes both off before it samples, so a frame with `head`
+   * hidden sits on exactly the pixel grid of the frame with it and the two
+   * overlay — which is the whole use of the picture: *which part is this pixel*
+   * is answered by the difference between two frames of one grid, and a subset
+   * re-framed to its own extent would have no second frame to differ from.
+   *
+   * ⚠️ Applied in `piecesOf`, where the pieces are collected, and resolved there
+   * against the posed skeleton's own slots and skin — see `slotSubsetOf` — so a
+   * name that draws nothing is refused by name rather than quietly matching no
+   * piece.
+   */
+  slots?: string[];
+  /** Draw every slot but these — see `slots`. */
+  hidden?: string[];
+}
+
+/**
+ * Why a slot subset cannot be drawn — a `--slot`/`--hide` naming no slot, a slot
+ * whose art only another skin carries, or both flags at once (issue #835).
+ *
+ * A class of its own so `cli.ts` can turn it into a usage refusal (exit 2,
+ * nothing written) without reading a message to decide what kind it is.
+ */
+export class SlotSubsetError extends Error {}
+
+/** The flag spelling each half of a subset is refused under — the UI's, since that is who reads it. */
+const SUBSET_FLAG = { slots: '--slot', hidden: '--hide' } as const;
+
+/**
+ * A slot subset resolved against a skeleton: which half was asked for, and the
+ * names in the skeleton's **draw order** rather than the order they were typed.
+ *
+ * Draw order because the names are a set and the sidecar records them: `--hide
+ * b,a` and `--hide a,b` are one picture, and a sidecar whose bytes depended on
+ * the spelling would make two identical frame sets differ.
+ */
+export interface SlotSubset {
+  mode: 'slots' | 'hidden';
+  names: string[];
+}
+
+/**
+ * Resolve `slots` / `hidden` against `data` as posed under `skin`, or refuse by name.
+ *
+ * `undefined` when neither is set — the whole rig, which is the ordinary case and
+ * costs nothing. Refused, each naming what would have worked:
+ *
+ * - **both at once** — one statement two ways, as `--rig` with `--cut` is;
+ * - **a name the skeleton does not declare** — with every slot it does declare,
+ *   in draw order, and how many;
+ * - **a slot whose attachments live only under skins this pose does not
+ *   resolve through.** Every slot is declared at the skeleton's top level, so
+ *   "a slot only a named skin declares" is not a shape the format has — what a
+ *   skin declares is the slot's ART. A pose resolves an attachment through the
+ *   skin it was set to and then the default skin (`Skeleton.getAttachment`), so
+ *   a slot none of whose attachments is in either of those draws nothing in
+ *   every frame, and `--slot` on it would be a blank picture that looks like an
+ *   answer. The refusal names the skin(s) that do carry it.
+ *
+ * ⚠️ A declared slot with no attachment in ANY skin is accepted: it draws
+ * nothing under every skin, so there is no skin to name and no picture of it
+ * that a different invocation would produce.
+ */
+export function slotSubsetOf(
+  data: SkeletonData,
+  opts: Pick<PoseOptions, 'slots' | 'hidden'> | undefined,
+  skin: string | undefined,
+): SlotSubset | undefined {
+  if (opts?.slots !== undefined && opts.hidden !== undefined) {
+    throw new SlotSubsetError(
+      '--slot and --hide are one statement two ways; name the slots to draw or the slots to hide, not both',
+    );
+  }
+  const mode = opts?.slots !== undefined ? 'slots' : opts?.hidden !== undefined ? 'hidden' : undefined;
+  if (mode === undefined) return undefined;
+  const asked = (mode === 'slots' ? opts?.slots : opts?.hidden) ?? [];
+  const flag = SUBSET_FLAG[mode];
+  const declared = data.slots.map((slot) => slot.name);
+
+  const unknown = asked.filter((name) => data.findSlot(name) === null);
+  if (unknown.length > 0 || asked.length === 0) {
+    const named =
+      unknown.length === 0
+        ? 'was given no slot name'
+        : `${unknown.map((name) => JSON.stringify(name)).join(', ')} ${unknown.length === 1 ? 'names' : 'name'} no slot`;
+    throw new SlotSubsetError(
+      `${flag} ${named}; this skeleton declares, in draw order: ${declared.join(', ') || 'none'} (${declared.length})`,
+    );
+  }
+
+  const resolving = new Set([skin ?? null, data.defaultSkin?.name ?? null]);
+  const underThisPose =
+    skin === undefined ? 'under no skin (the default skin alone)' : `under skin ${JSON.stringify(skin)}`;
+  for (const name of asked) {
+    const index = data.findSlot(name)?.index ?? -1;
+    const carriers = data.skins.filter((s) => s.getAttachments().some((entry) => entry.slotIndex === index));
+    if (carriers.length === 0 || carriers.some((s) => resolving.has(s.name))) continue;
+    const skins = carriers.map((s) => JSON.stringify(s.name));
+    throw new SlotSubsetError(
+      `${flag} ${JSON.stringify(name)} draws nothing ${underThisPose}: its attachments are declared only under ` +
+        `${skins.length === 1 ? 'skin' : 'skins'} ${skins.join(', ')} — pass --skin ${
+          skins.length === 1 ? skins[0] : 'with one of them'
+        }`,
+    );
+  }
+  const chosen = new Set(asked);
+  return { mode, names: declared.filter((name) => chosen.has(name)) };
 }
 
 /**
@@ -646,8 +771,14 @@ export function piecesOf(skeleton: Skeleton, opts?: PoseOptions): Piece[] {
         'skeleton.setSkin(...) and skeleton.setupPose() before this.',
     );
   }
+  // Resolved against the skeleton as it was posed — its own slots and the skin
+  // it was set to — so a name that draws nothing is refused here, where the one
+  // application point is, rather than matching no piece in silence.
+  const subset = slotSubsetOf(skeleton.data, opts, skeleton.skin?.name);
+  const named = subset === undefined ? undefined : new Set(subset.names);
   const pieces: Piece[] = [];
   for (const slot of skeleton.drawOrder.appliedPose) {
+    if (subset !== undefined && named !== undefined && named.has(slot.data.name) !== (subset.mode === 'slots')) continue;
     const pose = slot.appliedPose;
     const attachment = pose.attachment;
     if (!attachment) continue;
@@ -1091,10 +1222,17 @@ export function framingViewport(data: SkeletonData, maxSide: number, opts?: Pose
   // attachments that POSE, and two skins fill a slot with art of different sizes
   // in different places. Framing one skin's shot with another skin's box would
   // put the difference between two skins into every measurement taken in it.
+  //
+  // ⭐ A slot subset is the opposite case, and is taken off (issue #835): what
+  // `--slot`/`--hide` leave out still counts toward the box, so a frame with a
+  // part hidden lands on the pixel grid of the frame with it and the two overlay.
+  // A subset framed to its own extent would move every pixel it kept.
+  const { slots: _drawn, hidden: _hidden, ...whole } = opts ?? {};
+  const framed = opts === undefined ? undefined : whole;
   const sets =
     data.animations.length === 0
-      ? [sampleSetupPose(data, opts)]
-      : data.animations.map((a) => sampleAnimation(data, a.name, FRAMING_FPS, opts));
+      ? [sampleSetupPose(data, framed)]
+      : data.animations.map((a) => sampleAnimation(data, a.name, FRAMING_FPS, framed));
   const box = unionBounds(sets);
   if (!Number.isFinite(box.minX)) return null;
   const pad = Math.max(box.maxX - box.minX, box.maxY - box.minY) * PAD;

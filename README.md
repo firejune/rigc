@@ -532,7 +532,7 @@ commands take it and what its default is.
 | `validate <dir>` | re-gates artifacts already on disk |
 | `ingest <skeleton.json> --out <dir>` | `build` run backwards: reads a Spine 4.3 skeleton and writes the rig spec and motion spec that **rebuild it**, plus a findings report naming everything it could not carry. a skeleton that declares no stage is carried as declaring none, `--stage x,y,w,h` adds a box to one — and is refused, rather than ignored, beside one that declares a box — and `--images <dir>` writes the spec's own images directory — the opposite direction from `build --images`, which overrides it — so the rebuild carries no flag at all |
 | `explain --rig … --motion …` | the compiled rig as a table — every bone with its resolved parent, the slots in draw order, every timeline key by key. Writes nothing. What to reach for when a rig compiles and still looks wrong |
-| `render --candidate <dir>` | PNG frames plus a contact sheet, in `render/` |
+| `render --candidate <dir>` | PNG frames plus a contact sheet, in `render/`. `--hide <slot,…>` or `--slot <slot,…>` draws part of the rig on the **same grid** as the whole, so the two frames overlay and the difference is the part; `frames.json` records the subset and `check` refuses such a set as a reference |
 | `preview --candidate <dir>` | one self-contained `.html` that plays it |
 | `vote --candidate a --candidate b` | one `.html` that asks a human which; `vote --record <file>` checks the answer into `votes.jsonl` |
 | `pose --images <dir> --frame <png>` | reads part placements **out of** a picture |
