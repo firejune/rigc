@@ -159,7 +159,7 @@ What the flags mean:
 | --- | --- |
 | `--rig` | the rig spec — skeleton structure |
 | `--motion` | the motion spec — time |
-| `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths and `skeleton.images` are written relative to it |
+| `--out` | directory for `skeleton.json` + `skeleton.atlas`; atlas page paths and `skeleton.images` are written relative to it. On `check` it is a directory of **pictures** instead: one per frame the table lists (every compared frame under `--all-frames`), reference · candidate · difference · overlay at the comparison grid's native size, as `<dir>/<set>/f####.png` beside a `frames.json` that says what they are pictures of. Each `<dir>/<set>/` is cleared first; a file at `<dir>`, or a directory that is or holds `--frames`, is refused by name — **§9.2.1** |
 | `--copy-images` | `build` only: also copies every page **the emitted atlas names** into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own, and points `skeleton.images` at `--out` itself so the editor's import finds the parts beside the skeleton (§3.1 says why it is spelled `../<out>/` and not `./`). Under `--atlas-in` those pages are the pack's, not one per part (**§0.2**). Without it, page paths point at the source art |
 | `--pack` | `build` only: arrange every part onto **shared** atlas page(s), written into `--out` as real PNGs, instead of one page per part. Lossless — nothing is resampled, trimmed or rotated. The default is one page per part — **§0.1** |
 | `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1** |
@@ -6033,7 +6033,8 @@ rather than the rig (**§9.2**'s atlas floor — and note that it is *not* `--at
 which re-seats your geometry on that atlas's packing), `--skin <name>` to pose
 your candidate under one of its skins (below), `--all-frames` to list
 every frame instead of the worst by MAE, `--json <out>` for the whole per-frame,
-per-slot report.
+per-slot report, `--out <dir>` for the picture each listed frame's figures came from
+(**§9.2.1**).
 
 🚨 **What `check` certifies is the DEFAULT skin, unless you pass `--skin`.** With no `--skin` no skin is set at all, which is `spine-core`'s own
 initial state: every slot resolves through `SkeletonData.defaultSkin` alone, and a
@@ -7030,6 +7031,66 @@ the roster at the foot of the report before reacting to a chain's share: if the 
 slots column is a parenthesis rather than a fraction, the deformation it carries is
 already being scored inside the chain that owns the slot, and the row is telling you
 about your bone tree rather than about a hole in your figure.
+
+#### 9.2.1 Reading the pictures — `--out`
+
+```bash
+bun cli.ts check --candidate path/to/spine --frames path/to/reference/frames --out check-pictures
+```
+
+The table says **how much** a frame differs; `--out <dir>` writes **where**. For
+every frame the table lists — the frames worth reading, or every compared frame
+under `--all-frames` — it writes `<dir>/<set>/f####.png`, and beside them a
+`frames.json` recording what they are pictures of: the candidate, the frames
+directory, both skins, the framing scope, the grid, and per set the box it was
+framed in and which frames were written. Each picture is four panes, left to right:
+
+| Pane | What it is | The figure in its label |
+| --- | --- | --- |
+| `REFERENCE` | the frame as read from `--frames` | `REF D` — the table's `ref Δ`: pixels the reference moved since its own previous frame (`-` when that frame was not compared) |
+| `CANDIDATE` | your candidate exactly as `check` rendered it onto that grid — same framing, same skin, same texture | `DPX` — the table's `Δpx`, the same count on your side |
+| `DIFFERENCE` | per pixel, the largest of the three channel differences between the two, on a **fixed** grey ramp: 0 is black, 255 is white. Drawn over exactly the pixels the MAE averages over — what your geometry covers or the reference drew — and transparent everywhere else | `MAE` — the frame's MAE, as the table prints it |
+| `OVERLAY` | the two at 50 % each, so a displaced edge reads as a double line and a part drawn twice reads as a ghost | `UNION` — the table's `union px` |
+
+Under the panes, one row per slot of that frame: its drift at the table's
+precision and how it was matched, or why it has none (`not drawn`, `no attributable
+drift`). The frame's worst slot — the one its table row names — is marked `>`. The
+text is the tree's 5x7 bitmap font, so it prints in capitals, and a character the
+font does not carry draws as a solid block rather than disappearing.
+
+- **The ramp is fixed, and deliberately not stretched to the frame's own maximum.**
+  Two runs' pictures are then comparable by eye, and a quiet frame looks quiet. The
+  cost is the other side of the same choice: a frame whose MAE is a texture floor
+  of a few points reads as a **near-black silhouette** of the union, because 7 of
+  255 is dark. That silhouette is not nothing — it is where the two sides drew —
+  and the grey you have to find is the difference you have to fix.
+- **Every pane is at the grid's native size, and there is no upscaling option.** An
+  upscaled difference is a difference the instrument invented: a resampling filter
+  spreads ink into pixels the comparison never measured. Open the file and zoom in
+  your viewer instead, where the magnification is yours and visibly not the data.
+- **Nothing in a picture is a new number.** Every figure in it is one the report
+  already holds. The rasters are the ones the figures were computed on, kept at the
+  moment they were compared rather than rendered again.
+
+What a picture cannot tell you, and does not try to:
+
+- **Which side is right.** The difference pane is symmetric. A pixel lit there is
+  a pixel the two disagree about; whether yours or the reference's is the one to
+  move is yours to read off the other panes.
+- **Anything about a frame it does not show.** The set is the table's listing, so
+  a frame outside it was not pictured — not pictured clean. `--all-frames` widens
+  the set to every compared frame when the listing is not enough.
+
+`<dir>/<set>/` is cleared and rewritten, as `render` clears its own, and nothing
+else under `<dir>` is touched. Two things are refused before anything is compared:
+a **file** at `<dir>` (`check: --out <path> is a file; it names a directory`), and a
+directory that **is `--frames` or holds it** (`check: --out <path> is --frames …` /
+`… holds --frames …`), because clearing a set directory there deletes the frames the
+pictures are of. And a `check --out` directory is not a frame set: pointed at by
+`--frames`, it is refused by the field that says so —
+`` frames.json carries "comparison": it was written by `rigc check --out` `` and the
+rest of the sentence names the frames it was made against. The reference pane inside each
+picture is a frame; the file is four panes and a table.
 
 ### 9.3 What it still cannot see
 

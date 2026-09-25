@@ -126,10 +126,14 @@ import {
 import {
   assertFrameReadable,
   checkAgainstFrames,
+  CheckError,
   checkLines,
+  CheckPlates,
+  COMPARISON_FIELD,
   componentField,
   driftBound,
   EXTENT_SPREAD_REACH,
+  framesToList,
   matchSlots,
   OVERDRAW_RATIO,
   SUBPIXEL_CLAMP,
@@ -137,10 +141,12 @@ import {
   type ChainCheck,
   type CheckReport,
   type FrameChange,
+  type FrameCheck,
   type FramingHow,
   type FramingSource,
   type SlotTrack,
 } from './src/check.ts';
+import { pictureLayout, paneLabels, slotRows, writeCheckPictures } from './src/checkpics.ts';
 import {
   buildAtlasText,
   compile,
@@ -5814,6 +5820,266 @@ function runCheckSuite(): number | null {
         'reach — every frame set rendered before the flags existed is that set',
     );
     rmSync(work, { recursive: true, force: true });
+  }
+
+  // --- C32-C36: the picture each figure came from — `check --out` (issue #834) ---
+  //
+  // `check` held both rasters of every frame for one iteration and dropped them,
+  // so the number said HOW MUCH and nothing on disk said WHERE. These are counted
+  // off the files `writeCheckPictures` put on disk and the pixels of their panes,
+  // never off the report's text: the report is what the pictures are OF, and a
+  // control that read the count back from it would agree with itself.
+  {
+    const say = (name: string, ok: boolean, detail: string, why: string): void => {
+      bad += reportCase(name, ok, detail, why);
+    };
+    const pictureName = (index: number): string => `f${String(index).padStart(4, '0')}.png`;
+    /** The picture files one set directory holds, by name. */
+    const picturesOn = (dir: string): string[] =>
+      existsSync(dir) ? readdirSync(dir).filter((n) => /^f\d+\.png$/.test(n)).sort() : [];
+    /** Run `check` with the rasters kept, and write its pictures into a fresh directory. */
+    const pictureRun = (
+      build: { skeletonText: string; atlasText: string; atlasDir: string },
+      framesDir: string,
+      allFrames: boolean,
+    ): { report: CheckReport; out: string; peak: number } => {
+      const plates = new CheckPlates({ allFrames });
+      const report = checkAgainstFrames({ ...build, framesDir, plates });
+      const out = mkdtempSync(join(tmpdir(), 'rigc-check-pictures-'));
+      writeCheckPictures(out, report, plates, { allFrames });
+      return { report, out, peak: plates.peakBytes };
+    };
+    /**
+     * One picture read back off disk: whether it is the size its layout says, how
+     * many pixels its difference pane draws at all, and how many of those are lit.
+     * The pane is found by the layout, which reads the frame's structure — its
+     * labels and slot rows — and never a figure the pane is supposed to show.
+     */
+    const differencePaneOf = (
+      path: string,
+      frame: FrameCheck,
+      anim: AnimationCheck,
+    ): { sized: boolean; union: number; lit: number } => {
+      const picture = readPlate(path);
+      const w = anim.viewport.pixelWidth;
+      const h = anim.viewport.pixelHeight;
+      const layout = pictureLayout(w, h, paneLabels(frame), slotRows(frame));
+      const pane = layout.panes.find((p) => p.pane === 'difference');
+      let union = 0;
+      let lit = 0;
+      if (pane !== undefined) {
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const [r, g, b, a] = picture.get(pane.x + x, pane.y + y);
+            if (a === 0) continue;
+            union++;
+            if (r !== 0 || g !== 0 || b !== 0) lit++;
+          }
+        }
+      }
+      const sized = pane !== undefined && picture.width === layout.width && picture.height === layout.height;
+      return { sized, union, lit };
+    };
+
+    // The reference side of an identity run is the build's own render — see
+    // `renderOwnFrames` — at the rate the committed frames were rendered at.
+    const ownFrames = renderOwnFrames(faithful, faithfulReport.animations[0].fps);
+    const identity = pictureRun(faithful, ownFrames, false);
+    const identityProbes: string[] = [];
+    let identityFiles = 0;
+    let listedShort = 0;
+    for (const anim of identity.report.animations) {
+      const listed = framesToList(anim, false);
+      const want = listed.map((f) => pictureName(f.index));
+      const found = picturesOn(join(identity.out, anim.dir));
+      if (found.join(',') !== want.join(',')) {
+        identityProbes.push(
+          `set "${anim.dir}": ${found.length} picture(s) on disk [${found.join(', ')}] where the table lists ` +
+            `${want.length} [${want.join(', ')}]`,
+        );
+      }
+      if (listed.length < anim.compared) listedShort++;
+      for (const frame of listed) {
+        const file = join(identity.out, anim.dir, pictureName(frame.index));
+        if (!existsSync(file)) continue;
+        identityFiles++;
+        const pane = differencePaneOf(file, frame, anim);
+        if (!pane.sized) identityProbes.push(`${anim.dir}/${pictureName(frame.index)} is not the size its own layout gives it`);
+        if (pane.lit > 0) {
+          identityProbes.push(`${anim.dir}/${pictureName(frame.index)}: the difference pane lights ${pane.lit} px on an identity run`);
+        }
+        if (pane.union !== frame.unionPixels) {
+          identityProbes.push(
+            `${anim.dir}/${pictureName(frame.index)}: the difference pane draws ${pane.union} px where the MAE was ` +
+              `averaged over ${frame.unionPixels}`,
+          );
+        }
+      }
+    }
+    if (identityFiles === 0) identityProbes.push('no picture was written at all');
+    if (listedShort === 0) {
+      identityProbes.push('no set listed fewer frames than it compared, so the frames-worth-reading path never ran');
+    }
+    const identityHeld = identityProbes.length === 0;
+    say(
+      'C32_CHECK_OUT_WRITES_ONE_PICTURE_PER_LISTED_FRAME_AND_AN_IDENTITY_RUN_LIGHTS_NO_DIFFERENCE_PIXEL',
+      identityHeld,
+      probeDetail(
+        identityHeld,
+        identityProbes,
+        `the rung-3 transcription against its own render wrote ${identityFiles} picture(s) across ` +
+          `${identity.report.animations.length} set(s) — exactly the frames each table lists, ${listedShort} set(s) ` +
+          'listing fewer than it compared — and every difference pane draws the MAE\'s own union and lights none of ' +
+          `it; the rasters kept for them peaked at ${(identity.peak / 1024).toFixed(0)} KiB`,
+        (count) => `${count} thing(s) the identity pictures got wrong:`,
+      ),
+      'issue #834: `check` computed the picture behind every figure and threw it away, so an agent could read how ' +
+        'much a frame differed and never where — the files and their panes are counted here, not the report',
+    );
+
+    const planted = pictureRun(reversed, ownFrames, false);
+    const plantedProbes: string[] = [];
+    const lights: string[] = [];
+    for (const anim of planted.report.animations) {
+      if (anim.worstMaeFrame < 0) {
+        plantedProbes.push(`set "${anim.dir}" has no worst frame — the reversed motion reads MAE 0 everywhere, so the plant did not land`);
+        continue;
+      }
+      const frame = anim.frames.find((f) => f.index === anim.worstMaeFrame);
+      const file = join(planted.out, anim.dir, pictureName(anim.worstMaeFrame));
+      if (frame === undefined || !existsSync(file)) {
+        plantedProbes.push(`set "${anim.dir}": no picture on disk for its worst frame ${pictureName(anim.worstMaeFrame)}`);
+        continue;
+      }
+      const pane = differencePaneOf(file, frame, anim);
+      if (pane.lit === 0) {
+        plantedProbes.push(
+          `set "${anim.dir}": the worst frame ${pictureName(anim.worstMaeFrame)} reads MAE ${frame.mae.toFixed(2)} and ` +
+            'its difference pane lights nothing',
+        );
+      }
+      lights.push(`${anim.dir} ${pictureName(anim.worstMaeFrame)} MAE ${frame.mae.toFixed(2)}: ${pane.lit} of ${pane.union} px lit`);
+    }
+    const plantedHeld = plantedProbes.length === 0;
+    say(
+      'C33_A_REVERSED_CANDIDATES_WORST_FRAME_PICTURE_LIGHTS_ITS_DIFFERENCE_PANE',
+      plantedHeld,
+      probeDetail(
+        plantedHeld,
+        plantedProbes,
+        `every easing reversed, against the same frames: ${lights.join('; ')}`,
+        (count) => `${count} set(s) whose worst frame's picture does not show it:`,
+      ),
+      'the defect `check` exists for is the one a picture has to show: C32 alone would pass a writer that drew ' +
+        'every difference pane blank',
+    );
+
+    // A second, independent run of the same comparison — `A18`'s clause applied
+    // to the instrument. Every file, the sidecar included, byte for byte.
+    const again = pictureRun(reversed, ownFrames, false);
+    const repeatProbes: string[] = [];
+    let compared = 0;
+    for (const where of ['', ...planted.report.animations.map((a) => a.dir)]) {
+      const first = readdirSync(join(planted.out, where)).filter((n) => n.endsWith('.png') || n === FRAMES_SIDECAR).sort();
+      const second = readdirSync(join(again.out, where)).filter((n) => n.endsWith('.png') || n === FRAMES_SIDECAR).sort();
+      if (first.join(',') !== second.join(',')) {
+        repeatProbes.push(`${where || '(root)'}: the two runs wrote [${first.join(', ')}] and [${second.join(', ')}]`);
+        continue;
+      }
+      for (const name of first) {
+        compared++;
+        if (!readFileSync(join(planted.out, where, name)).equals(readFileSync(join(again.out, where, name)))) {
+          repeatProbes.push(`${where ? `${where}/` : ''}${name} differs between two runs of the same comparison`);
+        }
+      }
+    }
+    if (compared === 0) repeatProbes.push('nothing was written to compare');
+    const repeatHeld = repeatProbes.length === 0;
+    say(
+      'C34_TWO_RUNS_OF_ONE_COMPARISON_WRITE_BYTE_IDENTICAL_PICTURES',
+      repeatHeld,
+      probeDetail(
+        repeatHeld,
+        repeatProbes,
+        `${compared} file(s), the ${FRAMES_SIDECAR} included, byte-identical across two independent runs`,
+        (count) => `${count} file(s) that moved between two runs:`,
+      ),
+      'a picture that changes between two runs of the same comparison cannot be diffed against the last build\'s, ' +
+        'which is the one use a directory of them has',
+    );
+
+    const every = pictureRun(reversed, ownFrames, true);
+    const everyProbes: string[] = [];
+    let widened = 0;
+    let everyFiles = 0;
+    const recorded: unknown = JSON.parse(readFileSync(join(every.out, FRAMES_SIDECAR), 'utf8'));
+    const recordedSets = (recorded as { sets?: Array<{ dir: string; written: number }> }).sets ?? [];
+    for (const anim of every.report.animations) {
+      const found = picturesOn(join(every.out, anim.dir));
+      const want = anim.frames.map((f) => pictureName(f.index));
+      everyFiles += found.length;
+      if (found.join(',') !== want.join(',')) {
+        everyProbes.push(`set "${anim.dir}": ${found.length} picture(s) under --all-frames where ${anim.compared} were compared`);
+      }
+      if (found.length > picturesOn(join(planted.out, anim.dir)).length) widened++;
+      const entry = recordedSets.find((s) => s.dir === anim.dir);
+      if (entry === undefined || entry.written !== found.length) {
+        everyProbes.push(
+          `set "${anim.dir}": ${FRAMES_SIDECAR} records ${entry === undefined ? 'no entry' : `written ${entry.written}`} ` +
+            `beside ${found.length} picture(s) on disk`,
+        );
+      }
+    }
+    if (widened === 0) everyProbes.push('--all-frames wrote no set wider than the default listing, so it was never measured to widen one');
+    const everyHeld = everyProbes.length === 0;
+    say(
+      'C35_ALL_FRAMES_OUT_WRITES_EXACTLY_THE_COMPARED_FRAMES_AND_THE_SIDECAR_SAYS_SO',
+      everyHeld,
+      probeDetail(
+        everyHeld,
+        everyProbes,
+        `--all-frames wrote ${everyFiles} picture(s), one per compared frame, widening ${widened} set(s) past the ` +
+          `frames worth reading, and ${FRAMES_SIDECAR} records each set's count`,
+        (count) => `${count} thing(s) --all-frames wrote wrong:`,
+      ),
+      'the listing decides which frames get pictures, so the flag that widens the listing has to widen the pictures ' +
+        'by exactly as much',
+    );
+
+    const refusalProbes: string[] = [];
+    const refusedWith: string[] = [];
+    for (const framesDir of [planted.out, join(planted.out, planted.report.animations[0].dir)]) {
+      try {
+        checkAgainstFrames({ ...faithful, framesDir });
+        refusalProbes.push(`--frames ${framesDir} was read as a reference frame set`);
+      } catch (err) {
+        const message = (err as Error).message;
+        if (!(err instanceof CheckError) || !message.includes(JSON.stringify(COMPARISON_FIELD))) {
+          refusalProbes.push(`--frames ${framesDir} was refused without naming ${JSON.stringify(COMPARISON_FIELD)}: ${message}`);
+        } else {
+          refusedWith.push(message);
+        }
+      }
+    }
+    // The other side: the render the identity run read is a frame set, and it
+    // was read — so the refusal is the field's and not every sidecar's.
+    if (identity.report.animations.every((a) => a.compared === 0)) {
+      refusalProbes.push('the identity run\'s own render compared nothing, so no sidecar was seen accepted');
+    }
+    const refusalHeld = refusalProbes.length === 0;
+    say(
+      'C36_A_CHECKS_OWN_PICTURES_ARE_REFUSED_AS_FRAMES_BY_THE_FIELD_THAT_SAYS_WHAT_THEY_ARE',
+      refusalHeld,
+      probeDetail(
+        refusalHeld,
+        refusalProbes,
+        `the --out root and one set directory inside it are both refused, and the render beside them is read: ` +
+          `${refusedWith[0] ?? '(none)'}`,
+        (count) => `${count} way(s) the pictures passed for frames:`,
+      ),
+      'each picture holds a reference pane, but the file is four panes and a table — scoring a candidate against ' +
+        'it is a number about the wrong thing, and it would be silent',
+    );
   }
   return bad;
 }
@@ -46252,6 +46518,114 @@ function runCliSuite(): number {
       'the Spine Web Player draws what the skeleton draws, and a flag preview does not read is otherwise ignored — ' +
         'so a preview asked to hide a part would play the whole rig and look like the answer. Refused, it is a ' +
         'sentence pointing at render instead',
+    );
+    rmSync(work, { recursive: true, force: true });
+  }
+
+  // --- CLI104-CLI105: `check --out` at the command line (issue #834) ---------
+  //
+  // On a gallery example against its own render, so a fresh clone runs these:
+  // what is measured is the flag's refusals and its closing lines, not a figure.
+  {
+    const picturesIn = (dir: string): number =>
+      existsSync(dir) ? readdirSync(dir).filter((n) => /^f\d+\.png$/.test(n)).length : 0;
+    const identity = buildIdentityExample(null);
+    const frames = renderOwnFrames(identity, IDENTITY_FPS);
+    const setDir = readdirSync(frames).find((n) => statSync(join(frames, n)).isDirectory()) ?? '';
+    const work = mkdtempSync(join(tmpdir(), 'rigc-check-out-'));
+    const aFile = join(work, 'a-file');
+    writeFileSync(aFile, 'not a directory\n');
+    const emptyDir = join(work, 'empty');
+    mkdirSync(emptyDir);
+    const fresh = join(work, 'fresh', 'pictures');
+    const sidecarBefore = readFileSync(join(frames, FRAMES_SIDECAR));
+    const framesBefore = picturesIn(join(frames, setDir));
+    const check = (out: string, from = frames): ReturnType<typeof runCli> =>
+      runCli(['check', '--candidate', identity.atlasDir, '--frames', from, '--out', out]);
+
+    const outProbes: string[] = [];
+    const refusals = [
+      { what: 'a file', run: check(aFile), says: `check: --out ${aFile} is a file; it names a directory` },
+      { what: 'the --frames directory itself', run: check(frames), says: `check: --out ${frames} is --frames ${frames}` },
+      {
+        what: 'the directory holding the --frames set',
+        run: check(frames, join(frames, setDir)),
+        says: `check: --out ${frames} holds --frames ${join(frames, setDir)}`,
+      },
+    ];
+    for (const { what, run, says } of refusals) {
+      if (run.status !== 2 || !run.stderr.includes(says)) {
+        outProbes.push(`--out ${what} exited ${String(run.status)} without saying "${says}": ${JSON.stringify(run.stderr.split('\n')[0])}`);
+      }
+    }
+    if (readFileSync(aFile, 'utf8') !== 'not a directory\n') outProbes.push('the refused run wrote over the file at --out');
+    if (!readFileSync(join(frames, FRAMES_SIDECAR)).equals(sidecarBefore) || picturesIn(join(frames, setDir)) !== framesBefore) {
+      outProbes.push('a refused run touched the reference frame set');
+    }
+    const accepted = [
+      { what: 'a path that does not exist yet', out: fresh, run: check(fresh) },
+      { what: 'an existing empty directory', out: emptyDir, run: check(emptyDir) },
+    ];
+    for (const { what, out, run } of accepted) {
+      if (run.status !== 0 || !existsSync(join(out, FRAMES_SIDECAR))) {
+        outProbes.push(`--out ${what} exited ${String(run.status)} and ${existsSync(join(out, FRAMES_SIDECAR)) ? 'wrote' : 'did not write'} ${FRAMES_SIDECAR}: ${JSON.stringify(run.stderr.split('\n')[0])}`);
+      }
+    }
+    const outHeld = outProbes.length === 0;
+    say(
+      'CLI104_CHECK_OUT_REFUSES_A_FILE_AND_THE_FRAMES_OWN_DIRECTORY_BY_NAME_AND_WRITES_TO_A_FRESH_PATH_OR_AN_EMPTY_DIRECTORY',
+      outHeld,
+      probeDetail(
+        outHeld,
+        outProbes,
+        `a file at --out, --frames itself and the directory holding a --frames set each exit 2 by name and leave the ` +
+          `file and the frames as they were; a fresh path and an empty directory exit 0 with ${FRAMES_SIDECAR} written`,
+        (count) => `${count} thing(s) --out did wrong:`,
+      ),
+      '`<out>/<set>/` is cleared before it is written, as `render` clears its own — pointed at the frames it reads, ' +
+        'that is the reference set deleted by the command that compares against it',
+    );
+
+    // The same comparison without --out, against the run with it: the report is
+    // unchanged byte for byte, and what follows it names only files that exist.
+    const plain = runCli(['check', '--candidate', identity.atlasDir, '--frames', frames]);
+    const withOut = accepted[0].run;
+    const tailProbes: string[] = [];
+    if (plain.status !== 0) tailProbes.push(`the plain run exited ${String(plain.status)}`);
+    const tail = withOut.stdout.startsWith(plain.stdout) ? withOut.stdout.slice(plain.stdout.length) : null;
+    if (tail === null) {
+      tailProbes.push('the report printed with --out is not the report printed without it, byte for byte');
+    } else {
+      const lines = tail.split('\n').filter((l) => l !== '');
+      const setLines = lines.filter((l) => /^ {2}\.\. {4}/.test(l));
+      for (const line of setLines) {
+        const m = /(\d+) picture\(s\).* -> (.+)$/.exec(line);
+        if (m === null) {
+          tailProbes.push(`a closing line names no count and path: ${JSON.stringify(line)}`);
+        } else if (picturesIn(m[2]) !== Number(m[1])) {
+          tailProbes.push(`${JSON.stringify(line)} — ${picturesIn(m[2])} picture(s) are there`);
+        }
+      }
+      const wrote = lines.filter((l) => l.startsWith('rigc: wrote '));
+      if (wrote.length !== 1 || !existsSync(wrote[0].slice('rigc: wrote '.length)) || !wrote[0].endsWith(join(fresh, FRAMES_SIDECAR))) {
+        tailProbes.push(`the run ended ${JSON.stringify(wrote)} rather than naming the ${FRAMES_SIDECAR} it wrote`);
+      }
+      if (setLines.length === 0) tailProbes.push('no closing line named a set directory');
+      if (setLines.length + wrote.length !== lines.length) tailProbes.push(`${lines.length - setLines.length - wrote.length} other line(s) follow the report`);
+    }
+    const tailHeld = tailProbes.length === 0;
+    say(
+      'CLI105_CHECK_OUT_PRINTS_THE_REPORT_UNCHANGED_AND_THEN_NAMES_ONLY_WHAT_IT_WROTE',
+      tailHeld,
+      probeDetail(
+        tailHeld,
+        tailProbes,
+        `with --out the report is the plain run's ${plain.stdout.length} byte(s) exactly, then one line per set whose ` +
+          `count is the pictures on disk and one naming the ${FRAMES_SIDECAR}`,
+        (count) => `${count} thing(s) the --out run printed wrong:`,
+      ),
+      'an instrument that adds a file must not move a figure, and a line saying what was written is a claim about ' +
+        'the disk that the disk can be asked about',
     );
     rmSync(work, { recursive: true, force: true });
   }

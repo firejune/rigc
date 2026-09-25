@@ -214,6 +214,17 @@ function readSidecar(root: string): FramesSidecar | null {
   const raw = readFrameFile(root, join(root, FRAMES_SIDECAR)).toString('utf8');
   const parsed: unknown = JSON.parse(raw);
   if (typeof parsed !== 'object' || parsed === null) return null;
+  // Before the spec, because it is the more specific answer: a `check --out`
+  // directory carries this build's own spec, and what is wrong with it is not
+  // its version but what it is a picture OF — see `COMPARISON_FIELD`.
+  if (Object.prototype.hasOwnProperty.call(parsed, COMPARISON_FIELD)) {
+    throw new CheckError(
+      `${join(root, FRAMES_SIDECAR)} carries ${JSON.stringify(COMPARISON_FIELD)}: it was written by \`rigc check ` +
+        '--out`, and a check\'s pictures are a comparison, not a reference frame set — each one holds a reference ' +
+        'pane, but the file is four panes and a table. Point --frames at the frames that comparison was made ' +
+        `against, which its ${JSON.stringify(COMPARISON_FIELD)}.frames names.`,
+    );
+  }
   const sidecar = parsed as FramesSidecar;
   if (sidecar.spec !== FRAMES_SPEC) {
     throw new CheckError(
@@ -1006,6 +1017,12 @@ export interface CheckOptions {
    * this adds a second render per compared frame beside them.
    */
   textureFrom?: { atlasText: string; atlasDir: string; label: string };
+  /**
+   * Keep the rasters behind the frames the report will list, for `--out` — see
+   * `CheckPlates`. Nothing about the report changes when this is set: it is filled
+   * in beside the comparison, from the plates the comparison was computed on.
+   */
+  plates?: CheckPlates;
 }
 
 // ---------------------------------------------------------------------------
@@ -1420,7 +1437,18 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   for (let i = 0; i < prepared.length; i++) {
     const f = framings[i];
     animations.push(
-      checkOneSet(located.root, prepared[i], posable, f, background, chains, chainOfSlot, substitution, unmatched),
+      checkOneSet(
+        located.root,
+        prepared[i],
+        posable,
+        f,
+        background,
+        chains,
+        chainOfSlot,
+        substitution,
+        unmatched,
+        options.plates ?? null,
+      ),
     );
   }
 
@@ -2383,6 +2411,8 @@ function checkOneSet(
   substitution: TextureSubstitution | null,
   /** Region names it could not reach, unioned across every set by the caller. */
   unmatched: Set<string>,
+  /** Where to keep the rasters of the frames the report will list — `null` keeps none. */
+  plates: CheckPlates | null,
 ): AnimationCheck {
   const { set } = prepared;
   const viewport = framing.viewport;
@@ -2453,6 +2483,7 @@ function checkOneSet(
   // because `substituteTexture` prefixes every name it writes.
   const floorPages = substitution === null ? null : new Map([...posable.pages, ...substitution.pages]);
   const floorSum = { floor: 0, aboveFloor: 0, floorReference: 0, aboveFloorReference: 0 };
+  plates?.begin(set.dir, prepared.pairs.length);
 
   for (const { index, file, frame } of prepared.pairs) {
     const reference = readPlateFrom(root, file);
@@ -2463,7 +2494,7 @@ function checkOneSet(
       for (const name of swapped.unmatched) unmatched.add(name);
       floorPlate = renderFrame(swapped.frame, floorPages, viewport, background);
     }
-    const check = checkOneFrame(
+    const { check, coverage } = checkOneFrame(
       index,
       file,
       frame,
@@ -2478,6 +2509,9 @@ function checkOneSet(
     );
     check.change = previous && previous.index === index - 1 ? frameChange(previous, rendered, reference) : null;
     previous = { index, candidate: rendered, reference };
+    // After the change is known, because whether a frame will be listed depends
+    // on it — see `CheckPlates.offer`.
+    plates?.offer(set.dir, check, { reference, candidate: rendered, coverage });
     frames.push(check);
     maeSum += check.mae;
     maeReferenceSum += check.maeReference;
@@ -2843,7 +2877,7 @@ function checkOneFrame(
    * see `TextureFloor`. `null` is the ordinary case and costs nothing.
    */
   floorPlate: Plate | null,
-): FrameCheck {
+): { check: FrameCheck; coverage: Uint8Array } {
   const { coverage, footprints, owner } = frameGeometry(frame, pages, viewport, chainOfSlot);
   // Only worth the transform when something was drawn to be nearest TO.
   const nearest =
@@ -2927,7 +2961,7 @@ function checkOneFrame(
     }
   }
 
-  return {
+  const check: FrameCheck = {
     index,
     file,
     mae: union === 0 ? 0 : sum / union,
@@ -2959,6 +2993,9 @@ function checkOneFrame(
             aboveFloorReference: referencePixels === 0 ? 0 : aboveReferenceSum / referencePixels,
           },
   };
+  // The coverage goes back beside the figures because the union it defines is the
+  // one a `--out` difference pane is drawn over — see `CheckPlates`.
+  return { check, coverage };
 }
 
 // ---------------------------------------------------------------------------
@@ -3669,7 +3706,7 @@ function chainRollup(report: CheckReport): ChainRollup[] {
  * ranked by MAE is exactly the listing that leaves them out. Rung 6's f65–f68 sit
  * near the bottom of that ranking.
  */
-function framesToList(anim: AnimationCheck, allFrames: boolean): FrameCheck[] {
+export function framesToList(anim: AnimationCheck, allFrames: boolean): FrameCheck[] {
   if (allFrames || anim.frames.length <= LIST_EVERY) return anim.frames;
   const chosen = new Set(
     [...anim.frames]
@@ -3679,6 +3716,129 @@ function framesToList(anim: AnimationCheck, allFrames: boolean): FrameCheck[] {
   );
   for (const frame of anim.frames) if (frame.change && frame.change.verdict !== 'agrees') chosen.add(frame.index);
   return anim.frames.filter((f) => chosen.has(f.index));
+}
+
+/**
+ * The field of a `frames.json` that says the directory is `check --out`'s
+ * pictures and not a frame set — see `src/checkpics.ts`. `check --frames`
+ * refuses a sidecar carrying it, by this name.
+ */
+export const COMPARISON_FIELD = 'comparison';
+
+/** The three rasters one frame's figures were computed on. */
+export interface ComparedPlates {
+  /** The reference frame, as read from `--frames`. */
+  reference: Plate;
+  /** The candidate, rendered onto the reference's grid over the frames' background. */
+  candidate: Plate;
+  /** Which pixels the candidate's geometry covers, 1 or 0 — half of the union alpha. */
+  coverage: Uint8Array;
+}
+
+/**
+ * The rasters behind the frames a report will list, kept at the moment they were
+ * compared — what `check --out` draws its pictures from.
+ *
+ * ## Why they have to be kept, and why not all of them
+ *
+ * `checkOneSet` holds a frame's two plates for exactly one iteration (and the
+ * previous frame's for the change measure); the difference is never a raster at
+ * all, only a running sum. And which frames are *worth reading* is not known
+ * until the set is finished, because it is the worst by MAE over all of them —
+ * `framesToList` decides it at print time. So the choice is between re-rendering
+ * the listed frames afterwards and keeping them now, and re-rendering is rejected:
+ * a second render that agreed with the first would be a claim about the picture,
+ * and this is meant to be the record of it.
+ *
+ * Keeping every frame is the other simple answer and it does not scale: one
+ * frame at 256x116 is 261 KiB of plates and coverage, and a 300-frame set at
+ * 512x512 would hold 675 MiB. So a set longer than the listing threshold keeps a
+ * running top `WORST_FRAMES` by MAE — ties to the earlier index, which is the
+ * order `framesToList`'s stable sort gives them — plus every frame whose change
+ * disagrees, and drops the rest as it goes. `--all-frames` keeps everything,
+ * because then everything is listed.
+ *
+ * 🔒 `framesToList` stays the one derivation of the listing. This only has to
+ * keep a superset of it, and `writeCheckPictures` refuses by name a listed frame
+ * it finds nothing kept for, so the two cannot disagree in silence.
+ */
+export class CheckPlates {
+  /** Whether every compared frame is kept — `--all-frames`. */
+  readonly every: boolean;
+  private readonly kept = new Map<string, Map<number, ComparedPlates>>();
+  /** Per set: whether the whole set will be listed, so everything is kept. */
+  private readonly whole = new Map<string, boolean>();
+  /** Per set: the running worst by MAE, worst first, at most `WORST_FRAMES`. */
+  private readonly ranked = new Map<string, Array<{ index: number; mae: number }>>();
+  /** Per set: frames kept because their change disagrees, whatever their MAE. */
+  private readonly disagreeing = new Map<string, Set<number>>();
+  private held = 0;
+  /** The most bytes of raster this held at any one time — the cost `--out` adds. */
+  peakBytes = 0;
+
+  constructor(opts: { allFrames: boolean }) {
+    this.every = opts.allFrames;
+  }
+
+  /** A set is about to be compared, over this many frame pairs. */
+  begin(dir: string, compared: number): void {
+    this.kept.set(dir, new Map());
+    this.whole.set(dir, this.every || compared <= LIST_EVERY);
+    this.ranked.set(dir, []);
+    this.disagreeing.set(dir, new Set());
+  }
+
+  /** One frame has been compared: keep its plates if it can be listed. */
+  offer(dir: string, check: FrameCheck, plates: ComparedPlates): void {
+    const kept = this.kept.get(dir);
+    const ranked = this.ranked.get(dir);
+    const disagreeing = this.disagreeing.get(dir);
+    if (kept === undefined || ranked === undefined || disagreeing === undefined) {
+      throw new Error(`CheckPlates: set ${JSON.stringify(dir)} was offered a frame before it began`);
+    }
+    if (this.whole.get(dir) === true) {
+      this.keep(kept, check.index, plates);
+      return;
+    }
+    const disagrees = check.change !== null && check.change.verdict !== 'agrees';
+    if (disagrees) disagreeing.add(check.index);
+    // Frames arrive in index order, so a later frame that only ties the last
+    // ranked one loses to it — exactly as the stable sort would place them.
+    const enters = ranked.length < WORST_FRAMES || check.mae > ranked[ranked.length - 1].mae;
+    if (enters) {
+      let at = ranked.findIndex((r) => check.mae > r.mae);
+      if (at < 0) at = ranked.length;
+      ranked.splice(at, 0, { index: check.index, mae: check.mae });
+      if (ranked.length > WORST_FRAMES) {
+        const out = ranked.pop() as { index: number; mae: number };
+        if (!disagreeing.has(out.index)) this.drop(kept, out.index);
+      }
+    }
+    if (enters || disagrees) this.keep(kept, check.index, plates);
+  }
+
+  /** The plates kept for one frame of one set, if any. */
+  of(dir: string, index: number): ComparedPlates | undefined {
+    return this.kept.get(dir)?.get(index);
+  }
+
+  private keep(kept: Map<number, ComparedPlates>, index: number, plates: ComparedPlates): void {
+    if (kept.has(index)) return;
+    kept.set(index, plates);
+    this.held += bytesOf(plates);
+    if (this.held > this.peakBytes) this.peakBytes = this.held;
+  }
+
+  private drop(kept: Map<number, ComparedPlates>, index: number): void {
+    const plates = kept.get(index);
+    if (plates === undefined) return;
+    kept.delete(index);
+    this.held -= bytesOf(plates);
+  }
+}
+
+function bytesOf(plates: ComparedPlates): number {
+  return plates.reference.data.length + plates.candidate.data.length + plates.coverage.length;
 }
 
 /** The per-frame change measure, as the animation's own summary line. */
