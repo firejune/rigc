@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.0](https://github.com/firejune/rigc/compare/v1.1.0...v1.2.0) (2026-09-25)
+
+
+### Features
+
+* **check:** `--out` writes the picture each listed frame's figures came from — reference, candidate, difference and overlay at native size ([#840](https://github.com/firejune/rigc/issues/840)) ([e2abb95](https://github.com/firejune/rigc/commit/e2abb95264fd08d62a42ad486f2c065752d912ee))
+* **preview:** the header carries the line `validate <dir>` prints, a page takes a pane per candidate, and a green build ends by naming it ([#843](https://github.com/firejune/rigc/issues/843)) ([be2e251](https://github.com/firejune/rigc/commit/be2e2512a90fac6fec7870ef14abab3c4f0ba9b4))
+* **render:** `--slot` and `--hide` draw a subset of the slots on the whole rig's grid, recorded in frames.json and refused by `check` as a reference ([#838](https://github.com/firejune/rigc/issues/838)) ([f84eae4](https://github.com/firejune/rigc/commit/f84eae4f3f8955a7d0c44ab2b2f77074ffd70dd3))
+
+
+### Documentation
+
+* **skills:** the entry skill says what to look for after `render`, where reference frames come from for a foreign player, and that a unit ends on `preview` ([#841](https://github.com/firejune/rigc/issues/841)) ([c8cb0bc](https://github.com/firejune/rigc/commit/c8cb0bc085e4d7e7eca5daf7bcadd006c815f887))
+
 ## [1.1.0](https://github.com/firejune/rigc/compare/v1.0.2...v1.1.0) (2026-09-24)
 
 
