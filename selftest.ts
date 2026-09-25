@@ -5682,6 +5682,139 @@ function runCheckSuite(): number | null {
         'so it is said, on that report and no other, and the figures are compared whole to show it is true',
     );
   }
+
+  // --- C37-C39: a frame set of part of a rig is not a reference (issue #835) --
+  //
+  // `render --slot`/`--hide` draw a subset on the whole rig's grid and record it
+  // in the sidecar, which is what makes this refusable at all: a whole candidate
+  // scored against a reference with its head left out would print a real figure
+  // about art the reference never drew. So a set that records either key is
+  // refused by name before anything is posed, from the set's root and from one
+  // of its animation directories alike — and the set that records neither is
+  // the case that must NOT be refused, measured by the comparison running.
+  //
+  // Built from `gallery/look` rather than the rung-3 frames above, because the
+  // subset has to come from `render` itself: a sidecar forged here would test
+  // the reader against a writer nobody ships.
+  {
+    const say = (name: string, ok: boolean, detail: string, why: string): void => {
+      bad += reportCase(name, ok, detail, why);
+    };
+    const work = mkdtempSync(join(tmpdir(), 'rigc-check-subset-'));
+    const build = join(work, 'look');
+    const built = runCli(['build', '--rig', 'gallery/look/rig.json', '--motion', 'gallery/look/motion.json', '--out', build]);
+    const renderInto = (name: string, extra: string[]): ReturnType<typeof runCli> =>
+      runCli(['render', '--candidate', build, '--animation', 'tilt', '--max', '128', ...extra, '--out', join(work, name)]);
+    const artifact =
+      built.status === 0
+        ? {
+            skeletonText: readFileSync(join(build, 'skeleton.json'), 'utf8'),
+            atlasText: readFileSync(join(build, 'skeleton.atlas'), 'utf8'),
+            atlasDir: build,
+          }
+        : null;
+    const sidecarOf = (name: string): FramesSidecar | null => {
+      const path = join(work, name, FRAMES_SIDECAR);
+      return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as FramesSidecar) : null;
+    };
+    /** What `check` said of a frames directory: the refusal's message, or null when it compared. */
+    const refusalOf = (framesDir: string): { refused: string | null; sets: number } => {
+      if (artifact === null) return { refused: 'the candidate did not build', sets: 0 };
+      try {
+        const report = checkAgainstFrames({ ...artifact, framesDir });
+        return { refused: null, sets: checkExtremes(report).sets };
+      } catch (err) {
+        return { refused: (err as Error).message, sets: 0 };
+      }
+    };
+    const subsetCase = (
+      name: string,
+      flag: '--hide' | '--slot',
+      key: 'hidden' | 'slots',
+    ): { held: boolean; detail: string } => {
+      const run = renderInto(name, [flag, 'head']);
+      const side = sidecarOf(name);
+      const dirs = [join(work, name), ...(side?.sets[0] === undefined ? [] : [join(work, name, side.sets[0].dir)])];
+      const answers = dirs.map((dir) => ({ dir, ...refusalOf(dir) }));
+      const probes = [
+        ...(run.status === 0 ? [] : [`render ${flag} head exited ${String(run.status)}: ${run.stderr.split('\n')[0]}`]),
+        ...(JSON.stringify(side?.[key]) === JSON.stringify(['head']) ? [] : [`the sidecar records ${key}: ${JSON.stringify(side?.[key])}`]),
+        ...(answers.length === 2 ? [] : ['the sidecar lists no set, so only the root was asked']),
+        ...answers
+          .filter(
+            ({ dir, refused }) =>
+              refused === null ||
+              !refused.includes(
+                `--frames ${dir} records a slot subset (${key}: head) in ${FRAMES_SIDECAR}; a partial render is not a ` +
+                  'reference set — render the reference without --slot/--hide',
+              ),
+          )
+          .map(({ dir, refused, sets }) =>
+            refused === null ? `${dir} was compared (${sets} set(s)) rather than refused` : `${dir} was refused otherwise: ${refused}`,
+          ),
+      ];
+      const held = probes.length === 0;
+      return {
+        held,
+        detail: probeDetail(
+          held,
+          probes,
+          `render ${flag} head records ${key}: [head], and check refuses the set by name from its root and from ` +
+            `${side?.sets[0]?.dir ?? '(none)'}: ${answers[0]?.refused ?? ''}`,
+          (count) => `${count} thing(s) check did not refuse:`,
+        ),
+      };
+    };
+
+    // C37
+    const hiddenCase = subsetCase('hidden', '--hide', 'hidden');
+    say(
+      'C37_A_FRAME_SET_RENDERED_WITH_A_SLOT_HIDDEN_IS_REFUSED_AS_A_REFERENCE_BY_NAME',
+      hiddenCase.held,
+      hiddenCase.detail,
+      'a reference with its head left out, compared against a candidate that has one, prints a real figure about ' +
+        'art the reference never drew — and a warning beside that figure would still print it',
+    );
+
+    // C38
+    const onlyCase = subsetCase('only', '--slot', 'slots');
+    say(
+      'C38_A_FRAME_SET_RENDERED_WITH_ONLY_SOME_SLOTS_IS_REFUSED_AS_A_REFERENCE_BY_NAME',
+      onlyCase.held,
+      onlyCase.detail,
+      'the other spelling of the same partial picture, refused by the same clause: two flags that say one thing ' +
+        'two ways cannot be two different kinds of reference',
+    );
+
+    // C39
+    const whole = renderInto('whole', []);
+    const wholeSide = sidecarOf('whole');
+    const wholeAnswer = refusalOf(join(work, 'whole'));
+    const wholeProbes = [
+      ...(whole.status === 0 ? [] : [`render exited ${String(whole.status)}: ${whole.stderr.split('\n')[0]}`]),
+      ...(wholeSide !== null && wholeSide.slots === undefined && wholeSide.hidden === undefined
+        ? []
+        : [`the whole render's sidecar records ${JSON.stringify({ slots: wholeSide?.slots, hidden: wholeSide?.hidden })}`]),
+      ...(wholeAnswer.refused === null && wholeAnswer.sets > 0
+        ? []
+        : [`check did not compare the whole set: ${wholeAnswer.refused ?? `${wholeAnswer.sets} set(s)`}`]),
+    ];
+    const wholeHeld = wholeProbes.length === 0;
+    say(
+      'C39_A_FRAME_SET_OF_EVERY_SLOT_CARRIES_NEITHER_KEY_AND_IS_COMPARED',
+      wholeHeld,
+      probeDetail(
+        wholeHeld,
+        wholeProbes,
+        `render with neither flag writes a sidecar with no slots or hidden key, and check compares the candidate ` +
+          `against it (${wholeAnswer.sets} set(s))`,
+        (count) => `${count} thing(s) the whole set did not do:`,
+      ),
+      'the refusal above keys on a field being present, so the set that carries none is the case it must not ' +
+        'reach — every frame set rendered before the flags existed is that set',
+    );
+    rmSync(work, { recursive: true, force: true });
+  }
   return bad;
 }
 
@@ -45815,6 +45948,310 @@ function runCliSuite(): number {
       'a copy is the one shape an upgrade does not reach, so a copy that is no longer the package\'s is refused rather ' +
         'than kept or overwritten; and the refusals are measured to happen before the first write, because CLI10 and ' +
         'CLI11 run `rigc skills` from the repository root',
+    );
+    rmSync(work, { recursive: true, force: true });
+  }
+
+  // --- CLI100-CLI103: a subset of the slots, drawn on the whole rig's grid
+  // (issue #835) --------------------------------------------------------------
+  //
+  // ⭐ The question a picture of a whole rig cannot answer is *which part is this
+  // pixel*, and the answer is the difference between two frames of ONE grid —
+  // the rig with a slot and the rig without it. So the framing is the load-
+  // bearing half: the viewport is still fitted to every slot, and the three
+  // renders below are held to one sidecar viewport and one frame size before any
+  // pixel is compared. Every figure is counted off the frames `render` wrote;
+  // the only name typed is the slot the card asks about, and every other name
+  // comes off the skeleton `build` emitted.
+  //
+  // ⚠️ What the pixels do NOT say, measured on this rig: hiding `head` leaves the
+  // COUNT of drawn pixels where it was — something is drawn under the head
+  // everywhere it reaches — so the control reads which pixels changed value,
+  // not how many are drawn. And "every pixel that changed is one `--slot head`
+  // draws" was measured and rejected as a clause: it misses by a couple of
+  // pixels where the head's edge coverage is too faint to leave the background
+  // on its own and still moves the composite by a level.
+  {
+    const work = mkdtempSync(join(tmpdir(), 'rigc-slot-subset-'));
+    const build = join(work, 'look');
+    const built = runCli(['build', '--rig', 'gallery/look/rig.json', '--motion', 'gallery/look/motion.json', '--out', build]);
+    const renderInto = (
+      name: string,
+      extra: string[],
+      candidate: string[] = ['--candidate', build],
+    ): ReturnType<typeof runCli> => runCli(['render', ...candidate, '--animation', 'tilt', ...extra, '--out', join(work, name)]);
+    const sidecarOf = (name: string): FramesSidecar | null => {
+      const path = join(work, name, FRAMES_SIDECAR);
+      return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as FramesSidecar) : null;
+    };
+    const firstFrameOf = (name: string): Plate | null => {
+      const set = sidecarOf(name)?.sets[0];
+      const path = set === undefined ? '' : join(work, name, set.dir, 'f0000.png');
+      return path !== '' && existsSync(path) ? readPlate(path) : null;
+    };
+    const filesUnder = (name: string): string[] =>
+      existsSync(join(work, name))
+        ? readdirSync(join(work, name), { recursive: true })
+            .map(String)
+            .filter((file) => statSync(join(work, name, file)).isFile())
+            .sort()
+        : [];
+    const whole = renderInto('whole', []);
+    const hidden = renderInto('hidden', ['--hide', 'head']);
+    const hiddenAgain = renderInto('hidden-again', ['--hide', 'head']);
+    const only = renderInto('only', ['--slot', 'head']);
+
+    // CLI100
+    const [wholeSide, hiddenSide, onlySide] = [sidecarOf('whole'), sidecarOf('hidden'), sidecarOf('only')];
+    const [wholeFrame, hiddenFrame, onlyFrame] = [firstFrameOf('whole'), firstFrameOf('hidden'), firstFrameOf('only')];
+    const background = wholeSide?.background ?? BACKGROUND;
+    const isDrawn = (plate: Plate, x: number, y: number): boolean =>
+      plate.get(x, y).some((channel, i) => channel !== background[i]);
+    let wholeDrawn = 0;
+    let onlyDrawn = 0;
+    let onlyOutsideWhole = 0;
+    let changedByHiding = 0;
+    const sameSize =
+      wholeFrame !== null &&
+      hiddenFrame !== null &&
+      onlyFrame !== null &&
+      [hiddenFrame, onlyFrame].every((plate) => plate.width === wholeFrame.width && plate.height === wholeFrame.height);
+    if (sameSize && wholeFrame !== null && hiddenFrame !== null && onlyFrame !== null) {
+      for (let y = 0; y < wholeFrame.height; y++) {
+        for (let x = 0; x < wholeFrame.width; x++) {
+          const inWhole = isDrawn(wholeFrame, x, y);
+          if (inWhole) wholeDrawn++;
+          if (isDrawn(onlyFrame, x, y)) {
+            onlyDrawn++;
+            if (!inWhole) onlyOutsideWhole++;
+          }
+          const a = wholeFrame.get(x, y);
+          const b = hiddenFrame.get(x, y);
+          if (a.some((channel, i) => channel !== b[i])) changedByHiding++;
+        }
+      }
+    }
+    const viewportText = (side: FramesSidecar | null): string => JSON.stringify(side?.viewport ?? null);
+    const subsetText = (side: FramesSidecar | null): string => JSON.stringify({ slots: side?.slots, hidden: side?.hidden });
+    const hiddenFiles = filesUnder('hidden');
+    const againFiles = filesUnder('hidden-again');
+    const unlike = hiddenFiles.filter(
+      (file) =>
+        !existsSync(join(work, 'hidden-again', file)) ||
+        !readFileSync(join(work, 'hidden', file)).equals(readFileSync(join(work, 'hidden-again', file))),
+    );
+    const runs: Array<[ReturnType<typeof runCli>, string]> = [
+      [whole, 'the whole rig'],
+      [hidden, '--hide head'],
+      [hiddenAgain, '--hide head, again'],
+      [only, '--slot head'],
+    ];
+    const framingProbes = [
+      ...(built.status === 0 ? [] : [`gallery/look did not build: exit ${String(built.status)}`]),
+      ...runs
+        .filter(([run]) => run.status !== 0)
+        .map(([run, what]) => `render ${what} exited ${String(run.status)}: ${run.stderr.split('\n')[0]}`),
+      ...(wholeSide !== null && wholeSide.slots === undefined && wholeSide.hidden === undefined
+        ? []
+        : [`the whole rig's ${FRAMES_SIDECAR} records ${subsetText(wholeSide)}, where it should carry neither key`]),
+      ...(JSON.stringify(hiddenSide?.hidden) === JSON.stringify(['head']) && hiddenSide?.slots === undefined
+        ? []
+        : [`--hide head's ${FRAMES_SIDECAR} records ${subsetText(hiddenSide)}, not hidden: [head] alone`]),
+      ...(JSON.stringify(onlySide?.slots) === JSON.stringify(['head']) && onlySide?.hidden === undefined
+        ? []
+        : [`--slot head's ${FRAMES_SIDECAR} records ${subsetText(onlySide)}, not slots: [head] alone`]),
+      ...(wholeSide !== null &&
+      viewportText(hiddenSide) === viewportText(wholeSide) &&
+      viewportText(onlySide) === viewportText(wholeSide)
+        ? []
+        : [
+            `the viewports differ: whole ${viewportText(wholeSide)}, --hide head ${viewportText(hiddenSide)}, ` +
+              `--slot head ${viewportText(onlySide)}`,
+          ]),
+      ...(sameSize ? [] : ['the three first frames are not one size, or one of them is missing']),
+      ...(changedByHiding > 0 ? [] : ['hiding head changed no pixel of the first frame']),
+      ...(onlyDrawn > 0 && onlyDrawn < wholeDrawn && onlyOutsideWhole === 0
+        ? []
+        : [
+            `--slot head draws ${onlyDrawn} px, ${onlyOutsideWhole} of them where the whole rig draws nothing, against ` +
+              `the whole rig's ${wholeDrawn}`,
+          ]),
+      ...(hiddenFiles.length > 0 && hiddenFiles.join('|') === againFiles.join('|') && unlike.length === 0
+        ? []
+        : [
+            `two --hide head renders differ: ${hiddenFiles.length} and ${againFiles.length} file(s), unlike: ` +
+              `${unlike.slice(0, 3).join(', ') || '(none)'}`,
+          ]),
+    ];
+    const framingHeld = framingProbes.length === 0;
+    say(
+      'CLI100_A_SLOT_SUBSET_IS_DRAWN_ON_THE_WHOLE_RIGS_GRID_AND_RECORDED_IN_THE_SIDECAR',
+      framingHeld,
+      probeDetail(
+        framingHeld,
+        framingProbes,
+        `gallery/look, the first frame of tilt at ${wholeFrame?.width ?? 0}x${wholeFrame?.height ?? 0}px under one ` +
+          `viewport in all three sidecars: the whole rig draws ${wholeDrawn} px, --hide head changes ${changedByHiding} ` +
+          `of them, --slot head draws ${onlyDrawn} px, every one inside the whole rig's; the sidecars record ` +
+          `hidden: [head], slots: [head] and neither; two --hide head renders are ${hiddenFiles.length} identical file(s)`,
+        (count) => `${count} thing(s) the subset renders did not do:`,
+      ),
+      'a frame with a part hidden is only worth its difference from the frame with it, and a difference is only ' +
+        'readable on one grid — a subset framed to its own extent would move every pixel it kept. The sidecar says ' +
+        'which picture of the rig a set is, because `check` refuses the partial ones by reading it',
+    );
+
+    // CLI101
+    const skeletonPath = join(build, 'skeleton.json');
+    const emitted = (existsSync(skeletonPath) ? JSON.parse(readFileSync(skeletonPath, 'utf8')) : {}) as {
+      slots?: Array<{ name: string }>;
+      skins?: Array<{ name: string; attachments: Record<string, unknown> }>;
+      animations?: Record<string, { attachments?: Record<string, Record<string, unknown>> }>;
+    };
+    const declared = (emitted.slots ?? []).map((slot) => slot.name);
+    const undeclared = `${declared.join('')}_undeclared`;
+    const listing = `this skeleton declares, in draw order: ${declared.join(', ')} (${declared.length})`;
+    const missedSlot = renderInto('missed-slot', ['--slot', undeclared]);
+    const missedHide = renderInto('missed-hide', ['--hide', undeclared]);
+    // A second skin holding one slot's art, and that art taken out of the skin
+    // that held it: under no skin the slot then draws nothing, so `--slot` on it
+    // there would be a blank picture that looks like an answer. The slot is the
+    // first in draw order whose art no animation keys BY SKIN — a deform
+    // timeline names its skin, and moving art out from under one makes a file
+    // spine-core refuses to parse (measured: `head` is such a slot here, keyed
+    // by `turn`), which would test the parser rather than this.
+    const moved = 'moved';
+    const skins = emitted.skins ?? [];
+    const skinKeyed = new Set(
+      Object.values(emitted.animations ?? {}).flatMap((animation) =>
+        Object.values(animation.attachments ?? {}).flatMap((bySlot) => Object.keys(bySlot)),
+      ),
+    );
+    const movedSlot = declared.find((name) => !skinKeyed.has(name) && skins.some((skin) => skin.attachments[name] !== undefined));
+    const holder = movedSlot === undefined ? undefined : skins.find((skin) => skin.attachments[movedSlot] !== undefined);
+    const variantDir = join(work, 'variant');
+    mkdirSync(variantDir, { recursive: true });
+    if (holder !== undefined && movedSlot !== undefined) {
+      const kept = Object.fromEntries(Object.entries(holder.attachments).filter(([slot]) => slot !== movedSlot));
+      const variant = {
+        ...emitted,
+        skins: [
+          ...skins.map((skin) => (skin === holder ? { ...skin, attachments: kept } : skin)),
+          { name: moved, attachments: { [movedSlot]: holder.attachments[movedSlot] } },
+        ],
+      };
+      writeFileSync(join(variantDir, 'skeleton.json'), JSON.stringify(variant));
+    }
+    const variantCandidate = ['--candidate', join(variantDir, 'skeleton.json'), '--atlas', join(build, 'skeleton.atlas')];
+    const movedName = movedSlot ?? '';
+    const skinless = renderInto('skinless', ['--slot', movedName], variantCandidate);
+    const skinned = renderInto('skinned', ['--slot', movedName, '--skin', moved], variantCandidate);
+    const misses: Array<[string, string, ReturnType<typeof runCli>]> = [
+      ['--slot', 'missed-slot', missedSlot],
+      ['--hide', 'missed-hide', missedHide],
+    ];
+    const nameProbes = [
+      ...(declared.length > 0 ? [] : ['the emitted skeleton declares no slot, so there is no listing to check']),
+      ...misses
+        .filter(
+          ([flag, dir, run]) =>
+            run.status !== 2 ||
+            !run.stderr.includes(`${flag} ${JSON.stringify(undeclared)} names no slot; ${listing}`) ||
+            existsSync(join(work, dir)),
+        )
+        .map(([flag, , run]) => `${flag} on an undeclared name: exit ${String(run.status)}, stderr ${JSON.stringify(run.stderr.split('\n')[0])}`),
+      ...(hidden.status === 0 && only.status === 0 ? [] : ['a declared name was refused']),
+      ...(holder !== undefined
+        ? []
+        : ['no slot of the emitted skeleton has art that no animation keys by skin, so there was nothing to move']),
+      ...(skinless.status === 2 &&
+      skinless.stderr.includes(`--slot ${JSON.stringify(movedName)} draws nothing under no skin`) &&
+      skinless.stderr.includes(`declared only under skin ${JSON.stringify(moved)}`) &&
+      !existsSync(join(work, 'skinless'))
+        ? []
+        : [
+            `--slot ${movedName} with its art only under skin "${moved}": exit ${String(skinless.status)}, stderr ` +
+              JSON.stringify(skinless.stderr.split('\n')[0]),
+          ]),
+      ...(skinned.status === 0 &&
+      sidecarOf('skinned')?.skin === moved &&
+      JSON.stringify(sidecarOf('skinned')?.slots) === JSON.stringify([movedName])
+        ? []
+        : [
+            `--slot ${movedName} --skin ${moved}: exit ${String(skinned.status)}, sidecar ` +
+              JSON.stringify({ skin: sidecarOf('skinned')?.skin, slots: sidecarOf('skinned')?.slots }),
+          ]),
+    ];
+    const namesHeld = nameProbes.length === 0;
+    say(
+      'CLI101_A_SUBSET_NAME_IS_RESOLVED_AGAINST_THE_SLOTS_AND_THE_SKIN_OR_REFUSED_WITH_WHAT_WOULD_HAVE_WORKED',
+      namesHeld,
+      probeDetail(
+        namesHeld,
+        nameProbes,
+        `an undeclared name exits 2 under --slot and --hide listing all ${declared.length} declared slot(s) in draw ` +
+          `order and writes nothing; head is drawn and hidden; with ${movedName}'s art moved to skin "${moved}" it is ` +
+          `refused naming that skin under no skin, and drawn with --skin ${moved}, which the sidecar records beside ` +
+          'the subset',
+        (count) => `${count} thing(s) the name resolution did not do:`,
+      ),
+      'a typo in a subset is a picture with a part missing for no reason, and a slot whose art only another skin ' +
+        'carries is a blank frame — both are answers to a question nobody asked, so both are refused with the names ' +
+        'that would have worked, the way --skin and --animation are',
+    );
+
+    // CLI102
+    const both = renderInto('both', ['--slot', 'head', '--hide', declared.find((name) => name !== 'head') ?? 'head']);
+    const bothHeld =
+      both.status === 2 &&
+      both.stderr.includes(
+        '--slot and --hide are one statement two ways; name the slots to draw or the slots to hide, not both',
+      ) &&
+      !existsSync(join(work, 'both'));
+    say(
+      'CLI102_SLOT_WITH_HIDE_IS_REFUSED_AS_ONE_STATEMENT_TWO_WAYS_AND_WRITES_NOTHING',
+      bothHeld,
+      `exit=${String(both.status)} stderr=${JSON.stringify(both.stderr.split('\n')[0])}, --out ` +
+        (existsSync(join(work, 'both')) ? 'written' : 'not created'),
+      'the two flags say one thing two ways, and a run given both would have to pick which to believe — so it ' +
+        'believes neither, as --rig with --cut is refused',
+    );
+
+    // CLI103
+    const previewRuns = (['--slot', '--hide'] as const).map((flag) => ({
+      flag,
+      run: runCli(['preview', '--candidate', build, flag, 'head', '--out', join(work, `preview${flag}.html`)]),
+    }));
+    const subsetRows = (command: string): string[] =>
+      runCli([command, '--help'])
+        .stdout.split('\n')
+        .filter((line) => /^ {2}--(slot|hide) /.test(line));
+    const previewProbes = [
+      ...previewRuns
+        .filter(
+          ({ flag, run }) =>
+            run.status !== 2 ||
+            !run.stderr.includes(`preview takes no ${flag}`) ||
+            existsSync(join(work, `preview${flag}.html`)),
+        )
+        .map(({ flag, run }) => `preview ${flag} head: exit ${String(run.status)}, stderr ${JSON.stringify(run.stderr.split('\n')[0])}`),
+      ...(subsetRows('preview').length === 0 ? [] : [`preview --help lists ${subsetRows('preview').length} subset row(s)`]),
+      ...(subsetRows('render').length === 2 ? [] : [`render --help lists ${subsetRows('render').length} subset row(s), not 2`]),
+    ];
+    const previewHeld = previewProbes.length === 0;
+    say(
+      'CLI103_PREVIEW_REFUSES_A_SLOT_SUBSET_BY_NAME_AND_ONLY_RENDER_LISTS_THE_FLAGS',
+      previewHeld,
+      probeDetail(
+        previewHeld,
+        previewProbes,
+        'preview --slot head and preview --hide head each exit 2 naming the flag and write no page; render --help ' +
+          'lists both flags and preview --help neither',
+        (count) => `${count} thing(s) the preview side did not do:`,
+      ),
+      'the Spine Web Player draws what the skeleton draws, and a flag preview does not read is otherwise ignored — ' +
+        'so a preview asked to hide a part would play the whole rig and look like the answer. Refused, it is a ' +
+        'sentence pointing at render instead',
     );
     rmSync(work, { recursive: true, force: true });
   }

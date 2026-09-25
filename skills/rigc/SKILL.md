@@ -55,6 +55,8 @@ skill the package ships there, and `rigc skills --help` says what it refuses.
    §4.11.2.
 4. `rigc render --candidate <out>` or `rigc preview --candidate <out>` — look at
    it. A rig with its head off its torso passes the gate; looking is what catches it.
+   When a frame looks wrong, `render --hide <slot>` (or `--slot <slot,…>`) draws it
+   again without that part on the same grid, so the two frames say which part a pixel is.
 5. `rigc check --candidate <out> --frames <dir>` when you have reference pictures;
    `rigc vote --candidate <a> --candidate <b>` when several candidates are green and
    only a person can choose between them.

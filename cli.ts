@@ -141,9 +141,13 @@ import {
   SETUP_POSE_DIR,
   SHEET_FILE,
   SHEET_TILE,
+  SlotSubsetError,
+  slotSubsetOf,
   type Frame,
   type FramesSidecar,
   type FrameSet,
+  type Posable,
+  type SlotSubset,
 } from './src/render.ts';
 import {
   assertionCountForProfile,
@@ -1801,6 +1805,35 @@ function readSkinFlag(flags: Record<string, string>, declared: string[]): string
   return name;
 }
 
+/**
+ * `--slot` / `--hide`, resolved against the skeleton under the skin this run
+ * poses it in — or refused as a usage error, nothing written (issue #835).
+ *
+ * The rule itself is `slotSubsetOf`'s in `src/render.ts`, which `piecesOf`
+ * applies too: it is read here only so a miss exits 2 with the usage beside
+ * it before a directory is created, rather than surfacing from the sampler.
+ */
+function readSlotSubsetFlags(
+  flags: Record<string, string>,
+  data: Posable['data'],
+  skin: string | undefined,
+): SlotSubset | undefined {
+  const list = (raw: string | undefined): string[] | undefined =>
+    raw === undefined ? undefined : raw.split(',').map((name) => name.trim()).filter((name) => name !== '');
+  try {
+    return slotSubsetOf(data, { slots: list(flags.slot), hidden: list(flags.hide) }, skin);
+  } catch (err) {
+    if (err instanceof SlotSubsetError) throw new UsageError(err.message);
+    throw err;
+  }
+}
+
+/** A resolved subset as the one field it is spelled as, in `PoseOptions` and in `frames.json` alike. */
+function subsetFields(subset: SlotSubset | undefined): { slots?: string[]; hidden?: string[] } {
+  if (subset === undefined) return {};
+  return subset.mode === 'slots' ? { slots: subset.names } : { hidden: subset.names };
+}
+
 function readPositiveNumber(flags: Record<string, string>, key: string, fallback: number, least: number): number {
   const raw = flags[key];
   if (raw === undefined) return fallback;
@@ -1869,12 +1902,19 @@ function cmdRender(flags: Record<string, string>): void {
   const { data, pages } = loadPosable(skeletonPath, atlasPath, atlasDir);
   const only = readAnimationFlag(flags, data.animations.map((a) => a.name));
   const skin = readSkinFlag(flags, data.skins.map((s) => s.name));
+  const subset = readSlotSubsetFlags(flags, data, skin);
   // One object, so the framing and the frames cannot be posed under two
   // different skins — which would frame one shot with another shot's box.
   // Not annotated `PoseOptions`: that name is `src/pose.ts`'s in this file, and
   // `src/render.ts` has one of its own. The inferred shape is the render one.
-  const pose = skin === undefined ? undefined : { skin };
+  // The subset rides on the same object and `framingViewport` takes it off, so
+  // the frames draw the subset and the box is still the whole rig's.
+  const pose =
+    skin === undefined && subset === undefined
+      ? undefined
+      : { ...(skin === undefined ? {} : { skin }), ...subsetFields(subset) };
   if (skin !== undefined) console.log(`  ..    skin     ${skin}`);
+  if (subset !== undefined) console.log(`  ..    ${subset.mode.padEnd(8)} ${subset.names.join(', ')}`);
 
   const viewport = framingViewport(data, maxSide, pose);
   if (!viewport) {
@@ -1936,6 +1976,9 @@ function cmdRender(flags: Record<string, string>): void {
     // which is both what this run did and what every frame set written before
     // #571 did. See `FramesSidecar.skin`.
     ...(skin === undefined ? {} : { skin }),
+    // Written only when a subset was asked for, for the same reason: a render of
+    // every slot says nothing and stays the bytes it always was (issue #835).
+    ...subsetFields(subset),
     background: BACKGROUND,
     viewport: {
       x: viewport.minX,
@@ -1978,6 +2021,16 @@ function skeletonAnimationNames(skeletonText: string, path: string): string[] {
  * direction for the command whose whole job is "just show me".
  */
 function cmdPreview(flags: Record<string, string>): void {
+  // Refused rather than ignored: a preview asked to hide `head` that plays the
+  // whole rig is a picture that answers a question it was not asked (issue #835).
+  for (const flag of ['slot', 'hide'] as const) {
+    if (flags[flag] !== undefined) {
+      throw new UsageError(
+        `preview takes no --${flag}: the Spine Web Player draws what the skeleton draws. A subset of the slots is ` +
+          `\`rigc render --${flag} ${flags[flag]}\`, on the whole rig's grid`,
+      );
+    }
+  }
   const { skeletonPath, atlasPath, atlasDir } = resolveViewable(flags);
   const skeletonText = readFileSync(skeletonPath, 'utf8');
   const atlasText = readFileSync(atlasPath, 'utf8');
@@ -3594,6 +3647,14 @@ const FLAG_MEANINGS: Record<string, string> = {
     'through the default skin alone, so a slot whose art lives only in a named skin draws nothing. A name the ' +
     'skeleton does not declare is refused with the ones it does. `render` records the skin in frames.json and ' +
     '`check` reads it back, so a skin-A candidate is not scored against skin-B frames in silence',
+  slot:
+    'draw only these slots, comma-separated, in the skeleton\'s draw order, on the SAME grid as the whole rig: the ' +
+    'viewport is still fitted to every slot, so this frame overlays the full one pixel for pixel. A name the ' +
+    'skeleton does not declare is refused with every one it does; a slot whose art lives only under another skin ' +
+    'is refused naming that skin. frames.json records the subset, and `check` refuses such a set as a reference',
+  hide:
+    'draw every slot but these, comma-separated — `--slot` the other way round, on the same grid, recorded and ' +
+    'refused the same way. Not with `--slot`: the two are one statement',
   max: 'longest side of a rendered frame, in pixels (default 256)',
   record: 'a saved vote to check against its ballot and append to the ledger, instead of writing a ballot',
   ballot: `the ballot the --record'd vote answers (default \`${DEFAULT_BALLOT}\`); its embedded manifest is what the vote is checked against`,
@@ -3662,6 +3723,8 @@ const FLAG_VALUES: Record<string, string> = {
   'inward-lever': '<px>',
   animation: '<name>',
   skin: '<name>',
+  slot: '<name[,name…]>',
+  hide: '<name[,name…]>',
   max: '<px>',
   record: '<result.json>',
   ballot: '<ballot.html>',
@@ -3863,8 +3926,9 @@ const COMMANDS: CommandDoc[] = [
     name: 'render',
     usage: [
       'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--skin <name>] [--fps 12] [--max 256] [--out render/]',
+      'rigc render … --slot <name[,name…]> | --hide <name[,name…]>   (a subset of the slots, on the whole rig\'s grid)',
     ],
-    flags: ['candidate', 'atlas', 'animation', 'skin', 'fps', 'max', 'out'],
+    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'out'],
     overrides: {
       out: { value: '<dir>', meaning: 'directory to write the frame series into (default `render/`)' },
       fps: { meaning: `frames per second to sample the animation at (default ${PROTOCOL_FPS})` },

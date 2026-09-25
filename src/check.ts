@@ -1056,6 +1056,22 @@ export interface CheckOptions {
  */
 export function checkAgainstFrames(options: CheckOptions): CheckReport {
   const located = locateFrames(options.framesDir);
+  // A frame set `render --slot`/`--hide` wrote is a picture of PART of a rig
+  // (issue #835), and it is refused before anything is posed. The clause is the
+  // skin mismatch's below, one step stronger: there two skins are two pictures
+  // of one rig, here the reference is not a picture of a whole rig at all, so a
+  // whole candidate compared against it would print a real figure about art the
+  // reference leaves out. No flag makes that comparable — a warning would still
+  // print the figure — so there is no remedy here but the reference's own.
+  const subsetKey = located.sidecar?.slots !== undefined ? 'slots' : located.sidecar?.hidden !== undefined ? 'hidden' : null;
+  if (subsetKey !== null) {
+    const recorded = located.sidecar?.[subsetKey];
+    throw new CheckError(
+      `--frames ${options.framesDir} records a slot subset (${subsetKey}: ${
+        Array.isArray(recorded) ? recorded.join(', ') : JSON.stringify(recorded)
+      }) in ${FRAMES_SIDECAR}; a partial render is not a reference set — render the reference without --slot/--hide`,
+    );
+  }
   const notes: string[] = [];
 
   const posable = posableFromText(options.skeletonText, options.atlasText, options.atlasDir);

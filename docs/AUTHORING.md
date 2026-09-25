@@ -749,6 +749,7 @@ bun cli.ts diff     candidate.json reference.json [--as <candidate>=<reference>]
 bun cli.ts check    --candidate path/to/spine --frames path/to/frames [--skin …]
 bun cli.ts bench    3 --candidate path/to/spine [--frames path/to/frames]
 bun cli.ts render   --candidate path/to/spine [--animation …] [--skin …] [--fps 12] [--max 256]
+bun cli.ts render   --candidate path/to/spine --slot <name,…> | --hide <name,…>   # part of the rig, same grid
 bun cli.ts preview  --candidate path/to/spine [--animation …] [--out preview.html]
 bun cli.ts vote     --candidate path/to/a --candidate path/to/b [--out ballot.html]
 bun cli.ts vote     --record vote-<id>.json [--ballot ballot.html] [--ledger votes.jsonl]
@@ -824,12 +825,26 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   gate can know you did not mean them. `render` writes
   `render/<animation>/f0000.png…` with a `contact.png` grid of **every** frame
   beside them (open that one first — spacing is a comparison across frames) and a
-  `frames.json` sidecar naming the world box they are pictures of. `preview`
+  `frames.json` sidecar naming the world box they are pictures of. `contact.png`
+  is for spacing across frames; a defect is read on **one frame at full size**,
+  because a tile is too small to say which part a pixel belongs to. When a frame
+  looks wrong, render it again with `--hide <slot>` — the **largest attachment**
+  first, since it covers the most and is the likeliest to hide what is under it —
+  and compare the two frames: `--hide` and `--slot <name,…>` draw a subset of the
+  slots on the **same grid** as the whole rig (the viewport is still fitted to
+  every slot), so the frames overlay pixel for pixel and the difference is the
+  part. A name the skeleton does not declare is refused with every slot it does,
+  in draw order; a slot whose art lives only under another skin is refused naming
+  that skin (pass `--skin`); the two flags together are refused. `frames.json`
+  records the subset as `slots` or `hidden`, and **`check` refuses such a set as
+  a reference** (§9). `preview`
   writes one self-contained `.html`: your skeleton, atlas and page PNGs are
   embedded in it as data URIs and played by the official **Spine Web Player**, so
   double-clicking it is also the interop proof — what plays there was played by
   Esoteric Software's runtime, not by rigc's. The player is loaded from a CDN
-  rather than copied into the file, so the first open needs a network.
+  rather than copied into the file, so the first open needs a network. It takes
+  neither `--slot` nor `--hide` — the player draws what the skeleton draws — and
+  refuses both by name rather than playing the whole rig as if it had obeyed.
 - 📐 **`pose` is the only command here that reads an INPUT rather than a result.**
   Everything else takes a spec or a build and tells you something about it; `pose`
   takes a picture the user already has — a key pose — and reports where each loose
@@ -6055,6 +6070,21 @@ remember:
 
 A skin name the candidate does not declare is refused with the ones it does —
 `the candidate declares no skin "path"; it declares [default, patch, torn]`.
+
+🚫 **A frame set of PART of a rig is not a reference.** `render --slot`/`--hide`
+(§0) records the subset in `frames.json`, and `check` refuses any set that carries
+`slots` or `hidden`, before posing anything:
+
+```
+rigc check error: --frames frames/ records a slot subset (hidden: head) in frames.json; a partial render is not a reference set — render the reference without --slot/--hide
+```
+
+It is the skin clause one step stronger: two skins are two pictures of one rig,
+while a reference with a part left out is not a picture of the whole rig at all,
+and scoring a whole candidate against it would print a real figure about art the
+reference never drew. There is no flag that makes it comparable. A set with
+neither key — every set rendered without the flags, and every set written before
+they existed — is compared exactly as before.
 
 📌 **Deform measurement needs no such flag, because the timeline carries the
 name.** `A39` and the `DEFORM` block pose each key with the skin that key is keyed
