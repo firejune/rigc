@@ -46,7 +46,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import {
   BallotError,
   buildBallot,
@@ -70,7 +70,15 @@ import {
   IDENTITY_CORRESPONDENCE,
   type BoneDistReport,
 } from './src/bonedist.ts';
-import { checkAgainstFrames, checkLines, CheckError, type CheckOptions, type CheckReport } from './src/check.ts';
+import {
+  checkAgainstFrames,
+  checkLines,
+  CheckError,
+  CheckPlates,
+  type CheckOptions,
+  type CheckReport,
+} from './src/check.ts';
+import { writeCheckPictures } from './src/checkpics.ts';
 import { compile, CompileError, droppedStateReason, relativeImagesPath, type CompileOptions } from './src/compile.ts';
 import {
   skeletonDataFromText,
@@ -1704,7 +1712,13 @@ function readCheckFlags(
   return out;
 }
 
-function runCheck(candidate: string, atlasFlag: string | undefined, framesDir: string, flags: Record<string, string>): CheckReport {
+function runCheck(
+  candidate: string,
+  atlasFlag: string | undefined,
+  framesDir: string,
+  flags: Record<string, string>,
+  plates?: CheckPlates,
+): CheckReport {
   const { skeletonPath, atlasPath } = resolveArtifacts(candidate, atlasFlag);
   return checkAgainstFrames({
     skeletonText: readFileSync(skeletonPath, 'utf8'),
@@ -1713,16 +1727,59 @@ function runCheck(candidate: string, atlasFlag: string | undefined, framesDir: s
     framesDir,
     labels: { skeleton: skeletonPath, atlas: atlasPath },
     ...readCheckFlags(flags),
+    ...(plates === undefined ? {} : { plates }),
   });
+}
+
+/**
+ * `check --out <dir>`, refused before anything is compared when it cannot be
+ * written — see `src/checkpics.ts` for what goes there.
+ *
+ * Two refusals and no others. A **file** at the path is not a directory of
+ * pictures, and saying so beats the `ENOTDIR` a write would throw after the
+ * whole comparison had run. And a directory that **is `--frames` or holds it**
+ * is refused because `<out>/<set>/` is cleared and `<out>/frames.json` written,
+ * as `render` does to its own: there, that is the reference set being deleted by
+ * the command that reads it — `check --frames render --out render` would clear
+ * `render/heavy` and put a picture sidecar where the frames' own was. A fresh
+ * path, and an existing directory anywhere else, are written to.
+ */
+function readCheckOut(outFlag: string, framesFlag: string): string {
+  const out = resolve(outFlag);
+  if (existsSync(out) && !statSync(out).isDirectory()) {
+    throw new UsageError(`check: --out ${out} is a file; it names a directory`);
+  }
+  const frames = resolve(framesFlag);
+  const within = relative(out, frames);
+  if (within === '' || (!within.startsWith('..') && !isAbsolute(within))) {
+    throw new UsageError(
+      `check: --out ${out} ${within === '' ? 'is' : 'holds'} --frames ${frames}; the pictures would be written ` +
+        'over the frames they are pictures of (each set directory under --out is cleared first) — name a directory ' +
+        'outside it',
+    );
+  }
+  return out;
 }
 
 function cmdCheck(flags: Record<string, string>): void {
   if (flags.candidate === undefined) throw new UsageError('check needs --candidate <dir | skeleton.json>');
   if (flags.frames === undefined) throw new UsageError('check needs --frames <dir> — a rendered reference frame set');
-  const report = runCheck(flags.candidate, flags.atlas, flags.frames, flags);
+  const out = flags.out === undefined ? null : readCheckOut(flags.out, flags.frames);
+  const allFrames = flags['all-frames'] !== undefined;
+  // Only asked for when there is somewhere to put the pictures: without --out
+  // nothing is kept, and the run is the run it was before --out existed.
+  const plates = out === null ? undefined : new CheckPlates({ allFrames });
+  const report = runCheck(flags.candidate, flags.atlas, flags.frames, flags, plates);
   console.log('rigc check');
-  for (const line of checkLines(report, { allFrames: flags['all-frames'] !== undefined })) console.log(line);
+  for (const line of checkLines(report, { allFrames })) console.log(line);
   if (flags.json !== undefined) writeJson(flags.json, report);
+  if (out !== null && plates !== undefined) {
+    for (const set of writeCheckPictures(out, report, plates, { allFrames })) {
+      const which = set.frames.length === 0 ? 'nothing compared' : set.every ? 'every compared frame' : 'the frames worth reading';
+      console.log(`  ..    ${set.dir.padEnd(16)} ${set.frames.length} picture(s), ${which} -> ${set.path}`);
+    }
+    console.log(`rigc: wrote ${join(out, FRAMES_SIDECAR)}`);
+  }
 }
 
 function writeJson(target: string, body: unknown): void {
@@ -3875,7 +3932,7 @@ const COMMANDS: CommandDoc[] = [
   {
     name: 'check',
     usage: ['rigc check --candidate <dir | skeleton.json> --frames <dir> [flags]'],
-    flags: ['candidate', 'frames', 'atlas', 'texture-from', 'fps', 'viewport', 'framing', 'as', 'skin', 'all-frames', 'json'],
+    flags: ['candidate', 'frames', 'atlas', 'texture-from', 'fps', 'viewport', 'framing', 'as', 'skin', 'all-frames', 'json', 'out'],
     overrides: {
       skin: {
         meaning:
@@ -3883,6 +3940,16 @@ const COMMANDS: CommandDoc[] = [
           'default skin alone is compared, which for a multi-skin rig is a comparison that can see none of the ' +
           'contested art. The frames are checked back: a set whose frames.json records a different skin is ' +
           'REFUSED by name, and one that records none says so in the report rather than pretending to agree',
+      },
+      out: {
+        value: '<dir>',
+        meaning:
+          'also write the PICTURE each listed frame\'s figures came from, as <dir>/<set>/f####.png: reference, ' +
+          'candidate, difference and overlay side by side at the comparison grid\'s native size, with the table\'s ' +
+          'figures burned in and one row per slot under them, beside a frames.json that says what they are pictures ' +
+          'of. The frames are the ones the table lists, so --all-frames writes every compared one. Each <dir>/<set>/ ' +
+          'is cleared first; a file at <dir>, or a directory that is or holds --frames, is refused. See ' +
+          'docs/AUTHORING.md §9.2.1',
       },
     },
     notes: [
