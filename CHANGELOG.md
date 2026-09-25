@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/firejune/rigc/compare/v1.2.0...v1.2.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **check:** a sidecar-less frame set that is not opaque is refused by name, the no-frames.json note names both origins, and an unmatched directory names the animations and --as ([#845](https://github.com/firejune/rigc/issues/845)) ([5a66b03](https://github.com/firejune/rigc/commit/5a66b03563bdd1c79c6bd1b3efd81772b88e96ce))
+* **render:** the rasteriser clips as the runtime does, so render and check no longer draw pixels a clipping attachment removes ([#847](https://github.com/firejune/rigc/issues/847)) ([282880b](https://github.com/firejune/rigc/commit/282880bf7c6cce64f4405e2599f51a85c8a73870))
+
 ## [1.2.0](https://github.com/firejune/rigc/compare/v1.1.0...v1.2.0) (2026-09-25)
 
 
