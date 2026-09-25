@@ -152,12 +152,15 @@ one directory of `f0000.png`, `f0001.png`… named after the candidate animation
 shows (or pair the two with `--as`): `check` accepts a set with no `frames.json`
 and takes its rate from `--fps` (§9). What that set cannot carry is its
 **background**, which the sidecar would have recorded — so render it onto an
-**opaque** background of the colour `check`'s no-`frames.json` note names
-(`232, 232, 232, 255` in this release). The content box is found against that
-colour and alpha is not read: measured on the 24 frames of `gallery/look`'s `turn`,
-the same drawn pixels read MAE mean **2.25** over that grey, **5.19** over white and
-**20.37** over a transparent background, where the fit took the whole 234×256
-frame for the figure — all three at exit 0 with the same notes. A port with no
+**opaque** background of the colour `check`'s no-`frames.json` note names, the one
+after *"the background is this build's default,"*. Running `check` once on any
+frame set with no sidecar prints it, so read it there before rendering rather than
+from a copy here. The content box is found against that colour and alpha is not
+read, so a reference that is not opaque is **refused**, naming the frames and the
+first pixel whose alpha is not 255 (§9). A background that is opaque but another
+colour is not refused and costs you: measured on the 24 frames of `gallery/look`'s
+`turn`, the same drawn pixels read MAE mean **2.25** over the note's colour and
+**5.19** over white, at exit 0 with the same notes. A port with no
 reference frames is **unmeasured, not finished**: green from `build` says the file
 is valid and nothing about whether it is the source's picture. And the parts are
 the source's own texture cut along its drawables, **never a screenshot of it** — a
@@ -6172,6 +6175,31 @@ the rate those frames were
 sampled at, and without it the 12 fps protocol rate is assumed and the report says
 so rather than letting the assumption look like a measurement. Passing `--fps` with
 a value the sidecar contradicts is an error, not an override.
+
+A set with no sidecar is one of two things, and the `⚠️ no frames.json` note says
+which advice goes with which: **a rigc render older than the sidecar** is fixed by
+rendering it again with `rigc render`, and **a foreign source** — a Live2D, Unity or
+video player, whose frames predate nothing — needs the three things the sidecar
+would have said, supplied by whoever made them: an opaque background of the colour
+the note names, `--fps` at the rate it was rendered, and a directory named after
+the candidate animation it shows or `--as <that animation>`. Two of those are
+refused by name when they are wrong, because a figure would come out of either:
+
+```
+rigc check error: --frames frames/turn has no frames.json, and 24 of its 24 compared reference frame(s) are not opaque (f0000.png, f0001.png, f0002.png, and 21 more): f0000.png has alpha 0 at (0, 0), where every pixel must be 255. Without a sidecar the frames are read against the background colour 232, 232, 232, 255 with alpha unread, so a pixel that is not opaque counts by its colour bytes alone: a transparent background counts as drawn and puts the figure over the whole frame, a number about the transparent area and not the rig, which --viewport does not change. Render the frames onto an opaque background of 232, 232, 232, 255.
+rigc check error: no reference frame could be compared, so there is nothing to frame against: the frames were matched to a candidate animation by name, and the candidate has no animation called "idle" (the directory's own name) — it declares [sweep, tilt, turn]. Pass --as <name> with the one these frames show, or name the directory after it
+```
+
+The test is every pixel's alpha, not the border's: a pixel that is not opaque is
+not yet a colour — what it shows depends on what it is composited over — so one
+pixel of alpha 254 in one frame is refused too, naming that frame and that pixel.
+The first is a refusal rather than a note because pinning does not rescue it:
+`--viewport` set to the box the frames were drawn in reads MAE **0.00** on the
+opaque set and **32.90** on the same set made transparent, on every one of its 24
+frames — the transparent area times its distance from the background colour, which
+is a figure about the background and not about the rig. `--as` takes **one**
+candidate animation name; the `<candidate>=<reference>` pair is `diff`'s spelling,
+and `check` refuses it as a name the candidate does not declare.
 
 `--viewport <x>,<y>,<width>,<height>` pins your candidate's world box instead of
 fitting it. Two uses:

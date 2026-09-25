@@ -6081,6 +6081,223 @@ function runCheckSuite(): number | null {
         'it is a number about the wrong thing, and it would be silent',
     );
   }
+
+  // --- C40-C43: a frame set with no sidecar, as a foreign player makes one (issue #842) --
+  //
+  // Nothing but `render` writes `frames.json`, so every frame set a Live2D, Unity
+  // or video source produces is sidecar-less, and three things went silent on
+  // one: a transparent reference was scored whole-frame at exit 0, the note told
+  // its reader to re-render with a tool that renders Spine, and a directory whose
+  // name matched no animation was refused without naming the animation or --as.
+  //
+  // The sets are `render`'s own frames with the sidecar left behind, and the
+  // transparent one is those frames with every pixel that is exactly the render's
+  // background made alpha 0 — so the drawn pixels are the ones `render` drew, and
+  // the only thing that differs between the refused set and the compared one is
+  // the thing the refusal is about.
+  {
+    const say = (name: string, ok: boolean, detail: string, why: string): void => {
+      bad += reportCase(name, ok, detail, why);
+    };
+    const work = mkdtempSync(join(tmpdir(), 'rigc-check-foreign-'));
+    const build = join(work, 'look');
+    const built = runCli(['build', '--rig', 'gallery/look/rig.json', '--motion', 'gallery/look/motion.json', '--out', build]);
+    const rendered = join(work, 'rendered');
+    const render = runCli(['render', '--candidate', build, '--animation', 'tilt', '--max', '128', '--out', rendered]);
+    const side: FramesSidecar | null = existsSync(join(rendered, FRAMES_SIDECAR))
+      ? (JSON.parse(readFileSync(join(rendered, FRAMES_SIDECAR), 'utf8')) as FramesSidecar)
+      : null;
+    const artifact =
+      built.status === 0
+        ? {
+            skeletonText: readFileSync(join(build, 'skeleton.json'), 'utf8'),
+            atlasText: readFileSync(join(build, 'skeleton.atlas'), 'utf8'),
+            atlasDir: build,
+          }
+        : null;
+    const animations =
+      artifact === null
+        ? []
+        : Object.keys((JSON.parse(artifact.skeletonText) as { animations?: Record<string, unknown> }).animations ?? {});
+    const source = side?.sets[0] === undefined ? null : join(rendered, side.sets[0].dir);
+    const frameFiles = source === null ? [] : readdirSync(source).filter((f) => /^f\d{4}\.png$/.test(f)).sort();
+    /** `render`'s frames under `<work>/<parent>/<dir>`, with no sidecar in either; `recolour` rewrites the background. */
+    const bareSet = (parent: string, dir: string, recolour: RGBA | null): string => {
+      const out = join(work, parent, dir);
+      mkdirSync(out, { recursive: true });
+      for (const f of frameFiles) {
+        if (source === null) break;
+        if (recolour === null) {
+          copyFileSync(join(source, f), join(out, f));
+          continue;
+        }
+        const plate = readPlate(join(source, f));
+        for (let i = 0; i < plate.data.length; i += 4) {
+          if (BACKGROUND.every((c, k) => plate.data[i + k] === c)) plate.data.set(recolour, i);
+        }
+        plate.writePng(join(out, f));
+      }
+      return out;
+    };
+    type Answer = { refused: string | null; sets: number; notes: string[] };
+    const answerOf = (framesDir: string, extra: { as?: string; viewport?: FramesSidecar['viewport'] } = {}): Answer => {
+      if (artifact === null) return { refused: `the candidate did not build: ${built.stderr.split('\n')[0]}`, sets: 0, notes: [] };
+      try {
+        const report = checkAgainstFrames({
+          ...artifact,
+          framesDir,
+          ...(extra.as === undefined ? {} : { as: extra.as }),
+          ...(extra.viewport === undefined
+            ? {}
+            : { viewport: { x: extra.viewport.x, y: extra.viewport.y, width: extra.viewport.width, height: extra.viewport.height } }),
+        });
+        return { refused: null, sets: checkExtremes(report).sets, notes: report.notes };
+      } catch (err) {
+        return { refused: (err as Error).message, sets: 0, notes: [] };
+      }
+    };
+    const setup = [
+      ...(render.status === 0 ? [] : [`render exited ${String(render.status)}: ${render.stderr.split('\n')[0]}`]),
+      ...(frameFiles.length > 0 ? [] : ['render wrote no f####.png frames to build the sets from']),
+      ...(animations.length > 0 ? [] : ['the candidate declares no animation, so no directory name can miss one']),
+    ];
+    const colour = BACKGROUND.join(', ');
+
+    // C40
+    const clearDir = bareSet('clear', side?.sets[0]?.dir ?? 'tilt', [0, 0, 0, 0]);
+    const clearFitted = answerOf(clearDir);
+    const clearPinned = side === null ? null : answerOf(clearDir, { viewport: side.viewport });
+    const refusalTerms = [
+      `--frames ${clearDir} has no ${FRAMES_SIDECAR}, and ${frameFiles.length} of its ${frameFiles.length} compared reference frame(s) are not opaque`,
+      `${frameFiles[0] ?? '(none)'} has alpha 0 at (`,
+      'where every pixel must be 255',
+      `the frames are read against the background colour ${colour} with alpha unread`,
+      `Render the frames onto an opaque background of ${colour}.`,
+    ];
+    const clearProbes = [
+      ...setup,
+      ...(clearPinned === null ? ['the render wrote no sidecar, so there was no box to pin'] : []),
+      ...([
+        { how: 'fitted', a: clearFitted },
+        { how: 'pinned by --viewport to the box the frames were drawn in', a: clearPinned },
+      ] satisfies Array<{ how: string; a: Answer | null }>).flatMap(({ how, a }) => {
+        if (a === null) return [];
+        const refused = a.refused;
+        if (refused === null) return [`${how}: compared (${a.sets} set(s)) rather than refused`];
+        return refusalTerms
+          .filter((t) => !refused.includes(t))
+          .map((t) => `${how}: the refusal lacks ${JSON.stringify(t)} — it read: ${refused}`);
+      }),
+    ];
+    const clearHeld = clearProbes.length === 0;
+    say(
+      'C40_A_SIDECARLESS_SET_ON_A_TRANSPARENT_BACKGROUND_IS_REFUSED_BY_NAME_FITTED_OR_PINNED',
+      clearHeld,
+      probeDetail(
+        clearHeld,
+        clearProbes,
+        `${frameFiles.length} frame(s) with the background made alpha 0 are refused fitted and pinned alike: ${clearFitted.refused ?? ''}`,
+        (count) => `${count} thing(s) the transparent set did not do:`,
+      ),
+      'the content box and the union alpha are found against a colour with alpha unread, so a transparent pixel ' +
+        'counts as drawn — pinned to the true box, the figure is the transparent area times its distance from that ' +
+        'colour, the same on every frame, and a note beside it would still print it',
+    );
+
+    // C41
+    const greyDir = bareSet('grey', side?.sets[0]?.dir ?? 'tilt', null);
+    const grey = answerOf(greyDir);
+    const greyProbes = [
+      ...setup,
+      ...(grey.refused === null ? [] : [`the opaque set was refused: ${grey.refused}`]),
+      ...(grey.refused !== null || grey.sets > 0 ? [] : ['the opaque set compared no set']),
+    ];
+    const greyHeld = greyProbes.length === 0;
+    say(
+      'C41_THE_SAME_SET_ON_THE_OPAQUE_BACKGROUND_THE_NOTE_NAMES_IS_COMPARED',
+      greyHeld,
+      probeDetail(
+        greyHeld,
+        greyProbes,
+        `the same ${frameFiles.length} frame(s) over ${colour}, with no sidecar, are compared (${grey.sets} set(s))`,
+        (count) => `${count} thing(s) the opaque set did not do:`,
+      ),
+      'the refusal keys on alpha, so the set that differs from the refused one only in being opaque is the case ' +
+        'it must not reach — every sidecar-less set a foreign player renders as the note says is that set',
+    );
+
+    // C42
+    const note = grey.notes.find((n) => n.startsWith(`no ${FRAMES_SIDECAR} at `)) ?? null;
+    const noteTerms = [
+      'A rigc render older than the sidecar: re-render it with `rigc render`',
+      'A foreign source',
+      `render it onto an opaque background of ${colour}`,
+      'pass --fps at the rate it was rendered',
+      'name the directory after the candidate animation it shows, or pass --as <that animation>',
+    ];
+    const noteProbes = [
+      ...setup,
+      ...(note === null ? [`no note opens "no ${FRAMES_SIDECAR} at" — the notes were: ${grey.notes.join(' | ') || '(none)'}`] : []),
+      ...(note === null ? [] : noteTerms.filter((t) => !note.includes(t)).map((t) => `the note lacks ${JSON.stringify(t)}`)),
+      ...(note !== null && note.includes('predates the sidecar')
+        ? ['the note still tells every sidecar-less set that it predates the sidecar']
+        : []),
+    ];
+    const noteHeld = noteProbes.length === 0;
+    say(
+      'C42_THE_NO_SIDECAR_NOTE_NAMES_BOTH_ORIGINS_AND_WHAT_A_FOREIGN_SET_NEEDS',
+      noteHeld,
+      probeDetail(
+        noteHeld,
+        noteProbes,
+        `the note names a rigc render older than the sidecar and a foreign source, and gives the second the ` +
+          `background ${colour}, --fps and the directory name or --as`,
+        (count) => `${count} thing(s) the note did not say:`,
+      ),
+      "a foreign player's frames predate nothing and no rigc tool renders their source, so a note that only " +
+        'says "re-render" tells the one reader it is for to do the wrong thing',
+    );
+
+    // C43
+    let unmatched = 'frames';
+    while (animations.includes(unmatched)) unmatched = `${unmatched}_`;
+    const unmatchedDir = bareSet('named', unmatched, null);
+    const byName = answerOf(unmatchedDir);
+    const pair = `${animations[0] ?? 'tilt'}=${unmatched}`;
+    const byPair = answerOf(unmatchedDir, { as: pair });
+    const byAs = answerOf(unmatchedDir, { as: side?.sets[0]?.animation ?? 'tilt' });
+    const nameTerms = [
+      'nothing to frame against',
+      `the candidate has no animation called ${JSON.stringify(unmatched)} (the directory's own name)`,
+      `it declares [${animations.join(', ')}]`,
+      'Pass --as <name>',
+    ];
+    const pairTerms = [`--as ${JSON.stringify(pair)} names no animation of the candidate`, 'one candidate animation name'];
+    const nameProbes = [
+      ...setup,
+      ...(byName.refused === null ? [`the directory ${JSON.stringify(unmatched)} was compared rather than refused`] : []),
+      ...(byName.refused === null ? [] : nameTerms.filter((t) => !(byName.refused ?? '').includes(t)).map((t) => `the refusal lacks ${JSON.stringify(t)} — it read: ${byName.refused}`)),
+      ...(byPair.refused === null ? [`--as ${pair} was compared rather than refused`] : []),
+      ...(byPair.refused === null ? [] : pairTerms.filter((t) => !(byPair.refused ?? '').includes(t)).map((t) => `--as ${pair}: the refusal lacks ${JSON.stringify(t)} — it read: ${byPair.refused}`)),
+      ...(byAs.refused === null && byAs.sets > 0 ? [] : [`--as with the rendered animation did not compare: ${byAs.refused ?? `${byAs.sets} set(s)`}`]),
+    ];
+    const nameHeld = nameProbes.length === 0;
+    say(
+      'C43_A_DIRECTORY_THAT_NAMES_NO_ANIMATION_IS_REFUSED_WITH_THE_ANIMATIONS_AND_THE_AS_SPELLING',
+      nameHeld,
+      probeDetail(
+        nameHeld,
+        nameProbes,
+        `a directory named ${JSON.stringify(unmatched)} is refused naming it, the ${animations.length} animation(s) ` +
+          `the candidate declares and --as <name>; --as ${pair} is refused as a pair; --as with the rendered ` +
+          `animation compares: ${byName.refused ?? ''}`,
+        (count) => `${count} thing(s) the unmatched directory did not do:`,
+      ),
+      'the only fix for a name that matches nothing is --as or a rename, and a refusal that names neither leaves ' +
+        'the reader to guess that the directory name was ever read',
+    );
+    rmSync(work, { recursive: true, force: true });
+  }
   return bad;
 }
 

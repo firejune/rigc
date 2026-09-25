@@ -1169,11 +1169,20 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
         duration: disk[disk.length - 1].index / fps,
       },
     ];
+    // Two sources write a set like this, and they need opposite advice (issue
+    // #842): a rigc render older than the sidecar is fixed by rendering it again,
+    // while a foreign player's frames predate nothing and no rigc tool renders
+    // their source — what they need is the three things the sidecar would have
+    // said, supplied by whoever made them.
     notes.push(
-      `no ${FRAMES_SIDECAR} at ${located.root} or beside it — this frame set predates the sidecar. The rate is ` +
+      `no ${FRAMES_SIDECAR} at ${located.root} or beside it. The rate is ` +
         `--fps ${fps}${options.fps === undefined ? ' (the protocol default, not a measurement of these frames)' : ''} ` +
-        `and the background is this build's default (${BACKGROUND.join(', ')}). Re-render the set with ` +
-        'bench/render_reference.ts and both become facts about the frames.',
+        `and the background is this build's default, ${BACKGROUND.join(', ')}; neither is read from the frames. ` +
+        'A set with no sidecar is one of two things. A rigc render older than the sidecar: re-render it with ' +
+        '`rigc render` (bench/render_reference.ts for an editor export) and both become facts about the frames. ' +
+        `A foreign source — a Live2D, Unity or video player: render it onto an opaque background of ` +
+        `${BACKGROUND.join(', ')}, pass --fps at the rate it was rendered, and name the directory after the ` +
+        'candidate animation it shows, or pass --as <that animation>.',
     );
     // The set root is the animation directory itself here, so reads resolve
     // against its parent the way a sidecar layout does.
@@ -1226,8 +1235,36 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   // `EDGE_FRACTION`. A handful of frames is enough: the level is a property of the
   // palette, not of a pose, and reading every frame twice to learn it is waste.
   const level = pairs.length === 0 ? BACKGROUND_TOLERANCE : edgeLevelOf(located.root, pairs, background);
+  // Without a sidecar the background is an assumption, and it is an assumption
+  // about a COLOUR: the box and the union alpha are found against it with alpha
+  // unread. So a reference that is not opaque is refused rather than scored
+  // (issue #842). Measured on gallery/look's `turn` with its background made
+  // transparent and the candidate pinned by --viewport to the box the frames were
+  // drawn in — where the same set over the assumed grey reads MAE 0.00 exactly —
+  // it read 32.90 on every one of the 24 frames, which is the transparent area's
+  // share of the frame times its distance from the grey: a figure about the
+  // background, not the rig, and no framing moves it. A frame set WITH a sidecar
+  // is `render`'s, which composites onto the colour it records, so it is not asked.
+  const translucent: TranslucentFrame[] | null = located.sidecar ? null : [];
   const referenceBoxes =
-    pairs.length === 0 ? [] : referenceContentBoxes(located.root, pairs, background, level, pixelWidth, pixelHeight);
+    pairs.length === 0
+      ? []
+      : referenceContentBoxes(located.root, pairs, background, level, pixelWidth, pixelHeight, translucent);
+  if (translucent !== null && translucent.length > 0) {
+    const first = translucent[0];
+    const shown = translucent.slice(0, TRANSLUCENT_NAMED).map((t) => basename(t.file));
+    throw new CheckError(
+      `--frames ${options.framesDir} has no ${FRAMES_SIDECAR}, and ${translucent.length} of its ${pairs.length} ` +
+        `compared reference frame(s) are not opaque (${shown.join(', ')}${
+          translucent.length > shown.length ? `, and ${translucent.length - shown.length} more` : ''
+        }): ${basename(first.file)} has alpha ${first.alpha} at (${first.x}, ${first.y}), where every pixel must ` +
+        `be 255. Without a sidecar the frames are read against the background colour ${BACKGROUND.join(', ')} ` +
+        'with alpha unread, so a pixel that is not opaque counts by its colour bytes alone: a transparent ' +
+        'background counts as drawn and puts the figure over the whole frame, a number about the transparent ' +
+        'area and not the rig, which --viewport does not change. Render the frames onto an opaque background of ' +
+        `${BACKGROUND.join(', ')}.`,
+    );
+  }
 
   const scope: FramingScope = options.framing ?? 'per-shot';
   const slices = sliceBySet(prepared, referenceBoxes);
@@ -1287,7 +1324,14 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       topFit = reportFor(fit, pinned, { ...pinnedShape, agrees: fitDistance(fit) <= COINCIDENT_PIXELS, refinement });
     }
   } else if (referenceBoxes.every((b) => b === null)) {
-    throw new CheckError('no reference frame could be compared, so there is nothing to frame against');
+    throw new CheckError(
+      `no reference frame could be compared, so there is nothing to frame against${nothingToFrameWhy(
+        prepared,
+        posable.data.animations.map((a) => a.name),
+        options.as,
+        located.sidecar !== null,
+      )}`,
+    );
   } else if (scope === 'shared' || prepared.length === 1) {
     const framed = frameCandidate(
       prepared,
@@ -1725,7 +1769,38 @@ function edgeLevelOf(root: string, pairs: FramePair[], background: RGBA): number
   return histogram.level();
 }
 
-/** Each reference frame's own content box, and a check that they are one grid. */
+/** How many translucent reference frames the refusal names before it counts the rest. */
+const TRANSLUCENT_NAMED = 3;
+
+/** The first pixel of a reference frame that is not fully opaque — see `referenceContentBoxes`. */
+interface TranslucentFrame {
+  file: string;
+  x: number;
+  y: number;
+  alpha: number;
+}
+
+/** The first pixel whose alpha is not 255, in row order, or null when the frame is opaque. */
+function firstTranslucentPixel(plate: Plate): { x: number; y: number; alpha: number } | null {
+  for (let i = 3; i < plate.data.length; i += 4) {
+    if (plate.data[i] !== 255) {
+      const at = (i - 3) / 4;
+      return { x: at % plate.width, y: Math.floor(at / plate.width), alpha: plate.data[i] };
+    }
+  }
+  return null;
+}
+
+/**
+ * Each reference frame's own content box, and a check that they are one grid.
+ *
+ * `translucent`, when given, collects every frame that is not fully opaque. The
+ * content box and the union alpha are found against the background COLOUR and
+ * alpha is never read (`backgroundDistance`), so a transparent pixel is drawn to
+ * both of them whatever its colour bytes say. It is collected here rather than in
+ * a pass of its own because this is where every compared frame is already
+ * decoded, and a frame that is not compared cannot move a figure.
+ */
 function referenceContentBoxes(
   root: string,
   pairs: FramePair[],
@@ -1733,6 +1808,7 @@ function referenceContentBoxes(
   level: number,
   pixelWidth: number,
   pixelHeight: number,
+  translucent: TranslucentFrame[] | null,
 ): Array<ContentBox | null> {
   return pairs.map((pair) => {
     const plate = readPlateFrom(root, pair.file);
@@ -1741,6 +1817,10 @@ function referenceContentBoxes(
         `${pair.file} is ${plate.width}x${plate.height} but the viewport says ${pixelWidth}x${pixelHeight}; ` +
           'the frames and the sidecar disagree about their own size',
       );
+    }
+    if (translucent !== null) {
+      const at = firstTranslucentPixel(plate);
+      if (at !== null) translucent.push({ file: pair.file, ...at });
     }
     return contentBoxOfPlate(plate, background, level);
   });
@@ -2396,6 +2476,46 @@ function prepareSet(
     notes,
     missing: null,
   };
+}
+
+/**
+ * What the "nothing to frame against" refusal adds when the sets can say why.
+ *
+ * The one reason a whole run has no reference box that a reader can act on is a
+ * name that matched no candidate animation, and `prepareSet` already composed
+ * that per set — then the refusal fired before any set was reported, so the one
+ * sentence that named the fix never reached the reader (issue #842). This says
+ * where each name came from, because the fix differs: a directory name is
+ * renamed or overridden, an `--as` is corrected. Empty when every set matched,
+ * so the refusal's other causes keep the sentence they had.
+ */
+function nothingToFrameWhy(
+  prepared: PreparedSet[],
+  have: string[],
+  as: string | undefined,
+  sidecar: boolean,
+): string {
+  const unmatched = prepared.filter((p) => p.missing !== null);
+  if (unmatched.length === 0) return '';
+  const declared = `it declares [${have.join(', ') || 'none'}]`;
+  if (as !== undefined) {
+    return (
+      `: --as ${JSON.stringify(as)} names no animation of the candidate — ${declared}. --as takes one candidate ` +
+      'animation name, the one these frames show'
+    );
+  }
+  const tried = unmatched.map((p) => {
+    const name = JSON.stringify(p.set.animation);
+    if (sidecar) return `${name} (what ${FRAMES_SIDECAR} records for set ${JSON.stringify(p.set.dir)})`;
+    return p.set.dir === p.set.animation
+      ? `${name} (the directory's own name)`
+      : `${name} (the directory ${JSON.stringify(p.set.dir)}, its @fps suffix dropped)`;
+  });
+  return (
+    `: the frames were matched to a candidate animation by name, and the candidate has no animation called ` +
+    `${tried.join(', ')} — ${declared}. Pass --as <name> with the one these frames show, or name the ` +
+    'directory after it'
+  );
 }
 
 function checkOneSet(
