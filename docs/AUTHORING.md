@@ -141,6 +141,27 @@ the animation is the one in the frames, and there is no assertion that could —
 §9. The two run in that order because `check` needs artifacts on disk and `build`
 only writes them when the gate is green.
 
+🎞️ **When the source is a foreign player — a Live2D model, a Unity scene, a video —
+make the reference frames first, from the source.** rigc reads none of those
+formats and will not ([FACE.md](FACE.md#11-non-goals--stated-so-nobody-proposes-them-as-gaps)
+§11, the paragraph that opens *No Live2D file is read or written*); what it reads
+is the pictures they produce. Render the source at the rate you will check at into
+one directory of `f0000.png`, `f0001.png`… named after the candidate animation it
+shows (or pair the two with `--as`): `check` accepts a set with no `frames.json`
+and takes its rate from `--fps` (§9). What that set cannot carry is its
+**background**, which the sidecar would have recorded — so render it onto an
+**opaque** background of the colour `check`'s no-`frames.json` note names
+(`232, 232, 232, 255` in this release). The content box is found against that
+colour and alpha is not read: measured on the 24 frames of `gallery/look`'s `turn`,
+the same drawn pixels read MAE mean **2.25** over that grey, **5.19** over white and
+**20.37** over a transparent background, where the fit took the whole 234×256
+frame for the figure — all three at exit 0 with the same notes. A port with no
+reference frames is **unmeasured, not finished**: green from `build` says the file
+is valid and nothing about whether it is the source's picture. And the parts are
+the source's own texture cut along its drawables, **never a screenshot of it** — a
+screenshot is the composed result, so a part cut from it carries every part under
+it, which is what the first of the three questions under *LOOK* below finds.
+
 🚨 **Read `check`'s per-frame column before its MAE.** The table's headline figures
 are the MAE and the slot drift, and a reader who came for those will skip the
 `per-frame` line printed under them — but that line is the only thing in this
@@ -833,7 +854,13 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   and compare the two frames: `--hide` and `--slot <name,…>` draw a subset of the
   slots on the **same grid** as the whole rig (the viewport is still fitted to
   every slot), so the frames overlay pixel for pixel and the difference is the
-  part. A name the skeleton does not declare is refused with every slot it does,
+  part. Three questions to ask of that full-size frame, each answered that way.
+  **Is any picture drawn twice?** Hide the largest attachment and look for a second
+  copy of what it covered, since a ghost under an opaque part is invisible until the
+  part is gone. **Is there a straight edge where the art has none?** A part cut as a
+  rectangle carries a border its drawing never had, and `--slot <that slot>` shows it
+  alone. **Does a part cover a feature the art shows?** An eye slot drawn over the
+  eye is found by hiding the slot and watching the feature come back. A name the skeleton does not declare is refused with every slot it does,
   in draw order; a slot whose art lives only under another skin is refused naming
   that skin (pass `--skin`); the two flags together are refused. `frames.json`
   records the subset as `slots` or `hidden`, and **`check` refuses such a set as
