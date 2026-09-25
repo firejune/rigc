@@ -1007,6 +1007,7 @@ rigc build --rig semaphore.rig.json --motion semaphore.motion.json --images part
   ..    pages=3 regions=3 bones=4 slots=3 animations=1 version=4.3.13 regionAttachments=3 meshAttachments=0 physicsConstraints=0 rig=semaphore profile=spine
 rigc: wrote …/semaphore/spine/skeleton.json
 rigc: wrote …/semaphore/spine/skeleton.atlas
+rigc: look at it: rigc preview --candidate …/semaphore/spine
 ```
 
 ```bash

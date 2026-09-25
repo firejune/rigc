@@ -76,7 +76,7 @@ shows — `buoy.rig.json` and `buoy.motion.json` — copying them exactly as pri
 rigc build --rig buoy.rig.json --motion buoy.motion.json --images images --out spine
 ```
 
-**Step 6.** Confirm the last two lines say `rigc: wrote …/spine/skeleton.json` and
+**Step 6.** Confirm the output carries `rigc: wrote …/spine/skeleton.json` and
 `rigc: wrote …/spine/skeleton.atlas`. If any assertion says `FAIL`, read the
 message — it names the object, the value found and the value required — fix the
 file it points at, and run step 5 again.

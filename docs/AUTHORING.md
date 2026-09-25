@@ -123,6 +123,8 @@ bun cli.ts check \
 # …and if nobody gave you frames, LOOK at it instead — neither needs a reference:
 bun cli.ts render  --candidate path/to/spine    # PNG frames + a contact sheet grid
 bun cli.ts preview --candidate path/to/spine    # one .html that plays it in Spine's own player
+#   ↳ a green build ends by naming this command for its own --out; repeat
+#     --candidate for a pane per candidate on one page
 
 # …and where you have several green candidates and no instrument that separates
 # them, ask a human — the one loop step this toolchain cannot run for you:
@@ -191,8 +193,8 @@ What the flags mean:
 | `--cut` | `build`, `explain` and `validate`: look up a named cut in `--cuts <cuts.json>`, **instead of** `--rig`/`--motion`/`--out` — the two spellings are one build stated two ways and are refused together. A `cuts.json` is `{ "<name>": { "rig": …, "motion": …, "out": …, "manifest"?: … } }`, every path in it relative to the table's own file, so the table lives with the project that owns the art |
 | `--cuts` | the `cuts.json` `--cut` names. Required beside it — `--cut` alone is refused, with no guess at where the table lives |
 | `--profile` | `spine` = the 34 validity rules (**the default**) · `spine-html` = all 49, opt-in |
-| `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` is the one command that takes it more than once** — repeat it 2–4 times, one per pane, labelled A, B, C, D in the order given; everywhere else a repeat is a typo and is refused |
-| `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview`, and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote`, so is a name that only *some* candidates have |
+| `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` and `preview` take it more than once**: `vote` 2–4 times, one per pane, labelled A, B, C, D in the order given; `preview` any number of times, one pane per candidate in the order given, each headed by its path and its gate line, and the same skeleton twice (a directory and its `skeleton.json` are one) is refused by name. `--atlas` goes with one candidate only. Everywhere else a repeat is a typo and is refused |
+| `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview` (each candidate's own first, with several), and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote` and a several-candidate `preview`, so is a name that only *some* candidates have, naming the one that lacks it |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
 | `--ballot` | `vote --record` only: the ballot the vote answers (default `ballot.html`). Its embedded manifest is what the vote is checked against, so the ballot file is the record of the question |
 | `--ledger` | `vote --record` only: the append-only JSONL the vote lands in (default `votes.jsonl`), one vote per line |
@@ -771,7 +773,7 @@ bun cli.ts check    --candidate path/to/spine --frames path/to/frames [--skin �
 bun cli.ts bench    3 --candidate path/to/spine [--frames path/to/frames]
 bun cli.ts render   --candidate path/to/spine [--animation …] [--skin …] [--fps 12] [--max 256]
 bun cli.ts render   --candidate path/to/spine --slot <name,…> | --hide <name,…>   # part of the rig, same grid
-bun cli.ts preview  --candidate path/to/spine [--animation …] [--out preview.html]
+bun cli.ts preview  --candidate path/to/spine [--candidate path/to/another …] [--animation …] [--out preview.html]
 bun cli.ts vote     --candidate path/to/a --candidate path/to/b [--out ballot.html]
 bun cli.ts vote     --record vote-<id>.json [--ballot ballot.html] [--ledger votes.jsonl]
 bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
@@ -869,7 +871,14 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   embedded in it as data URIs and played by the official **Spine Web Player**, so
   double-clicking it is also the interop proof — what plays there was played by
   Esoteric Software's runtime, not by rigc's. The player is loaded from a CDN
-  rather than copied into the file, so the first open needs a network. It takes
+  rather than copied into the file, so the first open needs a network. Its
+  header carries the gate's line for the candidate — the `N assertions: …`
+  summary `rigc validate <dir>` prints for the same files, and its first `FAIL`
+  line when there is one — with the rigc version, measured when the page is
+  written; a refused candidate is still previewed, because looking at a red
+  build is what the page is for. Note that it is the **bare-directory** reading:
+  with no rig spec and no second compile beside the files, `A09` and `A18` report
+  SKIP there, so its counts are not the ones `build` printed. It takes
   neither `--slot` nor `--hide` — the player draws what the skeleton draws — and
   refuses both by name rather than playing the whole rig as if it had obeyed.
 - 📐 **`pose` is the only command here that reads an INPUT rather than a result.**

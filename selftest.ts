@@ -326,7 +326,7 @@ import {
   type BallotManifest,
   type LedgerLine,
 } from './src/ballot.ts';
-import { ATLAS_KEY, SKELETON_KEY } from './src/preview.ts';
+import { ATLAS_KEY, buildPreview, PLAYER_SCRIPT_URL, SKELETON_KEY, type PreviewGate } from './src/preview.ts';
 import {
   CHANNELS_BY_KIND,
   float32Step,
@@ -46626,6 +46626,254 @@ function runCliSuite(): number {
       ),
       'an instrument that adds a file must not move a figure, and a line saying what was written is a claim about ' +
         'the disk that the disk can be asked about',
+    );
+    rmSync(work, { recursive: true, force: true });
+  }
+
+  // --- CLI106-CLI109: build names the page to look at; preview carries the gate (issue #837)
+  //
+  // On the probe rig with its own art, so a fresh clone runs these. What is
+  // measured is lines against lines — the header against what `validate <dir>`
+  // printed for the same files, the closing line against the --out given —
+  // and never a figure written here.
+  {
+    const work = mkdtempSync(join(tmpdir(), 'rigc-handoff-'));
+    const lastLine = (text: string): string => text.split('\n').filter((l) => l !== '').pop() ?? '';
+    /** What the validator prints for a directory, gutters off — the strings the page must carry. */
+    const validateSays = (dir: string): { status: number | null; summary: string; firstFail: string | null } => {
+      const run = runCli(['validate', dir]);
+      const lines = run.stdout.split('\n');
+      const summary = lines.find((l) => /^ {2}\.\. {4}\d+ assertions: /.test(l));
+      const firstFail = lines.find((l) => l.startsWith('  FAIL  '));
+      return {
+        status: run.status,
+        summary: summary === undefined ? '' : summary.replace(/^ {2}\.\. {4}/, ''),
+        firstFail: firstFail === undefined ? null : firstFail.trimStart(),
+      };
+    };
+    const unescape = (html: string): string =>
+      html.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+    /** Every gate span on a page, in document order, as `{ state, text }`. */
+    const gateSpans = (page: string): Array<{ state: string; text: string }> =>
+      [...page.matchAll(/<span class="rigc-gate" data-gate="([a-z]+)"[^>]*>([\s\S]*?)<\/span>/g)].map((m) => ({
+        state: m[1],
+        text: unescape(m[2].replace(/<\/?code>/g, '')),
+      }));
+    const readIfThere = (path: string): string => (existsSync(path) ? readFileSync(path, 'utf8') : '');
+
+    // The green candidate, and a red one: the same rig with its art opaque in
+    // every texel, under the profile whose A19 refuses exactly that.
+    const green = writeProbeRig();
+    const motionPath = join(green.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+    const greenBuild = runCli(['build', '--rig', green.rigPath, '--motion', motionPath, '--images', green.dir, '--out', green.outDir]);
+    const red = writeProbeRig();
+    writeOpaqueProbeArt(red);
+    const redMotion = join(red.dir, 'probe.motion.json');
+    writeFileSync(redMotion, `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+    const redBuild = runCli([
+      'build', '--rig', red.rigPath, '--motion', redMotion, '--images', red.dir, '--out', red.outDir, '--profile', 'spine-html',
+    ]);
+
+    // CLI106
+    const handOff = `rigc: look at it: rigc preview --candidate ${resolve(green.outDir)}`;
+    const named = lastLine(greenBuild.stdout).startsWith('rigc: look at it: ')
+      ? lastLine(greenBuild.stdout).slice('rigc: look at it: rigc preview --candidate '.length)
+      : null;
+    const followed = named === null ? null : runCli(['preview', '--candidate', named, '--out', join(work, 'followed.html')]);
+    const buildProbes = [
+      ...(greenBuild.status === 0 ? [] : [`the green build exited ${String(greenBuild.status)}: ${greenBuild.stderr.split('\n')[0]}`]),
+      ...(lastLine(greenBuild.stdout) === handOff
+        ? []
+        : [`the green build ends ${JSON.stringify(lastLine(greenBuild.stdout))}, not ${JSON.stringify(handOff)}`]),
+      ...(greenBuild.stdout.split('\n').filter((l) => l.startsWith('rigc: look at it')).length === 1
+        ? []
+        : ['the green build does not print the hand-off exactly once']),
+      ...(followed !== null && followed.status === 0 && existsSync(join(work, 'followed.html'))
+        ? []
+        : [`the command the line names did not write a page: exit ${String(followed?.status ?? null)}`]),
+      ...(redBuild.status === 1 && redBuild.stderr.includes('nothing written')
+        ? []
+        : [`the planted red build exited ${String(redBuild.status)} without "nothing written", so it is not the red case`]),
+      ...(redBuild.stdout.split('\n').some((l) => l.startsWith('rigc: look at it') || l.startsWith('rigc: wrote '))
+        ? ['the red build names a page to look at, or a file it wrote, over a directory it left empty']
+        : []),
+      ...(existsSync(join(red.outDir, 'skeleton.json')) ? ['the red build wrote a skeleton'] : []),
+    ];
+    const buildHeld = buildProbes.length === 0;
+    say(
+      'CLI106_A_GREEN_BUILD_ENDS_BY_NAMING_THE_PREVIEW_OF_ITS_OUT_AND_A_RED_ONE_DOES_NOT',
+      buildHeld,
+      probeDetail(
+        buildHeld,
+        buildProbes,
+        `the green build's last line is the preview of ${resolve(green.outDir)}, once, and running it writes a page; ` +
+          'the red build (A19 under spine-html) exits 1, nothing written, and names neither a file nor a page',
+        (count) => `${count} thing(s) the hand-off did wrong:`,
+      ),
+      'the next command is part of the message — a build that ends on the files it wrote leaves the one question ' +
+        'a person has, "does it look right", to be answered by a page an agent writes by hand',
+    );
+
+    // CLI107 — a second green candidate, then planted red on disk: one part
+    // redrawn at twice its measured size, so the atlas no longer states the
+    // file (A06, a validity rule, under the profile `validate <dir>` uses).
+    const refused = writeProbeRig();
+    const refusedMotion = join(refused.dir, 'probe.motion.json');
+    writeFileSync(refusedMotion, `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+    const refusedBuild = runCli([
+      'build', '--rig', refused.rigPath, '--motion', refusedMotion, '--images', refused.dir, '--out', refused.outDir,
+    ]);
+    const blockArt = join(refused.dir, 'block.png');
+    const blockPlate = existsSync(blockArt) ? readPlate(blockArt) : null;
+    if (blockPlate !== null) writeProbePng(blockArt, blockPlate.width * 2, blockPlate.height * 2, [40, 60, 90, 255]);
+    const greenSays = validateSays(green.outDir);
+    const refusedSays = validateSays(refused.outDir);
+    const greenHtml = join(work, 'green.html');
+    const refusedHtml = join(work, 'refused.html');
+    const greenPreview = runCli(['preview', '--candidate', green.outDir, '--out', greenHtml]);
+    const refusedPreview = runCli(['preview', '--candidate', refused.outDir, '--out', refusedHtml]);
+    const greenSpans = gateSpans(readIfThere(greenHtml));
+    const refusedSpans = gateSpans(readIfThere(refusedHtml));
+    const version = packageVersion();
+    const headerProbes = [
+      ...(greenSays.status === 0 && greenSays.summary !== '' ? [] : [`validate <green> exited ${String(greenSays.status)} with summary ${JSON.stringify(greenSays.summary)}`]),
+      ...(refusedBuild.status === 0 && refusedSays.status === 1 && refusedSays.firstFail !== null
+        ? []
+        : [`the plant did not make validate refuse the candidate: build exit ${String(refusedBuild.status)}, validate exit ${String(refusedSays.status)}`]),
+      ...(greenPreview.status === 0 ? [] : [`preview <green> exited ${String(greenPreview.status)}: ${greenPreview.stderr.split('\n')[0]}`]),
+      ...(refusedPreview.status === 0
+        ? []
+        : [`preview <refused> exited ${String(refusedPreview.status)} — a red build must still be previewable: ${refusedPreview.stderr.split('\n')[0]}`]),
+      ...(greenSpans.length === 1 && greenSpans[0].state === 'green' && greenSpans[0].text.endsWith(`: ${greenSays.summary}`)
+        ? []
+        : [`the green page's gate line(s) ${JSON.stringify(greenSpans)} do not end on validate's ${JSON.stringify(greenSays.summary)}`]),
+      ...(greenSpans.every((s) => s.text.startsWith(`rigc ${version}, `)) ? [] : [`a gate line does not name rigc ${version}`]),
+      ...(greenPreview.stdout.includes(`  ..    gate     ${greenSays.summary}\n`) ? [] : ["preview's own stdout does not print validate's summary"]),
+      ...(refusedSpans.length === 1 &&
+      refusedSpans[0].state === 'refused' &&
+      refusedSays.firstFail !== null &&
+      refusedSpans[0].text.includes(`: ${refusedSays.summary} — refused: ${refusedSays.firstFail}`)
+        ? []
+        : [
+            `the refused page's gate line(s) ${JSON.stringify(refusedSpans)} do not carry validate's ` +
+              `${JSON.stringify(refusedSays.summary)} and ${JSON.stringify(refusedSays.firstFail)}`,
+          ]),
+    ];
+    const headerHeld = headerProbes.length === 0;
+    say(
+      'CLI107_THE_PREVIEW_HEADER_CARRIES_THE_LINES_VALIDATE_PRINTS_FOR_THE_SAME_FILES_GREEN_OR_REFUSED',
+      headerHeld,
+      probeDetail(
+        headerHeld,
+        headerProbes,
+        `green: ${JSON.stringify(greenSays.summary)}; refused: ${JSON.stringify(refusedSays.firstFail)} under ` +
+          `${JSON.stringify(refusedSays.summary)} — each read off \`validate <dir>\` and found in its page's header, ` +
+          'and the refused one was still previewed',
+        (count) => `${count} thing(s) the header did not carry:`,
+      ),
+      'the page is the one artifact a person opens, and it said less than the console did: the gate ran, and nothing ' +
+        'on the page could show it. A figure carried over from the build would describe a different run — a bare ' +
+        'directory skips what only a rig spec can supply',
+    );
+
+    // CLI108
+    const pairHtml = join(work, 'pair.html');
+    const swappedHtml = join(work, 'swapped.html');
+    const pair = runCli(['preview', '--candidate', green.outDir, '--candidate', refused.outDir, '--out', pairHtml]);
+    const swapped = runCli(['preview', '--candidate', refused.outDir, '--candidate', green.outDir, '--out', swappedHtml]);
+    const dupHtml = join(work, 'dup.html');
+    const dup = runCli([
+      'preview', '--candidate', green.outDir, '--candidate', join(green.outDir, 'skeleton.json'), '--out', dupHtml,
+    ]);
+    const paneOrder = (page: string): string[] =>
+      [...page.matchAll(/<section class="pane">\n {2}<header><b>([^<]*)<\/b>/g)].map((m) => unescape(m[1]));
+    const stageOrder = (page: string): string[] => [...page.matchAll(/<div class="stage" id="([^"]+)">/g)].map((m) => m[1]);
+    const pairPage = readIfThere(pairHtml);
+    const swappedPage = readIfThere(swappedHtml);
+    const greenSkeleton = join(resolve(green.outDir), 'skeleton.json');
+    const refusedSkeleton = join(resolve(refused.outDir), 'skeleton.json');
+    const paneProbes = [
+      ...(pair.status === 0 && swapped.status === 0 ? [] : [`two candidates exited ${String(pair.status)} and ${String(swapped.status)}`]),
+      ...(JSON.stringify(paneOrder(pairPage)) === JSON.stringify([greenSkeleton, refusedSkeleton])
+        ? []
+        : [`the pair's panes are ${JSON.stringify(paneOrder(pairPage))}, not green then refused`]),
+      ...(JSON.stringify(paneOrder(swappedPage)) === JSON.stringify([refusedSkeleton, greenSkeleton])
+        ? []
+        : [`the swapped pair's panes are ${JSON.stringify(paneOrder(swappedPage))}, not refused then green`]),
+      ...(JSON.stringify(gateSpans(pairPage).map((s) => s.state)) === JSON.stringify(['green', 'refused'])
+        ? []
+        : [`the pair's gate lines are ${JSON.stringify(gateSpans(pairPage).map((s) => s.state))}, not one per pane in order`]),
+      ...(JSON.stringify(stageOrder(pairPage)) === JSON.stringify(['rigc-player-1', 'rigc-player-2'])
+        ? []
+        : [`the pair mounts its players in ${JSON.stringify(stageOrder(pairPage))}`]),
+      ...(pairPage.includes('spine-runtimes-license') && pairPage.includes(PLAYER_SCRIPT_URL)
+        ? []
+        : ['the pair does not reference the player line or name its licence']),
+      ...(pairPage.includes(MANIFEST_ELEMENT_ID) || pairPage.includes('data-choice') ? ['the pair carries the ballot\'s manifest or its vote'] : []),
+      ...(dup.status === 2 && dup.stderr.includes(`is ${realpathSync(greenSkeleton)}, which --candidate`) && !existsSync(dupHtml)
+        ? []
+        : [`one skeleton spelled two ways: exit ${String(dup.status)}, stderr ${JSON.stringify(dup.stderr.split('\n')[0])}`]),
+    ];
+    const paneHeld = paneProbes.length === 0;
+    say(
+      'CLI108_PREVIEW_PUTS_A_PANE_PER_CANDIDATE_IN_THE_ORDER_GIVEN_AND_REFUSES_ONE_SKELETON_TWICE',
+      paneHeld,
+      probeDetail(
+        paneHeld,
+        paneProbes,
+        `two candidates, two panes in the order given either way round, each headed by its own path and gate line; ` +
+          `the directory and its skeleton.json together exit 2 naming the one file both resolve to, and write no page`,
+        (count) => `${count} thing(s) the page of panes did wrong:`,
+      ),
+      'two rigs side by side is what an agent built by hand, and vote is the wrong tool for it — it asks a question, ' +
+        'hides the paths, and records an answer',
+    );
+
+    // CLI109 — the one-candidate page, rebuilt in process from the same files
+    // with the CLI's own gate, is the CLI's page byte for byte; with any other
+    // gate it differs on one line, and that line is the header.
+    const skeletonText = readIfThere(join(green.outDir, 'skeleton.json'));
+    const atlasText = readIfThere(join(green.outDir, 'skeleton.atlas'));
+    const pages = atlasText === '' ? [] : atlasPageNames(atlasText).map((name) => ({ name, bytes: readFileSync(join(green.outDir, name)) }));
+    const animations = skeletonText === '' ? [] : Object.keys((JSON.parse(skeletonText) as { animations?: object }).animations ?? {});
+    const rebuilt = (gate: PreviewGate): string =>
+      buildPreview({
+        skeletonText,
+        atlasText,
+        pages,
+        animation: animations[0] ?? null,
+        animations,
+        label: greenSkeleton,
+        version,
+        gate,
+      });
+    const cliPage = readIfThere(greenHtml);
+    const same = rebuilt({ summary: greenSays.summary, refusal: null });
+    const other = rebuilt({ summary: refusedSays.summary, refusal: refusedSays.firstFail });
+    const cliLines = cliPage.split('\n');
+    const otherLines = other.split('\n');
+    const differing = cliLines.flatMap((line, i) => (line === otherLines[i] ? [] : [i]));
+    const oneLineProbes = [
+      ...(cliPage !== '' && same === cliPage ? [] : ['the page rebuilt in process with the CLI\'s gate is not the CLI\'s page byte for byte']),
+      ...(cliLines.length === otherLines.length ? [] : [`another gate changes the line count, ${cliLines.length} to ${otherLines.length}`]),
+      ...(differing.length === 1 && cliLines[differing[0]].startsWith('<header>')
+        ? []
+        : [`another gate changes ${differing.length} line(s): ${differing.slice(0, 3).map((i) => JSON.stringify(cliLines[i].slice(0, 60))).join(', ')}`]),
+    ];
+    const oneLineHeld = oneLineProbes.length === 0;
+    say(
+      'CLI109_THE_ONE_CANDIDATE_PAGE_DEPENDS_ON_THE_GATE_ON_ITS_HEADER_LINE_ALONE',
+      oneLineHeld,
+      probeDetail(
+        oneLineHeld,
+        oneLineProbes,
+        `the CLI's page is the in-process page for the same files and gate, byte for byte (${(cliPage.length / 1024).toFixed(1)} KiB), ` +
+          `and another gate moves line ${differing[0] + 1} of ${cliLines.length}, the header, and nothing else`,
+        (count) => `${count} way(s) the gate reaches past the header:`,
+      ),
+      'a one-candidate page that differs from the page before this change anywhere but its header is a change ' +
+        'nobody asked for, and the header is the only line the gate has any business in',
     );
     rmSync(work, { recursive: true, force: true });
   }
