@@ -1,6 +1,6 @@
 ---
 name: rigc
-description: Author, build and validate Spine 4.3 skeleton data (skeleton.json plus its .atlas) from loose part PNGs with rigc, the rig compiler that verifies its own output through a spine-core round-trip before writing it. Use for any request to make a Spine rig or Spine animation from PNG parts, to run or read rigc build, validate, render, preview, check or vote, or to write or fix a *.rig.json or *.motion.json spec; it says which shipped guide to open for the need at hand. Not for Live2D conversion, cutting an illustration into parts, or real-time face tracking.
+description: Author, build and validate Spine 4.3 skeleton data (skeleton.json plus its .atlas) from loose part PNGs with rigc, the rig compiler that verifies its own output through a spine-core round-trip before writing it. Use for any request to make a Spine rig or Spine animation from PNG parts, or where the source is a Live2D, Unity or video model whose pictures you can render, to run or read rigc build, validate, render, preview, check or vote, or to write or fix a *.rig.json or *.motion.json spec; it says which shipped guide to open for the need at hand. Not for Live2D conversion, cutting an illustration into parts, or real-time face tracking.
 license: MIT
 compatibility: Requires Bun 1.2 or later. The tool is the npm package spine-rigc (bunx spine-rigc, or bun add -d spine-rigc); the command it installs is rigc.
 ---
@@ -55,17 +55,37 @@ skill the package ships there, and `rigc skills --help` says what it refuses.
    §4.11.2.
 4. `rigc render --candidate <out>` or `rigc preview --candidate <out>` — look at
    it. A rig with its head off its torso passes the gate; looking is what catches it.
-   When a frame looks wrong, `render --hide <slot>` (or `--slot <slot,…>`) draws it
-   again without that part on the same grid, so the two frames say which part a pixel is.
+   Open one frame at full size, not only `contact.png`: the sheet is for spacing
+   across frames, and a defect is read on a frame. Ask it three things — is any
+   picture drawn twice, is there a straight edge where the art has none, does a part
+   cover a feature the art shows — and answer each with `render --hide <slot>` (or
+   `--slot <slot,…>`), which draws the frame again without that part on the same
+   grid, so the two frames say which part a pixel is. AUTHORING §0 holds the three.
 5. `rigc check --candidate <out> --frames <dir>` when you have reference pictures
    (`--out <dir>` writes the picture each of its numbers came from — open the worst);
    `rigc vote --candidate <a> --candidate <b>` when several candidates are green and
    only a person can choose between them.
 6. `rigc validate <out>` re-gates artifacts already on disk, and
    `rigc <command> --help` is each command's own flag table.
+7. Every finished unit ends with `rigc preview --candidate <out>`, and the report
+   names the `.html` it wrote. The hand-off to a person is part of the work.
 
 The loop in full, with `pose` before it and `chainfit` after the first build:
 AUTHORING §0.
+
+## When the source is not loose PNGs
+
+A Live2D model, a Unity scene or a video is a player, not a set of parts. Make the
+reference frames first: render the source at the rate you will check at, into one
+directory of `f0000.png`, `f0001.png`…, and `rigc check --frames <that dir> --fps <rate>`
+reads them with no `frames.json`. A port with no reference frames is unmeasured,
+not finished. The parts are the source's own texture cut along its drawables, never
+a screenshot: a screenshot is the composed result, and a part cut from it carries
+every part under it. rigc reads none of those formats — FACE §11, the paragraph
+that opens *No Live2D file is read or written*
+([FACE.md](https://github.com/firejune/rigc/blob/main/docs/FACE.md#11-non-goals--stated-so-nobody-proposes-them-as-gaps)) —
+only the pictures they produce. The rule, the background those frames need and
+what a wrong one costs: AUTHORING §0, *When the source is a foreign player*.
 
 ## Which guide, for which need
 
