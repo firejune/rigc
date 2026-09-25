@@ -6298,6 +6298,104 @@ function runCheckSuite(): number | null {
     );
     rmSync(work, { recursive: true, force: true });
   }
+
+  // --- C44-C45: a clipped candidate, through the CLI (issue #844) ----------
+  //
+  // `check` draws the candidate through the same `piecesOf` as `render`, so the
+  // clip reaches its figures by construction — which is exactly what has to be
+  // seen rather than assumed: an identity run that stays at zero with the clip
+  // applied on both sides, and a candidate whose only difference from the frames
+  // is the clip reading as different.
+  {
+    const say = (name: string, ok: boolean, detail: string, why: string): void => {
+      bad += reportCase(name, ok, detail, why);
+    };
+    const clippedProbe = writeClipProbe('clipped');
+    const bareProbe = writeClipProbe('bare');
+    const clipRender = (probe: ClipProbe): { dir: string; status: number | null; stderr: string } => {
+      const dir = join(probe.dir, 'frames');
+      const run = runCli(['render', '--candidate', probe.outDir, '--out', dir]);
+      return { dir, status: run.status, stderr: run.stderr };
+    };
+    type ClipCheckReport = { animations: Array<{ dir: string; compared: number; meanMae: number; worstMae: number }> };
+    const clipCheck = (probe: ClipProbe, framesDir: string, name: string): { status: number | null; report: ClipCheckReport | null; stderr: string } => {
+      const json = join(probe.dir, `${name}.json`);
+      const run = runCli(['check', '--candidate', probe.outDir, '--frames', framesDir, '--json', json]);
+      const report = existsSync(json) ? (JSON.parse(readFileSync(json, 'utf8')) as ClipCheckReport) : null;
+      return { status: run.status, report, stderr: run.stderr };
+    };
+    const ownFramesOf = clipRender(clippedProbe);
+    const bareFramesOf = clipRender(bareProbe);
+    const setup = [
+      ...[clippedProbe, bareProbe].flatMap((probe) =>
+        probe.posable === null ? [`the "${probe.variant}" clip fixture did not build: ${probe.buildError}`] : [],
+      ),
+      ...[ownFramesOf, bareFramesOf].flatMap((r) =>
+        r.status === 0 ? [] : [`render into ${r.dir} exited ${String(r.status)}: ${r.stderr.split('\n')[0]}`],
+      ),
+    ];
+
+    // C44
+    const identityRun = clipCheck(clippedProbe, ownFramesOf.dir, 'identity');
+    const identitySets = identityRun.report?.animations ?? [];
+    const identityProbes = [
+      ...setup,
+      ...(identityRun.status === 0 ? [] : [`check exited ${String(identityRun.status)}: ${identityRun.stderr.split('\n')[0]}`]),
+      ...floorProbes(
+        [[identitySets.reduce((n, a) => n + a.compared, 0), 1, `${identitySets.length} set(s) compared ${identitySets.reduce((n, a) => n + a.compared, 0)} frame(s)`]],
+        'so an identity reading of zero would be a reading of nothing',
+      ),
+      ...identitySets.flatMap((a) =>
+        a.meanMae === 0 && a.worstMae === 0
+          ? []
+          : [`set "${a.dir}": the clipped rig against its own render reads MAE mean ${a.meanMae} worst ${a.worstMae}`],
+      ),
+    ];
+    const identityHeld = identityProbes.length === 0;
+    say(
+      'C44_A_CLIPPED_RIG_AGAINST_ITS_OWN_RENDER_READS_ZERO',
+      identityHeld,
+      probeDetail(
+        identityHeld,
+        identityProbes,
+        `the clipped fixture against its own render: ${identitySets.map((a) => `${a.dir} ${a.compared} frame(s) MAE mean ${a.meanMae} worst ${a.worstMae}`).join('; ')}`,
+        (count) => `${count} thing(s) the identity run did not read as zero:`,
+      ),
+      'the floor every clipped figure is read against: the clipper runs in both halves of the comparison, and a ' +
+        'mask applied on one side of it and not the other would put the whole masked area into a figure about nothing',
+    );
+
+    // C45
+    const crossRun = clipCheck(clippedProbe, bareFramesOf.dir, 'cross');
+    const crossSets = crossRun.report?.animations ?? [];
+    const crossProbes = [
+      ...setup,
+      ...(crossRun.status === 0 ? [] : [`check exited ${String(crossRun.status)}: ${crossRun.stderr.split('\n')[0]}`]),
+      ...floorProbes(
+        [[crossSets.reduce((n, a) => n + a.compared, 0), 1, `${crossSets.length} set(s) compared ${crossSets.reduce((n, a) => n + a.compared, 0)} frame(s)`]],
+        'so a candidate read as different would be read from no frame at all',
+      ),
+      ...crossSets.flatMap((a) =>
+        a.meanMae > 0
+          ? []
+          : [`set "${a.dir}": the clipped rig against the same rig's unclipped frames reads MAE mean ${a.meanMae} — the clip is invisible to check`],
+      ),
+    ];
+    const crossHeld = crossProbes.length === 0;
+    say(
+      'C45_CHECK_TELLS_A_CLIPPED_RIG_FROM_THE_SAME_RIG_UNCLIPPED',
+      crossHeld,
+      probeDetail(
+        crossHeld,
+        crossProbes,
+        `the clipped fixture against the unclipped one's frames: ${crossSets.map((a) => `${a.dir} ${a.compared} frame(s) MAE mean ${a.meanMae.toFixed(2)} worst ${a.worstMae.toFixed(2)}`).join('; ')}`,
+        (count) => `${count} set(s) where the clip made no difference to check:`,
+      ),
+      'issue #844: the two differ by exactly the pixels a mask removes, and before the clip reached the rasteriser ' +
+        '`check` read them as one rig — the MAE-zero verdict on a wrong mask, which is the silence this tool exists to name',
+    );
+    for (const probe of [clippedProbe, bareProbe]) rmSync(probe.dir, { recursive: true, force: true });
+  }
   return bad;
 }
 
@@ -60263,7 +60361,241 @@ function runSeeItSuite(): number {
       'that would have worked',
   );
 
+  // --- R13-R15: a clipping attachment masks what it clips (issue #844) ------
+  //
+  // `piecesOf` skipped a clipping attachment as "draws no pixel", so every slot
+  // it clips drew whole: a blink read as irises over closed lids, and `check`
+  // blamed the rig for it. Everything below is counted off rendered pixels and
+  // the clip's own posed polygon, which spine-core computes — never off the
+  // numbers in the fixture table, which only choose a polygon smaller than both
+  // parts so each of them has pixels to lose.
+  const clipped = writeClipProbe('clipped');
+  const bare = writeClipProbe('bare');
+  const ended = writeClipProbe('ended');
+  const clipBuilds = [clipped, bare, ended].flatMap((probe) =>
+    probe.posable === null ? [`the "${probe.variant}" clip fixture did not build: ${probe.buildError}`] : [],
+  );
+
+  // R13 — inside the clip, nothing of the clipped slot is drawn outside the polygon.
+  const clippedBlock = clipSlotPixels(clipped, 'block');
+  const bareBlock = clipSlotPixels(bare, 'block');
+  const maskProbes = [
+    ...clipBuilds,
+    ...(clippedBlock.outside === 0
+      ? []
+      : [`slot "block" draws ${clippedBlock.outside} px outside the clip polygon with the clip on — the clip was not applied`]),
+    ...floorProbes(
+      [
+        [clippedBlock.inside, 1, `slot "block" draws ${clippedBlock.inside} px inside the polygon with the clip on`],
+        [bareBlock.outside, 1, `slot "block" draws ${bareBlock.outside} px outside the polygon with the clip removed`],
+      ],
+      'so a clip that erased the whole slot, or a fixture whose part never reached past the polygon, would read as a ' +
+        'working mask',
+    ),
+  ];
+  const maskHeld = maskProbes.length === 0;
+  say(
+    'R13_A_CLIP_REMOVES_EVERY_PIXEL_OF_ITS_SLOT_OUTSIDE_THE_POLYGON',
+    maskHeld,
+    probeDetail(
+      maskHeld,
+      maskProbes,
+      `slot "block" under the clip draws ${clippedBlock.inside} px inside its posed polygon and 0 outside it; the ` +
+        `same skeleton with the clip removed draws ${bareBlock.outside} px outside it`,
+      (count) => `${count} thing(s) the clip did not do:`,
+    ),
+    'issue #844: the runtime removes these pixels and the rasteriser drew them, so every figure `check` took over a ' +
+      'masked slot was a figure about pixels no player shows — and it was silent',
+  );
+
+  // R14 — the clip ends AT its end slot: that slot is clipped, the next one is not.
+  const endedMarker = clipSlotPixels(ended, 'marker');
+  const bareMarker = clipSlotPixels(bare, 'marker');
+  const endedBlock = clipSlotPixels(ended, 'block');
+  const endProbes = [
+    ...clipBuilds,
+    ...(endedMarker.outside === 0
+      ? []
+      : [`the end slot "marker" draws ${endedMarker.outside} px outside the polygon — the clip ended before it`]),
+    ...floorProbes(
+      [[bareMarker.outside, 1, `slot "marker" draws ${bareMarker.outside} px outside the polygon with the clip removed`]],
+      'so the end slot being clipped would be true of a part the polygon never cut',
+    ),
+    ...(endedBlock.pixels !== null && endedBlock.pixels.equals(bareBlock.pixels ?? Buffer.alloc(0))
+      ? []
+      : [
+          `slot "block", drawn after the end slot, renders ${endedBlock.pixels === null ? 'nothing' : 'a different frame'} ` +
+            `from the same slot with no clip at all (${endedBlock.outside} px outside the polygon against ` +
+            `${bareBlock.outside})`,
+        ]),
+  ];
+  const endHeld = endProbes.length === 0;
+  say(
+    'R14_THE_CLIP_ENDS_AT_ITS_END_SLOT_AND_THE_SLOT_AFTER_IT_IS_DRAWN_WHOLE',
+    endHeld,
+    probeDetail(
+      endHeld,
+      endProbes,
+      `with the clip ending at "marker", "marker" draws 0 px outside the polygon (${bareMarker.outside} without the ` +
+        'clip) and "block", drawn after it, is byte-identical to the frame of a skeleton with no clip',
+      (count) => `${count} thing(s) the end slot did wrong:`,
+    ),
+    'spine-webgl ends a clip with `clipEnd(slot)` AFTER drawing each slot, so the end slot is inside the mask and the ' +
+      'one after it is not; a clip that ran on, or stopped one slot short, is the same silence R13 exists for',
+  );
+
+  // R15 — the framing box counts what the clip removes.
+  const framingOf = (probe: ClipProbe): string =>
+    probe.posable === null ? 'none' : JSON.stringify(framingViewport(probe.posable.data, 256));
+  const boxOf = (probe: ClipProbe): string =>
+    probe.posable === null ? 'none' : JSON.stringify(unionBounds([sampleSetupPose(probe.posable.data)]));
+  const framingProbes = [
+    ...clipBuilds,
+    ...(framingOf(clipped) === framingOf(bare)
+      ? []
+      : [`the clipped skeleton frames to ${framingOf(clipped)} and the same one unclipped to ${framingOf(bare)}`]),
+    // The sensitivity half: the drawn geometry has to shrink, or equal framings
+    // would be true of a clip that never cut anything the box could see.
+    ...(boxOf(clipped) !== boxOf(bare)
+      ? []
+      : ['the clipped pieces span the same box as the unclipped ones, so equal framings prove nothing about the clip']),
+  ];
+  const framingHeld = framingProbes.length === 0;
+  say(
+    'R15_A_CLIP_MOVES_NO_PIXEL_OF_THE_FRAMING',
+    framingHeld,
+    probeDetail(
+      framingHeld,
+      framingProbes,
+      `clipped and unclipped skeletons frame to the same viewport ${framingOf(clipped)}, while their drawn pieces ` +
+        `span ${boxOf(clipped)} against ${boxOf(bare)}`,
+      (count) => `${count} way(s) the clip reached the framing:`,
+    ),
+    'the viewport is a property of the shot, like the one `--slot`/`--hide` keep: framed on clipped geometry, adding ' +
+      'or keying a mask would move every pixel it leaves drawn and strand every frames.json already written for the rig',
+  );
+  for (const probe of [clipped, bare, ended]) rmSync(probe.dir, { recursive: true, force: true });
+
   return bad;
+}
+
+/** The clip fixture's polygon, in the bone's own space: smaller than both parts, so each has pixels to lose. */
+const CLIP_PROBE_POLYGON = [-2, -2, 2, -2, 2, 2, -2, 2];
+
+/**
+ * Which clip fixture: `clipped` masks `block` (clip → block → marker, ending at
+ * block); `bare` is the same skeleton with the clip slot left empty; `ended`
+ * masks `marker` and ends there, with `block` drawn after it.
+ */
+type ClipVariant = 'clipped' | 'bare' | 'ended';
+
+interface ClipProbe {
+  variant: ClipVariant;
+  dir: string;
+  outDir: string;
+  posable: Posable | null;
+  buildError: string;
+}
+
+/** The static probe rig with a clipping slot added, built through the CLI. */
+function writeClipProbe(variant: ClipVariant): ClipProbe {
+  const end = variant === 'ended' ? 'marker' : 'block';
+  const mask = { name: 'mask', bone: 'block', ...(variant === 'bare' ? {} : { attachment: 'mask' }) };
+  const parts =
+    variant === 'ended'
+      ? [{ name: 'marker', bone: 'block', attachment: 'marker' }, { name: 'block', bone: 'block', attachment: 'block' }]
+      : [{ name: 'block', bone: 'block', attachment: 'block' }, { name: 'marker', bone: 'block', attachment: 'marker' }];
+  const dirs = writeProbeRig({
+    slots: [mask, ...parts],
+    skins: {
+      default: {
+        block: { block: { image: 'block.png' } },
+        marker: { marker: { image: 'marker.png' } },
+        mask: {
+          mask: { type: 'clipping', vertexCount: CLIP_PROBE_POLYGON.length / 2, vertices: CLIP_PROBE_POLYGON, end },
+        },
+      },
+    },
+  });
+  // The empty clip slot states its emptiness: the compiler guesses no setup pose.
+  const motion = variant === 'bare' ? { ...SLIDE_MOTION, setup: { mask: { attachment: null } } } : SLIDE_MOTION;
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+  const build = runCli([
+    'build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir, '--copy-images',
+  ]);
+  const skeletonPath = join(dirs.outDir, 'skeleton.json');
+  const posable =
+    build.status === 0 && existsSync(skeletonPath)
+      ? loadPosable(skeletonPath, join(dirs.outDir, 'skeleton.atlas'), dirs.outDir)
+      : null;
+  return {
+    variant,
+    dir: dirs.dir,
+    outDir: dirs.outDir,
+    posable,
+    buildError: `exit=${String(build.status)} ${build.stderr.split('\n')[0]}`,
+  };
+}
+
+/**
+ * One slot of a clip fixture drawn alone at its setup pose, on the whole rig's
+ * grid, and its drawn pixels split by the clip's POSED polygon — which spine-core
+ * computes off the skeleton, so the split is measured rather than restated from
+ * `CLIP_PROBE_POLYGON`. A pixel counts as outside only when its centre is outside
+ * the polygon by more than a millionth of a pixel: a centre on the boundary is the
+ * rasteriser's fill rule to decide, not a leak.
+ */
+function clipSlotPixels(probe: ClipProbe, slot: string): { inside: number; outside: number; pixels: Buffer | null } {
+  if (probe.posable === null) return { inside: 0, outside: 0, pixels: null };
+  const { data, pages } = probe.posable;
+  const viewport = framingViewport(data, 256);
+  if (viewport === null) return { inside: 0, outside: 0, pixels: null };
+  const plate = renderFrame(sampleSetupPose(data, { slots: [slot] })[0], pages, viewport, BACKGROUND);
+
+  const skeleton = new Skeleton(data);
+  skeleton.setupPose();
+  skeleton.update(0);
+  skeleton.updateWorldTransform(Physics.reset);
+  const maskSlot = skeleton.findSlot('mask');
+  const clip = data.defaultSkin?.getAttachment(data.findSlot('mask')?.index ?? -1, 'mask');
+  if (maskSlot === null || !(clip instanceof ClippingAttachment)) return { inside: 0, outside: 0, pixels: null };
+  const world = new Array<number>(clip.worldVerticesLength).fill(0);
+  clip.computeWorldVertices(skeleton, maskSlot, 0, clip.worldVerticesLength, world, 0, 2);
+  const project = projector(viewport);
+  const polygon: Array<[number, number]> = [];
+  for (let i = 0; i < world.length; i += 2) polygon.push(project(world[i], world[i + 1]));
+
+  const edgeDistance = (px: number, py: number): number => {
+    let best = Infinity;
+    for (let i = 0; i < polygon.length; i++) {
+      const [ax, ay] = polygon[i];
+      const [bx, by] = polygon[(i + 1) % polygon.length];
+      const t = Math.max(0, Math.min(1, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2)));
+      best = Math.min(best, Math.hypot(px - (ax + t * (bx - ax)), py - (ay + t * (by - ay))));
+    }
+    return best;
+  };
+  const contains = (px: number, py: number): boolean => {
+    let odd = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const [xi, yi] = polygon[i];
+      const [xj, yj] = polygon[j];
+      if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) odd = !odd;
+    }
+    return odd;
+  };
+  let inside = 0;
+  let outside = 0;
+  for (let y = 0; y < plate.height; y++) {
+    for (let x = 0; x < plate.width; x++) {
+      const [r, g, b, a] = plate.get(x, y);
+      if (r === BACKGROUND[0] && g === BACKGROUND[1] && b === BACKGROUND[2] && a === BACKGROUND[3]) continue;
+      if (contains(x + 0.5, y + 0.5) || edgeDistance(x + 0.5, y + 0.5) <= 1e-6) inside++;
+      else outside++;
+    }
+  }
+  return { inside, outside, pixels: Buffer.from(plate.data) };
 }
 
 // ---------------------------------------------------------------------------
