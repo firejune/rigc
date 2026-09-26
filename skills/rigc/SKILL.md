@@ -62,7 +62,12 @@ skill the package ships there, and `rigc skills --help` says what it refuses.
    `--slot <slot,…>`), which draws the frame again without that part on the same
    grid, so the two frames say which part a pixel is. AUTHORING §0 holds the three.
 5. `rigc check --candidate <out> --frames <dir>` when you have reference pictures
-   (`--out <dir>` writes the picture each of its numbers came from — open the worst);
+   (`--out <dir>` writes the picture each of its numbers came from — open the worst).
+   Read its output from the top: the framing block says whether the figures under
+   it are about placement or motion. A figure is where the loop starts, not where it
+   ends — keep the first green build's figure, check every later build against the
+   same frames, and stop when the figure stops moving, not when it exists; AUTHORING
+   §9.2 says how to read the framing block and the floor to read a figure against.
    `rigc vote --candidate <a> --candidate <b>` when several candidates are green and
    only a person can choose between them.
 6. `rigc validate <out>` re-gates artifacts already on disk, and
@@ -81,7 +86,10 @@ directory of `f0000.png`, `f0001.png`…, and `rigc check --frames <that dir> --
 reads them with no `frames.json`. A port with no reference frames is unmeasured,
 not finished. The parts are the source's own texture cut along its drawables, never
 a screenshot: a screenshot is the composed result, and a part cut from it carries
-every part under it. rigc reads none of those formats — FACE §11, the paragraph
+every part under it. Where a part goes is its drawable's geometry — its vertices in
+model space, its UVs, its triangles — which is a mesh attachment with those three
+(AUTHORING §3.4, *Mesh attachment*); a region at the drawable's bounding-box centre
+keeps only the box. rigc reads none of those formats — FACE §11, the paragraph
 that opens *No Live2D file is read or written*
 ([FACE.md](https://github.com/firejune/rigc/blob/main/docs/FACE.md#11-non-goals--stated-so-nobody-proposes-them-as-gaps)) —
 only the pictures they produce. The rule, the background those frames need and
