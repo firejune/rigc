@@ -141,7 +141,12 @@ result. There is no `--no-validate`, and there will not be one.
 Green from `build` means the file is valid; it says nothing at all about whether
 the animation is the one in the frames, and there is no assertion that could — see
 §9. The two run in that order because `check` needs artifacts on disk and `build`
-only writes them when the gate is green.
+only writes them when the gate is green. Read its report from the top, because the
+framing block says whether the figures under it are about placement or motion
+(§9.2, *Read the framing block first*), and read a figure as where the loop starts,
+not where it ends: keep the first green build's figure, check every later build
+against the same frames, and stop when the figure stops moving rather than when it
+exists — against a floor measured the way §9.2 says.
 
 🎞️ **When the source is a foreign player — a Live2D model, a Unity scene, a video —
 make the reference frames first, from the source.** rigc reads none of those
@@ -166,6 +171,11 @@ is valid and nothing about whether it is the source's picture. And the parts are
 the source's own texture cut along its drawables, **never a screenshot of it** — a
 screenshot is the composed result, so a part cut from it carries every part under
 it, which is what the first of the three questions under *LOOK* below finds.
+Where a part goes is the drawable's own geometry — its vertices in model space, its
+UVs and its triangles — which is a mesh attachment with those three (§3.4, *Mesh
+attachment*, where `uvs` are fractions of the region you cut rather than of the
+source's page); a region at the drawable's bounding-box centre keeps only the box,
+so no vertex the source moves has anywhere to go.
 
 🚨 **Read `check`'s per-frame column before its MAE.** The table's headline figures
 are the MAE and the slot drift, and a reader who came for those will skip the
