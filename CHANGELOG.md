@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.2](https://github.com/firejune/rigc/compare/v1.2.1...v1.2.2) (2026-09-26)
+
+
+### Documentation
+
+* **cases:** a case study — converting a Live2D model to Spine with the tree alone, and verifying the conversion ([#852](https://github.com/firejune/rigc/issues/852)) ([4079398](https://github.com/firejune/rigc/commit/4079398b7d07427565ed0c2e96169d81f09cc2a8))
+* **skills:** the loop reads check from the top and treats a figure as a start, and the foreign-player paragraph says where a drawable's part goes ([#850](https://github.com/firejune/rigc/issues/850)) ([ee24851](https://github.com/firejune/rigc/commit/ee24851efbb9300bddf1e0179b82b706dddaa7fd))
+
 ## [1.2.1](https://github.com/firejune/rigc/compare/v1.2.0...v1.2.1) (2026-09-25)
 
 
