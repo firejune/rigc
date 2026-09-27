@@ -2591,7 +2591,7 @@ that lists it — see §3.4.1, and note that the flag alone does nothing.
 that is deliberate. Every key on a constraint object is a Spine field the emitter
 writes; a statement to the gate about who turns the dial is what the artifact cannot
 say about itself, so it lives in `invariants.consumerDrivenMix` (§3.7), beside
-`deformMayFold` — the one other exemption from a named rule, which names its subject
+`deformMayFold` — another exemption from a named rule, which names its subject
 the same way.
 
 #### 3.5.1 `path` — bones that travel along a curve
@@ -3105,7 +3105,7 @@ is not an array. Every field is optional and each is the payload a firing
 Optional with one exception, and only meaningful for rigc's own formations:
 `meshSlots` and `meshTriangles` (the two halves of the mesh budget `A13` measures
 against), `axisBone`, `massBone`, `detached`, `deformMayFold`, `editorRoundTrip`,
-`consumerDrivenMix`.
+`consumerDrivenMix`, `idleDrivesMeshes`.
 Nothing in skeleton
 JSON records that a
 bone carries a cut's axis or that a parentage is forbidden, so the rig spec says it
@@ -3141,8 +3141,8 @@ loads and still animates and merely lies — something released into the world t
 must not ride the part that released it. [RIGGING.md](RIGGING.md) §10.3 has a
 worked one.
 
-🚨 **`deformMayFold` is one of the two fields here that turn a check OFF**
-(`consumerDrivenMix`, below, is the other), so it is held to a shape that is
+🚨 **`deformMayFold` is one of the three fields here that turn a check OFF**
+(`consumerDrivenMix` and `idleDrivesMeshes`, below, are the others), so it is held to a shape that is
 refused rather than skipped. It is
 `[{ "slot": …, "why": … }]`, it exempts that slot from
 `A39_DEFORM_KEEPS_TRIANGLE_WINDING`, and three shapes are compile errors: a slot
@@ -3215,6 +3215,37 @@ spelling of `gallery/look`'s rule that a face angle is a value rather than a tim
   above 0 — is refused at the gate: the declaration exempts nothing there.
 - What it buys is a **SKIP by name, never a pass** (§4.12 has the line). The
   declaration is a statement to the gate and changes no emitted byte.
+
+🎨 **`idleDrivesMeshes` says this rig's `idle` deforms meshes on purpose.** It is
+`{ "why": … }`, and it switches off `A15_IDLE_NO_MESH_BONE_KEYS` (§5.2). That rule
+assumes meshes are **mostly static**: the `spine-html` renderer skips redrawing a
+mesh nothing moved, so an `idle` keying a mesh's bone spends that skip on every
+frame. A **painting rig** is the genre where that is false by design — one
+illustration split into layers, most of them weighted meshes over bone chains, and
+an `idle` whose job is to move them (hair, sleeves, breathing). Without the field,
+the only way through is a parent bone above every keyed bone with the keys moved
+onto it: on the first such rig that was 42 extra bones for an identical pose.
+
+- Four shapes are compile errors, each naming `invariants.idleDrivesMeshes`: a
+  missing `why`, a blank one, one that is not a string, and anything that is not
+  an object (a bare `true` included, since it is a switch with no reason). A key
+  other than `why` is refused like any unknown key.
+- What it buys is a **SKIP, never a pass**, and the SKIP states the cost —
+  the keyed bones (all of them up to eight, then the first eight and `+k`), the
+  mesh attachments they drive and the vertices those hold, counted from each mesh's
+  loaded `worldVerticesLength`: `declared by the rig ("<why>"): idle keys N bone(s)
+  that drive M mesh attachment(s) totalling V vertices — "a", "b" — and each of
+  those meshes is recomputed on every frame it is shown`. "Drive" is A15's own reading: the mesh's slot bone, or a bone its weights name.
+  A mesh under a keyed bone's *descendant* also moves and is not counted, so the
+  figures are a floor.
+- ⛔ **A declaration nothing exercises is refused at the gate**, not skipped: an
+  `idle` that keys no mesh-driving bone, carries no bone timeline, or does not
+  exist fails A15 with `the rig "X" declares invariants.idleDrivesMeshes ("…"),
+  but "idle" keys no bone that drives a mesh, so the declaration switches off
+  nothing — remove it`. That is the `consumerDrivenMix` standard: an opt-out that
+  exempts nothing reads exactly like one that worked.
+- ⚠️ A15 is a renderer rule, so under `--profile spine` it reports `PROF` and the
+  declaration is not read at all, stale or not.
 
 ---
 
@@ -5487,7 +5518,7 @@ Fix A00 and run it again.
 | `A12_NO_DARK_COLOR` | renderer | a slot `dark` colour or an `rgba2`/`rgb2` timeline; parsed, then ignored |
 | `A13_MESH_BUDGET` | renderer | more mesh slots than the rig's `invariants.meshSlots`, or a mesh over its `invariants.meshTriangles`. Thin the mesh, or raise the budget in the rig spec. **SKIP** when the rig declares neither — which means *unmeasured*, not that the budget is inert: the same `meshSlots` is a **compile-time** refusal for rigc's own generators, before the gate (§3.7) **SKIP** also when the rig budgets **only** triangles and the skeleton carries no mesh. A declared slot budget still PASSes there, because zero mesh slots is a count measured against a ceiling |
 | `A14_NO_FULL_FRAME_MESH` | renderer | a mesh spans the whole stage — a full-frame canvas that can never dirty-skip. **SKIP** when the skeleton declares no stage (§3.1): there is no full frame to span, and *unmeasured* must not print the same green as *measured and clear* |
-| `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | the `idle` animation keys a bone that drives a mesh, directly or as a control bone. **SKIP** when there is no `idle` animation, or when the one there is carries no bone timeline — a rule whose subject does not exist is unmeasured and not satisfied |
+| `A15_IDLE_NO_MESH_BONE_KEYS` | renderer | the `idle` animation keys a bone that drives a mesh, directly or as a control bone. The rule assumes meshes are mostly static — the renderer skips redrawing a mesh nothing moved — so it has three states. **FAIL per bone** when the rig declares nothing: `idle keys bone "X", which drives a mesh — meshes never idle-skip`, and the **first** of those lines, once per run, names the case: `K bone(s) keyed by idle drive meshes; if this idle is meant to deform them (a painting rig), declare invariants.idleDrivesMeshes: { "why": … } in the rig spec — or, where the motion belongs to a pivot above the mesh, key that pivot one link up (FACE.md §3)`. It rides the first finding, so the count of FAIL lines is still the count of bones. **SKIP with the cost** when the rig declares `invariants.idleDrivesMeshes` (§3.7): `declared by the rig ("<why>"): idle keys N bone(s) that drive M mesh attachment(s) totalling V vertices — "a", "b" — and each of those meshes is recomputed on every frame it is shown`. **FAIL on a stale declaration** — declared, and the `idle` keys no mesh-driving bone, carries no bone timeline or does not exist: `the rig "X" declares invariants.idleDrivesMeshes ("…"), but "idle" keys no bone that drives a mesh, so the declaration switches off nothing — remove it`. Otherwise **SKIP** when there is no `idle` animation, or when the one there is carries no bone timeline — a rule whose subject does not exist is unmeasured and not satisfied |
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` label is not on the 4.3 line (`4.3`, `4.3.N`, `4.3.N-suffix`) |
 | `A17_ATLAS_PAGE_FILES_EXIST` | both | a page the atlas declares is not a file. Check `--images` and `--out`. **SKIP** when the atlas declares no page — as it is for `A06`, `A19` and `A27`; see `A07` |
 | `A18_DETERMINISTIC_EMIT` | both | a second compile of the same inputs differed. That is a compiler bug, not a spec bug — report it |

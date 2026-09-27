@@ -2317,23 +2317,57 @@ export function validate(input: ValidateInput): ValidateReport {
     });
 
     // --- A15: idle must not key a mesh-driving bone (dirty-skip lever) -----
+    //
+    // 🔑 The rule assumes meshes are mostly static: the renderer it serves skips
+    // redrawing a mesh nothing moved, and an `idle` keying one of its bones spends
+    // that skip on every frame. A painting rig is the genre where the assumption
+    // is false by design (issues #855, #858) — one illustration in layers, most
+    // of them weighted meshes, and an `idle` whose job is to move them — so the
+    // rig can say so in `invariants.idleDrivesMeshes`, and the rule then reports
+    // what the declaration costs instead of refusing each bone.
     check('A15_IDLE_NO_MESH_BONE_KEYS', () => {
-      const meshBoneNames = new Set<string>();
-      for (const slotIndex of meshSlots) meshBoneNames.add(data.slots[slotIndex].boneData.name);
-      // The slot's own bone is not the whole story once weights exist: a ring
-      // mesh is driven by its CONTROL bone, which is a different bone entirely.
-      // Checking only the slot bone would let `idle` key the one bone that
-      // actually dirties the canvas every frame.
-      for (const mesh of meshAttachments) {
-        if (!mesh.bones) continue;
-        for (let i = 0; i < mesh.bones.length; ) {
-          const boneCount = mesh.bones[i++];
-          for (let n = 0; n < boneCount; n++, i++) {
-            const bone = data.bones[mesh.bones[i]];
-            if (bone) meshBoneNames.add(bone.name);
+      const A15 = 'A15_IDLE_NO_MESH_BONE_KEYS';
+      /**
+       * Every mesh attachment, loaded, with the bones that drive it — its slot's
+       * bone, and, once weights exist, every bone its weights name. A ring mesh
+       * is driven by its CONTROL bone, a different bone from the slot's, and
+       * checking only the slot bone would let `idle` key the one bone that
+       * actually dirties the canvas every frame.
+       */
+      const meshDrivers: Array<{ mesh: MeshAttachment; bones: Set<string> }> = [];
+      for (const skin of data.skins) {
+        for (const entry of skin.getAttachments()) {
+          const mesh = entry.attachment;
+          if (!(mesh instanceof MeshAttachment)) continue;
+          const bones = new Set<string>([data.slots[entry.slotIndex].boneData.name]);
+          if (mesh.bones) {
+            for (let i = 0; i < mesh.bones.length; ) {
+              const boneCount = mesh.bones[i++];
+              for (let n = 0; n < boneCount; n++, i++) {
+                const bone = data.bones[mesh.bones[i]];
+                if (bone) bones.add(bone.name);
+              }
+            }
           }
+          meshDrivers.push({ mesh, bones });
         }
       }
+      const meshBoneNames = new Set<string>();
+      for (const { bones } of meshDrivers) for (const name of bones) meshBoneNames.add(name);
+      const declared = input.rig?.idleDrivesMeshes ?? null;
+      /**
+       * A declaration that switches off nothing is refused rather than skipped,
+       * the standard `consumerDrivenMix` is held to: an opt-out that exempts
+       * nothing reads exactly like one that worked, and the next reader cannot
+       * tell the rig that needs it from the rig it was copied onto.
+       */
+      const stale = (why: string): void => {
+        fail(
+          A15,
+          `the rig "${input.rig?.archetype}" declares invariants.idleDrivesMeshes ("${declared}"), but ${why}, so the ` +
+            'declaration switches off nothing — remove it',
+        );
+      };
       // The same shape as A06's and A17's guards, found by auditing for it
       // (#568): a rig with no `idle` at all has nothing here to be wrong, and a
       // rule that reports "held" over a subject that does not exist is the
@@ -2342,15 +2376,45 @@ export function validate(input: ValidateInput): ValidateReport {
       // versus one that keys no bone.
       const idle = isObj(raw?.animations) ? (raw.animations as Json).idle : undefined;
       if (!isObj(idle)) {
-        return skip('A15_IDLE_NO_MESH_BONE_KEYS', 'the skeleton declares no "idle" animation, so nothing here can key a mesh-driving bone');
+        if (declared !== null) return stale('the skeleton declares no "idle" animation');
+        return skip(A15, 'the skeleton declares no "idle" animation, so nothing here can key a mesh-driving bone');
       }
       if (!isObj(idle.bones)) {
-        return skip('A15_IDLE_NO_MESH_BONE_KEYS', '"idle" carries no bone timeline at all, so there is no key to hold against the mesh-driving bones');
+        if (declared !== null) return stale('"idle" carries no bone timeline at all');
+        return skip(A15, '"idle" carries no bone timeline at all, so there is no key to hold against the mesh-driving bones');
       }
-      for (const boneName of Object.keys(idle.bones as Json)) {
-        if (meshBoneNames.has(boneName)) {
-          fail('A15_IDLE_NO_MESH_BONE_KEYS', `idle keys bone "${boneName}", which drives a mesh — meshes never idle-skip`);
-        }
+      const keyed = Object.keys(idle.bones as Json).filter((name) => meshBoneNames.has(name));
+      if (declared !== null) {
+        if (keyed.length === 0) return stale('"idle" keys no bone that drives a mesh');
+        const keyedSet = new Set(keyed);
+        const moved = meshDrivers.filter(({ bones }) => [...bones].some((name) => keyedSet.has(name)));
+        // `worldVerticesLength` is two numbers per vertex whatever the encoding,
+        // which is the count the runtime recomputes; reading `vertices.length`
+        // would count a weighted mesh's bone entries instead.
+        const vertices = moved.reduce((sum, { mesh }) => sum + mesh.worldVerticesLength / 2, 0);
+        const SHOWN = 8;
+        const names =
+          keyed.slice(0, SHOWN).map((name) => `"${name}"`).join(', ') + (keyed.length > SHOWN ? ` +${keyed.length - SHOWN}` : '');
+        return skip(
+          A15,
+          `declared by the rig ("${declared}"): idle keys ${keyed.length} bone(s) that drive ${moved.length} mesh ` +
+            `attachment(s) totalling ${vertices} vertices — ${names} — and each of those meshes is recomputed on every ` +
+            'frame it is shown',
+        );
+      }
+      for (const [i, boneName] of keyed.entries()) {
+        // The case is named once, on the first line an agent reads, rather than
+        // after every bone: the first painting rig this met printed 42 of these,
+        // and 42 identical sentences read as 42 separate mistakes. It rides the
+        // first finding rather than being a finding of its own, so the count of
+        // FAIL lines is still the count of bones.
+        const hint =
+          i > 0
+            ? ''
+            : `. ${keyed.length} bone(s) keyed by idle drive meshes; if this idle is meant to deform them (a painting ` +
+              'rig), declare invariants.idleDrivesMeshes: { "why": … } in the rig spec — or, where the motion belongs to ' +
+              'a pivot above the mesh, key that pivot one link up (FACE.md §3)';
+        fail(A15, `idle keys bone "${boneName}", which drives a mesh — meshes never idle-skip${hint}`);
       }
     });
 

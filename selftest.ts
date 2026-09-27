@@ -577,6 +577,21 @@ interface Mutant {
    */
   profile?: ValidateProfile;
   mutate: (a: Artifacts) => Artifacts;
+  /**
+   * The rig info to gate the break under, derived from the pristine build's —
+   * for a rule that reads a DECLARATION as well as the file (issue #855: A15
+   * reads `invariants.idleDrivesMeshes`). Absent means the pristine rig info,
+   * which is what every other row runs under. That the declaration reaches
+   * `RigInfo` from a rig spec at all is the rig suite's control, not this one.
+   */
+  rig?: (rig: CompileResult['rig']) => CompileResult['rig'];
+  /**
+   * A further reading the report must satisfy beyond which assertion fired,
+   * with what was read either way — printed under the verdict, so a pass shows
+   * the figures it passed on. For a verdict whose TEXT is the product: a count,
+   * a hint that must appear exactly once.
+   */
+  holds?: (report: ReturnType<typeof validate>, broken: Artifacts) => { held: boolean; read: string };
 }
 
 const editJson = (text: string, f: (j: Record<string, unknown>) => void): string => {
@@ -584,6 +599,64 @@ const editJson = (text: string, f: (j: Record<string, unknown>) => void): string
   f(j);
   return `${JSON.stringify(j, null, 2)}\n`;
 };
+
+/**
+ * What A15 should report a declared idle as costing, read off the skeleton TEXT
+ * rather than the loaded data A15 reads (issue #855): which of `keyed` drive a
+ * mesh, how many mesh attachments they drive, and how many vertices those hold.
+ *
+ * A mesh's drivers are its slot's bone and every bone its weights name; its
+ * vertex count is `uvs.length / 2`, which the file states whatever the vertex
+ * encoding. The weight walk is the file's own: when `vertices` is longer than
+ * `uvs` each vertex is `count` followed by `count` runs of (bone, x, y, weight).
+ */
+function idleMeshCost(skeletonText: string, keyed: string[]): { bones: string[]; meshes: number; vertices: number } {
+  const j = JSON.parse(skeletonText) as {
+    bones: Array<{ name: string }>;
+    slots: Array<{ name: string; bone: string }>;
+    skins: Array<{ attachments?: Record<string, Record<string, { type?: string; uvs?: number[]; vertices?: number[] }>> }>;
+  };
+  const slotBone = new Map(j.slots.map((slot) => [slot.name, slot.bone]));
+  const want = new Set(keyed);
+  const driving = new Set<string>();
+  let meshes = 0;
+  let vertices = 0;
+  for (const skin of j.skins) {
+    for (const [slot, table] of Object.entries(skin.attachments ?? {})) {
+      for (const att of Object.values(table)) {
+        if (att.type !== 'mesh' || !att.uvs || !att.vertices) continue;
+        const drivers = new Set<string>([slotBone.get(slot) ?? '']);
+        if (att.vertices.length > att.uvs.length) {
+          for (let i = 0; i < att.vertices.length; ) {
+            const count = att.vertices[i++];
+            for (let n = 0; n < count; n++, i += 4) drivers.add(j.bones[att.vertices[i]].name);
+          }
+        }
+        const hit = [...drivers].filter((name) => want.has(name));
+        if (hit.length === 0) continue;
+        for (const name of hit) driving.add(name);
+        meshes++;
+        vertices += att.uvs.length / 2;
+      }
+    }
+  }
+  return { bones: keyed.filter((name) => driving.has(name)), meshes, vertices };
+}
+
+/** The why every A15 declaration row below declares. */
+const IDLE_DRIVES_WHY = 'a painting rig: the idle sways every layer on purpose';
+
+/** The overlay probe's idle keying its iris mesh's slot bone AND its control bone — two bones that drive a mesh. */
+const keyIrisInIdle = (a: Artifacts): Artifacts => ({
+  ...a,
+  skeletonText: editJson(a.skeletonText, (j) => {
+    const idle = (j.animations as Record<string, Record<string, unknown>>).idle;
+    idle.bones = {
+      iris: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 4 }] },
+      iris_aperture: { scale: [{ time: 0, x: 1, y: 1 }] },
+    };
+  }),
+});
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const MUTANTS: Mutant[] = [
@@ -978,6 +1051,99 @@ const MUTANTS: Mutant[] = [
         };
       }),
     }),
+  },
+  {
+    // 🔑 The positive control for issue #855: the same kind of break as M19,
+    // on a rig that says its idle deforms meshes on purpose. What must hold is
+    // not "accepted" alone — it is that A15 SKIPs rather than passes (the rule
+    // was switched off, not satisfied) and that the SKIP's three figures are the
+    // ones this file computes from the skeleton text by its own walk.
+    name: 'M90_a_declared_painting_idle_skips_with_its_cost',
+    origin: 'issue #855: 42 refusals on a rig whose idle was meant to deform every mesh, and 42 extra bones to get past them',
+    expect: null,
+    mutate: keyIrisInIdle,
+    rig: (rig) => ({ ...rig, idleDrivesMeshes: IDLE_DRIVES_WHY }),
+    holds: (report, broken) => {
+      const said = report.skipped.find((s) => s.assertion === 'A15_IDLE_NO_MESH_BONE_KEYS')?.reason ?? '';
+      const cost = idleMeshCost(broken.skeletonText, ['iris', 'iris_aperture']);
+      const figures =
+        `idle keys ${cost.bones.length} bone(s) that drive ${cost.meshes} mesh attachment(s) totalling ${cost.vertices} vertices`;
+      const held =
+        cost.bones.length === 2 &&
+        cost.meshes > 0 &&
+        said.includes(`("${IDLE_DRIVES_WHY}")`) &&
+        said.includes(figures) &&
+        cost.bones.every((name) => said.includes(`"${name}"`)) &&
+        !report.passed.includes('A15_IDLE_NO_MESH_BONE_KEYS');
+      return {
+        held,
+        read:
+          `this file's own walk reads "${figures}"; A15 ` +
+          (said === ''
+            ? `did not skip — it is in ${report.passed.includes('A15_IDLE_NO_MESH_BONE_KEYS') ? '`passed`' : 'neither list'}`
+            : `skipped: ${said}`),
+      };
+    },
+  },
+  {
+    // The same break without the declaration: refused per bone as it always was,
+    // and the genre named ONCE — on the first line, not after every bone.
+    name: 'M91_idle_keys_two_mesh_bones_and_the_case_is_named_once',
+    origin: 'issue #855: the first painting rig read as 42 separate mistakes because nothing said they were one case',
+    expect: 'A15_IDLE_NO_MESH_BONE_KEYS',
+    mutate: keyIrisInIdle,
+    holds: (report) => {
+      const lines = report.failures.filter((f) => f.assertion === 'A15_IDLE_NO_MESH_BONE_KEYS');
+      const hinted = lines.filter((f) => f.detail.includes('invariants.idleDrivesMeshes'));
+      const held =
+        lines.length === 2 &&
+        hinted.length === 1 &&
+        lines[0] === hinted[0] &&
+        hinted[0].detail.includes('2 bone(s) keyed by idle drive meshes') &&
+        hinted[0].detail.includes('FACE.md §3');
+      return {
+        held,
+        read: `${lines.length} A15 line(s) for 2 keyed mesh bones, ${hinted.length} of them naming the declaration` +
+          (hinted.length ? `, first: ${hinted[0].detail}` : ''),
+      };
+    },
+  },
+  {
+    // A declaration nothing exercises is refused, not skipped: the pristine
+    // overlay's idle keys only a slot's rgba, so no bone at all.
+    name: 'M92_a_declaration_on_an_idle_that_keys_no_bone',
+    origin: 'an opt-out that switches off nothing reads exactly like one that worked — the "applied" antipattern',
+    expect: 'A15_IDLE_NO_MESH_BONE_KEYS',
+    mutate: (a) => a,
+    rig: (rig) => ({ ...rig, idleDrivesMeshes: IDLE_DRIVES_WHY }),
+    holds: (report) => {
+      const said = report.failures.find((f) => f.assertion === 'A15_IDLE_NO_MESH_BONE_KEYS')?.detail ?? '';
+      return {
+        held: said.includes('carries no bone timeline') && said.includes('switches off nothing'),
+        read: said || 'A15 did not fail',
+      };
+    },
+  },
+  {
+    // The sharper half of the stale case: idle keys a bone, just not one that
+    // drives a mesh — `root` is no slot's bone and no weight names it.
+    name: 'M93_a_declaration_on_an_idle_that_keys_only_bones_that_drive_no_mesh',
+    origin: 'a declaration copied onto a rig that has since moved its keys off every mesh bone',
+    expect: 'A15_IDLE_NO_MESH_BONE_KEYS',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).animations.idle.bones = { root: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 2 }] } };
+      }),
+    }),
+    rig: (rig) => ({ ...rig, idleDrivesMeshes: IDLE_DRIVES_WHY }),
+    holds: (report) => {
+      const said = report.failures.find((f) => f.assertion === 'A15_IDLE_NO_MESH_BONE_KEYS')?.detail ?? '';
+      return {
+        held: said.includes('"idle" keys no bone that drives a mesh') && said.includes('switches off nothing'),
+        read: said || 'A15 did not fail',
+      };
+    },
   },
   {
     name: 'M20_mesh_falls_back_to_unweighted',
@@ -6904,6 +7070,49 @@ const RIG_MUTANTS: RigMutant[] = [
       (rig as any).invariants.meshVertices = 400;
     },
   },
+  // 🔒 `invariants.idleDrivesMeshes` turns A15 off (issue #855), so every
+  // spelling that would switch it off with no reason attached is refused by
+  // name — the `deformMayFold` standard, and one row per way to miss it.
+  {
+    name: 'RF84_an_idle_mesh_declaration_with_no_why',
+    origin: 'an exemption with no reason is how a defect ships as a decision — the `deformMayFold` standard',
+    expect: 'invariants.idleDrivesMeshes needs a "why" (a non-blank string), got none',
+    mutate: (rig) => {
+      (rig as any).invariants.idleDrivesMeshes = {};
+    },
+  },
+  {
+    name: 'RF85_an_idle_mesh_declaration_with_a_blank_why',
+    origin: 'whitespace is a reason nobody wrote',
+    expect: 'invariants.idleDrivesMeshes needs a "why" (a non-blank string), got "   "',
+    mutate: (rig) => {
+      (rig as any).invariants.idleDrivesMeshes = { why: '   ' };
+    },
+  },
+  {
+    name: 'RF86_an_idle_mesh_declaration_whose_why_is_not_a_string',
+    origin: 'a number where the reason goes still reads as "declared" to anybody skimming the spec',
+    expect: 'invariants.idleDrivesMeshes needs a "why" (a non-blank string), got 42',
+    mutate: (rig) => {
+      (rig as any).invariants.idleDrivesMeshes = { why: 42 };
+    },
+  },
+  {
+    name: 'RF87_an_idle_mesh_declaration_spelled_as_a_bare_true',
+    origin: 'the obvious spelling of a switch, and exactly the one with no reason attached',
+    expect: 'invariants.idleDrivesMeshes is true, expected { "why":',
+    mutate: (rig) => {
+      (rig as any).invariants.idleDrivesMeshes = true;
+    },
+  },
+  {
+    name: 'RF88_an_idle_mesh_declaration_key_nothing_reads',
+    origin: 'a misspelled `why` would otherwise arrive as the missing-why refusal and send the author looking for the wrong fault',
+    expect: 'invariants.idleDrivesMeshes has a key this compiler does not read: "reason"',
+    mutate: (rig) => {
+      (rig as any).invariants.idleDrivesMeshes = { why: 'a painting rig', reason: 'sway' };
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -7001,6 +7210,59 @@ function runRigSuite(): number {
       bad++;
       console.log(`  FAIL  CONTROL_A_RIG_THAT_ADDS_ONLY_KNOWN_KEYS_IS_STILL_ACCEPTED: ${message ?? moved}`);
     }
+  }
+
+  // --- invariants.idleDrivesMeshes, end to end (issue #855) -----------------
+  //
+  // The A15 rows in `MUTANTS` hand the gate a rig info with the declaration
+  // already in it, so they cannot see whether a rig SPEC's declaration ever
+  // reaches it. These two compile one: the declaration must arrive in
+  // `RigInfo` word for word and change no emitted byte, and the gate must then
+  // read it — here as stale, because this fixture's `idle` keys `cam` alone and
+  // `cam` drives no mesh, which is the fixture saying so rather than an edit.
+  {
+    const why = 'a painting rig: the idle sways every layer on purpose';
+    const rig = JSON.parse(sourceText) as Record<string, unknown>;
+    (rig.invariants as Record<string, unknown>).idleDrivesMeshes = { why };
+    writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+    let built: CompileResult | null = null;
+    let message: string | null = null;
+    try {
+      built = compile({ ...opts, rigPath });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    const sameBytes = built !== null && built.skeletonText === pristine.skeletonText && built.atlasText === pristine.atlasText;
+    bad += reportCase(
+      'IDM01_AN_IDLE_MESH_DECLARATION_REACHES_RIG_INFO_AND_CHANGES_NO_BYTE',
+      built !== null && sameBytes && built.rig.idleDrivesMeshes === why && pristine.rig.idleDrivesMeshes === null,
+      built === null
+        ? `the declaring rig was refused: ${message}`
+        : `rig info carries ${JSON.stringify(built.rig.idleDrivesMeshes)} (the undeclared build: ` +
+            `${JSON.stringify(pristine.rig.idleDrivesMeshes)}), and the emitted skeleton and atlas are ` +
+            `${sameBytes ? 'byte-identical to the undeclared build' : 'DIFFERENT from the undeclared build'}`,
+      'a declaration is a statement to the gate; one that moved a byte would be a second emit path, and one that ' +
+        'never reached `RigInfo` would leave every A15 row in the mutation suite testing a rig info no spec can produce',
+    );
+    const report =
+      built === null
+        ? null
+        : validate({
+            skeletonText: built.skeletonText,
+            atlasText: built.atlasText,
+            atlasDir: opts.outDir,
+            declaredDurations: built.declaredDurations,
+            rig: built.rig,
+            profile: 'spine-html',
+          });
+    const said = report?.failures.find((f) => f.assertion === 'A15_IDLE_NO_MESH_BONE_KEYS')?.detail ?? '';
+    bad += reportCase(
+      'IDM02_THE_GATE_REFUSES_A_COMPILED_DECLARATION_WHOSE_IDLE_KEYS_NO_MESH_BONE',
+      said.includes('"idle" keys no bone that drives a mesh') && said.includes(`("${why}")`),
+      said === '' ? `A15 did not fail on the declaring build: [${report?.failures.map((f) => f.assertion).join(', ') ?? 'not built'}]` : said,
+      'the stale-declaration refusal read off a rig spec rather than a hand-made rig info — the fixture\'s idle keys ' +
+        'only `cam`, so the declaration switches off nothing and has to be named for it',
+    );
   }
 
   {
@@ -38166,14 +38428,21 @@ function runSuite(suite: Suite): number {
       ...broken,
       atlasDir: suite.opts.outDir,
       declaredDurations: pristine.declaredDurations,
-      rig: pristine.rig,
+      rig: mutant.rig ? mutant.rig(pristine.rig) : pristine.rig,
       profile: mutant.profile ?? MUTANT_PROFILE,
     });
     const where = mutant.profile ? `  [profile ${mutant.profile}]` : '';
+    const reading = mutant.holds ? mutant.holds(report, broken) : null;
+    if (reading !== null && !reading.held) {
+      bad++;
+      console.log(`  FAIL  ${mutant.name}${where}: ${reading.read}`);
+      continue;
+    }
     if (mutant.expect === null) {
       // A tolerance control: this edit is legal and the gate must let it past.
       if (report.failures.length === 0) {
         console.log(`  PASS  ${mutant.name}${where}  (accepted, as it must be)`);
+        if (reading !== null) console.log(`          read: ${reading.read}`);
         console.log(`          origin: ${mutant.origin}`);
       } else {
         bad++;
@@ -38188,6 +38457,7 @@ function runSuite(suite: Suite): number {
     if (hit) {
       console.log(`  PASS  ${mutant.name}${where}`);
       console.log(`          caught by ${hit.assertion}: ${hit.detail}`);
+      if (reading !== null) console.log(`          read: ${reading.read}`);
       console.log(`          origin: ${mutant.origin}`);
     } else {
       bad++;
