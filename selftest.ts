@@ -53405,6 +53405,10 @@ function runCurrencySuite(): number {
       ...(lateAttempts >= 2 ? [] : [`the wait made ${lateAttempts} attempt(s) inside 3 s, so nothing here measured a second ask`]),
       ...(/attempt 1, \dm \d\ds into a 0\.05 min wait/.test(late.out) ? [] : ['no attempt announced its own elapsed time, which is what the sixty-second step could not be read for']),
       ...(late.out.includes('does not build') ? ['the run ALSO printed the served-and-broken message, so the two outcomes are still one message'] : []),
+      ...late.out
+        .split('\n')
+        .filter((line) => /attempt \d+, \dm \d\ds into a 0\.05 min wait/.test(line) && !/packument/.test(line))
+        .map((line) => `an attempt line does not say it is the packument that is missing: ${line.trim()}`),
       ...(/PASS {2}SMOKE_CASE/.test(late.out) ? ['a case ran and passed against a registry that is serving nothing'] : []),
     ];
     const lateHeld = lateProbes.length === 0;
@@ -53424,18 +53428,111 @@ function runCurrencySuite(): number {
         "now the script's and the two outcomes carry different exit codes",
     );
 
+    // --- CUR111: the packument without the tarball is a version NOT served (#833)
+    //
+    // 🚨 **The defect printed a good cut as a broken one a second time, one
+    // layer further in.** v1.1.0's confirmation waited out the packument
+    // (`npm view` answered on attempt 8), then `npm pack` 404'd on a tarball
+    // the registry had not finished serving, and the run said *"the published
+    // artifact does not build … This is a fault in what was published"* — exit
+    // 1 on a package a dispatch confirmed green six minutes later. So the wait
+    // now ends on the bytes, and these two runs hold it to that: metadata that
+    // answers over a tarball that 404s, and over a pack that exits 0 having
+    // written nothing, are both a confirmation not taken, and both say it was
+    // the tarball that never came.
+    const tarballUrl = `https://registry.invalid/spine-rigc/-/spine-rigc-${FAKE}.tgz`;
+    const metadataOnly = (pack: string): string =>
+      fakeRegistry(
+        '#!/bin/sh\n' +
+          '# The packument answers; the tarball behind it does not.\n' +
+          'if [ "$1" = "view" ]; then\n' +
+          `  echo "${tarballUrl}"\n` +
+          '  exit 0\n' +
+          'fi\n' +
+          'if [ "$1" = "pack" ]; then\n' +
+          pack +
+          'fi\n' +
+          'echo "npm error this fake registry answers nothing but view and pack" >&2\n' +
+          'exit 1\n',
+      );
+    const tarballRuns: Array<{ what: string; pack: string; said: string }> = [
+      {
+        what: 'a tarball that 404s',
+        pack: '  echo "npm error code E404" >&2\n' + `  echo "npm error 404 Not Found - GET ${tarballUrl}" >&2\n` + '  exit 1\n',
+        said: 'npm error code E404',
+      },
+      { what: 'a pack that exits 0 and writes no bytes', pack: '  exit 0\n', said: 'no bytes' },
+    ];
+    const tarballProbes: string[] = [];
+    const tarballCases: string[] = [];
+    for (const one of tarballRuns) {
+      const dir = metadataOnly(one.pack);
+      const ran = smokeWith(dir, ['--source', 'registry', '--version', FAKE, '--case', 'clean', '--wait', '0.05']);
+      rmSync(dir, { recursive: true, force: true });
+      const failLine = ran.out.split('\n').find((line) => line.includes('SMOKE_REGISTRY_SERVED_THE_VERSION')) ?? '';
+      const progress = ran.out.split('\n').filter((line) => /attempt \d+, \dm \d\ds into a 0\.05 min wait/.test(line));
+      const attempts = Number(/\((\d+) attempt\(s\)/.exec(ran.out)?.[1] ?? '0');
+      const faults = [
+        ...(ran.status === 3 ? [] : [`exit ${ran.status}, and 3 — the confirmation was not taken — was required`]),
+        ...(failLine === '' ? ['no SMOKE_REGISTRY_SERVED_THE_VERSION line, so the wait ended with nothing anybody can grep for'] : []),
+        ...(failLine !== '' && !/tarball/.test(failLine) ? ['the not-served line does not name the tarball, which is the piece that never came'] : []),
+        ...(failLine !== '' && !/packument answered/.test(failLine) ? ['the not-served line does not say the packument answered, so it reads the same as a version nobody published'] : []),
+        ...(failLine.includes(one.said) ? [] : [`the not-served line does not carry "${one.said}", what the registry actually handed back`]),
+        ...(ran.out.includes('the confirmation was NOT taken') ? [] : ['the run does not say the confirmation was NOT taken']),
+        ...(attempts >= 2 ? [] : [`${attempts} attempt(s) inside 3 s, so nothing here measured a second ask for the bytes`]),
+        ...(progress.length > 0 ? [] : ['no attempt announced its elapsed time']),
+        ...progress.filter((line) => !/tarball/.test(line)).map((line) => `an attempt line does not say it is the tarball that is missing: ${line.trim()}`),
+        ...(ran.out.includes('does not build') ? ['the run printed the served-and-broken message on bytes that never arrived — the #833 defect'] : []),
+        ...(ran.out.includes('SMOKE_PACK_WROTE_A_TARBALL') ? ['a case reached its own pack, so the wait let through a version whose tarball it never had'] : []),
+        ...(/PASS {2}SMOKE_CASE/.test(ran.out) ? ['a case passed with no tarball behind it'] : []),
+      ];
+      for (const f of faults) tarballProbes.push(`${one.what}: ${f}`);
+      tarballCases.push(`${one.what} -> exit ${ran.status} after ${attempts} attempt(s)`);
+    }
+    const tarballHeld = tarballProbes.length === 0;
+    say(
+      'CUR111_A_PACKUMENT_WITHOUT_ITS_TARBALL_IS_A_VERSION_NOT_SERVED_AND_NAMES_THE_TARBALL',
+      tarballHeld,
+      probeDetail(
+        tarballHeld,
+        tarballProbes,
+        `an \`npm\` whose \`view\` answers ${SPEC} and whose \`pack\` cannot hand over the bytes ends ` +
+          `\`--source registry --wait 0.05\` at exit 3 both ways — ${tarballCases.join('; ')} — with every attempt ` +
+          "line and the not-served line naming the tarball, npm's own answer carried, and no case reached",
+      ),
+      "v1.1.0's confirmation went red at exit 1 on a package that was fine: the packument answered at 09:08:37 UTC " +
+        'and its tarball was still a 404, so a wait that ended on metadata printed "the published artifact does not ' +
+        'build". Red on the script before #833 — exit 1, the served-and-broken message',
+    );
+
     // --- CUR30: a version that IS served is the artifact, and its red says so -
+    //
+    // ⚠️ Since #833 "served" means the bytes arrived, so this registry hands
+    // over a REAL tarball — a package.json and nothing else, no `bin` — and
+    // installs it by extracting it. What goes red is the artifact itself: an
+    // install that leaves no `rigc` shim. The fake this replaced answered the
+    // pack with E500, which is now a tarball that never came, and CUR111 says so.
     const servesThenBreaks = fakeRegistry(
       '#!/bin/sh\n' +
-        '# The version is served; the tarball behind it cannot be had.\n' +
+        '# The version is served, bytes and all; what it serves carries no bin.\n' +
         'if [ "$1" = "view" ]; then\n' +
-        `  echo "${FAKE}"\n` +
+        `  echo "${tarballUrl}"\n` +
         '  exit 0\n' +
         'fi\n' +
         'if [ "$1" = "pack" ]; then\n' +
-        '  echo "npm error code E500" >&2\n' +
-        '  echo "npm error 500 the tarball this version names is not there" >&2\n' +
-        '  exit 1\n' +
+        '  dest=""; prev=""\n' +
+        '  for arg in "$@"; do if [ "$prev" = "--pack-destination" ]; then dest="$arg"; fi; prev="$arg"; done\n' +
+        '  stage=$(mktemp -d)\n' +
+        '  mkdir -p "$stage/package"\n' +
+        `  printf '{"name":"spine-rigc","version":"${FAKE}"}\\n' > "$stage/package/package.json"\n` +
+        `  tar -czf "$dest/spine-rigc-${FAKE}.tgz" -C "$stage" package\n` +
+        '  rm -rf "$stage"\n' +
+        '  exit 0\n' +
+        'fi\n' +
+        'if [ "$1" = "install" ]; then\n' +
+        '  mkdir -p node_modules/spine-rigc\n' +
+        '  tar -xzf "$2" -C node_modules/spine-rigc --strip-components=1\n' +
+        '  exit $?\n' +
         'fi\n' +
         'exit 1\n',
     );
@@ -53448,7 +53545,8 @@ function runCurrencySuite(): number {
       ...(broken.out.includes(`the registry served ${SPEC}`) ? [] : ["the run does not record that the registry answered, which is what makes this red the artifact's rather than the wait's"]),
       ...(broken.out.includes('SMOKE_REGISTRY_SERVED_THE_VERSION') ? ['the run ALSO printed the not-served message on a version the registry served'] : []),
       ...(broken.out.includes('confirmation was NOT taken') ? ['the run says the confirmation was not taken, and it was: the artifact was asked for and went red'] : []),
-      ...(broken.out.includes('SMOKE_PACK_WROTE_A_TARBALL') ? [] : ['no fault named the step that went red, so this case cannot say what it measured']),
+      ...(broken.out.includes('SMOKE_INSTALL_EMPTY_DIR') ? [] : ['no fault named the install step, where a package with no `bin` goes red, so this case cannot say what it measured']),
+      ...(broken.out.includes('SMOKE_PACK_WROTE_A_TARBALL') ? ['the pack went red on a registry that handed over its bytes'] : []),
     ];
     const brokenHeld = brokenProbes.length === 0;
     say(
@@ -53457,9 +53555,10 @@ function runCurrencySuite(): number {
       probeDetail(
         brokenHeld,
         brokenProbes,
-        `an \`npm\` that serves ${SPEC} and cannot hand over its tarball ends the same command at exit ` +
-          `${broken.status} — the published artifact does not build — where the registry serving nothing ends it ` +
-          `at exit ${late.status}. Two fake registries, two codes, and neither message reaches the other run`,
+        `an \`npm\` that serves ${SPEC} with a tarball carrying no \`bin\` ends the same command at exit ` +
+          `${broken.status} — the published artifact does not build, named at the install — where the registry ` +
+          `serving nothing ends it at exit ${late.status}. Two fake registries, two codes, and neither message ` +
+          'reaches the other run',
       ),
       'these two are one control in two halves. One red for both facts was the whole of issue #563, so the half ' +
         'that proves the repair is not "the wait is named" but "the wait is named and a broken artifact is still ' +

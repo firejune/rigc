@@ -48,6 +48,19 @@
  * (`time[version]`): 4 min 11 s, 2 min 07 s and 2 min 38 s, all on 2026-09-16.
  * RELEASING.md carries those figures and their sources.
  *
+ * 📦 **"Served" means the bytes, not the metadata** (issue #833). The packument
+ * answering is the first half: v1.1.0's packument answered 2 min 38 s into the
+ * wait and the tarball behind it was still a 404, so the first `npm pack` of
+ * the battery failed and the run printed *the published artifact does not
+ * build* over a package a dispatch confirmed green six minutes later. So each
+ * attempt, once `npm view <spec> dist.tarball` answers, runs the fetch itself —
+ * `npm pack <spec>`, the same command a case would run, through the same npm
+ * configuration and cache — and the wait ends only when that has written a
+ * non-empty tarball. The cases install **those bytes**, copied, rather than
+ * fetching again, so "the fetch the smoke is about to make" and "the fetch the
+ * wait saw succeed" are one fetch and there is no second one to race. Every
+ * attempt line says which of the two pieces is still missing.
+ *
  * 🚨 **Not-yet-served and served-and-broken are different facts and they do not
  * print the same red.** A version the registry has not finished processing says
  * nothing at all about the package: that is exit **3** and a message saying the
@@ -61,14 +74,10 @@
  * there: it does not run the published artifact unless `--source registry` asks
  * it to (the tarball this tree packs is not the tarball npm serves until a
  * publish makes it one), it says nothing about how the rig LOOKS — `rigc check`
- * is that instrument — and it is one platform's answer, the runner's. ⚠️ The
- * wait's probe is `npm view <spec> version`, which is the registry answering
- * about its packument and not about the tarball: a version whose metadata is
- * served before its tarball is would be read here as an artifact that does not
- * build rather than as one still arriving. The probe is `--prefer-online` for
- * the neighbouring reason — npm caches a packument, a negative answer
- * included, and a poll reading its own earlier 404 back would wait out the
- * whole ceiling on a package that had already arrived.
+ * is that instrument — and it is one platform's answer, the runner's. Both
+ * halves of the probe are `--prefer-online` — npm caches a packument, a
+ * negative answer included, and a poll reading its own earlier 404 back would
+ * wait out the whole ceiling on a package that had already arrived.
  *
  * ## Why `scripts/` and not `tools/`
  *
@@ -86,9 +95,9 @@
  * `scripts/` it is read by no gate whose population it can weaken.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The repository this script packs — it is the subject, and nothing else reaches the fixture. */
@@ -353,38 +362,97 @@ interface RegistryWait {
   ms: number;
   /** The last thing npm said, so a network that is down is not reported as a version that is late. */
   last: string;
+  /** Which piece the registry was still missing when the wait ended — `null` once both arrived. */
+  missing: 'packument' | 'tarball' | null;
+  /** The attempt the packument first answered on, and when; `null` if it never did. */
+  packument: { attempt: number; ms: number } | null;
+  /** `dist.tarball` as the packument named it, or '' before it answered. */
+  tarballUrl: string;
+  /** The tarball the wait fetched, which is what every case installs; '' unless `served`. */
+  tgz: string;
 }
 
 /**
- * Ask the registry for a version until it answers or the wait runs out.
- *
- * ⚠️ Every attempt is announced with its elapsed time. The step this replaced
- * printed six identical lines and then somebody else's `E404`, so a reader had
- * no way to tell a 60-second wait from a 6-minute one without reading the
- * timestamps in the log gutter.
+ * The line npm names a failure on, and not the last line it printed: the last
+ * one is the path to a debug log, which says nothing about whether this was a
+ * 404 or a network that is down.
  */
-function waitForRegistry(spec: string, minutes: number, cwd: string): RegistryWait {
+function npmSaid(out: string): string {
+  const said = out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !/A complete log of this run/.test(line));
+  return said.find((line) => /\berror code\b/.test(line)) ?? said[0] ?? '';
+}
+
+/**
+ * Ask the registry for a version — its packument, then the tarball behind it —
+ * until both answer or the wait runs out.
+ *
+ * ⚠️ Every attempt is announced with its elapsed time and with the piece that
+ * is still missing. The step this replaced printed six identical lines and then
+ * somebody else's `E404`, so a reader had no way to tell a 60-second wait from
+ * a 6-minute one without reading the timestamps in the log gutter — and the
+ * version after it ended on the packument, which is half of what a case needs.
+ *
+ * 🔒 The tarball half is `npm pack` rather than a `HEAD` on `dist.tarball`:
+ * the pack is the fetch a case makes — the registry and credentials npm is
+ * configured with, its cache, its integrity check against the packument — and
+ * a URL probed from here would be none of those. `--loglevel=error` rather
+ * than `--silent`, because `--silent` prints nothing at all when the pack
+ * fails (measured: v1.1.0's fault line ended in an empty string where npm's
+ * `E404` should have been).
+ */
+function waitForRegistry(spec: string, minutes: number, cwd: string, into: string): RegistryWait {
   const started = Date.now();
   const deadline = started + Math.round(minutes * 60_000);
   let attempts = 0;
   let last = '';
+  let missing: 'packument' | 'tarball' = 'packument';
+  let packument: { attempt: number; ms: number } | null = null;
+  let tarballUrl = '';
+  const outcome = (served: boolean, tgz: string): RegistryWait => ({
+    served,
+    attempts,
+    ms: Date.now() - started,
+    last,
+    missing: served ? null : missing,
+    packument,
+    tarballUrl,
+    tgz,
+  });
   for (;;) {
     attempts += 1;
-    const asked = run('npm', ['view', spec, 'version', '--prefer-online'], cwd);
-    if (asked.status === 0) return { served: true, attempts, ms: Date.now() - started, last: asked.out.trim() };
-    // The line npm names the failure on, and not the last line it printed: the
-    // last one is the path to a debug log, which says nothing about whether
-    // this was a 404 or a network that is down.
-    const said = asked.out
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line !== '' && !/A complete log of this run/.test(line));
-    last = said.find((line) => /\berror code\b/.test(line)) ?? said[0] ?? '';
+    const asked = run('npm', ['view', spec, 'dist.tarball', '--prefer-online'], cwd);
+    if (asked.status !== 0) {
+      missing = 'packument';
+      last = npmSaid(asked.out);
+    } else {
+      if (packument === null) packument = { attempt: attempts, ms: Date.now() - started };
+      tarballUrl = asked.out.trim().split('\n').pop()?.trim() ?? '';
+      // A fresh directory per attempt, so a tarball left by an earlier one can
+      // never be counted as this one's bytes.
+      rmSync(into, { recursive: true, force: true });
+      mkdirSync(into, { recursive: true });
+      const fetched = run('npm', ['pack', spec, '--pack-destination', into, '--prefer-online', '--loglevel=error'], cwd);
+      const tarballs = readdirSync(into).filter((f) => f.endsWith('.tgz'));
+      const bytes = tarballs.length === 1 ? statSync(join(into, tarballs[0])).size : 0;
+      if (fetched.status === 0 && tarballs.length === 1 && bytes > 0) return outcome(true, join(into, tarballs[0]));
+      missing = 'tarball';
+      last =
+        fetched.status !== 0
+          ? npmSaid(fetched.out)
+          : `\`npm pack\` exited 0 and left ${tarballs.length} tarball(s) holding no bytes in ${into}`;
+    }
     const left = deadline - Date.now();
-    if (left <= 0) return { served: false, attempts, ms: Date.now() - started, last };
+    if (left <= 0) return outcome(false, '');
     const nap = Math.min(backoffMs(attempts), left);
+    const piece =
+      missing === 'packument'
+        ? `the registry is not serving the packument for ${spec} yet`
+        : `the registry is serving the packument for ${spec} but not its tarball yet (${tarballUrl || 'no dist.tarball named'})`;
     console.log(
-      `  the registry is not serving ${spec} yet — attempt ${attempts}, ${elapsedText(Date.now() - started)} into a ` +
+      `  ${piece} — attempt ${attempts}, ${elapsedText(Date.now() - started)} into a ` +
         `${minutes} min wait; asking again in ${Math.round(nap / 1000)}s`,
     );
     sleepMs(nap);
@@ -431,20 +499,22 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
  */
 function tarballFor(
   work: string,
-  source: { kind: 'tree' } | { kind: 'registry'; spec: string },
+  source: Source,
   plant: Plant,
 ): { tgz: string; faults: string[]; packedPaths: number; evidence: string } {
   const faults: string[] = [];
   const packDir = join(work, 'pack');
   mkdirSync(packDir, { recursive: true });
 
-  // `--prefer-online` on the registry arm for the wait's reason: the poll above
-  // has just refreshed this packument, and a pack reading a cached copy of the
-  // 404 it was polling through would fail on a version the registry is serving.
+  // The registry arm does not fetch: the wait already did, and "served" means
+  // exactly that fetch succeeded (issue #833). A copy of those bytes is what
+  // every case installs, so no second fetch can go red on a tarball the
+  // registry is still propagating and be printed as a broken artifact.
+  if (source.kind === 'registry') copyFileSync(source.tgz, join(packDir, basename(source.tgz)));
   const packed =
     source.kind === 'tree'
       ? run('npm', ['pack', ROOT, '--pack-destination', packDir, '--silent'], work)
-      : run('npm', ['pack', source.spec, '--pack-destination', packDir, '--silent', '--prefer-online'], work);
+      : { status: 0, out: '' };
   const tarballs = existsSync(packDir) ? readdirSync(packDir).filter((f) => f.endsWith('.tgz')) : [];
   if (packed.status !== 0 || tarballs.length !== 1) {
     faults.push(
@@ -557,9 +627,12 @@ function tarPaths(tgz: string, cwd: string): string[] {
 // One case
 // ---------------------------------------------------------------------------
 
+/** Where a case's tarball comes from: packed out of this tree, or the bytes the registry wait fetched. */
+type Source = { kind: 'tree' } | { kind: 'registry'; spec: string; tgz: string };
+
 interface CaseSpec {
   name: string;
-  source: { kind: 'tree' } | { kind: 'registry'; spec: string };
+  source: Source;
   installer: 'npm' | 'bun';
   plant: Plant;
   /** A directory name for the install root, when the case is about the path itself. */
@@ -818,8 +891,8 @@ exit codes:
   0  every case passed
   1  a case went red — against \`--source registry\`, the published artifact does not build
   2  no case ran, so this run measured nothing
-  3  the registry did not serve the version within --wait, so the confirmation was NOT taken;
-     nothing here says the package is broken
+  3  the registry did not serve the version — its packument, or the tarball behind it — within
+     --wait, so the confirmation was NOT taken; nothing here says the package is broken
 
 cases:
   clean          a correct package installs and builds, links its skills from the install, and the bin shim names Bun when bun is absent
@@ -850,8 +923,7 @@ function main(): number {
   const version = flag('version');
   const pkgVersion = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version?: string }).version ?? '';
   const wanted = version ?? pkgVersion;
-  const source: { kind: 'tree' } | { kind: 'registry'; spec: string } =
-    sourceKind === 'registry' ? { kind: 'registry', spec: `spine-rigc@${wanted}` } : { kind: 'tree' };
+  const registrySpec = sourceKind === 'registry' ? `spine-rigc@${wanted}` : null;
 
   // A flag that quietly does nothing is worse than one that is refused: a
   // `--wait` on a tarball this tree packs would read as a wait that was taken.
@@ -869,7 +941,7 @@ function main(): number {
     return EXIT_RED;
   }
 
-  console.log(`rigc install smoke — ${source.kind === 'tree' ? `a tarball packed from ${ROOT}` : `${source.spec} from the registry`}, installed with ${installer}`);
+  console.log(`rigc install smoke — ${registrySpec === null ? `a tarball packed from ${ROOT}` : `${registrySpec} from the registry`}, installed with ${installer}`);
 
   for (const tool of ['npm', 'bun', 'tar']) {
     if (onPath(tool) === null) {
@@ -882,15 +954,25 @@ function main(): number {
   // registry has not finished processing is not a package that fails to build,
   // and the two must not end in the same red — so this returns its own exit
   // code, names what was not taken, and says how to take it later.
-  const registrySpec = source.kind === 'registry' ? source.spec : null;
   let served: RegistryWait | null = null;
+  let source: Source = { kind: 'tree' };
   if (registrySpec !== null) {
-    served = waitForRegistry(registrySpec, waitMinutes, ROOT);
+    const fetchDir = mkdtempSync(join(tmpdir(), 'rigc-smoke-fetch-'));
+    LEFT_BEHIND.push(fetchDir);
+    served = waitForRegistry(registrySpec, waitMinutes, ROOT, join(fetchDir, 'pack'));
     const byHand = `bun run smoke -- --source registry --version ${wanted} --case clean`;
     if (!served.served) {
+      // Which piece never came, in the sentence that carries the exit code:
+      // metadata with no bytes behind it is a version still arriving, and the
+      // #833 run printed it as an artifact that does not build.
+      const never =
+        served.missing === 'tarball' && served.packument !== null
+          ? `its packument answered on attempt ${served.packument.attempt} (${elapsedText(served.packument.ms)}) and its ` +
+            `tarball (${served.tarballUrl || 'no dist.tarball named'}) never did`
+          : 'its packument never answered';
       console.log(
         `  FAIL  SMOKE_REGISTRY_SERVED_THE_VERSION: the registry did not serve ${registrySpec} within ${waitMinutes} min ` +
-          `(${served.attempts} attempt(s), ${elapsedText(served.ms)}) — the confirmation was NOT taken, and nothing here ` +
+          `(${served.attempts} attempt(s), ${elapsedText(served.ms)}) — ${never} — the confirmation was NOT taken, and nothing here ` +
           'says the package is broken. npm\'s own notice on publish is "Your package is being processed and may take a ' +
           'few minutes to become available". Re-run the confirmation (Actions -> release -> Run workflow, version ' +
           `${wanted}) or take it by hand once the registry answers: ${byHand}` +
@@ -899,10 +981,12 @@ function main(): number {
       console.log(`rigc install smoke: the registry did not serve ${registrySpec} — confirmation NOT taken`);
       return EXIT_NOT_SERVED;
     }
+    const metadata = served.packument === null ? '' : ` — the packument on attempt ${served.packument.attempt} (${elapsedText(served.packument.ms)}), the tarball on attempt ${served.attempts}`;
     console.log(
       `  the registry served ${registrySpec} on attempt ${served.attempts}, ${elapsedText(served.ms)} after this run ` +
-        'started asking',
+        `started asking${metadata}`,
     );
+    source = { kind: 'registry', spec: registrySpec, tgz: served.tgz };
   }
 
   const battery: CaseSpec[] = [
@@ -975,8 +1059,8 @@ function main(): number {
   console.log(bad === 0 ? `rigc install smoke: green — ${ran} case(s)` : `rigc install smoke: ${bad} of ${ran} case(s) failed`);
   if (bad === 0) return EXIT_GREEN;
   // 🚨 The second of the two outcomes, said out loud. Reaching here on a
-  // registry source means the wait above ENDED — the registry answered for this
-  // version — so what went red went red on the artifact people receive, and
+  // registry source means the wait above ENDED — the registry handed over this
+  // version's bytes — so what went red went red on the artifact people receive, and
   // calling that a propagation delay would be the #563 defect pointed the other
   // way.
   if (served !== null) {
@@ -989,4 +1073,12 @@ function main(): number {
   return EXIT_RED;
 }
 
-process.exit(main());
+/** Directories this run made outside any case — the registry wait's tarball — removed after `main` unless `--keep`. */
+const LEFT_BEHIND: string[] = [];
+
+const code = main();
+for (const dir of LEFT_BEHIND) {
+  if (process.argv.includes('--keep')) console.log(`          kept: ${dir}`);
+  else rmSync(dir, { recursive: true, force: true });
+}
+process.exit(code);

@@ -133,8 +133,11 @@ jobs:
       # measured: the sixty seconds this body used to sleep were shorter than
       # the registry took on all three of the cuts that ran it — 4 min 11 s,
       # 2 min 07 s, 2 min 38 s — and a `run:` body cannot be red-firsted
-      # anywhere, while `--wait` inside the script is driven by three selftest
-      # controls against a fake registry on `PATH`.
+      # anywhere, while `--wait` inside the script is driven by four selftest
+      # controls against a fake registry on `PATH`. Since issue #833 the wait
+      # ends on the tarball rather than the packument: v1.1.0's packument
+      # answered minutes before its bytes did, and this step printed that as an
+      # artifact that does not build.
       #
       # 🚨 What the script separates, and what this step used to print the same
       # red for: a version the registry has not served yet says NOTHING about
