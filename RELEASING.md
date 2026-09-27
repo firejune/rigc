@@ -308,8 +308,8 @@ question and not this one; and a green run is one platform's answer, the runner'
 
 ⚖️ **The registry half is a confirmation, not the gate**, and it is the last step
 of [`release.yml`](.github/workflows/release.yml): after the publish it waits for
-the registry to serve the new version and runs the same script with
-`--source registry`. It answers the one thing the gate cannot reach — the
+the registry to serve the new version — its packument, and then the tarball
+behind it — and runs the same script with `--source registry` on those bytes. It answers the one thing the gate cannot reach — the
 artifact people actually receive — and it is not the gate for the reason this
 repository applies to every check: its own firing cannot be observed without
 publishing something broken. What *is* observable, and was measured before the
@@ -324,32 +324,60 @@ cut needs a follow-up.
 ⏳ **A publish returns before the registry serves what it published.** npm says
 so on the way out — *"Your package is being processed and may take a few minutes
 to become available."* — and that notice, which states no upper bound, is the
-only statement of the window there is. **[observed]**, from the publish step's
-own log line to the moment the version appears in the registry's packument
-(`time[version]` at `https://registry.npmjs.org/spine-rigc`), all on 2026-09-16:
+only statement of the window there is. And it is **two** windows, not one: the
+packument can answer for a version whose tarball is still a 404. **[observed]**,
+from the publish step's own log line (the notice above) to the moment the
+version appears in the registry's packument (`time[version]` at
+`https://registry.npmjs.org/spine-rigc`), and — where anybody looked — to the
+first moment its `dist.tarball` answered:
 
-| cut | release run | publish step returned | registry served it | delay |
-| --- | --- | --- | --- | --- |
-| v0.22.0 | `35104574039` | 13:52:57.549Z | 13:57:08.543Z | 4 min 11 s |
-| v0.22.1 | `35112124244` | 15:00:05.473Z | 15:02:12.422Z | 2 min 07 s |
-| v0.22.2 | `35124107989` | 16:49:18.964Z | 16:51:56.700Z | 2 min 38 s |
+| cut | release run | publish step returned | packument (`time[version]`) | delay to packument | tarball fetchable | delay to tarball |
+| --- | --- | --- | --- | --- | --- | --- |
+| v0.22.0 | `35104574039` | 2026-09-16 13:52:57.549Z | 13:57:08.543Z | 4 min 11 s | not measured | not measured |
+| v0.22.1 | `35112124244` | 2026-09-16 15:00:05.473Z | 15:02:12.422Z | 2 min 07 s | not measured | not measured |
+| v0.22.2 | `35124107989` | 2026-09-16 16:49:18.964Z | 16:51:56.700Z | 2 min 38 s | not measured | not measured |
+| v1.1.0 | `35978786643` | 2026-09-24 09:05:59.452Z | 09:08:15.516Z | 2 min 16 s | between 09:13:07Z (404) and 09:13:40Z (200) ¹ | 7 min 08 s – 7 min 41 s ¹ |
+
+¹ **[observed, from a second machine]** — a poll of the `dist.tarball` URL taken
+by hand beside the run, recorded in
+[#833](https://github.com/firejune/rigc/issues/833); nothing in the run's own
+log times the tarball, because the script that ran then did not ask for it. What
+the run's log does carry agrees: its wait saw the packument at 09:08:37Z, its
+first `npm pack` failed a second later, and the dispatch re-run at 09:14:20Z
+fetched the tarball on its first attempt. The v1.1.0 row is the longest delay
+in the table, and it is the tarball's.
 
 There is no constant in that and nobody has promised one, so the step passes
 `--wait 15` and the script backs off — 5 s, 10 s, 20 s, then every 30 s —
-printing how long it has been asking. The job's `timeout-minutes` is above the
+printing how long it has been asking and which piece it is still missing.
+
+📦 **"Served" means the fetch a case makes has succeeded** (issue
+[#833](https://github.com/firejune/rigc/issues/833)). Each attempt asks
+`npm view <spec> dist.tarball`; once the packument answers, the same attempt
+runs `npm pack <spec>` — the fetch itself, through npm's own configuration,
+cache and integrity check — and the wait ends only on a non-empty tarball. The
+cases install **those bytes**, copied, so there is no second fetch to race. A
+`HEAD` on `dist.tarball` was the alternative and was rejected: it would ask a
+URL from outside npm, which is not the fetch a case makes, and a fake registry
+on `PATH` could not drive it offline. The job's `timeout-minutes` is above the
 wait, deliberately: a job cancelled mid-wait reports neither outcome.
 
 🚨 **The two outcomes are different facts and they no longer print the same
-red** (issue #563). The confirmation went red on all three cuts above and all
-three packages were fine: the wait was 60 s, and it ended in a trailing
-`npm view`'s raw `E404`.
+red** (issue #563). The confirmation went red on the first three cuts above and
+all three packages were fine: the wait was 60 s, and it ended in a trailing
+`npm view`'s raw `E404`. 🚨 **And then v1.1.0 went red the same way one layer
+further in** (issue #833): the wait ended on the packument, the first `npm pack`
+got a tarball that was not there yet, and the run printed *the published
+artifact does not build* — exit 1 — over a package a dispatch confirmed green
+six minutes later. Metadata without bytes is a version still arriving, so it is
+exit 3 now, and the line says it was the tarball that never came.
 
 | exit | what it means | what to do |
 | --- | --- | --- |
 | `0` | the published package installs and builds | nothing |
-| `1` | **the published artifact does not build** — the registry served it and a case went red on it | read the named fault; the cut needs a follow-up |
+| `1` | **the published artifact does not build** — the registry handed over its tarball and a case went red on those bytes | read the named fault; the cut needs a follow-up |
 | `2` | no case ran, so the run measured nothing | a broken invocation, not a verdict |
-| `3` | **the registry did not serve the version inside `--wait`** — the confirmation was NOT taken, and nothing about the package is known | re-run the confirmation |
+| `3` | **the registry did not serve the version inside `--wait`** — either its packument never answered, or it answered and the tarball behind it never did (v1.1.0's case; the line says which). The confirmation was NOT taken, and nothing about the package is known | re-run the confirmation |
 
 **Re-running a confirmation costs nothing and publishes nothing.** Actions →
 **release** → **Run workflow**, with the version (no leading `v`). That dispatch
