@@ -1,7 +1,7 @@
 {
   "name": "spine-rigc",
   "version": "1.2.2",
-  "description": "Rig compiler for Spine — declarative rig specs in, Spine 4.3 skeleton data out, verified by a spine-core round-trip. Built so AI agents can author rigs and check their own work; the output imports into the Spine editor.",
+  "description": "AI-authored Spine 2D rigging and animation, verified before it is written. rigc compiles a rig spec into Spine 4.3 skeleton data, round-trips it through spine-core and named assertions, and emits nothing that fails. Output imports into the Spine editor. Ships as an agent skill.",
   "type": "module",
   "bin": {
     "rigc": "./bin/rigc.cjs"
@@ -28,7 +28,13 @@
     "validator",
     "codegen",
     "ai-agents",
-    "cli"
+    "cli",
+    "spine-2d",
+    "ai",
+    "animation",
+    "rigging",
+    "agent-skill",
+    "claude"
   ],
   "files": [
     "bin/rigc.cjs",
