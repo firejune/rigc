@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/firejune/rigc/compare/v1.2.2...v1.2.3) (2026-09-27)
+
+
+### Documentation
+
+* **readme:** lead with the words users search for — AI-authored Spine 2D rigging and animation, verified before it is written ([#853](https://github.com/firejune/rigc/issues/853)) ([d257c86](https://github.com/firejune/rigc/commit/d257c868fc0446501c58ddddd379b66d41f3001d))
+
 ## [1.2.2](https://github.com/firejune/rigc/compare/v1.2.1...v1.2.2) (2026-09-26)
 
 
