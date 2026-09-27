@@ -805,11 +805,14 @@ part no instrument can measure, the movement between two poses.
 ```
   AMBIG  arm.png      x=   62.9  y=   56.2  rot=   35.3°  scale=1.114  residual=0.0227  unexplained=  1%
                       alt 2: x=   28.4  y=   56.2  rot=  -35.0°  scale=1.118  residual=0.0227  unexplained=  1%
+                      ambiguous: part is 10x30 px (span 33.4 frame px, opaque 1) with texture 0.0291, detail 0.873; 32 candidate(s), best 0.0227, next 0.0227, spread 0.0000 — above the measured floor (AUTHORING §11.5: detail 0.5, measured from 24 px up), so size and texture do not explain this; either the frame holds more than one place this part fits, or every candidate missed the true one — a narrower --scale or --rotation window around what you know of the part tells the two apart
   PLACE  ball.png     x=   45.7  y=  104.6  rot=    0.0°  scale=1.141  residual=0.0226  unexplained=  4%
                       rotation is a FREE degree of freedom — the 0° above is a placeholder
-  REFUSE foreign.png  no-match: the best placement found has residual 0.4254, above --max-residual 0.25
+  REFUSE foreign.png  x=   48.7  y=   76.4  rot= -139.9°  scale=0.679  residual=0.4254  unexplained=100%
+                      no-match: foreign.png: the best placement found has residual 0.4254, above --max-residual 0.25; part is 20x20 px (span 13.6 frame px, opaque 1) with texture 0.1404, detail 2.807; 18 candidate(s), best 0.4254, next 0.4254, spread 0.0000 — below the measured floor (AUTHORING §11.5: detail 0.5, measured from 24 px up): smaller than the smallest size the floor was measured at, so nothing measured says pose can place it; that says nothing about whether the cut is right
   AMBIG  torso.png    x=   45.6  y=   65.5  rot=    0.0°  scale=1.121  residual=0.0930  unexplained= 24%
                       alt 2: x=   44.2  y=   55.8  rot=  -17.0°  scale=0.500  residual=0.0937  unexplained= 32%
+                      ambiguous: part is 24x36 px (span 40.4 frame px, opaque 1) with texture 0.0295, detail 1.063; 20 candidate(s), best 0.0930, next 0.0937, spread 0.0007 — above the measured floor (AUTHORING §11.5: detail 0.5, measured from 24 px up), so size and texture do not explain this; either the frame holds more than one place this part fits, or every candidate missed the true one — a narrower --scale or --rotation window around what you know of the part tells the two apart
 ```
 
 📎 **Where those figures come from, so the next reader can re-run them rather than
@@ -818,7 +821,11 @@ trust them**: the selftest's own pose fixture (`buildPoseFixture` in
 91×137 frame — read back with `pose --images parts --frame poseA.png`. The rows
 above are a trim: the `head`, `blank` and `toobig` parts, the anchor-grid lines and
 the trailing alternates are cut for width, and the two refusals those two parts
-carry are the last bullet below.
+carry are the last bullet below. The `ambiguous:` lines and the tail of the
+`no-match:` line are the reading `pose` has given every refused or ambiguous part
+since [#857](https://github.com/firejune/rigc/issues/857) — the part's size, texture
+and candidate spread against the floor [AUTHORING §11.5](AUTHORING.md) measures; no
+residual above moved with them.
 
 📏 **Instrument re-baseline, 2026-09-03 — [#306](https://github.com/firejune/rigc/issues/306).**
 `pose`'s objective now interpolates its frame premultiplied, so a tap across a

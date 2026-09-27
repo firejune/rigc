@@ -8464,8 +8464,9 @@ Per part:
 | `ambiguous` | at least one alternate is inside the ambiguity margin. **Choose with something this instrument cannot see** — anatomy, the other frame, or `rigc vote` |
 | `rotationFree` | the part is self-similar under rotation, so `rotationDeg` is a placeholder and the value is yours |
 | `rotationSelfSimilarity` | the number `rotationFree` is a threshold on. A part just over the line is worth a look |
-| `refusal` | `{ reason, detail }` or `null`. Reasons: `no-match`, `larger-than-canvas`, `empty-part`. A `no-match` whose best placement stopped **on a wall of the search window** names the wall in its detail — see §11.4 |
+| `refusal` | `{ reason, detail }` or `null`. Reasons: `no-match`, `larger-than-canvas`, `empty-part`. A `no-match` whose best placement stopped **on a wall of the search window** names the wall in its detail — see §11.4 — and every `no-match` with a placement ends with `legibility.reading` — see §11.5 |
 | `coarse` | the grid this part was actually searched on. A handful of cells means the part is small relative to the frame and the first pass had little to go on |
+| `legibility` | what the part gave the search to work with, and how its answers stood against each other — `null` only when nothing was searched. `width`, `height`: the material box, part px · `span`: its longest side at the best placement's scale, **frame** px · `opaqueShare`: alpha weight over the box's area · `texture`: the part's **texture figure** (§11.5) · `candidates`: distinct placements measured at full resolution · `best`, `next`, `spread`: the best residual, the second distinct one, and `next − best` (`null` with no second) · `floor`: `below` or `above` the measured floor (§11.5), on every part · `reading`: on a refused or ambiguous part, the sentence saying which of the two readings those figures support; `null` on a placed one |
 | `notes` | the same facts in prose, in the order they were found |
 
 Per placement:
@@ -8539,6 +8540,102 @@ holds nothing because it already contains every angle.
 - **One frame per call.** Several key poses are several calls, and correlating A
   with B — which placement of a repeated part belongs to which limb, across two
   frames — is the authoring job, not this tool's.
+
+### 11.5 Too small or too plain — the measured floor
+
+A refusal or an ambiguity has two readings the residual cannot separate: **the
+part is wrong**, or **the part is too small or too plain for `pose`** to pin
+down. A correct cut of a plain sleeve and a foreign part can end in the same
+verdict. So every searched part carries `legibility`, and a refused or
+ambiguous one ends with a sentence saying which reading its figures support:
+
+- **below the floor** — a 40x28 part of one flat colour, cut from a plain block it fits anywhere inside:
+
+  > part is 40x28 px (span 40 frame px, opaque 1) with texture 0, detail 0; 11 candidate(s), best 0.0000, next 0.0000, spread 0.0000 — below the measured floor (AUTHORING §11.5: detail 0.5, measured from 24 px up): pose placed 7% of the measured parts this plain, so this part is too plain for pose to tell its placements apart; that says nothing about whether the cut is right
+
+- **above the floor** — a 200x150 black-and-white checker the frame does not hold:
+
+  > loud.png: the best placement found has residual 0.5000, above --max-residual 0.25; part is 200x150 px (span 200 frame px, opaque 1) with texture 0.2473, detail 49.455; 2 candidate(s), best 0.5000, next 0.5000, spread 0.0000 — above the measured floor (AUTHORING §11.5: detail 0.5, measured from 24 px up), so size and texture do not explain this; the cut (or the search window) is the suspect
+
+Read the figures, not only the verdict. *Below* says plainness alone explains the
+failure: the cut may be right, and `pose` cannot tell. *Above* says it does not,
+so look at the cut, the `--scale`/`--rotation` window, or — for an ambiguity — at
+whether the frame really holds the part twice. ⚠️ Above the floor is **not** a
+promise that `pose` will place the part (see the rates below).
+
+**The texture figure.** `legibility.texture` is the mean colour step between
+neighbouring material pixels, `0..1`, in the residual's own units: each pair of a
+pixel and its right or lower neighbour, both with material, contributes its mean
+absolute channel difference over 255, weighted by the smaller alpha. A part of
+one flat colour reads exactly `0`. It is chosen over a colour variance because it
+is, to first order, **what a one-pixel shift costs**: a part whose residual
+cannot rise when it moves cannot be told from itself moved. The silhouette is not
+counted — the material term already reads it, and only where the frame is ground.
+
+**The floor**, measured with `bun tools/pose_floor.ts`:
+
+Found within 2 px of the truth, out of 15 trials per cell (free search, default windows):
+
+| texture level (mean) | 24 px | 32 px | 48 px | 64 px | 96 px | 128 px | 192 px |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `native` (detail 3.49) | 10/15 (5 amb) | 8/15 (6 amb, 1 wrong) | 11/15 (4 amb) | 9/15 (4 amb, 2 wrong) | 10/15 (4 amb, 1 wrong) | 10/15 (3 amb, 2 wrong) | 12/15 (3 amb) |
+| `blur1` (detail 1.58) | 9/15 (6 amb) | 9/15 (6 amb) | 10/15 (4 amb, 1 wrong) | 8/15 (5 amb, 2 wrong) | 11/15 (2 amb, 2 wrong) | 9/15 (2 amb, 4 wrong) | 9/15 (5 amb, 1 wrong) |
+| `blur2` (detail 0.59) | 6/15 (9 amb) | 9/15 (4 amb, 2 wrong) | 8/15 (4 amb, 3 wrong) | 7/15 (4 amb, 4 wrong) | 8/15 (2 amb, 5 wrong) | 6/15 (4 amb, 5 wrong) | 6/15 (4 amb, 5 wrong) |
+| `flat` (detail 0.00) | 0/15 (14 amb, 1 wrong) | 0/15 (14 amb, 1 wrong) | 0/15 (12 amb, 3 wrong) | 0/15 (11 amb, 4 wrong) | 0/15 (12 amb, 3 wrong) | 0/15 (12 amb, 3 wrong) | 0/15 (12 amb, 3 wrong) |
+
+The same trials, grouped by `detail`:
+
+| detail | found | ambiguous | wrong | refused |
+| --- | --- | --- | --- | --- |
+| under 0.25 | 8/119 | 87 | 24 | 0 |
+| 0.25–0.5 | 0/3 | 3 | 0 | 0 |
+| 0.5–0.75 | 46/81 | 15 | 20 | 0 |
+| 0.75–1 | 14/34 | 18 | 2 | 0 |
+| 1–1.5 | 19/25 | 3 | 3 | 0 |
+| 1.5–2 | 29/48 | 16 | 3 | 0 |
+| 2–3 | 27/44 | 14 | 3 | 0 |
+| 3–4 | 25/34 | 7 | 2 | 0 |
+| 4 and over | 17/32 | 14 | 1 | 0 |
+
+**Method.** The truth set is `examples/spineboy`: its setup pose and one frame of
+`walk` (a third of the way in). For every trial the figure is rendered twice with one
+viewport — whole on the renderer's ground (the pose frame), and one slot alone on
+transparency (the part, cropped to its own alpha) — so the truth is the crop's own
+offset at rotation 0 and scale 1, fitted by nothing. Slots with at least 75% of their
+material visible take part: 8 in the setup pose and 7 in the walk frame, which makes 15
+trials per cell. The size is set by the viewport, so the part's longest side is the
+column's size in frame pixels. The texture is set on the atlas region the slot samples,
+so the part and the frame carry the same plainer art: `native`; `blur1`/`blur2`, a box
+blur of 3% and 10% of the region's longest side; `flat`, one alpha-weighted mean colour.
+A trial is *found* when it is neither refused nor ambiguous and its centre is within
+2 px of the truth.
+
+**The figure the floor is stated in** is `legibility.detail` = `texture` × the material
+box's longest side in part pixels: the colour change a walk along the part
+accumulates. The per-pixel `texture` alone does not predict the outcome — an upscaled
+part has a low per-pixel gradient and still places — and size alone has no
+measurable effect across 24–192 px at any level.
+
+**The edge**, derived by `deriveFloor` as the largest rung of a fixed ladder under
+which at most a tenth of the trials were found: **`detail` 0.5**. Under it, **6.6%**
+of the trials were found (8/122); at or over it, **59.4%** (177/298). A part is below
+the floor when its `detail` is under 0.5, or when its own longest side is under 24 px,
+the smallest size measured (there, nothing measured says `pose` can place it).
+
+⚠️ **What this is and is not.** No cell of the grid placed 90% of its trials (the best
+placed 12/15), so there is no size and texture above which `pose` is reliable, and
+none is claimed. The failures above the edge are the same few parts at every size
+(the gun placed 10 of 42, the goggles 11 of 42), and they are search failures rather
+than plainness: on one of them the true placement scored a lower residual than the two
+wrong answers the search reported. All this was measured on **ideal cuts**, the frame's
+own pixels, where a residual at the truth is near zero. A generated cut also disagrees
+with its picture, which can only make it harder to place. So the edge is where `pose`
+fails even on ideal cuts, and never a guarantee above it.
+
+Re-run it with `bun tools/pose_floor.ts --textures <level> --json <out>` (one level per
+process parallelises it), then `bun tools/pose_floor.ts --from <a.json>,<b.json>,…` to
+print the table and derive the edge. `PO22` in `bun run selftest` re-measures three of
+its cells.
 
 ## 12. Reading the half of that picture `pose` refuses — `rigc chainfit`
 

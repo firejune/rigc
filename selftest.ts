@@ -254,6 +254,7 @@ import {
   ROTATION_FREE_TOLERANCE,
   rotationLadder,
   searchRotationClause,
+  POSE_FLOOR,
   windowEdgeNote,
   type PosePlacement,
   type PoseWall,
@@ -379,6 +380,16 @@ import {
 } from './fixtures/public.ts';
 import { exactDecimal, landingRates, maxSideOf, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
+import {
+  FLOOR_EXAMPLE,
+  FLOOR_FAIL_RATE,
+  floorCell,
+  floorCorpusPresent,
+  floorSlots,
+  loadFloorScenes,
+  type FloorCell,
+  type FloorTexture,
+} from './tools/pose_floor.ts';
 import {
   diffSummaryLines,
   EDITOR_DEFAULTS,
@@ -56593,6 +56604,7 @@ function runCurrencySuite(): number {
           rotationFree: false,
           rotationSelfSimilarity: 1,
           coarse: null,
+          legibility: null,
           notes: [],
         },
       ],
@@ -62524,6 +62536,151 @@ function runPoseSuite(): number {
       ),
       'a window that is one value is a caller fixing that value, not a search that ran into a bound — marking it ' +
         'would print a warning over the one placement the caller asked for exactly',
+    );
+  }
+
+  // --- which of the two readings a refusal is (issue #857) -----------------
+  //
+  // ⭐ One synthetic frame, two parts, one sentence each. A plain block of one
+  // colour is laid on the ground, and the two parts are the two ends of the
+  // question the issue asked: a PLAIN part cut from inside that block — it fits
+  // anywhere in it, so the search cannot tell its placements apart, and at
+  // 40 px it is over the floor's span, so it is its plainness being read — and a
+  // loud, large checker the frame does not hold at all. The first must be read
+  // as "too small or too plain", the second as "the cut is the suspect", and
+  // each sentence must carry the figures it was chosen by. `--scale 1,1` holds
+  // the span at the part's own size, so which side of the floor each lands on
+  // is a fact about the part rather than about a scale the search wandered to.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'rigc-pose-legible-'));
+    const plainColour: RGBA = [70, 120, 180, 255];
+    const frame = new Plate(320, 240);
+    for (let y = 0; y < frame.height; y++) for (let x = 0; x < frame.width; x++) frame.set(x, y, BACKGROUND);
+    for (let y = 40; y < 200; y++) for (let x = 40; x < 280; x++) frame.set(x, y, plainColour);
+    const framePath = join(dir, 'frame.png');
+    frame.writePng(framePath);
+    const plain = new Plate(40, 28);
+    for (let y = 0; y < plain.height; y++) for (let x = 0; x < plain.width; x++) plain.set(x, y, plainColour);
+    const plainPath = join(dir, 'plain.png');
+    plain.writePng(plainPath);
+    const loud = poseChecker(200, 150, [0, 0, 0, 255], [255, 255, 255, 255], 4);
+    const loudPath = join(dir, 'loud.png');
+    loud.writePng(loudPath);
+    const read = estimatePose({ imagesDir: dir, framePath, parts: [plainPath, loudPath], scale: { min: 1, max: 1 } });
+    const plainPart = read.parts.find((p) => p.part === 'plain.png');
+    const loudPart = read.parts.find((p) => p.part === 'loud.png');
+    const cli = runCli(['pose', '--images', dir, '--frame', framePath, '--scale', '1,1', '--out', join(dir, 'pose.json')]);
+    // The guide teaches these two sentences by quoting them, so each control
+    // also asks the page for its sentence verbatim: a reworded message goes red
+    // here until §11.5 is reworded with it.
+    const guide = readFileSync(resolve(import.meta.dir, 'docs/AUTHORING.md'), 'utf8');
+
+    {
+      const l = plainPart?.legibility ?? null;
+      const reading = l?.reading ?? '';
+      const figures = l === null ? [] : [`${l.width}x${l.height} px`, `texture ${l.texture}`, `${l.candidates} candidate(s)`];
+      const ok =
+        plainPart !== undefined &&
+        (plainPart.ambiguous || plainPart.refusal !== null) &&
+        l !== null &&
+        l.texture === 0 &&
+        l.floor === 'below' &&
+        reading.includes('below the measured floor') &&
+        reading.includes('too plain for pose') &&
+        Math.max(l.width, l.height) >= POSE_FLOOR.span &&
+        figures.every((f) => reading.includes(f)) &&
+        cli.stdout.includes(reading) &&
+        guide.includes(reading);
+      say(
+        'PO20_A_PLAIN_PART_THE_SEARCH_CANNOT_PIN_IS_READ_AS_BELOW_THE_FLOOR_WITH_ITS_FIGURES',
+        ok,
+        plainPart === undefined
+          ? 'plain.png is not in the report'
+          : `ambiguous=${plainPart.ambiguous} refused=${plainPart.refusal !== null} floor=${l?.floor ?? 'n/a'}; ` +
+              `on the console: ${cli.stdout.includes(reading) && reading !== ''}, quoted in §11.5: ` +
+              `${guide.includes(reading) && reading !== ''}; ${JSON.stringify(reading)}`,
+        'a correct cut of a plain sleeve and a wrong part end in the same verdict; without the part\'s own size and ' +
+          'texture beside the floor, the user cannot tell which one they are holding (issue #857)',
+      );
+    }
+    {
+      const l = loudPart?.legibility ?? null;
+      const reading = l?.reading ?? '';
+      const detail = loudPart?.refusal?.detail ?? '';
+      const ok =
+        loudPart !== undefined &&
+        loudPart.refusal?.reason === 'no-match' &&
+        l !== null &&
+        l.floor === 'above' &&
+        l.span === 200 &&
+        reading.includes('above the measured floor') &&
+        reading.includes('the cut (or the search window) is the suspect') &&
+        reading.includes(`texture ${l.texture}`) &&
+        detail.endsWith(reading) &&
+        cli.stdout.includes(reading) &&
+        guide.includes(reading);
+      say(
+        'PO21_A_LEGIBLE_PART_THAT_IS_REFUSED_NAMES_THE_CUT_AS_THE_SUSPECT',
+        ok,
+        loudPart === undefined
+          ? 'loud.png is not in the report'
+          : `${loudPart.refusal?.reason ?? 'accepted'} floor=${l?.floor ?? 'n/a'} span=${l?.span ?? 'n/a'}; ` +
+              `in the detail: ${detail.endsWith(reading) && reading !== ''}, quoted in §11.5: ` +
+              `${guide.includes(reading) && reading !== ''}; ${JSON.stringify(reading)}`,
+        'the other half of the same sentence: a part with size and texture to spare that still matched nowhere is ' +
+          'evidence about the cut, and calling it "too plain" would send the user to the wrong remedy',
+      );
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  // --- PO22: three cells of the measured floor, re-measured -----------------
+  //
+  // 🔒 `POSE_FLOOR` is a number read off `tools/pose_floor.ts`'s grid, and a
+  // number read off a run is a number that stops being true silently the day
+  // the search changes. The full grid is hundreds of `pose` runs and is not a
+  // control; these are three of its cells — one scene, one size, the plainest,
+  // a blurred and the native texture — and they hold the two claims §11.5 makes:
+  // the flat cell is below the floor, part for part, and places at most the
+  // floor's own failure share; the native cell is above it for most of its
+  // parts and places more than the floor's under-share. ⚠️ Fetched art, so an
+  // absent `examples/` is a HOLE here and never a pass.
+  if (!floorCorpusPresent(INGEST_CORPUS_ROOT)) {
+    console.log(`  SKIP  PO22 did not run: no ${FLOOR_EXAMPLE} export under ${INGEST_CORPUS_ROOT}.`);
+    console.log('          run `bun run fetch-examples` and re-run this suite.');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — the floor §11.5 states was not re-measured at all.');
+  } else {
+    const { posable, scenes } = loadFloorScenes(INGEST_CORPUS_ROOT);
+    const scene = scenes.slice(0, 1);
+    const slots = new Map(scene.map((sc) => [sc.name, floorSlots(posable, sc)]));
+    const work = mkdtempSync(join(tmpdir(), 'rigc-pose-floor-'));
+    const cell = (texture: FloorTexture): FloorCell => floorCell(posable, scene, slots, 32, texture, work);
+    const [flat, blurred, native] = [cell('flat'), cell('blur2'), cell('native')];
+    rmSync(work, { recursive: true, force: true });
+    const share = (c: FloorCell): number => c.found / Math.max(1, c.trials.length);
+    const below = (c: FloorCell): number => c.trials.filter((t) => t.legibility?.floor === 'below').length;
+    const probes: string[] = [];
+    if (flat.trials.length === 0) probes.push('the flat cell took no trials');
+    if (below(flat) !== flat.trials.length) probes.push(`${flat.trials.length - below(flat)} flat part(s) read as above the floor`);
+    if (share(flat) > FLOOR_FAIL_RATE) probes.push(`the flat cell placed ${flat.found}/${flat.trials.length}, over the floor's ${FLOOR_FAIL_RATE}`);
+    if (below(native) * 2 > native.trials.length) probes.push(`${below(native)}/${native.trials.length} native part(s) read as below the floor`);
+    if (share(native) <= POSE_FLOOR.rateBelow) {
+      probes.push(`the native cell placed ${native.found}/${native.trials.length}, no better than the floor's under-share ${POSE_FLOOR.rateBelow}`);
+    }
+    if (share(blurred) < share(flat)) probes.push(`the blurred cell placed fewer than the flat one`);
+    const held = probes.length === 0;
+    say(
+      'PO22_THREE_CELLS_OF_THE_MEASURED_FLOOR_STILL_SAY_WHAT_THE_FLOOR_SAYS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${FLOOR_EXAMPLE} ${scene[0].name} at 32 px: flat ${flat.found}/${flat.trials.length} found, ${below(flat)} below the ` +
+          `floor; blur2 ${blurred.found}/${blurred.trials.length}; native ${native.found}/${native.trials.length}, ` +
+          `${native.trials.length - below(native)} above — against detail ${POSE_FLOOR.detail}, under-share ${POSE_FLOOR.rateBelow}`,
+      ),
+      'a floor is a measurement, and a measurement nobody repeats is a number that goes on being printed after the ' +
+        'search it measured has changed underneath it',
     );
   }
 
