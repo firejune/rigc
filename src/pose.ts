@@ -196,6 +196,87 @@ const MAX_ALTERNATES = 3;
 
 const DEG = Math.PI / 180;
 
+/**
+ * The detail below which `pose` has been MEASURED to almost never place a part
+ * — the floor a refusal or an ambiguity is read against (issue #857).
+ *
+ * 📏 Measured, not chosen: `tools/pose_floor.ts` builds the grid and derives
+ * `detail` (`deriveFloor`: the largest rung of a fixed ladder under which at
+ * most a tenth of the grid's trials were found), and `docs/AUTHORING.md` §11.5
+ * carries the grid, the method and what it rejected. A part is BELOW the floor
+ * when its `detail` is under `detail`, or its longest side, in its own pixels,
+ * under `span` — the grid cut its parts at scale 1, so its sizes are both.
+ *
+ * ⚠️ Two things this is not. It is not a size found to matter: `span` is the
+ * smallest size the grid measured, and over 24–192 px no texture level placed
+ * measurably better when larger — a part under it is below the floor because
+ * nothing was measured there, not because it was measured to fail. And it is
+ * not a line above which `pose` is reliable: over it, on IDEAL cuts (parts cut
+ * from the frame's own render, residual at the truth near zero), `rateAbove`
+ * of the trials were found. A generated cut also disagrees with its picture,
+ * which can only make that lower. So "above the floor" means "plainness does
+ * not explain this refusal", which is the question the issue asked, and never
+ * "this part will place".
+ */
+export const POSE_FLOOR = {
+  material: 'examples/spineboy, cut from its own render (tools/pose_floor.ts)',
+  withinPx: 2,
+  span: 24,
+  detail: 0.5,
+  /** Found share of the grid's trials under `detail`, and over it — both measured by `deriveFloor`. */
+  rateBelow: 0.066,
+  rateAbove: 0.594,
+};
+
+/** Which side of `POSE_FLOOR` a part is on, from its own longest side in part pixels and its detail. */
+export function floorSide(side: number, detail: number): 'below' | 'above' {
+  return side >= POSE_FLOOR.span && detail >= POSE_FLOOR.detail ? 'above' : 'below';
+}
+
+/** The floor as one clause, for the sentences that cite it. */
+export function floorClause(): string {
+  return `detail ${POSE_FLOOR.detail}, measured from ${POSE_FLOOR.span} px up`;
+}
+
+/**
+ * The sentence that tells "the part is wrong" from "the part is too small or too
+ * plain for `pose`", with every figure it rests on (issue #857).
+ *
+ * ⭐ Exported for the reason `windowEdgeNote` is: the guide quotes it, and a
+ * message and the document teaching it must be built from one place.
+ */
+export function legibilityReading(l: Omit<PoseLegibility, 'reading'>, verdict: 'refused' | 'ambiguous'): string {
+  const figures =
+    `part is ${l.width}x${l.height} px (span ${l.span} frame px, opaque ${l.opaqueShare}) with texture ${l.texture}, ` +
+    `detail ${l.detail}; ` +
+    `${l.candidates} candidate(s), best ${l.best.toFixed(4)}` +
+    (l.next === null || l.spread === null ? '' : `, next ${l.next.toFixed(4)}, spread ${l.spread.toFixed(4)}`);
+  if (l.floor === 'below') {
+    const why =
+      Math.max(l.width, l.height) < POSE_FLOOR.span
+        ? `smaller than the smallest size the floor was measured at, so nothing measured says pose can ` +
+          `${verdict === 'refused' ? 'place' : 'separate'} it`
+        : `pose placed ${Math.round(POSE_FLOOR.rateBelow * 100)}% of the measured parts this plain, so this part is too ` +
+          `plain for pose to ${verdict === 'refused' ? 'place' : 'tell its placements apart'}`;
+    return (
+      `${figures} — below the measured floor (AUTHORING §11.5: ${floorClause()}): ${why}; that says nothing about ` +
+      'whether the cut is right'
+    );
+  }
+  // ⚠️ "Above the floor" is not "the search found the right hill". Measured on
+  // the floor's own material, a part above it came back ambiguous between two
+  // equally WRONG placements (residual 0.148 each, 173 px off) while the truth
+  // scored 0.035 — a basin the coarse pass never sent down. So the sentence
+  // names that reading too, with the one remedy that separates it: a window.
+  return (
+    `${figures} — above the measured floor (AUTHORING §11.5: ${floorClause()}), so size and texture do not explain this; ` +
+    (verdict === 'refused'
+      ? 'the cut (or the search window) is the suspect'
+      : 'either the frame holds more than one place this part fits, or every candidate missed the true one — ' +
+        'a narrower --scale or --rotation window around what you know of the part tells the two apart')
+  );
+}
+
 // ---------------------------------------------------------------------------
 // the report
 // ---------------------------------------------------------------------------
@@ -307,8 +388,67 @@ export interface PosePart {
    * the part is small relative to the frame and the first pass had little to go on.
    */
   coarse: { reduction: number; cols: number; rows: number; stride: number } | null;
+  /**
+   * What the part itself gave the search to work with, and how the search's
+   * answers stood against each other — `null` only when nothing was searched
+   * (`empty-part`, `larger-than-canvas`). See `PoseLegibility`.
+   */
+  legibility: PoseLegibility | null;
   /** Plain-language versions of everything above, in the order they were found. */
   notes: string[];
+}
+
+/**
+ * The facts that tell "this part is wrong" from "this part is too small or too
+ * plain for `pose`" (issue #857).
+ *
+ * ⭐ Both readings end in the same refusal or the same ambiguity, and nothing in
+ * a residual separates them: a correct cut of a plain sleeve and a foreign part
+ * can print the same number. What separates them is the part's own evidence —
+ * how big it is in the frame and how much pattern it carries — held against a
+ * floor measured on parts whose placement was known (`POSE_FLOOR`). So every
+ * searched part carries these, whatever its verdict, and a refusal or an
+ * ambiguity quotes them in a sentence that says which of the two it is.
+ */
+export interface PoseLegibility {
+  /** The part's material box, part pixels — the PNG less its transparent margin. */
+  width: number;
+  height: number;
+  /**
+   * Longest side of the material box at the best placement's scale, frame pixels.
+   * ⚠️ Not what `floor` is read from — the part's own `width`/`height` are, since
+   * this one moves with a placement that may be wrong.
+   */
+  span: number;
+  /** The part's alpha weight over its material box's area, 0..1. A thin diagonal limb reads low; a filled block reads 1. */
+  opaqueShare: number;
+  /** Mean colour step between neighbouring material pixels, 0..1 — see `partTexture`. */
+  texture: number;
+  /**
+   * `texture` times the material box's longest side in PART pixels: the colour
+   * change a walk along the part's length accumulates. The figure the floor is
+   * stated in — see `POSE_FLOOR` for why it and not `texture` alone.
+   */
+  detail: number;
+  /** Distinct placements the search measured at full resolution, the best included. */
+  candidates: number;
+  /** The best placement's residual, and the second distinct one's — `null` when there was no second. */
+  best: number;
+  next: number | null;
+  /** `next − best`: how far the search's second answer was from its first. `null` with no second. */
+  spread: number | null;
+  /**
+   * Where the part stands against `POSE_FLOOR` — `below` when its span or its
+   * detail is under the floor's. A reading of the part, not of the answer: it is set on accepted
+   * parts too, and it is what a refusal's sentence is chosen by.
+   */
+  floor: 'below' | 'above';
+  /**
+   * The sentence a refused or ambiguous part carries, saying which of the two
+   * readings its figures support — `null` on a part that was placed. Built by
+   * `legibilityReading`, and the console prints the same text.
+   */
+  reading: string | null;
 }
 
 export interface PoseSearch {
@@ -548,6 +688,45 @@ function materialBox(part: Plate): { minX: number; minY: number; maxX: number; m
   }
   if (weight === 0) return null;
   return { minX, minY, maxX: maxX + 1, maxY: maxY + 1, weight };
+}
+
+/**
+ * The part's texture figure: the mean colour step between neighbouring material
+ * pixels, 0..1, in the residual's own units.
+ *
+ * Every pair of a pixel and its right or lower neighbour, both with material,
+ * contributes its mean absolute channel difference over 255, weighted by the
+ * smaller of the two alphas. A part filled with one colour reads exactly 0.
+ *
+ * ⭐ Why this figure rather than a colour variance: it is, to first order, what a
+ * one-pixel shift costs. Moving a part by a pixel inside material that continues
+ * under it compares each of its pixels against its neighbour's colour, so the
+ * residual rises by about this much per pixel of shift — and a part whose
+ * residual cannot rise when it moves cannot be told apart from itself moved.
+ * A variance does not see that: a part half one colour and half another has a
+ * large variance and one edge. The silhouette is deliberately not counted — it
+ * is what the material term already reads, and only where the frame is ground.
+ */
+export function partTexture(part: Plate): number {
+  const w = part.width;
+  const d = part.data;
+  let weight = 0;
+  let acc = 0;
+  const pair = (i: number, j: number): void => {
+    const k = Math.min(d[i + 3], d[j + 3]) / 255;
+    if (k <= 0) return;
+    weight += k;
+    acc += (k * (Math.abs(d[i] - d[j]) + Math.abs(d[i + 1] - d[j + 1]) + Math.abs(d[i + 2] - d[j + 2]))) / 765;
+  };
+  for (let y = 0; y < part.height; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (d[i + 3] === 0) continue;
+      if (x + 1 < w) pair(i, i + 4);
+      if (y + 1 < part.height) pair(i, i + w * 4);
+    }
+  }
+  return weight === 0 ? 0 : acc / weight;
 }
 
 // ---------------------------------------------------------------------------
@@ -1347,6 +1526,7 @@ function placePart(
       rotationFree: false,
       rotationSelfSimilarity: 1,
       coarse: null,
+      legibility: null,
       notes: [`${name} could not be decoded, so it was not placed.`],
     };
   }
@@ -1363,6 +1543,7 @@ function placePart(
     rotationFree: false,
     rotationSelfSimilarity: 1,
     coarse: null,
+    legibility: null,
     notes: [],
   };
 
@@ -1579,6 +1760,26 @@ function placePart(
   }
 
   const best = distinct[0].placement;
+  const second = distinct.length > 1 ? distinct[1].placement.residual : null;
+  base.legibility = {
+    width: tw,
+    height: th,
+    span: roundTo(span * best.scale, 1),
+    opaqueShare: roundTo(box.weight / (tw * th), 4),
+    texture: roundTo(partTexture(part), 4),
+    detail: roundTo(partTexture(part) * span, 3),
+    candidates: distinct.length,
+    best: best.residual,
+    next: second,
+    spread: second === null ? null : roundTo(second - best.residual, 5),
+    floor: 'above',
+    reading: null,
+  };
+  // The part's OWN size, not `span`: `span` is scaled by the best placement,
+  // and on the parts this reading exists for that placement is the one in
+  // doubt — a gun cut at 32 px read as 16 px under the half-scale optimum it
+  // wrongly settled on. The floor was measured at scale 1, where the two agree.
+  base.legibility.floor = floorSide(Math.max(tw, th), base.legibility.detail);
   const margin = Math.max(AMBIGUITY_ABSOLUTE, best.residual * AMBIGUITY_RELATIVE);
   const close = distinct.slice(1).filter((d) => d.placement.residual - best.residual <= margin);
   base.placement = best;
@@ -1652,6 +1853,17 @@ function placePart(
         'it, so that value is where the search was held and not where it came to rest: ' +
         `${base.walls.map((wall) => wallClause(wall.axis, wall.edge, wall.window)).join('; ')}.`,
     );
+  }
+  // ⭐ Which of the two readings a refusal or an ambiguity is (issue #857),
+  // in the refusal's own detail and in a note, from the figures `legibility`
+  // already carries. After the walls on purpose: a wall is the first thing to
+  // move, and this sentence is about what moving it cannot change.
+  if (base.refusal !== null || base.ambiguous) {
+    const verdict = base.refusal !== null ? 'refused' : 'ambiguous';
+    const reading = legibilityReading(base.legibility, verdict);
+    base.legibility.reading = reading;
+    if (base.refusal !== null) base.refusal.detail += `; ${reading}`;
+    base.notes.push(`${name}: ${reading}.`);
   }
   if (best.unexplained > 0.25 && best.residual <= maxResidual) {
     base.notes.push(
@@ -1728,6 +1940,7 @@ export function poseLines(report: PoseReport): string[] {
       lines.push(`         ${' '.repeat(width)}  alt ${i + 2}: ${placementLine(alt)}`);
     });
     if (part.refusal !== null) lines.push(`         ${' '.repeat(width)}  ${part.refusal.reason}: ${part.refusal.detail}`);
+    else if (part.legibility?.reading) lines.push(`         ${' '.repeat(width)}  ambiguous: ${part.legibility.reading}`);
   }
   lines.push('');
   lines.push('  ..    residuals are a trust signal, not a score — nothing here has a pass bar.');
