@@ -1415,6 +1415,14 @@ export interface RigInfo {
    */
   consumerDrivenMix: Array<{ type: 'ik' | 'transform'; constraint: string; why: string }>;
   /**
+   * The `why` of `invariants.idleDrivesMeshes`, or null when the rig does not
+   * declare that its `idle` deforms meshes on purpose. Declared, `A15` SKIPs
+   * with the renderer cost it measured, or FAILs when the `idle` keys no
+   * mesh-driving bone and the declaration switches off nothing. A bare
+   * `validate <dir>` has no rig, so null, and A15 refuses per bone as before.
+   */
+  idleDrivesMeshes: string | null;
+  /**
    * The atlas region(s) the build names as its base plate — the one image
    * `A19_OVERLAY_PNGS_HAVE_ALPHA` lets be opaque — in compile order.
    *

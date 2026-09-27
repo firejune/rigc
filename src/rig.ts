@@ -1591,6 +1591,35 @@ export interface RigInvariants {
    * left to measure, and on the build's stats line when something is.
    */
   consumerDrivenMix?: RigConsumerDrivenMix[];
+  /**
+   * The rig's `idle` deforms meshes **on purpose**, so
+   * `A15_IDLE_NO_MESH_BONE_KEYS` reports the renderer cost instead of refusing
+   * each keyed bone (issues #855, #858).
+   *
+   * 🔑 **What A15 assumes, and the genre that breaks it.** The rule exists for a
+   * renderer that skips redrawing a mesh nothing moved, so an `idle` keying a
+   * mesh-driving bone spends that skip on every frame — right for a rig whose
+   * meshes are mostly static, wrong for a painting rig: one illustration
+   * decomposed into layers, most of them weighted meshes over bone chains, with
+   * an `idle` whose whole job is to move them (hair, sleeves, breathing). The
+   * only way through without this field was a same-origin parent above every
+   * keyed bone — 42 extra bones on the first such rig, the same pose, the rule's
+   * wording met and its purpose not.
+   *
+   * 🚨 **An opt-OUT, held to `deformMayFold`'s standard.** The shape is
+   * `{ "why": … }` and a missing, blank or non-string `why` is refused by name.
+   * What it buys is a **SKIP, never a pass**, and the SKIP carries the cost —
+   * the keyed bones, how many mesh attachments they drive and how many vertices
+   * those hold. A declaration on a rig whose `idle` keys no mesh-driving bone is
+   * refused at the gate: it would switch off nothing while reading like it did.
+   */
+  idleDrivesMeshes?: RigIdleDrivesMeshes;
+}
+
+/** The rig's `idle` is meant to deform meshes — `invariants.idleDrivesMeshes` (`A15`). */
+export interface RigIdleDrivesMeshes {
+  /** Required, and blank is refused by name — see `idleDrivesMeshes`. */
+  why: string;
 }
 
 /** One constraint whose mix the consumer drives — `invariants.consumerDrivenMix`. */
@@ -1696,7 +1725,8 @@ export const RIG_KEYS = {
   RigBoneFrom: ['anchor', 'slotWindow', 'meshCenter', 'rotation'],
   RigSlot: ['name', 'bone', 'attachment', 'color', 'dark', 'blend'],
   RigEvent: ['int', 'float', 'string', 'audio', 'volume', 'balance'],
-  RigInvariants: ['meshSlots', 'meshTriangles', 'axisBone', 'massBone', 'detached', 'deformMayFold', 'editorRoundTrip', 'consumerDrivenMix'],
+  RigInvariants: ['meshSlots', 'meshTriangles', 'axisBone', 'massBone', 'detached', 'deformMayFold', 'editorRoundTrip', 'consumerDrivenMix', 'idleDrivesMeshes'],
+  RigIdleDrivesMeshes: ['why'],
   RigDetachedRule: ['bone', 'notUnder', 'why'],
   RigDeformFoldExemption: ['slot', 'why'],
   RigConsumerDrivenMix: ['constraint', 'type', 'why'],
@@ -1926,6 +1956,7 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
     for (const [i, rule] of (Array.isArray(raw.invariants.consumerDrivenMix) ? raw.invariants.consumerDrivenMix : []).entries()) {
       at(rule, 'RigConsumerDrivenMix', `invariants.consumerDrivenMix[${i}]`);
     }
+    at(raw.invariants.idleDrivesMeshes, 'RigIdleDrivesMeshes', 'invariants.idleDrivesMeshes');
   }
 
   for (const [skinName, skin] of Object.entries(isObj(raw.skins) ? raw.skins : {})) {
@@ -2134,9 +2165,9 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
     }
   }
 
-  // `invariants.deformMayFold` — one of the two fields in this file that TURN A
-  // CHECK OFF (`consumerDrivenMix`, below, is the other), so its own shape is
-  // checked harder than the fields that turn one on. A
+  // `invariants.deformMayFold` — one of the three fields in this file that TURN
+  // A CHECK OFF (`consumerDrivenMix` and `idleDrivesMeshes`, below, are the
+  // others), so its own shape is checked harder than the fields that turn one on. A
   // typo in a slot name here would silently exempt nothing and gate everything,
   // which reads exactly like the check working; and an exemption with no reason
   // is unreviewable six months later. Both are refused by name.
@@ -2262,6 +2293,29 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
             'off for that constraint, and an exemption nobody can date or justify is how a defect ships as a decision',
         );
       }
+    }
+  }
+
+  // `invariants.idleDrivesMeshes` — the third field that TURNS A CHECK OFF
+  // (issues #855, #858), so it is held to the same standard: the one shape it
+  // accepts is `{ "why": … }`, and a `why` that is missing, blank or not a
+  // string is refused by name. `true` is refused too, even though it reads like
+  // the obvious spelling — a switch with no reason attached is exactly the
+  // exemption nobody can review later. Whether the declaration switches off
+  // anything is a question about the emitted `idle`, so it is the gate's (A15
+  // refuses a stale one), not this parser's.
+  const idleDrives = spec.invariants?.idleDrivesMeshes;
+  if (idleDrives !== undefined) {
+    const shape = '{ "why": "<why this idle deforms meshes on purpose>" }';
+    if (!isObj(idleDrives)) {
+      throw new CompileError(`${where}: invariants.idleDrivesMeshes is ${JSON.stringify(idleDrives)}, expected ${shape}`);
+    }
+    if (typeof idleDrives.why !== 'string' || idleDrives.why.trim().length === 0) {
+      throw new CompileError(
+        `${where}: invariants.idleDrivesMeshes needs a "why" (a non-blank string), got ` +
+          `${idleDrives.why === undefined ? 'none' : JSON.stringify(idleDrives.why)} — expected ${shape}. This field switches ` +
+          'A15_IDLE_NO_MESH_BONE_KEYS off, and an exemption nobody can date or justify is how a defect ships as a decision',
+      );
     }
   }
 

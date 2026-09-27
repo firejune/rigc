@@ -544,6 +544,21 @@ keys a bone driving a mesh — its own slot bone or its control bone — because
 renderer must never idle-skip a mesh. Keying the pivot one link up satisfies it,
 and **the rig that satisfies the assertion is the better rig anyway.**
 
+⚠️ **A15 assumes the meshes are mostly static, and that assumption is the rule's
+whole premise.** The `spine-html` renderer skips redrawing a mesh nothing moved, so a
+face whose `idle` breathes through one pivot keeps every mesh under it cheap only if
+nothing keys the meshes' own bones. The rule reads bone **names**: keying `headroll`
+passes it, and `head`'s mesh still moves, because a child's world transform is
+composed from its parent's — so pivoting is right here for the anatomical reason
+above, not because it stops a redraw. A **painting rig** is the genre where the
+premise is false by design: one illustration in layers, most of them weighted
+meshes, with an `idle` whose job is to move them. Pivoting every keyed bone one link
+up there satisfies the wording and not the purpose (issue #855: 42 extra bones, the
+same pose, the meshes still moving). That rig **declares** instead —
+`invariants.idleDrivesMeshes: { "why": … }` ([AUTHORING](AUTHORING.md) §3.7) — and A15
+reports the bones, meshes and vertices the `idle` moves as a SKIP rather than a
+refusal per bone.
+
 ---
 
 ## 4. The mesh — where the columns go is the whole decision
