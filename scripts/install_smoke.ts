@@ -29,9 +29,10 @@
  *
  * 🌱 **The plants are part of the tool, not a story in a pull request.** A smoke
  * that has never been seen to fail proves that a program ran, not that a program
- * was checked, so four of the six cases rebuild the tarball from a PATCHED COPY
+ * was checked, so six of the eight cases rebuild the tarball from a PATCHED COPY
  * of the extracted package — an allowlist entry removed, a module removed, a
- * dependency removed, the skills removed — and INVERT the verdict: such a case is green only when the
+ * dependency removed, the skills removed, the `exports` map removed, its deep
+ * paths removed — and INVERT the verdict: such a case is green only when the
  * smoke went red at the step it was supposed to, naming the module that went
  * missing. The worktree is never patched; the patch is applied to the extraction
  * and packed from there, and a plant that removed nothing is itself a fault.
@@ -276,6 +277,163 @@ const REQUIRED_ASSERTIONS: Array<[string, string]> = [
   ['A18_DETERMINISTIC_EMIT', 'the second, independent compile the build runs to compare byte for byte'],
 ];
 
+/**
+ * The surface a dependant may import (issue #859): each `exports` key rigc
+ * names, and the file it has to land on in the install. RELEASING.md *The
+ * import surface* is where this is stated as a promise; this is where it is
+ * checked, and `drop-deep-exports` cuts the map down to exactly these keys.
+ */
+const NAMED_EXPORTS: Record<string, string> = {
+  './plate': 'tools/plate.ts',
+  './font5x7': 'tools/font5x7.ts',
+  './transform': 'src/transform.ts',
+  './cli': 'cli.ts',
+  './package.json': 'package.json',
+};
+
+/**
+ * The deep paths a dependant was observed importing before the map existed —
+ * spine-parts, on 2026-09-27 — which the one-release courtesy has to keep.
+ * They are also inside the every-shipped-path sweep below; they are named here
+ * so that the failure a dependant would hit is the one this prints.
+ */
+const OBSERVED_DEEP_PATHS: Record<string, string> = {
+  'spine-rigc/tools/plate.ts': 'tools/plate.ts',
+  'spine-rigc/tools/font5x7.ts': 'tools/font5x7.ts',
+  'spine-rigc/src/transform.ts': 'src/transform.ts',
+  'spine-rigc/cli.ts': 'cli.ts',
+};
+
+/**
+ * Imports the package the way a dependant does, from the install directory,
+ * and calls one symbol through every route that reaches a module.
+ *
+ * It prints `EXPORT_BAD <specifier>: <what>` for each failure, so the harness
+ * can name the subpath rather than the script, and `EXPORT_COUNTS …` once.
+ *
+ * ⚠️ The every-path sweep asks Bun and not Node, deliberately: Bun is the
+ * runtime rigc runs on, and it is the one whose extension probing made
+ * `spine-rigc/tools/plate` (no `.ts`) resolve before the map existed. Node's
+ * `import.meta.resolve` does not look at the disk for a path with no pattern
+ * match, so a Node answer here would pass a specifier nothing can load.
+ */
+const EXPORTS_PROBE_SOURCE = `import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = fileURLToPath(new URL('.', import.meta.url));
+const ROOT = realpathSync(join(HERE, 'node_modules', 'spine-rigc'));
+const plan = JSON.parse(readFileSync(join(HERE, 'exports_probe.json'), 'utf8'));
+const bad = [];
+const said = (spec, what) => bad.push(spec + ': ' + what);
+
+const where = (spec) => {
+  try {
+    const url = import.meta.resolve(spec);
+    const path = fileURLToPath(url);
+    return existsSync(path) ? realpathSync(path) : 'MISSING ' + path;
+  } catch (e) {
+    return 'THROW ' + (e && e.message ? e.message : String(e));
+  }
+};
+const lands = (spec, file) => {
+  const got = where(spec);
+  const want = join(ROOT, file);
+  if (got !== want) said(spec, 'resolved to ' + got + ' and ' + file + ' in the install was required');
+  return got === want;
+};
+const load = async (spec) => {
+  try {
+    return await import(spec);
+  } catch (e) {
+    said(spec, 'import threw ' + (e && e.message ? e.message : String(e)));
+    return null;
+  }
+};
+
+// 1. Every named entry, and every deep path a dependant was seen using.
+for (const [key, file] of Object.entries(plan.named)) lands('spine-rigc' + key.slice(1), file);
+for (const [spec, file] of Object.entries(plan.deep)) lands(spec, file);
+
+// 2. One symbol through each route. The expected values are facts of the
+// format or of the definition, never a measurement of this package: the IEND
+// chunk is the same twelve bytes in every PNG there is, and cropToSpineY is
+// height minus y by definition.
+const IEND = [0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+const plates = [];
+for (const spec of ['spine-rigc/plate', 'spine-rigc/tools/plate.ts']) {
+  const m = await load(spec);
+  if (m === null) continue;
+  plates.push(m);
+  const chunk = typeof m.pngChunk === 'function' ? Array.from(m.pngChunk('IEND', new Uint8Array(0))) : null;
+  if (chunk === null || chunk.join(',') !== IEND.join(',')) said(spec, 'pngChunk("IEND", 0 bytes) gave ' + JSON.stringify(chunk) + ' and the PNG IEND chunk was required');
+  if (!(m.PNG_SIGNATURE instanceof Uint8Array) || m.PNG_SIGNATURE[1] !== 0x50) said(spec, 'PNG_SIGNATURE is not the PNG signature');
+  const png = m.encodePng(1, 1, new Uint8Array([1, 2, 3, 4]));
+  const back = Array.from(m.decodePng(png).data);
+  if (back.join(',') !== '1,2,3,4') said(spec, 'encodePng then decodePng of one RGBA pixel 1,2,3,4 came back ' + back.join(','));
+}
+if (plates.length === 2 && plates[0].pngChunk !== plates[1].pngChunk) {
+  said('spine-rigc/plate', 'is a different module instance from spine-rigc/tools/plate.ts, so one file is loaded twice');
+}
+const Plate = plates[0] ? plates[0].Plate : null;
+for (const spec of ['spine-rigc/font5x7', 'spine-rigc/tools/font5x7.ts']) {
+  const m = await load(spec);
+  if (m === null || Plate === null) continue;
+  const w = m.textWidth('RIGC', 1);
+  const plate = new Plate(w, m.GLYPH_H);
+  let lit = 0;
+  let outside = 0;
+  m.drawText('RIGC', 0, 0, 1, (x, y) => {
+    lit += 1;
+    if (x < 0 || y < 0 || x >= w || y >= m.GLYPH_H) outside += 1;
+    plate.blend(x, y, [255, 255, 255, 255]);
+  });
+  let opaque = 0;
+  for (let i = 3; i < plate.data.length; i += 4) if (plate.data[i] === 255) opaque += 1;
+  if (lit === 0 || outside !== 0 || opaque !== lit) {
+    said(spec, 'drawText("RIGC") onto a ' + w + 'x' + m.GLYPH_H + ' plate plotted ' + lit + ' pixel(s), ' + outside + ' outside it, ' + opaque + ' opaque; a lit, in-bounds, one-to-one drawing was required');
+  }
+}
+for (const spec of ['spine-rigc/transform', 'spine-rigc/src/transform.ts']) {
+  const m = await load(spec);
+  if (m === null) continue;
+  const y = m.cropToSpineY(10, 64);
+  if (y !== 64 - 10) said(spec, 'cropToSpineY(10, 64) gave ' + y + ' and 64 - 10 was required');
+  const local = m.toBoneLocal({ a: 1, b: 0, c: 0, d: 1, worldX: 3, worldY: 4, worldRotation: 0 }, 5, 7);
+  if (local[0] !== 5 - 3 || local[1] !== 7 - 4) said(spec, 'toBoneLocal on an unrotated bone at (3, 4) gave ' + JSON.stringify(local) + ' for (5, 7) and [2, 3] was required');
+}
+const pkg = await load('spine-rigc/package.json');
+const version = pkg && pkg.default ? pkg.default.version : undefined;
+if (pkg !== null && (pkg.default === undefined || pkg.default.name !== 'spine-rigc')) said('spine-rigc/package.json', 'does not import as a JSON module named spine-rigc');
+// The CLI is RESOLVED and spawned rather than imported: importing it runs it,
+// and spawning the resolved file is what a dependant that gates through rigc does.
+for (const spec of ['spine-rigc/cli', 'spine-rigc/cli.ts']) {
+  const file = where(spec);
+  if (!file.startsWith(ROOT)) continue;
+  const ran = spawnSync(process.execPath, [file, '--version'], { encoding: 'utf8' });
+  const out = (ran.stdout || '').trim();
+  if (ran.status !== 0 || out !== version) said(spec, 'bun <resolved> --version exited ' + ran.status + ' printing ' + JSON.stringify(out) + ' and ' + JSON.stringify(version) + ' was required');
+}
+
+// 3. Every path the tarball carries, spelled in full — and, for a module, with
+// its extension left off, which is how Bun resolved it before the map existed.
+let full = 0;
+let bare = 0;
+let bareTried = 0;
+for (const path of plan.paths) {
+  if (lands('spine-rigc/' + path, path)) full += 1;
+  const m = /^(.*)\\.(ts|mjs|cjs)$/.exec(path);
+  if (m !== null) {
+    bareTried += 1;
+    if (lands('spine-rigc/' + m[1], path)) bare += 1;
+  }
+}
+for (const line of bad) console.log('EXPORT_BAD ' + line);
+console.log('EXPORT_COUNTS named ' + Object.keys(plan.named).length + ', observed deep paths ' + Object.keys(plan.deep).length + ', shipped paths ' + full + '/' + plan.paths.length + ' in full and ' + bare + '/' + bareTried + ' modules without their extension');
+process.exit(bad.length === 0 ? 0 : 1);
+`;
+
 // ---------------------------------------------------------------------------
 // Running things
 // ---------------------------------------------------------------------------
@@ -463,7 +621,7 @@ function waitForRegistry(spec: string, minutes: number, cwd: string, into: strin
 // The tarball, and the plants that patch a COPY of it
 // ---------------------------------------------------------------------------
 
-type Plant = 'none' | 'drop-plate' | 'drop-src-module' | 'drop-dependency' | 'drop-skills';
+type Plant = 'none' | 'drop-plate' | 'drop-src-module' | 'drop-dependency' | 'drop-skills' | 'drop-exports' | 'drop-deep-exports';
 
 /** The module each plant takes out of the package, and the step whose output has to name it. */
 const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]; what: string }> = {
@@ -487,6 +645,16 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
     steps: ['skills'],
     what: '`skills` removed from `files` (issue #831). `rigc skills install` finds the skills from its own location in the install, so a package that ships none is the one place this can be seen — a checkout always has them',
   },
+  'drop-exports': {
+    names: ['spine-rigc/plate'],
+    steps: ['exports'],
+    what: '`exports` removed from `package.json` (issue #859), which is the package v1.2.3 shipped: every deep path still resolves, so what goes missing is the named surface, and a dependant importing `spine-rigc/plate` is the one who finds out',
+  },
+  'drop-deep-exports': {
+    names: ['spine-rigc/tools/plate.ts'],
+    steps: ['exports'],
+    what: '`exports` cut down to its named entries (issue #859), which is the map without its one-release courtesy: `spine-rigc/tools/plate.ts`, a deep path a dependant was observed importing, stops resolving, and so does the fixture that imports it',
+  },
 };
 
 /**
@@ -501,7 +669,7 @@ function tarballFor(
   work: string,
   source: Source,
   plant: Plant,
-): { tgz: string; faults: string[]; packedPaths: number; evidence: string } {
+): { tgz: string; faults: string[]; paths: string[]; evidence: string } {
   const faults: string[] = [];
   const packDir = join(work, 'pack');
   mkdirSync(packDir, { recursive: true });
@@ -520,11 +688,11 @@ function tarballFor(
     faults.push(
       `SMOKE_PACK_WROTE_A_TARBALL: \`npm pack\` exited ${packed.status} and left ${tarballs.length} tarball(s) in ${packDir}; one was required. ${packed.out.trim()}`,
     );
-    return { tgz: '', faults, packedPaths: 0, evidence: '' };
+    return { tgz: '', faults, paths: [], evidence: '' };
   }
   const first = join(packDir, tarballs[0]);
   const paths = tarPaths(first, work);
-  if (plant === 'none') return { tgz: first, faults, packedPaths: paths.length, evidence: '' };
+  if (plant === 'none') return { tgz: first, faults, paths, evidence: '' };
 
   // Extract, patch, pack again. `npm pack <dir>` reads that directory's own
   // package.json, so a `files` entry removed from the extraction is a file the
@@ -535,13 +703,14 @@ function tarballFor(
   const pkgDir = join(patchDir, 'package');
   if (untar.status !== 0 || !existsSync(join(pkgDir, 'package.json'))) {
     faults.push(`SMOKE_PLANT_APPLIED: extracting ${first} left no package/package.json under ${patchDir}. ${untar.out.trim()}`);
-    return { tgz: '', faults, packedPaths: 0, evidence: '' };
+    return { tgz: '', faults, paths: [], evidence: '' };
   }
 
   const pkgPath = join(pkgDir, 'package.json');
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as {
     files?: string[];
     dependencies?: Record<string, string>;
+    exports?: Record<string, string>;
   };
   if (plant === 'drop-plate') {
     pkg.files = (pkg.files ?? []).filter((entry) => entry !== 'tools/plate.ts');
@@ -552,11 +721,17 @@ function tarballFor(
   } else if (plant === 'drop-skills') {
     pkg.files = (pkg.files ?? []).filter((entry) => entry !== 'skills');
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  } else if (plant === 'drop-exports') {
+    delete pkg.exports;
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  } else if (plant === 'drop-deep-exports') {
+    pkg.exports = Object.fromEntries(Object.entries(pkg.exports ?? {}).filter(([key]) => key in NAMED_EXPORTS));
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   } else {
     const victim = join(pkgDir, 'src', 'validate.ts');
     if (!existsSync(victim)) {
       faults.push(`SMOKE_PLANT_APPLIED: src/validate.ts is not in the packed tree, so removing it plants nothing`);
-      return { tgz: '', faults, packedPaths: 0, evidence: '' };
+      return { tgz: '', faults, paths: [], evidence: '' };
     }
     rmSync(victim);
   }
@@ -567,7 +742,7 @@ function tarballFor(
   const again = readdirSync(repackDir).filter((f) => f.endsWith('.tgz'));
   if (repacked.status !== 0 || again.length !== 1) {
     faults.push(`SMOKE_PLANT_APPLIED: re-packing the patched copy exited ${repacked.status} with ${again.length} tarball(s). ${repacked.out.trim()}`);
-    return { tgz: '', faults, packedPaths: 0, evidence: '' };
+    return { tgz: '', faults, paths: [], evidence: '' };
   }
   const second = join(repackDir, again[0]);
 
@@ -577,10 +752,10 @@ function tarballFor(
   // whole, and the inverted verdict below would then be reporting that a correct
   // package fails.
   //
-  // ⚠️ Two plants change the path list and one does not, so one clause cannot
-  // serve both: `drop-dependency` leaves every path where it was and edits one
-  // line inside `package.json`, and a clause written only for the first kind
-  // would pass it by construction.
+  // ⚠️ Some plants change the path list and three do not, so one clause cannot
+  // serve both: `drop-dependency` and the two `exports` plants leave every path
+  // where it was and edit `package.json`, and a clause written only for the
+  // first kind would pass them by construction.
   const before = new Set(paths);
   const after = tarPaths(second, work);
   const gone = [...before].filter((p) => !after.includes(p));
@@ -595,6 +770,23 @@ function tarballFor(
     } else {
       evidence = `the packed package.json declares ${Object.keys(deps).length} dependenc(ies) where the tree declares 1`;
     }
+  } else if (plant === 'drop-exports' || plant === 'drop-deep-exports') {
+    const shipped = run('tar', ['-xzOf', second, 'package/package.json'], work);
+    const map = shipped.status === 0 ? (JSON.parse(shipped.out) as { exports?: Record<string, string> }).exports : undefined;
+    const keys = map === undefined ? [] : Object.keys(map);
+    const treeKeys = Object.keys((JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { exports?: Record<string, string> }).exports ?? {});
+    const planted =
+      shipped.status === 0 &&
+      (plant === 'drop-exports'
+        ? map === undefined
+        : keys.length > 0 && keys.length < treeKeys.length && keys.every((key) => key in NAMED_EXPORTS));
+    if (!planted) {
+      faults.push(
+        `SMOKE_PLANT_APPLIED: the packed package.json maps ${map === undefined ? 'no exports' : `exports ${keys.join(', ')}`} where the tree maps ${treeKeys.length} key(s), so the plant "${plant}" planted nothing and a red below would be somebody else's fault`,
+      );
+    } else {
+      evidence = `the packed package.json maps ${keys.length} exports key(s) where the tree maps ${treeKeys.length}`;
+    }
   } else if (gone.length === 0) {
     faults.push(
       `SMOKE_PLANT_APPLIED: the plant "${plant}" left the packed path list unchanged at ${after.length} path(s), so nothing was planted and a red below would be somebody else's fault`,
@@ -602,7 +794,7 @@ function tarballFor(
   } else {
     evidence = `the plant took ${gone.join(', ')} out of the pack`;
   }
-  return { tgz: second, faults, packedPaths: after.length, evidence };
+  return { tgz: second, faults, paths: after, evidence };
 }
 
 /** Make one directory under another and hand back its path. */
@@ -661,7 +853,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   const built = tarballFor(work, spec.source, spec.plant);
   for (const f of built.faults) fault('pack', f);
   if (built.tgz === '') return { name: spec.name, faults, steps, notes, output };
-  notes.push(`the tarball carries ${built.packedPaths} path(s)`);
+  notes.push(`the tarball carries ${built.paths.length} path(s)`);
   if (built.evidence !== '') notes.push(built.evidence);
 
   // An EMPTY directory with a package.json of its own, so npm resolves here and
@@ -818,6 +1010,31 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     fault('validate', `SMOKE_VALIDATE_READS_BACK: \`node_modules/.bin/rigc validate build\` exited ${validate.status}. ${validate.out.trim().slice(0, 4000)}`);
   }
 
+  // The import surface (issue #859), from the install: every `exports` entry
+  // rigc names, the deep paths a dependant was seen importing, and every path
+  // the tarball carries. A checkout cannot see any of this — a relative import
+  // never reads `exports` — which is why it is here and not in the selftest.
+  writeFileSync(
+    join(home, 'exports_probe.json'),
+    `${JSON.stringify({ named: NAMED_EXPORTS, deep: OBSERVED_DEEP_PATHS, paths: built.paths }, null, 2)}\n`,
+  );
+  writeFileSync(join(home, 'exports_probe.mjs'), EXPORTS_PROBE_SOURCE);
+  const exportsRan = run('bun', [join(home, 'exports_probe.mjs')], home);
+  output += exportsRan.out;
+  const exportsBad = exportsRan.out.split('\n').filter((line) => line.startsWith('EXPORT_BAD '));
+  const exportsCounts = /^EXPORT_COUNTS (.+)$/m.exec(exportsRan.out)?.[1];
+  for (const line of exportsBad) {
+    fault('exports', `SMOKE_EXPORTS_RESOLVE_FROM_THE_INSTALL: ${line.slice('EXPORT_BAD '.length)}`);
+  }
+  if (exportsCounts === undefined || (exportsRan.status !== 0 && exportsBad.length === 0)) {
+    fault(
+      'exports',
+      `SMOKE_EXPORTS_RESOLVE_FROM_THE_INSTALL: the import probe exited ${exportsRan.status} without a verdict, so nothing was resolved. ${exportsRan.out.trim().slice(0, 2000)}`,
+    );
+  } else if (exportsBad.length === 0) {
+    notes.push(`exports: ${exportsCounts}`);
+  }
+
   // The skills, the way an agent host needs them (issue #831): the INSTALLED
   // package links its own `skills/` into a directory of this install — one with a
   // space in it, so a link that was not relative-and-quoted-safe would show —
@@ -895,12 +1112,14 @@ exit codes:
      --wait, so the confirmation was NOT taken; nothing here says the package is broken
 
 cases:
-  clean          a correct package installs and builds, links its skills from the install, and the bin shim names Bun when bun is absent
+  clean          a correct package installs and builds, resolves every \`exports\` entry and every shipped path from the install, links its skills, and the bin shim names Bun when bun is absent
   unusual-path   the same, installed at an absolute path with spaces and non-ASCII in it
   drop-plate     tools/plate.ts out of \`files\`  — the smoke has to go RED naming it
   drop-src-module  src/validate.ts out of the packed tree — the smoke has to go RED naming it
   drop-dependency  @esotericsoftware/spine-core out of \`dependencies\` — the smoke has to go RED naming it
   drop-skills      \`skills\` out of \`files\` — \`rigc skills install\` has to go RED naming it
+  drop-exports     \`exports\` out of package.json — importing spine-rigc/plate has to go RED naming it
+  drop-deep-exports  \`exports\` cut to its named entries — the deep path spine-rigc/tools/plate.ts has to go RED naming it
 
 A plant case is green when the smoke failed the way the plant says it must, and
 red when the smoke passed anyway. Nothing is written inside the repository.
@@ -999,6 +1218,8 @@ function main(): number {
     { name: 'drop-src-module', source, installer, plant: 'drop-src-module', dirName: 'planted-src' },
     { name: 'drop-dependency', source, installer, plant: 'drop-dependency', dirName: 'planted-dep' },
     { name: 'drop-skills', source, installer, plant: 'drop-skills', dirName: 'planted-skills' },
+    { name: 'drop-exports', source, installer, plant: 'drop-exports', dirName: 'planted-exports' },
+    { name: 'drop-deep-exports', source, installer, plant: 'drop-deep-exports', dirName: 'planted-deep-exports' },
   ];
   const chosen = only === null ? battery : battery.filter((c) => c.name === only);
   if (chosen.length === 0) {
