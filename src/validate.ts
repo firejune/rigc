@@ -2596,13 +2596,26 @@ export function validate(input: ValidateInput): ValidateReport {
       // a linked mesh has no rim of its OWN at all — the one it draws belongs to
       // its source, and is measured there. Nothing to measure is a SKIP — never
       // a pass, and never a failure on somebody else's correct geometry.
-      const measurable = meshAttachments.filter((m) => m.bones && kindOf(m) !== 'authored');
+      //
+      // 🔸 A `segments` mesh is rigc's own geometry and still has no rim to pin:
+      // its outline is traced off the art and weighted by distance like every
+      // other vertex, because a layer pulled by named bones is SUPPOSED to move
+      // at its edge. "Pinned to the slot bone" is not a claim that generator
+      // makes, so there is nothing here to hold it to — and `A20`'s coherence
+      // rules, which it does make, still apply to it in full.
+      const rimless = (m: MeshAttachment): boolean => kindOf(m) === 'authored' || kindOf(m) === 'segments';
+      const measurable = meshAttachments.filter((m) => m.bones && !rimless(m));
       if (measurable.length === 0) {
         const authored = authoredMeshNames(meshAttachments.filter((m) => m.bones));
+        const segmented = meshAttachments.filter((m) => m.bones && kindOf(m) === 'segments').map((m) => `"${m.name}"`);
         return skip(
           'A21_MESH_RIM_PINNED',
-          `every weighted mesh here is authored or linked geometry (${authored.join(', ')}), not a rigc ring or ` +
-            'ribbon — rigc did not place its rim, so it has no rim of its own to find unpinned',
+          segmented.length === 0
+            ? `every weighted mesh here is authored or linked geometry (${authored.join(', ')}), not a rigc ring or ` +
+                'ribbon — rigc did not place its rim, so it has no rim of its own to find unpinned'
+            : `every weighted mesh here is ${authored.length ? `authored or linked geometry (${authored.join(', ')}) or ` : ''}` +
+                `a "segments" lattice (${segmented.join(', ')}), not a rigc ring or ribbon — a segments mesh weights its ` +
+                'outline by distance to the bones it names, so it has no rim pinned to the slot bone to find unpinned',
         );
       }
       for (const mesh of measurable) {
@@ -5895,12 +5908,12 @@ export function validate(input: ValidateInput): ValidateReport {
       // of one whose meshes are contours — and the last two are cases where a
       // reader should know that a mesh went unmeasured on purpose.
       const unpaired = Object.entries(kinds)
-        .filter(([, kind]) => kind === 'authored' || kind === 'contour')
+        .filter(([, kind]) => kind === 'authored' || kind === 'contour' || kind === 'segments')
         .map(([slot, kind]) => `"${slot}" (${kind})`);
       return skip(
         'A28_RIBBON_ROWS_SHARE_WEIGHTS',
         unpaired.length
-          ? `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut — its mesh slot(s) ${unpaired.join(', ')} have no rows to pair: authored geometry is somebody else's topology, and a contour is one silhouette loop`
+          ? `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut — its mesh slot(s) ${unpaired.join(', ')} have no rows to pair: authored geometry is somebody else's topology, a contour is one silhouette loop, and a segments lattice has cells rather than cross rows`
           : `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut`,
       );
     }

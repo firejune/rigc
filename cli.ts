@@ -612,8 +612,36 @@ const MESH_KIND_NOTES: Record<CompileResult['meshes'][number]['kind'], string> =
   ribbon: 'ribbon    entry row pinned, rows share their weights so the strip lengthens without widening',
   contour: 'contour   the art\'s own silhouette, every vertex pinned to the slot bone (geometry, not a deformation)',
   grid: 'grid      a lattice over the part window at stated column and row positions, every vertex pinned to the slot bone',
+  segments: 'segments  a lattice over the part\'s alpha, every vertex weighted by distance to the bone segments it names',
   authored: 'authored  geometry rigc did not build; it assumes nothing about the topology',
 };
+
+/**
+ * The line under a `segments` mesh: how its bones share the vertices.
+ *
+ * ⭐ The weights are this generator's whole output, and the per-vertex numbers
+ * are nowhere a reader can see them — so the three figures that say whether the
+ * falloff did what was meant are printed where the mesh is: the most bones any
+ * vertex binds (against `maxBones`), the mean, and how many vertices a single
+ * bone owns outright. A named bone no vertex binds is said by name, because it
+ * is in no weight and so in no other figure either.
+ */
+function meshInfluenceNote(m: CompileResult['meshes'][number]): string {
+  const inf = m.influence;
+  if (inf === undefined) return '';
+  const unbound = m.bones.filter((b) => !inf.bound.includes(b));
+  const single = m.vertices === 0 ? 0 : (inf.singleBone / m.vertices) * 100;
+  const joined = inf.keptCells - inf.artCells;
+  return (
+    `\n        influence  max ${inf.maxBones} bone(s) per vertex, mean ${inf.meanBones.toFixed(2)}, ` +
+    `${inf.singleBone} of ${m.vertices} vertices (${single.toFixed(2)}%) on a single bone` +
+    (unbound.length ? `; named and bound by no vertex: ${unbound.join(', ')}` : '') +
+    `\n        lattice    cell ${inf.cell}px, ${inf.cols}x${inf.rows} cells, ${inf.artCells} with art, ${inf.keptCells} kept` +
+    (inf.islands > 1 || joined > 0
+      ? ` (${inf.islands} island(s) joined into one outline, ${joined} cell(s) added that hold no art)`
+      : '')
+  );
+}
 
 /**
  * Why a figure taken off a part's texels is withheld on a page whose file is
@@ -1394,7 +1422,8 @@ function cmdBuild(flags: Record<string, string>): void {
     console.log(
       `  MESH  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
         `${meshBudget(result.rig)}  bones=[${m.bones.join(', ')}]  attachments=[${m.attachments.join(', ')}]${meshFit(m)}` +
-        meshDepthNote(m),
+        meshDepthNote(m) +
+        meshInfluenceNote(m),
     );
   }
   for (const ph of result.physics) {
@@ -3327,7 +3356,8 @@ function cmdExplain(flags: Record<string, string>): void {
       console.log(
         `  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
           `${meshBudget(result.rig)}  bones=[${m.bones.join(', ')}]${meshFit(m)}` +
-          meshDepthNote(m),
+          meshDepthNote(m) +
+          meshInfluenceNote(m),
       );
     }
   }

@@ -83,8 +83,11 @@ import {
   meshEdges,
   MeshError,
   ringControlAngles,
+  buildSegmentsLattice,
+  segmentShares,
   traceOutline,
   type MeshBoneRef,
+  type WorldSegment,
   type MeshFitReport,
   type MeshGeometry,
   type MeshVertexWeight,
@@ -5047,6 +5050,7 @@ function buildGeneratedMesh(
 ): SpineMeshAttachment {
   if (generator.kind === 'contour') return buildContourAttachment(att, generator, placeholder, where, ctx);
   if (generator.kind === 'grid') return buildGridAttachment(att, generator, placeholder, where, ctx);
+  if (generator.kind === 'segments') return buildSegmentsAttachment(att, generator, placeholder, where, ctx);
   const controls = generator.kind === 'ring' ? generator.controls : generator.chain;
   // Resolving the bone list and the setup transform is one step with two named
   // refusals, because the ring's control angles need the transform and the encode
@@ -5688,6 +5692,335 @@ function buildGridAttachment(
     height: f32(h),
   };
   return out;
+}
+
+/**
+ * Defaults for the `segments` generator's optional parameters, stated once.
+ *
+ * `power`, `maxBones` and `minWeight` are the constants the algorithm was
+ * ported with, and `alpha` is `contour`'s own. `cell` and `falloff.radius` have
+ * none: both are lengths on this part's art, and a length rigc chose would be a
+ * judgement about a drawing it has not been told anything about.
+ */
+const SEGMENTS_DEFAULTS = { power: 2, maxBones: 4, minWeight: 0.03, alpha: 1 } as const;
+
+/** The smallest share a `minWeight` may keep: one step of the 6-decimal grid weights are written on. */
+const SEGMENTS_WEIGHT_STEP = 0.000001;
+
+/** `[x, y]` as two finite numbers, or null. */
+function finitePair(v: unknown): [number, number] | null {
+  return Array.isArray(v) && v.length === 2 && v.every((n) => typeof n === 'number' && Number.isFinite(n))
+    ? [v[0] as number, v[1] as number]
+    : null;
+}
+
+/**
+ * Build a `segments` mesh: a lattice over the part's alpha, weighted by distance
+ * to the bone segments `bones` names.
+ *
+ * ⭐ `bones` is the one decision the author makes, and everything else is read
+ * off something already in front of the compiler: the lattice off the image's
+ * alpha, each segment off the skeleton's setup pose (a bone's origin, the next
+ * chain link's origin, a bone's `length` tip) or off the two points a span
+ * states, and every weight off the distance between a vertex and those
+ * segments. No segment is invented — a bone with no `length` and no next link
+ * has an origin and no segment, and is refused by name.
+ *
+ * The placement is the one every generator on this route uses — the slot bone
+ * at the window's centre — unless `anchor` says where in the part's pixels the
+ * slot bone sits, which is what a part drawn somewhere other than centred on
+ * its bone needs, because unlike a pinned generator this one's weights depend
+ * on where the art is relative to the bones.
+ */
+function buildSegmentsAttachment(
+  att: RigMeshAttachment,
+  generator: Extract<NonNullable<RigMeshAttachment['generator']>, { kind: 'segments' }>,
+  placeholder: string,
+  where: string,
+  ctx: AttachmentContext,
+): SpineMeshAttachment {
+  if (att.image === undefined) {
+    throw new CompileError(
+      `${where}: a "segments" generator lays its lattice over the part's own alpha, so the attachment needs an ` +
+        '"image" — there is nothing else here that says which pixels are art',
+    );
+  }
+  const img = atlasedImage(att.image, where, ctx);
+  if (img.pageGrid !== undefined) {
+    throw new CompileError(
+      `${where}: a "segments" generator lays its lattice over the part's own alpha, and "${att.image}" is lifted ` +
+        'off a packed page at the coordinates the atlas states, which on this file are not where its texels are — ' +
+        `so there is no art here to cover, only another part of the page. ${img.pageGrid.sentence}`,
+    );
+  }
+  if (img.atlasScale !== undefined) {
+    throw new CompileError(
+      `${where}: a "segments" generator measures its "cell" and its falloff "radius" in the part's pixels, and ` +
+        `"${att.image}" sits on a page that declares scale: ${img.atlasScale}, where a pixel of the drawing is not a ` +
+        'texel of the page. This generator does not convert between the two; build it from the loose part, or ' +
+        'from a pack at scale 1',
+    );
+  }
+
+  // -- the falloff -----------------------------------------------------------
+  const falloffSpec: unknown = generator.falloff;
+  if (typeof falloffSpec !== 'object' || falloffSpec === null || Array.isArray(falloffSpec)) {
+    throw new CompileError(
+      `${where}: the "segments" generator states no "falloff" block. Its "radius" — added to every distance, in ` +
+        "the part's pixels — has no default, because it is a length on this art: " +
+        '"falloff": { "radius": <pixels> } is the least it takes',
+    );
+  }
+  const f = generator.falloff;
+  if (typeof f.radius !== 'number' || !Number.isFinite(f.radius) || !(f.radius > 0)) {
+    throw new CompileError(
+      `${where}: "falloff.radius" is ${JSON.stringify(f.radius)}; it is added to every distance before the power is ` +
+        "taken, a positive number of the part's pixels — at 0 a vertex on a segment would carry an infinite pull",
+    );
+  }
+  const power = f.power ?? SEGMENTS_DEFAULTS.power;
+  if (typeof power !== 'number' || !Number.isFinite(power) || !(power > 0)) {
+    throw new CompileError(
+      `${where}: "falloff.power" is ${JSON.stringify(power)}; it is the exponent a pull falls off with distance by, ` +
+        'a positive number — at 0 or below the far segment pulls as hard as the near one, or harder',
+    );
+  }
+  const maxBones = f.maxBones ?? SEGMENTS_DEFAULTS.maxBones;
+  if (typeof maxBones !== 'number' || !Number.isInteger(maxBones) || maxBones < 1) {
+    throw new CompileError(
+      `${where}: "falloff.maxBones" is ${JSON.stringify(maxBones)}; it is how many bones may pull one vertex, a ` +
+        'whole number of at least 1',
+    );
+  }
+  const minWeight = f.minWeight ?? SEGMENTS_DEFAULTS.minWeight;
+  if (typeof minWeight !== 'number' || !Number.isFinite(minWeight) || minWeight < SEGMENTS_WEIGHT_STEP || minWeight >= 1) {
+    throw new CompileError(
+      `${where}: "falloff.minWeight" is ${JSON.stringify(minWeight)}; it is the share under which a bone's pull ` +
+        `is dropped, so it lies in ${SEGMENTS_WEIGHT_STEP}..1 with 1 excluded — at 1 or above every share is dropped, ` +
+        `and under ${SEGMENTS_WEIGHT_STEP}, one step of the 6-decimal grid weights are written on, a kept binding ` +
+        'could be written as 0',
+    );
+  }
+  const threshold = generator.alpha ?? SEGMENTS_DEFAULTS.alpha;
+
+  // -- the lattice -----------------------------------------------------------
+  const plate = partPlate(img);
+  let lattice;
+  try {
+    lattice = buildSegmentsLattice({
+      mask: { width: plate.width, height: plate.height, alpha: plateAlpha(plate) },
+      threshold,
+      cell: generator.cell,
+    });
+  } catch (err) {
+    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
+    throw err;
+  }
+  const w = img.width;
+  const h = img.height;
+  if (att.width !== undefined && att.width !== w) {
+    throw new CompileError(`${where}: the spec says width ${att.width} and "${att.image}" measures ${w}`);
+  }
+  if (att.height !== undefined && att.height !== h) {
+    throw new CompileError(`${where}: the spec says height ${att.height} and "${att.image}" measures ${h}`);
+  }
+
+  // -- the placement ---------------------------------------------------------
+  const slotBone = ctx.transforms.get(ctx.anchorBone);
+  if (!slotBone) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  let anchorAt: [number, number] = [w / 2, h / 2];
+  if (generator.anchor !== undefined) {
+    const stated = finitePair(generator.anchor);
+    if (stated === null) {
+      throw new CompileError(
+        `${where}: "anchor" is ${JSON.stringify(generator.anchor)}; it is where the slot bone sits in the part's ` +
+          'pixels, y down, as [x, y] — two finite numbers',
+      );
+    }
+    anchorAt = stated;
+  }
+  const [ax, ay] = anchorAt;
+  const place = (px: number, py: number): [number, number] => [
+    slotBone.worldX + (px - ax),
+    slotBone.worldY + (cropToSpineY(py, h) - cropToSpineY(ay, h)),
+  ];
+
+  // -- the segments ----------------------------------------------------------
+  if (!Array.isArray(generator.bones) || generator.bones.length === 0) {
+    throw new CompileError(
+      `${where}: the "segments" generator names no bones. "bones" is the one decision this generator takes — which ` +
+        'segments may pull the part — so it lists at least one: a bone name, a chain as a list of bone names, or ' +
+        '{ "bone", "from", "to" }',
+    );
+  }
+  const parentOf = new Map(ctx.bones.map((b) => [b.name, b.parent ?? null]));
+  const named: string[] = [];
+  const refs: MeshBoneRef[] = [];
+  const segments: WorldSegment[] = [];
+  const boneOf = (name: unknown, at: string): { index: number; transform: BoneTransform } => {
+    if (typeof name !== 'string' || !parentOf.has(name)) {
+      throw new CompileError(`${where}: ${at} names mesh bone ${JSON.stringify(name)}, which is not in the rig's bone list`);
+    }
+    let index = named.indexOf(name);
+    if (index < 0) {
+      index = named.length;
+      named.push(name);
+      refs.push(meshBoneRef(name, where, ctx));
+    }
+    return { index, transform: ctx.transforms.get(name)! };
+  };
+  const tipOf = (name: string, transform: BoneTransform, at: string, chained: boolean): [number, number] => {
+    const length = ctx.bones.find((b) => b.name === name)?.length ?? 0;
+    if (!(length > 0)) {
+      throw new CompileError(
+        `${where}: ${at} names bone "${name}", which has no "length"${chained ? ' and is the last link of its chain' : ''}, ` +
+          'so it has an origin and no segment. Give the bone a "length" (its segment runs from its origin to that ' +
+          'tip, along its setup rotation), ' +
+          (chained ? 'end the chain on a bone that has one, ' : 'name it inside a chain whose next link says where it ends, ') +
+          'or state the segment outright as { "bone", "from", "to" }',
+      );
+    }
+    return toWorld(transform, length, 0);
+  };
+  generator.bones.forEach((entry: unknown, i: number) => {
+    const at = `"bones"[${i}]`;
+    if (typeof entry === 'string') {
+      const { index, transform } = boneOf(entry, at);
+      segments.push({ bone: index, a: [transform.worldX, transform.worldY], b: tipOf(entry, transform, at, false) });
+      return;
+    }
+    if (Array.isArray(entry)) {
+      if (entry.length === 0) {
+        throw new CompileError(`${where}: ${at} is an empty chain; a chain lists its bones root first, at least one`);
+      }
+      const links = entry.map((name: unknown, k: number) => ({ name, ...boneOf(name, `${at}[${k}]`) }));
+      links.forEach((link, k) => {
+        const name = link.name as string;
+        const origin: [number, number] = [link.transform.worldX, link.transform.worldY];
+        if (k === links.length - 1) {
+          segments.push({ bone: link.index, a: origin, b: tipOf(name, link.transform, `${at}[${k}]`, true) });
+          return;
+        }
+        const next = links[k + 1];
+        const nextName = next.name as string;
+        let cursor = parentOf.get(nextName) ?? null;
+        while (cursor !== null && cursor !== name) cursor = parentOf.get(cursor) ?? null;
+        if (cursor === null) {
+          throw new CompileError(
+            `${where}: ${at} chains "${name}" to "${nextName}", and "${nextName}" is not under "${name}" in the bone ` +
+              `tree — a chain runs down the skeleton, each link a descendant of the one before it. List the chain ` +
+              'root first, or name the two bones as separate entries',
+          );
+        }
+        const b: [number, number] = [next.transform.worldX, next.transform.worldY];
+        if (b[0] === origin[0] && b[1] === origin[1]) {
+          throw new CompileError(
+            `${where}: ${at} chains "${name}" to "${nextName}", and the two bones share their setup origin ` +
+              `(${origin[0]}, ${origin[1]}), so the link has no length and no direction to weight along. Give ` +
+              `"${nextName}" its own position, or name "${name}" alone with a "length"`,
+          );
+        }
+        segments.push({ bone: link.index, a: origin, b });
+      });
+      return;
+    }
+    if (typeof entry === 'object' && entry !== null) {
+      const span = entry as { bone?: unknown; from?: unknown; to?: unknown };
+      const { index } = boneOf(span.bone, `${at}.bone`);
+      const from = finitePair(span.from);
+      const to = finitePair(span.to);
+      if (from === null || to === null) {
+        throw new CompileError(
+          `${where}: ${at} states a segment whose ${from === null ? '"from"' : '"to"'} is ` +
+            `${JSON.stringify(from === null ? span.from : span.to)}; both ends are [x, y] in the part's pixels, y down`,
+        );
+      }
+      segments.push({ bone: index, a: place(from[0], from[1]), b: place(to[0], to[1]) });
+      return;
+    }
+    throw new CompileError(
+      `${where}: ${at} is ${JSON.stringify(entry)}; an entry is a bone name, a chain as a list of bone names, or ` +
+        '{ "bone", "from", "to" }',
+    );
+  });
+
+  // -- the weights -----------------------------------------------------------
+  const falloff = { power, radius: f.radius, maxBones, minWeight };
+  const weights: MeshVertexWeight[][] = lattice.points.map(([px, py], v) => {
+    const got = segmentShares(place(px, py), segments, falloff);
+    if ('weights' in got) return got.weights;
+    throw new CompileError(
+      `${where}: vertex ${v}, at (${px}, ${py}) in the part's pixels, keeps no bone — the ${got.dropped.length} ` +
+        `strongest pull(s) share it as ${got.dropped.map((d) => `"${named[d.bone]}" ${d.share.toFixed(4)}`).join(', ')}, ` +
+        `and every one is under "minWeight" ${minWeight}. A vertex needs a bone, and rigc will not pick one the ` +
+        `falloff dropped: lower "minWeight" to ${(1 / maxBones).toFixed(4)} or under (1 / "maxBones", which the ` +
+        'strongest share can never fall below), or name a segment nearer this part of the art',
+    );
+  });
+  const geometry: MeshGeometry = {
+    kind: 'segments',
+    points: lattice.points,
+    uvs: lattice.uvs,
+    triangles: lattice.triangles,
+    weights,
+    hullVertices: lattice.hullVertices,
+  };
+  const vertices = encodeWeightedVertices(geometry, place, {
+    anchor: meshBoneRef(ctx.anchorBone, where, ctx),
+    controls: refs,
+  });
+
+  // -- the report ------------------------------------------------------------
+  let maxInfluence = 0;
+  let totalInfluence = 0;
+  let singleBone = 0;
+  const bound = new Set<number>();
+  for (const vertex of weights) {
+    maxInfluence = Math.max(maxInfluence, vertex.length);
+    totalInfluence += vertex.length;
+    if (vertex.length === 1) singleBone++;
+    for (const e of vertex) bound.add(e.control ?? 0);
+  }
+  const fit = measureAuthoredMeshFit(
+    { width: plate.width, height: plate.height, alpha: plateAlpha(plate) },
+    threshold,
+    lattice.points,
+    lattice.triangles,
+  );
+  ctx.meshBones.add(ctx.anchorBone);
+  for (const k of [...bound].sort((a, b) => a - b)) ctx.meshBones.add(named[k]);
+  ctx.meshes.push({
+    slot: ctx.slotName,
+    kind: 'segments',
+    attachments: [placeholder],
+    vertices: lattice.points.length,
+    triangles: lattice.triangles.length / 3,
+    bones: [...named],
+    coverage: f32(fit.coverage),
+    overshoot: fit.overshoot,
+    influence: {
+      maxBones: maxInfluence,
+      meanBones: f32(totalInfluence / weights.length),
+      singleBone,
+      bound: named.filter((_, k) => bound.has(k)),
+      cell: generator.cell,
+      cols: lattice.report.cols,
+      rows: lattice.report.rows,
+      artCells: lattice.report.artCells,
+      keptCells: lattice.report.keptCells,
+      islands: lattice.report.islands,
+    },
+  });
+  return {
+    type: 'mesh',
+    ...meshTextureKeys(att, placeholder),
+    uvs: geometry.uvs.map(f32),
+    triangles: geometry.triangles,
+    vertices: vertices.map(f32),
+    ...generatedHullAndEdges(geometry, where),
+    width: f32(w),
+    height: f32(h),
+  };
 }
 
 /** Defaults for the `contour` generator's optional parameters, stated once. */

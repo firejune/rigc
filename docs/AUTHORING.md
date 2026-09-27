@@ -1703,13 +1703,15 @@ is the wrap-around curve from `x = 180` back to `x = 0`, which nothing reads. Th
 §3.5.1's constraint example rides: with `position: 0.25` its `cart` bone poses at
 `worldX = 45.000000`.
 
-The generators are `ring`, `ribbon`, `contour` and `grid` (see
+The generators are `ring`, `ribbon`, `contour`, `grid` and `segments` (see
 [`src/mesh.ts`](../src/mesh.ts)); the first two encode a deformation model rather
-than a table of numbers, which is why they are code invoked by data. The last two
-are geometry: they pin every vertex to the slot bone and exist to give a
-`deform` timeline (§4.12) somewhere to push. A generator
-is for a skeleton with **no** manifest; a cut that has one invokes the same
-builders through the manifest's `mesh` block.
+than a table of numbers, which is why they are code invoked by data. `contour`
+and `grid` are geometry: they pin every vertex to the slot bone and exist to give
+a `deform` timeline (§4.12) somewhere to push. `segments` is both at once — a
+lattice traced off the art, weighted by distance to the bones you name. A
+generator is for a skeleton with **no** manifest; a cut that has one invokes the
+same builders through the manifest's `mesh` block — except `segments`, which has
+no manifest spelling and is reached from a rig spec only.
 
 🚨 **A rig that invokes a generator must declare `invariants.meshSlots` (§3.7).**
 Geometry rigc built is geometry rigc will not ship **unmeasured**: a generated
@@ -2256,6 +2258,130 @@ influence through that bone's own inverse, so the **angle** a raised surface tur
 through and the **impact** a soft one answers sit on one slot. ⚠️ Read §4.11.1 before you add a mask to a part that already turns:
 past one bone the model's own coordinates are **world** ones, so `radius` and
 `about` change units.
+#### `segments` — a lattice over the art, weighted by distance to the bones you name
+
+**When you need one:** an arbitrary layer that a chosen set of bones should
+pull — a robe over a chest, a hip and two legs; a head of hair over a skull and
+three locks; a sleeve under an arm chain. None of the other generators fits
+that: a `ribbon` needs a strip, a `ring` an aperture, and `contour`/`grid` pin
+everything to one bone. Without this, every pipeline weights such a layer
+itself and transcribes the result into authored `weights`.
+
+⭐ **Its inputs are the one decision, and everything else is derived.** What
+you decide is **which segments may pull the part**. The lattice is read off
+the attachment's own `image`, each segment off the skeleton's setup pose, and
+every weight off the distance between a vertex and those segments — so the
+only thing in this block that is a judgement is `bones`, and the numbers
+beside it say how a distance becomes a share.
+
+```json
+"invariants": { "meshSlots": 1, "meshTriangles": 200 },
+"skins": {
+  "default": {
+    "robe": {
+      "robe": {
+        "type": "mesh",
+        "image": "robe.png",
+        "generator": {
+          "kind": "segments",
+          "cell": 24,
+          "bones": ["chest", ["skirt_0", "skirt_1", "skirt_2"],
+                    { "bone": "hip", "from": [20, 180], "to": [220, 180] }],
+          "falloff": { "power": 2, "radius": 10, "maxBones": 4, "minWeight": 0.03 },
+          "anchor": [120, 96]
+        }
+      }
+    }
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `cell` | **required.** The lattice's square, in the part's pixels — a whole number of at least 1. No default: it is a length on this art, and how fine a mesh the part needs is not something rigc can read off it |
+| `bones` | **required, at least one entry.** Which segments may pull the part. An entry is one of three forms, below |
+| `falloff` | **required**, because `radius` is: `{ "power"?, "radius", "maxBones"?, "minWeight"? }` |
+| `radius` | **required.** Added to every distance before the power is taken, in the part's pixels, so a vertex ON a segment has a finite pull and the blend between two segments is about this wide. Positive |
+| `power` | the exponent a pull falls off by: `w = 1 / (d + radius)^power`. Positive. Default `2` |
+| `maxBones` | at most this many bones pull one vertex — the strongest ones. A whole number of at least 1. Default `4` |
+| `minWeight` | a share under this is dropped, and the kept shares normalised again. In `0.000001`..`1`, 1 excluded. Default `0.03` |
+| `alpha` | the alpha at or above which a pixel counts as art, `1`..`255`. Default `1` — `contour`'s own |
+| `anchor` | where the **slot bone** sits in the part's pixels, `[x, y]`, y down. Default the window's centre — the placement every generator on this route uses (the ⭐ above). State it when the art is not drawn centred on its bone: unlike a pinned generator, this one's weights depend on where the art is relative to the bones |
+
+**The three forms of a `bones` entry**, each resolved by name against the rig:
+
+| Entry | Its segment(s) |
+| --- | --- |
+| `"chest"` — a bone | from the bone's origin to its **`length` tip**, along its setup rotation. A bone with no `length` has an origin and no segment, and is refused |
+| `["skirt_0", "skirt_1", "skirt_2"]` — a chain, root first | one per link: each link from its origin to the **next link's** origin, the last from its origin to its `length` tip. Each link must be a descendant of the one before it — the list is the chain's order, which is `ribbon`'s `chain` convention |
+| `{ "bone": "hip", "from": [x, y], "to": [x, y] }` — a span | exactly that segment, in the part's pixels, y down, pulling for `bone`. For a line no bone's own span describes — a hip pulling across a waist, or two meshes over one bone that each want it along a different line. `from` equal to `to` is a point |
+
+A bone named by two entries keeps the **stronger** of its pulls, and ties
+between bones keep the order they are first named in.
+
+**What it does, in order:** a lattice of `cell`-pixel squares over the part,
+the last column and row clipped to the image; a cell is kept when any pixel in
+it reaches `alpha`, so the triangles cover **every** art pixel. Then the kept
+cells are made **one closed outline**: holes filled, every other island joined
+to the largest by a straight run of cells, every diagonal pinch filled,
+repeated until a pass changes nothing. That is the case the *"the triangles'
+outline is not one closed loop"* refusal (above) would otherwise fire on — a
+layer the alpha splits in two is still one attachment — and the cells the join
+adds hold no art and draw nothing. Two triangles per cell, the diagonal
+alternating so the lattice has no preferred shear, the outline walked first
+(`hull` is the outline's vertex count), and the uvs are the lattice points over
+the image size. Then, per vertex, `1 / (d + radius)^power` to the nearest point
+of each segment, the strongest `maxBones` kept and normalised, any share under
+`minWeight` dropped, the rest normalised again — so every vertex closes at 1 by
+construction. The emitted mesh is a weighted one, bound by name.
+
+`build` and `explain` print what it measured, under the mesh's line. This is
+the selftest's own `segments_probe` (`fixtures/public.ts` in the repository) —
+one 96x64 plate of two islands under two two-link chains, `cell: 8`,
+`radius: 4`, `maxBones: 3` — as `build` prints it:
+
+```
+  MESH  cloth        segments 72 vertices / 100 triangles  (budget 200)  bones=[left_0, left_1, right_0, right_1]  attachments=[cloth]  covers 100.00% of the art, reaching 8.00px past it
+        influence  max 3 bone(s) per vertex, mean 2.61, 4 of 72 vertices (5.56%) on a single bone
+        lattice    cell 8px, 12x8 cells, 48 with art, 50 kept (2 island(s) joined into one outline, 2 cell(s) added that hold no art)
+```
+
+The `influence` line is the falloff's report: the most bones any vertex binds
+(read it against `maxBones`), the mean, and how many vertices one bone owns
+outright. A named bone that **no** vertex binds is listed there by name — it is
+in no weight, so no other figure moves — and under `--profile spine-html`
+`A20_MESH_WEIGHTS_COHERENT` refuses it as a declared bone nothing binds. The
+`lattice` line says how many cells had art and how many were kept, and when
+islands were joined, how many and how many cells the join added. The coverage
+figure is §3.4's authored-mesh one: 100% by construction, and the reach past
+the art is the lattice's own — up to a cell past the silhouette, and a join run
+across a gap (the 8.00px above is the two join cells).
+
+🔸 **What the gate does with it.** `A20`'s coherence rules and both of its
+generator-policy branches apply in full. `A21_MESH_RIM_PINNED` **SKIPs** on a
+segments mesh, by name: its outline is weighted by distance like every other
+vertex, because a layer pulled by named bones is *supposed* to move at its
+edge, so "the rim is pinned to the slot bone" is not a claim it makes.
+`A28_RIBBON_ROWS_SHARE_WEIGHTS` skips it too — a lattice has cells, not cross
+rows.
+
+**Stated limits, each a named refusal rather than a mesh that loads wrong:**
+
+| The input | What you get |
+| --- | --- |
+| a bone the rig does not declare | `"bones"[0][1] names mesh bone "nobody", which is not in the rig's bone list` |
+| an empty `bones` | `the "segments" generator names no bones. "bones" is the one decision this generator takes …` |
+| a part whose alpha keeps no cell | `no pixel of the 96x64 part reaches alpha 1, so a lattice at cell 8 keeps no cell — there is no art to cover` |
+| `minWeight` at or above 1, or under `0.000001` | `"falloff.minWeight" is 1; … at 1 or above every share is dropped, and under 0.000001, one step of the 6-decimal grid weights are written on, a kept binding could be written as 0` |
+| `maxBones` under 1 | `"falloff.maxBones" is 0; it is how many bones may pull one vertex, a whole number of at least 1` |
+| a vertex every one of whose kept shares is under `minWeight` | `vertex 0, at (0, 0) in the part's pixels, keeps no bone — the 4 strongest pull(s) share it as … and every one is under "minWeight" 0.3` — **refused, not handed the largest.** A bone the falloff dropped is a weight nobody decided; the message names the fix, a `minWeight` at or under `1 / maxBones`, which the strongest share can never fall below |
+| a bone with no `length` named alone, or as the last link of a chain | `names bone "body", which has no "length", so it has an origin and no segment` — give it a `length`, put it inside a chain, or state a span |
+| a chain whose next link is not beneath it | `chains "right_0" to "left_1", and "left_1" is not under "right_0" in the bone tree` |
+| a chain link at its next link's origin | `… the two bones share their setup origin (…), so the link has no length and no direction to weight along` |
+| an empty chain, a span with a malformed end, an entry of none of the three forms | `is an empty chain`; `both ends are [x, y] in the part's pixels`; `an entry is a bone name, a chain as a list of bone names, or { "bone", "from", "to" }` |
+| no `falloff`, a `radius` or `power` at or below 0, a malformed `anchor`, a `cell` under 1, no `image` | each named by its field — `radius` has no default because it is a length on this art |
+| a part on a packed page that declares a `scale:` | refused: `cell` and `radius` are the part's pixels and this generator does not convert them to a page's texels. Build from the loose part, or a pack at scale 1 |
+
 #### 3.4.1 A skin that switches bones and constraints on
 
 **When you need one:** a skin that is more than a change of art — a variant with an
@@ -5523,15 +5649,15 @@ Fix A00 and run it again.
 | `A17_ATLAS_PAGE_FILES_EXIST` | both | a page the atlas declares is not a file. Check `--images` and `--out`. **SKIP** when the atlas declares no page — as it is for `A06`, `A19` and `A27`; see `A07` |
 | `A18_DETERMINISTIC_EMIT` | both | a second compile of the same inputs differed. That is a compiler bug, not a spec bug — report it |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | an overlay part cannot draw a transparent pixel, so it would paint a solid rectangle over what is behind it. **The texels decide, on both routes**; the file header is only the fast negative. A file with no alpha channel (colour type 4 or 6) and no `tRNS` chunk has nowhere to keep a clear texel and is refused without being opened, by a sentence that names its colour type — so re-export it as RGBA, or as an indexed / greyscale PNG that keeps its `tRNS`. A file whose header says it **could** be transparent is opened and read until its first texel below full alpha; one clear texel passes, and none is refused in the words the packed route uses for a region, naming the file and what it can hold — `is opaque in every one of its 200x80 texels` … `its file can hold transparency — colour type 6 (truecolour + alpha) carries an alpha channel — and no texel uses it`. Saving as RGBA is not the repair: the runtime draws the texels, not the declaration. On a loose page the file is the part, so the whole decoded image is the rectangle and no atlas coordinate is read. Only the base plate may be opaque, and which image that is is decided once for both routes: the plate the build names — on a cut manifest, the part whose window is the crop — and, only when it names none, an image at least the stage's size. The rig's statement comes first because the two can disagree: a stage stated small enough for an overlay to cover would otherwise exempt that overlay. A rig spec cannot name a base plate, so a stageless rig-spec build, and `validate <dir>` on a stageless skeleton, has nothing to decide it; an opaque part there is refused with *"nothing here decides which image that is: this skeleton declares no stage size to measure one against"* and the two ways to decide it — a `skeleton` stage the plate covers, or a cut manifest (for `validate`, the specs it was built from: `--rig`, `--motion` and the `--manifest`). Indexed-with-`tRNS` — the usual output of ImageMagick, "Export as PNG-8", GIMP's indexed mode, aseprite and pngquant — **passes**: it is transparent art. On a **shared** page the question is asked per REGION over the decoded page rather than per file, because a packed page's own file all but always declares transparency — its gutter is transparent — and the file-level question would then be answered by the packing rather than by the art. ⚠️ **That scan states its verdict over the texels it READ, and never over texels that are not on the page**: a rectangle partly on its page is judged over the part that is on it, and the message carries both counts — `opaque in every one of the 77 texels of its 12x8 rectangle at -1,-1 … the other 19 of the 96 it declares are not on the page and are not measured here`. A rectangle with **no** texel on the page is reported **not measured** by name — the region, its rectangle, the page image's size, and the pointer to `A06`, which is the rule that judges a region's rectangle — and no verdict about opacity is printed at all. ⚠️ **A page whose IMAGE is not the size the atlas declares for it is the same non-measurement for every region on it**, and the clause above does not cover that case: a page rescaled after packing leaves most rectangles partly on it, at coordinates that address a different part of the picture, so a scan would come back with a confident verdict over texels nobody had located — on a two-region pack at a uniform 0.5 an opaque part's failure **disappears**, the scan finding a transparent texel 32 texels away from it. The row names the page's two sizes and points at `A06`, which judges the page grid and prints the header that repairs it (§0.2). It stays a failure rather than becoming a SKIP because a SKIP is per ASSERTION: it would delete the verdicts on every other part of the same page, and an assertion cannot be skipped and failed at once without the report counting it twice. ⚠️ **A page file that cannot be read as PNG at all is the same non-measurement for every part on it**: one row per page naming its parts and pointing at `A06`, which names what the file is. **SKIP** when the atlas declares no page |
-| `A20_MESH_WEIGHTS_COHERENT` | both ◑ | a weighted vertex with no bone, a negative weight, a bone index out of range, or weights that do not sum to 1. Under `spine-html` also: an unweighted mesh, a binding at weight 0, or **a bone the mesh declares that no vertex binds** — `mesh "x" declares bone "grip_b" and none of its 25 vertices binds it; the weights reference "box", "grip_a"`. Those three are one sentence about rigc's own generators: the bone set a generated mesh declares is the bone set its weights reference, so a `controls` or `chain` name that moves nothing is a defect where a foreign mesh's is not. Fix the rig spec's `controls`/`chain`, or the manifest's `control_bones`. **SKIP** when the skeleton carries no mesh attachment |
-| `A21_MESH_RIM_PINNED` | archetype | a generated ring's rim, a ribbon's entry row, or a contour's outline (which is all of it) is not pinned to its anchor bone at weight 1 |
+| `A20_MESH_WEIGHTS_COHERENT` | both ◑ | a weighted vertex with no bone, a negative weight, a bone index out of range, or weights that do not sum to 1. Under `spine-html` also: an unweighted mesh, a binding at weight 0, or **a bone the mesh declares that no vertex binds** — `mesh "x" declares bone "grip_b" and none of its 25 vertices binds it; the weights reference "box", "grip_a"`. Those three are one sentence about rigc's own generators: the bone set a generated mesh declares is the bone set its weights reference, so a `controls` or `chain` name that moves nothing is a defect where a foreign mesh's is not. Fix the rig spec's `controls`/`chain`, a `segments` generator's `bones` (its `influence` line names a bone no vertex binds), or the manifest's `control_bones`. **SKIP** when the skeleton carries no mesh attachment |
+| `A21_MESH_RIM_PINNED` | archetype | a generated ring's rim, a ribbon's entry row, or a contour's outline (which is all of it) is not pinned to its anchor bone at weight 1. **SKIPs** by name on authored or linked geometry and on a `segments` mesh, whose outline is weighted by distance like the rest of it — none of them claims a pinned rim |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | a mesh UV outside its region, or a UV array that disagrees with the vertex count. **SKIP** when the skeleton carries no mesh attachment |
 | `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | a physics constraint that drives no component, rests at `mix: 0` with **no timeline in any animation keying that `mix` above 0**, has `mass: 0`, has `strength` at or below 0 — `0` says `nothing pulls it back`, below 0 says the offset `is pushed away and grows with every step`, both read off the row's `outside` arms, which the key's refusal quotes too — or has `damping` outside `[0, 1]`, which says `` physics "C" has damping 1.5; must be inside [0, 1] — the per-step decay is `damping ** (60 * step)`, and the runtime runs this value finitely, so refusing it is rigc's call rather than the runtime's: above 1 every velocity grows on every step and the offset diverges ``, the bound read off the row the key's refusal reads; `1` and `0` are inside, since both are finite at every rate — **at rest, and on every physics timeline key**. The timeline arm reads each key through the runtime's own `PhysicsConstraint*Timeline.set`, so a keyed `mass` is judged as the `massInverse` it becomes, and the detail names the animation, the constraint, the key time, the value and the bound. Two differences between the two arms, and the runtime is the reason for both: a **key** of `mix: 0` is accepted, because `update` opens with `if (mix === 0) return;` and muting a constraint for a stretch is what a mix timeline is for — the editor's own `sack-pro` example keys it there on 24 of its 36 mix keys — and a **key** of `strength: 0` is accepted, because it releases the constraint for the span with `damping` and `inertia` still applied and the next key pulls the offset back, measured through spine-core at no NaN, a coast to a limit and a return in 54 steps. As a **setup** value `strength: 0` is still refused by the arm above, and `mix: 0` is refused only when nothing keys it above 0. The `mix` branch above is why `mix` is the one setup value a key can answer for: at rest the constraint is **inert** rather than broken, so a rig that rests muted and is keyed above 0 is refused by nothing, while a rig resting at `mass: 0` is `massInverse` Infinity before anything plays and no key reaches back into that. The detail of the refusal says both halves and how many animations were searched: `` physics "C" has mix 0 and none of the 3 animations keys its mix above 0; the runtime runs this value finitely, so refusing it is rigc's call rather than the runtime's: at 0 `update` returns before it does anything (`PhysicsConstraint.js:109-111`), so the constraint is muted — rest it above 0, or key its mix above 0 in an animation ``. ⚠️ Every reason A23 prints for a setup value is that value's row `basis` arm (§4.4's table) — an arithmetic arm names its expression (`physics "C" has massInverse Infinity; mass must be > 0 — at 0 …`), a behavioural one says it is rigc's call and what the value does. A setup `mix` **below** 0 is told the jiggle is applied inverted, not that it is muted: such a constraint is measured moving its bone by exactly the opposite of a positive mix. The search counts the unnamed global timeline for every constraint whose own `mixGlobal` is set, reads each key through the runtime's accessor, counts every sample of a Bezier between two keys as a value the timeline poses — so two keys of 0 joined by a curve lifted above 0 are a rescue, measured to move the bone — and takes an animation a slider applies like any other. It is the one reading `A36` and `A37` use as well. `inertia`, `wind`, `gravity` and the top of `mix` are bounded nowhere, at rest or keyed. `ingest` does not carry a constraint that drives no component into the spec it writes: it omits it with its timelines and reports `PHYSICS_DRIVES_NOTHING` ([INGEST §2.0](INGEST.md)), so this sentence is met on a file, never on a decompiled rebuild. **SKIP** when the skeleton declares no physics constraint — the same sentence `A36` and `A37` print for their own constraint types |
 | `A24_AXIS_SPACE_STROKE` | archetype | a bone under the rig's `axisBone` was keyed with a screen-space Y component, or the axis bone itself was keyed. **SKIP** when the rig declares no axis bone, and also when no animation keys that bone or anything under it |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | a bone the rig declares `detached` is a descendant of the bone it must never hang under |
 | `A26_SLOT_DRAW_ORDER` | archetype | the emitted slots are not the rig's slot table — a slot is out of order, is not in the table at all, or is in the table and missing from the skeleton (§3.3). **SKIP** when the rig declares no canonical slot order. ⚠️ A skeleton with **no** slot beside a rig that declares some is **not** a skip, and it is the one rule in this family where an empty loop is not a vacuous pass: the completeness clause reads it as every declared slot lost and names them |
 | `A27_REGION_NAME_MATCHES_PAGE_FILENAME` | renderer | a single-region page whose region name is not the PNG's basename. **SKIP** when the atlas declares no region |
-| `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | the two vertices of a ribbon row carry different weights, so the strip would change width. **SKIPs** on authored geometry and on a contour mesh — neither has rows rigc paired |
+| `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | the two vertices of a ribbon row carry different weights, so the strip would change width. **SKIPs** on authored geometry, a contour mesh and a `segments` lattice — none has rows rigc paired |
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the animation drives deeper than the manifest's measured contact depth |
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the animation drives past the measured containment ceiling, or scales a bone in the axis subtree |
 | `A31_DRAW_ORDER_OFFSETS_RESOLVE` | both | a draw-order key names a slot the skeleton does not have, offsets one slot twice, puts a slot outside the slots array, or lists its offsets out of slot order (§4.7). The only assertion that runs **before** `A00` — the last of those shapes makes the loader spin rather than return, so the round trip is refused instead of attempted |

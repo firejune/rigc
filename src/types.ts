@@ -1566,6 +1566,28 @@ export interface CompileResult {
      */
     soft?: { mask: string; digest: string; bone: string; carried: number; ramped: number };
     /**
+     * How a `segments` mesh's bones share its vertices — the figures `build`
+     * and `explain` print under its line. Only `segments` has one: it is the
+     * generator whose weights are the whole point, and every other generator's
+     * weighting is fixed by its kind.
+     */
+    influence?: {
+      /** Most bones any one vertex binds, and the mean over the mesh. */
+      maxBones: number;
+      meanBones: number;
+      /** Vertices bound to exactly one bone. */
+      singleBone: number;
+      /** The bones some vertex binds, in the order `bones` names them. */
+      bound: string[];
+      /** The lattice: its cell, cells across and down, cells with art, cells kept, islands joined. */
+      cell: number;
+      cols: number;
+      rows: number;
+      artCells: number;
+      keptCells: number;
+      islands: number;
+    };
+    /**
      * What a depth map put on this mesh's vertices, when one was named.
      *
      * The digest is over the levels rather than the file, so a re-encode of the

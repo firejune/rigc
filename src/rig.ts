@@ -558,6 +558,72 @@ export interface RigGridGenerator {
 }
 
 /**
+ * One segment stated outright, for a pull that no bone's own span describes.
+ *
+ * `from` and `to` are in the part's own pixels, y down — the frame every other
+ * point a generator takes is in (`ring.center`, `ring.hull`). The bone is
+ * resolved by name like everything else; the two points belong to this mesh
+ * alone, which is the case a bone's `length` cannot cover: two meshes over one
+ * bone that each want it to pull along a different line.
+ */
+export interface RigSegmentSpan {
+  bone: string;
+  from: [number, number];
+  to: [number, number];
+}
+
+/**
+ * How distance to a segment becomes a weight: `w = 1 / (d + radius)^power`
+ * per candidate bone, the strongest `maxBones` kept and normalised, any share
+ * under `minWeight` dropped, the rest normalised again.
+ */
+export interface RigSegmentsFalloff {
+  /** The exponent. Default 2. */
+  power?: number;
+  /**
+   * **Required.** Added to every distance, in the part's pixels, so a vertex
+   * ON a segment has a finite weight and the blend between two segments is as
+   * wide as this says. No default: it is a length on this part's art.
+   */
+  radius: number;
+  /** At most this many bones pull one vertex. Default 4. */
+  maxBones?: number;
+  /** A normalised share under this is dropped. Default 0.03. */
+  minWeight?: number;
+}
+
+/**
+ * A lattice over the part's alpha, weighted by distance to named bone segments
+ * (`buildSegmentsLattice` and `segmentWeights` in [`mesh.ts`](mesh.ts)).
+ *
+ * ⭐ The one authoring decision is `bones` — which segments may pull this part.
+ * The geometry comes off the attachment's own `image`, the segments off the
+ * skeleton's setup pose, and the weights off the distance between the two, so
+ * nothing else here is a judgement about the art.
+ */
+export interface RigSegmentsGenerator {
+  kind: 'segments';
+  /** **Required.** The lattice's cell, in the part's pixels, a whole number of at least 1. */
+  cell: number;
+  /**
+   * **Required, at least one entry.** Each is a bone name (origin to its
+   * `length` tip), a chain — a list of bone names, root first, each link
+   * running from its origin to the next link's (the last to its `length` tip) —
+   * or a `RigSegmentSpan` stated outright.
+   */
+  bones: Array<string | string[] | RigSegmentSpan>;
+  /** The falloff — see `RigSegmentsFalloff`. `radius` is required, so the block is too. */
+  falloff: RigSegmentsFalloff;
+  /** Alpha at or above which a pixel counts as art, 1..255. Default 1 — `contour`'s own. */
+  alpha?: number;
+  /**
+   * Where the slot bone sits in the part's pixels, y down. Default the window's
+   * centre — the placement every generator on this route uses.
+   */
+  anchor?: [number, number];
+}
+
+/**
  * Which builder in `src/mesh.ts` makes this mesh's geometry, and its parameters.
  *
  * The builders stay **code** and are invoked by **data**: they encode a
@@ -570,10 +636,15 @@ export interface RigGridGenerator {
  * and measured art lives in the manifest. `generator` is for a skeleton with no
  * manifest behind it.
  */
-export type RigMeshGenerator = RigRingGenerator | RigRibbonGenerator | RigContourGenerator | RigGridGenerator;
+export type RigMeshGenerator =
+  | RigRingGenerator
+  | RigRibbonGenerator
+  | RigContourGenerator
+  | RigGridGenerator
+  | RigSegmentsGenerator;
 
-/** The four `kind` names a generator may carry, and the order `RIG_KEYS` takes them in. */
-export const RIG_GENERATOR_KINDS = ['ring', 'ribbon', 'contour', 'grid'] as const;
+/** The five `kind` names a generator may carry, and the order `RIG_KEYS` takes them in. */
+export const RIG_GENERATOR_KINDS = ['ring', 'ribbon', 'contour', 'grid', 'segments'] as const;
 
 /**
  * The attachment's own NAME, as distinct from the placeholder key it is filed
@@ -1775,6 +1846,9 @@ export const RIG_KEYS = {
   RigRibbonGenerator: ['kind', 'size', 'rows', 'chain'],
   RigContourGenerator: ['kind', 'tolerance', 'margin', 'maxVertices', 'alpha', 'depth', 'soft'],
   RigGridGenerator: ['kind', 'us', 'vs', 'cols', 'rows', 'depth', 'soft'],
+  RigSegmentsGenerator: ['kind', 'cell', 'bones', 'falloff', 'alpha', 'anchor'],
+  RigSegmentsFalloff: ['power', 'radius', 'maxBones', 'minWeight'],
+  RigSegmentSpan: ['bone', 'from', 'to'],
   RigMeshBias: ['axis_deg', 'ramp'],
   RigDepthMap: ['image', 'near', 'zScale', 'gamma', 'contrast', 'bias'],
   RigSoftRegion: ['bone', 'mask'],
@@ -1811,6 +1885,7 @@ const GENERATOR_SHAPE: Record<string, keyof typeof RIG_KEYS> = {
   ribbon: 'RigRibbonGenerator',
   contour: 'RigContourGenerator',
   grid: 'RigGridGenerator',
+  segments: 'RigSegmentsGenerator',
 };
 
 /**
@@ -2016,6 +2091,10 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
         at(gen.bias, 'RigMeshBias', `${who} generator.bias`);
         at(gen.depth, 'RigDepthMap', `${who} generator.depth`);
         at(gen.soft, 'RigSoftRegion', `${who} generator.soft`);
+        at(gen.falloff, 'RigSegmentsFalloff', `${who} generator.falloff`);
+        for (const [i, entry] of (Array.isArray(gen.bones) ? gen.bones : []).entries()) {
+          at(entry, 'RigSegmentSpan', `${who} generator.bones[${i}]`);
+        }
       }
     }
   }

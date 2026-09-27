@@ -99,7 +99,7 @@ export interface MeshVertexWeight {
 }
 
 /** Which builder in this file made a mesh's geometry. */
-export type MeshKind = 'ring' | 'ribbon' | 'contour' | 'grid';
+export type MeshKind = 'ring' | 'ribbon' | 'contour' | 'grid' | 'segments';
 
 export interface MeshGeometry {
   kind: MeshKind;
@@ -1794,4 +1794,408 @@ export function meshEdges(vertexCount: number, triangles: readonly number[], hul
   interior.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
   for (const [a, b] of interior) out.push(2 * a, 2 * b);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// segments — a lattice over the part's alpha, weighted by distance to bones
+// ---------------------------------------------------------------------------
+//
+// The generator for "an arbitrary layer pulled by a chosen set of bones". Its
+// one authored input is WHICH segments may pull the part; the geometry is read
+// off the art and the weights off the distance between the two, so a pipeline
+// that used to re-implement distance weighting outside the compiler states the
+// segment list and nothing else.
+//
+// The algorithm is a port of `spine-parts`' lattice mesh and segment weights
+// (MIT, same owner). What it does, in order:
+//
+//   1. **Cells.** A square lattice of `cell`-pixel squares over the part; the
+//      last column and row are clipped to the image. A cell is kept when any
+//      pixel inside it reaches the alpha threshold, so the triangles cover
+//      every art pixel by construction.
+//   2. **One loop.** Spine's `hull` is one closed outline, and a layer is often
+//      two islands or has a hole. So the kept cells are made one simply
+//      connected region: holes filled, every other island bridged to the
+//      largest by a straight run of cells, every diagonal pinch filled, and the
+//      three repeated until a pass changes nothing. Every pass that does not
+//      settle adds at least one cell, so the loop is bounded by the lattice and
+//      needs no pass limit of its own. The added cells hold no art.
+//   3. **Triangles.** Vertices numbered in the order the kept cells first touch
+//      them (cells row-major; corners top-left, top-right, bottom-right,
+//      bottom-left), each cell two triangles with the diagonal alternating by
+//      `(i + j) % 2`, so the lattice has no preferred shear. Emitted
+//      counter-clockwise in Spine world, the winding every generator here
+//      writes (GR02 holds the grid to it).
+//   4. **Outline first.** The boundary is walked from the edges used by exactly
+//      one triangle, in first-seen order, and every interior vertex follows in
+//      index order — the arrangement `checkHullOrder` requires.
+//   5. **Weights.** Per vertex and per candidate segment, `w = 1 / (d + r)^p`
+//      where `d` is the distance to the segment's nearest point; a bone two
+//      segments name keeps the larger; the strongest `maxBones` are kept and
+//      normalised, a share under `minWeight` is dropped, and the rest are
+//      normalised again. Ties keep the order the bones first appear in.
+
+/** What the lattice step did, for the report and for the refusals. */
+export interface SegmentsLatticeReport {
+  /** Cells across and down. */
+  cols: number;
+  rows: number;
+  /** Cells holding an art pixel, and cells kept after the one-loop passes. */
+  artCells: number;
+  keptCells: number;
+  /** Passes of hole-fill, island-join and pinch-fill until one changed nothing. */
+  passes: number;
+  /** 4-connected islands of art cells before the joins. */
+  islands: number;
+}
+
+export interface SegmentsLattice {
+  /** Vertex positions in part-local pixels, y down, outline first. */
+  points: Array<[number, number]>;
+  uvs: number[];
+  /** Counter-clockwise in Spine world. */
+  triangles: number[];
+  hullVertices: number;
+  report: SegmentsLatticeReport;
+}
+
+/** `np.rint`: to the nearest integer, exact halves to even — the bridge's rounding. */
+function rintEven(x: number): number {
+  const f = Math.floor(x);
+  const frac = x - f;
+  if (frac < 0.5) return f;
+  if (frac > 0.5) return f + 1;
+  return f % 2 === 0 ? f : f + 1;
+}
+
+/** Fill every background cell the lattice border cannot reach through 4-connected background. */
+function fillCellHoles(cells: Uint8Array, nx: number, ny: number): Uint8Array {
+  const outside = new Uint8Array(nx * ny);
+  const stack: number[] = [];
+  const seed = (i: number): void => {
+    if (cells[i] === 0 && outside[i] === 0) {
+      outside[i] = 1;
+      stack.push(i);
+    }
+  };
+  for (let x = 0; x < nx; x++) {
+    seed(x);
+    seed((ny - 1) * nx + x);
+  }
+  for (let y = 0; y < ny; y++) {
+    seed(y * nx);
+    seed(y * nx + nx - 1);
+  }
+  while (stack.length > 0) {
+    const i = stack.pop()!;
+    const x = i % nx;
+    const y = (i - x) / nx;
+    if (x > 0) seed(i - 1);
+    if (x < nx - 1) seed(i + 1);
+    if (y > 0) seed(i - nx);
+    if (y < ny - 1) seed(i + nx);
+  }
+  const out = new Uint8Array(nx * ny);
+  for (let i = 0; i < out.length; i++) out[i] = outside[i] === 1 ? 0 : 1;
+  return out;
+}
+
+/**
+ * 4-connected components of the kept cells, numbered in raster order of each
+ * component's first cell, each with its cells in raster order.
+ */
+function cellIslands(cells: Uint8Array, nx: number, ny: number): Array<Array<[number, number]>> {
+  const label = new Int32Array(nx * ny).fill(-1);
+  const islands: Array<Array<[number, number]>> = [];
+  for (let start = 0; start < cells.length; start++) {
+    if (cells[start] === 0 || label[start] >= 0) continue;
+    const id = islands.length;
+    const stack = [start];
+    label[start] = id;
+    while (stack.length > 0) {
+      const i = stack.pop()!;
+      const x = i % nx;
+      const y = (i - x) / nx;
+      const visit = (j: number): void => {
+        if (cells[j] !== 0 && label[j] < 0) {
+          label[j] = id;
+          stack.push(j);
+        }
+      };
+      if (x > 0) visit(i - 1);
+      if (x < nx - 1) visit(i + 1);
+      if (y > 0) visit(i - nx);
+      if (y < ny - 1) visit(i + nx);
+    }
+    islands.push([]);
+  }
+  for (let i = 0; i < cells.length; i++) if (label[i] >= 0) islands[label[i]].push([(i - (i % nx)) / nx, i % nx]);
+  return islands;
+}
+
+/**
+ * The lattice over one part's alpha: cells, one loop, triangles, outline first.
+ *
+ * Refuses a part that keeps no cell and a cell that is not a whole number of
+ * pixels of at least 1; everything else about the geometry follows from the art.
+ */
+export function buildSegmentsLattice(input: { mask: AlphaMask; threshold: number; cell: number }): SegmentsLattice {
+  const { mask, threshold, cell } = input;
+  const { width: w, height: h } = mask;
+  if (!Number.isInteger(cell) || cell < 1) {
+    throw new MeshError(`"cell" is ${JSON.stringify(cell)}; it is the lattice's square, a whole number of pixels of at least 1`);
+  }
+  if (!Number.isInteger(threshold) || threshold < 1 || threshold > 255) {
+    throw new MeshError(`the alpha threshold must be a whole number in 1..255, got ${threshold}`);
+  }
+  const nx = Math.ceil(w / cell);
+  const ny = Math.ceil(h / cell);
+  const xs = Array.from({ length: nx + 1 }, (_, i) => Math.min(i * cell, w));
+  const ys = Array.from({ length: ny + 1 }, (_, j) => Math.min(j * cell, h));
+  let cells: Uint8Array = new Uint8Array(nx * ny);
+  let artCells = 0;
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      let any = 0;
+      for (let y = ys[j]; y < ys[j + 1] && any === 0; y++) {
+        for (let x = xs[i]; x < xs[i + 1]; x++) {
+          if (mask.alpha[y * w + x] >= threshold) {
+            any = 1;
+            break;
+          }
+        }
+      }
+      cells[j * nx + i] = any;
+      artCells += any;
+    }
+  }
+  if (artCells === 0) {
+    throw new MeshError(
+      `no pixel of the ${w}x${h} part reaches alpha ${threshold}, so a lattice at cell ${cell} keeps no cell — ` +
+        'there is no art to cover. Lower "alpha", or point at the image this mesh is meant to draw',
+    );
+  }
+  const islands = cellIslands(cells, nx, ny).length;
+
+  // 2. one loop, until a pass changes nothing.
+  let passes = 0;
+  for (;;) {
+    passes++;
+    cells = fillCellHoles(cells, nx, ny);
+    const found = cellIslands(cells, nx, ny);
+    if (found.length > 1) {
+      let main = 0;
+      for (let k = 1; k < found.length; k++) if (found[k].length > found[main].length) main = k;
+      const mainCells = found[main];
+      for (let k = 0; k < found.length; k++) {
+        if (k === main) continue;
+        const other = found[k];
+        let best = Infinity;
+        let a = 0;
+        let b = 0;
+        for (let p = 0; p < other.length; p++) {
+          for (let q = 0; q < mainCells.length; q++) {
+            const dj = other[p][0] - mainCells[q][0];
+            const di = other[p][1] - mainCells[q][1];
+            const d = dj * dj + di * di;
+            if (d < best) {
+              best = d;
+              a = p;
+              b = q;
+            }
+          }
+        }
+        const [j0, i0] = other[a];
+        const [j1, i1] = mainCells[b];
+        const steps = 2 * (Math.abs(j1 - j0) + Math.abs(i1 - i0)) + 2;
+        const stride = 1 / (steps - 1);
+        for (let s = 0; s < steps; s++) {
+          const t = s === steps - 1 ? 1 : s * stride;
+          cells[rintEven(j0 + (j1 - j0) * t) * nx + i0] = 1;
+          cells[j1 * nx + rintEven(i0 + (i1 - i0) * t)] = 1;
+          cells[rintEven(j0 + (j1 - j0) * t) * nx + rintEven(i0 + (i1 - i0) * t)] = 1;
+        }
+      }
+      continue;
+    }
+    const snap = new Uint8Array(cells);
+    const at = (j: number, i: number): number => snap[j * nx + i];
+    let pinch = false;
+    for (let j = 0; j < ny - 1; j++) {
+      for (let i = 0; i < nx - 1; i++) {
+        if (at(j, i) && at(j + 1, i + 1) && !at(j, i + 1) && !at(j + 1, i)) {
+          cells[j * nx + i + 1] = 1;
+          pinch = true;
+        } else if (at(j, i + 1) && at(j + 1, i) && !at(j, i) && !at(j + 1, i + 1)) {
+          cells[j * nx + i] = 1;
+          pinch = true;
+        }
+      }
+    }
+    if (!pinch) break;
+  }
+
+  // 3. triangles, in the lattice's own winding (top-left, top-right, bottom-right).
+  const vid = new Int32Array((nx + 1) * (ny + 1)).fill(-1);
+  const pts: Array<[number, number]> = [];
+  const tri: number[] = [];
+  let keptCells = 0;
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      if (cells[j * nx + i] === 0) continue;
+      keptCells++;
+      const c: number[] = [];
+      for (const [jj, ii] of [
+        [j, i],
+        [j, i + 1],
+        [j + 1, i + 1],
+        [j + 1, i],
+      ]) {
+        const k = jj * (nx + 1) + ii;
+        if (vid[k] < 0) {
+          vid[k] = pts.length;
+          pts.push([xs[ii], ys[jj]]);
+        }
+        c.push(vid[k]);
+      }
+      if ((i + j) % 2 === 0) tri.push(c[0], c[1], c[2], c[0], c[2], c[3]);
+      else tri.push(c[0], c[1], c[3], c[1], c[2], c[3]);
+    }
+  }
+
+  // 4. the outline, walked from the boundary edges in first-seen order.
+  const edgeUses = new Map<number, { a: number; b: number; n: number }>();
+  const V = pts.length;
+  for (let t = 0; t < tri.length; t += 3) {
+    for (const [p, q] of [
+      [tri[t], tri[t + 1]],
+      [tri[t + 1], tri[t + 2]],
+      [tri[t + 2], tri[t]],
+    ]) {
+      const a = Math.min(p, q);
+      const b = Math.max(p, q);
+      const key = a * V + b;
+      const e = edgeUses.get(key);
+      if (e === undefined) edgeUses.set(key, { a, b, n: 1 });
+      else e.n++;
+    }
+  }
+  const adj = new Map<number, number[]>();
+  const link = (p: number, q: number): void => {
+    const list = adj.get(p);
+    if (list === undefined) adj.set(p, [q]);
+    else list.push(q);
+  };
+  for (const { a, b, n } of edgeUses.values()) {
+    if (n !== 1) continue;
+    link(a, b);
+    link(b, a);
+  }
+  const order: number[] = [];
+  const seen = new Set<number>();
+  for (const s of adj.keys()) {
+    if (seen.has(s)) continue;
+    let cur = s;
+    let prev = -1;
+    while (!seen.has(cur)) {
+      seen.add(cur);
+      order.push(cur);
+      const next = (adj.get(cur) ?? []).filter((v) => v !== prev && !seen.has(v));
+      if (next.length === 0) break;
+      prev = cur;
+      cur = next[0];
+    }
+  }
+  const hullVertices = order.length;
+  for (let v = 0; v < V; v++) if (!seen.has(v)) order.push(v);
+  const remap = new Int32Array(V);
+  order.forEach((v, i) => (remap[v] = i));
+  const points = order.map((v) => pts[v]);
+  // Emitted counter-clockwise in Spine world: the lattice's corners were taken
+  // clockwise on the y-down page, so each triangle's last two are swapped.
+  const triangles: number[] = [];
+  for (let t = 0; t < tri.length; t += 3) triangles.push(remap[tri[t]], remap[tri[t + 2]], remap[tri[t + 1]]);
+  const uvs: number[] = [];
+  for (const [x, y] of points) uvs.push(r6(x / w), r6(y / h));
+  return {
+    points,
+    uvs,
+    triangles,
+    hullVertices,
+    report: { cols: nx, rows: ny, artCells, keptCells, passes, islands },
+  };
+}
+
+/** One candidate segment, in Spine world, and which of the mesh's bones it belongs to. */
+export interface WorldSegment {
+  /** Index into the mesh's distinct bone list. */
+  bone: number;
+  a: readonly [number, number];
+  b: readonly [number, number];
+}
+
+/** The four numbers the falloff reads, every one of them from the spec. */
+export interface SegmentsFalloff {
+  power: number;
+  radius: number;
+  maxBones: number;
+  minWeight: number;
+}
+
+/**
+ * Distance from `p` to the segment `a -> b`, a zero-length segment being its point.
+ *
+ * `sqrt(dx*dx + dy*dy)` rather than `Math.hypot`, whose last bit can differ:
+ * a weight is written on a 6-decimal grid, and that is where one ulp becomes a
+ * different number in the file.
+ */
+export function segmentDistance(p: readonly [number, number], a: readonly [number, number], b: readonly [number, number]): number {
+  const abx = b[0] - a[0];
+  const aby = b[1] - a[1];
+  const len2 = abx * abx + aby * aby;
+  let t = 0;
+  if (len2 > 0) {
+    t = ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / len2;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+  }
+  const dx = p[0] - (a[0] + t * abx);
+  const dy = p[1] - (a[1] + t * aby);
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
+ * The shares on one vertex, strongest first and closing at exactly 1 on the
+ * generator's 6-decimal grid — or, when every share the kept bones carry is
+ * under `minWeight`, the unrounded shares that were dropped, for the refusal to
+ * print. A vertex is never given a bone the falloff did not choose.
+ */
+export function segmentShares(
+  p: readonly [number, number],
+  segments: readonly WorldSegment[],
+  falloff: SegmentsFalloff,
+): { weights: MeshVertexWeight[] } | { dropped: Array<{ bone: number; share: number }> } {
+  const byBone = new Map<number, number>();
+  for (const s of segments) {
+    const reach = segmentDistance(p, s.a, s.b) + falloff.radius;
+    const w = 1 / Math.pow(reach, falloff.power);
+    const was = byBone.get(s.bone);
+    byBone.set(s.bone, was === undefined ? w : Math.max(was, w));
+  }
+  // `sort` is stable, so equal pulls keep the order the bones first appeared in.
+  const top = [...byBone.entries()].sort((x, y) => y[1] - x[1]).slice(0, falloff.maxBones);
+  let sum = 0;
+  for (const [, v] of top) sum += v;
+  const shares = top.map(([bone, v]) => ({ bone, share: v / sum }));
+  const kept = shares.filter((e) => e.share >= falloff.minWeight);
+  if (kept.length === 0) return { dropped: shares };
+  let sum2 = 0;
+  for (const e of kept) sum2 += e.share;
+  const weights: MeshVertexWeight[] = [];
+  let others = 0;
+  kept.forEach((e, k) => {
+    const weight = k === kept.length - 1 ? r6(1 - others) : r6(e.share / sum2);
+    others += weight;
+    weights.push({ bone: 'control', control: e.bone, weight });
+  });
+  return { weights };
 }

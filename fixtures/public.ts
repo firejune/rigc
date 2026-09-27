@@ -8,7 +8,7 @@
  * ships was a gate a fresh clone could not run — the tool's central claim,
  * demonstrable only by the one person who already had the fixtures.
  *
- * So the fixtures are generated. Three of them, and between them they carry every
+ * So the fixtures are generated. Four of them, and between them they carry every
  * structure the assertions have an opinion about:
  *
  *   - `overlay_probe`    — a base plate with alpha overlays pinned on top, one of
@@ -27,6 +27,10 @@
  *                          ancestor was: a ceiling that only one cut declares
  *                          makes its assertion vacuous on every other one, and a
  *                          break there would be caught by nothing.
+ *   - `segments_probe`   — the one with NO manifest: a rig spec whose only mesh is
+ *                          a `segments` generator over a plate of two islands,
+ *                          under two bone chains, so the island join and the
+ *                          distance weighting both run on every build of it.
  *
  * 🚫 **None of this is art.** Every plate is a checkerboard with its own name
  * burned into it by `tools/plate.ts`, and no claim about seams, blending or style
@@ -716,4 +720,127 @@ export function containedFixture(): Fixture {
   });
 
   return { rig: 'articulated_probe', dir, rigPath, motionPath, manifestPath, outDir: join(dir, 'spine') };
+}
+
+// ---------------------------------------------------------------------------
+// segments_probe
+// ---------------------------------------------------------------------------
+
+/** A fixture with no manifest: the rig spec states everything, and `imagesDir` is where its art is. */
+export interface SpecOnlyFixture {
+  rig: string;
+  dir: string;
+  rigPath: string;
+  motionPath: string;
+  imagesDir: string;
+  outDir: string;
+}
+
+/** The segments probe's plate: its size, and the two islands' columns (x0 inclusive, x1 exclusive). */
+export const SEGMENTS_PLATE = { width: 96, height: 64, rows: [8, 56], islands: [[8, 40], [56, 88]] } as const;
+
+/**
+ * One plate of TWO islands, meshed by the `segments` generator over two bone
+ * chains — the fourth shape, and the only one with no manifest behind it.
+ *
+ * ⭐ Two islands because that is the case the generator exists to handle: a
+ * layer the alpha splits in two is still one attachment, and the lattice has to
+ * join the islands into one closed outline or the mesh is refused. The gap
+ * between them is wider than one cell, so the join path actually runs and adds
+ * cells that hold no art — a gap narrower than a cell would be closed by the
+ * lattice itself and the path would never be exercised.
+ *
+ * Each island hangs under its own two-link chain, so the weights have a real
+ * choice to make: a vertex near the left island binds the left chain, one near
+ * the right binds the right, and the cells the join added sit between them.
+ * The last link of each chain states a `length`, which is what gives it a
+ * segment — without one it would have an origin and nothing to measure a
+ * distance to.
+ */
+export function segmentsFixture(): SpecOnlyFixture {
+  const dir = makeDir('segments_probe');
+  const imagesDir = join(dir, 'parts');
+  const { width, height, rows, islands } = SEGMENTS_PLATE;
+  const plate = new Plate(width, height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const on = (Math.floor(x / 8) + Math.floor(y / 8)) % 2 === 0;
+      plate.set(x, y, on ? PAPER : INK);
+    }
+  }
+  plate.maskAlpha((x, y) => (y >= rows[0] && y < rows[1] && islands.some(([x0, x1]) => x >= x0 && x < x1) ? 255 : 0));
+  plate.writePng(join(imagesDir, 'cloth.png'));
+
+  const rigPath = join(dir, 'segments_probe.rig.json');
+  writeJson(rigPath, {
+    spec: 'rigc-rig/1',
+    name: 'segments_probe',
+    images: 'parts',
+    skeleton: { width: 256, height: 256 },
+    invariants: { meshSlots: 1, meshTriangles: 200 },
+    bones: [
+      { name: 'root' },
+      { name: 'body', parent: 'root', x: 0, y: 100 },
+      { name: 'left_0', parent: 'body', x: -24, y: 24 },
+      { name: 'left_1', parent: 'left_0', x: 0, y: -24, rotation: -90, length: 24 },
+      { name: 'right_0', parent: 'body', x: 24, y: 24 },
+      { name: 'right_1', parent: 'right_0', x: 0, y: -24, rotation: -90, length: 24 },
+    ],
+    slots: [{ name: 'cloth', bone: 'body', attachment: 'cloth' }],
+    skins: {
+      default: {
+        cloth: {
+          cloth: {
+            type: 'mesh',
+            image: 'cloth.png',
+            generator: {
+              kind: 'segments',
+              cell: 8,
+              bones: [
+                ['left_0', 'left_1'],
+                ['right_0', 'right_1'],
+              ],
+              falloff: { radius: 4, maxBones: 3, minWeight: 0.03 },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const motionPath = join(dir, 'segments_probe.motion.json');
+  writeJson(motionPath, {
+    spec: 'rigc-motion/1',
+    archetype: 'segments_probe',
+    cut: 'segments_probe',
+    easings: {},
+    animations: {
+      sway: {
+        duration: 1,
+        loop: true,
+        tracks: [
+          {
+            bone: 'left_1',
+            property: 'rotate',
+            keys: [
+              { t: 0, v: [0] },
+              { t: 0.5, v: [20] },
+              { t: 1, v: [0] },
+            ],
+          },
+          {
+            bone: 'right_1',
+            property: 'rotate',
+            keys: [
+              { t: 0, v: [0] },
+              { t: 0.5, v: [-20] },
+              { t: 1, v: [0] },
+            ],
+          },
+        ],
+      },
+    },
+  });
+
+  return { rig: 'segments_probe', dir, rigPath, motionPath, imagesDir, outDir: join(dir, 'spine') };
 }
