@@ -6,6 +6,22 @@
   "bin": {
     "rigc": "./bin/rigc.cjs"
   },
+  "exports": {
+    "./plate": "./tools/plate.ts",
+    "./font5x7": "./tools/font5x7.ts",
+    "./transform": "./src/transform.ts",
+    "./cli": "./cli.ts",
+    "./package.json": "./package.json",
+    "./*.ts": "./*.ts",
+    "./*.mjs": "./*.mjs",
+    "./*.cjs": "./*.cjs",
+    "./*.json": "./*.json",
+    "./*.md": "./*.md",
+    "./LICENSE": "./LICENSE",
+    "./bin/rigc": "./bin/rigc.cjs",
+    "./tools/png_probe": "./tools/png_probe.mjs",
+    "./*": "./*.ts"
+  },
   "engines": {
     "bun": ">=1.2.0"
   },

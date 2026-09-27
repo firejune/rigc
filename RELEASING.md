@@ -226,6 +226,34 @@ attested from a run holding an OIDC token, so setting it in `package.json` would
 fail the manual fallback below; the workflow passes `--provenance` on the
 command line instead, where it applies to the automated publish only.
 
+#### The import surface
+
+`exports` in `package.json` is the second allowlist: `files` decides what is in
+the tarball, `exports` decides what a dependant may import out of it. The
+**named entries are the API** — `spine-rigc/plate`, `spine-rigc/font5x7`,
+`spine-rigc/transform`, `spine-rigc/cli` and `spine-rigc/package.json`, each
+the surface a dependant was observed needing before the map existed (issue
+[#859](https://github.com/firejune/rigc/issues/859)). Moving the file behind a
+named entry is not breaking, because the entry moves with it; **renaming or
+removing a named entry is a breaking change.**
+
+⏳ Every other key is a **one-release courtesy**, and says so by being a
+pattern: up to `v1.2.3` the package had no map, so any shipped file resolved
+by its path, and under Bun a module also resolved with its extension left off.
+The patterns keep both spellings of every shipped path working, so a dependant
+that deep-imports `spine-rigc/tools/plate.ts` today does not meet `Cannot find
+module` on this upgrade. **Moving an unnamed file is not a breaking change**;
+the courtesy is what makes it survivable for one release, not a promise that
+it is stable. The patterns may go in the **next major (`2.0.0`)** and no
+earlier.
+
+⚠️ `"./*": "./*"` alone was tried and rejected: under Bun it resolves a path
+spelled in full and **1 of the 42** shipped modules spelled without its
+extension, where the package with no map resolved all 42. Bun does not try an
+array of targets either, so the fallback is spelled per extension instead.
+`bun run smoke` resolves every shipped path both ways from the install, and
+two of its plants take the named entries and the patterns away in turn.
+
 ### Whether the tarball runs
 
 What the package *holds* and whether it *works* are two different facts, and
