@@ -51,7 +51,10 @@
  *     `regionWidth` and `pageWidth` are integers and the page is a power of two,
  *     so `u · pageWidth` recovers `regionX + localTexel` with nothing lost —
  *     which is why the eleven region-only rigs are already byte-identical, and
- *     why `PK18` can assert exactness rather than a bound;
+ *     why `PK18` can assert exactness rather than a bound. That holds for the
+ *     default power-of-two page only: `pageEdges: 'free'` gives it up, and the
+ *     region attachments of a free page sit at the mesh's bound of 1 (`PK72`,
+ *     and `packAtlas`, *free*);
  *   * on a **mesh** it is **not** 0 — 88 of 88 coordinates on `gallery/squash`'s
  *     ball, worst 3.15e-5 texels — because `spine-core` stores mesh page UVs in a
  *     **`Float32Array`**. `MeshAttachment.updateRegion` computes `u +
@@ -503,6 +506,18 @@ export interface EmitPage {
  * Rotation buys page area on a set of parts whose aspect ratios differ a lot. It
  * is not free and it is not implemented; a page that runs out of room spills to a
  * second page instead.
+ *
+ * 🔬 **Measured for issue #860, and held back on the measurement.** A pack that
+ * turned regions `rotate: 90` lifted every one of them back byte for byte through
+ * `extractRegion` (22 of 22 and 20 of 20 on two painting rigs, 12 turned on each),
+ * and rigc's renderer drew the turned region attachments with 0 differing pixels
+ * against the unturned pack. But on neither rig did a turn shrink the page: both
+ * were already on the smallest power-of-two page their area allows, and a turn
+ * that buys no area only moves bytes. Shipping it would also need two clauses
+ * changed that say rigc never turns a region — `A06`'s under `spine-html`
+ * ([`src/validate.ts`](validate.ts)) and `artUvsOf`
+ * ([`src/render.ts`](render.ts)), which returns no art UVs for a turned region
+ * attachment, so `check`'s texture substitution would report it unmatched.
  */
 export const PACK_NO_ROTATE = 0;
 
@@ -578,6 +593,21 @@ export const DEFAULT_PAGE_SIZE = 2048;
 /** What `--padding` defaults to. See `extrudeCell` for why it is not 0 and not 1. */
 export const DEFAULT_PADDING = 2;
 
+/**
+ * What a packed page's edges may be — `--page-edges`. See `packAtlas`, *Page size*.
+ *
+ * `pot` is the default and the only value until issue #860: both edges are powers
+ * of two. `free` lets the width be any multiple of `FREE_EDGE_STEP` and the height
+ * whatever the placement needs. What `free` costs is measured rather than
+ * conceded: a region attachment's sampling coordinate stops being exact and moves
+ * to `PK05`'s bound of one least significant bit, the bound a mesh already had.
+ */
+export const PAGE_EDGES = ['pot', 'free'] as const;
+export type PageEdges = (typeof PAGE_EDGES)[number];
+export const DEFAULT_PAGE_EDGES: PageEdges = 'pot';
+/** The step a `free` page's width is tried on. See `packAtlas`, *Page size*. */
+export const FREE_EDGE_STEP = 32;
+
 /** The part a page is packed from: its region name and its pixels. */
 export interface PackInput {
   region: string;
@@ -594,6 +624,8 @@ export interface PackOptions {
   padding?: number;
   /** Page filenames are `<stem>.png`, `<stem>2.png`, … — libgdx's own numbering. */
   pageStem?: string;
+  /** What the page's edges may be (default `pot`). See `PAGE_EDGES`. */
+  pageEdges?: PageEdges;
 }
 
 /** Where one region landed. `x`/`y` are the REGION's own corner, not its cell's. */
@@ -666,7 +698,9 @@ function floorPowerOfTwo(n: number): number {
 function smallestPageFor(
   cells: Array<{ w: number; h: number }>,
   maxEdge: number,
+  pageEdges: PageEdges,
 ): { width: number; height: number; rects: Rect[] } | null {
+  if (pageEdges === 'free') return smallestFreePageFor(cells, maxEdge);
   const edges: number[] = [];
   for (let e = 1; e <= maxEdge; e *= 2) edges.push(e);
   const candidates: Array<{ w: number; h: number }> = [];
@@ -678,6 +712,60 @@ function smallestPageFor(
     return { width: candidate.w, height: candidate.h, rects: attempt as Rect[] };
   }
   return null;
+}
+
+/**
+ * The smallest `free` page that holds these cells, and where they land on it —
+ * or `null` when they do not fit `maxEdge x maxEdge` at all.
+ *
+ * The rule, which `docs/AUTHORING.md` §0.1 states in the same words:
+ *
+ *   * the candidate WIDTHS are the multiples of `FREE_EDGE_STEP` from the widest
+ *     cell up to `maxEdge`, plus `maxEdge` itself (it is a power of two, so this
+ *     only adds anything when it is smaller than the step);
+ *   * at each width the cells are placed by the same MaxRects pass as a `pot`
+ *     page, on a page `maxEdge` tall, and the HEIGHT is the bottom edge of the
+ *     lowest cell — what that placement needs, not rounded;
+ *   * the page with the least area wins, then the squarer (smaller |width −
+ *     height|), then the narrower. Every candidate has a distinct width, so that
+ *     last key makes the order total and the answer a function of the cells.
+ *
+ * ⚠️ The height is read off one placement rather than searched for, and that is
+ * a definition, not an approximation of one: MaxRects' success is not monotonic
+ * in the page height (a shorter page changes which free rectangle scores best),
+ * so "the least height that fits" is not a quantity a bisection could find, and a
+ * definition that could not be computed exactly would not be deterministic.
+ */
+function smallestFreePageFor(
+  cells: Array<{ w: number; h: number }>,
+  maxEdge: number,
+): { width: number; height: number; rects: Rect[] } | null {
+  let widest = 0;
+  for (const cell of cells) widest = Math.max(widest, cell.w);
+  const widths: number[] = [];
+  for (let w = Math.ceil(widest / FREE_EDGE_STEP) * FREE_EDGE_STEP; w <= maxEdge; w += FREE_EDGE_STEP) widths.push(w);
+  if (widths[widths.length - 1] !== maxEdge && widest <= maxEdge) widths.push(maxEdge);
+  let best: { width: number; height: number; rects: Rect[] } | null = null;
+  for (const width of widths) {
+    const attempt = packOnePage(cells, width, maxEdge);
+    if (attempt.some((r) => r === null)) continue;
+    const rects = attempt as Rect[];
+    let height = 0;
+    for (const r of rects) height = Math.max(height, r.y + r.h);
+    if (best !== null) {
+      const area = width * height;
+      const bestArea = best.width * best.height;
+      if (area > bestArea) continue;
+      if (area === bestArea) {
+        const square = Math.abs(width - height);
+        const bestSquare = Math.abs(best.width - best.height);
+        if (square > bestSquare) continue;
+        if (square === bestSquare && width >= best.width) continue;
+      }
+    }
+    best = { width, height, rects };
+  }
+  return best;
 }
 
 /**
@@ -856,11 +944,40 @@ function extrudeCell(page: Plate, source: Plate, cellX: number, cellY: number, p
  * transparency — 4 MiB of decoded RAM at the 2048 default. A single part whose
  * cell is bigger than the maximum is refused by name — silently splitting one
  * drawing across two pages is not a thing the format can express.
+ *
+ * ## `pageEdges: 'free'` — a page sized to the parts rather than to a power of two (issue #860)
+ *
+ * Opt-in, and the default stays `pot`: every runtime accepts a power-of-two page
+ * and the editor's own packer writes one by default — 9 of the 10 atlases in the
+ * fetched `examples/` corpus are power-of-two on both edges. Under `free` the
+ * search is `smallestFreePageFor`: widths on a `FREE_EDGE_STEP` grid, the height
+ * the placement needs, least area first, then squarer, then narrower. Everything
+ * else is shared — the MaxRects pass, the packing order, the spill rule (which
+ * parts share a page is still decided at `maxEdge x maxEdge`) and `--page-size`
+ * as the ceiling on both edges, floored to a power of two exactly as under `pot`.
+ *
+ * What it buys and what it costs, observed on two 20- and 22-part painting rigs:
+ * the page went from 1024x2048 to 1888x697 (2,097,152 to 1,315,936 texels,
+ * -37.3 %) and from 512x2048 to 480x1166 (1,048,576 to 559,680, -46.6 %). The cost is the exactness the paragraph above describes:
+ * `x / pageWidth` is no longer exact, so a REGION attachment's sampling
+ * coordinate joins a mesh's at `PK05`'s bound of one least significant bit
+ * against the loose build. It does not go past it, and no region's bytes change
+ * (`PK02`'s lift-back holds under both).
+ *
+ * ⚠️ `pot` is not the smaller answer's poor relation, and its search was never
+ * "double until it fits": it tries every power-of-two pair in order of area.
+ * On both rigs above the cells' own area (1,206,755 and 540,793 texels at
+ * padding 2) already exceeds the next power-of-two page down, so no `pot`
+ * packer could do better; the only lever left was the power of two itself.
  */
 export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResult {
   const pageSize = opts.pageSize ?? DEFAULT_PAGE_SIZE;
   const padding = opts.padding ?? DEFAULT_PADDING;
   const stem = opts.pageStem ?? 'skeleton';
+  const pageEdges = opts.pageEdges ?? DEFAULT_PAGE_EDGES;
+  if (!PAGE_EDGES.includes(pageEdges)) {
+    throw new CompileError(`--page-edges ${JSON.stringify(String(opts.pageEdges))}; known values: ${PAGE_EDGES.join(', ')}`);
+  }
   if (!Number.isInteger(pageSize) || pageSize < 1) {
     throw new CompileError(`--page-size must be a positive integer, got ${String(opts.pageSize)}`);
   }
@@ -884,7 +1001,7 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
     );
   }
 
-  const single = smallestPageFor(cells, maxEdge);
+  const single = smallestPageFor(cells, maxEdge, pageEdges);
 
   /** page index -> the placements on it, in packing order. */
   const perPage: Placement[][] = [];
@@ -943,6 +1060,7 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
       const shrunk = smallestPageFor(
         onPage.map((r) => r.cell),
         maxEdge,
+        pageEdges,
       );
       if (shrunk === null) {
         // Unreachable for the same reason as the stall above: these cells were

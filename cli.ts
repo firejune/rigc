@@ -101,8 +101,12 @@ import { NotAPngError } from './src/png.ts';
 import { copyAtlasPages } from './src/emit.ts';
 import {
   DEFAULT_PADDING,
+  DEFAULT_PAGE_EDGES,
   DEFAULT_PAGE_SIZE,
+  FREE_EDGE_STEP,
+  PAGE_EDGES,
   packAtlas,
+  type PageEdges,
   pageFootprint,
   parseAtlasText,
   type AtlasRegion,
@@ -1289,6 +1293,21 @@ function readIntFlag(flags: Record<string, string>, name: string, fallback: numb
 }
 
 /**
+ * Read `--page-edges`, or its default — `pot`.
+ *
+ * An unknown value is a usage error for `readProfile`'s reason: a typo that fell
+ * back to `pot` would hand the caller who asked for the smaller page the bigger
+ * one, green, and say nothing.
+ */
+function readPageEdges(flags: Record<string, string>): PageEdges {
+  const raw = flags['page-edges'];
+  if (raw === undefined) return DEFAULT_PAGE_EDGES;
+  const found = PAGE_EDGES.find((e) => e === raw);
+  if (!found) throw new UsageError(`--page-edges ${JSON.stringify(raw)}; known values: ${PAGE_EDGES.join(', ')}`);
+  return found;
+}
+
+/**
  * One `DROP` line, written once because two outcomes print it.
  *
  * A build that succeeds prints it in its report; a build that REFUSES prints it
@@ -1371,7 +1390,7 @@ function cmdBuild(flags: Record<string, string>): void {
   // now a build like any other — and it is the only one that puts the renderer's
   // own rulebook over shared-page sampling.
   if (!packing) {
-    for (const name of ['page-size', 'padding'] as const) {
+    for (const name of ['page-size', 'padding', 'page-edges'] as const) {
       if (flags[name] !== undefined) throw new UsageError(`--${name} only means something with --pack`);
     }
   }
@@ -1474,6 +1493,7 @@ function cmdBuild(flags: Record<string, string>): void {
     const packOpts = {
       pageSize: readIntFlag(flags, 'page-size', DEFAULT_PAGE_SIZE),
       padding: readIntFlag(flags, 'padding', DEFAULT_PADDING),
+      pageEdges: readPageEdges(flags),
       pageStem: 'skeleton',
     };
     const inputs = result.images.map((img) => ({
@@ -1489,7 +1509,8 @@ function cmdBuild(flags: Record<string, string>): void {
       console.log(
         `  ..    pack: ${page.name} ${page.width}x${page.height}, ` +
           `${packed.placements.filter((p) => packed.pages[p.page].name === page.name).length} region(s), ` +
-          `${(page.occupancy * 100).toFixed(1)}% covered, padding ${packed.padding}`,
+          `${(page.occupancy * 100).toFixed(1)}% covered, padding ${packed.padding}` +
+          (packOpts.pageEdges === 'free' ? ', page edges free' : ''),
       );
     }
     for (const place of packed.placements) {
@@ -3767,6 +3788,10 @@ const FLAG_MEANINGS: Record<string, string> = {
     'one written is the smallest that holds the pack, spilling to more pages only when the set will not fit',
   padding: `gutter each region reserves on every side, --pack only (default ${DEFAULT_PADDING}); it is filled by ` +
     "extending the region's own edge pixels outwards, which is what stops a neighbour bleeding in",
+  'page-edges': `what a page's edges may be, --pack only (default ${DEFAULT_PAGE_EDGES}): pot is a power of two on ` +
+    `both; free tries every width on a ${FREE_EDGE_STEP}px step, takes the height the placement needs and keeps ` +
+    'the least area — a smaller page, at the cost of region attachments sampling within 1 LSB of the loose ' +
+    'build rather than exactly',
   'atlas-in':
     'resolve every part against the regions of this pre-packed .atlas instead of against loose PNGs — region ' +
     'geometry (bounds/offsets/rotate) is read from the file and the atlas is re-emitted into --out, re-anchored',
@@ -3885,6 +3910,7 @@ const FLAG_VALUES: Record<string, string> = {
   'atlas-in': '<file.atlas>',
   'page-size': '<px>',
   padding: '<px>',
+  'page-edges': 'pot|free',
   'texture-from': '<path>',
   reference: '<dir|skeleton.json>',
   'reference-atlas': '<path>',
@@ -3971,7 +3997,7 @@ const COMMANDS: CommandDoc[] = [
     name: 'build',
     usage: [
       'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images]',
-      `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}]   (parts onto shared pages, written into --out)`,
+      `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free]   (parts onto shared pages, written into --out)`,
       'rigc build … --atlas-in <skeleton.atlas>                    (resolve the parts against a pack somebody already made)',
       'rigc build --cut <name> --cuts <cuts.json>',
     ],
@@ -3985,6 +4011,7 @@ const COMMANDS: CommandDoc[] = [
       'pack',
       'page-size',
       'padding',
+      'page-edges',
       'atlas-in',
       'cut',
       'cuts',
@@ -4003,7 +4030,7 @@ const COMMANDS: CommandDoc[] = [
       'this line said "the same arguments as build, minus --profile" and was false in both',
       'directions (issue #697): --atlas-in was not listed here, so the one flag that lets this',
       'command read what `ingest --art none` writes was reachable and undocumented, while',
-      '--pack, --page-size, --padding and --copy-images are build\'s and do nothing here —',
+      '--pack, --page-size, --padding, --page-edges and --copy-images are build\'s and do nothing here —',
       'they decide what is WRITTEN, and this command writes nothing. What it takes is listed',
       'above, and that is now the whole of it.',
     ],

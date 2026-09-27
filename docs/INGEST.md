@@ -412,7 +412,7 @@ rigc: give either --cut <name> --cuts <cuts.json>, or --rig/--motion/--out
 
 It takes `--rig`, `--motion`, `--out`, and optionally `--manifest`, `--images` and
 `--atlas-in` — `build`'s spec-reading flags, and not the ones that decide what `build`
-*writes* (`--pack`, `--page-size`, `--padding`, `--copy-images`) or the one that gates
+*writes* (`--pack`, `--page-size`, `--padding`, `--page-edges`, `--copy-images`) or the one that gates
 (`--profile`). It prints the resolved account
 of **your** two spec files, and never gates. Which makes it a §2 instrument rather
 than a §1 one — the thing you run to compare what you transcribed against the export
