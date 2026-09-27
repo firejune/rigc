@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0](https://github.com/firejune/rigc/compare/v1.2.3...v1.3.0) (2026-09-27)
+
+
+### Features
+
+* **atlas:** build --pack can size the page freely — two painting rigs measured 37–47 % smaller at the PK05 bound; rotation measured and held back ([#870](https://github.com/firejune/rigc/issues/870)) ([8bc2da6](https://github.com/firejune/rigc/commit/8bc2da6c7afc50aefdc4a12ae87beaeba271e41c))
+* **compile:** a "segments" mesh generator — lattice over the part's alpha, weights from distance to named bone segments, one authoring decision ([#868](https://github.com/firejune/rigc/issues/868)) ([922becc](https://github.com/firejune/rigc/commit/922beccfd2913979e74e56eff04819d62c8e8de5))
+* **package:** an exports map names the surface a dependant may import — plate, font5x7, transform, cli — and keeps deep paths for one release ([#863](https://github.com/firejune/rigc/issues/863)) ([ced7cc5](https://github.com/firejune/rigc/commit/ced7cc52050b4dfadc80d0eb0fc785b1f293351a))
+* **validate:** A15 reads invariants.idleDrivesMeshes — a painting rig declares that its idle deforms meshes and A15 reports the cost instead of 42 refusals ([#867](https://github.com/firejune/rigc/issues/867)) ([3b99bcb](https://github.com/firejune/rigc/commit/3b99bcb9662c36028fd4e532fb2780343665ed65))
+
+
+### Bug Fixes
+
+* **pose:** a refusal names the part's size, texture and candidate spread against a measured floor ([#869](https://github.com/firejune/rigc/issues/869)) ([7fd796c](https://github.com/firejune/rigc/commit/7fd796cd843aae9a50aef77521f0cadd4c258a1d))
+* **smoke:** the release confirmation waits for the tarball, not the packument — metadata without bytes is "not served", exit 3 ([#861](https://github.com/firejune/rigc/issues/861)) ([fcabe4d](https://github.com/firejune/rigc/commit/fcabe4d3fb0ea7de6c4183feda4ba86b4e90bd41)), closes [#833](https://github.com/firejune/rigc/issues/833)
+
 ## [1.2.3](https://github.com/firejune/rigc/compare/v1.2.2...v1.2.3) (2026-09-27)
 
 
