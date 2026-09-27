@@ -25,9 +25,9 @@
  * did not already have the fixtures.
  *
  * So the fixtures are written fresh into a temp directory on every run, by
- * [`fixtures/public.ts`](fixtures/public.ts). Three of them, one per shape the
- * assertions care about: `overlay_probe`, `articulated_probe` and
- * `contained_probe`. Two further suites build their own even smaller rigs inline
+ * [`fixtures/public.ts`](fixtures/public.ts). Four of them, one per shape the
+ * assertions care about: `overlay_probe`, `articulated_probe`,
+ * `contained_probe` and `segments_probe`, the last with no manifest. Two further suites build their own even smaller rigs inline
  * (static rigs, draw-order timelines).
  *
  * Other suites measure against the official Spine example corpus that
@@ -369,7 +369,14 @@ import {
   VALIDATE_PROFILES,
   type ValidateProfile,
 } from './src/validate.ts';
-import { articulatedFixture, containedFixture, overlayFixture, type Fixture } from './fixtures/public.ts';
+import {
+  articulatedFixture,
+  containedFixture,
+  overlayFixture,
+  SEGMENTS_PLATE,
+  segmentsFixture,
+  type Fixture,
+} from './fixtures/public.ts';
 import { exactDecimal, landingRates, maxSideOf, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
 import {
@@ -31785,6 +31792,265 @@ function runContourMeshSuite(): number {
     if (typeof packs !== 'string') rmSync(packs.dir, { recursive: true, force: true });
   }
 
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// the segments generator — a lattice over the alpha, weights by distance (#856)
+// ---------------------------------------------------------------------------
+//
+// The generator whose output IS its weights, so the controls read the weights
+// off the artifact rather than off the compiler's report: a report that agreed
+// with itself would be the compiler checking its own assumption. The probe is
+// `fixtures/public.ts`'s `segments_probe` — one plate of two islands under two
+// bone chains — so the island join runs on every control that builds it.
+
+/** The segments probe's rig spec, parsed, for the cases that edit it. */
+type SegmentsRigSpec = {
+  bones: Array<Record<string, unknown>>;
+  skins: { default: { cloth: { cloth: Record<string, unknown> & { generator: Record<string, unknown> } } } };
+};
+
+function runSegmentsMeshSuite(): number {
+  let bad = 0;
+  console.log('\n── segments meshes: a lattice over the part\'s alpha, weighted by distance to named bones (self-contained) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const probe = segmentsFixture();
+  const optsOf = (rigPath: string, outName: string): Options => ({
+    rigPath,
+    motionPath: probe.motionPath,
+    outDir: join(probe.dir, outName),
+    imagesDir: probe.imagesDir,
+  });
+  const base = JSON.parse(readFileSync(probe.rigPath, 'utf8')) as SegmentsRigSpec;
+  const generator = base.skins.default.cloth.cloth.generator;
+  const falloff = generator.falloff as Record<string, number>;
+  const opts = optsOf(probe.rigPath, 'spine');
+  const first = compile(opts);
+  const second = compile({ ...opts, outDir: join(probe.dir, 'spine_again') });
+  const gateUnder = (profile: ValidateProfile): ReturnType<typeof validate> =>
+    validate({
+      skeletonText: first.skeletonText,
+      atlasText: first.atlasText,
+      atlasDir: opts.outDir,
+      declaredDurations: first.declaredDurations,
+      rig: first.rig,
+      profile,
+      reEmit: { skeletonText: second.skeletonText, atlasText: second.atlasText },
+    });
+  const plain = gateUnder('spine');
+  const policy = gateUnder('spine-html');
+  const mesh = first.meshes.find((m) => m.slot === 'cloth');
+  const a21 = policy.skipped.find((sk) => sk.assertion === 'A21_MESH_RIM_PINNED');
+  const green = plain.failures.length === 0 && policy.failures.length === 0;
+  say(
+    'SG00_CONTROL_A_TWO_ISLAND_SEGMENTS_MESH_COMPILES_AND_GATES_GREEN_UNDER_BOTH_PROFILES',
+    green &&
+      mesh?.kind === 'segments' &&
+      plain.passed.includes('A20_MESH_WEIGHTS_COHERENT') &&
+      policy.passed.includes('A20_MESH_WEIGHTS_COHERENT') &&
+      a21 !== undefined &&
+      a21.reason.includes('"segments" lattice') &&
+      !policy.passed.includes('A21_MESH_RIM_PINNED'),
+    green
+      ? `slot "cloth" is a ${mesh?.kind} of ${mesh?.vertices} vertices / ${mesh?.triangles} triangles; A20 passed under ` +
+          `both profiles, and A21 SKIPPED under spine-html with "${a21?.reason ?? 'NO SKIP'}"`
+      : `[${[...plain.failures, ...policy.failures].map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'every control below reads this build; and A21 must SKIP rather than pass, because a segments mesh makes no claim about a pinned rim for it to have checked',
+  );
+  if (!green || mesh === undefined || mesh.influence === undefined) {
+    console.log('  SKIP  SG_EVERY_CONTROL_BELOW_SG00  (the segments probe did not gate green, so there is no artifact to read)');
+    return bad;
+  }
+
+  // The weights, off the artifact.
+  const skeleton = JSON.parse(first.skeletonText) as SpineSkeletonJson;
+  const boneNames = skeleton.bones.map((b) => b.name);
+  const emitted = (skeleton.skins.find((sk) => sk.name === 'default')?.attachments?.cloth?.cloth ?? {}) as {
+    uvs?: number[];
+    vertices?: number[];
+    hull?: number;
+    triangles?: number[];
+  };
+  const runs = weightRuns(emitted.vertices ?? []);
+  const named = new Set<string>((generator.bones as string[][]).flat());
+  let worstSum = 0;
+  let over = 0;
+  let under = 0;
+  let foreign = 0;
+  const strongest: string[] = [];
+  for (const at of runs) {
+    const n = emitted.vertices![at];
+    let sum = 0;
+    let best = -1;
+    let bestBone = '';
+    if (n > falloff.maxBones) over++;
+    for (let k = 0; k < n; k++) {
+      const bone = boneNames[emitted.vertices![at + 1 + k * 4]];
+      const weight = emitted.vertices![at + 4 + k * 4];
+      sum += weight;
+      // float32 on the file's side of the comparison: a kept share is at least minWeight before it is written
+      if (weight < falloff.minWeight - 1e-6) under++;
+      if (!named.has(bone)) foreign++;
+      if (weight > best) {
+        best = weight;
+        bestBone = bone;
+      }
+    }
+    worstSum = Math.max(worstSum, Math.abs(sum - 1));
+    strongest.push(bestBone);
+  }
+  say(
+    'SG01_EVERY_VERTEX_CLOSES_AT_ONE_WITHIN_MAXBONES_ON_NAMED_BONES_ONLY',
+    runs.length === mesh.vertices && worstSum < 1e-6 && over === 0 && under === 0 && foreign === 0,
+    `${runs.length} vertex run(s) read off the emitted skeleton: worst |sum - 1| ${worstSum.toExponential(2)}, ` +
+      `${over} over the spec's maxBones ${falloff.maxBones}, ${under} binding(s) under its minWeight ${falloff.minWeight}, ` +
+      `${foreign} binding(s) on a bone "bones" does not name`,
+    'the three things the falloff promises and A20 checks only the first of: A20 knows nothing about maxBones or minWeight, and a bone outside the named set is a weight the author did not decide',
+  );
+
+  // Where the vertices land, through spine-core at the setup pose.
+  const posable = posableFromText(first.skeletonText, first.atlasText, opts.outDir);
+  const posed = new Skeleton(posable.data);
+  posed.setupPose();
+  posed.updateWorldTransform(Physics.none);
+  const slotBone = posed.findBone('body')!;
+  const { width: pw, height: ph } = SEGMENTS_PLATE;
+  let worstPlace = 0;
+  for (let v = 0; v < mesh.vertices; v++) {
+    const [wx, wy] = worldVertex(posed, 'cloth', v);
+    const px = (emitted.uvs![v * 2] ?? NaN) * pw;
+    const py = (emitted.uvs![v * 2 + 1] ?? NaN) * ph;
+    worstPlace = Math.max(worstPlace, Math.hypot(wx - (slotBone.appliedPose.worldX + px - pw / 2), wy - (slotBone.appliedPose.worldY + ph / 2 - py)));
+  }
+  const outline = traceOutline(mesh.vertices, emitted.triangles ?? []);
+  const inf = mesh.influence;
+  say(
+    'SG02_TWO_ISLANDS_JOIN_INTO_ONE_OUTLINE_AND_THE_POSED_MESH_SITS_ON_ITS_ART',
+    inf.islands === 2 &&
+      inf.keptCells > inf.artCells &&
+      outline.hull === emitted.hull &&
+      mesh.coverage === 1 &&
+      worstPlace < 1e-3,
+    `${inf.islands} island(s) of art cells, ${inf.keptCells - inf.artCells} cell(s) added by the join; the triangles' ` +
+      `own outline is ${outline.hull} vertices and the file declares hull ${emitted.hull}; coverage ` +
+      `${((mesh.coverage ?? 0) * 100).toFixed(2)}%; posed at setup through spine-core, the worst vertex sits ` +
+      `${worstPlace.toExponential(2)} from its uv's place on the plate centred on the slot bone`,
+    'a two-island layer is the case the "outline is not one closed loop" refusal would otherwise fire on, and a weighted mesh whose bind coordinates were computed in the wrong frame loads and gates green while drawing somewhere else',
+  );
+
+  // The weights follow the chains: each island's vertices are owned by its own chain.
+  const [left, right] = SEGMENTS_PLATE.islands;
+  let wrongSide = 0;
+  let onIsland = 0;
+  for (let v = 0; v < mesh.vertices; v++) {
+    const px = (emitted.uvs![v * 2] ?? NaN) * pw;
+    const side = px <= left[1] ? 'left_' : px >= right[0] ? 'right_' : null;
+    if (side === null) continue;
+    onIsland++;
+    if (!strongest[v].startsWith(side)) wrongSide++;
+  }
+  say(
+    'SG03_EACH_ISLAND_IS_OWNED_BY_THE_CHAIN_IT_HANGS_UNDER',
+    onIsland > 0 && wrongSide === 0 && inf.bound.length === named.size,
+    `${onIsland} vertices over an island, ${wrongSide} whose strongest bone is the OTHER chain's; ` +
+      `${inf.bound.length} of the ${named.size} named bones bound by some vertex`,
+    'weights by distance have to be weights by THIS distance: a port that measured to the wrong end of a segment, or from the wrong origin, still closes at one and still gates green',
+  );
+
+  say(
+    'SG04_TWO_INDEPENDENT_COMPILES_ARE_BYTE_IDENTICAL',
+    first.skeletonText === second.skeletonText && first.atlasText === second.atlasText && plain.passed.includes('A18_DETERMINISTIC_EMIT'),
+    `skeleton ${first.skeletonText === second.skeletonText ? 'identical' : 'DIFFERS'}, atlas ` +
+      `${first.atlasText === second.atlasText ? 'identical' : 'DIFFERS'}, and A18 ` +
+      `${plain.passed.includes('A18_DETERMINISTIC_EMIT') ? 'passed on the pair' : 'did NOT pass'}`,
+    'the island join and the boundary walk both iterate collections, and an order nobody made explicit is how a second compile differs',
+  );
+
+  // `explain` prints the influence figures where the mesh is.
+  const explained = runCli([
+    'explain', '--rig', probe.rigPath, '--motion', probe.motionPath, '--images', probe.imagesDir, '--out', join(probe.dir, 'explained'),
+  ]);
+  const influenceLine =
+    `influence  max ${inf.maxBones} bone(s) per vertex, mean ${inf.meanBones.toFixed(2)}, ` +
+    `${inf.singleBone} of ${mesh.vertices} vertices`;
+  const latticeLine = `lattice    cell ${inf.cell}px, ${inf.cols}x${inf.rows} cells, ${inf.artCells} with art, ${inf.keptCells} kept`;
+  say(
+    'SG05_EXPLAIN_PRINTS_THE_INFLUENCE_AND_LATTICE_LINES_UNDER_THE_MESH',
+    explained.status === 0 && explained.stdout.includes(influenceLine) && explained.stdout.includes(latticeLine) && explained.stdout.includes('island(s) joined'),
+    explained.status === 0
+      ? `explain prints "${influenceLine}" and "${latticeLine}"${explained.stdout.includes('island(s) joined') ? ' with the join' : ' WITHOUT the join'}`
+      : `explain exited ${explained.status}: ${explained.stderr.trim().split('\n').slice(-1)[0]}`,
+    'the weights are the output and nobody can see a per-vertex number; the three figures that say whether the falloff did what was meant have to be where the mesh is',
+  );
+
+  // Every refusal, by name.
+  const blank = new Plate(SEGMENTS_PLATE.width, SEGMENTS_PLATE.height);
+  blank.maskAlpha(() => 0);
+  blank.writePng(join(probe.imagesDir, 'blank.png'));
+  let attempt = 0;
+  const refusal = (edit: (rig: SegmentsRigSpec) => void): string | null => {
+    const rig = JSON.parse(readFileSync(probe.rigPath, 'utf8')) as SegmentsRigSpec;
+    edit(rig);
+    const rigPath = join(probe.dir, `refusal_${attempt}.rig.json`);
+    writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+    try {
+      compile(optsOf(rigPath, `refusal_${attempt++}`));
+      return null;
+    } catch (err) {
+      return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+    }
+  };
+  const gen = (rig: SegmentsRigSpec): Record<string, unknown> => rig.skins.default.cloth.cloth.generator;
+  const fall = (rig: SegmentsRigSpec): Record<string, unknown> => gen(rig).falloff as Record<string, unknown>;
+  const refusals: Array<[string, string | null, string]> = [
+    ['a bone the rig does not declare', refusal((r) => (gen(r).bones = [['left_0', 'nobody']])), 'names mesh bone "nobody", which is not in the rig\'s bone list'],
+    ['no bones at all', refusal((r) => (gen(r).bones = [])), 'names no bones'],
+    ['a part whose alpha keeps no cell', refusal((r) => (r.skins.default.cloth.cloth.image = 'blank.png')), 'keeps no cell'],
+    ['minWeight at 1', refusal((r) => (fall(r).minWeight = 1)), '"falloff.minWeight" is 1'],
+    ['maxBones under 1', refusal((r) => (fall(r).maxBones = 0)), '"falloff.maxBones" is 0'],
+    [
+      'a vertex whose every share falls under minWeight',
+      refusal((r) => {
+        fall(r).radius = 100000;
+        fall(r).maxBones = 4;
+        fall(r).minWeight = 0.3;
+      }),
+      'keeps no bone',
+    ],
+    ['a lone bone with no length', refusal((r) => (gen(r).bones = ['body'])), 'which has no "length"'],
+    ['a chain whose last link has no length', refusal((r) => (gen(r).bones = [['left_0']])), 'is the last link of its chain'],
+    ['a chain whose next link is not under it', refusal((r) => (gen(r).bones = [['right_0', 'left_1']])), '"left_1" is not under "right_0"'],
+    [
+      'a chain link that shares its next link\'s origin',
+      refusal((r) => {
+        r.bones.push({ name: 'left_pin', parent: 'left_0', x: 0, y: 0, length: 4 });
+        gen(r).bones = [['left_0', 'left_pin']];
+      }),
+      'share their setup origin',
+    ],
+    ['an empty chain', refusal((r) => (gen(r).bones = [[]])), 'is an empty chain'],
+    ['a stated span with a malformed end', refusal((r) => (gen(r).bones = [{ bone: 'body', from: [0], to: [1, 2] }])), 'both ends are [x, y]'],
+    ['an entry that is none of the three forms', refusal((r) => (gen(r).bones = [5])), 'an entry is a bone name'],
+    ['no falloff block', refusal((r) => delete gen(r).falloff), 'states no "falloff" block'],
+    ['a radius of 0', refusal((r) => (fall(r).radius = 0)), '"falloff.radius" is 0'],
+    ['a power of 0', refusal((r) => (fall(r).power = 0)), '"falloff.power" is 0'],
+    ['a malformed anchor', refusal((r) => (gen(r).anchor = [1])), '"anchor" is [1]'],
+    ['a cell of 0', refusal((r) => (gen(r).cell = 0)), '"cell" is 0'],
+    ['no image', refusal((r) => delete r.skins.default.cloth.cloth.image), 'needs an "image"'],
+    ['a misspelt falloff key', refusal((r) => (fall(r).maxbones = 3)), '"maxbones"'],
+  ];
+  const missed = refusals.filter(([, got, want]) => got === null || !got.includes(want));
+  say(
+    'SG06_EVERY_WAY_TO_ASK_FOR_A_SEGMENTS_MESH_THAT_CANNOT_EXIST_IS_REFUSED_BY_NAME',
+    missed.length === 0,
+    missed.length === 0
+      ? refusals.map(([label]) => label).join('; ')
+      : missed.map(([label, got, want]) => `${label}: expected "${want}", got ${got === null ? 'a clean compile' : got}`).join(' | '),
+    'the one the brief left open is the sixth: a vertex every share of which the falloff dropped is refused rather than handed the largest, because a bone the falloff did not keep is a weight nobody decided',
+  );
   return bad;
 }
 
@@ -72988,6 +73254,7 @@ function main(): void {
   tally.of('path-slider', runPathAndSliderSuite);
   tally.of('polygon', runPolygonSuite);
   tally.of('contour-mesh', runContourMeshSuite);
+  tally.of('segments-mesh', runSegmentsMeshSuite);
   tally.of('deform-winding', runDeformWindingSuite);
   tally.of('deform-transform', runDeformTransformSuite);
   tally.of('deform-report', runDeformReportSuite);
@@ -73484,6 +73751,12 @@ function main(): void {
       'round part measured against the same art — 90% with its rim on the silhouette against 100% with the rim an ' +
       "octagon's apothem outside it, and nothing at all reported for a mesh that names no image — and a generator " +
       'under a rig that declares no budget refused by the field that fixes it), ' +
+      '+ ' + n('segments-mesh') + ' segments-mesh controls (a plate of two islands under two bone chains, meshed by a ' +
+      'lattice over its alpha and weighted by distance to the named segments, gating green under both profiles with ' +
+      'A21 SKIPPING by name rather than passing; every weight read back off the artifact closing at one within the ' +
+      "spec's maxBones on named bones only; the islands joined into one outline and the mesh posed through spine-core " +
+      'onto its own art; each island owned by the chain it hangs under; two compiles byte-identical; `explain` printing ' +
+      'the influence and lattice lines; and every way to ask for a segments mesh that cannot exist refused by name), ' +
       '+ ' + n('deform-winding') + ' deform-winding controls (a 5x5 grid turned by the closed form of docs/FACE.md §4.2 — inside its own fold ' +
       'angle it gates green, past that angle A39 names the animation, the key, the time and every reversed triangle ' +
       'with both its areas, and the eight it names span only the outermost column pair the formula picks out; the ' +
