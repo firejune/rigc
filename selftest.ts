@@ -230,6 +230,7 @@ import {
   DEFAULT_PADDING,
   DEFAULT_PAGE_SIZE,
   extractRegion,
+  FREE_EDGE_STEP,
   packAtlas,
   pageFootprint,
   parseAtlasText,
@@ -39123,12 +39124,15 @@ function runtimePageRect(region: TextureAtlasRegion): { x: number; y: number; wi
 function packFixture(
   fixture: Fixture,
   padding: number,
+  pageEdges: 'pot' | 'free' = 'pot',
 ): { dir: string; atlasText: string; result: CompileResult; pages: string[] } {
   const opts = optsForFixture(fixture);
   const result = compile(opts);
-  const dir = join(fixture.dir, `packed_p${padding}`);
+  // The default keeps its directory name, so every control that packed here
+  // before `--page-edges` existed still reads and writes the same path.
+  const dir = join(fixture.dir, pageEdges === 'pot' ? `packed_p${padding}` : `packed_p${padding}_${pageEdges}`);
   mkdirSync(dir, { recursive: true });
-  const packed = packAtlas(packInputsOf(result.images), { padding });
+  const packed = packAtlas(packInputsOf(result.images), { padding, pageEdges });
   for (const page of packed.pages) page.plate.writePng(join(dir, page.name));
   writeFileSync(join(dir, 'skeleton.atlas'), packed.atlasText);
   writeFileSync(join(dir, 'skeleton.json'), result.skeletonText);
@@ -39251,8 +39255,12 @@ function samplingCoordinates(fixture: Fixture): { region: CoordinateAgreement; m
 }
 
 /** Every fixture's parts, byte-compared against what the page gives back. */
-function losslessReport(fixture: Fixture, padding: number): { regions: number; wrong: string[] } {
-  const packed = packFixture(fixture, padding);
+function losslessReport(
+  fixture: Fixture,
+  padding: number,
+  pageEdges: 'pot' | 'free' = 'pot',
+): { regions: number; wrong: string[] } {
+  const packed = packFixture(fixture, padding, pageEdges);
   const parsed = parseAtlasText(packed.atlasText);
   const inputs = packInputsOf(packed.result.images);
   const wrong: string[] = [];
@@ -41697,6 +41705,158 @@ function runPackerSuite(): number {
         'has to say what would decide it rather than that nothing does',
     );
   }
+
+  // --- PK70..PK73: `--page-edges free` (issue #860) --------------------------
+  // The default is untouched — every control above packs `pot` and reads the
+  // figures it always did — so these hold the opt-in to the same three claims
+  // the default is held to: a page no bigger than it has to be, a region that
+  // is its own bytes, a render inside PK05's bound. None of it takes a figure
+  // from the packer it measures: the set below is chosen so the two answers are
+  // far apart, and PK70 compares them rather than stating either.
+  //
+  // Three 300x300 parts: with the default gutter each cell is 304x304 and the
+  // three cells together cover 277,248 texels, more than a 512x512 page — so the
+  // smallest power-of-two page is twice that, while a width of three cells
+  // wastes almost nothing.
+  const freeDir = mkdtempSync(join(tmpdir(), 'rigc-free-pages-'));
+  const freeInputs: PackInput[] = ['free_a', 'free_b', 'free_c'].map((region, n) => {
+    const plate = new Plate(300, 300);
+    // A pattern that differs per part and per texel, so a lift-back that read
+    // the wrong part, or the right part one texel over, cannot compare equal.
+    for (let y = 0; y < 300; y++) {
+      for (let x = 0; x < 300; x++) plate.set(x, y, [(x * 7 + n * 50) % 256, (y * 5 + n * 90) % 256, (x ^ y) % 256, 255]);
+    }
+    const absPath = join(freeDir, `${region}.png`);
+    plate.writePng(absPath);
+    return { region, absPath, width: 300, height: 300 };
+  });
+  const potPage = packAtlas(freeInputs, {});
+  const freePage = packAtlas(freeInputs, { pageEdges: 'free' });
+  const freeLift = (result: ReturnType<typeof packAtlas>): string[] => {
+    const wrong: string[] = [];
+    const parsed = parseAtlasText(result.atlasText);
+    parsed.pages.forEach((page, i) => {
+      for (const region of page.regions) {
+        const input = freeInputs.find((f) => f.region === region.name.trim());
+        const lifted = extractRegion(result.pages[i].plate, region);
+        const source = input === undefined ? null : readPlate(input.absPath);
+        if (source === null || source.data.length !== lifted.data.length || source.data.some((v, k) => v !== lifted.data[k])) {
+          wrong.push(region.name.trim());
+        }
+      }
+    });
+    return wrong;
+  };
+  const freeWrong = freeLift(freePage);
+  const potArea = potPage.pages.reduce((n, p) => n + p.width * p.height, 0);
+  const freeArea = freePage.pages.reduce((n, p) => n + p.width * p.height, 0);
+  const freeShape = freePage.pages.map((p) => `${p.width}x${p.height}`).join(', ');
+  say(
+    'PK70_A_FREE_PAGE_IS_SMALLER_THAN_THE_POWER_OF_TWO_PAGE_AND_EVERY_REGION_LIFTS_BACK',
+    freePage.pages.length === 1 &&
+      potPage.pages.length === 1 &&
+      freeArea < potArea &&
+      freePage.pages[0].width % FREE_EDGE_STEP === 0 &&
+      freeWrong.length === 0 &&
+      freeLift(potPage).length === 0,
+    `3 parts of 300x300: pot ${potPage.pages.map((p) => `${p.width}x${p.height}`).join(', ')} = ${potArea} texels, ` +
+      `free ${freeShape} = ${freeArea} texels (width on the ${FREE_EDGE_STEP}px step: ` +
+      `${freePage.pages.every((p) => p.width % FREE_EDGE_STEP === 0) ? 'yes' : 'NO'}); ` +
+      `${freeInputs.length - freeWrong.length} of ${freeInputs.length} region(s) lifted back byte for byte` +
+      (freeWrong.length ? ` — wrong: ${freeWrong.join(', ')}` : ''),
+    'the one lever issue #860 measured a gain on: a set whose area already overflows the next power-of-two page ' +
+      'down cannot get smaller under `pot`, and `free` is only worth shipping if it does get smaller and moves no byte',
+  );
+
+  // PK71: PK03's determinism, for the free search. The width loop and its three
+  // tie-breaks are the new code, and a tie broken by iteration order would show
+  // up here as two layouts of one set.
+  const freeAgain = packAtlas(freeInputs.slice().reverse(), { pageEdges: 'free' });
+  const freeFixtureA = packAtlas(packInputsOf(compile(optsForFixture(OVERLAY)).images), { pageEdges: 'free' });
+  const freeFixtureB = packAtlas(packInputsOf(compile(optsForFixture(OVERLAY)).images).reverse(), { pageEdges: 'free' });
+  const samePack = (a: ReturnType<typeof packAtlas>, b: ReturnType<typeof packAtlas>): boolean =>
+    a.atlasText === b.atlasText &&
+    a.pages.length === b.pages.length &&
+    a.pages.every((p, i) => p.plate.data.every((v, k) => v === b.pages[i].plate.data[k]));
+  const freeSame = [
+    ['three-part set', samePack(freePage, freeAgain), freeShape],
+    [
+      'overlay fixture',
+      samePack(freeFixtureA, freeFixtureB),
+      freeFixtureA.pages.map((p) => `${p.width}x${p.height}`).join(', '),
+    ],
+  ] as const;
+  say(
+    'PK71_TWO_FREE_PACKS_OF_THE_SAME_PARTS_ARE_BYTE_IDENTICAL',
+    freeSame.every(([, same]) => same),
+    freeSame
+      .map(([what, same, shape]) => `${what} (${shape}): ${same ? 'atlas text and page pixels identical' : 'DIFFERENT'}`)
+      .join('; ') + ', the second pack of each handed its parts in reverse order',
+    'A18 compares two compiles byte for byte, and a free search whose ties fell to iteration order would make it ' +
+      'compare one arbitrary run against another',
+  );
+
+  // PK72: the rendered claim. `free` gives up the exactness of `x / pageWidth`
+  // for region attachments, and what it may give it up TO is PK05's bound —
+  // measured here against the loose build on every pack fixture, with the
+  // lift-back beside it so a page that drew the right picture from the wrong
+  // bytes could not pass.
+  const freeDeltas = PACK_FIXTURES.map(([name, fixture]) => {
+    const packed = packFixture(fixture, DEFAULT_PADDING, 'free');
+    const shape = parseAtlasText(packed.atlasText).pages.map((p) => `${p.width}x${p.height}`).join('+');
+    const delta = renderDelta(packed.result, optsForFixture(fixture).outDir, packed.atlasText, packed.dir);
+    return { name, shape, delta, wrong: losslessReport(fixture, DEFAULT_PADDING, 'free').wrong };
+  });
+  say(
+    'PK72_A_FREE_PACK_RENDERS_WITHIN_PK05S_BOUND_AND_MOVES_NO_BYTE',
+    freeDeltas.every((d) => d.delta.frames > 0 && d.delta.worst <= 1 && d.wrong.length === 0),
+    freeDeltas
+      .map(
+        (d) =>
+          `${d.name} (${d.shape}): ${d.delta.frames} frame(s), ${d.delta.samples}/${d.delta.total} channel samples ` +
+          `differ, worst ${d.delta.worst}, ${d.wrong.length} region(s) not their own bytes`,
+      )
+      .join('; '),
+    'the cost of a free page is stated as one least significant bit and no more; a wrong texel would be PK06-shaped ' +
+      'and far above it, and this is where it would show',
+  );
+
+  // PK73: the value is refused by name, at both doors. The CLI's is a usage
+  // error, exit 2; the API's is a CompileError. Both have to list what IS known,
+  // and the CLI must also refuse the flag without `--pack`, like its siblings.
+  const edgesDirs = writeProbeRig();
+  writeFileSync(join(edgesDirs.dir, 'probe.motion.json'), `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+  const edgesBase = [
+    'build',
+    '--rig', edgesDirs.rigPath,
+    '--motion', join(edgesDirs.dir, 'probe.motion.json'),
+    '--images', edgesDirs.dir,
+    '--out', edgesDirs.outDir,
+  ];
+  const typo = runCli([...edgesBase, '--pack', '--page-edges', 'squre']);
+  const unpacked = runCli([...edgesBase, '--page-edges', 'free']);
+  const apiTypo = refusalOf(() => packAtlas(freeInputs, { pageEdges: 'squre' as 'pot' }));
+  const edgesMissing = [
+    typo.status === 2 ? null : `--page-edges squre exited ${String(typo.status)}, not 2`,
+    typo.stderr.includes('--page-edges "squre"') && typo.stderr.includes('pot, free')
+      ? null
+      : `--page-edges squre said: ${typo.stderr.split('\n')[0]}`,
+    unpacked.status !== 0 && unpacked.stderr.includes('--page-edges only means something with --pack')
+      ? null
+      : `--page-edges without --pack said: ${unpacked.stderr.split('\n')[0]} (exit ${String(unpacked.status)})`,
+    apiTypo !== null && apiTypo.includes('"squre"') && apiTypo.includes('pot, free')
+      ? null
+      : `packAtlas said: ${String(apiTypo)}`,
+  ].filter((m): m is string => m !== null);
+  say(
+    'PK73_AN_UNKNOWN_PAGE_EDGES_VALUE_IS_REFUSED_BY_NAME',
+    edgesMissing.length === 0,
+    edgesMissing.length === 0
+      ? `${typo.stderr.split('\n')[0]} (exit ${String(typo.status)}); ${unpacked.stderr.split('\n')[0]}; ` +
+          `packAtlas: ${String(apiTypo)}`
+      : edgesMissing.join('; '),
+    'a typo that fell back to `pot` would hand the caller who asked for the smaller page the bigger one, green',
+  );
   return bad;
 }
 
@@ -74123,7 +74283,8 @@ function main(): void {
       'tap across a SILHOUETTE charging `pose`’s objective for coverage and no colour — #306, where the straight ' +
       'arithmetic charges 0.68 for a placement that disagrees with nothing — and the scan that keeps the straight ' +
       'tap a control by having no caller in `src/` at all)' +
-      ', + ' + n('packer') + ' packer/importer controls (shared pages on power-of-two edges, every region a lossless copy, two ' +
+      ', + ' + n('packer') + ' packer/importer controls (shared pages on power-of-two edges, or under --page-edges free on a smaller page ' +
+        'within PK05\'s bound and refused by name when misspelled, every region a lossless copy, two ' +
       'packs byte-identical from shuffled input, the padding respected on every pair, a packed render that never ' +
       'reads a wrong texel with the gutterless case three orders of magnitude louder, an oversized part and a ' +
       'spill both named — each spilled page only as big as what is on it, cross-checked against the single-page ' +

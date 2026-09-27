@@ -200,6 +200,7 @@ What the flags mean:
 | `--pack` | `build` only: arrange every part onto **shared** atlas page(s), written into `--out` as real PNGs, instead of one page per part. Lossless — nothing is resampled, trimmed or rotated. The default is one page per part — **§0.1** |
 | `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1** |
 | `--padding` | `build --pack` only: the gutter each region reserves on every side (default `2`), filled by extending the region's own edge pixels outwards. `0` is not a legal-but-tight choice, it is bleed — **§0.1** |
+| `--page-edges` | `build --pack` only: `pot` (default) or `free`. `pot` keeps both page edges powers of two; `free` sizes the page to the parts — a smaller page, at the cost of region attachments sampling within one least significant bit of the loose build instead of exactly. Any other value is refused by name — **§0.1** |
 | `--atlas-in` | `build` and `explain`: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; `build` re-emits the atlas into `--out`, re-anchored, and `explain` writes nothing and poses through it — **§0.2**. On `explain` it is the flag that makes a **size-only** spec readable at all (`ingest --art none`), because posing resolves every attachment against an atlas; without it that pair is refused by name rather than thrown through (§5.1) |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order. For `chainfit` it is only where each attachment's image name **resolves**: the candidate decides what the parts are, so extra PNGs are unused and a missing name is refused by name (§12.3) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
@@ -313,7 +314,10 @@ a gap:
   `RegionAttachment.computeUVs` assigns a different corner order at 90, so a
   rotated pack is one rigc's own `--atlas` substitution cannot read.
   Rotation buys page area; a page that runs out of room spills to a second page
-  instead.
+  instead. Measured on two painting rigs (issue #860), a pack that turned 12
+  regions `rotate: 90` lifted every region back byte for byte and drew its
+  region attachments with 0 differing pixels — and made neither page smaller,
+  because both were already on the smallest power-of-two page their area allows.
 - **no re-ordering of anything the skeleton says.** `skeleton.json` from a packed
   build is **byte-identical** to the unpacked one, because sizes are still
   measured from the loose PNGs and packing is an output arrangement.
@@ -347,6 +351,38 @@ significant bit of one channel and it never reads a different texel. On real art
 it usually does not appear at all: eleven of the thirteen rigs in this repository
 render **byte-identically** packed and unpacked across 1,101 frames, and the two
 that do not are the two with meshes, at 1 and 146 samples of 6 and 60 million.
+
+**`--page-edges free`: a page sized to the parts.** The default, `pot`, tries
+every power-of-two pair up to `--page-size` in order of area and writes the first
+the pack fits — it never doubles past a smaller page that would do. So when the
+parts' own area already exceeds the next power-of-two page down, no `pot` packer
+can do better, and `free` is the lever left. Under `free` the candidate widths
+are the multiples of 32 from the widest padded part up to `--page-size`; at each
+width the parts are placed by the same MaxRects pass on a page `--page-size`
+tall, and the height is the bottom edge of the lowest part. The page with the
+least area wins, then the squarer one (smaller |width − height|), then the
+narrower one — every candidate has a different width, so the order is total and
+two builds of the same parts write the same bytes. Spilling, the packing order
+and `--page-size` as the ceiling are the same as under `pot`.
+
+The default stays `pot` because every runtime accepts a power-of-two page and
+the editor's own packer writes one by default: 9 of the 10 atlases in the
+fetched `examples/` corpus are power-of-two on both edges. What `free` costs is
+the exactness above. `x / pageWidth` is no longer exact, so a **region**
+attachment's samples join a mesh's at one least significant bit against the
+loose build instead of 0. No region's bytes change: every one lifts back byte for
+byte, as under `pot`. Observed on two painting rigs of 22 and 20 parts:
+
+| Rig | `pot` page | `free` page | Area | Covered | Opaque (alpha > 0) | Render vs loose, region attachments only | Render vs loose, whole rig |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 22 parts | 1024x2048 = 2,097,152 | 1888x697 = 1,315,936 | −37.3 % | 56.3 % → 89.7 % | 36.8 % → 58.7 % | 0 → 2,323 px, worst 1 | 3,854 → 5,216 px, worst 1 |
+| 20 parts | 512x2048 = 1,048,576 | 480x1166 = 559,680 | −46.6 % | 49.7 % → 93.2 % | 28.7 % → 53.8 % | 0 → 527 px, worst 1 | 1,260 → 1,669 px, worst 1 |
+
+The pixel counts are over 49 frames at `render --max 1024`. **Covered** is the
+regions' own rectangles over the page, which the pack line prints; **opaque** is
+the page's texels with any alpha. The gap between the two is transparency
+inside the parts, which no packer that copies bytes can remove. The pack line
+ends `, page edges free` when the flag is set.
 
 ### 0.2 Building against a pack somebody else made — `--atlas-in`
 
@@ -814,8 +850,9 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   `build --atlas-in` gates green is readable here through the same flag, and
   without it the pair is refused by name at exit 2 rather than posed
   (§5.1). ⚠️ `--profile`,
-  `--pack`, `--page-size`, `--padding` and `--copy-images` are `build`'s and are
-  not here: four of them decide what is *written*, and this command writes nothing.
+  `--pack`, `--page-size`, `--padding`, `--page-edges` and `--copy-images` are
+  `build`'s and are not here: five of them decide what is *written*, and this
+  command writes nothing.
 
   📐 **What it will not measure: the texels of a page that is not its declared
   size.** Under
