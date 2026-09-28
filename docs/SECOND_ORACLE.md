@@ -11,9 +11,12 @@ not the second backend, it is the second oracle.*
 ## 1. The sentence
 
 A posing core of rigc's own — `src/core/`, pure, importing nothing from
-`@esotericsoftware/spine-core` — that reads rigc's own **compiled model** (the neutral
-model `compile` already builds before the Spine emitter shapes it, made serialisable)
-and poses it: bones with their inherit modes, slots and colours, every attachment kind's
+`@esotericsoftware/spine-core` — that reads rigc's own **compiled model** and poses it.
+That model does not exist yet: step 0a measured that `compile.ts` builds the Spine
+objects directly — 14 `Spine*` types, 111 references, the 4.3 spellings applied in the
+constructors, and 24 sites that read those objects back to compute later values
+([COMPILED_MODEL.md](COMPILED_MODEL.md), §1.4 and *The finding*) — so step 1 is a change
+to how `compile` builds, not a serialiser beside it. The core poses that model: bones with their inherit modes, slots and colours, every attachment kind's
 world vertices, deform, draw order, clipping, events, and the five constraint kinds; such
 that for **every spec in every corpus**, the pose our core produces from the compiled
 model equals the pose spine-core produces from the Spine backend's emission of the same
@@ -67,6 +70,14 @@ greps for names that may not appear.
 
 The mathematics of a 2D bone hierarchy, a Bézier curve, an IK solver or a path follower
 belongs to nobody; what the rule protects is that the *text* is ours.
+
+One place in the tree already sits on this line, and the owner reads it before the rule
+is applied to new code: `src/transform.ts`'s world-transform function says of itself
+that *"the five `inherit` cases are the runtime's, transcribed"* (`inheritedMatrix`, 63
+lines, measured 2026-09-29). It is the compiler's own reading of a bone's inherit mode,
+written before this page; whether it stays as it is, is rewritten from the format's
+documentation and measurement under this page's rule, or is what this page's rule
+should say is fine, is the owner's call and is recorded on #380 when made.
 
 ## 4. The oracle — the equivalence gate
 
@@ -143,7 +154,7 @@ through spine-core (§6, step 3).
 | --- | --- | --- | --- |
 | **0a** | a census of `src/compile.ts` (8,770 lines, measured 2026-09-29): every emission site classified *neutral* (a bone, a key, a mesh) or *Spine-shape* (a 4.3 spelling, a key order, an omitted default), and the compiled model's fields listed from the types that exist (`CompileResult`, `CompiledImage`, the contexts) | a table, and a draft of the model's type; nothing moves | squad |
 | **0b** | the oracle promoted from scratch into `tools/pose_oracle.ts`: dump, compare, phases, the ill-conditioned rule, and the *Not yet* list (mesh world vertices, deform, draw order, events, physics stepping, per-skin posing); the JSON shape written so a second dumper can produce it | the exam's 14/14 IDENTICAL reproduced on the public examples' rigc rebuilds; three rows held by the selftest the way `pose_floor` is; its own mutant | squad |
-| **1** | the split: `compile` produces the compiled model as a serialisable, deterministic document (`rigc-compiled/1`, fixed key order) written beside the Spine files, and the Spine emitter becomes its first consumer | **byte identity**: every build in every corpus emits the same bytes before and after — `A18`'s discipline applied across the refactor. #379's invariant becomes checkable: `compile.ts` names no Spine shape | the commander decides after 0a; the coupling is hidden, so this is the judgement-heavy step |
+| **1** | the split: `compile` builds the compiled model — a serialisable, deterministic document (`rigc-compiled/1`, fixed key order) written beside the Spine files — and the Spine emitter becomes its first consumer. 0a's census is the map: 144 neutral rows are the model's (the `f32`/`keyTime` quantisation included — spelling a fraction as its full double moved the pose on 19 of 19 builds, so which decimal is named is a value), 72 Spine-shape rows are the emitter's, and every one of the 24 read-back sites needs a model-side source, eleven of them a by-name form of the weighted run that nothing keeps today | **byte identity**: every build in every corpus emits the same bytes before and after — `A18`'s discipline applied across the refactor. #379's invariant becomes checkable: `compile.ts` names no Spine shape | judgement-heavy: the coupling is measured, not hidden, but the model-side source of each read-back site is a design choice per site; the commander briefs it from the census |
 | **2** | the core, one construct at a time in §5's order, each its own card and squad | §5's three conditions | squad per construct |
 | **3** | consumers switch: `render.ts` and `deformmeasure.ts` pose through our core once every construct they use is admitted. `validate.ts`'s round trip stays on spine-core | the same renders, bit-identical, on every corpus; the three link points in CLAUDE.md become two | squad |
 | **4** | the owner's three, in this order: whether the shipped package's round trip stays per-file (spine-core in the package, as today) or becomes population-proven (spine-core a dev dependency; the 🔒 invariant amended, and its per-file guarantee replaced by §4's per-population one — a weaker guarantee about any one file, stated as such); the packaging and the name if the licence line splits the package; the web player, which is a renderer over the core and lives where renderers live | — | owner |
