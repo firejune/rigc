@@ -982,9 +982,11 @@ are entirely the motion spec's business.
 
 ### 4. In-between it
 
-Duration 0.55 s, proposed (§3.3). Three easings (§3.4). The arm is the driver; the flag
-is the next link out and it is light, so §3.7's table puts its extreme **+20–35 %** after
-the arm's and gives it an overshoot. *"Snap"* buys an anticipation (§3.6) and an
+Duration 0.55 s, proposed (§3.3). Three easings (§3.4). The arm is the driver. The flag
+is the last thing on it and it is cloth, which is the row §3.7's table gives to *a
+pennant* — not the *next link out* row, because nothing hangs off the flag — so its
+extreme lands **+20–35 %** after the arm's, it overshoots, and it settles last with one
+crossing. *"Snap"* buys an anticipation (§3.6) and an
 overshoot (§3.8). The post is planted: ⛔ **no timeline**.
 
 `semaphore.motion.json` — complete, nothing trimmed:
@@ -1020,8 +1022,8 @@ overshoot (§3.8). The post is planted: ⛔ **no timeline**.
           "keys": [
             { "t": 0, "v": [-22.2], "ease": "gather" },
             { "t": 0.09, "v": [-30.1], "ease": "charge" },
-            { "t": 0.38, "v": [-3.8], "ease": "settle" },
-            { "t": 0.48, "v": [-15.4], "ease": "settle" },
+            { "t": 0.47, "v": [-3.8], "ease": "settle" },
+            { "t": 0.51, "v": [-15.4], "ease": "settle" },
             { "t": 0.55, "v": [-11.7] }
           ]
         }
@@ -1040,8 +1042,8 @@ which is which is worth being able to point at:
 | arm `t: 0.55` = 18.3, flag `t: 0.55` = −11.7 | **given** — pose B. The flag's is `6.6 − 18.3`: both world rotations converted first, then differenced, because a child's track carries a **local** rotation under a rotated parent |
 | arm `t: 0.07` = −66.4 | §3.6 — 4.5° against an 80° excursion (5.6 %), at 13 % of the duration |
 | arm `t: 0.32` = 24.7 | §3.8 — 6.4° past the end value (8 %), at 58 % of the duration |
-| flag `t: 0.09`, `t: 0.38` | §3.7 — the flag's extreme lands at 69 % against the arm's 58 %, an offset of **+11 %**, and it drags the other way first |
-| flag `t: 0.48` = −15.4 | §3.7's *one crossing* for a loose part: it comes back past its own end value before settling |
+| flag `t: 0.09`, `t: 0.47` | §3.7 — the flag's extreme lands at 85 % of the duration against the arm's 58 %, an offset of **+27 %**, the middle of its row's band, and it drags the other way first. Not the top of the band: at 35 % (`t: 0.51`) the crossing and the settle below would share 0.04 s, and the 24 fps render would still show the flag at its extreme one frame before the last |
+| flag `t: 0.51` = −15.4 | §3.7's *one crossing* for a loose part: it comes back past its own end value before settling, keyed halfway between its extreme and the end |
 | the three easings | §3.4 — one that gathers, one that arrives slowly, one symmetric. The **last key of each track carries no easing**, because there is nothing after it to ease towards (AUTHORING §4.5) |
 | the post's absent track | §3.7 — a planted part gets no timeline |
 
@@ -1071,7 +1073,9 @@ Open `render/raise@24fps/contact.png` **before anything else** — fourteen fram
 grid, and spacing is a comparison across frames rather than a property of any one of
 them. What to check on it, and it is not a score: frame 0 is pose A — the flag hanging off
 the arm's collar, not over its middle — the last frame is pose B, the anticipation dips
-*after* frame 0, and the flag's extreme is visibly later than the arm's.
+*after* frame 0, and the flag's extreme is visibly later than the arm's: the arm peaks at
+frame 8 while the flag is still closing on the arm's line, it keeps closing through
+frame 11 as the arm eases back, and at frame 12 it drops past its resting angle.
 
 🚫 **Do not run `rigc check` against `poseA.png` and `poseB.png`.** Two pictures are not
 a frame set: `check` reads the second as the frame 1/12 s in, at its default rate. And
@@ -1115,21 +1119,21 @@ rigc vote --candidate spine --candidate spine-b
 
 ```
 rigc vote
-  ..    ballot    bce70ad82fe90941
+  ..    ballot    862f444c58d10e3e
   ..    animation raise
-  ..    A         sha256:6740d3dbf304…  3 page(s), 0.4 KiB  <- …/semaphore/spine/skeleton.json
+  ..    A         sha256:c49e458df44e…  3 page(s), 0.4 KiB  <- …/semaphore/spine/skeleton.json
   ..    B         sha256:d1bda24d7c36…  3 page(s), 0.4 KiB  <- …/semaphore/spine-b/skeleton.json
   ..    the page shows A/B and nothing else — the paths above are in its manifest, never on the screen
   ..    embedded every candidate's skeleton, atlas and page(s) as data URIs; the player itself loads from unpkg (@4.3.*), so the first open needs a network
 rigc: wrote …/semaphore/ballot.html  (22.3 KiB — open it in a browser)
-rigc: then record the saved vote with  rigc vote --record vote-bce70ad82fe90941.json --ballot …/semaphore/ballot.html
+rigc: then record the saved vote with  rigc vote --record vote-862f444c58d10e3e.json --ballot …/semaphore/ballot.html
 ```
 
 A person opens that page, watches two loops, picks one, and saves the small JSON it hands
 them. Then:
 
 ```bash
-rigc vote --record vote-bce70ad82fe90941.json --ballot ballot.html
+rigc vote --record vote-862f444c58d10e3e.json --ballot ballot.html
 ```
 
 ```
@@ -1140,8 +1144,8 @@ rigc vote --record vote-bce70ad82fe90941.json --ballot ballot.html
   PASS  V04_CHOICE_IS_ON_THE_BALLOT
   PASS  V05_REASON_CODE_FITS_THE_CHOICE
   PASS  V06_NOT_ALREADY_RECORDED
-  ..    winner A = sha256:6740d3dbf3043ff39c5f90577407c381f6841ff6af921517be7a0cfd3d7eb9d3, reason code preferred
-  ..    coverage 2 candidate(s): A=sha256:6740d3dbf304… B=sha256:d1bda24d7c36…
+  ..    winner A = sha256:c49e458df44efd277aa6e50ff8fa1962c1211c7617079d63fbc4cf8008eaf0c5, reason code preferred
+  ..    coverage 2 candidate(s): A=sha256:c49e458df44e… B=sha256:d1bda24d7c36…
 rigc: appended line 1 to …/semaphore/votes.jsonl
 ```
 
@@ -1169,9 +1173,13 @@ that the ends are stateable by construction (`pose`), that the file is checkable
 (`vote`).
 
 🚫 **No scoring of end-pose reach, and nothing here to add one to.** At L1 and L2 the
-end poses are given conditions; a number saying how near the animation got to them is a
-number about the pose estimator. This is why §6 does not run `check` on the two pictures
-and why no threshold, tolerance or pass bar appears anywhere in this document. The
+end poses are given conditions, and what a picture gives is a **pose**: the rotations are
+`pose`'s readings, which the spec states by construction, so a number for how near the
+animation got to *them* is a number about the pose estimator. The **offsets** are the
+other half — derived from the pictures rather than given — and a rig can miss its
+picture by a wrong one with every key exact. Catching that is a look, not a score (§6.5's
+frame-0 check). This is why §6 does not run `check` on the two pictures and why no
+threshold, tolerance or pass bar appears anywhere in this document. The
 residuals in a `pose` report are trust signals about *placements*, and AUTHORING §11.1
 says the same from the instrument's side.
 
