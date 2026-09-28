@@ -376,6 +376,7 @@ import {
   SKIP_NO_LINKED_MESH,
   SKIP_NO_MESH_ATTACHMENT,
   SKIP_NO_PHYSICS_CONSTRAINT,
+  SKIP_NO_POSE,
   SKIP_NO_REGION_ATTACHMENT,
   SKIP_NO_SEPARABLE_COLOR,
   SKIP_NO_SEQUENCE,
@@ -747,6 +748,39 @@ function a10Names(report: ReturnType<typeof validate>, ...parts: string[]): { he
   const details = report.failures.filter((f) => f.assertion === 'A10_NO_NAN_AFTER_STEPPING').map((f) => f.detail);
   const held = details.some((d) => parts.every((p) => d.includes(p)));
   return { held, read: held ? `A10 names ${JSON.stringify(parts)}` : `A10 said ${JSON.stringify(details)}, not ${JSON.stringify(parts)}` };
+}
+
+/**
+ * Is A10's one detail exactly `sentence` — or, with `whole: false`, does it open
+ * with it? The prefix form is only for a sentence that goes on to quote the
+ * runtime's own mode table, which is not a row's to restate. Issue #902 is why
+ * M94 and M95b read this way rather than through `a10Names`: #902 moved where
+ * the setup pose is posed, and "the sentence on an animated rig did not move"
+ * is a claim only a whole-sentence comparison can hold.
+ */
+function a10Is(report: ReturnType<typeof validate>, sentence: string, whole = true): { held: boolean; read: string } {
+  const details = report.failures.filter((f) => f.assertion === 'A10_NO_NAN_AFTER_STEPPING').map((f) => f.detail);
+  const held = details.length === 1 && (whole ? details[0] === sentence : details[0].startsWith(sentence));
+  return {
+    held,
+    read: held
+      ? `A10 says ${JSON.stringify(sentence)}${whole ? ', whole' : ' …'}`
+      : `A10 said ${JSON.stringify(details)}, not one detail ${whole ? 'reading' : 'opening'} ${JSON.stringify(sentence)}`,
+  };
+}
+
+/**
+ * `a10Is` on a static rig, and the stats line saying the stepping clause had
+ * nothing to step (issue #902) — the half of the reading a PASS row, which
+ * carries no detail, can only give there.
+ */
+function a10SaysOnAStaticRig(report: ReturnType<typeof validate>, sentence: string, whole = true): { held: boolean; read: string } {
+  const said = a10Is(report, sentence, whole);
+  const stepping = report.stats.nanStepping;
+  return {
+    held: said.held && stepping === 'skipped',
+    read: `${said.read}; the stats line has nanStepping=${String(stepping)}${stepping === 'skipped' ? '' : ', not skipped'}`,
+  };
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -1940,7 +1974,7 @@ const MUTANTS: Mutant[] = [
       'worldY stay the parent\'s finite numbers — the file loads, the old A10 passed it, render refused it (issue #882)',
     expect: 'A10_NO_NAN_AFTER_STEPPING',
     mutate: (a) => ({ ...a, skeletonText: plantOverflow(a.skeletonText, (j, leaf) => { leaf.rotation = OVERFLOW_TOKEN; }) }),
-    holds: (report, broken) => a10Names(report, `the setup pose: bone "${leafOf(broken)}" has a NaN`),
+    holds: (report, broken) => a10Is(report, `the setup pose: bone "${leafOf(broken)}" has a NaN; a world transform is finite`),
   },
   {
     name: 'M95_a_rotate_key_past_the_largest_double_on_a_leaf_bone',
@@ -1971,7 +2005,8 @@ const MUTANTS: Mutant[] = [
       'Infinity and both positions stay finite, so the old A10 passed it (issue #882)',
     expect: 'A10_NO_NAN_AFTER_STEPPING',
     mutate: (a) => ({ ...a, skeletonText: plantScaleChain(a.skeletonText, 2 * Math.sqrt(Number.MAX_VALUE)) }),
-    holds: (report, broken) => a10Names(report, `the setup pose: bone "${leafOf(broken, true)}" has a Infinity`),
+    holds: (report, broken) =>
+      a10Is(report, `the setup pose: bone "${leafOf(broken, true)}" has a Infinity; a world transform is finite`),
   },
   {
     // ⭐ Why A10 reads vertices at all: this bone is finite in all six terms and
@@ -2002,6 +2037,77 @@ const MUTANTS: Mutant[] = [
       held: report.passed.includes('A10_NO_NAN_AFTER_STEPPING'),
       read: report.passed.includes('A10_NO_NAN_AFTER_STEPPING') ? 'A10 ran and held' : 'A10 did not run and hold',
     }),
+  },
+  // ─── the same plants on a skeleton with nothing to step (issue #902) ────────
+  //
+  // A10 skipped a skeleton with no animation outright, so each row below was
+  // gated green on main and `render` was the first thing to refuse it. The
+  // fixture is made static the way a foreign file is: the emitted `animations`
+  // key is taken out, after compile, beside the plant. The spec still declares
+  // its animations, so A09 fails as well on these — which is A09 measuring
+  // what it is for, and not what these rows are about.
+  //
+  // 🔒 M97's sentence is compared WHOLE and is M94's, because the setup pose is
+  // one surface whether or not anything is stepped after it — the two may not
+  // say different things about the same bone. The stats line is the other half
+  // of the reading: it is where a PASS row, which carries no detail, says that
+  // the stepping clause had nothing to step.
+  {
+    name: 'M97_a_static_rigs_leaf_bone_whose_setup_rotation_is_past_the_largest_double',
+    origin:
+      'M94 on a skeleton with no animation: A10 skipped such a skeleton whole, so the gate printed SKIP and green under ' +
+      'both profiles while `render` refused the file by the bone (issue #902)',
+    expect: 'A10_NO_NAN_AFTER_STEPPING',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: plantOverflow(a.skeletonText, (j, leaf) => {
+        delete j.animations;
+        leaf.rotation = OVERFLOW_TOKEN;
+      }),
+    }),
+    holds: (report, broken) =>
+      a10SaysOnAStaticRig(report, `the setup pose: bone "${leafOf(broken)}" has a NaN; a world transform is finite`),
+  },
+  {
+    // The two readings a stepped frame gets beyond the world-transform scan,
+    // made on the setup pose when it is the only frame there is.
+    name: 'M97b_a_static_rigs_leaf_bone_whose_setup_inherit_the_lookup_does_not_resolve',
+    origin:
+      'a setup `inherit` spelled "NOSCALE" loads as no mode, the bone\'s matrix stays 0 and finite, and on an animated ' +
+      'rig A10 names it from the first stepped frame — on a static rig nothing did (issue #902)',
+    expect: 'A10_NO_NAN_AFTER_STEPPING',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: plantOverflow(a.skeletonText, (j, leaf) => {
+        delete j.animations;
+        leaf.inherit = 'NOSCALE';
+      }),
+    }),
+    holds: (report, broken) =>
+      a10SaysOnAStaticRig(
+        report,
+        `the setup pose: bone "${leafOf(broken)}" poses inheritance mode undefined — its setup spells inherit "NOSCALE", `,
+        false,
+      ),
+  },
+  {
+    name: 'M97c_a_static_rigs_slot_whose_setup_colour_is_not_hex',
+    origin:
+      '`Color.setFromString` stores whatever `parseInt` returns, so a colour of "zzzzzzzz" loads as NaN; on an animated ' +
+      'rig A10 names the slot from the first stepped frame — on a static rig nothing did (issue #902)',
+    expect: 'A10_NO_NAN_AFTER_STEPPING',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        delete j.animations;
+        (j.slots as Array<Record<string, unknown>>)[0].color = 'zzzzzzzz';
+      }),
+    }),
+    holds: (report, broken) =>
+      a10SaysOnAStaticRig(
+        report,
+        `the setup pose: slot "${(JSON.parse(broken.skeletonText) as { slots: Array<{ name: string }> }).slots[0].name}" colour is non-finite`,
+      ),
   },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -11690,6 +11796,65 @@ function runStaticRigSuite(): number {
     'the skip is keyed on BOTH sides being empty; one side alone must still be compared',
   );
 
+  // A10's two clauses on a skeleton with nothing to step (issue #902). Until
+  // then A10 skipped this probe whole, so the one pose a static rig shows was
+  // the one pose nothing read — and `render` was the first to refuse a setup
+  // posed to NaN. Now the setup clause decides the row and the stepping clause
+  // says it had nothing on the stats line, since a PASS row carries no detail.
+  // The plants that make the setup clause FAIL are M97–M97c in the mutant
+  // table; these are the two states around them.
+  const A10_NAN = 'A10_NO_NAN_AFTER_STEPPING';
+  /** Where A10 stands in a report, as the rows would print it. */
+  const a10Row = (r: ReturnType<typeof validate>): string =>
+    [
+      ...(r.passed.includes(A10_NAN) ? ['PASS'] : []),
+      ...r.failures.filter((f) => f.assertion === A10_NAN).map((f) => `FAIL: ${f.detail}`),
+      ...r.skipped.filter((f) => f.assertion === A10_NAN).map((f) => `SKIP: ${f.reason}`),
+    ].join(', ') || 'no row at all';
+  const halfRan = (r: ReturnType<typeof validate>): string[] => [
+    ...(r.passed.includes(A10_NAN) ? [] : [`A10 is not in \`passed\` — ${a10Row(r)}`]),
+    ...(r.stats.nanStepping === 'skipped' ? [] : [`the stats line has nanStepping=${String(r.stats.nanStepping)}, not skipped`]),
+  ];
+  const big = gateProbeArtifacts(dirs, STATIC_MOTION, (skeleton) => {
+    const block = (skeleton.bones as Array<Record<string, unknown>>).find((b) => b.parent !== undefined);
+    if (block !== undefined) {
+      block.rotation = 359.999;
+      block.scaleX = 1e100;
+    }
+  });
+  const bigProbes = [...halfRan(report).map((p) => `the pristine probe: ${p}`), ...halfRan(big).map((p) => `at rotation 359.999 and scaleX 1e100: ${p}`)];
+  say(
+    'S113_A10_READS_A_STATIC_RIGS_SETUP_POSE_AND_SAYS_IT_STEPPED_NOTHING',
+    bigProbes.length === 0,
+    probeDetail(
+      bigProbes.length === 0,
+      bigProbes,
+      `A10 passes the probe as built and at rotation 359.999 with scaleX 1e100 — ${report.stats.animations} animation(s), ` +
+        'so it read the setup pose alone and each stats line says nanStepping=skipped',
+    ),
+    'large and finite is not broken, and a static rig is not an unmeasured one: its setup pose is the whole of what it ' +
+      'shows, so the rule that reads the pose must run on it and say which half had nothing',
+  );
+
+  // The one skeleton that gives A10 nothing at all: no bone to pose and no
+  // animation to step. The multi-clause rule of #580 skips only there, and the
+  // reason names both subjects.
+  const poseless = gateProbeArtifacts(dirs, STATIC_MOTION, (skeleton) => {
+    delete skeleton.slots;
+    skeleton.bones = [];
+    skeleton.skins = [{ name: 'default', attachments: {} }];
+  });
+  const poselessSkip = poseless.skipped.find((s) => s.assertion === A10_NAN);
+  say(
+    'S114_A10_SKIPS_ONLY_A_SKELETON_WITH_NO_BONE_AND_NO_ANIMATION',
+    poselessSkip?.reason === SKIP_NO_POSE && !poseless.passed.includes(A10_NAN),
+    // `RD02`'s line, for `S01`'s reason.
+    `${poselessSkip ? `skipped: ${poselessSkip.reason}` : `A10 did not skip — ${a10Row(poseless)}`}` +
+      `; A10 ${poseless.passed.includes(A10_NAN) ? 'is ALSO in `passed`' : 'is in no pass list'}`,
+    'with neither a bone nor an animation there is no pose to read and nothing to step, and a PASS there would be ' +
+      'the vacuous green the SKIP channel exists to refuse',
+  );
+
   // A41's three states, and the SKIP is the one that carries the product.
   //
   // The rule is opt-in because rigc's output is not wrong: a physics constraint
@@ -12046,11 +12211,19 @@ function runStaticRigSuite(): number {
   // carries **two deliberate FAIL rows**, `A07_ATLAS_TEXT_SHAPE` on the blank
   // atlas and `A26` on the slot taken away, and both are measurements. The cases
   // below are stated over rows and never over greenness for exactly that reason.
+  //
+  // 🦴 And the bones go too, since issue #902. A10's setup clause poses the
+  // bones, so a bare rig that kept its two had a subject for that clause and
+  // A10 PASSed on it by measuring them — which is not the vacuous green this
+  // case refuses, and this case called it one because the fixture still
+  // carried something. A fixture for "nothing to measure" has to carry nothing,
+  // and a skeleton with no bone loads: `SkeletonJson` iterates an empty list.
   const bare = gateProbeArtifacts(
     writeProbeRig(NO_SUBJECT),
     STATIC_MOTION,
     (skeleton) => {
       delete skeleton.slots;
+      skeleton.bones = [];
     },
     'spine-html',
   );
@@ -12061,6 +12234,7 @@ function runStaticRigSuite(): number {
     SKIP_NO_REGION_ATTACHMENT,
     SKIP_NO_MESH_ATTACHMENT,
     SKIP_NO_ANIMATION,
+    SKIP_NO_POSE,
     SKIP_NO_TIMELINE,
     SKIP_NO_PHYSICS_CONSTRAINT,
     SKIP_NO_ATLAS_PAGE,
@@ -12092,7 +12266,7 @@ function runStaticRigSuite(): number {
       vacuousHeld,
       vacuousProbes,
       `none of the ${quantified.length} assertion(s) that quantify over a subject passed on an artifact that ` +
-        `carries no attachment, animation, constraint or slot; the ${bare.passed.length} that did pass are the ` +
+        `carries no attachment, animation, constraint, slot or bone; the ${bare.passed.length} that did pass are the ` +
         `rules whose finding is a count of zero (${bare.passed.join(', ')})`,
       (count) => `${count} row(s) the criterion refuses:`,
     ),
@@ -12120,6 +12294,8 @@ function runStaticRigSuite(): number {
     [SKIP_NO_REGION_ATTACHMENT, 'regionAttachments'],
     [SKIP_NO_MESH_ATTACHMENT, 'meshAttachments'],
     [SKIP_NO_ANIMATION, 'animations'],
+    [SKIP_NO_POSE, 'animations'],
+    [SKIP_NO_POSE, 'bones'],
     [SKIP_NO_DECLARED_DURATION, 'animations'],
     [SKIP_NO_PHYSICS_CONSTRAINT, 'physicsConstraints'],
     [SKIP_NO_ATLAS_PAGE, 'pages'],
