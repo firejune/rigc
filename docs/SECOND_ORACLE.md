@@ -162,6 +162,28 @@ through spine-core (§6, step 3).
 Estimates, carried from #380's 2026-09-04 text and not re-measured: a posing core of
 5–8k lines; the split 1–2 squad-days. 0a refines both.
 
+### Step 1, cut by the census
+
+0a measured the split as a model to be *constructed* (24 read-back sites, eleven of
+them a weighted vertex naming its bone by index in the emitted array), so step 1 is
+not one change. It is the sequence below, each cut landing on its own under the same
+gate — byte identity of every build in every corpus, held by the instrument of 1a —
+and each cut's diff boundary is a set of rows in [COMPILED_MODEL.md](COMPILED_MODEL.md):
+
+| cut | what moves | the census rows it closes |
+| --- | --- | --- |
+| **1a** | the instrument: every build in every corpus hashed across two commits (`tools/emit_hashes.ts`), before any line of `compile.ts` moves | — |
+| **1b** | bones by name: the model's `bones` built first, the emitter producing `SpineBone[]` from them; world transforms, the rig info walk, segments and derived group values read the model | §1.4 rows 1, 2, 12, 21, 24 |
+| **1c** | the weighted run by name: a mesh's bindings kept by bone name in the model and encoded to indexes only at emission; deform geometry and path lengths decoded from the model | §1.4 rows 8, 13–23, 14; §2.1's first bullet |
+| **1d** | slots, skins, attachments, constraints, events as model records; the emitter owns the `type` discriminators, the inline omissions and the sequence frame spelling | §1.4 rows 3–7, 9–11, 16; §3 *Omission* and *Spellings* |
+| **1e** | animations: keys as the model holds them, the emitter restating every constructor insertion order the key-order table does not list | §3 *Layout and order*'s ⚠️ |
+| **1f** | the model written beside the Spine files (`rigc-compiled/1`, fixed key order), `A18` extended to it, and #379's rule made a control: `compile.ts` names no Spine shape | — |
+
+The `f32`/`keyTime` quantisation stays on the model side throughout (0a's first
+correction), and the two `open` rows (`filter`, `pma`) are decided at 1d. The tier of
+each cut is decided when it is briefed: 1a, 1b and 1f are closed by their rows; 1c and
+1e are where the judgement sits.
+
 ## 7. What this page does not change
 
 - **The Spine backend.** Spine data is emitted only through the spine-core round trip.
