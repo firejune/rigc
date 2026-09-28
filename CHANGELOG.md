@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.0](https://github.com/firejune/rigc/compare/v1.4.0...v1.5.0) (2026-09-28)
+
+
+### Features
+
+* **atlas:** build --pack --page-edges free searches every width, with two exact bounds — twelve region sets measured, up to 10.22 % smaller pages at 53 ms for all twelve ([#879](https://github.com/firejune/rigc/issues/879)) ([012a751](https://github.com/firejune/rigc/commit/012a7510c621c691eab422c7cec4b195c05d8ac8))
+
+
+### Bug Fixes
+
+* **pose:** the polish escapes a scale–position valley by re-fitting half a rung up and the refinement carries 15 — the four trials [#876](https://github.com/firejune/rigc/issues/876) lost return at their truth, the floor grid finds 227 → 237, misses 14 → 8 ([#884](https://github.com/firejune/rigc/issues/884)) ([7a9aa4b](https://github.com/firejune/rigc/commit/7a9aa4bb793cc0e1386227b75ffda7f8e7f4eed6))
+* **render:** a pose that is not finite is refused by the bone or vertex that overflowed and its value — "posed no drawable attachment" stays for a skeleton that draws nothing ([#883](https://github.com/firejune/rigc/issues/883)) ([120d87c](https://github.com/firejune/rigc/commit/120d87c420bc97439262c9b24ddc8da594c5bf49)), closes [#873](https://github.com/firejune/rigc/issues/873)
+
 ## [1.4.0](https://github.com/firejune/rigc/compare/v1.3.0...v1.4.0) (2026-09-28)
 
 
