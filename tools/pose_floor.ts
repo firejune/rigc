@@ -42,7 +42,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { errBilinear, estimatePose, levelOf, materialPlate, type PoseLegibility, type PoseTrace, readBackground } from '../src/pose.ts';
+import { errBilinear, estimatePose, levelOf, materialPlate, normaliseDegrees, type PoseLegibility, type PoseTrace, readBackground } from '../src/pose.ts';
 import {
   BACKGROUND,
   blitPiece,
@@ -118,6 +118,25 @@ export interface FloorTrial {
    * truth — the class issue #877 was about.
    */
   polish: FloorPolish | null;
+  /**
+   * The coarse seed nearest the truth, as the coarse field handed it down
+   * (issue #892): its offset, the rotation the field kept for its cell, and the
+   * field's own objective there at that rotation and at the truth's (0°). `gap`
+   * is the second minus the first — how far the truth's rotation lost the cell
+   * by. `null` when the trace has no coarse row, as on a grid written before it.
+   */
+  coarseSeed: FloorCoarseSeed | null;
+}
+
+export interface FloorCoarseSeed {
+  distance: number;
+  rotation: number;
+  kept: number;
+  atTruth: number | null;
+  gap: number | null;
+  /** Pyramid index of the coarse level, and of the first level whose nearest candidate is within 15° of the truth's rotation (-1 when none is). */
+  level: number;
+  correctedAt: number;
 }
 
 export interface FloorLevel {
@@ -132,6 +151,19 @@ export interface FloorLevel {
   /** The level's objective at the truth, and at its own best. */
   truth: number;
   best: number;
+  /**
+   * Degrees between the truth's rotation (0, by construction) and the rotation
+   * the candidate nearest the truth carries out of this level, in (-180, 180]
+   * (issue #892). `null` on a grid written before the column existed.
+   */
+  rotation: number | null;
+  /**
+   * The same two figures for the SEED nearest the truth, as this level took it
+   * in — at the coarse level that is the rotation the coarse field kept for the
+   * anchor cell, before any polish or re-grid has touched it.
+   */
+  seedDistance: number | null;
+  seedRotation: number | null;
 }
 
 export interface FloorPolish {
@@ -375,17 +407,21 @@ export function floorTrial(
     got.placement !== null &&
     truthResidual < got.placement.residual &&
     !reported.some((p) => Math.hypot(p.x - truth.x, p.y - truth.y) <= FLOOR_WITHIN_PX);
-  const { search, polish } = searchColumns(log, truth);
-  return { frame: scene.name, slot, size, texture, outcome, error, legibility: got.legibility, truthResidual, missed, search, polish };
+  const { search, polish, coarseSeed } = searchColumns(log, truth);
+  return { frame: scene.name, slot, size, texture, outcome, error, legibility: got.legibility, truthResidual, missed, search, polish, coarseSeed };
 }
 
 /** `FloorTrial.search` and `.polish`, read off the trace `pose` kept for one part. */
-function searchColumns(log: PoseTrace, truth: { x: number; y: number }): { search: FloorLevel[]; polish: FloorPolish | null } {
+function searchColumns(
+  log: PoseTrace,
+  truth: { x: number; y: number },
+): { search: FloorLevel[]; polish: FloorPolish | null; coarseSeed: FloorCoarseSeed | null } {
   const off = (c: { x: number; y: number }): number => Math.hypot(c.x - truth.x, c.y - truth.y);
   const nearest = (cs: { x: number; y: number }[]): number => cs.reduce((bi, c, i) => (off(c) < off(cs[bi]) ? i : bi), 0);
   const round = (n: number): number => Math.round(n * 1e5) / 1e5;
   const search = log.levels.map((level, i): FloorLevel => {
     const rank = level.out.length === 0 ? -1 : nearest(level.out);
+    const seed = level.seeds.length === 0 ? -1 : nearest(level.seeds);
     const next = log.levels[i + 1];
     return {
       level: level.level,
@@ -395,14 +431,37 @@ function searchColumns(log: PoseTrace, truth: { x: number; y: number }): { searc
       carried: next === undefined || rank < next.keep,
       truth: round(level.probeResidual ?? -1),
       best: level.out.length === 0 ? -1 : round(level.out[0].residual),
+      rotation: rank < 0 ? null : round(normaliseDegrees(level.out[rank].rotationDeg)),
+      seedDistance: seed < 0 ? null : round(off(level.seeds[seed])),
+      seedRotation: seed < 0 ? null : round(normaliseDegrees(level.seeds[seed].rotationDeg)),
     };
   });
+  const coarse = log.levels[0];
+  let coarseSeed: FloorCoarseSeed | null = null;
+  if (coarse !== undefined && coarse.coarseRotations !== null && coarse.seeds.length > 0) {
+    const at = nearest(coarse.seeds);
+    const row = coarse.coarseRotations.residuals[at];
+    const zero = coarse.coarseRotations.ladder.findIndex((r) => Math.abs(normaliseDegrees(r)) < 1e-9);
+    const kept = Math.min(...row);
+    const atTruth = zero < 0 ? null : row[zero];
+    const upright = search.findIndex((l) => l.rotation !== null && Math.abs(l.rotation) < 15);
+    coarseSeed = {
+      distance: round(off(coarse.seeds[at])),
+      rotation: round(normaliseDegrees(coarse.seeds[at].rotationDeg)),
+      kept: round(kept),
+      atTruth: atTruth === null ? null : round(atTruth),
+      gap: atTruth === null ? null : round(atTruth - kept),
+      level: coarse.level,
+      correctedAt: upright < 0 ? -1 : search[upright].level,
+    };
+  }
   const last = log.levels[log.levels.length - 1];
-  if (last === undefined || last.seeds.length === 0) return { search, polish: null };
+  if (last === undefined || last.seeds.length === 0) return { search, polish: null, coarseSeed };
   const seed = nearest(last.seeds);
   const path = last.paths[seed];
   return {
     search,
+    coarseSeed,
     polish: {
       steps: path.length,
       escapes: path.filter((step) => step.escape).length,

@@ -64381,9 +64381,74 @@ function runPoseSuite(): number {
       'the trace is an instrument pointed at the search, and an instrument that moves what it measures reports a ' +
         'search nobody ran without it',
     );
+
+    // --- PO33: the coarse row the trace keeps is the field's own (issue #892) --
+    //
+    // 🔍 The measurement #892 asked for — how often the seed nearest the truth
+    // reaches refinement carrying a half-turn, and by how much the truth's
+    // rotation lost its cell — is read off `coarseRotations`, which the trace
+    // recomputes rather than copies out of the field. So the row is only
+    // evidence if it IS the field: every coarse seed's carried rung must be the
+    // least value of its row and equal the residual the seed carries, bit for
+    // bit. A row forged to put another rung below the carried one must be named.
+    {
+      const rows = trace.levels.filter((l) => l.coarseRotations !== null);
+      const seeds = rows.reduce((n, l) => n + l.seeds.length, 0);
+      const found = coarseRowDisagreements(trace);
+      const forged: PoseTrace = JSON.parse(JSON.stringify(trace)) as PoseTrace;
+      const target = forged.levels.find((l) => l.coarseRotations !== null && l.coarseRotations.ladder.length > 1 && l.seeds.length > 0);
+      if (target !== undefined && target.coarseRotations !== null) {
+        const row = target.coarseRotations.residuals[0];
+        const carried = target.coarseRotations.ladder.findIndex((r) => Math.abs(normaliseDegrees(r) - target.seeds[0].rotationDeg) < 1e-9);
+        row[carried === 0 ? 1 : 0] = target.seeds[0].residual / 2;
+      }
+      const caught = coarseRowDisagreements(forged);
+      const held = found.length === 0 && seeds > 0 && target !== undefined && caught.length > 0;
+      say(
+        'PO33_THE_TRACED_COARSE_ROW_IS_THE_FIELD_EACH_SEED_WAS_PICKED_FROM',
+        held,
+        probeDetail(
+          held,
+          [
+            ...found,
+            ...(seeds === 0 ? ['the trace recorded no coarse row at all, so there was nothing to hold'] : []),
+            ...(target === undefined ? ['no coarse row had two rungs to forge'] : []),
+            ...(target !== undefined && caught.length === 0 ? ['a row forged to put another rung below the carried one was not named'] : []),
+          ],
+          `${seeds} coarse seed(s) over ${rows.length} part(s): each carries the least rung of its traced row, at the residual ` +
+            `it was handed down with; a forged row is named: ${caught[0] ?? 'n/a'}`,
+        ),
+        'a rotation table read off a row the search never used would measure an arithmetic nobody ran — and the ' +
+          'table is what decided that the coarse field needs no second rotation (issue #892)',
+      );
+    }
   }
 
   return bad;
+}
+
+/**
+ * Every coarse seed whose traced row disagrees with the field it came from: the
+ * rung it carries is not the least of its row, or its value there is not the
+ * residual the seed was handed down with — by part and seed.
+ */
+function coarseRowDisagreements(trace: PoseTrace): string[] {
+  const out: string[] = [];
+  for (const level of trace.levels) {
+    const rows = level.coarseRotations;
+    if (rows === null) continue;
+    level.seeds.forEach((seed, i) => {
+      const row = rows.residuals[i];
+      const at = rows.ladder.findIndex((r) => Math.abs(normaliseDegrees(r) - seed.rotationDeg) < 1e-9);
+      const least = Math.min(...row);
+      if (at < 0) out.push(`${level.part} coarse seed ${i}: carries ${seed.rotationDeg}°, which is not a rung of the ladder`);
+      else if (row[at] !== seed.residual) out.push(`${level.part} coarse seed ${i}: its row reads ${row[at]} at ${seed.rotationDeg}°, the seed carries ${seed.residual}`);
+      else if (row[at] !== least) {
+        out.push(`${level.part} coarse seed ${i}: carries ${seed.rotationDeg}° at ${row[at].toFixed(5)}, but its row has ${least.toFixed(5)} at ${rows.ladder[row.indexOf(least)]}°`);
+      }
+    });
+  }
+  return out;
 }
 
 /**
@@ -75824,7 +75889,7 @@ function main(): void {
       'declared scale window honoured in both directions, the command writing its JSON while a mistyped ' +
       'directory is refused by name, the same picture read twice reporting the same numbers rather than ' +
       'nearly the same ones — the objective divides since #306 — no polish ending on a worse residual than it ' +
-      'started from, read through a trace that changes nothing it reports, and the four floor-grid trials #865\'s ' +
+      'started from, read through a trace that changes nothing it reports and whose coarse row is the field each seed was picked from, and the four floor-grid trials #865\'s ' +
       'finer grid lost to the refinement each placed at its truth — three polishes let out of a scale–position ' +
       'valley by a half-rung escape up, and a shin whose truth ranked past the old twelve read off its trace as ' +
       'carried to the answer — with the escaping trial read twice to the same bytes — and MOTION.md §6\'s ' +
