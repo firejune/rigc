@@ -614,7 +614,7 @@ quietly, and every in-between hung off it swings about the wrong centre.
   further than you would accept as a bone position, treat it as the next case.
 - **Δ < 20°** — ⛔ **do not use the solve.** Take the default below and **say in your
   log that the pivot was defaulted and why** — the number, not the word: *"flag hinge
-  defaulted; relative rotation changed 10.8° between the two poses, amplification 5.3×"*.
+  defaulted; relative rotation changed 10.5° between the two poses, amplification 5.5×"*.
 - **Δ = 0** (a part that only translates, or a rigid pair) — the pivot is not a
   quantity the pictures contain at all. Default it.
 
@@ -632,10 +632,13 @@ actually see, which is why they beat an ill-conditioned solve:
    exactly why it gets said out loud.
 
 📌 **Then check the default the cheap way: it should agree with itself across the
-poses.** Take your chosen pivot point into the parent's local frame once per pose. A
-real hinge is *fixed* there, so the readings should differ by about your placement
-noise; if they differ by several pixels, the point you picked is not the hinge. §6
-runs this check on a real pair and gets 0.23 px.
+poses.** Take your chosen pivot point into the parent **bone's** frame once per pose —
+origin at the parent's own pivot, not at the centre of its image. A real hinge is
+*fixed* there, so the readings should differ by about your placement noise; if they
+differ by several pixels, the point you picked is not the hinge. §6 runs this check on
+a real pair and gets 0.25 px. ⚠️ The check cannot see the origin: measured from the
+wrong one, the readings agree exactly as well, because a constant offset agrees with
+itself. §6 shows both, and what the wrong one draws.
 
 ### 3.10 📗 Secondary action, and 🧩 what it costs here
 
@@ -817,12 +820,15 @@ rigc pose
                    ambiguous: part is 14x96 px (span 93.2 frame px, opaque 1) with texture 0.0146, detail 1.406; 43 candidate(s), best 0.0593, next 0.0687, spread 0.0095 — above the measured floor (AUTHORING §11.5: detail 0.5, measured from 24 px up), so size and texture do not explain this; either the frame holds more than one place this part fits, or every candidate missed the true one — a narrower --scale or --rotation window around what you know of the part tells the two apart
 ```
 
-⚠️ **The post came back at scale 0.690 with two alternates trailing it down to 0.500 —
-the window's own floor.** That is §2.2's caveat in the open: the post is a long part with
-most of its area in one colour, so a shrunken copy sitting inside the real post explains
-those pixels nearly as well, and three near-equal optima marching toward the edge of the
-window is what that looks like. The arm and the flag agree on ≈0.96, which says the
-picture is at the art's own resolution. ⇒ Narrow, and say so:
+⚠️ **The post came back `AMBIG`: a best at scale 0.971 and an alternate at 0.691, 7.3 px
+higher, trailing it by a spread of 0.0095.** That is §2.2's caveat in the open. The post
+is a long part with most of its area in one colour, so a shrunken copy sitting inside the
+real post explains those pixels nearly as well, and the report's own `ambiguous:` line
+says size and texture do not account for how close the two come. The report cannot say
+which one is true, and it says so: it names both and asks for a narrower window. The
+picture can. The arm and the flag read 0.970 and 0.955, so the picture is at the art's
+own resolution, and a post at 0.69 would be drawn at about 0.7 of the size of everything
+bolted to it. ⇒ Narrow, and say so:
 
 ```bash
 rigc pose --images parts --frame poseA.png --scale 0.85,1.2 --out poseA.json
@@ -859,18 +865,20 @@ rigc pose
 
 Three things to read out of that pair, none of which is a score:
 
-- **Scale.** All six readings sit in 0.955–0.995 — a spread of about 4 %, which is the
-  method's own floor rather than six different scales. ⇒ Take the pictures as being at
-  the art's own resolution and author the rig in **part pixels**, so no scaling appears
-  in the spec at all. Say that this is what the spread was read as.
+- **Scale.** All six readings sit in 0.956–0.995, a spread of about 4 %. The one part
+  read twice at one place, the post, reads 0.971 and 0.995 — 2.5 % apart on a part that
+  does not move — so a 4 % spread is the size of the method's own repeatability rather
+  than six different scales. ⇒ Take the pictures as being at the art's own resolution
+  and author the rig in **part pixels**, so no scaling appears in the spec at all. Say
+  that this is what the spread was read as.
 - **Draw order, from `unexplained`.** The post reads **16 %** unexplained in pose A and
   **9 %** in pose B, at placements that barely move — §2.2's occlusion signature. The arm
   crosses more of the post in pose A, so the arm is **in front of** the post. The flag
-  reads 0 % and 1 %: nothing covers it, so it is **in front of** the arm. ⇒ Slots in
+  reads 0 % in both: nothing covers it, so it is **in front of** the arm. ⇒ Slots in
   the order `post`, `arm`, `flag` (AUTHORING R4 — the slots array *is* the draw order,
   and there is nowhere else in the file to say it).
 - **The post does not move**, so its two readings are two measurements of one number:
-  x 79.9/80.0 and y 148.6/148.0. ⇒ Use the mean, **(79.95, 148.3)**, and treat the 0.6 px
+  x 79.9/80.0 and y 148.5/148.0. ⇒ Use the mean, **(79.95, 148.25)**, and treat the 0.5 px
   disagreement as the noise floor for every other number on the page.
 
 ### 3. Convert, and derive the rig
@@ -880,33 +888,59 @@ Three things to read out of that pair, none of which is a score:
 
 | | pose A, Spine world | pose B, Spine world |
 | --- | --- | --- |
-| `post` | x 79.9 · y 51.4 · rot 0.1° | x 80.0 · y 52.0 · rot 0.0° |
-| `arm` | x 91.9 · y 77.2 · rot −61.9° | x 102.6 · y 105.2 · rot 18.2° |
-| `flag` | x 104.7 · y 43.9 · rot −84.3° | x 137.4 · y 114.0 · rot 6.6° |
+| `post` | x 79.9 · y 51.5 · rot 0.1° | x 80.0 · y 52.0 · rot 0.0° |
+| `arm` | x 91.9 · y 77.2 · rot −61.9° | x 102.5 · y 105.2 · rot 18.3° |
+| `flag` | x 104.7 · y 43.9 · rot −84.1° | x 137.4 · y 114.0 · rot 6.6° |
 
 **The shoulder, by §3.9's solve.** The arm's screen rotation changes from 61.9° to
-−18.2°, so **Δ = 80.1°** — well inside the *solve it* band, `|det| = 4·sin²(40.05°) =
-1.656`, amplification 0.78×. Solving the 2×2 puts the fixed point at frame **(80.59,
-102.44)**, reconstructing identically from both poses, and the offset lands at arm-image
-pixel **(6.71, 7.38)** — inside the arm's own hub, which is where a hub is for. In Spine
-world that is (80.59, 97.56); in the post bone's local space, **(0.64, 45.86)**.
+−18.3°, so **Δ = 80.2°** — well inside the *solve it* band, `|det| = 4·sin²(40.1°) =
+1.660`, amplification 0.78×. Solving the 2×2 puts the fixed point at frame **(80.57,
+102.51)**, reconstructing identically from both poses, and the offset lands at arm-image
+pixel **(6.76, 7.43)** — inside the arm's own hub, which is where a hub is for. In Spine
+world that is (80.57, 97.49); in the post bone's local space, **(0.62, 45.74)**. That
+point is the `arm` bone's origin, and it is the origin of everything measured in the
+arm's frame below.
 
 **The flag hinge, by §3.9's default — and this is the interesting one.** The relative
-angle across that joint is 22.4° in pose A and 11.6° in pose B, so **Δ = 10.8°**:
-`|det| = 0.0354`, amplification **5.3×**, comfortably inside the *do not use the solve*
-band. Run it anyway, to see what it would have cost — it returns arm-local **(25.64,
-1.32)**, exactly as confidently as the shoulder did. The default instead: the flag's art
-draws its hinge as a dark hoist strip down one edge, whose centre is flag-image
-**(2.5, 10)**; carrying that point through each pose's placement into arm-local gives
-**(24.77, 0.01)** and **(24.54, 0.20)** — §3.9's self-agreement check, and the two poses
-agree to **0.23 px**. ⇒ Take the mean, **(24.66, 0)**, and write in the log that the
-pivot was **defaulted**, with the number: *relative rotation changed 10.8°,
-amplification 5.3×, ill-conditioned solve declined*.
+angle across that joint is 22.2° in pose A and 11.7° in pose B, so **Δ = 10.5°**:
+`|det| = 0.0335`, amplification **5.5×**, comfortably inside the *do not use the solve*
+band. Run it anyway, to see what it would have cost — it puts the hinge at **(49.15,
+−0.38)** in the arm bone's frame, exactly as confidently as the shoulder did. The default
+instead: the flag's art draws its hinge as a dark hoist strip down one edge, whose centre
+is flag-image **(2.5, 10)**. Carry that point through each pose's placement into the
+**arm bone's frame** — origin at the shoulder pivot above, x along the arm, y up: take
+the point's frame position, subtract the pivot's, turn it back through the arm's screen
+rotation and flip y once. Carried unrounded, printed rounded:
+
+| | pose A | pose B |
+| --- | --- | --- |
+| the hinge in the frame, through the flag's placement | (103.52, 144.66) | (125.98, 87.32) |
+| minus the pivot, (80.57, 102.51) | (22.94, 42.15) | (45.40, −15.18) |
+| turned by −61.9° and +18.3°, y flipped | **(47.99, 0.38)** | **(47.87, 0.16)** |
+
+That is §3.9's self-agreement check, and the two poses agree to **0.25 px**. ⇒ Take the
+mean, **(47.93, 0.27)**, write it as **(47.93, 0)** — the y is inside the 0.5 px noise
+floor — and write in the log that the pivot was **defaulted**, with the number:
+*relative rotation changed 10.5°, amplification 5.5×, ill-conditioned solve declined*.
+
+⚠️ **Which origin the arm's frame has is the whole of this step, and the check above
+cannot tell you.** A placement reports where the part image's **centre** lands, so the
+nearest frame to hand is the one centred on the arm image — and measured from there the
+same hinge reads (24.76, −0.05) and (24.64, −0.27). Those agree to 0.25 px just as well,
+because a constant offset agrees with itself. They are short by 23.24, the arm
+attachment's own offset below, and a flag hung at x 24.70 draws over the middle of the
+arm: built and rendered on the pictures' grid, its flag sits 23.5 px from where
+`poseA.png` draws it in frame 0 and 23.2 px from `poseB.png` at the end. With x 47.93 it
+sits 0.4 px and 0.2 px off, inside the noise floor. A bone sits at its **pivot**, and its
+children's offsets are measured from there.
 
 ⭐ Worth pausing on, because it is what §3.9 is for: **the two solves are
 indistinguishable from the inside.** Both are exact, both reconstruct to a point that
-agrees between the poses, and no residual anywhere in either pose report moves. The only
-thing separating them is Δ, which is arithmetic you can do before you trust either.
+agrees between the poses, and no residual anywhere in either pose report moves. Here
+the declined one lands 1.4 px from the drawn hinge — the 5.5× amplification applied to
+about a quarter-pixel of placement noise — and nothing in either answer says which of the
+two is the one to trust. The only thing separating them is Δ, which is arithmetic you
+can do before you trust either.
 
 `semaphore.rig.json` — complete, nothing trimmed:
 
@@ -918,9 +952,9 @@ thing separating them is Δ, which is arithmetic you can do before you trust eit
   "skeleton": { "width": 160, "height": 200 },
   "bones": [
     { "name": "root" },
-    { "name": "post", "parent": "root", "x": 79.95, "y": 51.7 },
-    { "name": "arm", "parent": "post", "x": 0.64, "y": 45.86 },
-    { "name": "flag", "parent": "arm", "x": 24.66, "y": 0 }
+    { "name": "post", "parent": "root", "x": 79.95, "y": 51.75 },
+    { "name": "arm", "parent": "post", "x": 0.62, "y": 45.74 },
+    { "name": "flag", "parent": "arm", "x": 47.93, "y": 0 }
   ],
   "slots": [
     { "name": "post", "bone": "post", "attachment": "post" },
@@ -930,7 +964,7 @@ thing separating them is Δ, which is arithmetic you can do before you trust eit
   "skins": {
     "default": {
       "post": { "post": { "image": "post.png" } },
-      "arm": { "arm": { "image": "arm.png", "x": 23.29 } },
+      "arm": { "arm": { "image": "arm.png", "x": 23.24 } },
       "flag": { "flag": { "image": "flag.png", "x": 11.5 } }
     }
   }
@@ -940,8 +974,8 @@ thing separating them is Δ, which is arithmetic you can do before you trust eit
 The two attachment offsets are the last of the arithmetic. A bone sits at its pivot and
 the placement told you where the image's **centre** goes, so the offset is the gap
 between them, in the bone's own axes with y flipped once: the arm's pivot is at image
-(6.71, 7.38) and its centre at (30, 7), giving **x 23.29** (the y term is 0.38, inside
-the 0.6 px noise floor, so it is not written); the flag's hinge is at image (2.5, 10) and
+(6.76, 7.43) and its centre at (30, 7), giving **x 23.24** (the y term is 0.43, inside
+the 0.5 px noise floor, so it is not written); the flag's hinge is at image (2.5, 10) and
 its centre at (14, 10), giving **x 11.5** exactly. Bone rotations are left off, which
 means *as drawn* — the arm plate is drawn horizontal and the post vertical, so the poses
 are entirely the motion spec's business.
@@ -976,19 +1010,19 @@ overshoot (§3.8). The post is planted: ⛔ **no timeline**.
           "keys": [
             { "t": 0, "v": [-61.9], "ease": "gather" },
             { "t": 0.07, "v": [-66.4], "ease": "charge" },
-            { "t": 0.32, "v": [24.6], "ease": "settle" },
-            { "t": 0.55, "v": [18.2] }
+            { "t": 0.32, "v": [24.7], "ease": "settle" },
+            { "t": 0.55, "v": [18.3] }
           ]
         },
         {
           "bone": "flag",
           "property": "rotate",
           "keys": [
-            { "t": 0, "v": [-22.4], "ease": "gather" },
+            { "t": 0, "v": [-22.2], "ease": "gather" },
             { "t": 0.09, "v": [-30.1], "ease": "charge" },
             { "t": 0.38, "v": [-3.8], "ease": "settle" },
             { "t": 0.48, "v": [-15.4], "ease": "settle" },
-            { "t": 0.55, "v": [-11.6] }
+            { "t": 0.55, "v": [-11.7] }
           ]
         }
       ]
@@ -1002,10 +1036,10 @@ which is which is worth being able to point at:
 
 | Key | Where it came from |
 | --- | --- |
-| arm `t: 0` = −61.9, flag `t: 0` = −22.4 | **given** — pose A, converted. Untouched, per §3.6 |
-| arm `t: 0.55` = 18.2, flag `t: 0.55` = −11.6 | **given** — pose B. The flag's is `6.6 − 18.2`: both world rotations converted first, then differenced, because a child's track carries a **local** rotation under a rotated parent |
+| arm `t: 0` = −61.9, flag `t: 0` = −22.2 | **given** — pose A, converted. Untouched, per §3.6 |
+| arm `t: 0.55` = 18.3, flag `t: 0.55` = −11.7 | **given** — pose B. The flag's is `6.6 − 18.3`: both world rotations converted first, then differenced, because a child's track carries a **local** rotation under a rotated parent |
 | arm `t: 0.07` = −66.4 | §3.6 — 4.5° against an 80° excursion (5.6 %), at 13 % of the duration |
-| arm `t: 0.32` = 24.6 | §3.8 — 6.4° past the end value (8 %), at 58 % of the duration |
+| arm `t: 0.32` = 24.7 | §3.8 — 6.4° past the end value (8 %), at 58 % of the duration |
 | flag `t: 0.09`, `t: 0.38` | §3.7 — the flag's extreme lands at 69 % against the arm's 58 %, an offset of **+11 %**, and it drags the other way first |
 | flag `t: 0.48` = −15.4 | §3.7's *one crossing* for a loose part: it comes back past its own end value before settling |
 | the three easings | §3.4 — one that gathers, one that arrives slowly, one symmetric. The **last key of each track carries no easing**, because there is nothing after it to ease towards (AUTHORING §4.5) |
@@ -1029,20 +1063,24 @@ rigc render --candidate spine --fps 24 --max 200
 ```
 
 ```
-  ..    111x200px at 24 fps, 1 set(s) -> …/semaphore/render
+  ..    134x200px at 24 fps, 1 set(s) -> …/semaphore/render
   ..    raise            14 frame(s), 0.542s + contact.png -> …/semaphore/render/raise@24fps
 ```
 
 Open `render/raise@24fps/contact.png` **before anything else** — fourteen frames as one
 grid, and spacing is a comparison across frames rather than a property of any one of
-them. What to check on it, and it is not a score: frame 0 is pose A, the last frame is
-pose B, the anticipation dips *after* frame 0, and the flag's extreme is visibly later
-than the arm's.
+them. What to check on it, and it is not a score: frame 0 is pose A — the flag hanging off
+the arm's collar, not over its middle — the last frame is pose B, the anticipation dips
+*after* frame 0, and the flag's extreme is visibly later than the arm's.
 
 🚫 **Do not run `rigc check` against `poseA.png` and `poseB.png`.** Two pictures are not
-a frame set, and more to the point the ends are **given conditions** the spec states by
-construction — measuring how near it got to them measures the pose estimator, not the
-movement. §7.
+a frame set: `check` reads the second as the frame 1/12 s in, at its default rate. And
+the ends' **rotations** are given conditions the spec states by construction, so a
+number for how near the movement got to them is a number about the pose estimator. What
+the pictures can still catch is §3's arithmetic, because every **offset** in the rig was
+derived rather than given, and a wrong one moves an end pose off its picture while every
+key stays exact. That is what the frame-0 check above is for, and it is a look, not a
+score. §7.
 
 ### 6. Spread, and ask
 
@@ -1061,10 +1099,10 @@ with **these two fields replaced** and `spec`, `archetype` and `cut` unchanged:
       "tracks": [
         { "bone": "arm", "property": "rotate", "keys": [
           { "t": 0, "v": [-61.9], "ease": "drive" },
-          { "t": 0.55, "v": [18.2] } ] },
+          { "t": 0.55, "v": [18.3] } ] },
         { "bone": "flag", "property": "rotate", "keys": [
-          { "t": 0, "v": [-22.4], "ease": "drive" },
-          { "t": 0.55, "v": [-11.6] } ] }
+          { "t": 0, "v": [-22.2], "ease": "drive" },
+          { "t": 0.55, "v": [-11.7] } ] }
       ]
     }
   }
@@ -1077,20 +1115,21 @@ rigc vote --candidate spine --candidate spine-b
 
 ```
 rigc vote
-  ..    ballot    15b3f32bbbce77be
+  ..    ballot    bce70ad82fe90941
   ..    animation raise
-  ..    A         sha256:2bc29990faf6…  3 page(s), 0.4 KiB  <- …/semaphore/spine/skeleton.json
-  ..    B         sha256:1bec4ce801ad…  3 page(s), 0.4 KiB  <- …/semaphore/spine-b/skeleton.json
+  ..    A         sha256:6740d3dbf304…  3 page(s), 0.4 KiB  <- …/semaphore/spine/skeleton.json
+  ..    B         sha256:d1bda24d7c36…  3 page(s), 0.4 KiB  <- …/semaphore/spine-b/skeleton.json
   ..    the page shows A/B and nothing else — the paths above are in its manifest, never on the screen
-rigc: wrote …/semaphore/ballot.html  (22.5 KiB — open it in a browser)
-rigc: then record the saved vote with  rigc vote --record vote-15b3f32bbbce77be.json --ballot …/semaphore/ballot.html
+  ..    embedded every candidate's skeleton, atlas and page(s) as data URIs; the player itself loads from unpkg (@4.3.*), so the first open needs a network
+rigc: wrote …/semaphore/ballot.html  (22.3 KiB — open it in a browser)
+rigc: then record the saved vote with  rigc vote --record vote-bce70ad82fe90941.json --ballot …/semaphore/ballot.html
 ```
 
 A person opens that page, watches two loops, picks one, and saves the small JSON it hands
 them. Then:
 
 ```bash
-rigc vote --record vote-15b3f32bbbce77be.json --ballot ballot.html
+rigc vote --record vote-bce70ad82fe90941.json --ballot ballot.html
 ```
 
 ```
@@ -1101,8 +1140,8 @@ rigc vote --record vote-15b3f32bbbce77be.json --ballot ballot.html
   PASS  V04_CHOICE_IS_ON_THE_BALLOT
   PASS  V05_REASON_CODE_FITS_THE_CHOICE
   PASS  V06_NOT_ALREADY_RECORDED
-  ..    winner A = sha256:2bc29990faf6e24c953cabd09f87cdfc2edd3885a1486f3d3fdb4a88a81439c8, reason code preferred
-  ..    coverage 2 candidate(s): A=sha256:2bc29990faf6… B=sha256:1bec4ce801ad…
+  ..    winner A = sha256:6740d3dbf3043ff39c5f90577407c381f6841ff6af921517be7a0cfd3d7eb9d3, reason code preferred
+  ..    coverage 2 candidate(s): A=sha256:6740d3dbf304… B=sha256:d1bda24d7c36…
 rigc: appended line 1 to …/semaphore/votes.jsonl
 ```
 
