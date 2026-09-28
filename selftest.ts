@@ -393,9 +393,11 @@ import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from 
 import {
   FLOOR_EXAMPLE,
   FLOOR_FAIL_RATE,
+  FLOOR_WITHIN_PX,
   floorCell,
   floorCorpusPresent,
   floorSlots,
+  floorTrial,
   loadFloorScenes,
   type FloorCell,
   type FloorTexture,
@@ -63318,6 +63320,8 @@ function runPoseSuite(): number {
     console.log(`  SKIP  PO22 did not run: no ${FLOOR_EXAMPLE} export under ${INGEST_CORPUS_ROOT}.`);
     console.log('          run `bun run fetch-examples` and re-run this suite.');
     console.log('          ⚠️ This is a HOLE in this run, not a pass — the floor §11.5 states was not re-measured at all.');
+    console.log(`  SKIP  PO23–PO25 did not run: no ${FLOOR_EXAMPLE} export under ${INGEST_CORPUS_ROOT}.`);
+    console.log('          ⚠️ A HOLE as well — the coarse pass (issue #865) was not measured on the art it was fixed on.');
   } else {
     const { posable, scenes } = loadFloorScenes(INGEST_CORPUS_ROOT);
     const scene = scenes.slice(0, 1);
@@ -63350,6 +63354,57 @@ function runPoseSuite(): number {
       ),
       'a floor is a measurement, and a measurement nobody repeats is a number that goes on being printed after the ' +
         'search it measured has changed underneath it',
+    );
+
+    // --- PO23–PO25: the coarse pass sends the true basin down (issue #865) --
+    //
+    // ⭐ The trial the card was opened on: the setup pose's front fist at 48 px,
+    // native texture. On the quarter-span grid the truth scored 0.035 and the
+    // search came back ambiguous between two placements 173 px off at 0.148 —
+    // the basin fell between two anchor cells and, on its own rung, ranked
+    // fifth. It must now be FOUND, which is neither ambiguous nor wrong.
+    const fistDir = mkdtempSync(join(tmpdir(), 'rigc-pose-fist-'));
+    const fist = floorTrial(posable, scene[0], 'front-fist', 48, 'native', join(fistDir, 'a'));
+    const fistAgain = floorTrial(posable, scene[0], 'front-fist', 48, 'native', join(fistDir, 'b'));
+    rmSync(fistDir, { recursive: true, force: true });
+    say(
+      'PO23_THE_FIST_THE_COARSE_PASS_USED_TO_STEP_OVER_PLACES_AT_ITS_TRUTH',
+      fist.outcome === 'found' && fist.error !== null && fist.error <= FLOOR_WITHIN_PX,
+      `${FLOOR_EXAMPLE} ${scene[0].name} front-fist at 48 px, native: ${fist.outcome}, ` +
+        `${fist.error === null ? 'nothing placed' : `${fist.error.toFixed(2)} px from the truth`} (bar ${FLOOR_WITHIN_PX} px); ` +
+        `residual at the truth ${fist.truthResidual.toFixed(4)}, best reported ${fist.legibility?.best ?? 'n/a'}`,
+      'a truth that scores four times better than the answer reported is the search failing, not the part — and the ' +
+        'grid it was measured on is the only place that failure could be seen (issue #865)',
+    );
+
+    // ⭐ What the lever promises, stated on cells this suite already measured:
+    // a failure that remains is not the SEARCH's. A trial is `missed` when the
+    // truth scores better than everything reported and nothing reported is on
+    // it; on the quarter grid the native gun in this very cell was one.
+    const cells = [flat, blurred, native];
+    const missed = cells.flatMap((c) => c.trials.filter((t) => t.missed).map((t) => `${c.texture} ${t.slot}`));
+    const failed = cells.reduce((n, c) => n + c.trials.length - c.found, 0);
+    say(
+      'PO24_NO_FAILURE_IN_THE_MEASURED_FLOOR_CELLS_IS_A_TRUTH_THE_SEARCH_MISSED',
+      missed.length === 0 && failed > 0,
+      probeDetail(
+        missed.length === 0 && failed > 0,
+        missed.map((m) => `${m} at 32 px: the truth scores better than every placement reported and none is on it`),
+        `${failed} failed trial(s) over the flat, blur2 and native cells at 32 px, none of them a search miss — each ` +
+          'is the objective preferring another placement, or the truth reported and tied',
+      ),
+      'a failure the search could fix and a failure it cannot read the same in a table of found counts; only the ' +
+        'residual at the truth tells them apart, and the floor is only a floor of plainness if the misses are gone',
+    );
+
+    const same = JSON.stringify(fist) === JSON.stringify(fistAgain);
+    say(
+      'PO25_THE_FINER_COARSE_GRID_READS_THE_SAME_TRIAL_TWICE_THE_SAME',
+      same,
+      `front-fist at 48 px run twice through the whole trial: ${same ? 'byte-identical' : 'DIFFERENT'} ` +
+        `(${fist.outcome}, ${fist.error?.toFixed(3) ?? 'n/a'} px)`,
+      'PO11 reads the fixture twice on the grid it happens to use; this reads twice a part whose answer depends on ' +
+        'the finer grid and the wider minima list, so an order dependence in either would show here first',
     );
   }
 

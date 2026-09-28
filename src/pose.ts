@@ -117,14 +117,62 @@ export const COARSE_LONG_SIDE = 40;
 export const COARSE_PART_SPAN = 10;
 
 /**
+ * Pixels the part's SHORT side must still span at the coarse level — the same
+ * argument as `COARSE_PART_SPAN`, applied to the axis that rule does not read.
+ *
+ * ⚠️ Found by the change that tightened the coarse grid (issue #865), not by the
+ * floor grid, whose parts are none of them thin enough to reach it. MOTION.md
+ * §6's 60x14 signal arm is 3.5 px thick at the 4x level its length chose; on the
+ * quarter-span grid an anchor cell happened to sit where refinement found its
+ * truth (residual 0.0305), and on the eighth-span grid none did, so pose B
+ * reported a placement 15 px down the arm at 0.1482. A part three pixels thick
+ * at the coarse level has no across-the-part signal for any grid to read. 4, 5
+ * and 6 were each measured to move that arm up one level and place it; 4 is the
+ * least, and at 4 no trial of the floor grid moves at all.
+ */
+const COARSE_PART_THICKNESS = 4;
+
+/**
  * Coarse anchor positions are stepped at a fraction of the part's own size.
  *
- * The objective varies over distances of order the part, not of order a pixel, so
- * scanning every pixel of the coarse level buys resolution the refinement stages
- * supply anyway — and it is what makes the scan's cost grow with the frame's area
- * instead of with the number of places the part could plausibly be.
+ * Scanning every pixel of the coarse level would make the scan's cost grow with
+ * the frame's area instead of with the number of places the part could plausibly
+ * be, so the anchors are strided. How far apart is the part's own business.
+ *
+ * ⚠️ An eighth, not the quarter it was, and the reason is measured rather than
+ * assumed (issue #865). "The objective varies over distances of order the part"
+ * is true of a solid part and false of a thin or holey one: a gun whose material
+ * is a third of its box, or a fist with gaps between the fingers, loses most of
+ * its fit a quarter-span off its truth. On `tools/pose_floor.ts`'s grid, 65
+ * failed trials had a truth that scored better than the answer reported and was
+ * missing from the final list; in 38 of them the truth, evaluated exactly at the
+ * coarse level, beat every cell of its scale rung, and the anchor CELL holding it
+ * did not — the basin fell between two anchors. A cutoff on how many minima
+ * survive (3 of the 65) was not what lost them. At an eighth the grid found
+ * 226 of 420 trials against 185 (with `MINIMA_PER_SCALE` still at three), and
+ * the search misses fell from 65 to 15, for 10–14% more CPU over the grid.
+ *
+ * 🔸 Not free of losses, and they are stated rather than averaged away: 9 trials
+ * that placed on the quarter grid do not on this one. Five of them are blurred
+ * parts that now come back ambiguous between two scales at the same spot, or
+ * 2.0 px off against a 2 px bar; three are a basin reached and then polished
+ * onto a worse placement beside it, and one a basin ranked out of the
+ * refinement's twelve — the refinement, not this grid.
  */
-export const COARSE_STRIDE_FRACTION = 0.25;
+export const COARSE_STRIDE_FRACTION = 0.125;
+
+/**
+ * Grid cells around a coarse cell that must not beat it for it to be a minimum,
+ * and the spacing kept between the minima one scale rung sends down.
+ *
+ * Four at an eighth-span stride is, nominally, the half-span the old two cells
+ * at a quarter held (the stride is rounded to whole level pixels, so only
+ * nominally). Measured on the grid: leaving it at two when the stride halved let one
+ * wrong hill fill a rung's `MINIMA_PER_SCALE` with its own neighbours — 223
+ * trials found rather than 226, and 12 that placed on the old grid lost rather
+ * than 9 (both at three minima per rung).
+ */
+const COARSE_SUPPRESSION_CELLS = 4;
 
 /** How many scale rungs one octave gets in the coarse ladder. */
 export const SCALE_STEPS_PER_OCTAVE = 3;
@@ -180,8 +228,20 @@ export const BACKGROUND_TOLERANCE = 10;
 /** Share of the frame's border ring one colour must hold before it is called the background. */
 export const BACKGROUND_BORDER_SHARE = 0.6;
 
-/** How many distinct places each coarse scale rung sends down for refinement. */
-const MINIMA_PER_SCALE = 3;
+/**
+ * How many distinct places each coarse scale rung sends down for refinement.
+ *
+ * ⚠️ Five rather than three, and read off the grid rather than off a probe
+ * (issue #865). The card's own probe raised this to ten and recovered the fist it
+ * was chasing; on the full grid that bought 2 trials net (3 gained, 1 lost),
+ * because only 3 of the 65 trials the search missed had their truth's basin
+ * ranked under the cutoff — the rest had fallen between anchor cells, which is
+ * `COARSE_STRIDE_FRACTION`'s job. With the stride fixed, one miss of that kind was
+ * left (a 48 px fist, its basin fifth on its rung), and five is the count that
+ * carries it: 227 trials found against 226 at three, none lost, and a CPU cost
+ * inside the grid's run-to-run noise.
+ */
+const MINIMA_PER_SCALE = 5;
 
 /** How many candidates survive each refinement level. */
 const REFINE_CANDIDATES = 12;
@@ -224,8 +284,8 @@ export const POSE_FLOOR = {
   span: 24,
   detail: 0.5,
   /** Found share of the grid's trials under `detail`, and over it — both measured by `deriveFloor`. */
-  rateBelow: 0.066,
-  rateAbove: 0.594,
+  rateBelow: 0.082,
+  rateAbove: 0.728,
 };
 
 /** Which side of `POSE_FLOOR` a part is on, from its own longest side in part pixels and its detail. */
@@ -266,8 +326,13 @@ export function legibilityReading(l: Omit<PoseLegibility, 'reading'>, verdict: '
   // ⚠️ "Above the floor" is not "the search found the right hill". Measured on
   // the floor's own material, a part above it came back ambiguous between two
   // equally WRONG placements (residual 0.148 each, 173 px off) while the truth
-  // scored 0.035 — a basin the coarse pass never sent down. So the sentence
-  // names that reading too, with the one remedy that separates it: a window.
+  // scored 0.035 — a basin the coarse pass never sent down. Issue #865 fixed
+  // that one (the coarse grid had stepped over it), and the reading still
+  // occurs: on the grid after it, 10 ambiguous trials above the floor had a
+  // truth scoring better than both answers — native 24 px gun and shin, 48 px
+  // arm, 96 px goggles twice, and blurred gun, goggles and rear shin from 48 px
+  // up. Nine of the ten sat 2–6 px from the truth rather than on another hill. So the sentence names that reading too, with the one remedy that
+  // separates it: a window.
   return (
     `${figures} — above the measured floor (AUTHORING §11.5: ${floorClause()}), so size and texture do not explain this; ` +
     (verdict === 'refused'
@@ -1623,9 +1688,18 @@ function placePart(
   // only about the frame. The pyramid stops when the frame fits in
   // COARSE_LONG_SIDE; this then walks back UP it until the part still spans
   // COARSE_PART_SPAN pixels there, because a level that has reduced the part to
-  // three pixels cannot say where the part is at any price.
+  // three pixels cannot say where the part is at any price — and until its short
+  // side still spans COARSE_PART_THICKNESS, which is the same sentence about a
+  // part that is long and thin.
   let coarseIndex = levels.length - 1;
-  while (coarseIndex > 0 && (span * scaleReference) / levels[coarseIndex].reduction < COARSE_PART_SPAN) coarseIndex--;
+  const thickness = Math.min(tw, th);
+  while (
+    coarseIndex > 0 &&
+    ((span * scaleReference) / levels[coarseIndex].reduction < COARSE_PART_SPAN ||
+      (thickness * scaleReference) / levels[coarseIndex].reduction < COARSE_PART_THICKNESS)
+  ) {
+    coarseIndex--;
+  }
   const coarse = levels[coarseIndex];
   const spanAtCoarse = (span * scaleReference) / coarse.reduction;
   const stride = Math.max(1, Math.round(spanAtCoarse * COARSE_STRIDE_FRACTION));
@@ -1635,7 +1709,7 @@ function placePart(
   for (const scale of scales) {
     const field = coarseScan(coarse, coarseSamples, scale, searchRotations, stride);
     grid = { reduction: coarse.reduction, cols: field.cols, rows: field.rows, stride };
-    candidates.push(...localMinima(field, 2, MINIMA_PER_SCALE));
+    candidates.push(...localMinima(field, COARSE_SUPPRESSION_CELLS, MINIMA_PER_SCALE));
   }
   base.coarse = grid;
   candidates.sort((a, b) => a.residual - b.residual);
