@@ -518,6 +518,37 @@ export interface EmitPage {
  * ([`src/validate.ts`](validate.ts)) and `artUvsOf`
  * ([`src/render.ts`](render.ts)), which returns no art UVs for a turned region
  * attachment, so `check`'s texture substitution would report it unmatched.
+ *
+ * 📏 **Measured again for issue #866, on twelve region sets, and held back again.**
+ * The sets are the two painting rigs above and ten production rigs of 20 to 22
+ * parts. Each was packed by this file's own search at padding 2 twice: as
+ * shipped, and with every cell also tried turned under the same BSSF score
+ * (ties go to the unturned cell). The shipped search reproduced the page every
+ * one of the twelve atlases was written at. Area change from turning:
+ *
+ *   | set | `pot` | `pot` + turn | `free` | `free` + turn |
+ *   | --- | --- | --- | --- | --- |
+ *   | 22-part painting | 1024x2048 | 0.00 % | 1888x697 | −1.14 % |
+ *   | 20-part painting | 512x2048 | 0.00 % | 480x1166 | +2.31 % |
+ *   | P1 | 512x2048 | 0.00 % | 416x1633 | +1.43 % |
+ *   | P2 | 1024x1024 | 0.00 % | 1184x810 | +0.70 % |
+ *   | P3 | 512x1024 | 0.00 % | 480x1000 | +2.96 % |
+ *   | P4 | 1024x2048 | 0.00 % | 864x1346 | −6.16 % |
+ *   | P5 | 2048x2048 | 0.00 % | 1344x1768 | −13.37 % |
+ *   | P6 | 1024x2048 | 0.00 % | 800x1934 | −1.62 % |
+ *   | P7 | 512x2048 | 0.00 % | 1024x928 | −0.05 % |
+ *   | P8 | 512x2048 | 0.00 % | 608x1250 | −4.96 % |
+ *   | P9 | 1024x2048 | +100.00 % | 1024x2037 | +6.51 % |
+ *   | P10 | 512x2048 | 0.00 % | 352x1433 | +0.70 % |
+ *
+ * Under `pot` a turn shrank no page on any set, and on P9 an ungated one doubled
+ * it. Under `free` the largest gain, P5's 13.37 %, is inside the search's own
+ * noise: the nearest other width on the `FREE_EDGE_STEP` grid moves P5's
+ * unturned page by 18.13 %, and searching every width instead of every 32nd
+ * finds an unturned P5 page 10.22 % smaller with nothing turned. With every
+ * width searched, the largest turn gain on any set is 5.05 % (P5), then 4.96 %
+ * (P8) and 4.22 % (P4). That is not a page worth two readers changing, so the
+ * packer still never turns a region.
  */
 export const PACK_NO_ROTATE = 0;
 

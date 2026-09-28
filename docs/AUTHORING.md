@@ -318,6 +318,31 @@ a gap:
   regions `rotate: 90` lifted every region back byte for byte and drew its
   region attachments with 0 differing pixels — and made neither page smaller,
   because both were already on the smallest power-of-two page their area allows.
+  Measured again on twelve region sets (issue #866: those two rigs and ten
+  production rigs of 20 to 22 parts), packing each with the same search twice —
+  as shipped, and with every part also tried turned under the same placement
+  score:
+
+  | Set | `pot` page | turned | `free` page | turned |
+  | --- | --- | --- | --- | --- |
+  | 22-part painting | 1024x2048 | 0.00 % | 1888x697 | −1.14 % |
+  | 20-part painting | 512x2048 | 0.00 % | 480x1166 | +2.31 % |
+  | P1 | 512x2048 | 0.00 % | 416x1633 | +1.43 % |
+  | P2 | 1024x1024 | 0.00 % | 1184x810 | +0.70 % |
+  | P3 | 512x1024 | 0.00 % | 480x1000 | +2.96 % |
+  | P4 | 1024x2048 | 0.00 % | 864x1346 | −6.16 % |
+  | P5 | 2048x2048 | 0.00 % | 1344x1768 | −13.37 % |
+  | P6 | 1024x2048 | 0.00 % | 800x1934 | −1.62 % |
+  | P7 | 512x2048 | 0.00 % | 1024x928 | −0.05 % |
+  | P8 | 512x2048 | 0.00 % | 608x1250 | −4.96 % |
+  | P9 | 1024x2048 | +100.00 % | 1024x2037 | +6.51 % |
+  | P10 | 512x2048 | 0.00 % | 352x1433 | +0.70 % |
+
+  Under `pot` turning shrank no page. Under `free` the largest gain, 13.37 %, is
+  inside the search's own noise: the neighbouring width on the 32-pixel grid
+  moves that set's unturned page by 18.13 %, and trying every width instead
+  finds an unturned page 10.22 % smaller. With every width tried, no set gains
+  more than 5.05 % from turning — so the packer still never turns a region.
 - **no re-ordering of anything the skeleton says.** `skeleton.json` from a packed
   build is **byte-identical** to the unpacked one, because sizes are still
   measured from the loose PNGs and packing is an output arrangement.
