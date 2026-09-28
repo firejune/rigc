@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.5.1](https://github.com/firejune/rigc/compare/v1.5.0...v1.5.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **compile:** a number the skeleton cannot carry is refused naming the field and the value — a bone at x: 1e309 (or 1e308) no longer builds green as "x": null ([#891](https://github.com/firejune/rigc/issues/891)) ([3df097b](https://github.com/firejune/rigc/commit/3df097b088baa493755cc68f77a5c771784e416e))
+* **pose:** the stopped polish also tries a quarter rung up — the narrowed search on MOTION §6's stationary post returns to the old placement (0.0649 → 0.0593, 0.1 px from it), the floor grid finds 237 → 238, misses 8 → 6 ([#893](https://github.com/firejune/rigc/issues/893)) ([e3e50e9](https://github.com/firejune/rigc/commit/e3e50e9aa3c213e2765c1be9d34f60ed585ecf1a)), closes [#886](https://github.com/firejune/rigc/issues/886)
+* **validate:** A10 reads the whole world transform — a NaN in a, b, c or d is refused naming the bone, the frame and the term, where a finite position let it through ([#888](https://github.com/firejune/rigc/issues/888)) ([66ad971](https://github.com/firejune/rigc/commit/66ad97170415a33fda0cddb65449ea49bf9571fb))
+
+
+### Instrument
+
+* **docs:** the docs-quote suite counts a transcript no anchor rule reaches, anchors a report header, runs a tagged setup fence in an overlay, and matches a token-leading `…/` — the five pose blocks reproduce ([#895](https://github.com/firejune/rigc/issues/895)) ([ea34c44](https://github.com/firejune/rigc/commit/ea34c44ac8ac381869557b1e633e73bbc5da7f8c))
+
 ## [1.5.0](https://github.com/firejune/rigc/compare/v1.4.0...v1.5.0) (2026-09-28)
 
 
