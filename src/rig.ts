@@ -60,7 +60,7 @@
  * with no manifest at all declares them here.
  */
 import { CompileError, NotImplementedError } from './errors.ts';
-import { refuseUnknownKeys } from './keys.ts';
+import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys } from './keys.ts';
 
 export { CompileError, NotImplementedError };
 
@@ -1925,6 +1925,10 @@ function checkRigSequence(att: Record<string, unknown>, who: string, where: stri
   const whole = (field: string, min: number): void => {
     const value = seq[field];
     if (value === undefined) return;
+    // A number the file cannot carry is `refuseNumbersTheFileCannotCarry`'s,
+    // one sentence for the whole family. This check runs inside the key scan,
+    // before that walk, and printed a stated 1e309 as `null` (issue #881).
+    if (typeof value === 'number' && !Number.isFinite(Math.fround(value))) return;
     if (typeof value !== 'number' || !Number.isInteger(value) || value < min) {
       throw new CompileError(
         `${where}: ${at}.${field} is ${JSON.stringify(value) ?? String(value)}; it is a whole number` +
@@ -1946,7 +1950,7 @@ function checkRigSequence(att: Record<string, unknown>, who: string, where: stri
   whole('digits', 0);
   whole('setup', 0);
   const count = seq.count as number;
-  if (typeof seq.setup === 'number' && seq.setup >= count) {
+  if (typeof seq.setup === 'number' && Number.isFinite(Math.fround(seq.setup)) && Number.isFinite(Math.fround(count)) && seq.setup >= count) {
     throw new CompileError(
       `${where}: ${at}.setup is ${seq.setup}, and a ${count}-frame series has frames 0 to ${count - 1}. ` +
         '`Sequence.resolveIndex` clamps an index at or past the end to the LAST frame (measured: `setup: 7` on ' +
@@ -2100,6 +2104,42 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
   }
 }
 
+
+/**
+ * A rig-spec path in the words the other refusals in this file use for it:
+ * `bone "hip" x`, `constraint "aim" mixRotate`, `skin "default" slot "tail"
+ * attachment "tail" weights[0][1].x`, `event "step" float`. Anything else is
+ * the dotted path, which names every number exactly.
+ */
+function rigPlace(raw: Record<string, unknown>): (path: ReadonlyArray<string | number>) => string {
+  const named = (list: unknown, i: number, kind: string, plural: string): string => {
+    const node = Array.isArray(list) ? list[i] : undefined;
+    return isObj(node) && typeof node.name === 'string' ? `${kind} ${JSON.stringify(node.name)}` : `${plural}[${i}]`;
+  };
+  const rest = (path: ReadonlyArray<string | number>): string => {
+    const tail = dottedPath(path);
+    return tail === '' ? '' : ` ${tail}`;
+  };
+  return (path) => {
+    const [head, second] = path;
+    if (typeof second === 'number') {
+      if (head === 'bones') return `${named(raw.bones, second, 'bone', 'bones')}${rest(path.slice(2))}`;
+      if (head === 'slots') return `${named(raw.slots, second, 'slot', 'slots')}${rest(path.slice(2))}`;
+      if (head === 'constraints') return `${named(raw.constraints, second, 'constraint', 'constraints')}${rest(path.slice(2))}`;
+    }
+    if (head === 'events' && typeof second === 'string') return `event ${JSON.stringify(second)}${rest(path.slice(2))}`;
+    if (head === 'skins' && typeof second === 'string') {
+      const inner = path[2] === 'attachments' ? path.slice(3) : path.slice(2);
+      const [slot, attachment] = inner;
+      if (typeof slot === 'string' && typeof attachment === 'string') {
+        return `skin ${JSON.stringify(second)} slot ${JSON.stringify(slot)} attachment ${JSON.stringify(attachment)}${rest(inner.slice(2))}`;
+      }
+      return `skin ${JSON.stringify(second)}${rest(path.slice(2))}`;
+    }
+    return dottedPath(path);
+  };
+}
+
 /**
  * Parse and check the envelope, then hand back a typed spec.
  *
@@ -2137,6 +2177,10 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   // throws directly below are the required-key checks, and each of them is the
   // consequence a typo at the root produces.
   checkRigSpecKeys(raw, where);
+  // After the key check, so a misspelled key is named as a misspelling before
+  // its value is judged, and before every reader below, so no range rule or
+  // derived number ever meets a value the file cannot carry (issue #881).
+  refuseNumbersTheFileCannotCarry(raw, where, rigPlace(raw));
 
   if (typeof raw.name !== 'string' || raw.name.length === 0) {
     throw new CompileError(`${where}: a rig spec needs a "name" — a motion spec names it to pick this rig`);

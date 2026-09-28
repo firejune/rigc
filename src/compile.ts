@@ -38,7 +38,7 @@ import { parseJsonWithPosition } from './json-position.ts';
 // The "did you mean" list on a missing atlas region, from the one implementation
 // of it — the same search serves `refuseUnknownKeys`, and a second copy here with
 // a threshold edited is how such a pair drifts apart.
-import { nearMisses } from './keys.ts';
+import { dottedPath, nearMisses, refuseNumbersTheFileCannotCarry } from './keys.ts';
 import { inEditorKeyOrder, withoutParserDefaults } from './keyorder.ts';
 import { EVERY_GLOBAL_PHYSICS, parseMotionSpec } from './motion.ts';
 import {
@@ -2030,6 +2030,11 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // and which refusals it deliberately leaves in this file.
   const motion = parseMotionSpec(readJson<unknown>(motionPath), motionPath);
   const manifest = manifestPath === null ? null : readJson<FaceManifest>(manifestPath);
+  // The manifest is the record of what was measured, and its numbers become
+  // bone positions and the stage: a `crop.h` of 1e309 built as `"height": null`
+  // before issue #881. The rig spec's walk is `parseRigSpec`'s; this is the
+  // same rule over the other file whose numbers reach the skeleton.
+  if (manifest !== null && manifestPath !== null) refuseNumbersTheFileCannotCarry(manifest, manifestPath, dottedPath);
 
   // The rig spec names its own path in every message `parseRigSpec` throws (its
   // `where` argument, above). The motion spec gets no such treatment below —

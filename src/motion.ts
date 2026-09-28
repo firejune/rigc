@@ -54,7 +54,7 @@
  * [`keys.ts`](keys.ts) shared with the rig parser.
  */
 import { CompileError } from './errors.ts';
-import { refuseUnknownKeys } from './keys.ts';
+import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys } from './keys.ts';
 import { SEQUENCE_MODES } from './timelines.ts';
 import type { MotionSpec } from './types.ts';
 
@@ -664,6 +664,12 @@ export function parseMotionSpec(raw: unknown, where: string): MotionSpec {
     if (name.length === 0) throw new CompileError(`${where}: an animation has an empty name`);
     parseAnimation(anim, where, name);
   }
+
+  // Last, so every field check above keeps its own sentence for a number that
+  // is not finite; what reaches this line is a finite double the float32 file
+  // cannot carry — a key at 1e308 built green with a `null` in it before issue
+  // #881 — and any number in a field no check above reads.
+  refuseNumbersTheFileCannotCarry(raw, where, (path) => `\`${dottedPath(path)}\``);
 
   return raw as unknown as MotionSpec;
 }

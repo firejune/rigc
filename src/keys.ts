@@ -115,3 +115,90 @@ export function refuseUnknownKeys(
       (known.length === 0 ? 'This shape has no fields at all.' : `Known here: ${[...known].sort().join(', ')}.`),
   );
 }
+
+/**
+ * The largest float32, `3.4028234663852886e38`. The skeleton file is written at
+ * float32 precision (`f32` in `src/compile.ts` rounds every emitted number), so
+ * this is the largest magnitude a stated number can have and still come out of
+ * the emitter as a number.
+ */
+export const FLOAT32_MAX = 3.4028234663852886e38;
+
+/**
+ * Refuse the first number in an input file that the skeleton file cannot carry
+ * — one that is not finite, or that is finite only as a double (issue #881).
+ *
+ * 🚨 The defect this closes was a green build. `JSON.parse` reads `1e309` as
+ * `Infinity`, the emitter wrote it, and `JSON.stringify(Infinity)` is `null`:
+ * a bone stated at `x: 1e309` built green on the overlay probe as `"x": null`
+ * and was read as 0, a value the spec never stated. `1e308` did exactly the same
+ * — it is a finite double, but every emitted number is rounded to a float32 and
+ * `Math.fround(1e308)` is `Infinity` — so the line is float32's range and not
+ * the double's: `3.4028234663852886e38` built green and was emitted as itself,
+ * the next double up that rounds past it (`3.4028235677973366e38`) was emitted
+ * as `null`. The predicate is therefore `Number.isFinite(Math.fround(n))`,
+ * which is `NaN`, both infinities and exactly that overflow.
+ *
+ * ⭐ It walks the file, not the emitter's route — `checkRigSpecKeys`'s design
+ * and its reason. Before this, a handful of readers in `compile.ts` carried a
+ * finite check of their own (vertex arrays, a path's lengths, a segments
+ * falloff, a slider's mapping, an event's payload), each right about its own
+ * field, and none of them was a rule. Measured when this was written, planting
+ * `1e309` at every numeric leaf of nine rig specs — 610 plants over 57 kinds
+ * of field: 19 kinds were refused by a rule of their own (30 of those 70
+ * refusals printing the Infinity as `null`, and some only by a later symptom
+ * such as *hull Infinity disagrees with the triangles*), 1 was caught only by
+ * the gate, and 37 built green with a `null` in them on at least one rig. One
+ * pass over every number the document holds cannot miss a reader added next
+ * month, and it runs before any of them — so a range rule further down (a
+ * radius that is positive, a weight in 0..1) never has to print `NaN`.
+ *
+ * 🔒 The report order is fixed: `Object.keys` of parsed JSON is the
+ * document's key order (integer-like keys first, as the language orders them)
+ * and arrays are visited by index, so the refusal names the same number on
+ * every run.
+ *
+ * ⚠️ What it cannot see is a number spelled as something else. `"x": "NaN"`
+ * is a string; there is no number here to refuse, and the reader downstream
+ * that coerces it is a type question this walk does not answer.
+ *
+ * `place` turns a path into the words the refusal uses for it.
+ */
+export function refuseNumbersTheFileCannotCarry(
+  raw: unknown,
+  where: string,
+  place: (path: ReadonlyArray<string | number>) => string,
+): void {
+  const visit = (node: unknown, path: Array<string | number>): void => {
+    if (typeof node === 'number') {
+      if (Number.isFinite(Math.fround(node))) return;
+      const why = Number.isNaN(node)
+        ? ''
+        : Number.isFinite(node)
+          ? ' This one is finite as a double and has no float32 but Infinity.'
+          : ' JSON has no spelling for Infinity: a literal past ±1.7976931348623157e308, such as 1e309, parses to it.';
+      throw new CompileError(
+        `${where}: ${place(path)} is ${String(node)}; a number in this file is finite at float32 precision, at most ` +
+          `±${String(FLOAT32_MAX)}, because the skeleton is written as float32 — past that it would be emitted as ` +
+          `Infinity, which JSON writes as null, a value the file never stated.${why}`,
+      );
+    }
+    if (Array.isArray(node)) {
+      node.forEach((child, i) => visit(child, [...path, i]));
+    } else if (node !== null && typeof node === 'object') {
+      const record = node as Record<string, unknown>;
+      for (const key of Object.keys(record)) visit(record[key], [...path, key]);
+    }
+  };
+  visit(raw, []);
+}
+
+/** A path as the file spells it: `.key`, `."odd key"`, `[3]`. */
+export function dottedPath(path: ReadonlyArray<string | number>): string {
+  let out = '';
+  for (const step of path) {
+    if (typeof step === 'number') out += `[${step}]`;
+    else out += /^[A-Za-z_][A-Za-z0-9_]*$/.test(step) ? `${out === '' ? '' : '.'}${step}` : `${out === '' ? '' : '.'}${JSON.stringify(step)}`;
+  }
+  return out;
+}

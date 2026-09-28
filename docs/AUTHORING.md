@@ -1298,6 +1298,14 @@ emitted as written, in the default skin or anywhere else.
 `spec` must be exactly `"rigc-rig/1"`. `name` must be a non-empty string. `bones`
 must be non-empty. `slots` must be present (it may be empty).
 
+🔢 **Every number in a rig spec is finite at float32 precision** — at most
+±3.4028234663852886e38 — whatever field it is in, so the ranges the tables below
+state are ranges *within* that. The skeleton is written as float32, and a number
+past that line would be emitted as Infinity, which JSON writes as `null`: `1e309`
+(which JSON reads as Infinity) and `1e308` (a finite double with no float32) are
+both refused by the field they are in, before anything is compiled (§5.1). The cut
+manifest and the motion spec are held to the same line.
+
 🚫 **Every example value below is invented.** Names, coordinates, vertex lists and
 payloads in this guide are written to illustrate a field, never copied out of a
 reference export — an example lifted from one would be handing an authoring agent an
@@ -5561,6 +5569,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `a rig spec needs a non-empty "bones" array` | §3.2 — a rig with no bones has nothing to hang a slot on; every one has at least a root |
 | `a rig spec needs a "slots" array (it may be empty; its ORDER is the draw order)` | §3.3 — write `[]` for a rig that draws nothing. ⚠️ These three arrive only when the key is really absent: **misspelt**, it is the unknown-key refusal above, naming what you wrote |
 | `bone "X" names parent "Y", which is not declared before it` | move `Y` earlier in `bones` |
+| `<file>: <where> is Infinity; a number in this file is finite at float32 precision, at most ±3.4028234663852886e+38, because the skeleton is written as float32 — …` (also `is -Infinity`, `is 1e+308`, and `is NaN` from a library caller) | §3 — state the number you meant, inside float32's range. One walk over the whole file, run right after the key scan and before any other rig-spec check, so a range rule never prints `NaN`. `<where>` is every number in the rig spec — a bone (`bone "hip" x`), a slot, a skin's attachment down to its arrays (`skin "default" slot "s" attachment "a" weights[3][1].x`), a constraint (`constraint "aim" mixRotate`), an event, `skeleton`, `invariants.meshTriangles` — and the dotted path in the cut manifest (`crop.h`) and in the motion spec (`` `animations.idle.tracks[0].keys[1].v[0]` ``, after the motion spec's own field checks, which keep their sentences). ⚠️ It sees numbers only: `"x": "NaN"` is a string and is not refused by this row — write a number as a JSON number |
 | `two bones are called "X"` | bone names are the join key; rename one |
 | `two ik constraints are called "X" — a constraint resolves by name AND type (\`SkeletonData.findConstraint\`), so names are unique PER KIND: an ik and a transform constraint may share one, two of a kind may not` | §3.5 — rename one of the two. The kind in the sentence is the pair's own, so `two transform constraints are called "X"` is the same refusal on another kind; a name shared **across** kinds is not this error |
 | `physics constraint "X" is declared in both the rig spec and the motion spec's physics table` | §4.6 — the rig spec declares a physics constraint's structure and the motion spec's `physics` table declares one outright; pick the file it belongs in. Per kind, like every other constraint name: an `ik` "X" in the rig spec beside a `physics` "X" here is two constraints and is not this error |
