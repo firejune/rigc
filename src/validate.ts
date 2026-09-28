@@ -82,6 +82,7 @@ import {
   type SpineGeneration,
 } from './generation.ts';
 import { colourTypeName, readPngHeader } from './png.ts';
+import { nonFiniteOfPosed } from './render.ts';
 import { BONE_INHERIT_KNOWN } from './rig.ts';
 import {
   CHANNELS_BY_KIND,
@@ -4400,6 +4401,26 @@ export function validate(input: ValidateInput): ValidateReport {
       }
       if (unresolved > 0) return;
 
+      // -- the whole world transform, at the setup pose and every stepped frame
+      //
+      // 🚨 Read through `nonFiniteOfPosed`, the scan `render` refuses on, and
+      // not a second opinion of it (issue #882). This loop read `worldX` and
+      // `worldY` alone until then, and a bone at `rotation: 1e309` — in its setup
+      // pose or as a `rotate` key — poses a finite position over a NaN `a`, `b`,
+      // `c` and `d` whenever it has no child offset from it: measured on every
+      // leaf bone of the three generated probes, 20 of 20 green through the whole
+      // gate, and `render` then refused the same file by the bone. So the gate
+      // said the skeleton was fine and the renderer said it was not, which is two
+      // definitions of one word. The scan reads the six terms of every bone, then
+      // the vertices of every region and mesh shown — because a bone can be
+      // finite over a vertex that is not (a `scaleX` chain whose product stays
+      // under the largest double while every corner of the child's region
+      // passes it) — and names the bone or the vertex, the term and the frame.
+      //
+      // ⚠️ The setup pose is its own surface and is read as such: every frame
+      // below is posed AFTER `state.apply`, so a bone the animation keys from
+      // t=0 never shows its setup value to the loop, and a runtime that shows
+      // the rig at rest does show it.
       for (const anim of data.animations) {
         const skeleton = new Skeleton(data);
         const state = new AnimationState(new AnimationStateData(data));
@@ -4407,18 +4428,27 @@ export function validate(input: ValidateInput): ValidateReport {
         skeleton.setupPose();
         skeleton.update(0);
         skeleton.updateWorldTransform(Physics.reset);
+        const atSetup = nonFiniteOfPosed('the setup pose', skeleton);
+        if (atSetup !== null) {
+          fail('A10_NO_NAN_AFTER_STEPPING', atSetup);
+          return;
+        }
         const step = Math.max(anim.duration, 1) / STEP_FRAMES;
         for (let i = 0; i < STEP_FRAMES; i++) {
           state.update(step);
           state.apply(skeleton);
           skeleton.update(step);
           skeleton.updateWorldTransform(Physics.update);
+          const found = nonFiniteOfPosed(
+            `animation ${JSON.stringify(anim.name)} frame ${i + 1} of ${STEP_FRAMES} (t=${((i + 1) * step).toFixed(4)}s)`,
+            skeleton,
+          );
+          if (found !== null) {
+            fail('A10_NO_NAN_AFTER_STEPPING', found);
+            return;
+          }
           for (const bone of skeleton.bones) {
             const pose = bone.appliedPose;
-            if (!Number.isFinite(pose.worldX) || !Number.isFinite(pose.worldY)) {
-              fail('A10_NO_NAN_AFTER_STEPPING', `${anim.name}: bone "${bone.data.name}" world is (${pose.worldX}, ${pose.worldY})`);
-              return;
-            }
             // The setup half of the clause above: a bone's own `inherit` goes
             // through the same lookup, and a miss there loads `undefined` into
             // the setup pose, which every frame copies. Only reachable on a
