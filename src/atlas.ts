@@ -543,12 +543,18 @@ export interface EmitPage {
  *
  * Under `pot` a turn shrank no page on any set, and on P9 an ungated one doubled
  * it. Under `free` the largest gain, P5's 13.37 %, is inside the search's own
- * noise: the nearest other width on the `FREE_EDGE_STEP` grid moves P5's
- * unturned page by 18.13 %, and searching every width instead of every 32nd
- * finds an unturned P5 page 10.22 % smaller with nothing turned. With every
+ * noise: the nearest other width on the 32-px grid the search then used moves
+ * P5's unturned page by 18.13 %, and searching every width instead of every
+ * 32nd finds an unturned P5 page 10.22 % smaller with nothing turned. With every
  * width searched, the largest turn gain on any set is 5.05 % (P5), then 4.96 %
  * (P8) and 4.22 % (P4). That is not a page worth two readers changing, so the
  * packer still never turns a region.
+ *
+ * ⚠️ The `free` column and the 18.13 % are measurements of the search as it was
+ * on that day, a 32-px width grid. Issue #872 replaced it with every width (see
+ * `FREE_EDGE_STEP`), so today's `free` pages for these sets are the every-width
+ * ones the paragraph above compares against, and the 5.05 % is the turn gain
+ * measured on the search that ships.
  */
 export const PACK_NO_ROTATE = 0;
 
@@ -628,7 +634,7 @@ export const DEFAULT_PADDING = 2;
  * What a packed page's edges may be — `--page-edges`. See `packAtlas`, *Page size*.
  *
  * `pot` is the default and the only value until issue #860: both edges are powers
- * of two. `free` lets the width be any multiple of `FREE_EDGE_STEP` and the height
+ * of two. `free` lets the width be any whole number of pixels and the height
  * whatever the placement needs. What `free` costs is measured rather than
  * conceded: a region attachment's sampling coordinate stops being exact and moves
  * to `PK05`'s bound of one least significant bit, the bound a mesh already had.
@@ -636,8 +642,28 @@ export const DEFAULT_PADDING = 2;
 export const PAGE_EDGES = ['pot', 'free'] as const;
 export type PageEdges = (typeof PAGE_EDGES)[number];
 export const DEFAULT_PAGE_EDGES: PageEdges = 'pot';
-/** The step a `free` page's width is tried on. See `packAtlas`, *Page size*. */
-export const FREE_EDGE_STEP = 32;
+/**
+ * The step a `free` page's width is tried on: **1, every width** (issue #872).
+ * See `smallestFreePageFor` for the search and `packAtlas`, *Page size*, for
+ * what it buys.
+ *
+ * It was 32 until #872, and the grid was the cost. On twelve region sets (two
+ * painting rigs and ten production rigs of 20 to 22 parts) the 32-px grid's page
+ * was larger than the every-width page on eleven, by up to 11.38 % (P5: 1344x1768
+ * against 1427x1495). Finer fixed steps and coarse-to-fine searches were measured
+ * against the every-width page too, and none of them is safe: the area as a
+ * function of the width has minima one pixel wide, so a step-4 grid refined
+ * over ±3 px of its best four widths still misses one (the fetched
+ * `5-squash-and-stretch` atlas: 867x415 against 863x415), and the coarse-to-fine
+ * search that was exact on all twelve sets missed by 0.82 % on the first
+ * held-out atlas it met. Every width is exact by construction; what keeps it
+ * cheap is the two bounds `smallestFreePageFor` prunes with, and they are exact
+ * too.
+ *
+ * Kept as a named constant rather than deleted because it is importable, and a
+ * reader of the old value should find the new one rather than a missing name.
+ */
+export const FREE_EDGE_STEP = 1;
 
 /** The part a page is packed from: its region name and its pixels. */
 export interface PackInput {
@@ -751,9 +777,8 @@ function smallestPageFor(
  *
  * The rule, which `docs/AUTHORING.md` §0.1 states in the same words:
  *
- *   * the candidate WIDTHS are the multiples of `FREE_EDGE_STEP` from the widest
- *     cell up to `maxEdge`, plus `maxEdge` itself (it is a power of two, so this
- *     only adds anything when it is smaller than the step);
+ *   * the candidate WIDTHS are every whole width from the widest cell up to
+ *     `maxEdge` (`FREE_EDGE_STEP` is 1);
  *   * at each width the cells are placed by the same MaxRects pass as a `pot`
  *     page, on a page `maxEdge` tall, and the HEIGHT is the bottom edge of the
  *     lowest cell — what that placement needs, not rounded;
@@ -766,26 +791,84 @@ function smallestPageFor(
  * in the page height (a shorter page changes which free rectangle scores best),
  * so "the least height that fits" is not a quantity a bisection could find, and a
  * definition that could not be computed exactly would not be deterministic.
+ *
+ * ⭐ **Two bounds make every width cheap, and neither can change the answer**
+ * (issue #872). Both compare against the best page found so far, and both are
+ * strict, so a width that could still TIE the best — and win on the squarer or
+ * narrower key — is always placed to the end:
+ *
+ *   * a width is not placed at all when the cells' own area exceeds
+ *     `width x maxEdge` (it cannot fit), or when `width x` the tallest cell
+ *     already exceeds the best area (no page at that width is shorter than its
+ *     tallest cell);
+ *   * a placement is abandoned the moment its lowest cell's bottom edge makes
+ *     `width x bottom` exceed the best area. The bottom edge only grows as cells
+ *     are added, so the page that placement would have finished is larger still.
+ *
+ * Neither changes a placement that runs to the end — the pass is the `pot` pass,
+ * on the same page, and abandoning it only stops it early — so the winner is the
+ * every-width winner, and `PK75` compares the two on every set it builds. What
+ * they save, measured on the twelve sets: 391,854 cell placements for an
+ * unbounded every-width search, 47,978 bounded, against 12,361 for the retired
+ * 32-px grid.
  */
 function smallestFreePageFor(
   cells: Array<{ w: number; h: number }>,
   maxEdge: number,
 ): { width: number; height: number; rects: Rect[] } | null {
+  return freePageSearch(cells, maxEdge).page;
+}
+
+/** What one `free` page search did: the page it chose, and what each width cost. */
+export interface FreePageSearch {
+  page: { width: number; height: number; rects: Array<{ x: number; y: number; w: number; h: number }> } | null;
+  /** Candidate widths, from the widest cell to `maxEdge`. */
+  widths: number;
+  /** Widths whose placement ran to the end. */
+  completed: number;
+  /** Widths whose placement stopped once its lowest cell made the page larger than the best so far. */
+  abandoned: number;
+  /** Widths never placed: too narrow for the cells' area, or wide enough that the tallest cell alone loses. */
+  skipped: number;
+}
+
+/**
+ * `smallestFreePageFor`'s search with its bookkeeping — exported so the
+ * selftest can compare its page against an unbounded every-width reference and
+ * see that the bounds did prune (`PK75`). The page is the whole of what the
+ * packer uses; the counts are for the control.
+ */
+export function freePageSearch(cells: Array<{ w: number; h: number }>, maxEdge: number): FreePageSearch {
   let widest = 0;
-  for (const cell of cells) widest = Math.max(widest, cell.w);
-  const widths: number[] = [];
-  for (let w = Math.ceil(widest / FREE_EDGE_STEP) * FREE_EDGE_STEP; w <= maxEdge; w += FREE_EDGE_STEP) widths.push(w);
-  if (widths[widths.length - 1] !== maxEdge && widest <= maxEdge) widths.push(maxEdge);
+  let tallest = 0;
+  let cellArea = 0;
+  for (const cell of cells) {
+    widest = Math.max(widest, cell.w);
+    tallest = Math.max(tallest, cell.h);
+    cellArea += cell.w * cell.h;
+  }
+  const out: FreePageSearch = { page: null, widths: 0, completed: 0, abandoned: 0, skipped: 0 };
   let best: { width: number; height: number; rects: Rect[] } | null = null;
-  for (const width of widths) {
-    const attempt = packOnePage(cells, width, maxEdge);
+  for (let width = Math.ceil(widest / FREE_EDGE_STEP) * FREE_EDGE_STEP; width <= maxEdge; width += FREE_EDGE_STEP) {
+    out.widths++;
+    const bestArea = best === null ? Infinity : best.width * best.height;
+    if (cellArea > width * maxEdge || width * tallest > bestArea) {
+      out.skipped++;
+      continue;
+    }
+    const maxBottom = best === null ? Infinity : Math.floor(bestArea / width);
+    const attempt = packOnePage(cells, width, maxEdge, maxBottom);
+    let height = 0;
+    for (const r of attempt) if (r !== null) height = Math.max(height, r.y + r.h);
+    if (height > maxBottom) {
+      out.abandoned++;
+      continue;
+    }
+    out.completed++;
     if (attempt.some((r) => r === null)) continue;
     const rects = attempt as Rect[];
-    let height = 0;
-    for (const r of rects) height = Math.max(height, r.y + r.h);
     if (best !== null) {
       const area = width * height;
-      const bestArea = best.width * best.height;
       if (area > bestArea) continue;
       if (area === bestArea) {
         const square = Math.abs(width - height);
@@ -796,7 +879,28 @@ function smallestFreePageFor(
     }
     best = { width, height, rects };
   }
-  return best;
+  out.page = best;
+  return out;
+}
+
+/**
+ * One `free` candidate, unbounded: the cells placed at `width` on a page
+ * `maxEdge` tall, and the height that placement needs — or `null` when they do
+ * not all fit. It is the pass `freePageSearch` runs at each width with no
+ * bound, exported so the selftest can rebuild a reference search from the same
+ * placement (`PK74`'s 32-px grid, `PK75`'s every width, `PK76`'s `pot` search).
+ */
+export function placeAtWidth(
+  cells: Array<{ w: number; h: number }>,
+  width: number,
+  height: number,
+): { width: number; height: number; rects: Array<{ x: number; y: number; w: number; h: number }> } | null {
+  const attempt = packOnePage(cells, width, height);
+  if (attempt.some((r) => r === null)) return null;
+  const rects = attempt as Rect[];
+  let bottom = 0;
+  for (const r of rects) bottom = Math.max(bottom, r.y + r.h);
+  return { width, height: bottom, rects };
 }
 
 /**
@@ -813,8 +917,18 @@ function smallestFreePageFor(
  * to be pushed. So the tie-break is spelled out and total — smallest long-side
  * leftover, then topmost, then leftmost — and the caller sorts its input before
  * calling. Same inputs, byte-identical page.
+ *
+ * `maxBottom` is the `free` search's abandon bound (see `freePageSearch`): once a
+ * placed cell's bottom edge passes it the pass stops, and the cells not placed
+ * are `null`. The default, `Infinity`, never stops a pass — which is every `pot`
+ * call, so a `pot` page is placed exactly as it was before the bound existed.
  */
-function packOnePage(cells: Array<{ w: number; h: number }>, pageW: number, pageH: number): Array<Rect | null> {
+function packOnePage(
+  cells: Array<{ w: number; h: number }>,
+  pageW: number,
+  pageH: number,
+  maxBottom = Infinity,
+): Array<Rect | null> {
   const free: Rect[] = [{ x: 0, y: 0, w: pageW, h: pageH }];
   const placed: Array<Rect | null> = [];
 
@@ -848,6 +962,10 @@ function packOnePage(cells: Array<{ w: number; h: number }>, pageW: number, page
     }
     const put: Rect = { x: best.x, y: best.y, w: cell.w, h: cell.h };
     placed.push(put);
+    if (put.y + put.h > maxBottom) {
+      while (placed.length < cells.length) placed.push(null);
+      return placed;
+    }
 
     // Split every free rectangle the placement overlaps, then prune.
     const next: Rect[] = [];
@@ -981,15 +1099,18 @@ function extrudeCell(page: Plate, source: Plate, cellX: number, cellY: number, p
  * Opt-in, and the default stays `pot`: every runtime accepts a power-of-two page
  * and the editor's own packer writes one by default — 9 of the 10 atlases in the
  * fetched `examples/` corpus are power-of-two on both edges. Under `free` the
- * search is `smallestFreePageFor`: widths on a `FREE_EDGE_STEP` grid, the height
- * the placement needs, least area first, then squarer, then narrower. Everything
+ * search is `smallestFreePageFor`: every width from the widest cell up (issue
+ * #872; a 32-px grid until then), the height the placement needs, least area
+ * first, then squarer, then narrower, with two exact bounds that keep it cheap. Everything
  * else is shared — the MaxRects pass, the packing order, the spill rule (which
  * parts share a page is still decided at `maxEdge x maxEdge`) and `--page-size`
  * as the ceiling on both edges, floored to a power of two exactly as under `pot`.
  *
  * What it buys and what it costs, observed on two 20- and 22-part painting rigs:
- * the page went from 1024x2048 to 1888x697 (2,097,152 to 1,315,936 texels,
- * -37.3 %) and from 512x2048 to 480x1166 (1,048,576 to 559,680, -46.6 %). The cost is the exactness the paragraph above describes:
+ * the page goes from 1024x2048 to 967x1338 (2,097,152 to 1,293,846 texels,
+ * -38.3 %) and from 512x2048 to 479x1166 (1,048,576 to 558,514, -46.7 %). Under
+ * the 32-px grid #860 shipped with they were 1888x697 (-37.3 %) and 480x1166
+ * (-46.6 %). The cost is the exactness the paragraph above describes:
  * `x / pageWidth` is no longer exact, so a REGION attachment's sampling
  * coordinate joins a mesh's at `PK05`'s bound of one least significant bit
  * against the loose build. It does not go past it, and no region's bytes change
