@@ -341,6 +341,12 @@ is the geometry: measured offsets, a measured axis, a measured ceiling, a mesh
 built over a contour nobody drew by hand. So the question it asks is the one only
 those cuts can answer — *does the whole gate still come back green on them?*
 
+`RIGC_EMIT_HASHES_BASE=<hashes.json>` gives the model-bones suite (`MB07`) a base
+hash document written by `tools/emit_hashes.ts` at an earlier commit, and the two
+gallery rigs it builds are then held byte-identical to that document's rows —
+the gate every cut of issue #380's step 1 lands under. Without it `MB07` prints
+`SKIP` and a HOLE line; it never passes on nothing.
+
 ⚠️ A cuts path that is **named and missing** exits 2. Treating a typo as "no cuts
 file" would mean the one caller who asked for the extra suite is the one caller
 who silently does not get it. A path that is not named at all is a normal run.

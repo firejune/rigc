@@ -19,6 +19,7 @@ import type { DeformTransform, DeformTransformReport } from './deformgen.ts';
 import type { TurnCeiling } from './depth.ts';
 import type { SpecEnumTable, SpecTypeRow } from './keys.ts';
 import type { MeshKind } from './mesh.ts';
+import type { CompiledModel } from './model.ts';
 import type { TrackDerive, TrackDeriveReport } from './trackgen.ts';
 
 // ---------------------------------------------------------------------------
@@ -1550,6 +1551,12 @@ export interface DroppedState {
 }
 
 export interface CompileResult {
+  /**
+   * The compiled model (`src/model.ts`): what the skeleton below was emitted
+   * from. This cut fills its `bones` and `setupWorld`; every other field is
+   * this result's own, carried by reference.
+   */
+  model: CompiledModel;
   skeleton: SpineSkeletonJson;
   skeletonText: string;
   atlasText: string;
