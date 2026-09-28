@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.5.2](https://github.com/firejune/rigc/compare/v1.5.1...v1.5.2) (2026-09-28)
+
+
+### Bug Fixes
+
+* **compile:** a spec value of the wrong type is refused naming the field, the type found and the type required — "x": "5" no longer builds as 5, and every key the scan admits has a type ([#901](https://github.com/firejune/rigc/issues/901)) ([babe62e](https://github.com/firejune/rigc/commit/babe62e9a6780750a9f766a3468c03e16e1b8779))
+
+
+### Instrument
+
+* **pose:** the trace records each coarse seed's rotation row — a half-turn within 2.4 px of the truth on 2 of 238 found trials and none of the 6 misses, so the one-rotation field stays and both levers measured are rejected ([#896](https://github.com/firejune/rigc/issues/896)) ([52faeba](https://github.com/firejune/rigc/commit/52faebae6346483ef9477ee53607b8a499fe21e5))
+
+
+### Documentation
+
+* **motion:** §6 derives the flag hinge in the arm bone's own frame — flag.x 24.66 → 47.93, frame 0 matches poseA within 0.4 px — and the chain, the digests and the argument are regenerated on the current search ([#899](https://github.com/firejune/rigc/issues/899)) ([4431011](https://github.com/firejune/rigc/commit/4431011de58b3c2ef5532d580a7cb16c7bf5990e)), closes [#885](https://github.com/firejune/rigc/issues/885)
+
 ## [1.5.1](https://github.com/firejune/rigc/compare/v1.5.0...v1.5.1) (2026-09-28)
 
 
