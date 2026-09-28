@@ -60,7 +60,8 @@
  * with no manifest at all declares them here.
  */
 import { CompileError, NotImplementedError } from './errors.ts';
-import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys } from './keys.ts';
+import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys, refuseValuesOfTheWrongType } from './keys.ts';
+import type { ShapeVisit, SpecValueType } from './keys.ts';
 
 export { CompileError, NotImplementedError };
 
@@ -1776,11 +1777,11 @@ function isObj(v: unknown): v is Record<string, unknown> {
  * Every key each shape of this format owns, keyed by the interface above that
  * declares it — the runtime shadow of the types, which TypeScript erases.
  *
- * 🔒 **Hand-written and mechanically held to the interfaces.** `KEY01` in
+ * 🔒 **Hand-written and mechanically held to the interfaces.** `CUR17` in
  * `selftest.ts` reads this file's own source, extracts each named interface's
  * field list and compares it to the entry here, so the pair cannot drift: adding
  * a field and forgetting this table is a red run, not a key an author cannot
- * write. `KEY02` closes the other direction — a key declared here and occurring
+ * write. `CUR18` closes the other direction — a key declared here and occurring
  * nowhere else in the tree is refused, which is exactly what `scaleYMode` was.
  *
  * ⚠️ `RigUnimplementedAttachment` is deliberately absent. It carries
@@ -1853,6 +1854,149 @@ export const RIG_KEYS = {
   RigDepthMap: ['image', 'near', 'zScale', 'gamma', 'contrast', 'bias'],
   RigSoftRegion: ['bone', 'mask'],
 } as const satisfies Record<string, readonly string[]>;
+
+/**
+ * The type every key of `RIG_KEYS` holds, shape by shape — what
+ * `refuseValuesOfTheWrongType` refuses a value against (issue #890).
+ *
+ * 🔒 **Beside the key table, and held equal to it twice.** `satisfies` over
+ * `RigTypeTable` makes a key typed here and absent there, or admitted there and
+ * untyped here, a type error; the selftest compares the two at runtime as well,
+ * and derives each checked type from the interface the row is named for, so a
+ * field declared `number` and typed `string` here is a red run rather than a
+ * refusal of correct work.
+ *
+ * Where an unchecked type (`object`, `enum`, `mixed` — see `SPEC_VALUE_TYPES`)
+ * is refused, and by what:
+ *
+ *   - the version tag `spec` — `parseRigSpec`, before anything else;
+ *   - `inherit` — `resolveBoneInherit`; `blend` — the slot loop
+ *     (`RIG_SLOT_BLEND`); `consumerDrivenMix[].type` — the invariants block;
+ *   - a constraint's `type` — `buildRigConstraint`; `scaleY` on ik, a path
+ *     constraint's three modes and a slider's `property` — the builder of that
+ *     constraint kind, each listing the names that exist;
+ *   - an attachment's `type` — the attachment reader; `depth.near` — the depth
+ *     map reader;
+ *   - `RigSegmentsGenerator.bones` (`mixed`: a name, a chain of names or a span)
+ *     — the segments generator, by index.
+ *
+ * 🚨 Measured when this table was written, three `enum` keys have **no** owner,
+ * and the table does not pretend otherwise: `boneIndexing` built green at `5`
+ * and at `"foo"` (on a weighted mesh too), `from.rotation` built green at `5`
+ * and at `"foo"` on an anchored bone, and a generator `kind` of `5` or `"foo"`
+ * threw a `TypeError` (*undefined is not an object (evaluating
+ * 'generator.size')*) rather than the mesh builder's refusal. Each is a closed
+ * set of names with nobody holding the name, which is a value refusal and not a
+ * type one, so it is not fixed here. `scaleY` on a physics constraint was not
+ * measured.
+ */
+type RigTypeTable = {
+  readonly [S in keyof typeof RIG_KEYS]: { readonly [K in (typeof RIG_KEYS)[S][number]]: SpecValueType };
+};
+
+export const RIG_TYPES = {
+  RigSpec: {
+    spec: 'enum', name: 'string', note: 'string', skeleton: 'object', images: 'string', bones: 'object[]', slots: 'object[]',
+    skins: 'map of object', constraints: 'object[]', events: 'map of object', invariants: 'object',
+  },
+  RigSkeletonHeader: {
+    x: 'number', y: 'number', width: 'number | null', height: 'number | null', fps: 'number', referenceScale: 'number',
+    images: 'string', audio: 'string | null',
+  },
+  RigBone: {
+    name: 'string', parent: 'string', length: 'number', x: 'number', y: 'number', rotation: 'number', scaleX: 'number',
+    scaleY: 'number', shearX: 'number', shearY: 'number', inherit: 'enum', skin: 'boolean', color: 'string', icon: 'string',
+    from: 'object',
+  },
+  RigBoneFrom: { anchor: 'string', slotWindow: 'string', meshCenter: 'string', rotation: 'enum' },
+  RigSlot: { name: 'string', bone: 'string', attachment: 'string | null', color: 'string', dark: 'string', blend: 'enum' },
+  RigEvent: { int: 'number', float: 'number', string: 'string', audio: 'string', volume: 'number', balance: 'number' },
+  RigInvariants: {
+    meshSlots: 'number', meshTriangles: 'number', axisBone: 'string', massBone: 'string', detached: 'object[]',
+    deformMayFold: 'object[]', editorRoundTrip: 'boolean', consumerDrivenMix: 'object[]', idleDrivesMeshes: 'object',
+  },
+  RigIdleDrivesMeshes: { why: 'string' },
+  RigDetachedRule: { bone: 'string', notUnder: 'string', why: 'string' },
+  RigDeformFoldExemption: { slot: 'string', why: 'string' },
+  RigConsumerDrivenMix: { constraint: 'string', type: 'enum', why: 'string' },
+  RigSkinEntry: {
+    attachments: 'map of object', bones: 'string[]', ik: 'string[]', transform: 'string[]', path: 'string[]',
+    physics: 'string[]', slider: 'string[]',
+  },
+  RigIkConstraint: {
+    name: 'string', skin: 'boolean', type: 'enum', bones: 'string[]', target: 'string', scaleY: 'enum', mix: 'number',
+    softness: 'number', bendPositive: 'boolean', compress: 'boolean', stretch: 'boolean',
+  },
+  RigTransformConstraint: {
+    name: 'string', skin: 'boolean', type: 'enum', bones: 'string[]', source: 'string', localSource: 'boolean',
+    localTarget: 'boolean', additive: 'boolean', clamp: 'boolean', properties: 'map of object',
+    rotation: 'number', x: 'number', y: 'number', scaleX: 'number', scaleY: 'number', shearY: 'number',
+    mixRotate: 'number', mixX: 'number', mixY: 'number', mixScaleX: 'number', mixScaleY: 'number', mixShearY: 'number',
+  },
+  RigPathConstraint: {
+    name: 'string', skin: 'boolean', type: 'enum', bones: 'string[]', slot: 'string', positionMode: 'enum',
+    spacingMode: 'enum', rotateMode: 'enum', rotation: 'number', position: 'number', spacing: 'number',
+    mixRotate: 'number', mixX: 'number', mixY: 'number',
+  },
+  RigPhysicsConstraint: {
+    name: 'string', skin: 'boolean', type: 'enum', bone: 'string', x: 'number', y: 'number', rotate: 'number',
+    scaleX: 'number', shearX: 'number', scaleY: 'enum', limit: 'number', fps: 'number', inertia: 'number',
+    strength: 'number', damping: 'number', mass: 'number', wind: 'number', gravity: 'number', mix: 'number',
+    inertiaGlobal: 'boolean', strengthGlobal: 'boolean', dampingGlobal: 'boolean', massGlobal: 'boolean',
+    windGlobal: 'boolean', gravityGlobal: 'boolean', mixGlobal: 'boolean',
+  },
+  RigSliderConstraint: {
+    name: 'string', skin: 'boolean', type: 'enum', animation: 'string', mix: 'number', additive: 'boolean',
+    loop: 'boolean', bone: 'string', property: 'enum', from: 'number', to: 'number', scale: 'number', max: 'number',
+    local: 'boolean', time: 'number',
+  },
+  RigTransformProperty: { offset: 'number', to: 'map of object' },
+  RigTransformTo: { offset: 'number', max: 'number', scale: 'number' },
+  RigRegionAttachment: {
+    type: 'enum', name: 'string', path: 'string', image: 'string', x: 'number', y: 'number', rotation: 'number',
+    scaleX: 'number', scaleY: 'number', width: 'number', height: 'number', color: 'string', sequence: 'object',
+  },
+  RigMeshAttachment: {
+    type: 'enum', name: 'string', path: 'string', image: 'string', uvs: 'number[]', triangles: 'number[]',
+    vertices: 'number[]', weights: 'object[][]', boneIndexing: 'enum', hull: 'number', edges: 'number[]',
+    width: 'number', height: 'number', color: 'string', generator: 'object', sequence: 'object',
+  },
+  RigLinkedMeshAttachment: {
+    type: 'enum', name: 'string', path: 'string', image: 'string', source: 'string', slot: 'string', skin: 'string',
+    timelines: 'boolean', width: 'number', height: 'number', color: 'string', sequence: 'object',
+    uvs: 'number[]', triangles: 'number[]', vertices: 'number[]', weights: 'object[][]', boneIndexing: 'enum',
+    hull: 'number', edges: 'number[]', generator: 'object',
+  },
+  RigMeshBinding: { bone: 'string', x: 'number', y: 'number', weight: 'number' },
+  RigSequence: { count: 'number', start: 'number', digits: 'number', setup: 'number' },
+  RigBoundingBoxAttachment: {
+    vertexCount: 'number', vertices: 'number[]', weights: 'object[][]', boneIndexing: 'enum', color: 'string', type: 'enum', name: 'string',
+  },
+  RigClippingAttachment: {
+    vertexCount: 'number', vertices: 'number[]', weights: 'object[][]', boneIndexing: 'enum', color: 'string', type: 'enum', name: 'string',
+    end: 'string', convex: 'boolean', inverse: 'boolean',
+  },
+  RigPathAttachment: {
+    vertexCount: 'number', vertices: 'number[]', weights: 'object[][]', boneIndexing: 'enum', color: 'string', type: 'enum', name: 'string',
+    closed: 'boolean', constantSpeed: 'boolean', lengths: 'number[]',
+  },
+  RigRingGenerator: {
+    kind: 'enum', hull: 'number[][]', center: 'number[]', inner: 'number', size: 'number[]', bias: 'object',
+    controls: 'string[]',
+  },
+  RigRibbonGenerator: { kind: 'enum', size: 'number[]', rows: 'number', chain: 'string[]' },
+  RigContourGenerator: {
+    kind: 'enum', tolerance: 'number', margin: 'number', maxVertices: 'number', alpha: 'number', depth: 'object',
+    soft: 'object',
+  },
+  RigGridGenerator: { kind: 'enum', us: 'number[]', vs: 'number[]', cols: 'number', rows: 'number', depth: 'object', soft: 'object' },
+  RigSegmentsGenerator: { kind: 'enum', cell: 'number', bones: 'mixed', falloff: 'object', alpha: 'number', anchor: 'number[]' },
+  RigSegmentsFalloff: { power: 'number', radius: 'number', maxBones: 'number', minWeight: 'number' },
+  RigSegmentSpan: { bone: 'string', from: 'number[]', to: 'number[]' },
+  RigMeshBias: { axis_deg: 'number', ramp: 'number[]' },
+  RigDepthMap: { image: 'string', near: 'enum', zScale: 'number', gamma: 'number', contrast: 'number', bias: 'number' },
+  RigSoftRegion: { bone: 'string', mask: 'string' },
+} as const satisfies RigTypeTable;
 
 /**
  * The five constraint `type` names, and the shape each one's keys come from.
@@ -1984,22 +2128,25 @@ function checkRigSequence(att: Record<string, unknown>, who: string, where: stri
  * refusal, and naming its keys would be a second opinion on a fault already
  * reported (see the note at the head of `parseMotionSpec`).
  */
-function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
-  const at = (node: unknown, shape: keyof typeof RIG_KEYS, what: string): void => {
-    if (isObj(node)) refuseUnknownKeys(node, RIG_KEYS[shape], where, what);
+function checkRigSpecKeys(raw: Record<string, unknown>, where: string): Array<{ node: Record<string, unknown>; shape: keyof typeof RIG_KEYS; path: Array<string | number> }> {
+  const visits: Array<{ node: Record<string, unknown>; shape: keyof typeof RIG_KEYS; path: Array<string | number> }> = [];
+  const at = (node: unknown, shape: keyof typeof RIG_KEYS, what: string, path: Array<string | number>): void => {
+    if (!isObj(node)) return;
+    refuseUnknownKeys(node, RIG_KEYS[shape], where, what);
+    visits.push({ node, shape, path });
   };
 
-  at(raw, 'RigSpec', 'this rig spec');
-  at(raw.skeleton, 'RigSkeletonHeader', '"skeleton"');
+  at(raw, 'RigSpec', 'this rig spec', []);
+  at(raw.skeleton, 'RigSkeletonHeader', '"skeleton"', ['skeleton']);
 
   for (const [i, bone] of (Array.isArray(raw.bones) ? raw.bones : []).entries()) {
     const who = isObj(bone) && typeof bone.name === 'string' ? `bone "${bone.name}"` : `bones[${i}]`;
-    at(bone, 'RigBone', who);
-    if (isObj(bone)) at(bone.from, 'RigBoneFrom', `${who}'s "from"`);
+    at(bone, 'RigBone', who, ['bones', i]);
+    if (isObj(bone)) at(bone.from, 'RigBoneFrom', `${who}'s "from"`, ['bones', i, 'from']);
   }
 
   for (const [i, slot] of (Array.isArray(raw.slots) ? raw.slots : []).entries()) {
-    at(slot, 'RigSlot', isObj(slot) && typeof slot.name === 'string' ? `slot "${slot.name}"` : `slots[${i}]`);
+    at(slot, 'RigSlot', isObj(slot) && typeof slot.name === 'string' ? `slot "${slot.name}"` : `slots[${i}]`, ['slots', i]);
   }
 
   for (const [i, constraint] of (Array.isArray(raw.constraints) ? raw.constraints : []).entries()) {
@@ -2010,32 +2157,32 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
     // that exist; there is no key set to check it against and no honest one to
     // guess, so it goes past here to the message that can say something.
     if (shape === undefined) continue;
-    at(constraint, shape, `${named} (${String(constraint.type)})`);
+    at(constraint, shape, `${named} (${String(constraint.type)})`, ['constraints', i]);
     for (const [from, entry] of Object.entries(isObj(constraint.properties) ? constraint.properties : {})) {
-      at(entry, 'RigTransformProperty', `${named} properties."${from}"`);
+      at(entry, 'RigTransformProperty', `${named} properties."${from}"`, ['constraints', i, 'properties', from]);
       if (!isObj(entry)) continue;
       for (const [to, driven] of Object.entries(isObj(entry.to) ? entry.to : {})) {
-        at(driven, 'RigTransformTo', `${named} properties."${from}".to."${to}"`);
+        at(driven, 'RigTransformTo', `${named} properties."${from}".to."${to}"`, ['constraints', i, 'properties', from, 'to', to]);
       }
     }
   }
 
   for (const [name, event] of Object.entries(isObj(raw.events) ? raw.events : {})) {
-    at(event, 'RigEvent', `event "${name}"`);
+    at(event, 'RigEvent', `event "${name}"`, ['events', name]);
   }
 
   if (isObj(raw.invariants)) {
-    at(raw.invariants, 'RigInvariants', '"invariants"');
+    at(raw.invariants, 'RigInvariants', '"invariants"', ['invariants']);
     for (const [i, rule] of (Array.isArray(raw.invariants.detached) ? raw.invariants.detached : []).entries()) {
-      at(rule, 'RigDetachedRule', `invariants.detached[${i}]`);
+      at(rule, 'RigDetachedRule', `invariants.detached[${i}]`, ['invariants', 'detached', i]);
     }
     for (const [i, rule] of (Array.isArray(raw.invariants.deformMayFold) ? raw.invariants.deformMayFold : []).entries()) {
-      at(rule, 'RigDeformFoldExemption', `invariants.deformMayFold[${i}]`);
+      at(rule, 'RigDeformFoldExemption', `invariants.deformMayFold[${i}]`, ['invariants', 'deformMayFold', i]);
     }
     for (const [i, rule] of (Array.isArray(raw.invariants.consumerDrivenMix) ? raw.invariants.consumerDrivenMix : []).entries()) {
-      at(rule, 'RigConsumerDrivenMix', `invariants.consumerDrivenMix[${i}]`);
+      at(rule, 'RigConsumerDrivenMix', `invariants.consumerDrivenMix[${i}]`, ['invariants', 'consumerDrivenMix', i]);
     }
-    at(raw.invariants.idleDrivesMeshes, 'RigIdleDrivesMeshes', 'invariants.idleDrivesMeshes');
+    at(raw.invariants.idleDrivesMeshes, 'RigIdleDrivesMeshes', 'invariants.idleDrivesMeshes', ['invariants', 'idleDrivesMeshes']);
   }
 
   for (const [skinName, skin] of Object.entries(isObj(raw.skins) ? raw.skins : {})) {
@@ -2044,6 +2191,10 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
     // likeliest cause (a slot left outside `attachments`), so it is reused
     // rather than restated — one refusal per fault.
     const parts = splitRigSkin(skin as RigSkin, `${where}: skin "${skinName}"`);
+    // The long form's own lists are typed too; `splitRigSkin` has just refused
+    // a key outside them, so the row's keys are the node's keys.
+    if (parts.explicit) visits.push({ node: skin, shape: 'RigSkinEntry', path: ['skins', skinName] });
+    const base: Array<string | number> = parts.explicit ? ['skins', skinName, 'attachments'] : ['skins', skinName];
     for (const [slot, placeholders] of Object.entries(parts.attachments)) {
       if (!isObj(placeholders)) continue;
       for (const [placeholder, att] of Object.entries(placeholders)) {
@@ -2075,14 +2226,15 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
               'series would be dropped in silence. Remove it, or put it on a region or a mesh.',
           );
         }
-        at(att, shape, `${who} (${type})`);
+        const here = [...base, slot, placeholder];
+        at(att, shape, `${who} (${type})`, here);
         if (att.sequence !== undefined) {
-          at(att.sequence, 'RigSequence', `${who} "sequence"`);
+          at(att.sequence, 'RigSequence', `${who} "sequence"`, [...here, 'sequence']);
           checkRigSequence(att, who, where);
         }
         for (const [i, vertex] of (Array.isArray(att.weights) ? att.weights : []).entries()) {
           for (const [j, binding] of (Array.isArray(vertex) ? vertex : []).entries()) {
-            at(binding, 'RigMeshBinding', `${who} weights[${i}][${j}]`);
+            at(binding, 'RigMeshBinding', `${who} weights[${i}][${j}]`, [...here, 'weights', i, j]);
           }
         }
         if (!isObj(att.generator)) continue;
@@ -2091,17 +2243,18 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): void {
         // Same rule as an unknown attachment type: an unknown `kind` is the mesh
         // builder's refusal, which can name the four that exist.
         if (genShape === undefined) continue;
-        at(gen, genShape, `${who} generator (${String(gen.kind)})`);
-        at(gen.bias, 'RigMeshBias', `${who} generator.bias`);
-        at(gen.depth, 'RigDepthMap', `${who} generator.depth`);
-        at(gen.soft, 'RigSoftRegion', `${who} generator.soft`);
-        at(gen.falloff, 'RigSegmentsFalloff', `${who} generator.falloff`);
+        at(gen, genShape, `${who} generator (${String(gen.kind)})`, [...here, 'generator']);
+        at(gen.bias, 'RigMeshBias', `${who} generator.bias`, [...here, 'generator', 'bias']);
+        at(gen.depth, 'RigDepthMap', `${who} generator.depth`, [...here, 'generator', 'depth']);
+        at(gen.soft, 'RigSoftRegion', `${who} generator.soft`, [...here, 'generator', 'soft']);
+        at(gen.falloff, 'RigSegmentsFalloff', `${who} generator.falloff`, [...here, 'generator', 'falloff']);
         for (const [i, entry] of (Array.isArray(gen.bones) ? gen.bones : []).entries()) {
-          at(entry, 'RigSegmentSpan', `${who} generator.bones[${i}]`);
+          at(entry, 'RigSegmentSpan', `${who} generator.bones[${i}]`, [...here, 'generator', 'bones', i]);
         }
       }
     }
   }
+  return visits;
 }
 
 
@@ -2176,11 +2329,24 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   // compiler does not read" for a format it has never read at all. The three
   // throws directly below are the required-key checks, and each of them is the
   // consequence a typo at the root produces.
-  checkRigSpecKeys(raw, where);
+  const visits = checkRigSpecKeys(raw, where);
+  const place = rigPlace(raw);
+  // Every value the scan admitted, against the type its key holds, before any
+  // reader — here or in `compile` — has done arithmetic on it (issue #890).
+  // ⚠️ It runs ahead of this function's own field checks on purpose: those read
+  // values too, and a reader that meets a wrong type names the wrong fault —
+  // `constraint.skin === true` reads `"skin": "true"` as a constraint that asks
+  // for no skin. The price, measured, is three controls whose type half pinned an
+  // older sentence (RF86, PS177, PS189); their other halves are unchanged.
+  refuseValuesOfTheWrongType(
+    visits.map((v) => ({ node: v.node, shape: v.shape, name: (tail) => place([...v.path, ...tail]) })),
+    RIG_TYPES,
+    where,
+  );
   // After the key check, so a misspelled key is named as a misspelling before
   // its value is judged, and before every reader below, so no range rule or
   // derived number ever meets a value the file cannot carry (issue #881).
-  refuseNumbersTheFileCannotCarry(raw, where, rigPlace(raw));
+  refuseNumbersTheFileCannotCarry(raw, where, place);
 
   if (typeof raw.name !== 'string' || raw.name.length === 0) {
     throw new CompileError(`${where}: a rig spec needs a "name" — a motion spec names it to pick this rig`);

@@ -17,6 +17,7 @@
 import type { AtlasRegion } from './atlas.ts';
 import type { DeformTransform, DeformTransformReport } from './deformgen.ts';
 import type { TurnCeiling } from './depth.ts';
+import type { SpecTypeRow } from './keys.ts';
 import type { MeshKind } from './mesh.ts';
 import type { TrackDerive, TrackDeriveReport } from './trackgen.ts';
 
@@ -168,6 +169,47 @@ export interface FaceManifest {
    */
   anchors?: Record<string, number[]>;
 }
+
+/**
+ * The type every field of the cut manifest holds, shape by shape — what
+ * `refuseValuesOfTheWrongType` refuses a manifest value against (issue #890).
+ * The three interfaces above name three rows; the inline object types they
+ * declare (`crop`, `axis`, `stroke`, `roi`, `mesh.bias`) are rows named
+ * `<interface>.<field>`, and the selftest derives every row's keys and checked
+ * types from the declarations here.
+ *
+ * ⚠️ A manifest has no key scan, and this table does not add one: a manifest is
+ * often also the record of the pipeline that made the art and carries fields
+ * rigc does not read. A key outside a row is left alone, exactly as before; a
+ * key inside one must hold its type. Measured before the walk existed, 62 of 84
+ * wrong-typed plants on the three fixture manifests built green —
+ * `crop.h: "256"` among them — and 4 threw a TypeError from `node:path`.
+ *
+ * Unchecked: `mesh.kind` and `mesh.hull` (`enum`) — the manifest mesh reader;
+ * `crop` and the other nested shapes, `parts` and `mesh` (`object`) — the
+ * readers that walk them.
+ */
+export const MANIFEST_TYPES = {
+  FaceManifest: {
+    schema: 'string', crop: 'object', base: 'string', state_machine: 'map of string[]', parts: 'object[]',
+    insertion: 'number[]', axis: 'object', stroke: 'object', roi: 'object', anchors: 'map of number[]',
+  },
+  'FaceManifest.crop': { x: 'number', y: 'number', w: 'number', h: 'number', resample: 'string' },
+  'FaceManifest.axis': { deg: 'number', unit: 'number[]' },
+  'FaceManifest.stroke': {
+    amplitude: 'number', extension: 'number', contact_depth: 'number | null', cap_containment_ceiling: 'number | null',
+  },
+  'FaceManifest.roi': { x: 'number', y: 'number', w: 'number', h: 'number' },
+  FaceManifestPart: {
+    slot: 'string', rig_slot: 'string', draw_order: 'number', image: 'string | null', offset: 'number[]', size: 'number[]',
+    state_key: 'string', states: 'map of string | null', polygon: 'number[][]', mesh: 'object',
+  },
+  FaceManifestMesh: {
+    kind: 'enum', hull: 'enum', center: 'number[]', inner: 'number', control_bone: 'string', control_bones: 'string[]',
+    rows: 'number', chain: 'string[]', bias: 'object',
+  },
+  'FaceManifestMesh.bias': { axis_deg: 'number', ramp: 'number[]', note: 'string' },
+} as const satisfies Record<string, SpecTypeRow>;
 
 // ---------------------------------------------------------------------------
 // Motion spec  (spec: "rigc-motion/1")
