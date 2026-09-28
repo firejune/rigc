@@ -42,7 +42,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { errBilinear, estimatePose, levelOf, materialPlate, type PoseLegibility, readBackground } from '../src/pose.ts';
+import { errBilinear, estimatePose, levelOf, materialPlate, type PoseLegibility, type PoseTrace, readBackground } from '../src/pose.ts';
 import {
   BACKGROUND,
   blitPiece,
@@ -102,6 +102,44 @@ export interface FloorTrial {
    * prefers something else there, or the truth was reported and tied (#865).
    */
   missed: boolean;
+  /**
+   * Where the refinement left the truth, level by level, coarsest first (issue
+   * #877). Per level: the rank, among the candidates that level handed on, of
+   * the one nearest the truth, how far off it was, whether the next level took
+   * it, and that level's own objective at the truth beside its best. `truth <
+   * best` on a level is the level preferring the truth over everything it kept.
+   */
+  search: FloorLevel[];
+  /**
+   * The full-resolution polish of the seed nearest the truth: how many moves it
+   * accepted, how many of them were scale escapes, whether a window held one,
+   * where it ended and what the same objective says at the truth. `truth < end`
+   * is a polish that stopped on a point its own objective scores worse than the
+   * truth — the class issue #877 was about.
+   */
+  polish: FloorPolish | null;
+}
+
+export interface FloorLevel {
+  level: number;
+  reduction: number;
+  /** Rank of the candidate nearest the truth, 0 = the level's best. */
+  rank: number;
+  /** Frame pixels between that candidate and the truth. */
+  distance: number;
+  /** Whether the next level polished it; `true` on the last level, which hands on to the report. */
+  carried: boolean;
+  /** The level's objective at the truth, and at its own best. */
+  truth: number;
+  best: number;
+}
+
+export interface FloorPolish {
+  steps: number;
+  escapes: number;
+  clamped: boolean;
+  end: number;
+  truth: number;
 }
 
 interface Scene {
@@ -272,6 +310,7 @@ export function floorTrial(
   size: number,
   texture: FloorTexture,
   workDir: string,
+  trace?: PoseTrace,
 ): FloorTrial {
   const index = scene.pieces.findIndex((p) => p.slot === slot);
   if (index < 0) throw new Error(`internal: scene ${scene.name} draws no slot "${slot}"`);
@@ -317,10 +356,13 @@ export function floorTrial(
   const framePath = join(workDir, 'frame.png');
   part.writePng(partPath);
   frame.writePng(framePath);
+  const log: PoseTrace = trace ?? { levels: [], measured: [] };
+  log.probe = { x: truth.x, y: truth.y, rotationDeg: 0, scale: 1 };
   const report = estimatePose({
     imagesDir: partsDir,
     framePath,
     parts: [partPath],
+    trace: log,
   });
   const got = report.parts[0];
   const error = got.placement === null ? null : Math.hypot(got.placement.x - truth.x, got.placement.y - truth.y);
@@ -333,7 +375,42 @@ export function floorTrial(
     got.placement !== null &&
     truthResidual < got.placement.residual &&
     !reported.some((p) => Math.hypot(p.x - truth.x, p.y - truth.y) <= FLOOR_WITHIN_PX);
-  return { frame: scene.name, slot, size, texture, outcome, error, legibility: got.legibility, truthResidual, missed };
+  const { search, polish } = searchColumns(log, truth);
+  return { frame: scene.name, slot, size, texture, outcome, error, legibility: got.legibility, truthResidual, missed, search, polish };
+}
+
+/** `FloorTrial.search` and `.polish`, read off the trace `pose` kept for one part. */
+function searchColumns(log: PoseTrace, truth: { x: number; y: number }): { search: FloorLevel[]; polish: FloorPolish | null } {
+  const off = (c: { x: number; y: number }): number => Math.hypot(c.x - truth.x, c.y - truth.y);
+  const nearest = (cs: { x: number; y: number }[]): number => cs.reduce((bi, c, i) => (off(c) < off(cs[bi]) ? i : bi), 0);
+  const round = (n: number): number => Math.round(n * 1e5) / 1e5;
+  const search = log.levels.map((level, i): FloorLevel => {
+    const rank = level.out.length === 0 ? -1 : nearest(level.out);
+    const next = log.levels[i + 1];
+    return {
+      level: level.level,
+      reduction: level.reduction,
+      rank,
+      distance: rank < 0 ? -1 : round(off(level.out[rank])),
+      carried: next === undefined || rank < next.keep,
+      truth: round(level.probeResidual ?? -1),
+      best: level.out.length === 0 ? -1 : round(level.out[0].residual),
+    };
+  });
+  const last = log.levels[log.levels.length - 1];
+  if (last === undefined || last.seeds.length === 0) return { search, polish: null };
+  const seed = nearest(last.seeds);
+  const path = last.paths[seed];
+  return {
+    search,
+    polish: {
+      steps: path.length,
+      escapes: path.filter((step) => step.escape).length,
+      clamped: path.some((step) => step.clamped),
+      end: round(last.polished[seed].residual),
+      truth: round(last.probeResidual ?? -1),
+    },
+  };
 }
 
 /**
@@ -422,7 +499,9 @@ export function floorCell(
  * grid at an eighth of the part, four native cells place 14 or 15 of 15 and the
  * trials at detail 3 and over place 62 of 66 — but `goggles` still places 10 of
  * 42, and a reliability line read off two dozen parts of one figure would be a
- * claim about spineboy. The edge stays the one thing stated.
+ * claim about spineboy. The edge stays the one thing stated. Issue #877's
+ * polish took those figures to five cells, 64 of 66 and 12 of 42, which changes
+ * nothing about that argument.
  */
 export const FLOOR_FAIL_RATE = 0.1;
 export const FLOOR_MIN_TRIALS = 30;
@@ -509,6 +588,19 @@ export function floorTable(cells: FloorCell[]): string[] {
   return lines;
 }
 
+/** One trial's refinement on one line: per level the truth's rank (`x` = not carried), its offset, and whether the level preferred it. */
+export function searchLine(t: FloorTrial): string {
+  const levels = t.search.map(
+    (l) => `L${l.level} #${l.rank}${l.carried ? '' : 'x'} ${l.distance.toFixed(1)}px ${l.truth < l.best ? 'truth<best' : 'truth>=best'}`,
+  );
+  const p = t.polish;
+  const tail =
+    p === null
+      ? 'no polish'
+      : `polish ${p.steps} step(s), ${p.escapes} escape(s)${p.clamped ? ', clamped' : ''}, end ${p.end} vs truth ${p.truth}`;
+  return `${levels.join(' · ')} · ${tail}`;
+}
+
 function main(argv: string[]): void {
   const flags = new Map<string, string>();
   for (let i = 0; i < argv.length; i += 2) flags.set(argv[i].replace(/^--/, ''), argv[i + 1] ?? '');
@@ -528,6 +620,11 @@ function main(argv: string[]): void {
       const failed = cells.reduce((n, c) => n + c.trials.length - c.found, 0);
       console.log(`missed by the search: ${cells.reduce((n, c) => n + c.missed, 0)} of ${failed} failed trials`);
       for (const c of cells) if (c.missed > 0) console.log(`  ${c.texture} ${c.size}px: ${c.trials.filter((t) => t.missed).map((t) => `${t.frame} ${t.slot}`).join(', ')}`);
+      // The trace columns arrived with issue #877; a grid written before them
+      // has no refinement to show, and inventing one would be the same fault.
+      for (const c of cells) {
+        for (const t of c.trials) if (t.missed && Array.isArray(t.search)) console.log(`    ${c.texture} ${c.size}px ${t.frame} ${t.slot}: ${searchLine(t)}`);
+      }
     }
     return;
   }
@@ -566,6 +663,7 @@ function main(argv: string[]): void {
               `${l.width}x${l.height} texture ${l.texture} opaque ${l.opaqueShare}, ${l.candidates} candidate(s), ` +
               `best ${l.best} next ${l.next ?? 'none'}, truth ${t.truthResidual.toFixed(5)}${t.missed ? ' — MISSED by the search' : ''}`,
           );
+          console.log(`             search: ${searchLine(t)}`);
         }
       }
     }
