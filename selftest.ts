@@ -693,6 +693,58 @@ const keyIrisInIdle = (a: Artifacts): Artifacts => ({
   }),
 });
 
+/** A string no emitted file carries, swapped for a literal JSON reads as Infinity (`1e309`). */
+const OVERFLOW_TOKEN = '__rigc_overflow__';
+
+type EmittedBone = { name: string; parent?: string } & Record<string, unknown>;
+
+/**
+ * The first bone with a parent that no bone hangs from — or, with `chained`,
+ * the first such bone whose parent has a parent of its own, so a scale set on
+ * both is a chain below the root.
+ */
+function leafBoneOf(bones: EmittedBone[], chained = false): EmittedBone {
+  const leaf = bones.find(
+    (b) =>
+      b.parent !== undefined &&
+      !bones.some((c) => c.parent === b.name) &&
+      (!chained || bones.some((p) => p.name === b.parent && p.parent !== undefined)),
+  );
+  if (leaf === undefined) throw new Error(`the fixture has no leaf bone${chained ? ' under a non-root parent' : ''} to plant on`);
+  return leaf;
+}
+
+/** The leaf a plant below edits, read back off the broken text. */
+const leafOf = (a: Artifacts, chained = false): string =>
+  leafBoneOf((JSON.parse(a.skeletonText) as { bones: EmittedBone[] }).bones, chained).name;
+
+/** The first animation the emitted file declares. */
+const firstAnimationOf = (a: Artifacts): string =>
+  Object.keys((JSON.parse(a.skeletonText) as { animations: Record<string, unknown> }).animations)[0];
+
+/** The emitted skeleton with `edit` applied to its first leaf bone, and every `OVERFLOW_TOKEN` written as `1e309`. */
+function plantOverflow(text: string, edit: (j: Record<string, unknown>, leaf: EmittedBone) => void): string {
+  return editJson(text, (j) => edit(j, leafBoneOf(j.bones as EmittedBone[]))).replaceAll(`"${OVERFLOW_TOKEN}"`, '1e309');
+}
+
+/** The emitted skeleton with `scaleX: factor` on a leaf bone and on its non-root parent. */
+function plantScaleChain(text: string, factor: number): string {
+  return editJson(text, (j) => {
+    const bones = j.bones as EmittedBone[];
+    const leaf = leafBoneOf(bones, true);
+    leaf.scaleX = factor;
+    const parent = bones.find((b) => b.name === leaf.parent);
+    if (parent !== undefined) parent.scaleX = factor;
+  });
+}
+
+/** Does an A10 failure carry every one of `parts`? The detail is the reading either way. */
+function a10Names(report: ReturnType<typeof validate>, ...parts: string[]): { held: boolean; read: string } {
+  const details = report.failures.filter((f) => f.assertion === 'A10_NO_NAN_AFTER_STEPPING').map((f) => f.detail);
+  const held = details.some((d) => parts.every((p) => d.includes(p)));
+  return { held, read: held ? `A10 names ${JSON.stringify(parts)}` : `A10 said ${JSON.stringify(details)}, not ${JSON.stringify(parts)}` };
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const MUTANTS: Mutant[] = [
   {
@@ -1864,6 +1916,88 @@ const MUTANTS: Mutant[] = [
       if (!a.atlasText.includes('\n\n')) throw new Error('the fixture atlas has one page block, and two are needed');
       return { ...a, atlasText: a.atlasText.replace('\n\n', '\n\n\n') };
     },
+  },
+  // ─── a world transform that is not finite at a finite position (issue #882) ─
+  //
+  // A10 read `worldX` and `worldY` alone, and each row below poses a bone whose
+  // position stays finite while a term of its world matrix does not — so every
+  // one was gated green on main, and `render` then refused the same file by the
+  // bone. Each is planted in the EMITTED skeleton, after compile, because the
+  // compiler now refuses a rig-spec number that is not finite by name (#881):
+  // through the spec these would be the compiler's catch, and what is under
+  // test is the gate on a file rigc did not write. The bone is found
+  // structurally — a LEAF, the first bone with a parent that no bone hangs
+  // from, because a child offset from a NaN matrix would take its own
+  // position to NaN and the old loop would have caught the plant through it.
+  {
+    name: 'M94_a_leaf_bone_whose_setup_rotation_is_past_the_largest_double',
+    origin:
+      'rotation 1e309 in the setup pose: cos and sin of Infinity are NaN, so a, b, c and d are NaN while worldX and ' +
+      'worldY stay the parent\'s finite numbers — the file loads, the old A10 passed it, render refused it (issue #882)',
+    expect: 'A10_NO_NAN_AFTER_STEPPING',
+    mutate: (a) => ({ ...a, skeletonText: plantOverflow(a.skeletonText, (j, leaf) => { leaf.rotation = OVERFLOW_TOKEN; }) }),
+    holds: (report, broken) => a10Names(report, `the setup pose: bone "${leafOf(broken)}" has a NaN`),
+  },
+  {
+    name: 'M95_a_rotate_key_past_the_largest_double_on_a_leaf_bone',
+    origin:
+      'the same NaN matrix posed by a `rotate` key rather than the setup pose, which is a separate surface: a frame is ' +
+      'posed after `state.apply`, so it is the key the frame shows (issue #882)',
+    expect: 'A10_NO_NAN_AFTER_STEPPING',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: plantOverflow(a.skeletonText, (j, leaf) => {
+        const animation = (j as any).animations[Object.keys((j as any).animations)[0]];
+        animation.bones = animation.bones ?? {};
+        animation.bones[leaf.name] = { ...(animation.bones[leaf.name] ?? {}), rotate: [{ time: 0, value: OVERFLOW_TOKEN }] };
+      }),
+    }),
+    holds: (report, broken) => a10Names(report, `animation ${JSON.stringify(firstAnimationOf(broken))} frame 1 of `, `bone "${leafOf(broken)}" has a NaN`),
+  },
+  {
+    // The smallest chain that does it is two bones: one bone's `a` is
+    // cos · scaleX, which is finite for any finite scaleX, and a child's is the
+    // product of the two. The factor is DERIVED — twice the square root of the
+    // largest double, so the product is four times it — rather than a measured
+    // literal; measured, 1e154 on both (the card's figure) leaves `a` at 1e308,
+    // finite, and that is M96's case, not this one.
+    name: 'M95b_a_scale_x_chain_whose_product_overflows_at_the_child',
+    origin:
+      'a parent and its leaf child each at a finite scaleX whose product passes the largest double: the child\'s a is ' +
+      'Infinity and both positions stay finite, so the old A10 passed it (issue #882)',
+    expect: 'A10_NO_NAN_AFTER_STEPPING',
+    mutate: (a) => ({ ...a, skeletonText: plantScaleChain(a.skeletonText, 2 * Math.sqrt(Number.MAX_VALUE)) }),
+    holds: (report, broken) => a10Names(report, `the setup pose: bone "${leafOf(broken, true)}" has a Infinity`),
+  },
+  {
+    // ⭐ Why A10 reads vertices at all: this bone is finite in all six terms and
+    // its region is not. The factor is nine tenths of the square root of the
+    // largest double, so the child's a is 0.81 of it — finite — and any corner
+    // offset past 1/0.81 ≈ 1.23 px from the bone takes a vertex past it.
+    name: 'M96_a_scale_x_chain_finite_at_the_bone_whose_vertices_overflow',
+    origin:
+      'the chain one step short of M95b: every bone term is finite, every corner of the leaf\'s region is not, and a ' +
+      'bone-only read would pass the file the renderer refuses by its vertex (issue #882)',
+    expect: 'A10_NO_NAN_AFTER_STEPPING',
+    mutate: (a) => ({ ...a, skeletonText: plantScaleChain(a.skeletonText, 0.9 * Math.sqrt(Number.MAX_VALUE)) }),
+    holds: (report) => a10Names(report, 'the setup pose: slot ', ' vertex ', 'Infinity; a posed vertex is finite'),
+  },
+  {
+    // The positive control for M94–M96: large and finite is not refused.
+    name: 'M96b_a_leaf_bone_at_rotation_359_999_and_scale_x_1e100_is_accepted',
+    origin: 'every number here is finite and so is every posed term and vertex — A10 must not read big as broken (issue #882)',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: plantOverflow(a.skeletonText, (j, leaf) => {
+        leaf.rotation = 359.999;
+        leaf.scaleX = 1e100;
+      }),
+    }),
+    holds: (report) => ({
+      held: report.passed.includes('A10_NO_NAN_AFTER_STEPPING'),
+      read: report.passed.includes('A10_NO_NAN_AFTER_STEPPING') ? 'A10 ran and held' : 'A10 did not run and hold',
+    }),
   },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */

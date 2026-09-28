@@ -1289,6 +1289,38 @@ function firstNonFinite(where: string, entries: readonly PosedVertices[], bones:
 }
 
 /**
+ * The same sentence for one skeleton as it stands posed now — its bones, then
+ * the vertices of every region and mesh its slots show, in draw order — or
+ * `null` when every one of those numbers is finite.
+ *
+ * ⭐ This is how `A10_NO_NAN_AFTER_STEPPING` reads each pose it steps (issue
+ * #882), so the gate and the renderer hold one definition of "not finite": the
+ * six terms `firstNonFinite` reads off a bone, and the vertices the runtime
+ * computes from them. Before it A10 read the world POSITION alone, and a bone at
+ * `rotation: 1e309` — finite position, NaN `a`, `b`, `c`, `d` — was gated green
+ * and then refused here. The vertices are read too because a bone can be finite
+ * and still carry one that is not: a two-bone `scaleX` chain of 1e154 × 1e154
+ * leaves the child's `a` at 1e308, finite, and every vertex of its attachment
+ * past the largest double. Only computed once every bone is finite, so a
+ * broken bone is named as the cause rather than through its vertices.
+ */
+export function nonFiniteOfPosed(where: string, skeleton: Skeleton): string | null {
+  const bones: WorldTransform[] = skeleton.bones.map((bone) => {
+    const { a, b, c, d, worldX, worldY } = bone.appliedPose;
+    return { name: bone.data.name, a, b, c, d, worldX, worldY };
+  });
+  const found = firstNonFinite(where, [], bones);
+  if (found !== null) return found;
+  const entries: PosedVertices[] = [];
+  for (const slot of skeleton.drawOrder.appliedPose) {
+    const attachment = slot.appliedPose.attachment;
+    if (!(attachment instanceof MeshAttachment) && !(attachment instanceof RegionAttachment)) continue;
+    entries.push({ slot: slot.data.name, attachment: attachment.name, vertices: worldVerticesOf(skeleton, slot, attachment) });
+  }
+  return firstNonFinite(where, entries, []);
+}
+
+/**
  * How a sampled frame is named in that sentence: the animation, the frame's
  * index at the rate it was sampled and its time — or the bare index for the one
  * frame of a skeleton with no animation, whose setup pose is checked first.
