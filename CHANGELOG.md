@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.3](https://github.com/firejune/rigc/compare/v1.5.2...v1.5.3) (2026-09-28)
+
+
+### Bug Fixes
+
+* **compile:** every enum key of the spec has an owner — boneIndexing, from.rotation, a generator kind and the manifest's mesh.kind outside their sets are refused naming the value and the set, where 5 or "foo" built green or crashed ([#906](https://github.com/firejune/rigc/issues/906)) ([eb5fdd8](https://github.com/firejune/rigc/commit/eb5fdd8a72c91cd86f33fe66dbb7c846aaeb62db)), closes [#900](https://github.com/firejune/rigc/issues/900)
+* **validate:** A10 reads the setup pose of a skeleton with no animation and skips only the stepping half — a static rig posed to NaN is refused where it gated green ([#905](https://github.com/firejune/rigc/issues/905)) ([86e615f](https://github.com/firejune/rigc/commit/86e615fff111273bd28af37fd8930e6e7fd3d6a6)), closes [#902](https://github.com/firejune/rigc/issues/902)
+
+
+### Documentation
+
+* **motion:** §6.4 keys the flag's extreme 27 % after the arm's, as §3.7's table says, and the chain is regenerated; §7 says what a picture measures ([#903](https://github.com/firejune/rigc/issues/903)) ([82d0fab](https://github.com/firejune/rigc/commit/82d0fab37381d76179c2cc62edff7b6497aef9c3)), closes [#897](https://github.com/firejune/rigc/issues/897)
+
 ## [1.5.2](https://github.com/firejune/rigc/compare/v1.5.1...v1.5.2) (2026-09-28)
 
 
