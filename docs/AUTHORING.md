@@ -209,6 +209,7 @@ What the flags mean:
 | `--profile` | `spine` = the 34 validity rules (**the default**) · `spine-html` = all 49, opt-in |
 | `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` and `preview` take it more than once**: `vote` 2–4 times, one per pane, labelled A, B, C, D in the order given; `preview` any number of times, one pane per candidate in the order given, each headed by its path and its gate line, and the same skeleton twice (a directory and its `skeleton.json` are one) is refused by name. `--atlas` goes with one candidate only. Everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview` (each candidate's own first, with several), and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote` and a several-candidate `preview`, so is a name that only *some* candidates have, naming the one that lacks it |
+| `--geometry` | `render` only: also write a `geometry.json` into each frame directory — per frame, every bone's world transform and every slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry and topology, on the frames' own grid and viewport. Every other file is byte for byte what the render writes without it. Refused with `--slot`/`--hide`, because the geometry is the whole pose whatever is drawn — **§8.2** |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
 | `--ballot` | `vote --record` only: the ballot the vote answers (default `ballot.html`). Its embedded manifest is what the vote is checked against, so the ballot file is the record of the question |
 | `--ledger` | `vote --record` only: the append-only JSONL the vote lands in (default `votes.jsonl`), one vote per line |
@@ -852,6 +853,7 @@ bun cli.ts check    --candidate path/to/spine --frames path/to/frames [--skin �
 bun cli.ts bench    3 --candidate path/to/spine [--frames path/to/frames]
 bun cli.ts render   --candidate path/to/spine [--animation …] [--skin …] [--fps 12] [--max 256]
 bun cli.ts render   --candidate path/to/spine --slot <name,…> | --hide <name,…>   # part of the rig, same grid
+bun cli.ts render   --candidate path/to/spine --geometry   # + geometry.json per set: the numbers the frames were drawn from
 bun cli.ts preview  --candidate path/to/spine [--candidate path/to/another …] [--animation …] [--out preview.html]
 bun cli.ts vote     --candidate path/to/a --candidate path/to/b [--out ballot.html]
 bun cli.ts vote     --record vote-<id>.json [--ballot ballot.html] [--ledger votes.jsonl]
@@ -946,7 +948,11 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   in draw order; a slot whose art lives only under another skin is refused naming
   that skin (pass `--skin`); the two flags together are refused. `frames.json`
   records the subset as `slots` or `hidden`, and **`check` refuses such a set as
-  a reference** (§9). `preview`
+  a reference** (§9). `--geometry` writes the numbers each frame was drawn from
+  beside it — every bone's world transform and every attachment's world vertices
+  after skinning, with their rest geometry — for a judgement the pixels cannot
+  make: a mesh triangle's stretch, a region read in its own bone's frame (§8.2).
+  `preview`
   writes one self-contained `.html`: your skeleton, atlas and page PNGs are
   embedded in it as data URIs and played by the official **Spine Web Player**, so
   double-clicking it is also the interop proof — what plays there was played by
@@ -6286,6 +6292,119 @@ exact ones out and penalise the rest. Then close
 the loop with **§9**: the fit's own number says how near this pose is to this frame,
 and only `check` says whether the shot is the shot. **§9.3** is the list of what even
 that cannot see.
+
+### 8.2 The numbers the frames were drawn from — `render --geometry`
+
+A frame set is pixels, and some judgements about a rig are not about pixels: how far
+a mesh triangle is stretched over its rest shape, or whether a region holds still in
+its own bone's frame. Both need the posed numbers, and both need them **on the frames'
+own grid** — a second tool re-sampling the animation would step the runtime its own
+way and drift from the pictures it is meant to explain. So `render --geometry` writes
+them beside the pictures, off the very frames it drew:
+
+```bash
+bun cli.ts render --candidate path/to/spine --geometry [--animation …] [--skin …] [--fps 12]
+```
+
+Each frame directory gains a `geometry.json` beside its `f####.png`. Nothing else
+changes: the PNGs, `contact.png` and `frames.json` are byte for byte what the same
+command writes without the flag. The export costs a small fraction of the render —
+measured on `spineboy-pro` at 12 fps, 190 frames: about 30 ms for the eleven files
+against about 610 ms for the rasterising alone — which is why there is no
+geometry-only mode: a consumer judging frames wants the frames, and skipping them
+would save little.
+
+⛔ **Not with `--slot`/`--hide`.** The two are refused together by name, exit 2,
+nothing written. A subset is a statement about which pixels are *drawn*; the
+geometry is the whole pose whatever a picture leaves out, so beside a subset's frames
+it would describe slots those frames do not draw. The whole-rig run writes the same
+file either way.
+
+**The file, field by field.** `spec` is `rigc-geometry/1`. The header fields sit one
+per line and each `rest` entry and each frame on a line of its own, so a diff of two
+exports names the frame that moved. Two exports of one skeleton are byte-identical.
+
+| Field | What it holds |
+| --- | --- |
+| `coordinates` | the string `spine world, y up, world units` — every position below is in the skeleton's world, not frame pixels |
+| `animation` | the animation, or `null` for a skeleton with none (its one frame is the setup pose) |
+| `skin` | the skin these frames were posed under — absent when none was set, exactly as in `frames.json` |
+| `fps` | the rate the frames were sampled at |
+| `viewport` | `frames.json`'s own `viewport` object, the same numbers: world box `x`, `y`, `width`, `height`, `scale` (frame pixels per world unit), `pixelWidth`, `pixelHeight`. World to frame pixel is `px = (x − viewport.x) · scale`, `py = (viewport.y + viewport.height − y) · scale`, which is the projection the renderer used |
+| `bones` | every bone in declaration order: `{ name, parent }`, `parent` `null` for the root |
+| `slots` | every slot in declaration order: `{ name, bone }` — the bone the slot hangs from |
+| `rest` | one entry per `(slot, attachment)` any frame shows, in order of first appearance: `slot`, `attachment`, `kind` (`region` or `mesh`), `vertices` at rest, `triangles` (vertex index triplets — a region's are the runtime's `0 1 2 2 3 0`), and for a mesh `hull` (the number of hull vertices, which are the first ones) and `uvs` (the attachment's own, `u, v` per vertex over the untrimmed drawing, y down) |
+| `setup` | the setup pose, sampled the way a skeleton with no animation is rendered: `{ bones, attachments }` |
+| `frames` | one per PNG, in index order: `{ index, time, bones, attachments }`. `index` is the number in `f####.png`, `time` is `index / fps` in seconds |
+
+Inside `setup` and each frame:
+
+- `bones` — every bone in declaration order: `{ name, a, b, c, d, worldX, worldY }`,
+  the world transform, so a point `(lx, ly)` in the bone's own frame lands at
+  `(a·lx + b·ly + worldX, c·lx + d·ly + worldY)`. The matrix is complete — rotation,
+  scale and shear all live in `a b c d`.
+- `attachments` — every slot showing a region or a mesh, in the frame's **draw
+  order**: `{ slot, attachment, vertices, color }`. `vertices` are `x, y` per vertex
+  in world units after skinning and deform — the runtime's own
+  `computeWorldVertices` over the **whole** attachment. A region's four are its
+  corners in the order bottom-left, top-left, top-right, bottom-right; a mesh's are
+  in the attachment's own order, so vertex `i` is the same vertex in every frame and
+  in `rest`. `color` is the slot colour times the attachment colour, straight RGBA
+  `0..1` — the same tint the frame was drawn with.
+
+What `rest` means, precisely: the **setup pose's bones with the slot's deform
+empty**, taken for every attachment the file shows — including one the setup pose
+does not show, which a slot only swaps to later. For an attachment the setup pose
+does show, its `rest` vertices and its `setup` vertices are the same numbers bit for
+bit, because they come off one posed skeleton.
+
+⚠️ **What is deliberately not in it.** Slots `--slot`/`--hide` would leave out are in
+it (see above). A clip is not applied: a clipping attachment removes pixels, and the
+clipper's output is a new triangle list whose vertices are not the attachment's and
+are not numbered like them — so `vertices` are the attachment's own, and the frames
+show what the clip left of them. Bounding boxes, points, paths and clipping polygons
+draw nothing and are not listed. Numbers are printed the way every JSON file this
+tool writes prints them — the shortest decimal that reads back as the same double —
+so a vertex in the file *is* the runtime's vertex, not a rounding of it; a pose that
+is not finite is refused naming the frame, the slot, the attachment and the vertex,
+rather than written as `null`.
+
+**The two judgements the file was designed for**, written once so a consumer
+implements what the file promises:
+
+1. **Texture stretch of a mesh triangle.** For each `rest` entry of kind `mesh` and
+   each triangle `(i, j, k)` in its `triangles`, over every frame whose `attachments`
+   carry the same `slot` and `attachment`:
+
+   `stretch = max over frames, max over the edges (i,j) (j,k) (k,i) of |posed edge| / |rest edge|`
+
+   where an edge's length is `hypot(x_j − x_i, y_j − y_i)` over that frame's
+   `vertices` and over `rest`'s. The worst triangle is named by its `slot`, its
+   triangle index and its three vertex indices. A value of exactly `1` is a
+   triangle no frame moved. It is measured against rest, so it counts what the
+   bones do to a weighted mesh as well as what a deform key does — unlike the
+   `DEFORM` block, which compares a key against the same bones with the deform
+   cleared.
+2. **A region still in its bone's own frame.** Take the region's `slot`, look its
+   `bone` up in `slots`, and for each frame carry its four corners into that bone's
+   frame by the inverse of the bone's world transform:
+
+   `det = a·d − b·c`, `dx = x − worldX`, `dy = y − worldY`,
+   `lx = (d·dx − b·dy) / det`, `ly = (−c·dx + a·dy) / det`
+
+   Against the same four carried from `setup`, the largest difference over frames is
+   the region's motion *relative to its bone*: zero, to double rounding, for a region
+   nothing but its bone moves. A face region measured against a head bone this way
+   is the face with the head's own turn, translation and scale taken out.
+
+**Measured on the example corpus** at 12 fps (these are one run's figures, not
+thresholds): `spineboy-pro`'s eleven files total 5.1 MB, from 72 kB (`aim`, one
+frame) to 1.46 MB (`death`, 60 frames), and `sack-pro`'s four 1.4 MB. The largest
+stretch is `sack-pro` `fall-in`, `cape-back` triangle 15, ×6.744; the largest
+still-in-frame residual over every region of `spineboy-pro` is 4.7e-12 world units
+(`portal-streaks2`, whose bone scales; `sack-pro` has no region).
+Topology and UVs sit in `rest` rather than on every frame because they do not
+change: repeating them per frame would add 35 % to `spineboy-pro`'s files.
 
 ---
 

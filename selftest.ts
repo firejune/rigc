@@ -291,6 +291,12 @@ import {
   FRAMES_SPEC,
   frameGeometry,
   framingViewport,
+  GEOMETRY_COORDINATES,
+  GEOMETRY_FILE,
+  GEOMETRY_SPEC,
+  GeometryError,
+  geometryFileOf,
+  geometryText,
   loadPosable,
   pageFor,
   piecesOf,
@@ -310,9 +316,12 @@ import {
   unionBounds,
   viewportFor,
   viewportOfSize,
+  type AttachmentPose,
   type Footprint,
   type Frame,
   type FramesSidecar,
+  type GeometryBone,
+  type GeometryFile,
   type Mesh,
   type Piece,
   type Posable,
@@ -343,7 +352,7 @@ import {
 } from './src/timelines.ts';
 import { readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
-import { skeletonDataFromText, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
+import { skeletonDataFromText, stretchSingularValues, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
 import {
   ASSERTION_NAMES,
   assertionCountForProfile,
@@ -61286,6 +61295,506 @@ function runSeeItSuite(): number {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// render --geometry (issue #864)
+// ---------------------------------------------------------------------------
+
+/**
+ * The per-triangle stretch a geometry file was designed for, computed off the
+ * parsed file alone: for every mesh in `rest`, each triangle's largest
+ * `posed edge / rest edge` over the frames that show it, and the worst one.
+ *
+ * ⭐ Written here the way a consumer that does not link spine-core would write it
+ * — from `docs/AUTHORING.md` §8.5, reading nothing but the file — because that
+ * is the claim `render --geometry` makes: the file is enough.
+ */
+function geometryStretch(file: GeometryFile): {
+  ratio: number;
+  slot: string;
+  attachment: string;
+  triangle: number;
+  ids: number[];
+  frame: number;
+  triangles: number;
+} {
+  let worst = { ratio: -Infinity, slot: '', attachment: '', triangle: -1, ids: [] as number[], frame: -1, triangles: 0 };
+  let triangles = 0;
+  for (const rest of file.rest) {
+    if (rest.kind !== 'mesh') continue;
+    triangles += rest.triangles.length / 3;
+    for (const frame of file.frames) {
+      const posed = frame.attachments.find((a) => a.slot === rest.slot && a.attachment === rest.attachment);
+      if (posed === undefined) continue;
+      for (let t = 0; t * 3 < rest.triangles.length; t++) {
+        const ids = rest.triangles.slice(t * 3, t * 3 + 3);
+        let ratio = 0;
+        for (const [i, j] of [[0, 1], [1, 2], [2, 0]] as const) {
+          const length = (v: number[]): number =>
+            Math.hypot(v[ids[j] * 2] - v[ids[i] * 2], v[ids[j] * 2 + 1] - v[ids[i] * 2 + 1]);
+          const before = length(rest.vertices);
+          if (before > 0) ratio = Math.max(ratio, length(posed.vertices) / before);
+        }
+        if (ratio > worst.ratio) worst = { ...worst, ratio, slot: rest.slot, attachment: rest.attachment, triangle: t, ids, frame: frame.index };
+      }
+    }
+  }
+  return { ...worst, triangles };
+}
+
+/** `vertices` carried into `bone`'s own frame: `[a b; c d]⁻¹ · (p − (worldX, worldY))` per vertex. */
+function intoBoneFrame(bone: GeometryBone, vertices: number[]): number[] {
+  const det = bone.a * bone.d - bone.b * bone.c;
+  const out: number[] = [];
+  for (let i = 0; i + 1 < vertices.length; i += 2) {
+    const dx = vertices[i] - bone.worldX;
+    const dy = vertices[i + 1] - bone.worldY;
+    out.push((bone.d * dx - bone.b * dy) / det, (-bone.c * dx + bone.a * dy) / det);
+  }
+  return out;
+}
+
+/** The largest coordinate difference between two equal-length arrays, or Infinity when their lengths differ. */
+function worstDifference(a: ArrayLike<number>, b: ArrayLike<number>): number {
+  if (a.length !== b.length) return Infinity;
+  let worst = 0;
+  for (let i = 0; i < a.length; i++) worst = Math.max(worst, Math.abs(a[i] - b[i]));
+  return worst;
+}
+
+/** The largest magnitude in an array — what a float32 rounding bound is scaled by. */
+function largestMagnitude(values: ArrayLike<number>): number {
+  let most = 0;
+  for (let i = 0; i < values.length; i++) most = Math.max(most, Math.abs(values[i]));
+  return most;
+}
+
+/** A skeleton's geometry file for one animation, exactly as `render --geometry` would print it, read back. */
+function geometryOf(data: SkeletonData, animation: string, fps: number, fixed?: Viewport): GeometryFile {
+  const viewport = fixed ?? framingViewport(data, 256);
+  if (viewport === null) throw new Error('the probe posed nothing to frame');
+  const frames = sampleAnimation(data, animation, fps, { bones: true, geometry: true });
+  return JSON.parse(geometryText(geometryFileOf(data, animation, fps, frames, viewport, undefined))) as GeometryFile;
+}
+
+function runGeometryExportSuite(): number {
+  console.log('\n── render --geometry: every frame\'s skinned vertices and bone world transforms (issue #864) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const fps = PROTOCOL_FPS;
+
+  // The deform probe: one authored 5x5 grid on a still bone, one yaw key at a
+  // time on the frame grid, and the same grid under a run that deforms nothing.
+  const KEY_TIME = 0.5;
+  const YAW = 12;
+  const turn = buildTurnRig([], { time: KEY_TIME, transform: { kind: 'yaw', radius: TURN_R, degrees: YAW } });
+  const turnData = skeletonDataFromText(turn.result.skeletonText, turn.result.atlasText);
+  const turnFile = geometryOf(turnData, 'turn', fps);
+  const keyFrame = turnFile.frames.find((frame) => Math.abs(frame.time - KEY_TIME) < 1e-12);
+  const headAt = (entries: AttachmentPose[] | undefined): AttachmentPose | undefined =>
+    entries?.find((a) => a.slot === 'head' && a.attachment === 'head');
+  const restHead = turnFile.rest.find((r) => r.slot === 'head' && r.attachment === 'head');
+
+  // GY01 — at the key's own time, the export's vertices are the ones the deform survey posed.
+  {
+    const surveyed = surveyDeformKeys(turnData).keys.find(
+      (k) => k.animation === 'turn' && k.slot === 'head' && Math.abs(k.time - KEY_TIME) < 1e-6 && k.moved > 0,
+    );
+    const posed = headAt(keyFrame?.attachments);
+    const probes: string[] = [];
+    let displacement = NaN;
+    let vertex = -1;
+    let stretch = NaN;
+    let tolerance = NaN;
+    if (keyFrame === undefined) probes.push(`no frame of the ${fps} fps export sits at the key's time ${KEY_TIME}s`);
+    if (surveyed === undefined) probes.push(`surveyDeformKeys reported no moving key on head at ${KEY_TIME}s`);
+    if (posed === undefined || restHead === undefined) probes.push('the export carries no head/head entry at the key frame or in rest');
+    if (keyFrame !== undefined && worstDifference(
+      keyFrame.bones.flatMap((b) => [b.a, b.b, b.c, b.d, b.worldX, b.worldY]),
+      turnFile.setup.bones.flatMap((b) => [b.a, b.b, b.c, b.d, b.worldX, b.worldY]),
+    ) !== 0) {
+      probes.push('the bones moved between setup and the key frame, so frame minus rest is not the deform the survey measures');
+    }
+    if (surveyed !== undefined && posed !== undefined && restHead !== undefined) {
+      // The survey poses into Float32Array; the export keeps the runtime's
+      // doubles. Each side of a difference is then off by at most half a float32
+      // ulp of the largest coordinate, so two of them bound the gap.
+      tolerance = 2 * largestMagnitude(posed.vertices) * 2 ** -24;
+      for (let v = 0; v * 2 < posed.vertices.length; v++) {
+        const d = Math.hypot(posed.vertices[v * 2] - restHead.vertices[v * 2], posed.vertices[v * 2 + 1] - restHead.vertices[v * 2 + 1]);
+        if (d > (Number.isNaN(displacement) ? -1 : displacement)) {
+          displacement = d;
+          vertex = v;
+        }
+      }
+      if (!(Math.abs(displacement - surveyed.maxDisplacement) <= tolerance)) {
+        probes.push(`the export's largest displacement is ${displacement} and the survey's ${surveyed.maxDisplacement} (tolerance ${tolerance.toExponential(2)})`);
+      }
+      // The yaw moves every vertex of one column alike, so the largest
+      // displacement is a tie across rows and each side breaks it at whichever
+      // vertex its own rounding puts first. What must agree is that the
+      // survey's vertex is one of the export's largest.
+      const at = surveyed.maxDisplacementVertex;
+      const theirs = Math.hypot(posed.vertices[at * 2] - restHead.vertices[at * 2], posed.vertices[at * 2 + 1] - restHead.vertices[at * 2 + 1]);
+      if (!(Math.abs(theirs - displacement) <= tolerance)) {
+        probes.push(`the survey's most-displaced vertex ${at} moves ${theirs} in the export, not the export's largest ${displacement} (vertex ${vertex})`);
+      }
+      const extreme = surveyed.stretchMax;
+      const sigma = extreme === null ? null : stretchSingularValues(restHead.vertices, posed.vertices, restHead.triangles, extreme.triangle);
+      stretch = sigma?.max ?? NaN;
+      // The same float32 half-ulps, over the shortest rest edge a singular value divides by.
+      const shortest = Math.min(...[...Array(restHead.triangles.length / 3).keys()].flatMap((t) =>
+        [[0, 1], [1, 2], [2, 0]].map(([i, j]) => Math.hypot(
+          restHead.vertices[restHead.triangles[t * 3 + j] * 2] - restHead.vertices[restHead.triangles[t * 3 + i] * 2],
+          restHead.vertices[restHead.triangles[t * 3 + j] * 2 + 1] - restHead.vertices[restHead.triangles[t * 3 + i] * 2 + 1],
+        ))));
+      const stretchTolerance = (4 * tolerance) / shortest;
+      if (extreme === null || !(Math.abs(stretch - extreme.value) <= stretchTolerance)) {
+        probes.push(`σ₁ of triangle ${extreme?.triangle ?? '?'} from the export is ${stretch} and the survey's ${extreme?.value ?? 'none'} (tolerance ${stretchTolerance.toExponential(2)})`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'GY01_AT_A_DEFORM_KEYS_OWN_TIME_THE_EXPORT_HOLDS_THE_VERTICES_THE_DEFORM_SURVEY_POSED',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `frame ${keyFrame?.index ?? '?'} (t=${keyFrame?.time ?? '?'}s) of the ${fps} fps export against the survey's key ` +
+          `at ${KEY_TIME}s: largest displacement ${displacement} at vertex ${vertex} (survey ${surveyed?.maxDisplacement} at ` +
+          `${surveyed?.maxDisplacementVertex}, one of the same column's tie), σ₁ ${stretch} (survey ${surveyed?.stretchMax?.value}); tolerance ` +
+          `${tolerance.toExponential(2)} = two float32 half-ulps of the largest coordinate, since the survey poses into Float32Array`,
+      ),
+      'issue #864: the export is posed by the renderer\'s stepping and the survey by a fresh state at the key\'s time — ' +
+        'two recipes, so agreement on the frame both claim is what makes either a measurement of the same pose',
+    );
+  }
+
+  // GY02 — the setup entry is the rest geometry, and every bone composes its parent's world with its own setup local.
+  const SETUP_DEGREES = 30;
+  const SPIN_DEGREES = 90;
+  const spin = ((): { data: SkeletonData; dir: string; build: ReturnType<typeof runCli> } => {
+    const dirs = writeProbeRig({
+      bones: [
+        { name: 'root' },
+        { name: 'block', parent: 'root', x: 7, y: -3, rotation: SETUP_DEGREES, scaleX: 1.5, scaleY: 0.8, length: 12 },
+      ],
+    });
+    const motionPath = join(dirs.dir, 'spin.motion.json');
+    writeFileSync(
+      motionPath,
+      `${JSON.stringify({
+        spec: 'rigc-motion/1',
+        archetype: 'static_probe',
+        cut: 'static_probe',
+        easings: {},
+        animations: {
+          spin: { duration: 1, loop: false, tracks: [{ bone: 'block', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [SPIN_DEGREES] }] }] },
+        },
+      }, null, 2)}\n`,
+    );
+    const build = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir]);
+    const posable = build.status === 0 ? loadPosable(join(dirs.outDir, 'skeleton.json'), join(dirs.outDir, 'skeleton.atlas'), dirs.outDir) : null;
+    return { data: posable?.data ?? turnData, dir: dirs.dir, build };
+  })();
+  {
+    const probes: string[] = [];
+    if (spin.build.status !== 0) probes.push(`the spin probe did not build (exit ${String(spin.build.status)}): ${spin.build.stderr.trim().slice(0, 200)}`);
+    const spinFile = geometryOf(spin.data, spin.build.status === 0 ? 'spin' : 'turn', fps);
+    let composed = 0;
+    let worstCompose = 0;
+    for (const file of [turnFile, spinFile]) {
+      for (const shown of file.setup.attachments) {
+        const rest = file.rest.find((r) => r.slot === shown.slot && r.attachment === shown.attachment);
+        if (rest === undefined || worstDifference(rest.vertices, shown.vertices) !== 0) {
+          probes.push(`${file.animation}: setup's ${shown.slot}/${shown.attachment} is ${rest === undefined ? 'missing from rest' : 'not bit-identical to its rest entry'}`);
+        }
+      }
+      const data = file === turnFile ? turnData : spin.data;
+      for (const declared of file.bones) {
+        const world = file.setup.bones.find((b) => b.name === declared.name);
+        const bone = data.findBone(declared.name)?.setupPose ?? null;
+        if (world === undefined || bone === null) {
+          probes.push(`${file.animation}: bone ${declared.name} has no setup entry`);
+          continue;
+        }
+        // An `inherit: normal` bone's local matrix, written out from its setup
+        // fields rather than read off its world. Through the runtime's own
+        // `cosDeg`/`sinDeg`: its degree-to-radian factor is built on
+        // `MathUtils.PI = 3.1415927`, so `cos 90°` is -2.3e-8 there and not 0,
+        // and a control on `Math.PI` would measure that constant, not the
+        // composition.
+        const la = MathUtils.cosDeg(bone.rotation + bone.shearX) * bone.scaleX;
+        const lb = MathUtils.cosDeg(bone.rotation + 90 + bone.shearY) * bone.scaleY;
+        const lc = MathUtils.sinDeg(bone.rotation + bone.shearX) * bone.scaleX;
+        const ld = MathUtils.sinDeg(bone.rotation + 90 + bone.shearY) * bone.scaleY;
+        const parent = declared.parent === null ? null : file.setup.bones.find((b) => b.name === declared.parent);
+        const p = parent ?? { a: 1, b: 0, c: 0, d: 1, worldX: 0, worldY: 0 };
+        const expected = [
+          p.a * la + p.b * lc, p.a * lb + p.b * ld, p.c * la + p.d * lc, p.c * lb + p.d * ld,
+          p.a * bone.x + p.b * bone.y + p.worldX, p.c * bone.x + p.d * bone.y + p.worldY,
+        ];
+        const gap = worstDifference(expected, [world.a, world.b, world.c, world.d, world.worldX, world.worldY]);
+        composed++;
+        worstCompose = Math.max(worstCompose, gap);
+        if (!(gap <= 1e-9)) probes.push(`${file.animation}: bone ${declared.name}'s world is ${gap.toExponential(2)} from its parent's world times its setup local`);
+      }
+    }
+    // The turn grid's rest, against the rig spec's own vertices carried by the
+    // head bone's setup world transform — an unweighted mesh's vertices are in
+    // its slot bone's space. Beside it, how far that is from the naive
+    // "spec plus (400, 400)", which is the runtime's cos 90° again.
+    const headSetup = turnFile.setup.bones.find((b) => b.name === 'head');
+    const specLocal = TURN_ORDER.flatMap((id) => [TURN_COLUMNS[id % TURN_COLUMNS.length], TURN_ROWS[Math.floor(id / TURN_COLUMNS.length)]]);
+    const specRest = headSetup === undefined ? [] : specLocal.flatMap((value, i) => i % 2 === 1 ? [] : [
+      headSetup.a * value + headSetup.b * specLocal[i + 1] + headSetup.worldX,
+      headSetup.c * value + headSetup.d * specLocal[i + 1] + headSetup.worldY,
+    ]);
+    const specGap = restHead === undefined ? Infinity : worstDifference(restHead.vertices, specRest);
+    const naiveGap = restHead === undefined ? Infinity : worstDifference(restHead.vertices, specLocal.map((value) => value + 400));
+    if (!(specGap <= 1e-9)) probes.push(`the turn grid's rest vertices are ${specGap} from the rig spec's vertices under the head bone's setup world transform`);
+    // An attachment the setup pose does not show still gets a rest entry: the
+    // head slot swaps to a region a quarter of the way in and back.
+    const swapped = buildTurnRig([], {
+      deformKeys: [{ t: 0 }, { t: 1 }],
+      swapTo: 'away',
+      tracks: [{ slot: 'head', property: 'attachment', keys: [{ t: 0, v: 'head' }, { t: 0.25, v: 'away' }, { t: 0.75, v: 'head' }] }],
+    });
+    const swapFile = geometryOf(skeletonDataFromText(swapped.result.skeletonText, swapped.result.atlasText), 'turn', fps);
+    const awayRest = swapFile.rest.find((r) => r.slot === 'head' && r.attachment === 'away');
+    const awayFrames = swapFile.frames.flatMap((f) => f.attachments.filter((a) => a.slot === 'head' && a.attachment === 'away'));
+    if (swapFile.setup.attachments.some((a) => a.attachment === 'away')) probes.push('the swap probe shows "away" at setup, so its rest entry proves nothing');
+    if (awayRest === undefined || awayRest.kind !== 'region' || awayFrames.length === 0) {
+      probes.push(`the swap probe's rest ${awayRest === undefined ? 'has no' : `has a ${awayRest.kind}`} "away" entry over ${awayFrames.length} frame(s) that show it`);
+    } else if (awayFrames.some((a) => worstDifference(a.vertices, awayRest.vertices) !== 0)) {
+      probes.push('"away" sits on a still bone and is rigid, yet a frame\'s corners are not its rest corners bit for bit');
+    }
+    rmSync(swapped.dir, { recursive: true, force: true });
+    const blockSetup = spinFile.setup.bones.find((b) => b.name === 'block');
+    // 1e-6°: the runtime's π is 3.1415927, 1.5e-8 relative off, which is 4.4e-7° at 30°.
+    if (blockSetup === undefined || Math.abs(Math.atan2(blockSetup.c, blockSetup.a) / (Math.PI / 180) - SETUP_DEGREES) > 1e-6) {
+      probes.push('the spin probe\'s block bone does not sit at its 30° setup rotation, so the composition was checked on a trivial matrix');
+    }
+    const held = probes.length === 0;
+    say(
+      'GY02_THE_SETUP_ENTRY_IS_THE_REST_GEOMETRY_AND_EVERY_BONE_COMPOSES_ITS_PARENTS_WORLD_WITH_ITS_LOCAL',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `every attachment the setup pose shows is bit-identical to its rest entry on both probes, and a region the setup ` +
+          `pose does not show has one too, equal to the ${awayFrames.length} frame(s) that swap to it; the turn grid's rest is ` +
+          `the rig spec's ${TURN_ORDER.length} vertices under the head bone's world transform to ${specGap.toExponential(2)} ` +
+          `(and ${naiveGap.toExponential(2)} from the spec plus (400, 400), since the runtime's cos 90° is ` +
+          `${MathUtils.cosDeg(90).toExponential(2)}); ${composed} bone(s) — one at ${SETUP_DEGREES}°, x1.5/x0.8, offset (7, -3) — ` +
+          `compose parent·local to ${worstCompose.toExponential(2)} (tolerance 1e-9)`,
+      ),
+      'a stretch ratio divides by the rest edge and a bone frame inverts the world matrix, so a rest that is not the ' +
+        'setup pose or a world transform that is not the parent\'s times the local would make both formulas measure a pose nobody authored',
+    );
+
+    // GY03 — a region on a rotating bone is exactly still in that bone's frame.
+    const stillProbes: string[] = [];
+    let residual = 0;
+    let travelled = 0;
+    let turned = 0;
+    const markerRest = spinFile.rest.find((r) => r.slot === 'marker');
+    const boneOf = spinFile.slots.find((s) => s.name === 'marker')?.bone;
+    const reference = boneOf === undefined || markerRest === undefined
+      ? null
+      : intoBoneFrame(spinFile.setup.bones.find((b) => b.name === boneOf) ?? spinFile.setup.bones[0], markerRest.vertices);
+    for (const frame of spinFile.frames) {
+      const bone = frame.bones.find((b) => b.name === boneOf);
+      const marker = frame.attachments.find((a) => a.slot === 'marker');
+      if (bone === undefined || marker === undefined || reference === null || markerRest === undefined) continue;
+      residual = Math.max(residual, worstDifference(intoBoneFrame(bone, marker.vertices), reference));
+      travelled = Math.max(travelled, worstDifference(marker.vertices, markerRest.vertices));
+      turned = Math.max(turned, Math.abs(Math.atan2(bone.c, bone.a) - Math.atan2(spinFile.setup.bones.find((b) => b.name === boneOf)?.c ?? 0, spinFile.setup.bones.find((b) => b.name === boneOf)?.a ?? 1)) / (Math.PI / 180));
+    }
+    const STILL = 1e-9;
+    if (reference === null) stillProbes.push('the spin export carries no marker region, or no slot table entry naming its bone');
+    if (boneOf !== 'block') stillProbes.push(`the slot table hangs marker from ${String(boneOf)} rather than the rig spec's "block"`);
+    if (!(residual <= STILL)) stillProbes.push(`marker's corners move ${residual.toExponential(2)} in block's own frame across the spin (tolerance ${STILL})`);
+    stillProbes.push(...floorProbes(
+      [[travelled, 1, `marker's corners travel ${travelled} world units across the spin`], [turned, SPIN_DEGREES - 1e-6, `block turns ${turned}° across the spin, keyed to ${SPIN_DEGREES}°`]],
+      'so being still in the bone frame would be true of a region that never moved',
+    ));
+    const stillHeld = stillProbes.length === 0;
+    say(
+      'GY03_A_REGION_ON_A_ROTATING_BONE_IS_STILL_IN_THAT_BONES_OWN_FRAME',
+      stillHeld,
+      probeDetail(
+        stillHeld,
+        stillProbes,
+        `block turns ${turned.toFixed(3)}° over ${spinFile.frames.length} frames and marker's corners travel ` +
+          `${travelled.toFixed(3)} world units; carried by the inverse of block's world transform they move ` +
+          `${residual.toExponential(2)} (tolerance ${STILL}, far above double rounding and far below a pixel)`,
+      ),
+      'issue #864 (b): a face read in the head\'s frame is the second judgement the export exists for, and it is the ' +
+        'inverse of a world transform applied to a region\'s corners — which has to hold exactly where nothing but the bone moved',
+    );
+  }
+
+  // GY04 — two exports are byte-identical, and --geometry changes no other file.
+  {
+    const work = mkdtempSync(join(tmpdir(), 'rigc-geometry-'));
+    const candidate = join(work, 'turn');
+    const built = runCli(['build', '--rig', turn.opts.rigPath, '--motion', turn.opts.motionPath, '--images', turn.opts.imagesDir ?? turn.dir, '--out', candidate]);
+    const renderInto = (name: string, extra: string[]): ReturnType<typeof runCli> =>
+      runCli(['render', '--candidate', candidate, ...extra, '--out', join(work, name)]);
+    const first = renderInto('first', ['--geometry']);
+    const second = renderInto('second', ['--geometry']);
+    const plain = renderInto('plain', []);
+    const filesOf = (name: string): string[] =>
+      existsSync(join(work, name))
+        ? readdirSync(join(work, name), { recursive: true }).map(String).filter((f) => statSync(join(work, name, f)).isFile()).sort()
+        : [];
+    const probes: string[] = [];
+    for (const [label, run] of [['build', built], ['first', first], ['second', second], ['plain', plain]] as const) {
+      if (run.status !== 0) probes.push(`${label} exited ${String(run.status)}: ${(run.stderr || run.stdout).trim().slice(0, 200)}`);
+    }
+    const geometryFiles = filesOf('first').filter((f) => basename(f) === GEOMETRY_FILE);
+    const differing = filesOf('first').filter((f) => !existsSync(join(work, 'second', f)) || !readFileSync(join(work, 'first', f)).equals(readFileSync(join(work, 'second', f))));
+    if (differing.length > 0) probes.push(`two --geometry runs differ in ${differing.join(', ')}`);
+    const others = filesOf('first').filter((f) => basename(f) !== GEOMETRY_FILE);
+    const moved = others.filter((f) => !existsSync(join(work, 'plain', f)) || !readFileSync(join(work, 'first', f)).equals(readFileSync(join(work, 'plain', f))));
+    if (moved.length > 0) probes.push(`--geometry changed ${moved.join(', ')} against a plain render`);
+    if (filesOf('plain').length !== others.length) probes.push(`a plain render wrote ${filesOf('plain').length} file(s) and a --geometry render ${others.length} beside its geometry`);
+    const written = geometryFiles.length === 0 ? null : (JSON.parse(readFileSync(join(work, 'first', geometryFiles[0]), 'utf8')) as GeometryFile);
+    const sidecar = existsSync(join(work, 'first', FRAMES_SIDECAR))
+      ? (JSON.parse(readFileSync(join(work, 'first', FRAMES_SIDECAR), 'utf8')) as FramesSidecar)
+      : null;
+    if (written === null || sidecar === null) probes.push(`the --geometry run wrote ${geometryFiles.length} ${GEOMETRY_FILE} and ${sidecar === null ? 'no' : 'a'} ${FRAMES_SIDECAR}`);
+    else {
+      if (JSON.stringify(written.viewport) !== JSON.stringify(sidecar.viewport)) probes.push(`${GEOMETRY_FILE}'s viewport ${JSON.stringify(written.viewport)} is not ${FRAMES_SIDECAR}'s ${JSON.stringify(sidecar.viewport)}`);
+      const pngs = filesOf('first').filter((f) => dirname(f) === dirname(geometryFiles[0]) && /^f\d{4}\.png$/.test(basename(f))).length;
+      if (written.frames.length !== pngs) probes.push(`${GEOMETRY_FILE} carries ${written.frames.length} frame(s) beside ${pngs} PNG(s)`);
+      if (written.spec !== GEOMETRY_SPEC || written.coordinates !== GEOMETRY_COORDINATES) probes.push(`the header says spec ${written.spec}, coordinates ${written.coordinates}`);
+      if (JSON.stringify(written) !== JSON.stringify(turnFile)) probes.push(`the CLI's ${GEOMETRY_FILE} is not the library's geometryFileOf for the same skeleton`);
+    }
+    const held = probes.length === 0;
+    say(
+      'GY04_TWO_GEOMETRY_EXPORTS_ARE_BYTE_IDENTICAL_AND_CHANGE_NO_OTHER_FILE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `two \`render --geometry\` runs agree byte for byte over ${filesOf('first').length} file(s); the ${others.length} ` +
+          `beside ${GEOMETRY_FILE} are the plain render's bytes; its viewport is ${FRAMES_SIDECAR}'s and it carries one ` +
+          `frame per PNG (${written?.frames.length ?? 0})`,
+      ),
+      'A18\'s contract, extended to the export: a consumer diffs two geometry files to find what moved, and a file ' +
+        'that differed run to run would report motion that is not there — while a flag that nudged the pictures would change the frames it describes',
+    );
+
+    // GY05 — an unknown animation is refused by name on the export path too.
+    const unknown = renderInto('unknown', ['--geometry', '--animation', 'no-such-take']);
+    const unknownHeld =
+      unknown.status === 2 &&
+      unknown.stderr.includes('no animation "no-such-take" in this skeleton; it has [turn]') &&
+      filesOf('unknown').length === 0;
+    say(
+      'GY05_AN_UNKNOWN_ANIMATION_IS_REFUSED_BY_NAME_ON_THE_GEOMETRY_PATH_AND_NOTHING_IS_WRITTEN',
+      unknownHeld,
+      `exit ${String(unknown.status)}, ${filesOf('unknown').length} file(s) written: ${JSON.stringify(unknown.stderr.split('\n')[0])}`,
+      'the export is the same command as the pictures, so it must fail the same way — a geometry file for an animation ' +
+        'nobody asked for is a set of numbers about the wrong take',
+    );
+
+    // GY06 — a slot subset and the export are refused together.
+    const subsetProbes: string[] = [];
+    for (const [flag, value] of [['--slot', 'head'], ['--hide', 'head']] as const) {
+      const run = renderInto(`subset${flag}`, ['--geometry', flag, value]);
+      if (run.status !== 2 || !run.stderr.includes(`--geometry takes no ${flag}`) || filesOf(`subset${flag}`).length > 0) {
+        subsetProbes.push(`--geometry ${flag} ${value} exited ${String(run.status)} writing ${filesOf(`subset${flag}`).length} file(s): ${JSON.stringify(run.stderr.split('\n')[0])}`);
+      }
+    }
+    const subsetAlone = renderInto('subset-alone', ['--slot', 'head']);
+    if (subsetAlone.status !== 0) subsetProbes.push(`--slot head without --geometry exited ${String(subsetAlone.status)}, so the refusal is not the pairing's`);
+    const subsetHeld = subsetProbes.length === 0;
+    say(
+      'GY06_GEOMETRY_WITH_A_SLOT_SUBSET_IS_REFUSED_BY_NAME_AND_WRITES_NOTHING',
+      subsetHeld,
+      probeDetail(
+        subsetHeld,
+        subsetProbes,
+        '--geometry with --slot and with --hide each exit 2 naming the pair and write nothing; --slot head alone renders',
+      ),
+      'the geometry is the whole pose whatever a picture leaves out, so beside a subset\'s frames it would describe ' +
+        'slots those frames do not draw — refused rather than written, since the whole-rig run writes the same file',
+    );
+    rmSync(work, { recursive: true, force: true });
+  }
+
+  // GY07 — the stretch formula, off the file alone: the closed form on the yawed grid, exactly 1 where nothing deforms.
+  {
+    const ratios = columnRatios(turnShifts(YAW));
+    const expected = Math.max(1, ...ratios);
+    const widest = ratios.indexOf(Math.max(...ratios));
+    const measured = geometryStretch(turnFile);
+    const flat = buildTurnRig([], { deformKeys: [{ t: 0 }, { t: 1 }] });
+    const flatFile = geometryOf(skeletonDataFromText(flat.result.skeletonText, flat.result.atlasText), 'turn', fps);
+    const still = geometryStretch(flatFile);
+    const columns = measured.ids.map((v) => turnColumn(v));
+    const probes: string[] = [];
+    if (!(Math.abs(measured.ratio - expected) < 1e-5)) probes.push(`the worst ratio is ${measured.ratio} where the closed form gives ${expected}`);
+    if (!(expected > 1)) probes.push(`the closed form's widest column pair scales by ${expected}, so a stretch of 1 would pass`);
+    if (Math.min(...columns) !== widest || Math.max(...columns) !== widest + 1) {
+      probes.push(`the worst triangle ${measured.triangle} [${measured.ids.join(', ')}] spans columns ${columns.join(', ')}, not the widened pair ${widest}–${widest + 1}`);
+    }
+    if (measured.frame !== keyFrame?.index) probes.push(`the worst frame is ${measured.frame}, not the key's frame ${keyFrame?.index ?? '?'}`);
+    if (still.ratio !== 1) probes.push(`an animation that deforms nothing reads ${still.ratio} rather than exactly 1`);
+    if (measured.triangles === 0 || still.triangles === 0) probes.push(`the rest tables carry ${measured.triangles} and ${still.triangles} mesh triangle(s)`);
+    rmSync(flat.dir, { recursive: true, force: true });
+    const held = probes.length === 0;
+    say(
+      'GY07_THE_STRETCH_FORMULA_OFF_THE_FILE_READS_THE_CLOSED_FORM_AND_EXACTLY_ONE_WHERE_NOTHING_DEFORMS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `a ${YAW}° yaw widens column pair ${widest}–${widest + 1} by x${expected.toFixed(6)}; the file alone names ` +
+          `${measured.slot}/${measured.attachment} triangle ${measured.triangle} [${measured.ids.join(', ')}] at frame ` +
+          `${measured.frame}, ratio x${measured.ratio.toFixed(6)} (tolerance 1e-5, the float32 offsets); the same grid ` +
+          `under keys that deform nothing reads x${still.ratio} over ${still.triangles} triangle(s)`,
+      ),
+      'spine-parts #31 reads texture stretch off this file and nothing else, so the formula AUTHORING §8 states has to ' +
+        'find the triangle a closed form predicts and say exactly 1 where the pose never moved a vertex',
+    );
+  }
+
+  // GY08 — a number the file cannot hold is refused by name, before anything is written.
+  {
+    const planted = turn.result.skeletonText.replace(/"x":\s*400/, '"x": 1e309');
+    const probes: string[] = [];
+    if (planted === turn.result.skeletonText) probes.push('the plant found no `"x": 400` to replace, so nothing was broken');
+    let refused = '';
+    try {
+      // A box of its own: framing an infinite pose finds no box at all, and the
+      // refusal under test is the export's, not the framing's.
+      geometryOf(skeletonDataFromText(planted, turn.result.atlasText), 'turn', fps, viewportFor(0, 0, 1, 1, 256));
+    } catch (err) {
+      refused = err instanceof GeometryError ? err.message : `not a GeometryError: ${(err as Error).message}`;
+    }
+    if (!/slot "head" attachment "head" vertex \d+ has x Infinity/.test(refused) && !/bone "head" has worldX Infinity/.test(refused)) {
+      probes.push(`the planted infinity was answered ${JSON.stringify(refused || 'with a file')}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'GY08_A_POSE_THAT_IS_NOT_FINITE_IS_REFUSED_BY_NAME_RATHER_THAN_WRITTEN_AS_NULL',
+      held,
+      probeDetail(held, probes, `a head bone at x=1e309 is refused: ${JSON.stringify(refused)}; the unplanted skeleton exports (GY01, GY07)`),
+      'JSON.stringify writes NaN and Infinity as null, and a consumer reading null as a coordinate measures a hole ' +
+        'as geometry — the silence this repository converts into a named failure',
+    );
+  }
+
+  rmSync(turn.dir, { recursive: true, force: true });
+  rmSync(spin.dir, { recursive: true, force: true });
+  return bad;
+}
+
 /** The clip fixture's polygon, in the bone's own space: smaller than both parts, so each has pixels to lose. */
 const CLIP_PROBE_POLYGON = [-2, -2, 2, -2, 2, 2, -2, 2];
 
@@ -73597,6 +74106,7 @@ function main(): void {
   const docsQuotes = tally.of('docs-transcript', runDocsQuoteSuite, { failures: (value) => value.failures });
   tally.of('doc-script', runDocScriptSuite);
   tally.of('see-it', runSeeItSuite);
+  tally.of('geometry-export', runGeometryExportSuite);
   tally.of('pose', runPoseSuite);
   tally.of('chainfit', runChainFitSuite);
   tally.of('ballot', runBallotSuite);
@@ -74234,6 +74744,14 @@ function main(): void {
       'to RGBA while still refusing a colour type that is not one, a preview embedding the skeleton, the atlas and ' +
       'one data URI per page under the names the player asks for, the player referenced rather than vendored, both ' +
       'commands in the help, and a misspelled --animation refused by name)' +
+      ', + ' + n('geometry-export') + ' geometry-export controls (issue #864 — `render --geometry`, the numbers a frame ' +
+      'set was drawn from: at a deform key\'s own time the export holds the vertices the deform survey posed, to two ' +
+      'float32 half-ulps; the setup entry is the rest table bit for bit and every bone composes its parent\'s world ' +
+      'with its own setup local; a region on a rotating bone is still in that bone\'s frame; two exports are byte-' +
+      'identical and leave every other file a plain render writes unchanged; an unknown animation and a slot subset ' +
+      'are refused by name with nothing written; the stretch formula AUTHORING §8 states, run off the parsed file ' +
+      'alone, finds the triangle a closed form predicts and reads exactly 1 where nothing deforms; and a pose that is ' +
+      'not finite is refused rather than written as null)' +
       ', + ' + n('pose') + ' pose controls (a rig rendered at a chosen scale and its placements read back out of the picture ' +
       'within a pixel, a degree and 8% — one PNG posed twice reported as TWO placements rather than picked ' +
       "between, a round part's rotation reported as free where nothing else is, a foreign part / a part the " +
