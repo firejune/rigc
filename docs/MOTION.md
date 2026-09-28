@@ -767,7 +767,7 @@ late, §3.8's overshoot is live; animation name → **`raise`**.
 
 ### 1. The art, and the two pictures
 
-```bash
+```bash setup
 mkdir -p semaphore/parts && cd semaphore
 bun -e '
 const files = {
@@ -806,15 +806,15 @@ rigc pose
   ..    frame   …/semaphore/poseA.png  (160x200)
   ..    ground  rgb(238, 238, 234) over 100% of the border ring
   ..    parts   …/semaphore/parts  (3 png)
-  ..    search  scale 0.5–2 in 7 step(s) · rotation -180°–180° step 15° · refuse above residual 0.25
-  PLACE  arm.png   x=   91.9  y=  122.8  rot=   61.9°  scale=0.968  residual=0.0320  unexplained=  4%
-                   found on a 10x13 anchor grid, step 4 at 4x reduction
-  PLACE  flag.png  x=  104.7  y=  156.1  rot=   84.3°  scale=0.955  residual=0.0135  unexplained=  0%
+  ..    search  scale 0.5–2 in 7 step(s) · rotation -180°–180° in 24 step(s) of 15° · refuse above residual 0.25
+  PLACE  arm.png   x=   92.0  y=  122.8  rot=   61.9°  scale=0.970  residual=0.0320  unexplained=  4%
                    found on a 20x25 anchor grid, step 4 at 2x reduction
-  AMBIG  post.png  x=   79.0  y=  141.7  rot=   -0.4°  scale=0.690  residual=0.0687  unexplained= 25%
-                   found on a 7x9 anchor grid, step 3 at 8x reduction
-                   alt 2: x=   78.9  y=  140.7  rot=   -0.4°  scale=0.650  residual=0.0692  unexplained= 26%
-                   alt 3: x=   78.4  y=  135.5  rot=   -0.5°  scale=0.500  residual=0.0702  unexplained= 23%
+  PLACE  flag.png  x=  104.7  y=  156.1  rot=   84.3°  scale=0.955  residual=0.0135  unexplained=  0%
+                   found on a 40x50 anchor grid, step 2 at 2x reduction
+  AMBIG  post.png  x=   79.9  y=  149.0  rot=   -0.1°  scale=0.971  residual=0.0593  unexplained= 16%
+                   found on a 14x17 anchor grid, step 6 at 2x reduction
+                   alt 2: x=   79.0  y=  141.7  rot=   -0.5°  scale=0.691  residual=0.0687  unexplained= 25%
+                   ambiguous: part is 14x96 px (span 93.2 frame px, opaque 1) with texture 0.0146, detail 1.406; 43 candidate(s), best 0.0593, next 0.0687, spread 0.0095 — above the measured floor (AUTHORING §11.5: detail 0.5, measured from 24 px up), so size and texture do not explain this; either the frame holds more than one place this part fits, or every candidate missed the true one — a narrower --scale or --rotation window around what you know of the part tells the two apart
 ```
 
 ⚠️ **The post came back at scale 0.690 with two alternates trailing it down to 0.500 —
@@ -830,17 +830,31 @@ rigc pose --images parts --frame poseB.png --scale 0.85,1.2 --out poseB.json
 ```
 
 ```
-  ..    search  scale 0.85–1.2 in 2 step(s) · rotation -180°–180° step 15° · refuse above residual 0.25
-  PLACE  arm.png   x=   91.9  y=  122.8  rot=   61.9°  scale=0.968  residual=0.0320  unexplained=  4%
-  PLACE  flag.png  x=  104.7  y=  156.1  rot=   84.3°  scale=0.955  residual=0.0135  unexplained=  0%
-  PLACE  post.png  x=   79.9  y=  148.6  rot=   -0.1°  scale=0.975  residual=0.0589  unexplained= 16%
+rigc pose
+  ..    frame   …/semaphore/poseA.png  (160x200)
+  ..    ground  rgb(238, 238, 234) over 100% of the border ring
+  ..    parts   …/semaphore/parts  (3 png)
+  ..    search  scale 0.85–1.2 in 2 step(s) · rotation -180°–180° in 24 step(s) of 15° · refuse above residual 0.25
+  PLACE  arm.png   x=   91.9  y=  122.8  rot=   61.9°  scale=0.970  residual=0.0320  unexplained=  4%
+                   found on a 20x25 anchor grid, step 4 at 2x reduction
+  PLACE  flag.png  x=  104.7  y=  156.1  rot=   84.1°  scale=0.956  residual=0.0135  unexplained=  0%
+                   found on a 40x50 anchor grid, step 2 at 2x reduction
+  PLACE  post.png  x=   79.9  y=  148.5  rot=   -0.1°  scale=0.971  residual=0.0593  unexplained= 16%
+                   found on a 14x17 anchor grid, step 6 at 2x reduction
 ```
 
 ```
-  ..    search  scale 0.85–1.2 in 2 step(s) · rotation -180°–180° step 15° · refuse above residual 0.25
-  PLACE  arm.png   x=  102.6  y=   94.8  rot=  -18.2°  scale=0.973  residual=0.0305  unexplained=  4%
-  PLACE  flag.png  x=  137.4  y=   86.0  rot=   -6.6°  scale=0.956  residual=0.0134  unexplained=  1%
+rigc pose
+  ..    frame   …/semaphore/poseB.png  (160x200)
+  ..    ground  rgb(238, 238, 234) over 100% of the border ring
+  ..    parts   …/semaphore/parts  (3 png)
+  ..    search  scale 0.85–1.2 in 2 step(s) · rotation -180°–180° in 24 step(s) of 15° · refuse above residual 0.25
+  PLACE  arm.png   x=  102.5  y=   94.8  rot=  -18.3°  scale=0.974  residual=0.0305  unexplained=  4%
+                   found on a 20x25 anchor grid, step 4 at 2x reduction
+  PLACE  flag.png  x=  137.4  y=   86.0  rot=   -6.6°  scale=0.956  residual=0.0134  unexplained=  0%
+                   found on a 40x50 anchor grid, step 2 at 2x reduction
   PLACE  post.png  x=   80.0  y=  148.0  rot=    0.0°  scale=0.995  residual=0.0394  unexplained=  9%
+                   found on a 14x17 anchor grid, step 6 at 2x reduction
 ```
 
 Three things to read out of that pair, none of which is a score:
@@ -1168,7 +1182,7 @@ skeleton — AUTHORING §10.3 and PROMPTING clause 4 both price it. Keys are str
 The bytes of `poseA.png` and `poseB.png`, so §6 runs end to end. Both are 160×200 on a
 flat ground; both are invented.
 
-```bash
+```bash setup
 bun -e '
 const frames = {
   "poseA.png": "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",

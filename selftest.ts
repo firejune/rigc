@@ -75450,9 +75450,14 @@ function main(): void {
   const docsTranscripts =
     ', + ' + n('docs-transcript') + ' docs-transcript controls (issue #468 — the same question one surface over, on ' +
     'the pages an agent is sent to before it has seen a rig. The population is every plain fenced block of a ' +
-    'tracked markdown file outside `gallery/`, anchored by the same two rules and through the same functions; ' +
-    'the pool is every rigc invocation each page states in a fence that carries an info string, with `--out` ' +
-    'redirected into the round and nothing else touched. What each block gets is one of four things that never ' +
+    'tracked markdown file outside `gallery/`, anchored by the same two rules and through the same functions, ' +
+    'plus the two structures that carry no data — a section rule and a report header — and a block that opens ' +
+    'the way only rigc\'s output opens is COUNTED by that shape even where nothing anchors it, so no transcript ' +
+    'leaves the population in silence (issue #887); the pool is every rigc invocation each page states in a ' +
+    'fence that carries an info string, with `--out` redirected into the round and nothing else touched — except ' +
+    'on a page with a `setup` fence, whose four permitted statements the runner executes itself, in an overlay ' +
+    'of the round\'s own that its invocations then run in, and whose printed paths compare under one ' +
+    'token-leading `…/`. What each block gets is one of four things that never ' +
     'share a bucket — verified, declared, a HOLE, or unreachable WITH ITS REASON PRINTED — because the ruling ' +
     'this card was reopened to reverse was a classification that read "currently failing" as "not reachable". ' +
     'The coverage is the finding and it is published rather than implied: a fraction of what `docs/` fences is ' +
@@ -78256,6 +78261,17 @@ function runDocScriptSuite(): number {
 //     And a third the gallery has no use for: a **section rule**
 //     (`TRANSCRIPT_SECTION_RULE`), a printed structure that carries no data, so
 //     neither of the first two can see it.
+//     And a fourth, for the same reason: a **report header**, the bare
+//     `rigc <verb>` line `pose`, `render`, `diff`, `check`, `vote`, `preview`
+//     and `chainfit` open on (`docsQuoteHeaderField`, issue #887). Because a
+//     header names a verb and not a run, a block it found is COMPARED only
+//     where a run also prints the line under it.
+//  4. A plain fence that no rule anchors and that opens the way only rigc's
+//     output opens — the `..` gutter, or a header with nothing under it — is
+//     **counted** as unreachable with that shape as its reason, and never
+//     compared (`docsQuoteTranscriptShape`). Before issue #887 it left the
+//     population without a word, which is how five `pose` blocks went stale
+//     at #719 with nothing on the summary line moving.
 //
 // ⚠️ **Rule 3 is here because a fence opening on one went stale for a week and
 // a hand pass caught it** — `docs/LADDER.md`'s `bench 3` summary, whose last
@@ -78320,6 +78336,15 @@ function runDocScriptSuite(): number {
 // redirection; two is a different recipe — and the measured cost of the rule is
 // exactly `docs/FACE.md`'s two `render` runs and one `preview`, **20.4 s of
 // 22.2 s**, feeding no anchored block.
+//
+// ⭐ **A page with a `setup` fence is the exception, and it is one rule rather
+// than a second recipe** (issue #887; the fences and the reasons are at
+// `docsQuoteSetupTag`). Its setup runs first, in an overlay directory of the
+// round's own, and its invocations run inside that overlay: `--out` writes
+// there under the page's own name and a later command reads it back by that
+// name, which is what a reader's shell does. Every other page is run exactly as
+// above. The printed paths that come out of either are compared under one
+// relaxation, a token-leading `…/` (`docsQuoteSameLine`).
 //
 // **The verdict, and the floor that makes a thin one honest.** #468's closing
 // argument against this gate was that a small verified set *"buys the appearance
@@ -78406,6 +78431,13 @@ function runDocScriptSuite(): number {
 // the build that feeds it are 90 ms — cheap, and worth it, because that block
 // is one of the two this card was reopened for. Every plant below is free: the
 // rescans re-read the runs already taken. **35 subprocesses, ~2.7 s.**
+// ⚠️ **The two overlay pages cost more than the rest together** (issue #887),
+// measured one page at a time on the same tree at a load average near 6: run
+// the old way, `docs/MOTION.md` was 4 runs in 0.5 s and `docs/INGEST.md` 11 in
+// 2.3 s; in their overlays they are 9 runs in 20.9 s and 16 in 13.8 s. The
+// difference is what the overlay reaches — five `pose` searches, and the
+// renders and the `check` whose output the pages quote — and it is the price of
+// those blocks being compared at all.
 // ⚠️ Deriving the vocabulary from the documents' OWN runs instead was built and
 // **rejected on measurement**: it costs the same (3.1 s), it drags `FAIL` into
 // the green vocabulary — the tag the refusal half derives by SUBTRACTION from
@@ -78429,12 +78461,67 @@ function runDocScriptSuite(): number {
  * is one: this region is appended AFTER `main()` is called, so a module-level
  * binding here is in its temporal dead zone when the suite runs.
  */
-function docsAnchorRules(): readonly ('tag' | 'head' | 'rule')[] {
-  return ['tag', 'head', 'rule'];
+function docsAnchorRules(): readonly ('tag' | 'head' | 'rule' | 'header')[] {
+  return ['tag', 'head', 'rule', 'header'];
 }
 
-/** How a block was found: by one of the anchor rules, or by its declaration alone. */
-type DocsQuoteAnchor = ReturnType<typeof docsAnchorRules>[number] | 'declared';
+/**
+ * The fourth anchor rule's shape: a **report header**, the bare `rigc <verb>`
+ * line seven commands open their report on (issue #887).
+ *
+ * ⭐ Shape-only, for the reason `TRANSCRIPT_SECTION_RULE` is: the header carries
+ * no data — it names the verb and nothing else — so it is the same string
+ * however stale the block beneath it goes, which is the qualifier every anchor
+ * here is held to. It is read off the first FIELD rather than the whole line so
+ * the adrift plant, which keeps the field and rewrites the rest, leaves it
+ * anchored, exactly as it leaves a tag or a head.
+ *
+ * ⚠️ **Why a shape and not a vocabulary**, since the brief this was built from
+ * asked for the second: `pose`'s tags could only enter the vocabulary from a
+ * gallery example stating a `pose` run, and none can state one honestly. The
+ * vocabulary's runner synthesises `build` and `explain` from the example's name
+ * and runs nothing a README writes; `pose` places every PNG in `--images`, and
+ * the gallery ships no directory holding one part; and measured over the
+ * nearest candidate — `gallery/squash`'s sixteen parts against its own frame 0
+ * — it took 32 s of CPU and placed **0 of 16** under the default window. The
+ * header needs none of that, reaches `render`, `diff`, `check` and `vote`
+ * blocks the vocabulary never could, and brings no tag with it, so `FAIL` —
+ * the tag the refusal half derives by subtraction — cannot ride in on it.
+ */
+function docsQuoteHeaderField(): RegExp {
+  return /^rigc [a-z][a-z-]*$/;
+}
+
+/** A block opening on a report header with at least one line of that report hanging under it. */
+function docsQuoteHeaderAnchored(body: string[]): boolean {
+  if (!docsQuoteHeaderField().test(transcriptAnchorField(body[0]))) return false;
+  let next = 1;
+  while (next < body.length && body[next].trim() === '') next++;
+  return next < body.length && transcriptIndent(body[next]) > transcriptIndent(body[0]);
+}
+
+/**
+ * Which shape only rigc's output opens on, for a block no anchor rule reached —
+ * or null. The whole of issue #887's first defect is what this returns.
+ *
+ * 🚨 **A transcript that loses every anchor used to leave the population
+ * without a word**, and five `pose` blocks went stale at #719 that way: none
+ * was among the unreachable, and their page was not among the pages. So a block
+ * that opens on the gutter's own `..` mark, or on a bare report header with
+ * nothing under it, is COUNTED — as unreachable, with this shape as its reason
+ * — and never compared, because a `..` line carries data and anchoring on one
+ * is the loose anchor issue #422 forbids. What it buys is not a gate on the
+ * block; it is that the summary can no longer hide one.
+ */
+function docsQuoteTranscriptShape(body: string[]): string | null {
+  const field = transcriptAnchorField(body[0]);
+  if (field === '..') return 'the `..` gutter mark every rigc report prints';
+  if (docsQuoteHeaderField().test(field)) return `\`${field}\`, a report header, with no line of its report under it`;
+  return null;
+}
+
+/** How a block was found: by one of the anchor rules, by its declaration alone, or by its shape alone. */
+type DocsQuoteAnchor = ReturnType<typeof docsAnchorRules>[number] | 'declared' | 'shape';
 
 /** One block of a document this gate can see, with how it was found. */
 interface DocsQuoteBlock {
@@ -78477,7 +78564,10 @@ interface DocsQuoteScan {
   byTag: number;
   byHead: number;
   byRule: number;
+  byHeader: number;
   byDeclared: number;
+  /** Counted by the shape it opens on, with no anchor rule behind it — never compared (issue #887). */
+  byShape: number;
   verified: Array<{ where: string; command: string; lines: number; anchor: DocsQuoteBlock['anchor'] }>;
   /**
    * Declared unreproducible, and whether this run actually COMPARED it.
@@ -78661,6 +78751,11 @@ function docsQuoteCommands(file: string, text: string, root: string): DocsQuoteC
       if (/[…]|\.\.\./.test(statement.text)) falls('elided', 'the command it states is elided');
       else {
         for (let i = 1; i < argv.length; i++) {
+          // One layer of quotes around a word with no space in it is taken off
+          // (issue #887): `'ref-big/light@4fps/f0002.png'` is one word however a
+          // shell reads it, and it is the only quoting two of the tree's `pose`
+          // commands carry. Anything a shell would read differently still falls.
+          argv[i] = docsQuoteUnquoted(argv[i]);
           const word = argv[i];
           if (outAt >= 0 && i === outAt + 1) continue; // the one value this runner supplies
           if (produced.has(word)) continue;
@@ -78803,6 +78898,362 @@ function docsQuotePool(
   return runs;
 }
 
+// --- elided paths (issue #887) ---------------------------------------------
+//
+// 🔒 **`…/` at the start of a token stands for an absolute prefix, and for
+// nothing else.** `pose`, `render` and `build` print the absolute paths they
+// resolved, and a page cannot state an absolute path that is true on a reader's
+// disk, so it writes `…/semaphore/poseA.png`. The rule that lets that compare is
+// exact in every other respect: the tool's token has to be an ABSOLUTE path, the
+// elision takes whole leading components off it and nothing else, and every
+// character after `…/` has to be the tool's own. A `…/` inside a token is not an
+// elision and compares as the literal it is, so it never matches.
+//
+// ⚠️ **Rejected: a `pose` flag printing paths relative to `--images`.** It
+// would move the question rather than answer it: `render` and `build` print the
+// same absolute paths and the pages elide them the same way, so every one of
+// those verbs would need the flag, and each flag is a second output format the
+// tool has to keep — for the benefit of this suite, which is the wrong direction
+// for a gate to pull a product. The prefix rule costs one comparison and changes
+// no output.
+
+/** Does a page's line say what the tool printed, with a leading `…/` standing for an absolute prefix? */
+function docsQuoteSameLine(page: string, tool: string): boolean {
+  if (page === tool) return true;
+  if (!page.includes('…/')) return false;
+  return docsQuoteElision(page).test(tool);
+}
+
+/** The page's line as a pattern: literal throughout, except that a token-leading `…/` is `/` plus any whole components. */
+function docsQuoteElision(page: string): RegExp {
+  const pieces = page.split(/(?<=^|\s)…\//);
+  return new RegExp(`^${pieces.map(literalPattern).join('\\/(?:\\S*\\/)?')}$`);
+}
+
+/**
+ * `bestTranscriptWindow`, with the one relaxation above: a line matches when it
+ * is the tool's line or the tool's line under a token-leading elision.
+ *
+ * ⚡ The fast path is kept wherever the first line carries no elision, which is
+ * every block but the few that open on a path — the first line is then looked
+ * up exactly, as before.
+ */
+function docsQuoteWindow(
+  body: string[],
+  runs: TranscriptRun[],
+): { command: string; window: string[]; shared: number } | null {
+  let best: { command: string; window: string[]; shared: number } | null = null;
+  const head = body[0].trimStart();
+  for (const run of runs) {
+    const starts = head.includes('…/')
+      ? run.lines
+          .map((line, i) => (docsQuoteSameLine(head, line.trimStart().replace(/\s+$/, '')) ? i : -1))
+          .filter((i) => i >= 0)
+      : anchorsIn(run, head);
+    for (const i of starts) {
+      if (i + body.length > run.lines.length) continue;
+      const window = transcriptBody(run.lines.slice(i, i + body.length));
+      if (window.length !== body.length) continue;
+      let shared = 0;
+      while (shared < body.length && docsQuoteSameLine(body[shared], window[shared])) shared++;
+      if (best === null || shared > best.shared) best = { command: run.command, window, shared };
+      if (shared === body.length) return best;
+    }
+  }
+  return best;
+}
+
+// --- setup fences (issue #887) ---------------------------------------------
+//
+// ⭐ **A fence whose info string carries the word `setup` is executed, before
+// the page's invocations, in a directory of the round's own — and it is
+// executed by THIS RUNNER, never by a shell.** Four statements are understood,
+// the four the tree's pages actually state: `mkdir -p`, `cd`, `cp` and
+// `bun -e '…'`, split on `&&`. Anything else is refused by name, and so is any
+// path that would leave the directory: absolute, home-relative, carrying a
+// `..`, or asking for an expansion the shell would have done.
+//
+// 🔒 **Why this and not "pages must state their inputs as files the tree
+// ships".** The suite's bar is that a green run cannot depend on the reader's
+// shell, and a runner that interprets four statements itself meets it exactly —
+// there is no shell in the loop to depend on, and `bun` is the repository's own
+// runtime. The alternative would move `docs/MOTION.md` §6's plates and frames
+// into the tree and make the section runnable only from a checkout, when it is
+// written so that a reader with nothing but the installed package can run it end
+// to end; that is a regression in the product to make the gate's life easier,
+// and it would rewrite a section another card owns.
+//
+// **What a page with a setup fence gets.** Its invocations run in that
+// directory, from wherever the last `cd` left it, and the directory is an
+// OVERLAY on the checkout: a path the setup or an earlier `--out` wrote is read
+// from the overlay, any other path falls through to the checkout at the same
+// relative place, and `--out` writes into the overlay under the name the page
+// spells. So a later command reading what an earlier one wrote is reached with
+// no placeholder — which is the reader's own model of a shell session, and the
+// reason the redirection rule above cannot serve here.
+//
+// ⚠️ **What this cannot promise, stated because it is a limit and not a
+// feature.** `bun -e` runs JavaScript, and a script can compute a path this
+// runner never sees. What is refused is every string LITERAL in the script that
+// escapes — an absolute path or a `..` — which is how the tree's scripts name
+// what they write; a path built out of pieces is not read. The working-copy
+// bracket around the round is what measures the checkout itself.
+
+/** The word in a fence's info string that makes it setup this runner executes. */
+function docsQuoteSetupTag(): string {
+  return 'setup';
+}
+
+function docsQuoteIsSetup(info: string): boolean {
+  return info.split(/\s+/).includes(docsQuoteSetupTag());
+}
+
+/** Why a path in a setup statement or an overlay `--out` would leave the round's directory, or null. */
+function docsQuoteEscape(word: string): string | null {
+  if (word.startsWith('/')) return 'it is an absolute path';
+  if (word.startsWith('~')) return 'it is relative to a home directory';
+  if (/[$`*?{}]/.test(word)) return 'it asks for an expansion a shell would perform and this runner does not';
+  if (word.split('/').includes('..')) return 'it climbs out with `..`';
+  return null;
+}
+
+/** One statement's parts, split on `&&` outside single quotes. */
+function docsQuoteSetupParts(text: string): string[] {
+  const parts: string[] = [];
+  let held = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "'") quoted = !quoted;
+    if (!quoted && text.startsWith('&&', i)) {
+      parts.push(held.trim());
+      held = '';
+      i++;
+      continue;
+    }
+    held += text[i];
+  }
+  if (held.trim() !== '') parts.push(held.trim());
+  return parts.filter((part) => part !== '');
+}
+
+/** A shell word with one layer of single quotes taken off, when the whole word is quoted and holds no space. */
+function docsQuoteUnquoted(word: string): string {
+  return /^'[^'"\s]*'$/.test(word) ? word.slice(1, -1) : word;
+}
+
+/** Where a path the page spells lives: the overlay if something wrote it there, else the checkout at the same place. */
+function docsQuoteOverlayPath(word: string, cwd: string, sandbox: string, root: string): string | null {
+  if (existsSync(join(cwd, word))) return join(cwd, word);
+  const tree = join(root, relative(sandbox, cwd), word);
+  return existsSync(tree) ? tree : null;
+}
+
+/**
+ * Execute a page's setup fences, in page order, inside `sandbox`.
+ *
+ * Stops at the first statement it refuses or that fails, because every
+ * statement after it may depend on it and a half-built directory is a
+ * directory nothing on the page describes.
+ */
+function docsQuoteRunSetup(
+  file: string,
+  text: string,
+  sandbox: string,
+  root: string,
+  ignored: ReadonlySet<string>,
+): { cwd: string; ran: string[]; refusals: string[]; hole: string | null } {
+  let cwd = sandbox;
+  const ran: string[] = [];
+  const refusals: string[] = [];
+  for (const block of galleryBlocks(text)) {
+    if (!docsQuoteIsSetup(block.info)) continue;
+    for (const statement of docStatements(block.lines, block.line + 1)) {
+      if (statement.comment) continue;
+      for (const part of docsQuoteSetupParts(statement.text)) {
+        const where = `${file}:${statement.line}`;
+        const flat = part.replace(/\\\n\s*/g, ' ').replace(/\s+/g, ' ').trim();
+        // A rigc invocation in a setup fence is the page's, and the pool runs it.
+        if (docsQuoteInvocation().test(flat)) continue;
+        const refuse = (why: string): { cwd: string; ran: string[]; refusals: string[]; hole: string | null } => {
+          refusals.push(`${where}  the setup statement \`${flat.slice(0, 72)}\` is refused: ${why}`);
+          return { cwd, ran, refusals, hole: null };
+        };
+        if (/^bun -e '/.test(part)) {
+          const source = part.slice(part.indexOf("'") + 1, part.lastIndexOf("'"));
+          // Only the two escapes a literal can spell. The rest of what
+          // `docsQuoteEscape` refuses is shell syntax, and a script's literals
+          // are data — base64, JSON — that carry braces and slashes of their own.
+          for (const found of source.matchAll(/(["'`])((?:\\.|(?!\1)[^\\])*)\1/g)) {
+            const literal = found[2];
+            const why = /^[/~]/.test(literal)
+              ? 'a script literal that starts at the root or a home directory writes outside the round'
+              : literal.split('/').includes('..')
+                ? 'a script literal carrying `..` climbs out of the round'
+                : null;
+            if (why !== null) return refuse(`its script names \`${literal.slice(0, 48)}\`, and ${why}`);
+          }
+          const run = spawnSync(process.execPath, ['-e', source], { cwd, encoding: 'utf8', timeout: 60_000 });
+          if (run.error !== undefined || run.status !== 0) {
+            return refuse(`its script exited ${String(run.status)}: ${`${run.stderr ?? ''}`.trim().split('\n')[0] ?? ''}`);
+          }
+          ran.push(`${where} bun -e`);
+          continue;
+        }
+        const words = flat.split(' ').map(docsQuoteUnquoted);
+        const [verb, ...args] = words;
+        if (verb !== 'mkdir' && verb !== 'cd' && verb !== 'cp') {
+          return refuse(
+            `\`${verb}\` is not one of the four statements a setup fence may state — \`mkdir -p\`, \`cd\`, \`cp\` and ` +
+              "`bun -e '…'` — and this runner hands nothing to a shell",
+          );
+        }
+        const operands = verb === 'mkdir' ? args.filter((word) => word !== '-p') : args;
+        for (const word of operands) {
+          const why = word.startsWith('-') ? `\`${word}\` is a flag this runner does not implement` : docsQuoteEscape(word);
+          if (why !== null) return refuse(`\`${word}\`: ${why}`);
+        }
+        if (verb === 'mkdir') {
+          if (operands.length === 0) return refuse('it names no directory');
+          for (const word of operands) mkdirSync(join(cwd, word), { recursive: true });
+        } else if (verb === 'cd') {
+          if (operands.length !== 1) return refuse(`it names ${operands.length} directories where \`cd\` takes one`);
+          const next = join(cwd, operands[0]);
+          if (!existsSync(next) || !statSync(next).isDirectory()) return refuse(`\`${operands[0]}\` is not a directory it made`);
+          cwd = next;
+        } else {
+          if (operands.length < 2) return refuse('it names no source and destination');
+          const target = operands[operands.length - 1];
+          for (const source of operands.slice(0, -1)) {
+            const from = docsQuoteOverlayPath(source, cwd, sandbox, root);
+            // The fetched corpus absent is a HOLE, as it is for an invocation:
+            // the setup stops, and nothing is refused, because nothing is wrong
+            // with the page.
+            if (from === null && ignored.has(source)) return { cwd, ran, refusals, hole: source };
+            if (from === null || !statSync(from).isFile()) {
+              return refuse(`\`${source}\` is not a file here or in the checkout`);
+            }
+            const into = join(cwd, target);
+            const dest =
+              target.endsWith('/') || (existsSync(into) && statSync(into).isDirectory()) ? join(into, basename(source)) : into;
+            copyFileSync(from, dest);
+          }
+        }
+        ran.push(`${where} ${verb}`);
+      }
+    }
+  }
+  return { cwd, ran, refusals, hole: null };
+}
+
+/** Every path a page's setup fences name outside a script, so git can be asked which of them it does not track. */
+function docsQuoteSetupWords(text: string): string[] {
+  const words: string[] = [];
+  for (const block of galleryBlocks(text)) {
+    if (!docsQuoteIsSetup(block.info)) continue;
+    for (const statement of docStatements(block.lines, block.line + 1)) {
+      if (statement.comment) continue;
+      for (const part of docsQuoteSetupParts(statement.text)) {
+        if (/^bun -e '/.test(part)) continue;
+        for (const word of part.replace(/\\\n\s*/g, ' ').split(/\s+/).map(docsQuoteUnquoted)) {
+          if (!word.startsWith('-') && docsQuoteEscape(word) === null && docsQuoteLooksLikePath(word)) words.push(word);
+        }
+      }
+    }
+  }
+  return words;
+}
+
+/**
+ * Run the pool of a page that has setup fences, inside its overlay.
+ *
+ * Every command the static pass did not refuse for its SHAPE is re-derived
+ * here, after the setup and every earlier command have run, because what exists
+ * is only known then: a path is resolved in the overlay first and the checkout
+ * second, and a command reading a path in neither falls out with the static
+ * reason for that path — a HOLE where git says the tree does not track it.
+ */
+function docsQuoteOverlayPool(
+  file: string,
+  text: string,
+  commands: readonly DocsQuoteCommand[],
+  roundDir: string,
+  root: string,
+  memo: Map<string, { run: TranscriptRun; out: string | null }>,
+  ignored: ReadonlySet<string>,
+): { runs: TranscriptRun[]; refusals: string[]; ran: string[] } {
+  const sandbox = mkdtempSync(join(roundDir, 'overlay-'));
+  const setup = docsQuoteRunSetup(file, text, sandbox, root, ignored);
+  const runs: TranscriptRun[] = [];
+  const refusals = [...setup.refusals];
+  const produced = new Map<string, string>();
+  for (const command of commands) {
+    if (command.kind !== null && command.kind !== 'absent' && command.kind !== 'untracked') continue;
+    const argv = [...command.argv];
+    let why: { kind: DocsQuoteCommand['kind']; reason: string; hole: boolean } | null = null;
+    for (let i = 1; i < argv.length; i++) {
+      const word = argv[i];
+      if (command.outAt >= 0 && i === command.outAt + 1) {
+        if (/^<[^<>]+>$/.test(word)) {
+          const fresh = mkdtempSync(join(sandbox, 'out-'));
+          produced.set(word, fresh);
+          argv[i] = fresh;
+          continue;
+        }
+        const escapes = docsQuoteEscape(word);
+        if (escapes !== null) {
+          why = { kind: 'absolute', reason: `its \`--out ${word}\` would write outside the page's directory: ${escapes}`, hole: false };
+          break;
+        }
+        continue;
+      }
+      const mapped = produced.get(word);
+      if (mapped !== undefined) {
+        argv[i] = mapped;
+        continue;
+      }
+      if (word.startsWith('-') || !docsQuoteLooksLikePath(word)) continue;
+      const at = docsQuoteOverlayPath(word, setup.cwd, sandbox, root);
+      if (at === null) {
+        // A setup that stopped on the fetched corpus takes every path it would
+        // have written with it, and those are HOLEs for the same reason.
+        const hole = ignored.has(word) || setup.hole !== null;
+        why = {
+          kind: hole ? 'untracked' : 'absent',
+          reason: hole
+            ? ignored.has(word)
+              ? `it reads \`${word}\`, which this repository generates or fetches rather than tracking`
+              : `it reads \`${word}\`, which its page's setup would have written from \`${setup.hole ?? ''}\` — ` +
+                'which this repository generates or fetches rather than tracking'
+            : `it reads \`${word}\`, which neither its page's setup nor the repository carries`,
+          hole,
+        };
+        break;
+      }
+      // What the setup or an earlier command wrote is read where it was
+      // written, under the name the page gave it; the checkout is read whole.
+      if (!at.startsWith(`${sandbox}/`)) argv[i] = at;
+    }
+    if (why !== null) {
+      command.kind = why.kind;
+      command.reason = why.reason;
+      command.hole = why.hole;
+      continue;
+    }
+    command.kind = null;
+    command.reason = null;
+    command.hole = false;
+    const result = spawnSync(process.execPath, [join(root, 'cli.ts'), ...argv], { cwd: setup.cwd, encoding: 'utf8' });
+    const run: TranscriptRun = {
+      command: command.text,
+      lines: `${result.stdout}${result.stderr}`.split('\n'),
+      status: result.status,
+    };
+    memo.set(`${file} (overlay) ${argv.join(' ')}`, { run, out: null });
+    runs.push(run);
+  }
+  return { runs, refusals, ran: setup.ran };
+}
+
 /**
  * Every block, and its verdict — the whole of what `DQ01` reports and `DQ02`
  * and `DQ03` read.
@@ -78822,7 +79273,9 @@ function scanDocsQuotes(
     byTag: 0,
     byHead: 0,
     byRule: 0,
+    byHeader: 0,
     byDeclared: 0,
+    byShape: 0,
     verified: [],
     declared: [],
     holes: [],
@@ -78847,7 +79300,10 @@ function scanDocsQuotes(
       const byTag = tag !== null && vocabulary.has(tag[1]);
       const byHead = !byTag && transcriptHeadAnchored(body, heads);
       const byRule = !byTag && !byHead && TRANSCRIPT_SECTION_RULE.test(body[0]);
-      if (!byTag && !byHead && !byRule && block.declared === null) continue;
+      const byHeader = !byTag && !byHead && !byRule && docsQuoteHeaderAnchored(body);
+      const shape =
+        !byTag && !byHead && !byRule && !byHeader && block.declared === null ? docsQuoteTranscriptShape(body) : null;
+      if (!byTag && !byHead && !byRule && !byHeader && block.declared === null && shape === null) continue;
       const at = `${file}:${block.line}`;
       const seal = sealed.prefixes.find((entry) => entry.prefix !== '' && file.startsWith(entry.prefix));
       if (seal !== undefined) {
@@ -78855,13 +79311,36 @@ function scanDocsQuotes(
         continue;
       }
       scan.found++;
-      const anchor: DocsQuoteBlock['anchor'] = byTag ? 'tag' : byHead ? 'head' : byRule ? 'rule' : 'declared';
+      // 🔒 Counted and never compared (issue #887): no rule anchored it, so
+      // laying a run against it would be anchoring on its content. What it may
+      // not do any more is leave the population in silence.
+      if (shape !== null) {
+        scan.byShape++;
+        scan.unreachable.push({
+          where: at,
+          why:
+            `it opens on ${shape}, and no anchor rule reaches it — no tag, record head, section rule or report ` +
+            'header this gate knows names its first line, so no run was laid against it',
+          compared: false,
+        });
+        continue;
+      }
+      const anchor: DocsQuoteBlock['anchor'] = byTag
+        ? 'tag'
+        : byHead
+          ? 'head'
+          : byRule
+            ? 'rule'
+            : byHeader
+              ? 'header'
+              : 'declared';
       if (byTag) scan.byTag++;
       else if (byHead) scan.byHead++;
       else if (byRule) scan.byRule++;
+      else if (byHeader) scan.byHeader++;
       else scan.byDeclared++;
 
-      const best = bestTranscriptWindow(body, runs);
+      const best = docsQuoteWindow(body, runs);
       const reproduces = best !== null && best.shared === body.length;
       // 🔒 **The one value that decides both the printed reason and the fault**,
       // because the fault rule below may reach exactly the blocks this run
@@ -78882,8 +79361,17 @@ function scanDocsQuotes(
       // SAME sixty-four characters twice and left a reader with a line number
       // and nothing else (issue #538). Measured on a planted `animations=0.936`
       // → `0.937` before this was written.
+      // 🔒 **A report header says which verb printed the block and nothing
+      // about which RUN** (issue #887), so for a block the header rule found,
+      // "a stated command prints its first line" means the line under the
+      // header. Measured before this clause existed: `docs/INGEST.md`'s
+      // `rigc diff` block — whose own command reads a directory no stated
+      // command writes — was compared against the page's OTHER `diff`,
+      // diverged on the candidate path at line 2, and faulted as a stale quote
+      // it is not.
+      const comparedFrom = anchor === 'header' ? 2 : 1;
       const divergence =
-        !reproduces && runs.length > 0 && best !== null && best.shared > 0
+        !reproduces && runs.length > 0 && best !== null && best.shared >= comparedFrom
           ? ((): { command: string; at: number; of: number; agree: number; page: string; tool: string } => {
               const page = body[best.shared].trim();
               const tool = best.window[best.shared].trim();
@@ -79053,10 +79541,14 @@ function docsQuotePlant(text: string, block: GalleryBlock, edited: string[]): st
   return [...raw.slice(0, block.line), ...edited, ...raw.slice(block.line + block.lines.length)].join('\n');
 }
 
-/** The first line of a block that carries anything — the one both anchor rules read. */
-function docsQuoteAnchorLine(lines: readonly string[]): string {
-  return lines.find((line) => line.trim() !== '') ?? '';
+/** The first `count` lines of a block that carry anything — what a comparison is keyed on. */
+function docsQuoteKeyLines(lines: readonly string[], count: number): string {
+  return lines
+    .filter((line) => line.trim() !== '')
+    .slice(0, count)
+    .join('\n');
 }
+
 
 /**
  * Keep the block's ANCHOR and make its first line one no run prints.
@@ -79139,9 +79631,23 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   // --- each document's own pool ---------------------------------------------
   const commandsBy = new Map<string, DocsQuoteCommand[]>();
   const absent = new Set<string>();
+  // A page with a setup fence is run in an overlay (issue #887), where a path
+  // absent from the checkout may be one its setup writes — so EVERY absent path
+  // its commands name is asked about, not only the first, because the first
+  // may turn out to exist once the setup has run.
+  const overlaid = new Set([...docs].filter(([, text]) => galleryBlocks(text).some((block) => docsQuoteIsSetup(block.info))).map(([file]) => file));
   for (const [file, text] of docs) {
     const commands = docsQuoteCommands(file, text, root);
     for (const command of commands) if (command.kind === 'absent' && command.reason !== null) absent.add(command.reason);
+    if (overlaid.has(file)) {
+      for (const word of docsQuoteSetupWords(text)) if (!existsSync(join(root, word))) absent.add(word);
+      for (const command of commands) {
+        for (const word of command.argv.slice(1)) {
+          if (word.startsWith('-') || /^[/~]|[<>'"…]/.test(word) || !docsQuoteLooksLikePath(word)) continue;
+          if (!existsSync(join(root, word))) absent.add(word);
+        }
+      }
+    }
     commandsBy.set(file, commands);
   }
   const asked = docsQuoteIgnored([...absent], root);
@@ -79160,7 +79666,18 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   const roundDir = mkdtempSync(join(tmpdir(), 'rigc-docsquote-round-'));
   const memo = new Map<string, { run: TranscriptRun; out: string | null }>();
   const runsBy = new Map<string, TranscriptRun[]>();
-  for (const [file, commands] of commandsBy) runsBy.set(file, docsQuotePool(commands, roundDir, memo));
+  const setupRefusals: string[] = [];
+  const setupRan: string[] = [];
+  for (const [file, commands] of commandsBy) {
+    if (!overlaid.has(file)) {
+      runsBy.set(file, docsQuotePool(commands, roundDir, memo));
+      continue;
+    }
+    const pool = docsQuoteOverlayPool(file, docs.get(file) ?? '', commands, roundDir, root, memo, asked.ignored);
+    runsBy.set(file, pool.runs);
+    setupRefusals.push(...pool.refusals);
+    setupRan.push(...pool.ran);
+  }
 
   const copyAfter = docsQuoteWorkingCopy(root);
 
@@ -79255,6 +79772,10 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   const derivation = [
     ...(treeFault === null ? [] : [treeFault]),
     ...(asked.fault === null ? [] : [asked.fault]),
+    // A setup statement this runner refused, or one that failed, by name
+    // (issue #887): the page's own directory could not be built, so what its
+    // commands read is not what the page describes.
+    ...setupRefusals,
     ...(copyBefore === copyAfter
       ? []
       : [
@@ -79293,6 +79814,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       // block a run IS laid against is held by that rule's own reach row below,
       // where it belongs.
       [scan.byRule, 1, `${scan.byRule} of them by a section rule`],
+      [scan.byHeader, 1, `${scan.byHeader} of them by a report header`],
       [sealed.prefixes.length, 1, `${sealed.prefixes.length} sealed-subtree marker(s) were read`],
       [scan.excluded.length, 1, `${scan.excluded.length} block(s) were excluded by one`],
       [scan.verified.length, 1, `${scan.verified.length} block(s) reproduced`],
@@ -79311,7 +79833,8 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       : `${docs.size} tracked markdown file(s) outside \`gallery/\`; the vocabulary comes from ${galleryRuns} run(s) ` +
         `of ${galleryExamples} gallery example(s) — {${[...vocabulary].sort().join(' ')}} at the gutter and ` +
         `${heads.size} record head(s). ${stated} rigc invocation(s) are stated in those pages and ${memo.size} ` +
-        `distinct one(s) ran; ${outOfReach.length} are out of reach — ` +
+        `distinct one(s) ran, ${setupRan.length} setup statement(s) having run first in the overlay of ` +
+        `${overlaid.size} page(s) (${[...overlaid].sort().join(', ') || 'none'}); ${outOfReach.length} are out of reach — ` +
         `${[...byKind].sort().map(([kind, count]) => `${count} ${kind}`).join(', ')} — of which the ones on a page ` +
         `that holds an anchored block are:\n          ` +
         (outOfReach
@@ -79319,8 +79842,8 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
           .map((command) => `      ${command.file}:${command.line} — ${command.reason ?? ''}`)
           .join('\n          ') || '      none') +
         `\n          ${scan.found} anchored block(s) over ${pages.length} page(s) — ${scan.byTag} by a gutter tag, ` +
-        `${scan.byHead} by a record head, ${scan.byRule} by a section rule, ` +
-        `${scan.byDeclared} by a declaration alone — of which ` +
+        `${scan.byHead} by a record head, ${scan.byRule} by a section rule, ${scan.byHeader} by a report header, ` +
+        `${scan.byDeclared} by a declaration alone, ${scan.byShape} by the shape of its first line alone — of which ` +
         `${scan.verified.length} reproduce, ${scan.declared.length} are declared unreproducible, ` +
         `${scan.holes.length} are a HOLE and ${scan.unreachable.length} are unreachable. ` +
         `${reachable} block(s) were reached, and the floor on that is one row per anchor rule: ` +
@@ -79447,7 +79970,12 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       // 🔒 Read off the PLANT rather than off the scan: an edit that did not
       // touch the first line left both anchor rules exactly as they were, so
       // this block was compared and the fault rule owes it a fault by name.
-      if (docsQuoteAnchorLine(edited) === docsQuoteAnchorLine(block.lines)) {
+      // ⚠️ For a block the header rule found, the lines a comparison is keyed on
+      // are the header AND the line under it (issue #887), so "left alone"
+      // means both of them: dropping the line under a header takes the block
+      // out of the compared set, which is the scope that rule is built with.
+      const keyed = entry.anchor === 'header' ? 2 : 1;
+      if (docsQuoteKeyLines(edited, keyed) === docsQuoteKeyLines(block.lines, keyed)) {
         if (!after.faults.some((fault) => fault.startsWith(`${entry.where}  `))) {
           misses.push(
             `${entry.where}: ${name} — the first line was left alone, so the block kept its anchor and was ` +
@@ -80280,5 +80808,240 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
         'which is the state this gate exists to reach',
     );
   }
+
+  // --- DQ06: a transcript no anchor rule reaches is COUNTED (issue #887) -----
+  //
+  // 🚨 The defect this card opened on: five `pose` blocks left the population
+  // in silence, so they went stale at #719 with the summary line unmoved. The
+  // plant is a page the tree does not hold, with the three shapes a transcript
+  // can open on and still have no run laid against it — the `..` gutter, a bare
+  // header, and a header with its report under it on a page that states no
+  // command — and each has to come back by path and line with its reason, the
+  // population has to grow by exactly the plants, and nothing may fault.
+  const shapeProbes: string[] = [];
+  const shapePage = 'docs/DQ06_PLANTED_PAGE.md';
+  const shapeFences: Array<{ lines: string[]; reason: string; rule: 'shape' | 'header' }> = [
+    { lines: ['  ..    search  scale 0.5–2 in 7 step(s)'], reason: 'the `..` gutter mark', rule: 'shape' },
+    { lines: ['rigc pose'], reason: 'a report header, with no line of its report under it', rule: 'shape' },
+    { lines: ['rigc pose', '  ..    frame   …/poseA.png  (160x200)'], reason: 'nothing in this repository prints it', rule: 'header' },
+  ];
+  const shapeText: string[] = ['# a page planted by DQ06', ''];
+  const shapeAt: number[] = [];
+  for (const fence of shapeFences) {
+    shapeAt.push(shapeText.length + 1);
+    shapeText.push('```', ...fence.lines, '```', '');
+  }
+  const shapeScan = rescan(withText(shapePage, shapeText.join('\n')));
+  const shapeGrew = shapeScan.found - scan.found;
+  if (shapeGrew !== shapeFences.length) {
+    shapeProbes.push(`the population went ${scan.found} -> ${shapeScan.found}, where the ${shapeFences.length} planted fence(s) owe +${shapeFences.length}`);
+  }
+  shapeFences.forEach((fence, i) => {
+    const where = `${shapePage}:${shapeAt[i]}`;
+    const named = shapeScan.unreachable.find((entry) => entry.where === where);
+    if (named === undefined) shapeProbes.push(`${where}: not named as unreachable — it left the population in silence`);
+    else if (!named.why.includes(fence.reason)) shapeProbes.push(`${where}: named, but not for its reason ("${fence.reason}"): ${named.why.slice(0, 120)}`);
+    else if (named.compared) shapeProbes.push(`${where}: named as COMPARED, and nothing on its page runs anything`);
+  });
+  const owedShape = shapeFences.filter((fence) => fence.rule === 'shape').length;
+  const owedHeader = shapeFences.filter((fence) => fence.rule === 'header').length;
+  if (shapeScan.byShape - scan.byShape !== owedShape || shapeScan.byHeader - scan.byHeader !== owedHeader) {
+    shapeProbes.push(
+      `the counts moved by shape ${shapeScan.byShape - scan.byShape} and header ${shapeScan.byHeader - scan.byHeader}, ` +
+        `where the plants owe +${owedShape} and +${owedHeader}`,
+    );
+  }
+  const shapeRaised = raisedBy(shapeScan.faults, { was: scan.faults });
+  if (shapeRaised.length !== 0) shapeProbes.push(`the plants raised ${shapeRaised.length} fault(s), where a block nothing compared may raise none: ${shapeRaised[0].slice(0, 120)}`);
+  // And the same page with the fences' opening lines made prose-shaped: none of
+  // them is a transcript any more, so none may be counted — the rule has to be
+  // a shape, not "every plain fence".
+  const proseText = shapeText.map((line) => (line === 'rigc pose' || line.startsWith('  ..') ? `  prose ${line.trim()}` : line));
+  const proseScan = rescan(withText(shapePage, proseText.join('\n')));
+  if (proseScan.found !== scan.found) {
+    shapeProbes.push(`with the opening lines made prose, the population went ${scan.found} -> ${proseScan.found}, where a fence no shape names owes nothing`);
+  }
+  const shapeHeld = shapeProbes.length === 0;
+  say(
+    'DQ06_A_TRANSCRIPT_NO_ANCHOR_RULE_REACHES_IS_COUNTED_AS_UNREACHABLE_BY_NAME',
+    shapeHeld,
+    probeDetail(
+      shapeHeld,
+      shapeProbes,
+      `${shapeFences.length} fence(s) planted on a page the tree does not hold took the population ${scan.found} -> ` +
+        `${shapeScan.found}, each named by path and line — ` +
+        shapeFences.map((_, i) => `${shapePage}:${shapeAt[i]} (${shapeScan.unreachable.find((entry) => entry.where === `${shapePage}:${shapeAt[i]}`)?.why.slice(0, 60) ?? ''}…)`).join('; ') +
+        ` — and faulting nothing; the same fences opening on prose took it nowhere. On the tree itself ` +
+        `${scan.byShape} block(s) are counted by their shape alone: ` +
+        (scan.unreachable
+          .filter((entry) => entry.why.startsWith('it opens on '))
+          .map((entry) => entry.where)
+          .join(', ') || 'none'),
+      (count) => `${count} of the shape plants did not come back as they must:`,
+    ),
+    'issue #887: a transcript that loses every anchor is the one departure this gate could not see, because it is ' +
+      'compared against nothing and so has nothing to fault — five `pose` blocks went stale that way at #719 with ' +
+      'the summary unmoved and their page not among the pages. Counting such a block buys no gate on it; what it ' +
+      'buys is that the summary line can never again hide one, and the shape it is counted by is one only rigc\'s ' +
+      'own output opens on, so an ordinary fence of prose is not swept in — which is the half the prose plant holds',
+  );
+
+  // --- DQ07: a setup fence runs, and cannot leave its directory (issue #887) --
+  //
+  // ⭐ Two-sided, on the runner's own functions and a directory of its own: a
+  // setup that writes a file has to be what lets the next invocation read it —
+  // the same page with the tag taken off reaches nothing — and every way a
+  // statement could reach outside the round is refused by name, with the
+  // round's parent measured afterwards so a refusal that was printed while the
+  // write still happened cannot pass.
+  const setupProbes: string[] = [];
+  const setupCases: string[] = [];
+  {
+    const probe = mkdtempSync(join(tmpdir(), 'rigc-docsquote-setup-'));
+    try {
+      const page = 'docs/DQ07_PLANTED_PAGE.md';
+      const written = [
+        '```bash setup',
+        'mkdir -p probe && cd probe',
+        "bun -e 'await Bun.write(\"probe.json\", \"{}\")'",
+        '```',
+        '',
+        '```bash',
+        'rigc validate probe.json',
+        '```',
+        '',
+      ].join('\n');
+      for (const [tagged, text] of [
+        [true, written],
+        [false, written.replace('```bash setup', '```bash')],
+      ] as const) {
+        const commands = docsQuoteCommands(page, text, root);
+        const pool = docsQuoteOverlayPool(page, text, commands, probe, root, new Map(), new Set());
+        const read = pool.runs.some((run) => run.lines.some((line) => line.includes('/probe/probe.json')));
+        if (tagged && (!read || commands.some((command) => command.reason !== null))) {
+          setupProbes.push(
+            `the tagged setup wrote probe/probe.json and \`rigc validate probe.json\` ${read ? 'read it but was still counted out of reach' : 'did not read it'}: ` +
+              `${commands.map((command) => command.reason ?? 'ran').join('; ')}`,
+          );
+        }
+        if (!tagged && (read || !commands.some((command) => command.kind === 'absent'))) {
+          setupProbes.push('with the `setup` tag taken off, the invocation was still reached — so the tag is not what runs a setup');
+        }
+        setupCases.push(tagged ? `tagged: ${pool.ran.length} statement(s) ran, the invocation read what they wrote` : 'untagged: nothing ran and the invocation fell out as absent');
+      }
+      // The third field is what the case line prints, because one statement
+      // names the round's own absolute path and a detail must not carry one.
+      const escapes: Array<[string, string, string]> = [
+        ['mkdir -p ../escaped', '`../escaped`', 'a `mkdir` with `..`'],
+        ['cp gallery/README.md /tmp/escaped.md', '`/tmp/escaped.md`', 'a `cp` to an absolute path'],
+        ['cp gallery/README.md ~/escaped.md', '`~/escaped.md`', 'a `cp` into a home directory'],
+        ['cd /', '`/`', 'a `cd` to the root'],
+        [`bun -e 'await Bun.write("${join(probe, 'escaped.txt')}", "x")'`, 'its script names', 'a script writing an absolute path'],
+        ["bun -e 'await Bun.write(\"../escaped.txt\", \"x\")'", 'its script names', 'a script writing through `..`'],
+        ['rm -rf probe', 'not one of the four statements', 'an `rm`'],
+      ];
+      for (const [statement, named, label] of escapes) {
+        const sandbox = mkdtempSync(join(probe, 'overlay-'));
+        const before = readdirSync(probe).sort().join(',');
+        const setup = docsQuoteRunSetup(page, ['```bash setup', statement, '```', ''].join('\n'), sandbox, root, new Set());
+        const after = readdirSync(probe).sort().join(',');
+        if (setup.refusals.length !== 1 || !setup.refusals[0].includes(named)) {
+          setupProbes.push(`${label} — ${setup.refusals.length === 0 ? 'not refused' : `refused without naming ${named}: ${setup.refusals[0].slice(0, 120)}`}`);
+        }
+        if (after !== before) setupProbes.push(`${label} — something was written beside the round's directory: ${after}`);
+        setupCases.push(`${label} refused`);
+      }
+    } finally {
+      rmSync(probe, { recursive: true, force: true });
+    }
+  }
+  const setupHeld = setupProbes.length === 0;
+  say(
+    'DQ07_A_SETUP_FENCE_WRITES_WHAT_THE_NEXT_INVOCATION_READS_AND_CANNOT_LEAVE_ITS_DIRECTORY',
+    setupHeld,
+    probeDetail(
+      setupHeld,
+      setupProbes,
+      `${setupCases.join('; ')}. On the tree, ${setupRan.length} setup statement(s) ran in the overlay of ` +
+        `${overlaid.size} page(s): ${[...overlaid].sort().join(', ')}`,
+      (count) => `${count} of the setup plants did not answer:`,
+    ),
+    'issue #887: `docs/MOTION.md` §6 writes its plates and frames with `bun -e`, and `docs/INGEST.md` its loose part ' +
+      'with `mkdir`/`cp`, so their `pose` transcripts read files no rigc invocation makes. The runner executes the ' +
+      'four statements a setup fence may state itself, so no shell is in the loop and a green run cannot depend on a ' +
+      'reader\'s, and it refuses every path that climbs out — which is the half that has to be seen firing, because a ' +
+      'runner that executes a page\'s statements is the one place this suite could write outside its round',
+  );
+
+  // --- DQ08: an elided path matches a prefix, and only a prefix (issue #887) --
+  //
+  // 🔒 The relaxation is one rule and it is held from both sides: the pairs
+  // below are the rule's own statement, and the plant is its near miss on the
+  // tree — every verified block with an elided path past the lines its
+  // comparison is keyed on gets one character changed right after the `…/`,
+  // and it has to leave the verified set AND fault by name, which is what says
+  // an elision cannot absorb a difference it does not stand for.
+  const elisionProbes: string[] = [];
+  const elisionPairs: Array<[string, string, boolean, string]> = [
+    ['  ..    frame   …/a/b.png  (1x1)', '  ..    frame   /x/y/a/b.png  (1x1)', true, 'a whole absolute prefix'],
+    ['…/a/b.png', '/a/b.png', true, 'the root alone'],
+    ['…/a/b.png', 'a/b.png', false, 'a relative path, which no elision stands for'],
+    ['…/a/b.png', '/x/a/b.pnh', false, 'one character past the elision'],
+    ['…/a', '/x/a/b', false, 'a SUFFIX left off, which an elision may not take'],
+    ['x…/a', 'x/y/a', false, 'an ellipsis inside a token, which is not an elision'],
+    ['…/b c', '/a b/b c', false, 'a prefix with a space in it, which no token has'],
+  ];
+  for (const [page, tool, want, what] of elisionPairs) {
+    if (docsQuoteSameLine(page, tool) !== want) elisionProbes.push(`"${page}" against "${tool}" (${what}) — ${want ? 'did not match' : 'matched'}`);
+  }
+  let elisionPlanted = 0;
+  const elisionOn: string[] = [];
+  for (const entry of scan.verified) {
+    const file = entry.where.slice(0, entry.where.lastIndexOf(':'));
+    const line = Number(entry.where.slice(entry.where.lastIndexOf(':') + 1));
+    const text = docs.get(file) ?? '';
+    const block = galleryBlocks(text).find((candidate) => candidate.line === line);
+    if (block === undefined) continue;
+    const keyed = entry.anchor === 'header' ? 2 : 1;
+    // Past the keyed lines, so the plant leaves the block compared: the
+    // elided line a header block is keyed on is the one DQ03's adrift plant
+    // already answers for.
+    const carrying = block.lines.map((one, i) => (one.trim() === '' ? -1 : i)).filter((i) => i >= 0);
+    const at = carrying.slice(keyed).reverse().find((i) => /(?:^|\s)…\/./.test(block.lines[i])) ?? -1;
+    if (at < 0) continue;
+    const edited = [...block.lines];
+    const elided = /(^|\s)…\/(?=.)/.exec(edited[at]);
+    if (elided === null) continue;
+    const cut = elided.index + elided[1].length + 2;
+    const was = edited[at][cut];
+    edited[at] = `${edited[at].slice(0, cut)}${was === 'x' ? 'y' : 'x'}${edited[at].slice(cut + 1)}`;
+    elisionPlanted++;
+    elisionOn.push(entry.where);
+    const after = rescan(withText(file, docsQuotePlant(text, block, edited)));
+    if (after.verified.some((candidate) => candidate.where === entry.where)) {
+      elisionProbes.push(`${entry.where}: one character after the elision on line ${at + 1} changed, and the block still reproduces`);
+    } else if (!after.faults.some((fault) => fault.startsWith(`${entry.where}  `))) {
+      elisionProbes.push(`${entry.where}: one character after the elision on line ${at + 1} changed, and nothing faulted`);
+    }
+  }
+  if (elisionPlanted === 0) elisionProbes.push('no verified block carries an elided path past its keyed lines, so the near miss was never planted');
+  const elisionHeld = elisionProbes.length === 0;
+  say(
+    'DQ08_AN_ELIDED_PATH_MATCHES_AN_ABSOLUTE_PREFIX_AND_A_ONE_CHARACTER_MISS_AFTER_IT_FAULTS',
+    elisionHeld,
+    probeDetail(
+      elisionHeld,
+      elisionProbes,
+      `${elisionPairs.length} pair(s) state the rule — ${elisionPairs.map(([, , want, what]) => `${want ? 'matches' : 'refuses'} ${what}`).join('; ')} — ` +
+        `and the near miss was planted on ${elisionPlanted} verified block(s), each leaving the verified set and faulting: ${elisionOn.join(', ')}`,
+      (count) => `${count} of the elision checks did not answer:`,
+    ),
+    'issue #887: `pose`, `render` and `build` print the absolute paths they resolved and a page can only write ' +
+      '`…/`, so without this rule an exact comparison could never equal a block that states a path. The rule is ' +
+      'the narrowest that lets those compare — a token-leading elision, standing for whole leading components of an ' +
+      'absolute path — and the near miss is what keeps it from being a loosening: a character wrong after the ' +
+      'elision is wrong',
+  );
+
   return { failures: bad, holes: scan.holes.length };
 }
