@@ -187,9 +187,10 @@ import {
   parserReading,
   withoutParserDefaults,
 } from './src/keyorder.ts';
-import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
-import { FLOAT32_MAX } from './src/keys.ts';
-import { BONE_INHERIT_KNOWN, RIG_BONE_INHERIT, RIG_KEYS, RIG_SPEC_VERSION, parseRigSpec, resolveBoneInherit } from './src/rig.ts';
+import { MOTION_KEYS, MOTION_TYPES, parseMotionSpec } from './src/motion.ts';
+import { CHECKED_SPEC_VALUE_TYPES, FLOAT32_MAX, SPEC_VALUE_TYPES } from './src/keys.ts';
+import { MANIFEST_TYPES } from './src/types.ts';
+import { BONE_INHERIT_KNOWN, RIG_BONE_INHERIT, RIG_KEYS, RIG_SPEC_VERSION, RIG_TYPES, parseRigSpec, resolveBoneInherit } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
   buildGridMesh,
@@ -7263,8 +7264,11 @@ const RIG_MUTANTS: RigMutant[] = [
   },
   {
     name: 'RF86_an_idle_mesh_declaration_whose_why_is_not_a_string',
-    origin: 'a number where the reason goes still reads as "declared" to anybody skimming the spec',
-    expect: 'invariants.idleDrivesMeshes needs a "why" (a non-blank string), got 42',
+    origin:
+      'a number where the reason goes still reads as "declared" to anybody skimming the spec. Since issue #890 the ' +
+      'type half is the type walk\'s, which runs before any field check reads a value; the blank and absent halves ' +
+      'above keep their own sentence',
+    expect: 'invariants.idleDrivesMeshes.why is a number 42; a string is required',
     mutate: (rig) => {
       (rig as any).invariants.idleDrivesMeshes = { why: 42 };
     },
@@ -7330,6 +7334,92 @@ const RIG_MUTANTS: RigMutant[] = [
     expect: 'invariants.meshTriangles is Infinity; a number in this file is finite',
     mutate: (rig) => {
       (rig as any).invariants.meshTriangles = Infinity;
+    },
+  },
+  // 🔒 A value of the wrong JSON type (issue #890). #881's walk refuses every
+  // NUMBER the file cannot carry, and a value that is not a number never reached
+  // it: the arithmetic that read it coerced it first. Measured before the type
+  // walk, 287 of 581 wrong-typed plants over 27 rig shapes built green — the
+  // root bone's `"x": "5"` as 5, `true` as 1, `[1]` as 1. One row
+  // per JSON type an author could put where a number goes, then one per surface.
+  {
+    name: 'RF104_a_bone_number_given_as_a_string_is_refused_by_the_bone_the_field_and_both_types',
+    origin: 'issue #890: `"x": "5"` on the root bone built green as `"x": 5`, a value the spec spelled and never stated',
+    expect: 'bone "root" x is a string "5"; a number is required',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'root').x = '5';
+    },
+  },
+  {
+    name: 'RF105_a_bone_number_given_as_a_boolean_is_refused',
+    origin: 'issue #890: `"x": true` built green as `"x": 1` — JavaScript arithmetic reads true as one',
+    expect: 'bone "root" x is a boolean true; a number is required',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'root').x = true;
+    },
+  },
+  {
+    name: 'RF106_a_bone_number_given_as_a_one_element_array_is_refused',
+    origin: 'issue #890: `"x": [1]` built green as `"x": 1` — a one-element array coerces to its element',
+    expect: 'bone "root" x is an array [1]; a number is required',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'root').x = [1];
+    },
+  },
+  {
+    name: 'RF107_a_json_null_on_a_number_is_refused_as_null_rather_than_read_as_absent',
+    origin:
+      'issue #890: `"rotation": null` built green on the segments probe with its bytes moved. `null` is a value in ' +
+      'JSON, and it is accepted only where ' +
+      'the field says so — a stage stated absent, a slot showing nothing — which this field does not',
+    expect: 'bone "root" rotation is null; a number is required',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'root').rotation = null;
+    },
+  },
+  {
+    name: 'RF108_a_constraint_number_given_as_a_string_is_refused_by_the_constraint',
+    origin: 'issue #890: 32 of 40 transform-constraint plants in the sweep built green, a spelt `mixRotate` among them',
+    expect: 'constraint "reach" mix is a string "0.5"; a number is required',
+    mutate: (rig) => {
+      (rig as any).constraints = [{ type: 'ik', name: 'reach', bones: ['trail_b'], target: 'trail_c', mix: '0.5' }];
+    },
+  },
+  {
+    name: 'RF109_an_attachment_number_given_as_a_string_is_refused_by_its_skin_slot_and_attachment',
+    origin: 'issue #890: 43 of 77 region-attachment plants in the sweep built green, a spelt `rotation` among them',
+    expect: 'skin "default" slot "near" attachment "probe_missing" rotation is a string "90"; a number is required',
+    mutate: (rig) => {
+      (rig as any).skins = { default: { near: { probe_missing: { image: 'nope_not_here.png', rotation: '90' } } } };
+    },
+  },
+  {
+    name: 'RF110_a_weight_binding_with_a_string_coordinate_is_refused_by_vertex_and_binding_index',
+    origin: 'issue #890: 6 of 8 mesh-binding plants built green; an element of an array is typed, not only the array',
+    expect: 'skin "default" slot "near" attachment "probe_mesh" weights[1][0].x is a string "1"; a number is required',
+    mutate: (rig) => {
+      const bind = (x: unknown) => [{ bone: 'root', x, y: 0, weight: 1 }];
+      (rig as any).skins = {
+        default: {
+          near: {
+            probe_mesh: {
+              type: 'mesh', image: 'nope_not_here.png', uvs: [0, 0, 1, 0, 1, 1], triangles: [0, 1, 2],
+              weights: [bind(0), bind('1'), bind(1)],
+            },
+          },
+        },
+      };
+    },
+  },
+  {
+    name: 'RF111_a_boolean_given_as_the_string_true_is_refused',
+    origin:
+      'issue #890: the flags are read with `=== true`, so `"skin": "true"` on a bone compiled as a bone no skin ' +
+      'gates. Measured, the gate caught it on all 10 sweep rigs — as `A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED`, a ' +
+      'sentence about skin membership, which is the consequence rather than the typo',
+    expect: 'bone "root" skin is a string "true"; a boolean (true or false) is required',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'root').skin = 'true';
     },
   },
 ];
@@ -7707,6 +7797,255 @@ function runRigSuite(): number {
           '`parseMotionSpec` makes, so a checked field such as a physics tuning number keeps its own sentence',
       );
     }
+  }
+
+  // --- values of the wrong type, off the rig spec's own route (issue #890) --
+  //
+  // RF104–RF111 are the refusal on the rig spec's surfaces. These are what a
+  // row in `RIG_MUTANTS` cannot say: the motion spec and the manifest, the legal
+  // spellings of a number that must still build alike, the CLI writing nothing,
+  // and the two claims that make the type table a table rather than a list —
+  // that it types exactly the keys the scan admits, and that each checked type
+  // is the one the interface declares.
+  {
+    const TYPE_MARK = 'a number is required';
+    const refusalOf = (fn: () => unknown): string => {
+      try {
+        fn();
+        return '';
+      } catch (err) {
+        return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+      }
+    };
+    const work = mkdtempSync(join(tmpdir(), 'rigc-types-'));
+
+    // (e) the motion spec: a field nothing in `parseMotionSpec` reads, refused by
+    // its path — and a field it does read keeps its own sentence.
+    {
+      const motion = JSON.parse(readFileSync(opts.motionPath, 'utf8')) as {
+        animations: Record<string, unknown>;
+        physics?: Record<string, Record<string, unknown>>;
+      };
+      const ikEdit = JSON.parse(JSON.stringify(motion)) as typeof motion;
+      ikEdit.animations.type_probe = { duration: 1, tracks: [], ik: [{ constraint: 'reach', keys: [{ t: 0, mix: '1' }] }] };
+      const ikPath = join(work, 'ik.motion.json');
+      writeFileSync(ikPath, `${JSON.stringify(ikEdit, null, 2)}\n`);
+      const ikSaid = refusalOf(() => compile({ ...opts, motionPath: ikPath }));
+      const physics = Object.entries(motion.physics ?? {})[0];
+      let tuned = 'the probe motion has no physics entry to plant';
+      if (physics !== undefined) {
+        const edit = JSON.parse(JSON.stringify(motion)) as { physics: Record<string, Record<string, unknown>> };
+        edit.physics[physics[0]].strength = 'stiff';
+        const planted = join(work, 'physics.motion.json');
+        writeFileSync(planted, `${JSON.stringify(edit, null, 2)}\n`);
+        tuned = refusalOf(() => compile({ ...opts, motionPath: planted }));
+      }
+      bad += reportCase(
+        'RF112_A_MOTION_VALUE_OF_THE_WRONG_TYPE_IS_REFUSED_BY_ITS_PATH_AND_A_CHECKED_FIELD_KEEPS_ITS_SENTENCE',
+        ikSaid.startsWith(`${ikPath}: \`animations."type_probe".ik[0].keys[0].mix\` is a string "1"; ${TYPE_MARK}`) &&
+          tuned.includes('every tuning field of a physics constraint is a finite number') &&
+          !tuned.includes(TYPE_MARK),
+        `ik key mix "1": ${ikSaid === '' ? 'compiled' : ikSaid} | physics strength "stiff": ${tuned === '' ? 'compiled' : tuned}`,
+        'issue #890, measured before the walk: all 303 wrong-typed plants over 18 motion shapes were refused, but by ' +
+          'the timeline compiler, and 7 of those sentences named another fault (`"float": "1"` as *float 1 is not ' +
+          'finite*). The walk runs after every field check `parseMotionSpec` makes, so a checked field keeps its own',
+      );
+    }
+
+    // (f) the manifest: `crop.h` spelt as a string, refused by its path.
+    if (opts.manifestPath !== undefined) {
+      const manifest = JSON.parse(readFileSync(opts.manifestPath, 'utf8')) as { crop: Record<string, unknown> };
+      const stated = manifest.crop.h;
+      manifest.crop.h = String(stated);
+      // Beside the original, so every plate path in it still resolves.
+      const planted = join(dirname(opts.manifestPath), 'type_probe.manifest.json');
+      writeFileSync(planted, `${JSON.stringify(manifest, null, 2)}\n`);
+      const said = refusalOf(() => compile({ ...opts, manifestPath: planted }));
+      rmSync(planted);
+      bad += reportCase(
+        'RF113_A_MANIFEST_NUMBER_SPELT_AS_A_STRING_IS_REFUSED_BY_ITS_PATH',
+        said.startsWith(`${planted}: crop.h is a string ${JSON.stringify(String(stated))}; ${TYPE_MARK}`),
+        said === '' ? `a manifest crop of height ${JSON.stringify(String(stated))} compiled` : `refused with: ${said}`,
+        'issue #890, measured before the walk: 62 of 84 wrong-typed plants on the three fixture manifests built ' +
+          'green, and a spelt `crop.h` that was caught was caught as *the plate is 256x256 but the window is 256x256*',
+      );
+    }
+
+    // (h) the legal spellings of a number: -0, 1.0, 1e3 and the largest float32
+    // build green, A18 holds, and they emit the same bytes as the plain twin.
+    {
+      const MARK = '__rigc_type_literal__';
+      const spelled = (rotation: string, scaleX: string, y: string): string => {
+        const rig = JSON.parse(sourceText) as { bones: Array<Record<string, unknown>> };
+        const root = rig.bones.find((b) => b.name === 'root');
+        if (root === undefined) return '';
+        root.x = FLOAT32_MAX;
+        root.rotation = `${MARK}${rotation}`;
+        root.scaleX = `${MARK}${scaleX}`;
+        root.y = `${MARK}${y}`;
+        return `${JSON.stringify(rig, null, 2).replace(new RegExp(`"${MARK}([^"]*)"`, 'g'), '$1')}\n`;
+      };
+      const literalPath = join(dirname(rigPath), 'literal.rig.json');
+      const plainPath = join(dirname(rigPath), 'plain.rig.json');
+      const literalText = spelled('-0', '1.0', '1e3');
+      writeFileSync(literalPath, literalText);
+      writeFileSync(plainPath, spelled('0', '1', '1000'));
+      const probes: string[] = [];
+      if (!literalText.includes('"rotation": -0') || !literalText.includes('"scaleX": 1.0') || !literalText.includes('"y": 1e3')) {
+        probes.push('the harness did not write -0, 1.0 and 1e3 as literals');
+      }
+      try {
+        const first = compile({ ...opts, rigPath: literalPath });
+        const second = compile({ ...opts, rigPath: literalPath });
+        const plain = compile({ ...opts, rigPath: plainPath });
+        const report = validate({
+          skeletonText: first.skeletonText,
+          atlasText: first.atlasText,
+          atlasDir: opts.outDir,
+          declaredDurations: first.declaredDurations,
+          rig: first.rig,
+          profile: 'spine-html',
+          reEmit: { skeletonText: second.skeletonText, atlasText: second.atlasText },
+        });
+        if (report.failures.length > 0) probes.push(`the gate failed it: ${[...new Set(report.failures.map((f) => f.assertion))].join(', ')}`);
+        if (!report.passed.includes('A18_DETERMINISTIC_EMIT')) probes.push('A18 did not pass on two compiles of it');
+        if (first.skeletonText !== plain.skeletonText) probes.push('the literal spellings emitted different bytes from 0, 1 and 1000');
+      } catch (err) {
+        probes.push(`the legal spellings were refused: ${(err as Error).message}`);
+      }
+      bad += reportCase(
+        'RF114_NEGATIVE_ZERO_ONE_POINT_ZERO_1E3_AND_THE_LARGEST_FLOAT32_BUILD_GREEN_ALIKE_TWICE_AND_AS_THEIR_PLAIN_TWIN',
+        probes.length === 0,
+        probes.length === 0
+          ? `root rotation -0, scaleX 1.0, y 1e3 and x ${String(FLOAT32_MAX)}: compiled, gate green, A18 passed, bytes equal to the build spelling 0, 1 and 1000`
+          : probes.join('; '),
+        'the positive control for RF104–RF113: a type is a property of the JSON value, not of its spelling, so a rule ' +
+          'that refused any of these would be reading the text rather than the number',
+      );
+    }
+
+    // (i) the type tables type exactly the keys the key tables admit.
+    {
+      const compare = (keys: Record<string, readonly string[]>, types: Record<string, Record<string, unknown>>, label: string): string[] => {
+        const faults: string[] = [];
+        for (const shape of Object.keys(keys)) if (!(shape in types)) faults.push(`${label}: shape ${shape} has keys and no type row`);
+        for (const shape of Object.keys(types)) if (!(shape in keys)) faults.push(`${label}: type row ${shape} has no key set`);
+        for (const [shape, list] of Object.entries(keys)) {
+          const row = types[shape];
+          if (row === undefined) continue;
+          for (const key of list) if (!(key in row)) faults.push(`${label}: ${shape}.${key} is admitted by the scan and has no type`);
+          for (const key of Object.keys(row)) if (!list.includes(key)) faults.push(`${label}: ${shape}.${key} is typed and the scan does not admit it`);
+        }
+        return faults;
+      };
+      const faults = [...compare(RIG_KEYS, RIG_TYPES, 'rig'), ...compare(MOTION_KEYS, MOTION_TYPES, 'motion')];
+      const planted = [
+        ...(raisedBy(compare({ P: ['a', 'b'] }, { P: { a: 'number' } }, 'plant'), { at: 'plant: P.b is admitted by the scan and has no type' }).length === 1 ? [] : ['a key with no type was not faulted']),
+        ...(raisedBy(compare({ P: ['a'] }, { P: { a: 'number', b: 'string' } }, 'plant'), { at: 'plant: P.b is typed and the scan does not admit it' }).length === 1 ? [] : ['a typed key the scan does not admit was not faulted']),
+        ...(raisedBy(compare({ P: ['a'] }, {}, 'plant'), { at: 'plant: shape P has keys and no type row' }).length === 1 ? [] : ['a shape with no type row was not faulted']),
+      ];
+      const unknownTypes = [...Object.entries(RIG_TYPES), ...Object.entries(MOTION_TYPES), ...Object.entries(MANIFEST_TYPES)].flatMap(
+        ([shape, row]) => Object.entries(row).filter(([, t]) => !(SPEC_VALUE_TYPES as readonly string[]).includes(t)).map(([k, t]) => `${shape}.${k} is typed "${t}", which is not a type the walk knows`),
+      );
+      const keyCount = [...Object.values(RIG_KEYS), ...Object.values(MOTION_KEYS)].reduce((n, list) => n + list.length, 0);
+      const probes = [...faults, ...planted, ...unknownTypes];
+      bad += reportCase(
+        'RF115_EVERY_KEY_THE_SCAN_ADMITS_HAS_A_TYPE_AND_NO_TYPED_KEY_IS_UNKNOWN_TO_THE_SCAN',
+        probes.length === 0 && keyCount > 0,
+        probes.length === 0
+          ? `${Object.keys(RIG_TYPES).length} rig and ${Object.keys(MOTION_TYPES).length} motion shape(s), ${keyCount} key(s), each set equal to its type row; a missing type, an extra type and a missing row were each faulted`
+          : probes.join('; '),
+        'a key the scan admits and the type table does not know would pass the walk untyped — exactly the silence ' +
+          'the walk exists to remove — so the two tables are held equal here as well as by `satisfies` in the source',
+      );
+    }
+
+    // The checked types agree with the declarations they shadow, and the
+    // manifest's rows are its interfaces' field lists (it has no key set).
+    {
+      const sources = ['src/rig.ts', 'src/types.ts', 'src/trackgen.ts', 'src/deformgen.ts'].map((rel) => readFileSync(join(import.meta.dir, rel), 'utf8'));
+      const aliases = new Map<string, string>();
+      for (const text of sources) for (const [k, v] of typeAliasesIn(text)) aliases.set(k, v);
+      const declared = (shape: string): Array<[string, string]> | null => {
+        const [iface, inline] = shape.split('.');
+        const fields = sources.map((text) => interfaceFieldTypesIn(text, iface)).find((f) => f !== null) ?? null;
+        if (fields === null || inline === undefined) return fields;
+        const literal = fields.find(([k]) => k === inline)?.[1];
+        const body = literal === undefined ? null : /^\{([\s\S]*)\}$/.exec(literal);
+        return body === null ? null : inlineFieldTypes(body[1]);
+      };
+      const faults: string[] = [];
+      let compared = 0;
+      const tables: Array<[string, Record<string, Record<string, string>>]> = [['rig', RIG_TYPES], ['motion', MOTION_TYPES], ['manifest', MANIFEST_TYPES]];
+      for (const [label, table] of tables) {
+        for (const [shape, row] of Object.entries(table)) {
+          const fields = declared(shape);
+          if (fields === null) {
+            faults.push(`${label}: ${shape} is declared nowhere this reads`);
+            continue;
+          }
+          if (label === 'manifest') {
+            for (const [k] of fields) if (!(k in row)) faults.push(`manifest: ${shape}.${k} is declared and has no type`);
+            for (const k of Object.keys(row)) if (!fields.some(([f]) => f === k)) faults.push(`manifest: ${shape}.${k} is typed and not declared`);
+          }
+          for (const [key, text] of fields) {
+            const typed = row[key];
+            if (typed === undefined) continue;
+            compared += 1;
+            const derived = checkedTypeOf(text, aliases);
+            if (derived !== null && derived !== typed) faults.push(`${label}: ${shape}.${key} is declared \`${text}\` (${derived}) and typed "${typed}"`);
+            if (derived === null && (CHECKED_SPEC_VALUE_TYPES as readonly string[]).includes(typed)) {
+              faults.push(`${label}: ${shape}.${key} is typed "${typed}" and declared \`${text}\`, which is not that type`);
+            }
+          }
+        }
+      }
+      const noAliases = new Map<string, string>();
+      const planted = [
+        ...(checkedTypeOf('number', noAliases) === 'number' ? [] : ['`number` did not derive as number']),
+        ...(checkedTypeOf('[number, number]', noAliases) === 'number[]' ? [] : ['a pair did not derive as number[]']),
+        ...(checkedTypeOf("'a' | 'b'", noAliases) === null ? [] : ['a union of literals derived as a checked type']),
+        ...(checkedTypeOf('Name', new Map([['Name', 'string']])) === 'string' ? [] : ['an alias of string did not derive through its declaration']),
+        ...(JSON.stringify(inlineFieldTypes(' a: number; b?: { c: string; d: number };\n e: string[]; ')) ===
+        JSON.stringify([['a', 'number'], ['b', '{ c: string; d: number }'], ['e', 'string[]']])
+          ? []
+          : ['the field reader does not read a nested literal whole']),
+      ];
+      const probes = [...faults, ...planted];
+      bad += reportCase(
+        'RF116_EVERY_CHECKED_TYPE_IS_THE_TYPE_ITS_INTERFACE_DECLARES',
+        probes.length === 0 && compared > 0,
+        probes.length === 0
+          ? `${compared} typed field(s) across ${tables.map(([l, t]) => `${Object.keys(t).length} ${l}`).join(', ')} row(s) read against their declarations: every field declared a checked type is typed so, and no field is checked as a type it is not declared`
+          : probes.join('; '),
+        'a hand-written type beside a declaration is the antipattern this tree has a judgment about: typed `string` ' +
+          'where the interface says `number`, the walk would refuse every correct rig. So each checked type is derived ' +
+          'from the declaration and compared, in both directions, with the reader driven over plants it must read',
+      );
+    }
+
+    // (j) nothing is written: the CLI's `build` refuses before it writes a file.
+    {
+      const planted = join(work, 'planted.rig.json');
+      const rig = JSON.parse(sourceText) as { bones: Array<Record<string, unknown>> };
+      const root = rig.bones.find((b) => b.name === 'root');
+      if (root !== undefined) root.x = '5';
+      writeFileSync(planted, `${JSON.stringify(rig, null, 2)}\n`);
+      const out = join(work, 'out');
+      const run = runCli(['build', '--rig', planted, '--motion', opts.motionPath, '--manifest', opts.manifestPath ?? '', '--out', out]);
+      const probes: string[] = [];
+      if (run.status !== 1) probes.push(`build exited ${String(run.status)}, not 1`);
+      if (!run.stderr.includes(`bone "root" x is a string "5"; ${TYPE_MARK}`)) probes.push(`build said ${JSON.stringify(run.stderr.trim().split('\n').slice(-2).join(' | '))}`);
+      if (existsSync(out)) probes.push(`build created --out (${readdirSync(out).length} file(s) in it)`);
+      bad += reportCase(
+        'RF117_A_BUILD_REFUSED_FOR_A_VALUE_OF_THE_WRONG_TYPE_EXITS_1_AND_CREATES_NO_OUT',
+        probes.length === 0,
+        probes.length === 0 ? 'exit 1, the bone and both types named on stderr, --out never created' : probes.join('; '),
+        'emit only after green: a skeleton with "x": 5 on disk is a value the spec spelt and never stated, and it ' +
+          'outlives the console line that refused it',
+      );
+    }
+    rmSync(work, { recursive: true, force: true });
   }
 
   // --- a slot track naming a timeline the emitter does not have (issue #650) -
@@ -28657,7 +28996,8 @@ function runPathAndSliderSuite(): number {
   say(
     'PS177_A_NAME_THAT_IS_NOT_A_STRING_IS_REFUSED_BY_THE_FIELD_AND_THE_VALUE',
     typeof numericName === 'string' &&
-      numericName.includes('skin "dress" slot "marker" attachment "marker": "name" is 7, which is not a string') &&
+      // Since issue #890 the type walk names it, before the attachment reader reads it.
+      numericName.includes('skin "dress" slot "marker" attachment "marker" name is a number 7; a string is required') &&
       stringNamed?.name === '7' &&
       stringNamed.path === 'marker',
     typeof numericName !== 'string'
@@ -29189,7 +29529,8 @@ function runPathAndSliderSuite(): number {
   const entryProbes = [
     ...(decreasing !== null && decreasing.includes('"lengths"[1] is 45, below the 90 before it') ? [] : [`[90, 45, 360]: ${decreasing ?? 'the compile went through'}`]),
     ...(negative !== null && negative.includes('"lengths"[0] is -1, below 0') ? [] : [`[-1, 180, 360]: ${negative ?? 'the compile went through'}`]),
-    ...(spelt !== null && spelt.includes('"lengths"[1] is "180"') ? [] : [`[90, "180", 360]: ${spelt ?? 'the compile went through'}`]),
+    // Since issue #890 the type walk names the spelt entry, before the path reader reads it.
+    ...(spelt !== null && spelt.includes('lengths[1] is a string "180"; a number is required') ? [] : [`[90, "180", 360]: ${spelt ?? 'the compile went through'}`]),
   ];
   const entryHeld = entryProbes.length === 0;
   say(
@@ -54545,7 +54886,7 @@ function runCurrencySuite(): number {
     const code = modules.map((rel) => {
       const raw = readFileSync(join(root, rel), 'utf8');
       const body = DECLARING.has(rel)
-        ? cutBracedBlocks(cutBracedBlocks(raw, /export interface \w+(?: extends \w+)? \{/), /export const (?:RIG|MOTION)_KEYS = \{/)
+        ? cutBracedBlocks(cutBracedBlocks(raw, /export interface \w+(?: extends \w+)? \{/), /export const (?:RIG|MOTION)_(?:KEYS|TYPES) = \{/)
         : raw;
       return body.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
     });
@@ -54572,7 +54913,7 @@ function runCurrencySuite(): number {
         held,
         [...orphans.map((key) => `"${key}" is named by no line of code in the ${modules.length} module(s) this reads, only by its own declaration`), ...planted],
         `all ${every.length} distinct key(s) of the two formats are named by code in the ${modules.length} ` +
-          `module(s) this reads, with the ${DECLARING.size} declaring ones stripped of their interfaces and key ` +
+          `module(s) this reads, with the ${DECLARING.size} declaring ones stripped of their interfaces and their key and type ` +
           'tables and every module stripped of its comments — under which `scaleYMode` reads as unnamed, an ' +
           'invented key as unnamed, and an emitted one as named',
       ),
@@ -59016,6 +59357,97 @@ function interfaceFieldsIn(source: string, name: string): string[] | null {
   }
   const base = head[1] === undefined ? [] : (interfaceFieldsIn(source, head[1]) ?? []);
   return [...base, ...fields];
+}
+
+/**
+ * Each field of an exported interface with its declared type text, whitespace
+ * collapsed — `interfaceFieldsIn`'s reading, carried one step further for the
+ * type tables (issue #890). A type spanning lines is read to the `;` that closes
+ * it at depth 0, so an inline object type such as `crop: { x: number; … }` comes
+ * back whole; `inlineFieldTypes` reads that literal's own fields.
+ */
+function interfaceFieldTypesIn(source: string, name: string): Array<[string, string]> | null {
+  const head = new RegExp(`export interface ${name}(?: extends (\\w+))? \\{`).exec(source);
+  if (head === null) return null;
+  let depth = 0;
+  let end = -1;
+  for (let i = head.index + head[0].length - 1; i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}' && --depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  if (end === -1) return null;
+  const body = source.slice(head.index + head[0].length, end);
+  const base = head[1] === undefined ? [] : (interfaceFieldTypesIn(source, head[1]) ?? []);
+  return [...base, ...inlineFieldTypes(body)];
+}
+
+/** The `name?: type;` fields of an object type's body, comments removed. */
+function inlineFieldTypes(literalBody: string): Array<[string, string]> {
+  const body = literalBody.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const out: Array<[string, string]> = [];
+  let i = 0;
+  while (i < body.length) {
+    const field = /^\s*(\w+)\??\s*:\s*/.exec(body.slice(i));
+    if (field === null) {
+      i++;
+      continue;
+    }
+    i += field[0].length;
+    const start = i;
+    let depth = 0;
+    for (; i < body.length; i++) {
+      const ch = body[i];
+      if ('{([<'.includes(ch)) depth++;
+      else if ('})]>'.includes(ch)) depth--;
+      else if ((ch === ';' || ch === ',') && depth === 0) break;
+    }
+    out.push([field[1], body.slice(start, i).trim().replace(/\s+/g, ' ')]);
+    i++;
+  }
+  return out;
+}
+
+/**
+ * The checked type (`SPEC_VALUE_TYPES`' first twelve) a declared TypeScript type
+ * spells, or `null` when it spells none of them — a union of literals, an
+ * interface, a mixed union. `aliases` is `export type X = …;` text by name, so
+ * `RigAttachmentName` (a `string`) and `EasingHandles` (four numbers) derive
+ * through their declarations rather than through a list kept here.
+ */
+function checkedTypeOf(declared: string, aliases: ReadonlyMap<string, string>): string | null {
+  let text = declared;
+  for (let pass = 0; pass < 3; pass++) {
+    text = text.replace(/\b[A-Z]\w*\b/g, (word) => {
+      if (word === 'Array' || word === 'Record') return word;
+      const rhs = aliases.get(word);
+      return rhs !== undefined && checkedTypeOf(rhs, new Map()) !== null ? rhs : word;
+    });
+  }
+  const number = /^(?:number|\[number(?:, number)*\]|number\[\]|Array<number>)$/;
+  const t = text.trim();
+  if (t === 'number' || t === 'string' || t === 'boolean') return t;
+  if (/^(?:number \| null|null \| number)$/.test(t)) return 'number | null';
+  if (/^(?:string \| null|null \| string)$/.test(t)) return 'string | null';
+  if (t !== 'number' && number.test(t)) return 'number[]';
+  if (/^(?:number\[\]|\[number(?:, number)*\]) \| null$/.test(t)) return 'number[] | null';
+  if (t === 'string[]' || t === 'Array<string>') return 'string[]';
+  if (/^(?:Array<\[number(?:, number)*\]>|number\[\]\[\])$/.test(t)) return 'number[][]';
+  const map = /^Record<string, (.+)>$/.exec(t);
+  if (map !== null) {
+    const each = checkedTypeOf(map[1], new Map());
+    if (each === 'number[]' || each === 'string[]' || each === 'string | null') return `map of ${each}`;
+  }
+  return null;
+}
+
+/** `export type X = …;` declarations of a module, by name. */
+function typeAliasesIn(source: string): Map<string, string> {
+  const aliases = new Map<string, string>();
+  for (const m of source.matchAll(/export type (\w+) =\s*([^;]+);/g)) aliases.set(m[1], m[2].trim().replace(/\s+/g, ' '));
+  return aliases;
 }
 
 // ---------------------------------------------------------------------------

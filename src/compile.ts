@@ -38,7 +38,9 @@ import { parseJsonWithPosition } from './json-position.ts';
 // The "did you mean" list on a missing atlas region, from the one implementation
 // of it — the same search serves `refuseUnknownKeys`, and a second copy here with
 // a threshold edited is how such a pair drifts apart.
-import { dottedPath, nearMisses, refuseNumbersTheFileCannotCarry } from './keys.ts';
+import { dottedPath, nearMisses, refuseNumbersTheFileCannotCarry, refuseValuesOfTheWrongType } from './keys.ts';
+import type { ShapeVisit } from './keys.ts';
+import { MANIFEST_TYPES } from './types.ts';
 import { inEditorKeyOrder, withoutParserDefaults } from './keyorder.ts';
 import { EVERY_GLOBAL_PHYSICS, parseMotionSpec } from './motion.ts';
 import {
@@ -1997,6 +1999,30 @@ export function droppedStateReason(dropped: DroppedState): string {
 }
 
 /**
+ * Every node of a cut manifest that `MANIFEST_TYPES` has a row for, in document
+ * order, named by its dotted path (`parts[2].mesh.center[1]`). A node that is
+ * not an object is skipped: whether it should have been one is the reader's
+ * refusal, and the rows below it have nothing to type.
+ */
+function manifestShapeVisits(manifest: unknown): ShapeVisit[] {
+  const visits: ShapeVisit[] = [];
+  const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+  const at = (node: unknown, shape: keyof typeof MANIFEST_TYPES, path: Array<string | number>): void => {
+    if (isRecord(node)) visits.push({ node, shape, name: (tail) => dottedPath([...path, ...tail]) });
+  };
+  if (!isRecord(manifest)) return visits;
+  at(manifest, 'FaceManifest', []);
+  for (const field of ['crop', 'axis', 'stroke', 'roi'] as const) at(manifest[field], `FaceManifest.${field}`, [field]);
+  for (const [i, part] of (Array.isArray(manifest.parts) ? manifest.parts : []).entries()) {
+    at(part, 'FaceManifestPart', ['parts', i]);
+    if (!isRecord(part)) continue;
+    at(part.mesh, 'FaceManifestMesh', ['parts', i, 'mesh']);
+    if (isRecord(part.mesh)) at(part.mesh.bias, 'FaceManifestMesh.bias', ['parts', i, 'mesh', 'bias']);
+  }
+  return visits;
+}
+
+/**
  * Compile a rig spec and a motion spec into Spine 4.3 skeleton data.
  *
  * The body is `compileInto`; this wrapper exists for one reason, and it is the
@@ -2034,6 +2060,9 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // bone positions and the stage: a `crop.h` of 1e309 built as `"height": null`
   // before issue #881. The rig spec's walk is `parseRigSpec`'s; this is the
   // same rule over the other file whose numbers reach the skeleton.
+  // Its values of the wrong type first (issue #890): `crop.h: "806"` built
+  // green, the string coerced by whatever arithmetic read it.
+  if (manifest !== null && manifestPath !== null) refuseValuesOfTheWrongType(manifestShapeVisits(manifest), MANIFEST_TYPES, manifestPath);
   if (manifest !== null && manifestPath !== null) refuseNumbersTheFileCannotCarry(manifest, manifestPath, dottedPath);
 
   // The rig spec names its own path in every message `parseRigSpec` throws (its

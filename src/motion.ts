@@ -54,7 +54,8 @@
  * [`keys.ts`](keys.ts) shared with the rig parser.
  */
 import { CompileError } from './errors.ts';
-import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys } from './keys.ts';
+import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys, refuseValuesOfTheWrongType } from './keys.ts';
+import type { ShapeVisit, SpecValueType } from './keys.ts';
 import { SEQUENCE_MODES } from './timelines.ts';
 import type { MotionSpec } from './types.ts';
 
@@ -112,7 +113,7 @@ const CONSTRAINT_GROUPS = ['ik', 'transform'] as const;
  * it — the runtime shadow of types TypeScript erases, and the other half of
  * `RIG_KEYS` in [`rig.ts`](rig.ts).
  *
- * 🔒 Held to those interfaces by `KEY01` in `selftest.ts`, which reads the
+ * 🔒 Held to those interfaces by `CUR17` in `selftest.ts`, which reads the
  * declaring source and compares. The interfaces are spread over three modules —
  * `types.ts` for the format, [`trackgen.ts`](trackgen.ts) for a track's `derive`
  * and [`deformgen.ts`](deformgen.ts) for a deform key's `transform` — and the
@@ -151,6 +152,80 @@ export const MOTION_KEYS = {
   DeformWave: ['kind', 'amplitude', 'wavelength', 'phase', 'along', 'axis'],
   DeformBend: ['kind', 'amount', 'from', 'to', 'power', 'along', 'axis'],
 } as const satisfies Record<string, readonly string[]>;
+
+/**
+ * The type every key of `MOTION_KEYS` holds, shape by shape — what
+ * `refuseValuesOfTheWrongType` refuses a value against (issue #890), held to
+ * the key table by `satisfies MotionTypeTable` and by the selftest, exactly as
+ * `RIG_TYPES` is.
+ *
+ * ⚠️ The walk runs LAST in `parseMotionSpec`, after every field check above,
+ * so a field this file already checks keeps its own sentence (a physics tuning
+ * number, a key's `t`, an easing's handles) and the walk is what covers the
+ * fields nothing here reads — an ik key's `mix`, a deform key's `offset`, an
+ * event key's `float`, a derive's `degrees`.
+ *
+ * Where an unchecked type is refused: `spec` — the version check; a track's
+ * `property` — `compileTrack`; a derive's `kind` — `evaluateTrackDerive`; a deform
+ * transform's `kind`, `along` and `axis` — `evaluateDeformTransform`;
+ * `MotionKey.v`, a key's `curve`, a derive's `depth` and `mix.pairs` (`mixed`)
+ * — the track compiler by property, the curve reader, the derive evaluator and
+ * `parseMix`. A sequence key's `mode` is a closed set too, but its interface
+ * declares it `string` and so does this row: `parseSequence` refuses a name
+ * outside `SEQUENCE_MODES` before the walk runs, and a non-string with it.
+ */
+type MotionTypeTable = {
+  readonly [S in keyof typeof MOTION_KEYS]: { readonly [K in (typeof MOTION_KEYS)[S][number]]: SpecValueType };
+};
+
+export const MOTION_TYPES = {
+  MotionSpec: {
+    spec: 'enum', archetype: 'string', cut: 'string', note: 'string', easings: 'map of number[]', groups: 'map of string[]',
+    setup: 'map of object', physics: 'map of object', animations: 'map of object', mix: 'object',
+  },
+  MotionMix: { default: 'number', pairs: 'mixed' },
+  MotionSetupSlot: { attachment: 'string | null', color: 'number[]' },
+  MotionPhysics: {
+    bone: 'string', x: 'number', y: 'number', rotate: 'number', scaleX: 'number', shearX: 'number', inertia: 'number',
+    strength: 'number', damping: 'number', mass: 'number', wind: 'number', gravity: 'number', mix: 'number',
+    fps: 'number', limit: 'number', note: 'string',
+  },
+  MotionAnimation: {
+    duration: 'number', loop: 'boolean', note: 'string', tracks: 'object[]', ik: 'object[]', transform: 'object[]',
+    deform: 'object[]', sequence: 'object[]', drawOrder: 'object[]', events: 'object[]',
+  },
+  MotionTrack: {
+    slot: 'string', group: 'string', bone: 'string', physics: 'string', path: 'string', slider: 'string',
+    property: 'enum', lag: 'number', stagger: 'number', keys: 'object[]',
+  },
+  MotionKey: { t: 'number', v: 'mixed', derive: 'object', ease: 'string', curve: 'mixed' },
+  MotionIkTrack: { constraint: 'string', keys: 'object[]' },
+  MotionIkKey: {
+    t: 'number', mix: 'number', softness: 'number', bendPositive: 'boolean', compress: 'boolean', stretch: 'boolean',
+    ease: 'string', curve: 'mixed',
+  },
+  MotionTransformTrack: { constraint: 'string', keys: 'object[]' },
+  MotionTransformKey: {
+    t: 'number', mixRotate: 'number', mixX: 'number', mixY: 'number', mixScaleX: 'number', mixScaleY: 'number',
+    mixShearY: 'number', ease: 'string', curve: 'mixed',
+  },
+  MotionDeformTrack: { skin: 'string', slot: 'string', attachment: 'string', keys: 'object[]' },
+  MotionDeformKey: {
+    t: 'number', offset: 'number', fromVertex: 'number', vertices: 'number[] | null', transform: 'object', ease: 'string', curve: 'mixed',
+  },
+  MotionSequenceTrack: { skin: 'string', slot: 'string', attachment: 'string', keys: 'object[]' },
+  MotionSequenceKey: { t: 'number', mode: 'string', index: 'number', delay: 'number' },
+  MotionDrawOrderKey: { t: 'number', offsets: 'object[]' },
+  MotionDrawOrderOffset: { slot: 'string', offset: 'number' },
+  MotionEventKey: {
+    t: 'number', name: 'string', int: 'number', float: 'number', string: 'string', volume: 'number', balance: 'number',
+  },
+  TrackDeriveTurn: { kind: 'enum', degrees: 'number', depth: 'mixed', carried: 'number', about: 'number' },
+  DeformTurn: { kind: 'enum', radius: 'number', depth: 'boolean', degrees: 'number', about: 'number' },
+  DeformAffine: { kind: 'enum', scale: 'number[]', about: 'number[]' },
+  DeformWave: { kind: 'enum', amplitude: 'number', wavelength: 'number', phase: 'number', along: 'enum', axis: 'enum' },
+  DeformBend: { kind: 'enum', amount: 'number', from: 'number', to: 'number', power: 'number', along: 'enum', axis: 'enum' },
+} as const satisfies MotionTypeTable;
 
 /** A deform key's `transform` kinds, and the shape each one's keys come from. */
 const DEFORM_TRANSFORM_SHAPE: Record<string, keyof typeof MOTION_KEYS> = {
@@ -199,8 +274,26 @@ function refuse(where: string, key: string, is: unknown, hint: string): never {
  * the wrong field.
  */
 function known(node: unknown, shape: keyof typeof MOTION_KEYS, where: string, at: string): void {
-  if (isObj(node)) refuseUnknownKeys(node, MOTION_KEYS[shape], where, `\`${at}\``);
+  if (!isObj(node)) return;
+  refuseUnknownKeys(node, MOTION_KEYS[shape], where, `\`${at}\``);
+  // The root is named by its keys alone — `archetype`, not `this motion spec.archetype`.
+  const prefix = shape === 'MotionSpec' ? '' : at;
+  visiting?.push({
+    node,
+    shape,
+    name: (tail) => `\`${prefix}${tail.map((step, i) => (typeof step === 'number' ? `[${step}]` : prefix === '' && i === 0 ? step : `.${step}`)).join('')}\``,
+  });
 }
+
+/**
+ * The nodes `known` admitted during the parse in progress, in the order it
+ * admitted them — what `refuseValuesOfTheWrongType` walks at the end of
+ * `parseMotionSpec`. Module state rather than a parameter because `known` is
+ * called from a dozen readers that would otherwise each carry it; it is set and
+ * cleared by `parseMotionSpec` alone, around a parse that is synchronous and
+ * does not re-enter, so no two parses ever share it.
+ */
+let visiting: ShapeVisit[] | null = null;
 
 // --- the leaf checks, each returning the value it just proved ---------------
 
@@ -633,6 +726,16 @@ function parseAnimation(raw: unknown, where: string, name: string): void {
  * otherwise no way to tell which of them is at fault (issue #227).
  */
 export function parseMotionSpec(raw: unknown, where: string): MotionSpec {
+  const visits: ShapeVisit[] = [];
+  visiting = visits;
+  try {
+    return parseMotionSpecInto(raw, where, visits);
+  } finally {
+    visiting = null;
+  }
+}
+
+function parseMotionSpecInto(raw: unknown, where: string, visits: readonly ShapeVisit[]): MotionSpec {
   if (!isObj(raw)) {
     throw new CompileError(`${where}: a motion spec must be a JSON object, and this file holds ${describe(raw)}`);
   }
@@ -664,6 +767,17 @@ export function parseMotionSpec(raw: unknown, where: string): MotionSpec {
     if (name.length === 0) throw new CompileError(`${where}: an animation has an empty name`);
     parseAnimation(anim, where, name);
   }
+
+  // After every field check above, so a field this file checks keeps its own
+  // sentence, and before the finite walk, so a value that is not a number is
+  // named as that rather than skipped (issue #890). What reaches this line is a
+  // field nothing above reads. Measured before the walk, every one of 303
+  // wrong-typed plants over 18 motion shapes was refused somewhere — but later,
+  // by the timeline compiler, and 7 of those sentences named the wrong fault:
+  // an event key's `"float": "1"` as *float 1 is not finite*, a `"volume": "1"`
+  // as an event with no audio, a yaw transform's `"depth": "true"` as a radius
+  // that is undefined.
+  refuseValuesOfTheWrongType(visits, MOTION_TYPES, where);
 
   // Last, so every field check above keeps its own sentence for a number that
   // is not finite; what reaches this line is a finite double the float32 file
