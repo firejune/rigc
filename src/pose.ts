@@ -274,8 +274,9 @@ const MINIMA_PER_SCALE = 5;
 const REFINE_CANDIDATES = 15;
 
 /**
- * The factor a converged full-resolution polish tries its scale up by before it
- * stops — half a coarse scale rung, the resolution the coarse ladder itself had.
+ * The factors a converged full-resolution polish tries its scale up by before it
+ * stops — half a coarse scale rung, the resolution the coarse ladder itself had,
+ * and a quarter of one (issue #886); the better of the two re-fits wins.
  *
  * 🔍 What the pattern search cannot do, and the trace table of issue #877 is
  * how it was seen: every probe moves ONE degree of freedom, and the objective
@@ -306,8 +307,32 @@ const REFINE_CANDIDATES = 15;
  * margin, and the blurred 24 px front shin (walk) now places AT its truth
  * (0.03 px, 0.00989) where it placed 0.57 px off at 0.0191 — the old answer is
  * still reported beside it, 0.0094 above, inside the 0.01 absolute margin.
+ *
+ * 🔍 The quarter rung is issue #886, and the fixed-scale profile is what
+ * named it. MOTION.md §6's post (14x96, pose A, `--scale 0.85,1.2`) came back
+ * at scale 0.917 and residual 0.0649 where the page had recorded 0.975 at
+ * 0.0589 — the old placement still scores 0.0589 on this objective, so the
+ * search missed it. The trace: the coarse cell nearest the truth (2.4 px off
+ * it, at the 2x level) kept a half-turned post, its polish ended 6.7 px from
+ * the truth, the full-resolution rotation re-grid set it upright there, and
+ * the polish climbed the scale–position valley to 0.917.
+ * The half-rung escape then tried 1.029: best position there 0.0980, worse
+ * than 0.0649, so it declined — while the best position at every scale
+ * between 0.94 and 1.00 scores 0.0619–0.0589. A part whose material fills its
+ * image pays for every pixel pushed past the figure, so its profile above the
+ * truth is a cliff, and half a rung stepped over the basin onto it. A quarter
+ * rung lands at 0.971 (0.0593, 0.1 px off the page's placement).
+ *
+ * 📏 Both, not the quarter alone, and measured on the grid rather than argued:
+ * the quarter alone found 234 (3 gained, 6 lost — the native arms #877 was
+ * made for need the half); half then quarter, the quarter tried only when the
+ * half declines, 237 (1, 1); both, the better kept, 238 (2 gained, 1 lost) and
+ * misses 8 → 6, for 16% more user CPU over the grid. The one it loses is a
+ * margin reading of the kind named above: the blurred 32 px front shin (walk)
+ * now reports its truth as its BEST (0.07 px, 0.00968) with the old 0.51 px
+ * answer 0.0045 above it, inside the 0.01 absolute margin.
  */
-const POLISH_SCALE_ESCAPE = 2 ** (1 / (2 * SCALE_STEPS_PER_OCTAVE));
+const POLISH_SCALE_ESCAPES = [2 ** (1 / (4 * SCALE_STEPS_PER_OCTAVE)), 2 ** (1 / (2 * SCALE_STEPS_PER_OCTAVE))];
 
 /** Sample budgets per stage. The reported residual uses every pixel regardless. */
 const COARSE_SAMPLES = 96;
@@ -347,8 +372,8 @@ export const POSE_FLOOR = {
   span: 24,
   detail: 0.5,
   /** Found share of the grid's trials under `detail`, and over it — both measured by `deriveFloor`. */
-  rateBelow: 0.074,
-  rateAbove: 0.765,
+  rateBelow: 0.066,
+  rateAbove: 0.772,
 };
 
 /** Which side of `POSE_FLOOR` a part is on, from its own longest side in part pixels and its detail. */
@@ -1934,7 +1959,7 @@ function placePart(
     }
     const paths = seeds.map((): { start: number; steps: PoseTraceStep[] } => ({ start: 0, steps: [] }));
     candidates = seeds.map((seed, i) =>
-      polish(level, plate, s, seed, step, floor, smooth, scaleBounds, rotationBounds, li === 0 ? [POLISH_SCALE_ESCAPE] : [], trace === undefined ? undefined : paths[i]),
+      polish(level, plate, s, seed, step, floor, smooth, scaleBounds, rotationBounds, li === 0 ? POLISH_SCALE_ESCAPES : [], trace === undefined ? undefined : paths[i]),
     );
     const polished = candidates.slice();
     candidates.sort((a, b) => a.residual - b.residual);
