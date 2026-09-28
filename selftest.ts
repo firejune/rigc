@@ -188,6 +188,7 @@ import {
   withoutParserDefaults,
 } from './src/keyorder.ts';
 import { MOTION_KEYS, parseMotionSpec } from './src/motion.ts';
+import { FLOAT32_MAX } from './src/keys.ts';
 import { BONE_INHERIT_KNOWN, RIG_BONE_INHERIT, RIG_KEYS, RIG_SPEC_VERSION, parseRigSpec, resolveBoneInherit } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
@@ -7282,8 +7283,80 @@ const RIG_MUTANTS: RigMutant[] = [
       (rig as any).invariants.idleDrivesMeshes = { why: 'a painting rig', reason: 'sway' };
     },
   },
+  // 🔒 A number the skeleton file cannot carry (issue #881). JSON reads `1e309`
+  // as Infinity and the emitter wrote it as `null`, green; `1e308` is a finite
+  // double whose float32 is Infinity and did the same. One walk over the file
+  // refuses both, so these rows are one per SURFACE the sweep found written
+  // through — a bone, an attachment, a constraint and the invariants block —
+  // plus the float32 line itself. `writeJsonAsAuthored` spells what JSON.stringify
+  // would turn into `null`.
+  {
+    name: 'RF94_a_bone_stated_at_1e309_is_refused_by_the_bone_the_field_and_Infinity',
+    origin: 'issue #881: `x: 1e309` on a bone built green as `"x": null`, which the runtime reads as 0 — a value the spec never stated',
+    expect: 'bone "root" x is Infinity; a number in this file is finite at float32 precision',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'root').x = Infinity;
+    },
+  },
+  {
+    name: 'RF95_a_finite_double_past_float32_is_refused_as_the_file_would_carry_it',
+    origin: 'issue #881: every emitted number is rounded to a float32 and Math.fround(1e308) is Infinity — measured, 1e308 emitted the same `null` 1e309 did, and 3.4028234663852886e38 did not',
+    expect: 'bone "root" rotation is 1e+308; a number in this file is finite at float32 precision',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'root').rotation = 1e308;
+    },
+  },
+  {
+    name: 'RF96_an_attachment_rotation_at_minus_infinity_is_refused_by_its_skin_slot_and_attachment',
+    origin: 'issue #881: a region attachment\'s x, y, rotation, scale and size were each emitted as `null` with the gate green',
+    expect: 'skin "default" slot "near" attachment "probe_missing" rotation is -Infinity; a number in this file is finite',
+    mutate: (rig) => {
+      (rig as any).skins = { default: { near: { probe_missing: { image: 'nope_not_here.png', rotation: -Infinity } } } };
+    },
+  },
+  {
+    name: 'RF97_a_constraint_mix_at_infinity_is_refused_by_the_constraint',
+    origin: 'issue #881: every ik and transform constraint number the sweep planted — mix, softness, offsets, property maxima — built green as `null`',
+    expect: 'constraint "reach" mix is Infinity; a number in this file is finite',
+    mutate: (rig) => {
+      (rig as any).constraints = [{ type: 'ik', name: 'reach', bones: ['trail_b'], target: 'trail_c', mix: Infinity }];
+    },
+  },
+  {
+    name: 'RF98_an_invariants_budget_at_infinity_is_refused_rather_than_switching_the_check_off',
+    origin: 'issue #881: `meshTriangles: 1e309` changed no emitted byte and handed A13 a ceiling nothing can reach — the budget measured nothing and printed a pass',
+    expect: 'invariants.meshTriangles is Infinity; a number in this file is finite',
+    mutate: (rig) => {
+      (rig as any).invariants.meshTriangles = Infinity;
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+/**
+ * An input file as the text an author could have written — `JSON.stringify` with
+ * the three numbers it cannot spell spelled (issue #881). It writes `Infinity`
+ * as `null` and `-0` as `0`, so a mutant planting either would test a
+ * different file from the one it names; `1e309` is the literal JSON reads as
+ * Infinity. NaN has no JSON spelling at all, so a mutant planting it is a
+ * harness fault and is refused here rather than written as something else.
+ */
+function writeJsonAsAuthored(path: string, spec: unknown): void {
+  const MARK = '__rigc_literal__';
+  const text = JSON.stringify(
+    spec,
+    (_key, value: unknown) => {
+      if (typeof value !== 'number') return value;
+      if (Number.isNaN(value)) throw new Error('a rig spec cannot state NaN: JSON has no spelling for it');
+      if (value === Infinity) return `${MARK}1e309`;
+      if (value === -Infinity) return `${MARK}-1e309`;
+      if (Object.is(value, -0)) return `${MARK}-0`;
+      return value;
+    },
+    2,
+  );
+  writeFileSync(path, `${text.replace(new RegExp(`"${MARK}([^"]*)"`, 'g'), '$1')}\n`);
+}
 
 function runRigSuite(): number {
   const opts = optsForFixture(ARTICULATED);
@@ -7313,7 +7386,7 @@ function runRigSuite(): number {
   for (const mutant of RIG_MUTANTS) {
     const rig = JSON.parse(sourceText) as Record<string, unknown>;
     mutant.mutate(rig);
-    writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+    writeJsonAsAuthored(rigPath, rig);
     let message: string | null = null;
     try {
       compile({ ...opts, rigPath });
@@ -7460,6 +7533,176 @@ function runRigSuite(): number {
         `  FAIL  CONTROL_EVERY_RIG_SPEC_IN_THIS_REPOSITORY_PARSES_CLEAN: ${
           specs.length === 0 ? 'found no rig specs at all, which is not a pass' : `${refused.length} refused — ${refused[0]}`
         }`,
+      );
+    }
+  }
+
+  // --- numbers the file cannot carry, off the rig spec's own route (issue #881)
+  //
+  // RF94–RF98 above are the refusal on each surface. These are what a row in
+  // `RIG_MUTANTS` cannot say: the NaN only a library caller can hand in, the
+  // legal edge that must still build (and build twice alike), the CLI writing
+  // nothing, and the same walk over the two other files whose numbers reach
+  // the skeleton. They are cases rather than rows because the manifest and
+  // motion ones are not broken rig specs, and the summary counts rows as that.
+  {
+    const MARK = 'a number in this file is finite at float32 precision';
+    const refusalOf = (fn: () => unknown): string => {
+      try {
+        fn();
+        return '';
+      } catch (err) {
+        return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+      }
+    };
+    const edited = (edit: (rig: { bones: Array<Record<string, unknown>> } & Record<string, unknown>) => void) => {
+      const rig = JSON.parse(sourceText) as { bones: Array<Record<string, unknown>> } & Record<string, unknown>;
+      edit(rig);
+      return rig;
+    };
+    const rootOf = (rig: { bones: Array<Record<string, unknown>> }): Record<string, unknown> => {
+      const root = rig.bones.find((b) => b.name === 'root');
+      if (root === undefined) throw new Error(`${ARTICULATED.rig} declares no bone "root"`);
+      return root;
+    };
+
+    // (c) JSON cannot spell NaN, so a file cannot carry one — the library can.
+    const nanSaid = refusalOf(() => parseRigSpec(edited((rig) => { rootOf(rig).x = Number.NaN; }), 'api-rig'));
+    bad += reportCase(
+      'RF99_A_NAN_HANDED_TO_THE_LIBRARY_IS_REFUSED_BY_THE_BONE_AND_THE_FIELD',
+      nanSaid.startsWith(`api-rig: bone "root" x is NaN; ${MARK}`),
+      nanSaid === '' ? 'parseRigSpec accepted a bone at x = NaN' : `refused with: ${nanSaid}`,
+      'JSON has no NaN, so no rig spec FILE can state one; `parseRigSpec` is exported and takes an object, and an ' +
+        'object can — so the walk is the parser\'s, not the file reader\'s',
+    );
+
+    // (d)+(e) the legal edge: the largest float32 and a negative zero build, pass the gate, and build alike twice.
+    {
+      const edge = edited((rig) => {
+        rootOf(rig).x = FLOAT32_MAX;
+        rootOf(rig).rotation = -0;
+      });
+      writeJsonAsAuthored(rigPath, edge);
+      const spelled = readFileSync(rigPath, 'utf8');
+      let message = '';
+      let report: ReturnType<typeof validate> | null = null;
+      let emitted: unknown;
+      try {
+        const first = compile({ ...opts, rigPath });
+        const second = compile({ ...opts, rigPath });
+        emitted = (JSON.parse(first.skeletonText) as { bones: Array<Record<string, unknown>> }).bones.find((b) => b.name === 'root')?.x;
+        report = validate({
+          skeletonText: first.skeletonText,
+          atlasText: first.atlasText,
+          atlasDir: opts.outDir,
+          declaredDurations: first.declaredDurations,
+          rig: first.rig,
+          profile: 'spine-html',
+          reEmit: { skeletonText: second.skeletonText, atlasText: second.atlasText },
+        });
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      const probes: string[] = [];
+      if (!spelled.includes('"rotation": -0') || !spelled.includes(`"x": ${String(FLOAT32_MAX)}`)) {
+        probes.push('the harness did not write -0 and the largest float32 as literals');
+      }
+      if (message !== '') probes.push(`the legal edge was refused: ${message}`);
+      if (report !== null && report.failures.length > 0) {
+        probes.push(`the gate failed it: ${[...new Set(report.failures.map((f) => f.assertion))].join(', ')}`);
+      }
+      if (report !== null && !report.passed.includes('A18_DETERMINISTIC_EMIT')) probes.push('A18 did not pass on two compiles of it');
+      if (typeof emitted !== 'number' || Math.fround(emitted) !== FLOAT32_MAX) probes.push(`root x was emitted as ${JSON.stringify(emitted)}, which is not the largest float32`);
+      bad += reportCase(
+        'RF100_THE_LARGEST_FLOAT32_AND_A_NEGATIVE_ZERO_STILL_BUILD_GREEN_AND_BUILD_ALIKE_TWICE',
+        probes.length === 0,
+        probes.length === 0
+          ? `root x ${String(FLOAT32_MAX)} and rotation -0: compiled, gate green, A18 passed, x emitted as ${JSON.stringify(emitted)}`
+          : probes.join('; '),
+        'the positive control for RF94–RF98: a rule that refused every large number would print the same sentences, ' +
+          'and 3.4028234663852886e38 is the last double that is still a number once the file rounds it to a float32',
+      );
+    }
+
+    // (3) nothing is written: the CLI's `build` refuses before it writes a file.
+    {
+      const work = mkdtempSync(join(tmpdir(), 'rigc-finite-'));
+      const planted = join(work, 'planted.rig.json');
+      writeJsonAsAuthored(planted, edited((rig) => { rootOf(rig).x = Infinity; }));
+      const out = join(work, 'out');
+      const run = runCli(['build', '--rig', planted, '--motion', opts.motionPath, '--manifest', opts.manifestPath ?? '', '--out', out]);
+      const written = existsSync(out) ? readdirSync(out) : [];
+      const probes: string[] = [];
+      if (run.status === 0) probes.push('build exited 0');
+      if (!run.stderr.includes(`bone "root" x is Infinity; ${MARK}`)) probes.push(`build said ${JSON.stringify(run.stderr.trim().split('\n').slice(-2).join(' | '))}`);
+      if (written.length > 0) probes.push(`build wrote ${written.length} file(s) into --out: ${written.slice(0, 3).join(', ')}`);
+      bad += reportCase(
+        'RF101_A_BUILD_REFUSED_FOR_A_NUMBER_THE_FILE_CANNOT_CARRY_WRITES_NOTHING',
+        probes.length === 0,
+        probes.length === 0 ? `exit ${String(run.status)}, the bone named on stderr, --out ${existsSync(out) ? 'empty' : 'never created'}` : probes.join('; '),
+        'emit only after green: a skeleton with "x": null on disk outlives the console line that refused it',
+      );
+    }
+
+    // The manifest and the motion spec: the same walk over the other two files whose numbers are emitted.
+    {
+      const manifestPath = opts.manifestPath;
+      const work = mkdtempSync(join(tmpdir(), 'rigc-finite-inputs-'));
+      let manifestSaid = 'the fixture has no manifest';
+      if (manifestPath !== undefined) {
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { crop: Record<string, unknown> };
+        manifest.crop.h = Infinity;
+        // Beside the original, so every plate path in it still resolves.
+        const planted = join(dirname(manifestPath), 'finite_probe.manifest.json');
+        writeJsonAsAuthored(planted, manifest);
+        manifestSaid = refusalOf(() => compile({ ...opts, manifestPath: planted }));
+        rmSync(planted);
+        bad += reportCase(
+          'RF102_A_MANIFEST_NUMBER_THE_FILE_CANNOT_CARRY_IS_REFUSED_BY_ITS_PATH',
+          manifestSaid.startsWith(`${planted}: crop.h is Infinity; ${MARK}`),
+          manifestSaid === '' ? 'a manifest crop of height 1e309 compiled' : `refused with: ${manifestSaid}`,
+          'issue #881, measured before the change: `crop.h: 1e309` built with `"height": null` in the skeleton header ' +
+            'and was caught only through A20 on this probe\'s weighted meshes — a rig without them would have gone green',
+        );
+      }
+      const motion = JSON.parse(readFileSync(opts.motionPath, 'utf8')) as {
+        animations: Record<string, { tracks: Array<{ keys: Array<{ v?: unknown[] }> }> }>;
+      };
+      const [animation, anim] = Object.entries(motion.animations)[0] ?? [];
+      const key = anim?.tracks[0]?.keys.findIndex((k) => Array.isArray(k.v) && typeof k.v[0] === 'number') ?? -1;
+      const motionAt = (value: number): string => {
+        const edit = JSON.parse(JSON.stringify(motion)) as typeof motion;
+        const values = edit.animations[animation ?? '']?.tracks[0]?.keys[key]?.v;
+        if (values === undefined) return 'the probe motion has no numeric key to plant';
+        values[0] = value;
+        const planted = join(work, 'planted.motion.json');
+        writeJsonAsAuthored(planted, edit);
+        return refusalOf(() => compile({ ...opts, motionPath: planted }));
+      };
+      const overflow = motionAt(1e308);
+      const infinite = motionAt(Infinity);
+      const at = `\`animations.${animation ?? ''}.tracks[0].keys[${key}].v[0]\``;
+      // A field `parseMotionSpec` checks itself keeps that check's sentence: the walk runs after it.
+      const physics = Object.entries((motion as { physics?: Record<string, Record<string, unknown>> }).physics ?? {})[0];
+      let tuned = 'the probe motion has no physics entry to plant';
+      if (physics !== undefined) {
+        const edit = JSON.parse(JSON.stringify(motion)) as { physics: Record<string, Record<string, unknown>> };
+        edit.physics[physics[0]].strength = Infinity;
+        const planted = join(work, 'physics.motion.json');
+        writeJsonAsAuthored(planted, edit);
+        tuned = refusalOf(() => compile({ ...opts, motionPath: planted }));
+      }
+      bad += reportCase(
+        'RF103_A_MOTION_NUMBER_THE_FILE_CANNOT_CARRY_IS_REFUSED_BY_ITS_PATH_AND_A_CHECKED_FIELD_KEEPS_ITS_SENTENCE',
+        overflow.includes(`${at} is 1e+308; ${MARK}`) &&
+          infinite.includes(`${at} is Infinity; ${MARK}`) &&
+          tuned.includes('every tuning field of a physics constraint is a finite number') &&
+          !tuned.includes(MARK),
+        `key at 1e308: ${overflow === '' ? 'compiled' : overflow} | key at 1e309: ${infinite === '' ? 'compiled' : infinite} | ` +
+          `physics strength at 1e309: ${tuned === '' ? 'compiled' : tuned}`,
+        'issue #881, measured before the change: a motion key at 1e308 built green with a `null` in it, and one at ' +
+          '1e309 was refused only later, by the timeline compiler — the walk runs after every field check ' +
+          '`parseMotionSpec` makes, so a checked field such as a physics tuning number keeps its own sentence',
       );
     }
   }
