@@ -42,6 +42,9 @@ shots: pictures 30 + instrument 32 + candidates 72 + choice 32 + winner 49 = 215
 - **Every number on screen was printed first by a tool.** Shot 2's report is read out of
   `pose/poseB.log`; shot 4's winner line is read out of the `rigc vote --record` run in
   `vote/record.log`. Nothing is retyped from either.
+  Shot 2 was made with `spine-rigc@0.9.0`, the version `run.sh` and `package.json` pin, and
+  its pose log is that version's output — so it prints 0.9.0's report, not what `rigc pose`
+  prints today (whose `search` line, for one, has since been reworded).
 - **The vote is a real vote.** `vote/drive.mjs` clicks the page's own controls and takes
   the JSON the page hands a person afterwards; `rigc vote --record` then checks that JSON
   against the ballot's embedded manifest, so a forged result is refused by name. `V00`
