@@ -8936,6 +8936,21 @@ quarter alone found 234, losing the native arms #877 was made for. The one lost 
 margin reading again: the blurred 32 px front shin (walk) now reports its truth as its
 best (0.07 px, 0.00968), with its old 0.51 px answer 0.0045 above it.
 
+Issue #892 asked whether the coarse field, which keeps **one rotation per anchor
+cell**, loses the truth more often than on that post, and the answer is no. The
+tool now records, per trial, the coarse seed nearest the truth, the rotation the
+field kept for its cell and the field's own score there at the truth's rotation.
+Within 2.4 px of the truth that seed is a half turn off on 2 of the 238 found
+trials (a mouth at 48 px, both found anyway) and on none of the 6 misses, and
+every failed trial whose nearest seed is a quarter or half turn off but one is a
+flat part, none of them a miss. On the post itself, the upright rung scores 0.305
+at that cell against the half turn's 0.168, so a second rotation per cell would
+need a band 1.8 times wide to carry it. Re-gridding the rotation at the coarse level
+instead of the next one took the grid to 236 found (7 gained, 9 lost), and
+suppressing minima only within a rotation family took it to 231 (2 gained, 10
+lost). Both lose trials far from the truth, so neither shipped and the field is
+unchanged.
+
 ⚠️ **What this is and is not.** The grid is not a reliability line: six native cells
 place 14 or 15 of 15 and the trials at `detail` 3 and over place 65 of 66, but the
 goggles still place 13 of 42, and a threshold read off two dozen parts of one figure
@@ -8962,6 +8977,8 @@ no miss at all, and `PO23` places the 48 px fist #865 was made for; `PO28` and
 cutoff, and `PO26` holds every polish to strictly descending residuals, read through
 the same trace. `PO31` places §6's post at the old placement from the page's own
 input bytes, and `PO32` holds it to taking the quarter-rung escape and reading the same twice.
+`PO33` holds the coarse row the tool reads rotations from to the field each seed was
+picked from.
 
 ## 12. Reading the half of that picture `pose` refuses — `rigc chainfit`
 

@@ -706,6 +706,15 @@ export interface PoseTraceLevel {
   out: PoseTraceCandidate[];
   /** This level's objective at `PoseTrace.probe`, when one was given. */
   probeResidual: number | null;
+  /**
+   * At the coarse level only, and `null` on every other (issue #892): the
+   * rotation ladder the coarse field scanned, and per seed the field's own
+   * objective at that seed's anchor cell and scale for every rung of it, in
+   * ladder order — the numbers the field picked the seed's one rotation from.
+   * Computed with the field's arithmetic, so the rung a seed carries reads the
+   * least value of its row.
+   */
+  coarseRotations: { ladder: number[]; residuals: number[][] } | null;
 }
 
 /**
@@ -1089,6 +1098,22 @@ function residualAt(level: Level, plate: Plate, s: Samples, cand: Candidate, smo
  * A per-cell best rather than a global top-K, because the thing this instrument
  * must not lose is the SECOND place a part could sit — and a global top-K fills
  * up with a hundred neighbours of the single best cell before it ever reaches it.
+ *
+ * 📏 ONE rotation per cell, and issue #892 measured what that costs rather than
+ * assuming it. Over `tools/pose_floor.ts`'s 420 trials, the coarse seed nearest
+ * the truth is within 2.4 px of it and a half-turn off on 2 of the 238 found
+ * trials (both a mouth at 48 px, both found anyway) and on none of the 6
+ * misses; every failed trial whose nearest seed is a quarter- or half-turn off
+ * but one is a flat part, and none of those 26 is a miss: each is the objective
+ * preferring another placement or the truth reported and tied. MOTION.md
+ * §6's post is the one case, and a second rotation per cell would not reach it:
+ * at its nearest cell the upright rung scores 0.305 against the half-turn's
+ * 0.168 — 1.8 times, wider than the 1.73 band `REFINE_CANDIDATES` rejected.
+ * The other two levers the card named were measured on the grid and lost found
+ * trials outside the ambiguity margin: re-gridding rotation at this level
+ * rather than the next (238 → 236: 7 gained, 9 lost, six of them native, three
+ * guns now 37–151 px off), and suppressing minima only within a rotation family
+ * (238 → 231: 2 gained, 10 lost, among them the 48 px fist `PO23` holds).
  */
 interface CoarseField {
   residual: Float64Array;
@@ -1163,6 +1188,25 @@ function coarseScan(level: Level, s: Samples, scale: number, rotations: number[]
     }
   }
   return field;
+}
+
+/**
+ * The coarse field's objective at one anchor, scale and rotation, summed in the
+ * order `coarseScan` sums it and without its early exit — the trace's reading of
+ * a cell, never the search's.
+ */
+function coarseCellResidual(level: Level, s: Samples, scale: number, rotDeg: number, ax: number, ay: number): number {
+  if (s.count === 0) return Infinity;
+  const k = scale / level.reduction;
+  const cos = Math.cos(rotDeg * DEG) * k;
+  const sin = Math.sin(rotDeg * DEG) * k;
+  let acc = 0;
+  for (let i = 0; i < s.count; i++) {
+    const dx = s.u[i] * cos - s.v[i] * sin;
+    const dy = s.u[i] * sin + s.v[i] * cos;
+    acc += s.w[i] * errNearest(level, ax + dx, ay + dy, s.r[i], s.g[i], s.b[i]);
+  }
+  return acc / s.weight;
 }
 
 /**
@@ -2009,6 +2053,15 @@ function placePart(
         polished: polished.map(said),
         out: candidates.map(said),
         probeResidual,
+        coarseRotations:
+          li === coarseIndex
+            ? {
+                ladder: searchRotations.slice(),
+                residuals: seeds.map((seed) =>
+                  searchRotations.map((rotDeg) => coarseCellResidual(level, coarseSamples, seed.scale, rotDeg, seed.cx, seed.cy)),
+                ),
+              }
+            : null,
       });
     }
     if (li > 0) {
