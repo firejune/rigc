@@ -70,7 +70,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, dirname, join, relative, resolve } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 // Imported for the gates that read this file as CODE rather than as text, and
 // the reason each is worth a parser: one has to find the condition GOVERNING a
@@ -157,6 +157,8 @@ import {
   deformGeometryOf,
   EDITOR_NAME_FOLD,
   editorNamesInOrder,
+  editorSkinOrder,
+  editorSlotKeyOrder,
   pathChain,
   pathCurveLengths,
   relativeImagesPath,
@@ -200,12 +202,26 @@ import {
   emitBoundingBox,
   emitClipping,
   emitMesh,
+  emitConstraint,
+  emitEvents,
+  emitLinkedMesh,
   emitPath,
+  emitRegion,
   emitSkinAttachments,
+  emitSkins,
+  emitSlots,
   emitVertices,
 } from './src/emit_spine.ts';
 import {
   isModelVertexAttachment,
+  type CompiledModel,
+  type ModelConstraint,
+  type ModelEvent,
+  type ModelLinkedMeshAttachment,
+  type ModelRegionAttachment,
+  type ModelSkin,
+  type ModelSlot,
+  type SkinTable,
   type ModelBinding,
   type ModelBone,
   type ModelBoundingBoxAttachment,
@@ -66915,6 +66931,11 @@ function priorSetupWorldVertices(
   return out;
 }
 
+/** A compiled model's table for one skin, or undefined when the model has no such skin. */
+function tableOfSkin(model: CompiledModel, name: string): SkinTable | undefined {
+  return model.skins.find((skin) => skin.name === name)?.attachments;
+}
+
 /** One attachment through the two whole-object passes the compiler applies, as the JSON text the file carries. */
 function attachmentAsFileText(att: unknown): string {
   const holder = { skins: [{ name: 'default', attachments: { s: { a: att } } }] };
@@ -66962,8 +66983,9 @@ function compileVertexSourceProblems(text: string): string[] {
   if (spineTypes !== 0) problems.push(`a Spine vertex-attachment type is named ${spineTypes} time(s); compile builds model records`);
   const encoders = count(/\b(encodeWeightedVertices|encodeNamedWeights)\b/g);
   if (encoders !== 0) problems.push(`an index encoder is named ${encoders} time(s); the run's bone index is the emitter's`);
-  const emits = count(/\bemitSkinAttachments\(/g);
-  if (emits !== 1) problems.push(`emitSkinAttachments is called ${emits} time(s); the skins' attachments are emitted exactly once`);
+  // Since issue #919 the skins' attachments are emitted inside `emitSkins`, which the assembly calls once.
+  const emits = count(/\bemitSkins\(/g);
+  if (emits !== 1) problems.push(`emitSkins is called ${emits} time(s); the skins' attachments are emitted exactly once`);
   const findIndex = count(/\.findIndex\(\(b\) => b\.name/g);
   if (findIndex !== 0) problems.push(`a bone's position is looked up ${findIndex} time(s); a binding names its bone`);
   const intake = count(/\bbindRawRun\(/g);
@@ -67090,7 +67112,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
       const dirs = writeModelVerticesProbe(order);
       try {
         const built = compileProbe(dirs);
-        const record = built.model.attachments.get('default')?.block?.block;
+        const record = tableOfSkin(built.model, 'default')?.block?.block;
         const file = (JSON.parse(built.skeletonText) as SpineSkeletonJson).skins.find((s) => s.name === 'default')?.attachments.block?.block as { vertices?: number[] } | undefined;
         if (record === undefined || !isModelVertexAttachment(record) || !record.vertices.weighted || file?.vertices === undefined) probes.push(`order ${order}: no weighted model mesh and emitted twin`);
         else runs[order] = { names: JSON.stringify(record.vertices.bindings), file: file.vertices };
@@ -67138,7 +67160,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
     const dirs = meshProbe({ type: 'mesh', image: 'block.png', uvs: [0, 0, 1, 0, 1, 1, 0, 1], triangles: [0, 1, 2, 0, 2, 3], vertices: [-6, -4, 6, -4, 6, 4, -6, 4] });
     try {
       const built = compileProbe(dirs);
-      const record = built.model.attachments.get('default')?.block?.block;
+      const record = tableOfSkin(built.model, 'default')?.block?.block;
       const file = (JSON.parse(built.skeletonText) as SpineSkeletonJson).skins[0]?.attachments.block?.block as { uvs?: number[]; vertices?: number[] } | undefined;
       if (record === undefined || !isModelVertexAttachment(record) || record.vertices.weighted) probes.push('the compiled unweighted mesh is not an unweighted model record');
       else if (file?.vertices === undefined || file.uvs === undefined) probes.push('the file carries no mesh');
@@ -67175,7 +67197,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
       const built = compileProbe(dirs);
       const skin = (JSON.parse(built.skeletonText) as SpineSkeletonJson).skins[0];
       for (const [slot, placeholder, stated] of [['block', 'block', raw], ['marker', 'box', boxRaw]] as const) {
-        const record = built.model.attachments.get('default')?.[slot]?.[placeholder];
+        const record = tableOfSkin(built.model, 'default')?.[slot]?.[placeholder];
         const file = skin?.attachments[slot]?.[placeholder] as { vertices?: number[] } | undefined;
         if (record === undefined || !isModelVertexAttachment(record) || !record.vertices.weighted) probes.push(`${slot}/${placeholder}: the raw run is not a weighted model record`);
         else {
@@ -67293,7 +67315,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
     let plantCaught = false;
     for (const { label, result } of results) {
       const file = JSON.parse(result.skeletonText) as SpineSkeletonJson;
-      for (const [skinName, table] of result.model.attachments) {
+      for (const { name: skinName, attachments: table } of result.model.skins) {
         const fileSkin = file.skins.find((s) => s.name === skinName);
         for (const [slot, perSlot] of Object.entries(table)) {
           for (const [placeholder, entry] of Object.entries(perSlot)) {
@@ -67348,7 +67370,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
     try {
       const result = compileProbe(probe);
       const file = JSON.parse(result.skeletonText) as SpineSkeletonJson;
-      const record = result.model.attachments.get('default')?.marker?.track;
+      const record = tableOfSkin(result.model, 'default')?.marker?.track;
       const emitted = file.skins.find((s) => s.name === 'default')?.attachments.marker?.track as { vertices?: number[]; vertexCount?: number; lengths?: number[] } | undefined;
       const anchor = result.model.setupWorld.get('block');
       if (record === undefined || !isModelVertexAttachment(record) || record.kind !== 'path' || !record.vertices.weighted) probes.push('the probe\'s path is not a weighted model path');
@@ -67387,7 +67409,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
     const plants: Array<[string, string]> = [
       ['a Spine mesh type named', `${source}\ntype Back = SpineMeshAttachment;\n`],
       ['the index encoder named', `${source}\nconst old = encodeNamedWeights;\n`],
-      ['a second emission', `${source}\nconst again = emitSkinAttachments(table, indexOf);\n`],
+      ['a second emission', `${source}\nconst again = emitSkins(skins, indexOf, order);\n`],
       ['a bone looked up by position', `${source}\nconst at = bones.findIndex((b) => b.name === name);\n`],
       ['a third raw intake', `${source}\nconst more = bindRawRun(run, bones, where);\n`],
     ];
@@ -67420,7 +67442,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
       let fileCount = 0;
       for (const skin of file.skins) for (const perSlot of Object.values(skin.attachments)) fileCount += Object.keys(perSlot).length;
       let modelCount = 0;
-      for (const [skinName, table] of result.model.attachments) {
+      for (const { name: skinName, attachments: table } of result.model.skins) {
         const fileSkin = file.skins.find((s) => s.name === skinName);
         const emitted = emitSkinAttachments(table, indexOf);
         for (const [slot, perSlot] of Object.entries(table)) {
@@ -67432,10 +67454,9 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
               continue;
             }
             if (!isModelVertexAttachment(entry)) {
-              // A Spine object is passed through as itself — the object the file's passes reached.
+              // A region or linked mesh is a model record too since issue #919 (`MS02`, `MS03` hold its keys).
               passedThrough++;
-              if (emitted[slot][placeholder] !== entry) probes.push(`${label} ${skinName}/${slot}/${placeholder}: a region or linked mesh was copied rather than passed through`);
-              if (JSON.stringify(want) !== JSON.stringify(entry)) probes.push(`${label} ${skinName}/${slot}/${placeholder}: a passed-through attachment is not the file's`);
+              if (attachmentAsFileText(emitted[slot][placeholder]) !== JSON.stringify(want)) probes.push(`${label} ${skinName}/${slot}/${placeholder}: a region or linked-mesh record through the emitter and the two passes is not the file's attachment`);
               continue;
             }
             records++;
@@ -67448,7 +67469,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
       if (modelCount !== fileCount) probes.push(`${label}: the model holds ${modelCount} attachment(s) and the file ${fileCount}`);
       if (label === 'the four-kind probe rig') {
         const kinds = new Set<string>();
-        for (const table of result.model.attachments.values()) for (const perSlot of Object.values(table)) for (const entry of Object.values(perSlot)) if (isModelVertexAttachment(entry)) kinds.add(entry.kind);
+        for (const { attachments: table } of result.model.skins) for (const perSlot of Object.values(table)) for (const entry of Object.values(perSlot)) if (isModelVertexAttachment(entry)) kinds.add(entry.kind);
         if (kinds.size !== 4) probes.push(`the probe rig built ${[...kinds].join(', ')}; all four kinds are its point`);
       }
     }
@@ -67457,7 +67478,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
     say(
       'MV08_COMPILED_ATTACHMENTS_ARE_THE_MODEL_THROUGH_THE_EMITTER_AND_COMPILE_BINDS_BY_NAME',
       held,
-      probeDetail(held, probes, `${rigs} rig(s) compiled in process — the four-kind probe and every gallery rig: ${records} model record(s), each carrying neither \`type\` nor \`color\`, through \`emitSkinAttachments\` and the two passes are the file's attachment text, and ${passedThrough} region or linked-mesh object(s) pass through as the file's; \`src/compile.ts\`, comments aside, names no Spine vertex-attachment type and no index encoder, emits the skins once, looks up no bone by position and decodes a raw run at exactly two intakes; each of ${plants.length} plants raises exactly its own problem`),
+      probeDetail(held, probes, `${rigs} rig(s) compiled in process — the four-kind probe and every gallery rig: ${records} model record(s), each carrying neither \`type\` nor \`color\`, through \`emitSkinAttachments\` and the two passes are the file's attachment text, and so are ${passedThrough} region or linked-mesh record(s); \`src/compile.ts\`, comments aside, names no Spine vertex-attachment type and no index encoder, emits the skins once, looks up no bone by position and decodes a raw run at exactly two intakes; each of ${plants.length} plants raises exactly its own problem`),
       'issue #917\'s shape: the model holds values and the emitter owns the bytes — the four vertex kinds are built as records, the skins\' attachments are turned into Spine\'s at one line of the assembly, and nothing in the compiler reads a bone index back',
     );
   }
@@ -67516,6 +67537,697 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
         held,
         probeDetail(held, probes, `${rows.map((r) => r.name).join(', ')} built through \`tools/emit_hashes.ts\` on this tree against ${basePath}: ${verdict}; the same rows with the last one's hash flipped read DIFF naming it alone`),
         'issue #917\'s gate as a control, the way `MB07` holds #915\'s: the gallery carries generated meshes of every generator kind the manifest and the rig spec reach and the tree\'s one measured path, so every gallery row is run rather than two; the bounding box and clipping polygon are the fetched corpus\'s and are held by the full nineteen-recipe run in the PR',
+      );
+    }
+  }
+
+  rmSync(work, { recursive: true, force: true });
+  return { failures: bad, gateHole };
+}
+
+// ---------------------------------------------------------------------------
+// the compiled model's remaining records: slots, skins, constraints, events (issue #919)
+// ---------------------------------------------------------------------------
+
+/**
+ * One top-level section of a skeleton, as the file carries it: `value` placed
+ * under `key` in a holder, a deep copy through the two whole-object passes the
+ * compiler applies, and its JSON text. The copy is what keeps the passes, which
+ * run in place, off whatever the caller handed in.
+ */
+function sectionAsFileText(key: 'slots' | 'skins' | 'constraints' | 'events', value: unknown): string {
+  const holder: Record<string, unknown> = { [key]: structuredClone(value) };
+  inEditorKeyOrder(withoutParserDefaults(holder));
+  return JSON.stringify(holder[key]);
+}
+
+/** The model's structural records as one text, to see whether anything reached into them. */
+function modelRecordsText(model: CompiledModel): string {
+  return JSON.stringify({ slots: model.slots, skins: model.skins, constraints: model.constraints, events: [...model.events] });
+}
+
+/** The model's structural records through the Spine emitter, section by section, as the file carries each. */
+function modelSectionsAsFileText(model: CompiledModel): Record<'slots' | 'skins' | 'constraints' | 'events', string | undefined> {
+  const events = emitEvents(model.events);
+  return {
+    slots: sectionAsFileText('slots', emitSlots(model.slots)),
+    skins: sectionAsFileText('skins', emitSkins(model.skins, boneIndexOf(model.bones), { skins: editorSkinOrder, slotKeys: editorSlotKeyOrder })),
+    constraints: model.constraints.length ? sectionAsFileText('constraints', model.constraints.map(emitConstraint)) : undefined,
+    events: Object.keys(events).length ? sectionAsFileText('events', events) : undefined,
+  };
+}
+
+/** An object's keys moved: `key` taken out and put back right after `after`, every value kept. */
+function withKeyMoved<T extends object>(object: T, key: string, after: string): T {
+  const out: Record<string, unknown> = {};
+  const record = object as Record<string, unknown>;
+  for (const [k, v] of Object.entries(record)) {
+    if (k === key) continue;
+    out[k] = v;
+    if (k === after) out[key] = record[key];
+  }
+  return out as T;
+}
+
+/** The source rules `MS11` holds `compile.ts` to; each entry is a problem found. */
+function compileRecordSourceProblems(text: string): string[] {
+  const code = codeOnly(text);
+  const count = (re: RegExp): number => (code.match(re) ?? []).length;
+  const problems: string[] = [];
+  const spine = count(/\bSpine(Slot|Skin|Constraint|Event|RegionAttachment|LinkedMeshAttachment)\b/g);
+  if (spine !== 0) problems.push(`a Spine slot, skin, constraint, event, region or linked-mesh type is named ${spine} time(s); compile builds model records`);
+  for (const emitter of ['emitSlots', 'emitSkins', 'emitConstraints', 'emitEvents']) {
+    const calls = count(new RegExp(`\\b${emitter}\\(`, 'g'));
+    if (calls !== 1) problems.push(`${emitter} is called ${calls} time(s); each section is emitted exactly once`);
+  }
+  // A rig spec's own `type` is the input and is read (`spec.type`); a built record's is not.
+  const typeReads = count(/(?<!\bspec)\.type === '(ik|transform|physics|path|slider|linkedmesh|region|mesh|boundingbox|clipping)'/g);
+  if (typeReads !== 0) problems.push(`a built record's Spine \`type\` is compared ${typeReads} time(s); the model's records carry \`kind\``);
+  const union = count(/\battachmentTypeOf\b/g);
+  if (union !== 0) problems.push(`attachmentTypeOf is named ${union} time(s); the transition union it read is gone`);
+  return problems;
+}
+
+/**
+ * The model-records probe (issue #919): one rig carrying every key a slot, a
+ * region, a linked mesh, each constraint kind and an event can carry, three
+ * named skins with member lists beside the default, and a motion spec whose
+ * physics table states components at 0 and parameters at their defaults.
+ * `anim` replaces the one animation's extra timelines.
+ */
+function writeModelRecordsProbe(anim: Record<string, unknown> = {}): { dirs: ProbeDirs; motionPath: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-model-records-'));
+  writeOverlayProbePng(join(dir, 'block.png'), 12, 8, [40, 60, 90, 255]);
+  writeOverlayProbePng(join(dir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
+  writeOverlayProbePng(join(dir, 'marker2.png'), 6, 6, [80, 170, 50, 255]);
+  for (let i = 1; i <= 3; i++) writeOverlayProbePng(join(dir, `glint_${String(i).padStart(4, '0')}.png`), 8, 8, [40 * i, 60, 90, 255]);
+  const rigPath = join(dir, 'probe.rig.json');
+  writeFileSync(
+    rigPath,
+    `${JSON.stringify(
+      {
+        spec: 'rigc-rig/1',
+        name: 'records',
+        skeleton: { width: 64, height: 64 },
+        bones: [
+          { name: 'root' },
+          { name: 'a', parent: 'root', x: 5, length: 10 },
+          { name: 'b', parent: 'root', x: -5, length: 10 },
+          { name: 'c', parent: 'root', y: 8, length: 6, skin: true },
+          { name: 'd', parent: 'root', y: -8, length: 6 },
+        ],
+        slots: [
+          { name: 'plain', bone: 'root', attachment: 'plain' },
+          { name: 'named', bone: 'a', attachment: 'r' },
+          { name: 'same', bone: 'a', attachment: 'marker' },
+          { name: 'dark', bone: 'b', attachment: 'marker', color: 'ff8800ff', dark: '102030', blend: 'additive' },
+          { name: 'tint', bone: 'b' },
+          { name: 'empty', bone: 'root' },
+          { name: 'meshslot', bone: 'root', attachment: 'm' },
+          { name: 'otherslot', bone: 'root' },
+          { name: 'seq', bone: 'root', attachment: 'glint_' },
+          { name: 'trackslot', bone: 'root', attachment: 'track' },
+        ],
+        skins: {
+          default: {
+            plain: { plain: { image: 'block.png' } },
+            named: {
+              r: { name: 'nm', image: 'marker.png', path: 'marker', x: 0, y: 2, rotation: 0, scaleX: 1.5, scaleY: 1, color: 'ff00ffff' },
+              r2: { image: 'marker2.png', path: 'marker2', x: 3, rotation: 15 },
+            },
+            same: { marker: { image: 'marker.png' }, m2: { name: 'marker2', image: 'marker2.png' }, marker2: { image: 'marker2.png', path: 'marker2' } },
+            dark: { marker: { image: 'marker.png' } },
+            tint: { t: { image: 'marker.png' } },
+            meshslot: {
+              m: { type: 'mesh', image: 'block.png', uvs: [0, 0, 1, 0, 1, 1, 0, 1], triangles: [0, 1, 2, 0, 2, 3], vertices: [-6, -4, 6, -4, 6, 4, -6, 4] },
+            },
+            seq: { glint_: { sequence: { count: 3, start: 1, digits: 4, setup: 0 }, x: 1, color: '80ff80ff' } },
+            trackslot: { track: { type: 'path', vertexCount: 6, vertices: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10] } },
+          },
+          zeta: {
+            bones: ['c'],
+            attachments: { meshslot: { lz: { type: 'linkedmesh', source: 'm', skin: 'default', slot: 'meshslot', timelines: true, image: 'marker.png' } } },
+          },
+          alpha: {
+            ik: ['ikc'],
+            attachments: {
+              otherslot: {
+                l2: { type: 'linkedmesh', name: 'ln', source: 'm', skin: 'default', slot: 'meshslot', timelines: false, image: 'marker.png', path: 'marker2', color: '112233ff' },
+                l3: { type: 'mesh', source: 'm', skin: 'default', slot: 'meshslot', path: 'glint_', sequence: { count: 3, digits: 4 }, width: 8, height: 8 },
+              },
+            },
+          },
+          mid: { bones: ['c'], ik: ['ikc'], transform: ['tc'], path: ['pc'], physics: ['ph'], slider: ['sl'], attachments: {} },
+        },
+        constraints: [
+          { type: 'ik', name: 'ikc', bones: ['a'], target: 'c', scaleY: 'uniform', mix: 0.5, softness: 2, bendPositive: false, compress: true, stretch: true, skin: true },
+          {
+            type: 'transform', name: 'tc', bones: ['b'], source: 'd', properties: { rotate: { to: { rotate: { max: 10, scale: 1, offset: 0 } } } },
+            localSource: true, localTarget: true, additive: true, clamp: true, rotation: 10, x: 1, y: 2, scaleX: 0.1, scaleY: 0.2, shearY: 3,
+            mixRotate: 0.5, mixX: 0.5, mixY: 0.4, mixScaleX: 0.3, mixScaleY: 0.2, mixShearY: 0.1, skin: true,
+          },
+          {
+            type: 'path', name: 'pc', bones: ['b'], slot: 'trackslot', positionMode: 'fixed', spacingMode: 'fixed', rotateMode: 'chain',
+            rotation: 5, position: 3, spacing: 2, mixRotate: 0.5, mixX: 0.5, mixY: 0.5, skin: true,
+          },
+          { type: 'slider', name: 'sl', animation: 'idle', additive: true, loop: true, mix: 0.5, bone: 'd', property: 'x', from: 0, to: 0, scale: 2, max: 10, local: true, skin: true },
+          { type: 'slider', name: 'sl2', animation: 'idle', mix: 0.25, time: 0.25 },
+          {
+            type: 'physics', name: 'ph', bone: 'c', scaleY: 'volume', x: 0.5, y: 0, rotate: 0.3, scaleX: 0, shearX: 0.1, limit: 1000, fps: 30,
+            inertia: 0.4, strength: 90, damping: 0.8, mass: 2, wind: 1, gravity: 2, mix: 0.7, inertiaGlobal: true, strengthGlobal: true,
+            dampingGlobal: true, massGlobal: true, windGlobal: true, gravityGlobal: true, mixGlobal: true, skin: true,
+          },
+        ],
+        events: { hit: { int: 3, float: 1.5, string: 's', audio: 'a.ogg', volume: 0.5, balance: -0.5 }, bare: {}, zed: { float: 0.1 } },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const motionPath = join(dir, 'probe.motion.json');
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify(
+      {
+        spec: 'rigc-motion/1',
+        archetype: 'records',
+        cut: 'records',
+        easings: {},
+        setup: { tint: { attachment: 't', color: [0.5, 0.25, 1, 0.8] }, otherslot: { attachment: null } },
+        physics: {
+          tp: { bone: 'a', x: 0.5, y: 0, rotate: 1, scaleX: 0, inertia: 0.5, limit: 4000, fps: 60, strength: 80, damping: 0.85, mass: 1, wind: 0, gravity: 1, mix: 1 },
+          tq: { bone: 'b', rotate: 2, inertia: 0.3, limit: 900, fps: 30 },
+        },
+        animations: { idle: { duration: 1, tracks: [{ bone: 'a', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [5] }] }], ...anim } },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return { dirs: { dir, rigPath, outDir: join(dir, 'spine') }, motionPath };
+}
+
+/** Compile the model-records probe; the refusal's message instead of a result when it is refused. */
+function compileModelRecordsProbe(anim: Record<string, unknown> = {}): { result: CompileResult | null; refusal: string } {
+  const { dirs, motionPath } = writeModelRecordsProbe(anim);
+  try {
+    return { result: compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir }), refusal: '' };
+  } catch (err) {
+    return { result: null, refusal: err instanceof CompileError ? err.message : `not a CompileError: ${(err as Error).message}` };
+  } finally {
+    rmSync(dirs.dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The compiled model's remaining structural records and the Spine emitter
+ * (issue #919): each record kind emits its keys in the order its constructor
+ * wrote them, each omission the constructors made inline is the emitter's and
+ * leaves the value in the model, the editor's skin order is applied at
+ * emission, the read-back sites read the model and refuse in the words they
+ * did, `compile.ts` names no Spine record type, and — when a base hash document
+ * is named — every recipe it lists lands byte-identical.
+ */
+function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
+  console.log('\n── model-records: slots, skins, constraints and events as model records, the Spine emitter their one writer (issue #919) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const work = mkdtempSync(join(tmpdir(), 'rigc-model-records-'));
+
+  // --- MS01: a slot's keys in the constructor's order; a null setup left out --
+  {
+    const probes: string[] = [];
+    const full: ModelSlot = { blend: 'additive', dark: '102030', color: 'ff8800ff', setup: 'art', bone: 'b', name: 'full' };
+    const empty: ModelSlot = { setup: null, bone: 'b', name: 'empty' };
+    const expected = '[{"name":"full","bone":"b","attachment":"art","color":"ff8800ff","dark":"102030","blend":"additive"},{"name":"empty","bone":"b"}]';
+    const emitted = emitSlots([full, empty]);
+    const text = JSON.stringify(emitted);
+    if (text !== expected) probes.push(`emitted ${text}`);
+    if (empty.setup !== null) probes.push('the model slot lost its null setup');
+    // The mutant: `dark` inserted before `attachment`. The slot row does not list `dark`, so the pass cannot put it back.
+    const mutant = withKeyMoved(emitted[0], 'dark', 'bone');
+    if (sectionAsFileText('slots', [mutant]) === sectionAsFileText('slots', [emitted[0]])) probes.push('a slot with `dark` moved before `attachment` wrote the same file text, so this order is not the emitter\'s to hold');
+    const held = probes.length === 0;
+    say(
+      'MS01_A_SLOT_EMITS_ITS_KEYS_IN_THE_CONSTRUCTORS_ORDER_AND_A_NULL_SETUP_IS_LEFT_OUT',
+      held,
+      probeDetail(held, probes, `a model slot carrying every field, built in reverse, and one whose setup is null emit exactly ${expected}; the null stays in the model; the mutant with \`dark\` before \`attachment\` still differs after both passes`),
+      'issue #919: the slot constructor wrote `name, bone, attachment, color, dark, blend`, and `dark` is a key the slot row does not list, so its position is the emitter\'s byte; a null setup is the value "shows nothing", which Spine spells by leaving `attachment` out (the parser\'s null default) — census §3, *Omission*',
+    );
+  }
+
+  // --- MS02: a region's keys in the builders' order; a zero placement left out --
+  {
+    const probes: string[] = [];
+    const full: ModelRegionAttachment = {
+      sequence: { setup: 0, digits: 4, start: 1, count: 3 }, color: 'ff00ffff', scaleY: 0.5, scaleX: 1.5, rotation: 15, y: 2, x: 3,
+      height: 6, width: 8, path: 'p', name: 'nm', kind: 'region',
+    };
+    const expected = '{"name":"nm","width":8,"height":6,"path":"p","x":3,"y":2,"rotation":15,"scaleX":1.5,"scaleY":0.5,"color":"ff00ffff","sequence":{"count":3,"start":1,"digits":4,"setup":0}}';
+    const emitted = emitRegion(full);
+    if (JSON.stringify(emitted) !== expected) probes.push(`emitted ${JSON.stringify(emitted)}`);
+    const zero: ModelRegionAttachment = { kind: 'region', width: 4, height: 4, x: 0, y: 0, rotation: 0 };
+    const zeroText = JSON.stringify(emitRegion(zero));
+    if (zeroText !== '{"width":4,"height":4}') probes.push(`a region placed at 0 emitted ${zeroText}`);
+    if (zero.x !== 0 || zero.y !== 0 || zero.rotation !== 0) probes.push('the zero placement left the model');
+    // The pass removes `start: 1` and `setup: 0` in place; the model's block must keep them.
+    attachmentAsFileText(emitted);
+    if (full.sequence?.start !== 1 || full.sequence.setup !== 0) probes.push('the parser-default pass reached the model\'s sequence block');
+    if (attachmentAsFileText(withKeyMoved(emitted, 'name', 'width')) === attachmentAsFileText(emitted)) probes.push('a region with `name` after `width` wrote the same file text');
+    // The manifest's regions: every one placed by `placeRegion` holds x, y and rotation; each 0 is absent from the file.
+    let zeros = 0;
+    for (const [label, fixture] of [['overlay', OVERLAY], ['articulated', ARTICULATED], ['contained', CONTAINED]] as const) {
+      let result: CompileResult;
+      try {
+        result = compile(optsForFixture(fixture));
+      } catch (err) {
+        probes.push(`the ${label} fixture did not compile: ${(err as Error).message}`);
+        continue;
+      }
+      const file = JSON.parse(result.skeletonText) as SpineSkeletonJson;
+      for (const skin of result.model.skins) {
+        for (const [slot, perSlot] of Object.entries(skin.attachments)) {
+          for (const [placeholder, record] of Object.entries(perSlot)) {
+            if (record.kind !== 'region') continue;
+            const written = file.skins.find((s) => s.name === skin.name)?.attachments[slot]?.[placeholder] as Record<string, unknown> | undefined;
+            for (const field of ['x', 'y', 'rotation'] as const) {
+              if (record[field] === 0) {
+                zeros++;
+                if (written === undefined || field in written) probes.push(`${label} ${slot}/${placeholder}: ${field} is 0 in the model and ${written === undefined ? 'the region is not in the file' : 'written in the file'}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    if (zeros === 0) probes.push('no manifest region was placed at 0 on any axis, so the omission went unread');
+    const held = probes.length === 0;
+    say(
+      'MS02_A_REGION_EMITS_ITS_KEYS_IN_THE_BUILDERS_ORDER_AND_A_ZERO_PLACEMENT_IS_LEFT_OUT',
+      held,
+      probeDetail(held, probes, `a model region carrying every field, built in reverse, emits exactly ${expected}; one placed at 0, 0, 0 emits its size alone and keeps the three zeros; the model's sequence block survives the pass; \`name\` after \`width\` differs after both passes; over the three manifest fixtures, ${zeros} placement field(s) held at 0 in the model are each absent from the file`),
+      'issue #919: `buildRigRegion` and `placeRegion` wrote one order, and `name`, `path`, `color`, `sequence` are keys the region row does not list; `placeRegion` left an `x`, `y` or `rotation` of 0 out inline, which is the emitter\'s now — the model holds the placement it computed. No recipe of the nineteen reaches a region with `name`, `path`, `color` or `sequence`, and none places a manifest region, so this control is where both are held',
+    );
+  }
+
+  // --- MS03: a linked mesh's keys in the builder's order; the link's defaults left out --
+  {
+    const probes: string[] = [];
+    const full: ModelLinkedMeshAttachment = {
+      sequence: { count: 2 }, color: '112233ff', timelines: false, slot: 'other', skin: 'alpha', height: 6, width: 8, source: 'm', path: 'p', name: 'ln', kind: 'linkedmesh',
+    };
+    const expected = '{"name":"ln","type":"linkedmesh","source":"m","width":8,"height":6,"path":"p","slot":"other","skin":"alpha","timelines":false,"color":"112233ff","sequence":{"count":2}}';
+    const emitted = emitLinkedMesh(full, 'mine');
+    if (JSON.stringify(emitted) !== expected) probes.push(`emitted ${JSON.stringify(emitted)}`);
+    const own: ModelLinkedMeshAttachment = { kind: 'linkedmesh', source: 'm', skin: 'default', slot: 'mine', timelines: true, width: 8, height: 6 };
+    const ownText = JSON.stringify(emitLinkedMesh(own, 'mine'));
+    if (ownText !== '{"type":"linkedmesh","source":"m","width":8,"height":6}') probes.push(`a link at the parser's defaults emitted ${ownText}`);
+    if (own.slot !== 'mine' || own.skin !== 'default' || own.timelines !== true) probes.push('the link\'s defaults left the model');
+    if (attachmentAsFileText(withKeyMoved(emitted, 'slot', 'skin')) === attachmentAsFileText(emitted)) probes.push('a link with `slot` after `skin` wrote the same file text');
+    const held = probes.length === 0;
+    say(
+      'MS03_A_LINKED_MESH_EMITS_ITS_KEYS_IN_THE_BUILDERS_ORDER_AND_THE_LINKS_DEFAULTS_ARE_LEFT_OUT',
+      held,
+      probeDetail(held, probes, `a model link carrying every field, built in reverse, emits exactly ${expected}; one in its own slot, from the \`default\` skin, playing its source's timelines emits neither \`slot\`, \`skin\` nor \`timelines\` and the model keeps all three; \`slot\` after \`skin\` differs after both passes`),
+      'issue #919: the key order has no row for a linked mesh, so `buildRigLinkedMesh`\'s insertion order is the byte contract; the model holds the link in full (`PendingLink`\'s skin and slot, and `timelines`) and the emitter writes each only where it is not the parser\'s fallback. No recipe of the nineteen carries a linked mesh',
+    );
+  }
+
+  // --- MS04: every constraint kind in its builder's order --
+  {
+    const probes: string[] = [];
+    const reversed = (fields: Record<string, unknown>): ModelConstraint => {
+      const entries = Object.entries(fields).reverse();
+      return Object.fromEntries(entries) as ModelConstraint;
+    };
+    const cases: Array<[string, ModelConstraint, string]> = [
+      [
+        'ik',
+        reversed({ kind: 'ik', name: 'k', declaredIn: 'rig', bones: ['a'], target: 'c', scaleY: 'uniform', mix: 0.5, softness: 2, bendPositive: false, compress: true, stretch: true, skin: true }),
+        '{"name":"k","type":"ik","bones":["a"],"target":"c","scaleY":"uniform","mix":0.5,"softness":2,"bendPositive":false,"compress":true,"stretch":true,"skin":true}',
+      ],
+      [
+        'transform',
+        reversed({
+          kind: 'transform', name: 't', declaredIn: 'rig', bones: ['b'], source: 'd', properties: { rotate: { to: { rotate: { max: 10 } } } }, localSource: true,
+          localTarget: true, additive: true, clamp: true, rotation: 10, x: 1, y: 2, scaleX: 0.1, scaleY: 0.2, shearY: 3, mixRotate: 0.5, mixX: 0.5, mixY: 0.4,
+          mixScaleX: 0.3, mixScaleY: 0.2, mixShearY: 0.1, skin: true,
+        }),
+        '{"name":"t","type":"transform","bones":["b"],"source":"d","properties":{"rotate":{"to":{"rotate":{"max":10}}}},"localSource":true,"localTarget":true,' +
+          '"additive":true,"clamp":true,"rotation":10,"x":1,"y":2,"scaleX":0.1,"scaleY":0.2,"shearY":3,"mixRotate":0.5,"mixX":0.5,"mixY":0.4,"mixScaleX":0.3,' +
+          '"mixScaleY":0.2,"mixShearY":0.1,"skin":true}',
+      ],
+      [
+        'path',
+        reversed({
+          kind: 'path', name: 'p', declaredIn: 'rig', bones: ['b'], slot: 's', positionMode: 'fixed', spacingMode: 'fixed', rotateMode: 'chain', rotation: 5, position: 3,
+          spacing: 2, mixRotate: 0.5, mixX: 0.5, mixY: 0.5, skin: true,
+        }),
+        '{"name":"p","type":"path","bones":["b"],"slot":"s","positionMode":"fixed","spacingMode":"fixed","rotateMode":"chain","rotation":5,"position":3,' +
+          '"spacing":2,"mixRotate":0.5,"mixX":0.5,"mixY":0.5,"skin":true}',
+      ],
+      [
+        'slider driven by a bone',
+        reversed({
+          kind: 'slider', name: 'sl', declaredIn: 'rig', animation: 'idle', additive: true, loop: true, mix: 0.5, bone: 'd', property: 'x', from: 1, to: 0.5, scale: 2, max: 10,
+          local: true, skin: true,
+        }),
+        '{"name":"sl","type":"slider","animation":"idle","additive":true,"loop":true,"mix":0.5,"bone":"d","property":"x","from":1,"to":0.5,"scale":2,"max":10,' +
+          '"local":true,"skin":true}',
+      ],
+      [
+        'slider at a time',
+        reversed({ kind: 'slider', name: 's2', declaredIn: 'rig', animation: 'idle', mix: 0.25, time: 0.25, skin: true }),
+        '{"name":"s2","type":"slider","animation":"idle","mix":0.25,"time":0.25,"skin":true}',
+      ],
+      [
+        'physics declared in the rig',
+        reversed({
+          kind: 'physics', name: 'ph', declaredIn: 'rig', bone: 'c', scaleY: 'volume', x: 0.5, y: 0.25, rotate: 0.3, scaleX: 0.2, shearX: 0.1, limit: 1000, fps: 30,
+          inertia: 0.4, strength: 90, damping: 0.8, mass: 2, wind: 1, gravity: 2, mix: 0.7, inertiaGlobal: true, strengthGlobal: true, dampingGlobal: true,
+          massGlobal: true, windGlobal: true, gravityGlobal: true, mixGlobal: true, skin: true,
+        }),
+        '{"name":"ph","type":"physics","bone":"c","scaleY":"volume","x":0.5,"y":0.25,"rotate":0.3,"scaleX":0.2,"shearX":0.1,"limit":1000,"fps":30,' +
+          '"inertia":0.4,"strength":90,"damping":0.8,"mass":2,"wind":1,"gravity":2,"mix":0.7,"inertiaGlobal":true,"strengthGlobal":true,"dampingGlobal":true,' +
+          '"massGlobal":true,"windGlobal":true,"gravityGlobal":true,"mixGlobal":true,"skin":true}',
+      ],
+      [
+        'physics from the motion table',
+        reversed({
+          kind: 'physics', name: 'tp', declaredIn: 'motion', bone: 'a', x: 0.5, y: 0.25, rotate: 1, scaleX: 0.2, shearX: 0.1, inertia: 0.4, strength: 80, damping: 0.8,
+          mass: 2, wind: 1, gravity: 1, mix: 0.7, fps: 30, limit: 900,
+        }),
+        '{"name":"tp","type":"physics","bone":"a","x":0.5,"y":0.25,"rotate":1,"scaleX":0.2,"shearX":0.1,"inertia":0.4,"strength":80,"damping":0.8,"mass":2,' +
+          '"wind":1,"gravity":1,"mix":0.7,"fps":30,"limit":900}',
+      ],
+    ];
+    for (const [label, model, expected] of cases) {
+      const emitted = emitConstraint(model);
+      const text = JSON.stringify(emitted);
+      if (text !== expected) probes.push(`${label}: emitted ${text}`);
+      // The mutant: the last key moved to right after `type`. Every kind's last key is one its row does not list.
+      const keys = Object.keys(emitted);
+      const moved = withKeyMoved(emitted, keys[keys.length - 1], 'type');
+      if (sectionAsFileText('constraints', [moved]) === sectionAsFileText('constraints', [emitted])) probes.push(`${label}: its last key moved after \`type\` wrote the same file text`);
+    }
+    let stray = '';
+    try {
+      emitConstraint({ kind: 'ik', name: 'k', declaredIn: 'rig', bones: ['a'], target: 'c', bogus: 1 });
+    } catch (err) {
+      stray = (err as Error).message;
+    }
+    if (!stray.includes('ik constraint "k" carries bogus, which the emitter has no place for')) probes.push(`a field the emitter has no place for was ${stray === '' ? 'dropped in silence' : `refused as "${stray}"`}`);
+    const held = probes.length === 0;
+    say(
+      'MS04_EACH_CONSTRAINT_KIND_EMITS_ITS_BUILDERS_ORDER',
+      held,
+      probeDetail(held, probes, `${cases.length} model constraints — ik, transform, path, a slider of each form, a physics constraint from the rig and one from the motion table — each carrying every field, built in reverse, emit exactly the text their builders wrote (\`name, type\`, then \`buildRigConstraint\`'s branch or the table loop, in insertion order); each with its last key moved after \`type\` still differs after both passes; a field with no place is refused by name`),
+      'issue #919: the rows list only a few constraint fields and path and slider have no row, so the builders\' insertion order is the byte contract; over the nineteen recipes no constraint carries `softness`, `compress`, `stretch`, `clamp`, `additive` on a transform, a path\'s `position` or `rotation`, a slider\'s `loop`, `to` or `time`, or a physics `fps` or `limit`, so only this text holds those positions',
+    );
+  }
+
+  // --- MS05: the two physics builders write two orders; the table's omissions are the emitter's --
+  {
+    const probes: string[] = [];
+    const values = { bone: 'c', x: 0.5, rotate: 0, inertia: 0.4, limit: 1000, fps: 60, mass: 1 };
+    const fromRig: ModelConstraint = { kind: 'physics', name: 'p', declaredIn: 'rig', ...values };
+    const fromTable: ModelConstraint = { kind: 'physics', name: 'p', declaredIn: 'motion', ...values };
+    const rigText = JSON.stringify(emitConstraint(fromRig));
+    const tableText = JSON.stringify(emitConstraint(fromTable));
+    const rigWant = '{"name":"p","type":"physics","bone":"c","x":0.5,"limit":1000,"inertia":0.4}';
+    const tableWant = '{"name":"p","type":"physics","bone":"c","x":0.5,"inertia":0.4,"limit":1000}';
+    if (rigText !== rigWant) probes.push(`the rig's route emitted ${rigText}`);
+    if (tableText !== tableWant) probes.push(`the table's route emitted ${tableText}`);
+    const rigFile = sectionAsFileText('constraints', [emitConstraint(fromRig)]);
+    const tableFile = sectionAsFileText('constraints', [emitConstraint(fromTable)]);
+    if (rigFile === tableFile) probes.push('the two routes wrote one file text, so `declaredIn` is not a byte');
+    if (fromTable.rotate !== 0 || fromTable.fps !== 60 || fromTable.mass !== 1) probes.push('a component at 0 or a parameter at its default left the model');
+    // Through the compiler: the probe's table constraint `tq` and the rig's `ph`, each in its own order in the file.
+    const { result, refusal } = compileModelRecordsProbe();
+    if (result === null) probes.push(`the records probe did not compile: ${refusal}`);
+    else {
+      const file = JSON.parse(result.skeletonText) as SpineSkeletonJson;
+      const keysOf = (name: string): string[] => Object.keys(file.constraints?.find((c) => c.name === name) ?? {});
+      const tq = keysOf('tq');
+      const ph = keysOf('ph');
+      if (!(tq.indexOf('inertia') < tq.indexOf('fps') && tq.indexOf('fps') < tq.indexOf('limit'))) probes.push(`the table's "tq" was written ${tq.join(', ')}`);
+      if (!(ph.indexOf('limit') < ph.indexOf('fps') && ph.indexOf('fps') < ph.indexOf('inertia'))) probes.push(`the rig's "ph" was written ${ph.join(', ')}`);
+      const tp = result.model.constraints.find((c) => c.name === 'tp');
+      const tpFile = file.constraints?.find((c) => c.name === 'tp') ?? {};
+      const held = ['y', 'scaleX', 'inertia', 'fps', 'damping', 'mass', 'wind', 'mix'];
+      if (tp?.declaredIn !== 'motion') probes.push('the table constraint "tp" is not marked as the motion spec\'s');
+      for (const field of held) {
+        if (tp?.[field] === undefined) probes.push(`"tp" states ${field} and the model does not hold it`);
+        if (field in tpFile) probes.push(`"tp"'s ${field} is at 0 or its default and the file writes it`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'MS05_THE_PHYSICS_TABLE_AND_THE_RIG_WRITE_TWO_ORDERS_AND_THE_TABLES_OMISSIONS_ARE_THE_EMITTERS',
+      held,
+      probeDetail(held, probes, `one physics constraint's values emit ${rigWant} from the rig and ${tableWant} from the motion table, and the two differ after both passes; \`rotate: 0\`, \`fps: 60\` and \`mass: 1\` stay in the model and out of the text; compiled, the table's "tq" writes \`inertia, fps, limit\`, the rig's "ph" \`limit, fps, inertia\`, and the table's "tp" holds eight fields at 0 or their default that the file leaves out`),
+      'issue #919: the brief fixed `ModelConstraint` as a kind, a name and the builders\' fields; the model also says which builder, because `buildRigConstraint` writes `limit, fps` ahead of the parameters and the table loop writes them last, neither key is in the physics row, and the bytes differ. No recipe of the nineteen carries a physics `fps` or `limit`, so only this probe reaches it',
+    );
+  }
+
+  // --- MS06: events in the rig's order, each payload in the assembly's order --
+  {
+    const probes: string[] = [];
+    const events = new Map<string, ModelEvent>([
+      ['zed', { float: 0.1 }],
+      ['hit', { balance: -0.5, volume: 0.5, audio: 'a.ogg', string: 's', float: 1.5, int: 3 }],
+      ['bare', {}],
+    ]);
+    const expected = '{"zed":{"float":0.1},"hit":{"int":3,"float":1.5,"string":"s","audio":"a.ogg","volume":0.5,"balance":-0.5},"bare":{}}';
+    const text = JSON.stringify(emitEvents(events));
+    if (text !== expected) probes.push(`emitted ${text}`);
+    const swapped = new Map([...events].reverse());
+    if (sectionAsFileText('events', emitEvents(swapped)) === sectionAsFileText('events', emitEvents(events))) probes.push('the events in another order wrote the same file text');
+    const held = probes.length === 0;
+    say(
+      'MS06_EVENTS_EMIT_IN_THE_RIGS_ORDER_WITH_EACH_PAYLOAD_IN_THE_ASSEMBLYS_ORDER',
+      held,
+      probeDetail(held, probes, `three events — one float, one carrying every payload key built in reverse, one empty — emit exactly ${expected}; reversed, the map writes another text after both passes`),
+      'issue #919: the key order has no row for an event, so the assembly\'s `int, float, string, audio, volume, balance` is the byte contract; over the nineteen recipes both events carry no payload at all, so only this text holds it',
+    );
+  }
+
+  // --- MS07: `default` first, then the editor's order; a skin entry's members only when non-empty --
+  {
+    const probes: string[] = [];
+    const none = { ik: [], transform: [], path: [], physics: [], slider: [] };
+    const skins: ModelSkin[] = [
+      { name: 'zeta', bones: ['c'], constraints: none, attachments: {} },
+      { name: 'default', bones: [], constraints: none, attachments: {} },
+      { name: 'alpha', bones: [], constraints: { ...none, ik: ['k'] }, attachments: {} },
+      { name: 'mid', bones: ['c'], constraints: { ik: ['k'], transform: ['t'], path: ['p'], physics: ['ph'], slider: ['sl'] }, attachments: {} },
+    ];
+    const order = { skins: editorSkinOrder, slotKeys: editorSlotKeyOrder };
+    const expected =
+      '[{"name":"default","attachments":{}},{"name":"alpha","ik":["k"],"attachments":{}},' +
+      '{"name":"mid","bones":["c"],"ik":["k"],"transform":["t"],"path":["p"],"physics":["ph"],"slider":["sl"],"attachments":{}},' +
+      '{"name":"zeta","bones":["c"],"attachments":{}}]';
+    const text = JSON.stringify(emitSkins(skins, () => 0, order));
+    if (text !== expected) probes.push(`emitted ${text}`);
+    if (skins.map((s) => s.name).join(',') !== 'zeta,default,alpha,mid') probes.push('emitting reordered the model\'s skins');
+    const unsorted = JSON.stringify(emitSkins(skins, () => 0, { skins: (s) => [...s], slotKeys: (a) => a }));
+    if (unsorted === text) probes.push('with the order functions replaced by the identity the text did not change, so the emitter did not apply them');
+    // Through the compiler: the records probe declares default, zeta, alpha, mid.
+    const { result, refusal } = compileModelRecordsProbe();
+    if (result === null) probes.push(`the records probe did not compile: ${refusal}`);
+    else {
+      const model = result.model.skins.map((s) => s.name).join(',');
+      const file = (JSON.parse(result.skeletonText) as SpineSkeletonJson).skins.map((s) => s.name).join(',');
+      if (model !== 'default,zeta,alpha,mid') probes.push(`the model holds the skins as ${model}, not in the spec's order`);
+      if (file !== 'default,alpha,mid,zeta') probes.push(`the file writes the skins as ${file}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MS07_THE_SKINS_ARE_WRITTEN_DEFAULT_FIRST_THEN_IN_THE_EDITORS_ORDER',
+      held,
+      probeDetail(held, probes, `four model skins held as zeta, default, alpha, mid emit exactly ${expected}, and the model keeps its order; with identity order functions the text differs; compiled, a rig declaring default, zeta, alpha, mid holds that order in the model and writes default, alpha, mid, zeta`),
+      'issue #919: the order is the emitter\'s (census §3, *Layout and order*) and the model holds the spec\'s; every recipe of the nineteen has one skin with no member list, so the sort and the member lists are held here',
+    );
+  }
+
+  // --- MS08: every compiled rig's records are its model through the emitter --
+  {
+    const probes: string[] = [];
+    const galleryRoot = resolve(import.meta.dir, 'gallery');
+    const gallery = existsSync(galleryRoot)
+      ? readdirSync(galleryRoot).sort().filter((name) => existsSync(join(galleryRoot, name, 'rig.json')) && existsSync(join(galleryRoot, name, 'motion.json')))
+      : [];
+    const results: Array<{ label: string; result: CompileResult }> = [];
+    const { result: probeResult, refusal } = compileModelRecordsProbe();
+    if (probeResult === null) probes.push(`the records probe did not compile: ${refusal}`);
+    else results.push({ label: 'the records probe', result: probeResult });
+    for (const [i, name] of gallery.entries()) {
+      try {
+        results.push({ label: `gallery/${name}`, result: compile({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir: join(work, `records${i}`) }) });
+      } catch (err) {
+        probes.push(`gallery/${name} did not compile: ${(err as Error).message}`);
+      }
+    }
+    let sections = 0;
+    for (const { label, result } of results) {
+      const file = JSON.parse(result.skeletonText) as Record<string, unknown>;
+      const before = modelRecordsText(result.model);
+      const emitted = modelSectionsAsFileText(result.model);
+      for (const key of ['slots', 'skins', 'constraints', 'events'] as const) {
+        const want = file[key] === undefined ? undefined : JSON.stringify(file[key]);
+        if (emitted[key] !== want) probes.push(`${label}: the model's ${key} through the emitter and the two passes ${want === undefined ? 'are written where the file has none' : 'are not the file\'s'}`);
+        else if (want !== undefined) sections++;
+      }
+      if (modelRecordsText(result.model) !== before) probes.push(`${label}: emitting and the passes changed the model`);
+    }
+    // The probe's own cases, each an omission or a value the file and the model must state differently.
+    if (probeResult !== null) {
+      const model = probeResult.model;
+      const file = JSON.parse(probeResult.skeletonText) as SpineSkeletonJson;
+      const fileSkin = (name: string) => file.skins.find((s) => s.name === name)?.attachments ?? {};
+      const empty = model.slots.find((s) => s.name === 'empty');
+      if (empty?.setup !== null) probes.push('slot "empty" does not hold a null setup');
+      if (file.slots.find((s) => s.name === 'empty')?.attachment !== undefined) probes.push('slot "empty" writes an attachment');
+      const table = tableOfSkin(model, 'default');
+      const stated = table?.same?.marker2;
+      const derived = table?.same?.marker;
+      if (stated?.kind !== 'region' || stated.path !== 'marker2' || (fileSkin('default').same?.marker2 as { path?: string } | undefined)?.path !== 'marker2') probes.push('a STATED `path` equal to the name is not held and written');
+      if (derived?.kind !== 'region' || derived.path !== undefined || 'path' in (fileSkin('default').same?.marker ?? {})) probes.push('a `path` DERIVED from an image named like the placeholder is held or written');
+      const link = tableOfSkin(model, 'zeta')?.meshslot?.lz;
+      const linkFile = (fileSkin('zeta').meshslot?.lz ?? {}) as unknown as Record<string, unknown>;
+      if (link?.kind !== 'linkedmesh' || link.slot !== 'meshslot' || link.skin !== 'default' || !link.timelines) probes.push('the link "lz" does not hold its own slot, the default skin and `timelines`');
+      if ('slot' in linkFile || 'skin' in linkFile || 'timelines' in linkFile) probes.push('the link "lz" writes a key at the parser\'s default');
+    }
+    const held = probes.length === 0;
+    say(
+      'MS08_COMPILED_SLOTS_SKINS_CONSTRAINTS_AND_EVENTS_ARE_THE_MODEL_THROUGH_THE_EMITTER',
+      held,
+      probeDetail(held, probes, `${results.length} rig(s) compiled in process — the records probe and every gallery rig: ${sections} section(s) of slots, skins, constraints and events emitted from the model and passed through the two passes are the file's text, and none of it reached back into the model; in the probe a null setup, a link at its defaults and a derived \`path\` are held and absent, and a stated \`path\` equal to its name is held and written`),
+      'issue #919\'s shape: the model holds values and the emitter owns the bytes; the one omission the model still makes is `path` at the name, which `attachmentPath` decides because a stated one is written — the record cannot tell the two apart',
+    );
+  }
+
+  // --- MS09: a draw-order offset is checked against the model's slot order, in the words it was --
+  {
+    const probes: string[] = [];
+    const last = 'trackslot';
+    const planted = compileModelRecordsProbe({ drawOrder: [{ t: 0.5, offsets: [{ slot: last, offset: 1 }] }] });
+    const expected = `animation "idle" drawOrder at t=0.5: slot "${last}" is at index 9 and offset 1 puts it at 10, outside the 10 emitted slots`;
+    if (!planted.refusal.endsWith(`: ${expected}`)) probes.push(`the offset past the end was ${planted.result === null ? `refused as "${planted.refusal}"` : 'compiled'}`);
+    const legal = compileModelRecordsProbe({ drawOrder: [{ t: 0.5, offsets: [{ slot: last, offset: -1 }] }] });
+    const keys = legal.result === null ? null : (JSON.parse(legal.result.skeletonText) as SpineSkeletonJson).animations.idle?.drawOrder;
+    if (legal.result === null) probes.push(`the legal offset was refused: ${legal.refusal}`);
+    else if (JSON.stringify(keys) !== `[{"time":0.5,"offsets":[{"slot":"${last}","offset":-1}]}]`) probes.push(`the legal offset was written ${JSON.stringify(keys)}`);
+    const held = probes.length === 0;
+    say(
+      'MS09_A_DRAW_ORDER_OFFSET_IS_CHECKED_AGAINST_THE_MODELS_SLOT_ORDER',
+      held,
+      probeDetail(held, probes, `over the probe's 10 model slots, "${last}" (the last) offset by +1 is refused as \`${expected}\` and offset by -1 compiles and is written as stated`),
+      'issue #919, census §1.4 row 10: `compileDrawOrder` counted an offset against the emitted slots; it reads the model\'s now, whose order IS the emitted order, and its refusal keeps its words',
+    );
+  }
+
+  // --- MS10: an rgba2 key on a slot with no `dark` is refused off the model's slots, in the words it was --
+  {
+    const probes: string[] = [];
+    const keys = [{ t: 0, v: [1, 1, 1, 1, 0, 0, 0] }];
+    const planted = compileModelRecordsProbe({ tracks: [{ bone: 'a', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [5] }] }, { slot: 'plain', property: 'rgba2', keys }] });
+    const sentence = 'slot "plain" declares no setup "dark", and an "rgba2" timeline poses a slot\'s dark colour — the runtime allocates one only for a slot whose setup pose has it, so applying this animation throws instead of tinting. Give slot "plain" a `dark` in the rig spec (the colour it holds at rest), or key "rgba" if only the light colour moves';
+    if (!planted.refusal.endsWith(sentence)) probes.push(`the rgba2 key on a slot with no dark was ${planted.result === null ? `refused as "${planted.refusal}"` : 'compiled'}`);
+    const legal = compileModelRecordsProbe({ tracks: [{ bone: 'a', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [5] }] }, { slot: 'dark', property: 'rgba2', keys }] });
+    if (legal.result === null) probes.push(`the rgba2 key on the slot with a dark was refused: ${legal.refusal}`);
+    else if ((JSON.parse(legal.result.skeletonText) as SpineSkeletonJson).animations.idle?.slots?.dark?.rgba2 === undefined) probes.push('the rgba2 key on the slot with a dark was not written');
+    const held = probes.length === 0;
+    say(
+      'MS10_AN_RGBA2_KEY_ON_A_SLOT_WITH_NO_DARK_IS_REFUSED_OFF_THE_MODELS_SLOTS',
+      held,
+      probeDetail(held, probes, 'an `rgba2` track on the probe\'s slot "plain", whose model slot has no `dark`, is refused with the sentence it had; on slot "dark" it compiles and is written'),
+      'issue #919, census §1.4 row 6: the slots that may take `rgba2`/`rgb2` were read off the emitted slots\' `dark`; they are the model slots\' now, and no recipe of the nineteen carries a `dark`',
+    );
+  }
+
+  // --- MS11: compile.ts names no Spine record type and emits each section once --
+  {
+    const probes: string[] = [];
+    const source = readFileSync(resolve(import.meta.dir, 'src', 'compile.ts'), 'utf8');
+    probes.push(...compileRecordSourceProblems(source));
+    const plants: Array<[string, string]> = [
+      ['a Spine slot named', `${source}\ntype Back = SpineSlot;\n`],
+      ['a second emission', `${source}\nconst again = emitConstraints(constraints);\n`],
+      ['a Spine type read back', `${source}\nconst kinds = constraints.filter((one) => one.type === 'physics');\n`],
+      ['the transition union read', `${source}\nconst kind = attachmentTypeOf(entry);\n`],
+    ];
+    for (const [label, text] of plants) {
+      if (compileRecordSourceProblems(text).length !== 1) probes.push(`the plant "${label}" raised ${compileRecordSourceProblems(text).length} problem(s), not one`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MS11_COMPILE_NAMES_NO_SPINE_RECORD_TYPE_AND_EMITS_EACH_SECTION_ONCE',
+      held,
+      probeDetail(held, probes, `\`src/compile.ts\`, comments aside, names none of \`SpineSlot\`, \`SpineSkin\`, \`SpineConstraint\`, \`SpineEvent\`, \`SpineRegionAttachment\`, \`SpineLinkedMeshAttachment\`, calls \`emitSlots\`, \`emitSkins\`, \`emitConstraints\` and \`emitEvents\` once each, compares no record's \`type\` and reads no transition union; each of ${plants.length} plants raises exactly its own problem`),
+      'issue #919\'s shape, and #379\'s rule for these six records: the compiler builds model records and the assembly is the one place they become Spine\'s',
+    );
+  }
+
+  // --- MS12: every recipe of a named base document hashes identical --
+  let gateHole = false;
+  {
+    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
+    if (basePath === undefined || basePath === '') {
+      gateHole = true;
+      console.log('  SKIP  MS12 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
+      console.log('          ⚠️ This is a HOLE in this run, not a pass — the structural records\' byte identity against a base commit was not measured here.');
+    } else {
+      const probes: string[] = [];
+      let base: HashesDocument | null = null;
+      try {
+        base = readHashes(resolve(basePath));
+      } catch (err) {
+        probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
+      }
+      // Every row whose staged inputs this tree has: the gallery always, the fetched exports when `examples/` is linked.
+      const present = (from: string): boolean => existsSync(isAbsolute(from) ? from : resolve(import.meta.dir, from));
+      const rows = (base?.recipes ?? []).filter((r) => r.stage.every((s) => present(s.from)));
+      const absent = (base?.recipes ?? []).length - rows.length;
+      if (base !== null && rows.length === 0) probes.push('no row of the base document has its inputs in this tree');
+      let verdict = '';
+      if (base !== null && rows.length > 0) {
+        const recipesPath = join(work, 'gate-recipes.json');
+        writeFileSync(recipesPath, recipesText(rows.map((r) => ({ name: r.name, stage: r.stage, commands: r.commands }))));
+        const out = join(work, 'gate.json');
+        const run = runHashes(['run', '--recipes', recipesPath, '--out', out, '--work', join(work, 'gate')]);
+        if (run.status !== 0) probes.push(`the run exited ${run.status}: ${run.stderr.trim().slice(0, 200)}`);
+        let after: HashesDocument | null = null;
+        try {
+          after = readHashes(out);
+        } catch (err) {
+          probes.push(`the run wrote no readable document: ${(err as Error).message}`);
+        }
+        if (after !== null) {
+          const baseRows: HashesDocument = { ...base, recipes: rows };
+          const c = compareHashes(baseRows, after);
+          verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
+          if (!c.identical) probes.push(`against the base: ${verdict}`);
+          const flipped: HashesDocument = JSON.parse(JSON.stringify(baseRows)) as HashesDocument;
+          const first = flipped.recipes[0];
+          const file = first.files[0];
+          if (file === undefined) probes.push(`${first.name} has no hashed file in the base`);
+          else {
+            file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
+            const p = compareHashes(flipped, after);
+            if (p.identical || p.differ.length !== 1 || p.differ[0].name !== first.name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
+          }
+        }
+      }
+      if (absent > 0) console.log(`          ⚠️ HOLE: ${absent} row(s) of the base document were not run, their inputs are not in this tree (run \`bun run fetch-examples\`).`);
+      const held = probes.length === 0;
+      say(
+        'MS12_EVERY_RECIPE_WITH_ITS_INPUTS_HERE_HASHES_IDENTICAL_TO_THE_BASE_DOCUMENT',
+        held,
+        probeDetail(held, probes, `${rows.length} row(s) of ${basePath} built through \`tools/emit_hashes.ts\` on this tree (${absent} without their inputs here): ${verdict}; the same rows with the first one's hash flipped read DIFF naming it alone`),
+        'issue #919\'s gate as a control: the null setups and the physics table\'s omitted defaults the corpus does reach live in the fetched exports and the gallery alike, so every row whose inputs are present is run rather than the gallery alone',
       );
     }
   }
@@ -78280,6 +78992,7 @@ function main(): void {
   const emitHashesBad = tally.of('emit-hashes', runEmitHashesSuite, { ran: ranIt });
   const modelBones = tally.of('model-bones', runModelBonesSuite, { failures: (value) => value.failures });
   const modelVertices = tally.of('model-vertices', runModelVerticesSuite, { failures: (value) => value.failures });
+  const modelRecords = tally.of('model-records', runModelRecordsSuite, { failures: (value) => value.failures });
   tally.of('chainfit', runChainFitSuite);
   tally.of('ballot', runBallotSuite);
   tally.of('copy-images', runCopyImagesSuite);
@@ -78978,6 +79691,15 @@ function main(): void {
       'model equal to the old decode of the file, to the bit; every compiled rig\'s attachments being its model through ' +
       'the emitter, with `compile.ts` binding by name; and, when a base document is named, every gallery rig hashing ' +
       'identical to its rows)' +
+      ', + ' + n('model-records') + ' model-records controls (issue #919 — slots, region and linked-mesh attachments, skins, ' +
+      'constraints and events as model records, the Spine emitter their one writer: each record kind\'s keys in its ' +
+      'constructor\'s order, which the key-order pass cannot restore; a null setup attachment, a zero region placement, a ' +
+      'link at the parser\'s defaults and a physics component at 0 or parameter at its default each held in the model ' +
+      'and left out of the file by the emitter; the physics table and the rig writing two orders; `default` first and ' +
+      'the editor\'s order over three named skins; every compiled rig\'s records being its model through the emitter, ' +
+      'untouched by the passes; a draw-order offset and an `rgba2` key refused off the model in the words they were; ' +
+      '`compile.ts` naming no Spine record type; and, when a base document is named, every recipe with its inputs ' +
+      'here hashing identical to its rows)' +
       ', + ' + n('chainfit') + ' chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
@@ -79071,6 +79793,7 @@ function main(): void {
       (emitHashesBad === null ? '\n  ⚠️ Fewer than two gallery rigs, so no build was hashed across two runs (issue #914) in this run.' : '') +
       (modelBones.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so byte identity against a base commit (issue #915) was not measured in this run.' : '') +
       (modelVertices.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the vertex attachments\' byte identity against a base commit (issue #917) was not measured in this run.' : '') +
+      (modelRecords.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the structural records\' byte identity against a base commit (issue #919) was not measured in this run.' : '') +
       (launcher.startsWith(',') ? '' : launcher) +
       (gallery.examples > 0
         ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled three times and gated green under BOTH profiles`
