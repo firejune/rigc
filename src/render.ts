@@ -337,6 +337,17 @@ export interface PoseOptions {
    */
   bones?: boolean;
   /**
+   * Also record every slot's attachment geometry, whole — see `AttachmentPose`
+   * and `Frame.attachments` (issue #864). Off by default for `bones`' reason:
+   * nothing that draws reads it, and `render --geometry` is the one caller.
+   *
+   * ⭐ **It is not filtered by `slots`/`hidden` and not cut by a clip.** Those
+   * are statements about which pixels are drawn; the geometry is a statement
+   * about where the pose put each attachment, and it is the same pose whatever
+   * a picture of it leaves out.
+   */
+  geometry?: boolean;
+  /**
    * Pose under this skin, by the name the skeleton declares for it.
    *
    * ⭐ Absent means **no skin is set at all**, which is spine-core's own initial
@@ -635,6 +646,44 @@ export interface Frame {
    * the two rigs.
    */
   bones?: BoneSnapshot[];
+  /**
+   * Every slot's attachment as the pose left it, in draw order — present only
+   * when `PoseOptions.geometry` asked for it (issue #864).
+   *
+   * ⚠️ Not `pieces` again. A piece is what gets DRAWN: `--slot`/`--hide` remove
+   * pieces and a clip replaces one with the clipper's own triangle list, whose
+   * vertices are not the attachment's and are not numbered like them. A
+   * consumer comparing a triangle's edges across frames needs vertex `i` to be
+   * the same vertex in every frame, so these are the attachment's own vertices,
+   * whole, for every slot that shows a region or a mesh.
+   *
+   * Read off the same skeleton at the same step as `pieces` and `bones`, which
+   * is what puts it on render's frame grid by construction rather than by a
+   * second derivation of it.
+   */
+  attachments?: AttachmentPose[];
+}
+
+/**
+ * One slot's region or mesh attachment in one posed frame (issue #864).
+ *
+ * `vertices` come from the runtime's own `computeWorldVertices` over the whole
+ * attachment — the call `pieceOf` makes, through the one helper both share —
+ * so skinning and deform live in spine-core and nowhere here.
+ */
+export interface AttachmentPose {
+  slot: string;
+  /** The attachment's own name, which is what a deform or attachment timeline keys. */
+  attachment: string;
+  /**
+   * World positions, `x, y` per vertex, **y up**. A region's four corners are in
+   * spine-core's order — bottom-left, top-left, top-right, bottom-right — and a
+   * mesh's vertices in the attachment's own order, so index `i` names the same
+   * vertex in every frame.
+   */
+  vertices: number[];
+  /** Slot colour x attachment colour, straight alpha, 0..1 — the piece's `tint`, by the same arithmetic. */
+  color: [number, number, number, number];
 }
 
 /** Where the world sits in a frame: the four world numbers plus the scale. */
@@ -732,6 +781,7 @@ export function sampleAnimation(data: SkeletonData, name: string, fps: number, o
       time: i * step,
       pieces: piecesOf(skeleton, pieceOpts),
       ...(opts?.bones ? { bones: boneSnapshots(skeleton) } : {}),
+      ...(opts?.geometry ? { attachments: attachmentsOf(skeleton) } : {}),
     });
   }
   return frames;
@@ -746,18 +796,29 @@ export function sampleAnimation(data: SkeletonData, name: string, fps: number, o
  * whole content is the setup pose.
  */
 export function sampleSetupPose(data: SkeletonData, opts?: PoseOptions): Frame[] {
-  const skeleton = skeletonUnderSkin(data, opts?.skin);
-  skeleton.setupPose();
-  skeleton.update(0);
-  skeleton.updateWorldTransform(Physics.reset);
+  const skeleton = setupPosed(data, opts?.skin);
   return [
     {
       index: 0,
       time: 0,
       pieces: piecesOf(skeleton, piecesOptions(opts)),
       ...(opts?.bones ? { bones: boneSnapshots(skeleton) } : {}),
+      ...(opts?.geometry ? { attachments: attachmentsOf(skeleton) } : {}),
     },
   ];
+}
+
+/**
+ * A fresh skeleton under `skin`, stepped into its setup pose — the one recipe
+ * `sampleSetupPose` and the geometry export's `rest` table both pose from, so
+ * the two cannot come to describe different rest poses.
+ */
+function setupPosed(data: SkeletonData, skin: string | undefined): Skeleton {
+  const skeleton = skeletonUnderSkin(data, skin);
+  skeleton.setupPose();
+  skeleton.update(0);
+  skeleton.updateWorldTransform(Physics.reset);
+  return skeleton;
 }
 
 /**
@@ -877,14 +938,7 @@ function pieceOf(
         'the attachment names a region the atlas does not have',
     );
   }
-  const colour = pose.color;
-  const own = attachment.color;
-  const tint: [number, number, number, number] = [
-    colour.r * own.r,
-    colour.g * own.g,
-    colour.b * own.b,
-    colour.a * own.a,
-  ];
+  const tint = tintOf(slot, attachment);
   // The dark colour is the SLOT's alone — an attachment has a `color` and no
   // dark one, so there is nothing to multiply it by. Read off `appliedPose`
   // like the light colour, so an `rgba2` timeline reaches the picture.
@@ -897,23 +951,66 @@ function pieceOf(
 
   let piece: Piece;
   let triangles: number[];
+  const world = worldVerticesOf(skeleton, slot, attachment);
   if (isMesh) {
-    // `worldVerticesLength` is 2 per vertex whether or not the mesh is
-    // weighted — the weight runs live in `vertices`, not here — so this is the
-    // full output length and the whole mesh is computed in one call. Deform
-    // offsets, if the pose carries any, are applied inside it.
-    const world = new Array<number>(attachment.worldVerticesLength).fill(0);
-    attachment.computeWorldVertices(skeleton, slot, 0, attachment.worldVerticesLength, world, 0, 2);
     triangles = attachment.triangles;
     piece = { kind: 'mesh', ...common, texture, world, uvs, triangles };
   } else {
-    const world = new Array<number>(8).fill(0);
-    attachment.computeWorldVertices(slot, attachment.getOffsets(pose), world, 0, 2);
     triangles = QUAD_TRIANGLES;
     piece = { kind: 'region', ...common, texture, world, uvs };
   }
   if (clipper === null || !clipper.isClipping()) return piece;
   return clippedPiece(piece, triangles, uvs, clipper);
+}
+
+/** Slot colour x attachment colour, straight alpha — what a piece is tinted by and a geometry entry records. */
+function tintOf(slot: Slot, attachment: MeshAttachment | RegionAttachment): [number, number, number, number] {
+  const colour = slot.appliedPose.color;
+  const own = attachment.color;
+  return [colour.r * own.r, colour.g * own.g, colour.b * own.b, colour.a * own.a];
+}
+
+/**
+ * One attachment's world vertices on `slot`, whole, by the runtime's own routine.
+ *
+ * The one place either kind is asked for them: `pieceOf` draws what this returns
+ * and `attachmentsOf` records it, so a drawn frame and its geometry export
+ * cannot disagree about where a vertex is.
+ *
+ * `worldVerticesLength` is 2 per vertex whether or not the mesh is weighted —
+ * the weight runs live in `vertices`, not here — so this is the full output
+ * length and the whole mesh is computed in one call. Deform offsets, if the
+ * slot's pose carries any, are applied inside it; a region's offsets are read
+ * for the sequence frame the slot's pose resolves.
+ */
+function worldVerticesOf(skeleton: Skeleton, slot: Slot, attachment: MeshAttachment | RegionAttachment): number[] {
+  if (attachment instanceof MeshAttachment) {
+    const world = new Array<number>(attachment.worldVerticesLength).fill(0);
+    attachment.computeWorldVertices(skeleton, slot, 0, attachment.worldVerticesLength, world, 0, 2);
+    return world;
+  }
+  const world = new Array<number>(8).fill(0);
+  attachment.computeWorldVertices(slot, attachment.getOffsets(slot.appliedPose), world, 0, 2);
+  return world;
+}
+
+/**
+ * Every slot's region or mesh attachment, whole, in the posed draw order — see
+ * `Frame.attachments`. No subset and no clip: those are `piecesOf`'s business.
+ */
+function attachmentsOf(skeleton: Skeleton): AttachmentPose[] {
+  const out: AttachmentPose[] = [];
+  for (const slot of skeleton.drawOrder.appliedPose) {
+    const attachment = slot.appliedPose.attachment;
+    if (!(attachment instanceof MeshAttachment) && !(attachment instanceof RegionAttachment)) continue;
+    out.push({
+      slot: slot.data.name,
+      attachment: attachment.name,
+      vertices: worldVerticesOf(skeleton, slot, attachment),
+      color: tintOf(slot, attachment),
+    });
+  }
+  return out;
 }
 
 /**
@@ -949,6 +1046,262 @@ function clippedPiece(piece: Piece, triangles: number[], uvs: Float32Array, clip
   }
   const { tint, dark, slot, page } = piece;
   return { kind: 'mesh', tint, dark, slot, page, texture, world, uvs: clippedUvs, triangles: clipped };
+}
+
+// ---------------------------------------------------------------------------
+// the geometry export — `render --geometry` (issue #864)
+// ---------------------------------------------------------------------------
+//
+// ⭐ A frame set is pixels, and two judgements a consumer that does not link
+// spine-core wants to make are not about pixels: how far a mesh triangle is
+// stretched over its rest shape, and whether a region holds still in its own
+// bone's frame. Both need the numbers the pose was drawn FROM. So `render` writes
+// them beside the pictures, off the very `Frame`s it drew — one call, one frame
+// grid, one viewport — rather than a second command re-deriving any of the three.
+
+/** The export's file name inside an animation's frame directory, and its format tag. */
+export const GEOMETRY_FILE = 'geometry.json';
+export const GEOMETRY_SPEC = 'rigc-geometry/1';
+/** Stated in the file, so a reader cannot take the numbers for frame pixels. */
+export const GEOMETRY_COORDINATES = 'spine world, y up, world units';
+
+/** A geometry file's frame: `Frame` reduced to the numbers the export promises. */
+export interface GeometryFrame {
+  index: number;
+  time: number;
+  bones: GeometryBone[];
+  attachments: AttachmentPose[];
+}
+
+/** One bone's world transform: `world = [a b; c d]·local + (worldX, worldY)`. */
+export interface GeometryBone {
+  name: string;
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  worldX: number;
+  worldY: number;
+}
+
+/**
+ * One attachment's rest geometry and its topology — the half of a stretch ratio
+ * no frame carries.
+ *
+ * ⭐ **Rest is the setup pose's bones with no deform**, taken for every
+ * attachment any frame of the file shows — including one the setup pose does not
+ * show, which a slot only swaps to later. For an attachment the setup pose does
+ * show, these vertices are the `setup` entry's own, bit for bit: both come off
+ * one skeleton posed by `setupPosed`.
+ */
+export interface AttachmentRest {
+  slot: string;
+  attachment: string;
+  kind: 'region' | 'mesh';
+  vertices: number[];
+  /** Vertex index triplets. A region's are the runtime's own `0 1 2 2 3 0`. */
+  triangles: number[];
+  /** A mesh's hull vertex count — the first `hull` vertices, as the format's `hull` field counts them. */
+  hull?: number;
+  /** A mesh's `uvs`, `u, v` per vertex over the untrimmed drawing, y down — the attachment's own, not a page's. */
+  uvs?: number[];
+}
+
+export interface GeometryFile {
+  spec: string;
+  coordinates: string;
+  /** The animation, or `null` for a skeleton with none (its one frame is the setup pose). */
+  animation: string | null;
+  skin?: string;
+  fps: number;
+  /** The box the PNG frames beside this file were drawn over — `frames.json`'s own `viewport`. */
+  viewport: FramesSidecar['viewport'];
+  /** Every bone in the skeleton's declaration order, and its parent's name. */
+  bones: Array<{ name: string; parent: string | null }>;
+  /**
+   * Every slot in the skeleton's declaration order, and the bone it hangs from —
+   * which is the bone whose frame "still in its own bone's frame" is read in.
+   */
+  slots: Array<{ name: string; bone: string }>;
+  rest: AttachmentRest[];
+  /** The setup pose, sampled the way `sampleSetupPose` samples it. */
+  setup: Omit<GeometryFrame, 'index' | 'time'>;
+  frames: GeometryFrame[];
+}
+
+/**
+ * A number the export could not print as a number — refused rather than written,
+ * because `JSON.stringify` writes `NaN` and `Infinity` as `null` and a consumer
+ * would read a hole in the geometry as a vertex at nothing.
+ */
+export class GeometryError extends Error {}
+
+/** `frames.json`'s viewport block for `v` — the one spelling both files use. */
+export function sidecarViewport(v: Viewport): FramesSidecar['viewport'] {
+  return {
+    x: v.minX,
+    y: v.minY,
+    width: v.maxX - v.minX,
+    height: v.maxY - v.minY,
+    scale: v.scale,
+    pixelWidth: v.width,
+    pixelHeight: v.height,
+  };
+}
+
+/**
+ * The geometry file for one frame set — `frames` exactly as a sampler returned
+ * them with `{ bones: true, geometry: true }`, which is what makes its grid the
+ * frame set's own.
+ *
+ * Refused by `GeometryError`, naming the frame, the slot, the attachment and the
+ * vertex (or the bone), when any number in it is not finite.
+ */
+export function geometryFileOf(
+  data: SkeletonData,
+  animation: string | null,
+  fps: number,
+  frames: Frame[],
+  viewport: Viewport,
+  skin: string | undefined,
+): GeometryFile {
+  const geometryFrame = (frame: Frame, where: string): Omit<GeometryFrame, 'index' | 'time'> => {
+    if (frame.bones === undefined || frame.attachments === undefined) {
+      throw new Error(`${where} was sampled without { bones: true, geometry: true }; the geometry export needs both`);
+    }
+    return {
+      bones: frame.bones.map(({ name, a, b, c, d, worldX, worldY }) => ({ name, a, b, c, d, worldX, worldY })),
+      attachments: frame.attachments,
+    };
+  };
+  const posed = frames.map((frame) => ({
+    index: frame.index,
+    time: frame.time,
+    ...geometryFrame(frame, `frame ${frame.index}`),
+  }));
+  const setupFrame = sampleSetupPose(data, { ...(skin === undefined ? {} : { skin }), bones: true, geometry: true })[0];
+  const setup = geometryFrame(setupFrame, 'the setup pose');
+  const file: GeometryFile = {
+    spec: GEOMETRY_SPEC,
+    coordinates: GEOMETRY_COORDINATES,
+    animation,
+    ...(skin === undefined ? {} : { skin }),
+    fps,
+    viewport: sidecarViewport(viewport),
+    bones: data.bones.map((bone) => ({ name: bone.name, parent: bone.parent?.name ?? null })),
+    slots: data.slots.map((slot) => ({ name: slot.name, bone: slot.boneData.name })),
+    rest: restOf(data, skin, [setup.attachments, ...posed.map((frame) => frame.attachments)]),
+    setup,
+    frames: posed,
+  };
+  refuseNonFinite(file);
+  return file;
+}
+
+/**
+ * The rest table: every (slot, attachment) the given frames show, in order of
+ * first appearance, posed on one setup skeleton with the slot's deform empty.
+ *
+ * The attachment is resolved the way the pose resolved it — `Skeleton.getAttachment`,
+ * the skin first and the default skin second — so a name means the object the
+ * frames drew. A region's rest corners are read for the sequence frame the setup
+ * pose resolves, which is the frame its setup pose draws.
+ */
+function restOf(data: SkeletonData, skin: string | undefined, shown: AttachmentPose[][]): AttachmentRest[] {
+  const skeleton = setupPosed(data, skin);
+  // Slot, then attachment: two maps rather than one joined key, so no pair of
+  // names can fold into another's entry whatever characters they carry.
+  const seen = new Map<string, Set<string>>();
+  const out: AttachmentRest[] = [];
+  for (const entries of shown) {
+    for (const entry of entries) {
+      const names = seen.get(entry.slot) ?? new Set<string>();
+      if (names.has(entry.attachment)) continue;
+      names.add(entry.attachment);
+      seen.set(entry.slot, names);
+      const slotIndex = data.findSlot(entry.slot)?.index ?? -1;
+      const slot = skeleton.slots[slotIndex];
+      const attachment = slot === undefined ? null : skeleton.getAttachment(slotIndex, entry.attachment);
+      if (slot === undefined || !(attachment instanceof MeshAttachment || attachment instanceof RegionAttachment)) {
+        throw new Error(
+          `slot ${JSON.stringify(entry.slot)} showed attachment ${JSON.stringify(entry.attachment)} in a frame, and ` +
+            'the setup skeleton resolves no region or mesh of that name there',
+        );
+      }
+      // A mesh reads the slot's deform array; the setup pose leaves it empty,
+      // and emptying it here says so rather than trusting that it is.
+      slot.appliedPose.deform.length = 0;
+      const vertices = worldVerticesOf(skeleton, slot, attachment);
+      out.push(
+        attachment instanceof MeshAttachment
+          ? {
+              slot: entry.slot,
+              attachment: entry.attachment,
+              kind: 'mesh',
+              vertices,
+              triangles: Array.from(attachment.triangles),
+              hull: attachment.hullLength / 2,
+              uvs: Array.from(attachment.regionUVs),
+            }
+          : { slot: entry.slot, attachment: entry.attachment, kind: 'region', vertices, triangles: [...QUAD_TRIANGLES] },
+      );
+    }
+  }
+  return out;
+}
+
+/** Throw a `GeometryError` at the first number in `file` that is not finite, naming where it sits. */
+function refuseNonFinite(file: GeometryFile): void {
+  const check = (where: string, entries: AttachmentPose[] | AttachmentRest[], bones: GeometryBone[]): void => {
+    for (const bone of bones) {
+      for (const field of ['a', 'b', 'c', 'd', 'worldX', 'worldY'] as const) {
+        if (!Number.isFinite(bone[field])) {
+          throw new GeometryError(`${where}: bone ${JSON.stringify(bone.name)} has ${field} ${String(bone[field])}; a world transform is finite`);
+        }
+      }
+    }
+    for (const entry of entries) {
+      const bad = entry.vertices.findIndex((value) => !Number.isFinite(value));
+      if (bad === -1) continue;
+      throw new GeometryError(
+        `${where}: slot ${JSON.stringify(entry.slot)} attachment ${JSON.stringify(entry.attachment)} vertex ` +
+          `${Math.floor(bad / 2)} has ${bad % 2 === 0 ? 'x' : 'y'} ${String(entry.vertices[bad])}; a posed vertex is finite`,
+      );
+    }
+  };
+  check('the rest table', file.rest, []);
+  check('the setup pose', file.setup.attachments, file.setup.bones);
+  for (const frame of file.frames) check(`frame ${frame.index}`, frame.attachments, frame.bones);
+}
+
+/**
+ * The file's text: a JSON object whose header fields sit one per line and whose
+ * `rest` entries and `frames` sit one per line each, so a diff of two exports
+ * names the frame that moved.
+ *
+ * Numbers are `JSON.stringify`'s, which is how every JSON this tree writes prints
+ * them — the shortest decimal that reads back as the same double, fixed by the
+ * language rather than a locale — so a vertex in the file IS the runtime's
+ * vertex, not a rounding of it.
+ */
+export function geometryText(file: GeometryFile): string {
+  const lines: string[] = [];
+  const entries = Object.entries(file);
+  entries.forEach(([key, value], i) => {
+    const comma = i + 1 < entries.length ? ',' : '';
+    if ((key === 'rest' || key === 'frames') && Array.isArray(value)) {
+      if (value.length === 0) {
+        lines.push(`  ${JSON.stringify(key)}: []${comma}`);
+        return;
+      }
+      lines.push(`  ${JSON.stringify(key)}: [`);
+      value.forEach((item, j) => lines.push(`    ${JSON.stringify(item)}${j + 1 < value.length ? ',' : ''}`));
+      lines.push(`  ]${comma}`);
+      return;
+    }
+    lines.push(`  ${JSON.stringify(key)}: ${JSON.stringify(value)}${comma}`);
+  });
+  return `{\n${lines.join('\n')}\n}\n`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1347,7 +1700,9 @@ export function framingViewport(data: SkeletonData, maxSide: number, opts?: Pose
   // A clip is taken off for the same reason (issue #844): what it removes still
   // counts toward the box, so adding or keying a mask moves no pixel it leaves
   // drawn — see `PoseOptions.unclipped`.
-  const { slots: _drawn, hidden: _hidden, ...whole } = opts ?? {};
+  // Neither the bone snapshots nor the geometry export frame anything, and
+  // both would be taken at `FRAMING_FPS` for every animation only to be dropped.
+  const { slots: _drawn, hidden: _hidden, bones: _bones, geometry: _geometry, ...whole } = opts ?? {};
   const framed: PoseOptions = { ...whole, unclipped: true };
   const sets =
     data.animations.length === 0

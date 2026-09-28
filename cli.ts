@@ -145,6 +145,10 @@ import {
   FRAMES_SIDECAR,
   FRAMES_SPEC,
   framingViewport,
+  GEOMETRY_FILE,
+  GeometryError,
+  geometryFileOf,
+  geometryText,
   loadPosable,
   PROTOCOL_FPS,
   renderFrame,
@@ -153,6 +157,7 @@ import {
   SETUP_POSE_DIR,
   SHEET_FILE,
   SHEET_TILE,
+  sidecarViewport,
   SlotSubsetError,
   slotSubsetOf,
   type Frame,
@@ -259,7 +264,7 @@ function repositoryUrl(): string {
  * needs a value` (issue #328). `CLI10`/`CLI11` in `selftest.ts` now hold the two
  * halves together by reading `--help` rather than by naming a flag.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy']);
+const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry']);
 
 /**
  * The flags a command is allowed to spell more than once.
@@ -2010,6 +2015,24 @@ function cmdRender(flags: Record<string, string>): void {
   const fps = readPositiveNumber(flags, 'fps', PROTOCOL_FPS, 1);
   const maxSide = readPositiveNumber(flags, 'max', 256, 16);
   const outRoot = resolve(flags.out ?? 'render');
+  const geometry = flags.geometry !== undefined;
+  // Refused together rather than one of them ignored (issue #864). The export
+  // records every slot's whole geometry, because a subset is a statement about
+  // which pixels are DRAWN and the pose is the same whatever a picture leaves
+  // out — so a geometry.json beside a subset's frames would describe slots
+  // those frames do not draw, and one that dropped them would stop being the
+  // pose. The whole-rig run writes the same file either way.
+  if (geometry) {
+    for (const flag of ['slot', 'hide'] as const) {
+      if (flags[flag] !== undefined) {
+        throw new UsageError(
+          `--geometry takes no --${flag}: it records every slot's whole geometry, which a subset of the drawn slots ` +
+            `does not change. Run \`rigc render --geometry\` on the whole rig for the file, and --${flag} ` +
+            `${flags[flag]} without --geometry for the pictures — both land on the same grid`,
+        );
+      }
+    }
+  }
 
   console.log('rigc render');
   console.log(`  ..    skeleton ${skeletonPath}`);
@@ -2043,8 +2066,24 @@ function cmdRender(flags: Record<string, string>): void {
   // `sampleAll` covers the skeleton with no animation at all, which files its one
   // setup-pose frame under the reserved name. Narrowing to one animation reuses
   // the same sampler rather than a second path through it.
+  //
+  // `--geometry` rides on the SAME call (issue #864): the bones and the whole
+  // attachments are read off the skeleton at the step that drew each frame, so
+  // the export's grid is this frame set's by construction.
+  const sampling = geometry ? { ...pose, bones: true, geometry: true } : pose;
   const sampled: Map<string, Frame[]> =
-    only === undefined ? sampleAll(data, fps, pose) : new Map([[only, sampleAnimation(data, only, fps, pose)]]);
+    only === undefined
+      ? sampleAll(data, fps, sampling)
+      : new Map([[only, sampleAnimation(data, only, fps, sampling)]]);
+  // Every file's text before the first write, so a refused number leaves the
+  // output directory as it was rather than half of a frame set behind it.
+  const geometryTexts = new Map<string, string>();
+  if (geometry) {
+    for (const [name, frames] of sampled) {
+      const animation = name === SETUP_POSE_DIR && data.animations.length === 0 ? null : name;
+      geometryTexts.set(name, geometryText(geometryFileOf(data, animation, fps, frames, viewport, skin)));
+    }
+  }
   console.log(`  ..    ${viewport.width}x${viewport.height}px at ${fps} fps, ${sampled.size} set(s) -> ${outRoot}`);
   if (!declaresSetupStage(data)) console.log(`  ..    ${STAGELESS_FRAMING.render}`);
 
@@ -2067,6 +2106,8 @@ function cmdRender(flags: Record<string, string>): void {
     // would be the same picture with a border and a "0" on it.
     const sheet = frames.length > 1;
     if (sheet) contactSheet(frames, pages, viewport, SHEET_TILE).writePng(join(dir, SHEET_FILE));
+    const geometryOut = geometryTexts.get(name);
+    if (geometryOut !== undefined) writeFileSync(join(dir, GEOMETRY_FILE), geometryOut);
     const duration = frames[frames.length - 1].time;
     sets.push({
       dir: dirName,
@@ -2078,7 +2119,8 @@ function cmdRender(flags: Record<string, string>): void {
       duration,
     });
     const how = frames.length === 1 ? 'a single pose' : `${duration.toFixed(3)}s`;
-    console.log(`  ..    ${name.padEnd(16)} ${frames.length} frame(s), ${how}${sheet ? ` + ${SHEET_FILE}` : ''} -> ${dir}`);
+    const extras = `${sheet ? ` + ${SHEET_FILE}` : ''}${geometryOut === undefined ? '' : ` + ${GEOMETRY_FILE}`}`;
+    console.log(`  ..    ${name.padEnd(16)} ${frames.length} frame(s), ${how}${extras} -> ${dir}`);
   }
 
   // The sidecar is what makes this a frame SET rather than a pile of pictures:
@@ -2095,15 +2137,9 @@ function cmdRender(flags: Record<string, string>): void {
     // every slot says nothing and stays the bytes it always was (issue #835).
     ...subsetFields(subset),
     background: BACKGROUND,
-    viewport: {
-      x: viewport.minX,
-      y: viewport.minY,
-      width: viewport.maxX - viewport.minX,
-      height: viewport.maxY - viewport.minY,
-      scale: viewport.scale,
-      pixelWidth: viewport.width,
-      pixelHeight: viewport.height,
-    },
+    // The one spelling `geometry.json` repeats, so the two files cannot state
+    // two boxes for one grid.
+    viewport: sidecarViewport(viewport),
     sets: [...sets].sort((a, b) => a.dir.localeCompare(b.dir)),
   };
   writeFileSync(join(outRoot, FRAMES_SIDECAR), `${JSON.stringify(sidecar, null, 2)}\n`);
@@ -3808,6 +3844,10 @@ const FLAG_MEANINGS: Record<string, string> = {
     'derived: a candidate is entitled to its own vocabulary, so a mapping worked out here would be a guess reported ' +
     'as a measurement',
   'all-bones': 'print every bone pair, not just the worst by position',
+  geometry:
+    `also write ${GEOMETRY_FILE} into each frame directory: per frame, every bone's world transform and every ` +
+    "slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry — on the " +
+    'frames\' own grid and viewport. Not with --slot/--hide: the geometry is the whole pose whatever is drawn',
   'texture-from':
     "also measure this run through this atlas's texels, keeping the candidate's own geometry, and report how much " +
     'of the MAE is texture resampling rather than the rig — pass the atlas the reference frames were rendered ' +
@@ -4148,10 +4188,10 @@ const COMMANDS: CommandDoc[] = [
   {
     name: 'render',
     usage: [
-      'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--skin <name>] [--fps 12] [--max 256] [--out render/]',
+      'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--skin <name>] [--fps 12] [--max 256] [--geometry] [--out render/]',
       'rigc render … --slot <name[,name…]> | --hide <name[,name…]>   (a subset of the slots, on the whole rig\'s grid)',
     ],
-    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'out'],
+    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'geometry', 'out'],
     overrides: {
       out: { value: '<dir>', meaning: 'directory to write the frame series into (default `render/`)' },
       fps: { meaning: `frames per second to sample the animation at (default ${PROTOCOL_FPS})` },
@@ -4499,6 +4539,13 @@ try {
   // the one reader's and already names the file, what it is and what rigc
   // reads; a stack under it is the tool describing its own internals instead.
   // Exit 1, like a compile error: the invocation was fine, a file was not.
+  // A pose the geometry export cannot write as numbers (issue #864): the
+  // invocation was fine and the skeleton posed a NaN or an infinity, so exit 1
+  // like a file that is not a PNG. Raised before the first file is written.
+  if (err instanceof GeometryError) {
+    console.error(`rigc render: ${err.message}`);
+    process.exit(1);
+  }
   if (err instanceof NotAPngError) {
     console.error(`rigc: ${err.message}`);
     process.exit(1);
