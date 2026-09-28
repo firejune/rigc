@@ -28,6 +28,13 @@
  * picture. A generated cut disagrees with its picture as well, which makes the
  * floor measured here a LOWER bound on the floor for such a cut, not the floor.
  *
+ * 🔍 Every trial also carries the residual AT the truth, and a failure is marked
+ * `missed` when the truth scores better than what was reported and nothing
+ * reported is on it. That split is what diagnosed issue #865: of the failures,
+ * only a miss is the search's to fix — the rest are the objective preferring
+ * another placement, or the truth reported and tied with one. `--from` prints
+ * the misses per cell under the table.
+ *
  * 🔒 Not a selftest control: a full grid is hundreds of `pose` runs. `selftest.ts`
  * runs three cells of it through `floorCell` below and holds them to the table
  * `src/pose.ts` states, so the table cannot drift away from this tool silently.
@@ -35,7 +42,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { estimatePose, type PoseLegibility } from '../src/pose.ts';
+import { errBilinear, estimatePose, levelOf, materialPlate, type PoseLegibility, readBackground } from '../src/pose.ts';
 import {
   BACKGROUND,
   blitPiece,
@@ -82,6 +89,19 @@ export interface FloorTrial {
   error: number | null;
   /** `null` only when the part was not searched, which on this material means a defect in this tool. */
   legibility: PoseLegibility | null;
+  /**
+   * The residual `pose` would report AT the truth — scale 1, rotation 0, the
+   * crop's own offset — over every part pixel, with the objective `pose` uses.
+   */
+  truthResidual: number;
+  /**
+   * The search's own miss, as opposed to the objective's or the verdict's: not
+   * found, the truth scores below the best residual reported, and no reported
+   * placement (best or alternate) is within `FLOOR_WITHIN_PX` of it. A failure
+   * that is not a miss is one the search could not have fixed — the objective
+   * prefers something else there, or the truth was reported and tied (#865).
+   */
+  missed: boolean;
 }
 
 interface Scene {
@@ -306,7 +326,38 @@ export function floorTrial(
   const error = got.placement === null ? null : Math.hypot(got.placement.x - truth.x, got.placement.y - truth.y);
   const outcome: FloorOutcome =
     got.refusal !== null ? 'refused' : got.ambiguous ? 'ambiguous' : error !== null && error <= FLOOR_WITHIN_PX ? 'found' : 'wrong';
-  return { frame: scene.name, slot, size, texture, outcome, error, legibility: got.legibility };
+  const truthResidual = residualAtTruth(frame, part, box);
+  const reported = got.placement === null ? [] : [got.placement, ...got.alternates];
+  const missed =
+    outcome !== 'found' &&
+    got.placement !== null &&
+    truthResidual < got.placement.residual &&
+    !reported.some((p) => Math.hypot(p.x - truth.x, p.y - truth.y) <= FLOOR_WITHIN_PX);
+  return { frame: scene.name, slot, size, texture, outcome, error, legibility: got.legibility, truthResidual, missed };
+}
+
+/**
+ * `pose`'s objective at the truth placement: every part pixel at its own offset
+ * in the frame, scale 1, rotation 0, scored on the frame's material plate with
+ * `pose`'s own tap — the same arithmetic its `measure` step reports a residual
+ * with, so the two are comparable to the last decimal that matters here.
+ */
+function residualAtTruth(frame: Plate, part: Plate, box: { x: number; y: number }): number {
+  const material = materialPlate(frame, readBackground(frame)).plate;
+  const level = levelOf(material, 1);
+  let weight = 0;
+  let acc = 0;
+  for (let y = 0; y < part.height; y++) {
+    for (let x = 0; x < part.width; x++) {
+      const i = (y * part.width + x) * 4;
+      const a = part.data[i + 3];
+      if (a === 0) continue;
+      const w = a / 255;
+      weight += w;
+      acc += w * errBilinear(level, material, box.x + x + 0.5, box.y + y + 0.5, part.data[i], part.data[i + 1], part.data[i + 2]);
+    }
+  }
+  return weight === 0 ? 1 : acc / weight;
 }
 
 export interface FloorCell {
@@ -317,6 +368,8 @@ export interface FloorCell {
   wrong: number;
   ambiguous: number;
   refused: number;
+  /** Trials the search itself missed — see `FloorTrial.missed`. */
+  missed: number;
   /** Mean `legibility.texture` over the cell's parts. */
   meanTexture: number;
 }
@@ -346,6 +399,7 @@ export function floorCell(
     wrong: count('wrong'),
     ambiguous: count('ambiguous'),
     refused: count('refused'),
+    missed: trials.filter((t) => t.missed).length,
     meanTexture:
       trials.reduce((s, t) => s + (t.legibility?.texture ?? 0), 0) / Math.max(1, trials.filter((t) => t.legibility !== null).length),
   };
@@ -356,14 +410,19 @@ export function floorCell(
  * this share of the grid's trials, stated on at least `FLOOR_MIN_TRIALS`.
  *
  * ⚠️ Not the brief's "smallest cell that places reliably", and the grid is why.
- * No cell of it placed 0.9 of its trials — the best placed 13 of 15 — and no
- * detail threshold on thirty or more trials reached even 0.8: above any rung,
- * the same few parts failed at every size and texture (a thin gun, a lens pair)
- * because the coarse pass never sent their true basin down. A floor stated at a
- * bar nothing reaches is a floor everything sits under, which tells a user
- * nothing. What the grid DOES support is the other edge — a detail under which
- * `pose` almost never places anything — and that is the question the issue
- * asked: is this part too plain for `pose`, or is it wrong?
+ * When this was chosen no cell placed 0.9 of its trials — the best placed 13
+ * of 15 — and no detail threshold on thirty or more trials reached even 0.8:
+ * above any rung, the same few parts failed at every size and texture (a thin
+ * gun, a lens pair) because the coarse pass never sent their true basin down.
+ * What the grid DOES support is the other edge — a detail under which `pose`
+ * almost never places anything — and that is the question the issue asked: is
+ * this part too plain for `pose`, or is it wrong?
+ *
+ * 🔸 Issue #865 moved the other half without moving this one. With the coarse
+ * grid at an eighth of the part, four native cells place 14 or 15 of 15 and the
+ * trials at detail 3 and over place 62 of 66 — but `goggles` still places 10 of
+ * 42, and a reliability line read off two dozen parts of one figure would be a
+ * claim about spineboy. The edge stays the one thing stated.
  */
 export const FLOOR_FAIL_RATE = 0.1;
 export const FLOOR_MIN_TRIALS = 30;
@@ -463,6 +522,13 @@ function main(argv: string[]): void {
     for (const line of detailBands(cells)) console.log(line);
     console.log('');
     console.log(`floor: ${JSON.stringify(deriveFloor(cells))}`);
+    // A grid written before the column existed has no `missed`, and saying 0
+    // for it would be a measurement nobody took.
+    if (cells.every((c) => typeof c.missed === 'number')) {
+      const failed = cells.reduce((n, c) => n + c.trials.length - c.found, 0);
+      console.log(`missed by the search: ${cells.reduce((n, c) => n + c.missed, 0)} of ${failed} failed trials`);
+      for (const c of cells) if (c.missed > 0) console.log(`  ${c.texture} ${c.size}px: ${c.trials.filter((t) => t.missed).map((t) => `${t.frame} ${t.slot}`).join(', ')}`);
+    }
     return;
   }
   const root = resolve(flags.get('examples') ?? 'examples');
@@ -486,7 +552,7 @@ function main(argv: string[]): void {
         const n = cell.trials.length;
         console.log(
           `  ${texture.padEnd(6)} ${String(size).padStart(4)}px  texture ${cell.meanTexture.toFixed(4)}  ` +
-            `found ${cell.found}/${n}  wrong ${cell.wrong}  ambiguous ${cell.ambiguous}  refused ${cell.refused}`,
+            `found ${cell.found}/${n}  wrong ${cell.wrong}  ambiguous ${cell.ambiguous}  refused ${cell.refused}  missed ${cell.missed}`,
         );
         for (const t of cell.trials) {
           if (t.outcome === 'found') continue;
@@ -498,7 +564,7 @@ function main(argv: string[]): void {
           console.log(
             `           ${t.outcome.padEnd(9)} ${t.frame} ${t.slot}: off ${t.error === null ? 'n/a' : t.error.toFixed(1)}px, ` +
               `${l.width}x${l.height} texture ${l.texture} opaque ${l.opaqueShare}, ${l.candidates} candidate(s), ` +
-              `best ${l.best} next ${l.next ?? 'none'}`,
+              `best ${l.best} next ${l.next ?? 'none'}, truth ${t.truthResidual.toFixed(5)}${t.missed ? ' — MISSED by the search' : ''}`,
           );
         }
       }

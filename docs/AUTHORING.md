@@ -8732,7 +8732,7 @@ ambiguous one ends with a sentence saying which reading its figures support:
 
 - **below the floor** — a 40x28 part of one flat colour, cut from a plain block it fits anywhere inside:
 
-  > part is 40x28 px (span 40 frame px, opaque 1) with texture 0, detail 0; 11 candidate(s), best 0.0000, next 0.0000, spread 0.0000 — below the measured floor (AUTHORING §11.5: detail 0.5, measured from 24 px up): pose placed 7% of the measured parts this plain, so this part is too plain for pose to tell its placements apart; that says nothing about whether the cut is right
+  > part is 40x28 px (span 40 frame px, opaque 1) with texture 0, detail 0; 14 candidate(s), best 0.0000, next 0.0000, spread 0.0000 — below the measured floor (AUTHORING §11.5: detail 0.5, measured from 24 px up): pose placed 8% of the measured parts this plain, so this part is too plain for pose to tell its placements apart; that says nothing about whether the cut is right
 
 - **above the floor** — a 200x150 black-and-white checker the frame does not hold:
 
@@ -8759,24 +8759,24 @@ Found within 2 px of the truth, out of 15 trials per cell (free search, default 
 
 | texture level (mean) | 24 px | 32 px | 48 px | 64 px | 96 px | 128 px | 192 px |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `native` (detail 3.49) | 10/15 (5 amb) | 8/15 (6 amb, 1 wrong) | 11/15 (4 amb) | 9/15 (4 amb, 2 wrong) | 10/15 (4 amb, 1 wrong) | 10/15 (3 amb, 2 wrong) | 12/15 (3 amb) |
-| `blur1` (detail 1.58) | 9/15 (6 amb) | 9/15 (6 amb) | 10/15 (4 amb, 1 wrong) | 8/15 (5 amb, 2 wrong) | 11/15 (2 amb, 2 wrong) | 9/15 (2 amb, 4 wrong) | 9/15 (5 amb, 1 wrong) |
-| `blur2` (detail 0.59) | 6/15 (9 amb) | 9/15 (4 amb, 2 wrong) | 8/15 (4 amb, 3 wrong) | 7/15 (4 amb, 4 wrong) | 8/15 (2 amb, 5 wrong) | 6/15 (4 amb, 5 wrong) | 6/15 (4 amb, 5 wrong) |
-| `flat` (detail 0.00) | 0/15 (14 amb, 1 wrong) | 0/15 (14 amb, 1 wrong) | 0/15 (12 amb, 3 wrong) | 0/15 (11 amb, 4 wrong) | 0/15 (12 amb, 3 wrong) | 0/15 (12 amb, 3 wrong) | 0/15 (12 amb, 3 wrong) |
+| `native` (detail 3.49) | 12/15 (3 amb) | 14/15 (1 amb) | 13/15 (2 amb) | 15/15 | 12/15 (2 amb, 1 wrong) | 14/15 (1 wrong) | 14/15 (1 wrong) |
+| `blur1` (detail 1.58) | 10/15 (5 amb) | 12/15 (2 amb, 1 wrong) | 13/15 (2 amb) | 13/15 (2 amb) | 12/15 (1 amb, 2 wrong) | 11/15 (1 amb, 3 wrong) | 11/15 (2 amb, 2 wrong) |
+| `blur2` (detail 0.59) | 7/15 (7 amb, 1 wrong) | 8/15 (5 amb, 2 wrong) | 9/15 (4 amb, 2 wrong) | 8/15 (3 amb, 4 wrong) | 7/15 (3 amb, 5 wrong) | 6/15 (4 amb, 5 wrong) | 6/15 (2 amb, 7 wrong) |
+| `flat` (detail 0.00) | 0/15 (14 amb, 1 wrong) | 0/15 (14 amb, 1 wrong) | 0/15 (13 amb, 2 wrong) | 0/15 (11 amb, 4 wrong) | 0/15 (13 amb, 2 wrong) | 0/15 (12 amb, 3 wrong) | 0/15 (12 amb, 3 wrong) |
 
 The same trials, grouped by `detail`:
 
 | detail | found | ambiguous | wrong | refused |
 | --- | --- | --- | --- | --- |
-| under 0.25 | 8/119 | 87 | 24 | 0 |
-| 0.25–0.5 | 0/3 | 3 | 0 | 0 |
-| 0.5–0.75 | 46/81 | 15 | 20 | 0 |
-| 0.75–1 | 14/34 | 18 | 2 | 0 |
-| 1–1.5 | 19/25 | 3 | 3 | 0 |
-| 1.5–2 | 29/48 | 16 | 3 | 0 |
-| 2–3 | 27/44 | 14 | 3 | 0 |
-| 3–4 | 25/34 | 7 | 2 | 0 |
-| 4 and over | 17/32 | 14 | 1 | 0 |
+| under 0.25 | 8/119 | 89 | 22 | 0 |
+| 0.25–0.5 | 2/3 | 0 | 1 | 0 |
+| 0.5–0.75 | 44/81 | 16 | 21 | 0 |
+| 0.75–1 | 17/34 | 14 | 3 | 0 |
+| 1–1.5 | 24/25 | 1 | 0 | 0 |
+| 1.5–2 | 34/48 | 11 | 3 | 0 |
+| 2–3 | 36/44 | 5 | 3 | 0 |
+| 3–4 | 33/34 | 1 | 0 | 0 |
+| 4 and over | 29/32 | 3 | 0 | 0 |
 
 **Method.** The truth set is `examples/spineboy`: its setup pose and one frame of
 `walk` (a third of the way in). For every trial the figure is rendered twice with one
@@ -8798,25 +8798,42 @@ part has a low per-pixel gradient and still places — and size alone has no
 measurable effect across 24–192 px at any level.
 
 **The edge**, derived by `deriveFloor` as the largest rung of a fixed ladder under
-which at most a tenth of the trials were found: **`detail` 0.5**. Under it, **6.6%**
-of the trials were found (8/122); at or over it, **59.4%** (177/298). A part is below
+which at most a tenth of the trials were found: **`detail` 0.5**. Under it, **8.2%**
+of the trials were found (10/122); at or over it, **72.8%** (217/298). A part is below
 the floor when its `detail` is under 0.5, or when its own longest side is under 24 px,
 the smallest size measured (there, nothing measured says `pose` can place it).
 
-⚠️ **What this is and is not.** No cell of the grid placed 90% of its trials (the best
-placed 12/15), so there is no size and texture above which `pose` is reliable, and
-none is claimed. The failures above the edge are the same few parts at every size
-(the gun placed 10 of 42, the goggles 11 of 42), and they are search failures rather
-than plainness: on one of them the true placement scored a lower residual than the two
-wrong answers the search reported. All this was measured on **ideal cuts**, the frame's
-own pixels, where a residual at the truth is near zero. A generated cut also disagrees
-with its picture, which can only make it harder to place. So the edge is where `pose`
-fails even on ideal cuts, and never a guarantee above it.
+**What the search carries, and why.** The coarse pass scores the part at anchor
+cells an **eighth** of its own span apart, and every scale rung sends its **five**
+best distinct places down to the finer levels. Both were set on this grid (issue
+#865): of the 65 failures whose truth scored better than every answer reported, 38
+had a truth that beat its whole scale rung at the coarse level while the anchor cell
+holding it did not — at a quarter-span stride a thin gun or a gapped fist falls between
+two anchors — and only 3 had it ranked under the old cutoff of three. The finer grid
+took the grid from 185 to 227 trials found and those misses from 65 to 14, for about
+10–14% more CPU over the grid (615 s of user time before it, 678 s and 704 s on two runs after).
+
+⚠️ **What this is and is not.** The grid is not a reliability line: four native cells
+place 14 or 15 of 15 and the trials at `detail` 3 and over place 62 of 66, but the
+goggles still place 10 of 42, and a threshold read off two dozen parts of one figure
+would be a claim about that figure. What the grid can separate is **whose** failure a
+failure is. `bun tools/pose_floor.ts` prints the residual at the truth for every
+failed trial and marks it **missed** when the truth scores better than everything
+reported and nothing reported is on it — a failure the search could fix. The other
+failures are the objective preferring another placement (a blurred part shrunk into
+its own region scores better than its truth) or the truth reported and tied, and no
+search can fix those. After the change, 14 of the 193 failed trials are misses, and 13
+of those sit within 7 px of the truth rather than on another hill. All this was
+measured on **ideal cuts**, the frame's own pixels, where a residual at the truth is
+near zero. A generated cut also disagrees with its picture, which can only make it
+harder to place. So the edge is where `pose` fails even on ideal cuts, and never a
+guarantee above it.
 
 Re-run it with `bun tools/pose_floor.ts --textures <level> --json <out>` (one level per
 process parallelises it), then `bun tools/pose_floor.ts --from <a.json>,<b.json>,…` to
-print the table and derive the edge. `PO22` in `bun run selftest` re-measures three of
-its cells.
+print the table, derive the edge and list the misses per cell. `PO22` in
+`bun run selftest` re-measures three of its cells, `PO24` holds those three cells to
+no miss at all, and `PO23` places the 48 px fist this change was made for.
 
 ## 12. Reading the half of that picture `pose` refuses — `rigc chainfit`
 
