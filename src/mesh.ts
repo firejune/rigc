@@ -42,6 +42,7 @@
  * Everything here is pure and integer-stable: same manifest in, same floats out
  * (assertion A18 recompiles and compares bytes).
  */
+import type { ModelBinding, ModelVertices } from './model.ts';
 
 export interface MeshSpecInput {
   /** Polygon in part-local pixels, y down, in manifest order. */
@@ -1567,44 +1568,52 @@ export function buildContourMesh(input: ContourSpecInput): MeshGeometry {
   };
 }
 
-/** One bone a weighted vertex can bind to: its index, and its world inverse. */
+/**
+ * One bone a weighted vertex can bind to: its NAME, and its world inverse.
+ *
+ * It carried the bone's index into the emitted bone array until issue #917; the
+ * index is the Spine emitter's now (`emitVertices` in `src/emit_spine.ts`), so a
+ * binding made here names its bone and survives a bone inserted ahead of it.
+ */
 export interface MeshBoneRef {
-  index: number;
+  name: string;
   /** Spine world point -> this bone's local space, at the setup pose. */
   toBind: (worldX: number, worldY: number) => [number, number];
 }
 
 /**
- * Weighted-mesh `vertices` encoding: per vertex, boneCount then
- * (boneIndex, bindX, bindY, weight) repeated.
+ * Bind a generated mesh's vertices to their bones by name: per vertex, one
+ * `{ bone, x, y, weight }` per influence, `x, y` the vertex in that bone's LOCAL
+ * setup space and `weight` on the generator's grid (`r6`).
  *
  * Bind coordinates are in each bone's LOCAL space, so a rotated bone needs a real
  * inverse transform — see `src/transform.ts` for why the old "world minus origin"
  * shortcut had to go and what it would have failed like.
  *
- * The encoding is chosen by a length comparison alone, so
- * there is no field that says "weighted" — get the run lengths wrong and the
- * loader reads weights as coordinates without a word.
+ * Returned as the model's `ModelVertices`, weighted, and not as Spine's run: the
+ * run's bone INDEX is written by the Spine emitter at emission (issue #917), and
+ * the encoding it chooses by a length comparison alone is said here outright.
+ * The caller puts the numbers on the float32 grid, as it did the run's.
  */
-export function encodeWeightedVertices(
+export function bindWeightedVertices(
   geometry: MeshGeometry,
   /** Part-local pixel -> Spine world. */
   toWorld: (x: number, y: number) => [number, number],
   bones: { anchor: MeshBoneRef; controls: MeshBoneRef[] },
-): number[] {
-  const out: number[] = [];
+): Extract<ModelVertices, { weighted: true }> {
+  const bindings: ModelBinding[][] = [];
   geometry.points.forEach(([px, py], i) => {
     const [wx, wy] = toWorld(px, py);
-    const vw = geometry.weights[i];
-    out.push(vw.length);
-    for (const { bone, control, weight } of vw) {
+    const vertex: ModelBinding[] = [];
+    for (const { bone, control, weight } of geometry.weights[i]) {
       const ref = bone === 'anchor' ? bones.anchor : bones.controls[control ?? 0];
       if (!ref) throw new MeshError(`vertex ${i} binds to control bone ${control ?? 0}, which the rig does not have`);
       const [bx, by] = ref.toBind(wx, wy);
-      out.push(ref.index, bx, by, r6(weight));
+      vertex.push({ bone: ref.name, x: bx, y: by, weight: r6(weight) });
     }
+    bindings.push(vertex);
   });
-  return out;
+  return { weighted: true, bindings };
 }
 
 // ---------------------------------------------------------------------------

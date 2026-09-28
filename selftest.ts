@@ -154,10 +154,14 @@ import {
   buildAtlasText,
   compile,
   CompileError,
+  deformGeometryOf,
   EDITOR_NAME_FOLD,
   editorNamesInOrder,
+  pathChain,
+  pathCurveLengths,
   relativeImagesPath,
   SPINE_VERSION,
+  type DeformGeometry,
 } from './src/compile.ts';
 import {
   LEGACY_BONE_INHERIT_KEY,
@@ -190,9 +194,28 @@ import {
   parserReading,
   withoutParserDefaults,
 } from './src/keyorder.ts';
-import { emitBones } from './src/emit_spine.ts';
-import type { ModelBone } from './src/model.ts';
-import { computeWorldTransforms, type BoneTransform } from './src/transform.ts';
+import {
+  boneIndexOf,
+  emitBones,
+  emitBoundingBox,
+  emitClipping,
+  emitMesh,
+  emitPath,
+  emitSkinAttachments,
+  emitVertices,
+} from './src/emit_spine.ts';
+import {
+  isModelVertexAttachment,
+  type ModelBinding,
+  type ModelBone,
+  type ModelBoundingBoxAttachment,
+  type ModelClippingAttachment,
+  type ModelMeshAttachment,
+  type ModelPathAttachment,
+  type ModelVertexAttachment,
+  type ModelVertices,
+} from './src/model.ts';
+import { computeWorldTransforms, toBoneLocal, toWorld, type BoneTransform } from './src/transform.ts';
 import { MOTION_ENUMS, MOTION_KEYS, MOTION_TYPES, parseMotionSpec } from './src/motion.ts';
 import { CHECKED_SPEC_VALUE_TYPES, FLOAT32_MAX, SPEC_VALUE_TYPES, type SpecEnumRule } from './src/keys.ts';
 import { MANIFEST_ENUMS, MANIFEST_MESH_KINDS, MANIFEST_TYPES } from './src/types.ts';
@@ -212,6 +235,7 @@ import {
 } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
+  bindWeightedVertices,
   buildGridMesh,
   checkHullOrder,
   contourOvershootBound,
@@ -220,6 +244,7 @@ import {
   signedArea,
   traceAlphaOutline,
   traceOutline,
+  type MeshGeometry,
 } from './src/mesh.ts';
 import {
   boneDistance,
@@ -59046,9 +59071,18 @@ function runCurrencySuite(): number {
     };
 
     // CUR93 — the mesh sentence, in the guide and above `meshTextureKeys`, and
-    // every mesh literal spreading it right after `type`.
+    // the one mesh constructor writing the two keys right after `type`.
+    //
+    // ⚠️ Since issue #917 that constructor is `emitMesh` in `src/emit_spine.ts`:
+    // `compile.ts` builds mesh RECORDS, whose key order is no byte, and the
+    // emitter restates the order the six mesh literals here used to open with.
+    // The scan read `: SpineMeshAttachment = {` literals in `compile.ts` until
+    // then, and found none once the records moved — the plant is the scan's to
+    // change, and it now reads the literal that owns the bytes.
     const MESH_SENTENCE = 'right after `type`, `path` before `color` — measured on a production set (#791), not on `examples/`';
-    const scanMesh = (guide: string, code: string): { faults: string[]; literals: number } => {
+    const emitPath = 'src/emit_spine.ts';
+    const emitText = readFileSync(join(root, emitPath), 'utf8');
+    const scanMesh = (guide: string, code: string, emitter: string): { faults: string[]; literals: number } => {
       const faults: string[] = [];
       const section = sectionOf(guide);
       if (section === null) faults.push(`${guidePath} has no §10.6b`);
@@ -59056,40 +59090,40 @@ function runCurrencySuite(): number {
       const comment = commentAbove(code, 'function meshTextureKeys(');
       if (comment === null) faults.push(`${compilePath} has no doc comment directly above \`function meshTextureKeys(\``);
       else if (!comment.includes(MESH_SENTENCE)) faults.push(`${compilePath}'s comment above \`meshTextureKeys\` does not say ${JSON.stringify(MESH_SENTENCE)}`);
-      const lines = code.split('\n');
+      const lines = emitter.split('\n');
       let literals = 0;
       lines.forEach((line, i) => {
-        if (!/: SpineMeshAttachment = \{\s*$/.test(line)) return;
+        if (line.trim() !== "type: 'mesh',") return;
         literals++;
         const next = lines.slice(i + 1, i + 3).map((l) => l.trim());
-        if (next[0] !== "type: 'mesh'," || !next[1].startsWith('...meshTextureKeys(')) {
-          faults.push(`${compilePath}:${i + 1}: a mesh literal opens ${JSON.stringify(next.join(' '))} — \`type\` then \`...meshTextureKeys(\` is the order §10.6b states`);
+        if (!next[0].startsWith('...(mesh.path !== undefined') || !next[1].startsWith('...(mesh.color !== undefined')) {
+          faults.push(`${emitPath}:${i + 1}: the mesh literal follows \`type\` with ${JSON.stringify(next.join(' '))} — \`path\` then \`color\` is the order §10.6b states`);
         }
       });
       return { faults, literals };
     };
-    const meshScan = scanMesh(guideText, compileText);
+    const meshScan = scanMesh(guideText, compileText, emitText);
     const meshProbes = [
       ...meshScan.faults,
       ...floorProbes([[meshScan.literals, 1, `${meshScan.literals} mesh literal(s) found`]], 'so no constructor was read'),
     ];
     let meshNote = '';
     if (meshProbes.length === 0) {
-      // Plant 1: the first literal's spread moved after `height`. Plant 2: the
-      // guide's sentence with the set it names exchanged.
-      const lines = compileText.split('\n');
-      const open = lines.findIndex((line) => /: SpineMeshAttachment = \{\s*$/.test(line));
-      const spread = lines[open + 2];
-      const moved = [...lines.slice(0, open + 2), ...lines.slice(open + 3)];
+      // Plant 1: the literal's `path` moved to its end. Plant 2: the guide's
+      // sentence with the set it names exchanged.
+      const lines = emitText.split('\n');
+      const open = lines.findIndex((line) => line.trim() === "type: 'mesh',");
+      const spread = lines[open + 1];
+      const moved = [...lines.slice(0, open + 1), ...lines.slice(open + 2)];
       const close = moved.findIndex((line, i) => i > open && line.trim() === '};');
       moved.splice(close, 0, spread);
-      const codeRaised = raisedBy(scanMesh(guideText, moved.join('\n')).faults, { was: meshScan.faults });
-      const guideRaised = raisedBy(scanMesh(guideText.replace('measured on a production set (#791), not on', 'measured on a public set (#791), not on'), compileText).faults, {
+      const codeRaised = raisedBy(scanMesh(guideText, compileText, moved.join('\n')).faults, { was: meshScan.faults });
+      const guideRaised = raisedBy(scanMesh(guideText.replace('measured on a production set (#791), not on', 'measured on a public set (#791), not on'), compileText, emitText).faults, {
         was: meshScan.faults,
       });
-      if (codeRaised.length !== 1) meshProbes.push(`the first mesh literal's spread moved after \`height\` raised ${codeRaised.length} fault(s) and this control requires one`);
+      if (codeRaised.length !== 1) meshProbes.push(`the mesh literal's \`path\` moved to its end raised ${codeRaised.length} fault(s) and this control requires one`);
       if (guideRaised.length !== 1) meshProbes.push(`the guide's set exchanged raised ${guideRaised.length} fault(s) and this control requires one`);
-      if (codeRaised.length === 1 && guideRaised.length === 1) meshNote = `the first literal's spread moved last: "${codeRaised[0]}"; the guide's set exchanged: "${guideRaised[0]}"`;
+      if (codeRaised.length === 1 && guideRaised.length === 1) meshNote = `the literal's \`path\` moved last: "${codeRaised[0]}"; the guide's set exchanged: "${guideRaised[0]}"`;
     }
     const meshHeld = meshProbes.length === 0;
     say(
@@ -59099,11 +59133,11 @@ function runCurrencySuite(): number {
         meshHeld,
         meshProbes,
         `${guidePath} §10.6b and the comment above \`meshTextureKeys\` both say ${JSON.stringify(MESH_SENTENCE)}, and ` +
-          `each of the ${meshScan.literals} mesh literal(s) in ${compilePath} opens \`type\`, \`...meshTextureKeys(\` — and ${meshNote}`,
+          `the ${meshScan.literals} mesh literal(s) in ${emitPath} follow \`type\` with \`path\` then \`color\` — and ${meshNote}`,
       ),
-      'the position is a production measurement no row carries, so the constructor is the only place it lives: a ' +
-        'mesh literal that builds the two keys anywhere else, or a guide that says they come from `examples/`, is ' +
-        'the claim drifting from the one place it is kept',
+      'the position is a production measurement no row carries, so the constructor is the only place it lives — ' +
+        '`emitMesh` since issue #917 moved the bytes to the Spine emitter: a mesh literal that writes the two keys ' +
+        'anywhere else, or a guide that says they come from `examples/`, is the claim drifting from the one place it is kept',
     );
 
     // CUR94 — the fold's sentence: its name, and the code points it states.
@@ -66747,6 +66781,741 @@ function runModelBonesSuite(): { failures: number; gateHole: boolean } {
         probeDetail(held, probes, `${rows.map((r) => r.name).join(' and ')} built through \`tools/emit_hashes.ts\` on this tree against ${basePath}: ${verdict}; the same rows with one base hash flipped read DIFF naming ${rows[0]?.name ?? '(none)'}`),
         'issue #915\'s gate as a control: step 1 of #380 is gated by byte identity across the refactor, and the full ' +
           'corpus run is PR material; this row repeats a slice of it wherever a base document is named',
+      );
+    }
+  }
+
+  rmSync(work, { recursive: true, force: true });
+  return { failures: bad, gateHole };
+}
+
+// ---------------------------------------------------------------------------
+// the compiled model's vertex attachments: the weighted run by name (issue #917)
+// ---------------------------------------------------------------------------
+
+/**
+ * The weighted-mesh encoder `src/mesh.ts` carried until issue #917, transcribed
+ * line for line: per vertex its binding count, then `index, bindX, bindY,
+ * weight` with the index read off the ref. `MV01` holds the by-name binder and
+ * the emitter to it; nothing else calls it.
+ */
+function priorEncodeWeightedVertices(
+  geometry: MeshGeometry,
+  toWorldPoint: (x: number, y: number) => [number, number],
+  bones: {
+    anchor: { index: number; toBind: (x: number, y: number) => [number, number] };
+    controls: Array<{ index: number; toBind: (x: number, y: number) => [number, number] }>;
+  },
+): number[] {
+  const r6 = (n: number): number => {
+    const v = Math.round(n * 1e6) / 1e6;
+    return v === 0 ? 0 : v;
+  };
+  const out: number[] = [];
+  geometry.points.forEach(([px, py], i) => {
+    const [wx, wy] = toWorldPoint(px, py);
+    const vw = geometry.weights[i];
+    out.push(vw.length);
+    for (const { bone, control, weight } of vw) {
+      const ref = bone === 'anchor' ? bones.anchor : bones.controls[control ?? 0];
+      const [bx, by] = ref.toBind(wx, wy);
+      out.push(ref.index, bx, by, r6(weight));
+    }
+  });
+  return out;
+}
+
+/**
+ * `deformGeometryOf` as it read the EMITTED attachment before issue #917 — the
+ * run decoded against the emitted bone array by index — transcribed from the
+ * removed code, `depth` aside. `MV06` holds the model-record reader to it.
+ */
+function priorDeformGeometry(
+  att: Record<string, unknown>,
+  bones: ReadonlyArray<{ name: string }>,
+  transforms: Map<string, BoneTransform>,
+): Omit<DeformGeometry, 'depth'> {
+  const type = typeof att.type === 'string' ? att.type : 'region';
+  const worldVerticesLength = type === 'mesh' ? (att.uvs as number[]).length : (att.vertexCount as number) * 2;
+  const vertices = (att.vertices as number[] | undefined) ?? [];
+  const weighted = vertices.length !== worldVerticesLength;
+  if (!weighted) {
+    return { weighted, deformLength: worldVerticesLength, vertexCount: worldVerticesLength / 2, boneCounts: null, setup: vertices.slice(), influenceBones: null, setupWhy: null };
+  }
+  const boneCounts: number[] = [];
+  const bindSpace: number[] = [];
+  const single = new Set<number>();
+  const influenceRun: number[] = [];
+  for (let i = 0; i < vertices.length; ) {
+    const n = vertices[i++];
+    if (n === 1) {
+      single.add(vertices[i]);
+      bindSpace.push(vertices[i + 1], vertices[i + 2]);
+    }
+    const from = i;
+    i += n * 4;
+    for (let k = from; k < i; k++) influenceRun.push(vertices[k]);
+    boneCounts.push(n);
+  }
+  let influences = 0;
+  for (const n of boneCounts) influences += n;
+  const common = { weighted, deformLength: influences * 2, vertexCount: boneCounts.length, boneCounts };
+  if (boneCounts.every((n) => n === 1) && single.size === 1) return { ...common, setup: bindSpace, influenceBones: null, setupWhy: null };
+  const setupWorld: number[] = [];
+  const influenceBones: BoneTransform[] = [];
+  let open: string | null = null;
+  for (let v = 0, k = 0; v < boneCounts.length; v++) {
+    let wx = 0;
+    let wy = 0;
+    let sum = 0;
+    for (let n = 0; n < boneCounts[v]; n++, k++) {
+      const bone = bones[influenceRun[4 * k]];
+      const m = bone === undefined ? undefined : transforms.get(bone.name);
+      if (!m) throw new Error(`vertex ${v} binds bone index ${influenceRun[4 * k]}, which is not in the bone list`);
+      const weight = influenceRun[4 * k + 3];
+      const [x, y] = toWorld(m, influenceRun[4 * k + 1], influenceRun[4 * k + 2]);
+      wx += x * weight;
+      wy += y * weight;
+      sum += weight;
+      influenceBones.push(m);
+    }
+    setupWorld.push(wx, wy);
+    if (open === null && Math.abs(sum - 1) > 1e-3) open = `vertex ${v}'s weights sum to ${sum.toFixed(4)}`;
+  }
+  return { ...common, setup: open === null ? setupWorld : null, influenceBones: open === null ? influenceBones : null, setupWhy: open };
+}
+
+/** `setupWorldVertices` as it decoded the EMITTED run before issue #917, for `MV07`. */
+function priorSetupWorldVertices(
+  vertices: number[],
+  vertexCount: number,
+  anchor: BoneTransform,
+  bones: ReadonlyArray<{ name: string }>,
+  transforms: Map<string, BoneTransform>,
+): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  if (vertices.length === vertexCount * 2) {
+    for (let i = 0; i < vertices.length; i += 2) out.push(toWorld(anchor, vertices[i], vertices[i + 1]));
+    return out;
+  }
+  for (let i = 0; i < vertices.length; ) {
+    const count = vertices[i++];
+    let x = 0;
+    let y = 0;
+    for (let n = 0; n < count; n++, i += 4) {
+      const bone = bones[vertices[i]];
+      const m = bone === undefined ? undefined : transforms.get(bone.name);
+      if (!m) throw new Error(`vertex ${out.length} binds bone index ${vertices[i]}, which is not in the bone list`);
+      const [wx, wy] = toWorld(m, vertices[i + 1], vertices[i + 2]);
+      x += wx * vertices[i + 3];
+      y += wy * vertices[i + 3];
+    }
+    out.push([x, y]);
+  }
+  return out;
+}
+
+/** One attachment through the two whole-object passes the compiler applies, as the JSON text the file carries. */
+function attachmentAsFileText(att: unknown): string {
+  const holder = { skins: [{ name: 'default', attachments: { s: { a: att } } }] };
+  inEditorKeyOrder(withoutParserDefaults(holder));
+  return JSON.stringify(holder.skins[0].attachments.s.a);
+}
+
+/** The first index at which two number arrays are not `Object.is`-equal, or null. */
+function firstNumberDifference(a: readonly number[], b: readonly number[]): string | null {
+  if (a.length !== b.length) return `length ${a.length} against ${b.length}`;
+  for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return `[${i}] ${a[i]} against ${b[i]}`;
+  return null;
+}
+
+/** Where a model-record deform geometry and the prior decoder's reading of the file disagree, or null. */
+function deformGeometryDifference(now: DeformGeometry, prior: Omit<DeformGeometry, 'depth'>): string | null {
+  if (now.weighted !== prior.weighted) return `weighted ${now.weighted} against ${prior.weighted}`;
+  if (now.deformLength !== prior.deformLength) return `deformLength ${now.deformLength} against ${prior.deformLength}`;
+  if (now.vertexCount !== prior.vertexCount) return `vertexCount ${now.vertexCount} against ${prior.vertexCount}`;
+  if (JSON.stringify(now.boneCounts) !== JSON.stringify(prior.boneCounts)) return 'boneCounts differ';
+  if ((now.setup === null) !== (prior.setup === null)) return `setup null on one side only (${now.setupWhy ?? prior.setupWhy})`;
+  if (now.setup !== null && prior.setup !== null) {
+    const d = firstNumberDifference(now.setup, prior.setup);
+    if (d !== null) return `setup ${d}`;
+  }
+  if ((now.influenceBones === null) !== (prior.influenceBones === null)) return 'influenceBones null on one side only';
+  if (now.influenceBones !== null && prior.influenceBones !== null) {
+    if (now.influenceBones.length !== prior.influenceBones.length) return `influenceBones ${now.influenceBones.length} against ${prior.influenceBones.length}`;
+    for (let i = 0; i < now.influenceBones.length; i++) {
+      for (const field of ['a', 'b', 'c', 'd', 'worldX', 'worldY', 'worldRotation'] as const) {
+        if (!Object.is(now.influenceBones[i][field], prior.influenceBones[i][field])) return `influenceBones[${i}].${field} differs`;
+      }
+    }
+  }
+  if (now.setupWhy !== prior.setupWhy && (now.setupWhy === null || prior.setupWhy === null)) return 'setupWhy set on one side only';
+  return null;
+}
+
+/** The source rules `MV08` holds `compile.ts` to; each entry is a problem found. */
+function compileVertexSourceProblems(text: string): string[] {
+  const code = codeOnly(text);
+  const count = (re: RegExp): number => (code.match(re) ?? []).length;
+  const problems: string[] = [];
+  const spineTypes = count(/\bSpine(Mesh|Path|BoundingBox|Clipping)Attachment\b/g);
+  if (spineTypes !== 0) problems.push(`a Spine vertex-attachment type is named ${spineTypes} time(s); compile builds model records`);
+  const encoders = count(/\b(encodeWeightedVertices|encodeNamedWeights)\b/g);
+  if (encoders !== 0) problems.push(`an index encoder is named ${encoders} time(s); the run's bone index is the emitter's`);
+  const emits = count(/\bemitSkinAttachments\(/g);
+  if (emits !== 1) problems.push(`emitSkinAttachments is called ${emits} time(s); the skins' attachments are emitted exactly once`);
+  const findIndex = count(/\.findIndex\(\(b\) => b\.name/g);
+  if (findIndex !== 0) problems.push(`a bone's position is looked up ${findIndex} time(s); a binding names its bone`);
+  const intake = count(/\bbindRawRun\(/g);
+  if (intake !== 3) problems.push(`bindRawRun appears ${intake} time(s), not 3 (its definition and the two intakes — polygon and mesh)`);
+  return problems;
+}
+
+/** A one-rig probe with a weighted mesh, bounding box, clipping polygon and path, for `MV06`–`MV08`. */
+function writeModelVerticesProbe(boneOrder: 'ab' | 'ba' = 'ab'): ProbeDirs {
+  const a = { name: 'a', parent: 'root', x: 10, y: 5, rotation: 30, scaleX: 1.5 };
+  const b = { name: 'b', parent: 'root', x: -8, y: 3, rotation: -20, scaleY: 0.8, shearX: 5 };
+  const pair = (x: number, y: number, w: number): ModelBinding[] => [
+    { bone: 'a', x, y, weight: w },
+    { bone: 'b', x: -y, y: x, weight: 1 - w },
+  ];
+  return writeProbeRig({
+    bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }, ...(boneOrder === 'ab' ? [a, b] : [b, a])],
+    skins: {
+      default: {
+        block: {
+          block: {
+            type: 'mesh',
+            image: 'block.png',
+            uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+            triangles: [0, 1, 2, 0, 2, 3],
+            weights: [pair(-6, -4, 0.25), pair(6, -4, 0.5), pair(6, 4, 0.75), pair(-6, 4, 0.125)],
+          },
+        },
+        marker: {
+          marker: { image: 'marker.png' },
+          box: { type: 'boundingbox', vertexCount: 3, weights: [[{ bone: 'a', x: 0, y: 0, weight: 1 }], [{ bone: 'a', x: 5, y: 0, weight: 1 }], [{ bone: 'a', x: 0, y: 5, weight: 1 }]] },
+          clip: { type: 'clipping', vertexCount: 3, vertices: [0, 0, 7, 0, 0, 7], end: 'marker', convex: true, inverse: true },
+          track: {
+            type: 'path',
+            vertexCount: 6,
+            weights: [pair(0, 0, 0.5), pair(4, 2, 0.5), pair(8, 2, 0.5), pair(12, 0, 0.5), pair(16, -2, 0.5), pair(20, -2, 0.5)],
+          },
+        },
+      },
+    },
+  });
+}
+
+/**
+ * The compiled model's four vertex-attachment kinds and the Spine emitter
+ * (issue #917): a weighted vertex names its bone in the model and the emitter
+ * writes its index once, against the model's bone order; each kind's keys come
+ * out in the order its builder wrote them; the decoders that read the emitted
+ * run back read the model instead and say the same numbers to the bit; and,
+ * when a base hash document is named, every gallery rig lands byte-identical.
+ */
+function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
+  console.log('\n── model-vertices: vertex attachments as model records, bound by bone name (issue #917) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const work = mkdtempSync(join(tmpdir(), 'rigc-model-vertices-'));
+  const chain = computeWorldTransforms([
+    { name: 'root', x: 3, y: -2 },
+    { name: 'arm', parent: 'root', x: 20, y: 4, rotation: 35, scaleX: 1.5, scaleY: 0.5 },
+    { name: 'hand', parent: 'arm', x: 12, rotation: -20, shearX: 5 },
+  ]);
+  const toBindOf = (name: string) => (wx: number, wy: number): [number, number] => toBoneLocal(chain.get(name)!, wx, wy);
+
+  // --- MV01: the binder and the emitter write the run the index encoder wrote --
+  {
+    const probes: string[] = [];
+    const geometry: MeshGeometry = {
+      kind: 'ring',
+      points: [[0, 0], [10, 0], [10, 8], [0, 8], [5, 4]],
+      uvs: [0, 0, 1, 0, 1, 1, 0, 1, 0.5, 0.5],
+      triangles: [0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4],
+      weights: [
+        [{ bone: 'anchor', weight: 1 }],
+        [{ bone: 'anchor', weight: 0.7 }, { bone: 'control', weight: 0.3 }],
+        [{ bone: 'control', control: 0, weight: 1 / 3 }, { bone: 'anchor', weight: 2 / 3 }],
+        [{ bone: 'anchor', weight: 1 }],
+        [{ bone: 'control', weight: 1 }],
+      ],
+      hullVertices: 4,
+    };
+    const place = (x: number, y: number): [number, number] => [7 + x * 1.25, 30 - y];
+    const bones = ['root', 'arm', 'hand'];
+    const prior = priorEncodeWeightedVertices(geometry, place, {
+      anchor: { index: bones.indexOf('arm'), toBind: toBindOf('arm') },
+      controls: [{ index: bones.indexOf('hand'), toBind: toBindOf('hand') }],
+    });
+    const bound = bindWeightedVertices(geometry, place, { anchor: { name: 'arm', toBind: toBindOf('arm') }, controls: [{ name: 'hand', toBind: toBindOf('hand') }] });
+    const emitted = emitVertices(bound, boneIndexOf(bones.map((name) => ({ name }))));
+    const d = firstNumberDifference(emitted, prior);
+    if (d !== null) probes.push(`the by-name run through the emitter differs from the index encoder's at ${d}`);
+    const names = [...new Set(bound.bindings.flat().map((b) => b.bone))].sort().join(',');
+    if (names !== 'arm,hand') probes.push(`the bindings name ${names}; the probe binds arm and hand`);
+    // The plant: the same run encoded against the bone list with arm and hand swapped must differ,
+    // or equality above says nothing about which bone each index names.
+    const swapped = emitVertices(bound, boneIndexOf(['root', 'hand', 'arm'].map((name) => ({ name }))));
+    if (firstNumberDifference(swapped, prior) === null) probes.push('the run emitted against a swapped bone list equals the old one, so the comparison cannot see an index');
+    const held = probes.length === 0;
+    say(
+      'MV01_THE_BY_NAME_BINDER_THROUGH_THE_EMITTER_WRITES_THE_INDEX_ENCODERS_RUN',
+      held,
+      probeDetail(held, probes, `a ${geometry.points.length}-vertex probe mesh over two bones (a rotated, scaled anchor and a sheared control, one vertex split three ways): \`bindWeightedVertices\` then \`emitVertices\` is the removed \`encodeWeightedVertices\`'s run, all ${prior.length} numbers \`Object.is\`-equal; the same bindings against a list with the two bones swapped differ`),
+      'issue #917: the binder keeps the bone\'s name and the emitter writes its position; the numbers between must be the ones the index encoder wrote, or the byte-identity gate is hiding a moved value',
+    );
+  }
+
+  // --- MV02: reversing the bone order moves every emitted index and no binding name --
+  {
+    const probes: string[] = [];
+    const vertices: ModelVertices = { weighted: true, bindings: [[{ bone: 'root', x: 1, y: 2, weight: 0.5 }, { bone: 'hand', x: 3, y: 4, weight: 0.5 }], [{ bone: 'arm', x: 5, y: 6, weight: 1 }]] };
+    const forward = ['root', 'arm', 'hand'].map((name) => ({ name }));
+    const before = JSON.stringify(vertices);
+    const a = emitVertices(vertices, boneIndexOf(forward));
+    const b = emitVertices(vertices, boneIndexOf([...forward].reverse()));
+    // Run: [2, i, 1, 2, 0.5, i, 3, 4, 0.5, 1, i, 5, 6, 1] — the three indexes sit at 1, 5 and 10.
+    const indexAt = [1, 5, 10];
+    for (const i of indexAt) if (a[i] !== 2 - b[i]) probes.push(`index at [${i}] is ${a[i]} forward and ${b[i]} reversed; reversal maps i to ${forward.length - 1} - i`);
+    for (let i = 0; i < a.length; i++) if (!indexAt.includes(i) && !Object.is(a[i], b[i])) probes.push(`[${i}] is not an index and moved: ${a[i]} against ${b[i]}`);
+    if (JSON.stringify(vertices) !== before) probes.push('emitting changed the model\'s bindings');
+    // The same through the compiler: one rig with its two leaf bones declared in either order.
+    const runs: Record<string, { names: string; file: number[] }> = {};
+    for (const order of ['ab', 'ba'] as const) {
+      const dirs = writeModelVerticesProbe(order);
+      try {
+        const built = compileProbe(dirs);
+        const record = built.model.attachments.get('default')?.block?.block;
+        const file = (JSON.parse(built.skeletonText) as SpineSkeletonJson).skins.find((s) => s.name === 'default')?.attachments.block?.block as { vertices?: number[] } | undefined;
+        if (record === undefined || !isModelVertexAttachment(record) || !record.vertices.weighted || file?.vertices === undefined) probes.push(`order ${order}: no weighted model mesh and emitted twin`);
+        else runs[order] = { names: JSON.stringify(record.vertices.bindings), file: file.vertices };
+      } catch (err) {
+        probes.push(`order ${order}: ${(err as Error).message}`);
+      } finally {
+        rmSync(dirs.dir, { recursive: true, force: true });
+      }
+    }
+    let moved = 0;
+    if (runs.ab !== undefined && runs.ba !== undefined) {
+      if (runs.ab.names !== runs.ba.names) probes.push('the model\'s bindings differ between the two bone orders');
+      if (runs.ab.file.length !== runs.ba.file.length) probes.push('the two emitted runs differ in length');
+      else {
+        // Walk the run: every index flips between the two leaf bones (2 <-> 3), every other number stands.
+        for (let i = 0; i < runs.ab.file.length; ) {
+          const n = runs.ab.file[i++];
+          for (let k = 0; k < n; k++, i += 4) {
+            if (runs.ab.file[i] + runs.ba.file[i] !== 5 || runs.ab.file[i] === runs.ba.file[i]) probes.push(`index at [${i}] is ${runs.ab.file[i]} and ${runs.ba.file[i]}`);
+            else moved++;
+            for (let j = 1; j < 4; j++) if (!Object.is(runs.ab.file[i + j], runs.ba.file[i + j])) probes.push(`[${i + j}] moved with the bone order`);
+          }
+        }
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'MV02_REVERSING_THE_BONE_ORDER_MOVES_EVERY_EMITTED_INDEX_AND_NO_BINDING',
+      held,
+      probeDetail(held, probes, `emitted against a reversed bone list every index of a two-vertex run maps i to 2 - i and no other number moves; compiled with its two leaf bones declared in either order, a probe mesh keeps identical by-name bindings in the model while all ${moved} emitted indexes swap between 2 and 3`),
+      'issue #917 and #45: inserting or reordering a bone is a renumbering in the file and nothing in the model; before this cut the model had no binding to keep, only the run',
+    );
+  }
+
+  // --- MV03: an unweighted run is xy verbatim, and its length is the uv count --
+  {
+    const probes: string[] = [];
+    const xy = [1.5, -2, 3.25, 4, -0.125, 7];
+    const out = emitVertices({ weighted: false, xy }, () => {
+      throw new Error('an unweighted run asked for a bone index');
+    });
+    const d = firstNumberDifference(out, xy);
+    if (d !== null) probes.push(`emitVertices changed an unweighted run at ${d}`);
+    if (out === xy) probes.push('the emitted array is the model\'s own array, which the file passes would then share');
+    const dirs = meshProbe({ type: 'mesh', image: 'block.png', uvs: [0, 0, 1, 0, 1, 1, 0, 1], triangles: [0, 1, 2, 0, 2, 3], vertices: [-6, -4, 6, -4, 6, 4, -6, 4] });
+    try {
+      const built = compileProbe(dirs);
+      const record = built.model.attachments.get('default')?.block?.block;
+      const file = (JSON.parse(built.skeletonText) as SpineSkeletonJson).skins[0]?.attachments.block?.block as { uvs?: number[]; vertices?: number[] } | undefined;
+      if (record === undefined || !isModelVertexAttachment(record) || record.vertices.weighted) probes.push('the compiled unweighted mesh is not an unweighted model record');
+      else if (file?.vertices === undefined || file.uvs === undefined) probes.push('the file carries no mesh');
+      else {
+        const e = firstNumberDifference(file.vertices, record.vertices.xy);
+        if (e !== null) probes.push(`the file's run is not the model's xy: ${e}`);
+        if (file.vertices.length !== file.uvs.length) probes.push(`the run holds ${file.vertices.length} numbers and uvs ${file.uvs.length}; the reader would take it as weighted`);
+      }
+    } catch (err) {
+      probes.push(`the unweighted probe did not compile: ${(err as Error).message}`);
+    } finally {
+      rmSync(dirs.dir, { recursive: true, force: true });
+    }
+    const held = probes.length === 0;
+    say(
+      'MV03_AN_UNWEIGHTED_RUN_IS_EMITTED_VERBATIM_AT_THE_UV_COUNT',
+      held,
+      probeDetail(held, probes, 'an unweighted run leaves the emitter number for number without asking for a bone, in an array of its own; a compiled unweighted mesh is an unweighted record whose `xy` is the file\'s run, of `uvs.length` numbers'),
+      'the reader tells the encodings apart by length alone (`readVertices`); the model says `weighted` outright, so the emitter is the one place it becomes a length and has to be the right one',
+    );
+  }
+
+  // --- MV04: an authored raw run is decoded to names once and emitted as stated --
+  {
+    const probes: string[] = [];
+    const quad = { uvs: [0, 0, 1, 0, 1, 1, 0, 1], triangles: [0, 1, 2, 0, 2, 3] };
+    // Two bones per vertex, indexes into the probe's [root, block].
+    const raw = [2, 0, -6, -4, 0.25, 1, -6, -4, 0.75, 2, 1, 6, -4, 0.5, 0, 6, -4, 0.5, 1, 1, 6, 4, 1, 2, 0, -6, 4, 0.125, 1, -6, 4, 0.875];
+    const boxRaw = [1, 1, 0, 0, 1, 1, 0, 5, 0, 1, 2, 0, 0, 5, 0.5, 1, 0, 5, 0.5];
+    const rigWith = (mesh: Record<string, unknown>, box?: Record<string, unknown>): ProbeDirs =>
+      writeProbeRig({ skins: { default: { block: { block: mesh }, marker: { marker: { image: 'marker.png' }, ...(box ? { box } : {}) } } } });
+    const dirs = rigWith({ type: 'mesh', image: 'block.png', ...quad, boneIndexing: 'raw', vertices: raw }, { type: 'boundingbox', vertexCount: 3, boneIndexing: 'raw', vertices: boxRaw });
+    try {
+      const built = compileProbe(dirs);
+      const skin = (JSON.parse(built.skeletonText) as SpineSkeletonJson).skins[0];
+      for (const [slot, placeholder, stated] of [['block', 'block', raw], ['marker', 'box', boxRaw]] as const) {
+        const record = built.model.attachments.get('default')?.[slot]?.[placeholder];
+        const file = skin?.attachments[slot]?.[placeholder] as { vertices?: number[] } | undefined;
+        if (record === undefined || !isModelVertexAttachment(record) || !record.vertices.weighted) probes.push(`${slot}/${placeholder}: the raw run is not a weighted model record`);
+        else {
+          const names = [...new Set(record.vertices.bindings.flat().map((b) => b.bone))].sort().join(',');
+          if (names !== 'block,root') probes.push(`${slot}/${placeholder}: the decoded bindings name ${names}`);
+          const d = firstNumberDifference(file?.vertices ?? [], [...stated]);
+          if (d !== null) probes.push(`${slot}/${placeholder}: the emitted run is not the run the spec stated: ${d}`);
+        }
+      }
+    } catch (err) {
+      probes.push(`the raw probe did not compile: ${(err as Error).message}`);
+    } finally {
+      rmSync(dirs.dir, { recursive: true, force: true });
+    }
+    // The plants: runs the model cannot hold are refused at intake, by name. Before issue #917 the
+    // off-the-end index was skipped at compile on every reader but a measured path's lengths.
+    const cut = (run: number[], i: number, v: number): number[] => run.map((n, k) => (k === i ? v : n));
+    /** A six-vertex open path bound one bone a vertex, its second vertex to bone index `second`. */
+    const pathRaw = (second: number): number[] => [0, 1, 2, 3, 4, 5].flatMap((x, i) => [1, i === 1 ? second : 1, x * 4, 0, 1]);
+    const plants: Array<[string, ProbeDirs, string]> = [
+      ['a mesh index past the bone list', rigWith({ type: 'mesh', image: 'block.png', ...quad, boneIndexing: 'raw', vertices: cut(raw, 10, 7) }), 'vertex 1 binds bone index 7, which is not in the bone list'],
+      ['a fractional mesh index', rigWith({ type: 'mesh', image: 'block.png', ...quad, boneIndexing: 'raw', vertices: cut(raw, 1, 0.5) }), 'vertex 0 binds bone index 0.5, which is not in the bone list'],
+      ['a bounding-box index past the bone list', rigWith({ type: 'mesh', image: 'block.png', ...quad, boneIndexing: 'raw', vertices: raw }, { type: 'boundingbox', vertexCount: 3, boneIndexing: 'raw', vertices: cut(boxRaw, 6, 9) }), 'vertex 1 binds bone index 9, which is not in the bone list'],
+      ['a clipping index past the bone list', rigWith({ type: 'mesh', image: 'block.png', ...quad, boneIndexing: 'raw', vertices: raw }, { type: 'clipping', vertexCount: 3, boneIndexing: 'raw', vertices: cut(boxRaw, 6, 9) }), 'vertex 1 binds bone index 9, which is not in the bone list'],
+      // A path with `lengths` stated was the case nothing refused at compile: only the measurement of an omitted
+      // `lengths` decoded the run, so the stated one went to `A33`. The omitted one is planted beside it.
+      ['a path index past the bone list, lengths stated', rigWith({ type: 'mesh', image: 'block.png', ...quad, boneIndexing: 'raw', vertices: raw }, { type: 'path', vertexCount: 6, lengths: [1, 2], boneIndexing: 'raw', vertices: pathRaw(9) }), 'vertex 1 binds bone index 9, which is not in the bone list'],
+      ['a path index past the bone list, lengths measured', rigWith({ type: 'mesh', image: 'block.png', ...quad, boneIndexing: 'raw', vertices: raw }, { type: 'path', vertexCount: 6, boneIndexing: 'raw', vertices: pathRaw(9) }), 'vertex 1 binds bone index 9, which is not in the bone list'],
+      ['a mesh bone count of 0', rigWith({ type: 'mesh', image: 'block.png', ...quad, boneIndexing: 'raw', vertices: [0, ...raw] }), 'the raw weighted run has a bone count of 0 at index 0'],
+      ['a truncated mesh run', rigWith({ type: 'mesh', image: 'block.png', ...quad, boneIndexing: 'raw', vertices: raw.slice(0, -2) }), 'the raw weighted run is truncated — vertex 3 claims 2 bone(s) and the array ends first'],
+      ['a mesh run one vertex short', rigWith({ type: 'mesh', image: 'block.png', ...quad, boneIndexing: 'raw', vertices: raw.slice(0, 23) }), 'the raw weighted run decodes to 3 vertices but there are 4 uv pairs'],
+    ];
+    for (const [label, plant, expected] of plants) {
+      try {
+        compileProbe(plant);
+        probes.push(`${label}: compiled`);
+      } catch (err) {
+        if (!(err instanceof CompileError) || !(err as Error).message.includes(expected)) probes.push(`${label}: refused as "${(err as Error).message}"`);
+      } finally {
+        rmSync(plant.dir, { recursive: true, force: true });
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'MV04_AN_AUTHORED_RAW_RUN_IS_DECODED_TO_NAMES_ONCE_AND_EMITTED_AS_STATED',
+      held,
+      probeDetail(held, probes, `a raw mesh run and a raw bounding-box run over [root, block], two bones a vertex where it can, decode to bindings naming both bones and emit number for number as stated; ${plants.length} runs the model cannot hold — an index past the list on each of the four kinds (a path with its \`lengths\` stated and with them measured), a fractional one, a bone count of 0, a truncated run, a run one vertex short — are each refused by name at compile`),
+      'issue #917: `"boneIndexing": "raw"` is decoded against the model\'s bone order at intake, so the emitter writing indexes from that order reproduces the stated run; before it, a mesh or polygon index off the end compiled and was left to `A20` or `A33` at the gate',
+    );
+  }
+
+  // --- MV05: each kind emits its keys in its builder's order --
+  {
+    const probes: string[] = [];
+    const indexOf = boneIndexOf([{ name: 'root' }, { name: 'b' }]);
+    const run: ModelVertices = { weighted: true, bindings: [[{ bone: 'b', x: 1, y: 2, weight: 1 }]] };
+    // Each record built in REVERSE key order, so an emitter copying the input's order would fail.
+    const mesh: ModelMeshAttachment = { sequence: { count: 2 }, height: 5, width: 4, edges: [0, 2], hull: 1, vertices: run, triangles: [0, 0, 0], uvs: [0, 0], color: 'ff0000ff', path: 'art', name: 'full', kind: 'mesh' };
+    const box: ModelBoundingBoxAttachment = { editorColor: '00ff00ff', vertices: run, vertexCount: 1, name: 'box', kind: 'boundingbox' };
+    const clip: ModelClippingAttachment = { editorColor: '0000ffff', vertices: run, vertexCount: 1, inverse: true, convex: true, end: 's', name: 'clip', kind: 'clipping' };
+    const path: ModelPathAttachment = { editorColor: 'ff00ffff', lengths: [5], vertices: run, vertexCount: 1, constantSpeed: false, closed: true, name: 'p', kind: 'path' };
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ['mesh', emitMesh(mesh, indexOf) as unknown as Record<string, unknown>, '{"name":"full","type":"mesh","path":"art","color":"ff0000ff","uvs":[0,0],"triangles":[0,0,0],"vertices":[1,1,1,2,1],"hull":1,"edges":[0,2],"width":4,"height":5,"sequence":{"count":2}}'],
+      ['boundingbox', emitBoundingBox(box, indexOf) as unknown as Record<string, unknown>, '{"name":"box","type":"boundingbox","vertexCount":1,"vertices":[1,1,1,2,1],"color":"00ff00ff"}'],
+      ['clipping', emitClipping(clip, indexOf) as unknown as Record<string, unknown>, '{"name":"clip","type":"clipping","end":"s","convex":true,"inverse":true,"vertexCount":1,"vertices":[1,1,1,2,1],"color":"0000ffff"}'],
+      ['path', emitPath(path, indexOf) as unknown as Record<string, unknown>, '{"name":"p","type":"path","closed":true,"constantSpeed":false,"vertexCount":1,"vertices":[1,1,1,2,1],"lengths":[5],"color":"ff00ffff"}'],
+    ];
+    let mutantsSeen = 0;
+    for (const [kind, emitted, expected] of cases) {
+      const text = JSON.stringify(emitted);
+      if (text !== expected) probes.push(`${kind} emitted ${text}`);
+      // The mutant: `name` inserted after `type` rather than before it. No row lists `name`,
+      // so the key-order pass cannot put it back: insertion order IS the bytes.
+      const mutant: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(emitted)) {
+        if (key === 'name') continue;
+        mutant[key] = value;
+        if (key === 'type') mutant.name = emitted.name;
+      }
+      if (attachmentAsFileText(emitted) === attachmentAsFileText(mutant)) probes.push(`${kind}: a constructor that put \`name\` after \`type\` wrote the same file text, so this control cannot see an order`);
+      else mutantsSeen++;
+    }
+    const held = probes.length === 0;
+    say(
+      'MV05_EACH_VERTEX_KIND_EMITS_ITS_KEYS_IN_ITS_BUILDERS_ORDER',
+      held,
+      probeDetail(held, probes, `a mesh, bounding box, clipping polygon and path carrying every key, each built in reverse key order, emit exactly the text their builders wrote before issue #917 (\`name\` first, then \`type\`, then each builder's own order); for all ${mutantsSeen} kinds a mutant with \`name\` after \`type\` still differs after both passes`),
+      'issue #917: for a key the key-order table does not list — every attachment\'s `name`, a mesh\'s `path`, `color` and `sequence`, a clipping\'s `convex` and `inverse`, all of a path\'s — the constructor\'s insertion order is the byte contract (docs/COMPILED_MODEL.md §3); the nineteen recipes carry none of those keys on a vertex attachment, so only this text holds them',
+    );
+  }
+
+  // --- MV06: deformGeometryOf on the model record says what the old decoder said of the file --
+  {
+    const probes: string[] = [];
+    const galleryRoot = resolve(import.meta.dir, 'gallery');
+    const gallery = existsSync(galleryRoot)
+      ? readdirSync(galleryRoot).sort().filter((name) => existsSync(join(galleryRoot, name, 'rig.json')) && existsSync(join(galleryRoot, name, 'motion.json')))
+      : [];
+    const probe = writeModelVerticesProbe();
+    const results: Array<{ label: string; result: CompileResult }> = [];
+    try {
+      results.push({ label: 'the four-kind probe rig', result: compileProbe(probe) });
+    } catch (err) {
+      probes.push(`the four-kind probe did not compile: ${(err as Error).message}`);
+    }
+    for (const [i, name] of gallery.entries()) {
+      try {
+        results.push({ label: `gallery/${name}`, result: compile({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir: join(work, `deform${i}`) }) });
+      } catch (err) {
+        probes.push(`gallery/${name} did not compile: ${(err as Error).message}`);
+      }
+    }
+    let measured = 0;
+    let multi = 0;
+    let plantCaught = false;
+    for (const { label, result } of results) {
+      const file = JSON.parse(result.skeletonText) as SpineSkeletonJson;
+      for (const [skinName, table] of result.model.attachments) {
+        const fileSkin = file.skins.find((s) => s.name === skinName);
+        for (const [slot, perSlot] of Object.entries(table)) {
+          for (const [placeholder, entry] of Object.entries(perSlot)) {
+            const at = `${label} ${skinName}/${slot}/${placeholder}`;
+            if (!isModelVertexAttachment(entry)) {
+              let refused = '';
+              try {
+                deformGeometryOf(entry, at, result.model.setupWorld);
+              } catch (err) {
+                refused = (err as Error).message;
+              }
+              if (!refused.includes('has no vertex array to deform')) probes.push(`${at}: a non-vertex attachment was ${refused ? `refused as "${refused}"` : 'measured'}`);
+              continue;
+            }
+            const emitted = fileSkin?.attachments[slot]?.[placeholder] as Record<string, unknown> | undefined;
+            if (emitted === undefined) {
+              probes.push(`${at}: in the model and not in the file`);
+              continue;
+            }
+            const now = deformGeometryOf(entry, at, result.model.setupWorld);
+            const prior = priorDeformGeometry(emitted, file.bones, result.model.setupWorld);
+            const d = deformGeometryDifference(now, prior);
+            if (d !== null) probes.push(`${at}: ${d}`);
+            measured++;
+            if (now.influenceBones !== null) {
+              multi++;
+              // The plant: the old decoder reading the same file against the bone list reversed must disagree.
+              const reversed = priorDeformGeometry(emitted, [...file.bones].reverse(), result.model.setupWorld);
+              if (deformGeometryDifference(now, reversed) !== null) plantCaught = true;
+            }
+          }
+        }
+      }
+    }
+    rmSync(probe.dir, { recursive: true, force: true });
+    if (multi === 0) probes.push('no multi-influence attachment was measured, so the by-name influence lookup went unread');
+    else if (!plantCaught) probes.push('the file decoded against a reversed bone list agreed with the model everywhere, so the comparison cannot see a bone');
+    const held = probes.length === 0;
+    say(
+      'MV06_DEFORM_GEOMETRY_FROM_THE_MODEL_RECORD_IS_THE_OLD_DECODE_OF_THE_FILE_TO_THE_BIT',
+      held,
+      probeDetail(held, probes, `${measured} vertex attachment(s) over ${results.length} rig(s) — a probe carrying a two-bone weighted mesh and path, a one-bone weighted box and an unweighted clip, and every gallery rig — read by \`deformGeometryOf\` off the model record and by the removed index decoder off the file: \`weighted\`, lengths, counts, \`setup\` and each influence's transform \`Object.is\`-equal; ${multi} of them multi-influence, where the file read against a reversed bone list disagrees; every region and linked mesh refused by type`),
+      'issue #917, census row 8: the deform compiler decoded the emitted run back into bones by index; it now reads the bindings by name, and the numbers it hands `compileDeformTrack` must not move by a bit',
+    );
+  }
+
+  // --- MV07: a path's measured lengths from the model equal the old measurement --
+  {
+    const probes: string[] = [];
+    const probe = writeModelVerticesProbe();
+    let detail = '';
+    try {
+      const result = compileProbe(probe);
+      const file = JSON.parse(result.skeletonText) as SpineSkeletonJson;
+      const record = result.model.attachments.get('default')?.marker?.track;
+      const emitted = file.skins.find((s) => s.name === 'default')?.attachments.marker?.track as { vertices?: number[]; vertexCount?: number; lengths?: number[] } | undefined;
+      const anchor = result.model.setupWorld.get('block');
+      if (record === undefined || !isModelVertexAttachment(record) || record.kind !== 'path' || !record.vertices.weighted) probes.push('the probe\'s path is not a weighted model path');
+      else if (emitted?.vertices === undefined || emitted.vertexCount === undefined || emitted.lengths === undefined || anchor === undefined) probes.push('the file carries no path, or the slot bone has no transform');
+      else {
+        const old = pathCurveLengths(pathChain(priorSetupWorldVertices(emitted.vertices, emitted.vertexCount, anchor, file.bones, result.model.setupWorld), true));
+        if (old.length !== record.lengths.length) probes.push(`the old measurement has ${old.length} entries and the model ${record.lengths.length}`);
+        for (let i = 0; i < old.length; i++) {
+          if (Math.fround(old[i]) !== Math.fround(record.lengths[i])) probes.push(`lengths[${i}]: the model holds ${record.lengths[i]} and the old measurement is ${old[i]}`);
+        }
+        const d = firstNumberDifference(emitted.lengths, record.lengths);
+        if (d !== null) probes.push(`the file's lengths are not the model's: ${d}`);
+        const shifted = pathCurveLengths(pathChain(priorSetupWorldVertices(emitted.vertices, emitted.vertexCount, anchor, [...file.bones].reverse(), result.model.setupWorld), true));
+        if (shifted.every((n, i) => Math.fround(n) === Math.fround(record.lengths[i]))) probes.push('the path measured against a reversed bone list gives the same lengths, so the comparison cannot see a bone');
+        detail = `[${record.lengths.join(', ')}]`;
+      }
+    } catch (err) {
+      probes.push(`the probe did not compile: ${(err as Error).message}`);
+    } finally {
+      rmSync(probe.dir, { recursive: true, force: true });
+    }
+    const held = probes.length === 0;
+    say(
+      'MV07_A_PATHS_MEASURED_LENGTHS_FROM_THE_MODEL_ARE_THE_OLD_MEASUREMENT',
+      held,
+      probeDetail(held, probes, `a six-vertex open path bound 50/50 to a rotated, scaled bone and a sheared one, lengths omitted: the model's ${detail} equals, float32 for float32, \`pathCurveLengths\` over the removed index decode of the file's run, and the file carries the model's numbers; decoded against a reversed bone list it measures otherwise`),
+      'issue #917, census row 14: `setupWorldVertices` decoded the emitted run to measure an omitted `lengths`; it now reads the bindings by name, and no corpus rig carries a weighted path with measured lengths, so this probe is where the reading is held',
+    );
+  }
+
+  // --- MV08: compiled rigs' attachments are their model through the emitter, and compile binds by name --
+  {
+    const probes: string[] = [];
+    const source = readFileSync(resolve(import.meta.dir, 'src', 'compile.ts'), 'utf8');
+    probes.push(...compileVertexSourceProblems(source));
+    const plants: Array<[string, string]> = [
+      ['a Spine mesh type named', `${source}\ntype Back = SpineMeshAttachment;\n`],
+      ['the index encoder named', `${source}\nconst old = encodeNamedWeights;\n`],
+      ['a second emission', `${source}\nconst again = emitSkinAttachments(table, indexOf);\n`],
+      ['a bone looked up by position', `${source}\nconst at = bones.findIndex((b) => b.name === name);\n`],
+      ['a third raw intake', `${source}\nconst more = bindRawRun(run, bones, where);\n`],
+    ];
+    for (const [label, text] of plants) {
+      if (compileVertexSourceProblems(text).length !== 1) probes.push(`the plant "${label}" raised ${compileVertexSourceProblems(text).length} problem(s), not one`);
+    }
+    const galleryRoot = resolve(import.meta.dir, 'gallery');
+    const gallery = existsSync(galleryRoot)
+      ? readdirSync(galleryRoot).sort().filter((name) => existsSync(join(galleryRoot, name, 'rig.json')) && existsSync(join(galleryRoot, name, 'motion.json')))
+      : [];
+    const probe = writeModelVerticesProbe();
+    let records = 0;
+    let passedThrough = 0;
+    let rigs = 0;
+    const entries: Array<{ label: string; build: () => CompileResult }> = [
+      { label: 'the four-kind probe rig', build: () => compileProbe(probe) },
+      ...gallery.map((name, i) => ({ label: `gallery/${name}`, build: () => compile({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir: join(work, `emit${i}`) }) })),
+    ];
+    for (const { label, build } of entries) {
+      let result: CompileResult;
+      try {
+        result = build();
+      } catch (err) {
+        probes.push(`${label} did not compile: ${(err as Error).message}`);
+        continue;
+      }
+      rigs++;
+      const file = JSON.parse(result.skeletonText) as SpineSkeletonJson;
+      const indexOf = boneIndexOf(result.model.bones);
+      let fileCount = 0;
+      for (const skin of file.skins) for (const perSlot of Object.values(skin.attachments)) fileCount += Object.keys(perSlot).length;
+      let modelCount = 0;
+      for (const [skinName, table] of result.model.attachments) {
+        const fileSkin = file.skins.find((s) => s.name === skinName);
+        const emitted = emitSkinAttachments(table, indexOf);
+        for (const [slot, perSlot] of Object.entries(table)) {
+          for (const [placeholder, entry] of Object.entries(perSlot)) {
+            modelCount++;
+            const want = fileSkin?.attachments[slot]?.[placeholder];
+            if (want === undefined) {
+              probes.push(`${label} ${skinName}/${slot}/${placeholder}: in the model and not in the file`);
+              continue;
+            }
+            if (!isModelVertexAttachment(entry)) {
+              // A Spine object is passed through as itself — the object the file's passes reached.
+              passedThrough++;
+              if (emitted[slot][placeholder] !== entry) probes.push(`${label} ${skinName}/${slot}/${placeholder}: a region or linked mesh was copied rather than passed through`);
+              if (JSON.stringify(want) !== JSON.stringify(entry)) probes.push(`${label} ${skinName}/${slot}/${placeholder}: a passed-through attachment is not the file's`);
+              continue;
+            }
+            records++;
+            const foreign = Object.keys(entry).filter((k) => k === 'type' || k === 'color');
+            if (foreign.length > 0) probes.push(`${label} ${skinName}/${slot}/${placeholder}: the model record carries the Spine key(s) ${foreign.join(', ')}`);
+            if (attachmentAsFileText(emitted[slot][placeholder]) !== JSON.stringify(want)) probes.push(`${label} ${skinName}/${slot}/${placeholder}: the model record through the emitter and the two passes is not the file's attachment`);
+          }
+        }
+      }
+      if (modelCount !== fileCount) probes.push(`${label}: the model holds ${modelCount} attachment(s) and the file ${fileCount}`);
+      if (label === 'the four-kind probe rig') {
+        const kinds = new Set<string>();
+        for (const table of result.model.attachments.values()) for (const perSlot of Object.values(table)) for (const entry of Object.values(perSlot)) if (isModelVertexAttachment(entry)) kinds.add(entry.kind);
+        if (kinds.size !== 4) probes.push(`the probe rig built ${[...kinds].join(', ')}; all four kinds are its point`);
+      }
+    }
+    rmSync(probe.dir, { recursive: true, force: true });
+    const held = probes.length === 0;
+    say(
+      'MV08_COMPILED_ATTACHMENTS_ARE_THE_MODEL_THROUGH_THE_EMITTER_AND_COMPILE_BINDS_BY_NAME',
+      held,
+      probeDetail(held, probes, `${rigs} rig(s) compiled in process — the four-kind probe and every gallery rig: ${records} model record(s), each carrying neither \`type\` nor \`color\`, through \`emitSkinAttachments\` and the two passes are the file's attachment text, and ${passedThrough} region or linked-mesh object(s) pass through as the file's; \`src/compile.ts\`, comments aside, names no Spine vertex-attachment type and no index encoder, emits the skins once, looks up no bone by position and decodes a raw run at exactly two intakes; each of ${plants.length} plants raises exactly its own problem`),
+      'issue #917\'s shape: the model holds values and the emitter owns the bytes — the four vertex kinds are built as records, the skins\' attachments are turned into Spine\'s at one line of the assembly, and nothing in the compiler reads a bone index back',
+    );
+  }
+
+  // --- MV09: every gallery rig hashes identical to a named base document's rows --
+  let gateHole = false;
+  {
+    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
+    if (basePath === undefined || basePath === '') {
+      gateHole = true;
+      console.log('  SKIP  MV09 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
+      console.log('          ⚠️ This is a HOLE in this run, not a pass — the vertex attachments\' byte identity against a base commit was not measured here.');
+    } else {
+      const probes: string[] = [];
+      let base: HashesDocument | null = null;
+      try {
+        base = readHashes(resolve(basePath));
+      } catch (err) {
+        probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
+      }
+      const rows = (base?.recipes ?? []).filter((r) => r.name.startsWith('gallery/'));
+      if (base !== null && rows.length === 0) probes.push('the base document has no gallery row');
+      let verdict = '';
+      if (base !== null && rows.length > 0) {
+        const recipesPath = join(work, 'gate-recipes.json');
+        writeFileSync(recipesPath, recipesText(rows.map((r) => ({ name: r.name, stage: r.stage, commands: r.commands }))));
+        const out = join(work, 'gate.json');
+        const run = runHashes(['run', '--recipes', recipesPath, '--out', out, '--work', join(work, 'gate')]);
+        if (run.status !== 0) probes.push(`the run exited ${run.status}: ${run.stderr.trim().slice(0, 200)}`);
+        let after: HashesDocument | null = null;
+        try {
+          after = readHashes(out);
+        } catch (err) {
+          probes.push(`the run wrote no readable document: ${(err as Error).message}`);
+        }
+        if (after !== null) {
+          const baseRows: HashesDocument = { ...base, recipes: rows };
+          const c = compareHashes(baseRows, after);
+          verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
+          if (!c.identical) probes.push(`against the base: ${verdict}`);
+          // The plant: the last row's first hash flipped must read DIFF naming that row.
+          const flipped: HashesDocument = JSON.parse(JSON.stringify(baseRows)) as HashesDocument;
+          const last = flipped.recipes[flipped.recipes.length - 1];
+          const file = last.files[0];
+          if (file === undefined) probes.push(`${last.name} has no hashed file in the base`);
+          else {
+            file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
+            const p = compareHashes(flipped, after);
+            if (p.identical || p.differ.length !== 1 || p.differ[0].name !== last.name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
+          }
+        }
+      }
+      const held = probes.length === 0;
+      say(
+        'MV09_EVERY_GALLERY_RIG_HASHES_IDENTICAL_TO_THE_BASE_DOCUMENTS_ROWS',
+        held,
+        probeDetail(held, probes, `${rows.map((r) => r.name).join(', ')} built through \`tools/emit_hashes.ts\` on this tree against ${basePath}: ${verdict}; the same rows with the last one's hash flipped read DIFF naming it alone`),
+        'issue #917\'s gate as a control, the way `MB07` holds #915\'s: the gallery carries generated meshes of every generator kind the manifest and the rig spec reach and the tree\'s one measured path, so every gallery row is run rather than two; the bounding box and clipping polygon are the fetched corpus\'s and are held by the full nineteen-recipe run in the PR',
       );
     }
   }
@@ -77510,6 +78279,7 @@ function main(): void {
   tally.of('pose-oracle', runPoseOracleSuite);
   const emitHashesBad = tally.of('emit-hashes', runEmitHashesSuite, { ran: ranIt });
   const modelBones = tally.of('model-bones', runModelBonesSuite, { failures: (value) => value.failures });
+  const modelVertices = tally.of('model-vertices', runModelVerticesSuite, { failures: (value) => value.failures });
   tally.of('chainfit', runChainFitSuite);
   tally.of('ballot', runBallotSuite);
   tally.of('copy-images', runCopyImagesSuite);
@@ -78199,6 +78969,15 @@ function main(): void {
       'model chain and its emitted twin posing to the bit through every inherit mode; every compiled rig\'s bones being ' +
       'its model through the emitter, with its setup pose to the bit; `compile.ts` emitting the bones once and naming no ' +
       'Spine bone; and, when a base document is named, two gallery rigs hashing identical to its rows)' +
+      ', + ' + n('model-vertices') + ' model-vertices controls (issue #917 — mesh, path, bounding-box and clipping ' +
+      'attachments as model records whose weighted vertices name their bone: the by-name binder through the emitter ' +
+      'writing the removed index encoder\'s run number for number; a reversed bone order moving every emitted index and ' +
+      'no binding; an unweighted run emitted verbatim at the uv count; an authored raw run decoded to names once and ' +
+      'emitted as stated, with the runs the model cannot hold refused by name; each kind\'s keys in its builder\'s ' +
+      'order, which the key-order pass cannot restore; the deform geometry and a path\'s measured lengths read off the ' +
+      'model equal to the old decode of the file, to the bit; every compiled rig\'s attachments being its model through ' +
+      'the emitter, with `compile.ts` binding by name; and, when a base document is named, every gallery rig hashing ' +
+      'identical to its rows)' +
       ', + ' + n('chainfit') + ' chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
@@ -78291,6 +79070,7 @@ function main(): void {
       (meshRung.startsWith(',') ? '' : meshRung) +
       (emitHashesBad === null ? '\n  ⚠️ Fewer than two gallery rigs, so no build was hashed across two runs (issue #914) in this run.' : '') +
       (modelBones.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so byte identity against a base commit (issue #915) was not measured in this run.' : '') +
+      (modelVertices.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the vertex attachments\' byte identity against a base commit (issue #917) was not measured in this run.' : '') +
       (launcher.startsWith(',') ? '' : launcher) +
       (gallery.examples > 0
         ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled three times and gated green under BOTH profiles`

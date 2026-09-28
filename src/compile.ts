@@ -79,7 +79,7 @@ import {
   buildRibbonMesh,
   buildRingMesh,
   checkHullOrder,
-  encodeWeightedVertices,
+  bindWeightedVertices,
   formatWalk,
   measureAuthoredMeshFit,
   meshEdges,
@@ -128,8 +128,21 @@ import {
   TransformError,
   type BoneTransform,
 } from './transform.ts';
-import { emitBones } from './emit_spine.ts';
-import type { CarriedFromCompileResult, ModelBone } from './model.ts';
+import { boneIndexOf, emitBones, emitSkinAttachments } from './emit_spine.ts';
+import {
+  attachmentTypeOf,
+  isModelVertexAttachment,
+  type CarriedFromCompileResult,
+  type ModelBinding,
+  type ModelBone,
+  type ModelBoundingBoxAttachment,
+  type ModelClippingAttachment,
+  type ModelMeshAttachment,
+  type ModelPathAttachment,
+  type ModelVertices,
+  type SkinTableEntry,
+  type SkinTables,
+} from './model.ts';
 import type {
   CompileResult,
   CompiledImage,
@@ -149,14 +162,9 @@ import type {
   MotionValueKey,
   MotionValueTrack,
   RigInfo,
-  SpineAttachment,
-  SpineBoundingBoxAttachment,
-  SpineClippingAttachment,
   SpineConstraint,
   SpineEvent,
   SpineLinkedMeshAttachment,
-  SpineMeshAttachment,
-  SpinePathAttachment,
   SpineRegionAttachment,
   SpineSequence,
   SpineSkeletonJson,
@@ -2565,8 +2573,10 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // Draw order IS the slots array order. No separate field,
   // and the rig's array is that order.
   const slots: SpineSlot[] = [];
-  const skinTables = new Map<string, Record<string, Record<string, SpineAttachment>>>();
-  const tableFor = (skinName: string): Record<string, Record<string, SpineAttachment>> => {
+  // Model records for the four vertex kinds, Spine objects for the rest until
+  // cut 1d (`SkinTableEntry`); the emitter turns the table into Spine's at assembly.
+  const skinTables: SkinTables = new Map();
+  const tableFor = (skinName: string): Record<string, Record<string, SkinTableEntry>> => {
     let table = skinTables.get(skinName);
     if (!table) {
       table = {};
@@ -2718,7 +2728,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     if (empty) continue;
 
     if (part) {
-      const perSlot: Record<string, SpineAttachment> = {};
+      const perSlot: Record<string, SkinTableEntry> = {};
       const mesh = part.mesh ? buildMesh(part, manifest!, bones, transforms, rigSlot.bone) : null;
       for (const name of names) {
         const img = images.find((im) => im.region === name);
@@ -2752,7 +2762,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     for (const skinName of skinNames) {
       const placeholders = skinParts.get(skinName)!.attachments[rigSlot.name];
       if (!placeholders) continue;
-      const perSlot: Record<string, SpineAttachment> = {};
+      const perSlot: Record<string, SkinTableEntry> = {};
       for (const [placeholder, att] of Object.entries(placeholders)) {
         const where = `skin "${skinName}" slot "${rigSlot.name}" attachment "${placeholder}"`;
         const built = buildRigAttachment(att, placeholder, where, {
@@ -2874,7 +2884,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   for (const [skinName, table] of skinTables) {
     for (const [slotName, perSlot] of Object.entries(table)) {
       for (const att of Object.values(perSlot)) {
-        if ((att as { type?: string }).type !== 'path') continue;
+        if (attachmentTypeOf(att) !== 'path') continue;
         pathSlots.set(slotName, [...(pathSlots.get(slotName) ?? []), skinName]);
         break;
       }
@@ -3236,7 +3246,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           animName,
           anim.duration,
           {
-            ...deformGeometryOf(attachment, at, bones, transforms),
+            ...deformGeometryOf(attachment, at, transforms),
             depth: attachmentDepths.get(`${skinName}/${track.slot}/${track.attachment}`) ?? null,
           },
           deformTransforms,
@@ -3358,6 +3368,9 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     events[name] = entry;
   }
 
+  // A weighted vertex's bone index is its bone's position in this array, the
+  // one `emitBones` writes; the skin tables bind by name and are encoded here.
+  const indexOf = boneIndexOf(bones);
   const skeleton: SpineSkeletonJson = {
     skeleton: header,
     // The one place the model's bones become Spine's: `emitBones` owns the 4.3
@@ -3387,7 +3400,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
               parts!.constraints[key],
             ]),
           ),
-          attachments: editorSlotKeyOrder(attachments),
+          attachments: editorSlotKeyOrder(emitSkinAttachments(attachments, indexOf)),
         };
       }),
     ),
@@ -3446,7 +3459,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
     atlasText,
     ...carried,
-    model: { bones, setupWorld: transforms, ...carried },
+    model: { bones, setupWorld: transforms, attachments: skinTables, ...carried },
   };
 }
 
@@ -3634,9 +3647,9 @@ function rotationOf(spec: RigBone, ctx: BoneContext): number | null {
  * with a name was in that set, so for those types the position is the same
  * choice rather than a second measurement.
  */
-function withStatedName(att: SpineAttachment, stated: RigAttachment): SpineAttachment {
+function withStatedName(att: SkinTableEntry, stated: RigAttachment): SkinTableEntry {
   const name = (stated as { name?: string }).name;
-  return name === undefined ? att : ({ name, ...att } as SpineAttachment);
+  return name === undefined ? att : { name, ...att };
 }
 
 /**
@@ -3863,7 +3876,7 @@ function buildRigAttachment(
   placeholder: string,
   where: string,
   ctx: AttachmentContext,
-): SpineAttachment {
+): SkinTableEntry {
   const stated = (att as { type?: unknown }).type;
   if (stated !== undefined && typeof stated !== 'string') {
     throw new CompileError(
@@ -3932,7 +3945,8 @@ function deferredAttachmentRefusal(type: string, where: string, how: string): st
 }
 
 /**
- * Encode the polygon a bounding box or a clipping attachment carries.
+ * The polygon a bounding box, a clipping attachment or a path carries, as the
+ * model's `ModelVertices`.
  *
  * 🚨 `vertexCount` is required, and everything else here is a cross-check of it.
  * The parser reads `map.vertexCount << 1` and hands that to `readVertices` as the
@@ -3942,12 +3956,12 @@ function deferredAttachmentRefusal(type: string, where: string, how: string): st
  * whatever that garbage produced. It loads. It draws nothing (a bounding box
  * never did) and clips nothing, or clips the wrong shape, in complete silence.
  *
- * The two encodings are the mesh's — `encodeNamedWeights` is the same function —
+ * The two encodings are the mesh's — `bindNamedWeights` is the same function —
  * because they are the same field with the same trap: `readVertices` decides
  * weighted vs unweighted by a length comparison alone, and a coincidental match
- * reads weight data as coordinates.
+ * reads weight data as coordinates. The model says which one it is outright.
  */
-function buildVertexGeometry(att: RigVertexGeometry, where: string, ctx: AttachmentContext): number[] {
+function buildVertexGeometry(att: RigVertexGeometry, where: string, ctx: AttachmentContext): ModelVertices {
   const count = att.vertexCount;
   if (typeof count !== 'number' || !Number.isInteger(count) || count < 3) {
     throw new CompileError(
@@ -3967,7 +3981,7 @@ function buildVertexGeometry(att: RigVertexGeometry, where: string, ctx: Attachm
     if (att.weights.length !== count) {
       throw new CompileError(`${where}: weights cover ${att.weights.length} vertices but vertexCount is ${count}`);
     }
-    return encodeNamedWeights(att.weights, where, ctx);
+    return { weighted: true, bindings: bindNamedWeights(att.weights, where, ctx) };
   }
   const raw = att.vertices;
   if (!raw || raw.length === 0) {
@@ -3986,48 +4000,89 @@ function buildVertexGeometry(att: RigVertexGeometry, where: string, ctx: Attachm
     }
     // A raw run still has to decode to exactly `vertexCount` vertices, or the
     // count and the polygon disagree and the parser believes the count.
-    let decoded = 0;
-    for (let i = 0; i < raw.length; decoded++) {
-      const bones = raw[i++];
-      if (!Number.isInteger(bones) || bones < 1) {
-        throw new CompileError(`${where}: the raw weighted run has a bone count of ${String(bones)} at index ${i - 1}`);
-      }
-      i += bones * 4;
-      if (i > raw.length) {
-        throw new CompileError(
-          `${where}: the raw weighted run is truncated — vertex ${decoded} claims ${bones} bone(s) and the array ends first`,
-        );
-      }
-    }
-    if (decoded !== count) {
-      throw new CompileError(`${where}: the raw weighted run decodes to ${decoded} vertices but vertexCount is ${count}`);
-    }
-    // Register the bones it binds so the mesh-bone reports stay complete.
-    for (let i = 0; i < raw.length; ) {
-      const bones = raw[i++];
-      for (let k = 0; k < bones; k++, i += 4) {
-        const bone = ctx.bones[raw[i]];
-        if (bone) ctx.meshBones.add(bone.name);
-      }
-    }
+    checkRawRunShape(raw, count, `vertexCount is ${count}`, where);
   }
   for (const n of raw) {
     if (!Number.isFinite(n)) throw new CompileError(`${where}: the vertex array holds a non-finite value ${String(n)}`);
   }
-  return raw.map(f32);
+  if (unweighted) return { weighted: false, xy: raw.map(f32) };
+  const bindings = bindRawRun(raw.map(f32), ctx.bones, where);
+  // Register the bones it binds so the mesh-bone reports stay complete.
+  for (const vertex of bindings) for (const binding of vertex) ctx.meshBones.add(binding.bone);
+  return { weighted: true, bindings };
+}
+
+/**
+ * Refuse a raw weighted run whose shape is not `vertices` vertices of
+ * `boneCount, (boneIndex, x, y, weight) × boneCount` each. `countSays` is the
+ * clause naming where the expected count came from.
+ */
+function checkRawRunShape(raw: readonly number[], vertices: number, countSays: string, where: string): void {
+  let decoded = 0;
+  for (let i = 0; i < raw.length; decoded++) {
+    const bones = raw[i++];
+    if (!Number.isInteger(bones) || bones < 1) {
+      throw new CompileError(`${where}: the raw weighted run has a bone count of ${String(bones)} at index ${i - 1}`);
+    }
+    i += bones * 4;
+    if (i > raw.length) {
+      throw new CompileError(
+        `${where}: the raw weighted run is truncated — vertex ${decoded} claims ${bones} bone(s) and the array ends first`,
+      );
+    }
+  }
+  if (decoded !== vertices) {
+    throw new CompileError(`${where}: the raw weighted run decodes to ${decoded} vertices but ${countSays}`);
+  }
+}
+
+/**
+ * Decode an authored raw run (`"boneIndexing": "raw"`) to bindings by name, ONCE,
+ * at intake, against the model's bone order — the order the emitter writes the
+ * indexes back in, so the emitted run is the run the spec stated.
+ *
+ * The shape is already checked (`checkRawRunShape`). An index that names no bone
+ * — past the end of the list, negative, fractional — is refused here with the
+ * sentence the path-length measurement used to raise for it; before issue #917
+ * every other reader of the run skipped it at compile time and left it to the
+ * gate (`A20` on a mesh, `A33` on the other three).
+ */
+function bindRawRun(run: readonly number[], bones: readonly ModelBone[], where: string): ModelBinding[][] {
+  const out: ModelBinding[][] = [];
+  for (let i = 0; i < run.length; ) {
+    const count = run[i++];
+    const vertex: ModelBinding[] = [];
+    for (let k = 0; k < count; k++, i += 4) {
+      const bone = bones[run[i]];
+      if (bone === undefined) {
+        throw new CompileError(`${where}: vertex ${out.length} binds bone index ${run[i]}, which is not in the bone list`);
+      }
+      vertex.push({ bone: bone.name, x: run[i + 1], y: run[i + 2], weight: run[i + 3] });
+    }
+    out.push(vertex);
+  }
+  return out;
+}
+
+/** Every number of a weighted binding list on the float32 grid — what `.map(f32)` did to the run. */
+function bindingsOnF32(vertices: Extract<ModelVertices, { weighted: true }>): Extract<ModelVertices, { weighted: true }> {
+  return {
+    weighted: true,
+    bindings: vertices.bindings.map((vertex) => vertex.map((b) => ({ bone: b.bone, x: f32(b.x), y: f32(b.y), weight: f32(b.weight) }))),
+  };
 }
 
 function buildRigBoundingBox(
   att: RigBoundingBoxAttachment,
   where: string,
   ctx: AttachmentContext,
-): SpineBoundingBoxAttachment {
-  const out: SpineBoundingBoxAttachment = {
-    type: 'boundingbox',
+): ModelBoundingBoxAttachment {
+  const out: ModelBoundingBoxAttachment = {
+    kind: 'boundingbox',
     vertexCount: att.vertexCount,
     vertices: buildVertexGeometry(att, where, ctx),
   };
-  if (att.color !== undefined) out.color = att.color;
+  if (att.color !== undefined) out.editorColor = att.color;
   return out;
 }
 
@@ -4035,7 +4090,7 @@ function buildRigClipping(
   att: RigClippingAttachment,
   where: string,
   ctx: AttachmentContext,
-): SpineClippingAttachment {
+): ModelClippingAttachment {
   if (att.end !== undefined) {
     // `skeletonData.findSlot` returns null on a miss and the parser assigns that
     // null (`:626-627`), so a typo does not fail — the clip simply never ends and
@@ -4047,57 +4102,50 @@ function buildRigClipping(
       );
     }
   }
-  // Field order is the editor's here — `end`, `convex`, `inverse` before the
-  // geometry — via conditional spreads, because a key assigned after the literal
-  // lands at the end instead. Order carries no meaning in JSON; it is read by
-  // people, and this file's diff against a reference is read a lot.
-  const out: SpineClippingAttachment = {
-    type: 'clipping',
+  // Field order is the emitter's (`emitClipping`); a present key here is one the
+  // spec declared.
+  const out: ModelClippingAttachment = {
+    kind: 'clipping',
     ...(att.end !== undefined ? { end: att.end } : {}),
     ...(att.convex !== undefined ? { convex: att.convex } : {}),
     ...(att.inverse !== undefined ? { inverse: att.inverse } : {}),
     vertexCount: att.vertexCount,
     vertices: buildVertexGeometry(att, where, ctx),
   };
-  if (att.color !== undefined) out.color = att.color;
+  if (att.color !== undefined) out.editorColor = att.color;
   return out;
 }
 
 /**
- * Setup-pose world position of every vertex of an emitted vertex run.
+ * Setup-pose world position of every vertex of a model vertex attachment.
  *
  * The two encodings again, and the same split `readVertices` makes: an unweighted
- * run is one `x, y` in the SLOT BONE's space; a weighted one is
- * `boneCount, (boneIndex, bindX, bindY, weight) × n` per vertex, and the vertex
- * is the weighted sum of each influence's bind point taken to world through its
- * own bone. This is `VertexAttachment.computeWorldVertices` at setup, restated in
- * the compiler because the compiler must not link the runtime.
+ * attachment is one `x, y` in the SLOT BONE's space; a weighted one binds each
+ * vertex to its bones by name, and the vertex is the weighted sum of each
+ * influence's bind point taken to world through its own bone. This is
+ * `VertexAttachment.computeWorldVertices` at setup, restated in the compiler
+ * because the compiler must not link the runtime.
  */
 function setupWorldVertices(
-  vertices: number[],
-  vertexCount: number,
+  vertices: ModelVertices,
   anchor: BoneTransform,
-  bones: ModelBone[],
   transforms: Map<string, BoneTransform>,
   where: string,
 ): Array<[number, number]> {
   const out: Array<[number, number]> = [];
-  if (vertices.length === vertexCount * 2) {
-    for (let i = 0; i < vertices.length; i += 2) out.push(toWorld(anchor, vertices[i], vertices[i + 1]));
+  if (!vertices.weighted) {
+    for (let i = 0; i < vertices.xy.length; i += 2) out.push(toWorld(anchor, vertices.xy[i], vertices.xy[i + 1]));
     return out;
   }
-  for (let i = 0; i < vertices.length; ) {
-    const count = vertices[i++];
+  for (const vertex of vertices.bindings) {
     let x = 0;
     let y = 0;
-    for (let n = 0; n < count; n++, i += 4) {
-      const bone = bones[vertices[i]];
-      const m = bone === undefined ? undefined : transforms.get(bone.name);
-      if (!m) throw new CompileError(`${where}: vertex ${out.length} binds bone index ${vertices[i]}, which is not in the bone list`);
-      const [wx, wy] = toWorld(m, vertices[i + 1], vertices[i + 2]);
-      const weight = vertices[i + 3];
-      x += wx * weight;
-      y += wy * weight;
+    for (const binding of vertex) {
+      const m = transforms.get(binding.bone);
+      if (!m) throw new CompileError(`${where}: vertex ${out.length} binds bone "${binding.bone}", which has no setup transform`);
+      const [wx, wy] = toWorld(m, binding.x, binding.y);
+      x += wx * binding.weight;
+      y += wy * binding.weight;
     }
     out.push([x, y]);
   }
@@ -4126,8 +4174,11 @@ function setupWorldVertices(
  * prefix, so the entries the runtime reads are the same numbers either way; the
  * trailing one is read by nothing, and is written so a rebuild is the file the
  * editor writes rather than one entry short of it.
+ *
+ * Exported, with `pathCurveLengths`, for the selftest alone: `MV07` measures a
+ * decode of the emitted run through the two and compares.
  */
-function pathChain(points: Array<[number, number]>, closed: boolean): Array<[number, number]> {
+export function pathChain(points: Array<[number, number]>, closed: boolean): Array<[number, number]> {
   if (!closed) return points.slice(1, points.length - 1);
   return [...points.slice(1), points[0], points[1]];
 }
@@ -4194,7 +4245,7 @@ function pathChain(points: Array<[number, number]>, closed: boolean): Array<[num
  * running total carried across curves rather than restarted. Each of those is a
  * place where a more accurate line would emit a different file.
  */
-function pathCurveLengths(chain: Array<[number, number]>): number[] {
+export function pathCurveLengths(chain: Array<[number, number]>): number[] {
   const out: number[] = [];
   let total = 0;
   for (let c = 0; c + 3 < chain.length; c += 3) {
@@ -4248,7 +4299,7 @@ function pathCurveLengths(chain: Array<[number, number]>): number[] {
  *   3. **An omitted one is measured**, `vertexCount / 3` entries over the closed
  *      chain (`pathChain`), on the unconstrained setup pose.
  */
-function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentContext): SpinePathAttachment {
+function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentContext): ModelPathAttachment {
   const vertices = buildVertexGeometry(att, where, ctx);
   const count = att.vertexCount;
   const closed = att.closed === true;
@@ -4273,7 +4324,7 @@ function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentCont
   } else {
     const anchor = ctx.transforms.get(ctx.anchorBone);
     if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
-    const points = setupWorldVertices(vertices, count, anchor, ctx.bones, ctx.transforms, where);
+    const points = setupWorldVertices(vertices, anchor, ctx.transforms, where);
     lengths = pathCurveLengths(pathChain(points, true));
     // The total the runtime reads is the last CURVE's entry, `lengths[vertexCount
     // / 3 - (closed ? 1 : 2)]` (`PathConstraint.js:204-206`) — on an open path
@@ -4286,17 +4337,17 @@ function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentCont
       );
     }
   }
-  // Field order is the parser's reading order (`:606-623`), and each optional key
-  // is present exactly when the spec declared it — the rule the whole rig spec
-  // follows, so Spine's own defaults stand for the rest.
+  // Each optional key is present exactly when the spec declared it — the rule
+  // the whole rig spec follows, so Spine's own defaults stand for the rest. The
+  // field order (the parser's reading order, `:606-623`) is `emitPath`'s.
   return {
-    type: 'path',
+    kind: 'path',
     ...(att.closed !== undefined ? { closed: att.closed } : {}),
     ...(att.constantSpeed !== undefined ? { constantSpeed: att.constantSpeed } : {}),
     vertexCount: count,
     vertices,
     lengths: lengths.map(f32),
-    ...(att.color !== undefined ? { color: att.color } : {}),
+    ...(att.color !== undefined ? { editorColor: att.color } : {}),
   };
 }
 
@@ -4425,8 +4476,9 @@ function attachmentPath(att: { name?: string; path?: string; image?: string }, p
 }
 
 /**
- * A mesh attachment's `path` and `color`, in that order — the two keys every
- * mesh constructor spreads right after `type` (issue #791).
+ * A mesh attachment's `path` and `color` — the two values every mesh builder
+ * spreads into its record, and which `emitMesh` (`src/emit_spine.ts`) writes
+ * right after `type` (issue #791; the position moved to the emitter with #917).
  *
  * 🔬 The editor writes a mesh `type, path, color, uvs, …`: right after `type`,
  * `path` before `color` — measured on a production set (#791), not on
@@ -4435,16 +4487,17 @@ function attachmentPath(att: { name?: string; path?: string; image?: string }, p
  * `path` before `color` is the order the two measured positions leave, not a
  * third measurement. The twelve exports carry neither key on a mesh, which is
  * why `EDITOR_KEY_ORDER`'s `mesh attachment` row does not list them: an unlisted
- * key keeps its constructor's index, so the position is stated HERE, and the
- * row stays what the public exports derive.
+ * key keeps its constructor's index, so the position is stated in the one
+ * constructor that writes the bytes, `emitMesh`, and the row stays what the
+ * public exports derive.
  *
  * ⚠️ Not a linked mesh's, and not a region's. Neither was in the measured set —
  * a region's `path` stays where `buildRigRegion` puts it, a linked mesh's
  * keys where `buildRigLinkedMesh` does — because the analogy to a mesh is
  * obvious and it is not a measurement.
  */
-function meshTextureKeys(att: { name?: string; path?: string; image?: string; color?: string }, placeholder: string): Pick<SpineMeshAttachment, 'path' | 'color'> {
-  const out: Pick<SpineMeshAttachment, 'path' | 'color'> = {};
+function meshTextureKeys(att: { name?: string; path?: string; image?: string; color?: string }, placeholder: string): Pick<ModelMeshAttachment, 'path' | 'color'> {
+  const out: Pick<ModelMeshAttachment, 'path' | 'color'> = {};
   const path = attachmentPath(att, placeholder);
   if (path !== undefined) out.path = path;
   if (att.color !== undefined) out.color = att.color;
@@ -4624,37 +4677,34 @@ function buildRigRegion(
 }
 
 /**
- * Resolve an authored mesh's by-name weights into Spine's index run.
+ * Resolve an authored attachment's by-name weights into the model's bindings.
  *
- * 🚨 This is the whole point of the `weights` form. The run is
+ * 🚨 This is the whole point of the `weights` form. Spine's run is
  * `boneCount, (boneIndex, bindX, bindY, weight) x n` per vertex and those
  * indices are positions in the emitted bone array — a thing the rig spec never
- * writes. Resolving them here, from names, is what makes "insert a bone" a
+ * writes. Keeping the NAME here, and letting the emitter write the index from
+ * the model's bone order (`emitVertices`), is what makes "insert a bone" a
  * renumbering rather than a rebinding: the names still point at the same bones,
  * so the emitted indices move and the mesh does not.
  *
  * An unknown name is a `CompileError`, the same as a bone's `parent`, a slot's
  * `bone` or a constraint's `target`. The alternative — the raw form — cannot
- * refuse anything, because an index has no name to be wrong.
+ * refuse a rebind, because an index has no name to be wrong.
  */
-function encodeNamedWeights(weights: RigMeshBinding[][], where: string, ctx: AttachmentContext): number[] {
-  const out: number[] = [];
-  weights.forEach((vertex, i) => {
+function bindNamedWeights(weights: RigMeshBinding[][], where: string, ctx: AttachmentContext): ModelBinding[][] {
+  return weights.map((vertex, i) => {
     if (!Array.isArray(vertex) || vertex.length === 0) {
       throw new CompileError(`${where}: vertex ${i} has no bone bindings; a weighted vertex names at least one bone`);
     }
-    out.push(vertex.length);
-    for (const binding of vertex) {
-      const index = ctx.bones.findIndex((b) => b.name === binding.bone);
-      if (index < 0) {
+    return vertex.map((binding) => {
+      if (!ctx.bones.some((b) => b.name === binding.bone)) {
         throw new CompileError(
           `${where}: vertex ${i} binds bone ${JSON.stringify(binding.bone)}, which the rig does not declare as a bone`,
         );
       }
-      out.push(index, f32(binding.x), f32(binding.y), f32(binding.weight));
-    }
+      return { bone: binding.bone, x: f32(binding.x), y: f32(binding.y), weight: f32(binding.weight) };
+    });
   });
-  return out;
 }
 
 /**
@@ -4799,7 +4849,7 @@ function buildRigMesh(
   placeholder: string,
   where: string,
   ctx: AttachmentContext,
-): SpineMeshAttachment {
+): ModelMeshAttachment {
   const authored =
     att.uvs !== undefined || att.triangles !== undefined || att.vertices !== undefined || att.weights !== undefined;
   if (authored && att.generator) {
@@ -4815,7 +4865,7 @@ function buildRigMesh(
     throw new CompileError(`${where}: an authored mesh needs uvs, triangles and vertices or weights (or a "generator")`);
   }
   const uvCount = att.uvs.length;
-  let vertices: number[];
+  let vertices: ModelVertices;
   let boundBones: string[] = [];
   if (att.weights) {
     if (att.boneIndexing === 'raw') {
@@ -4826,7 +4876,7 @@ function buildRigMesh(
         `${where}: weights cover ${att.weights.length} vertices but there are ${uvCount / 2} uv pairs`,
       );
     }
-    vertices = encodeNamedWeights(att.weights, where, ctx);
+    vertices = { weighted: true, bindings: bindNamedWeights(att.weights, where, ctx) };
     boundBones = [...new Set(att.weights.flat().map((b) => b.bone))];
   } else {
     const raw = att.vertices!;
@@ -4841,17 +4891,17 @@ function buildRigMesh(
           'or say "boneIndexing": "raw" on this attachment to keep the index form deliberately.',
       );
     }
-    vertices = raw.map(f32);
     if (weighted) {
-      const names = new Set<string>();
-      for (let i = 0; i < raw.length; ) {
-        const n = raw[i++];
-        for (let k = 0; k < n; k++, i += 4) {
-          const bone = ctx.bones[raw[i]];
-          if (bone) names.add(bone.name);
-        }
-      }
-      boundBones = [...names];
+      // Decoded to names once, here, against the model's bone order — which is
+      // the order the emitter writes the indexes back in, so the emitted run is
+      // the run the spec stated. A run the model cannot hold is refused by name
+      // rather than left to `A20` at the gate (issue #917).
+      checkRawRunShape(raw, uvCount / 2, `there are ${uvCount / 2} uv pairs`, where);
+      const bindings = bindRawRun(raw.map(f32), ctx.bones, where);
+      vertices = { weighted: true, bindings };
+      boundBones = [...new Set(bindings.flat().map((b) => b.bone))];
+    } else {
+      vertices = { weighted: false, xy: raw.map(f32) };
     }
   }
   const { hull, edges } = authoredHullAndEdges(att, uvCount / 2, att.triangles, where);
@@ -4871,8 +4921,8 @@ function buildRigMesh(
       `${where}: a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG`,
     );
   }
-  const out: SpineMeshAttachment = {
-    type: 'mesh',
+  const out: ModelMeshAttachment = {
+    kind: 'mesh',
     ...meshTextureKeys(att, placeholder),
     uvs: att.uvs.map(f32),
     triangles: att.triangles,
@@ -5024,7 +5074,7 @@ function buildRigLinkedMesh(
  */
 function resolveLinkedMeshes(
   links: readonly PendingLink[],
-  tables: Map<string, Record<string, Record<string, SpineAttachment>>>,
+  tables: SkinTables,
 ): void {
   const skinNames = [...tables.keys()];
   for (const link of links) {
@@ -5065,7 +5115,7 @@ function resolveLinkedMeshes(
           "Left to the round trip this is the runtime's `Source mesh not found`.",
       );
     }
-    const type = (found as { type?: string }).type ?? 'region';
+    const type = attachmentTypeOf(found);
     if (type === 'linkedmesh') {
       throw new CompileError(
         `${link.where}: "source" is ${JSON.stringify(link.source)}, which is itself a linked mesh, and a chain of ` +
@@ -5100,25 +5150,24 @@ function buildGeneratedMesh(
   placeholder: string,
   where: string,
   ctx: AttachmentContext,
-): SpineMeshAttachment {
+): ModelMeshAttachment {
   if (generator.kind === 'contour') return buildContourAttachment(att, generator, placeholder, where, ctx);
   if (generator.kind === 'grid') return buildGridAttachment(att, generator, placeholder, where, ctx);
   if (generator.kind === 'segments') return buildSegmentsAttachment(att, generator, placeholder, where, ctx);
   const controls = generator.kind === 'ring' ? generator.controls : generator.chain;
-  // Resolving the bone list and the setup transform is one step with two named
-  // refusals, because the ring's control angles need the transform and the encode
-  // needs the index — and the two must refuse a bone the rig lacks in the same
+  // Resolving the bone and its setup transform is one step with two named
+  // refusals, because the ring's control angles need the transform and the bind
+  // needs the bone — and the two must refuse a bone the rig lacks in the same
   // words whichever of them asks for it first.
-  const resolve = (name: string): { index: number; transform: BoneTransform } => {
-    const index = ctx.bones.findIndex((b) => b.name === name);
-    if (index < 0) throw new CompileError(`${where}: mesh bone "${name}" is not in the rig's bone list`);
+  const resolve = (name: string): BoneTransform => {
+    if (!ctx.bones.some((b) => b.name === name)) throw new CompileError(`${where}: mesh bone "${name}" is not in the rig's bone list`);
     const transform = ctx.transforms.get(name);
     if (!transform) throw new CompileError(`${where}: no setup transform for mesh bone "${name}"`);
-    return { index, transform };
+    return transform;
   };
   const refFor = (name: string): MeshBoneRef => {
-    const { index, transform } = resolve(name);
-    return { index, toBind: (wx, wy) => toBoneLocal(transform, wx, wy) };
+    const transform = resolve(name);
+    return { name, toBind: (wx, wy) => toBoneLocal(transform, wx, wy) };
   };
   // The generator works in part-local pixels, y down. Without a manifest there is
   // no crop to flip against, so the part window is centred on its own slot bone.
@@ -5142,7 +5191,7 @@ function buildGeneratedMesh(
             size: generator.size,
             bias: generator.bias,
             controlAngles: ringControlAngles(controls, generator.center, (name) => {
-              const { transform } = resolve(name);
+              const transform = resolve(name);
               return toPartLocal(transform.worldX, transform.worldY);
             }),
           });
@@ -5150,7 +5199,7 @@ function buildGeneratedMesh(
     if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
     throw err;
   }
-  const vertices = encodeWeightedVertices(
+  const vertices = bindWeightedVertices(
     geometry,
     // The world point is an INTERMEDIATE — `toBind` makes it local and the
     // result is what is emitted, through `f32` below — so it carries the double.
@@ -5169,12 +5218,12 @@ function buildGeneratedMesh(
     triangles: geometry.triangles.length / 3,
     bones: [ctx.anchorBone, ...controls],
   });
-  const out: SpineMeshAttachment = {
-    type: 'mesh',
+  const out: ModelMeshAttachment = {
+    kind: 'mesh',
     ...meshTextureKeys(att, placeholder),
     uvs: geometry.uvs.map(f32),
     triangles: geometry.triangles,
-    vertices: vertices.map(f32),
+    vertices: bindingsOnF32(vertices),
     ...generatedHullAndEdges(geometry, where),
     width: f32(w),
     height: f32(h),
@@ -5250,7 +5299,7 @@ function sampleMeshDepth(
   triangles: ReadonlyArray<number>,
   /**
    * A part-local pixel to the BIND space this mesh's vertices are emitted in —
-   * the same composition `encodeWeightedVertices` applies, handed in rather than
+   * the same composition `bindWeightedVertices` applies, handed in rather than
    * rebuilt so the two cannot diverge.
    *
    * 🚨 The ceiling has to be taken in bind space and in no other. A deform
@@ -5410,13 +5459,12 @@ function sampleMeshDepth(
   };
 }
 
-/** One bone of the rig as `encodeWeightedVertices` wants it. */
+/** One bone of the rig as `bindWeightedVertices` wants it: by name, with its setup inverse. */
 function meshBoneRef(name: string, where: string, ctx: AttachmentContext): MeshBoneRef {
   const transform = ctx.transforms.get(name);
   if (!transform) throw new CompileError(`${where}: bone "${name}" has no setup transform`);
-  const index = ctx.bones.findIndex((b) => b.name === name);
-  if (index < 0) throw new CompileError(`${where}: bone "${name}" is not in the rig's bone list`);
-  return { index, toBind: (wx, wy) => toBoneLocal(transform, wx, wy) };
+  if (!ctx.bones.some((b) => b.name === name)) throw new CompileError(`${where}: bone "${name}" is not in the rig's bone list`);
+  return { name, toBind: (wx, wy) => toBoneLocal(transform, wx, wy) };
 }
 
 /**
@@ -5621,7 +5669,7 @@ function buildGridAttachment(
   placeholder: string,
   where: string,
   ctx: AttachmentContext,
-): SpineMeshAttachment {
+): ModelMeshAttachment {
   if (att.image === undefined) {
     throw new CompileError(
       `${where}: a "grid" generator lays its lattice over the part's own window, so the attachment needs an ` +
@@ -5682,8 +5730,9 @@ function buildGridAttachment(
   }
   const anchor = ctx.transforms.get(ctx.anchorBone);
   if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
-  const index = ctx.bones.findIndex((b) => b.name === ctx.anchorBone);
-  if (index < 0) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
+  if (!ctx.bones.some((b) => b.name === ctx.anchorBone)) {
+    throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
+  }
   // Sampled BEFORE the encode, because `bind` rewrites the weights the encode
   // then writes out.
   const depth =
@@ -5710,11 +5759,11 @@ function buildGridAttachment(
       ? undefined
       : softRegionWeights(generator.soft, geometry.points, sheetGridOf(img, plate), where, ctx);
   if (bound) geometry = { ...geometry, weights: bound.weights };
-  const vertices = encodeWeightedVertices(
+  const vertices = bindWeightedVertices(
     geometry,
     (px, py) => [anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt],
     {
-      anchor: { index, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) },
+      anchor: { name: ctx.anchorBone, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) },
       controls: bound ? [meshBoneRef(bound.bone, where, ctx)] : [],
     },
   );
@@ -5734,12 +5783,12 @@ function buildGridAttachment(
         ? undefined
         : { mask: bound.mask, digest: bound.digest, bone: bound.bone, carried: bound.carried, ramped: bound.ramped },
   });
-  const out: SpineMeshAttachment = {
-    type: 'mesh',
+  const out: ModelMeshAttachment = {
+    kind: 'mesh',
     ...meshTextureKeys(att, placeholder),
     uvs: geometry.uvs.map(f32),
     triangles: geometry.triangles,
-    vertices: vertices.map(f32),
+    vertices: bindingsOnF32(vertices),
     ...generatedHullAndEdges(geometry, where),
     width: f32(w),
     height: f32(h),
@@ -5791,7 +5840,7 @@ function buildSegmentsAttachment(
   placeholder: string,
   where: string,
   ctx: AttachmentContext,
-): SpineMeshAttachment {
+): ModelMeshAttachment {
   if (att.image === undefined) {
     throw new CompileError(
       `${where}: a "segments" generator lays its lattice over the part's own alpha, so the attachment needs an ` +
@@ -6018,7 +6067,7 @@ function buildSegmentsAttachment(
     weights,
     hullVertices: lattice.hullVertices,
   };
-  const vertices = encodeWeightedVertices(geometry, place, {
+  const vertices = bindWeightedVertices(geometry, place, {
     anchor: meshBoneRef(ctx.anchorBone, where, ctx),
     controls: refs,
   });
@@ -6065,11 +6114,11 @@ function buildSegmentsAttachment(
     },
   });
   return {
-    type: 'mesh',
+    kind: 'mesh',
     ...meshTextureKeys(att, placeholder),
     uvs: geometry.uvs.map(f32),
     triangles: geometry.triangles,
-    vertices: vertices.map(f32),
+    vertices: bindingsOnF32(vertices),
     ...generatedHullAndEdges(geometry, where),
     width: f32(w),
     height: f32(h),
@@ -6107,7 +6156,7 @@ function buildContourAttachment(
   placeholder: string,
   where: string,
   ctx: AttachmentContext,
-): SpineMeshAttachment {
+): ModelMeshAttachment {
   if (att.image === undefined) {
     throw new CompileError(
       `${where}: a "contour" generator traces the part's own alpha, so the attachment needs an "image" — ` +
@@ -6180,12 +6229,13 @@ function buildContourAttachment(
   }
   const anchor = ctx.transforms.get(ctx.anchorBone);
   if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
-  const index = ctx.bones.findIndex((b) => b.name === ctx.anchorBone);
-  if (index < 0) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
-  const vertices = encodeWeightedVertices(
+  if (!ctx.bones.some((b) => b.name === ctx.anchorBone)) {
+    throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
+  }
+  const vertices = bindWeightedVertices(
     geometry,
     (px, py) => [anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt],
-    { anchor: { index, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) }, controls: [] },
+    { anchor: { name: ctx.anchorBone, toBind: (wx, wy) => toBoneLocal(anchor, wx, wy) }, controls: [] },
   );
   ctx.meshBones.add(ctx.anchorBone);
   // The vertices are on the TRACED grid — the plate's — and the depth map is
@@ -6230,12 +6280,12 @@ function buildContourAttachment(
   // this comment used to be the rule's only statement, beside four emit sites
   // that disagreed with it — and spread right after `type` by
   // `meshTextureKeys` since #791.
-  const out: SpineMeshAttachment = {
-    type: 'mesh',
+  const out: ModelMeshAttachment = {
+    kind: 'mesh',
     ...meshTextureKeys(att, placeholder),
     uvs: geometry.uvs.map(f32),
     triangles: geometry.triangles,
-    vertices: vertices.map(f32),
+    vertices: bindingsOnF32(vertices),
     ...generatedHullAndEdges(geometry, where),
     width: f32(w),
     height: f32(h),
@@ -7014,7 +7064,7 @@ function buildMesh(
   bones: ModelBone[],
   transforms: Map<string, BoneTransform>,
   anchorName: string,
-): { attachment: SpineMeshAttachment; kind: 'ring' | 'ribbon' } {
+): { attachment: ModelMeshAttachment; kind: 'ring' | 'ribbon' } {
   const spec = part.mesh!;
   const kind = spec.kind ?? 'ring';
   const win = partWindow(part, manifest);
@@ -7022,11 +7072,10 @@ function buildMesh(
   const controls = meshControlBones(part);
 
   const refFor = (name: string): MeshBoneRef => {
-    const index = bones.findIndex((b) => b.name === name);
-    if (index < 0) throw new CompileError(`internal: mesh bone "${name}" is not in the bone list`);
+    if (!bones.some((b) => b.name === name)) throw new CompileError(`internal: mesh bone "${name}" is not in the bone list`);
     const m = transforms.get(name);
     if (!m) throw new CompileError(`internal: no setup transform for mesh bone "${name}"`);
-    return { index, toBind: (wx, wy) => toBoneLocal(m, wx, wy) };
+    return { name, toBind: (wx, wy) => toBoneLocal(m, wx, wy) };
   };
 
   let geometry;
@@ -7066,7 +7115,7 @@ function buildMesh(
     throw err;
   }
 
-  const vertices = encodeWeightedVertices(
+  const vertices = bindWeightedVertices(
     geometry,
     (px, py) => [win.x + px, cropToSpineY(win.y + py, cropH)],
     { anchor: refFor(anchorName), controls: controls.map(refFor) },
@@ -7075,10 +7124,10 @@ function buildMesh(
   return {
     kind: geometry.kind,
     attachment: {
-      type: 'mesh',
+      kind: 'mesh',
       uvs: geometry.uvs.map(f32),
       triangles: geometry.triangles,
-      vertices: vertices.map(f32),
+      vertices: bindingsOnF32(vertices),
       ...generatedHullAndEdges(geometry, `slot "${part.slot}" mesh`),
       width: win.w,
       height: win.h,
@@ -7613,7 +7662,7 @@ function defaultOf(shape: ConstraintTimelineShape, field: string): number | bool
  * Same shape, two meanings, and picking the wrong one writes a run that silently
  * lands on the wrong vertices.
  */
-interface DeformGeometry {
+export interface DeformGeometry {
   weighted: boolean;
   /** How long the array the key edits is. */
   deformLength: number;
@@ -7660,7 +7709,7 @@ interface DeformGeometry {
   /**
    * Per-vertex `z`, when this attachment's generator named a depth map.
    *
-   * Not measured from the emitted attachment like everything else here — there
+   * Not measured from the attachment like everything else here — there
    * is nowhere in the format to measure it FROM, which is the whole reason the
    * sampler keeps it beside the skeleton instead of in it. Filled in by the
    * caller, which is where the skin, slot and attachment names live.
@@ -7669,25 +7718,35 @@ interface DeformGeometry {
 }
 
 /**
- * Measure one emitted attachment's deform array.
+ * Measure one attachment's deform array, off its model record (issue #917): the
+ * bindings name their bones, so each influence's setup transform is looked up by
+ * name and no index into any bone array is read.
  *
  * A region attachment is refused rather than measured: it has no `vertices` at
  * all, so `attachment.vertices.length` throws inside the parser — one of the very
  * few places this format fails loudly, and it fails in the consumer's process.
+ * A linked mesh is refused the same way, by its type.
+ *
+ * Exported for the selftest alone: `MV06` holds it to the decoder of the emitted
+ * run it replaced, to the bit.
  */
-function deformGeometryOf(
-  att: SpineAttachment,
+export function deformGeometryOf(
+  att: SkinTableEntry,
   where: string,
-  /** The model's bone array, in the order the emitted one keeps — a weight run's `boneIndex` indexes into it. */
-  rigBones: ModelBone[],
-  /** Their setup world transforms, by name. */
+  /** Every bone's setup world transform, by name. */
   transforms: Map<string, BoneTransform>,
 ): DeformGeometry {
-  const type = (att as { type?: string }).type ?? 'region';
+  const type = attachmentTypeOf(att);
   let worldVerticesLength: number;
-  if (type === 'mesh') {
-    worldVerticesLength = (att as SpineMeshAttachment).uvs.length;
-  } else if (type === 'boundingbox' || type === 'clipping' || type === 'path') {
+  if (!isModelVertexAttachment(att)) {
+    throw new CompileError(
+      `${where}: a deform timeline keys the vertices of an attachment, and this one is a "${type}" — ` +
+        'it has no vertex array to deform. Deformable types: mesh, boundingbox, clipping, path.',
+    );
+  }
+  if (att.kind === 'mesh') {
+    worldVerticesLength = att.uvs.length;
+  } else {
     // ⭐ A `path` reaches this line as of issue #696, and it is the SAME line the
     // other two vertex-and-no-triangles types take: the array the parser sizes
     // is `vertexCount * 2`, the two encodings below are the mesh's own, and a
@@ -7716,16 +7775,11 @@ function deformGeometryOf(
     // file twice. `docs/AUTHORING.md` §4.11 states the `constantSpeed: false`
     // reading instead, which is the honest home for it: a fact about the format
     // the author is choosing, not a fault rigc can measure.
-    worldVerticesLength = (att as SpineBoundingBoxAttachment | SpinePathAttachment).vertexCount * 2;
-  } else {
-    throw new CompileError(
-      `${where}: a deform timeline keys the vertices of an attachment, and this one is a "${type}" — ` +
-        'it has no vertex array to deform. Deformable types: mesh, boundingbox, clipping, path.',
-    );
+    worldVerticesLength = att.vertexCount * 2;
   }
-  const vertices = (att as SpineMeshAttachment).vertices ?? [];
-  const weighted = vertices.length !== worldVerticesLength;
-  if (!weighted) {
+  const vertices = att.vertices;
+  const weighted = vertices.weighted;
+  if (!vertices.weighted) {
     return {
       weighted,
       deformLength: worldVerticesLength,
@@ -7733,41 +7787,37 @@ function deformGeometryOf(
       boneCounts: null,
       // An unweighted attachment IS its own space: the array is one `x, y` per
       // vertex in the slot bone's space, which is the space the offsets are in.
-      setup: vertices.slice(),
+      setup: vertices.xy.slice(),
       influenceBones: null,
       setupWhy: null,
-      // Filled in by the caller; `deformGeometryOf` reads the emitted
-      // attachment, and the depth is deliberately not in it.
+      // Filled in by the caller; `deformGeometryOf` reads the attachment's
+      // record, and the depth is deliberately not in it.
       depth: null,
     };
   }
-  // Walk the weight run for the per-vertex influence counts. The run's own shape
-  // is already assured by the attachment builders and by A33/A04; this only
-  // counts, and a malformed run stops rather than producing a plausible number.
+  // Walk the bindings for the per-vertex influence counts. Their shape is
+  // already assured by the attachment builders and by A33/A04; this only counts,
+  // and a vertex with no binding stops rather than producing a plausible number
+  // — at the index its count would hold in the emitted run, as it was worded
+  // when this walked the run.
   const boneCounts: number[] = [];
   const bindSpace: number[] = [];
-  const bones = new Set<number>();
-  /** `boneIndex, bindX, bindY, weight` per influence, in deform-array order. */
-  const influenceRun: number[] = [];
-  for (let i = 0; i < vertices.length; ) {
-    const n = vertices[i++];
-    if (!Number.isInteger(n) || n < 1) {
-      throw new CompileError(`${where}: the attachment's weighted vertex run has a bone count of ${String(n)} at index ${i - 1}`);
+  const bones = new Set<string>();
+  for (let v = 0, at = 0; v < vertices.bindings.length; v++) {
+    const vertex = vertices.bindings[v];
+    const n = vertex.length;
+    if (n < 1) {
+      throw new CompileError(`${where}: the attachment's weighted vertex run has a bone count of ${String(n)} at index ${at}`);
     }
     if (n === 1) {
-      bones.add(vertices[i]);
-      bindSpace.push(vertices[i + 1], vertices[i + 2]);
+      bones.add(vertex[0].bone);
+      bindSpace.push(vertex[0].x, vertex[0].y);
     }
-    const from = i;
-    i += n * 4;
-    if (i > vertices.length) {
-      throw new CompileError(`${where}: the attachment's weighted vertex run is truncated at vertex ${boneCounts.length}`);
-    }
-    for (let k = from; k < i; k++) influenceRun.push(vertices[k]);
     boneCounts.push(n);
+    at += 1 + n * 4;
   }
   // ⚠️ The influence count is the SUM of the per-vertex counts, not a division
-  // of the JSON array's length. The emitted array is `boneCount` followed by
+  // of the emitted JSON array's length. The emitted array is `boneCount` followed by
   // `boneIndex, x, y, weight` per influence — five numbers for a single-bone
   // vertex, not three — so `vertices.length / 3` overstated the deform array by
   // two thirds on a one-bone-per-vertex mesh (`gallery/flex`'s 77-vertex leaf
@@ -7805,17 +7855,15 @@ function deformGeometryOf(
   const setupWorld: number[] = [];
   const influenceBones: BoneTransform[] = [];
   let openWeights: string | null = null;
-  for (let v = 0, k = 0; v < boneCounts.length; v++) {
+  for (let v = 0; v < boneCounts.length; v++) {
     let wx = 0;
     let wy = 0;
     let sum = 0;
-    for (let n = 0; n < boneCounts[v]; n++, k++) {
-      const index = influenceRun[4 * k];
-      const bone = rigBones[index];
-      const m = bone === undefined ? undefined : transforms.get(bone.name);
-      if (!m) throw new CompileError(`${where}: vertex ${v} binds bone index ${index}, which is not in the bone list`);
-      const weight = influenceRun[4 * k + 3];
-      const [x, y] = toWorld(m, influenceRun[4 * k + 1], influenceRun[4 * k + 2]);
+    for (const binding of vertices.bindings[v]) {
+      const m = transforms.get(binding.bone);
+      if (!m) throw new CompileError(`${where}: vertex ${v} binds bone "${binding.bone}", which has no setup transform`);
+      const weight = binding.weight;
+      const [x, y] = toWorld(m, binding.x, binding.y);
       wx += x * weight;
       wy += y * weight;
       sum += weight;
@@ -7910,10 +7958,10 @@ function deformGeometryOf(
 function compileSequenceTrack(
   track: MotionSequenceTrack,
   duration: number,
-  attachment: SpineAttachment,
+  attachment: SkinTableEntry,
   where: string,
 ): SpineTimelineKey[] {
-  const type = (attachment as { type?: string }).type ?? 'region';
+  const type = attachmentTypeOf(attachment);
   const series = (attachment as { sequence?: SpineSequence }).sequence;
   if (series === undefined) {
     throw new CompileError(
