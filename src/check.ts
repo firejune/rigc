@@ -80,6 +80,7 @@ import {
   PAD,
   FRAMES_SIDECAR,
   FRAMES_SPEC,
+  nonFinitePoseOf,
   SHEET_COLUMNS,
   SHEET_FILE,
   SHEET_GAP,
@@ -1225,6 +1226,27 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   // to compare it — and posing twice is both slower and a chance for the framing
   // and the comparison to disagree about what they measured.
   const prepared = sets.map((set) => prepareSet(located.root, set, posable, options.as, poseOptions));
+  // 🔒 A pose that is not finite is refused before anything measures it (issue
+  // #873), in the words `render` and the geometry export use for it. Measured
+  // on a planted bone at x=1e309 before this: an overflowing root read "posed no
+  // drawable attachment", one at -1e309 "drew no pixel", and one at +1e309 or a
+  // rotation at 1e309 exited 0 with MAE 1.00 — the part missing from every
+  // frame, and nothing said why.
+  const posed = prepared.filter((p) => p.missing === null);
+  const overflow = posed.some((p) =>
+    p.frames.some((frame) => frame.pieces.some((piece) => piece.world.some((value) => !Number.isFinite(value)))),
+  );
+  if (overflow) {
+    const found = nonFinitePoseOf(
+      posable.data,
+      options.skin,
+      posed.map((p) => ({ animation: p.candidateAnimation, fps: p.set.fps })),
+    );
+    if (found === null) {
+      throw new Error('a drawn piece of the candidate is not finite and no bone or vertex of its pose is — the two were posed differently');
+    }
+    throw new CheckError(`the candidate is posed to a number that is not finite, so no frame of it can be compared: ${found}`);
+  }
   const pairs = prepared.flatMap((p) => p.pairs);
   if (pairs.length === 0) {
     notes.push('no reference frame has a candidate frame at the same index — nothing below was measured');
