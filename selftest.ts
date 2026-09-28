@@ -55483,18 +55483,29 @@ function runCurrencySuite(): number {
         : raw;
       return body.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
     });
-    const reads = (key: string): boolean => {
+    const readsIn = (texts: readonly string[], key: string): boolean => {
       const token = new RegExp(`\\b${key}\\b`);
-      return code.some((text) => token.test(text));
+      return texts.some((text) => token.test(text));
     };
+    const reads = (key: string): boolean => readsIn(code, key);
+    // The compiler's own modules — `cli.ts` and `src/` — which is where issue
+    // #545's key lived and was read by nothing. `tools/` is left out of THIS set
+    // only: `tools/pose_oracle.ts` dumps the runtime's
+    // `PhysicsConstraintData.scaleYMode`, a real spine-core property of that
+    // name, which is not the rig-spec key #545 was about. The orphan scan above
+    // keeps its full scope, tools included, and `zzNoSuchSpecKey` below already
+    // holds that scope to not matching everything.
+    const compilerCode = code.filter((_, i) => !modules[i].startsWith('tools/'));
     const every = [...new Set([...Object.values(RIG_KEYS), ...Object.values(MOTION_KEYS)].flat())].sort();
     const orphans = every.filter((key) => !reads(key));
     // The plants, and the first of them is the defect itself: with the
-    // declarations and the prose gone, `scaleYMode` is a name no line of code in
-    // this repository carries — so a run that reported it read would be a search
-    // matching anything, and the clean verdict above would mean nothing.
+    // declarations and the prose gone, `scaleYMode` is a name no line of the
+    // compiler's code carries — so a run that reported it read there would be a
+    // search matching anything, and the clean verdict above would mean nothing.
     const planted = [
-      ...(reads('scaleYMode') ? ['`scaleYMode` was reported as read by code, so this search matches prose and the clean run is vacuous'] : []),
+      ...(readsIn(compilerCode, 'scaleYMode')
+        ? ['`scaleYMode` was reported as read by code, so this search matches prose and the clean run is vacuous']
+        : []),
       ...(reads('zzNoSuchSpecKey') ? ['a name no file carries was reported as read'] : []),
       ...(reads('triangles') ? [] : ['a key every emitted mesh carries was reported as unread, so the search matches nothing']),
     ];
@@ -55507,7 +55518,8 @@ function runCurrencySuite(): number {
         [...orphans.map((key) => `"${key}" is named by no line of code in the ${modules.length} module(s) this reads, only by its own declaration`), ...planted],
         `all ${every.length} distinct key(s) of the two formats are named by code in the ${modules.length} ` +
           `module(s) this reads, with the ${DECLARING.size} declaring ones stripped of their interfaces and their key and type ` +
-          'tables and every module stripped of its comments — under which `scaleYMode` reads as unnamed, an ' +
+          'tables and every module stripped of its comments — under which `scaleYMode` reads as unnamed by the ' +
+          'compiler\'s modules, an ' +
           'invented key as unnamed, and an emitted one as named',
       ),
       'run over the whole tree before it was written, this named exactly one key — ' +
