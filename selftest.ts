@@ -442,6 +442,15 @@ import {
   parseDt,
 } from './tools/pose_oracle.ts';
 import {
+  compareHashes,
+  galleryRecipe,
+  type HashesDocument,
+  type Recipe,
+  readHashes,
+  recipesText,
+  treeRecipes,
+} from './tools/emit_hashes.ts';
+import {
   diffSummaryLines,
   EDITOR_DEFAULTS,
   shapeDiff,
@@ -66033,6 +66042,308 @@ function runPoseOracleSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// the byte-identity instrument: tools/emit_hashes.ts (issue #914, step 1a of #380)
+// ---------------------------------------------------------------------------
+
+/** The hashes command in a child process, as a caller runs it. */
+function runHashes(args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, ['tools/emit_hashes.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/**
+ * The bones of a rig spec, parsed. Only the fields the plants below touch are
+ * typed; the rest of the spec is carried through `JSON.stringify` untouched.
+ */
+type SpecBone = { name: string; parent?: string; x?: number };
+
+function editSpecBones(path: string, edit: (bones: SpecBone[]) => string): string {
+  const spec = JSON.parse(readFileSync(path, 'utf8')) as { bones: SpecBone[] };
+  const what = edit(spec.bones);
+  writeFileSync(path, `${JSON.stringify(spec, null, 2)}\n`);
+  return what;
+}
+
+/**
+ * `tools/emit_hashes.ts` held the way `pose_oracle` is: three rows the card
+ * names over two gallery rigs, the tree's own recipes, and the refusals.
+ * Returns null — a HOLE — when `gallery/` is absent.
+ *
+ * 💰 Cost: eight `rigc build` child processes over two gallery rigs (two runs
+ * of the pair for EH01, one each for EH02 and EH03), the tree's recipes
+ * generated once — which trial-builds the two exports that sit beside two
+ * packs when `examples/` is fetched — and seven refusals that each exit before
+ * building anything. The whole corpus is never run here; that is PR material.
+ */
+function runEmitHashesSuite(): number | null {
+  console.log('\n── emit-hashes: every build hashed as it lands on disk, and two runs compared (issue #914) ──');
+  const galleryRoot = resolve(import.meta.dir, 'gallery');
+  const pair = existsSync(galleryRoot)
+    ? readdirSync(galleryRoot)
+        .sort()
+        .filter((name) => existsSync(join(galleryRoot, name, 'rig.json')))
+        .slice(0, 2)
+    : [];
+  if (pair.length < 2) {
+    console.log(`  SKIP  EH01–EH05 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — no build was hashed, so byte identity across runs was not measured.');
+    return null;
+  }
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const work = mkdtempSync(join(tmpdir(), 'rigc-emit-hashes-selftest-'));
+  const recipes = pair.map((name) => galleryRecipe(import.meta.dir, name).recipe);
+  const recipesPath = join(work, 'recipes.json');
+  writeFileSync(recipesPath, recipesText(recipes));
+  const runAt = (label: string, workDir: string, root?: string): { run: ReturnType<typeof runHashes>; out: string; doc: HashesDocument | null } => {
+    const out = join(work, `${label}.json`);
+    const run = runHashes(['run', '--recipes', recipesPath, '--out', out, '--work', workDir, ...(root === undefined ? [] : ['--root', root])]);
+    let doc: HashesDocument | null = null;
+    try {
+      doc = existsSync(out) ? readHashes(out) : null;
+    } catch {
+      doc = null;
+    }
+    return { run, out, doc };
+  };
+  /** A copy of the pair's gallery directories, the root a plant is made in. */
+  const plantRoot = (label: string): string => {
+    const root = join(work, `${label}-root`);
+    for (const name of pair) cpSync(join(galleryRoot, name), join(root, 'gallery', name), { recursive: true });
+    return root;
+  };
+
+  // --- EH01: two runs of one recipe set, at two work depths, are byte-identical --
+  const a = runAt('a', join(work, 'wa'));
+  const b = runAt('b', join(work, 'w', 'one', 'level', 'deeper', 'wb'));
+  {
+    const probes: string[] = [];
+    for (const [label, r] of [['A', a], ['B', b]] as const) {
+      if (r.run.status !== 0) probes.push(`run ${label} exited ${r.run.status}: ${r.run.stderr.trim().slice(0, 200)}`);
+      if (r.doc === null) probes.push(`run ${label} wrote no readable hash document`);
+      for (const recipe of r.doc?.recipes ?? []) {
+        if (recipe.exits.some((e) => e !== 0)) probes.push(`run ${label}: ${recipe.name} exited ${JSON.stringify(recipe.exits)}, not green`);
+        if (!recipe.files.some((f) => f.path === 'skeleton.json')) probes.push(`run ${label}: ${recipe.name} hashed no skeleton.json`);
+      }
+    }
+    if (a.doc !== null && b.doc !== null && !readFileSync(a.out).equals(readFileSync(b.out))) probes.push('the two hash documents differ in their bytes');
+    const same = runHashes(['compare', a.out, b.out]);
+    const last = same.stdout.trim().split('\n').pop() ?? '';
+    if (same.status !== 0 || !last.startsWith('IDENTICAL')) probes.push(`compare of the twins exited ${same.status}: ${JSON.stringify(last)}`);
+    const files = a.doc?.recipes.reduce((s, r) => s + r.files.length, 0) ?? 0;
+    const held = probes.length === 0;
+    say(
+      'EH01_TWO_RUNS_OF_ONE_RECIPE_SET_AT_TWO_WORK_DEPTHS_HASH_BYTE_IDENTICAL',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${pair.map((n) => `gallery/${n}`).join(' and ')} built twice through \`rigc build\`, the second work directory four ` +
+          `levels deeper: ${existsSync(a.out) ? statSync(a.out).size : 0}-byte documents equal to the byte over ${files} hashed ` +
+          `file(s), and compare reads ${JSON.stringify(last)} with exit 0`,
+      ),
+      'the brief\'s row EH01, and the one the instrument stands on: a hash document that moved between two runs of one ' +
+        'commit would make every cross-commit DIFF a statement about the run. The two depths are the half that is ' +
+        'measured rather than assumed — built in place, `build` spells `images` and every atlas page as a path from ' +
+        '`--out`, and one level of depth changed the skeleton file; staged inputs are what make it hold',
+    );
+  }
+
+  // --- EH02: one number edited in a spec copy is the ONE recipe compare names --
+  {
+    const probes: string[] = [];
+    const target = pair[1];
+    const root = plantRoot('moved');
+    let what = '';
+    try {
+      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
+        const bone = [...bones].reverse().find((x) => typeof x.x === 'number');
+        if (bone === undefined) return '';
+        bone.x = (bone.x as number) + 1;
+        return `bone "${bone.name}" x ${bone.x - 1} → ${bone.x}`;
+      });
+    } catch (err) {
+      probes.push(`the plant could not be made: ${(err as Error).message}`);
+    }
+    if (what === '') probes.push(`gallery/${target}/rig.json has no bone with a numeric x to move`);
+    const moved = runAt('moved', join(work, 'wm'), root);
+    const run = runHashes(['compare', a.out, moved.out]);
+    let named: string[] = [];
+    if (moved.run.status !== 0) probes.push(`the planted run exited ${moved.run.status}: ${moved.run.stderr.trim().slice(0, 200)}`);
+    if (run.status !== 1) probes.push(`compare exited ${run.status} over the plant, not 1`);
+    if (a.doc !== null && moved.doc !== null) {
+      const c = compareHashes(a.doc, moved.doc);
+      named = c.differ.map((d) => d.name);
+      if (c.onlyA.length + c.onlyB.length > 0) probes.push(`recipes on one side only: ${[...c.onlyA, ...c.onlyB].join(', ')}`);
+      if (named.length !== 1 || named[0] !== `gallery/${target}`) probes.push(`compare named [${named.join(', ')}], not gallery/${target} alone`);
+      const findings = c.differ.flatMap((d) => d.findings);
+      if (findings.length !== 1 || !findings[0].startsWith('skeleton.json differs:')) {
+        probes.push(`the findings are ${JSON.stringify(findings)}, not skeleton.json alone — a bone's x moves no part's page`);
+      }
+      if (!run.stdout.includes(`DIFF  gallery/${target}`)) probes.push('the printed report does not carry the recipe\'s DIFF line');
+    } else probes.push('a document to compare is missing');
+    const held = probes.length === 0;
+    say(
+      'EH02_ONE_NUMBER_EDITED_IN_A_SPEC_COPY_IS_THE_ONE_RECIPE_AND_FILE_COMPARE_NAMES',
+      held,
+      probeDetail(held, probes, `${what} in a copy of gallery/${target}/rig.json, run under --root: compare exits 1 naming ${named.join(', ')} and skeleton.json in it, and nothing else`),
+      'the brief\'s row EH02: the smallest edit a cut could make by mistake, and the two names an agent needs to act ' +
+        'on it. "Nothing else" is the half that keeps it from passing by making everything noisy — the untouched ' +
+        'twin recipe and the untouched atlas both stay IDENTICAL',
+    );
+  }
+
+  // --- EH03: a refused build is recorded as its exit code and named, never dropped --
+  {
+    const probes: string[] = [];
+    const target = pair[0];
+    const root = plantRoot('refused');
+    const ghost = '__emit_hashes_no_such_bone';
+    let what = '';
+    try {
+      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
+        const bone = [...bones].reverse().find((x) => typeof x.parent === 'string');
+        if (bone === undefined) return '';
+        bone.parent = ghost;
+        return `bone "${bone.name}"'s parent renamed to "${ghost}"`;
+      });
+    } catch (err) {
+      probes.push(`the plant could not be made: ${(err as Error).message}`);
+    }
+    if (what === '') probes.push(`gallery/${target}/rig.json has no bone with a parent`);
+    const refused = runAt('refused', join(work, 'wr'), root);
+    const run = runHashes(['compare', a.out, refused.out]);
+    let exits = '';
+    if (refused.run.status !== 0) probes.push(`the run exited ${refused.run.status} over a refusing recipe; a refusal is data, not a failed run`);
+    if (run.status !== 1) probes.push(`compare exited ${run.status}, not 1`);
+    const row = refused.doc?.recipes.find((r) => r.name === `gallery/${target}`);
+    if (row === undefined) probes.push(`the planted document has no row for gallery/${target} — the refusal was dropped`);
+    else {
+      exits = JSON.stringify(row.exits);
+      if (!row.exits.some((e) => e !== 0)) probes.push(`gallery/${target} recorded exits ${exits}; the build was planted to refuse`);
+      if (row.files.length !== 0) probes.push(`a refused build left ${row.files.length} file(s) under --out`);
+    }
+    if (a.doc !== null && refused.doc !== null) {
+      const c = compareHashes(a.doc, refused.doc);
+      const named = c.differ.map((d) => d.name);
+      if (named.length !== 1 || named[0] !== `gallery/${target}`) probes.push(`compare named [${named.join(', ')}], not gallery/${target} alone`);
+      const findings = c.differ.flatMap((d) => d.findings);
+      if (!findings.some((f) => f.startsWith('exit codes [0] in A'))) probes.push(`no finding names the exit codes: ${JSON.stringify(findings)}`);
+      for (const file of a.doc.recipes.find((r) => r.name === `gallery/${target}`)?.files ?? []) {
+        if (!findings.some((f) => f.startsWith(`${file.path} only in A`))) probes.push(`${file.path}, written by the green twin, is not named as only in A`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'EH03_A_REFUSED_BUILD_IS_ITS_EXIT_CODE_NAMED_AGAINST_ITS_GREEN_TWIN_NEVER_DROPPED',
+      held,
+      probeDetail(held, probes, `${what} in a copy of gallery/${target}/rig.json: the run exits 0 and records exits ${exits} with no file; compare exits 1 naming that recipe's exit codes and every file only its green twin wrote`),
+      'the brief\'s row EH03: a cut that makes a green build refuse is the loudest regression there is, and an ' +
+        'instrument that skipped refused recipes would read it as a smaller corpus. Never a partial verdict',
+    );
+  }
+
+  // --- EH04: the tree's recipes are generated from the tree, with no finding --
+  {
+    const probes: string[] = [];
+    const notes: string[] = [];
+    let generated: Recipe[] = [];
+    try {
+      generated = treeRecipes(import.meta.dir, (line) => notes.push(line));
+    } catch (err) {
+      probes.push(`generating the recipes threw: ${(err as Error).message}`);
+    }
+    const gallery = readdirSync(galleryRoot)
+      .sort()
+      .filter((name) => existsSync(join(galleryRoot, name, 'rig.json')));
+    const exports = corpusExports();
+    for (const name of gallery) {
+      const r = generated.find((x) => x.name === `gallery/${name}`);
+      if (r === undefined) probes.push(`gallery/${name} has no recipe`);
+      else if (!r.commands[0].includes(`{{work}}/gallery/${name}/rig.json`)) probes.push(`gallery/${name}'s recipe does not build its own staged rig.json: ${JSON.stringify(r.commands[0])}`);
+    }
+    for (const entry of exports) {
+      if (!generated.some((x) => x.name === `examples/${entry.label}` && x.commands.length === 2 && x.commands[0][0] === 'ingest')) {
+        probes.push(`examples/${entry.label} has no ingest-then-build recipe`);
+      }
+    }
+    const extra = generated.length - gallery.length - exports.length;
+    if (extra !== 0) probes.push(`${generated.length} recipe(s) for ${gallery.length} gallery rig(s) and ${exports.length} export(s)`);
+    const findings = notes.filter((n) => n.startsWith('FINDING'));
+    if (findings.length > 0) probes.push(...findings);
+    const hole = exports.length === 0;
+    const held = probes.length === 0;
+    say(
+      'EH04_THE_TREES_RECIPES_ARE_EVERY_GALLERY_RIG_AND_EVERY_EXPORT_WITH_NO_FINDING',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${generated.length} recipe(s): ${gallery.length} gallery rig(s), each with the build its own README states, and ` +
+          `${exports.length} export(s) as ingest --art none then build --atlas-in` +
+          (hole ? ' — ⚠️ examples/ is not fetched, so the export half is a HOLE in this run' : ''),
+      ),
+      'the brief\'s third command, held: the base a cut is compared against is only a base for the corpora it covers, ' +
+        'and a gallery README that stopped stating its build would otherwise drop a recipe in silence',
+    );
+    if (hole) console.log('          ⚠️ HOLE: no editor export under examples/ — run `bun run fetch-examples`; this row covered the gallery only.');
+  }
+
+  // --- EH05: a bad input exits 2, by name, and writes nothing --
+  {
+    const probes: string[] = [];
+    const out = join(work, 'bad-input-out.json');
+    const notHashes = join(work, 'not-hashes.json');
+    writeFileSync(notHashes, '{"spec":"pose-oracle/1"}\n');
+    const otherSet = join(work, 'other-set.json');
+    if (a.doc !== null) {
+      const copy = JSON.parse(readFileSync(a.out, 'utf8')) as HashesDocument;
+      copy.recipes[0].commands[0] = [...copy.recipes[0].commands[0], '--profile', 'spine-html'];
+      writeFileSync(otherSet, `${JSON.stringify(copy, null, 2)}\n`);
+    }
+    const badOut = join(work, 'bad-out.json');
+    writeFileSync(badOut, recipesText([{ ...recipes[0], commands: [recipes[0].commands[0].map((arg) => (arg === '{{out}}' ? '{{work}}/elsewhere' : arg))] }]));
+    const badStage = join(work, 'bad-stage.json');
+    writeFileSync(badStage, recipesText([{ ...recipes[0], stage: [{ from: 'gallery/__emit_hashes_absent', to: 'gallery/x' }] }]));
+    const full = join(work, 'full');
+    mkdirSync(full, { recursive: true });
+    writeFileSync(join(full, 'left-over'), '');
+    const cases: Array<[string, string[], string]> = [
+      ['a file that does not exist', ['compare', join(work, 'absent.json'), a.out], 'no such file'],
+      ['a document that is not a hash document', ['compare', notHashes, a.out], 'spec is "pose-oracle/1", not "emit-hashes/1"'],
+      ['one name standing for two builds', ['compare', a.out, otherSet], 'different recipe sets'],
+      ['a last command whose --out is not {{out}}', ['run', '--recipes', badOut, '--out', out, '--work', join(work, 'w1')], 'it must be {{out}}'],
+      ['an input that is not there', ['run', '--recipes', badStage, '--out', out, '--work', join(work, 'w2')], 'input(s) missing before anything ran'],
+      ['a work directory that is not fresh', ['run', '--recipes', recipesPath, '--out', out, '--work', full], 'is not empty'],
+      ['an unknown command', ['hash'], 'unknown command "hash"'],
+    ];
+    for (const [label, args, expect] of cases) {
+      const run = runHashes(args);
+      if (run.status !== 2) probes.push(`${label}: exit ${run.status}, not 2`);
+      if (!run.stderr.includes(expect)) probes.push(`${label}: stderr ${JSON.stringify(run.stderr.trim().slice(0, 200))} does not say ${JSON.stringify(expect)}`);
+      if (existsSync(out)) {
+        probes.push(`${label}: ${basename(out)} was written by a refused run`);
+        rmSync(out);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'EH05_A_BAD_INPUT_EXITS_2_BY_NAME_AND_WRITES_NOTHING',
+      held,
+      probeDetail(held, probes, `${cases.length} refusals, each exit 2 with its sentence and no document written: ${cases.map(([l]) => l).join('; ')}`),
+      'exit 2 is the third answer — not IDENTICAL, not DIFF, but "these cannot be compared" — and the one that ' +
+        'matters most is one recipe name standing for two builds, where every verdict under it would be a statement ' +
+        'about the recipes rather than the commits',
+    );
+  }
+
+  rmSync(work, { recursive: true, force: true });
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // reading through the rig: chainfit (issue #284)
 // ---------------------------------------------------------------------------
 
@@ -76785,6 +77096,7 @@ function main(): void {
   tally.of('geometry-export', runGeometryExportSuite);
   tally.of('pose', runPoseSuite);
   tally.of('pose-oracle', runPoseOracleSuite);
+  const emitHashesBad = tally.of('emit-hashes', runEmitHashesSuite, { ran: ranIt });
   tally.of('chainfit', runChainFitSuite);
   tally.of('ballot', runBallotSuite);
   tally.of('copy-images', runCopyImagesSuite);
@@ -77460,6 +77772,14 @@ function main(): void {
       'refused with exit 2 and nothing written; stepped physics moving only what a physics constraint carries; and ' +
       'every public example\'s rigc rebuild posed against its export at the reading measured, with what the corpus ' +
       'cannot grade printed as a HOLE — or all of that last half a HOLE when the corpus is not fetched)' +
+      (emitHashesBad === null
+        ? ''
+        : ', + ' + n('emit-hashes') + ' emit-hashes controls (issue #914 — `tools/emit_hashes.ts`, the byte-identity ' +
+          'instrument step 1 of #380 is gated by: two gallery rigs built twice through the CLI, at two work depths, ' +
+          'hashing equal to the byte; one number moved in a spec copy named as the one recipe and the one file it ' +
+          'changed; a refused build recorded as its exit code and named against its green twin; the tree\'s recipes ' +
+          'covering every gallery rig and every fetched export with no finding; and bad inputs refused with exit 2 ' +
+          'and nothing written)') +
       ', + ' + n('chainfit') + ' chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
@@ -77550,6 +77870,7 @@ function main(): void {
       gateHelpers +
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
+      (emitHashesBad === null ? '\n  ⚠️ Fewer than two gallery rigs, so no build was hashed across two runs (issue #914) in this run.' : '') +
       (launcher.startsWith(',') ? '' : launcher) +
       (gallery.examples > 0
         ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled three times and gated green under BOTH profiles`
