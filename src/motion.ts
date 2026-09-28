@@ -54,8 +54,8 @@
  * [`keys.ts`](keys.ts) shared with the rig parser.
  */
 import { CompileError } from './errors.ts';
-import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys, refuseValuesOfTheWrongType } from './keys.ts';
-import type { ShapeVisit, SpecValueType } from './keys.ts';
+import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys, refuseValuesOfTheWrongType, refuseValuesOutsideTheirSet } from './keys.ts';
+import type { ShapeVisit, SpecEnumTable, SpecValueType } from './keys.ts';
 import { SEQUENCE_MODES } from './timelines.ts';
 import type { MotionSpec } from './types.ts';
 
@@ -165,9 +165,8 @@ export const MOTION_KEYS = {
  * fields nothing here reads — an ik key's `mix`, a deform key's `offset`, an
  * event key's `float`, a derive's `degrees`.
  *
- * Where an unchecked type is refused: `spec` — the version check; a track's
- * `property` — `compileTrack`; a derive's `kind` — `evaluateTrackDerive`; a deform
- * transform's `kind`, `along` and `axis` — `evaluateDeformTransform`;
+ * Where an unchecked type is refused: an `enum` row — the entry `MOTION_ENUMS`
+ * has for it, below, which is a table a control reads rather than a list here;
  * `MotionKey.v`, a key's `curve`, a derive's `depth` and `mix.pairs` (`mixed`)
  * — the track compiler by property, the curve reader, the derive evaluator and
  * `parseMix`. A sequence key's `mode` is a closed set too, but its interface
@@ -226,6 +225,24 @@ export const MOTION_TYPES = {
   DeformWave: { kind: 'enum', amplitude: 'number', wavelength: 'number', phase: 'number', along: 'enum', axis: 'enum' },
   DeformBend: { kind: 'enum', amount: 'number', from: 'number', to: 'number', power: 'number', along: 'enum', axis: 'enum' },
 } as const satisfies MotionTypeTable;
+
+/**
+ * Who refuses each `enum` row of `MOTION_TYPES` outside its set (issue #900);
+ * `SpecEnumTable` in [`keys.ts`](keys.ts) says what an entry means. Every one
+ * is an owner: measured when this table was written, a planted `5` and `"foo"`
+ * on each row was refused by name by the reader named here, listing the names
+ * that exist, so none of them states a set. A deform transform's and a derive's
+ * `kind` choose the row they are checked against, as a generator's does.
+ */
+export const MOTION_ENUMS = {
+  MotionSpec: { spec: { owner: 'parseMotionSpecInto' } },
+  MotionTrack: { property: { owner: 'compileTrack' } },
+  TrackDeriveTurn: { kind: { owner: 'evaluateTrackDerive' } },
+  DeformTurn: { kind: { owner: 'evaluateDeformTransform' } },
+  DeformAffine: { kind: { owner: 'evaluateDeformTransform' } },
+  DeformWave: { kind: { owner: 'evaluateDeformTransform' }, along: { owner: 'evaluateDeformTransform' }, axis: { owner: 'evaluateDeformTransform' } },
+  DeformBend: { kind: { owner: 'evaluateDeformTransform' }, along: { owner: 'evaluateDeformTransform' }, axis: { owner: 'evaluateDeformTransform' } },
+} as const satisfies SpecEnumTable<typeof MOTION_TYPES>;
 
 /** A deform key's `transform` kinds, and the shape each one's keys come from. */
 const DEFORM_TRANSFORM_SHAPE: Record<string, keyof typeof MOTION_KEYS> = {
@@ -778,6 +795,9 @@ function parseMotionSpecInto(raw: unknown, where: string, visits: readonly Shape
   // as an event with no audio, a yaw transform's `"depth": "true"` as a radius
   // that is undefined.
   refuseValuesOfTheWrongType(visits, MOTION_TYPES, where);
+  // Every `enum` row here names an owner, so this refuses nothing today; it is
+  // called so that a row given a set is refused from the day it is given one.
+  refuseValuesOutsideTheirSet(visits, MOTION_TYPES, MOTION_ENUMS, where);
 
   // Last, so every field check above keeps its own sentence for a number that
   // is not finite; what reaches this line is a finite double the float32 file

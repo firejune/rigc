@@ -187,10 +187,23 @@ import {
   parserReading,
   withoutParserDefaults,
 } from './src/keyorder.ts';
-import { MOTION_KEYS, MOTION_TYPES, parseMotionSpec } from './src/motion.ts';
-import { CHECKED_SPEC_VALUE_TYPES, FLOAT32_MAX, SPEC_VALUE_TYPES } from './src/keys.ts';
-import { MANIFEST_TYPES } from './src/types.ts';
-import { BONE_INHERIT_KNOWN, RIG_BONE_INHERIT, RIG_KEYS, RIG_SPEC_VERSION, RIG_TYPES, parseRigSpec, resolveBoneInherit } from './src/rig.ts';
+import { MOTION_ENUMS, MOTION_KEYS, MOTION_TYPES, parseMotionSpec } from './src/motion.ts';
+import { CHECKED_SPEC_VALUE_TYPES, FLOAT32_MAX, SPEC_VALUE_TYPES, type SpecEnumRule } from './src/keys.ts';
+import { MANIFEST_ENUMS, MANIFEST_MESH_KINDS, MANIFEST_TYPES } from './src/types.ts';
+import {
+  BONE_INHERIT_KNOWN,
+  RIG_BONE_INDEXING,
+  RIG_BONE_INHERIT,
+  RIG_ENUMS,
+  RIG_FROM_ROTATIONS,
+  RIG_GENERATOR_KINDS,
+  RIG_KEYS,
+  RIG_SLOT_BLEND,
+  RIG_SPEC_VERSION,
+  RIG_TYPES,
+  parseRigSpec,
+  resolveBoneInherit,
+} from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
   buildGridMesh,
@@ -7528,6 +7541,102 @@ const RIG_MUTANTS: RigMutant[] = [
       (rig as any).bones.find((b: any) => b.name === 'root').skin = 'true';
     },
   },
+  // 🔒 A name outside an `enum` row's closed set (issue #900). #890's walk
+  // types every field and deliberately not an `enum`, whose type says nothing
+  // about which names exist — and three rows had nobody holding the name.
+  // Measured before the set was stated: `boneIndexing` and `from.rotation`
+  // built green at `5` and `"foo"`, and a generator `kind` of either threw a
+  // TypeError. One row per value an author could write in the wrong place.
+  {
+    name: 'RF118_a_bone_indexing_outside_its_set_is_refused_naming_the_value_and_both_names',
+    origin: 'issue #900: `"boneIndexing": "foo"` built green, read as the default "name" — byte for byte the build that states no key',
+    expect: 'skin "default" slot "near" attachment "probe_mesh" boneIndexing is "foo"; one of "name", "raw"',
+    mutate: (rig) => {
+      (rig as any).skins = {
+        default: {
+          near: {
+            probe_mesh: { type: 'mesh', image: 'nope_not_here.png', uvs: [0, 0, 1, 0, 1, 1], triangles: [0, 1, 2], vertices: [0, 0, 1, 0, 1, 1], boneIndexing: 'foo' },
+          },
+        },
+      };
+    },
+  },
+  {
+    name: 'RF119_a_bone_indexing_given_as_a_number_is_refused_by_the_set_not_by_the_type',
+    origin:
+      'issue #900: `5` built green as "name" too. The type walk does not check an `enum` row, so a number there ' +
+      'is a value outside the set, and it is named as one',
+    expect: 'skin "default" slot "near" attachment "probe_mesh" boneIndexing is 5; one of "name", "raw"',
+    mutate: (rig) => {
+      (rig as any).skins = {
+        default: {
+          near: {
+            probe_mesh: { type: 'mesh', image: 'nope_not_here.png', uvs: [0, 0, 1, 0, 1, 1], triangles: [0, 1, 2], vertices: [0, 0, 1, 0, 1, 1], boneIndexing: 5 },
+          },
+        },
+      };
+    },
+  },
+  {
+    name: 'RF120_a_bone_indexing_one_letter_past_the_name_is_refused_rather_than_read_as_it',
+    origin:
+      'issue #900 wrote the set as "named" and "raw", and `"named"` built green, read as "name" — a near miss of the ' +
+      'right word is exactly what a set nobody holds lets through',
+    expect: 'skin "default" slot "near" attachment "probe_mesh" boneIndexing is "named"; one of "name", "raw"',
+    mutate: (rig) => {
+      (rig as any).skins = {
+        default: {
+          near: {
+            probe_mesh: { type: 'mesh', image: 'nope_not_here.png', uvs: [0, 0, 1, 0, 1, 1], triangles: [0, 1, 2], vertices: [0, 0, 1, 0, 1, 1], boneIndexing: 'named' },
+          },
+        },
+      };
+    },
+  },
+  {
+    name: 'RF121_a_rotation_source_outside_its_set_is_refused_by_the_bone',
+    origin:
+      'issue #900: `"rotation": "foo"` on an anchored bone built green with the bone\'s setup rotation dropped — ' +
+      'byte for byte the build that states no from.rotation',
+    expect: 'bone "mass_a" from.rotation is "foo"; one of "axis", "anchor"',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'mass_a').from.rotation = 'foo';
+    },
+  },
+  {
+    name: 'RF122_a_rotation_source_given_as_a_number_is_refused_by_the_bone',
+    origin: 'issue #900: `"rotation": 5` under `from` is not a literal rotation, and it built green as no rotation at all',
+    expect: 'bone "mass_a" from.rotation is 5; one of "axis", "anchor"',
+    mutate: (rig) => {
+      (rig as any).bones.find((b: any) => b.name === 'mass_a').from.rotation = 5;
+    },
+  },
+  {
+    name: 'RF123_a_generator_kind_outside_the_five_is_refused_naming_all_five',
+    origin:
+      'issue #900: the scan skipped a `kind` it had no row for as "the mesh builder\'s refusal", and the builder had ' +
+      'none — it fell through to its ring branch and threw `TypeError: undefined is not an object`',
+    expect: 'skin "default" slot "near" attachment "probe_mesh" generator.kind is "foo"; one of "ring", "ribbon", "contour", "grid", "segments"',
+    mutate: (rig) => {
+      (rig as any).skins = { default: { near: { probe_mesh: { type: 'mesh', image: 'nope_not_here.png', generator: { kind: 'foo', cols: 2, rows: 2 } } } } };
+    },
+  },
+  {
+    name: 'RF124_a_generator_kind_given_as_a_number_is_refused',
+    origin: 'issue #900: `"kind": 5` threw the same TypeError',
+    expect: 'skin "default" slot "near" attachment "probe_mesh" generator.kind is 5; one of "ring", "ribbon", "contour", "grid", "segments"',
+    mutate: (rig) => {
+      (rig as any).skins = { default: { near: { probe_mesh: { type: 'mesh', image: 'nope_not_here.png', generator: { kind: 5, cols: 2, rows: 2 } } } } };
+    },
+  },
+  {
+    name: 'RF125_a_generator_that_states_no_kind_is_refused_as_absent',
+    origin: 'issue #900: a generator with no `kind` reached the same fall-through, since the scan could not choose a row for it either',
+    expect: 'skin "default" slot "near" attachment "probe_mesh" generator.kind is absent; one of "ring", "ribbon", "contour", "grid", "segments"',
+    mutate: (rig) => {
+      (rig as any).skins = { default: { near: { probe_mesh: { type: 'mesh', image: 'nope_not_here.png', generator: { cols: 2, rows: 2 } } } } };
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -8149,6 +8258,298 @@ function runRigSuite(): number {
         probes.length === 0 ? 'exit 1, the bone and both types named on stderr, --out never created' : probes.join('; '),
         'emit only after green: a skeleton with "x": 5 on disk is a value the spec spelt and never stated, and it ' +
           'outlives the console line that refused it',
+      );
+    }
+    rmSync(work, { recursive: true, force: true });
+  }
+
+  // --- names outside an `enum` row's set, off the rig spec's own route (#900)
+  //
+  // RF118–RF125 are the refusal on the rig spec's three unheld rows. These are
+  // what a row in `RIG_MUTANTS` cannot say: the manifest's `mesh.kind`, which was
+  // the fourth, every legal name still building green, the table claim that a
+  // fifth cannot arrive unheld, an owner keeping its own sentence, and the CLI
+  // writing nothing.
+  {
+    const refusalOf = (fn: () => unknown): string => {
+      try {
+        fn();
+        return '';
+      } catch (err) {
+        return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+      }
+    };
+    const work = mkdtempSync(join(tmpdir(), 'rigc-enums-'));
+
+    // The manifest's `mesh.kind`, planted on a ring part: before the set was
+    // stated it was refused as a ribbon missing its rows — a fault it did not have.
+    if (opts.manifestPath !== undefined) {
+      const manifest = JSON.parse(readFileSync(opts.manifestPath, 'utf8')) as { parts: Array<{ mesh?: Record<string, unknown> }> };
+      const at = manifest.parts.findIndex((p) => p.mesh !== undefined && (p.mesh.kind ?? 'ring') === 'ring');
+      let said = `the fixture manifest has no ring part to plant (${opts.manifestPath})`;
+      let planted = '';
+      if (at >= 0) {
+        manifest.parts[at].mesh!.kind = 'foo';
+        planted = join(dirname(opts.manifestPath), 'enum_probe.manifest.json');
+        writeFileSync(planted, `${JSON.stringify(manifest, null, 2)}\n`);
+        said = refusalOf(() => compile({ ...opts, manifestPath: planted }));
+        rmSync(planted);
+      }
+      bad += reportCase(
+        'RF126_A_MANIFEST_MESH_KIND_OUTSIDE_ITS_SET_IS_REFUSED_BY_ITS_PATH_RATHER_THAN_AS_A_RIBBON',
+        at >= 0 && said.startsWith(`${planted}: parts[${at}].mesh.kind is "foo"; one of "ring", "ribbon"`) && !said.includes('ribbon mesh needs'),
+        said === '' ? 'a ring part with mesh.kind "foo" compiled' : `refused with: ${said}`,
+        'issue #900, measured before the set: the mesh checks read "foo" as a ribbon and the control-bone reader and the ' +
+          'geometry builder read it as a ring, so a ring part was refused as *a ribbon mesh needs mesh.rows and a ' +
+          'mesh.chain* and a ribbon part as *a mesh with no control bone deforms nothing*',
+      );
+    }
+
+    // Every legal name of the four sets, and every generator kind, still builds
+    // green — so the refusal above is about the name and not about the row.
+    {
+      const probes: string[] = [];
+      const seen: string[] = [];
+      const gateOf = (built: ReturnType<typeof compile>, atlasDir: string): string[] => {
+        const report = validate({
+          skeletonText: built.skeletonText,
+          atlasText: built.atlasText,
+          atlasDir,
+          declaredDurations: built.declaredDurations,
+          rig: built.rig,
+          profile: 'spine-html',
+        });
+        return [...new Set(report.failures.map((f) => f.assertion))];
+      };
+      // `from.rotation` and `mesh.kind`: every name in the set is stated in the
+      // articulated fixture, and its pristine build emits the rotation it asked for.
+      const rig = JSON.parse(sourceText) as { bones: Array<{ name: string; from?: { rotation?: string } }> };
+      const pristine = compile(opts);
+      const emittedBones = (JSON.parse(pristine.skeletonText) as { bones: Array<{ name: string; rotation?: number }> }).bones;
+      const failed = gateOf(pristine, opts.outDir);
+      if (failed.length > 0) probes.push(`the articulated fixture's own build failed ${failed.join(', ')}`);
+      for (const source of RIG_FROM_ROTATIONS) {
+        const users = rig.bones.filter((b) => b.from?.rotation === source);
+        if (users.length === 0) probes.push(`no bone of the fixture states from.rotation "${source}", so it was not built`);
+        for (const b of users) {
+          if (emittedBones.find((e) => e.name === b.name)?.rotation === undefined) probes.push(`bone "${b.name}" (from.rotation "${source}") was emitted with no rotation`);
+        }
+        if (users.length > 0) seen.push(`from.rotation "${source}" (${users.length} bone(s))`);
+      }
+      const manifest = opts.manifestPath === undefined ? null : (JSON.parse(readFileSync(opts.manifestPath, 'utf8')) as { parts: Array<{ mesh?: { kind?: string } }> });
+      for (const kind of MANIFEST_MESH_KINDS) {
+        const parts = (manifest?.parts ?? []).filter((p) => p.mesh?.kind === kind);
+        if (parts.length === 0) probes.push(`no part of the fixture manifest states mesh.kind "${kind}", so it was not built`);
+        else seen.push(`mesh.kind "${kind}" (${parts.length} part(s))`);
+      }
+      // `boneIndexing`: one quad bound to `block`, three ways — by `weights`,
+      // with `"name"` stated beside them, and as Spine's index run behind
+      // `"raw"`. The index is the bone's place in the emitted array, which the
+      // probe rig fixes; all three must emit the same attachment.
+      const quad = { uvs: [0, 0, 1, 0, 1, 1, 0, 1], triangles: [0, 1, 2, 0, 2, 3], hull: 4 };
+      const corners = [[-6, -4], [6, -4], [6, 4], [-6, 4]];
+      const byName = { type: 'mesh', image: 'block.png', ...quad, weights: corners.map(([x, y]) => [{ bone: 'block', x, y, weight: 1 }]) };
+      const forms: Record<(typeof RIG_BONE_INDEXING)[number] | 'absent', Record<string, unknown>> = {
+        absent: byName,
+        name: { ...byName, boneIndexing: 'name' },
+        raw: { type: 'mesh', image: 'block.png', ...quad, boneIndexing: 'raw', vertices: corners.flatMap(([x, y]) => [1, 1, x, y, 1]) },
+      };
+      const meshes: Record<string, string> = {};
+      for (const [form, mesh] of Object.entries(forms)) {
+        const dirs = meshProbe(mesh);
+        try {
+          const built = compileProbe(dirs);
+          const gate = gateOf(built, dirs.outDir);
+          if (gate.length > 0) probes.push(`boneIndexing ${form}: the gate failed ${gate.join(', ')}`);
+          const skins = (JSON.parse(built.skeletonText) as { skins: Array<{ attachments: Record<string, Record<string, unknown>> }> }).skins;
+          meshes[form] = JSON.stringify(skins[0]?.attachments.block?.block ?? null);
+        } catch (err) {
+          probes.push(`boneIndexing ${form}: refused — ${(err as Error).message}`);
+        } finally {
+          rmSync(dirs.dir, { recursive: true, force: true });
+        }
+      }
+      for (const form of RIG_BONE_INDEXING) {
+        if (meshes[form] === undefined) continue;
+        if (meshes[form] !== meshes.absent) probes.push(`boneIndexing "${form}" emitted a different mesh from the one that states no key`);
+        else seen.push(`boneIndexing "${form}"`);
+      }
+      // Every generator kind, one slot each, on the probe's 12x8 block.
+      const hull = [[3, 0], [9, 0], [12, 2], [12, 6], [9, 8], [3, 8], [0, 6], [0, 2]];
+      const generators: Record<(typeof RIG_GENERATOR_KINDS)[number], Record<string, unknown>> = {
+        ring: { kind: 'ring', size: [12, 8], center: [6, 4], inner: 0.45, controls: ['tip'], hull },
+        ribbon: { kind: 'ribbon', size: [12, 8], rows: 3, chain: ['block', 'tip'] },
+        contour: { kind: 'contour', tolerance: 1 },
+        grid: { kind: 'grid', cols: 2, rows: 2 },
+        segments: { kind: 'segments', cell: 4, bones: ['block'], falloff: { radius: 4 } },
+      };
+      const kinds = Object.keys(generators);
+      const dirs = writeProbeRig({
+        invariants: { meshSlots: kinds.length, meshTriangles: 400 },
+        bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }, { name: 'tip', parent: 'block', x: 6 }],
+        slots: kinds.map((k) => ({ name: `gen_${k}`, bone: 'block', attachment: 'block' })),
+        skins: { default: Object.fromEntries(kinds.map((k) => [`gen_${k}`, { block: { type: 'mesh', image: 'block.png', generator: generators[k as keyof typeof generators] } }])) },
+      });
+      try {
+        const built = compileProbe(dirs);
+        const gate = gateOf(built, dirs.outDir);
+        if (gate.length > 0) probes.push(`the five generators: the gate failed ${gate.join(', ')}`);
+        const attachments = (JSON.parse(built.skeletonText) as { skins: Array<{ attachments: Record<string, Record<string, { type?: string }>> }> }).skins[0]?.attachments ?? {};
+        for (const k of kinds) {
+          if (attachments[`gen_${k}`]?.block?.type !== 'mesh') probes.push(`generator "${k}" emitted no mesh`);
+          else seen.push(`generator "${k}"`);
+        }
+      } catch (err) {
+        probes.push(`the five generators were refused: ${(err as Error).message}`);
+      } finally {
+        rmSync(dirs.dir, { recursive: true, force: true });
+      }
+      bad += reportCase(
+        'RF127_EVERY_NAME_IN_EVERY_STATED_SET_AND_EVERY_GENERATOR_KIND_STILL_BUILDS_GREEN',
+        probes.length === 0 && seen.length > 0,
+        probes.length === 0
+          ? `${seen.length} legal name(s) built with the gate green: ${seen.join(', ')}; "name" and "raw" emit the mesh the unflagged build does`
+          : probes.join('; '),
+        'the positive control for RF118–RF126: a set that refused a name it lists would be a gate reading its own ' +
+          'table wrong. "raw" is built here on a run whose indices are right, which is what makes its mesh equal the ' +
+          'by-name one; what the escape costs when they are wrong is MR07\'s to show',
+      );
+    }
+
+    // Every `enum` row of the three type tables has an entry, and every entry
+    // is a set or an owner that reads the key — derived from the tables, so a
+    // fourth unheld row is a red run rather than a comment.
+    {
+      const srcDir = join(import.meta.dir, 'src');
+      const sources = readdirSync(srcDir).filter((f) => f.endsWith('.ts')).sort().map((f) => readFileSync(join(srcDir, f), 'utf8'));
+      const bodyOf = (name: string): string | null => {
+        for (const text of sources) {
+          const at = new RegExp(`^(?:export )?function ${name}\\b`, 'm').exec(text);
+          if (at === null) continue;
+          const rest = text.slice(at.index);
+          const end = rest.search(/\n\}\n/);
+          return end < 0 ? rest : rest.slice(0, end);
+        }
+        return null;
+      };
+      type EnumTables = Record<string, Record<string, SpecEnumRule>>;
+      const faultsOf = (label: string, types: Record<string, Record<string, string>>, enums: EnumTables): string[] => {
+        const faults: string[] = [];
+        for (const [shape, row] of Object.entries(types)) {
+          for (const [key, type] of Object.entries(row)) {
+            const rule = enums[shape]?.[key];
+            if (type !== 'enum') {
+              if (rule !== undefined) faults.push(`${label}: ${shape}.${key} is typed "${type}" and has an enum entry`);
+              continue;
+            }
+            if (rule === undefined) faults.push(`${label}: ${shape}.${key} is an enum row with neither a set nor an owner`);
+            else if ('set' in rule) {
+              if (rule.set.length === 0 || new Set(rule.set).size !== rule.set.length) faults.push(`${label}: ${shape}.${key} states a set that is empty or repeats a name`);
+              if (rule.readAs.trim() === '') faults.push(`${label}: ${shape}.${key} states a set and not what anything else was read as`);
+            } else {
+              const body = bodyOf(rule.owner);
+              if (body === null) faults.push(`${label}: ${shape}.${key} names owner ${rule.owner}, which no file in src/ declares`);
+              else if (!new RegExp(`\\b${key}\\b`).test(body)) faults.push(`${label}: ${shape}.${key} names owner ${rule.owner}, whose body never mentions ${key}`);
+            }
+          }
+        }
+        return faults;
+      };
+      const tables: Array<[string, Record<string, Record<string, string>>, EnumTables]> = [
+        ['rig', RIG_TYPES, RIG_ENUMS],
+        ['motion', MOTION_TYPES, MOTION_ENUMS],
+        ['manifest', MANIFEST_TYPES, MANIFEST_ENUMS],
+      ];
+      const faults = tables.flatMap(([label, types, enums]) => faultsOf(label, types, enums));
+      const rows = tables.flatMap(([, types, enums]) =>
+        Object.entries(types).flatMap(([shape, row]) => Object.keys(row).filter((k) => row[k] === 'enum').map((k) => enums[shape]?.[k])),
+      );
+      const sets = rows.filter((r) => r !== undefined && 'set' in r).length;
+      // The plant's key names occur nowhere in `src/`, so an owner that is real
+      // (`parseRigSpec`) and does not read the key is exactly what is planted.
+      const plantTypes = { P: { planted_enum_key: 'enum', planted_number_key: 'number' } };
+      const planted: ReadonlyArray<readonly [EnumTables, string, string]> = [
+        [{}, 'plant: P.planted_enum_key is an enum row with neither a set nor an owner', 'an enum row with no entry'],
+        [
+          { P: { planted_enum_key: { owner: 'noSuchFunctionAnywhere' } } },
+          'plant: P.planted_enum_key names owner noSuchFunctionAnywhere, which no file in src/ declares',
+          'an owner no file declares',
+        ],
+        [
+          { P: { planted_enum_key: { owner: 'parseRigSpec' } } },
+          'plant: P.planted_enum_key names owner parseRigSpec, whose body never mentions planted_enum_key',
+          'an owner that never reads the key',
+        ],
+        [{ P: { planted_enum_key: { set: [], readAs: 'x' } } }, 'plant: P.planted_enum_key states a set that is empty or repeats a name', 'an empty set'],
+        [
+          { P: { planted_enum_key: { set: ['a'], readAs: 'x' }, planted_number_key: { set: ['a'], readAs: 'x' } } },
+          'plant: P.planted_number_key is typed "number" and has an enum entry',
+          'an entry on a row that is not an enum',
+        ],
+      ];
+      const plantProbes = planted.flatMap(([enums, fault, what]) => {
+        const said = faultsOf('plant', plantTypes, enums);
+        return raisedBy(said, { at: fault }).length === 1 ? [] : [`${what} was not faulted (said: ${said.join('; ') || 'nothing'})`];
+      });
+      const probes = [...faults, ...plantProbes];
+      bad += reportCase(
+        'RF128_EVERY_ENUM_ROW_OF_THE_THREE_TYPE_TABLES_STATES_A_SET_OR_NAMES_AN_OWNER_THAT_READS_IT',
+        probes.length === 0 && rows.length > 0,
+        probes.length === 0
+          ? `${rows.length} enum row(s) across the rig, motion and manifest tables: ${sets} state a set, ${rows.length - sets} name an owner whose body reads the key; ` +
+              `${planted.length} plants (${planted.map(([, , what]) => what).join(', ')}) were each faulted`
+          : probes.join('; '),
+        'issue #900: the type table\'s own comment listed three enum keys nobody held, and a fourth — the manifest\'s ' +
+          'mesh.kind — was listed as held and was not. `satisfies SpecEnumTable` holds the rows at compile time; this ' +
+          'holds them at runtime and reads each owner for the key, so a row cannot be held by a function that never looks',
+      );
+    }
+
+    // An owner keeps its own sentence: the set walk passes over a row whose
+    // entry names an owner, so a slot's `blend` is refused exactly as before.
+    {
+      const rig = JSON.parse(sourceText) as { slots: Array<{ name: string; blend?: string }> };
+      const slot = rig.slots[0];
+      const planted = join(dirname(rigPath), 'blend_probe.rig.json');
+      let said = 'the fixture has no slot to plant';
+      if (slot !== undefined) {
+        slot.blend = 'foo';
+        writeFileSync(planted, `${JSON.stringify(rig, null, 2)}\n`);
+        said = refusalOf(() => compile({ ...opts, rigPath: planted }));
+      }
+      const sentence = slot === undefined ? '' : `${planted}: slot "${slot.name}" has blend "foo"; known: ${RIG_SLOT_BLEND.join(', ')}`;
+      bad += reportCase(
+        'RF129_AN_ENUM_ROW_WITH_AN_OWNER_KEEPS_THE_OWNERS_SENTENCE',
+        slot !== undefined && said === sentence && RIG_ENUMS.RigSlot.blend.owner === 'parseRigSpec',
+        said === '' ? 'a slot with blend "foo" compiled' : `refused with: ${said}`,
+        'the set walk runs ahead of every reader, so a row it judged would lose its reader\'s sentence — which for ' +
+          '`inherit` and `scaleY` says the first letter\'s case is free, something a set cannot say. So an owned row is ' +
+          'passed over, and this holds one owner\'s sentence to the character',
+      );
+    }
+
+    // Nothing is written: the CLI's `build` refuses before it writes a file.
+    {
+      const planted = join(work, 'planted.rig.json');
+      const rig = JSON.parse(sourceText) as { bones: Array<{ name: string; from?: Record<string, unknown> }> };
+      const bone = rig.bones.find((b) => b.from?.rotation !== undefined);
+      if (bone?.from !== undefined) bone.from.rotation = 'foo';
+      writeFileSync(planted, `${JSON.stringify(rig, null, 2)}\n`);
+      const out = join(work, 'out');
+      const run = runCli(['build', '--rig', planted, '--motion', opts.motionPath, '--manifest', opts.manifestPath ?? '', '--out', out]);
+      const probes: string[] = [];
+      if (bone === undefined) probes.push('the fixture has no bone stating from.rotation to plant');
+      if (run.status !== 1) probes.push(`build exited ${String(run.status)}, not 1`);
+      if (bone !== undefined && !run.stderr.includes(`bone "${bone.name}" from.rotation is "foo"; one of "axis", "anchor"`)) {
+        probes.push(`build said ${JSON.stringify(run.stderr.trim().split('\n').slice(-2).join(' | '))}`);
+      }
+      if (existsSync(out)) probes.push(`build created --out (${readdirSync(out).length} file(s) in it)`);
+      bad += reportCase(
+        'RF130_A_BUILD_REFUSED_FOR_A_NAME_OUTSIDE_ITS_SET_EXITS_1_AND_CREATES_NO_OUT',
+        probes.length === 0,
+        probes.length === 0 ? 'exit 1, the bone, the value and both names on stderr, --out never created' : probes.join('; '),
+        'emit only after green: the skeleton this used to write had a bone without the rotation its spec asked for, ' +
+          'and that file outlives the console line that would have refused it',
       );
     }
     rmSync(work, { recursive: true, force: true });
