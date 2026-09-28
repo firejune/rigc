@@ -426,6 +426,22 @@ import {
   type FloorTexture,
 } from './tools/pose_floor.ts';
 import {
+  asOracleDump,
+  type BoneRow,
+  compareDumps,
+  dumpSkeleton,
+  loadOracleData,
+  ORACLE_DEFAULT_DT,
+  ORACLE_DEFAULT_SAMPLES,
+  ORACLE_DEFAULT_TOL,
+  ORACLE_GRID,
+  type OracleDump,
+  type OracleOptions,
+  type OraclePhase,
+  type OracleSample,
+  parseDt,
+} from './tools/pose_oracle.ts';
+import {
   diffSummaryLines,
   EDITOR_DEFAULTS,
   shapeDiff,
@@ -65487,6 +65503,524 @@ function polishRegressions(trace: PoseTrace): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// the pose oracle: tools/pose_oracle.ts, held the way pose_floor is (issue #909)
+// ---------------------------------------------------------------------------
+
+/** The oracle's command in a child process, as a caller runs it. */
+function runOracle(args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, ['tools/pose_oracle.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8' });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/**
+ * The bone a planted setup rotation should be named by: the last bone in
+ * skeleton order that no other bone reads — it has no child, and no constraint
+ * takes it as its target, source, slot bone or slider bone. A physics
+ * constraint's own bone qualifies, since under `Physics.none` the constraint
+ * does nothing. Chosen off the skeleton rather than by name, so the plant does
+ * not know which rig it is in.
+ */
+function unreadBone(data: SkeletonData): string | null {
+  const read = new Set<string>();
+  for (const bone of data.bones) if (bone.parent) read.add(bone.parent.name);
+  for (const c of data.constraints) {
+    if (c instanceof IkConstraintData) read.add(c.target.name);
+    else if (c instanceof TransformConstraintData) read.add(c.source.name);
+    else if (c instanceof PathConstraintData) read.add(c.slot.boneData.name);
+    else if (c instanceof SliderData && c.bone !== null) read.add(c.bone.name);
+  }
+  const candidates = data.bones.filter((b) => b.parent !== null && !read.has(b.name));
+  return candidates.length === 0 ? null : candidates[candidates.length - 1].name;
+}
+
+function runPoseOracleSuite(): number {
+  console.log('\n── pose-oracle: the exam\'s pose oracle in the tree, dumped, compared and graded (issue #909) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const work = mkdtempSync(join(tmpdir(), 'rigc-pose-oracle-'));
+  const tol = { xy: ORACLE_DEFAULT_TOL, m: ORACLE_DEFAULT_TOL };
+
+  // The build every generated row reads: the ingest coverage probe, through
+  // `rigc build` itself, so the directory is the one the command writes. It
+  // is the rig in this file that carries every field the dump added — a mesh
+  // and a linked mesh, a clipping attachment, an event, a draw-order key, two
+  // dark colours, a physics constraint and a second skin.
+  const probe = writeIngestProbe();
+  const buildDir = join(work, 'build');
+  const built = runCli(['build', '--rig', probe.rigPath, '--motion', probe.motionPath, '--out', buildDir, ...(probe.imagesDir === undefined ? [] : ['--images', probe.imagesDir])]);
+  const buildOk = built.status === 0 && existsSync(join(buildDir, 'skeleton.json')) && existsSync(join(buildDir, 'skeleton.atlas'));
+  const dumpAt = (dir: string, out: string, extra: string[] = []): ReturnType<typeof runOracle> => runOracle(['dump', dir, '--out', out, ...extra]);
+  const readDump = (path: string): OracleDump | null => (existsSync(path) ? asOracleDump(JSON.parse(readFileSync(path, 'utf8')), path) : null);
+
+  // --- POR01: two dumps of one build are byte-identical, and they carry every field --
+  const noneA = join(work, 'none-a.json');
+  const noneB = join(work, 'none-b.json');
+  const stepA = join(work, 'step-a.json');
+  const stepB = join(work, 'step-b.json');
+  const runs = buildOk
+    ? [dumpAt(buildDir, noneA), dumpAt(buildDir, noneB), dumpAt(buildDir, stepA, ['--physics', 'step']), dumpAt(buildDir, stepB, ['--physics', 'step'])]
+    : [];
+  const none = readDump(noneA);
+  const step = readDump(stepA);
+  {
+    const probes: string[] = [];
+    if (!buildOk) probes.push(`rigc build of the probe did not write a build: exit ${built.status}, ${built.stderr.slice(0, 200)}`);
+    runs.forEach((run, i) => {
+      if (run.status !== 0) probes.push(`dump ${i + 1} exited ${run.status}: ${run.stderr.slice(0, 200)}`);
+    });
+    const same = (a: string, b: string): boolean => existsSync(a) && existsSync(b) && readFileSync(a).equals(readFileSync(b));
+    if (buildOk && !same(noneA, noneB)) probes.push('two --physics none dumps of one build differ in their bytes');
+    if (buildOk && !same(stepA, stepB)) probes.push('two --physics step dumps of one build differ in their bytes');
+    const samples = none === null ? [] : [none.setup, ...none.animations.flatMap((a) => a.samples)];
+    const count = {
+      meshes: samples.reduce((s, x) => s + x.attachments.filter((a) => a[2] === 'mesh').length, 0),
+      regions: samples.reduce((s, x) => s + x.attachments.filter((a) => a[2] === 'region').length, 0),
+      clips: samples.reduce((s, x) => s + x.clips.length, 0),
+      events: none === null ? 0 : none.animations.flatMap((a) => a.samples).reduce((s, x) => s + x.events.length, 0),
+      darks: samples.reduce((s, x) => s + x.slots.filter((slot) => slot[6] !== null).length, 0),
+      physics: none?.physics.length ?? 0,
+      skins: none?.skins.length ?? 0,
+    };
+    for (const [field, n] of Object.entries(count)) {
+      if (none !== null && n === 0) probes.push(`the dump carries no ${field}, so its byte identity says nothing about them`);
+    }
+    if (none !== null && count.skins < 2) probes.push(`the dump names ${count.skins} skin(s); the probe declares two`);
+    const held = probes.length === 0;
+    say(
+      'POR01_TWO_DUMPS_OF_ONE_BUILD_ARE_BYTE_IDENTICAL_UNDER_BOTH_PHYSICS_MODES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the ingest coverage probe, built by \`rigc build\` and dumped four times: ${existsSync(noneA) ? statSync(noneA).size : 0} bytes under ` +
+          `--physics none twice and ${existsSync(stepA) ? statSync(stepA).size : 0} under --physics step twice, each pair equal to the byte, over ` +
+          `${none?.bones.length} bones, ${count.regions} region and ${count.meshes} mesh vertex rows, ${count.clips} clip ` +
+          `polygon(s), ${count.events} fired event(s), ${count.darks} dark colour(s), ${count.physics} physics block(s) ` +
+          `and ${count.skins} skins`,
+      ),
+      'the brief\'s row (a), and the contract a second dumper is held to: the document is only comparable byte for ' +
+        'byte if the same input writes the same bytes, and a determinism claim over fields the dump did not carry would ' +
+        'be a claim about nothing — so the fields are counted beside it',
+    );
+  }
+
+  // --- POR02: a dump compared with itself reads IDENTICAL and exits 0 --
+  {
+    const probes: string[] = [];
+    const cases = buildOk ? [noneA, stepA].map((p) => [p, runOracle(['compare', p, p === noneA ? noneB : stepB])] as const) : [];
+    for (const [path, run] of cases) {
+      const last = run.stdout.trim().split('\n').pop() ?? '';
+      if (run.status !== 0) probes.push(`${basename(path)} against its twin exited ${run.status}: ${run.stderr.slice(0, 200)}`);
+      if (!last.startsWith('IDENTICAL')) probes.push(`${basename(path)} against its twin ended ${JSON.stringify(last)}`);
+    }
+    if (!buildOk) probes.push('no build to dump');
+    const held = probes.length === 0;
+    say(
+      'POR02_A_DUMP_COMPARED_WITH_ITS_TWIN_READS_IDENTICAL_AND_EXITS_0',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `both twins compared through the command: exit 0, ${cases.map(([, run]) => run.stdout.trim().split('\n').pop()).join(' / ')}`,
+      ),
+      'the positive control the mutants below stand beside: a comparator that never said IDENTICAL would name every ' +
+        'plant and prove nothing about any of them',
+    );
+  }
+
+  // --- POR03: one bone's setup rotation moved 1°, named by bone, animation and sample --
+  {
+    const probes: string[] = [];
+    const skeletonText = buildOk ? readFileSync(join(buildDir, 'skeleton.json'), 'utf8') : '';
+    const atlasText = buildOk ? readFileSync(join(buildDir, 'skeleton.atlas'), 'utf8') : '';
+    const data = buildOk ? loadOracleData(skeletonText, atlasText, 'the probe build') : null;
+    const bone = data === null ? null : unreadBone(data);
+    let run: ReturnType<typeof runOracle> | null = null;
+    let named = 0;
+    let rows = 0;
+    if (data !== null && bone === null) probes.push('the probe has no bone that no other bone or constraint reads');
+    if (data !== null && bone !== null) {
+      const raw = JSON.parse(skeletonText) as { bones: Array<{ name: string; rotation?: number }> };
+      const was = raw.bones.find((b) => b.name === bone)?.rotation ?? 0;
+      const mutantDir = join(work, 'mutant');
+      mkdirSync(mutantDir, { recursive: true });
+      writeFileSync(join(mutantDir, 'skeleton.json'), writeBoneRotation(skeletonText, bone, was + 1));
+      writeFileSync(join(mutantDir, 'skeleton.atlas'), atlasText);
+      const mutantPath = join(work, 'mutant.json');
+      const dumped = dumpAt(mutantDir, mutantPath);
+      if (dumped.status !== 0) probes.push(`the mutant did not dump: ${dumped.stderr.slice(0, 200)}`);
+      run = runOracle(['compare', noneA, mutantPath]);
+      if (run.status !== 1) probes.push(`compare exited ${run.status} on the mutant, not 1`);
+      if (!run.stdout.includes(`DIFF — first difference: the setup pose: bone "${bone}"`)) {
+        probes.push(`the verdict line does not name bone "${bone}" at the setup pose: ${JSON.stringify(run.stdout.trim().split('\n').pop())}`);
+      }
+      const mutant = readDump(mutantPath);
+      if (none !== null && mutant !== null) {
+        const c = compareDumps(none, mutant, tol);
+        for (const row of c.rows) {
+          rows++;
+          const sample = row.name === '(setup)' ? 'the setup pose' : `animation "${row.name}" t=${none.animations.find((a) => a.name === row.name)?.samples[0]?.t}`;
+          const first = row.findings[0] ?? '';
+          if (first.startsWith(`${sample}: bone "${bone}"`)) named++;
+          else probes.push(`${row.name}: the first difference is ${JSON.stringify(first.slice(0, 160))}, not bone "${bone}" at ${sample}`);
+          if (!run.stdout.includes(row.name === '(setup)' ? '(setup)' : JSON.stringify(row.name))) probes.push(`the printed report has no row for ${row.name}`);
+        }
+      }
+    }
+    const held = probes.length === 0 && rows > 0;
+    say(
+      'POR03_A_SETUP_ROTATION_MOVED_ONE_DEGREE_IS_NAMED_BY_BONE_ANIMATION_AND_SAMPLE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `bone "${bone}" — the last bone no other bone or constraint reads — turned 1° in a copy of the build: compare ` +
+          `exits 1, and the first difference in each of the ${rows} row(s) (the setup pose and every animation) is that ` +
+          `bone at that row's first sample (${named}/${rows})`,
+      ),
+      'the brief\'s row (b): the smallest plant a rig spec could plausibly carry by mistake, and the three names an ' +
+        'agent needs to act on it. The bone is the last one nothing else reads, so being FIRST in every row is a claim ' +
+        'the comparator has to earn — any bone ahead of it in skeleton order that moved would be a comparator that ' +
+        'reports noise',
+    );
+  }
+
+  // --- POR04: a planted difference in each field the dump added is named, alone --
+  {
+    const probes: string[] = [];
+    const planted: string[] = [];
+    const nudge = 2 / ORACLE_GRID;
+    const plant = (label: string, edit: (d: OracleDump) => string | null, expect: string): void => {
+      if (none === null) return;
+      const copy = JSON.parse(JSON.stringify(none)) as OracleDump;
+      const miss = edit(copy);
+      if (miss !== null) {
+        probes.push(`${label}: ${miss}`);
+        return;
+      }
+      const c = compareDumps(none, copy, tol);
+      const all = [...c.document, ...c.rows.flatMap((r) => r.findings)];
+      if (c.identical) probes.push(`${label}: compare read IDENTICAL over the plant`);
+      else if (all.length !== 1) probes.push(`${label}: ${all.length} differences named, not the one planted: ${all.slice(0, 3).join(' | ')}`);
+      else if (!all[0].includes(expect)) probes.push(`${label}: named ${JSON.stringify(all[0].slice(0, 160))}, which does not say ${JSON.stringify(expect)}`);
+      else planted.push(label);
+    };
+    const firstSample = (d: OracleDump, has: (s: OracleSample) => boolean): OracleSample | null =>
+      d.animations.flatMap((a) => a.samples).find(has) ?? null;
+    plant('a mesh vertex moved 2e-6', (d) => {
+      const s = firstSample(d, (x) => x.attachments.some((a) => a[2] === 'mesh'));
+      const row = s?.attachments.find((a) => a[2] === 'mesh');
+      if (!row || row[3][0] === null) return 'no mesh row to plant into';
+      row[3][0] = (row[3][0] as number) + nudge;
+      return null;
+    }, 'vertex 0 moved 0.000002');
+    plant('two draw-order entries swapped', (d) => {
+      const s = firstSample(d, (x) => x.drawOrder.length >= 2);
+      if (!s) return 'no draw order of two slots';
+      [s.drawOrder[0], s.drawOrder[1]] = [s.drawOrder[1], s.drawOrder[0]];
+      return null;
+    }, 'draw order differs from position 0');
+    plant('a fired event renamed', (d) => {
+      const s = firstSample(d, (x) => x.events.length > 0);
+      if (!s) return 'no sample fires an event';
+      s.events[0][0] = `${s.events[0][0]}_renamed`;
+      return null;
+    }, 'events fired');
+    plant('a clip polygon vertex moved 2e-6', (d) => {
+      const s = firstSample(d, (x) => x.clips.length > 0);
+      if (!s || s.clips[0][3][0] === null) return 'no clip to plant into';
+      s.clips[0][3][0] = (s.clips[0][3][0] as number) + nudge;
+      return null;
+    }, 'vertex 0 moved 0.000002');
+    plant('a clip end slot changed', (d) => {
+      const s = firstSample(d, (x) => x.clips.length > 0);
+      if (!s) return 'no clip to plant into';
+      s.clips[0][2] = `${s.clips[0][2]}_elsewhere`;
+      return null;
+    }, 'end slot');
+    plant('a dark colour moved 2e-6', (d) => {
+      const s = firstSample(d, (x) => x.slots.some((slot) => slot[6] !== null && slot[6][0] !== null && (slot[6][0] as number) < 1));
+      const slot = s?.slots.find((x) => x[6] !== null && x[6][0] !== null && (x[6][0] as number) < 1);
+      if (!slot || slot[6] === null) return 'no dark colour below 1 to plant into';
+      slot[6][0] = (slot[6][0] as number) + nudge;
+      return null;
+    }, 'dark colour');
+    const held = probes.length === 0 && planted.length > 0;
+    say(
+      'POR04_A_PLANT_IN_EACH_FIELD_THE_DUMP_ADDED_IS_NAMED_AND_NOTHING_ELSE_IS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${planted.length} plants, each at two steps of the grid, each the ONE difference compare names: ${planted.join('; ')}`,
+      ),
+      'the dump grew five kinds of number the prototype never compared — world vertices, draw order, events, clip ' +
+        'polygons and their end slots, dark colours — and a field nobody has seen go red is not compared, it is ' +
+        'carried. "Alone" is the half that keeps a plant from passing by making everything noisy',
+    );
+  }
+
+  // --- POR05: an ill-conditioned bone is excluded with its descendants, counted, never compared --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    if (none !== null) {
+      const parentOf = new Map(none.setup.bones.map((b) => [b[0], b[8]]));
+      const collapsed = none.setup.bones.find((b) => b[8] !== null && none.setup.bones.some((c) => c[8] === b[0]))?.[0] ?? null;
+      if (collapsed === null) probes.push('the probe has no bone with both a parent and a child');
+      else {
+        const under = (name: string): boolean => {
+          for (let at: string | null = name; at !== null; at = parentOf.get(at) ?? null) if (at === collapsed) return true;
+          return false;
+        };
+        const subtree = none.setup.bones.filter((b) => under(b[0])).map((b) => b[0]);
+        const child = subtree.find((n) => n !== collapsed) ?? null;
+        const outside = none.setup.bones.find((b) => !under(b[0]))?.[0] ?? null;
+        const copy = JSON.parse(JSON.stringify(none)) as OracleDump;
+        const row = (name: string): BoneRow => copy.setup.bones.find((b) => b[0] === name) as BoneRow;
+        const c0 = row(collapsed);
+        [c0[3], c0[4], c0[5], c0[6]] = [0, 0, 0, 0];
+        if (child !== null) row(child)[1] = (row(child)[1] as number) + 1;
+        const quiet = compareDumps(none, copy, tol);
+        const setupRow = quiet.rows[0];
+        if (child === null) probes.push(`bone "${collapsed}" has no descendant to move`);
+        if (!quiet.identical) probes.push(`a collapsed "${collapsed}" and its moved child read ${quiet.first}`);
+        if (setupRow.excluded !== subtree.length) {
+          probes.push(`the setup row excluded ${setupRow.excluded} bone(s); "${collapsed}" and its descendants are ${subtree.length}`);
+        }
+        if (outside === null) probes.push('no bone outside the collapsed subtree to move');
+        else {
+          row(outside)[1] = (row(outside)[1] as number) + 1;
+          const loud = compareDumps(none, copy, tol);
+          if (loud.identical || !(loud.first ?? '').includes(`bone "${outside}"`)) {
+            probes.push(`bone "${outside}", outside the subtree, moved 1 and compare read ${loud.first ?? 'IDENTICAL'}`);
+          }
+        }
+        detail =
+          `bone "${collapsed}"'s matrix zeroed and its descendant "${child}" moved 1 in one document: IDENTICAL with ` +
+          `${setupRow.excluded} bone(s) excluded at the setup pose (${subtree.join(', ')}); the same move on "${outside}", ` +
+          'outside that subtree, is named';
+      }
+    } else probes.push('no dump to plant into');
+    const held = probes.length === 0;
+    say(
+      'POR05_AN_ILL_CONDITIONED_BONE_IS_EXCLUDED_WITH_ITS_DESCENDANTS_AND_COUNTED',
+      held,
+      probeDetail(held, probes, detail),
+      'the rule the exam\'s calibration derived, and the one clause of this comparator that makes a difference NOT ' +
+        'count — so it is the clause that most needs a fence: it reaches exactly the collapsed bone and what hangs ' +
+        'under it, and a move one bone outside it is still named',
+    );
+  }
+
+  // --- POR06: a bad input exits 2, by name, and writes nothing --
+  {
+    const probes: string[] = [];
+    const emptyDir = join(work, 'empty');
+    mkdirSync(emptyDir, { recursive: true });
+    const notOracle = join(work, 'not-oracle.json');
+    writeFileSync(notOracle, '{"spec":"rigc-frames/1"}\n');
+    const out = join(work, 'refused.json');
+    const cases: Array<[string, string[], string]> = [
+      ['a phase that does not exist', ['dump', buildDir, '--out', out, '--phase', 'sideways'], '--phase "sideways" is not one of grid, off, irr, dense'],
+      ['--dt without stepping', ['dump', buildDir, '--out', out, '--dt', '1/60'], '--physics none steps nothing'],
+      ['a skin the rig does not declare', ['dump', buildDir, '--out', out, '--skin', 'nosuch'], '--skin "nosuch": no such skin; this skeleton declares [default, alt]'],
+      ['a directory rigc did not build', ['dump', emptyDir, '--out', out], 'has no skeleton.json and no skeleton.atlas'],
+      ['a document that is not an oracle dump', ['compare', notOracle, noneA], 'spec is "rigc-frames/1", not "pose-oracle/1"'],
+      ['two dumps posed under different options', ['compare', noneA, stepA], 'posed under different options'],
+    ];
+    for (const [label, args, expect] of cases) {
+      const run = runOracle(args);
+      if (run.status !== 2) probes.push(`${label}: exit ${run.status}, not 2`);
+      if (!run.stderr.includes(expect)) probes.push(`${label}: stderr ${JSON.stringify(run.stderr.trim().slice(0, 200))} does not say ${JSON.stringify(expect)}`);
+      if (existsSync(out)) {
+        probes.push(`${label}: ${basename(out)} was written by a refused run`);
+        rmSync(out);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'POR06_A_BAD_INPUT_EXITS_2_BY_NAME_AND_WRITES_NOTHING',
+      held,
+      probeDetail(held, probes, `${cases.length} refusals, each exit 2 with its sentence and no file written: ${cases.map(([l]) => l).join('; ')}`),
+      'exit 2 is the third answer the brief asks for — not IDENTICAL, not DIFF, but "these two cannot be compared" — ' +
+        'and a comparison across two sampling schedules would print a DIFF that is a fact about the flags',
+    );
+  }
+
+  // --- POR07: stepping moves the physics bone's subtree and nothing else --
+  {
+    const probes: string[] = [];
+    let moved: string[] = [];
+    let worst = 0;
+    if (none !== null && step !== null && none.physics.length > 0) {
+      const physicsBones = new Set(none.physics.map((p) => p.bone));
+      const parentOf = new Map(none.setup.bones.map((b) => [b[0], b[8]]));
+      const underPhysics = (name: string): boolean => {
+        for (let at: string | null = name; at !== null; at = parentOf.get(at) ?? null) if (physicsBones.has(at)) return true;
+        return false;
+      };
+      const c = compareDumps({ ...none, options: step.options }, step, tol);
+      worst = c.worstXy + c.worstM;
+      const named = c.rows.flatMap((r) => r.findings).map((f) => /: bone "([^"]+)"/.exec(f)?.[1] ?? null);
+      moved = [...new Set(named.filter((n): n is string => n !== null))].sort();
+      if (c.identical) probes.push('the stepped dump is IDENTICAL to the unstepped one, so stepping stepped nothing');
+      const stray = moved.filter((n) => !underPhysics(n));
+      if (stray.length > 0) probes.push(`bones outside every physics constraint's subtree moved: ${stray.join(', ')}`);
+      const other = c.rows.flatMap((r) => r.findings).filter((f) => !/: bone "/.test(f));
+      if (other.length > 0) probes.push(`stepping changed something other than bones: ${other.slice(0, 3).join(' | ')}`);
+    } else probes.push(none === null || step === null ? 'no dumps to compare' : 'the probe declares no physics constraint');
+    const held = probes.length === 0;
+    say(
+      'POR07_STEPPED_PHYSICS_MOVES_THE_PHYSICS_BONES_AND_NOTHING_THEY_DO_NOT_CARRY',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `--physics step against --physics none on the probe: bones named ${moved.join(', ')} — each a physics ` +
+          `constraint's bone or under one — worst Δxy+Δabcd ${worst.toFixed(6)}`,
+      ),
+      'the stepped phase is new, and a stepping loop that forgot `update(delta)` would dump byte-identically twice ' +
+        'and match itself for ever; comparing it with the unstepped dump is what shows it simulates, and the ' +
+        'subtree clause is what shows it simulates only what the constraints hold',
+    );
+  }
+
+  // --- POR08/POR09: the public examples' rebuilds against their exports --
+  //
+  // ⚠️ Fetched art, so an absent `examples/` is a HOLE here and never a pass.
+  // The reading held is the one measured when this landed: IDENTICAL on every
+  // export, in three phases and stepped. A rigc change that moves it is the
+  // gate issue #380 is built on turning red, which is the point.
+  const corpus = corpusExports();
+  if (corpus.length === 0) {
+    console.log(`  SKIP  POR08–POR09 did not run: no editor export under ${INGEST_CORPUS_ROOT}.`);
+    console.log('          run `bun run fetch-examples` and re-run this suite.');
+    console.log(
+      '          ⚠️ This is a HOLE in this run, not a pass — no rigc rebuild was posed against the export it was read ' +
+        'from, so the reproduction the oracle was promoted for did not happen here.',
+    );
+  } else {
+    const PHASES: OraclePhase[] = ['grid', 'off', 'irr'];
+    const reach = { events: 0, clips: 0, meshes: 0, stepped: 0, skins: 0, exports: 0 };
+    for (const entry of corpus) {
+      const sourceText = readFileSync(entry.path, 'utf8');
+      const decompiled = ingest(JSON.parse(sourceText) as Record<string, unknown>, {
+        name: entry.name,
+        art: 'none',
+        source: basename(entry.path),
+        version: packageVersion(),
+      });
+      const root = mkdtempSync(join(tmpdir(), `rigc-oracle-${entry.name}-`));
+      writeFileSync(join(root, 'rig.json'), `${JSON.stringify(decompiled.rig, null, 2)}\n`);
+      writeFileSync(join(root, 'motion.json'), `${JSON.stringify(decompiled.motion, null, 2)}\n`);
+      // The pack is found by resolving, as IG16 finds it: the first one the
+      // rebuild compiles and gates green against.
+      let rebuilt: CompileResult | null = null;
+      let pack = '';
+      for (const [index, candidate] of entry.packs.entries()) {
+        const outDir = join(root, `B${index}`);
+        mkdirSync(outDir, { recursive: true });
+        try {
+          const b = compile({ rigPath: join(root, 'rig.json'), motionPath: join(root, 'motion.json'), outDir, atlasInPath: candidate });
+          const verdict = validate({
+            skeletonText: b.skeletonText,
+            atlasText: b.atlasText,
+            atlasDir: outDir,
+            declaredDurations: b.declaredDurations,
+            rig: b.rig,
+            profile: 'spine',
+          });
+          if (verdict.failures.length > 0) continue;
+          rebuilt = b;
+          pack = candidate;
+          break;
+        } catch {
+          // Another pack may cover it; the case line names the none that did.
+        }
+      }
+      rmSync(root, { recursive: true, force: true });
+      const readings: string[] = [];
+      let held = rebuilt !== null;
+      let boneSamples = 0;
+      let vertices = 0;
+      if (rebuilt !== null) {
+        const ours = loadOracleData(rebuilt.skeletonText, rebuilt.atlasText, `the rebuild of ${entry.label}`);
+        const theirs = loadOracleData(sourceText, readFileSync(pack, 'utf8'), entry.label);
+        const graded: Array<[string, OracleOptions]> = [
+          ...PHASES.map((phase): [string, OracleOptions] => [phase, { phase, samples: ORACLE_DEFAULT_SAMPLES, skin: 'all', physics: 'none', dt: null }]),
+          ['grid stepped', { phase: 'grid', samples: ORACLE_DEFAULT_SAMPLES, skin: 'all', physics: 'step', dt: parseDt(ORACLE_DEFAULT_DT) }],
+        ];
+        for (const [label, options] of graded) {
+          const a = dumpSkeleton(ours, options);
+          const b = dumpSkeleton(theirs, options);
+          const c = compareDumps(a, b, tol);
+          boneSamples += c.boneSamples;
+          vertices += c.rows.reduce((s, r) => s + r.vertices, 0);
+          if (!c.identical || c.boneSamples === 0) held = false;
+          readings.push(`${label} ${c.identical ? 'IDENTICAL' : `DIFF (${c.first})`}`);
+          if (label === 'grid') {
+            const samples = b.animations.flatMap((x) => x.samples);
+            reach.events += samples.reduce((s, x) => s + x.events.length, 0);
+            reach.clips += samples.reduce((s, x) => s + x.clips.length, 0);
+            reach.meshes += samples.reduce((s, x) => s + x.attachments.filter((x2) => x2[2] === 'mesh').length, 0);
+            reach.skins = Math.max(reach.skins, b.skins.length);
+          }
+          if (options.physics === 'step' && b.physics.length > 0) {
+            const unstepped = dumpSkeleton(theirs, { ...options, physics: 'none', dt: null });
+            if (!compareDumps({ ...unstepped, options: b.options }, b, tol).identical) reach.stepped++;
+          }
+        }
+        reach.exports++;
+      }
+      say(
+        `POR08_A_PUBLIC_EXAMPLES_RIGC_REBUILD_POSES_AS_ITS_EXPORT_AT_THE_READING_MEASURED[${entry.label}]`,
+        held,
+        rebuilt === null
+          ? `NO REBUILD — none of the ${entry.packs.length} pack(s) beside the export compiled and gated green`
+          : `ingest → build through ${basename(pack)}, posed beside the export: ${readings.join(', ')}; ` +
+              `${boneSamples} bone-sample(s) and ${vertices} vertex-sample(s) compared`,
+        'the brief\'s row (c) and §6 step 0b\'s gate: the exam read IDENTICAL on its production rigs, and this is the ' +
+          'same instrument on the public ones. The reading is held as measured — IDENTICAL on every export, in the ' +
+          'grid, off and irr phases and stepped — rather than assumed, so a rigc change that moves one names the ' +
+          'export, the phase and the first difference',
+      );
+    }
+    const probes: string[] = [];
+    if (reach.exports !== corpus.length) probes.push(`${corpus.length - reach.exports} export(s) were not rebuilt, so their fields went ungraded`);
+    for (const [field, n] of [['fired event', reach.events], ['clip polygon', reach.clips], ['mesh vertex row', reach.meshes], ['stepped physics export', reach.stepped]] as const) {
+      if (n === 0) probes.push(`no export compared a ${field}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'POR09_THE_CORPUS_GRADES_EVERY_FIELD_THE_DUMP_ADDED_OR_NAMES_THE_HOLE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `over ${reach.exports} export(s): ${reach.events} fired event(s), ${reach.clips} clip polygon(s), ` +
+          `${reach.meshes} mesh vertex row(s) compared at grid, and ${reach.stepped} export(s) whose stepped pose ` +
+          'differs from its unstepped one — stepping was graded where it does something',
+      ),
+      '§4\'s rule for a population: a construct no row uses is a HOLE, not a pass. What the exports cannot grade — ' +
+        'posing under one of several skins, when none of them declares a second — is printed below this line ' +
+        'rather than folded into the green',
+    );
+    if (reach.skins < 2) {
+      console.log(
+        `          ⚠️ HOLE: no export under ${INGEST_CORPUS_ROOT} declares more than ${reach.skins} skin, so posing ` +
+          'under one skin (--skin <name>) is graded by no public row — only the probe above carries two.',
+      );
+    }
+  }
+
+  rmSync(work, { recursive: true, force: true });
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // reading through the rig: chainfit (issue #284)
 // ---------------------------------------------------------------------------
 
@@ -76238,6 +76772,7 @@ function main(): void {
   tally.of('see-it', runSeeItSuite);
   tally.of('geometry-export', runGeometryExportSuite);
   tally.of('pose', runPoseSuite);
+  tally.of('pose-oracle', runPoseOracleSuite);
   tally.of('chainfit', runChainFitSuite);
   tally.of('ballot', runBallotSuite);
   tally.of('copy-images', runCopyImagesSuite);
@@ -76904,6 +77439,15 @@ function main(): void {
       'carried to the answer — with the escaping trial read twice to the same bytes — and MOTION.md §6\'s ' +
       'stationary post, rebuilt from the page\'s own bytes, placed where the old search found it by the quarter-rung ' +
       'escape a half rung stepped over, read twice to the same bytes as well)' +
+      ', + ' + n('pose-oracle') + ' pose-oracle controls (issue #909 — `tools/pose_oracle.ts`, the exam\'s pose oracle ' +
+      'promoted into the tree as the document a second dumper has to be able to write: two dumps of one build equal to ' +
+      'the byte under both physics modes, over every field the dump added; a dump against its twin IDENTICAL with exit ' +
+      '0; one bone turned a degree in a copy of the build named first in every row by bone, animation and sample; a ' +
+      'plant in each added field — a mesh vertex, the draw order, an event, a clip polygon and its end slot, a dark ' +
+      'colour — named alone; the ill-conditioned rule reaching exactly the collapsed bone\'s subtree; six bad inputs ' +
+      'refused with exit 2 and nothing written; stepped physics moving only what a physics constraint carries; and ' +
+      'every public example\'s rigc rebuild posed against its export at the reading measured, with what the corpus ' +
+      'cannot grade printed as a HOLE — or all of that last half a HOLE when the corpus is not fetched)' +
       ', + ' + n('chainfit') + ' chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
