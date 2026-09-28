@@ -260,6 +260,7 @@ import {
   POSE_FLOOR,
   windowEdgeNote,
   type PosePlacement,
+  type PoseTrace,
   type PoseWall,
   type PoseReport,
 } from './src/pose.ts';
@@ -402,6 +403,7 @@ import {
   floorSlots,
   floorTrial,
   loadFloorScenes,
+  searchLine,
   type FloorCell,
   type FloorTexture,
 } from './tools/pose_floor.ts';
@@ -63698,6 +63700,8 @@ function runPoseSuite(): number {
     console.log('          ⚠️ This is a HOLE in this run, not a pass — the floor §11.5 states was not re-measured at all.');
     console.log(`  SKIP  PO23–PO25 did not run: no ${FLOOR_EXAMPLE} export under ${INGEST_CORPUS_ROOT}.`);
     console.log('          ⚠️ A HOLE as well — the coarse pass (issue #865) was not measured on the art it was fixed on.');
+    console.log(`  SKIP  PO28–PO30 did not run: no ${FLOOR_EXAMPLE} export under ${INGEST_CORPUS_ROOT}.`);
+    console.log('          ⚠️ A HOLE as well — the refinement (issue #877) was not measured on the trials it was fixed on.');
   } else {
     const { posable, scenes } = loadFloorScenes(INGEST_CORPUS_ROOT);
     const scene = scenes.slice(0, 1);
@@ -63782,9 +63786,170 @@ function runPoseSuite(): number {
       'PO11 reads the fixture twice on the grid it happens to use; this reads twice a part whose answer depends on ' +
         'the finer grid and the wider minima list, so an order dependence in either would show here first',
     );
+
+    // --- PO28–PO30: the refinement keeps the basin it reached (issue #877) --
+    //
+    // ⭐ The four trials #865's finer grid placed and then lost to the
+    // refinement. Three reached full resolution with the truth's candidate
+    // ranked first or second and stopped 1.6–3.8 px off it at a shrunk scale,
+    // on a point every single-axis probe scores worse and a joint move scores
+    // better; the fourth, the 24 px shin, had its truth's candidate ranked 15th
+    // at the 2x level and cut. Each must now be FOUND — placed within the bar
+    // and not ambiguous — rather than merely within 2 px of an answer.
+    const walk = scenes.find((sc) => sc.name.startsWith('walk'));
+    const lostDir = mkdtempSync(join(tmpdir(), 'rigc-pose-877-'));
+    const four: [string, string, number][] = [
+      [scene[0].name, 'front-shin', 24],
+      [walk?.name ?? '', 'front-upper-arm', 48],
+      [walk?.name ?? '', 'goggles', 48],
+      [scene[0].name, 'goggles', 96],
+    ];
+    const shinTrace: PoseTrace = { levels: [], measured: [] };
+    const againTrace: PoseTrace = { levels: [], measured: [] };
+    const placed = four.map(([frame, slot, size], i) => {
+      const sc = scenes.find((x) => x.name === frame);
+      if (sc === undefined) throw new Error(`internal: the floor corpus has no scene "${frame}"`);
+      return { frame, slot, size, trial: floorTrial(posable, sc, slot, size, 'native', join(lostDir, String(i)), i === 0 ? shinTrace : undefined) };
+    });
+    const goggles = scenes.find((x) => x.name === four[3][0]);
+    const gogglesAgain =
+      goggles === undefined ? null : floorTrial(posable, goggles, 'goggles', 96, 'native', join(lostDir, 'again'), againTrace);
+    rmSync(lostDir, { recursive: true, force: true });
+    const fourOk = placed.every((p) => p.trial.outcome === 'found' && p.trial.error !== null && p.trial.error <= FLOOR_WITHIN_PX);
+    say(
+      'PO28_THE_FOUR_TRIALS_THE_REFINEMENT_LOST_AFTER_865_PLACE_AT_THEIR_TRUTH',
+      fourOk,
+      probeDetail(
+        fourOk,
+        placed
+          .filter((p) => !(p.trial.outcome === 'found' && p.trial.error !== null && p.trial.error <= FLOOR_WITHIN_PX))
+          .map(
+            (p) =>
+              `${p.frame} ${p.slot} at ${p.size} px, native: ${p.trial.outcome}, ` +
+              `${p.trial.error === null ? 'nothing placed' : `${p.trial.error.toFixed(2)} px`} (bar ${FLOOR_WITHIN_PX} px), ` +
+              `truth ${p.trial.truthResidual.toFixed(4)} against best ${p.trial.legibility?.best ?? 'n/a'}`,
+          ),
+        placed.map((p) => `${p.frame} ${p.slot} ${p.size} px: ${p.trial.error?.toFixed(2) ?? 'n/a'} px`).join('; ') +
+          ` — every one found, within ${FLOOR_WITHIN_PX} px and not ambiguous`,
+      ),
+      'a basin the search reached and then walked out of is the search failing on the last step it takes, and these ' +
+        'four are where #865 measured it doing so',
+    );
+
+    // The shin was the one lost to the cutoff rather than to a polish, so this
+    // reads WHERE it survived: its truth's candidate ranks past twelve at some
+    // level — the count this was before #877 — and the next level still takes it.
+    const OLD_REFINE_CANDIDATES = 12;
+    const shin = placed[0].trial;
+    const past = shin.search.findIndex((l) => l.rank >= OLD_REFINE_CANDIDATES && l.carried && l.distance <= FLOOR_WITHIN_PX);
+    const carriedOk = past >= 0 && shin.outcome === 'found';
+    say(
+      'PO29_A_CANDIDATE_RANKED_PAST_THE_OLD_TWELVE_IS_CARRIED_TO_THE_ANSWER',
+      carriedOk,
+      carriedOk
+        ? `${placed[0].frame} front-shin at 24 px: the truth's candidate ranks #${shin.search[past].rank} at the ` +
+            `${shin.search[past].reduction}x level, ${shin.search[past].distance.toFixed(2)} px off, is carried, and the trial ` +
+            `is found ${shin.error?.toFixed(2)} px from the truth`
+        : `${placed[0].frame} front-shin at 24 px: ${shin.outcome}; per level ${searchLine(shin)}`,
+      'a cutoff by rank is a guess about which candidates can still win, and on this trial the one it cut was the ' +
+        'truth — the rank is read off the trace, so the survival is measured rather than inferred from the answer',
+    );
+
+    const traceSame = gogglesAgain !== null && JSON.stringify(placed[3].trial) === JSON.stringify(gogglesAgain);
+    say(
+      'PO30_THE_ESCAPING_POLISH_READS_THE_SAME_TRIAL_TWICE_THE_SAME',
+      traceSame && againTrace.levels.length > 0,
+      `${four[3][0]} goggles at 96 px, native, run twice through the whole trial (the second with a trace kept): ` +
+        `${traceSame ? 'byte-identical' : 'DIFFERENT'} (${placed[3].trial.outcome}, ${placed[3].trial.error?.toFixed(3) ?? 'n/a'} px, ` +
+        `${againTrace.levels.length} level(s) traced)`,
+      'the escape restarts a polish from a point chosen by comparing residuals, which is exactly where an order ' +
+        'dependence would enter; this trial takes that path, so it would show here first',
+    );
+  }
+
+  // --- PO26–PO27: the refinement, read through its trace (issue #877) -----
+  //
+  // 🔍 The card said the polish "leaves a basin it is in and settles on a worse
+  // residual", and named two cures: never accept a worse residual, or restart
+  // from the best point seen. The trace answered it before either was built: a
+  // polish accepts a probe only when it scores strictly lower on its own level's
+  // objective, so a rise from one level to the next is a change of objective
+  // (another sample set on another plate), never a step taken uphill. This holds
+  // the invariant that made the card's first cure unnecessary — on the fixture,
+  // no generated art needed — and holds the trace to not changing the answer.
+  {
+    const trace: PoseTrace = { levels: [], measured: [] };
+    const traced = estimatePose({ imagesDir: fixture.parts, framePath: fixture.framePath, trace });
+    const found = polishRegressions(trace);
+    const polishes = trace.levels.reduce((n, l) => n + l.paths.length, 0);
+    const steps = trace.levels.reduce((n, l) => n + l.paths.reduce((m, p) => m + p.length, 0), 0);
+    // The same reader must name a polish forged to walk uphill, or its silence
+    // above says nothing. The first polish that moved at all gets its first
+    // step pushed above where it started.
+    const forged: PoseTrace = JSON.parse(JSON.stringify(trace)) as PoseTrace;
+    const moved = forged.levels.find((l) => l.paths.some((p) => p.length > 0));
+    const seed = moved === undefined ? -1 : moved.paths.findIndex((p) => p.length > 0);
+    if (moved !== undefined) moved.paths[seed][0].residual = moved.starts[seed] + 0.01;
+    const caught = polishRegressions(forged);
+    const held = found.length === 0 && steps > 0 && moved !== undefined && caught.length > 0;
+    say(
+      'PO26_NO_POLISH_ENDS_ON_A_WORSE_RESIDUAL_THAN_IT_STARTED_FROM',
+      held,
+      probeDetail(
+        held,
+        [
+          ...found,
+          ...(steps === 0 ? ['the trace recorded no accepted move at all, so there was nothing to hold'] : []),
+          ...(moved !== undefined && caught.length === 0 ? ['a polish forged to walk uphill was not named'] : []),
+        ],
+        `${polishes} polish(es) over ${trace.levels.length} level(s) of ${traced.parts.length} part(s), ${steps} accepted ` +
+          `move(s), every one strictly below the point before it; a forged uphill step is named: ${caught[0] ?? 'n/a'}`,
+      ),
+      'a search that could report a point worse than one it had already stood on is a search whose answer depends on ' +
+        'where it happened to stop — and it is the premise issue #877 opened on, measured false before any cure was built',
+    );
+
+    const plain = JSON.stringify(report.parts);
+    const same = JSON.stringify(traced.parts) === plain;
+    const narrowed = estimatePose({ imagesDir: fixture.parts, framePath: fixture.framePath, trace: { levels: [], measured: [] }, rotation: { minDeg: -5, maxDeg: 5 } });
+    const differs = JSON.stringify(narrowed.parts) !== plain;
+    say(
+      'PO27_A_TRACED_SEARCH_REPORTS_WHAT_AN_UNTRACED_ONE_DOES',
+      same && differs,
+      `${traced.parts.length} part(s) read with a trace and without: ${same ? 'byte-identical' : 'DIFFERENT'}; ` +
+        `the same comparison on a run with the rotation window narrowed to -5,5: ${differs ? 'different, as it must be' : 'IDENTICAL — the comparison cannot fail'}`,
+      'the trace is an instrument pointed at the search, and an instrument that moves what it measures reports a ' +
+        'search nobody ran without it',
+    );
   }
 
   return bad;
+}
+
+/**
+ * Every polish in a trace that took a step no lower than the point before it,
+ * or ended anywhere but on its last accepted point — by part, level and seed.
+ */
+function polishRegressions(trace: PoseTrace): string[] {
+  const out: string[] = [];
+  for (const level of trace.levels) {
+    level.paths.forEach((path, seed) => {
+      let before = level.starts[seed];
+      path.forEach((step, k) => {
+        if (!(step.residual < before)) {
+          out.push(`${level.part} level ${level.level} seed ${seed} step ${k}: ${step.residual.toFixed(5)} after ${before.toFixed(5)}`);
+        }
+        before = step.residual;
+      });
+      if (level.polished[seed].residual !== before) {
+        out.push(
+          `${level.part} level ${level.level} seed ${seed}: ended at ${level.polished[seed].residual.toFixed(5)}, ` +
+            `its last accepted point ${before.toFixed(5)}`,
+        );
+      }
+    });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -75192,8 +75357,12 @@ function main(): void {
       'canvas cannot hold / an all-transparent part each refused by their own reason, an occluded part whose ' +
       'residual rises while its placement does not move, a knocked-out ground read the same as a flat one, the ' +
       'declared scale window honoured in both directions, the command writing its JSON while a mistyped ' +
-      'directory is refused by name, and the same picture read twice reporting the same numbers rather than ' +
-      'nearly the same ones — the objective divides since #306)' +
+      'directory is refused by name, the same picture read twice reporting the same numbers rather than ' +
+      'nearly the same ones — the objective divides since #306 — no polish ending on a worse residual than it ' +
+      'started from, read through a trace that changes nothing it reports, and the four floor-grid trials #865\'s ' +
+      'finer grid lost to the refinement each placed at its truth — three polishes let out of a scale–position ' +
+      'valley by a half-rung escape up, and a shin whose truth ranked past the old twelve read off its trace as ' +
+      'carried to the answer — with the escaping trial read twice to the same bytes)' +
       ', + ' + n('chainfit') + ' chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +

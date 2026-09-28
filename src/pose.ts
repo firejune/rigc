@@ -153,11 +153,23 @@ const COARSE_PART_THICKNESS = 4;
  * the search misses fell from 65 to 15, for 10–14% more CPU over the grid.
  *
  * 🔸 Not free of losses, and they are stated rather than averaged away: 9 trials
- * that placed on the quarter grid do not on this one. Five of them are blurred
- * parts that now come back ambiguous between two scales at the same spot, or
- * 2.0 px off against a 2 px bar; three are a basin reached and then polished
- * onto a worse placement beside it, and one a basin ranked out of the
- * refinement's twelve — the refinement, not this grid.
+ * that placed on the quarter grid did not on this one when it shipped. Five are
+ * blurred parts at 24–96 px that came back ambiguous between two scales at the
+ * same spot, or 2.0 px off against a 2 px bar — the objective's, not this
+ * grid's. The other four were the refinement's, and since issue #877 all four
+ * place at their truth again: the native 48 px arm (walk) at 0.07 px, 48 px
+ * goggles (walk) 0.04, 96 px goggles (setup) 0.03 — three polishes stopped in a
+ * scale–position valley, now left by `POLISH_SCALE_ESCAPE` — and the 24 px shin
+ * (setup) 0.03, ranked 15th into full resolution, now carried by
+ * `REFINE_CANDIDATES`. Of the five blurred ones, the blur2 32 px shin (setup)
+ * and the blur1 24 px mouth are found again too.
+ *
+ * ⚠️ #877 lost two of its own, both inside the ambiguity margin rather than
+ * off the truth: the blur2 24 px front shin (walk) now reports the truth as its
+ * BEST (0.03 px, 0.00989) with the old 0.57 px answer 0.0094 above it, and the
+ * blur1 64 px mouth (walk) keeps its best at 0.93 px and gains a second scale
+ * at the same spot 0.0031 above it. Each is two readings of one place the
+ * 0.01 absolute margin will not pick between — the verdict it exists to give.
  */
 export const COARSE_STRIDE_FRACTION = 0.125;
 
@@ -243,8 +255,59 @@ export const BACKGROUND_BORDER_SHARE = 0.6;
  */
 const MINIMA_PER_SCALE = 5;
 
-/** How many candidates survive each refinement level. */
-const REFINE_CANDIDATES = 12;
+/**
+ * How many candidates survive each refinement level.
+ *
+ * ⚠️ Fifteen rather than twelve, and it is the smallest count the grid named
+ * (issue #877). Of the 14 trials the search missed after #865, one was lost by
+ * this cutoff rather than by any polish: the native 24 px front shin, whose
+ * truth's candidate ranked 15th (index 14) of 28 at the 2x level — that part's
+ * coarse level — and was cut on the way into full resolution, where the truth
+ * scores 0.0199 against the 0.1188 reported. Fifteen is the least count that
+ * carries index 14; sixteen alone was measured to place it at 0.03 px and move
+ * no other trial (228 found, none lost). A band of the level's best was the
+ * alternative, and it was rejected on its number: to carry that candidate it
+ * would have had to reach 1.73x the best, and a band that wide carried up to 27
+ * candidates (14 of 108 sampled refinement levels over twelve) — a cost set by
+ * one trial and paid on all of them.
+ */
+const REFINE_CANDIDATES = 15;
+
+/**
+ * The factor a converged full-resolution polish tries its scale up by before it
+ * stops — half a coarse scale rung, the resolution the coarse ladder itself had.
+ *
+ * 🔍 What the pattern search cannot do, and the trace table of issue #877 is
+ * how it was seen: every probe moves ONE degree of freedom, and the objective
+ * couples scale to position along a diagonal valley — a part shrunk a little
+ * fits best a pixel or two off its truth, so from there every single-axis probe
+ * is worse and every joint move is better. In 12 of the 14 missed trials the
+ * truth's candidate reached full resolution ranked first or second, the
+ * full-resolution objective preferred the truth to everything kept, and the
+ * polish stopped 2–7 px off it at a scale of 0.64–0.96. Not one polish ever
+ * accepted a worse residual — a polish moves only on a strictly lower probe of
+ * its own level's objective, and `PO26` holds that — so the rise from one level
+ * to the next is a change of objective, never a step taken uphill.
+ *
+ * ⭐ So the escape re-fits position at the new scale before comparing — the
+ * joint move, taken one axis at a time — and a better point restarts the polish
+ * there. UP only, and that is derived rather than tuned: the objective charges a
+ * part pixel that lands off the figure and charges nothing for figure left
+ * uncovered, so a shrunk placement is the cheap error the reduced levels make —
+ * every stuck point in the table sat below scale 1, none above.
+ *
+ * 📏 Measured on the grid with `REFINE_CANDIDATES` at fifteen: 227 → 237 trials
+ * found, 12 gained, 2 lost, search misses 14 → 8, for 43% more refinement
+ * samples (the coarse pass is untouched). Both ways at twelve found 236 (12
+ * gained, 3 lost) for 38% more against up only's 21%; a second step each way,
+ * 237 (15, 5) for 76%. ⚠️ The two it loses are one shape, a scale twin at the
+ * same spot: the blurred 64 px mouth (walk) keeps its best at 0.9 px and now
+ * reports a second placement 1.8 px off at scale 0.825 within the ambiguity
+ * margin, and the blurred 24 px front shin (walk) now places AT its truth
+ * (0.03 px, 0.00989) where it placed 0.57 px off at 0.0191 — the old answer is
+ * still reported beside it, 0.0094 above, inside the 0.01 absolute margin.
+ */
+const POLISH_SCALE_ESCAPE = 2 ** (1 / (2 * SCALE_STEPS_PER_OCTAVE));
 
 /** Sample budgets per stage. The reported residual uses every pixel regardless. */
 const COARSE_SAMPLES = 96;
@@ -284,8 +347,8 @@ export const POSE_FLOOR = {
   span: 24,
   detail: 0.5,
   /** Found share of the grid's trials under `detail`, and over it — both measured by `deriveFloor`. */
-  rateBelow: 0.082,
-  rateAbove: 0.728,
+  rateBelow: 0.074,
+  rateAbove: 0.765,
 };
 
 /** Which side of `POSE_FLOOR` a part is on, from its own longest side in part pixels and its detail. */
@@ -331,8 +394,11 @@ export function legibilityReading(l: Omit<PoseLegibility, 'reading'>, verdict: '
   // occurs: on the grid after it, 10 ambiguous trials above the floor had a
   // truth scoring better than both answers — native 24 px gun and shin, 48 px
   // arm, 96 px goggles twice, and blurred gun, goggles and rear shin from 48 px
-  // up. Nine of the ten sat 2–6 px from the truth rather than on another hill. So the sentence names that reading too, with the one remedy that
-  // separates it: a window.
+  // up. Nine of the ten sat 2–6 px from the truth rather than on another hill.
+  // Issue #877's polish took that to 6 — native 24 px gun, 96 px goggles, and
+  // blurred goggles and gun from 128 px and rear shin at 48 px — five of them
+  // 2.1–2.7 px off, the rear shin 19 px. So the sentence names that reading
+  // too, with the one remedy that separates it: a window.
   return (
     `${figures} — above the measured floor (AUTHORING §11.5: ${floorClause()}), so size and texture do not explain this; ` +
     (verdict === 'refused'
@@ -567,6 +633,67 @@ export interface PoseOptions {
   scale?: { min: number; max: number };
   rotation?: { minDeg: number; maxDeg: number };
   maxResidual?: number;
+  /**
+   * An instrument's sink, never read by the search itself: when present, every
+   * level of every part's refinement is appended to it. See `PoseTrace`.
+   */
+  trace?: PoseTrace;
+}
+
+/** A search candidate as the trace states it: where the part image's centre would land, frame pixels. */
+export interface PoseTraceCandidate {
+  x: number;
+  y: number;
+  rotationDeg: number;
+  scale: number;
+  /** The level's own sampled objective — not the reported, every-pixel residual. */
+  residual: number;
+}
+
+/** One accepted move of a polish: the residual it moved to and the steps it moved with. */
+export interface PoseTraceStep {
+  residual: number;
+  translate: number;
+  rotate: number;
+  scale: number;
+  /** The accepted probe's scale or rotation was held by its window rather than taken as stepped. */
+  clamped: boolean;
+  /** A restart from a converged point to a different scale, rather than a step of the pattern. */
+  escape: boolean;
+}
+
+export interface PoseTraceLevel {
+  part: string;
+  /** Pyramid index; 0 is full resolution. */
+  level: number;
+  reduction: number;
+  /** How many of the candidates handed down this level took, before any rotation branching. */
+  keep: number;
+  /** The seeds this level polished, in the order they were ranked going in. */
+  seeds: PoseTraceCandidate[];
+  /** Per seed, this level's objective at the seed — where its polish started from. */
+  starts: number[];
+  /** Per seed, the moves its polish accepted, in order. */
+  paths: PoseTraceStep[][];
+  /** Per seed, where its polish ended. */
+  polished: PoseTraceCandidate[];
+  /** The candidates this level hands on, ranked and deduplicated. */
+  out: PoseTraceCandidate[];
+  /** This level's objective at `PoseTrace.probe`, when one was given. */
+  probeResidual: number | null;
+}
+
+/**
+ * The refinement written down level by level, for an instrument that knows
+ * where the truth is and needs to say where the search left it (issue #877).
+ * Pure bookkeeping: a search with a trace returns the same report as one without.
+ */
+export interface PoseTrace {
+  /** A placement, in the report's own space, to score at every level alongside the candidates. */
+  probe?: { x: number; y: number; rotationDeg: number; scale: number };
+  levels: PoseTraceLevel[];
+  /** Per part, every candidate that reached the report, with its every-pixel residual, best first. */
+  measured: { part: string; candidates: PoseTraceCandidate[] }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -1095,16 +1222,47 @@ function polish(
    * default run moves.
    */
   rotationBounds: { min: number; max: number; wraps: boolean },
+  /** Scale factors tried from the point the steps converged on; a better one restarts the polish there. */
+  escapes: readonly number[],
+  /** An instrument's record of where the polish started and the moves it accepted; the search never reads it. */
+  path?: { start: number; steps: PoseTraceStep[] },
 ): Candidate {
   const clamp = (v: number): number => Math.min(bounds.max, Math.max(bounds.min, v));
   const hold = (v: number): number =>
     rotationBounds.wraps ? v : Math.min(rotationBounds.max, Math.max(rotationBounds.min, v));
   let cur: Candidate = { ...start, residual: residualAt(level, plate, s, start, smooth) };
+  if (path !== undefined) path.start = cur.residual;
   let dt = step.translate;
   let dr = step.rotate;
   let ds = step.scale;
   for (let guard = 0; guard < 200; guard++) {
-    if (dt <= floor.translate && dr <= floor.rotate && ds <= floor.scale) break;
+    if (dt <= floor.translate && dr <= floor.rotate && ds <= floor.scale) {
+      let jump = cur;
+      for (const f of escapes) {
+        const scale = clamp(cur.scale * f);
+        if (scale === cur.scale) continue;
+        const refit = polish(
+          level,
+          plate,
+          s,
+          { ...cur, scale },
+          { translate: step.translate, rotate: 0, scale: 0 },
+          { translate: floor.translate, rotate: 0, scale: 0 },
+          smooth,
+          bounds,
+          rotationBounds,
+          [],
+        );
+        if (refit.residual < jump.residual) jump = refit;
+      }
+      if (jump === cur) break;
+      path?.steps.push({ residual: jump.residual, translate: dt, rotate: dr, scale: jump.scale / cur.scale - 1, clamped: false, escape: true });
+      cur = jump;
+      dt = step.translate;
+      dr = step.rotate;
+      ds = step.scale;
+      continue;
+    }
     const probes: Candidate[] = [];
     const push = (cand: Omit<Candidate, 'residual'>): void => {
       probes.push({ ...cand, residual: residualAt(level, plate, s, { ...cand, residual: 0 }, smooth) });
@@ -1138,6 +1296,12 @@ function polish(
       dr /= 2;
       ds /= 2;
       continue;
+    }
+    if (path !== undefined) {
+      const clamped =
+        (best.scale !== cur.scale && best.scale !== cur.scale * (1 + ds) && best.scale !== cur.scale * (1 - ds)) ||
+        (best.rotDeg !== cur.rotDeg && best.rotDeg !== cur.rotDeg + dr && best.rotDeg !== cur.rotDeg - dr);
+      path.steps.push({ residual: best.residual, translate: dt, rotate: dr, scale: ds, clamped, escape: false });
     }
     cur = best;
   }
@@ -1553,6 +1717,7 @@ export function estimatePose(options: PoseOptions): PoseReport {
         maxResidual,
         { min: scaleMin, max: scaleMax },
         rotationBounds,
+        options.trace,
       ),
     );
   }
@@ -1569,6 +1734,7 @@ function placePart(
   maxResidual: number,
   scaleBounds: { min: number; max: number },
   rotationBounds: { min: number; max: number; wraps: boolean },
+  trace?: PoseTrace,
 ): PosePart {
   const scaleMin = scaleBounds.min;
   /** The scale the sample sets are sized for — the middle of the window, and NOT the scale under test. */
@@ -1766,7 +1932,11 @@ function placePart(
       }
       seeds.push(start);
     }
-    candidates = seeds.map((seed) => polish(level, plate, s, seed, step, floor, smooth, scaleBounds, rotationBounds));
+    const paths = seeds.map((): { start: number; steps: PoseTraceStep[] } => ({ start: 0, steps: [] }));
+    candidates = seeds.map((seed, i) =>
+      polish(level, plate, s, seed, step, floor, smooth, scaleBounds, rotationBounds, li === 0 ? [POLISH_SCALE_ESCAPE] : [], trace === undefined ? undefined : paths[i]),
+    );
+    const polished = candidates.slice();
     candidates.sort((a, b) => a.residual - b.residual);
     // ⚠️ Eight branches that walked to one optimum are one candidate, not eight —
     // and the radius has to scale with the PART rather than be a pixel count.
@@ -1775,6 +1945,47 @@ function placePart(
     // instrument exists to keep: with a fixed one-pixel radius the fixture lost
     // one of its two identical arms.
     candidates = dedupe(candidates, Math.max(1, (0.2 * span * scaleReference) / level.reduction), 5, 1.03);
+    if (trace !== undefined) {
+      const ou = part.width / 2 - anchorX;
+      const ov = part.height / 2 - anchorY;
+      const said = (c: Candidate): PoseTraceCandidate => {
+        const cos = Math.cos(c.rotDeg * DEG) * c.scale;
+        const sin = Math.sin(c.rotDeg * DEG) * c.scale;
+        return {
+          x: c.cx * level.reduction + ou * cos - ov * sin,
+          y: c.cy * level.reduction + ou * sin + ov * cos,
+          rotationDeg: normaliseDegrees(c.rotDeg),
+          scale: c.scale,
+          residual: c.residual,
+        };
+      };
+      let probeResidual: number | null = null;
+      if (trace.probe !== undefined) {
+        const q = trace.probe;
+        const cos = Math.cos(q.rotationDeg * DEG) * q.scale;
+        const sin = Math.sin(q.rotationDeg * DEG) * q.scale;
+        const at: Candidate = {
+          cx: (q.x - (ou * cos - ov * sin)) / level.reduction,
+          cy: (q.y - (ou * sin + ov * cos)) / level.reduction,
+          rotDeg: q.rotationDeg,
+          scale: q.scale,
+          residual: 0,
+        };
+        probeResidual = residualAt(level, plate, s, at, smooth);
+      }
+      trace.levels.push({
+        part: name,
+        level: li,
+        reduction: level.reduction,
+        keep,
+        seeds: seeds.map(said),
+        starts: paths.map((p) => p.start),
+        paths: paths.map((p) => p.steps),
+        polished: polished.map(said),
+        out: candidates.map(said),
+        probeResidual,
+      });
+    }
     if (li > 0) {
       candidates = candidates.map((c) => ({ ...c, cx: c.cx * 2, cy: c.cy * 2 }));
       // A rotation-free part keeps its step at zero all the way down, so the
@@ -1812,6 +2023,7 @@ function placePart(
           true,
           scaleBounds,
           rotationBounds,
+          [],
         ),
       );
     }
@@ -1822,6 +2034,16 @@ function placePart(
   // candidates that walked to the same optimum are one answer, not two.
   const measured = candidates.map((cand) => ({ cand, placement: toPlacement(part, anchorX, anchorY, cand, measure(levels[0], plates[0], part, anchorX, anchorY, cand)) }));
   measured.sort((a, b) => a.placement.residual - b.placement.residual || b.placement.footprint - a.placement.footprint);
+  trace?.measured.push({
+    part: name,
+    candidates: measured.map((m) => ({
+      x: m.placement.x,
+      y: m.placement.y,
+      rotationDeg: m.placement.rotationDeg,
+      scale: m.placement.scale,
+      residual: m.placement.residual,
+    })),
+  });
   const distinct: typeof measured = [];
   for (const m of measured) {
     const same = distinct.some(
