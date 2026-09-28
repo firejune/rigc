@@ -289,16 +289,17 @@ export const SKIP_NO_ATLAS = 'the round trip did not produce an atlas to measure
  *     `A15_IDLE_NO_MESH_BONE_KEYS` is the pattern and already reads this way: no
  *     `idle` animation, or an `idle` with no bone timeline, is the named subject
  *     absent and SKIPs; no mesh-driving bone among the bones `idle` does key is
- *     the construct absent and passes. `A10_NO_NAN_AFTER_STEPPING` is the same
- *     shape — the stepping is per animation, so a skeleton with none has not
- *     been stepped.
+ *     the construct absent and passes. `A10_NO_NAN_AFTER_STEPPING` was the same
+ *     shape until issue #902, and is the next bullet's now: #882 gave it a
+ *     setup-pose clause whose subject is the bones, beside the stepping clause
+ *     whose subject is the animations.
  *   * An assertion with more than one clause SKIPs only when EVERY clause had
  *     nothing to measure, which is the shape `A09`, `A33` and `A38` already
- *     carry (`polygons.length === 0 && endsChecked === 0`). `A13_MESH_BUDGET` is
- *     why the clause is stated: a declared slot budget is measured against a
- *     count of mesh slots, and zero is a count, so that half passes on a rig
- *     with no mesh — while a rig that declares only a TRIANGLE budget has
- *     nothing left to measure and skips.
+ *     carry (`polygons.length === 0 && endsChecked === 0`), and `A10` since #902.
+ *     `A13_MESH_BUDGET` is why the clause is stated: a declared slot budget is
+ *     measured against a count of mesh slots, and zero is a count, so that half
+ *     passes on a rig with no mesh — while a rig that declares only a TRIANGLE
+ *     budget has nothing left to measure and skips.
  *
  * ⚠️ What the criterion is not allowed to become is a table of assertions with
  * their verdicts written beside them. Every row above is decided by reading the
@@ -318,6 +319,13 @@ export const SKIP_NO_ATLAS = 'the round trip did not produce an atlas to measure
 export const SKIP_NO_REGION_ATTACHMENT = 'the skeleton carries no region attachment';
 export const SKIP_NO_MESH_ATTACHMENT = 'the skeleton carries no mesh attachment';
 export const SKIP_NO_ANIMATION = 'the skeleton carries no animation';
+/**
+ * A10's (issue #902): its setup clause reads the bones and its stepping clause
+ * the animations, so it skips only when the skeleton carries neither — and the
+ * sentence is `SKIP_NO_ANIMATION`'s with the second subject added, so the two
+ * cannot drift into different words for the same absence.
+ */
+export const SKIP_NO_POSE = `${SKIP_NO_ANIMATION} and no bone, so there is no setup pose to read and nothing to step`;
 export const SKIP_NO_TIMELINE = 'no animation here carries a timeline';
 export const SKIP_NO_PHYSICS_CONSTRAINT = 'the skeleton declares no physics constraint';
 export const SKIP_NO_ATLAS_PAGE = 'the atlas declares no page';
@@ -4336,13 +4344,31 @@ export function validate(input: ValidateInput): ValidateReport {
 
     // --- A10: step every animation and look for NaN ------------------------
     check('A10_NO_NAN_AFTER_STEPPING', () => {
-      // The name carries a subject as well as a construct, and A15 is the
-      // pattern (#580): the NaN is produced by STEPPING, which happens once per
-      // animation, so a skeleton with none has not been stepped and has no pose
-      // to find non-finite. A09 already reads the same subject this way — a
-      // static rig has no duration to compare — and the two must not print
-      // different verdicts over one skeleton's empty animation list.
-      if (data.animations.length === 0) return skip('A10_NO_NAN_AFTER_STEPPING', SKIP_NO_ANIMATION);
+      // Two clauses, and since issue #902 each is read on its own subject. The
+      // SETUP POSE is posed from the bones, so it has something to read on any
+      // skeleton that carries one; the STEPPED FRAMES are posed once per
+      // animation, so a skeleton with none has nothing to step. This used to
+      // skip the whole rule on the second fact alone, which was A15's pattern
+      // (#580) for a rule whose only clause was the stepping — and #882 gave it
+      // the setup clause without moving the skip. Measured on the static probe
+      // with a leaf bone at `rotation: 1e309` in its emitted file: `validate`
+      // printed this rule as SKIP and the run green under both profiles, and
+      // `render` refused the same file by the bone. A static rig's setup pose
+      // is the whole of what it shows, so that was the one pose nothing read.
+      //
+      // ⇒ The multi-clause rule of #580 now governs, the shape A09, A13, A33
+      // and A38 carry: the rule SKIPs only when neither clause has anything to
+      // measure, the clause that ran decides PASS or FAIL, and the clause that
+      // had nothing is named on the stats line (`nanStepping=skipped`, beside
+      // `animations=0`) the way A47 names a constraint it did not measure. A
+      // PASS row carries no detail, which is why the stats line is where.
+      //
+      // ⚠️ A09 does not follow, and that is its own name read at its word: a
+      // declared duration is a fact about an animation and nothing else, so a
+      // static rig still gives it nothing at all.
+      if (data.animations.length === 0 && data.bones.length === 0) {
+        return skip('A10_NO_NAN_AFTER_STEPPING', SKIP_NO_POSE);
+      }
       /** Is this a mode `updateWorldTransform`'s switch has a case for? Read off the runtime's own enum. */
       const isMode = (inherit: unknown): boolean => typeof inherit === 'number' && Inherit[inherit] !== undefined;
 
@@ -4421,6 +4447,73 @@ export function validate(input: ValidateInput): ValidateReport {
       // below is posed AFTER `state.apply`, so a bone the animation keys from
       // t=0 never shows its setup value to the loop, and a runtime that shows
       // the rig at rest does show it.
+      //
+      // 🔸 Posed once, before any animation is set, rather than once per
+      // animation as it was until #902: `setAnimation` does not touch the
+      // skeleton, so every animation's copy of this pose was the same pose, and
+      // the first of them was the only one ever read.
+      if (data.animations.length === 0) stats.nanStepping = 'skipped';
+      const atRest = new Skeleton(data);
+      atRest.setupPose();
+      atRest.update(0);
+      atRest.updateWorldTransform(Physics.reset);
+      const atSetup = nonFiniteOfPosed('the setup pose', atRest);
+      if (atSetup !== null) {
+        fail('A10_NO_NAN_AFTER_STEPPING', atSetup);
+        return;
+      }
+
+      /**
+       * What a posed frame shows that the world-transform scan does not read: a
+       * bone posing no inheritance mode, and a slot colour that is not finite.
+       * `where` leads the sentence — the animation's name at a stepped frame,
+       * as it always has, or `the setup pose` on a skeleton with no animation.
+       */
+      const poseDefect = (where: string, skeleton: Skeleton): string | null => {
+        for (const bone of skeleton.bones) {
+          const pose = bone.appliedPose;
+          // The setup half of the inherit-key clause above: a bone's own
+          // `inherit` goes through the same lookup, and a miss there loads
+          // `undefined` into the setup pose, which every frame copies. Only
+          // reachable on a file rigc did not write — `parseRigSpec` refuses the
+          // spelling.
+          if (!isMode(pose.inherit)) {
+            const rawBone = Array.isArray(raw?.bones)
+              ? (raw.bones as unknown[]).find((b) => isObj(b) && b.name === bone.data.name)
+              : undefined;
+            return (
+              `${where}: bone "${bone.data.name}" poses inheritance mode ${String(pose.inherit)} — its setup ` +
+              `spells inherit ${JSON.stringify(isObj(rawBone) ? rawBone.inherit : undefined)}, which the ` +
+              `runtime's mode lookup does not resolve (${BONE_INHERIT_KNOWN}), so its world rotation, scale and shear ` +
+              'are never computed — they stay 0 and everything the bone carries collapses to a point'
+            );
+          }
+        }
+        for (const slot of skeleton.slots) {
+          const c = slot.appliedPose.color;
+          if (![c.r, c.g, c.b, c.a].every(Number.isFinite)) return `${where}: slot "${slot.data.name}" colour is non-finite`;
+          // The other colour a slot poses, and it was outside this loop until
+          // issue #690 for the reason every gap here has: nothing emitted one.
+          // `null` is the ordinary case — a slot with no `dark` allocates no
+          // dark colour at all — and is not a reading to make, so it is
+          // skipped rather than treated as zero.
+          const d = slot.appliedPose.darkColor;
+          if (d !== null && ![d.r, d.g, d.b].every(Number.isFinite)) {
+            return `${where}: slot "${slot.data.name}" dark colour is non-finite`;
+          }
+        }
+        return null;
+      };
+
+      // The stepping half, and on a static rig there is nothing to step: the
+      // setup pose is then the only frame the skeleton has, and the two readings
+      // a stepped frame gets are made on it instead, so a colour or an
+      // inheritance mode the rig shows at rest is not left to `render`.
+      if (data.animations.length === 0) {
+        const atRestDefect = poseDefect('the setup pose', atRest);
+        if (atRestDefect !== null) fail('A10_NO_NAN_AFTER_STEPPING', atRestDefect);
+        return;
+      }
       for (const anim of data.animations) {
         const skeleton = new Skeleton(data);
         const state = new AnimationState(new AnimationStateData(data));
@@ -4428,11 +4521,6 @@ export function validate(input: ValidateInput): ValidateReport {
         skeleton.setupPose();
         skeleton.update(0);
         skeleton.updateWorldTransform(Physics.reset);
-        const atSetup = nonFiniteOfPosed('the setup pose', skeleton);
-        if (atSetup !== null) {
-          fail('A10_NO_NAN_AFTER_STEPPING', atSetup);
-          return;
-        }
         const step = Math.max(anim.duration, 1) / STEP_FRAMES;
         for (let i = 0; i < STEP_FRAMES; i++) {
           state.update(step);
@@ -4447,42 +4535,10 @@ export function validate(input: ValidateInput): ValidateReport {
             fail('A10_NO_NAN_AFTER_STEPPING', found);
             return;
           }
-          for (const bone of skeleton.bones) {
-            const pose = bone.appliedPose;
-            // The setup half of the clause above: a bone's own `inherit` goes
-            // through the same lookup, and a miss there loads `undefined` into
-            // the setup pose, which every frame copies. Only reachable on a
-            // file rigc did not write — `parseRigSpec` refuses the spelling.
-            if (!isMode(pose.inherit)) {
-              const rawBone = Array.isArray(raw?.bones)
-                ? (raw.bones as unknown[]).find((b) => isObj(b) && b.name === bone.data.name)
-                : undefined;
-              fail(
-                'A10_NO_NAN_AFTER_STEPPING',
-                `${anim.name}: bone "${bone.data.name}" poses inheritance mode ${String(pose.inherit)} — its setup ` +
-                  `spells inherit ${JSON.stringify(isObj(rawBone) ? rawBone.inherit : undefined)}, which the ` +
-                  `runtime's mode lookup does not resolve (${BONE_INHERIT_KNOWN}), so its world rotation, scale and shear ` +
-                  'are never computed — they stay 0 and everything the bone carries collapses to a point',
-              );
-              return;
-            }
-          }
-          for (const slot of skeleton.slots) {
-            const c = slot.appliedPose.color;
-            if (![c.r, c.g, c.b, c.a].every(Number.isFinite)) {
-              fail('A10_NO_NAN_AFTER_STEPPING', `${anim.name}: slot "${slot.data.name}" colour is non-finite`);
-              return;
-            }
-            // The other colour a slot poses, and it was outside this loop until
-            // issue #690 for the reason every gap here has: nothing emitted one.
-            // `null` is the ordinary case — a slot with no `dark` allocates no
-            // dark colour at all — and is not a reading to make, so it is
-            // skipped rather than treated as zero.
-            const d = slot.appliedPose.darkColor;
-            if (d !== null && ![d.r, d.g, d.b].every(Number.isFinite)) {
-              fail('A10_NO_NAN_AFTER_STEPPING', `${anim.name}: slot "${slot.data.name}" dark colour is non-finite`);
-              return;
-            }
+          const defect = poseDefect(anim.name, skeleton);
+          if (defect !== null) {
+            fail('A10_NO_NAN_AFTER_STEPPING', defect);
+            return;
           }
         }
       }
