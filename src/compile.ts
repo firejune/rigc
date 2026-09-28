@@ -128,6 +128,8 @@ import {
   TransformError,
   type BoneTransform,
 } from './transform.ts';
+import { emitBones } from './emit_spine.ts';
+import type { CarriedFromCompileResult, ModelBone } from './model.ts';
 import type {
   CompileResult,
   CompiledImage,
@@ -148,7 +150,6 @@ import type {
   MotionValueTrack,
   RigInfo,
   SpineAttachment,
-  SpineBone,
   SpineBoundingBoxAttachment,
   SpineClippingAttachment,
   SpineConstraint,
@@ -2537,7 +2538,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   const axisSpineDeg = manifest?.axis ? screenToSpineDegrees(manifest.axis.deg) : null;
   const partBySlot = new Map(parts.map((part) => [part.slot, part]));
 
-  const bones: SpineBone[] = [];
+  const bones: ModelBone[] = [];
   for (const spec of rig.bones) {
     bones.push(buildBone(spec, bones, { rig, manifest, cropH, axisSpineDeg, partBySlot }));
   }
@@ -3359,7 +3360,10 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
 
   const skeleton: SpineSkeletonJson = {
     skeleton: header,
-    bones,
+    // The one place the model's bones become Spine's: `emitBones` owns the 4.3
+    // spellings and the insertion order the key-order pass leaves alone. Nothing
+    // below reads this array back — `buildRigInfo` takes the model's bones.
+    bones: emitBones(bones),
     slots,
     // A skin entry is `name`, then whatever it activates, then `attachments` —
     // `readSkeletonData`'s own order (`:372-443`). Every member list is a
@@ -3422,10 +3426,9 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // of what was written — and what the parser loads does not move (`S103`).
   inEditorKeyOrder(withoutParserDefaults(skeleton));
 
-  return {
-    skeleton,
-    skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
-    atlasText,
+  // The fields the model carries as `CompileResult` carries them, by reference:
+  // one object, so the result and its model cannot say two different things.
+  const carried: CarriedFromCompileResult = {
     images,
     pageGrids: atlasIn === null ? [] : [...atlasIn.grids].map(([page, grid]) => ({ page, said: grid.said })),
     droppedStates,
@@ -3437,6 +3440,13 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     deformTransforms,
     trackDerivations,
     rig: buildRigInfo(rig, bones, meshes, manifest, images),
+  };
+  return {
+    skeleton,
+    skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
+    atlasText,
+    ...carried,
+    model: { bones, setupWorld: transforms, ...carried },
   };
 }
 
@@ -3453,7 +3463,7 @@ interface BoneContext {
 }
 
 /**
- * One rig bone -> one emitted bone.
+ * One rig bone -> one model bone (`ModelBone`); `emitBones` writes it as Spine's.
  *
  * 🔑 A field is emitted exactly when the spec declared it. That is not Spine's
  * own exporter convention (it omits anything equal to the default) and the
@@ -3461,8 +3471,8 @@ interface BoneContext {
  * deciding emission from the arithmetic rather than from the author's text makes
  * the file depend on a rounding.
  */
-function buildBone(spec: RigBone, soFar: SpineBone[], ctx: BoneContext): SpineBone {
-  const bone: SpineBone = { name: spec.name };
+function buildBone(spec: RigBone, soFar: ModelBone[], ctx: BoneContext): ModelBone {
+  const bone: ModelBone = { name: spec.name };
   if (spec.parent !== undefined) bone.parent = spec.parent;
   if (spec.length !== undefined) bone.length = f32(spec.length);
 
@@ -3493,10 +3503,13 @@ function buildBone(spec: RigBone, soFar: SpineBone[], ctx: BoneContext): SpineBo
   if (spec.scaleY !== undefined) bone.scaleY = f32(spec.scaleY);
   if (spec.shearX !== undefined) bone.shearX = f32(spec.shearX);
   if (spec.shearY !== undefined) bone.shearY = f32(spec.shearY);
-  if (spec.inherit !== undefined) bone.inherit = spec.inherit;
-  if (spec.skin !== undefined) bone.skin = spec.skin;
-  if (spec.color !== undefined) bone.color = spec.color;
-  if (spec.icon !== undefined) bone.icon = spec.icon;
+  if (spec.inherit !== undefined) bone.inheritMode = spec.inherit;
+  if (spec.skin !== undefined) bone.skinRequired = spec.skin;
+  if (spec.color !== undefined || spec.icon !== undefined) {
+    bone.editor = {};
+    if (spec.color !== undefined) bone.editor.color = spec.color;
+    if (spec.icon !== undefined) bone.editor.icon = spec.icon;
+  }
   return bone;
 }
 
@@ -3734,7 +3747,7 @@ function refuseDefaultSkinContests(skinNames: readonly string[], skinParts: Map<
 
 interface AttachmentContext {
   images: CompiledImage[];
-  bones: SpineBone[];
+  bones: ModelBone[];
   transforms: Map<string, BoneTransform>;
   meshBones: Set<string>;
   meshes: CompileResult['meshes'];
@@ -4064,7 +4077,7 @@ function setupWorldVertices(
   vertices: number[],
   vertexCount: number,
   anchor: BoneTransform,
-  bones: SpineBone[],
+  bones: ModelBone[],
   transforms: Map<string, BoneTransform>,
   where: string,
 ): Array<[number, number]> {
@@ -6852,7 +6865,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
  */
 function buildRigInfo(
   rig: RigSpec,
-  bones: SpineBone[],
+  bones: ModelBone[],
   meshes: CompileResult['meshes'],
   manifest: FaceManifest | null,
   images: CompiledImage[],
@@ -6998,7 +7011,7 @@ function placeRegion(
 function buildMesh(
   part: FaceManifestPart,
   manifest: FaceManifest,
-  bones: SpineBone[],
+  bones: ModelBone[],
   transforms: Map<string, BoneTransform>,
   anchorName: string,
 ): { attachment: SpineMeshAttachment; kind: 'ring' | 'ribbon' } {
@@ -7665,8 +7678,8 @@ interface DeformGeometry {
 function deformGeometryOf(
   att: SpineAttachment,
   where: string,
-  /** The emitted bone array, which a weight run's `boneIndex` indexes into. */
-  rigBones: SpineBone[],
+  /** The model's bone array, in the order the emitted one keeps — a weight run's `boneIndex` indexes into it. */
+  rigBones: ModelBone[],
   /** Their setup world transforms, by name. */
   transforms: Map<string, BoneTransform>,
 ): DeformGeometry {
@@ -8468,7 +8481,7 @@ function resolveMemberTrack(
   track: MotionTrack,
   animName: string,
   targets: readonly string[],
-  bones: readonly SpineBone[],
+  bones: readonly ModelBone[],
   derivations: CompileResult['trackDerivations'],
 ): Map<string, MotionValueTrack> {
   const carriesMap = track.keys.some((key) => isMemberValues(key.v));

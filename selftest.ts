@@ -15,6 +15,9 @@
  *   bun selftest.ts                      the public suite: everything below
  *   bun selftest.ts --cuts <cuts.json>   plus an extra suite over those cuts
  *   RIGC_CUTS=<cuts.json> bun selftest.ts
+ *   RIGC_EMIT_HASHES_BASE=<hashes.json> bun selftest.ts
+ *                                        plus MB07: two gallery rigs hashed against
+ *                                        that base document's rows (issue #915)
  *
  * ## The public suite runs on fixtures this file generates
  *
@@ -187,6 +190,9 @@ import {
   parserReading,
   withoutParserDefaults,
 } from './src/keyorder.ts';
+import { emitBones } from './src/emit_spine.ts';
+import type { ModelBone } from './src/model.ts';
+import { computeWorldTransforms, type BoneTransform } from './src/transform.ts';
 import { MOTION_ENUMS, MOTION_KEYS, MOTION_TYPES, parseMotionSpec } from './src/motion.ts';
 import { CHECKED_SPEC_VALUE_TYPES, FLOAT32_MAX, SPEC_VALUE_TYPES, type SpecEnumRule } from './src/keys.ts';
 import { MANIFEST_ENUMS, MANIFEST_MESH_KINDS, MANIFEST_TYPES } from './src/types.ts';
@@ -372,7 +378,7 @@ import {
   SLOT_COLOR_CHANNELS,
 } from './src/timelines.ts';
 import { readPngInfo } from './src/png.ts';
-import type { CompiledImage, CompileResult, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
+import type { CompiledImage, CompileResult, SpineBone, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
 import { skeletonDataFromText, stretchSingularValues, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
 import {
   ASSERTION_NAMES,
@@ -443,6 +449,7 @@ import {
 } from './tools/pose_oracle.ts';
 import {
   compareHashes,
+  comparisonLines,
   galleryRecipe,
   type HashesDocument,
   type Recipe,
@@ -66344,6 +66351,411 @@ function runEmitHashesSuite(): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// the compiled model's first record: bones, and the Spine emitter (issue #915, step 1b of #380)
+// ---------------------------------------------------------------------------
+
+/** The keys a `ModelBone` may carry: the neutral names, and none of Spine's spellings. */
+const MODEL_BONE_KEYS: readonly string[] = [
+  'name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inheritMode', 'skinRequired', 'editor',
+];
+
+/**
+ * Compile-time halves of `MB04`, held by `tsc` rather than by a line this run
+ * prints: both bone shapes satisfy `computeWorldTransforms`'s parameter without
+ * a cast, and a bone carrying BOTH spellings of the inherit mode does not — so
+ * which one wins is never a run-time question. Each constant is typed `true`
+ * only when its condition holds, so a regression is a type error here.
+ */
+type PosableOf = Parameters<typeof computeWorldTransforms>[0][number];
+const SPINE_BONE_IS_POSABLE: SpineBone extends PosableOf ? true : false = true;
+const MODEL_BONE_IS_POSABLE: ModelBone extends PosableOf ? true : false = true;
+const BOTH_SPELLINGS_ARE_NOT_POSABLE: { name: string; inherit: string; inheritMode: string } extends PosableOf ? false : true = true;
+
+/** Two setup-transform maps compared with `Object.is` on every field; the first difference, or null. */
+function firstTransformDifference(a: Map<string, BoneTransform>, b: Map<string, BoneTransform>): string | null {
+  const names = [...new Set([...a.keys(), ...b.keys()])];
+  for (const name of names) {
+    const ta = a.get(name);
+    const tb = b.get(name);
+    if (ta === undefined || tb === undefined) return `bone "${name}" is on one side only`;
+    for (const field of ['a', 'b', 'c', 'd', 'worldX', 'worldY', 'worldRotation'] as const) {
+      if (!Object.is(ta[field], tb[field])) return `bone "${name}" ${field} ${ta[field]} against ${tb[field]}`;
+    }
+  }
+  return null;
+}
+
+/** Bones through the two whole-object passes the compiler applies, as JSON text — what the skeleton file carries. */
+function bonesAsFileText(bones: SpineBone[]): string {
+  const holder = { bones };
+  inEditorKeyOrder(withoutParserDefaults(holder));
+  return JSON.stringify(holder.bones);
+}
+
+/** `src/compile.ts` with its comments blanked, so a scan reads code only. */
+function codeOnly(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+}
+
+/** The source rules `MB06` holds `compile.ts` to; each entry is a problem found. */
+function compileSourceProblems(text: string): string[] {
+  const code = codeOnly(text);
+  const count = (re: RegExp): number => (code.match(re) ?? []).length;
+  const problems: string[] = [];
+  const emits = count(/\bemitBones\(/g);
+  if (emits !== 1) problems.push(`emitBones is called ${emits} time(s); the skeleton's bones are emitted exactly once`);
+  const spine = count(/\bSpineBone\b/g);
+  if (spine !== 0) problems.push(`SpineBone is named ${spine} time(s); compile builds model bones and names no Spine bone`);
+  const readBack = count(/\bskeleton\.bones\b/g);
+  if (readBack !== 0) problems.push(`skeleton.bones is read ${readBack} time(s); nothing reads the emitted bones back`);
+  const spelled = count(/\bbone\.(inherit|skin|color|icon)\s*=/g);
+  if (spelled !== 0) problems.push(`a bone is assigned a Spine spelling ${spelled} time(s); those keys are the emitter's`);
+  return problems;
+}
+
+/**
+ * The compiled model's bones and the Spine emitter (issue #915): the emitter
+ * restates each bone in the constructor's key order under the 4.3 spellings, a
+ * model bone and its emitted twin pose to the bit, every compiled rig's bones
+ * are its model through the emitter, `compile.ts` emits them once, and — when a
+ * base hash document is named — two gallery rigs land byte-identical to it.
+ */
+function runModelBonesSuite(): { failures: number; gateHole: boolean } {
+  console.log('\n── model-bones: the compiled model\'s bones, and the Spine emitter as their one consumer (issue #915) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  // --- MB01: every key, in the constructor's order, restated by the emitter --
+  {
+    const probes: string[] = [];
+    // Built in REVERSE key order, so the emitter's order is its own and not a copy of the input's.
+    const full: ModelBone = {
+      editor: { icon: 'arrows', color: 'ff8800ff' },
+      skinRequired: true,
+      inheritMode: 'noScale',
+      shearY: -7,
+      shearX: 5,
+      scaleY: 0.75,
+      scaleX: 1.5,
+      rotation: 30,
+      y: -4.5,
+      x: 3.25,
+      length: 12.5,
+      parent: 'root',
+      name: 'full',
+    };
+    const expected =
+      '{"name":"full","parent":"root","length":12.5,"x":3.25,"y":-4.5,"rotation":30,"scaleX":1.5,"scaleY":0.75,' +
+      '"shearX":5,"shearY":-7,"inherit":"noScale","skin":true,"color":"ff8800ff","icon":"arrows"}';
+    const [emitted] = emitBones([full]);
+    const text = JSON.stringify(emitted);
+    if (text !== expected) probes.push(`emitted ${text}`);
+    // The mutant: a constructor that inserted `inherit` before `shearX`. The key-order pass
+    // does not list `shearX`, so it cannot put the mutant back — insertion order IS the bytes.
+    const mutant: SpineBone = { name: 'full' };
+    for (const [key, value] of Object.entries(emitted)) {
+      if (key === 'shearX') continue;
+      if (key === 'inherit') {
+        Object.assign(mutant, { inherit: value, shearX: emitted.shearX });
+        continue;
+      }
+      Object.assign(mutant, { [key]: value });
+    }
+    const passed = bonesAsFileText([emitted]);
+    const passedMutant = bonesAsFileText([mutant]);
+    if (passed === passedMutant) probes.push('a constructor that moved `inherit` before `shearX` wrote the same file text; the key-order pass would own this order and the control proves nothing');
+    const held = probes.length === 0;
+    say(
+      'MB01_EMIT_BONES_RESTATES_EVERY_KEY_IN_THE_CONSTRUCTORS_ORDER',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `a model bone carrying every field, built in reverse key order, emits exactly ${expected}; the mutant that ` +
+          'inserts `inherit` before `shearX` still differs after `withoutParserDefaults` and `inEditorKeyOrder`, ' +
+          'because the bone row does not list `shearX`',
+      ),
+      'issue #915: for a key the key-order table does not list, the constructor\'s insertion order is the byte ' +
+        'contract (docs/COMPILED_MODEL.md §3), so the emitter restates `buildBone`\'s order exactly; the text of one ' +
+        'bone is compared, not the object, because the object compares equal in any order',
+    );
+  }
+
+  // --- MB02: a name alone, and an empty editor block, emit the name alone --
+  {
+    const probes: string[] = [];
+    const lone = JSON.stringify(emitBones([{ name: 'lone' }, { name: 'bare', editor: {} }]));
+    const expected = '[{"name":"lone"},{"name":"bare"}]';
+    if (lone !== expected) probes.push(`emitted ${lone}`);
+    const held = probes.length === 0;
+    say(
+      'MB02_A_NAME_ONLY_MODEL_BONE_EMITS_THE_NAME_ALONE',
+      held,
+      probeDetail(held, probes, `a bone with only a name, and one whose editor block is empty, emit ${expected}`),
+      'a field is emitted exactly when the spec declared it (`buildBone`\'s rule): the emitter invents no key, and an ' +
+        'editor block with nothing in it writes nothing',
+    );
+  }
+
+  // --- MB03: the mode and the flag come out under the 4.3 spellings, and no neutral key leaks --
+  {
+    const probes: string[] = [];
+    const bones = emitBones([
+      { name: 'moded', inheritMode: 'onlyTranslation', skinRequired: false },
+      { name: 'plain', parent: 'moded' },
+    ]);
+    const keys = bones.map((b) => Object.keys(b).join(','));
+    if (keys[0] !== 'name,inherit,skin') probes.push(`the moded bone emitted keys ${keys[0]}`);
+    if (bones[0].inherit !== 'onlyTranslation') probes.push(`inherit is ${JSON.stringify(bones[0].inherit)}`);
+    if (bones[0].skin !== false) probes.push(`skin is ${JSON.stringify(bones[0].skin)}; false is a stated value, not an absence`);
+    if (keys[1] !== 'name,parent') probes.push(`a bone with no mode emitted keys ${keys[1]}`);
+    const leaked = bones.flatMap((b) => Object.keys(b).filter((k) => k === 'inheritMode' || k === 'skinRequired' || k === 'editor'));
+    if (leaked.length > 0) probes.push(`neutral key(s) reached the Spine bone: ${leaked.join(', ')}`);
+    const held = probes.length === 0;
+    say(
+      'MB03_THE_INHERIT_MODE_AND_SKIN_FLAG_COME_OUT_UNDER_THE_SPINE_SPELLINGS',
+      held,
+      probeDetail(held, probes, '`inheritMode: onlyTranslation` emits `inherit`, `skinRequired: false` emits `skin: false`, a bone with neither emits neither, and no model key name reaches the file'),
+      'the two spellings with a generation history live in the emitter and nowhere else: 4.0/4.1 wrote the mode ' +
+        'as `transform`, which 4.3 loads silently as Normal (`A02`)',
+    );
+  }
+
+  // --- MB04: a model bone and its emitted twin pose to the same matrix, to the bit --
+  {
+    const probes: string[] = [];
+    const chain: ModelBone[] = [
+      { name: 'root', x: 5, y: -3, rotation: 10, scaleX: 2, scaleY: 1.25 },
+      { name: 'arm', parent: 'root', x: 20, y: 4, rotation: 35, scaleX: 1.5, scaleY: 0.5, shearX: 5, shearY: -3, inheritMode: 'noScale' },
+      { name: 'hand', parent: 'arm', x: 12, rotation: -20, scaleY: 2, inheritMode: 'onlyTranslation' },
+      { name: 'finger', parent: 'hand', x: 6, y: 1, rotation: 50, scaleX: -1, inheritMode: 'noRotationOrReflection' },
+      { name: 'nail', parent: 'finger', x: 2, rotation: 15, scaleX: 0.8, inheritMode: 'noScaleOrReflection' },
+    ];
+    const fromModel = computeWorldTransforms(chain);
+    const emitted = emitBones(chain);
+    const fromTwin = computeWorldTransforms(emitted);
+    const diff = firstTransformDifference(fromModel, fromTwin);
+    if (diff !== null) probes.push(`model and emitted twin differ: ${diff}`);
+    // The plant: the twin with its `inherit` dropped. If the mode were read off one spelling only,
+    // this would still agree with the model and the control above would be blind to the mode.
+    const unmoded = emitted.map((b) => Object.fromEntries(Object.entries(b).filter(([k]) => k !== 'inherit')) as SpineBone);
+    const plantDiff = firstTransformDifference(fromModel, computeWorldTransforms(unmoded));
+    if (plantDiff === null) probes.push('the twin with every `inherit` dropped posed the same, so the probe does not see the mode');
+    if (!SPINE_BONE_IS_POSABLE || !MODEL_BONE_IS_POSABLE || !BOTH_SPELLINGS_ARE_NOT_POSABLE) probes.push('a compile-time half is false');
+    const held = probes.length === 0;
+    say(
+      'MB04_A_MODEL_BONE_AND_ITS_EMITTED_TWIN_POSE_TO_THE_SAME_MATRIX_TO_THE_BIT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `a chain of ${chain.length} bones through all four non-normal inherit modes, scale and shear: every field of ` +
+          'every setup transform `Object.is`-equal from the model and from its emitted twin; the twin with its modes ' +
+          `dropped moves (${plantDiff ?? 'no difference'}); and \`tsc\` holds that both shapes are posable and one ` +
+          'carrying both spellings is not',
+      ),
+      'issue #915: `computeWorldTransforms` takes a structural bone so spine-parts (Spine bones) and `compile` (model ' +
+        'bones) share one door, reading the mode as `inheritMode ?? inherit`; a bit here can move a float32 spelling ' +
+        'in the file, so equality is to the bit',
+    );
+  }
+
+  // --- MB05: every compiled rig's bones are its model through the emitter and the two passes --
+  const work = mkdtempSync(join(tmpdir(), 'rigc-model-bones-'));
+  {
+    const probes: string[] = [];
+    const TRACK = { type: 'path', vertexCount: 6, vertices: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10] };
+    const every = join(work, 'every');
+    mkdirSync(every, { recursive: true });
+    writeFileSync(
+      join(every, 'rig.json'),
+      `${JSON.stringify(
+        {
+          spec: 'rigc-rig/1',
+          name: 'modelbones',
+          skeleton: { width: 64, height: 64 },
+          bones: [
+            { name: 'root' },
+            {
+              name: 'hinge', parent: 'root', length: 8, x: 10, y: 4, rotation: 20, scaleX: 1.5, scaleY: 0.5, shearX: 5, shearY: -3,
+              inherit: 'noScale', color: 'ff8800ff', icon: 'arrows',
+            },
+            { name: 'wing', parent: 'hinge', x: 20, length: 10, inherit: 'onlyTranslation', skin: true },
+            { name: 'zero', parent: 'root', x: 0, rotation: 0, scaleX: 1, inherit: 'normal' },
+          ],
+          slots: [{ name: 'track', bone: 'root', attachment: 'track' }],
+          skins: { default: { attachments: { track: { track: TRACK } } }, variant: { bones: ['wing'] } },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    writeFileSync(
+      join(every, 'motion.json'),
+      `${JSON.stringify({ spec: 'rigc-motion/1', archetype: 'modelbones', cut: 'modelbones', easings: {}, animations: {} }, null, 2)}\n`,
+    );
+    const galleryRoot = resolve(import.meta.dir, 'gallery');
+    const gallery = existsSync(galleryRoot)
+      ? readdirSync(galleryRoot)
+          .sort()
+          .filter((name) => existsSync(join(galleryRoot, name, 'rig.json')) && existsSync(join(galleryRoot, name, 'motion.json')))
+      : [];
+    const rigs: Array<{ label: string; rigPath: string; motionPath: string }> = [
+      { label: 'the every-field probe rig', rigPath: join(every, 'rig.json'), motionPath: join(every, 'motion.json') },
+      ...gallery.map((name) => ({ label: `gallery/${name}`, rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json') })),
+    ];
+    const carriedKeys = [
+      'images', 'pageGrids', 'droppedStates', 'absentParts', 'declaredDurations', 'meshBones', 'meshes', 'physics',
+      'deformTransforms', 'trackDerivations', 'rig',
+    ] as const;
+    let bonesSeen = 0;
+    let plantCaught = false;
+    for (const [i, entry] of rigs.entries()) {
+      let result: CompileResult;
+      try {
+        result = compile({ rigPath: entry.rigPath, motionPath: entry.motionPath, outDir: join(work, `out${i}`) });
+      } catch (err) {
+        probes.push(`${entry.label} did not compile: ${(err as Error).message}`);
+        continue;
+      }
+      const model = result.model;
+      bonesSeen += model.bones.length;
+      for (const bone of model.bones) {
+        const foreign = Object.keys(bone).filter((k) => !MODEL_BONE_KEYS.includes(k));
+        if (foreign.length > 0) probes.push(`${entry.label}: model bone "${bone.name}" carries ${foreign.join(', ')}`);
+      }
+      const fileBones = (JSON.parse(result.skeletonText) as SpineSkeletonJson).bones;
+      const fileText = JSON.stringify(fileBones);
+      if (bonesAsFileText(emitBones(model.bones)) !== fileText) probes.push(`${entry.label}: the model's bones through the emitter and the two passes are not the file's bones`);
+      const world = firstTransformDifference(model.setupWorld, computeWorldTransforms(fileBones));
+      if (world !== null) probes.push(`${entry.label}: setupWorld is not the file's own setup pose: ${world}`);
+      for (const key of carriedKeys) {
+        if (model[key] !== result[key]) probes.push(`${entry.label}: model.${key} is not the result's own ${key}`);
+      }
+      if (i === 0) {
+        const bones = emitBones(model.bones);
+        if (JSON.stringify(bones.map((b) => Object.keys(b))) === JSON.stringify(fileBones.map((b) => Object.keys(b)))) {
+          probes.push('the every-field rig lost no parser default between the model and the file, so the passes were not exercised');
+        }
+        const moved = model.bones.map((b) => (b.name === 'wing' ? { ...b, x: (b.x ?? 0) + 1 } : b));
+        plantCaught = bonesAsFileText(emitBones(moved)) !== fileText;
+        if (!plantCaught) probes.push('a model bone moved one unit wrote the same file text, so the comparison is blind');
+        const hinge = fileBones.find((b) => b.name === 'hinge');
+        if (hinge?.inherit !== 'noScale' || hinge.shearX === undefined || hinge.icon !== 'arrows') {
+          probes.push(`the every-field rig's hinge was emitted as ${JSON.stringify(hinge)}`);
+        }
+        if (fileBones.find((b) => b.name === 'wing')?.skin !== true) probes.push('the every-field rig\'s wing was not emitted skin-required');
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'MB05_A_COMPILED_RIGS_BONES_ARE_ITS_MODEL_THROUGH_THE_EMITTER',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${rigs.length} rig(s) compiled in process — a probe rig carrying every bone field (shear, a mode, the skin flag, ` +
+          `the editor colour and icon) and every gallery rig — over ${bonesSeen} model bone(s): each model bone carries ` +
+          'only neutral keys, `emitBones` then the two passes is the file\'s `bones` text, `setupWorld` is the file\'s ' +
+          'own setup pose to the bit, the carried fields are the result\'s own objects, and one bone moved a unit in ' +
+          'the model is a different text',
+      ),
+      'issue #915: the skeleton\'s bones are produced once, from the model, and the model is what the rest of ' +
+        '`compile` reads. The probe rig exists because the corpus does not reach every key: over the nineteen recipes\' ' +
+        'emitted bones, measured for #915, no bone carries shear or the skin flag. Its `zero` bone states four parser ' +
+        'defaults, so the two passes have something to remove',
+    );
+  }
+
+  // --- MB06: compile.ts emits the bones once and names no Spine bone --
+  {
+    const probes: string[] = [];
+    const source = readFileSync(resolve(import.meta.dir, 'src', 'compile.ts'), 'utf8');
+    probes.push(...compileSourceProblems(source));
+    const plants: Array<[string, string]> = [
+      ['a second emission', `${source}\nconst again = emitBones([]);\n`],
+      ['a read of the emitted bones', `${source}\nconst back = skeleton.bones;\n`],
+      ['a Spine bone named', `${source}\ntype Back = SpineBone;\n`],
+      ['a Spine spelling assigned', `${source}\nbone.inherit = 'normal';\n`],
+    ];
+    for (const [label, text] of plants) {
+      if (compileSourceProblems(text).length !== 1) probes.push(`the plant "${label}" raised ${compileSourceProblems(text).length} problem(s), not one`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MB06_COMPILE_EMITS_THE_BONES_ONCE_AND_NAMES_NO_SPINE_BONE',
+      held,
+      probeDetail(held, probes, `\`src/compile.ts\`, comments aside: one \`emitBones\` call, no \`SpineBone\`, no read of \`skeleton.bones\`, no Spine spelling assigned to a bone; each of ${plants.length} plants raises exactly its own problem`),
+      'issue #915\'s shape: the model holds values and the emitter owns the bytes, so the compiler builds `ModelBone`s ' +
+        'and the one line that turns them into Spine\'s is the assembly',
+    );
+  }
+
+  // --- MB07: two gallery rigs hash identical to a named base document's rows --
+  let gateHole = false;
+  {
+    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
+    if (basePath === undefined || basePath === '') {
+      gateHole = true;
+      console.log('  SKIP  MB07 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
+      console.log('          ⚠️ This is a HOLE in this run, not a pass — byte identity against a base commit was not measured here.');
+    } else {
+      const probes: string[] = [];
+      let base: HashesDocument | null = null;
+      try {
+        base = readHashes(resolve(basePath));
+      } catch (err) {
+        probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
+      }
+      const rows = (base?.recipes ?? []).filter((r) => r.name.startsWith('gallery/')).slice(0, 2);
+      if (base !== null && rows.length < 2) probes.push(`the base document has ${rows.length} gallery row(s); two are needed`);
+      let verdict = '';
+      if (base !== null && rows.length === 2) {
+        const recipesPath = join(work, 'gate-recipes.json');
+        writeFileSync(recipesPath, recipesText(rows.map((r) => ({ name: r.name, stage: r.stage, commands: r.commands }))));
+        const out = join(work, 'gate.json');
+        const run = runHashes(['run', '--recipes', recipesPath, '--out', out, '--work', join(work, 'gate')]);
+        if (run.status !== 0) probes.push(`the run exited ${run.status}: ${run.stderr.trim().slice(0, 200)}`);
+        const baseRows: HashesDocument = { ...base, recipes: rows };
+        let after: HashesDocument | null = null;
+        try {
+          after = readHashes(out);
+        } catch (err) {
+          probes.push(`the run wrote no readable document: ${(err as Error).message}`);
+        }
+        if (after !== null) {
+          const c = compareHashes(baseRows, after);
+          verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
+          if (!c.identical) probes.push(`against the base: ${verdict}`);
+          // The plant: the base with one hash flipped must read DIFF, or IDENTICAL above meant nothing.
+          const flipped: HashesDocument = JSON.parse(JSON.stringify(baseRows)) as HashesDocument;
+          const file = flipped.recipes[0].files[0];
+          if (file === undefined) probes.push(`${rows[0].name} has no hashed file in the base`);
+          else {
+            file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
+            const p = compareHashes(flipped, after);
+            if (p.identical || p.differ.length !== 1 || p.differ[0].name !== rows[0].name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
+          }
+        }
+      }
+      const held = probes.length === 0;
+      say(
+        'MB07_TWO_GALLERY_RIGS_HASH_IDENTICAL_TO_THE_BASE_DOCUMENTS_ROWS',
+        held,
+        probeDetail(held, probes, `${rows.map((r) => r.name).join(' and ')} built through \`tools/emit_hashes.ts\` on this tree against ${basePath}: ${verdict}; the same rows with one base hash flipped read DIFF naming ${rows[0]?.name ?? '(none)'}`),
+        'issue #915\'s gate as a control: step 1 of #380 is gated by byte identity across the refactor, and the full ' +
+          'corpus run is PR material; this row repeats a slice of it wherever a base document is named',
+      );
+    }
+  }
+
+  rmSync(work, { recursive: true, force: true });
+  return { failures: bad, gateHole };
+}
+
+// ---------------------------------------------------------------------------
 // reading through the rig: chainfit (issue #284)
 // ---------------------------------------------------------------------------
 
@@ -77097,6 +77509,7 @@ function main(): void {
   tally.of('pose', runPoseSuite);
   tally.of('pose-oracle', runPoseOracleSuite);
   const emitHashesBad = tally.of('emit-hashes', runEmitHashesSuite, { ran: ranIt });
+  const modelBones = tally.of('model-bones', runModelBonesSuite, { failures: (value) => value.failures });
   tally.of('chainfit', runChainFitSuite);
   tally.of('ballot', runBallotSuite);
   tally.of('copy-images', runCopyImagesSuite);
@@ -77780,6 +78193,12 @@ function main(): void {
           'changed; a refused build recorded as its exit code and named against its green twin; the tree\'s recipes ' +
           'covering every gallery rig and every fetched export with no finding; and bad inputs refused with exit 2 ' +
           'and nothing written)') +
+      ', + ' + n('model-bones') + ' model-bones controls (issue #915 — the compiled model\'s first record: `emitBones` ' +
+      'restating a bone with every key in the constructor\'s order, which the key-order pass cannot restore for a key its ' +
+      'row does not list; a name alone emitting the name alone; the mode and the skin flag under the Spine spellings; a ' +
+      'model chain and its emitted twin posing to the bit through every inherit mode; every compiled rig\'s bones being ' +
+      'its model through the emitter, with its setup pose to the bit; `compile.ts` emitting the bones once and naming no ' +
+      'Spine bone; and, when a base document is named, two gallery rigs hashing identical to its rows)' +
       ', + ' + n('chainfit') + ' chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
@@ -77871,6 +78290,7 @@ function main(): void {
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (emitHashesBad === null ? '\n  ⚠️ Fewer than two gallery rigs, so no build was hashed across two runs (issue #914) in this run.' : '') +
+      (modelBones.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so byte identity against a base commit (issue #915) was not measured in this run.' : '') +
       (launcher.startsWith(',') ? '' : launcher) +
       (gallery.examples > 0
         ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled three times and gated green under BOTH profiles`

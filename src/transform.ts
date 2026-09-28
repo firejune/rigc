@@ -31,7 +31,29 @@
  * wrong. `computeWorldTransforms` below is `BonePose.updateWorldTransform`
  * (spine-core 4.3.13, `BonePose.js:110-216`) at setup, with a skeleton scale of 1.
  */
-import type { SpineBone } from './types.ts';
+/**
+ * What `computeWorldTransforms` reads off a bone — a structural type, so both a
+ * Spine bone (`SpineBone`, what spine-parts and every skeleton reader hold) and
+ * a compiled-model bone (`ModelBone`, what `compile` holds) satisfy it as they
+ * are, without a cast.
+ *
+ * The two differ in one key, the inherit mode: Spine 4.3 spells it `inherit`
+ * and the model `inheritMode`. The union below admits exactly one of the two on
+ * any one bone (the other is `never`), so a bone carrying both is a type error
+ * rather than a question of which one wins, and the mode is read as
+ * `inheritMode ?? inherit` — whichever the bone has.
+ */
+export type PosableBone = {
+  name: string;
+  parent?: string;
+  x?: number;
+  y?: number;
+  rotation?: number;
+  scaleX?: number;
+  scaleY?: number;
+  shearX?: number;
+  shearY?: number;
+} & ({ inherit?: string; inheritMode?: never } | { inheritMode?: string; inherit?: never });
 
 export interface BoneTransform {
   a: number;
@@ -79,7 +101,7 @@ export function cropToSpineY(cropY: number, cropHeight: number): number {
  * inheriting rig emits moves by a byte. The five `inherit` cases are the
  * runtime's, transcribed.
  */
-export function computeWorldTransforms(bones: SpineBone[]): Map<string, BoneTransform> {
+export function computeWorldTransforms(bones: readonly PosableBone[]): Map<string, BoneTransform> {
   const out = new Map<string, BoneTransform>();
   for (const bone of bones) {
     const rotation = bone.rotation ?? 0;
@@ -144,8 +166,8 @@ const INHERIT_MODES: readonly InheritMode[] = ['normal', 'onlyTranslation', 'noR
  * leaves the matrix where it was, and the rig spec's parse refuses that
  * spelling first (issue #733), so reaching this throw is rigc's own defect.
  */
-function inheritMode(bone: SpineBone): InheritMode {
-  const value = bone.inherit;
+function inheritMode(bone: PosableBone): InheritMode {
+  const value = bone.inheritMode ?? bone.inherit;
   if (value === undefined) return 'normal';
   const folded = value.length === 0 ? value : value[0].toLowerCase() + value.slice(1);
   const mode = INHERIT_MODES.find((m) => m === folded);
