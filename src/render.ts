@@ -1130,9 +1130,17 @@ export interface GeometryFile {
 }
 
 /**
- * A number the export could not print as a number — refused rather than written,
- * because `JSON.stringify` writes `NaN` and `Infinity` as `null` and a consumer
- * would read a hole in the geometry as a vertex at nothing.
+ * A pose holding a number that is not finite — refused by the bone or the vertex
+ * that holds it, and the value, rather than drawn, framed or written.
+ *
+ * Two callers throw it, with one sentence between them (`nonFiniteSentence`):
+ * the geometry export, because `JSON.stringify` writes `NaN` and `Infinity` as
+ * `null` and a consumer would read a hole in the geometry as a vertex at
+ * nothing; and `framingViewport`, because a box over an infinite vertex is no
+ * box at all (issue #873). Before that second caller the framing answered `null`
+ * for it, which `render` prints as "posed no drawable attachment" — true of a
+ * skeleton that draws nothing and false of this one, whose attachment is there
+ * and posed to a number no picture can hold.
  */
 export class GeometryError extends Error {}
 
@@ -1250,28 +1258,127 @@ function restOf(data: SkeletonData, skin: string | undefined, shown: AttachmentP
   return out;
 }
 
-/** Throw a `GeometryError` at the first number in `file` that is not finite, naming where it sits. */
-function refuseNonFinite(file: GeometryFile): void {
-  const check = (where: string, entries: AttachmentPose[] | AttachmentRest[], bones: GeometryBone[]): void => {
-    for (const bone of bones) {
-      for (const field of ['a', 'b', 'c', 'd', 'worldX', 'worldY'] as const) {
-        if (!Number.isFinite(bone[field])) {
-          throw new GeometryError(`${where}: bone ${JSON.stringify(bone.name)} has ${field} ${String(bone[field])}; a world transform is finite`);
-        }
+/** The bone fields a world transform is made of — what `firstNonFinite` reads off a bone. */
+type WorldTransform = Pick<GeometryBone, 'name' | 'a' | 'b' | 'c' | 'd' | 'worldX' | 'worldY'>;
+
+/** The fields of an attachment entry `firstNonFinite` reads — a frame's `AttachmentPose` or a rest entry. */
+type PosedVertices = Pick<AttachmentPose, 'slot' | 'attachment' | 'vertices'>;
+
+/**
+ * The sentence for the first number at `where` that is not finite — bones before
+ * vertices, since a bone that overflowed is the cause and its vertices the
+ * symptom — or `null` when every number there is finite.
+ */
+function firstNonFinite(where: string, entries: readonly PosedVertices[], bones: readonly WorldTransform[]): string | null {
+  for (const bone of bones) {
+    for (const field of ['a', 'b', 'c', 'd', 'worldX', 'worldY'] as const) {
+      if (!Number.isFinite(bone[field])) {
+        return `${where}: bone ${JSON.stringify(bone.name)} has ${field} ${String(bone[field])}; a world transform is finite`;
       }
     }
-    for (const entry of entries) {
-      const bad = entry.vertices.findIndex((value) => !Number.isFinite(value));
-      if (bad === -1) continue;
-      throw new GeometryError(
-        `${where}: slot ${JSON.stringify(entry.slot)} attachment ${JSON.stringify(entry.attachment)} vertex ` +
-          `${Math.floor(bad / 2)} has ${bad % 2 === 0 ? 'x' : 'y'} ${String(entry.vertices[bad])}; a posed vertex is finite`,
-      );
+  }
+  for (const entry of entries) {
+    const bad = entry.vertices.findIndex((value) => !Number.isFinite(value));
+    if (bad === -1) continue;
+    return (
+      `${where}: slot ${JSON.stringify(entry.slot)} attachment ${JSON.stringify(entry.attachment)} vertex ` +
+      `${Math.floor(bad / 2)} has ${bad % 2 === 0 ? 'x' : 'y'} ${String(entry.vertices[bad])}; a posed vertex is finite`
+    );
+  }
+  return null;
+}
+
+/**
+ * How a sampled frame is named in that sentence: the animation, the frame's
+ * index at the rate it was sampled and its time — or the bare index for the one
+ * frame of a skeleton with no animation, whose setup pose is checked first.
+ */
+function frameWhere(animation: string | null, index: number, time: number, fps: number): string {
+  if (animation === null) return `frame ${index}`;
+  return `animation ${JSON.stringify(animation)} frame ${index} at ${fps} fps (t=${time.toFixed(4)}s)`;
+}
+
+/** One sampled frame's numbers, under the name the sentence gives it. */
+interface NamedPose {
+  where: string;
+  attachments: readonly PosedVertices[];
+  bones: readonly WorldTransform[];
+}
+
+/**
+ * ⭐ **The one derivation of the non-finite sentence** (issue #873): the setup
+ * pose, then every frame in order, then the rest table. The export and the
+ * framing both reach it, so `render` and `render --geometry` refuse one planted
+ * overflow in the same words.
+ *
+ * The setup pose first because a setup bone that overflowed is named there as
+ * the BONE, and the rest table — the setup's bones with no deform — would name
+ * the same fault one step on, as a vertex. Rest is still checked, last: it holds
+ * attachments the setup pose does not show.
+ */
+function nonFiniteSentence(
+  setup: Pick<NamedPose, 'attachments' | 'bones'>,
+  frames: readonly NamedPose[],
+  rest: readonly PosedVertices[],
+): string | null {
+  const first = firstNonFinite('the setup pose', setup.attachments, setup.bones);
+  if (first !== null) return first;
+  for (const frame of frames) {
+    const found = firstNonFinite(frame.where, frame.attachments, frame.bones);
+    if (found !== null) return found;
+  }
+  return firstNonFinite('the rest table', rest, []);
+}
+
+/** Throw a `GeometryError` at the first number in `file` that is not finite, naming where it sits. */
+function refuseNonFinite(file: GeometryFile): void {
+  const sentence = nonFiniteSentence(
+    file.setup,
+    file.frames.map((frame) => ({ ...frame, where: frameWhere(file.animation, frame.index, frame.time, file.fps) })),
+    file.rest,
+  );
+  if (sentence !== null) throw new GeometryError(sentence);
+}
+
+/**
+ * Where a skeleton's pose is not finite, as the sentence the geometry export
+ * refuses on — or `null` when every bone and vertex of it is finite.
+ *
+ * Each set is sampled at its own rate, with its bones and whole attachments —
+ * `animation: null` is the setup pose alone — so the frame it names is a frame of
+ * the caller's own grid. It samples again rather than taking the caller's
+ * frames, because a caller that only draws sampled no bones; it is run only
+ * once the caller has found a number that is not finite, so a finite pose never
+ * pays for it.
+ */
+export function nonFinitePoseOf(
+  data: SkeletonData,
+  skin: string | undefined,
+  sets: ReadonlyArray<{ animation: string | null; fps: number }>,
+): string | null {
+  const opts: PoseOptions = { ...(skin === undefined ? {} : { skin }), bones: true, geometry: true };
+  // Every attachment list the frames showed, for the rest table's roster.
+  const shown: AttachmentPose[][] = [];
+  const named = (frame: Frame, where: string): NamedPose => {
+    if (frame.bones === undefined || frame.attachments === undefined) {
+      throw new Error(`${where} was sampled without { bones: true, geometry: true }`);
     }
+    shown.push(frame.attachments);
+    return { where, attachments: frame.attachments, bones: frame.bones };
   };
-  check('the rest table', file.rest, []);
-  check('the setup pose', file.setup.attachments, file.setup.bones);
-  for (const frame of file.frames) check(`frame ${frame.index}`, frame.attachments, frame.bones);
+  const setup = named(sampleSetupPose(data, opts)[0], 'the setup pose');
+  const frames = sets.flatMap(({ animation, fps }) =>
+    animation === null
+      ? []
+      : sampleAnimation(data, animation, fps, opts).map((frame) =>
+          named(frame, frameWhere(animation, frame.index, frame.time, fps)),
+        ),
+  );
+  // Not read unless the setup pose and every frame are finite: `restOf` poses
+  // what they show, and would be posing the same overflow a third time.
+  const found = nonFiniteSentence(setup, frames, []);
+  if (found !== null) return found;
+  return nonFiniteSentence({ attachments: [], bones: [] }, [], restOf(data, skin, shown));
 }
 
 /**
@@ -1685,6 +1792,10 @@ export function trimmedUnionBounds(
  *
  * Measuring the box densely and once makes the framing a property of the SHOT,
  * so every rate of one skeleton lands on the same pixels.
+ *
+ * `null` means the skeleton posed no vertex at all — nothing to draw. A pose
+ * holding a vertex at Infinity or NaN is refused by a `GeometryError` naming the
+ * bone or vertex and its value (issue #873), never answered `null`.
  */
 export function framingViewport(data: SkeletonData, maxSide: number, opts?: PoseOptions): Viewport | null {
   // The skin belongs here as much as in the frames: the union box is over the
@@ -1708,8 +1819,35 @@ export function framingViewport(data: SkeletonData, maxSide: number, opts?: Pose
     data.animations.length === 0
       ? [sampleSetupPose(data, framed)]
       : data.animations.map((a) => sampleAnimation(data, a.name, FRAMING_FPS, framed));
+  // ⚠️ Two different reasons a box is not finite, told apart here and nowhere
+  // else (issue #873). A skeleton that posed no vertex at all has nothing to
+  // draw, and that is `null`. One that posed a vertex at Infinity or NaN has a
+  // drawable attachment in a place no box can hold — so it is refused by the
+  // bone or vertex and its value, in the geometry export's own sentence. Before
+  // this, the first case's `null` covered both, and a single overflowing bone
+  // among finite ones reached neither: its box was finite on one side, and
+  // `render` wrote a NaN-by-NaN frame set with exit 0.
+  const posedAny = sets.some((frames) => frames.some((frame) => frame.pieces.some((piece) => piece.world.length > 0)));
+  if (!posedAny) return null;
   const box = unionBounds(sets);
-  if (!Number.isFinite(box.minX)) return null;
+  if (![box.minX, box.minY, box.maxX, box.maxY].every(Number.isFinite)) {
+    const found = nonFinitePoseOf(
+      data,
+      framed.skin,
+      data.animations.length === 0
+        ? [{ animation: null, fps: FRAMING_FPS }]
+        : data.animations.map((a) => ({ animation: a.name, fps: FRAMING_FPS })),
+    );
+    // Reaching here with nothing found would mean the pieces and the whole
+    // attachments disagree about one pose — a defect here, said as one.
+    if (found === null) {
+      throw new Error(
+        `the framing box is not finite (${box.minX}, ${box.minY}, ${box.maxX}, ${box.maxY}) and no bone or ` +
+          'vertex of the pose is — the drawn pieces and the attachments were posed differently',
+      );
+    }
+    throw new GeometryError(found);
+  }
   const pad = Math.max(box.maxX - box.minX, box.maxY - box.minY) * PAD;
   return viewportFor(box.minX - pad, box.minY - pad, box.maxX + pad, box.maxY + pad, maxSide);
 }

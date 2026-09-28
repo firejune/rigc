@@ -292,6 +292,7 @@ import {
   FRAMES_SIDECAR,
   FRAMES_SPEC,
   frameGeometry,
+  FRAMING_FPS,
   framingViewport,
   GEOMETRY_COORDINATES,
   GEOMETRY_FILE,
@@ -61944,8 +61945,8 @@ function runGeometryExportSuite(): number {
     if (planted === turn.result.skeletonText) probes.push('the plant found no `"x": 400` to replace, so nothing was broken');
     let refused = '';
     try {
-      // A box of its own: framing an infinite pose finds no box at all, and the
-      // refusal under test is the export's, not the framing's.
+      // A box of its own: framing an infinite pose refuses it itself (issue
+      // #873, GY09), and the refusal under test is the export's, not the framing's.
       geometryOf(skeletonDataFromText(planted, turn.result.atlasText), 'turn', fps, viewportFor(0, 0, 1, 1, 256));
     } catch (err) {
       refused = err instanceof GeometryError ? err.message : `not a GeometryError: ${(err as Error).message}`;
@@ -61961,6 +61962,210 @@ function runGeometryExportSuite(): number {
       'JSON.stringify writes NaN and Infinity as null, and a consumer reading null as a coordinate measures a hole ' +
         'as geometry — the silence this repository converts into a named failure',
     );
+  }
+
+  // --- GY09–GY13: a pose that is not finite, through the CLI (issue #873) ---
+  // Before #873 `framingViewport` answered `null` for an overflow as it does for
+  // a skeleton that draws nothing, so `render` printed "posed no drawable
+  // attachment" over an attachment that was there, and GY08's sentence was
+  // reachable only through the library. One bone overflowing beside finite ones
+  // reached neither: its box was finite on one side and `render` wrote a
+  // NaN-by-NaN frame set with exit 0. Each plant below is the emitted file with
+  // one number edited, the way GY08 plants it — the rig spec route is not used,
+  // because a motion key of 1e309 is refused by the compiler by name.
+  {
+    const work = mkdtempSync(join(tmpdir(), 'rigc-nonfinite-'));
+    const candidate = join(work, 'turn');
+    const built = runCli(['build', '--rig', turn.opts.rigPath, '--motion', turn.opts.motionPath, '--images', turn.opts.imagesDir ?? turn.dir, '--out', candidate]);
+    const skeletonPath = join(candidate, 'skeleton.json');
+    const emitted = built.status === 0 && existsSync(skeletonPath) ? readFileSync(skeletonPath, 'utf8') : '';
+    // A string no emitted file carries, swapped for a literal JSON reads as Infinity.
+    const OVERFLOW = '__rigc_overflow__';
+    type Emitted = {
+      bones: Array<Record<string, unknown>>;
+      slots: Array<Record<string, unknown>>;
+      skins: Array<{ name: string; attachments: Record<string, unknown> }>;
+      animations: Record<string, { bones?: Record<string, Record<string, unknown>> }>;
+    };
+    const plant = (name: string, edit: (skeleton: Emitted) => void): string => {
+      const dir = join(work, name);
+      mkdirSync(dir, { recursive: true });
+      for (const file of existsSync(candidate) ? readdirSync(candidate) : []) {
+        if (file !== 'skeleton.json') writeFileSync(join(dir, file), readFileSync(join(candidate, file)));
+      }
+      const skeleton = JSON.parse(emitted) as Emitted;
+      edit(skeleton);
+      writeFileSync(join(dir, 'skeleton.json'), JSON.stringify(skeleton, null, 2).replaceAll(`"${OVERFLOW}"`, '1e309'));
+      return dir;
+    };
+    const boneNamed = (skeleton: Emitted, name: string): Record<string, unknown> => {
+      const bone = skeleton.bones.find((b) => b.name === name);
+      if (bone === undefined) throw new Error(`the turn probe emits no bone "${name}"`);
+      return bone;
+    };
+    const setupPlant = plant('setup', (sk) => {
+      boneNamed(sk, 'head').x = OVERFLOW;
+    });
+    // A second bone carrying a copy of the head mesh, at +1e309, beside the finite head.
+    const strayPlant = plant('stray', (sk) => {
+      sk.bones.push({ name: 'stray', parent: 'root', x: OVERFLOW, y: 0 });
+      sk.slots.push({ name: 'stray', bone: 'stray', attachment: 'head' });
+      const skin = sk.skins.find((k) => k.name === 'default');
+      if (skin !== undefined) skin.attachments.stray = skin.attachments.head;
+    });
+    // A rotate key that overflows half a framing step after the deform key, with
+    // every frame before it finite. Off the grid on purpose: the sampler reaches
+    // a frame by adding its step, and 30 steps of 1/60 land a hair under 0.5 —
+    // measured, a key AT 0.5 was first non-finite at frame 31, not 30.
+    const KEY_AT = KEY_TIME + 1 / (2 * FRAMING_FPS);
+    const keyPlant = plant('key', (sk) => {
+      const bones = (sk.animations.turn.bones ??= {});
+      bones.head = { ...(bones.head ?? {}), rotate: [{ time: KEY_AT, value: OVERFLOW }] };
+    });
+    const emptyPlant = plant('empty', (sk) => {
+      for (const slot of sk.slots) delete slot.attachment;
+    });
+    const refusalOf = (run: ReturnType<typeof runCli>): string =>
+      run.stderr.split('\n').find((line) => line.startsWith('rigc render: '))?.slice('rigc render: '.length) ?? '';
+    const filesUnder = (dir: string): string[] =>
+      existsSync(dir) ? readdirSync(dir, { recursive: true }).map(String).filter((f) => statSync(join(dir, f)).isFile()).sort() : [];
+    const renderOf = (dir: string, out: string, extra: string[] = []): ReturnType<typeof runCli> =>
+      runCli(['render', '--candidate', dir, ...extra, '--out', join(work, out)]);
+    // The library's own sentence for the same file, at the framing's rate and on a box of its own.
+    const exportSays = (dir: string, fpsFor: number): string => {
+      try {
+        const data = skeletonDataFromText(readFileSync(join(dir, 'skeleton.json'), 'utf8'), readFileSync(join(dir, 'skeleton.atlas'), 'utf8'));
+        geometryOf(data, 'turn', fpsFor, viewportFor(0, 0, 1, 1, 256));
+        return '';
+      } catch (err) {
+        return err instanceof GeometryError ? err.message : `not a GeometryError: ${(err as Error).message}`;
+      }
+    };
+    const buildProbe = built.status === 0 && emitted !== '' ? [] : [`the turn probe did not build: exit ${String(built.status)}`];
+
+    // GY09 — the whole rig at 1e309: refused by the bone and its value, nothing written.
+    {
+      const run = renderOf(setupPlant, 'out-setup');
+      const said = refusalOf(run);
+      const probes = [...buildProbe];
+      if (run.status !== 1) probes.push(`render exited ${String(run.status)}, not 1 (the exit a GeometryError takes)`);
+      if (!said.includes('bone "head" has worldX Infinity')) probes.push(`render said ${JSON.stringify(said || run.stderr.trim().slice(0, 200))}`);
+      if (run.stderr.includes('posed no drawable attachment')) probes.push('render still said "posed no drawable attachment" over an attachment that is there');
+      const written = filesUnder(join(work, 'out-setup'));
+      if (written.length > 0) probes.push(`render wrote ${written.length} file(s): ${written.slice(0, 3).join(', ')}`);
+      const held = probes.length === 0;
+      say(
+        'RF89_A_RIG_POSED_TO_INFINITY_IS_REFUSED_BY_THE_BONE_AND_ITS_VALUE_NOT_AS_NOTHING_TO_DRAW',
+        held,
+        probeDetail(held, probes, `head bone at x=1e309: exit ${String(run.status)}, ${JSON.stringify(said)}; nothing written`),
+        'issue #873: the framing answered null for an overflow as for an empty skeleton, so render sent an agent ' +
+          'looking for a missing attachment when the attachment was there and posed to a number no box can hold',
+      );
+    }
+
+    // GY10 — one bone at 1e309 beside a finite one: refused, where it once wrote NaN-sized frames with exit 0.
+    {
+      const run = renderOf(strayPlant, 'out-stray');
+      const said = refusalOf(run);
+      const probes = [...buildProbe];
+      if (run.status !== 1) probes.push(`render exited ${String(run.status)}, not 1`);
+      if (!said.includes('bone "stray" has worldX Infinity')) probes.push(`render said ${JSON.stringify(said || run.stderr.trim().slice(0, 200))}`);
+      if (run.stdout.includes('NaN')) probes.push(`render printed NaN on stdout: ${JSON.stringify(run.stdout.split('\n').find((l) => l.includes('NaN')))}`);
+      const written = filesUnder(join(work, 'out-stray'));
+      if (written.length > 0) probes.push(`render wrote ${written.length} file(s), frames and contact sheet among them: ${written.slice(0, 3).join(', ')}`);
+      const held = probes.length === 0;
+      say(
+        'RF90_ONE_BONE_AT_INFINITY_BESIDE_FINITE_ONES_IS_REFUSED_RATHER_THAN_FRAMED_AT_NAN_BY_NAN',
+        held,
+        probeDetail(held, probes, `a stray bone at x=1e309 carrying a copy of the head mesh: exit ${String(run.status)}, ${JSON.stringify(said)}; nothing written`),
+        'issue #873, measured before the change: the union box was finite on its minimum and Infinity on its ' +
+          'maximum, which the null test did not read, and render wrote 13 frames and a contact sheet at NaNxNaN px with exit 0',
+      );
+    }
+
+    // GY11 — the positive control: a skeleton that draws nothing keeps its own sentence and exit.
+    {
+      const run = renderOf(emptyPlant, 'out-empty');
+      const probes = [...buildProbe];
+      if (run.status !== 2) probes.push(`render exited ${String(run.status)}, not 2 (the UsageError exit)`);
+      if (!run.stderr.includes('posed no drawable attachment in any animation or in its setup pose')) {
+        probes.push(`render said ${JSON.stringify(run.stderr.trim().split('\n').slice(0, 3).join(' | '))}`);
+      }
+      if (refusalOf(run) !== '') probes.push(`an empty skeleton was refused as an overflow: ${JSON.stringify(refusalOf(run))}`);
+      const held = probes.length === 0;
+      say(
+        'RF91_A_SKELETON_THAT_DRAWS_NOTHING_STILL_SAYS_POSED_NO_DRAWABLE_ATTACHMENT',
+        held,
+        probeDetail(held, probes, `every slot's setup attachment removed: exit ${String(run.status)}, "posed no drawable attachment"`),
+        'issue #873: the empty case is the one the sentence is true of, and tools/editor_roundtrip.ts reads it — with ' +
+          'exit 2 — as the SKIP for a rig with no picture, so it must not move while the overflow leaves it',
+      );
+    }
+
+    // GY12 — check, with the planted file as its candidate, names the same fault.
+    {
+      const frames = join(work, 'frames');
+      const reference = runCli(['render', '--candidate', candidate, '--out', frames]);
+      const runs = [
+        ['setup', setupPlant, 'bone "head" has worldX Infinity'],
+        ['stray', strayPlant, 'bone "stray" has worldX Infinity'],
+        ['key', keyPlant, 'bone "head" has a NaN'],
+      ] as const;
+      const probes = [...buildProbe];
+      if (reference.status !== 0) probes.push(`the reference render exited ${String(reference.status)}`);
+      const seen: string[] = [];
+      for (const [label, dir, fault] of runs) {
+        const run = runCli(['check', '--candidate', dir, '--frames', frames]);
+        const line = run.stderr.split('\n').find((l) => l.startsWith('rigc check error: ')) ?? '';
+        const lead = 'rigc check error: the candidate is posed to a number that is not finite, so no frame of it can be compared: ';
+        const sentence = line.startsWith(lead) ? line.slice(lead.length) : '';
+        seen.push(`${label}: exit ${String(run.status)} ${JSON.stringify(sentence)}`);
+        if (run.status !== 1) probes.push(`${label}: check exited ${String(run.status)}, not 1`);
+        if (!sentence.includes(fault)) probes.push(`${label}: check said ${JSON.stringify(line || run.stdout.trim().slice(0, 200))}`);
+        // The same derivation at check's own rate: the frames' fps, not the framing's.
+        const exported = exportSays(dir, PROTOCOL_FPS);
+        if (sentence !== exported) probes.push(`${label}: check's sentence ${JSON.stringify(sentence)} is not the export's at ${PROTOCOL_FPS} fps ${JSON.stringify(exported)}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'RF92_CHECK_REFUSES_A_CANDIDATE_POSED_TO_INFINITY_IN_THE_EXPORTS_OWN_SENTENCE',
+        held,
+        probeDetail(held, probes, seen.join('; ')),
+        'issue #873, measured before the change on a planted candidate: an overflowing root read "posed no drawable ' +
+          'attachment", and an overflowing leaf or a rotation at 1e309 exited 0 with the part missing from every frame',
+      );
+    }
+
+    // GY13 — one sentence: render, render --geometry and the library export agree to the byte, twice.
+    {
+      const probes = [...buildProbe];
+      const seen: string[] = [];
+      for (const [label, dir] of [['setup', setupPlant], ['stray', strayPlant], ['key', keyPlant]] as const) {
+        const plain = refusalOf(renderOf(dir, `rf93-${label}-plain`));
+        const again = refusalOf(renderOf(dir, `rf93-${label}-again`));
+        const geometry = refusalOf(renderOf(dir, `rf93-${label}-geometry`, ['--geometry']));
+        const exported = exportSays(dir, FRAMING_FPS);
+        seen.push(`${label}: ${JSON.stringify(plain)}`);
+        if (plain === '') probes.push(`${label}: render refused nothing`);
+        if (plain !== again) probes.push(`${label}: two runs said ${JSON.stringify(plain)} and ${JSON.stringify(again)}`);
+        if (plain !== geometry) probes.push(`${label}: render said ${JSON.stringify(plain)} and render --geometry ${JSON.stringify(geometry)}`);
+        if (plain !== exported) probes.push(`${label}: render said ${JSON.stringify(plain)} and the export at ${FRAMING_FPS} fps ${JSON.stringify(exported)}`);
+      }
+      // The key plant must be found at its own key, not at frame 0: the frames before it are finite.
+      const keyed = refusalOf(renderOf(keyPlant, 'rf93-key-where'));
+      const firstBad = Math.ceil(KEY_AT * FRAMING_FPS);
+      const at = `animation "turn" frame ${firstBad} at ${FRAMING_FPS} fps (t=${(firstBad / FRAMING_FPS).toFixed(4)}s)`;
+      if (!keyed.startsWith(`${at}: `)) probes.push(`the key plant was placed at ${JSON.stringify(keyed.split(':')[0])}, not ${JSON.stringify(at)}`);
+      const held = probes.length === 0;
+      say(
+        'RF93_RENDER_RENDER_GEOMETRY_AND_THE_EXPORT_REFUSE_ONE_OVERFLOW_IN_ONE_SENTENCE_EVERY_RUN',
+        held,
+        probeDetail(held, probes, seen.join('; ')),
+        'issue #873: the sentence has one derivation (`nonFiniteSentence`), and holding the three callers equal on ' +
+          'three plants — a setup bone, a leaf beside finite bones, a key — is what stops a second one from forking off',
+      );
+    }
+    rmSync(work, { recursive: true, force: true });
   }
 
   rmSync(turn.dir, { recursive: true, force: true });
@@ -74977,7 +75182,10 @@ function main(): void {
       'identical and leave every other file a plain render writes unchanged; an unknown animation and a slot subset ' +
       'are refused by name with nothing written; the stretch formula AUTHORING §8 states, run off the parsed file ' +
       'alone, finds the triangle a closed form predicts and reads exactly 1 where nothing deforms; and a pose that is ' +
-      'not finite is refused rather than written as null)' +
+      'not finite is refused rather than written as null — and, since #873, refused by the framing as well, so plain ' +
+      '`render`, `render --geometry`, `check` and the library export name one planted setup bone, one leaf beside ' +
+      'finite bones and one key in the same sentence with nothing written, while a skeleton that draws nothing still ' +
+      'says "posed no drawable attachment")' +
       ', + ' + n('pose') + ' pose controls (a rig rendered at a chosen scale and its placements read back out of the picture ' +
       'within a pixel, a degree and 8% — one PNG posed twice reported as TWO placements rather than picked ' +
       "between, a round part's rotation reported as free where nothing else is, a foreign part / a part the " +

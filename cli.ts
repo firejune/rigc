@@ -2053,6 +2053,9 @@ function cmdRender(flags: Record<string, string>): void {
   if (skin !== undefined) console.log(`  ..    skin     ${skin}`);
   if (subset !== undefined) console.log(`  ..    ${subset.mode.padEnd(8)} ${subset.names.join(', ')}`);
 
+  // `null` is a skeleton that posed no vertex at all. One that posed a vertex
+  // it cannot frame — Infinity or NaN — is thrown from the framing as a
+  // `GeometryError` naming the number (issue #873), and never reaches this.
   const viewport = framingViewport(data, maxSide, pose);
   if (!viewport) {
     throw new UsageError(
@@ -4538,9 +4541,10 @@ try {
   // the one reader's and already names the file, what it is and what rigc
   // reads; a stack under it is the tool describing its own internals instead.
   // Exit 1, like a compile error: the invocation was fine, a file was not.
-  // A pose the geometry export cannot write as numbers (issue #864): the
-  // invocation was fine and the skeleton posed a NaN or an infinity, so exit 1
-  // like a file that is not a PNG. Raised before the first file is written.
+  // A pose that is not finite (issues #864, #873): the invocation was fine and
+  // the skeleton posed a NaN or an infinity, so exit 1 like a file that is not
+  // a PNG. Raised by the geometry export and by the framing — the one sentence
+  // naming the bone or vertex and its value — before the first file is written.
   if (err instanceof GeometryError) {
     console.error(`rigc render: ${err.message}`);
     process.exit(1);

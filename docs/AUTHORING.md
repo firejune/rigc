@@ -1498,6 +1498,20 @@ renderers and reports its step 5 as a **SKIP** naming that, and the round trip
 comes back green on the strength of `validate` and `diff`. A skin only **one** side
 can draw is the other case entirely, and stays red.
 
+🔢 **"Nothing to draw" is said only of a skeleton that posed no vertex at all.** One
+whose attachment is there but posed to `Infinity` or `NaN` is refused by the bone or
+the vertex that holds it and the value — `rigc render: the setup pose: bone "head" has
+worldX Infinity; a world transform is finite`, or `… animation "turn" frame 31 at 60
+fps (t=0.5167s): bone "head" has a NaN; …` for a key, or `… slot "x" attachment "y"
+vertex 3 has x NaN; a posed vertex is finite` — exit 1, before anything is written.
+It is the sentence `render --geometry` refuses on (§8.2), from the same code, and
+`rigc check` prints it after `the candidate is posed to a number that is not finite,
+so no frame of it can be compared:`. The bone is named before its vertices because
+it is the cause; look for its value in the skeleton file — a setup `x`/`y`/`rotation`,
+or a timeline key at the time given — and, for a rig spec you wrote, in `rigc explain`,
+which prints every bone's local transform. A frame's time is the framing pass's own
+(every animation at 60 fps); the key that overflowed is at or just before it.
+
 **Region attachment** ([Spine: region attachments](http://esotericsoftware.com/spine-regions)),
 the default `type`:
 
@@ -5414,6 +5428,13 @@ rather than linked, like the references at the top of this page: that page cites
 corpus inventory, and a ladder run reads this guide without following its references
 out of it.)
 
+🔢 **A fourth surface is a pose that is not finite**, which `render` and `check`
+refuse before drawing anything, naming the bone or vertex and its value. `validate`
+does not always get there first: a bone `rotation` of `1e309`, in the setup pose or
+in a key, was measured leaving `A10_NO_NAN_AFTER_STEPPING` green, because the bone's
+world position stays finite while its matrix is `NaN`. The sentence, and where to
+look for the number, is under *nothing to draw* in §3.4.
+
 ### 5.1 Compile errors — before the gate
 
 A `CompileError` names the object and the field, and nothing is written.
@@ -6421,8 +6442,13 @@ show what the clip left of them. Bounding boxes, points, paths and clipping poly
 draw nothing and are not listed. Numbers are printed the way every JSON file this
 tool writes prints them — the shortest decimal that reads back as the same double —
 so a vertex in the file *is* the runtime's vertex, not a rounding of it; a pose that
-is not finite is refused naming the frame, the slot, the attachment and the vertex,
-rather than written as `null`.
+is not finite is refused rather than written as `null`, naming where — the setup pose,
+`animation "a" frame i at F fps (t=…s)`, or the rest table — and then the bone and
+its world-transform field, or the slot, the attachment and the vertex, with the
+value. Bones come first, so a bone that overflowed is named as itself rather than as
+its first vertex. Since issue #873 plain `render` refuses the same pose in the same
+sentence while framing it (§3.4's note under *nothing to draw*), so the flag is not
+needed to find out which number it was.
 
 **The two judgements the file was designed for**, written once so a consumer
 implements what the file promises:
