@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0](https://github.com/firejune/rigc/compare/v1.3.0...v1.4.0) (2026-09-28)
+
+
+### Features
+
+* **render:** --geometry writes every frame's skinned vertices and bone world transforms beside the frames — the instrument spine-parts' stretch and head-frame judgements need ([#874](https://github.com/firejune/rigc/issues/874)) ([570fdf3](https://github.com/firejune/rigc/commit/570fdf330c41c1a38152ec56a235aa33c07e2c0e)), closes [#864](https://github.com/firejune/rigc/issues/864)
+
+
+### Bug Fixes
+
+* **pose:** the coarse grid steps at an eighth of the part, not a quarter — 42 more trials found on the floor grid (185 → 227 of 420), the 48 px fist places at its truth, search misses 65 → 14 ([#876](https://github.com/firejune/rigc/issues/876)) ([85bcaed](https://github.com/firejune/rigc/commit/85bcaed56618d8a34a79b6a7c6a2d91cc07e2303))
+
 ## [1.3.0](https://github.com/firejune/rigc/compare/v1.2.3...v1.3.0) (2026-09-27)
 
 
