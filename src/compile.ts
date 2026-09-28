@@ -38,9 +38,9 @@ import { parseJsonWithPosition } from './json-position.ts';
 // The "did you mean" list on a missing atlas region, from the one implementation
 // of it — the same search serves `refuseUnknownKeys`, and a second copy here with
 // a threshold edited is how such a pair drifts apart.
-import { dottedPath, nearMisses, refuseNumbersTheFileCannotCarry, refuseValuesOfTheWrongType } from './keys.ts';
+import { dottedPath, nearMisses, refuseNumbersTheFileCannotCarry, refuseValuesOfTheWrongType, refuseValuesOutsideTheirSet } from './keys.ts';
 import type { ShapeVisit } from './keys.ts';
-import { MANIFEST_TYPES } from './types.ts';
+import { MANIFEST_ENUMS, MANIFEST_TYPES } from './types.ts';
 import { inEditorKeyOrder, withoutParserDefaults } from './keyorder.ts';
 import { EVERY_GLOBAL_PHYSICS, parseMotionSpec } from './motion.ts';
 import {
@@ -2062,7 +2062,13 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // same rule over the other file whose numbers reach the skeleton.
   // Its values of the wrong type first (issue #890): `crop.h: "806"` built
   // green, the string coerced by whatever arithmetic read it.
-  if (manifest !== null && manifestPath !== null) refuseValuesOfTheWrongType(manifestShapeVisits(manifest), MANIFEST_TYPES, manifestPath);
+  if (manifest !== null && manifestPath !== null) {
+    const visits = manifestShapeVisits(manifest);
+    refuseValuesOfTheWrongType(visits, MANIFEST_TYPES, manifestPath);
+    // Then a name outside a stated set (issue #900): `mesh.kind: "foo"` was
+    // read as a ribbon by one reader and a ring by two others.
+    refuseValuesOutsideTheirSet(visits, MANIFEST_TYPES, MANIFEST_ENUMS, manifestPath);
+  }
   if (manifest !== null && manifestPath !== null) refuseNumbersTheFileCannotCarry(manifest, manifestPath, dottedPath);
 
   // The rig spec names its own path in every message `parseRigSpec` throws (its

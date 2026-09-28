@@ -17,7 +17,7 @@
 import type { AtlasRegion } from './atlas.ts';
 import type { DeformTransform, DeformTransformReport } from './deformgen.ts';
 import type { TurnCeiling } from './depth.ts';
-import type { SpecTypeRow } from './keys.ts';
+import type { SpecEnumTable, SpecTypeRow } from './keys.ts';
 import type { MeshKind } from './mesh.ts';
 import type { TrackDerive, TrackDeriveReport } from './trackgen.ts';
 
@@ -185,9 +185,9 @@ export interface FaceManifest {
  * wrong-typed plants on the three fixture manifests built green —
  * `crop.h: "256"` among them — and 4 threw a TypeError from `node:path`.
  *
- * Unchecked: `mesh.kind` and `mesh.hull` (`enum`) — the manifest mesh reader;
- * `crop` and the other nested shapes, `parts` and `mesh` (`object`) — the
- * readers that walk them.
+ * Unchecked by this walk: `mesh.kind` and `mesh.hull` (`enum`) — see
+ * `MANIFEST_ENUMS`, below; `crop` and the other nested shapes, `parts` and
+ * `mesh` (`object`) — the readers that walk them.
  */
 export const MANIFEST_TYPES = {
   FaceManifest: {
@@ -210,6 +210,34 @@ export const MANIFEST_TYPES = {
   },
   'FaceManifestMesh.bias': { axis_deg: 'number', ramp: 'number[]', note: 'string' },
 } as const satisfies Record<string, SpecTypeRow>;
+
+/** The two mesh generators a manifest part may name (`FaceManifestMesh.kind`); absent means `ring`. */
+export const MANIFEST_MESH_KINDS = ['ring', 'ribbon'] as const satisfies ReadonlyArray<NonNullable<FaceManifestMesh['kind']>>;
+
+/**
+ * Who refuses each `enum` row of `MANIFEST_TYPES` outside its set (issue #900);
+ * `SpecEnumTable` in [`keys.ts`](keys.ts) says what an entry means.
+ *
+ * 🚨 `mesh.kind` was listed as held by "the manifest mesh reader", and it was
+ * not held at all: that reader has three places that ask the kind, and they
+ * disagreed about a value outside the two. The mesh checks read `"foo"` as a
+ * ribbon, while the control-bone reader and the geometry builder read it as a
+ * ring — so a ring part was refused as *a ribbon mesh needs mesh.rows and a
+ * mesh.chain*, and a ribbon part as *a mesh with no control bone deforms
+ * nothing*, both naming a fault the part did not have. `hull` is held: the ring
+ * check refuses anything but `"polygon"` by name, and keeps that sentence.
+ */
+export const MANIFEST_ENUMS = {
+  FaceManifestMesh: {
+    kind: {
+      set: MANIFEST_MESH_KINDS,
+      readAs:
+        'anything else was read as a ribbon by the mesh checks and as a ring by the control-bone reader and the ' +
+        'geometry builder, so the refusal it got named a fault the part did not have',
+    },
+    hull: { owner: 'compileInto' },
+  },
+} as const satisfies SpecEnumTable<typeof MANIFEST_TYPES>;
 
 // ---------------------------------------------------------------------------
 // Motion spec  (spec: "rigc-motion/1")

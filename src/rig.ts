@@ -60,8 +60,8 @@
  * with no manifest at all declares them here.
  */
 import { CompileError, NotImplementedError } from './errors.ts';
-import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys, refuseValuesOfTheWrongType } from './keys.ts';
-import type { ShapeVisit, SpecValueType } from './keys.ts';
+import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys, refuseValuesOfTheWrongType, refuseValuesOutsideTheirSet } from './keys.ts';
+import type { ShapeVisit, SpecEnumTable, SpecValueType } from './keys.ts';
 
 export { CompileError, NotImplementedError };
 
@@ -1866,29 +1866,20 @@ export const RIG_KEYS = {
  * field declared `number` and typed `string` here is a red run rather than a
  * refusal of correct work.
  *
- * Where an unchecked type (`object`, `enum`, `mixed` — see `SPEC_VALUE_TYPES`)
- * is refused, and by what:
+ * Where an unchecked `object` or `mixed` row is refused: a nested shape by the
+ * reader that walks it; `RigSegmentsGenerator.bones` (`mixed`: a name, a chain
+ * of names or a span) by the segments generator, by index. Where an `enum` row
+ * is refused is not a list in prose any more: `RIG_ENUMS`, below, has one entry
+ * per `enum` row — a set refused by `refuseValuesOutsideTheirSet`, or the
+ * reader that refuses it — and `satisfies` makes a row without one a type error.
  *
- *   - the version tag `spec` — `parseRigSpec`, before anything else;
- *   - `inherit` — `resolveBoneInherit`; `blend` — the slot loop
- *     (`RIG_SLOT_BLEND`); `consumerDrivenMix[].type` — the invariants block;
- *   - a constraint's `type` — `buildRigConstraint`; `scaleY` on ik, a path
- *     constraint's three modes and a slider's `property` — the builder of that
- *     constraint kind, each listing the names that exist;
- *   - an attachment's `type` — the attachment reader; `depth.near` — the depth
- *     map reader;
- *   - `RigSegmentsGenerator.bones` (`mixed`: a name, a chain of names or a span)
- *     — the segments generator, by index.
- *
- * 🚨 Measured when this table was written, three `enum` keys have **no** owner,
- * and the table does not pretend otherwise: `boneIndexing` built green at `5`
- * and at `"foo"` (on a weighted mesh too), `from.rotation` built green at `5`
- * and at `"foo"` on an anchored bone, and a generator `kind` of `5` or `"foo"`
- * threw a `TypeError` (*undefined is not an object (evaluating
- * 'generator.size')*) rather than the mesh builder's refusal. Each is a closed
- * set of names with nobody holding the name, which is a value refusal and not a
- * type one, so it is not fixed here. `scaleY` on a physics constraint was not
- * measured.
+ * ⚠️ Until issue #900 this comment carried that list, and ended by naming three
+ * `enum` keys with **no** owner: `boneIndexing`, `from.rotation` and a
+ * generator `kind`. The list was right about the three and wrong by omission
+ * about a fourth — the cut manifest's `mesh.kind`, which `MANIFEST_TYPES` said
+ * "the manifest mesh reader" held and which that reader read as a ribbon in one
+ * place and a ring in another. A list of owners in a comment is a claim nothing
+ * checks; the table is one a control reads.
  */
 type RigTypeTable = {
   readonly [S in keyof typeof RIG_KEYS]: { readonly [K in (typeof RIG_KEYS)[S][number]]: SpecValueType };
@@ -1998,6 +1989,70 @@ export const RIG_TYPES = {
   RigSoftRegion: { bone: 'string', mask: 'string' },
 } as const satisfies RigTypeTable;
 
+/** The two sources a bone's `from.rotation` names (`RigBoneFrom.rotation`). */
+export const RIG_FROM_ROTATIONS = ['axis', 'anchor'] as const satisfies ReadonlyArray<NonNullable<RigBoneFrom['rotation']>>;
+
+/** The two ways a weighted `vertices` run names its bones (`RigMeshAttachment.boneIndexing`). */
+export const RIG_BONE_INDEXING = ['name', 'raw'] as const satisfies ReadonlyArray<NonNullable<RigMeshAttachment['boneIndexing']>>;
+
+/** What `boneIndexing` outside its set was read as, measured before issue #900. */
+const BONE_INDEXING_READ_AS =
+  'anything else was read as the default "name" in silence: a weighted "vertices" run was refused as unflagged, ' +
+  'and every other attachment built byte for byte as if the key were absent';
+
+/**
+ * Who refuses each `enum` row of `RIG_TYPES` outside its set (issue #900) —
+ * `SpecEnumTable` in [`keys.ts`](keys.ts) says what the two kinds of entry
+ * mean, and `satisfies` makes an `enum` row without one a type error.
+ *
+ * ⭐ A `set` is stated for exactly the rows nobody held: measured when this
+ * table was written, `boneIndexing` built green at `5`, `"foo"` and `"named"`
+ * (the spelling the issue itself used) as the default, and `from.rotation`
+ * built green at `5` and `"foo"` with the bone's setup rotation dropped. Every
+ * other row already had a reader that refused a planted `5` and `"foo"` by
+ * name, and keeps it; the generator's `kind` is the one of those that is a
+ * dispatch, and its refusal is new — it threw a `TypeError` (*undefined is not
+ * an object (evaluating 'generator.size')*), because the scan skipped a `kind`
+ * it had no row for and the mesh builder fell through to the ring branch.
+ */
+export const RIG_ENUMS = {
+  RigSpec: { spec: { owner: 'parseRigSpec' } },
+  RigBone: { inherit: { owner: 'parseRigSpec' } },
+  RigBoneFrom: {
+    rotation: {
+      set: RIG_FROM_ROTATIONS,
+      readAs: 'anything else was read as no rotation source, and the bone was emitted without the setup rotation it asked for',
+    },
+  },
+  RigSlot: { blend: { owner: 'parseRigSpec' } },
+  RigConsumerDrivenMix: { type: { owner: 'parseRigSpec' } },
+  RigIkConstraint: { type: { owner: 'buildRigConstraint' }, scaleY: { owner: 'buildRigConstraint' } },
+  RigTransformConstraint: { type: { owner: 'buildRigConstraint' } },
+  RigPathConstraint: {
+    type: { owner: 'buildRigConstraint' },
+    positionMode: { owner: 'buildRigConstraint' },
+    spacingMode: { owner: 'buildRigConstraint' },
+    rotateMode: { owner: 'buildRigConstraint' },
+  },
+  RigPhysicsConstraint: { type: { owner: 'buildRigConstraint' }, scaleY: { owner: 'buildRigConstraint' } },
+  RigSliderConstraint: { type: { owner: 'buildRigConstraint' }, property: { owner: 'buildRigConstraint' } },
+  RigRegionAttachment: { type: { owner: 'buildRigAttachment' } },
+  RigMeshAttachment: { type: { owner: 'buildRigAttachment' }, boneIndexing: { set: RIG_BONE_INDEXING, readAs: BONE_INDEXING_READ_AS } },
+  RigLinkedMeshAttachment: { type: { owner: 'buildRigAttachment' }, boneIndexing: { set: RIG_BONE_INDEXING, readAs: BONE_INDEXING_READ_AS } },
+  RigBoundingBoxAttachment: { type: { owner: 'buildRigAttachment' }, boneIndexing: { set: RIG_BONE_INDEXING, readAs: BONE_INDEXING_READ_AS } },
+  RigClippingAttachment: { type: { owner: 'buildRigAttachment' }, boneIndexing: { set: RIG_BONE_INDEXING, readAs: BONE_INDEXING_READ_AS } },
+  RigPathAttachment: { type: { owner: 'buildRigAttachment' }, boneIndexing: { set: RIG_BONE_INDEXING, readAs: BONE_INDEXING_READ_AS } },
+  // The generator's `kind` chooses the row its other keys are checked against,
+  // so a `kind` outside the five has no row to be visited in: the scan that
+  // dispatches on it is where it is refused.
+  RigRingGenerator: { kind: { owner: 'checkRigSpecKeys' } },
+  RigRibbonGenerator: { kind: { owner: 'checkRigSpecKeys' } },
+  RigContourGenerator: { kind: { owner: 'checkRigSpecKeys' } },
+  RigGridGenerator: { kind: { owner: 'checkRigSpecKeys' } },
+  RigSegmentsGenerator: { kind: { owner: 'checkRigSpecKeys' } },
+  RigDepthMap: { near: { owner: 'sampleMeshDepth' } },
+} as const satisfies SpecEnumTable<typeof RIG_TYPES>;
+
 /**
  * The five constraint `type` names, and the shape each one's keys come from.
  *
@@ -2024,7 +2079,7 @@ const ATTACHMENT_SHAPE: Record<string, keyof typeof RIG_KEYS> = {
 };
 
 /** The generator `kind` names, and the shape each one's keys come from. */
-const GENERATOR_SHAPE: Record<string, keyof typeof RIG_KEYS> = {
+const GENERATOR_SHAPE: Record<(typeof RIG_GENERATOR_KINDS)[number], keyof typeof RIG_KEYS> = {
   ring: 'RigRingGenerator',
   ribbon: 'RigRibbonGenerator',
   contour: 'RigContourGenerator',
@@ -2239,10 +2294,21 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): Array<{ 
         }
         if (!isObj(att.generator)) continue;
         const gen = att.generator;
-        const genShape = GENERATOR_SHAPE[String(gen.kind)];
-        // Same rule as an unknown attachment type: an unknown `kind` is the mesh
-        // builder's refusal, which can name the four that exist.
-        if (genShape === undefined) continue;
+        const kind = RIG_GENERATOR_KINDS.find((k) => k === gen.kind);
+        const genShape = kind === undefined ? undefined : GENERATOR_SHAPE[kind];
+        // 🚨 An unknown `kind` used to be skipped here as "the mesh builder's
+        // refusal", and the mesh builder had none: `buildGeneratedMesh` fell
+        // through to the ring branch and threw a TypeError reading
+        // `generator.size` (issue #900). `kind` chooses the row every other key
+        // of the generator is checked against, so this dispatch is the one
+        // place that can refuse it — before any of those keys is judged.
+        if (genShape === undefined) {
+          const stated = gen.kind === undefined ? 'absent' : (JSON.stringify(gen.kind) ?? String(gen.kind));
+          throw new CompileError(
+            `${where}: ${who} generator.kind is ${stated}; one of ${RIG_GENERATOR_KINDS.map((k) => JSON.stringify(k)).join(', ')} — ` +
+              'the kind names the builder, and each builder reads its own keys, so nothing about the mesh can be checked or built without one',
+          );
+        }
         at(gen, genShape, `${who} generator (${String(gen.kind)})`, [...here, 'generator']);
         at(gen.bias, 'RigMeshBias', `${who} generator.bias`, [...here, 'generator', 'bias']);
         at(gen.depth, 'RigDepthMap', `${who} generator.depth`, [...here, 'generator', 'depth']);
@@ -2338,11 +2404,13 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   // `constraint.skin === true` reads `"skin": "true"` as a constraint that asks
   // for no skin. The price, measured, is three controls whose type half pinned an
   // older sentence (RF86, PS177, PS189); their other halves are unchanged.
-  refuseValuesOfTheWrongType(
-    visits.map((v) => ({ node: v.node, shape: v.shape, name: (tail) => place([...v.path, ...tail]) })),
-    RIG_TYPES,
-    where,
-  );
+  const shapeVisits: ShapeVisit[] = visits.map((v) => ({ node: v.node, shape: v.shape, name: (tail) => place([...v.path, ...tail]) }));
+  refuseValuesOfTheWrongType(shapeVisits, RIG_TYPES, where);
+  // A name outside an `enum` row's stated set (issue #900), after the type walk
+  // and over the same visits: `boneIndexing: "foo"` built as the default and
+  // `from.rotation: "foo"` as no rotation, both green. A row whose entry names
+  // an owner is that reader's to refuse, in its own words.
+  refuseValuesOutsideTheirSet(shapeVisits, RIG_TYPES, RIG_ENUMS, where);
   // After the key check, so a misspelled key is named as a misspelling before
   // its value is judged, and before every reader below, so no range rule or
   // derived number ever meets a value the file cannot carry (issue #881).

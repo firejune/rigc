@@ -219,8 +219,12 @@ export function dottedPath(path: ReadonlyArray<string | number>): string {
  *     kind of container is the refusal of the reader that walks it (a rig spec's
  *     `"bones"` that is not an array is *a rig spec needs a non-empty "bones"
  *     array*);
- *   - `enum` — a closed set of names, refused by name where it is read, with the
- *     names that exist listed (a slot's `blend`, a constraint's `type`);
+ *   - `enum` — a closed set of names. Every `enum` row has an entry in the
+ *     shape's enum table (`RIG_ENUMS`, `MOTION_ENUMS`, `MANIFEST_ENUMS`, typed by
+ *     `SpecEnumTable`), which either states the set — and
+ *     `refuseValuesOutsideTheirSet` refuses a value outside it — or names the
+ *     reader that refuses it where it reads it, with the names that exist listed
+ *     (a slot's `blend`, a constraint's `type`);
  *   - `mixed` — a union of kinds whose owner decides by the value (`MotionKey.v`
  *     is numbers on `rotate`, a name on `attachment`, a member map on a group).
  */
@@ -406,6 +410,76 @@ export function refuseValuesOfTheWrongType(
       if (wrong === null) continue;
       throw new CompileError(
         `${where}: ${visit.name([key, ...wrong.tail])} is ${typeFound(wrong.value)}; ${wrong.required} is required`,
+      );
+    }
+  }
+}
+
+/**
+ * Who refuses a value outside an `enum` row's closed set (issue #900).
+ *
+ *   - `set` — the names the row accepts, refused from one place by
+ *     `refuseValuesOutsideTheirSet`; `readAs` is what the readers did with any
+ *     other value before the set was stated, which the refusal says, because
+ *     "one of" alone does not tell an author that the build they had was wrong;
+ *   - `owner` — the function that reads the value and refuses one outside its
+ *     set by name there, listing the names that exist. It keeps its own sentence,
+ *     which often says more than a set can (a first letter whose case is free, a
+ *     row chosen by the value itself).
+ */
+export type SpecEnumRule = { readonly set: readonly string[]; readonly readAs: string } | { readonly owner: string };
+
+/** The keys of a type row whose type is `enum`. */
+type EnumKeysOf<R> = { [K in keyof R]: R[K] extends 'enum' ? K : never }[keyof R];
+
+/**
+ * A type table's enum table: one entry per `enum` row, and nothing else.
+ *
+ * 🔒 `satisfies SpecEnumTable<typeof X_TYPES>` is what makes a fourth unowned
+ * enum a type error rather than a row nobody holds: a shape with an `enum` row
+ * must appear, with exactly its `enum` keys, and a key of another type cannot.
+ * A selftest control holds the same claim at runtime and reads each `owner`'s
+ * body for the key it is said to own.
+ */
+export type SpecEnumTable<T extends Readonly<Record<string, SpecTypeRow>>> = {
+  readonly [S in keyof T as [EnumKeysOf<T[S]>] extends [never] ? never : S]: { readonly [K in EnumKeysOf<T[S]>]: SpecEnumRule };
+};
+
+/**
+ * Refuse the first value of an `enum` row whose enum table states a set and
+ * that is not in it (issue #900).
+ *
+ * 🚨 The defect this closes was a green build again, one step past #890's:
+ * the type walk does not check `enum` (a name's type says nothing about which
+ * names exist), and three rows had nobody holding the name — `boneIndexing`,
+ * a bone's `from.rotation` and the cut manifest's `mesh.kind`. `"foo"` and `5`
+ * were each read as something the spec never said, in silence.
+ *
+ * It runs after the type walk and over the same visits, so a key the scan
+ * refused is never judged here, and before every reader. A row whose table
+ * entry names an `owner` is passed over: that reader refuses it with its own
+ * sentence. The order is the type walk's — visits in the scan's order, keys in
+ * the document's — so the refusal names the same value on every run.
+ */
+export function refuseValuesOutsideTheirSet(
+  visits: readonly ShapeVisit[],
+  types: Readonly<Record<string, SpecTypeRow>>,
+  enums: Readonly<Record<string, Readonly<Record<string, SpecEnumRule>>>>,
+  where: string,
+): void {
+  for (const visit of visits) {
+    const row = types[visit.shape];
+    if (row === undefined) throw new Error(`no type row for shape ${visit.shape} (a key scan visited a shape the type table does not have)`);
+    for (const key of Object.keys(visit.node)) {
+      if (row[key] !== 'enum') continue;
+      const rule = enums[visit.shape]?.[key];
+      if (rule === undefined) throw new Error(`${visit.shape}.${key} is an enum row with no entry in its enum table`);
+      if (!('set' in rule)) continue;
+      const value = visit.node[key];
+      if (typeof value === 'string' && rule.set.includes(value)) continue;
+      throw new CompileError(
+        `${where}: ${visit.name([key])} is ${JSON.stringify(value) ?? String(value)}; one of ` +
+          `${rule.set.map((name) => JSON.stringify(name)).join(', ')} — ${rule.readAs}`,
       );
     }
   }
