@@ -8852,8 +8852,8 @@ Found within 2 px of the truth, out of 15 trials per cell (free search, default 
 
 | texture level (mean) | 24 px | 32 px | 48 px | 64 px | 96 px | 128 px | 192 px |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `native` (detail 3.49) | 13/15 (2 amb) | 15/15 | 15/15 | 15/15 | 13/15 (1 amb, 1 wrong) | 14/15 (1 wrong) | 14/15 (1 wrong) |
-| `blur1` (detail 1.58) | 12/15 (3 amb) | 12/15 (2 amb, 1 wrong) | 13/15 (2 amb) | 12/15 (3 amb) | 12/15 (2 amb, 1 wrong) | 11/15 (1 amb, 3 wrong) | 11/15 (2 amb, 2 wrong) |
+| `native` (detail 3.49) | 13/15 (2 amb) | 15/15 | 15/15 | 15/15 | 14/15 (1 wrong) | 14/15 (1 wrong) | 14/15 (1 wrong) |
+| `blur1` (detail 1.58) | 12/15 (3 amb) | 12/15 (3 amb) | 13/15 (2 amb) | 12/15 (3 amb) | 12/15 (2 amb, 1 wrong) | 11/15 (1 amb, 3 wrong) | 11/15 (2 amb, 2 wrong) |
 | `blur2` (detail 0.59) | 9/15 (5 amb, 1 wrong) | 9/15 (4 amb, 2 wrong) | 9/15 (4 amb, 2 wrong) | 8/15 (3 amb, 4 wrong) | 7/15 (3 amb, 5 wrong) | 6/15 (4 amb, 5 wrong) | 7/15 (3 amb, 5 wrong) |
 | `flat` (detail 0.00) | 0/15 (14 amb, 1 wrong) | 0/15 (14 amb, 1 wrong) | 0/15 (13 amb, 2 wrong) | 0/15 (11 amb, 4 wrong) | 0/15 (13 amb, 2 wrong) | 0/15 (12 amb, 3 wrong) | 0/15 (12 amb, 3 wrong) |
 
@@ -8862,14 +8862,14 @@ The same trials, grouped by `detail`:
 | detail | found | ambiguous | wrong | refused |
 | --- | --- | --- | --- | --- |
 | under 0.25 | 8/119 | 89 | 22 | 0 |
-| 0.25–0.5 | 1/3 | 1 | 1 | 0 |
-| 0.5–0.75 | 48/81 | 14 | 19 | 0 |
+| 0.25–0.5 | 0/3 | 2 | 1 | 0 |
+| 0.5–0.75 | 49/81 | 13 | 19 | 0 |
 | 0.75–1 | 17/34 | 14 | 3 | 0 |
 | 1–1.5 | 25/25 | 0 | 0 | 0 |
-| 1.5–2 | 34/48 | 12 | 2 | 0 |
+| 1.5–2 | 34/48 | 13 | 1 | 0 |
 | 2–3 | 40/44 | 1 | 3 | 0 |
 | 3–4 | 34/34 | 0 | 0 | 0 |
-| 4 and over | 30/32 | 2 | 0 | 0 |
+| 4 and over | 31/32 | 1 | 0 | 0 |
 
 **Method.** The truth set is `examples/spineboy`: its setup pose and one frame of
 `walk` (a third of the way in). For every trial the figure is rendered twice with one
@@ -8891,8 +8891,8 @@ part has a low per-pixel gradient and still places — and size alone has no
 measurable effect across 24–192 px at any level.
 
 **The edge**, derived by `deriveFloor` as the largest rung of a fixed ladder under
-which at most a tenth of the trials were found: **`detail` 0.5**. Under it, **7.4%**
-of the trials were found (9/122); at or over it, **76.5%** (228/298). A part is below
+which at most a tenth of the trials were found: **`detail` 0.5**. Under it, **6.6%**
+of the trials were found (8/122); at or over it, **77.2%** (230/298). A part is below
 the floor when its `detail` is under 0.5, or when its own longest side is under 24 px,
 the smallest size measured (there, nothing measured says `pose` can place it).
 
@@ -8923,16 +8923,29 @@ blurred part now reported with a second placement at the same spot and another
 scale, one of them with the truth itself as its best answer), for 43% more
 refinement samples and the coarse pass untouched.
 
-⚠️ **What this is and is not.** The grid is not a reliability line: five native cells
-place 14 or 15 of 15 and the trials at `detail` 3 and over place 64 of 66, but the
-goggles still place 12 of 42, and a threshold read off two dozen parts of one figure
+Since issue #886 the stopped polish tries **a quarter rung** (2^(1/12)) beside the
+half and keeps the better re-fit. The case was not a grid trial but §6's stationary
+post in [MOTION.md](MOTION.md): under `--scale 0.85,1.2` it came back at scale
+0.917, residual 0.0649, where the old placement at 0.975 still scores 0.0589. The
+half rung stepped from 0.917 to 1.029, where the best position scores 0.0980 — a part
+that fills its image pays for every pixel pushed past the figure, so above its truth
+the objective is a cliff, and half a rung crossed the basin onto it. With both, the
+post places at 0.971 (0.0593, 0.1 px from the old placement), and the grid goes from
+237 to 238 found and 8 to 6 misses (2 gained, 1 lost) for 16% more user CPU. The
+quarter alone found 234, losing the native arms #877 was made for. The one lost is a
+margin reading again: the blurred 32 px front shin (walk) now reports its truth as its
+best (0.07 px, 0.00968), with its old 0.51 px answer 0.0045 above it.
+
+⚠️ **What this is and is not.** The grid is not a reliability line: six native cells
+place 14 or 15 of 15 and the trials at `detail` 3 and over place 65 of 66, but the
+goggles still place 13 of 42, and a threshold read off two dozen parts of one figure
 would be a claim about that figure. What the grid can separate is **whose** failure a
 failure is. `bun tools/pose_floor.ts` prints the residual at the truth for every
 failed trial and marks it **missed** when the truth scores better than everything
 reported and nothing reported is on it — a failure the search could fix. The other
 failures are the objective preferring another placement (a blurred part shrunk into
 its own region scores better than its truth) or the truth reported and tied, and no
-search can fix those. After #877, 8 of the 183 failed trials are misses, and 7 of
+search can fix those. After #886, 6 of the 182 failed trials are misses, and 5 of
 those sit within 3.1 px of the truth rather than on another hill; the `--from`
 listing prints, for each, where the refinement left the truth level by level. All this was
 measured on **ideal cuts**, the frame's own pixels, where a residual at the truth is
@@ -8947,7 +8960,8 @@ print the table, derive the edge and list the misses per cell. `PO22` in
 no miss at all, and `PO23` places the 48 px fist #865 was made for; `PO28` and
 `PO29` place the four trials #877 was made for and read where the shin survived the
 cutoff, and `PO26` holds every polish to strictly descending residuals, read through
-the same trace.
+the same trace. `PO31` places §6's post at the old placement from the page's own
+input bytes, and `PO32` holds it to taking the quarter-rung escape and reading the same twice.
 
 ## 12. Reading the half of that picture `pose` refuses — `rigc chainfit`
 

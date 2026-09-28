@@ -244,6 +244,7 @@ import {
 } from './src/atlas.ts';
 import { isContent } from './src/framing.ts';
 import {
+  AMBIGUITY_ABSOLUTE,
   COARSE_ROTATION_STEP,
   DEFAULT_MAX_RESIDUAL,
   DEFAULT_SCALE_MAX,
@@ -257,6 +258,7 @@ import {
   poseLines,
   ROTATION_FREE_TOLERANCE,
   rotationLadder,
+  SCALE_STEPS_PER_OCTAVE,
   searchRotationClause,
   POSE_FLOOR,
   windowEdgeNote,
@@ -64244,6 +64246,87 @@ function runPoseSuite(): number {
     );
   }
 
+  // --- PO31–PO32: the stationary post MOTION.md §6 reads (issue #886) ------
+  //
+  // ⭐ Natural art rather than a grid trial, and self-contained: the page's own
+  // `bun -e` fences carry the three plates and the two pictures as base64, so
+  // this reads them out of `docs/MOTION.md` and writes them where §6 does. On
+  // pose A under `--scale 0.85,1.2` the page recorded the post at (79.9, 148.6),
+  // -0.1°, scale 0.975, residual 0.0589 — the answer of the search before
+  // issue #876, measured with the objective this one uses. After #876 and #877
+  // the search settled at scale 0.917, 2.25 px off, at 0.0649, while the old
+  // placement still scores 0.0589: a miss by the objective's own measure. The
+  // half-rung escape stepped from 0.917 to 1.029, past the basin and onto the
+  // cliff a part that fills its image has above its truth; the quarter lands in
+  // it. The bar is the grid's own `FLOOR_WITHIN_PX` from the old placement and a
+  // residual within a tenth of `AMBIGUITY_ABSOLUTE` of what the old placement
+  // scores — main's answer fails both (2.25 px, 0.0060 above), the lever passes
+  // both (0.10 px, 0.0004). The old placement is scored through the trace's
+  // probe at full resolution, whose sample set is every pixel of this part:
+  // 14x96 is 1,344 pixels, under the 2,048 the polish level samples.
+  {
+    const page = readFileSync(resolve(import.meta.dir, 'docs/MOTION.md'), 'utf8');
+    const fence = (name: string): Buffer | null => {
+      const m = page.match(new RegExp(`"${name.replace(/[.]/g, '\\.')}": "([A-Za-z0-9+/=]+)"`));
+      return m === null ? null : Buffer.from(m[1], 'base64');
+    };
+    const files = ['parts/post.png', 'parts/arm.png', 'parts/flag.png', 'poseA.png'];
+    const missing = files.filter((f) => fence(f) === null);
+    const dir = mkdtempSync(join(tmpdir(), 'rigc-pose-886-'));
+    mkdirSync(join(dir, 'parts'));
+    for (const f of files) {
+      const bytes = fence(f);
+      if (bytes !== null) writeFileSync(join(dir, f), bytes);
+    }
+    const old = { x: 79.9, y: 148.6, rotationDeg: -0.1, scale: 0.975 };
+    const read = (trace?: PoseTrace): PoseReport | null =>
+      missing.length > 0
+        ? null
+        : estimatePose({ imagesDir: join(dir, 'parts'), framePath: join(dir, 'poseA.png'), scale: { min: 0.85, max: 1.2 }, trace });
+    const trace: PoseTrace = { probe: old, levels: [], measured: [] };
+    const first = read(trace);
+    const again = read();
+    rmSync(dir, { recursive: true, force: true });
+    const post = first?.parts.find((p) => p.part === 'post.png')?.placement ?? null;
+    const levels = trace.levels.filter((l) => l.part === 'post.png');
+    const full = levels.find((l) => l.level === 0) ?? null;
+    const atOld = full?.probeResidual ?? null;
+    const off = post === null ? null : Math.hypot(post.x - old.x, post.y - old.y);
+    const gap = post === null || atOld === null ? null : post.residual - atOld;
+    const bar = AMBIGUITY_ABSOLUTE / 10;
+    const ok = post !== null && off !== null && gap !== null && off <= FLOOR_WITHIN_PX && gap <= bar;
+    say(
+      'PO31_THE_STATIONARY_POST_OF_MOTION_6_IS_PLACED_WHERE_THE_OLD_SEARCH_FOUND_IT',
+      ok,
+      missing.length > 0
+        ? `docs/MOTION.md no longer carries ${missing.join(', ')} in a fence, so §6's inputs cannot be rebuilt`
+        : post === null || off === null || gap === null
+          ? `post.png: no placement, or no full-resolution probe in the trace (${levels.length} level(s) traced)`
+          : `post.png on pose A, --scale 0.85,1.2: x ${post.x} y ${post.y} rot ${post.rotationDeg}° scale ${post.scale}, ` +
+            `residual ${post.residual}; the old placement (${old.x}, ${old.y}, ${old.rotationDeg}°, ${old.scale}) scores ` +
+            `${atOld?.toFixed(5)} — ${off.toFixed(2)} px from it (bar ${FLOOR_WITHIN_PX} px) and ${gap.toFixed(5)} above it ` +
+            `(bar ${bar})`,
+      'a placement the objective scores lower was inside the window the caller named, and the search settled beside it; ' +
+        'a caller reading a stationary part twice then sees 0.917 and 0.995 and has no way to tell a miss from a moved part',
+    );
+
+    // The new path must be the one taken, or the pass above says nothing about
+    // it: the winning full-resolution polish accepted an escape by the quarter
+    // rung. And, as PO30 does for the half, the whole read twice is the same.
+    const quarter = 2 ** (1 / (4 * SCALE_STEPS_PER_OCTAVE)) - 1;
+    const winner = full === null || full.polished.length === 0 ? -1 : full.polished.reduce((bi, c, i, a) => (c.residual < a[bi].residual ? i : bi), 0);
+    const escaped = full !== null && winner >= 0 && full.paths[winner].some((s) => s.escape && Math.abs(s.scale - quarter) < 1e-9);
+    const same = first !== null && again !== null && JSON.stringify(first.parts) === JSON.stringify(again.parts);
+    say(
+      'PO32_THE_QUARTER_RUNG_ESCAPE_IS_TAKEN_AND_READS_THE_SAME_TWICE',
+      escaped && same,
+      `post.png's winning full-resolution polish ${escaped ? 'took' : 'did NOT take'} a scale escape of ${quarter.toFixed(4)}; ` +
+        `the three parts read twice: ${same ? 'byte-identical' : 'DIFFERENT'}`,
+      'the escape picks the better of two re-fits by comparing residuals, which is where an order dependence would enter, ' +
+        'and a control that passes without the new path being taken holds nothing about it',
+    );
+  }
+
   // --- PO26–PO27: the refinement, read through its trace (issue #877) -----
   //
   // 🔍 The card said the polish "leaves a basin it is in and settles on a worse
@@ -75739,7 +75822,9 @@ function main(): void {
       'started from, read through a trace that changes nothing it reports, and the four floor-grid trials #865\'s ' +
       'finer grid lost to the refinement each placed at its truth — three polishes let out of a scale–position ' +
       'valley by a half-rung escape up, and a shin whose truth ranked past the old twelve read off its trace as ' +
-      'carried to the answer — with the escaping trial read twice to the same bytes)' +
+      'carried to the answer — with the escaping trial read twice to the same bytes — and MOTION.md §6\'s ' +
+      'stationary post, rebuilt from the page\'s own bytes, placed where the old search found it by the quarter-rung ' +
+      'escape a half rung stepped over, read twice to the same bytes as well)' +
       ', + ' + n('chainfit') + ' chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
