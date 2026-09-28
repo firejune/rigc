@@ -1,7 +1,15 @@
 # The compiled model — a census of what `compile` writes, and who owns each byte
 
-**Status: a measurement, not a design** (issue #908, step 0a of issue #380). Taken at
-commit `574f596` of `main`. Nothing under `src/` moved to produce it. It answers the
+**Status: a measurement, not a design** (issue #908, step 0a of issue #380). Taken on
+2026-09-29 at commit `574f596` of `main`. Nothing under `src/` moved to produce it.
+
+**A dated record:** what this page states was measured on the date it carries and is not kept current, so the selftest's currency gate leaves its figures alone.
+
+Every `file.ts:NNN` below is a coordinate at `574f596`. When the lines have moved, read
+the row's *writes* column rather than the number, and re-take the census at the new
+commit: the row list that generated §1.3 checked each line against a token that line
+must carry, which is how a re-take finds every row that went stale. That generator was a
+scratch script and is not in the tree, so a re-take starts from §1.1's definition. It answers the
 three questions step 1 of #380 needs answered before the compiler can hand a neutral
 model to a Spine emitter: *which writes are content and which are Spine's shape*, *what
 the model's fields are, from the values that exist*, and *what an emitter that must
