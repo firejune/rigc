@@ -370,6 +370,8 @@ rigc check --candidate examples/3-timing-and-spacing/export/3-timing-and-spacing
            --frames ref3/light
 ```
 
+**No run reproduces this:** abridged — the head's `atlas`, `frames`, `skin`, `scope`, `reference`, `content` and `in units` lines and its two ⚠️ notes are cut, so the `⤷ fit` line the run prints under `content` stands under `framed to`; the section's `frames` line and every `⤷` note are cut; and so is everything the run prints after `per-frame`
+
 ```
 rigc check
   candidate  …/examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.json
@@ -378,14 +380,14 @@ rigc check
   declared   frames.json's own box: TAKEN, coincident — a fit there asks for 0.00 px, under the 1 px that separates a candidate in the frames' coordinates from one in its own, over 21 frame(s).
 
   ── light — candidate animation "light", 12 fps ──
-     MAE        mean 0.00  worst 0.00 at f00-1   (0..255 over the union alpha; over the whole frame, mean 0.00)
-     slot drift worst 0.5 px  "pendulum" at f0003
+     MAE        mean 0.00  worst 0.00 (exact: none of the 21 compared frame(s) differs from the reference)   (0..255 over the union alpha; over the whole frame, mean 0.00)
+     slot drift worst 0.4 px  "pendulum" at f0012
      per-frame all 20 adjacent pair(s) change by as much as the reference's own frames do
 ```
 
 Two things to take from the control, both of which you need before reading any real
 number: the **framing** resolved to the frames' own box at 0.00 px, so the MAE is a
-comparison of pictures rather than of framings; and **slot drift still reads 0.5 px at
+comparison of pictures rather than of framings; and **slot drift still reads 0.4 px at
 MAE 0.00**, which is that instrument's own floor rather than a difference.
 
 ⚠️ **`--texture-from` is not optional on ingest work, and the reason is structural.**
@@ -1339,7 +1341,9 @@ against one picture. A foreign export hands you a packed page instead, and point
 `pose` at one is worse than useless — it treats the whole page as a single part and
 answers confidently:
 
-```bash
+```bash setup
+rigc render --candidate examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.json \
+            --fps 4 --max 900 --out ref-big
 mkdir -p packed-only
 cp examples/3-timing-and-spacing/export/3-timing-and-spacing.png packed-only/
 rigc pose --images packed-only --frame 'ref-big/light@4fps/f0002.png'
@@ -1350,12 +1354,12 @@ rigc pose
   ..    frame   …/ref-big/light@4fps/f0002.png  (900x409)
   ..    ground  rgb(232, 232, 232) over 100% of the border ring
   ..    parts   …/packed-only  (1 png)
-  ..    search  scale 0.5–2 in 7 step(s) · rotation -180°–180° step 15° · refuse above residual 0.25
-  PLACE  3-timing-and-spacing.png  x=  324.3  y=  188.2  rot=  -91.4°  scale=0.629  residual=0.2083  unexplained= 30%
-                                   found on a 7x3 anchor grid, step 4 at 32x reduction
+  ..    search  scale 0.5–2 in 7 step(s) · rotation -180°–180° in 24 step(s) of 15° · refuse above residual 0.25
+  PLACE  3-timing-and-spacing.png  x=  324.3  y=  188.3  rot=  -91.6°  scale=0.630  residual=0.2085  unexplained= 30%
+                                   found on a 14x7 anchor grid, step 4 at 16x reduction
 ```
 
-⚠️ **`residual=0.2083` is *under* the default 0.25 refusal bar**, so nothing refused
+⚠️ **`residual=0.2085` is *under* the default 0.25 refusal bar**, so nothing refused
 it, and `PLACE` rather than `AMBIG` means nothing flagged it either. With the same frame
 and the two real loose parts, the answer is what it should be:
 
@@ -1365,12 +1369,15 @@ rigc pose --images examples/3-timing-and-spacing/images \
 ```
 
 ```
+rigc pose
+  ..    frame   …/ref-big/light@4fps/f0002.png  (900x409)
+  ..    ground  rgb(232, 232, 232) over 100% of the border ring
   ..    parts   …/examples/3-timing-and-spacing/images  (2 png)
-  ..    search  scale 0.3–0.6 in 4 step(s) · rotation -180°–180° step 15° · refuse above residual 0.25
-  PLACE  pendulum.png  x=  319.3  y=  214.5  rot=  -88.9°  scale=0.412  residual=0.0425  unexplained=  7%
-                       found on a 12x5 anchor grid, step 5 at 16x reduction
-  PLACE  square.png    x=  437.2  y=  343.1  rot=   -0.1°  scale=0.410  residual=0.0331  unexplained=  4%
-                       found on a 57x26 anchor grid, step 4 at 4x reduction
+  ..    search  scale 0.3–0.6 in 4 step(s) · rotation -180°–180° in 24 step(s) of 15° · refuse above residual 0.25
+  PLACE  pendulum.png  x=  319.3  y=  214.6  rot=  -88.9°  scale=0.411  residual=0.0428  unexplained=  7%
+                       found on a 28x13 anchor grid, step 2 at 16x reduction
+  PLACE  square.png    x=  437.1  y=  343.1  rot=    0.0°  scale=0.410  residual=0.0334  unexplained=  4%
+                       found on a 113x51 anchor grid, step 2 at 4x reduction
 ```
 
 ⇒ **Check what is in `--images` before trusting a `pose` report on ingest work.** One
