@@ -174,8 +174,8 @@ and each cut's diff boundary is a set of rows in [COMPILED_MODEL.md](COMPILED_MO
 | --- | --- | --- |
 | **1a** | the instrument: every build in every corpus hashed across two commits (`tools/emit_hashes.ts`), before any line of `compile.ts` moves | — |
 | **1b** | bones by name: the model's `bones` built first, the emitter producing `SpineBone[]` from them; world transforms, the rig info walk, segments and derived group values read the model | §1.4 rows 1, 2, 12, 21, 24 |
-| **1c** | the weighted run by name: a mesh's bindings kept by bone name in the model and encoded to indexes only at emission; deform geometry and path lengths decoded from the model | §1.4 rows 8, 13–23, 14; §2.1's first bullet |
-| **1d** | slots, skins, attachments, constraints, events as model records; the emitter owns the `type` discriminators, the inline omissions and the sequence frame spelling | §1.4 rows 3–7, 9–11, 16; §3 *Omission* and *Spellings* |
+| **1c** | the weighted run by name: the four vertex-attachment kinds (mesh, path, bounding box, clipping) as model records whose bindings name their bone, encoded to indexes only at emission; deform geometry, path lengths and the mesh-bone reads decoded from the model | §1.4 rows 8, 13–23, 14, 17; §2.1's first bullet |
+| **1d** | slots, skins, the remaining attachment kinds (region, point, linked mesh), constraints, events as model records; the emitter owns the `type` discriminators, the inline omissions and the sequence frame spelling | §1.4 rows 3–7, 9–11, 16; §3 *Omission* and *Spellings* |
 | **1e** | animations: keys as the model holds them, the emitter restating every constructor insertion order the key-order table does not list | §3 *Layout and order*'s ⚠️ |
 | **1f** | the model written beside the Spine files (`rigc-compiled/1`, fixed key order), `A18` extended to it, and #379's rule made a control: `compile.ts` names no Spine shape | — |
 
