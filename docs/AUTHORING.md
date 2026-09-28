@@ -341,9 +341,12 @@ a gap:
 
   Under `pot` turning shrank no page. Under `free` the largest gain, 13.37 %, is
   inside the search's own noise: the neighbouring width on the 32-pixel grid
-  moves that set's unturned page by 18.13 %, and trying every width instead
-  finds an unturned page 10.22 % smaller. With every width tried, no set gains
-  more than 5.05 % from turning — so the packer still never turns a region.
+  `free` then searched moves that set's unturned page by 18.13 %, and trying
+  every width instead finds an unturned page 10.22 % smaller. With every width
+  tried, no set gains more than 5.05 % from turning — so the packer still never
+  turns a region. (The `free` column is that day's 32-pixel grid. `free` has
+  tried every width since issue #872 — below — so the 5.05 % is the turn gain on
+  the search that ships.)
 - **no re-ordering of anything the skeleton says.** `skeleton.json` from a packed
   build is **byte-identical** to the unpacked one, because sizes are still
   measured from the loose PNGs and packing is an output arrangement.
@@ -383,7 +386,7 @@ every power-of-two pair up to `--page-size` in order of area and writes the firs
 the pack fits — it never doubles past a smaller page that would do. So when the
 parts' own area already exceeds the next power-of-two page down, no `pot` packer
 can do better, and `free` is the lever left. Under `free` the candidate widths
-are the multiples of 32 from the widest padded part up to `--page-size`; at each
+are **every width** from the widest padded part up to `--page-size`; at each
 width the parts are placed by the same MaxRects pass on a page `--page-size`
 tall, and the height is the bottom edge of the lowest part. The page with the
 least area wins, then the squarer one (smaller |width − height|), then the
@@ -391,13 +394,65 @@ narrower one — every candidate has a different width, so the order is total an
 two builds of the same parts write the same bytes. Spilling, the packing order
 and `--page-size` as the ceiling are the same as under `pot`.
 
+Every width is affordable because of two bounds, and neither can change the
+page: a width is not tried when the parts' area cannot fit it or when its
+tallest part alone already makes it larger than the best page so far, and a
+placement stops as soon as its lowest part makes it larger than that best page.
+Both are strict, so a width that could tie the best is always placed to the end.
+
+**Why every width, measured (issue #872).** Until then the widths were the
+multiples of 32. On twelve region sets — the two painting rigs below and ten
+production rigs of 20 to 22 parts, the sets of the rotation table above — and,
+as a held-out check, on the ten atlases of the fetched `examples/` corpus, each
+search was run against the every-width page (padding 2, `--page-size` 2048).
+Area change against the 32-pixel grid:
+
+| Set | 32 px (before) | step 8 | step 4 | coarse 32 → ±31 px of the best 2 | coarse 12 → ±11 px of the best | every width (now) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 22-part painting | 1888x697 | −1.58 % | −1.58 % | −1.68 % | −1.68 % | 967x1338, −1.68 % |
+| 20-part painting | 480x1166 | 0.00 % | 0.00 % | −0.21 % | −0.21 % | 479x1166, −0.21 % |
+| P1 | 416x1633 | −1.92 % | −2.88 % | −2.88 % | −2.88 % | 404x1633, −2.88 % |
+| P2 | 1184x810 | 0.00 % | 0.00 % | −0.08 % | −0.08 % | 1183x810, −0.08 % |
+| P3 | 480x1000 | 0.00 % | 0.00 % | 0.00 % | 0.00 % | 480x1000, 0.00 % |
+| P4 | 864x1346 | −3.07 % | −3.07 % | −2.66 % | −3.15 % | 1231x915, −3.15 % |
+| P5 | 1344x1768 | −9.90 % | −10.16 % | −10.22 % | −10.22 % | 1427x1495, −10.22 % |
+| P6 | 800x1934 | −1.00 % | −1.50 % | −1.50 % | −1.50 % | 788x1934, −1.50 % |
+| P7 | 1024x928 | −0.78 % | −0.78 % | −0.88 % | −0.88 % | 1015x928, −0.88 % |
+| P8 | 608x1250 | 0.00 % | 0.00 % | −0.16 % | −0.16 % | 607x1250, −0.16 % |
+| P9 | 1024x2037 | −2.34 % | −2.73 % | −2.93 % | −2.93 % | 994x2037, −2.93 % |
+| P10 | 352x1433 | 0.00 % | −1.14 % | −1.70 % | −1.70 % | 346x1433, −1.70 % |
+| worst miss of the every-width page, twelve sets | 11.38 % | 1.73 % | 0.58 % | 0.50 % | 0.00 % | 0.00 % |
+| worst miss, the ten `examples/` atlases | 4.12 % | 2.67 % | 0.77 % | 0.82 % | 0.82 % | 0.00 % |
+| cell placements, twelve sets | 12,361 | 49,063 | 98,021 | 40,230 | 38,371 | 47,978 |
+
+The rule was the cheapest search that lands on the every-width page. Flipping
+the packer's own last tie-break (leftmost before topmost) changes no page on any
+of the 22 sets, so there is no tie-break noise to land "within": the target is
+the page itself. The coarse-to-fine search that met it on all twelve sets missed
+it on the first held-out atlas, and its failures do not follow its grid — on
+the twelve sets, refining around the best width of a 9-pixel grid misses where
+10 to 12 do not, and a 14-pixel grid misses again —
+because the area as a function of the width has minima one pixel wide (a 4-pixel
+grid refined around its best four widths still misses one). Every width is exact
+by construction. Its placement count overstates its cost, because an abandoned
+placement stops early: all twelve sets take 53 ms in the measuring harness,
+against 22 ms for the 32-pixel grid and 810 ms for every width unbounded, and a
+whole `build --pack --page-edges free` of the 22-part rig takes the same wall
+time either way. ⚠️ The cost grows with the part count faster than the grid's:
+on generated sets of 100 and 300 small parts, where no bound prunes much, the
+search places 15 times the grid's cells.
+
 The default stays `pot` because every runtime accepts a power-of-two page and
 the editor's own packer writes one by default: 9 of the 10 atlases in the
 fetched `examples/` corpus are power-of-two on both edges. What `free` costs is
 the exactness above. `x / pageWidth` is no longer exact, so a **region**
 attachment's samples join a mesh's at one least significant bit against the
 loose build instead of 0. No region's bytes change: every one lifts back byte for
-byte, as under `pot`. Observed on two painting rigs of 22 and 20 parts:
+byte, as under `pot`. Observed on two painting rigs of 22 and 20 parts, on the
+32-pixel grid `free` shipped with (issue #860); every width now packs them at
+967x1338 = 1,293,846 (−38.3 %, 91.2 % covered, 59.7 % opaque) and 479x1166 =
+558,514 (−46.7 %, 93.4 % covered, 53.9 % opaque), and the render columns are
+held to their bound of one by `PK72` on every build rather than re-measured here:
 
 | Rig | `pot` page | `free` page | Area | Covered | Opaque (alpha > 0) | Render vs loose, region attachments only | Render vs loose, whole rig |
 | --- | --- | --- | --- | --- | --- | --- | --- |

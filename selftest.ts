@@ -231,8 +231,10 @@ import {
   DEFAULT_PAGE_SIZE,
   extractRegion,
   FREE_EDGE_STEP,
+  freePageSearch,
   packAtlas,
   pageFootprint,
+  placeAtWidth,
   parseAtlasText,
   rewritePageNames,
   writeAtlasText,
@@ -41767,12 +41769,10 @@ function runPackerSuite(): number {
     freePage.pages.length === 1 &&
       potPage.pages.length === 1 &&
       freeArea < potArea &&
-      freePage.pages[0].width % FREE_EDGE_STEP === 0 &&
       freeWrong.length === 0 &&
       freeLift(potPage).length === 0,
     `3 parts of 300x300: pot ${potPage.pages.map((p) => `${p.width}x${p.height}`).join(', ')} = ${potArea} texels, ` +
-      `free ${freeShape} = ${freeArea} texels (width on the ${FREE_EDGE_STEP}px step: ` +
-      `${freePage.pages.every((p) => p.width % FREE_EDGE_STEP === 0) ? 'yes' : 'NO'}); ` +
+      `free ${freeShape} = ${freeArea} texels (widths tried on a ${FREE_EDGE_STEP}px step); ` +
       `${freeInputs.length - freeWrong.length} of ${freeInputs.length} region(s) lifted back byte for byte` +
       (freeWrong.length ? ` — wrong: ${freeWrong.join(', ')}` : ''),
     'the one lever issue #860 measured a gain on: a set whose area already overflows the next power-of-two page ' +
@@ -41867,6 +41867,177 @@ function runPackerSuite(): number {
           `packAtlas: ${String(apiTypo)}`
       : edgesMissing.join('; '),
     'a typo that fell back to `pot` would hand the caller who asked for the smaller page the bigger one, green',
+  );
+
+  // --- PK74..PK77: the free search tries every width (issue #872) -----------
+  // `free` used to try widths on a 32-px grid; it now tries every width, and
+  // prunes with two bounds that are claimed not to change the answer. These
+  // hold that claim against references rebuilt in this file from
+  // `placeAtWidth` — the same unbounded MaxRects pass the packer runs — so
+  // none of them takes a figure from the search it measures.
+  //
+  // The cells are what `packAtlas` places: each part plus the default gutter
+  // on every side, in the packer's stated order (long side, then area, both
+  // descending, then name).
+  const cellsInPackOrder = (parts: ReadonlyArray<{ region: string; width: number; height: number }>, padding: number) =>
+    parts
+      .slice()
+      .sort(
+        (a, b) =>
+          Math.max(b.width, b.height) - Math.max(a.width, a.height) ||
+          b.width * b.height - a.width * a.height ||
+          (a.region < b.region ? -1 : a.region > b.region ? 1 : 0),
+      )
+      .map((part) => ({ w: part.width + 2 * padding, h: part.height + 2 * padding }));
+  type RefPage = { width: number; height: number };
+  // The free rule's order, restated from AUTHORING §0.1 rather than imported:
+  // least area, then squarer, then narrower.
+  const freeBeats = (a: RefPage, b: RefPage | null): boolean => {
+    if (b === null) return true;
+    if (a.width * a.height !== b.width * b.height) return a.width * a.height < b.width * b.height;
+    const squareA = Math.abs(a.width - a.height);
+    const squareB = Math.abs(b.width - b.height);
+    return squareA !== squareB ? squareA < squareB : a.width < b.width;
+  };
+  const referenceFree = (cells: Array<{ w: number; h: number }>, maxEdge: number, step: number): RefPage | null => {
+    let widest = 0;
+    for (const cell of cells) widest = Math.max(widest, cell.w);
+    const widths: number[] = [];
+    for (let w = Math.ceil(widest / step) * step; w <= maxEdge; w += step) widths.push(w);
+    if (widths[widths.length - 1] !== maxEdge && widest <= maxEdge) widths.push(maxEdge);
+    let best: RefPage | null = null;
+    for (const width of widths) {
+      const page = placeAtWidth(cells, width, maxEdge);
+      if (page !== null && freeBeats(page, best)) best = { width: page.width, height: page.height };
+    }
+    return best;
+  };
+  const shapeOf = (page: RefPage | null): string => (page === null ? 'none' : `${page.width}x${page.height}`);
+  const areaOf = (page: RefPage | null): number => (page === null ? Infinity : page.width * page.height);
+  const RETIRED_FREE_STEP = 32;
+
+  // PK74: the reason for the change, on rectangles built here. PK70's three
+  // 304x304 cells fit three abreast at 912 px, which is not a multiple of 32:
+  // the grid's nearest width is 928, so the grid pays for 16 empty columns the
+  // every-width search does not.
+  const freeCells = cellsInPackOrder(freeInputs, DEFAULT_PADDING);
+  const gridPage = referenceFree(freeCells, DEFAULT_PAGE_SIZE, RETIRED_FREE_STEP);
+  const shippedPage: RefPage = { width: freePage.pages[0].width, height: freePage.pages[0].height };
+  say(
+    'PK74_THE_FREE_SEARCH_FINDS_A_SMALLER_PAGE_THAN_THE_RETIRED_32PX_GRID',
+    freePage.pages.length === 1 && gridPage !== null && areaOf(shippedPage) < areaOf(gridPage),
+    `3 parts of 300x300: the ${RETIRED_FREE_STEP}px grid, rebuilt from placeAtWidth, packs ${shapeOf(gridPage)} = ` +
+      `${areaOf(gridPage)} texels; the shipped search packs ${shapeOf(shippedPage)} = ${areaOf(shippedPage)} texels`,
+    'issue #872 measured the grid leaving up to 11.38 % of a page on twelve region sets; a search that could not ' +
+      'beat the grid where the two differ would be the grid again under another name',
+  );
+
+  // PK75: the bounds are exact. On three sets — PK70's, the overlay fixture's
+  // parts and a generated mix of rectangles — the shipped search's page equals
+  // an unbounded every-width reference, and the bounds had something to do: a
+  // set on which nothing was skipped or abandoned would make the equality
+  // vacuous. The width count is checked as well, so a search that quietly
+  // dropped widths cannot pass by being cheap.
+  const mixedParts = Array.from({ length: 14 }, (_, i) => ({
+    region: `mix_${String(i).padStart(2, '0')}`,
+    width: 40 + ((i * 37) % 150),
+    height: 30 + ((i * 53) % 170),
+  }));
+  const exactSets = [
+    ['three-part set', freeCells],
+    ['overlay fixture', cellsInPackOrder(packInputsOf(compile(optsForFixture(OVERLAY)).images), DEFAULT_PADDING)],
+    ['14 generated rectangles', cellsInPackOrder(mixedParts, DEFAULT_PADDING)],
+  ] as const;
+  const exactRows = exactSets.map(([what, cells]) => {
+    const search = freePageSearch(cells, DEFAULT_PAGE_SIZE);
+    const reference = referenceFree(cells, DEFAULT_PAGE_SIZE, 1);
+    let widest = 0;
+    for (const cell of cells) widest = Math.max(widest, cell.w);
+    const expectedWidths = DEFAULT_PAGE_SIZE - widest + 1;
+    return { what, search, reference, expectedWidths };
+  });
+  const pruned = exactRows.reduce((n, r) => n + r.search.skipped, 0);
+  const abandoned = exactRows.reduce((n, r) => n + r.search.abandoned, 0);
+  say(
+    'PK75_THE_BOUNDED_FREE_SEARCH_RETURNS_THE_EVERY_WIDTH_PAGE',
+    exactRows.every(
+      (r) =>
+        r.reference !== null &&
+        r.search.page !== null &&
+        r.search.page.width === r.reference.width &&
+        r.search.page.height === r.reference.height &&
+        r.search.widths === r.expectedWidths &&
+        r.search.completed + r.search.abandoned + r.search.skipped === r.search.widths,
+    ) &&
+      pruned > 0 &&
+      abandoned > 0,
+    exactRows
+      .map(
+        (r) =>
+          `${r.what}: search ${shapeOf(r.search.page)}, unbounded reference ${shapeOf(r.reference)}; ` +
+          `${r.search.widths} of ${r.expectedWidths} width(s): ${r.search.completed} placed to the end, ` +
+          `${r.search.abandoned} abandoned, ${r.search.skipped} skipped`,
+      )
+      .join('; '),
+    'the two bounds are what make every width affordable, and they are only allowed because they cannot change ' +
+      'the page; a bound that was off by one, or not strict, would change it here and nowhere a reader would see',
+  );
+
+  // PK76: `pot` does not move. The abandon bound lives in the pass `pot` also
+  // uses, so its default has to be "never" — held here by rebuilding the whole
+  // `pot` search from the unbounded pass (every power-of-two pair in order of
+  // area, then width; the first that fits) and comparing page and every
+  // placement against `packAtlas`, on every pack fixture and PK70's set.
+  const potRows = [
+    ...PACK_FIXTURES.map(([name, fixture]) => [name, packInputsOf(compile(optsForFixture(fixture)).images)] as const),
+    ['three-part set', freeInputs] as const,
+  ].map(([what, inputs]) => {
+    const packed = packAtlas(inputs, {});
+    const cells = cellsInPackOrder(inputs, DEFAULT_PADDING);
+    const edges: number[] = [];
+    for (let e = 1; e <= DEFAULT_PAGE_SIZE; e *= 2) edges.push(e);
+    const pairs = edges.flatMap((w) => edges.map((h) => ({ w, h }))).sort((a, b) => a.w * a.h - b.w * b.h || a.w - b.w);
+    let reference: ReturnType<typeof placeAtWidth> = null;
+    for (const pair of pairs) {
+      const placed = placeAtWidth(cells, pair.w, pair.h);
+      if (placed === null) continue;
+      reference = { ...placed, height: pair.h };
+      break;
+    }
+    const same =
+      reference !== null &&
+      packed.pages.length === 1 &&
+      packed.pages[0].width === reference.width &&
+      packed.pages[0].height === reference.height &&
+      packed.placements.length === reference.rects.length &&
+      packed.placements.every(
+        (place, i) => place.x === reference.rects[i].x + DEFAULT_PADDING && place.y === reference.rects[i].y + DEFAULT_PADDING,
+      );
+    return { what, same, shape: packed.pages.map((p) => `${p.width}x${p.height}`).join('+'), regions: packed.placements.length };
+  });
+  say(
+    'PK76_A_POT_PACK_IS_PLACED_BY_THE_UNBOUNDED_PASS',
+    potRows.every((r) => r.same),
+    potRows
+      .map((r) => `${r.what} (${r.shape}, ${r.regions} region(s)): ${r.same ? 'page and every placement match' : 'DIFFERENT'}`)
+      .join('; '),
+    '`pot` is the default and issue #872 changes only `free`; a bound that leaked into the default would move the ' +
+      'bytes of every packed build anybody has already shipped',
+  );
+
+  // PK77: A18 on a free build, through the CLI — the second independent
+  // compile+pack a packed build is gated on, now that the search has bounds
+  // whose bookkeeping could in principle differ between two runs.
+  const freeBuild = runCli([...edgesBase, '--pack', '--page-edges', 'free']);
+  const a18Lines = freeBuild.stdout.split('\n').filter((line) => line.includes('A18_DETERMINISTIC_EMIT'));
+  const freePackLine = freeBuild.stdout.split('\n').find((line) => line.includes('page edges free')) ?? '(no pack line)';
+  say(
+    'PK77_A_FREE_BUILD_PASSES_A18_ON_ITS_PACKED_ATLAS',
+    freeBuild.status === 0 && a18Lines.length === 2 && a18Lines.every((line) => line.includes('PASS')),
+    `build --pack --page-edges free exited ${String(freeBuild.status)}; ${freePackLine.trim()}; ` +
+      `A18 rows: ${a18Lines.map((line) => line.trim()).join(' / ') || 'none'}`,
+    'A18 compares two independent compiles byte for byte, and the packed gate is the only place it sees the atlas ' +
+      'a free search chose',
   );
   return bad;
 }

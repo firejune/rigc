@@ -103,7 +103,6 @@ import {
   DEFAULT_PADDING,
   DEFAULT_PAGE_EDGES,
   DEFAULT_PAGE_SIZE,
-  FREE_EDGE_STEP,
   PAGE_EDGES,
   packAtlas,
   type PageEdges,
@@ -3825,7 +3824,7 @@ const FLAG_MEANINGS: Record<string, string> = {
   padding: `gutter each region reserves on every side, --pack only (default ${DEFAULT_PADDING}); it is filled by ` +
     "extending the region's own edge pixels outwards, which is what stops a neighbour bleeding in",
   'page-edges': `what a page's edges may be, --pack only (default ${DEFAULT_PAGE_EDGES}): pot is a power of two on ` +
-    `both; free tries every width on a ${FREE_EDGE_STEP}px step, takes the height the placement needs and keeps ` +
+    'both; free tries every width from the widest part up, takes the height the placement needs and keeps ' +
     'the least area — a smaller page, at the cost of region attachments sampling within 1 LSB of the loose ' +
     'build rather than exactly',
   'atlas-in':
