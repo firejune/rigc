@@ -52,6 +52,7 @@
  * it was skipped and the run still passes on the public suite alone.
  */
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   copyFileSync,
@@ -67029,22 +67030,80 @@ function runHashes(args: string[]): { status: number | null; stdout: string; std
 }
 
 /**
- * `after` with `skeleton.model.json` taken out of every row whose `base` row
- * does not carry it — the Spine files `after` wrote, against a base document
- * taken before issue #922 made `build` write the model beside them.
+ * `after` as a base taken before two cuts to the model document reads it: with
+ * `skeleton.model.json` taken out of every row whose `base` row does not carry
+ * it (issue #922 made `build` write it), and, on a row whose base DOES carry it
+ * and whose document differs, the document re-hashed with every region's atlas
+ * rectangle removed (`withoutAtlasRects`, issue #935) — standing in for the
+ * written one only when that re-hash equals the base's to the byte.
  *
  * ⚠️ This is what lets the step-1 byte-identity gates (`MB07`, `MV09`, `MS12`,
  * `MA12`) keep meaning "the Spine bytes did not move" against a base older
- * than the document. It does not excuse the added file: `MD07` holds that the
- * difference from such a base is EXACTLY that one file on every row, and a
- * base that carries the file is compared in full, the document included.
+ * than the document or than its rectangles. It excuses exactly those two
+ * changes and nothing else: `MD07` holds that the difference from a base
+ * without the document is EXACTLY that one file on every row, `MG07` that the
+ * difference from a base with it is exactly the rectangles, and a document
+ * that differs in any other byte keeps its own hash here and reads DIFF.
+ *
+ * `gateWork` is the `--work` directory the `after` run was given: its
+ * per-recipe directories are numbered in the order of the recipes file, which
+ * every caller writes from `base`'s rows in `base`'s order — `after`'s order,
+ * since both documents sort their recipes by name. A mapping that were wrong
+ * would re-hash another row's document, which matches no base, so it cannot
+ * excuse anything.
  */
-function withoutAddedModelDocument(base: HashesDocument, after: HashesDocument): HashesDocument {
-  const baseCarries = new Map(base.recipes.map((r) => [r.name, r.files.some((f) => f.path === MODEL_DOCUMENT_FILE)] as const));
+function withoutAddedModelDocument(base: HashesDocument, after: HashesDocument, gateWork: string): HashesDocument {
+  const baseDocument = new Map(base.recipes.map((r) => [r.name, r.files.find((f) => f.path === MODEL_DOCUMENT_FILE)] as const));
+  const dirs = existsSync(gateWork) ? readdirSync(gateWork).filter((d) => /^\d+$/.test(d)).sort() : [];
   return {
     ...after,
-    recipes: after.recipes.map((r) => (baseCarries.get(r.name) === false ? { ...r, files: r.files.filter((f) => f.path !== MODEL_DOCUMENT_FILE) } : r)),
+    recipes: after.recipes.map((r, i) => {
+      if (!baseDocument.has(r.name)) return r;
+      const was = baseDocument.get(r.name);
+      if (was === undefined) return { ...r, files: r.files.filter((f) => f.path !== MODEL_DOCUMENT_FILE) };
+      const now = r.files.find((f) => f.path === MODEL_DOCUMENT_FILE);
+      if (now === undefined || now.sha256 === was.sha256 || dirs.length !== after.recipes.length) return r;
+      const written = join(gateWork, dirs[i], 'out', MODEL_DOCUMENT_FILE);
+      if (!existsSync(written)) return r;
+      const stripped = withoutAtlasRects(readFileSync(written, 'utf8'));
+      if (stripped === null) return r;
+      const bytes = Buffer.from(stripped, 'utf8');
+      const sha256 = createHash('sha256').update(bytes).digest('hex');
+      return sha256 === was.sha256 ? { ...r, files: r.files.map((f) => (f === now ? { path: f.path, size: bytes.length, sha256 } : f)) } : r;
+    }),
   };
+}
+
+/**
+ * A `rigc-compiled/1` text with every region record's `atlas` and every region
+ * sequence's `atlas` removed, spelled back the way `modelDocument` spells —
+ * the document as it was before issue #935 added the rectangles — or `null`
+ * when the text is not a document with skins to walk, or is not what it parses
+ * to spelled back (`MD01` holds that every written document is), so that no
+ * difference in spelling alone can be excused.
+ */
+function withoutAtlasRects(text: string): string | null {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  // A text that is not its own spelling would be re-spelled below, and a difference in spelling alone excused.
+  if (`${JSON.stringify(doc, null, 2)}\n` !== text) return null;
+  const skins = (doc as { skins?: unknown }).skins;
+  if (!Array.isArray(skins)) return null;
+  for (const skin of skins as Array<{ attachments?: Record<string, Record<string, Record<string, unknown>>> }>) {
+    for (const table of Object.values(skin.attachments ?? {})) {
+      for (const record of Object.values(table)) {
+        if (record.kind !== 'region') continue;
+        delete record.atlas;
+        const sequence = record.sequence as Record<string, unknown> | undefined;
+        if (sequence !== undefined) delete sequence.atlas;
+      }
+    }
+  }
+  return `${JSON.stringify(doc, null, 2)}\n`;
 }
 
 /**
@@ -67735,7 +67794,7 @@ function runModelBonesSuite(): { failures: number; gateHole: boolean } {
           probes.push(`the run wrote no readable document: ${(err as Error).message}`);
         }
         if (after !== null) {
-          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after));
+          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after, join(work, 'gate')));
           verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
           if (!c.identical) probes.push(`against the base: ${verdict}`);
           // The plant: the base with one hash flipped must read DIFF, or IDENTICAL above meant nothing.
@@ -67744,7 +67803,7 @@ function runModelBonesSuite(): { failures: number; gateHole: boolean } {
           if (file === undefined) probes.push(`${rows[0].name} has no hashed file in the base`);
           else {
             file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
-            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after));
+            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after, join(work, 'gate')));
             if (p.identical || p.differ.length !== 1 || p.differ[0].name !== rows[0].name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
           }
         }
@@ -68476,7 +68535,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
         }
         if (after !== null) {
           const baseRows: HashesDocument = { ...base, recipes: rows };
-          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after));
+          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after, join(work, 'gate')));
           verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
           if (!c.identical) probes.push(`against the base: ${verdict}`);
           // The plant: the last row's first hash flipped must read DIFF naming that row.
@@ -68486,7 +68545,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
           if (file === undefined) probes.push(`${last.name} has no hashed file in the base`);
           else {
             file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
-            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after));
+            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after, join(work, 'gate')));
             if (p.identical || p.differ.length !== 1 || p.differ[0].name !== last.name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
           }
         }
@@ -68743,7 +68802,8 @@ function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
   {
     const probes: string[] = [];
     const full: ModelRegionAttachment = {
-      sequence: { setup: 0, digits: 4, start: 1, count: 3 }, color: 'ff00ffff', scaleY: 0.5, scaleX: 1.5, rotation: 15, y: 2, x: 3,
+      // The frames' rectangles (issue #935) are the model's and never the file's: `expected` carries none.
+      sequence: { atlas: [1, 2, 3].map((n) => ({ width: n, height: n, offsetX: 0, offsetY: 0, originalWidth: n, originalHeight: n })), setup: 0, digits: 4, start: 1, count: 3 }, color: 'ff00ffff', scaleY: 0.5, scaleX: 1.5, rotation: 15, y: 2, x: 3,
       height: 6, width: 8, path: 'p', name: 'nm', kind: 'region',
     };
     const expected = '{"name":"nm","width":8,"height":6,"path":"p","x":3,"y":2,"rotation":15,"scaleX":1.5,"scaleY":0.5,"color":"ff00ffff","sequence":{"count":3,"start":1,"digits":4,"setup":0}}';
@@ -69168,7 +69228,7 @@ function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
         }
         if (after !== null) {
           const baseRows: HashesDocument = { ...base, recipes: rows };
-          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after));
+          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after, join(work, 'gate')));
           verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
           if (!c.identical) probes.push(`against the base: ${verdict}`);
           const flipped: HashesDocument = JSON.parse(JSON.stringify(baseRows)) as HashesDocument;
@@ -69177,7 +69237,7 @@ function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
           if (file === undefined) probes.push(`${first.name} has no hashed file in the base`);
           else {
             file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
-            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after));
+            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after, join(work, 'gate')));
             if (p.identical || p.differ.length !== 1 || p.differ[0].name !== first.name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
           }
         }
@@ -69747,7 +69807,7 @@ function runModelAnimationsSuite(): { failures: number; gateHole: boolean } {
         }
         if (after !== null) {
           const baseRows: HashesDocument = { ...base, recipes: rows };
-          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after));
+          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after, join(work, 'gate')));
           verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
           if (!c.identical) probes.push(`against the base: ${verdict}`);
           const flipped: HashesDocument = JSON.parse(JSON.stringify(baseRows)) as HashesDocument;
@@ -69756,7 +69816,7 @@ function runModelAnimationsSuite(): { failures: number; gateHole: boolean } {
           if (file === undefined) probes.push(`${last.name} has no hashed file in the base`);
           else {
             file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
-            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after));
+            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after, join(work, 'gate')));
             if (p.identical || p.differ.length !== 1 || p.differ[0].name !== last.name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
           }
         }
@@ -70153,11 +70213,14 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
             if (findings.length === 1 && findings[0].startsWith(`${MODEL_DOCUMENT_FILE} only in B (`)) added += 1;
             else probes.push(`${r.name}: ${findings.length === 0 ? 'no difference — the document was not written' : findings.join('; ')}`);
           }
-          for (const d of c.differ) if (carried.includes(d.name)) probes.push(`${d.name}, whose base carries the document: ${d.findings.join('; ')}`);
+          // A base that carries the document is compared in full, the document included — through the one
+          // projection that excuses the rectangles issue #935 added to it (`MG07` holds that difference).
+          const projected = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after, join(work, 'gate')));
+          for (const d of projected.differ) if (carried.includes(d.name)) probes.push(`${d.name}, whose base carries the document: ${d.findings.join('; ')}`);
           if (c.onlyA.length + c.onlyB.length > 0) probes.push(`recipes on one side only: ${[...c.onlyA, ...c.onlyB].join(', ')}`);
-          const spine = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after));
+          const spine = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after, join(work, 'gate')));
           if (!spine.identical) probes.push(`without the added file: ${comparisonLines(spine).join(' | ')}`);
-          verdict = `${added} of ${rows.length} recipe(s) differ by exactly ${MODEL_DOCUMENT_FILE} only in the after run, ${carried.length} carried it in the base and match in full; the rest ${spine.identical ? `IDENTICAL over ${spine.files} file(s)` : 'DIFF'}`;
+          verdict = `${added} of ${rows.length} recipe(s) differ by exactly ${MODEL_DOCUMENT_FILE} only in the after run, ${carried.length} carried it in the base and match in full, their documents read without #935's rectangles; the rest ${spine.identical ? `IDENTICAL over ${spine.files} file(s)` : 'DIFF'}`;
           // The plant: one Spine hash flipped in the base must be read as a difference the projection does not excuse.
           const flipped: HashesDocument = JSON.parse(JSON.stringify(baseRows)) as HashesDocument;
           const last = flipped.recipes[flipped.recipes.length - 1];
@@ -70165,7 +70228,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
           if (file === undefined) probes.push(`${last.name} has no skeleton.json in the base`);
           else {
             file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
-            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after));
+            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after, join(work, 'gate')));
             if (p.identical || p.differ.length !== 1 || p.differ[0].name !== last.name || !p.differ[0].findings.every((f) => f.startsWith('skeleton.json differs:'))) {
               probes.push(`one flipped skeleton.json hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
             }
@@ -70184,6 +70247,521 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
   }
 
   probe.done();
+  rmSync(work, { recursive: true, force: true });
+  return { failures: bad, gateHole };
+}
+
+// ---------------------------------------------------------------------------
+// the compiled model's atlas rectangles (issue #935, step 1g of #380)
+// ---------------------------------------------------------------------------
+
+/** The six fields of `ModelAtlasRect`, in its order — hand-written: the writer's list and this one drifting apart is the failure. */
+const ATLAS_RECT_KEYS = ['width', 'height', 'offsetX', 'offsetY', 'originalWidth', 'originalHeight'] as const;
+
+/** A region's six numbers, as the atlas states them, in `ModelAtlasRect`'s order. */
+function rectOfRegion(region: { width: number; height: number; offsetX: number; offsetY: number; originalWidth: number; originalHeight: number }): string {
+  return JSON.stringify(ATLAS_RECT_KEYS.map((k) => region[k]));
+}
+
+/** A document rectangle's six numbers in the same order, or `null` spelled out. */
+function rectOfRecord(rect: unknown): string {
+  if (rect === null || typeof rect !== 'object') return String(rect);
+  const r = rect as Record<string, unknown>;
+  return JSON.stringify(ATLAS_RECT_KEYS.map((k) => r[k]));
+}
+
+/** Every leaf path at which two parsed JSON values differ, in document order. */
+function leafDifferences(a: unknown, b: unknown, at = ''): string[] {
+  const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+  if (Array.isArray(a) && Array.isArray(b)) {
+    const out: string[] = [];
+    for (let i = 0; i < Math.max(a.length, b.length); i++) out.push(...leafDifferences(a[i], b[i], `${at}[${i}]`));
+    return out;
+  }
+  if (isObject(a) && isObject(b)) {
+    const out: string[] = [];
+    for (const key of [...new Set([...Object.keys(a), ...Object.keys(b)])]) out.push(...leafDifferences(a[key], b[key], `${at}.${key}`));
+    return out;
+  }
+  return a === b ? [] : [at];
+}
+
+/** Every region record of a parsed document: `slot/placeholder`, the region name it resolves through, and the record. */
+function documentRegions(doc: unknown): Array<{ at: string; region: string; record: Record<string, unknown> }> {
+  const out: Array<{ at: string; region: string; record: Record<string, unknown> }> = [];
+  const skins = (doc as { skins?: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }> }).skins ?? [];
+  for (const skin of skins) {
+    for (const [slot, table] of Object.entries(skin.attachments)) {
+      for (const [placeholder, record] of Object.entries(table)) {
+        if (record.kind !== 'region') continue;
+        const region = (record.path as string | undefined) ?? (record.name as string | undefined) ?? placeholder;
+        out.push({ at: `${skin.name}/${slot}/${placeholder}`, region, record });
+      }
+    }
+  }
+  return out;
+}
+
+/** The frame count of the rectangle probe's series, and its region stem. */
+const RECT_PROBE_FRAMES = 2;
+const RECT_PROBE_STEM = 'glint_';
+
+/**
+ * The rectangle probe (issue #935): one root bone and three region slots —
+ * `plate` names `plate.png`; `alias` names no image and resolves through
+ * `path: "plate"`, the region an ingested rig's region is; `glint` is a
+ * two-frame series `glint_0001`, `glint_0002`. `extra` slots are added with
+ * their one attachment each. Loose PNGs beside the spec, and two hand-written
+ * packs on one 64x32 page at `scale: 0.5`, both trimming `plate` (bounds 10x6,
+ * offsets 1, 2 of a 12x8 drawing) and the second frame (bounds 14x12 at
+ * `rotate: 90`, offsets 1, 3 of 16x16), and both carrying a fourth region,
+ * `badge`, which no PNG and no `image` names — an ingested rig's region, whose
+ * rectangle lives in the pack alone. `trimmed` trims it (bounds 12x12, offsets
+ * 2, 1 of 16x16); `untrimmed` differs from `trimmed` in `badge`'s two lines alone.
+ */
+function writeRectProbe(extra: Record<string, Record<string, unknown>> = {}): { dirs: ProbeDirs; motionPath: string; trimmed: string; untrimmed: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-atlas-rect-'));
+  writeProbePng(join(dir, 'plate.png'), 12, 8, [40, 60, 90, 255]);
+  for (let i = 0; i < RECT_PROBE_FRAMES; i++) writeProbePng(join(dir, `${RECT_PROBE_STEM}${String(1 + i).padStart(4, '0')}.png`), 16, 16, [60 * (i + 1), 60, 90, 255]);
+  const rigPath = join(dir, 'probe.rig.json');
+  const slots = [
+    { name: 'plate', bone: 'root', attachment: 'plate' },
+    { name: 'alias', bone: 'root', attachment: 'alias' },
+    { name: 'glint', bone: 'root', attachment: 'glint' },
+    ...Object.keys(extra).map((name) => ({ name, bone: 'root', attachment: name })),
+  ];
+  const skin: Record<string, Record<string, Record<string, unknown>>> = {
+    plate: { plate: { image: 'plate.png' } },
+    alias: { alias: { path: 'plate', width: 24, height: 16 } },
+    glint: { glint: { path: RECT_PROBE_STEM, sequence: { count: RECT_PROBE_FRAMES, start: 1, digits: 4 } } },
+  };
+  for (const [name, attachment] of Object.entries(extra)) skin[name] = { [name]: attachment };
+  writeFileSync(rigPath, `${JSON.stringify({ spec: 'rigc-rig/1', name: 'atlas_rect_probe', skeleton: { width: 64, height: 64 }, bones: [{ name: 'root' }], slots, skins: { default: skin } }, null, 2)}\n`);
+  const motionPath = join(dir, 'probe.motion.json');
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify({ spec: 'rigc-motion/1', archetype: 'atlas_rect_probe', cut: 'atlas_rect_probe', easings: {}, animations: { idle: { duration: 1, tracks: [{ bone: 'root', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [0] }] }] } } }, null, 2)}\n`,
+  );
+  const packDir = join(dir, 'pack');
+  mkdirSync(packDir);
+  writeProbePng(join(packDir, 'pack.png'), 64, 32, [90, 90, 90, 255]);
+  const pack = (badge: string): string =>
+    ['pack.png', '\tsize: 64, 32', '\tfilter: Linear, Linear', '\tscale: 0.5', 'plate', '\tbounds: 0, 0, 10, 6', '\toffsets: 1, 2, 12, 8', `${RECT_PROBE_STEM}0001`, '\tbounds: 12, 0, 16, 16', `${RECT_PROBE_STEM}0002`, '\tbounds: 30, 0, 14, 12', '\toffsets: 1, 3, 16, 16', '\trotate: 90', 'badge', badge, ''].join('\n');
+  const trimmed = join(packDir, 'trimmed.atlas');
+  const untrimmed = join(packDir, 'untrimmed.atlas');
+  writeFileSync(trimmed, pack('\tbounds: 46, 0, 12, 12\n\toffsets: 2, 1, 16, 16'));
+  writeFileSync(untrimmed, pack('\tbounds: 46, 0, 16, 16'));
+  return { dirs: { dir, rigPath, outDir: join(dir, 'spine') }, motionPath, trimmed, untrimmed };
+}
+
+/** The rectangle probe compiled (into `out`, through `atlasInPath` when given) and gated under `spine`, or the refusal. */
+function buildRectProbe(probe: { dirs: ProbeDirs; motionPath: string }, out: string, atlasInPath?: string): { built: CompileResult | null; report: ValidateReport | null; refusal: string } {
+  try {
+    const built = compile({ rigPath: probe.dirs.rigPath, motionPath: probe.motionPath, outDir: out, imagesDir: probe.dirs.dir, ...(atlasInPath === undefined ? {} : { atlasInPath }) });
+    const report = validate({ skeletonText: built.skeletonText, atlasText: built.atlasText, atlasDir: out, declaredDurations: built.declaredDurations, rig: built.rig, profile: 'spine', modelText: modelDocument(built.model), reEmit: gateTextsOf(built) });
+    return { built, report, refusal: '' };
+  } catch (err) {
+    return { built: null, report: null, refusal: (err as Error).message };
+  }
+}
+
+/**
+ * Every region record and sequence frame of the compiled model carries the
+ * rectangle it draws through (issue #935): the two-atlas build pair, each
+ * route's source (loose, `--atlas-in`, `--pack`, none), the base gate, and the
+ * core's reader.
+ */
+function runModelAtlasSuite(): { failures: number; gateHole: boolean } {
+  console.log('\n── model-atlas: every region record and sequence frame carries its atlas rectangle (issue #935) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const work = mkdtempSync(join(tmpdir(), 'rigc-model-atlas-'));
+  const probe = writeRectProbe();
+  const loose = buildRectProbe(probe, join(probe.dirs.dir, 'loose'));
+  const trimmed = buildRectProbe(probe, join(probe.dirs.dir, 'trimmed'), probe.trimmed);
+  const greenOf = (label: string, b: ReturnType<typeof buildRectProbe>, probes: string[]): b is { built: CompileResult; report: ValidateReport; refusal: string } => {
+    if (b.built === null || b.report === null) {
+      probes.push(`the ${label} build did not compile: ${b.refusal}`);
+      return false;
+    }
+    if (b.report.failures.length > 0) probes.push(`the ${label} build is not green: ${b.report.failures.map((f) => `${f.assertion}: ${f.detail}`).join(' | ').slice(0, 300)}`);
+    return true;
+  };
+
+  // --- MG01: one rig, two packs differing in one trim: the Spine file identical, the documents differ by the rectangle --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    const pairProbe = writeRectProbe({ badge: { path: 'badge', width: 32, height: 32 } });
+    const pair = [pairProbe.trimmed, pairProbe.untrimmed].map((pack, i) => buildRectProbe(pairProbe, join(pairProbe.dirs.dir, `pack${i}`), pack));
+    if (greenOf('trimmed-badge', pair[0], probes) && greenOf('untrimmed-badge', pair[1], probes)) {
+      const a = pair[0].built;
+      const b = pair[1].built;
+      if (a.skeletonText !== b.skeletonText) probes.push('skeleton.json differs between the two packs — the pair measures nothing about the document');
+      const docA = JSON.parse(modelDocument(a.model)) as unknown;
+      const docB = JSON.parse(modelDocument(b.model)) as unknown;
+      const differ = leafDifferences(docA, docB);
+      const expected = ['width', 'height', 'offsetX', 'offsetY'].map((k) => `.skins[0].attachments.badge.badge.atlas.${k}`);
+      if (JSON.stringify(differ) !== JSON.stringify(expected)) probes.push(`the documents differ at [${differ.join(', ')}], not exactly [${expected.join(', ')}]`);
+      const stripA = withoutAtlasRects(modelDocument(a.model));
+      if (stripA === null || stripA !== withoutAtlasRects(modelDocument(b.model))) probes.push('with the rectangles removed the two documents still differ');
+      const badgeOf = (doc: unknown): string => rectOfRecord(documentRegions(doc).find((r) => r.region === 'badge')?.record.atlas);
+      detail = `a region naming no image, resolved through "badge" of two packs that differ in its trim alone: skeleton.json byte-identical (${a.skeletonText.length} bytes); the documents differ at exactly ${differ.length} leaves, badge's atlas ${badgeOf(docA)} against ${badgeOf(docB)} (${ATLAS_RECT_KEYS.join(', ')}); with the rectangles removed, byte-identical — which is what the two documents were before this change`;
+    }
+    rmSync(pairProbe.dirs.dir, { recursive: true, force: true });
+    const ok = probes.length === 0;
+    say(
+      'MG01_TWO_PACKS_DIFFERING_IN_ONE_TRIM_WRITE_ONE_SKELETON_AND_TWO_DOCUMENTS_THAT_DIFFER_IN_THE_RECTANGLE_ALONE',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #935: before it, two packs differing only in a region\'s trim wrote byte-identical skeleton.json AND skeleton.model.json while spine-core posed the region\'s corners apart (issue #931\'s build pair: 11.925 world units), so no core reading the document could tell the two rigs apart',
+    );
+  }
+
+  // --- MG02: the STOP report's own pair, on the example it was measured on --
+  {
+    const exportDir = resolve(import.meta.dir, 'examples', '3-timing-and-spacing', 'export');
+    const atlasName = '3-timing-and-spacing.atlas';
+    if (!existsSync(join(exportDir, atlasName))) {
+      console.log(`  SKIP  MG02 did not run: ${exportDir} is absent (run \`bun run fetch-examples\`).`);
+      console.log('          ⚠️ This is a HOLE in this run, not a pass — the example pair of issue #931 was not rebuilt here.');
+    } else {
+      const probes: string[] = [];
+      let detail = '';
+      const stage = join(work, 'pair');
+      cpSync(exportDir, join(stage, 'export'), { recursive: true, dereference: true });
+      const original = readFileSync(join(stage, 'export', atlasName), 'utf8');
+      const from = '\tbounds: 377, 28, 80, 80\n';
+      if (!original.includes(`square\n${from}`)) probes.push(`${atlasName} no longer states square's bounds as "${from.trim()}", so the pair cannot be planted`);
+      else {
+        writeFileSync(join(stage, 'export', 'trimmed.atlas'), original.replace(`square\n${from}`, 'square\n\tbounds: 377, 28, 70, 70\n\toffsets: 4, 6, 80, 80\n'));
+        const ingest = runCli(['ingest', join(stage, 'export', '3-timing-and-spacing-ess.json'), '--art', 'none', '--out', join(stage, 'specs')]);
+        if (ingest.status !== 0) probes.push(`ingest exited ${ingest.status}: ${ingest.stderr.trim().slice(0, 200)}`);
+        const outs = [atlasName, 'trimmed.atlas'].map((atlas, i) => {
+          const out = join(stage, `out${i}`);
+          const run = runCli(['build', '--rig', join(stage, 'specs', 'rig.json'), '--motion', join(stage, 'specs', 'motion.json'), '--atlas-in', join(stage, 'export', atlas), '--out', out]);
+          if (run.status !== 0) probes.push(`build against ${atlas} exited ${run.status}: ${run.stderr.trim().split('\n').slice(-2).join(' | ')}`);
+          return out;
+        });
+        const read = (out: string, file: string): string => (existsSync(join(out, file)) ? readFileSync(join(out, file), 'utf8') : '');
+        if (probes.length === 0) {
+          if (read(outs[0], 'skeleton.json') === '' || read(outs[0], 'skeleton.json') !== read(outs[1], 'skeleton.json')) probes.push('skeleton.json differs between the two packs, or was not written');
+          const docs = outs.map((out) => read(out, MODEL_DOCUMENT_FILE));
+          const differ = leafDifferences(JSON.parse(docs[0]) as unknown, JSON.parse(docs[1]) as unknown);
+          const square = documentRegions(JSON.parse(docs[1]) as unknown).filter((r) => r.region === 'square');
+          if (square.length !== 1) probes.push(`${square.length} region record(s) resolve through "square", not one`);
+          const stem = square.length === 1 ? `.skins[0].attachments.${square[0].at.split('/')[1]}.${square[0].at.split('/')[2]}.atlas.` : '(none)';
+          const expected = ['width', 'height', 'offsetX', 'offsetY'].map((k) => `${stem}${k}`);
+          if (JSON.stringify(differ) !== JSON.stringify(expected)) probes.push(`the documents differ at [${differ.join(', ')}], not exactly [${expected.join(', ')}]`);
+          if (square.length === 1 && rectOfRecord(square[0].record.atlas) !== JSON.stringify([70, 70, 4, 6, 80, 80])) probes.push(`the trimmed build's square reads ${rectOfRecord(square[0].record.atlas)}`);
+          if (withoutAtlasRects(docs[0]) !== withoutAtlasRects(docs[1])) probes.push('with the rectangles removed the two documents still differ');
+          const before = documentRegions(JSON.parse(docs[0]) as unknown).find((r) => r.region === 'square');
+          detail = `examples/3-timing-and-spacing ingested and built against its own pack and against the pack with square's bounds 80x80 turned into 70x70 + offsets 4, 6, 80, 80: skeleton.json byte-identical, the documents differ at exactly ${differ.length} leaves — ${square[0]?.at ?? '?'}'s atlas ${rectOfRecord(before?.record.atlas)} against ${rectOfRecord(square[0]?.record.atlas)} (${ATLAS_RECT_KEYS.join(', ')})`;
+        }
+      }
+      const ok = probes.length === 0;
+      say(
+        'MG02_THE_EXAMPLE_PAIR_ISSUE_931_MEASURED_NOW_WRITES_TWO_DOCUMENTS_DIFFERING_IN_SQUARES_RECTANGLE',
+        ok,
+        probeDetail(ok, probes, detail),
+        'issue #931\'s decisive measurement, through the tree: the same example built against two packs differing in `square`\'s trim wrote byte-identical documents while spine-core moved the region\'s corners by 11.925 world units; the model now states the trim the pose reads',
+      );
+    }
+  }
+
+  // --- MG03: the loose route: every rectangle is its PNG, as the emitted atlas states it --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    if (greenOf('loose', loose, probes)) {
+      const doc = JSON.parse(modelDocument(loose.built.model)) as unknown;
+      const emitted = new Map(parseAtlasText(loose.built.atlasText).pages.flatMap((p) => p.regions.map((r) => [r.name, r] as const)));
+      const lines: string[] = [];
+      for (const r of documentRegions(doc)) {
+        const seq = r.record.sequence as { count: number; start?: number; digits?: number; atlas?: unknown[] } | undefined;
+        const frames = seq === undefined ? [[r.region, r.record.atlas] as const] : (seq.atlas ?? []).map((rect, i) => [`${r.region}${String((seq.start ?? 1) + i).padStart(seq.digits ?? 0, '0')}`, rect] as const);
+        if (seq !== undefined && frames.length !== seq.count) probes.push(`${r.at}: ${frames.length} frame rectangle(s) for a count of ${seq.count}`);
+        if (seq !== undefined && 'atlas' in r.record) probes.push(`${r.at}: a sequence record carries a record-level atlas too`);
+        for (const [name, rect] of frames) {
+          const region = emitted.get(name);
+          const png = loose.built.images.find((img) => img.region === name);
+          if (region === undefined || png === undefined) {
+            probes.push(`${r.at}: region "${name}" is not in the emitted atlas or the images`);
+            continue;
+          }
+          const wanted = JSON.stringify([png.width, png.height, 0, 0, png.width, png.height]);
+          if (rectOfRecord(rect) !== wanted || rectOfRegion(region) !== wanted) probes.push(`${r.at} "${name}": the document reads ${rectOfRecord(rect)}, the emitted atlas ${rectOfRegion(region)}, the PNG ${png.width}x${png.height}`);
+          if (rect !== null && typeof rect === 'object' && JSON.stringify(Object.keys(rect)) !== JSON.stringify(ATLAS_RECT_KEYS)) probes.push(`${r.at} "${name}": the rectangle writes [${Object.keys(rect).join(', ')}], not ModelAtlasRect's order`);
+          lines.push(`${name} ${rectOfRecord(rect)}`);
+        }
+        const keys = Object.keys(r.record);
+        if (keys[keys.length - 1] !== (seq === undefined ? 'atlas' : 'sequence')) probes.push(`${r.at}: the record writes [${keys.join(', ')}] — the rectangle is not its last field`);
+      }
+      detail = `${lines.length} rectangle(s) — ${lines.join('; ')} — each the PNG's size with offsets 0, equal to the region the emitted atlas writes for it; \`alias\`, which names no image, reads plate.png's; each rectangle in ModelAtlasRect's order, last in its record (a sequence's last in the sequence)`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'MG03_A_LOOSE_PARTS_RECTANGLE_IS_ITS_PNG_AS_THE_EMITTED_ATLAS_STATES_IT',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #935: on the loose route each part is its own page, so its rectangle is untrimmed by construction — and the document now says so rather than leaving the reader to assume it',
+    );
+  }
+
+  // --- MG04: the --atlas-in route: every rectangle is the pack's, in texels --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    if (greenOf('trimmed-pack', trimmed, probes)) {
+      const doc = JSON.parse(modelDocument(trimmed.built.model)) as unknown;
+      const pack = new Map(parseAtlasText(readFileSync(probe.trimmed, 'utf8')).pages.flatMap((p) => p.regions.map((r) => [r.name.trim(), r] as const)));
+      const lines: string[] = [];
+      let turned = 0;
+      let trims = 0;
+      for (const r of documentRegions(doc)) {
+        const seq = r.record.sequence as { start?: number; digits?: number; atlas?: unknown[] } | undefined;
+        const frames = seq === undefined ? [[r.region, r.record.atlas] as const] : (seq.atlas ?? []).map((rect, i) => [`${r.region}${String((seq.start ?? 1) + i).padStart(seq.digits ?? 0, '0')}`, rect] as const);
+        for (const [name, rect] of frames) {
+          const region = pack.get(name);
+          if (region === undefined) {
+            probes.push(`${r.at}: the pack has no region "${name}"`);
+            continue;
+          }
+          if (rectOfRecord(rect) !== rectOfRegion(region)) probes.push(`${r.at} "${name}": the document reads ${rectOfRecord(rect)}, the pack ${rectOfRegion(region)}`);
+          if (region.degrees !== 0) turned += 1;
+          if (region.offsetX !== 0 || region.offsetY !== 0 || region.width !== region.originalWidth || region.height !== region.originalHeight) trims += 1;
+          lines.push(`${name} ${rectOfRecord(rect)}`);
+        }
+      }
+      const plate = trimmed.built.model.skins[0]?.attachments.plate?.plate;
+      if (plate?.kind !== 'region' || plate.width !== 24) probes.push(`plate's record width is ${plate?.kind === 'region' ? plate.width : '(no region)'}, not the drawing's 24 (12 texels at scale 0.5) — the probe does not separate the rectangle's texels from the record's size`);
+      if (turned === 0 || trims < 2) probes.push(`the probe reaches ${turned} turned and ${trims} trimmed region(s); it needs a turned one and two trimmed`);
+      detail = `${lines.length} rectangle(s) — ${lines.join('; ')} — each equal to the pack's region of that name, ${trims} of them trimmed and ${turned} at rotate: 90 (kept size in the drawing's orientation), in the page's texels while the record's size is the drawing's (plate: record 24x16, rectangle original 12x8 at scale: 0.5)`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'MG04_AN_ATLAS_IN_REGIONS_RECTANGLE_IS_THE_PACKS_OWN_NUMBERS',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #935: under --atlas-in the rectangle is read from the pack, the same first-match lookup `resolveFromAtlas` and the runtime\'s `findRegion` make — for a region naming an image, one naming none, and each frame of a series',
+    );
+  }
+
+  // --- MG05: --pack: every packed region is untrimmed and its size is the document's --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    const galleryRoot = resolve(import.meta.dir, 'gallery');
+    const name = existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().find((n) => existsSync(join(galleryRoot, n, 'rig.json')) && existsSync(join(galleryRoot, n, 'motion.json'))) : undefined;
+    if (name === undefined) probes.push(`no gallery rig with a rig.json and motion.json under ${galleryRoot}`);
+    else {
+      const out = join(work, 'packed');
+      const run = runCli(['build', '--rig', join(galleryRoot, name, 'rig.json'), '--motion', join(galleryRoot, name, 'motion.json'), '--pack', '--out', out]);
+      if (run.status !== 0) probes.push(`build --pack exited ${run.status}: ${run.stderr.trim().split('\n').slice(-2).join(' | ')}`);
+      else {
+        const doc = JSON.parse(readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8')) as { images: Array<{ region: string; page: string }> };
+        const packed = parseAtlasText(readFileSync(join(out, 'skeleton.atlas'), 'utf8'));
+        const byName = new Map(packed.pages.flatMap((p) => p.regions.map((r) => [r.name, { region: r, page: p.name }] as const)));
+        let held = 0;
+        let moved = 0;
+        for (const r of documentRegions(doc)) {
+          const found = byName.get(r.region);
+          if (found === undefined) {
+            probes.push(`${r.at}: the packed atlas has no region "${r.region}"`);
+            continue;
+          }
+          const rect = rectOfRecord(r.record.atlas);
+          const untrimmed = JSON.stringify([found.region.width, found.region.height, 0, 0, found.region.width, found.region.height]);
+          if (rectOfRegion(found.region) !== untrimmed || found.region.degrees !== 0) probes.push(`${r.at}: the packed region "${r.region}" reads ${rectOfRegion(found.region)} at rotate ${found.region.degrees} — the packer trimmed or turned it`);
+          else if (rect !== untrimmed) probes.push(`${r.at}: the document reads ${rect}, the packed region ${untrimmed}`);
+          else held += 1;
+          const loosePage = doc.images.find((img) => img.region === r.region)?.page;
+          if (found.page !== loosePage || found.region.x !== 0 || found.region.y !== 0) moved += 1;
+        }
+        if (held === 0) probes.push('no region record was held against the packed atlas');
+        detail = `gallery/${name} built with --pack onto ${packed.pages.length} page(s): ${held} region record(s), each packed untrimmed and unturned with the document's six numbers; ${moved} of them sit on another page or at another x/y than their loose page — the placement the document leaves out`;
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'MG05_PACK_KEEPS_EVERY_RECTANGLE_THE_DOCUMENT_STATES_TRIM_ZERO_ORIGINAL_EQUAL_TO_SIZE',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #935: `build --pack` repacks after the document is spelled, and the rectangle stays true only because rigc\'s packer never trims or rotates (src/atlas.ts) — an invariant stated in a comment until this control measured it on the document; the page and x/y do move, which is why the rectangle does not hold them',
+    );
+  }
+
+  // --- MG06: a region with no source is null, and the build is red at A08 --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    const ghostProbe = writeRectProbe({ ghost: { path: 'ghost', width: 4, height: 4 } });
+    const ghost = buildRectProbe(ghostProbe, join(ghostProbe.dirs.dir, 'loose'));
+    if (ghost.built === null || ghost.report === null) probes.push(`the ghost probe did not compile: ${ghost.refusal}`);
+    else {
+      const record = ghost.built.model.skins[0]?.attachments.ghost?.ghost;
+      if (record?.kind !== 'region' || record.atlas !== null) probes.push(`the ghost record's atlas is ${record?.kind === 'region' ? JSON.stringify(record.atlas) : '(no region)'}, not null`);
+      const text = modelDocument(ghost.built.model);
+      const written = documentRegions(JSON.parse(text) as unknown).find((r) => r.at === 'default/ghost/ghost');
+      if (written === undefined || written.record.atlas !== null) probes.push(`the document writes ghost's atlas as ${JSON.stringify(written?.record.atlas)}`);
+      const a08 = ghost.report.failures.filter((f) => f.assertion === 'A08_REGION_NAMES_MATCH_ATTACHMENTS');
+      if (a08.length !== 1 || !a08[0].detail.includes('wants region "ghost"')) probes.push(`A08 read ${JSON.stringify(a08.map((f) => f.detail))}`);
+      if (coreRefusal(text) !== '') probes.push(`readModel refused the null: ${coreRefusal(text)}`);
+      const others = ghost.built.model.skins[0]?.attachments;
+      const nonNull = ['plate', 'alias'].filter((s) => { const r = others?.[s]?.[s]; return r?.kind === 'region' && r.atlas !== null && r.atlas !== undefined; });
+      if (nonNull.length !== 2) probes.push(`the probe's other regions read null too (${nonNull.length} of 2 carry a rectangle)`);
+      // The writer's own guard: a region states a rectangle or a sequence, exactly one.
+      const model = ghost.built.model;
+      const withRecord = (entry: ModelRegionAttachment): CompiledModel => ({ ...model, skins: model.skins.map((s, i) => (i === 0 ? { ...s, attachments: { ...s.attachments, ghost: { ghost: entry } } } : s)) });
+      const bare: ModelRegionAttachment = { kind: 'region', width: 4, height: 4 };
+      const both: ModelRegionAttachment = { kind: 'region', width: 4, height: 4, atlas: null, sequence: { count: 1, atlas: [{ width: 4, height: 4, offsetX: 0, offsetY: 0, originalWidth: 4, originalHeight: 4 }] } };
+      for (const [label, entry, expected] of [['neither', bare, 'carries neither an atlas rectangle nor a sequence'], ['both', both, 'carries both an atlas rectangle and a sequence']] as const) {
+        const refusal = modelDocumentRefusal(withRecord(entry));
+        if (!refusal.includes(expected) || !refusal.includes('skins[0].attachments["ghost"]["ghost"]')) probes.push(`a region carrying ${label}: ${refusal === '' ? 'written' : `refused as "${refusal}"`}`);
+      }
+      detail = `a region naming "ghost", which no PNG and no pack provides, compiles with \`"atlas": null\` in the model and the document while plate and alias carry theirs; the gate is red, A08 naming the region — "${a08[0]?.detail ?? ''}"; readModel accepts the null; a record carrying neither a rectangle nor a sequence, or both, is refused by its path`;
+    }
+    rmSync(ghostProbe.dirs.dir, { recursive: true, force: true });
+    const ok = probes.length === 0;
+    say(
+      'MG06_A_REGION_WITH_NO_SOURCE_IS_NULL_NEVER_A_ZERO_TRIM_AND_THE_BUILD_IS_RED_AT_A08',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #935: never invent a value — a region the build has no rectangle for is stated as having none, and because the emitted atlas comes from the same source the gate already refuses that build by the region\'s name, so no green document carries a null',
+    );
+  }
+
+  // --- MG07: every recipe of a named base differs by exactly the rectangles --
+  let gateHole = false;
+  {
+    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
+    if (basePath === undefined || basePath === '') {
+      gateHole = true;
+      console.log('  SKIP  MG07 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
+      console.log('          ⚠️ This is a HOLE in this run, not a pass — that the rectangles are the only change to the document and the Spine files did not move was not measured here.');
+    } else {
+      const probes: string[] = [];
+      let base: HashesDocument | null = null;
+      try {
+        base = readHashes(resolve(basePath));
+      } catch (err) {
+        probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
+      }
+      const present = (from: string): boolean => existsSync(isAbsolute(from) ? from : resolve(import.meta.dir, from));
+      const rows = (base?.recipes ?? []).filter((r) => r.stage.every((s) => present(s.from)));
+      const absent = (base?.recipes ?? []).length - rows.length;
+      if (base !== null && rows.length === 0) probes.push('no row of the base document has its inputs in this tree');
+      let verdict = '';
+      if (base !== null && rows.length > 0) {
+        const recipesPath = join(work, 'gate-recipes.json');
+        writeFileSync(recipesPath, recipesText(rows.map((r) => ({ name: r.name, stage: r.stage, commands: r.commands }))));
+        const out = join(work, 'gate.json');
+        const gateWork = join(work, 'gate');
+        const run = runHashes(['run', '--recipes', recipesPath, '--out', out, '--work', gateWork]);
+        if (run.status !== 0) probes.push(`the run exited ${run.status}: ${run.stderr.trim().slice(0, 200)}`);
+        let after: HashesDocument | null = null;
+        try {
+          after = readHashes(out);
+        } catch (err) {
+          probes.push(`the run wrote no readable document: ${(err as Error).message}`);
+        }
+        if (after !== null) {
+          const baseRows: HashesDocument = { ...base, recipes: rows };
+          const carried = rows.filter((r) => r.files.some((f) => f.path === MODEL_DOCUMENT_FILE)).map((r) => r.name);
+          if (carried.length === 0) probes.push('no row of the base carries the model document, so it predates the document and this gate has nothing to compare it with (MD07 is that gate)');
+          const raw = compareHashes(baseRows, after);
+          let changed = 0;
+          for (const d of raw.differ) {
+            if (!carried.includes(d.name)) continue;
+            if (d.findings.length === 1 && d.findings[0].startsWith(`${MODEL_DOCUMENT_FILE} differs:`)) changed += 1;
+            else probes.push(`${d.name}: ${d.findings.join('; ')}`);
+          }
+          const projected = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after, gateWork));
+          if (!projected.identical) probes.push(`with the rectangles removed: ${comparisonLines(projected).join(' | ')}`);
+          verdict = `${changed} of ${carried.length} row(s) carrying the document differ in ${MODEL_DOCUMENT_FILE} alone and ${carried.length - changed} not at all; every Spine file identical; with every region's rectangle removed, ${projected.identical ? `IDENTICAL over ${projected.files} file(s)` : 'DIFF'}`;
+          // The plants: a document changed anywhere but a rectangle, or spelled otherwise, must not be excused.
+          const target = raw.differ.find((d) => carried.includes(d.name))?.name;
+          const index = target === undefined ? -1 : after.recipes.findIndex((r) => r.name === target);
+          const dirs = existsSync(gateWork) ? readdirSync(gateWork).filter((d) => /^\d+$/.test(d)).sort() : [];
+          if (index < 0 || dirs[index] === undefined) probes.push('no row changed its document, so the plants have nothing to change');
+          else {
+            const file = join(gateWork, dirs[index], 'out', MODEL_DOCUMENT_FILE);
+            const text = readFileSync(file, 'utf8');
+            const widened = JSON.parse(text) as unknown;
+            const first = documentRegions(widened)[0];
+            if (first === undefined) probes.push(`${target} has no region record to plant on`);
+            else {
+              first.record.width = (first.record.width as number) + 1;
+              const plants: Array<[string, string]> = [
+                [`${first.at}'s record width one larger`, `${JSON.stringify(widened, null, 2)}\n`],
+                ['the document with a trailing space', `${text.slice(0, -1)} \n`],
+              ];
+              for (const [label, planted] of plants) {
+                writeFileSync(file, planted);
+                const p = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after, gateWork));
+                if (p.identical || p.differ.length !== 1 || p.differ[0].name !== target) probes.push(`${label} read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
+              }
+              writeFileSync(file, text);
+            }
+          }
+        }
+      }
+      if (absent > 0) console.log(`          ⚠️ HOLE: ${absent} row(s) of the base document were not run, their inputs are not in this tree (run \`bun run fetch-examples\`).`);
+      const ok = probes.length === 0;
+      say(
+        'MG07_EVERY_RECIPE_OF_THE_BASE_DIFFERS_BY_THE_RECTANGLES_ALONE_AND_NO_SPINE_BYTE_MOVES',
+        ok,
+        probeDetail(ok, probes, `${rows.length} row(s) of ${basePath} built through \`tools/emit_hashes.ts\` on this tree (${absent} without their inputs here): ${verdict}; a document with one record's width changed, and one with a trailing space, are each not excused`),
+        'issue #935\'s gate: the Spine files\' bytes do not move on any recipe and the document changes by the added field alone — measured by removing exactly that field and matching the base\'s hash to the byte',
+      );
+    }
+  }
+
+  // --- MG08: the core reads the rectangle, and refuses a malformed one by its path --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    if (greenOf('trimmed-pack', trimmed, probes)) {
+      const text = modelDocument(trimmed.built.model);
+      let read: CompiledDocument | null = null;
+      try {
+        read = readModel(text);
+      } catch (err) {
+        probes.push(`readModel refused the built document: ${(err as Error).message}`);
+      }
+      const plate = read?.skins[0]?.attachments.plate?.plate;
+      if (rectOfRecord(plate?.atlas) !== JSON.stringify([10, 6, 1, 2, 12, 8])) probes.push(`the core reads plate's rectangle as ${rectOfRecord(plate?.atlas)}`);
+      const at = 'skins[0] "default".attachments["plate"]["plate"]';
+      const edit = (change: (record: Record<string, unknown>) => void): string => {
+        const doc = JSON.parse(text) as { skins: Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }> };
+        change(doc.skins[0].attachments.plate.plate);
+        return JSON.stringify(doc);
+      };
+      const plants: Array<[string, string, string]> = [
+        ['an unknown field in the rectangle', edit((r) => { (r.atlas as Record<string, unknown>).page = 'p.png'; }), `${at}.atlas: field "page" is not one this reader knows`],
+        ['a rectangle field spelled as a string', edit((r) => { (r.atlas as Record<string, unknown>).width = '10'; }), `${at}.atlas: width is "10", not a finite number`],
+        ['a rectangle missing a field', edit((r) => { delete (r.atlas as Record<string, unknown>).offsetY; }), `${at}.atlas: offsetY is absent, not a finite number`],
+        ['a rectangle that is a number', edit((r) => { r.atlas = 5; }), `${at}.atlas is 5, neither null nor an object`],
+        ['an unknown field on the region record, still', edit((r) => { r.atlass = null; }), `${at}: field "atlass" is not one this reader knows`],
+      ];
+      for (const [label, planted, expected] of plants) {
+        const refusal = coreRefusal(planted);
+        if (!refusal.includes(expected)) probes.push(`${label}: ${refusal === '' ? 'read' : `refused as "${refusal}"`}, not naming "${expected}"`);
+      }
+      detail = `readModel reads the built document and plate's rectangle as ${rectOfRecord(plate?.atlas)}; ${plants.length} plants — an unknown rectangle field, a string, a missing field, a number in place of the rectangle, and an unknown record field — are each refused naming the path`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'MG08_THE_CORE_READS_THE_RECTANGLE_AND_REFUSES_A_MALFORMED_ONE_BY_ITS_PATH',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #935: `readModel` refused every field it does not know, so the added field is read in the same change — checked field by field — rather than left for the region construct (issue #931) to discover as a refusal',
+    );
+  }
+
+  rmSync(probe.dirs.dir, { recursive: true, force: true });
   rmSync(work, { recursive: true, force: true });
   return { failures: bad, gateHole };
 }
@@ -80948,6 +81526,7 @@ function main(): void {
   const modelRecords = tally.of('model-records', runModelRecordsSuite, { failures: (value) => value.failures });
   const modelAnimations = tally.of('model-animations', runModelAnimationsSuite, { failures: (value) => value.failures });
   const modelDocumentRun = tally.of('model-document', runModelDocumentSuite, { failures: (value) => value.failures });
+  const modelAtlas = tally.of('model-atlas', runModelAtlasSuite, { failures: (value) => value.failures });
   tally.of('chainfit', runChainFitSuite);
   tally.of('ballot', runBallotSuite);
   tally.of('copy-images', runCopyImagesSuite);
@@ -81781,6 +82360,7 @@ function main(): void {
       (modelRecords.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the structural records\' byte identity against a base commit (issue #919) was not measured in this run.' : '') +
       (modelAnimations.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the animations\' byte identity against a base commit (issue #921) was not measured in this run.' : '') +
       (modelDocumentRun.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so that the model document is the only difference from a base commit (issue #922) was not measured in this run.' : '') +
+      (modelAtlas.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so that the atlas rectangles are the only change to the model document from a base commit (issue #935) was not measured in this run.' : '') +
       (launcher.startsWith(',') ? '' : launcher) +
       (gallery.examples > 0
         ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled twice — once, and once more for the determinism check over every file build writes — and gated green under BOTH profiles`

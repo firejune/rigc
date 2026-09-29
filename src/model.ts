@@ -14,11 +14,24 @@
  * first consumer, and the one that owns every Spine 4.3 byte; the model owns
  * none.
  *
- * ⚠️ **Numbers are already on the float32 grid** (`f32` in `compile.ts`). That is
- * model content and not formatting: which decimal a float32 is spelled with is
- * the double spine-core's JSON reader keeps, so it moves the pose (census §4,
- * 19 of 19 builds). The model therefore holds exactly the numbers the file
- * holds, and the emitter copies them without touching one.
+ * ⚠️ **The numbers are exactly the numbers the file holds**, and the emitter
+ * copies them without touching one. Which decimal a number is spelled with is
+ * model content and not formatting: it is the double spine-core's JSON reader
+ * keeps, so it moves the pose (census §4, 19 of 19 builds).
+ *
+ * 🔸 **"On the float32 grid" holds for the values `f32` produced, not for
+ * every number here** (issue #931's measurement, corrected by #935). A bone's
+ * transform, a region's placement and size and a key's value are `f32`'d. A
+ * generated weight, and the bind and vertex coordinates an ingested rig
+ * states, are `r6` or the source's own decimals: on the nineteen recipes
+ * `tools/emit_hashes.ts` generates, 503 of 516 bind coordinates of
+ * `gallery/flex` and 767 of 792 of `spineboy-pro` are not float32 values. The
+ * runtime reads a bone's and a region's numbers as the doubles the text
+ * spells, and a vertex attachment's `vertices` (weights and bind coordinates
+ * included) into a float32 array; so a reader reproducing the runtime's pose
+ * reads vertex arrays and weights through `Math.fround` and every other number
+ * as written. Read as doubles, the corpus's weighted meshes pose 1 to 3
+ * millionths away from spine-core; read through `Math.fround`, exact.
  *
  * ## What it holds
  *
@@ -29,7 +42,7 @@
  * attachments, `skins` holding every attachment as a model record,
  * `constraints` and `events`; and `animations` (issue #921, cut 1e), each a
  * `CompiledAnimation` whose timelines hold the keys the timeline compilers
- * build. Every other field is `CompileResult`'s own, carried by reference under
+ * build; and every region's atlas rectangle (issue #935, `ModelAtlasRect`). Every other field is `CompileResult`'s own, carried by reference under
  * the same name (`CarriedFromCompileResult`) until its own cut gives it a
  * model-side form; the skeleton object, its text and the atlas text are emitted
  * artifacts and are not part of the model at all.
@@ -167,6 +180,64 @@ export interface ModelSequence {
 }
 
 /**
+ * The rectangle a region draws through, in the atlas's own numbers and under
+ * the names the atlas's `bounds:` and `offsets:` lines carry (issue #935): the
+ * kept rectangle's `width` and `height`, in the drawing's orientation; the
+ * trim's `offsetX` (from the drawing's left) and `offsetY` (from its bottom);
+ * and the untrimmed drawing's `originalWidth` and `originalHeight`. All six are
+ * in the page's texels, exactly as the atlas states them (`AtlasRegion` in
+ * `src/atlas.ts`) — NOT divided by a page's `scale:`, because the pose reads
+ * only their ratios to the record's `width` and `height`.
+ *
+ * ⭐ **Why the model holds it.** A region's four corners are
+ * `x1 = -W/2·sx + offsetX·W/originalWidth·sx`, `x2 = x1 + width·W/originalWidth·sx`
+ * (and the same in y) before the record's placement and the bone — measured
+ * exact on 3000 of 3000 probes against spine-core 4.3.13, and 976 of 3000 with
+ * the trim ignored (issue #931). The trim and the original size live only in
+ * the atlas, so until this record held them one model document posed two ways:
+ * `examples/3-timing-and-spacing` built against two atlases differing only in
+ * `square`'s trim wrote byte-identical `skeleton.model.json` and
+ * `skeleton.json`, and spine-core moved that region's corners by 11.925 world
+ * units. A value any backend posing the rig needs belongs in the model.
+ *
+ * 🔸 **What it leaves out, and why.** The page, the rectangle's `x`/`y` on it
+ * and its `rotate` are WHERE the drawing sits in one arrangement of the pixels,
+ * not what the drawing is: `build --pack` repacks every part onto shared pages
+ * after this document is spelled, and `--copy-images` renames every page, so
+ * those four would state a place the written atlas does not have on two of
+ * the three routes that write one. None of them enters a region's corners
+ * (#931: the atlas's `rotate` transposed into the corners was exact on 2018 of
+ * 3000 probes, ignored on 3000 of 3000). The trim and the original size do not
+ * move under either: rigc's packer never trims or rotates (`src/atlas.ts`).
+ */
+export interface ModelAtlasRect {
+  width: number;
+  height: number;
+  offsetX: number;
+  offsetY: number;
+  originalWidth: number;
+  originalHeight: number;
+}
+
+/**
+ * A region's sequence: the four stated fields, and `atlas`, one rectangle per
+ * frame in frame order — frame `i` is the region `<path><start + i>`, padded
+ * to `digits`, and the runtime draws each frame through its own rectangle
+ * (`Sequence.apply` sets the region the corners are computed from).
+ *
+ * A parallel array rather than a `frames` list of objects: a frame's region
+ * NAME is derived from the four fields, so the rectangle is the one thing per
+ * frame the record does not already state. Never `null`: the gather pass
+ * atlases every frame of every sequence or refuses the missing one by name
+ * before any attachment is built. A mesh's or a linked mesh's sequence does not
+ * carry it — a mesh's vertices read no atlas (#931, 400 of 400 meshes exact
+ * with none), and neither kind's record carries a rectangle.
+ */
+export interface ModelRegionSequence extends ModelSequence {
+  atlas: ModelAtlasRect[];
+}
+
+/**
  * A mesh: `buildRigMesh`'s authored geometry, the five generators' output, and a
  * manifest part's ring or ribbon. Fields as the builders compute them today.
  */
@@ -256,7 +327,26 @@ export interface ModelRegionAttachment {
   width: number;
   height: number;
   color?: string;
-  sequence?: ModelSequence;
+  sequence?: ModelRegionSequence;
+  /**
+   * The rectangle this region draws through (`ModelAtlasRect`), present exactly
+   * when the record has no `sequence` — a sequence's frames carry theirs. It is
+   * looked up under the region NAME the runtime asks for — `path`, else the
+   * stated `name`, else the placeholder — in the build's one atlas source:
+   *
+   *   - `--atlas-in`: the pack's region of that name, first match (as
+   *     `TextureAtlas.findRegion` resolves it), its numbers as the pack states
+   *     them;
+   *   - otherwise: the part PNG atlased under that name, which is its own page —
+   *     `width`/`height` and `originalWidth`/`originalHeight` the PNG's size,
+   *     offsets 0. `build --pack` keeps all six (it never trims);
+   *   - `null` when the source has no region of that name — an ingested region
+   *     built without `--atlas-in`, or one naming a region the pack lacks. That
+   *     is a statement that the build has no source, never a trim of 0, and a
+   *     green build never carries one: the emitted atlas has no such region
+   *     either, and `A08_REGION_NAMES_MATCH_ATTACHMENTS` refuses the build.
+   */
+  atlas?: ModelAtlasRect | null;
 }
 
 /**
@@ -573,7 +663,8 @@ function targetsOf(targets: ReadonlyMap<string, ModelTimelines>, where: string):
 
 const BONE_FIELDS = ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inheritMode', 'skinRequired', 'editor'] as const;
 const SLOT_FIELDS = ['name', 'bone', 'setup', 'color', 'dark', 'blend'] as const;
-const SEQUENCE_FIELDS = ['count', 'start', 'digits', 'setup'] as const;
+const SEQUENCE_FIELDS = ['count', 'start', 'digits', 'setup', 'atlas'] as const;
+const ATLAS_RECT_FIELDS = ['width', 'height', 'offsetX', 'offsetY', 'originalWidth', 'originalHeight'] as const;
 const BINDING_FIELDS = ['bone', 'x', 'y', 'weight'] as const;
 const EVENT_FIELDS = ['int', 'float', 'string', 'audio', 'volume', 'balance'] as const;
 const CONSTRAINT_KINDS = ['ik', 'transform', 'path', 'physics', 'slider'] as const;
@@ -582,7 +673,7 @@ const ATTACHMENT_FIELDS: Readonly<Record<SkinTableEntry['kind'], readonly string
   boundingbox: ['kind', 'name', 'vertexCount', 'vertices', 'editorColor'],
   clipping: ['kind', 'name', 'end', 'convex', 'inverse', 'vertexCount', 'vertices', 'editorColor'],
   path: ['kind', 'name', 'closed', 'constantSpeed', 'vertexCount', 'vertices', 'lengths', 'editorColor'],
-  region: ['kind', 'name', 'path', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'width', 'height', 'color', 'sequence'],
+  region: ['kind', 'name', 'path', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'width', 'height', 'color', 'sequence', 'atlas'],
   linkedmesh: ['kind', 'name', 'path', 'source', 'skin', 'slot', 'timelines', 'width', 'height', 'color', 'sequence'],
 };
 
@@ -599,11 +690,30 @@ function verticesOf(vertices: ModelVertices, where: string): DocValue {
 function attachmentOf(entry: SkinTableEntry, where: string): DocValue {
   const fields = ATTACHMENT_FIELDS[entry.kind];
   if (fields === undefined) throw new CompileError(`internal: the model document knows no attachment kind "${String(entry.kind)}" at ${where}`);
+  if (entry.kind === 'region' && (entry.atlas === undefined) === (entry.sequence === undefined)) {
+    throw new CompileError(
+      `internal: the region at ${where} carries ${entry.atlas === undefined ? 'neither an atlas rectangle nor a sequence' : 'both an atlas rectangle and a sequence'}; ` +
+        'a region states exactly one of the two, and a sequence holds a rectangle per frame (issue #935)',
+    );
+  }
   return ordered(entry, fields, where, (key, v) => {
     if (key === 'vertices') return verticesOf(v as ModelVertices, `${where}.vertices`);
-    if (key === 'sequence') return ordered(v as object, SEQUENCE_FIELDS, `${where}.sequence`);
+    if (key === 'sequence') {
+      return ordered(v as object, SEQUENCE_FIELDS, `${where}.sequence`, (k, item) =>
+        k === 'atlas' ? (item as ModelAtlasRect[]).map((rect, i) => atlasRectOf(rect, `${where}.sequence.atlas[${i}]`)) : plain(item, `${where}.sequence.${k}`),
+      );
+    }
+    if (key === 'atlas') return v === null ? null : atlasRectOf(v as ModelAtlasRect, `${where}.atlas`);
     return plain(v, `${where}.${key}`);
   });
+}
+
+/** One rectangle, in `ModelAtlasRect`'s order, every field required. */
+function atlasRectOf(rect: ModelAtlasRect, where: string): DocValue {
+  for (const key of ATLAS_RECT_FIELDS) {
+    if (rect[key] === undefined) throw new CompileError(`internal: the atlas rectangle at ${where} has no ${key}; it states all of [${ATLAS_RECT_FIELDS.join(', ')}]`);
+  }
+  return ordered(rect, ATLAS_RECT_FIELDS, where);
 }
 
 function skinOf(skin: ModelSkin, where: string): DocValue {
@@ -680,7 +790,7 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  * `absentParts`, `meshBones`, `meshes`, `physics`, `deformTransforms`,
  * `trackDerivations`, `rig`. Inside a model record, its interface's field
  * order (`ModelBone`, `ModelSlot`, `ModelSkin`, each attachment kind,
- * `ModelBinding`, `ModelSequence`, `ModelEvent`, `CompiledAnimation`), each
+ * `ModelBinding`, `ModelSequence`, `ModelAtlasRect`, `ModelEvent`, `CompiledAnimation`), each
  * field only when the record carries it, and a field the interface does not
  * list refused by name. Three kinds of record keep their own order, because
  * there the order is the value: a constraint's fields after `kind`, `name`,
@@ -702,8 +812,9 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  * the physics timeline that names no constraint keeps the model's name for it,
  * `*` (`EVERY_GLOBAL_PHYSICS`), not the empty name Spine spells it with.
  *
- * **Numbers** are written exactly as the model holds them, and they are on the
- * float32 grid already, so nothing is re-rounded. A number JSON cannot carry
+ * **Numbers** are written exactly as the model holds them — the numbers the
+ * Spine file holds — so nothing is re-rounded; which of them are float32
+ * values, and how a reader reads the rest, is the header's 🔸. A number JSON cannot carry
  * exactly — `-0`, `NaN`, an infinity — is refused by its path (`plain`).
  *
  * **Left out, and why.** Each is something the model holds that is not a

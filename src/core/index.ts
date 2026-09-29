@@ -140,7 +140,7 @@
  * child process, no file system — `readModel` takes the document's TEXT — and
  * nothing from the Spine runtime package, as a value or as a type.
  */
-import type { ModelBone, ModelSlot, SkinTableEntry } from '../model.ts';
+import type { ModelAtlasRect, ModelBone, ModelSlot, SkinTableEntry } from '../model.ts';
 import { worldTransforms, type CoreWorld } from './world.ts';
 
 /** The document spec this reader takes. */
@@ -175,7 +175,7 @@ export const CORE_ATTACHMENT_FIELDS: Readonly<Record<SkinTableEntry['kind'], rea
   boundingbox: ['kind', 'name', 'vertexCount', 'vertices', 'editorColor'],
   clipping: ['kind', 'name', 'end', 'convex', 'inverse', 'vertexCount', 'vertices', 'editorColor'],
   path: ['kind', 'name', 'closed', 'constantSpeed', 'vertexCount', 'vertices', 'lengths', 'editorColor'],
-  region: ['kind', 'name', 'path', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'width', 'height', 'color', 'sequence'],
+  region: ['kind', 'name', 'path', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'width', 'height', 'color', 'sequence', 'atlas'],
   linkedmesh: ['kind', 'name', 'path', 'source', 'skin', 'slot', 'timelines', 'width', 'height', 'color', 'sequence'],
 };
 /** The kinds whose shown record names an atlas region — the ones the oracle's row gives a path (the header's measurement). */
@@ -188,11 +188,25 @@ export type CoreConstraintKind = (typeof CORE_CONSTRAINT_KINDS)[number];
 /** The five inherit modes, as the rig spec spells them once its first letter is lower-cased. */
 export const CORE_INHERIT_MODES = ['normal', 'onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'] as const;
 
-/** One attachment record, as far as the slots read it: its kind, and its own name and region path where stated. */
+/**
+ * The fields of a region's atlas rectangle (`ModelAtlasRect` in `src/model.ts`,
+ * issue #935), every one required and a finite number.
+ */
+export const CORE_ATLAS_RECT_FIELDS = ['width', 'height', 'offsetX', 'offsetY', 'originalWidth', 'originalHeight'] as const;
+
+/**
+ * One attachment record, as far as the slots read it: its kind, and its own
+ * name and region path where stated — and a region's atlas rectangle where the
+ * record carries one, `null` where the build had no source for it (issue #935).
+ * Nothing here poses a region yet; the rectangle is read so the construct that
+ * does (issue #931) finds it checked. A sequence's per-frame rectangles are not
+ * read: no construct here reads a sequence.
+ */
 export interface CoreAttachment {
   kind: SkinTableEntry['kind'];
   name?: string;
   path?: string;
+  atlas?: ModelAtlasRect | null;
 }
 
 /** One skin, as far as these constructs read it: its name, the bones it activates, and its table — slot, then placeholder. */
@@ -351,11 +365,31 @@ function readAttachments(value: Record<string, unknown>, slots: ReadonlySet<stri
         if (typeof v !== 'string' || v === '') problems.push(`${where}: ${key} is ${JSON.stringify(v)}, not a non-empty string`);
         else record[key] = v;
       }
+      if (kind === 'region' && raw.atlas !== undefined) {
+        const rect = readAtlasRect(raw.atlas, `${where}.atlas`, problems);
+        if (rect !== undefined) record.atlas = rect;
+      }
       entries[placeholder] = record;
     }
     out[slot] = entries;
   }
   return out;
+}
+
+/** A region's `atlas`: `null`, or an object holding exactly the six fields, each a finite number. `undefined` when refused. */
+function readAtlasRect(value: unknown, where: string, problems: string[]): ModelAtlasRect | null | undefined {
+  if (value === null) return null;
+  if (!isRecord(value)) {
+    problems.push(`${where} is ${JSON.stringify(value)}, neither null nor an object`);
+    return undefined;
+  }
+  const before = problems.length;
+  unknownFields(value, CORE_ATLAS_RECT_FIELDS, where, problems);
+  for (const key of CORE_ATLAS_RECT_FIELDS) {
+    const v = value[key];
+    if (typeof v !== 'number' || !Number.isFinite(v)) problems.push(`${where}: ${key} is ${JSON.stringify(v) ?? 'absent'}, not a finite number`);
+  }
+  return problems.length === before ? (value as unknown as ModelAtlasRect) : undefined;
 }
 
 function readSkins(value: unknown, bones: ReadonlySet<string>, slots: ReadonlySet<string>, problems: string[]): CoreSkin[] {
