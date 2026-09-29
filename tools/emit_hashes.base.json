@@ -1,0 +1,250 @@
+{
+  "spec": "emit-hashes/1",
+  "recipes": [
+    {
+      "name": "gallery/flex",
+      "stage": [
+        {
+          "from": "gallery/flex",
+          "to": "gallery/flex"
+        }
+      ],
+      "commands": [
+        [
+          "build",
+          "--rig",
+          "{{work}}/gallery/flex/rig.json",
+          "--motion",
+          "{{work}}/gallery/flex/motion.json",
+          "--out",
+          "{{out}}"
+        ]
+      ],
+      "exits": [
+        0
+      ],
+      "files": [
+        {
+          "path": "skeleton.atlas",
+          "size": 2867,
+          "sha256": "f79d22804e950ae504be14ecbe3df88125abd36cda3e67674339a9705629cc2a"
+        },
+        {
+          "path": "skeleton.json",
+          "size": 103923,
+          "sha256": "c9cda94f1666085224705ff528b5c95d777098423bd56b165e2fe8c414bcdddf"
+        }
+      ]
+    },
+    {
+      "name": "gallery/look",
+      "stage": [
+        {
+          "from": "gallery/look",
+          "to": "gallery/look"
+        }
+      ],
+      "commands": [
+        [
+          "build",
+          "--rig",
+          "{{work}}/gallery/look/rig.json",
+          "--motion",
+          "{{work}}/gallery/look/motion.json",
+          "--out",
+          "{{out}}"
+        ]
+      ],
+      "exits": [
+        0
+      ],
+      "files": [
+        {
+          "path": "skeleton.atlas",
+          "size": 3492,
+          "sha256": "3b10dc23020b96591372604df7e34b62d28a7184ba09d6b02197a2daad55d5d6"
+        },
+        {
+          "path": "skeleton.json",
+          "size": 211653,
+          "sha256": "b3a7ee298052dd8aaefbaa9079b70319a43d714a7f5901963893bb48c79238b0"
+        }
+      ]
+    },
+    {
+      "name": "gallery/nod",
+      "stage": [
+        {
+          "from": "gallery/nod",
+          "to": "gallery/nod"
+        }
+      ],
+      "commands": [
+        [
+          "build",
+          "--rig",
+          "{{work}}/gallery/nod/rig.json",
+          "--motion",
+          "{{work}}/gallery/nod/motion.json",
+          "--out",
+          "{{out}}"
+        ]
+      ],
+      "exits": [
+        0
+      ],
+      "files": [
+        {
+          "path": "skeleton.atlas",
+          "size": 1419,
+          "sha256": "591873889445780ac98ac099e0df776da870d887122d7018210f7b4507aa0880"
+        },
+        {
+          "path": "skeleton.json",
+          "size": 74947,
+          "sha256": "0a197bf14714d548467206babe8f3022b79f924a0a082f5a3624f4cd99d3b3a1"
+        }
+      ]
+    },
+    {
+      "name": "gallery/portrait",
+      "stage": [
+        {
+          "from": "gallery/portrait",
+          "to": "gallery/portrait"
+        }
+      ],
+      "commands": [
+        [
+          "build",
+          "--rig",
+          "{{work}}/gallery/portrait/rig.json",
+          "--motion",
+          "{{work}}/gallery/portrait/motion.json",
+          "--out",
+          "{{out}}"
+        ]
+      ],
+      "exits": [
+        0
+      ],
+      "files": [
+        {
+          "path": "skeleton.atlas",
+          "size": 3260,
+          "sha256": "46e04ec63d288456485e898c2a24c9c840b1e1c12d61a2fa0b9921bf649b9647"
+        },
+        {
+          "path": "skeleton.json",
+          "size": 52211,
+          "sha256": "7dd52369faf37d403a741965810c036a4a918c7a0a5611e622a2b9df75267b45"
+        }
+      ]
+    },
+    {
+      "name": "gallery/ride",
+      "stage": [
+        {
+          "from": "gallery/ride",
+          "to": "gallery/ride"
+        }
+      ],
+      "commands": [
+        [
+          "build",
+          "--rig",
+          "{{work}}/gallery/ride/rig.json",
+          "--motion",
+          "{{work}}/gallery/ride/motion.json",
+          "--out",
+          "{{out}}"
+        ]
+      ],
+      "exits": [
+        0
+      ],
+      "files": [
+        {
+          "path": "skeleton.atlas",
+          "size": 2576,
+          "sha256": "73faac5eb6e0fab8135eef2e3d796a8fd6cf637d230a4d5a803caf96ca6f71d5"
+        },
+        {
+          "path": "skeleton.json",
+          "size": 16438,
+          "sha256": "f5b85b52dba83f5a974ffaa2534fe4601181a8df6bf1dfd60b1d0bdf99804d1f"
+        }
+      ]
+    },
+    {
+      "name": "gallery/squash",
+      "stage": [
+        {
+          "from": "gallery/squash",
+          "to": "gallery/squash"
+        }
+      ],
+      "commands": [
+        [
+          "build",
+          "--rig",
+          "{{work}}/gallery/squash/rig.json",
+          "--motion",
+          "{{work}}/gallery/squash/motion.json",
+          "--out",
+          "{{out}}"
+        ]
+      ],
+      "exits": [
+        0
+      ],
+      "files": [
+        {
+          "path": "skeleton.atlas",
+          "size": 2344,
+          "sha256": "739ecf4ab34973c73fae9ef443c35e9a783e902438991c40ad8b29c1cba5b902"
+        },
+        {
+          "path": "skeleton.json",
+          "size": 16507,
+          "sha256": "8d23f26e3d3c7fa549a9564a49005978dd73ab824a064bfbf4432b73c0f68842"
+        }
+      ]
+    },
+    {
+      "name": "gallery/walk",
+      "stage": [
+        {
+          "from": "gallery/walk",
+          "to": "gallery/walk"
+        }
+      ],
+      "commands": [
+        [
+          "build",
+          "--rig",
+          "{{work}}/gallery/walk/rig.json",
+          "--motion",
+          "{{work}}/gallery/walk/motion.json",
+          "--out",
+          "{{out}}"
+        ]
+      ],
+      "exits": [
+        0
+      ],
+      "files": [
+        {
+          "path": "skeleton.atlas",
+          "size": 2165,
+          "sha256": "fd05ac9b40a0063580e1b95423e6b769643fdda77f5a7307a741451c4088d4ca"
+        },
+        {
+          "path": "skeleton.json",
+          "size": 18907,
+          "sha256": "218186c4453ac5ef9e0445db7b0a030c0ee7b30d026d58a1e3844d6180d94203"
+        }
+      ]
+    }
+  ]
+}
