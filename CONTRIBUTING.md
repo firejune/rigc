@@ -91,7 +91,8 @@ the tarball runs* is the argument.
   actually has.
 - **A change that moves a gallery build's bytes on purpose regenerates the base
   in the same pull request.** `tools/emit_hashes.base.json` records, hash by
-  hash, what every `gallery/<name>/` build writes, and five selftest gates hold
+  hash, the Spine files every `gallery/<name>/` build writes (the skeleton and
+  the atlas, which are the same bytes on every machine), and five selftest gates hold
   the tree to it on every run, CI included — so a moved build is red on your
   branch until the file moves with it, and `EH06` names the row, the file and the
   command. That command is `bun tools/emit_hashes.ts base`; run it, commit the

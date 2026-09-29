@@ -67797,7 +67797,12 @@ function withoutAtlasRects(text: string): string | null {
  * run, and a HOLE on every run cannot be told from one that matters. The
  * tracked base carries the gallery's rows only, because `examples/` is not in
  * CI; `EH06` holds it to what `tools/emit_hashes.ts base` writes on this tree,
- * so a gate reading it reads this tree's own record, not a stale copy.
+ * so a gate reading it reads this tree's own record, not a stale copy. It
+ * carries the Spine files only (`skeleton.json` and the atlas), because the
+ * model document was measured to differ across machines (the tool's `## base`
+ * says where); `withoutAddedModelDocument` then holds the four identity gates
+ * to the Spine files, and `MD07` reads it in its original sense — every row
+ * differs by exactly the added document.
  *
  * 🔸 `MG07` (issue #935) does not read it, deliberately: it measures the
  * TRANSITION to the rectangles — a base whose documents lack them — and

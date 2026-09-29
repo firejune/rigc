@@ -138,6 +138,20 @@
  * exports are left out because `examples/` is gitignored and absent in CI, so a
  * row for them would be a row no CI run can build.
  *
+ * 🔸 **It carries the Spine files only — `skeleton.json` and the atlas — and
+ * leaves `skeleton.model.json` out of every row**, because the model document
+ * is measured NOT to be machine-independent. The base taken on the machine it
+ * was written on read STALE on the first Linux CI run (PR #941, run
+ * 36548303780) on exactly one row and one file: `gallery/look`'s
+ * `skeleton.model.json`, 394523 bytes `6e0960b0a4c2` in the file against 394529
+ * bytes `e15d81552ae1` on CI, while `skeleton.json` and `skeleton.atlas` were
+ * identical on all seven rows. A value the Spine file's float32 spelling
+ * absorbs survives into the document's six-decimal fields; why is a card of
+ * its own. So the gates reading this base hold the bytes a consumer loads, on
+ * every machine, and a fuller document named by `RIGC_EMIT_HASHES_BASE` still
+ * holds every file, the model document included. `MD07` reads this base in its
+ * original sense: every row differs from it by exactly the added document.
+ *
  * 🔒 **It is written by one command and never by hand**: `bun tools/emit_hashes.ts
  * base` regenerates it in place, and `--file` writes it elsewhere. A gallery row
  * that exits non-zero is refused by name and nothing is written, because a base
@@ -156,6 +170,7 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
+import { MODEL_DOCUMENT_FILE } from '../src/model.ts';
 
 export const HASHES_SPEC = 'emit-hashes/1';
 export const RECIPES_SPEC = 'emit-hashes-recipes/1';
@@ -167,6 +182,11 @@ const CLI = join(TREE_ROOT, 'cli.ts');
 /** The tracked base's place in the checkout, and the one command that writes it (issue #930). */
 export const BASE_FILE = 'tools/emit_hashes.base.json';
 export const BASE_COMMAND = 'bun tools/emit_hashes.ts base';
+
+/** A gallery run as the tracked base records it: every row without the model document (see `## base`). */
+export function spineFilesOnly(doc: HashesDocument): HashesDocument {
+  return { ...doc, recipes: doc.recipes.map((r) => ({ ...r, files: r.files.filter((f) => f.path !== MODEL_DOCUMENT_FILE) })) };
+}
 
 /** A refusal about an input — the command exits 2 on it. */
 export class HashesInputError extends Error {}
@@ -767,7 +787,7 @@ export function hashesMain(argv: readonly string[], print: (line: string) => voi
       }
       warn(`emit_hashes: ${recipes.length} gallery recipe(s), work directory ${work}`);
       const started = performance.now();
-      const doc = runRecipes(recipes, work, root, print);
+      const doc = spineFilesOnly(runRecipes(recipes, work, root, print));
       warn(`emit_hashes: wall time ${((performance.now() - started) / 1000).toFixed(1)} s`);
       if (check) {
         const verdict = baseVerdict(file, shown, doc, flags.has('--file') ? `${BASE_COMMAND} --file ${file}` : BASE_COMMAND);
