@@ -194,13 +194,17 @@
  * words it (issue #928), or absent when a slot's setup placeholder is filled
  * by skins that disagree, since which of them `--skin all` shows is the Spine
  * file's skin order and the model does not carry it (the core's header says
- * why, with the measurements). `animations` is every animation of the model,
- * in the model's order, sampled at the phase's times over its runtime
- * duration (issue #936, `src/core/animation.ts`): each sample's `bones` and
- * `slots` posed from the setup pose with the animation's bone and slot
- * timelines at alpha 1 — `animations.bones` absent when the document declares
- * a constraint, `animations.slots` absent when a slider keys a slot or skins
- * disagree over a placeholder a slot shows — and its `drawOrder`,
+ * why, with the measurements); `setup.attachments` and `setup.clips` are the
+ * world vertices of every region, mesh, linked mesh and clipping polygon shown
+ * at setup, in slot order (issue #931, `src/core/vertices.ts`), absent when
+ * either block above is, and `setup.attachments` also when a shown region's
+ * atlas rectangle is `null` in the model. `animations` is every animation of
+ * the model, in the model's order, sampled at the phase's times over its
+ * runtime duration (issue #936, `src/core/animation.ts`): each sample's
+ * `bones` and `slots` posed from the setup pose with the animation's bone and
+ * slot timelines at alpha 1 — `animations.bones` absent when the document
+ * declares a constraint, `animations.slots` absent when a slider keys a slot
+ * or skins disagree over a placeholder a slot shows — and its `drawOrder`,
  * `attachments`, `clips` and `events` absent, each named. Every other block
  * is `null` and named in `absent`.
  *
@@ -1412,7 +1416,8 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
         writeFileSync(out, dumpText(dump));
         print(
           `pose_oracle: the core posed ${core}: ${model.bones.length} bones, setup.bones ${dump.setup.bones === null ? 'ABSENT' : 'posed'}, ` +
-            `${model.slots.length} slots, setup.slots ${dump.setup.slots === null ? 'ABSENT' : 'posed'}; ` +
+            `${model.slots.length} slots, setup.slots ${dump.setup.slots === null ? 'ABSENT' : 'posed'}, ` +
+            `setup.attachments ${dump.setup.attachments === null ? 'ABSENT' : `${dump.setup.attachments.length} posed`}, setup.clips ${dump.setup.clips === null ? 'ABSENT' : `${dump.setup.clips.length} posed`}; ` +
             `${model.animations.length} animation(s) × ${options.samples} sample(s), animations.bones ${(dump.absent ?? []).some((x) => x[0] === 'animations.bones') ? 'ABSENT' : 'posed'}, ` +
             `animations.slots ${(dump.absent ?? []).some((x) => x[0] === 'animations.slots') ? 'ABSENT' : 'posed'}; ` +
             `absent: ${(dump.absent ?? []).map((x) => x[0]).join(', ')} → ${out}`,

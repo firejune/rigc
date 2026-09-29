@@ -66190,10 +66190,11 @@ function runPoseOracleSuite(): number {
 
 // Its own statement, so the suite lands as one hunk (the convention the
 // slider-reader suite states at its imports).
-import { activeBones, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED, readColour, readModel, type CompiledDocument, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
+import { activeBones, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED, poseSetup, readColour, readModel, shownAttachment, type CompiledDocument, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
+import { regionCorners, worldVertices, type VertexPoser } from './src/core/vertices.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
-import { animationCensusOf, animationReachLines, buildRecipes, censusOf, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, reachLines, slotCensusOf, slotReachLines, type AnimationCensusField, type BuiltRow } from './tools/core_gate.ts';
+import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, censusOf, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, reachLines, slotCensusOf, slotReachLines, type AnimationCensusField, type BuiltRow } from './tools/core_gate.ts';
 import { BEZIER_SIXTH, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
 import { modeMatrix, worldTransforms, type CoreInheritMode } from './src/core/world.ts';
 
@@ -66285,7 +66286,7 @@ function srcPopulation(root: string): Map<string, string> {
 
 /** The core suite: `src/core/`'s reader and setup pose, the second dumper in `tools/pose_oracle.ts`, compare's absences, the gate's instrument and the tree rule. */
 function runCoreSuite(): number {
-  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones and slots, and every animation\'s bones and slots at its samples, as pose-oracle/1 (issues #925, #928, #936) ──');
+  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots and attachments\' world vertices, and every animation\'s bones and slots at its samples, as pose-oracle/1 (issues #925, #928, #931, #936) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -66756,9 +66757,12 @@ function runCoreSuite(): number {
     );
   }
 
-  // Slot rows judged alone at tolerance 0: the spine-core dump against the core's with the bones left out.
-  const slotsAlone = (spine: OracleDump, core: OracleDocument): ReturnType<typeof compareDumps> =>
-    compareDumps(spine, { ...core, absent: [...(core.absent ?? []).filter((x) => x[0] !== 'setup.bones'), ['setup.bones', 'left out to judge the slots alone']], setup: { ...core.setup, bones: null } }, { xy: 0, m: 0 });
+  // Slot rows judged alone at tolerance 0: the spine-core dump against the core's with the bones, attachments and clips left out.
+  const slotsAlone = (spine: OracleDump, core: OracleDocument): ReturnType<typeof compareDumps> => {
+    const others = ['setup.bones', 'setup.attachments', 'setup.clips'];
+    const absent: Array<[string, string]> = [...(core.absent ?? []).filter((x) => !others.includes(x[0])), ...others.map((b): [string, string] => [b, 'left out to judge the slots alone'])];
+    return compareDumps(spine, { ...core, absent, setup: { ...core.setup, bones: null, attachments: null, clips: null } }, { xy: 0, m: 0 });
+  };
   const ONE: OracleOptions = { phase: 'grid', samples: 1, skin: 'all', physics: 'none', dt: null };
   const slotCompared = rows.filter((r) => r.blocks !== null && r.blocks['setup.slots'].verdict !== 'SKIP');
 
@@ -66808,6 +66812,8 @@ function runCoreSuite(): number {
       spec: 'rigc-compiled/1', bones: parts.bones, slots: parts.slots, skins: parts.skins, constraints: parts.constraints ?? [], events: [], animations: parts.animations ?? [],
       images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
     });
+  /** The rectangle `atlasOf` gives every region, as the model states it (issue #935). */
+  const UNTRIMMED4 = { width: 4, height: 4, offsetX: 0, offsetY: 0, originalWidth: 4, originalHeight: 4 };
   /** An atlas text of 4x4 regions of the given names on one page. */
   const atlasOf = (regions: readonly string[]): string => `page.png\n\tsize: 64, 64\n${regions.map((n) => `${n}\n\tbounds: 0, 0, 4, 4\n`).join('')}`;
   /** The core's slot resolution, planted: the placeholder looked up in the model's FIRST skin alone. */
@@ -66884,7 +66890,8 @@ function runCoreSuite(): number {
       const pathed = { ...named, ...(rec.path === undefined ? {} : { path: rec.path }) };
       switch (rec.kind) {
         case 'region':
-          return { ...pathed, width: 4, height: 4, ...(rec.color === undefined ? {} : { color: rec.color }), ...(rec.sequence === undefined ? {} : { sequence: rec.sequence }) };
+          // Every region the atlas below holds is 4x4 and untrimmed; the model states that rectangle (issue #935), a sequence one per frame.
+          return { ...pathed, width: 4, height: 4, ...(rec.color === undefined ? {} : { color: rec.color }), ...(rec.sequence === undefined ? { atlas: UNTRIMMED4 } : { sequence: { ...rec.sequence, atlas: Array.from({ length: rec.sequence.count }, () => UNTRIMMED4) } }) };
         case 'mesh':
           return { ...pathed, uvs: meshKeys.uvs, triangles: meshKeys.triangles, vertices: { weighted: false, xy: [0, 0, 4, 0, 4, 4] }, hull: 3, edges: [], width: 4, height: 4 };
         case 'linkedmesh':
@@ -67026,7 +67033,7 @@ function runCoreSuite(): number {
     const atlas = atlasOf(['r', 'q']);
     const [without, withSlider] = [false, true].map((s) => dumpSkeleton(loadOracleData(sliderSkeleton(s), atlas, 'the slider probe'), ONE).setup.slots[0]);
     if (JSON.stringify(without) !== JSON.stringify(['s', 'r', 1, 1, 1, 1, null, 'r']) || JSON.stringify(withSlider) !== JSON.stringify(['s', 'q', 1, 0, 0, 0.501961, null, 'q'])) probes.push(`spine-core's setup row is ${JSON.stringify(without)} without the slider and ${JSON.stringify(withSlider)} with it, not the header's measurement`);
-    const records = { r: { kind: 'region', width: 4, height: 4 }, q: { kind: 'region', width: 4, height: 4 } };
+    const records = { r: { kind: 'region', width: 4, height: 4, atlas: UNTRIMMED4 }, q: { kind: 'region', width: 4, height: 4, atlas: UNTRIMMED4 } };
     const keyed = (slots: unknown[]): string => modelOf({
       bones: [{ name: 'root' }, { name: 'dial', parent: 'root', rotation: 10 }],
       slots: [{ name: 's', bone: 'root', setup: 'r' }],
@@ -67083,6 +67090,268 @@ function runCoreSuite(): number {
     for (const label of holes) console.log(`          ⚠️ HOLE: no compared recipe has a row the plant "${label}" reaches, so it has no corpus row to turn red — CO11's probe is the only reading of it`);
   }
 
+  // The attachments' world vertices (issue #931). One hand-written skeleton, written once as the Spine file and
+  // once as the model, holds every case the corpus does not reach — read by CO15, posed by CO17.
+  /** Five decimals that are not float32 values — the spelling that tells a double reading from a float32 one. */
+  const probeBones = [
+    { name: 'root', x: 3.5, y: -2.25, rotation: 7 },
+    { name: 'turned', parent: 'root', x: 12.3, y: 4.1, rotation: 30, scaleX: 1.5, scaleY: 0.75, shearX: 10, shearY: -5 },
+    { name: 'mirrored', parent: 'turned', x: -8.2, y: 6.6, rotation: 20, scaleX: -1.25 },
+    { name: 'flipped', parent: 'root', x: 10, y: -20, rotation: -45, scaleY: -0.8, shearY: 25 },
+    { name: 'plain', parent: 'root', x: -30, y: 11 },
+  ];
+  /** Trimmed rectangles: the region's own, and a three-frame sequence whose frames differ in their trims. */
+  const trimmedRect = { width: 30, height: 14, offsetX: 5, offsetY: 3, originalWidth: 44, originalHeight: 26 };
+  const mirrorRect = { width: 9, height: 20, offsetX: 1, offsetY: 7, originalWidth: 12, originalHeight: 30 };
+  const frames = [
+    { width: 30, height: 20, offsetX: 0, offsetY: 0, originalWidth: 30, originalHeight: 20 },
+    { width: 10, height: 8, offsetX: 5, offsetY: 3, originalWidth: 30, originalHeight: 20 },
+    { width: 22, height: 12, offsetX: 1, offsetY: 7, originalWidth: 30, originalHeight: 20 },
+  ];
+  const rectLine = (name: string, r: typeof trimmedRect, rotate = 0): string =>
+    `${name}\n\tbounds: 0, 0, ${r.width}, ${r.height}\n\toffsets: ${r.offsetX}, ${r.offsetY}, ${r.originalWidth}, ${r.originalHeight}\n${rotate === 0 ? '' : `\trotate: ${rotate}\n`}`;
+  // The page is scaled and the trimmed region turned on it: neither enters the corners (the header of src/core/vertices.ts).
+  const probeAtlas = `page.png\n\tsize: 512, 512\n\tscale: 0.5\n${rectLine('trimmed', trimmedRect, 90)}${rectLine('mirror', mirrorRect)}${frames.map((f, i) => rectLine(`seq${i + 1}`, f)).join('')}m\n\tbounds: 0, 0, 10, 10\n`;
+  const weighted = [
+    [{ bone: 'turned', x: 310.12345, y: -203.33337, weight: 0.33333 }, { bone: 'mirrored', x: -404.44441, y: 177.77771, weight: 0.33333 }, { bone: 'flipped', x: 272.71828, y: 314.14159, weight: 0.33334 }],
+    [{ bone: 'mirrored', x: 141.41421, y: -173.20508, weight: 0.6 }, { bone: 'flipped', x: -606.06061, y: 230.10301, weight: 0.4 }],
+    [{ bone: 'turned', x: 257.72157, y: 980.66501, weight: 1 }],
+  ];
+  const spineWeighted = weighted.flatMap((v) => [v.length, ...v.flatMap((b) => [probeBones.findIndex((x) => x.name === b.bone), b.x, b.y, b.weight])]);
+  const localXy = [100.1, 200.2, 430.00001, 0.00003, 412.12345, 470.70007];
+  const meshKeysOf = (n: number): { uvs: number[]; triangles: number[]; hull: number; width: number; height: number } => ({ uvs: new Array<number>(2 * n).fill(0.5), triangles: [0, 1, 2], hull: n, width: 10, height: 10 });
+  /** Per slot: its bone, its placeholder, the Spine record and the model record; `skin` when not the default. */
+  const probeSlots: Array<{ slot: string; bone: string; spine: Record<string, unknown>; model: Record<string, unknown>; skin?: string }> = [
+    { slot: 'weighted', bone: 'plain', spine: { type: 'mesh', path: 'm', vertices: spineWeighted, ...meshKeysOf(3) }, model: { kind: 'mesh', path: 'm', ...meshKeysOf(3), vertices: { weighted: true, bindings: weighted }, edges: [] } },
+    { slot: 'unweighted', bone: 'flipped', spine: { type: 'mesh', path: 'm', vertices: localXy, ...meshKeysOf(3) }, model: { kind: 'mesh', path: 'm', ...meshKeysOf(3), vertices: { weighted: false, xy: localXy }, edges: [] } },
+    { slot: 'trimmed', bone: 'turned', spine: { path: 'trimmed', x: 3.33333, y: -1.11111, rotation: 17.77777, scaleX: 1.30001, scaleY: 0.70003, width: 88.12345, height: 52.54321 }, model: { kind: 'region', path: 'trimmed', x: 3.33333, y: -1.11111, rotation: 17.77777, scaleX: 1.30001, scaleY: 0.70003, width: 88.12345, height: 52.54321, atlas: trimmedRect } },
+    { slot: 'mirror', bone: 'mirrored', spine: { path: 'mirror', scaleX: -1.5, rotation: -33, width: 24, height: 60 }, model: { kind: 'region', path: 'mirror', scaleX: -1.5, rotation: -33, width: 24, height: 60, atlas: mirrorRect } },
+    { slot: 'sequenced', bone: 'flipped', spine: { path: 'seq', x: 3, width: 60, height: 40, sequence: { count: 3, start: 1, setup: 2 } }, model: { kind: 'region', path: 'seq', x: 3, width: 60, height: 40, sequence: { count: 3, start: 1, setup: 2, atlas: frames } } },
+    { slot: 'linked', bone: 'mirrored', skin: 'other', spine: { type: 'linkedmesh', path: 'm', source: 'a', slot: 'weighted', width: 10, height: 10 }, model: { kind: 'linkedmesh', path: 'm', source: 'a', skin: 'default', slot: 'weighted', timelines: true, width: 10, height: 10 } },
+    { slot: 'clipEnds', bone: 'turned', spine: { type: 'clipping', end: 'unweighted', vertexCount: 3, vertices: [101.1, 0.00003, 333.33331, 101.3, 0, 222.22227] }, model: { kind: 'clipping', end: 'unweighted', vertexCount: 3, vertices: { weighted: false, xy: [101.1, 0.00003, 333.33331, 101.3, 0, 222.22227] } } },
+    { slot: 'clipWeighted', bone: 'plain', spine: { type: 'clipping', vertexCount: 3, vertices: spineWeighted }, model: { kind: 'clipping', vertexCount: 3, vertices: { weighted: true, bindings: weighted } } },
+    { slot: 'box', bone: 'turned', spine: { type: 'boundingbox', vertexCount: 3, vertices: [0, 0, 1, 0, 1, 1] }, model: { kind: 'boundingbox', vertexCount: 3, vertices: { weighted: false, xy: [0, 0, 1, 0, 1, 1] } } },
+  ];
+  const probeTables = (side: 'spine' | 'model', skin: string): Record<string, Record<string, Record<string, unknown>>> =>
+    Object.fromEntries(probeSlots.filter((p) => (p.skin ?? 'default') === skin).map((p) => [p.slot, { a: p[side] }]));
+  const probeSkeleton = JSON.stringify({
+    skeleton: { spine: '4.3.13' }, bones: probeBones, slots: probeSlots.map((p) => ({ name: p.slot, bone: p.bone, attachment: 'a' })),
+    skins: ['default', 'other'].map((name) => ({ name, attachments: probeTables('spine', name) })), animations: {},
+  });
+  const probeModelText = modelOf({
+    bones: probeBones, slots: probeSlots.map((p) => ({ name: p.slot, bone: p.bone, setup: 'a' })),
+    skins: ['default', 'other'].map((name) => ({ name, bones: [], constraints: {}, attachments: probeTables('model', name) })),
+  });
+  /** The probe's model with one record replaced — a plant for CO15 and CO17. */
+  const probeWith = (slot: string, edit: (record: Record<string, unknown>) => void): string => {
+    const doc = JSON.parse(probeModelText) as { skins: Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }> };
+    for (const skin of doc.skins) if (skin.attachments[slot] !== undefined) edit(skin.attachments[slot].a);
+    return JSON.stringify(doc);
+  };
+  /** The core's vertex reading, planted: the stored numbers read as the doubles the text spells — the reading the float32 measurement rejects. */
+  const asDoubles: VertexPoser = (v, bone, world) => {
+    const out: number[] = [];
+    if (!v.weighted) {
+      for (let i = 0; i + 1 < v.xy.length; i += 2) out.push(v.xy[i] * bone.a + v.xy[i + 1] * bone.b + bone.worldX, v.xy[i] * bone.c + v.xy[i + 1] * bone.d + bone.worldY);
+      return out;
+    }
+    for (const influences of v.bindings) {
+      let wx = 0;
+      let wy = 0;
+      for (const b of influences) {
+        const t = world.get(b.bone) ?? bone;
+        wx += (b.x * t.a + b.y * t.b + t.worldX) * b.weight;
+        wy += (b.x * t.c + b.y * t.d + t.worldY) * b.weight;
+      }
+      out.push(wx, wy);
+    }
+    return out;
+  };
+  /** The core's vertex reading, planted: every weighted vertex's first binding's weight scaled by 1.25. */
+  const scaledWeight: VertexPoser = (vertices, bone, world) =>
+    worldVertices(vertices.weighted ? { weighted: true, bindings: vertices.bindings.map((v) => v.map((b, j) => (j === 0 ? { ...b, weight: b.weight * 1.25 } : b))) } : vertices, bone, world);
+  /** The core's region corners, planted: the four corners rotated one place (upper-left first). */
+  const rotatedCorners: CorePlant['region'] = (region, bone) => {
+    const c = regionCorners(region, bone);
+    return [...c.slice(2), ...c.slice(0, 2)];
+  };
+
+  // --- CO15: readModel reads each record's geometry and refuses each plant by name --
+  {
+    const probes: string[] = [];
+    const read = coreRefusal(probeModelText);
+    if (read !== '') probes.push(`the probe's model was refused: ${read}`);
+    const at = (slot: string, skin = 'default'): string => `skins[${skin === 'default' ? 0 : 1}] "${skin}".attachments["${slot}"]["a"]`;
+    const plants: Array<[string, string, string]> = [
+      ['a binding naming no bone', probeWith('weighted', (r) => ((r.vertices as { bindings: Array<Array<Record<string, unknown>>> }).bindings[1][0].bone = 'nowhere')), `${at('weighted')}.vertices.bindings[1][0]: bone "nowhere" is not a bone of this document`],
+      ['a weight spelled as a string', probeWith('weighted', (r) => ((r.vertices as { bindings: Array<Array<Record<string, unknown>>> }).bindings[0][2].weight = '0.3')), `${at('weighted')}.vertices.bindings[0][2]: weight is "0.3", not a finite number`],
+      ['a vertex with no binding', probeWith('weighted', (r) => ((r.vertices as { bindings: unknown[][] }).bindings[2] = [])), `${at('weighted')}.vertices.bindings[2] is not a non-empty list of bindings`],
+      ['an odd run of coordinates', probeWith('unweighted', (r) => ((r.vertices as { xy: number[] }).xy = [0, 1, 2])), `${at('unweighted')}.vertices.xy is not an even-length list of finite numbers`],
+      ['a region carrying neither a rectangle nor a sequence', probeWith('trimmed', (r) => delete r.atlas), `${at('trimmed')}: the region carries neither an atlas rectangle nor a sequence`],
+      ['a region carrying both', probeWith('sequenced', (r) => (r.atlas = trimmedRect)), `${at('sequenced')}: the region carries both an atlas rectangle and a sequence`],
+      ['a sequence one rectangle short', probeWith('sequenced', (r) => (r.sequence as { atlas: unknown[] }).atlas.pop()), `${at('sequenced')}.sequence: atlas is not a list of 3 rectangle(s), one per frame`],
+      ['a setup frame past the last', probeWith('sequenced', (r) => ((r.sequence as Record<string, unknown>).setup = 3)), `${at('sequenced')}.sequence: setup is 3, not a frame of the 3`],
+      ['a frame rectangle missing a field', probeWith('sequenced', (r) => delete (r.sequence as { atlas: Array<Record<string, unknown>> }).atlas[1].offsetX), `${at('sequenced')}.sequence.atlas[1]: offsetX is absent, not a finite number`],
+      ['a linked mesh whose source is not in its slot', probeWith('linked', (r) => (r.source = 'b')), `${at('linked', 'other')}: the linked mesh's source "b" is not in skin "default" slot "weighted"`],
+      ['a linked mesh whose source is a region', probeWith('linked', (r) => (r.slot = 'mirror')), `${at('linked', 'other')}: the linked mesh's source "a" in skin "default" slot "mirror" is a region, not a mesh`],
+      ['a linked mesh naming no skin', probeWith('linked', (r) => (r.skin = 'nowhere')), `the linked mesh's skin "nowhere" is not a skin of this document`],
+      ['a clip ending at no slot', probeWith('clipEnds', (r) => (r.end = 'nowhere')), `${at('clipEnds')}: end is "nowhere", not a slot of this document`],
+    ];
+    for (const [label, text, expected] of plants) {
+      const refusal = coreRefusal(text);
+      if (!refusal.includes(expected)) probes.push(`${label}: ${refusal === '' ? 'read' : `refused as "${refusal}"`}, not naming "${expected}"`);
+    }
+    const nulled = coreRefusal(probeWith('trimmed', (r) => (r.atlas = null)));
+    if (nulled !== '') probes.push(`a region whose rectangle is null — the model's statement that the build had none (MG06) — was refused: ${nulled}`);
+    const ok = probes.length === 0;
+    say(
+      'CO15_READ_MODEL_READS_EACH_RECORDS_GEOMETRY_AND_REFUSES_EACH_PLANT_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `the probe's model read, ${probeSlots.length} slots of every kind; ${plants.length} plants — a binding naming no bone, a string weight, a vertex with no binding, an odd coordinate run, a region with neither a rectangle nor a sequence and one with both, a sequence a rectangle short, a setup frame past the last, a frame missing a field, a linked mesh whose source is missing, is a region, or names no skin, and a clip ending at no slot — each refused naming its path; a null rectangle read`),
+      'issue #931: the vertices read every number of a record\'s geometry, so the reader holds each one to what the writer writes (`attachmentOf` in src/model.ts refuses a region carrying neither or both) and resolves every name — a binding\'s bone, a linked mesh\'s source, a clip\'s end — refusing a miss by name rather than posing around it',
+    );
+  }
+
+  const attachmentsCompared = rows.filter((r) => r.blocks !== null && r.blocks['setup.attachments'].verdict !== 'SKIP');
+
+  // --- CO16: every recipe without a constraint poses its setup attachments as spine-core does --
+  {
+    const probes: string[] = [];
+    let vertices = 0;
+    let rowsHeld = 0;
+    const offHierarchy: string[] = [];
+    for (const r of rows) {
+      for (const block of ['setup.attachments', 'setup.clips'] as const) {
+        const v = r.blocks?.[block];
+        if (v === undefined || v.verdict === 'DIFF') probes.push(`${r.name}: ${block} ${v?.verdict ?? r.verdict} — ${v?.why ?? r.why}`);
+      }
+    }
+    for (const b of built) {
+      const row = rows.find((r) => r.name === b.name);
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      if (row === undefined || row.blocks === null || !existsSync(path)) continue;
+      const model = readModel(readFileSync(path, 'utf8'), path);
+      const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), ONE);
+      const skipped = row.blocks['setup.attachments'].verdict === 'SKIP';
+      const upstream = row.blocks['setup.bones'].verdict === 'SKIP' || row.blocks['setup.slots'].verdict === 'SKIP';
+      if (skipped !== upstream) probes.push(`${b.name}: setup.attachments ${row.blocks['setup.attachments'].verdict} while bones ${row.blocks['setup.bones'].verdict} and slots ${row.blocks['setup.slots'].verdict}`);
+      if (skipped) {
+        // By construct: posed off the hierarchy alone — the constraints dropped from a copy — the vertices move.
+        const loose = poseSetup({ ...model, constraints: [] }).setup;
+        const absent: Array<[string, string]> = [...NOT_ADMITTED.map(([k, w]): [string, string] => [k, w]), ['setup.bones', 'left out'], ['setup.slots', 'left out'], ['setup.clips', 'left out']];
+        // The animations are left out too (issue #936's blocks): this judges the setup attachments alone.
+        const c = compareDumps(spine, { ...coreDump(model, ONE), absent, setup: { bones: null, slots: null, drawOrder: null, attachments: loose.attachments, clips: null }, animations: null }, { xy: 0, m: 0 });
+        if (c.identical) probes.push(`${b.name}: posed off its hierarchy alone its attachments read IDENTICAL, so skipping it holds back nothing`);
+        else offHierarchy.push(`${b.name.replace(/^examples\/[^/]+\//, '')} ${c.worstVertex.toFixed(6)}`);
+        continue;
+      }
+      const core = coreDump(model, ONE);
+      const order = JSON.stringify((core.setup.attachments ?? []).map((x) => x[0])) === JSON.stringify(spine.setup.attachments.map((x) => x[0]));
+      if (!order) probes.push(`${b.name}: the core's attachment rows are not in spine-core's draw order`);
+      const alone = compareDumps(spine, { ...core, absent: [...(core.absent ?? []), ['setup.bones', 'left out'], ['setup.slots', 'left out']], setup: { ...core.setup, bones: null, slots: null }, animations: null }, { xy: 0, m: 0 });
+      if (!alone.identical) probes.push(`${b.name}: attachments and clips at tolerance 0 — ${alone.first}`);
+      else rowsHeld++;
+      vertices += alone.rows[0]?.vertices ?? 0;
+    }
+    if (attachmentsCompared.length === 0) probes.push('no row\'s setup.attachments was compared, so the gate held nothing');
+    const held = probes.length === 0;
+    say(
+      'CO16_EVERY_RECIPE_WITHOUT_A_CONSTRAINT_POSES_ITS_SETUP_ATTACHMENTS_AS_SPINE_CORE_DOES',
+      held,
+      probeDetail(held, probes, `${gateVerdict(rows).line}: ${vertices} vertices over ${rowsHeld} recipe(s) exact at tolerance 0, in spine-core's draw order; the skipped rows exactly the ones whose bones or slots the core leaves out, and each of them posed off its hierarchy alone moves its vertices (worst Δ: ${offHierarchy.join(', ')}), so the skip holds back a real difference`),
+      'issue #931, the third construct of #380 §5 admitted: every region\'s corners from its record and its carried trim, every mesh\'s vertices from its bindings by name through `Math.fround`, against spine-core\'s dump of the same build. A rig with a constraint is not judged: its vertices move with its bones, and those are the constraints\' admission',
+    );
+    for (const line of attachmentReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
+  }
+
+  // --- CO17: a hand-written probe poses every attachment case the corpus does not reach as spine-core does --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    try {
+      const spine = dumpSkeleton(loadOracleData(probeSkeleton, probeAtlas, 'the attachment probe'), ONE);
+      const model = readModel(probeModelText, 'the attachment probe');
+      const core = coreDump(model, ONE);
+      const c = compareDumps(spine, core, { xy: 0, m: 0 });
+      if (!c.identical || c.skipped.some((x) => x.startsWith('setup.bones') || x.startsWith('setup.slots') || x.startsWith('setup.attachments') || x.startsWith('setup.clips'))) probes.push(`the probe read ${c.identical ? 'IDENTICAL' : `DIFF (${c.first})`}, skipping [${c.skipped.map((x) => x.slice(0, x.indexOf(':'))).join(', ')}]`);
+      const drawn = (core.setup.attachments ?? []).map((x) => `${x[0]}:${x[2]}`);
+      const wantDrawn = ['weighted:mesh', 'unweighted:mesh', 'trimmed:region', 'mirror:region', 'sequenced:region', 'linked:mesh'];
+      if (JSON.stringify(drawn) !== JSON.stringify(wantDrawn) || JSON.stringify(spine.setup.attachments.map((x) => `${x[0]}:${x[2]}`)) !== JSON.stringify(wantDrawn)) probes.push(`the attachment rows are [${drawn.join(', ')}] in the core and [${spine.setup.attachments.map((x) => `${x[0]}:${x[2]}`).join(', ')}] in spine-core, not [${wantDrawn.join(', ')}] — a bounding box has no row in either`);
+      const clips = spine.setup.clips.map((x) => `${x[0]}>${x[2]}`);
+      if (JSON.stringify(clips) !== JSON.stringify(['clipEnds>unweighted', 'clipWeighted>null'])) probes.push(`spine-core's clips are [${clips.join(', ')}]`);
+      // The measurements the rules stand on, each turned into a reading of the runtime's own dump.
+      const seqAt = (setup: number): number[] => dumpSkeleton(loadOracleData(probeSkeleton.replace('"setup":2', `"setup":${setup}`), probeAtlas, 'the sequence probe'), ONE).setup.attachments.find((x) => x[0] === 'sequenced')?.[3] as number[];
+      const distinct = new Set([0, 1, 2].map((i) => JSON.stringify(seqAt(i)))).size;
+      if (distinct !== 3) probes.push(`the three setup frames drew ${distinct} distinct corner sets, so the probe does not tell the frame`);
+      const readings: Array<[string, CorePlant | string, string[]]> = [
+        ['the vertices read as doubles', { vertices: asDoubles }, ['attachment "weighted/a"', 'attachment "unweighted/a"', 'attachment "linked/a"', 'clip "clipEnds/a"', 'clip "clipWeighted/a"']],
+        ['the trim ignored', probeWith('trimmed', (r) => (r.atlas = { ...trimmedRect, offsetX: 0, offsetY: 0, originalWidth: trimmedRect.width, originalHeight: trimmedRect.height })), ['attachment "trimmed/a"']],
+        ['the sequence\'s first frame drawn', probeWith('sequenced', (r) => ((r.sequence as Record<string, unknown>).setup = 0)), ['attachment "sequenced/a"']],
+        ['a binding\'s weight scaled', { vertices: scaledWeight }, ['attachment "weighted/a"', 'attachment "linked/a"', 'clip "clipWeighted/a"']],
+        ['the corners rotated one place', { region: rotatedCorners }, ['attachment "trimmed/a"', 'attachment "mirror/a"', 'attachment "sequenced/a"']],
+      ];
+      for (const [label, plant, expected] of readings) {
+        const other = typeof plant === 'string' ? coreDump(readModel(plant), ONE) : coreDump(model, ONE, plant);
+        // Every slot the wrong reading reaches is named, and no other.
+        const p = compareDumps(spine, other, { xy: 0, m: 0 });
+        const named = [...new Set(p.rows.flatMap((r) => r.findings).map((f) => /(?:attachment|clip) "[^"]+"/.exec(f)?.[0] ?? f))].sort();
+        if (JSON.stringify(named) !== JSON.stringify([...expected].sort())) probes.push(`${label}: named [${named.join(', ')}], not [${expected.join(', ')}]`);
+      }
+      // A null rectangle: the block is left out naming the slot, and the clips are still posed.
+      const nulled = coreDump(readModel(probeWith('mirror', (r) => (r.atlas = null))), ONE);
+      const why = nulled.absent?.find((x) => x[0] === 'setup.attachments')?.[1] ?? '';
+      if (nulled.setup.attachments !== null || !why.includes('slot "mirror" shows region "a"') || !why.includes('atlas: null') || nulled.setup.clips === null) probes.push(`a null rectangle: attachments ${nulled.setup.attachments === null ? 'left out' : 'posed'} naming ${JSON.stringify(why)}, clips ${nulled.setup.clips === null ? 'left out' : 'posed'}`);
+      detail = `${probeBones.length} bones rotated, scaled, sheared and reflecting, and ${probeSlots.length} slots — a mesh weighted over three of them, an unweighted mesh, a region trimmed and turned on a scaled page, a region trimmed under a negative scale on a reflected bone, a three-frame sequence drawing frame 2, a linked mesh in another skin sourced from another slot, a clip ending at a slot and a weighted one ending nowhere, a bounding box with no row — every coordinate spelled with non-float32 decimals, exact at tolerance 0 against spine-core: ${c.rows[0]?.vertices ?? 0} vertices; each of ${readings.length} wrong readings named at its slot — the vertices as doubles, the trim ignored, the first frame, a weight scaled, the corners rotated; a null rectangle leaves the block out naming "mirror" and the clips posed`;
+    } catch (err) {
+      probes.push(`the probe did not load or pose: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CO17_A_HAND_WRITTEN_PROBE_POSES_EVERY_ATTACHMENT_CASE_THE_CORPUS_DOES_NOT_REACH_AS_SPINE_CORE_DOES',
+      held,
+      probeDetail(held, probes, detail),
+      'issue #931: the corpus reaches weighted meshes on one compared row and meshes bound to several bones, a reflecting or shearing binding, a trim, a sequence, a linked mesh and a clip on none, so each rule is held on a skeleton written here, both as the Spine file and as the model, and posed by the runtime — with the reading each measurement rejected shown to go red',
+    );
+  }
+
+  // --- CO18: a scaled weight and rotated corners, each in a copy of the core, turn exactly the rows using them red --
+  {
+    const probes: string[] = [];
+    const judged = built.filter((b) => attachmentsCompared.some((r) => r.name === b.name));
+    const shows = (b: BuiltRow, test: (kind: string, weightedMesh: boolean) => boolean): boolean => {
+      const doc = readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'));
+      return doc.slots.some((slot) => {
+        const s = shownAttachment(doc, slot);
+        const g = s === null || 'conflict' in s ? undefined : s.record.geometry;
+        return g !== undefined && test(g.kind, g.kind === 'mesh' && g.vertices.weighted);
+      });
+    };
+    const reached: string[] = [];
+    const holes: string[] = [];
+    const plants: Array<[string, CorePlant, (b: BuiltRow) => boolean]> = [
+      ['a binding\'s weight scaled', { vertices: scaledWeight }, (b) => shows(b, (_k, w) => w)],
+      ['the corners rotated one place', { region: rotatedCorners }, (b) => shows(b, (k) => k === 'region')],
+    ];
+    for (const [label, plant, uses] of plants) {
+      const using = judged.filter(uses).map((b) => b.name);
+      const red = gateBuilt(judged, plant);
+      const turned = red.filter((r) => r.blocks?.['setup.attachments'].verdict === 'DIFF').map((r) => r.name);
+      const others = red.filter((r) => r.blocks?.['setup.bones'].verdict === 'DIFF' || r.blocks?.['setup.slots'].verdict === 'DIFF' || r.blocks?.['setup.clips'].verdict === 'DIFF').map((r) => r.name);
+      if (JSON.stringify(turned) !== JSON.stringify(using)) probes.push(`${label} turned [${turned.join(', ')}] red on setup.attachments; the rows using it are [${using.join(', ')}]`);
+      if (others.length > 0) probes.push(`${label} turned another block red on [${others.join(', ')}]`);
+      if (using.length === 0) holes.push(label);
+      reached.push(`${label} ${turned.length}/${judged.length}`);
+    }
+    const held = probes.length === 0 && judged.length > 0;
+    say(
+      'CO18_A_SCALED_WEIGHT_AND_ROTATED_CORNERS_IN_A_COPY_OF_THE_CORE_TURN_EXACTLY_THE_ROWS_USING_THEM_RED',
+      held,
+      probeDetail(held, judged.length === 0 ? [...probes, 'no row\'s attachments were compared'] : probes, `each plant passed as a copy, never in src/: rows red on setup.attachments of those compared — ${reached.join(', ')} — exactly the rows showing a weighted mesh, and the rows showing a region; setup.bones, setup.slots and setup.clips untouched on every row`),
+      'issue #931\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the weights or the corner order at all',
+    );
+    for (const label of holes) console.log(`          ⚠️ HOLE: no compared recipe has a row the plant "${label}" reaches, so it has no corpus row to turn red — CO17's probe is the only reading of it`);
+  }
+
   // ===========================================================================
   // Construct 4 (issue #936): the bone and slot timelines at a sample time.
   // Every measurement below is taken by posing a skeleton written here through
@@ -67099,11 +67368,12 @@ function runCoreSuite(): number {
    * slot, and one animation `a` keyed per bone and per slot. Spine's key and the
    * model's key are one object: the model's channels are named as the format's.
    */
+  // Each region record states the 4x4 untrimmed rectangle `atlasOf` gives it, as `readModel` requires since issue #931.
   const timelinePair = (parts: { bones: Array<Record<string, unknown>>; slots?: Array<Record<string, unknown>>; regions?: Record<string, string[]>; bones_?: Keyed; slotKeys?: Keyed; events?: Array<Record<string, unknown>> }): { spine: string; model: string; atlas: string } => {
     const slots = parts.slots ?? [];
     const regions = parts.regions ?? {};
     const skinTable = (kind: boolean): Record<string, Record<string, Record<string, unknown>>> =>
-      Object.fromEntries(Object.entries(regions).map(([slot, names]) => [slot, Object.fromEntries(names.map((n) => [n, kind ? { kind: 'region', width: 4, height: 4 } : { width: 4, height: 4 }]))]));
+      Object.fromEntries(Object.entries(regions).map(([slot, names]) => [slot, Object.fromEntries(names.map((n) => [n, kind ? { kind: 'region', width: 4, height: 4, atlas: UNTRIMMED4 } : { width: 4, height: 4 }]))]));
     const names = [...new Set(Object.values(regions).flat())];
     const spine = {
       skeleton: { spine: '4.3.13' },
@@ -83392,7 +83662,15 @@ function main(): void {
       'every channel to the runtime at tolerance zero; several skins on one placeholder shown to be the Spine ' +
       'file\'s order, which the model does not hold, and a disagreement left out by name; a slider shown to pose ' +
       'the slots its animation keys; and a channel misread and a wrong skin, each in a copy, turning exactly the ' +
-      'rows using them red; then construct four, issue #936, every animation\'s bone and slot timelines at the ' +
+      'rows using them red; then every drawn attachment\'s world vertices at the setup pose, issue #931: the reader ' +
+      'holding every binding, link, clip end and region rectangle to what the writer writes; every recipe without ' +
+      'a constraint posing its regions\' corners, its meshes\' vertices and its clipping polygons exactly as ' +
+      'spine-core does, in its draw order, the skipped rows shown to move when posed off their hierarchy; a ' +
+      'hand-written probe holding a mesh weighted over three sheared and reflecting bones, a trimmed region on a ' +
+      'turned rectangle and a scaled page, a mirrored region, a sequence\'s setup frame, a linked mesh and both ' +
+      'kinds of clip to the runtime at tolerance zero, with the double reading, the ignored trim and the first ' +
+      'frame each named red and a null rectangle left out by name; and a scaled weight and rotated corners, each ' +
+      'in a copy, turning exactly the rows using them red; then construct four, issue #936, every animation\'s bone and slot timelines at the ' +
       'oracle\'s sample times: the reader holding every key to the writer\'s channels and spellings and refusing ' +
       'what the runtime cannot apply; the Bézier shown to be the runtime\'s ten-piece polyline by forward ' +
       'differences over the numbers as stated, with every rejected reading held missing; the key search and each ' +

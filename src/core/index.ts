@@ -7,16 +7,20 @@
  *
  * ## What it poses, and what it does not yet
  *
- * Two constructs are here, in the runtime's own order (§5 of the design on
+ * Three constructs are here, in the runtime's own order (§5 of the design on
  * issue #380): **the setup pose of every bone** — its world origin and matrix,
- * its active flag and its parent (issue #925) — and **the slots at the setup
+ * its active flag and its parent (issue #925) — **the slots at the setup
  * pose** — what each shows, its colour and dark colour, and the region path
- * the shown attachment names (issue #928, below). Both are rounded as the
- * oracle rounds (`gridRound`). A third, **every animation's bone and slot
- * timelines at the oracle's sample times** (issue #936), is its own module,
- * `./animation.ts`, which this reader calls for each animation record. Every
- * other block of the oracle's document is a construct not yet admitted
- * (attachments, the draw order, deform, events, constraints, clipping), and
+ * the shown attachment names (issue #928, below) — and **every drawn
+ * attachment's world vertices at the setup pose** — a region's corners, a
+ * mesh's vertices and a clipping polygon (issue #931, `./vertices.ts`, whose
+ * header states each measured rule). All are rounded as the oracle rounds
+ * (`gridRound`). A fourth, **every animation's bone and slot timelines at the
+ * oracle's sample times** (issue #936), is its own module, `./animation.ts`,
+ * which this reader calls for each animation record. Every other block of the
+ * oracle's document is a construct not yet admitted (the draw order, deform,
+ * events, constraints, path attachments, and the attachments and clips at a
+ * sample), and
  * the core says so by name (`NOT_ADMITTED`) rather than writing a value for
  * it.
  *
@@ -143,9 +147,10 @@
  * child process, no file system — `readModel` takes the document's TEXT — and
  * nothing from the Spine runtime package, as a value or as a type.
  */
-import type { ModelAtlasRect, ModelBone, ModelSlot, SkinTableEntry } from '../model.ts';
+import type { ModelAtlasRect, ModelBone, ModelSlot, ModelVertices, SkinTableEntry } from '../model.ts';
 import { worldTransforms, type CoreWorld } from './world.ts';
 import { readAnimationTimelines, type CoreAnimationTimelines } from './animation.ts';
+import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type RegionPoser, type ShownGeometry, type VertexPoser } from './vertices.ts';
 
 /** The document spec this reader takes. */
 export const CORE_DOCUMENT_SPEC = 'rigc-compiled/1';
@@ -201,16 +206,16 @@ export const CORE_ATLAS_RECT_FIELDS = ['width', 'height', 'offsetX', 'offsetY', 
 /**
  * One attachment record, as far as the slots read it: its kind, and its own
  * name and region path where stated — and a region's atlas rectangle where the
- * record carries one, `null` where the build had no source for it (issue #935).
- * Nothing here poses a region yet; the rectangle is read so the construct that
- * does (issue #931) finds it checked. A sequence's per-frame rectangles are not
- * read: no construct here reads a sequence.
+ * record carries one, `null` where the build had no source for it (issue #935);
+ * and, for the world vertices (issue #931, `./vertices.ts`), the geometry the
+ * record carries, checked field by field (`readGeometry`).
  */
 export interface CoreAttachment {
   kind: SkinTableEntry['kind'];
   name?: string;
   path?: string;
   atlas?: ModelAtlasRect | null;
+  geometry?: CoreGeometry;
 }
 
 /** One skin, as far as these constructs read it: its name, the bones it activates, and its table — slot, then placeholder. */
@@ -340,7 +345,7 @@ function readSlots(value: unknown, bones: ReadonlySet<string>, problems: string[
   return out;
 }
 
-function readAttachments(value: Record<string, unknown>, slots: ReadonlySet<string>, label: string, problems: string[]): Record<string, Record<string, CoreAttachment>> {
+function readAttachments(value: Record<string, unknown>, bones: ReadonlySet<string>, slots: ReadonlySet<string>, label: string, problems: string[]): Record<string, Record<string, CoreAttachment>> {
   const out: Record<string, Record<string, CoreAttachment>> = {};
   for (const [slot, table] of Object.entries(value)) {
     const at = `${label}.attachments["${slot}"]`;
@@ -374,6 +379,8 @@ function readAttachments(value: Record<string, unknown>, slots: ReadonlySet<stri
         const rect = readAtlasRect(raw.atlas, `${where}.atlas`, problems);
         if (rect !== undefined) record.atlas = rect;
       }
+      const geometry = readGeometry(raw, kind, where, bones, slots, problems);
+      if (geometry !== undefined) record.geometry = geometry;
       entries[placeholder] = record;
     }
     out[slot] = entries;
@@ -424,7 +431,7 @@ function readSkins(value: unknown, bones: ReadonlySet<string>, slots: ReadonlySe
     if (!isRecord(raw.constraints)) problems.push(`${label}: constraints is not an object`);
     let attachments: Record<string, Record<string, CoreAttachment>> = {};
     if (!isRecord(raw.attachments)) problems.push(`${label}: attachments is not an object`);
-    else attachments = readAttachments(raw.attachments, slots, label, problems);
+    else attachments = readAttachments(raw.attachments, bones, slots, label, problems);
     out.push({ name: typeof raw.name === 'string' ? raw.name : '', bones: members, attachments });
   });
   return out;
@@ -510,10 +517,37 @@ export function readModel(text: string, where = 'the model document'): CompiledD
   const slots = readSlots(value.slots, names, problems);
   const slotNames = new Set(slots.map((x) => x.name));
   const skins = readSkins(value.skins, names, slotNames, problems);
+  problems.push(...linkProblems(skins));
   const animations = readAnimations(value.animations, names, slots, problems);
   const constraints = readConstraints(value.constraints, new Set(animations.map((a) => a.name)), problems);
   if (problems.length > 0) throw new CoreInputError(`${where}: ${problems.length} problem(s): ${problems.join('; ')}`);
   return { spec: CORE_DOCUMENT_SPEC, bones, slots, skins, constraints, animations };
+}
+
+/** Every linked mesh whose `skin`, `slot` and `source` do not resolve to a mesh record, named — the runtime refuses such a file too. */
+function linkProblems(skins: readonly CoreSkin[]): string[] {
+  const out: string[] = [];
+  skins.forEach((skin, i) => {
+    for (const [slot, table] of Object.entries(skin.attachments)) {
+      for (const [placeholder, record] of Object.entries(table)) {
+        const g = record.geometry;
+        if (g?.kind !== 'linkedmesh') continue;
+        const why = sourceProblem(skins, g.skin, g.slot, g.source);
+        if (why !== null) out.push(`skins[${i}] "${skin.name}".attachments["${slot}"]["${placeholder}"]: ${why}`);
+      }
+    }
+  });
+  return out;
+}
+
+/** Why a linked mesh's source does not resolve, or null when it is a mesh record. */
+function sourceProblem(skins: readonly CoreSkin[], skin: string, slot: string, source: string): string | null {
+  const found = skins.find((k) => k.name === skin);
+  if (found === undefined) return `the linked mesh's skin "${skin}" is not a skin of this document`;
+  const record = found.attachments[slot]?.[source];
+  if (record === undefined) return `the linked mesh's source "${source}" is not in skin "${skin}" slot "${slot}"`;
+  if (record.kind !== 'mesh') return `the linked mesh's source "${source}" in skin "${skin}" slot "${slot}" is a ${record.kind}, not a mesh`;
+  return null;
 }
 
 /**
@@ -566,29 +600,32 @@ export interface CorePlant {
   evaluate?: SetupEvaluator;
   shown?: ShownResolver;
   colour?: ColourReader;
+  /** A region's corners (`regionCorners` in `./vertices.ts`). */
+  region?: RegionPoser;
+  /** A vertex array's world positions (`worldVertices` in `./vertices.ts`). */
+  vertices?: VertexPoser;
 }
 
 /**
  * The blocks of the oracle's document the core does not produce, each with the
  * construct that has to be admitted first (§5 of the design on issue #380), in the
- * document's key order. `setup.bones` and `setup.slots` are not here: each is
- * produced, or absent for the reason `poseSetup` gives.
+ * document's key order. `setup.bones`, `setup.slots`, `setup.attachments` and
+ * `setup.clips` are not here: each is produced, or absent for the reason
+ * `poseSetup` gives.
  */
 export const NOT_ADMITTED: ReadonlyArray<readonly [string, string]> = [
   ['physics', 'physics constraint parameters: constraints are not admitted (item 5)'],
   ['paths', 'path constraint parameters: constraints are not admitted (item 5)'],
   ['pathAttachments', 'path attachments: attachments are not admitted (item 3)'],
   ['setup.drawOrder', 'the draw order: not admitted (item 2)'],
-  ['setup.attachments', 'attachment world vertices: not admitted (item 3)'],
-  ['setup.clips', 'clipping polygons: not admitted (items 3 and 6)'],
   ['animations.drawOrder', 'the draw order at a sample: draw-order timelines are not admitted (items 2 and 4)'],
   ['animations.attachments', 'attachment world vertices at a sample: attachments and deform timelines are not admitted (items 3 and 4)'],
   ['animations.clips', 'clipping polygons at a sample: not admitted (items 3 and 6)'],
   ['animations.events', 'events fired: event timelines are not admitted (item 4)'],
 ];
 
-/** The two blocks the core poses, in the document's order: after `pathAttachments`, before `setup.drawOrder`. */
-const POSED_BLOCKS = ['setup.bones', 'setup.slots'] as const;
+/** The blocks the core poses, in the document's order: bones and slots after `pathAttachments`, attachments and clips after `setup.drawOrder`. */
+const POSED_BLOCKS = ['setup.bones', 'setup.slots', 'setup.attachments', 'setup.clips'] as const;
 
 /** Bones active under every skin applied at once — the rule measured in the header. */
 export function activeBones(doc: CompiledDocument): Set<string> {
@@ -637,13 +674,13 @@ export function shownAttachment(doc: CompiledDocument, slot: ModelSlot): ShownRe
   return agree ? filling[0] : { conflict: rows.map((r) => ({ skin: r.skin, shown: r.name, path: r.path })) };
 }
 
-/** The oracle's `setup` block as the core writes it: bones and slots posed or absent, every other block absent. */
+/** The oracle's `setup` block as the core writes it: bones, slots, attachments and clips posed or absent, the draw order absent. */
 export interface CoreSetup {
   bones: CoreBoneRow[] | null;
   slots: CoreSlotRow[] | null;
   drawOrder: null;
-  attachments: null;
-  clips: null;
+  attachments: CoreAttachmentRow[] | null;
+  clips: CoreClipRow[] | null;
 }
 
 /**
@@ -652,7 +689,11 @@ export interface CoreSetup {
  * in document order). Bones are absent when the document declares a
  * constraint (the header's ⚠️), with the kinds and counts named; slots are
  * absent when a slot's setup placeholder is filled by skins that disagree
- * (the slots' ⚠️), with each such slot named.
+ * (the slots' ⚠️), with each such slot named. The attachments' world vertices
+ * and the clipping polygons (`./vertices.ts`, issue #931) are absent when
+ * either of those is — they go through the bones' world matrices and follow
+ * what each slot shows — and the attachments also when a shown region's atlas
+ * rectangle is `null`, every such slot named.
  */
 export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup: CoreSetup; absent: Array<[string, string]> } {
   const evaluate = plant.evaluate ?? worldTransforms;
@@ -692,14 +733,37 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
     ? null
     : `${conflicts.join('; ')} — under --skin all the LAST of them in the Spine file's skin order wins, and that order is the emitter's (default first, the rest in the editor's order), not the model's; posing one skin at a time is not admitted`);
   const slots = slotsWhy === null ? slotRows : null;
-  // `NOT_ADMITTED` is in document order; the two posed blocks stand between `pathAttachments` and `setup.drawOrder`.
-  const why: Record<(typeof POSED_BLOCKS)[number], string | null> = { 'setup.bones': bonesWhy, 'setup.slots': slotsWhy };
+  const upstream = [bonesWhy === null ? null : `setup.bones is absent (${bonesWhy}), and every vertex goes through a bone's world matrix`, slotsWhy === null ? null : 'setup.slots is absent, so what a slot shows is not posed'].filter((x): x is string => x !== null);
+  let attachments: CoreAttachmentRow[] | null = null;
+  let clips: CoreClipRow[] | null = null;
+  let attachmentsWhy: string | null = upstream.length === 0 ? null : upstream.join('; ');
+  const clipsWhy = attachmentsWhy;
+  if (attachmentsWhy === null) {
+    const world = evaluate(doc.bones, activeBones(doc));
+    const shown: ShownGeometry[] = [];
+    for (const slot of doc.slots) {
+      const s = resolve(doc, slot);
+      if (s === null || 'conflict' in s || s.record.geometry === undefined) continue;
+      shown.push({ slot: slot.name, bone: slot.bone, name: shownRow(s).name, placeholder: s.placeholder, skin: s.skin, geometry: s.record.geometry });
+    }
+    const sourceOf = (skin: string, slot: string, source: string): ModelVertices | string => {
+      const g = doc.skins.find((k) => k.name === skin)?.attachments[slot]?.[source]?.geometry;
+      return g?.kind === 'mesh' ? g.vertices : (sourceProblem(doc.skins, skin, slot, source) ?? `the linked mesh's source "${source}" carries no vertices`);
+    };
+    const posed = poseGeometry(shown, world, sourceOf, gridRound, { region: plant.region, vertices: plant.vertices });
+    attachments = posed.attachments;
+    attachmentsWhy = posed.attachmentsWhy;
+    clips = posed.clips;
+  }
+  // `NOT_ADMITTED` is in document order; bones and slots stand before `setup.drawOrder`, attachments and clips after it.
+  const why: Record<(typeof POSED_BLOCKS)[number], string | null> = { 'setup.bones': bonesWhy, 'setup.slots': slotsWhy, 'setup.attachments': attachmentsWhy, 'setup.clips': clipsWhy };
   const absent: Array<[string, string]> = [];
   for (const [block, reason] of NOT_ADMITTED) {
-    if (block === 'setup.drawOrder') for (const posed of POSED_BLOCKS) if (why[posed] !== null) absent.push([posed, why[posed] as string]);
+    if (block === 'setup.drawOrder') for (const posed of ['setup.bones', 'setup.slots'] as const) if (why[posed] !== null) absent.push([posed, why[posed] as string]);
     absent.push([block, reason]);
+    if (block === 'setup.drawOrder') for (const posed of ['setup.attachments', 'setup.clips'] as const) if (why[posed] !== null) absent.push([posed, why[posed] as string]);
   }
-  return { setup: { bones, slots, drawOrder: null, attachments: null, clips: null }, absent };
+  return { setup: { bones, slots, drawOrder: null, attachments, clips }, absent };
 }
 
 /** Why the setup slots cannot be posed yet because a slider poses them, or null when no slider's animation keys a slot. */

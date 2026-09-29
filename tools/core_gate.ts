@@ -2,7 +2,8 @@
  * core_gate — the equivalence gate of issue #380 run over a corpus: every
  * recipe built through the CLI, its Spine build posed by spine-core and its
  * model document posed by rigc's own core, the two compared, and the census of
- * what the corpus reaches (issue #925, step 2a; the slots, issue #928).
+ * what the corpus reaches (issue #925, step 2a; the slots, issue #928; the
+ * attachments' world vertices and the clipping polygons, issue #931).
  *
  *   bun tools/core_gate.ts [--recipes <recipes.json>] [--root <dir>] [--work <dir>]
  *
@@ -20,15 +21,17 @@
  * `skeleton.json` + `skeleton.atlas` (spine-core) and `dump --core` of
  * `skeleton.model.json`, both under the default options (grid, nine samples,
  * every skin, no physics), then `compare`. Each block the core poses —
- * `setup.bones`, `setup.slots`, `animations.bones`, `animations.slots`
+ * `setup.bones`, `setup.slots`, `setup.attachments`, `setup.clips`,
+ * `animations.bones`, `animations.slots`
  * (`GATE_BLOCKS`) — is judged on its own, by a `compare` of the spine-core
  * dump against the core's with the other posed blocks left out, and reads:
  *
  *   - `IDENTICAL` — the block agrees;
  *   - `SKIP` — the core left the block out, with the construct it names (a
  *     declared constraint for the bones; a slider keying a slot, or skins
- *     disagreeing over a placeholder, for the slots), so the row holds nothing
- *     about it;
+ *     disagreeing over a placeholder, for the slots; either of those, or a
+ *     shown region whose atlas rectangle is `null`, for the attachments), so
+ *     the row holds nothing about it;
  *   - `DIFF` — with the first difference.
  *
  * The row's own verdict is `DIFF` when any block is (or the whole comparison
@@ -66,6 +69,18 @@
  * timelines of the groups construct 4 does not pose. A field no row whose
  * animation block was compared reaches is a HOLE, and the later groups'
  * timelines are a HOLE however many rows carry them.
+ *
+ * And one line per row for the attachments (`ATTACHMENT_CENSUS_FIELDS`, issue
+ * #931), each a count of slots whose setup attachment has it: a weighted mesh,
+ * a mesh bound to several bones, a mesh bound to a bone whose setup world
+ * matrix reflects or shears (off the spine-core dump), a linked mesh, a
+ * trimmed region, a region with non-unit scale or a rotation, a region under
+ * a negative scale or a reflecting bone, a region with a sequence, a region
+ * whose rectangle is `null`, a clipping polygon and one ending at a slot, a
+ * bounding box and a path attachment. Each field no row whose block was
+ * compared reaches is a HOLE; ⚠️ a bounding box and a path are HOLEs on every
+ * corpus, since the oracle's dump writes no vertices for either, and a trim
+ * is reached only from a pack that trims, which the public examples do not.
  *
  * Exit codes: 0 when every row is IDENTICAL or SKIP; 1 when any row is DIFF or
  * REFUSED; 2 on a bad input, by name. `tools/` is not `src/`: this file runs
@@ -114,8 +129,19 @@ export const SLOT_CENSUS_FIELDS = [
 export type SlotCensusField = (typeof SLOT_CENSUS_FIELDS)[number];
 export type SlotCensusRow = Record<SlotCensusField, number> & { slots: number };
 
+/**
+ * The attachments' census fields (issue #931), each a count of slots shown at
+ * setup, in the order its table prints them — the header's list.
+ */
+export const ATTACHMENT_CENSUS_FIELDS = [
+  'weightedMesh', 'multiBoneMesh', 'skewedBinding', 'linkedMesh', 'trimmedRegion', 'scaledOrTurnedRegion', 'mirroredRegion', 'sequenceRegion', 'nullAtlas',
+  'clipping', 'clipEnd', 'boundingbox', 'path',
+] as const;
+export type AttachmentCensusField = (typeof ATTACHMENT_CENSUS_FIELDS)[number];
+export type AttachmentCensusRow = Record<AttachmentCensusField, number>;
+
 /** The blocks the core poses, each judged on its own. */
-export const GATE_BLOCKS = ['setup.bones', 'setup.slots', 'animations.bones', 'animations.slots'] as const;
+export const GATE_BLOCKS = ['setup.bones', 'setup.slots', 'setup.attachments', 'setup.clips', 'animations.bones', 'animations.slots'] as const;
 export type GateBlock = (typeof GATE_BLOCKS)[number];
 
 /**
@@ -166,6 +192,10 @@ export interface GateRow {
   /** Per animation, each animation block's verdict; empty on a REFUSED row. */
   animations: AnimationVerdict[];
   animationCensus: AnimationCensusRow | null;
+  /** Attachment rows and vertices compared (the setup pose's attachments and clips, when carried). */
+  attachmentRows: number;
+  vertices: number;
+  attachmentCensus: AttachmentCensusRow | null;
 }
 
 /** A refusal about an input — the command exits 2 on it. */
@@ -262,6 +292,56 @@ export function animationCensusOf(modelText: string, options: OracleOptions = GA
   return out;
 }
 
+/**
+ * The attachments' census of one model document (issue #931) — the header's
+ * fields, each a count of slots whose setup attachment (resolved by the core's
+ * own `shownAttachment`) has it. `reflecting` and `sheared` are the bones
+ * whose setup world matrix reflects (determinant below 0) or shears (columns
+ * not at right angles), read off the spine-core dump.
+ */
+export function attachmentCensusOf(modelText: string, reflecting: ReadonlySet<string>, sheared: ReadonlySet<string>): AttachmentCensusRow {
+  const doc = readModel(modelText);
+  const out = Object.fromEntries(ATTACHMENT_CENSUS_FIELDS.map((f) => [f, 0])) as AttachmentCensusRow;
+  const skewed = (bone: string): boolean => reflecting.has(bone) || sheared.has(bone);
+  for (const slot of doc.slots) {
+    const shown = shownAttachment(doc, slot);
+    if (shown === null || 'conflict' in shown) continue;
+    const g = shown.record.geometry;
+    if (g === undefined) continue;
+    if (g.kind === 'boundingbox' || g.kind === 'path') out[g.kind]++;
+    if (g.kind === 'region') {
+      const r = g.region;
+      if (r.atlas === null) out.nullAtlas++;
+      else if (r.atlas.offsetX !== 0 || r.atlas.offsetY !== 0 || r.atlas.width !== r.atlas.originalWidth || r.atlas.height !== r.atlas.originalHeight) out.trimmedRegion++;
+      if ((r.scaleX ?? 1) !== 1 || (r.scaleY ?? 1) !== 1 || (r.rotation ?? 0) !== 0) out.scaledOrTurnedRegion++;
+      if ((r.scaleX ?? 1) < 0 || (r.scaleY ?? 1) < 0 || reflecting.has(slot.bone)) out.mirroredRegion++;
+      if (isSequence(modelText, shown.skin, slot.name, shown.placeholder)) out.sequenceRegion++;
+    }
+    let vertices = g.kind === 'mesh' || g.kind === 'clipping' ? g.vertices : null;
+    if (g.kind === 'linkedmesh') {
+      out.linkedMesh++;
+      const source = doc.skins.find((k) => k.name === g.skin)?.attachments[g.slot]?.[g.source]?.geometry;
+      vertices = source?.kind === 'mesh' ? source.vertices : null;
+    }
+    if (g.kind === 'clipping') {
+      out.clipping++;
+      if (g.end !== null) out.clipEnd++;
+    }
+    if (vertices === null || g.kind === 'clipping') continue;
+    const bones = vertices.weighted ? [...new Set(vertices.bindings.flatMap((v) => v.map((b) => b.bone)))] : [slot.bone];
+    if (vertices.weighted) out.weightedMesh++;
+    if (bones.length > 1) out.multiBoneMesh++;
+    if (bones.some(skewed)) out.skewedBinding++;
+  }
+  return out;
+}
+
+/** Whether the record at skin/slot/placeholder states a `sequence` — read off the text, since the core keeps only the setup frame's rectangle. */
+function isSequence(modelText: string, skin: string, slot: string, placeholder: string): boolean {
+  const doc = JSON.parse(modelText) as { skins: Array<{ name: string; attachments: Record<string, Record<string, { sequence?: unknown }>> }> };
+  return doc.skins.find((k) => k.name === skin)?.attachments[slot]?.[placeholder]?.sequence !== undefined;
+}
+
 /** The core's document with every posed block but `keep` left out — so a `compare` judges that block alone. */
 function only(core: OracleDocument, keep: GateBlock): OracleDocument {
   const drop = GATE_BLOCKS.filter((b) => b !== keep);
@@ -271,6 +351,8 @@ function only(core: OracleDocument, keep: GateBlock): OracleDocument {
   for (const block of drop) {
     if (block === 'setup.bones') setup.bones = null;
     else if (block === 'setup.slots') setup.slots = null;
+    else if (block === 'setup.attachments') setup.attachments = null;
+    else if (block === 'setup.clips') setup.clips = null;
     else {
       const field = block === 'animations.bones' ? 'bones' : 'slots';
       animations = (animations ?? []).map((a) => ({ ...a, samples: a.samples.map((x) => ({ ...x, [field]: null })) }));
@@ -287,7 +369,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   const atlas = join(outDir, 'skeleton.atlas');
   const model = join(outDir, MODEL_DOCUMENT_FILE);
   const missing = [skeleton, atlas, model].filter((p) => !existsSync(p));
-  const refused = (why: string): GateRow => ({ name, verdict: 'REFUSED', why, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, animations: [], animationCensus: null });
+  const refused = (why: string): GateRow => ({ name, verdict: 'REFUSED', why, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, attachmentRows: 0, vertices: 0, attachmentCensus: null, animations: [], animationCensus: null });
   if (missing.length > 0) return refused(`the build wrote no ${missing.map((p) => p.slice(outDir.length + 1)).join(', ')}`);
   let c: OracleComparison;
   let census: CensusRow;
@@ -296,6 +378,8 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   const blocks = {} as Record<GateBlock, { verdict: BlockVerdict; why: string | null }>;
   const perAnimation = new Map<string, AnimationVerdict>();
   let slotRows = 0;
+  let attachmentCensus: AttachmentCensusRow;
+  let attachmentRows = 0;
   try {
     const spine = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), GATE_OPTIONS);
     const modelText = readFileSync(model, 'utf8');
@@ -324,16 +408,20 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
     }
     for (const a of core.animations ?? []) if (!perAnimation.has(a.name)) perAnimation.set(a.name, { name: a.name, bones: 'SKIP', slots: 'SKIP', why: null });
     if (core.setup.slots !== null) slotRows = core.setup.slots.length;
+    attachmentRows = (core.setup.attachments?.length ?? 0) + (core.setup.clips?.length ?? 0);
     const reflecting = new Set(spine.setup.bones.filter((b) => b[3] !== null && b[4] !== null && b[5] !== null && b[6] !== null && b[3] * b[6] - b[4] * b[5] < 0).map((b) => b[0]));
     census = censusOf(modelText, reflecting);
     slotCensus = slotCensusOf(modelText);
     animationCensus = animationCensusOf(modelText);
+    const sheared = new Set(spine.setup.bones.filter((b) => b[3] !== null && b[4] !== null && b[5] !== null && b[6] !== null && Math.abs(b[3] * b[4] + b[5] * b[6]) > 1e-6).map((b) => b[0]));
+    attachmentCensus = attachmentCensusOf(modelText, reflecting, sheared);
   } catch (err) {
     if (err instanceof OracleInputError || err instanceof CoreInputError) return refused(err.message);
     throw err;
   }
   const animations = [...perAnimation.values()];
-  const base = { name, blocks, boneSamples: c.boneSamples, slotRows, worstXy: c.worstXy, worstM: c.worstM, census, slotCensus, animations, animationCensus };
+  const setupRow = c.rows.find((x) => x.name === '(setup)');
+  const base = { name, blocks, boneSamples: c.boneSamples, slotRows, worstXy: c.worstXy, worstM: c.worstM, census, slotCensus, attachmentRows, vertices: setupRow?.vertices ?? 0, attachmentCensus, animations, animationCensus };
   if (!c.identical) return { ...base, verdict: 'DIFF', why: c.first };
   const skipped = GATE_BLOCKS.filter((b) => blocks[b].verdict === 'SKIP');
   if (skipped.length > 0) return { ...base, verdict: 'SKIP', why: skipped.map((b) => `${b}: ${blocks[b].why}`).join(' | ') };
@@ -358,7 +446,7 @@ export function buildRecipes(recipes: readonly Recipe[], work: string, root: str
 export function gateBuilt(built: readonly BuiltRow[], plant: TimelinePlant = {}): GateRow[] {
   return built.map((r) =>
     r.exits.some((e) => e !== 0)
-      ? { name: r.name, verdict: 'REFUSED' as const, why: `the build chain exited ${JSON.stringify(r.exits)}`, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, animations: [], animationCensus: null }
+      ? { name: r.name, verdict: 'REFUSED' as const, why: `the build chain exited ${JSON.stringify(r.exits)}`, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, attachmentRows: 0, vertices: 0, attachmentCensus: null, animations: [], animationCensus: null }
       : gateBuild(r.name, r.out, plant),
   );
 }
@@ -455,6 +543,44 @@ export function slotReachLines(rows: readonly GateRow[]): string[] {
   return out;
 }
 
+/** The attachments' census as a markdown table, one row per recipe, then the totals. */
+export function attachmentCensusTable(rows: readonly GateRow[]): string[] {
+  const head = ['row', 'setup.attachments', 'setup.clips', ...ATTACHMENT_CENSUS_FIELDS];
+  const out = [`| ${head.join(' | ')} |`, `| ${head.map((_h, i) => (i < 3 ? '---' : '---:')).join(' | ')} |`];
+  const total: number[] = new Array<number>(ATTACHMENT_CENSUS_FIELDS.length).fill(0);
+  for (const row of rows) {
+    const c = row.attachmentCensus;
+    const values = c === null ? null : ATTACHMENT_CENSUS_FIELDS.map((f) => c[f]);
+    if (values !== null) values.forEach((v, i) => (total[i] += v));
+    out.push(`| ${row.name} | ${row.blocks?.['setup.attachments'].verdict ?? row.verdict} | ${row.blocks?.['setup.clips'].verdict ?? row.verdict} | ${(values ?? ATTACHMENT_CENSUS_FIELDS.map(() => '—')).map(String).join(' | ')} |`);
+  }
+  out.push(`| **all** | | | ${total.join(' | ')} |`);
+  return out;
+}
+
+/**
+ * Each attachment field the rows whose block was compared reach, and the
+ * HOLEs (issue #931): the clipping fields against `setup.clips`, the rest
+ * against `setup.attachments`. A bounding box and a path attachment are HOLEs
+ * however many rows show one — the oracle's dump writes no vertices for
+ * either — and a `null` rectangle is never compared: the core leaves the block
+ * out by name.
+ */
+export function attachmentReachLines(rows: readonly GateRow[]): string[] {
+  const out: string[] = [];
+  for (const f of ATTACHMENT_CENSUS_FIELDS) {
+    const block: GateBlock = f === 'clipping' || f === 'clipEnd' ? 'setup.clips' : 'setup.attachments';
+    const on = comparedOn(rows, block).filter((r) => (r.attachmentCensus?.[f] ?? 0) > 0).map((r) => r.name);
+    const anywhere = rows.filter((r) => (r.attachmentCensus?.[f] ?? 0) > 0).map((r) => r.name);
+    const elsewhere = anywhere.length > 0 ? ` (shown on ${anywhere.join(', ')})` : '';
+    if (f === 'boundingbox' || f === 'path') out.push(`  HOLE  attachments ${f}: the oracle's dump writes no vertices for it, so none was judged${elsewhere}`);
+    else if (f === 'nullAtlas') out.push(on.length > 0 ? `  REACH attachments ${f}: ${on.length} compared row(s)` : `  HOLE  attachments ${f}: no compared row carries one — the core leaves the block out by name where one is shown${elsewhere}`);
+    else if (f === 'trimmedRegion' && on.length === 0) out.push(`  HOLE  attachments ${f}: no compared row reaches it — only a pack that trims does (a private corpus under --recipes)${elsewhere}`);
+    else out.push(on.length > 0 ? `  REACH attachments ${f}: ${on.length} compared row(s)` : `  HOLE  attachments ${f}: no compared row reaches it${anywhere.length > 0 ? ` (only ${anywhere.join(', ')}, which the core skips)` : ''}`);
+  }
+  return out;
+}
+
 /** Each mode and field the compared rows reach, and the HOLEs — what no compared row reaches. */
 export function reachLines(rows: readonly GateRow[]): string[] {
   const compared = comparedOn(rows, 'setup.bones');
@@ -522,7 +648,7 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     for (const row of rows) {
       const blocks = row.blocks === null ? '' : ` [${GATE_BLOCKS.map((b) => `${b} ${row.blocks?.[b].verdict}`).join(', ')}]`;
       print(
-        `  ${row.verdict.padEnd(9)} ${row.name}${blocks}: ${row.boneSamples} bone-sample(s) and ${row.slotRows} slot row(s) compared, worst Δxy ${row.worstXy.toFixed(6)}, worst Δabcd ${row.worstM.toFixed(6)}` +
+        `  ${row.verdict.padEnd(9)} ${row.name}${blocks}: ${row.boneSamples} bone-sample(s), ${row.slotRows} slot row(s) and ${row.attachmentRows} attachment row(s) of ${row.vertices} vertices compared, worst Δxy ${row.worstXy.toFixed(6)}, worst Δabcd ${row.worstM.toFixed(6)}` +
           (row.why === null ? '' : ` — ${row.why}`),
       );
       for (const a of row.animations) print(`              animation ${JSON.stringify(a.name)}: bones ${a.bones}, slots ${a.slots}${a.why === null ? '' : ` — ${a.why}`}`);
@@ -532,10 +658,13 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     print('');
     for (const line of slotCensusTable(rows)) print(line);
     print('');
+    for (const line of attachmentCensusTable(rows)) print(line);
+    print('');
     for (const line of animationCensusTable(rows)) print(line);
     print('');
     for (const line of reachLines(rows)) print(line);
     for (const line of slotReachLines(rows)) print(line);
+    for (const line of attachmentReachLines(rows)) print(line);
     for (const line of animationReachLines(rows)) print(line);
     const verdict = gateVerdict(rows);
     print(verdict.line);
