@@ -6,6 +6,7 @@
  *                                 [--samples 9] [--phase grid|off|irr|dense]
  *                                 [--skin all|<name>] [--physics none|step] [--dt 1/60]
  *   bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]
+ *   bun tools/pose_oracle.ts dump --core <skeleton.model.json> --out <json> [same flags]
  *   bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]
  *
  * ⭐ Why this is a document and not a function. The equivalence gate issue
@@ -52,6 +53,15 @@
  *   the dump was taken under; `dt` is `null` unless `physics` is `"step"`.
  *   Two dumps taken under different options are not comparable and `compare`
  *   refuses the pair (exit 2).
+ * - `absent` — written only by a dumper that leaves a block out (the core,
+ *   below): `[[block, why], …]` naming every block that is `null` in this
+ *   document, in document order, with the construct not yet admitted. A block
+ *   is one of `bones`, `slots`, `skins`, `constraints`, `physics`, `paths`,
+ *   `pathAttachments`, `setup.bones`, `setup.slots`, `setup.drawOrder`,
+ *   `setup.attachments`, `setup.clips`, `animations` (`ORACLE_BLOCKS`). A
+ *   `null` block the list does not name, or a name that is not a `null` block,
+ *   makes the document unreadable (exit 2). The spine-core dump leaves nothing
+ *   out and writes no `absent` key.
  * - `bones` — every bone name in skeleton order (`SkeletonData.bones`, which is
  *   parent-before-child).
  * - `slots` — `[name, bone]` per slot in setup order (`SkeletonData.slots`,
@@ -158,10 +168,28 @@
  * `step` inside that call, carrying the remainder, so `dt` decides how often
  * the animated bones are re-posed under the simulation, not the integrator.
  *
+ * ## `dump --core` — the second dumper
+ *
+ * The same document from rigc's own core (`src/core/index.ts`, issue #925)
+ * posing a `rigc-compiled/1` document (`skeleton.model.json`, which `build`
+ * writes beside the Spine pair) — no spine-core call is made for it. `dumper`
+ * is `"rigc-core"`; `source` is `{ "spine": null, "hash": null }`, since the
+ * model states neither; `options` as given, and the core refuses (exit 2) any
+ * `--skin` but `all` and any `--physics` but `none`. The rosters `bones`,
+ * `slots`, `skins` and `constraints` are the document's own, in its order.
+ * `setup.bones` is the core's setup pose, or absent when the document
+ * declares a constraint (the core's header says why); every other block is
+ * `null` and named in `absent`.
+ *
  * ## `compare` — two documents
  *
- * Refused (exit 2) when either file is not a `pose-oracle/1` document or the
- * two were taken under different `options`. Otherwise every roster (bones,
+ * Refused (exit 2) when either file is not a `pose-oracle/1` document, when
+ * the two were taken under different `options`, or when a block is absent
+ * from BOTH — there is then nothing to compare it with. A block absent from
+ * exactly one side prints `SKIP <block>: not produced by <dumper>` (and the
+ * absent side's reason) and is neither compared nor counted: IDENTICAL then
+ * speaks for the blocks both documents carry, and its line says how many were
+ * skipped and which. Otherwise every roster (bones,
  * slots, skins, animations, constraints, path attachments, sample counts) and
  * every name must agree exactly, and every number within tolerance: world
  * positions and vertex coordinates within `--tol-xy`, everything else (the
@@ -217,6 +245,7 @@ import {
   TransformConstraintData,
   type Event,
 } from '@esotericsoftware/spine-core';
+import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, readModel, type CompiledDocument, type SetupEvaluator } from '../src/core/index.ts';
 
 export const ORACLE_SPEC = 'pose-oracle/1';
 export const ORACLE_DUMPER = 'spine-core 4.3.13';
@@ -339,11 +368,56 @@ export interface OracleDump {
   animations: OracleAnimation[];
 }
 
-/** Six decimals, round half up; `null` for a value that is not finite. */
+/**
+ * Every block a document may leave absent (`null`), by the name `compare` and
+ * a SKIP line use: the top-level lists, then the setup pose's own, then
+ * `animations` — the document's key order.
+ */
+export const ORACLE_BLOCKS = [
+  'bones', 'slots', 'skins', 'constraints', 'physics', 'paths', 'pathAttachments',
+  'setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips', 'animations',
+] as const;
+export type OracleBlock = (typeof ORACLE_BLOCKS)[number];
+
+/** A setup pose in which a block may be absent. */
+export interface OracleDocumentPose {
+  bones: BoneRow[] | null;
+  slots: SlotRow[] | null;
+  drawOrder: string[] | null;
+  attachments: AttachmentRow[] | null;
+  clips: ClipRow[] | null;
+}
+
+/**
+ * A `pose-oracle/1` document from either dumper: an `OracleDump` is one with
+ * nothing absent. `absent` names every `null` block with the construct its
+ * dumper has not admitted; a spine-core dump carries none and writes no
+ * `absent` key.
+ */
+export interface OracleDocument {
+  spec: string;
+  dumper: string;
+  source: { spine: string | null; hash: string | null };
+  options: OracleOptions;
+  absent?: Array<[string, string]>;
+  bones: string[] | null;
+  slots: Array<[string, string]> | null;
+  skins: string[] | null;
+  constraints: Array<[string, string]> | null;
+  physics: OraclePhysicsRow[] | null;
+  paths: OraclePathRow[] | null;
+  pathAttachments: OraclePathAttachmentRow[] | null;
+  setup: OracleDocumentPose;
+  animations: OracleAnimation[] | null;
+}
+
+/**
+ * Six decimals, round half up; `null` for a value that is not finite. The
+ * function is the core's (`gridRound` in `src/core/index.ts`), so the two
+ * dumpers round with one body rather than two that could drift.
+ */
 export function r(v: number): Num {
-  if (!Number.isFinite(v)) return null;
-  const out = Math.round(v * ORACLE_GRID) / ORACLE_GRID;
-  return out === 0 ? 0 : out;
+  return gridRound(v);
 }
 
 /** Sample `i` of `n` over duration `d` under `phase` — see the header. */
@@ -609,8 +683,58 @@ export function dumpSkeleton(data: SkeletonData, options: OracleOptions): Oracle
 }
 
 /** The document's bytes: one line and a newline, keys in the order the objects above were built in. */
-export function dumpText(dump: OracleDump): string {
+export function dumpText(dump: OracleDocument): string {
   return `${JSON.stringify(dump)}\n`;
+}
+
+/**
+ * The second dumper: a `rigc-compiled/1` document posed by rigc's own core
+ * (`src/core/index.ts`) into the same shape — see the header's *`dump --core`*.
+ * The core poses under `--skin all` and `--physics none` only; any other
+ * option is refused by name, since it names a pose the core does not produce.
+ */
+export function coreDump(doc: CompiledDocument, options: OracleOptions, evaluate?: SetupEvaluator): OracleDocument {
+  if (options.skin !== 'all') {
+    throw new OracleInputError(`dump --core: --skin ${JSON.stringify(options.skin)} — the core poses every skin at once (--skin all) and nothing else yet (issue #925)`);
+  }
+  if (options.physics !== 'none') {
+    throw new OracleInputError(`dump --core: --physics ${JSON.stringify(options.physics)} — the core steps no physics; physics is not admitted (issue #925)`);
+  }
+  const { setup, absent } = poseSetup(doc, evaluate);
+  return {
+    spec: ORACLE_SPEC,
+    dumper: CORE_DUMPER,
+    source: { spine: null, hash: null },
+    options: { phase: options.phase, samples: options.samples, skin: options.skin, physics: options.physics, dt: null },
+    absent,
+    bones: doc.bones.map((b) => b.name),
+    slots: doc.slots.map((s): [string, string] => [s.name, s.bone]),
+    skins: doc.skins.map((s) => s.name),
+    constraints: doc.constraints.map((c): [string, string] => [c.kind, c.name]),
+    physics: null,
+    paths: null,
+    pathAttachments: null,
+    setup,
+    animations: null,
+  };
+}
+
+/** A block of a document, or `null` when the document leaves it absent. */
+export function blockOf(doc: OracleDocument, block: OracleBlock): unknown[] | null {
+  switch (block) {
+    case 'setup.bones':
+      return doc.setup.bones;
+    case 'setup.slots':
+      return doc.setup.slots;
+    case 'setup.drawOrder':
+      return doc.setup.drawOrder;
+    case 'setup.attachments':
+      return doc.setup.attachments;
+    case 'setup.clips':
+      return doc.setup.clips;
+    default:
+      return doc[block];
+  }
 }
 
 /** Where a dump's input is: a build directory, or a skeleton and its atlas. */
@@ -670,6 +794,12 @@ export interface OracleRowReport {
 
 export interface OracleComparison {
   identical: boolean;
+  /**
+   * `<block>: not produced by <dumper>[ — why]`, one per block exactly one side
+   * leaves absent, in document order. Neither compared nor counted: IDENTICAL
+   * is a statement about the blocks both documents carry.
+   */
+  skipped: string[];
   rows: OracleRowReport[];
   /** Differences that belong to no row: rosters, constraints, parameters. */
   document: string[];
@@ -698,6 +828,37 @@ export function asOracleDump(value: unknown, where: string): OracleDump {
     if (!Array.isArray(v[key])) throw new OracleInputError(`${where}: ${key} is not a list`);
   }
   return value as OracleDump;
+}
+
+/**
+ * Throws naming the first field that is not what a `pose-oracle/1` document
+ * has — either dumper's: a block may be `null`, and then the document's
+ * `absent` list must name it, and name nothing else.
+ */
+export function asOracleDocument(value: unknown, where: string): OracleDocument {
+  if (typeof value !== 'object' || value === null) throw new OracleInputError(`${where}: not a JSON object`);
+  const v = value as Record<string, unknown>;
+  if (v.spec !== ORACLE_SPEC) throw new OracleInputError(`${where}: spec is ${JSON.stringify(v.spec)}, not "${ORACLE_SPEC}"`);
+  for (const key of ['options', 'setup', 'source'] as const) {
+    if (typeof v[key] !== 'object' || v[key] === null) throw new OracleInputError(`${where}: no ${key} object`);
+  }
+  const doc = value as OracleDocument;
+  const nulls: string[] = [];
+  for (const block of ORACLE_BLOCKS) {
+    const b = blockOf(doc, block);
+    if (b === undefined || (b !== null && !Array.isArray(b))) throw new OracleInputError(`${where}: ${block} is neither a list nor null`);
+    if (b === null) nulls.push(block);
+  }
+  const absent = v.absent;
+  if (absent !== undefined && !(Array.isArray(absent) && absent.every((x) => Array.isArray(x) && x.length === 2 && typeof x[0] === 'string' && typeof x[1] === 'string'))) {
+    throw new OracleInputError(`${where}: absent is not a list of [block, why] pairs`);
+  }
+  const named = absent === undefined ? [] : (absent as Array<[string, string]>).map((x) => x[0]);
+  const unnamed = nulls.filter((b) => !named.includes(b));
+  const extra = named.filter((b) => !nulls.includes(b));
+  if (unnamed.length > 0) throw new OracleInputError(`${where}: ${unnamed.join(', ')} ${unnamed.length === 1 ? 'is' : 'are'} null and the absent list does not say why`);
+  if (extra.length > 0) throw new OracleInputError(`${where}: the absent list names ${extra.join(', ')}, which ${extra.length === 1 ? 'is' : 'are'} present or no block of the document`);
+  return doc;
 }
 
 /** Bones excluded at one sample: `|det| < ε` in either pose, and their descendants. */
@@ -771,20 +932,29 @@ function newRow(name: string): OracleRowReport {
   };
 }
 
+/** The pose blocks a comparison reads; a setup pose one side leaves partly absent passes fewer. */
+type PoseBlock = 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips';
+const EVERY_POSE_BLOCK: ReadonlySet<PoseBlock> = new Set<PoseBlock>(['bones', 'slots', 'drawOrder', 'attachments', 'clips']);
+
 function comparePose(
   row: OracleRowReport,
   t: Num,
-  a: OraclePose,
-  b: OraclePose,
+  pa: OracleDocumentPose,
+  pb: OracleDocumentPose,
   tolXy: number,
   tolM: number,
   slotBones: Map<string, string>,
+  carry: ReadonlySet<PoseBlock> = EVERY_POSE_BLOCK,
 ): void {
   const where = at(row.name, t);
   const note = (kind: string, text: string): void => {
     row.mismatches[kind] = (row.mismatches[kind] ?? 0) + 1;
     row.findings.push(`${where}: ${text}`);
   };
+  // A block not carried is compared as empty on both sides, which is nothing.
+  const take = <T>(block: PoseBlock, l: T[] | null): T[] => (carry.has(block) && l !== null ? l : []);
+  const a = { bones: take('bones', pa.bones), slots: take('slots', pa.slots), drawOrder: take('drawOrder', pa.drawOrder), attachments: take('attachments', pa.attachments), clips: take('clips', pa.clips) };
+  const b = { bones: take('bones', pb.bones), slots: take('slots', pb.slots), drawOrder: take('drawOrder', pb.drawOrder), attachments: take('attachments', pb.attachments), clips: take('clips', pb.clips) };
   row.samples++;
   const bBones = new Map(b.bones.map((x) => [x[0], x]));
   const excluded = illConditioned(a.bones, bBones);
@@ -922,55 +1092,87 @@ function compareEvents(row: OracleRowReport, t: Num, a: EventRow[], b: EventRow[
 }
 
 /** Compare two `pose-oracle/1` documents — see the header. */
-export function compareDumps(a: OracleDump, b: OracleDump, tol: OracleTolerance): OracleComparison {
+export function compareDumps(a: OracleDocument, b: OracleDocument, tol: OracleTolerance): OracleComparison {
   const oa = JSON.stringify(a.options);
   const ob = JSON.stringify(b.options);
   if (oa !== ob) throw new OracleInputError(`the two documents were posed under different options: A ${oa} vs B ${ob}`);
+  // Absence first: a block one side leaves out is a SKIP by name, and one
+  // neither side carries is no comparison at all.
+  const skipped: string[] = [];
+  const carried = new Set<OracleBlock>();
+  for (const block of ORACLE_BLOCKS) {
+    const na = blockOf(a, block) === null;
+    const nb = blockOf(b, block) === null;
+    if (na && nb) {
+      throw new OracleInputError(`${block} is absent from both documents (A posed by ${a.dumper}, B by ${b.dumper}), so there is nothing to compare it with`);
+    }
+    if (!na && !nb) {
+      carried.add(block);
+      continue;
+    }
+    const side = na ? a : b;
+    const why = side.absent?.find((x) => x[0] === block)?.[1];
+    skipped.push(`${block}: not produced by ${side.dumper}${why === undefined ? '' : ` — ${why}`}`);
+  }
+  const has = (block: OracleBlock): boolean => carried.has(block);
   const tolXy = tol.xy * ORACLE_GRID;
   const tolM = tol.m * ORACLE_GRID;
-  const slotBones = new Map(a.slots.map((s) => [s[0], s[1]]));
-  const bSlotBones = new Map(b.slots.map((s) => [s[0], s[1]]));
+  const aSlots = a.slots ?? [];
+  const bSlots = b.slots ?? [];
+  const slotBones = new Map((a.slots ?? bSlots).map((s) => [s[0], s[1]]));
+  const bSlotBones = new Map(bSlots.map((s) => [s[0], s[1]]));
   const document: string[] = [
-    ...listDiff('bones', a.bones, b.bones),
-    ...listDiff('slots', a.slots.map((s) => s[0]), b.slots.map((s) => s[0])),
-    ...a.slots.flatMap(([slot, bone]) => {
-      const other = bSlotBones.get(slot);
-      return other === undefined || other === bone ? [] : [`slot "${slot}" is on bone "${bone}" in A and "${other}" in B`];
-    }),
-    ...listDiff('skins', [...a.skins].sort(), [...b.skins].sort()),
-    ...listDiff('animations', a.animations.map((x) => x.name), b.animations.map((x) => x.name)),
-    ...listDiff('constraints', a.constraints.map((c) => `${c[0]} ${c[1]}`), b.constraints.map((c) => `${c[0]} ${c[1]}`)),
+    ...(has('bones') ? listDiff('bones', a.bones ?? [], b.bones ?? []) : []),
+    ...(has('slots') ? listDiff('slots', aSlots.map((s) => s[0]), bSlots.map((s) => s[0])) : []),
+    ...(has('slots')
+      ? aSlots.flatMap(([slot, bone]) => {
+          const other = bSlotBones.get(slot);
+          return other === undefined || other === bone ? [] : [`slot "${slot}" is on bone "${bone}" in A and "${other}" in B`];
+        })
+      : []),
+    ...(has('skins') ? listDiff('skins', [...(a.skins ?? [])].sort(), [...(b.skins ?? [])].sort()) : []),
+    ...(has('animations') ? listDiff('animations', (a.animations ?? []).map((x) => x.name), (b.animations ?? []).map((x) => x.name)) : []),
+    ...(has('constraints') ? listDiff('constraints', (a.constraints ?? []).map((c) => `${c[0]} ${c[1]}`), (b.constraints ?? []).map((c) => `${c[0]} ${c[1]}`)) : []),
   ];
   const byName = <T extends { name: string }>(l: T[]): Map<string, T> => new Map(l.map((x) => [x.name, x]));
-  const pb = byName(b.physics);
-  for (const p of a.physics) {
+  const aPhysics = has('physics') ? (a.physics ?? []) : [];
+  const bPhysics = has('physics') ? (b.physics ?? []) : [];
+  const pb = byName(bPhysics);
+  for (const p of aPhysics) {
     const q = pb.get(p.name);
     if (q === undefined) document.push(`physics constraint "${p.name}" only in A`);
     else document.push(...paramDiffs('physics constraint', p.name, p as unknown as Record<string, unknown>, q as unknown as Record<string, unknown>, tolM));
   }
-  for (const q of b.physics) if (!a.physics.some((p) => p.name === q.name)) document.push(`physics constraint "${q.name}" only in B`);
-  const qb = byName(b.paths);
-  for (const p of a.paths) {
+  for (const q of bPhysics) if (!aPhysics.some((p) => p.name === q.name)) document.push(`physics constraint "${q.name}" only in B`);
+  const aPaths = has('paths') ? (a.paths ?? []) : [];
+  const bPaths = has('paths') ? (b.paths ?? []) : [];
+  const qb = byName(bPaths);
+  for (const p of aPaths) {
     const q = qb.get(p.name);
     if (q === undefined) document.push(`path constraint "${p.name}" only in A`);
     else document.push(...paramDiffs('path constraint', p.name, p as unknown as Record<string, unknown>, q as unknown as Record<string, unknown>, tolM));
   }
-  for (const q of b.paths) if (!a.paths.some((p) => p.name === q.name)) document.push(`path constraint "${q.name}" only in B`);
+  for (const q of bPaths) if (!aPaths.some((p) => p.name === q.name)) document.push(`path constraint "${q.name}" only in B`);
+  const aPa = has('pathAttachments') ? (a.pathAttachments ?? []) : [];
+  const bPa = has('pathAttachments') ? (b.pathAttachments ?? []) : [];
   const paKey = (x: OraclePathAttachmentRow): string => `${x.skin}/${x.slot}/${x.placeholder}`;
-  const pab = new Map(b.pathAttachments.map((x) => [paKey(x), x]));
-  for (const p of a.pathAttachments) {
+  const pab = new Map(bPa.map((x) => [paKey(x), x]));
+  for (const p of aPa) {
     const q = pab.get(paKey(p));
     if (q === undefined) document.push(`path attachment "${paKey(p)}" only in A`);
     else document.push(...paramDiffs('path attachment', paKey(p), p as unknown as Record<string, unknown>, q as unknown as Record<string, unknown>, tolM));
   }
-  for (const q of b.pathAttachments) if (!pab.has(paKey(q)) || !a.pathAttachments.some((p) => paKey(p) === paKey(q))) document.push(`path attachment "${paKey(q)}" only in B`);
+  for (const q of bPa) if (!pab.has(paKey(q)) || !aPa.some((p) => paKey(p) === paKey(q))) document.push(`path attachment "${paKey(q)}" only in B`);
 
   const rows: OracleRowReport[] = [];
-  const setupRow = newRow('(setup)');
-  comparePose(setupRow, null, a.setup, b.setup, tolXy, tolM, slotBones);
-  rows.push(setupRow);
-  const animB = byName(b.animations);
-  for (const anim of a.animations) {
+  const setupCarry = new Set<PoseBlock>((['bones', 'slots', 'drawOrder', 'attachments', 'clips'] as const).filter((k) => has(`setup.${k}`)));
+  if (setupCarry.size > 0) {
+    const setupRow = newRow('(setup)');
+    comparePose(setupRow, null, a.setup, b.setup, tolXy, tolM, slotBones, setupCarry);
+    rows.push(setupRow);
+  }
+  const animB = byName(has('animations') ? (b.animations ?? []) : []);
+  for (const anim of has('animations') ? (a.animations ?? []) : []) {
     const other = animB.get(anim.name);
     if (other === undefined) continue;
     const row = newRow(anim.name);
@@ -1000,12 +1202,13 @@ export function compareDumps(a: OracleDump, b: OracleDump, tol: OracleTolerance)
   const all = [...document, ...rows.flatMap((x) => x.findings)];
   return {
     identical: all.length === 0,
+    skipped,
     rows,
     document,
     first: all[0] ?? null,
-    worstXy: Math.max(...rows.map((x) => x.worstXy.d)) / ORACLE_GRID,
-    worstM: Math.max(...rows.map((x) => x.worstM.d)) / ORACLE_GRID,
-    worstVertex: Math.max(...rows.map((x) => x.worstVertex.d)) / ORACLE_GRID,
+    worstXy: Math.max(0, ...rows.map((x) => x.worstXy.d)) / ORACLE_GRID,
+    worstM: Math.max(0, ...rows.map((x) => x.worstM.d)) / ORACLE_GRID,
+    worstVertex: Math.max(0, ...rows.map((x) => x.worstVertex.d)) / ORACLE_GRID,
     excluded: rows.reduce((s, x) => s + x.excluded, 0),
     boneSamples: rows.reduce((s, x) => s + x.boneSamples, 0),
   };
@@ -1014,6 +1217,7 @@ export function compareDumps(a: OracleDump, b: OracleDump, tol: OracleTolerance)
 /** The report `compare` prints, one line per row, then the verdict. */
 export function comparisonLines(c: OracleComparison, listed = 5): string[] {
   const out: string[] = [];
+  for (const s of c.skipped) out.push(`  SKIP  ${s}`);
   for (const d of c.document.slice(0, listed * 4)) out.push(`  DOC   ${d}`);
   if (c.document.length > listed * 4) out.push(`  DOC   … ${c.document.length - listed * 4} more`);
   for (const row of c.rows) {
@@ -1032,9 +1236,10 @@ export function comparisonLines(c: OracleComparison, listed = 5): string[] {
     if (row.findings.length > listed) out.push(`          … ${row.findings.length - listed} more`);
   }
   out.push(
-    c.identical
+    (c.identical
       ? `IDENTICAL — ${c.boneSamples} bone-sample(s) over ${c.rows.length} row(s), ${c.excluded} excluded as ill-conditioned`
-      : `DIFF — first difference: ${c.first}`,
+      : `DIFF — first difference: ${c.first}`) +
+      (c.skipped.length === 0 ? '' : `; ${c.skipped.length} block(s) SKIPPED, not compared: ${c.skipped.map((x) => x.slice(0, x.indexOf(':'))).join(', ')}`),
   );
   return out;
 }
@@ -1047,6 +1252,7 @@ const USAGE = [
   'usage:',
   '  bun tools/pose_oracle.ts dump <build dir> --out <json> [--samples 9] [--phase grid|off|irr|dense] [--skin all|<name>] [--physics none|step] [--dt 1/60]',
   '  bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]',
+  '  bun tools/pose_oracle.ts dump --core <skeleton.model.json> --out <json> [same flags; --skin all and --physics none only]',
   '  bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]',
 ].join('\n');
 
@@ -1095,10 +1301,29 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
   const [command, ...rest] = argv;
   try {
     if (command === 'dump') {
-      const { positional, flags } = parseFlags(rest, ['--out', '--samples', '--phase', '--skin', '--physics', '--dt']);
+      const { positional, flags } = parseFlags(rest, ['--out', '--samples', '--phase', '--skin', '--physics', '--dt', '--core']);
       const out = flags.get('--out');
       if (out === undefined) throw new OracleInputError('dump: --out <json> is required');
       const options = dumpOptions(flags);
+      const core = flags.get('--core');
+      if (core !== undefined) {
+        if (positional.length > 0) throw new OracleInputError(`dump --core takes the model document and no other path, got ${positional.join(' ')}`);
+        if (!existsSync(core)) throw new OracleInputError(`dump --core: no such file ${core}`);
+        let model: CompiledDocument;
+        try {
+          model = readModel(readFileSync(core, 'utf8'), core);
+        } catch (err) {
+          if (err instanceof CoreInputError) throw new OracleInputError(err.message);
+          throw err;
+        }
+        const dump = coreDump(model, options);
+        writeFileSync(out, dumpText(dump));
+        print(
+          `pose_oracle: the core posed ${core}: ${model.bones.length} bones, setup.bones ${dump.setup.bones === null ? 'ABSENT' : 'posed'}; ` +
+            `absent: ${(dump.absent ?? []).map((x) => x[0]).join(', ')} → ${out}`,
+        );
+        return 0;
+      }
       const input = resolveDumpInput(positional);
       const data = loadOracleData(readFileSync(input.skeleton, 'utf8'), readFileSync(input.atlas, 'utf8'), input.skeleton);
       const dump = dumpSkeleton(data, options);
@@ -1112,7 +1337,7 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
     if (command === 'compare') {
       const { positional, flags } = parseFlags(rest, ['--tol-xy', '--tol-m']);
       if (positional.length !== 2) throw new OracleInputError(`compare: expected <a.json> <b.json>, got ${positional.length} path(s)`);
-      const read = (path: string): OracleDump => {
+      const read = (path: string): OracleDocument => {
         if (!existsSync(path)) throw new OracleInputError(`compare: no such file ${path}`);
         let value: unknown;
         try {
@@ -1120,7 +1345,7 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
         } catch (err) {
           throw new OracleInputError(`${path}: not JSON — ${(err as Error).message}`);
         }
-        return asOracleDump(value, path);
+        return asOracleDocument(value, path);
       };
       const a = read(positional[0]);
       const b = read(positional[1]);
