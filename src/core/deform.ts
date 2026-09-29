@@ -150,8 +150,8 @@
  */
 import type { ModelSlot, ModelVertices } from '../model.ts';
 import { bezierPolyline, keyIndexAt, type CoreAnimationTimelines, type CoreCurve } from './animation.ts';
-import { shownRow, type CompiledDocument, type CoreShown, type CoreSkin, type ShownResolution } from './index.ts';
-import { fillingSkins } from './skins.ts';
+import { activeBones, shownRow, type CompiledDocument, type CoreShown, type CoreSkin, type ShownResolution } from './index.ts';
+import { fillingSkins, slotTimelinesApply, type SlotTimelineGate } from './skins.ts';
 import type { CoreGeometry, ShownGeometry } from './vertices.ts';
 
 /** The far end the deform curve's recurrence runs to — the header's measurement. */
@@ -495,13 +495,17 @@ export function attachmentStates(
   placeholders: ReadonlyMap<string, string | null>,
   sample: { timelines: CoreAnimationTimelines; t: number } | null,
   sliders: readonly AttachmentApplication[],
-  plant: { deform?: DeformEvaluator; sequence?: SequenceEvaluator } = {},
+  plant: { deform?: DeformEvaluator; sequence?: SequenceEvaluator; slotTimelines?: SlotTimelineGate } = {},
 ): { shown: ShownGeometry[]; why: string[] } {
   const evalDeform = plant.deform ?? deformAt;
   const evalFrame = plant.sequence ?? sequenceFrameAt;
   const shown: ShownGeometry[] = [];
   const why: string[] = [];
+  const active = activeBones(doc);
+  const gate = plant.slotTimelines ?? slotTimelinesApply;
   for (const slot of doc.slots) {
+    // A slot on a bone the skin leaves inactive is not animated: no deform, no frame, no slider switch (`./skins.ts`).
+    const live = gate(doc, slot, active);
     let placeholder = placeholders.get(slot.name) ?? null;
     let deform: number[] | null = null;
     let frame: number | null = null;
@@ -533,8 +537,8 @@ export function attachmentStates(
         }
       }
     };
-    if (sample !== null) apply(sample.timelines.attachments, sample.t, null);
-    for (const app of sliders) {
+    if (sample !== null && live) apply(sample.timelines.attachments, sample.t, null);
+    for (const app of live ? sliders : []) {
       // The slider's attachment key first, as the slot timelines are (`applySliderSlots` in `./constraints_slider.ts`); a switch to another placeholder clears what the timelines set.
       for (const target of app.timelines.slots) {
         if (target.name !== slot.name) continue;

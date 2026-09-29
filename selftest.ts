@@ -72247,6 +72247,88 @@ function runCoreSuite(): number {
     if (several === 0) console.log(`          ⚠️ HOLE: no tree row declares several skins, so the per-skin runs judge nothing here; CN01–CN04's probes are the reading of the rule`);
   }
 
+  // --- CN06: a slot on a bone the applied skin leaves inactive is not animated; one on an active bone showing nothing is (the commander's private finding) --
+  {
+    const probes: string[] = [];
+    const KEYS: Record<string, Obj[]> = {
+      rgba: [{ time: 0, color: 'ffffff00' }],
+      rgb: [{ time: 0, color: '00ff00' }],
+      alpha: [{ time: 0, value: 0.25 }],
+      rgba2: [{ time: 0, light: 'ff0000ff', dark: '00ff00' }],
+      rgb2: [{ time: 0, light: 'ff0000', dark: '0000ff' }],
+      attachment: [{ time: 0, name: 'q' }],
+    };
+    const probe = (slider: boolean): { spine: string; model: string; atlas: string } => {
+      const anims: Record<string, RAnim> = { bend: { deform: [{ slot: 'w', attachment: 'w', keys: [{ time: 0, vertices: [5, 5] }] }] } };
+      // The commander's shape first: two animations keying the slot with one rgba key ffffff00 at 0.
+      anims.fade1 = { slots: { s: { rgba: KEYS.rgba }, t: { rgba: KEYS.rgba } } };
+      anims.fade2 = { slots: { s: { rgba: KEYS.rgba }, t: { rgba: KEYS.rgba } } };
+      for (const [kind, keys] of Object.entries(KEYS)) anims[`k_${kind}`] = { slots: { s: { [kind]: keys }, t: { [kind]: keys } } };
+      if (slider) anims.sk = { slots: { s: { rgba: [{ time: 0, color: 'ff000080' }] } } };
+      const pair = withSkinLists(remainderPair({
+        bones: [{ name: 'root' }, { name: 'req', parent: 'root', skin: true, x: 3 }],
+        // A clip on the root first, so every slot below is drawn under it and the samples carry `clipped` rows (issue #964).
+        slots: [{ name: 'c', bone: 'root', attachment: 'c' }, { name: 's', bone: 'req', attachment: 'p' }, { name: 't', bone: 'root', attachment: 'p' }, { name: 'w', bone: 'req', attachment: 'w' }],
+        skins: {
+          default: { c: { c: { kind: 'clipping', xy: [-0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5] } }, s: { q: { kind: 'region', path: 'dq' } }, t: { q: { kind: 'region', path: 'tq' } }, w: { w: { kind: 'mesh', weighted: [[{ bone: 'root', x: 0, y: 0, w: 1 }], [{ bone: 'root', x: 1, y: 0, w: 1 }], [{ bone: 'root', x: 0, y: 1, w: 1 }]] } } },
+          s1: { s: { p: { kind: 'region', path: 's1p' } } },
+        },
+        ...(slider ? { constraints: [{ type: 'slider', name: 'sl', animation: 'sk', time: 0 }] } : {}),
+        anims,
+      }), { s1: { bones: ['req'] } });
+      // Both slots carry a dark colour, so the two-colour keys have something to move.
+      const spine = JSON.parse(pair.spine) as { slots: Obj[] };
+      const model = JSON.parse(pair.model) as { slots: Obj[] };
+      for (const x of [...spine.slots, ...model.slots]) if (x.name === 's' || x.name === 't') x.dark = '000000';
+      return { spine: JSON.stringify(spine), model: JSON.stringify(model), atlas: pair.atlas };
+    };
+    const lines: string[] = [];
+    const red: string[] = [];
+    let dumps = 0;
+    let clippedRows = 0;
+    for (const slider of [false, true]) {
+      const pair = probe(slider);
+      for (const skin of ['all', 's1', 'default']) {
+        const options = skinOf(skin, 'none', 3);
+        const { spine, core, c } = skinCompare(pair, options);
+        dumps++;
+        const label = `${slider ? 'with a slider' : 'no slider'}, --skin ${skin}`;
+        const live = skin !== 'default';
+        const setupS = JSON.stringify(spine.setup.slots.find((r) => r[0] === 's')?.slice(1));
+        const setupT = JSON.stringify(spine.setup.slots.find((r) => r[0] === 't')?.slice(1));
+        // spine-core, as measured: slot s moves under a skin activating its bone and holds its setup row under one that does not; slot t (active, showing nothing) moves under every skin.
+        const sMoves = spine.animations.filter((a) => a.name !== 'bend' && a.name !== 'sk').map((a) => a.samples.every((x) => JSON.stringify(x.slots.find((r) => r[0] === 's')?.slice(1)) !== setupS));
+        const tMoves = spine.animations.filter((a) => a.name !== 'bend' && a.name !== 'sk').map((a) => a.samples.every((x) => JSON.stringify(x.slots.find((r) => r[0] === 't')?.slice(1)) !== setupT));
+        // With the slider, its own rgba key lands after each sample's and at setup, so the samples are read against the setup only without it.
+        if (!slider && sMoves.some((m) => m !== live)) probes.push(`${label}: spine-core moved slot s in [${sMoves.join(', ')}], not ${live ? 'every' : 'no'} animation`);
+        if (tMoves.some((m) => !m)) probes.push(`${label}: spine-core left slot t (active, showing nothing) still in some animation [${tMoves.join(', ')}]`);
+        const sliderMoved = JSON.stringify(spine.setup.slots.find((r) => r[0] === 's')?.slice(2, 6)) !== JSON.stringify([1, 1, 1, 1]);
+        if (slider && sliderMoved !== live) probes.push(`${label}: the slider ${sliderMoved ? 'moved' : 'did not move'} slot s at setup`);
+        const bent = spine.animations.find((a) => a.name === 'bend')?.samples[0].attachments.find((r) => r[0] === 'w')?.[3][0];
+        if ((bent === 5) !== live) probes.push(`${label}: the deform left mesh w's first x at ${bent}`);
+        if (!c.identical) probes.push(`${label}: ${c.first}`);
+        // The ill-conditioned rule keeps a mesh on an inactive bone's slot out of compare, so its rows are held to each other directly.
+        // The same for the `clipped` rows, where a clip cuts what such a slot draws (issue #964).
+        const rowsOf = (d: OracleDocument): string => JSON.stringify([d.setup.attachments, d.setup.clipped, (d.animations ?? []).map((a) => a.samples.map((x) => [x.attachments, x.clipped]))]);
+        if (rowsOf(spine) !== rowsOf(core)) probes.push(`${label}: the attachment or clipped rows differ between spine-core and the core`);
+        clippedRows += (spine.animations ?? []).reduce((n, a) => n + a.samples.reduce((m, x) => m + (x.clipped ?? []).filter((r) => r[0] === 'w' && r[2] === 1).length, 0), 0);
+        const planted = skinCompare(pair, options, { slotTimelines: () => true });
+        if (!planted.c.identical || rowsOf(planted.spine) !== rowsOf(planted.core)) red.push(label);
+        lines.push(`${label}: s ${live ? 'animated' : 'held at setup'}`);
+      }
+    }
+    const wantRed = ['no slider, --skin default', 'with a slider, --skin default'];
+    if (clippedRows === 0) probes.push('no sample drew mesh w cut by the clip, so the clipped rows held nothing');
+    if (JSON.stringify(red) !== JSON.stringify(wantRed)) probes.push(`slot timelines applied on an inactive bone, planted, went red on [${red.join('; ')}], not exactly [${wantRed.join('; ')}]`);
+    const ok = probes.length === 0;
+    say(
+      'CN06_A_SLOT_ON_A_BONE_THE_SKIN_LEAVES_INACTIVE_IS_NOT_ANIMATED_AND_ONE_SHOWING_NOTHING_ON_AN_ACTIVE_BONE_IS',
+      ok,
+      probeDetail(ok, probes, `${dumps} dumps at 3 samples — a slot on a skin-required bone only s1 names, keyed by rgba ffffff00 in two animations (the commander's shape) and by each of rgba, rgb, alpha, rgba2, rgb2 and attachment, a slider keying it, a deform on a mesh weighted to the root in its slot, all drawn under a clip on the root (${clippedRows} cut sample rows of the mesh, held with the attachment rows) — spine-core as measured (animated under all and s1, held at its setup row under default, the slider and the deform too; the slot on the root showing nothing animated under all three) and the core exact at tolerance 0; the timelines applied on an inactive bone, planted, red on exactly the ${wantRed.length} default dumps`),
+      'issue #932, the commander\'s private-corpus finding: a 19-skin rig read DIFF on 18 of its 19 skin runs, because the core applied a slot\'s rgba key while the slot\'s bone was inactive under the skin posed, and spine-core does not. The predicate is the slot bone\'s activity, not what the slot shows — a slot showing nothing on an active bone is animated',
+    );
+  }
+
   rmSync(work, { recursive: true, force: true });
   return bad;
 }

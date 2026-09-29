@@ -32,11 +32,34 @@
  *   it — the default skin's list does not count either (`./constraints.ts`'s
  *   header, the nine readings per kind).
  *
+ * - **A slot on an inactive bone is not animated** (the commander's private
+ *   finding on this issue: a 19-skin rig read DIFF on 18 of its 19 skin
+ *   runs). A slot whose bone the applied skin leaves inactive keeps its
+ *   setup colour, dark colour and attachment under every slot timeline —
+ *   `rgba`, `rgb`, `alpha`, `rgba2`, `rgb2` and `attachment` — whether an
+ *   animation plays it or a slider applies it, and a deform timeline on its
+ *   attachment does not apply either (a mesh weighted to an ACTIVE bone, so
+ *   the deform would show: moved by 5 under `all` and `s1`, unmoved under
+ *   `default`, which leaves the slot's bone inactive). Measured on
+ *   hand-written skeletons under `--skin all`, `s1` (naming the bone) and
+ *   `default` (not): each timeline moved the slot under the first two and
+ *   not under the third, and the setup row read the setup under all three
+ *   (a slider's key included). A slot on an ACTIVE bone that shows nothing
+ *   (no skin holds its placeholder) IS animated: every colour key applied,
+ *   and an attachment key switched it. A draw-order key moves a slot on an
+ *   inactive bone like any other. A sequence timeline is held by the same
+ *   gate; its effect on such a slot is not observable in the dump — a
+ *   region's corners on an inactive bone are all zeros whatever the frame.
+ *   So the predicate is the slot bone's activity (`slotTimelinesApply`),
+ *   not what the slot shows; under `all` every bone some skin names is
+ *   active, so a one-skin rig is unchanged.
+ *
  * Under `all` every skin is applied at once: `bones` and the constraint
  * lists of every skin count, and a placeholder several skins fill shows the
  * LAST of them in the Spine file's order — the case `./index.ts` leaves out
  * by name, and the one the per-skin dumps exist to judge.
  */
+import type { ModelSlot } from '../model.ts';
 import type { CompiledDocument, CoreSkin } from './index.ts';
 
 /** The skin option that merges every skin — the oracle's `--skin all`. */
@@ -68,6 +91,12 @@ export function fillingSkins(doc: CompiledDocument, slot: string, placeholder: s
   const first = lookupSkins(doc).find((k) => k.attachments[slot]?.[placeholder] !== undefined);
   return first === undefined ? [] : [first.name];
 }
+
+/** Whether a slot's timelines — its colour and attachment timelines, and the deform and sequence timelines on what it shows — apply: `slotTimelinesApply` unless a plant passes another. */
+export type SlotTimelineGate = (doc: CompiledDocument, slot: ModelSlot, active: ReadonlySet<string>) => boolean;
+
+/** A slot's timelines apply exactly when its bone is active under the skin posed (the header's measurement). */
+export const slotTimelinesApply: SlotTimelineGate = (_doc, slot, active) => active.has(slot.bone);
 
 /** Whether an applied skin's list for `kind` names the constraint — what applies a skin-required one (`./constraints.ts`'s header). */
 export function listedByAppliedSkin(doc: CompiledDocument, kind: keyof CoreSkin['constraints'], name: string): boolean {

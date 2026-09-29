@@ -177,7 +177,7 @@ import type { CoreClippedRow, TriangleClipper } from './clipping.ts';
 import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
 import { readPathRecord } from './constraints_path.ts';
 import { readPhysicsRecord, type PhysicsStepContext, type PhysicsStepper } from './constraints_physics.ts';
-import { appliedSkins, CORE_ALL_SKINS, fillingSkins, listedByAppliedSkin, lookupSkins } from './skins.ts';
+import { appliedSkins, CORE_ALL_SKINS, fillingSkins, listedByAppliedSkin, lookupSkins, slotTimelinesApply, type SlotTimelineGate } from './skins.ts';
 import { applySliderSlots, readSliderRecord, type SliderApplication, type SlotPoseState } from './constraints_slider.ts';
 import { attachmentStates, type DeformEvaluator, type SequenceEvaluator } from './deform.ts';
 import { drawOrderAt, type DrawOrderEvaluator } from './draw_order.ts';
@@ -786,6 +786,8 @@ export interface CorePlant {
   physicsStep?: PhysicsStepper;
   /** One attachment's triangles against a clip polygon (`clipTriangles` in `./clipping.ts`). */
   clip?: TriangleClipper;
+  /** Whether a slot's timelines apply (`slotTimelinesApply` in `./skins.ts`). */
+  slotTimelines?: SlotTimelineGate;
 }
 
 /** The document's ik, transform and path constraint records, in its order — what `applyConstraints` runs. */
@@ -919,13 +921,16 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
   }
   const conflicts: string[] = [];
   const slotRows: CoreSlotRow[] = [];
+  const liveBones = activeBones(doc);
+  const slotGate = plant.slotTimelines ?? slotTimelinesApply;
   for (const slot of doc.slots) {
     const pose: SlotPoseState = {
       placeholder: slot.setup,
       light: slot.color === undefined ? [1, 1, 1, 1] : [...colour(slot.color)],
       dark: slot.dark === undefined ? null : readColour(slot.dark).slice(0, 3),
     };
-    applySliderSlots(slot.name, pose, applied);
+    // A slot on an inactive bone is not animated, by a slider either (`./skins.ts`).
+    if (slotGate(doc, slot, liveBones)) applySliderSlots(slot.name, pose, applied);
     const posedRecord: ModelSlot = { ...slot, setup: pose.placeholder };
     const shown = pose.placeholder === null ? null : resolve(doc, posedRecord);
     if (shown !== null && 'conflict' in shown) {
