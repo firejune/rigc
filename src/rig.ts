@@ -289,10 +289,31 @@ export interface RigBone {
 // slots — `root.slots[]` (SkeletonJson.ts:121-141)
 // ---------------------------------------------------------------------------
 
-/** `SlotData.ts:64`. */
-export type RigSlotBlend = 'normal' | 'additive' | 'multiply' | 'screen';
+/**
+ * `SlotData.ts:64`, read by `SkeletonJson.js:124` through `Utils.enumValue`, so
+ * only the first letter's case is free: `additive` and `Additive` read
+ * `Additive`, while `ADDITIVE`, `mUlTiPlY` and `foo` read as no mode with no
+ * error (issue #946, measured with `tools/pose_oracle.ts dump` on spine-core
+ * 4.3.13). The parser refuses those by name and the emitter writes the
+ * spelling as stated, which is one the runtime resolves.
+ */
+export type RigSlotBlend =
+  | 'normal'
+  | 'additive'
+  | 'multiply'
+  | 'screen'
+  | 'Normal'
+  | 'Additive'
+  | 'Multiply'
+  | 'Screen';
 
+/** The four modes, as a refusal names them; each also reads with its first letter upper-cased. */
 export const RIG_SLOT_BLEND: readonly RigSlotBlend[] = ['normal', 'additive', 'multiply', 'screen'];
+
+/** Whether the runtime resolves a stated blend to a mode: its first letter folded, the rest exactly one of the four. */
+export function isRigSlotBlend(value: unknown): value is RigSlotBlend {
+  return typeof value === 'string' && (RIG_SLOT_BLEND as readonly string[]).includes(value.charAt(0).toLowerCase() + value.slice(1));
+}
 
 /**
  * One slot. **The array order IS the draw order** — there is no separate setup
@@ -338,7 +359,7 @@ export interface RigSlot {
   color?: string;
   /** Two-colour tint, `rrggbb`. 🚫 `A12_NO_DARK_COLOR` under `spine-html`. */
   dark?: string;
-  /** Default `normal`. */
+  /** Default `normal`. Only the first letter's case is free (`RigSlotBlend`). */
   blend?: RigSlotBlend;
 }
 
@@ -2517,8 +2538,15 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
         `${where}: slot "${slot.name}" names bone ${JSON.stringify(slot.bone)}, which this rig does not declare`,
       );
     }
-    if (slot.blend !== undefined && !RIG_SLOT_BLEND.some((v) => v.toLowerCase() === String(slot.blend).toLowerCase())) {
-      throw new CompileError(`${where}: slot "${slot.name}" has blend ${JSON.stringify(slot.blend)}; known: ${RIG_SLOT_BLEND.join(', ')}`);
+    // Issue #946: this used to compare case-insensitively, so `ADDITIVE` built
+    // green and the runtime read the slot as no mode at all. The rule is now the
+    // runtime's own, the one `buildRigConstraint`'s enums state.
+    if (slot.blend !== undefined && !isRigSlotBlend(slot.blend)) {
+      throw new CompileError(
+        `${where}: slot "${slot.name}" has blend ${JSON.stringify(slot.blend)}; known: ${RIG_SLOT_BLEND.join(', ')} ` +
+          "(only the first letter's case is free — the parser's enumValue uppercases that one character and nothing " +
+          'else, and an unresolved name becomes undefined without an error)',
+      );
     }
   }
 

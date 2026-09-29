@@ -7791,6 +7791,18 @@ const RIG_MUTANTS: RigMutant[] = [
       (rig as any).skins = { default: { near: { probe_mesh: { type: 'mesh', image: 'nope_not_here.png', generator: { cols: 2, rows: 2 } } } } };
     },
   },
+  {
+    name: 'RF131_a_slot_blend_the_runtime_reads_as_no_mode_is_refused_with_the_enum_sentence',
+    origin:
+      'issue #946: the parser compared the name case-insensitively and built `ADDITIVE` green, while `SkeletonJson.js:124` ' +
+      'reads it through `Utils.enumValue`, which upper-cases only the first letter — `tools/pose_oracle.ts dump` read the ' +
+      'slot as no mode (`null`), with no error',
+    expect:
+      'slot "near" has blend "ADDITIVE"; known: normal, additive, multiply, screen (only the first letter\'s case is free',
+    mutate: (rig) => {
+      (rig as any).slots.find((sl: any) => sl.name === 'near').blend = 'ADDITIVE';
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -8673,7 +8685,12 @@ function runRigSuite(): number {
         writeFileSync(planted, `${JSON.stringify(rig, null, 2)}\n`);
         said = refusalOf(() => compile({ ...opts, rigPath: planted }));
       }
-      const sentence = slot === undefined ? '' : `${planted}: slot "${slot.name}" has blend "foo"; known: ${RIG_SLOT_BLEND.join(', ')}`;
+      const sentence =
+        slot === undefined
+          ? ''
+          : `${planted}: slot "${slot.name}" has blend "foo"; known: ${RIG_SLOT_BLEND.join(', ')} (only the first letter's case ` +
+            "is free — the parser's enumValue uppercases that one character and nothing else, and an unresolved name " +
+            'becomes undefined without an error)';
       bad += reportCase(
         'RF129_AN_ENUM_ROW_WITH_AN_OWNER_KEEPS_THE_OWNERS_SENTENCE',
         slot !== undefined && said === sentence && RIG_ENUMS.RigSlot.blend.owner === 'parseRigSpec',
@@ -8681,6 +8698,67 @@ function runRigSuite(): number {
         'the set walk runs ahead of every reader, so a row it judged would lose its reader\'s sentence — which for ' +
           '`inherit` and `scaleY` says the first letter\'s case is free, something a set cannot say. So an owned row is ' +
           'passed over, and this holds one owner\'s sentence to the character',
+      );
+    }
+
+    // The positive side of RF131 (issue #946): every spelling the runtime
+    // resolves builds and is emitted as written, and every spelling the parser
+    // refuses is one the core — which reads a blend by `CO19`'s measured rule —
+    // also reads as no mode. The two rules are held to each other, not to a list.
+    {
+      const rig = JSON.parse(sourceText) as { slots: Array<{ name: string; blend?: string }> };
+      const planted = join(dirname(rigPath), 'blend_spellings.rig.json');
+      const probes: string[] = [];
+      const read: string[] = [];
+      const refused: string[] = [];
+      const slot = rig.slots[0];
+      if (slot === undefined) probes.push('the fixture has no slot to plant');
+      for (const lower of RIG_SLOT_BLEND) {
+        const upperFirst = lower.charAt(0).toUpperCase() + lower.slice(1);
+        for (const spelling of [lower, upperFirst]) {
+          if (slot === undefined) break;
+          slot.blend = spelling;
+          writeFileSync(planted, `${JSON.stringify(rig, null, 2)}\n`);
+          try {
+            const built = compile({ ...opts, rigPath: planted });
+            const emitted = (JSON.parse(built.skeletonText) as { slots: Array<{ name: string; blend?: string }> }).slots.find(
+              (sl) => sl.name === slot.name,
+            )?.blend;
+            // The parser's own default spelling is left out (`withoutParserDefaults`), and the core reads an absent blend as Normal.
+            const expected = spelling === PARSER_DEFAULTS.slot.blend ? undefined : spelling;
+            if (emitted !== expected) probes.push(`"${spelling}" was emitted as ${JSON.stringify(emitted)}, not ${JSON.stringify(expected)}`);
+            else if (foldBlend(spelling) !== upperFirst) probes.push(`"${spelling}" built, and the core reads it as ${JSON.stringify(foldBlend(spelling))}`);
+            else read.push(spelling);
+          } catch (err) {
+            probes.push(`"${spelling}" was refused: ${(err as Error).message}`);
+          }
+        }
+        for (const spelling of [lower.toUpperCase(), lower.charAt(0) + lower.slice(1).toUpperCase()]) {
+          if (slot === undefined) break;
+          slot.blend = spelling;
+          writeFileSync(planted, `${JSON.stringify(rig, null, 2)}\n`);
+          let said: string | null = null;
+          try {
+            compile({ ...opts, rigPath: planted });
+          } catch (err) {
+            said = (err as Error).message;
+          }
+          if (said === null || !said.includes(`has blend "${spelling}"; known:`)) probes.push(`"${spelling}" was not refused by name (said: ${said ?? 'nothing'})`);
+          else if (foldBlend(spelling) !== null) probes.push(`"${spelling}" was refused, and the core reads it as ${foldBlend(spelling)}`);
+          else refused.push(spelling);
+        }
+      }
+      rmSync(planted, { force: true });
+      bad += reportCase(
+        'RF132_EVERY_BLEND_SPELLING_THE_RUNTIME_RESOLVES_BUILDS_AS_WRITTEN_AND_EVERY_ONE_REFUSED_IS_NO_MODE_TO_THE_CORE',
+        probes.length === 0 && read.length > 0 && refused.length > 0,
+        probes.length === 0
+          ? `${read.length} spelling(s) built, emitted as written (the parser's default "${String(PARSER_DEFAULTS.slot.blend)}" left out) and read by the core as the mode named (${read.join(', ')}); ` +
+              `${refused.length} refused by name, each no mode to the core (${refused.join(', ')})`
+          : probes.join('; '),
+        'the positive control for RF131: a parser rule that refused `Additive` would refuse a file the runtime reads, and one ' +
+          'that let `ADDITIVE` through would be the case-insensitive comparison issue #946 removed. Emitted as written, not ' +
+          'folded to lower case: every spelling that passes is one the runtime already resolves, as the constraint enums are',
       );
     }
 
@@ -66261,7 +66339,7 @@ function runPoseOracleSuite(): number {
 
 // Its own statement, so the suite lands as one hunk (the convention the
 // slider-reader suite states at its imports).
-import { activeBones, CORE_CONSTRAINT_KINDS, CORE_DUMPER, CoreInputError, foldInheritMode, gridRound, NOT_ADMITTED, poseSetup, readBlend, readColour, readModel, shownAttachment, type CompiledDocument, type CoreBlendMode, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
+import { activeBones, CORE_CONSTRAINT_KINDS, CORE_DUMPER, CoreInputError, foldBlend, foldInheritMode, gridRound, NOT_ADMITTED, poseSetup, readBlend, readColour, readModel, shownAttachment, type CompiledDocument, type CoreBlendMode, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
 import { regionCorners, worldVertices, type VertexPoser } from './src/core/vertices.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';

@@ -409,6 +409,10 @@ export interface ModelSlot {
   color?: string;
   /** The two-colour tint's dark colour, as stated; a slot with none takes no `rgba2`/`rgb2` timeline. */
   dark?: string;
+  /**
+   * The blend as stated, which `parseRigSpec` has held to a spelling the
+   * runtime resolves (`RigSlotBlend`: only the first letter's case is free).
+   */
   blend?: string;
 }
 

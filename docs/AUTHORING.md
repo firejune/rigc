@@ -1438,7 +1438,7 @@ and the inheritance silently falls back to Normal — assertion `A02` refuses it
 | `attachment` | the **setup pose** attachment name, or `null` for "show nothing" | must come from here or from `motion.setup` (R3) — **except** on a slot nothing fills, where it can only be `null` and may be left out |
 | `color` | `rrggbbaa` tint | opaque white |
 | `dark` | two-colour tint, `rrggbb`. The **setup** half; §4.4's `rgba2` and `rgb2` tracks key it over time and require it | — (🚫 `A12` under `spine-html`) |
-| `blend` | `normal` · `additive` · `multiply` · `screen` | `normal` |
+| `blend` | `normal` · `additive` · `multiply` · `screen`. Only the first letter's case is free: `Additive` reads as `additive`, while `ADDITIVE` or `mUlTiPlY` reads as **no mode** in the runtime with no error, so `build` refuses it by name (§5.1). Emitted as written | `normal` |
 
 ✅ **Every slot you declare is emitted, in this order.** A slot nothing fills — no
 skin entry, no manifest part — is emitted **empty**: `name` and `bone`, and no
@@ -5691,6 +5691,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `"lengths"[i] is V, below …` / `"lengths"[i] is "…"; every entry is a finite cumulative length` | §3.4 — the array is cumulative, so each entry is at least the one before it |
 | `rig constraint "X": slot "Y" has no path attachment in any skin` | §3.5.1 — give that slot a `"type": "path"` attachment, or aim the constraint at the slot that has one |
 | `rig constraint "X": rotateMode is "CHAINSCALE"; known: Tangent, Chain, ChainScale` | §3.5.1 — only the first letter's case is free; anything else resolves to `undefined` in the parser |
+| `<file>: slot "X" has blend "ADDITIVE"; known: normal, additive, multiply, screen (only the first letter's case is free — …)` | §3.3 — write the mode in lower case, or with only its first letter upper-cased. `SkeletonJson` reads `blend` through `Utils.enumValue`, which upper-cases the first character and looks the rest up exactly, so `ADDITIVE` loaded as no mode at all (`tools/pose_oracle.ts dump` reads it as `null`), with no error. rigc used to compare the name case-insensitively and build that file green |
 | `rig constraint "X": applies animation "Y", which the motion spec does not declare (it declares: …)` | §3.5.2 — fix the slider's `animation`, or add it to the motion spec |
 | `rig constraint "X": declares both a "bone" and "time"` | §3.5.2 — `bone` picks the model and `time` belongs to the other one |
 | `rig constraint "X": declares "property" but no "bone"` | §3.5.2 — name the driving bone, or key `slider.<name>.time` instead |
