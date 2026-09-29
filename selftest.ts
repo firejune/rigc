@@ -66117,6 +66117,527 @@ function runPoseOracleSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// rigc's own core: src/core/, the second dumper (issue #925, step 2a of #380)
+// ---------------------------------------------------------------------------
+
+// Its own statement, so the suite lands as one hunk (the convention the
+// slider-reader suite states at its imports).
+import { activeBones, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED, readModel, type CompiledDocument, type SetupEvaluator } from './src/core/index.ts';
+import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, type OracleDocument } from './tools/pose_oracle.ts';
+import { runRecipe } from './tools/emit_hashes.ts';
+import { buildRecipes, censusOf, gateBuild, gateBuilt, gateVerdict, reachLines, type BuiltRow } from './tools/core_gate.ts';
+import { modeMatrix, worldTransforms, type CoreInheritMode } from './src/core/world.ts';
+
+/** What `readModel` refuses `text` with, or '' when it reads it. */
+function coreRefusal(text: string): string {
+  try {
+    readModel(text);
+    return '';
+  } catch (err) {
+    return err instanceof CoreInputError ? err.message : `not a CoreInputError: ${(err as Error).message}`;
+  }
+}
+
+/** Module specifiers the core may not import, as a value or as a type: the runtime, and every impure door. */
+const CORE_FORBIDDEN_MODULES: readonly RegExp[] = [
+  /^@esotericsoftware\/spine-core(\/|$)/,
+  /^(node:)?(child_process|net|http|https|http2|dgram|dns|tls|fs|fs\/promises|os|worker_threads|cluster|perf_hooks)$/,
+];
+/** Calls the core may not make: a clock, randomness, the network, the process. */
+const CORE_FORBIDDEN_CALLS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bDate\.now\s*\(|\bnew\s+Date\b/, 'a clock'],
+  [/\bperformance\.now\s*\(/, 'a clock'],
+  [/\bMath\.random\s*\(/, 'randomness'],
+  [/\bfetch\s*\(/, 'the network'],
+  [/\bprocess\.|\bBun\./, 'the process'],
+];
+
+/** Every module specifier a source text names: static and type imports, re-exports, dynamic imports, requires. */
+function specifiersOf(code: string): Array<{ spec: string; typeOnly: boolean }> {
+  const out: Array<{ spec: string; typeOnly: boolean }> = [];
+  for (const m of code.matchAll(/\b(import|export)\s+(type\s+)?[^;'"]*?\bfrom\s*['"]([^'"]+)['"]/g)) out.push({ spec: m[3], typeOnly: m[2] !== undefined });
+  for (const m of code.matchAll(/\bimport\s*['"]([^'"]+)['"]/g)) out.push({ spec: m[1], typeOnly: false });
+  for (const m of code.matchAll(/\b(?:import|require)\s*\(\s*['"]([^'"]+)['"]\s*\)/g)) out.push({ spec: m[1], typeOnly: false });
+  return out;
+}
+
+/**
+ * The core's tree rule over a population of `path -> text`: every file under
+ * `src/core/`, and every module under `src/` it reaches by a value import,
+ * names no forbidden module and makes no forbidden call; the core itself also
+ * imports nothing outside `src/`. Comments are not code (`codeOnly`).
+ */
+function coreTreeProblems(population: ReadonlyMap<string, string>): string[] {
+  const problems: string[] = [];
+  const core = [...population.keys()].filter((p) => p.startsWith('src/core/')).sort();
+  const seen = new Set<string>();
+  const queue = [...core];
+  while (queue.length > 0) {
+    const rel = queue.shift() as string;
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    const text = population.get(rel);
+    if (text === undefined) {
+      problems.push(`${rel} is imported by the core and is not in the population read`);
+      continue;
+    }
+    const code = codeOnly(text);
+    const inCore = rel.startsWith('src/core/');
+    for (const { spec, typeOnly } of specifiersOf(code)) {
+      if (CORE_FORBIDDEN_MODULES.some((re) => re.test(spec)) && (inCore || !typeOnly)) problems.push(`${rel} imports "${spec}"${inCore ? '' : ', and the core reaches it'}`);
+      if (!spec.startsWith('.')) continue;
+      const target = join(dirname(rel), spec).split('\\').join('/');
+      if (inCore && target === 'src/transform.ts') problems.push(`${rel} imports "${spec}" — the compiler's evaluator, frozen for the emitter's bytes; the core poses with its own (src/core/world.ts)`);
+      if (!target.startsWith('src/')) {
+        if (inCore) problems.push(`${rel} imports "${spec}", outside src/`);
+        continue;
+      }
+      if (!typeOnly) queue.push(target);
+    }
+    for (const [re, what] of CORE_FORBIDDEN_CALLS) if (re.test(code)) problems.push(`${rel} reaches ${what} (${re.source})`);
+  }
+  if (core.length === 0) problems.push('no file under src/core/ was read, so the rule held nothing');
+  return problems;
+}
+
+/** Every `.ts` file under `src/`, read off the disk (a file not yet committed included), repo-relative. */
+function srcPopulation(root: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const walk = (rel: string): void => {
+    for (const entry of readdirSync(join(root, rel), { withFileTypes: true })) {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) walk(child);
+      else if (entry.name.endsWith('.ts')) out.set(child, readFileSync(join(root, child), 'utf8'));
+    }
+  };
+  walk('src');
+  return out;
+}
+
+/** The core suite: `src/core/`'s reader and setup pose, the second dumper in `tools/pose_oracle.ts`, compare's absences, the gate's instrument and the tree rule. */
+function runCoreSuite(): number {
+  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones as pose-oracle/1 (issue #925) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const root = import.meta.dir;
+  const work = mkdtempSync(join(tmpdir(), 'rigc-core-'));
+  // Two gallery builds, chosen off what their models declare rather than by
+  // name: the first with no constraint (the core poses its bones) and the
+  // first with one (the core leaves its bones out).
+  const galleryRoot = join(root, 'gallery');
+  const names = existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().filter((n) => existsSync(join(galleryRoot, n, 'rig.json'))) : [];
+  const builds: Array<{ name: string; out: string; model: CompiledDocument; text: string }> = [];
+  const buildProblems: string[] = [];
+  for (const [i, name] of names.entries()) {
+    const built = runRecipe(galleryRecipe(root, name).recipe, join(work, `g${i}`), root);
+    const modelPath = join(work, `g${i}`, 'out', MODEL_DOCUMENT_FILE);
+    if (built.exits.some((e) => e !== 0) || !existsSync(modelPath)) {
+      buildProblems.push(`gallery/${name} built with exits ${JSON.stringify(built.exits)} and ${existsSync(modelPath) ? 'a' : 'no'} model document`);
+      continue;
+    }
+    const text = readFileSync(modelPath, 'utf8');
+    builds.push({ name: `gallery/${name}`, out: join(work, `g${i}`, 'out'), model: readModel(text, modelPath), text });
+    if (builds.some((b) => b.model.constraints.length === 0) && builds.some((b) => b.model.constraints.length > 0)) break;
+  }
+  const free = builds.find((b) => b.model.constraints.length === 0) ?? null;
+  const held = builds.find((b) => b.model.constraints.length > 0) ?? null;
+  if (free === null) buildProblems.push('no gallery rig built a model that declares no constraint');
+  if (held === null) buildProblems.push('no gallery rig built a model that declares a constraint');
+
+  // --- CO01: readModel reads a built document and refuses each plant by name --
+  {
+    const probes: string[] = [...buildProblems];
+    let count = 0;
+    if (free !== null) {
+      const base = JSON.parse(free.text) as Record<string, unknown> & { bones: Array<Record<string, unknown>> };
+      if (free.model.bones.length !== base.bones.length) probes.push(`read ${free.model.bones.length} bone(s) of ${base.bones.length}`);
+      const plant = (edit: (doc: typeof base) => void): string => {
+        const copy = JSON.parse(free.text) as typeof base;
+        edit(copy);
+        return JSON.stringify(copy);
+      };
+      const last = String(base.bones[base.bones.length - 1].name);
+      const plants: Array<[string, string, string[]]> = [
+        ['not JSON', `${free.text}}`, ['not JSON']],
+        ['a wrong spec', plant((d) => (d.spec = 'rigc-compiled/2')), ['spec is "rigc-compiled/2"']],
+        ['a missing section', plant((d) => delete d.skins), ['section "skins" is missing']],
+        ['a section the document does not have', plant((d) => (d.poses = [])), ['section "poses" is not one']],
+        ['a bone field the writer does not write', plant((d) => (d.bones[1].drawOrder = 1)), ['field "drawOrder" is not one this reader knows']],
+        ['a parent declared after its child', plant((d) => (d.bones[1].parent = last)), [`parent "${last}" is not declared before it`]],
+        ['a mode no fold resolves', plant((d) => (d.bones[1].inheritMode = 'sideways')), ['inheritMode is "sideways", which folds to none of']],
+        ['a number spelled as a string', plant((d) => (d.bones[1].x = '1')), ['x is "1", not a finite number']],
+        ['two plants at once', plant((d) => {
+          d.bones[1].drawOrder = 1;
+          d.bones[1].inheritMode = 'sideways';
+        }), ['2 problem(s)', 'field "drawOrder"', 'inheritMode is "sideways"']],
+      ];
+      for (const [label, text, expected] of plants) {
+        count++;
+        const refusal = coreRefusal(text);
+        if (!expected.every((e) => refusal.includes(e))) probes.push(`${label}: ${refusal === '' ? 'read' : `refused as "${refusal}"`}, not naming ${expected.map((e) => JSON.stringify(e)).join(' and ')}`);
+      }
+      const folded = coreRefusal(plant((d) => (d.bones[1].inheritMode = 'NoScale')));
+      if (folded !== '') probes.push(`a mode in the rig spec's first-letter fold (NoScale) was refused: ${folded}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CO01_READ_MODEL_READS_A_BUILT_DOCUMENT_AND_REFUSES_EACH_PLANT_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `${free?.name}'s ${MODEL_DOCUMENT_FILE}, as \`rigc build\` wrote it, read with its ${free?.model.bones.length} bone(s); ${count} plants — not JSON, a wrong spec, a missing section, an unknown section, an unknown bone field, a parent after its child, an unresolvable mode, a string number, two at once — each refused naming its path, the two together in one refusal; \`NoScale\` read, as the rig spec folds it`),
+      'issue #925: the core reads what `build` writes and nothing else — the writer refuses a field it has no place for (`ordered` in src/model.ts), so the reader mirrors it; a field read past in silence would be a value the core does not pose',
+    );
+  }
+
+  // --- CO02: the core dump poses the setup bones and names every block it leaves out --
+  {
+    const probes: string[] = [...buildProblems];
+    let detail = '';
+    if (free !== null && held !== null) {
+      const modelPath = join(free.out, MODEL_DOCUMENT_FILE);
+      const outs = ['a', 'b'].map((x) => join(work, `core-${x}.json`));
+      for (const out of outs) {
+        const run = runOracle(['dump', '--core', modelPath, '--out', out]);
+        if (run.status !== 0) probes.push(`dump --core exited ${run.status}: ${run.stderr.trim().slice(0, 200)}`);
+      }
+      const same = outs.every((o) => existsSync(o)) && readFileSync(outs[0]).equals(readFileSync(outs[1]));
+      if (!same) probes.push('two core dumps of one document differ in their bytes, or one was not written');
+      let doc: OracleDocument | null = null;
+      try {
+        doc = existsSync(outs[0]) ? asOracleDocument(JSON.parse(readFileSync(outs[0], 'utf8')), outs[0]) : null;
+      } catch (err) {
+        probes.push(`the core dump is not a readable document: ${(err as Error).message}`);
+      }
+      if (doc !== null) {
+        if (doc.dumper !== CORE_DUMPER) probes.push(`dumper is ${JSON.stringify(doc.dumper)}`);
+        const rows = doc.setup.bones ?? [];
+        if (JSON.stringify(rows.map((r) => r[0])) !== JSON.stringify(free.model.bones.map((b) => b.name))) probes.push('setup.bones is not every bone in the document\'s order');
+        if (JSON.stringify(rows.map((r) => r[8])) !== JSON.stringify(free.model.bones.map((b) => b.parent ?? null))) probes.push('a setup row\'s parent is not the document\'s');
+        if (rows.some((r) => r[7] !== 1)) probes.push('a bone of a rig with no skin-required bone reads inactive');
+        const nulls = ORACLE_BLOCKS.filter((b) => blockOf(doc as OracleDocument, b) === null);
+        const named = (doc.absent ?? []).map((x) => x[0]);
+        if (JSON.stringify(nulls) !== JSON.stringify(NOT_ADMITTED.map((x) => x[0])) || JSON.stringify(named) !== JSON.stringify(nulls)) {
+          probes.push(`absent blocks [${nulls.join(', ')}], named [${named.join(', ')}], not the ${NOT_ADMITTED.length} the core has not admitted`);
+        }
+        if (JSON.stringify(doc.bones) !== JSON.stringify(free.model.bones.map((b) => b.name)) || JSON.stringify(doc.slots) !== JSON.stringify(free.model.slots.map((s) => [s.name, s.bone]))) probes.push('the rosters are not the document\'s');
+        detail = `${free.name}: ${statSync(outs[0]).size}-byte dump twice to the byte, ${rows.length} setup bone(s) in order, ${nulls.length} block(s) null and each named in \`absent\``;
+      }
+      const constrained = coreDump(held.model, { phase: 'grid', samples: ORACLE_DEFAULT_SAMPLES, skin: 'all', physics: 'none', dt: null });
+      const why = constrained.absent?.find((x) => x[0] === 'setup.bones')?.[1] ?? '';
+      const kinds = [...new Set(held.model.constraints.map((c) => c.kind))];
+      if (constrained.setup.bones !== null || !kinds.every((k) => why.includes(`${k} ×`))) probes.push(`${held.name} (${kinds.join(', ')}) was posed, or left out without naming its kinds: ${JSON.stringify(why)}`);
+      const refusals: Array<[string, string[], string]> = [
+        ['one skin', ['--skin', 'default'], '--skin "default"'],
+        ['stepped physics', ['--physics', 'step'], '--physics "step"'],
+        ['a second path', [free.out], 'takes the model document and no other path'],
+        ['a missing document', [], 'no such file'],
+      ];
+      for (const [label, extra, expected] of refusals) {
+        const out = join(work, `refused-${label.replace(/\W+/g, '-')}.json`);
+        const run = runOracle(['dump', '--core', label === 'a missing document' ? join(work, 'none.json') : modelPath, '--out', out, ...extra]);
+        if (run.status !== 2 || !run.stderr.includes(expected) || existsSync(out)) probes.push(`${label}: exit ${run.status}, ${existsSync(out) ? 'a file written' : 'nothing written'}, stderr ${JSON.stringify(run.stderr.trim().slice(0, 160))}`);
+      }
+      detail += `; ${held.name}'s bones left out naming ${kinds.join(', ')}; ${refusals.length} bad inputs exit 2 by name with nothing written`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'CO02_THE_CORE_DUMP_POSES_THE_SETUP_BONES_AND_NAMES_EVERY_BLOCK_IT_LEAVES_OUT',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #925: the second dumper writes the oracle\'s document and says what it does not pose — a block the core has not admitted is `null` and named with its construct, never a value, and a rig whose setup the runtime poses with constraints applied has no setup bones from a core that has not admitted them',
+    );
+  }
+
+  // --- CO03: compare SKIPs a block one side leaves out and refuses one neither carries --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    if (free !== null) {
+      const spine = dumpSkeleton(loadOracleData(readFileSync(join(free.out, 'skeleton.json'), 'utf8'), readFileSync(join(free.out, 'skeleton.atlas'), 'utf8'), free.out), { phase: 'grid', samples: 2, skin: 'all', physics: 'none', dt: null });
+      const tol = { xy: ORACLE_DEFAULT_TOL, m: ORACLE_DEFAULT_TOL };
+      const partial = (from: OracleDump): OracleDocument => ({
+        ...from,
+        dumper: 'a partial twin',
+        absent: [['setup.slots', 'planted'], ['animations', 'planted']],
+        setup: { ...from.setup, slots: null },
+        animations: null,
+      });
+      const twin = partial(spine);
+      const c = compareDumps(spine, twin, tol);
+      const skipped = c.skipped.map((s) => s.slice(0, s.indexOf(':')));
+      if (!c.identical || JSON.stringify(skipped) !== JSON.stringify(['setup.slots', 'animations']) || !c.skipped.every((s) => s.includes('not produced by a partial twin — planted'))) probes.push(`a twin with two blocks left out read ${c.identical ? 'IDENTICAL' : `DIFF (${c.first})`}, skipping [${c.skipped.join(' | ')}]`);
+      if (c.rows.length !== 1 || c.boneSamples !== spine.setup.bones.length) probes.push(`the skipped animations were counted: ${c.rows.length} row(s), ${c.boneSamples} bone-sample(s)`);
+      // A difference inside a block the other side left out is not compared; one inside a carried block still is.
+      const hidden = JSON.parse(JSON.stringify(spine)) as OracleDump;
+      hidden.setup.slots.forEach((s) => (s[2] = 0.123));
+      if (!compareDumps(hidden, twin, tol).identical) probes.push('a colour planted in setup.slots, which the twin leaves out, was compared');
+      const moved = JSON.parse(JSON.stringify(twin)) as OracleDocument;
+      const rows = moved.setup.bones ?? [];
+      const target = rows[rows.length - 1];
+      target[1] = (target[1] ?? 0) + 0.001;
+      const m = compareDumps(spine, moved, tol);
+      if (m.identical || !(m.first ?? '').includes(`bone "${target[0]}"`)) probes.push(`a bone moved 0.001 in a carried block read ${m.identical ? 'IDENTICAL' : m.first}`);
+      let both = '';
+      try {
+        compareDumps(twin, twin, tol);
+      } catch (err) {
+        both = err instanceof OracleInputError ? err.message : `not an OracleInputError: ${(err as Error).message}`;
+      }
+      if (!both.includes('setup.slots is absent from both documents')) probes.push(`a block absent from both read ${both === '' ? 'a comparison' : JSON.stringify(both)}`);
+      const readErr = (v: unknown): string => {
+        try {
+          asOracleDocument(v, 'plant');
+          return '';
+        } catch (err) {
+          return (err as Error).message;
+        }
+      };
+      if (!readErr({ ...twin, absent: [['animations', 'planted']] }).includes('setup.slots is null and the absent list does not say why')) probes.push('a null block the absent list does not name was read');
+      if (!readErr({ ...twin, absent: [...(twin.absent ?? []), ['bones', 'planted']] }).includes('names bones, which is present')) probes.push('an absent list naming a present block was read');
+      if (readErr(spine) !== '') probes.push(`a spine-core dump with no absent key was refused: ${readErr(spine)}`);
+      let strict = '';
+      try {
+        asOracleDump(JSON.parse(JSON.stringify(twin)), 'plant');
+      } catch (err) {
+        strict = (err as Error).message;
+      }
+      if (!strict.includes('animations is not a list')) probes.push('asOracleDump, the full-document reader, took a document with a null block');
+      // Through the command: exit 0 with the SKIP lines, and exit 2 on a block neither carries.
+      const pa = join(work, 'spine.json');
+      const pb = join(work, 'twin.json');
+      writeFileSync(pa, `${JSON.stringify(spine)}\n`);
+      writeFileSync(pb, `${JSON.stringify(twin)}\n`);
+      const run = runOracle(['compare', pa, pb]);
+      const lines = run.stdout.trim().split('\n');
+      const last = lines[lines.length - 1] ?? '';
+      if (run.status !== 0 || !lines.includes('  SKIP  setup.slots: not produced by a partial twin — planted') || !last.startsWith('IDENTICAL') || !last.includes('2 block(s) SKIPPED, not compared: setup.slots, animations')) probes.push(`compare exited ${run.status}, last line ${JSON.stringify(last)}`);
+      const twice = runOracle(['compare', pb, pb]);
+      if (twice.status !== 2 || !twice.stderr.includes('absent from both documents')) probes.push(`compare of the twin with itself exited ${twice.status}: ${JSON.stringify(twice.stderr.trim())}`);
+      detail = `${free.name}'s spine-core dump against a twin leaving setup.slots and animations out: IDENTICAL over ${c.boneSamples} bone-sample(s) with both SKIPped by name and uncounted; a colour planted in the skipped block not compared, a bone moved 0.001 in the carried one named; a block neither carries refused, in-process and exit 2; a null block the absent list does not name, and a name that is not null, refused; \`compare\` prints \`${last}\``;
+    } else probes.push(...buildProblems);
+    const ok = probes.length === 0;
+    say(
+      'CO03_COMPARE_SKIPS_A_BLOCK_ONE_SIDE_LEAVES_OUT_AND_REFUSES_ONE_NEITHER_CARRIES',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #380 §4: a row is judged only on constructs admitted, and a construct one side does not produce prints SKIP by name and counts as not run — never a pass. Absent on both sides there is nothing to hold it to, which is an error and not a vacuous IDENTICAL',
+    );
+  }
+
+  // --- CO04: the core imports nothing from spine-core and nothing impure --
+  {
+    const probes: string[] = [];
+    const population = srcPopulation(root);
+    const live = coreTreeProblems(population);
+    probes.push(...live);
+    const coreFiles = [...population.keys()].filter((p) => p.startsWith('src/core/'));
+    const base = population.get('src/core/index.ts') ?? '';
+    const plants: Array<[string, string, boolean]> = [
+      ['a value import of the runtime', `${base}\nimport { Skeleton } from '@esotericsoftware/spine-core';\n`, true],
+      ['a type import of the runtime', `${base}\nimport type { Skeleton } from '@esotericsoftware/spine-core';\n`, true],
+      ['a dynamic import of the runtime', `${base}\nconst late = import('@esotericsoftware/spine-core');\n`, true],
+      ['a child process', `${base}\nimport { spawnSync } from 'node:child_process';\n`, true],
+      ['a clock', `${base}\nconst at = Date.now();\n`, true],
+      ['a module outside src/', `${base}\nimport { r } from '../../tools/pose_oracle.ts';\n`, true],
+      ['the compiler\'s evaluator', `${base}\nimport { computeWorldTransforms } from '../transform.ts';\n`, true],
+      ['a src module that links the runtime', `${base}\nimport { validate } from '../validate.ts';\n`, true],
+      ['the runtime named in a comment', `${base}\n// not '@esotericsoftware/spine-core', and not Date.now()\n`, false],
+    ];
+    for (const [label, text, fires] of plants) {
+      const planted = new Map(population);
+      planted.set('src/core/index.ts', text);
+      const raised = coreTreeProblems(planted).length - live.length;
+      if (fires ? raised < 1 : raised !== 0) probes.push(`${label}: ${raised} problem(s) raised`);
+    }
+    const reached = [...population.keys()].filter((p) => !p.startsWith('src/core/') && coreTreeProblems(new Map([...population].filter(([k]) => k !== p))).some((x) => x.includes(`${p} is imported by the core`)));
+    const ok = probes.length === 0;
+    say(
+      'CO04_THE_CORE_IMPORTS_NOTHING_FROM_SPINE_CORE_AND_NOTHING_IMPURE',
+      ok,
+      probeDetail(ok, probes, `${coreFiles.length} file(s) under src/core/, read off the disk, and the src/ module(s) they reach by value [${reached.join(', ')}]: no import of the runtime package as a value or a type, nor of src/transform.ts, no child process, network, file system or clock module, no clock, randomness or process call, nothing outside src/; ${plants.length - 1} plants each raise a problem and the runtime named in a comment raises none`),
+      'issue #925 and the design\'s §3: the core is the second dumper only while it does not link the first, and `src/` is pure. CUR07 reads the files directly in src/ through git and so sees neither this directory nor an uncommitted file; this reads the directory off the disk, follows the core\'s value imports into src/, and holds the three link points CUR07 names apart from it',
+    );
+  }
+
+  // --- CO05: the gate names a skipped or refused row, and the census counts by hand --
+  {
+    const probes: string[] = [...buildProblems];
+    if (held !== null) {
+      const row = gateBuild(held.name, held.out);
+      if (row.verdict !== 'SKIP' || !(row.why ?? '').includes('constraints are not admitted')) probes.push(`${held.name} read ${row.verdict}: ${row.why}`);
+    }
+    const empty = join(work, 'empty-out');
+    mkdirSync(empty, { recursive: true });
+    const refused = gateBuild('planted', empty);
+    if (refused.verdict !== 'REFUSED' || !(refused.why ?? '').includes(MODEL_DOCUMENT_FILE)) probes.push(`a build with nothing in it read ${refused.verdict}: ${refused.why}`);
+    // A hand-made document: five bones, one per stated mode but the fifth, each field once.
+    const bones = [
+      { name: 'root', scaleX: -1 },
+      { name: 'a', parent: 'root', length: 3, rotation: 360, inheritMode: 'onlyTranslation' },
+      { name: 'b', parent: 'a', shearX: 1, shearY: 2, inheritMode: 'NoScale' },
+      { name: 'c', parent: 'b', scaleY: 2, skinRequired: true, inheritMode: 'noRotationOrReflection' },
+      { name: 'd', parent: 'root', inheritMode: 'normal' },
+    ];
+    const text = JSON.stringify({ spec: 'rigc-compiled/1', bones, slots: [], skins: [{ name: 'default', bones: ['c'], constraints: {}, attachments: {} }], constraints: [], events: [], animations: [], images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {} });
+    const census = censusOf(text, new Set(['root']));
+    const want = { bones: 5, modes: { normal: 2, onlyTranslation: 1, noRotationOrReflection: 1, noScale: 1, noScaleOrReflection: 0 }, fields: { length: 1, scaleX: 1, scaleY: 1, shearX: 1, shearY: 1, skinRequired: 1, negativeScale: 1, rotation360: 1, reflectingParent: 2 } };
+    if (JSON.stringify(census) !== JSON.stringify(want)) probes.push(`the census of the hand-made document is ${JSON.stringify(census)}, not ${JSON.stringify(want)}`);
+    const active = [...activeBones(readModel(text))].sort();
+    if (JSON.stringify(active) !== JSON.stringify(['a', 'b', 'c', 'd', 'root'])) probes.push(`active bones are [${active.join(', ')}]`);
+    const noSkin = [...activeBones(readModel(text.replace('"bones":["c"]', '"bones":[]')))].sort();
+    if (noSkin.includes('c') || noSkin.length !== 4) probes.push(`with no skin naming it, the skin-required bone reads active: [${noSkin.join(', ')}]`);
+    const ok = probes.length === 0;
+    say(
+      'CO05_THE_GATE_NAMES_A_SKIPPED_OR_REFUSED_ROW_AND_THE_CENSUS_COUNTS_BY_HAND',
+      ok,
+      probeDetail(ok, probes, `${held?.name} gated SKIP with its construct named, an empty build REFUSED naming ${MODEL_DOCUMENT_FILE}; a five-bone document made by hand counted as computed by hand — two normal, one each of three stated modes, none of the fifth, every field once, two bones under a reflecting parent; its skin-required bone active when a skin names it and inactive when none does`),
+      'issue #925\'s census is what the next construct\'s probes are aimed by, so its counts are held to a document whose answer is known, and the gate\'s two non-verdicts are held to name why',
+    );
+  }
+
+  // The equivalence gate (issue #925): the tree's recipes built once, then
+  // gated with the core's evaluator and with each plant.
+  const notes: string[] = [];
+  const recipes = treeRecipes(root, (line) => notes.push(line));
+  const built = buildRecipes(recipes, join(work, 'gate'), root);
+  const rows = gateBuilt(built);
+  const examplesHole = notes.find((l) => l.startsWith('HOLE')) ?? null;
+  const compared = rows.filter((r) => r.verdict === 'IDENTICAL' || r.verdict === 'DIFF');
+  /** A non-root bone of `mode` in a built row's model — the rows a plant in that mode must turn red. */
+  const usesMode = (r: BuiltRow, mode: CoreInheritMode): boolean => {
+    const path = join(r.out, MODEL_DOCUMENT_FILE);
+    if (!existsSync(path)) return false;
+    return readModel(readFileSync(path, 'utf8')).bones.some((b) => b.parent !== undefined && (b.inheritMode === undefined ? 'normal' : foldInheritMode(b.inheritMode)) === mode);
+  };
+  /** The core's evaluator with one mode's y axis turned over — the plant, in a copy, never in `src/`. */
+  const planted = (mode: CoreInheritMode): SetupEvaluator => (bones, active) =>
+    worldTransforms(bones, active, (m, parent, bone) => {
+      const out = modeMatrix(m, parent, bone);
+      return m === mode ? [out[0], -out[1], out[2], -out[3]] : out;
+    });
+
+  // --- CO06: every recipe without a constraint poses as spine-core does ------
+  {
+    const probes: string[] = [];
+    for (const r of rows) {
+      if (r.verdict === 'DIFF' || r.verdict === 'REFUSED') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+      if (r.verdict === 'IDENTICAL' && (r.worstXy !== 0 || r.worstM !== 0 || r.boneSamples === 0)) probes.push(`${r.name}: IDENTICAL within tolerance but not exact (Δxy ${r.worstXy}, Δabcd ${r.worstM}) or over no bone`);
+    }
+    for (const b of built) {
+      const row = rows.find((r) => r.name === b.name);
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      if (row === undefined || !existsSync(path)) continue;
+      const declares = readModel(readFileSync(path, 'utf8')).constraints.length > 0;
+      if (declares !== (row.verdict === 'SKIP')) probes.push(`${b.name}: ${declares ? 'declares a constraint and was not skipped' : 'declares none and was skipped'}`);
+    }
+    if (compared.length === 0) probes.push('no row was compared, so the gate held nothing');
+    const verdict = gateVerdict(rows);
+    const held = probes.length === 0;
+    say(
+      'CO06_EVERY_RECIPE_WITHOUT_A_CONSTRAINT_POSES_ITS_SETUP_BONES_AS_SPINE_CORE_DOES',
+      held,
+      probeDetail(held, probes, `${verdict.line}: ${compared.reduce((s, r) => s + r.boneSamples, 0)} bone-sample(s) over ${compared.length} row(s), every one exact (worst Δ 0), and the skipped rows exactly the ones declaring a constraint, each naming its kinds`),
+      'issue #925, the first construct of #380 §5 admitted: the core\'s own evaluator (`src/core/world.ts`), written from measurement, against spine-core\'s dump of the same build on every recipe the tree generates. A rig with a constraint is not judged here: the runtime poses its setup with the constraints applied, and those are later constructs',
+    );
+    if (examplesHole !== null) console.log(`          ⚠️ ${examplesHole} — only the gallery rows ran`);
+    for (const line of reachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
+  }
+
+  // --- CO07: a hand-written probe poses all five modes and the skin rule as spine-core does --
+  {
+    const probes: string[] = [];
+    const MODES: readonly CoreInheritMode[] = ['normal', 'onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
+    // Four parents, each a different thing to inherit — a rotation with scale and shear, a reflection on x,
+    // a reflection on y with shear, a quarter turn — and under each a child in every mode.
+    const parents = [
+      { name: 'turned', rotation: 30, scaleX: 1.5, scaleY: 0.75, shearX: 10, shearY: -5, x: 40, y: 12 },
+      { name: 'mirrored', rotation: 20, scaleX: -1.25, x: -30, y: 8 },
+      { name: 'flipped', rotation: -45, scaleY: -0.8, shearY: 25, x: 10, y: -20 },
+      { name: 'quarter', rotation: 90, x: 0, y: 50 },
+    ];
+    const bones: Array<Record<string, unknown>> = [{ name: 'root', rotation: 10, x: 5, y: -3 }];
+    for (const p of parents) {
+      bones.push({ ...p, parent: 'root' });
+      for (const mode of MODES) {
+        bones.push({ name: `${p.name}.${mode}`, parent: p.name, x: 12.5, y: -7.25, rotation: 33, scaleX: 0.9, shearX: 7, ...(mode === 'normal' ? {} : { inherit: mode }) });
+      }
+    }
+    // The skin rule: a skin-required bone a skin names, a skin-required parent of one, one no skin names, and a bone under that one.
+    bones.push({ name: 'req.parent', parent: 'root', skin: true }, { name: 'req.leaf', parent: 'req.parent', skin: true }, { name: 'req.named', parent: 'root', skin: true });
+    bones.push({ name: 'req.unnamed', parent: 'root', skin: true }, { name: 'free.under', parent: 'req.unnamed' });
+    const skinBones = ['req.leaf', 'req.named'];
+    const skeletonText = JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], skins: [{ name: 'default' }, { name: 'extra', bones: skinBones }], animations: {} });
+    const modelText = JSON.stringify({
+      spec: 'rigc-compiled/1',
+      bones: bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
+      slots: [],
+      skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }, { name: 'extra', bones: skinBones, constraints: {}, attachments: {} }],
+      constraints: [], events: [], animations: [], images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+    });
+    const options: OracleOptions = { phase: 'grid', samples: 1, skin: 'all', physics: 'none', dt: null };
+    const spine = dumpSkeleton(loadOracleData(skeletonText, '', 'the probe'), options);
+    const probeModel = readModel(modelText, 'the probe');
+    const c = compareDumps(spine, coreDump(probeModel, options), { xy: 0, m: 0 });
+    // The inactive bone and the bone under it are all zeros in both dumps, so the ill-conditioned rule excludes
+    // exactly those two from `compare`; their rows are held to each other directly instead.
+    const coreRows = new Map((coreDump(probeModel, options).setup.bones ?? []).map((b) => [b[0], b]));
+    if (!c.identical || c.boneSamples !== bones.length - 2 || c.excluded !== 2) probes.push(`the probe read ${c.identical ? 'IDENTICAL' : `DIFF (${c.first})`} over ${c.boneSamples} of ${bones.length} bone(s), ${c.excluded} excluded`);
+    for (const name of ['req.unnamed', 'free.under']) {
+      const theirs = spine.setup.bones.find((b) => b[0] === name);
+      if (JSON.stringify(theirs) !== JSON.stringify(coreRows.get(name)) || theirs?.slice(1, 7).some((v) => v !== 0)) probes.push(`${name}: spine-core ${JSON.stringify(theirs)}, the core ${JSON.stringify(coreRows.get(name))}, not both all zeros`);
+    }
+    const activity = Object.fromEntries(spine.setup.bones.filter((b) => b[0].includes('.') && !MODES.some((m) => b[0].endsWith(`.${m}`))).map((b) => [b[0], b[7]]));
+    const expected = { 'req.parent': 1, 'req.leaf': 1, 'req.named': 1, 'req.unnamed': 0, 'free.under': 1 };
+    if (JSON.stringify(activity) !== JSON.stringify(expected)) probes.push(`spine-core's activity is ${JSON.stringify(activity)}, not the measured rule's ${JSON.stringify(expected)}`);
+    // Each mode's plant turns the probe red at that mode's first bone.
+    for (const mode of MODES) {
+      const p = compareDumps(spine, coreDump(probeModel, options, planted(mode)), { xy: 0, m: 0 });
+      const named = /bone "([^"]+)"/.exec(p.first ?? '')?.[1];
+      const namedMode = bones.find((b) => b.name === named)?.inherit ?? (named === undefined || named === 'root' ? undefined : 'normal');
+      if (p.identical || namedMode !== mode) probes.push(`the ${mode} plant read ${p.identical ? 'IDENTICAL' : p.first}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CO07_A_HAND_WRITTEN_PROBE_POSES_ALL_FIVE_MODES_AND_THE_SKIN_RULE_AS_SPINE_CORE_DOES',
+      held,
+      probeDetail(held, probes, `${bones.length} bones — every mode under a scaled and sheared parent, a parent reflected on x, one reflected on y with shear, and a quarter turn — exact at tolerance 0 against spine-core under --skin all, the skin-required rule included (a bone a skin names and its skin-required parent active, one no skin names inactive and unposed — all zeros in both dumps — and a bone under that one active and posed from those zeros); each mode's plant named at its first bone`),
+      'issue #925: the corpus reaches noScale only on a rig with constraints and noScaleOrReflection on none, and no recipe has a skin-required bone, so these are held on a skeleton written here and posed by the runtime. Under --skin all every skin is applied at once: a skin-required bone is active exactly when some skin names it or a bone below it',
+    );
+  }
+
+  // --- CO08: one mode's sign flipped in a copy of the evaluator turns exactly the rows using it red --
+  {
+    const probes: string[] = [];
+    const reached: string[] = [];
+    const MODES: readonly CoreInheritMode[] = ['normal', 'onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
+    const holes: string[] = [];
+    for (const mode of MODES) {
+      const using = built.filter((b) => compared.some((r) => r.name === b.name) && usesMode(b, mode)).map((b) => b.name);
+      if (using.length === 0) {
+        holes.push(mode);
+        continue;
+      }
+      const red = gateBuilt(built.filter((b) => compared.some((r) => r.name === b.name)), planted(mode));
+      const turned = red.filter((r) => r.verdict === 'DIFF').map((r) => r.name);
+      if (JSON.stringify(turned) !== JSON.stringify(using)) probes.push(`the ${mode} plant turned [${turned.join(', ')}] red; the rows using it are [${using.join(', ')}]`);
+      reached.push(`${mode} ${turned.length}/${compared.length}`);
+    }
+    const held = probes.length === 0 && reached.length > 0;
+    say(
+      'CO08_ONE_MODES_SIGN_FLIPPED_IN_A_COPY_OF_THE_EVALUATOR_TURNS_EXACTLY_THE_ROWS_USING_IT_RED',
+      held,
+      probeDetail(held, reached.length === 0 ? [...probes, 'no mode is used by a compared row'] : probes, `the y axis turned over for one mode at a time, in a copy passed as the evaluator: rows red of those compared — ${reached.join(', ')} — exactly the rows with a bone in that mode, each named`),
+      'issue #925\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the mode at all',
+    );
+    for (const mode of holes) console.log(`          ⚠️ HOLE: no compared recipe has a bone in ${mode}, so its plant has no corpus row to turn red — CO07's probe is the only reading of it`);
+  }
+
+  rmSync(work, { recursive: true, force: true });
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // the byte-identity instrument: tools/emit_hashes.ts (issue #914, step 1a of #380)
 // ---------------------------------------------------------------------------
 
@@ -80039,6 +80560,7 @@ function main(): void {
   tally.of('geometry-export', runGeometryExportSuite);
   tally.of('pose', runPoseSuite);
   tally.of('pose-oracle', runPoseOracleSuite);
+  tally.of('core', runCoreSuite);
   const emitHashesBad = tally.of('emit-hashes', runEmitHashesSuite, { ran: ranIt });
   const modelBones = tally.of('model-bones', runModelBonesSuite, { failures: (value) => value.failures });
   const modelVertices = tally.of('model-vertices', runModelVerticesSuite, { failures: (value) => value.failures });
@@ -80720,6 +81242,19 @@ function main(): void {
       'refused with exit 2 and nothing written; stepped physics moving only what a physics constraint carries; and ' +
       'every public example\'s rigc rebuild posed against its export at the reading measured, with what the corpus ' +
       'cannot grade printed as a HOLE — or all of that last half a HOLE when the corpus is not fetched)' +
+      ', + ' + n('core') + ' core controls (issue #925 — rigc\'s own core in `src/core/`, the second dumper of the pose ' +
+      'oracle: `readModel` reading a built `rigc-compiled/1` document and refusing each plant by its path, two at ' +
+      'once in one refusal; `dump --core` writing the setup bones twice to the byte, every block the core has not ' +
+      'admitted `null` and named with its construct, a rig with a constraint left without setup bones naming its ' +
+      'kinds, and bad inputs refused with exit 2; `compare` skipping by name a block one side leaves out, ' +
+      'comparing nothing inside it and still naming a bone moved in a carried one, and refusing a block neither ' +
+      'carries; the core importing nothing from the runtime and nothing impure, off the disk and through its value ' +
+      'imports; and the gate\'s SKIP and REFUSED rows and the census held to a document counted by hand; then the ' +
+      'equivalence, with the core\'s own evaluator: every recipe without a constraint posing its setup bones ' +
+      'exactly as spine-core does, the rows with one skipped by construct, and what no row reaches printed as a ' +
+      'HOLE; a hand-written probe posing all five inherit modes under turned, scaled, sheared and reflecting ' +
+      'parents and the skin-required rule exactly as the runtime does; and one mode\'s sign flipped in a copy of ' +
+      'the evaluator turning exactly the rows using it red)' +
       (emitHashesBad === null
         ? ''
         : ', + ' + n('emit-hashes') + ' emit-hashes controls (issue #914 — `tools/emit_hashes.ts`, the byte-identity ' +
