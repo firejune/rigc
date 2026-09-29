@@ -156,6 +156,7 @@ import {
   CoreInputError,
   foldInheritMode,
   gridRound,
+  readBlend,
   readColour,
   shownAttachment,
   shownRow,
@@ -635,6 +636,7 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 export function posedSlots(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}): { rows: CoreSlotRow[]; conflicts: string[] } {
   const resolve = plant.shown ?? shownAttachment;
   const colour = plant.colour ?? readColour;
+  const blend = plant.blend ?? readBlend;
   const byName = new Map(timelines.slots.map((s) => [s.name, s]));
   const rows: CoreSlotRow[] = [];
   const conflicts: string[] = [];
@@ -670,6 +672,8 @@ export function posedSlots(doc: CompiledDocument, timelines: CoreAnimationTimeli
       gridRound(light[0]), gridRound(light[1]), gridRound(light[2]), gridRound(light[3]),
       dark === null ? null : [gridRound(dark[0]), gridRound(dark[1]), gridRound(dark[2])],
       row === null ? null : row.path,
+      // The slot's data, not its pose: no timeline moves it (the index header's blend rule).
+      blend(slot),
     ]);
   }
   return { rows, conflicts };

@@ -2,7 +2,7 @@
  * rigc's own core: it reads the compiled model as `build` writes it
  * (`rigc-compiled/1`, `skeleton.model.json`) and poses it (issue #925, step 2a
  * of issue #380). It is the second dumper `tools/pose_oracle.ts` was shaped
- * for: what it poses is written into the same `pose-oracle/1` document the
+ * for: what it poses is written into the same `pose-oracle/2` document the
  * runtime's dump is, and `compare` holds the two to each other.
  *
  * ## What it poses, and what it does not yet
@@ -10,8 +10,9 @@
  * Three constructs are here, in the runtime's own order (§5 of the design on
  * issue #380): **the setup pose of every bone** — its world origin and matrix,
  * its active flag and its parent (issue #925) — **the slots at the setup
- * pose** — what each shows, its colour and dark colour, and the region path
- * the shown attachment names (issue #928, below) — and **every drawn
+ * pose** — what each shows, its colour and dark colour, the region path
+ * the shown attachment names (issue #928, below) and its blend mode (issue
+ * #933) — and **every drawn
  * attachment's world vertices at the setup pose** — a region's corners, a
  * mesh's vertices and a clipping polygon (issue #931, `./vertices.ts`, whose
  * header states each measured rule). All are rounded as the oracle rounds
@@ -123,9 +124,16 @@
  *   too before this rule — only because its dial rests where `turn` keys the
  *   colours the slots already have; that is the rig's design, not a law the
  *   core could pose by (issue #928's report).
- * - **Blend modes are not in the row.** The oracle's slot row has no blend
- *   field, so a blend mode is not judged by this block; `tools/core_gate.ts`
- *   counts the rows stating one and prints that it is unjudged.
+ * - **The blend mode** (issue #933) is the row's last cell, as the runtime's
+ *   enum names it: `Normal`, `Additive`, `Multiply`, `Screen`. A slot that
+ *   states none reads `Normal`. The runtime reads a stated blend by
+ *   upper-casing its first letter and looking the result up: `additive` and
+ *   `Additive` both read `Additive`, while `ADDITIVE` and `mUlTiPlY` read no
+ *   mode at all (the dump's `null`) and an empty string threw on load. So the
+ *   core reads exactly the eight spellings whose first letter folds to one of
+ *   the four names and `readModel` refuses every other by name. The mode is
+ *   the slot's data, not its pose: an animation keying the slot's colour left
+ *   it where setup put it, so a sample's row carries the setup's mode.
  *
  * ## The evaluator
  *
@@ -137,7 +145,7 @@
  * as it is it read IDENTICAL on 1 of the 12 recipes the core poses (DIFF on
  * 11, worst 61 millionths against a tolerance of one — issue #925's report).
  * The owner's decision is recorded on issue #380. `poseSetup` takes a
- * `CorePlant` — the evaluator, the skin resolution, the colour reading — so
+ * `CorePlant` — the evaluator, the skin resolution, the colour and blend readings — so
  * the suite's plants can pass a copy of one of them; nothing else passes one.
  *
  * ## Purity
@@ -191,6 +199,14 @@ export const CORE_ATTACHMENT_FIELDS: Readonly<Record<SkinTableEntry['kind'], rea
 export const CORE_REGION_KINDS: ReadonlySet<SkinTableEntry['kind']> = new Set(['region', 'mesh', 'linkedmesh']);
 /** A colour the core reads: six or eight hex digits, either case (the header's measurement; anything else is refused). */
 const HEX_COLOUR = /^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
+/** The blend modes, as the runtime's enum names them (the header's measurement). */
+export const CORE_BLEND_MODES = ['Normal', 'Additive', 'Multiply', 'Screen'] as const;
+export type CoreBlendMode = (typeof CORE_BLEND_MODES)[number];
+/** A stated blend's reading: its first letter upper-cased, when that is one of the four names; `null` otherwise. */
+export function foldBlend(stated: string): CoreBlendMode | null {
+  const folded = `${stated.slice(0, 1).toUpperCase()}${stated.slice(1)}`;
+  return (CORE_BLEND_MODES as readonly string[]).includes(folded) ? (folded as CoreBlendMode) : null;
+}
 /** The five constraint kinds a document names. */
 export const CORE_CONSTRAINT_KINDS = ['ik', 'transform', 'path', 'physics', 'slider'] as const;
 export type CoreConstraintKind = (typeof CORE_CONSTRAINT_KINDS)[number];
@@ -339,6 +355,9 @@ function readSlots(value: unknown, bones: ReadonlySet<string>, problems: string[
     for (const key of ['color', 'dark'] as const) {
       const v = raw[key];
       if (typeof v === 'string' && !HEX_COLOUR.test(v)) problems.push(`${label}: ${key} is ${JSON.stringify(v)}, not six or eight hex digits (rrggbb or rrggbbaa) — the only spellings whose reading was measured to be a colour`);
+    }
+    if (typeof raw.blend === 'string' && foldBlend(raw.blend) === null) {
+      problems.push(`${label}: blend is ${JSON.stringify(raw.blend)}, which the runtime reads as no mode — one of ${CORE_BLEND_MODES.join(', ')}, first letter in either case, is the only spelling measured to be one`);
     }
     out.push(raw as unknown as ModelSlot);
   });
@@ -568,8 +587,8 @@ export type CoreBoneRow = [string, number | null, number | null, number | null, 
 /** What computes the world transforms: the core's own `worldTransforms` (`./world.ts`) unless a caller passes another. */
 export type SetupEvaluator = (bones: readonly ModelBone[], active: ReadonlySet<string>) => Map<string, CoreWorld>;
 
-/** One slot of a posed setup: `[name, attachment, r, g, b, a, dark, path]`, the oracle's row. */
-export type CoreSlotRow = [string, string | null, number | null, number | null, number | null, number | null, [number | null, number | null, number | null] | null, string | null];
+/** One slot of a posed setup: `[name, attachment, r, g, b, a, dark, path, blend]`, the oracle's row. */
+export type CoreSlotRow = [string, string | null, number | null, number | null, number | null, number | null, [number | null, number | null, number | null] | null, string | null, string | null];
 
 /** The record a slot's setup placeholder resolves to, and the skin whose table holds it. */
 export interface CoreShown {
@@ -588,6 +607,9 @@ export type ShownResolution = CoreShown | null | { conflict: Array<{ skin: strin
 /** What resolves a slot's setup attachment: `shownAttachment` unless a caller passes another. */
 export type ShownResolver = (doc: CompiledDocument, slot: ModelSlot) => ShownResolution;
 
+/** What reads a slot's blend mode: `readBlend` unless a caller passes another. */
+export type BlendReader = (slot: ModelSlot) => CoreBlendMode;
+
 /** What reads a stated light colour into its four channels: `readColour` unless a caller passes another. */
 export type ColourReader = (hex: string) => [number, number, number, number];
 
@@ -600,6 +622,8 @@ export interface CorePlant {
   evaluate?: SetupEvaluator;
   shown?: ShownResolver;
   colour?: ColourReader;
+  /** A slot's blend mode (`readBlend`). */
+  blend?: BlendReader;
   /** A region's corners (`regionCorners` in `./vertices.ts`). */
   region?: RegionPoser;
   /** A vertex array's world positions (`worldVertices` in `./vertices.ts`). */
@@ -646,6 +670,18 @@ export function activeBones(doc: CompiledDocument): Set<string> {
 export function readColour(hex: string): [number, number, number, number] {
   const channel = (i: number): number => Number.parseInt(hex.slice(2 * i, 2 * i + 2), 16) / 255;
   return [channel(0), channel(1), channel(2), hex.length === 8 ? channel(3) : 1];
+}
+
+/**
+ * A slot's blend mode: `Normal` when it states none, else the stated
+ * spelling folded (the header's measurement). `readModel` has already refused
+ * every spelling that folds to no mode.
+ */
+export function readBlend(slot: ModelSlot): CoreBlendMode {
+  if (slot.blend === undefined) return 'Normal';
+  const mode = foldBlend(slot.blend);
+  if (mode === null) throw new CoreInputError(`slot "${slot.name}": blend ${JSON.stringify(slot.blend)} is no mode the runtime reads`);
+  return mode;
 }
 
 /** The name a record shows and the region path it names — the header's two measured rules. */
@@ -699,6 +735,7 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
   const evaluate = plant.evaluate ?? worldTransforms;
   const resolve = plant.shown ?? shownAttachment;
   const colour = plant.colour ?? readColour;
+  const blend = plant.blend ?? readBlend;
   const bonesWhy = constraintsWhy(doc);
   let bones: CoreBoneRow[] | null = null;
   if (bonesWhy === null) {
@@ -727,6 +764,7 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
       gridRound(r), gridRound(g), gridRound(b), gridRound(a),
       dark === null ? null : [gridRound(dark[0]), gridRound(dark[1]), gridRound(dark[2])],
       row === null ? null : row.path,
+      blend(slot),
     ]);
   }
   const slotsWhy = slidersWhy(doc) ?? (conflicts.length === 0

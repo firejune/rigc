@@ -26,7 +26,14 @@
  * world vertices (with deform and weights), the draw order, clipping, events,
  * stepped physics and posing under one skin.
  *
- * ## `dump` — the document, `"spec": "pose-oracle/1"`
+ * ## `dump` — the document, `"spec": "pose-oracle/2"`
+ *
+ * 🔢 **The number in `spec` changes whenever a field is added, removed or
+ * moved.** `compare` reads a row by position and a reader refuses any `spec`
+ * but its own, so a document with a cell the reader does not know is refused
+ * by name rather than compared on the cells the reader does know — which
+ * would read IDENTICAL over a difference it never looked at. `/1` became `/2`
+ * when the slot row gained its blend mode (issue #933).
  *
  * One JSON object on one line, then a newline. Key order is fixed and is the
  * order written here. Two dumps of one input are byte-identical: no clock, no
@@ -42,7 +49,7 @@
  *
  * Top level, in order:
  *
- * - `spec` — the string `"pose-oracle/1"`.
+ * - `spec` — the string `"pose-oracle/2"`.
  * - `dumper` — who posed it, free text (`"spine-core 4.3.13"` here). Never
  *   compared.
  * - `source` — `{ "spine": <string|null>, "hash": <string|null> }`, the
@@ -105,11 +112,19 @@
  *   world matrix `[a b][c d]` and origin); `active` is `1` or `0`
  *   (`Bone.active`, false for a `skinRequired` bone the skin does not name);
  *   `parent` is the parent bone's name or `null`.
- * - `slots` — `[name, attachment, r, g, b, a, dark, path]` per slot in setup
- *   order, off `Slot.appliedPose`: the attachment's `name` or `null`, the light
- *   colour, `dark` as `[r, g, b]` or `null` when the slot has no dark colour,
- *   and the attachment's `path` (region and mesh attachments, which default
- *   `path` to their name) or `null` for any other attachment or none.
+ * - `slots` — `[name, attachment, r, g, b, a, dark, path, blend]` per slot in
+ *   setup order, off `Slot.appliedPose`: the attachment's `name` or `null`, the
+ *   light colour, `dark` as `[r, g, b]` or `null` when the slot has no dark
+ *   colour, and the attachment's `path` (region and mesh attachments, which
+ *   default `path` to their name) or `null` for any other attachment or none;
+ *   then `blend`, off the slot's data (`SlotData.blendMode`) as its enum's
+ *   name — `Normal`, `Additive`, `Multiply`, `Screen` — or `null` when the
+ *   runtime holds no mode (it reads a stated `ADDITIVE` so). The blend mode is
+ *   data, not pose: a `SlotPose` carries `color`, `darkColor`, `attachment`,
+ *   `sequenceIndex` and `deform` and no mode, and an animation leaves it where
+ *   setup put it; it is in the row because the renderer draws the posed slot
+ *   with it. Of the pose's other two fields, `deform` is in `attachments`'
+ *   world vertices and `sequenceIndex` is not dumped (issue #933's report).
  * - `drawOrder` — slot names in the posed draw order
  *   (`Skeleton.drawOrder.appliedPose`).
  * - `attachments` — `[slot, attachment, kind, vertices]` for every slot, in
@@ -210,7 +225,7 @@
  *
  * ## `compare` — two documents
  *
- * Refused (exit 2) when either file is not a `pose-oracle/1` document, when
+ * Refused (exit 2) when either file is not a `pose-oracle/2` document, when
  * the two were taken under different `options`, or when a block is absent
  * from BOTH — there is then nothing to compare it with. A block absent from
  * exactly one side prints `SKIP <block>: not produced by <dumper>` (and the
@@ -253,6 +268,7 @@ import { join } from 'node:path';
 import {
   Animation,
   AtlasAttachmentLoader,
+  BlendMode,
   ClippingAttachment,
   EventTimeline,
   IkConstraintData,
@@ -279,7 +295,7 @@ import {
 import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, readModel, type CompiledDocument } from '../src/core/index.ts';
 import { IRR_OFFSET as CORE_IRR_OFFSET, poseAnimations, sampleTime as coreSampleTime, type TimelinePlant } from '../src/core/animation.ts';
 
-export const ORACLE_SPEC = 'pose-oracle/1';
+export const ORACLE_SPEC = 'pose-oracle/2';
 export const ORACLE_DUMPER = 'spine-core 4.3.13';
 export const ORACLE_PHASES = ['grid', 'off', 'irr', 'dense'] as const;
 export type OraclePhase = (typeof ORACLE_PHASES)[number];
@@ -300,7 +316,7 @@ export class OracleInputError extends Error {}
 
 export type Num = number | null;
 export type BoneRow = [string, Num, Num, Num, Num, Num, Num, 0 | 1, string | null];
-export type SlotRow = [string, string | null, Num, Num, Num, Num, [Num, Num, Num] | null, string | null];
+export type SlotRow = [string, string | null, Num, Num, Num, Num, [Num, Num, Num] | null, string | null, string | null];
 export type AttachmentRow = [string, string, 'region' | 'mesh', Num[]];
 export type ClipRow = [string, string, string | null, Num[]];
 export type EventRow = [string, Num, number, Num, string | null];
@@ -445,7 +461,7 @@ export interface OracleDocumentPose {
 }
 
 /**
- * A `pose-oracle/1` document from either dumper: an `OracleDump` is one with
+ * A `pose-oracle/2` document from either dumper: an `OracleDump` is one with
  * nothing absent. `absent` names every `null` block with the construct its
  * dumper has not admitted; a spine-core dump carries none and writes no
  * `absent` key.
@@ -535,6 +551,7 @@ function readPose(skeleton: Skeleton): OraclePose {
       r(p.color.a),
       dark === null ? null : [r(dark.r), r(dark.g), r(dark.b)],
       path ?? null,
+      BlendMode[s.data.blendMode] ?? null,
     ];
   });
   const drawOrder: string[] = [];
@@ -568,7 +585,7 @@ function firedBetween(skeleton: Skeleton, anim: Animation, last: number, t: numb
   return fired.map((e) => [e.data.name, r(e.time), e.intValue, r(e.floatValue), e.stringValue ?? null]);
 }
 
-/** Pose one skeleton into a `pose-oracle/1` document — see the header for every field. */
+/** Pose one skeleton into a `pose-oracle/2` document — see the header for every field. */
 export function dumpSkeleton(data: SkeletonData, options: OracleOptions): OracleDump {
   let skin: Skin;
   if (options.skin === 'all') {
@@ -896,7 +913,7 @@ const units = (v: number): number => Math.round(v * ORACLE_GRID);
 const fmt = (u: number): string => (u / ORACLE_GRID).toFixed(6);
 const at = (row: string, t: Num): string => (row === '(setup)' ? 'the setup pose' : `animation "${row}" t=${t ?? 'null'}`);
 
-/** Throws naming the first field that is not what a `pose-oracle/1` document has. */
+/** Throws naming the first field that is not what a `pose-oracle/2` document has. */
 export function asOracleDump(value: unknown, where: string): OracleDump {
   if (typeof value !== 'object' || value === null) throw new OracleInputError(`${where}: not a JSON object`);
   const v = value as Record<string, unknown>;
@@ -911,7 +928,7 @@ export function asOracleDump(value: unknown, where: string): OracleDump {
 }
 
 /**
- * Throws naming the first field that is not what a `pose-oracle/1` document
+ * Throws naming the first field that is not what a `pose-oracle/2` document
  * has — either dumper's: a block may be `null`, and then the document's
  * `absent` list must name it, and name nothing else.
  */
@@ -1096,6 +1113,7 @@ function comparePose(
     }
     if (slot[1] !== other[1]) note('attachment', `slot "${slot[0]}" shows ${JSON.stringify(slot[1])} vs ${JSON.stringify(other[1])}`);
     if (slot[7] !== other[7]) note('path', `slot "${slot[0]}" region path ${JSON.stringify(slot[7])} vs ${JSON.stringify(other[7])}`);
+    if (slot[8] !== other[8]) note('blend', `slot "${slot[0]}" blend ${JSON.stringify(slot[8])} vs ${JSON.stringify(other[8])}`);
     let dc = 0;
     for (let i = 2; i <= 5; i++) {
       const d = numDelta(slot[i] as Num, other[i] as Num);
@@ -1184,7 +1202,7 @@ function compareEvents(row: OracleRowReport, t: Num, a: EventRow[], b: EventRow[
   row.findings.push(`${where}: events fired A ${show(a)} vs B ${show(b)}`);
 }
 
-/** Compare two `pose-oracle/1` documents — see the header. */
+/** Compare two `pose-oracle/2` documents — see the header. */
 export function compareDumps(a: OracleDocument, b: OracleDocument, tol: OracleTolerance): OracleComparison {
   const oa = JSON.stringify(a.options);
   const ob = JSON.stringify(b.options);
