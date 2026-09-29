@@ -48,6 +48,22 @@
  * row, one line per animation (issue #936): its verdict on each sample
  * block, and the first difference of a DIFF.
  *
+ * ## The stepped run (issue #956)
+ *
+ * Every row is dumped a second time by both dumpers under `--physics step
+ * --dt 1/60` (`STEPPED_OPTIONS`, the oracle's default `dt`, the same nine
+ * grid samples) and its `setup.bones` and `animations.bones` judged alone,
+ * the `physics` parameter block with each — both phases on every run, not a
+ * flag: the stepped share of a run over the nineteen tree rows measured
+ * 0.56 s and 1.67 s on two runs of a shared machine, against builds that
+ * take the rest of its half-minute. A row declaring a physics constraint,
+ * or one whose stepped verdict is not IDENTICAL, prints the `dt` its two
+ * documents state (they must state the same one, or the row is DIFF) and,
+ * per animation, the steps the schedule takes to reach each sample from the
+ * one before (`stepSchedule` in `src/core/constraints_physics.ts`; the first
+ * sample, at 0, takes none: it is the reset pose). A stepped DIFF turns the
+ * run RED, and the verdict line counts the stepped verdicts after the rest.
+ *
  * ## The census
  *
  * One line per row: bones, the inherit modes the model states (a bone that
@@ -92,10 +108,17 @@
  * an earlier one moved, and a world-space edit a later one re-poses — each a
  * HOLE when no row whose bones were compared reaches it; the physics
  * constraints and their timelines, and the slider's forms, flags, what its
- * animation keys and its timelines, likewise; the stepped phase of a physics
- * constraint a HOLE by name, since the gate poses `--physics none`; the kinds
+ * animation keys and its timelines, likewise; the kinds
  * no cut poses yet (`later`) a HOLE however many rows declare one, and a
  * `NONE` line saying so when no kind is left to a later cut.
+ *
+ * And one line per row for the stepped phase (`STEPPED_CENSUS_FIELDS`, issue
+ * #956): each component a physics constraint drives, each setting it states
+ * off the parser's value, each timeline kind keyed, the timeline naming no
+ * constraint, a `mix` of 0, two constraints on one bone, one physics bone
+ * below another and a skin-required constraint — each a HOLE when no row
+ * the stepped run judged IDENTICAL reaches it, which the core suite's `CK`
+ * probes hold (it replaces issue #938's `physics.stepped` HOLE).
  *
  * And one line per row for the path constraints (`PATH_CENSUS_FIELDS`, issue
  * #938's second cut): every mode and setting the walk reads, the curve each
@@ -119,7 +142,7 @@
  * is reached only from a pack that trims, which the public examples do not.
  *
  * Exit codes: 0 when every row is IDENTICAL or SKIP; 1 when any row is DIFF or
- * REFUSED; 2 on a bad input, by name. `tools/` is not `src/`: this file runs
+ * REFUSED, or its stepped run is DIFF; 2 on a bad input, by name. `tools/` is not `src/`: this file runs
  * child processes (through `runRecipes`) and reads the disk.
  */
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -129,6 +152,7 @@ import { activeBones, CORE_INHERIT_MODES, CoreInputError, foldInheritMode, readB
 import { BONE_TIMELINE_KINDS, sampleTime, SLOT_TIMELINE_KINDS, type TimelinePlant } from '../src/core/animation.ts';
 import { ADMITTED_CONSTRAINT_KINDS, TRANSFORM_PROPERTIES, type CoreConstraintRecord } from '../src/core/constraints.ts';
 import { slotBonePlan, type CorePathRecord } from '../src/core/constraints_path.ts';
+import { EVERY_GLOBAL_PHYSICS, PHYSICS_DEFAULTS, stepSchedule, type CorePhysicsRecord } from '../src/core/constraints_physics.ts';
 import { CORE_CONSTRAINT_KINDS } from '../src/core/index.ts';
 import { MODEL_DOCUMENT_FILE } from '../src/model.ts';
 import { HashesInputError, readRecipes, runRecipes, TREE_ROOT, treeRecipes, type Recipe } from './emit_hashes.ts';
@@ -138,9 +162,11 @@ import {
   dumpSkeleton,
   loadOracleData,
   ORACLE_BLOCKS,
+  ORACLE_DEFAULT_DT,
   ORACLE_DEFAULT_SAMPLES,
   ORACLE_DEFAULT_TOL,
   OracleInputError,
+  parseDt,
   type OracleBlock,
   type OracleComparison,
   type OracleDocument,
@@ -149,6 +175,41 @@ import {
 
 /** The options both dumps are taken under: the oracle's defaults. */
 export const GATE_OPTIONS: OracleOptions = { phase: 'grid', samples: ORACLE_DEFAULT_SAMPLES, skin: 'all', physics: 'none', dt: null };
+
+/** The stepped run's options (issue #956): the same samples, `--physics step` at the oracle's default `--dt`. */
+export const STEPPED_OPTIONS: OracleOptions = { ...GATE_OPTIONS, physics: 'step', dt: parseDt(ORACLE_DEFAULT_DT) };
+
+/**
+ * The stepped phase's census fields (issue #956), in the order its table
+ * prints them: each component a physics constraint drives (above 0), a
+ * component stated below 0 (off, though a negative `rotate` or `shearX` still
+ * weighs the rotation), each setting stated other than the parser's value
+ * (`PHYSICS_DEFAULTS`), each timeline kind keyed, the timeline that names no
+ * constraint, a constraint resting at `mix` 0 or keyed to it, two constraints
+ * on one bone, a physics bone below another physics bone, and a
+ * skin-required one. Each a count of physics constraints (or timelines),
+ * over the document.
+ */
+export const STEPPED_CENSUS_FIELDS = [
+  'x', 'y', 'rotate', 'scaleX', 'shearX', 'componentNegative',
+  'inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix', 'limit', 'fps',
+  'timeline.inertia', 'timeline.strength', 'timeline.damping', 'timeline.mass', 'timeline.wind', 'timeline.gravity', 'timeline.mix', 'timeline.reset',
+  'timeline.global', 'mixZero', 'sameBone', 'chain', 'skin',
+] as const;
+export type SteppedCensusField = (typeof STEPPED_CENSUS_FIELDS)[number];
+export type SteppedCensusRow = Record<SteppedCensusField, number>;
+
+/** One row's stepped run: its bones judged under `STEPPED_OPTIONS`, the `dt` both documents state, and the steps the walk takes between samples. */
+export interface SteppedRow {
+  verdict: BlockVerdict;
+  why: string | null;
+  /** The `options.dt` both documents carry. */
+  dt: number | null;
+  boneSamples: number;
+  /** Per animation, the steps taken to reach each sample from the one before (the first from the reset at 0). */
+  steps: Array<{ animation: string; counts: number[] }>;
+  census: SteppedCensusRow;
+}
 
 /** The census's bone fields, in the order its table prints them. */
 export const CENSUS_FIELDS = ['length', 'scaleX', 'scaleY', 'shearX', 'shearY', 'skinRequired', 'negativeScale', 'rotation360', 'reflectingParent'] as const;
@@ -311,6 +372,8 @@ export interface GateRow {
   attachmentCensus: AttachmentCensusRow | null;
   constraintCensus: ConstraintCensusRow | null;
   pathCensus: PathCensusRow | null;
+  /** The stepped run (issue #956); absent on a REFUSED row. */
+  stepped?: SteppedRow;
 }
 
 /** A refusal about an input — the command exits 2 on it. */
@@ -554,6 +617,48 @@ export function constraintCensusOf(modelText: string): ConstraintCensusRow {
 }
 
 /**
+ * The stepped phase's census of one model document (issue #956) — the
+ * fields of `STEPPED_CENSUS_FIELDS`, read off the physics records and the
+ * physics timelines.
+ */
+export function steppedCensusOf(modelText: string): SteppedCensusRow {
+  const doc = readModel(modelText);
+  const out = Object.fromEntries(STEPPED_CENSUS_FIELDS.map((f) => [f, 0])) as SteppedCensusRow;
+  const records = doc.constraints.flatMap((c) => (c.record?.kind === 'physics' ? [c.record as CorePhysicsRecord] : []));
+  const parentOf = new Map(doc.bones.map((b) => [b.name, b.parent]));
+  const bones = new Set(records.map((r) => r.bone));
+  const counted = new Set<string>();
+  for (const r of records) {
+    for (const f of ['x', 'y', 'rotate', 'scaleX', 'shearX'] as const) if (r[f] > 0) out[f]++;
+    if ((['x', 'y', 'rotate', 'scaleX', 'shearX'] as const).some((f) => r[f] < 0)) out.componentNegative++;
+    for (const f of ['inertia', 'strength', 'damping', 'wind', 'gravity', 'mix', 'limit'] as const) if (r[f] !== PHYSICS_DEFAULTS[f]) out[f]++;
+    if (r.massInverse !== 1 / PHYSICS_DEFAULTS.mass) out.mass++;
+    if (r.step !== 1 / PHYSICS_DEFAULTS.fps) out.fps++;
+    if (r.mix === 0) out.mixZero++;
+    if (records.filter((q) => q.bone === r.bone).length > 1) out.sameBone++;
+    for (let at = parentOf.get(r.bone); at !== undefined; at = parentOf.get(at)) {
+      if (bones.has(at)) {
+        out.chain++;
+        break;
+      }
+    }
+    if (r.skin) out.skin++;
+  }
+  for (const a of doc.animations) {
+    for (const tl of a.constraints.physicsKeyed ?? []) {
+      out[`timeline.${tl.kind}` as SteppedCensusField]++;
+      if (tl.name === EVERY_GLOBAL_PHYSICS) out['timeline.global']++;
+      const key = `${a.name}/${tl.name}`;
+      if (tl.kind === 'mix' && tl.keys.some((k) => k.values[0] === 0) && !counted.has(key)) {
+        counted.add(key);
+        out.mixZero++;
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * The path constraints' census of one model document (issue #938, second
  * cut) — the fields of `PATH_CENSUS_FIELDS`. The slot bone's reading is the
  * core's own plan (`slotBonePlan`), under every skin at once.
@@ -683,6 +788,39 @@ function only(core: OracleDocument, keep: GateBlock): OracleDocument {
   return { ...core, absent, setup, animations };
 }
 
+/**
+ * The stepped run of one build (issue #956): both dumps again under
+ * `STEPPED_OPTIONS`, the setup bones and the samples' bones each judged
+ * alone — the physics parameter block with them — then the whole document
+ * (every block the core writes, #955's among them), the `dt` both documents
+ * state, and the steps the core's schedule takes between samples.
+ */
+export function steppedRun(skeletonText: string, atlasText: string, skeletonPath: string, modelText: string, modelPath: string, plant: TimelinePlant, tol: { xy: number; m: number }): SteppedRow {
+  const spine = dumpSkeleton(loadOracleData(skeletonText, atlasText, skeletonPath), STEPPED_OPTIONS);
+  const doc = readModel(modelText, modelPath);
+  const core = coreDump(doc, STEPPED_OPTIONS, plant);
+  const census = steppedCensusOf(modelText);
+  const dt = spine.options.dt === core.options.dt ? core.options.dt : null;
+  const steps = doc.animations.map((a) => ({ animation: a.name, counts: stepSchedule(STEPPED_OPTIONS.phase, a.timelines.duration, STEPPED_OPTIONS.samples, STEPPED_OPTIONS.dt as number).map((x) => x.length) }));
+  if (dt === null) return { verdict: 'DIFF', why: `the two documents state dt ${spine.options.dt} and ${core.options.dt}`, dt, boneSamples: 0, steps, census };
+  const skipped: string[] = [];
+  let boneSamples = 0;
+  for (const block of ['setup.bones', 'animations.bones'] as const) {
+    const why = core.absent?.find((x) => x[0] === block)?.[1];
+    if (why !== undefined) {
+      skipped.push(`${block}: ${why}`);
+      continue;
+    }
+    const alone = compareDumps(spine, only(core, block), tol);
+    if (!alone.identical) return { verdict: 'DIFF', why: `${block}: ${alone.first}`, dt, boneSamples, steps, census };
+    boneSamples += alone.boneSamples;
+  }
+  // Every other block the core writes under the step (issue #955's attachments, clips, draw order and events among them) compared whole; a block the core leaves out is SKIP there, not a difference.
+  const whole = compareDumps(spine, core, tol);
+  if (!whole.identical) return { verdict: 'DIFF', why: `the whole document: ${whole.first}`, dt, boneSamples, steps, census };
+  return skipped.length === 0 ? { verdict: 'IDENTICAL', why: null, dt, boneSamples, steps, census } : { verdict: 'SKIP', why: skipped.join(' | '), dt, boneSamples, steps, census };
+}
+
 /** One built row: both dumps, the comparisons — whole and per block — and the census. `plant` replaces a part of the core (a control's plant). */
 export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {}): GateRow {
   const skeleton = join(outDir, 'skeleton.json');
@@ -701,6 +839,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   let attachmentCensus: AttachmentCensusRow;
   let constraintCensus: ConstraintCensusRow;
   let pathCensus: PathCensusRow;
+  let stepped: SteppedRow;
   let attachmentRows = 0;
   try {
     const spine = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), GATE_OPTIONS);
@@ -739,13 +878,14 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
     attachmentCensus = attachmentCensusOf(modelText, reflecting, sheared);
     constraintCensus = constraintCensusOf(modelText);
     pathCensus = pathCensusOf(modelText);
+    stepped = steppedRun(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton, modelText, model, plant, tol);
   } catch (err) {
     if (err instanceof OracleInputError || err instanceof CoreInputError) return refused(err.message);
     throw err;
   }
   const animations = [...perAnimation.values()];
   const setupRow = c.rows.find((x) => x.name === '(setup)');
-  const base = { name, blocks, boneSamples: c.boneSamples, slotRows, worstXy: c.worstXy, worstM: c.worstM, census, slotCensus, attachmentRows, vertices: setupRow?.vertices ?? 0, attachmentCensus, constraintCensus, pathCensus, animations, animationCensus };
+  const base = { name, blocks, boneSamples: c.boneSamples, slotRows, worstXy: c.worstXy, worstM: c.worstM, census, slotCensus, attachmentRows, vertices: setupRow?.vertices ?? 0, attachmentCensus, constraintCensus, pathCensus, animations, animationCensus, stepped };
   if (!c.identical) return { ...base, verdict: 'DIFF', why: c.first };
   const skipped = GATE_BLOCKS.filter((b) => blocks[b].verdict === 'SKIP');
   if (skipped.length > 0) return { ...base, verdict: 'SKIP', why: skipped.map((b) => `${b}: ${blocks[b].why}`).join(' | ') };
@@ -938,9 +1078,8 @@ export function constraintCensusTable(rows: readonly GateRow[]): string[] {
  * whose `animations.bones` was compared, every other on one whose
  * `setup.bones` was — and the HOLEs; `later` is a HOLE however many rows carry
  * one, since no cut judges those kinds yet, and when no kind is left to a
- * later cut it is a `NONE` line saying so; and the stepped phase of a
- * physics constraint is a HOLE by name on every corpus, since the gate poses
- * `--physics none` only.
+ * later cut it is a `NONE` line saying so. The stepped phase has its own
+ * census since issue #956 (`steppedReachLines`).
  */
 export function constraintReachLines(rows: readonly GateRow[]): string[] {
   const out: string[] = [];
@@ -954,8 +1093,6 @@ export function constraintReachLines(rows: readonly GateRow[]): string[] {
     }
     else out.push(on.length > 0 ? `  REACH constraints ${f}: ${on.length} compared row(s)` : `  HOLE  constraints ${f}: no compared row reaches it${anywhere.length > 0 ? ` (only ${anywhere.join(', ')}, which the core skips)` : ''}`);
   }
-  const physics = rows.filter((r) => (r.constraintCensus?.physics ?? 0) > 0).map((r) => r.name);
-  out.push(`  HOLE  constraints physics.stepped: ${physics.length} row(s) declare a physics constraint; the gate poses --physics none only, where it applies nothing, and the stepped phase (--physics step) is its own card — none was judged`);
   return out;
 }
 
@@ -1023,17 +1160,48 @@ export function pathReachLines(rows: readonly GateRow[]): string[] {
   return out;
 }
 
+/** The stepped census as a markdown table, one row per recipe, then the totals. */
+export function steppedCensusTable(rows: readonly GateRow[]): string[] {
+  const head = ['row', 'stepped', ...STEPPED_CENSUS_FIELDS];
+  const out = [`| ${head.join(' | ')} |`, `| ${head.map((_h, i) => (i < 2 ? '---' : '---:')).join(' | ')} |`];
+  const total: number[] = new Array<number>(STEPPED_CENSUS_FIELDS.length).fill(0);
+  for (const row of rows) {
+    const c = row.stepped?.census ?? null;
+    const values = c === null ? null : STEPPED_CENSUS_FIELDS.map((f) => c[f]);
+    if (values !== null) values.forEach((v, i) => (total[i] += v));
+    out.push(`| ${row.name} | ${row.stepped?.verdict ?? row.verdict} | ${(values ?? STEPPED_CENSUS_FIELDS.map(() => '—')).map(String).join(' | ')} |`);
+  }
+  out.push(`| **all** | | ${total.join(' | ')} |`);
+  return out;
+}
+
+/**
+ * Each stepped field a row judged IDENTICAL under the step reaches, and the
+ * HOLEs — what no such row reaches, each covered by the core suite's `CK`
+ * probes (issue #956; it replaces the `physics.stepped` HOLE of issue #938).
+ */
+export function steppedReachLines(rows: readonly GateRow[]): string[] {
+  const out: string[] = [];
+  for (const f of STEPPED_CENSUS_FIELDS) {
+    const on = rows.filter((r) => r.stepped?.verdict === 'IDENTICAL' && r.stepped.census[f] > 0).map((r) => r.name);
+    const anywhere = rows.filter((r) => (r.stepped?.census[f] ?? 0) > 0).map((r) => r.name);
+    out.push(on.length > 0 ? `  REACH stepped ${f}: ${on.length} compared row(s)` : `  HOLE  stepped ${f}: no compared row reaches it${anywhere.length > 0 ? ` (only ${anywhere.join(', ')}, which the stepped run does not judge IDENTICAL)` : ''}`);
+  }
+  return out;
+}
+
 /** The verdict line. */
 export function gateVerdict(rows: readonly GateRow[]): { ok: boolean; line: string } {
   const count = (v: GateVerdict): number => rows.filter((r) => r.verdict === v).length;
   const on = (block: GateBlock, v: BlockVerdict): number => rows.filter((r) => r.blocks?.[block].verdict === v).length;
-  const ok = count('DIFF') === 0 && count('REFUSED') === 0;
+  const stepped = (v: BlockVerdict): number => rows.filter((r) => r.stepped?.verdict === v).length;
+  const ok = count('DIFF') === 0 && count('REFUSED') === 0 && stepped('DIFF') === 0;
   return {
     ok,
     line:
       `${ok ? 'GREEN' : 'RED'} — ${rows.length} row(s): ` +
       GATE_BLOCKS.map((b) => `${b} ${on(b, 'IDENTICAL')} IDENTICAL, ${on(b, 'SKIP')} SKIP, ${on(b, 'DIFF')} DIFF`).join('; ') +
-      `; ${count('REFUSED')} REFUSED`,
+      `; ${count('REFUSED')} REFUSED; stepped (--physics step --dt ${ORACLE_DEFAULT_DT}) bones ${stepped('IDENTICAL')} IDENTICAL, ${stepped('SKIP')} SKIP, ${stepped('DIFF')} DIFF`,
   };
 }
 
@@ -1077,6 +1245,11 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
           (row.why === null ? '' : ` — ${row.why}`),
       );
       for (const a of row.animations) print(`              animation ${JSON.stringify(a.name)}: bones ${a.bones}, slots ${a.slots}, drawOrder ${a.drawOrder}, attachments ${a.attachments}, clips ${a.clips}, events ${a.events}${a.why === null ? '' : ` — ${a.why}`}`);
+      const st = row.stepped;
+      if (st !== undefined && ((row.constraintCensus?.physics ?? 0) > 0 || st.verdict !== 'IDENTICAL')) {
+        print(`              stepped (--physics step, dt ${st.dt} in both documents): bones ${st.verdict}, ${st.boneSamples} bone-sample(s)${st.why === null ? '' : ` — ${st.why}`}`);
+        for (const a of st.steps) print(`                steps between samples, ${JSON.stringify(a.animation)}: [${a.counts.join(', ')}] (${a.counts.reduce((x, y) => x + y, 0)} in all)`);
+      }
     }
     print('');
     for (const line of censusTable(rows)) print(line);
@@ -1091,12 +1264,15 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     print('');
     for (const line of pathCensusTable(rows)) print(line);
     print('');
+    for (const line of steppedCensusTable(rows)) print(line);
+    print('');
     for (const line of reachLines(rows)) print(line);
     for (const line of slotReachLines(rows)) print(line);
     for (const line of attachmentReachLines(rows)) print(line);
     for (const line of animationReachLines(rows)) print(line);
     for (const line of constraintReachLines(rows)) print(line);
     for (const line of pathReachLines(rows)) print(line);
+    for (const line of steppedReachLines(rows)) print(line);
     const kinds = new Map<string, string[]>();
     for (const row of rows) {
       const path = join(work, String(rows.indexOf(row)).padStart(String(rows.length).length, '0'), 'out', MODEL_DOCUMENT_FILE);

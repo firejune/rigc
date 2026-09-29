@@ -6,7 +6,10 @@
  * #938, step 2e-ii) adds `path`, whose record, walk and solver are
  * `./constraints_path.ts`'s; the third cut (2e-iii) adds `physics` under
  * `Physics.none` (`./constraints_physics.ts`: it applies nothing) and
- * `slider` (`./constraints_slider.ts`). Each is one more step of the update
+ * `slider` (`./constraints_slider.ts`); the fourth (issue #956, 2e-iv)
+ * steps physics when `applyConstraints` is given a step context — the
+ * constraint then moves its bone in world space and the bones below it are
+ * posed again, as after a world-space transform. Each is one more step of the update
  * loop below, so every constraint kind is posed; what the core still cannot
  * pose exactly leaves the bones out by name (`constraintsAbsentWhy`).
  *
@@ -271,7 +274,7 @@ import { modeMatrix, RUNTIME_PI, worldTransforms, type CoreInheritMode, type Cor
 import { channelAt, keyIndexAt, type CoreCurve, type CoreKey } from './animation.ts';
 import type { CompiledDocument, CoreConstraintKind } from './index.ts';
 import { readPathTimelines, slotBonePlan, solvePath, type CorePathRecord, type CorePathTimelines, type SlotBoneEvent } from './constraints_path.ts';
-import { physicsTimelineCount, type CorePhysicsRecord } from './constraints_physics.ts';
+import { physicsTimelineCount, readPhysicsTimelines, stepPhysics, type CorePhysicsRecord, type CorePhysicsTimeline, type PhysicsStepContext } from './constraints_physics.ts';
 import { applySlider, posedSlider, readSliderTimelines, sliderBonesWhy, type CoreSliderRecord, type CoreSliderTimeline, type SliderApplication } from './constraints_slider.ts';
 
 const DEG = 180 / RUNTIME_PI;
@@ -514,6 +517,8 @@ export interface CoreConstraintTimelines {
   path: CorePathTimelines[];
   /** How many physics timelines the animation holds — they pose nothing under `Physics.none` (`./constraints_physics.ts`). */
   physics: number;
+  /** The physics timelines themselves, in the animation's order — what the stepped phase poses (`./constraints_physics.ts`). */
+  physicsKeyed?: CorePhysicsTimeline[];
   /** The slider timelines (`./constraints_slider.ts`). */
   slider: CoreSliderTimeline[];
 }
@@ -551,6 +556,7 @@ export function readConstraintTimelines(value: unknown, label: string, declared:
   if (!isRecord(value)) return out;
   out.path = readPathTimelines(value.path, label, new Set(declared.filter((c) => c.kind === 'path').map((c) => c.name)), problems);
   out.physics = physicsTimelineCount(value.physics);
+  out.physicsKeyed = readPhysicsTimelines(value.physics, label, new Set(declared.filter((c) => c.kind === 'physics').map((c) => c.name)), problems);
   out.slider = readSliderTimelines(value.slider, label, declared, problems);
   for (const kind of ['ik', 'transform'] as const) {
     const list = value[kind];
@@ -1079,9 +1085,11 @@ export type ConstraintPlant = (records: CoreConstraintRecord[]) => CoreConstrain
  * Every admitted constraint applied, in the document's order, to the bones'
  * local values (copied, never the caller's) and their world transforms as
  * `worldTransforms` posed them — the header's update order — and the world
- * transforms returned.
+ * transforms returned. With `physics`, the stepped phase's context, each
+ * physics constraint is stepped on its bone (`stepPhysics` in
+ * `./constraints_physics.ts`); without it, it applies nothing.
  */
-export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap<string, CoreWorld>, active: ReadonlySet<string>, records: readonly CoreConstraintRecord[], previous: ReadonlyMap<string, CoreWorld> | null = null, applied?: SliderApplication[]): Map<string, CoreWorld> {
+export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap<string, CoreWorld>, active: ReadonlySet<string>, records: readonly CoreConstraintRecord[], previous: ReadonlyMap<string, CoreWorld> | null = null, applied?: SliderApplication[], physics?: PhysicsStepContext): Map<string, CoreWorld> {
   const state: SolverState = { bones: bones.map((b) => ({ ...b })), index: new Map(bones.map((b, i) => [b.name, i])), world: new Map(world), active };
   const skipped = new Set<number>();
   records.forEach((c, i) => {
@@ -1100,7 +1108,15 @@ export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap
     let changed: string[] = [];
     let inWorld: string[] = [];
     if (c.kind === 'physics') {
-      // Under Physics.none a physics constraint applies nothing (`./constraints_physics.ts`).
+      // Under Physics.none a physics constraint applies nothing; stepped, it moves its bone in world space (`./constraints_physics.ts`).
+      if (physics !== undefined) {
+        const w = { ...(state.world.get(c.bone) as CoreWorld) };
+        if ((physics.step ?? stepPhysics)(c, w, bone(state, c.bone).length ?? 0, physics)) {
+          state.world.set(c.bone, w);
+          changed = [c.bone];
+          inWorld = [c.bone];
+        }
+      }
     } else if (c.kind === 'slider') {
       changed = applySlider(state, c, applied);
     } else if (c.kind === 'ik') {

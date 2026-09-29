@@ -66261,15 +66261,16 @@ function runPoseOracleSuite(): number {
 
 // Its own statement, so the suite lands as one hunk (the convention the
 // slider-reader suite states at its imports).
-import { activeBones, CORE_CONSTRAINT_KINDS, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED, poseSetup, readBlend, readColour, readModel, shownAttachment, type CompiledDocument, type CoreBlendMode, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
+import { activeBones, CORE_CONSTRAINT_KINDS, CORE_DUMPER, CoreInputError, foldInheritMode, gridRound, NOT_ADMITTED, poseSetup, readBlend, readColour, readModel, shownAttachment, type CompiledDocument, type CoreBlendMode, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
 import { regionCorners, worldVertices, type VertexPoser } from './src/core/vertices.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
-import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, GATE_BLOCKS, REMAINDER_CENSUS_BLOCKS, timelineKindLines, type GateBlock, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField } from './tools/core_gate.ts';
+import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, GATE_BLOCKS, REMAINDER_CENSUS_BLOCKS, timelineKindLines, type GateBlock, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, STEPPED_CENSUS_FIELDS, STEPPED_OPTIONS, steppedCensusOf, steppedReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField, type SteppedCensusField } from './tools/core_gate.ts';
 import { BEZIER_SIXTH, bezierPolyline, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
 import { deformAt, deformPercent, heldArray, SEQUENCE_MODES as CORE_SEQUENCE_MODES, sequenceFrameAt, type CoreDeformKey } from './src/core/deform.ts';
 import { drawOrderAt } from './src/core/draw_order.ts';
 import { eventsFired, type CoreEventRow } from './src/core/events.ts';
+import { physicsState, stepPhysics, stepSchedule, type CorePhysicsRecord } from './src/core/constraints_physics.ts';
 import { modeMatrix, worldTransforms, type CoreInheritMode } from './src/core/world.ts';
 import { ADMITTED_CONSTRAINT_KINDS, TRANSFORM_PROPERTIES, type ConstraintPlant, type CoreConstraintRecord, type CoreTransformRecord } from './src/core/constraints.ts';
 
@@ -66490,7 +66491,6 @@ function runCoreSuite(): number {
       }
       const refusals: Array<[string, string[], string]> = [
         ['one skin', ['--skin', 'default'], '--skin "default"'],
-        ['stepped physics', ['--physics', 'step'], '--physics "step"'],
         ['a second path', [free.out], 'takes the model document and no other path'],
         ['a missing document', [], 'no such file'],
       ];
@@ -68934,7 +68934,7 @@ function runCoreSuite(): number {
       'CQ02_UNDER_PHYSICS_NONE_A_PHYSICS_CONSTRAINT_APPLIES_NOTHING_AND_THE_CORE_POSES_IT_SO',
       ok,
       probeDetail(ok, probes, `${N} rigs of two to five constraints — physics constraints with every component and parameter at random, keyed mix, wind and reset, among ik and world- and local-space transform constraints in random order, amplified — spine-core's dump identical with the physics constraints and without them on ${withoutSame}, and the core exact at tolerance 0 on ${exact} (${samples} bone-samples, six irr samples on the one skeleton the dump reuses)`),
-      'issue #938: what an unstepped physics constraint contributes was the first thing to measure, and it is nothing — the pose is the rig without it (src/core/constraints_physics.ts); the stepped phase, where it integrates, is its own card and the core refuses --physics step by name',
+      'issue #938: what an unstepped physics constraint contributes was the first thing to measure, and it is nothing — the pose is the rig without it (src/core/constraints_physics.ts); the stepped phase, where it integrates, is issue #956\'s (the CK controls)',
     );
   }
 
@@ -69365,7 +69365,7 @@ function runCoreSuite(): number {
     );
   }
 
-  // --- CQ11: every physics and slider field no compared row reaches is a HOLE by name, a probe reaches it, and the stepped phase is a HOLE --
+  // --- CQ11: every physics and slider field no compared row reaches is a HOLE by name, and a probe reaches it --
   {
     const probes: string[] = [];
     const lines = constraintReachLines(rows);
@@ -69375,16 +69375,15 @@ function runCoreSuite(): number {
       const c = constraintCensusOf(text);
       for (const f of CONSTRAINT_CENSUS_FIELDS) reached[f] += c[f];
     }
-    const unreached = holes.filter((h) => h !== 'physics.stepped' && reached[h as ConstraintCensusField] === 0);
+    const unreached = holes.filter((h) => reached[h as ConstraintCensusField] === 0);
     if (unreached.length > 0) probes.push(`HOLE(s) no CQ probe reaches: ${unreached.join(', ')}`);
-    if (!holes.includes('physics.stepped')) probes.push('the stepped phase of a physics constraint was not named a HOLE');
     const ours = CONSTRAINT_CENSUS_FIELDS.filter((f) => f.startsWith('physics') || f.startsWith('slider'));
     const ok = probes.length === 0;
     say(
-      'CQ11_EVERY_PHYSICS_AND_SLIDER_FIELD_NO_COMPARED_ROW_REACHES_IS_A_HOLE_BY_NAME_A_PROBE_REACHES_IT_AND_THE_STEPPED_PHASE_IS_A_HOLE',
+      'CQ11_EVERY_PHYSICS_AND_SLIDER_FIELD_NO_COMPARED_ROW_REACHES_IS_A_HOLE_BY_NAME_AND_A_PROBE_REACHES_IT',
       ok,
-      probeDetail(ok, probes, `${holes.length} HOLE(s) over the compared rows — ${holes.join(', ')} — each but the stepped phase reached by the CQ01–CQ08 probes at tolerance 0; the probes' census: ${ours.map((f) => `${f} ${reached[f]}`).join(', ')}`),
-      'issue #380 §4: a construct no row uses is a HOLE, never a pass; the stepped physics phase is the one this cut names and does not cover — its own card',
+      probeDetail(ok, probes, `${holes.length} HOLE(s) over the compared rows — ${holes.join(', ') || 'none'} — each reached by the CQ01–CQ08 probes at tolerance 0; the probes' census: ${ours.map((f) => `${f} ${reached[f]}`).join(', ')}`),
+      'issue #380 §4: a construct no row uses is a HOLE, never a pass; the stepped physics phase has its own census since issue #956 (CK11)',
     );
   }
 
@@ -69415,6 +69414,524 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `${Object.keys(expected).length} census fields of a five-constraint document counted as by hand, and its physics and slider timelines counted as none of construct 4's remainder`),
       'issue #938: a census that miscounts turns a HOLE into a REACH in silence — held on a document whose every count is computed by hand',
+    );
+  }
+
+  // ===========================================================================
+  // Construct 5, fourth cut (issue #956, step 2e-iv): the stepped phase of the
+  // physics constraint. Each probe is one skeleton written twice — the Spine
+  // file for `dumpSkeleton` and the model for `readModel` — dumped by both
+  // under `--physics step --dt <s>` and compared at tolerance 0 through
+  // `coreDump`. The timeline that names no constraint is `""` in the Spine
+  // file and `*` in the model.
+  // ===========================================================================
+  const stepOptions = (dt: number, samples = 9, phase: OracleOptions['phase'] = 'grid'): OracleOptions => ({ phase, samples, skin: 'all', physics: 'step', dt });
+  interface StepAnim { bones?: Keyed; physics?: Keyed }
+  const stepPair = (bones: Obj[], constraints: Obj[], anims: Record<string, StepAnim>, head: Obj = {}): { spine: string; model: string } => {
+    const spine = {
+      skeleton: { spine: '4.3.13', ...head }, bones, slots: [], constraints, skins: [{ name: 'default', attachments: {} }],
+      animations: Object.fromEntries(Object.entries(anims).map(([n, a]) => [n, { ...(a.bones ? { bones: a.bones } : {}), ...(a.physics ? { physics: a.physics } : {}) }])),
+    };
+    const physicsOf = (group: Keyed | undefined): Obj[] => Object.entries(group ?? {}).map(([name, tls]) => ({ name: name === '' ? '*' : name, timelines: Object.entries(tls).map(([k, keys]) => ({ name: k, keys })) }));
+    const model = JSON.stringify({
+      spec: 'rigc-compiled/1',
+      bones: bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
+      slots: [], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }],
+      constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
+      events: [],
+      animations: Object.entries(anims).map(([name, a]) => ({ name, duration: 0, bones: named(a.bones), slots: [], constraints: { ik: [], transform: [], path: [], physics: physicsOf(a.physics), slider: [] }, attachments: [], drawOrder: [], events: [] })),
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+    });
+    return { spine: JSON.stringify(spine), model };
+  };
+  const stepSpine = (pair: { spine: string }, options: OracleOptions): OracleDump => dumpSkeleton(loadOracleData(pair.spine, '', 'the step probe'), options);
+  const stepCompare = (pair: { spine: string; model: string }, options: OracleOptions, plant: TimelinePlant = {}): ReturnType<typeof compareDumps> =>
+    compareDumps(stepSpine(pair, options), coreDump(readModel(pair.model, 'the step probe'), options, plant), { xy: 0, m: 0 });
+  const ckModels: string[] = [];
+  /** A population of step probes: how many read exact (and with `plant`, how many a planted step leaves exact), the first misses named. */
+  const stepPopulation = (n: number, seed: number, make: (rnd: () => number) => { pair: { spine: string; model: string }; options: OracleOptions }, plant?: TimelinePlant): { exact: number; planted: number; misses: string[]; samples: number } => {
+    const rnd = lcg(seed);
+    let exact = 0;
+    let planted = 0;
+    let samples = 0;
+    const misses: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const { pair, options } = make(rnd);
+      ckModels.push(pair.model);
+      const c = stepCompare(pair, options);
+      samples += c.boneSamples;
+      if (c.identical && posedSkips(c).length === 0) exact++;
+      else if (misses.length < 3) misses.push(`probe ${i} (dt ${options.dt}): ${posedSkips(c).join('; ') || c.first}`);
+      if (plant !== undefined && stepCompare(pair, options, plant).identical) planted++;
+    }
+    return { exact, planted, misses, samples };
+  };
+  /** A planted step, in a copy: each record rewritten before `stepPhysics` steps it. */
+  const plantedRecord = (rewrite: (r: CorePhysicsRecord) => CorePhysicsRecord): TimelinePlant => ({ physicsStep: (r, w, length, ctx) => stepPhysics(rewrite(r), w, length, ctx) });
+  /** A planted step, in a copy: what remains of the step's time dropped after every update. */
+  const REMAINDER_DROPPED: TimelinePlant = {
+    physicsStep: (r, w, length, ctx) => {
+      const moved = stepPhysics(r, w, length, ctx);
+      physicsState(ctx, r.name).remaining = 0;
+      return moved;
+    },
+  };
+  const STEP_DTS = [1 / 60, 1 / 30, 1 / 120];
+  /** A one-constraint probe: a (maybe reflecting, sheared) parent swung and moved, the constrained bone and a child, both amplified; `constraint` the physics fields; the dt among `STEP_DTS` or a random one. */
+  const oneStepProbe = (rnd: () => number, constraint: Obj, physics?: Record<string, Obj[]>, global?: Record<string, Obj[]>): { pair: { spine: string; model: string }; options: OracleOptions } => {
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const p = { name: 'p', parent: 'root', x: R(-50, 50), y: R(-50, 50), rotation: R(-180, 180) };
+    const b: Obj = { name: 'b', parent: 'p', x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 80) };
+    if (rnd() < 0.3) b.inherit = 'onlyTranslation';
+    const bones = [{ name: 'root' }, rnd() < 0.5 ? skewed(rnd, p) : p, rnd() < 0.5 ? skewed(rnd, b) : b, { name: 'c', parent: 'b', x: R(5, 30), y: R(-10, 10), rotation: R(-90, 90) }, ...amplify('b'), ...amplify('c')];
+    const swing: Keyed = { p: { translate: [{ time: 0, x: R(-60, 60), y: R(-60, 60) }, { time: R(0.2, 0.6), x: R(-60, 60), y: R(-60, 60), ...(rnd() < 0.3 ? { curve: 'stepped' } : {}) }, { time: 1, x: R(-60, 60), y: R(-60, 60) }], ...(rnd() < 0.5 ? { rotate: [{ time: 0, value: R(-90, 90) }, { time: R(0.3, 0.9), value: R(-90, 90) }] } : {}) } };
+    const tl: Keyed = {};
+    if (physics !== undefined) tl.k = physics;
+    if (global !== undefined) tl[''] = global;
+    const anims = { a: { bones: swing, ...(Object.keys(tl).length > 0 ? { physics: tl } : {}) } };
+    return { pair: stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', ...constraint }], anims), options: stepOptions(pick([...STEP_DTS, R(0.005, 0.05)]), 9, pick(['grid', 'irr'])) };
+  };
+  /** One setting's random value, inside the range its row of `docs/AUTHORING.md` §4.4 admits. */
+  const settingValue = (rnd: () => number, f: string): number => {
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    return f === 'fps' ? pick([24, 30, 45, 120]) : f === 'mass' ? R(0.2, 3) : f === 'damping' ? R(0, 1) : f === 'limit' ? R(10, 300) : f === 'mix' ? R(0.05, 1.5) : f === 'inertia' ? R(0, 1) : f === 'strength' ? R(1, 300) : R(-50, 50);
+  };
+  /** Components on at random, at least one of them. */
+  const someComponents = (rnd: () => number): Obj => {
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const c: Obj = {};
+    for (const f of ['x', 'y', 'rotate', 'scaleX', 'shearX']) if (rnd() < 0.5) c[f] = pick([1, R(0.05, 2)]);
+    if (Object.keys(c).length === 0) c[pick(['x', 'y', 'rotate', 'scaleX', 'shearX'])] = 1;
+    return c;
+  };
+
+  // --- CK01: readModel reads a physics constraint's settings and its timelines, and refuses each plant by name --
+  {
+    const probes: string[] = [];
+    const bones: Obj[] = [{ name: 'root' }, { name: 'b', parent: 'root', length: 10 }];
+    const stated: Obj = { type: 'physics', name: 'all', bone: 'b', x: 0.5, y: 1, rotate: 1, scaleX: 0.25, shearX: 2, limit: 40, fps: 45, inertia: 0.3, strength: 70, damping: 0.6, mass: 3, wind: 2, gravity: -4, mix: 0.8, inertiaGlobal: true, mixGlobal: true, scaleY: 'volume' };
+    const pair = stepPair(bones, [{ type: 'physics', name: 'none', bone: 'b' }, stated], { a: { physics: { all: { inertia: [{ time: 0, value: 0.2 }], mass: [{ time: 0.5, value: 2 }], reset: [{ time: 0.25 }] }, '': { mix: [{ time: 0.1, value: 0.5 }] } } } });
+    ckModels.push(pair.model);
+    const spine = stepSpine(pair, stepOptions(1 / 60, 2));
+    const core = coreDump(readModel(pair.model), stepOptions(1 / 60, 2));
+    if (JSON.stringify(core.physics) !== JSON.stringify(spine.physics)) probes.push(`the physics block reads ${JSON.stringify(core.physics)}, spine-core's ${JSON.stringify(spine.physics)}`);
+    const doc = readModel(pair.model);
+    const keyed = doc.animations[0].constraints.physicsKeyed ?? [];
+    if (JSON.stringify(keyed.map((t) => `${t.name}.${t.kind}`)) !== JSON.stringify(['all.inertia', 'all.mass', 'all.reset', '*.mix'])) probes.push(`the timelines read ${JSON.stringify(keyed.map((t) => `${t.name}.${t.kind}`))}`);
+    const base = JSON.parse(pair.model) as Obj;
+    const plant = (label: string, edit: (anim: Obj) => void, expected: string): void => {
+      const copy = JSON.parse(JSON.stringify(base)) as { animations: Obj[] };
+      edit(copy.animations[0]);
+      const why = coreRefusal(JSON.stringify(copy));
+      if (!why.includes(expected)) probes.push(`${label}: refused with ${JSON.stringify(why.slice(0, 200))}, not naming ${JSON.stringify(expected)}`);
+    };
+    const tls = (anim: Obj): Obj[] => ((anim.constraints as Obj).physics as Obj[]);
+    plant('a timeline of an unknown kind', (a) => ((tls(a)[0].timelines as Obj[])[0].name = 'spin'), '"spin" is not a physics timeline');
+    plant('a timeline naming no physics constraint', (a) => (tls(a)[0].name = 'ghost'), '"ghost" is not a physics constraint of this document');
+    plant('a reset key stating a value', (a) => (((tls(a)[0].timelines as Obj[])[2].keys as Obj[])[0].value = 1), 'field "value" is not one this reader knows');
+    plant('a kind keyed twice', (a) => (tls(a)[0].timelines as Obj[]).push({ name: 'inertia', keys: [{ time: 0, value: 1 }] }), '"inertia" is keyed twice');
+    plant('a value spelled as a string', (a) => (((tls(a)[0].timelines as Obj[])[0].keys as Obj[])[0].value = '0.2'), 'value is "0.2", not a finite number');
+    const ok = probes.length === 0;
+    say(
+      'CK01_READ_MODEL_READS_EACH_PHYSICS_SETTING_AND_TIMELINE_AND_REFUSES_EACH_PLANT_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `a constraint stating nothing and one stating every setting, flag and mode: the core's physics block equal to spine-core's (the parser's value for every field left out — limit 5000, fps 60, inertia 0.5, strength 100, damping 0.85, mass 1, mix 1); four timelines read in order, the one naming no constraint as "*"; five plants each refused naming its path`),
+      'issue #956: the stepped phase reads every setting the record states and the parser\'s value for every one it does not, so the block the oracle dumps is the core\'s input, compared field by field; a timeline the reader does not know is a value the step would not pose',
+    );
+  }
+
+  // --- CK02: the simplest spring steps as computed by hand, and as spine-core steps it at three dt --
+  {
+    const probes: string[] = [];
+    const bones = [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'b', parent: 'p', length: 50 }];
+    const pair = stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', x: 1 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 60, y: 0 }] } } } });
+    ckModels.push(pair.model);
+    // By hand, at fps 60 and dt 1/60, the parent one unit further each step: the first update after the reset gains
+    // (previous − now)·inertia = −0.5 and shows it (the lag's weight is 1 when nothing remains), so the bone is at 1 − 0.5;
+    // the second shows that offset after one spring step, v = 0.5·100/60, plus the next −0.5.
+    const first = 1 - 0.5;
+    const second = 2 + (-0.5 + ((0.5 * 100) / 60) / 60 - 0.5);
+    const fine = stepSpine(pair, stepOptions(1 / 60, 61));
+    const at = (doc: OracleDocument, i: number): number | null => (doc.animations?.[0].samples[i].bones?.find((r) => r[0] === 'b')?.[1] ?? null) as number | null;
+    const core = coreDump(readModel(pair.model), stepOptions(1 / 60, 61));
+    if (at(fine, 1) !== gridRound(first) || at(core, 1) !== gridRound(first)) probes.push(`one step: spine-core ${at(fine, 1)}, the core ${at(core, 1)}, by hand ${gridRound(first)}`);
+    if (at(fine, 2) !== gridRound(second) || at(core, 2) !== gridRound(second)) probes.push(`two steps: spine-core ${at(fine, 2)}, the core ${at(core, 2)}, by hand ${gridRound(second)}`);
+    const trajectories: string[] = [];
+    for (const dt of [1 / 60, 1 / 30, 0.025]) {
+      const c = stepCompare(pair, stepOptions(dt));
+      if (!c.identical) probes.push(`dt ${dt}: ${c.first}`);
+      trajectories.push(String(at(stepSpine(pair, stepOptions(dt)), 1)));
+    }
+    if (new Set(trajectories).size !== 3) probes.push(`the three dt read [${trajectories.join(', ')}] at 0.125 s: the step's schedule did not move the pose`);
+    const ok = probes.length === 0;
+    say(
+      'CK02_THE_SIMPLEST_SPRING_STEPS_AS_COMPUTED_BY_HAND_AND_AS_SPINE_CORE_STEPS_IT',
+      ok,
+      probeDetail(ok, probes, `an x spring under a parent moving sixty units a second: ${gridRound(first)} after one step and ${gridRound(second)} after two, by hand and in both dumps; at dt 1/60, 1/30 and 0.025 three trajectories (${trajectories.join(', ')} at 0.125 s), each exact`),
+      'issue #956: the first rule to measure was the simplest spring, one flag at the parser\'s settings — its first two steps derive by hand from the header\'s rules, and dt decides how often the animated parent is re-posed under the integrator, so three dt must read three poses',
+    );
+  }
+
+  // --- CK03: the schedule steps as the oracle walks it, counted by hand --
+  {
+    const probes: string[] = [];
+    // A one-second animation, nine grid samples an eighth apart: at dt 1/60 seven steps before each sample and one to it,
+    // at 0.05 two and one, at 0.2 none and one; the first sample, at 0, is the reset pose and takes none.
+    const cases: Array<[number, number[]]> = [[1 / 60, [0, 8, 8, 8, 8, 8, 8, 8, 8]], [0.05, [0, 3, 3, 3, 3, 3, 3, 3, 3]], [0.2, [0, 1, 1, 1, 1, 1, 1, 1, 1]]];
+    for (const [dt, want] of cases) {
+      const got = stepSchedule('grid', 1, 9, dt).map((x) => x.length);
+      if (JSON.stringify(got) !== JSON.stringify(want)) probes.push(`dt ${dt}: [${got.join(', ')}], by hand [${want.join(', ')}]`);
+    }
+    const last = stepSchedule('grid', 1, 9, 0.05).map((x) => x[x.length - 1]);
+    if (last.slice(1).some((t, i) => t !== sampleTime('grid', 1, i + 1, 9))) probes.push(`a sample's last step is not its own time: [${last.join(', ')}]`);
+    const ok = probes.length === 0;
+    say(
+      'CK03_THE_SCHEDULE_STEPS_AS_THE_ORACLE_WALKS_IT_COUNTED_BY_HAND',
+      ok,
+      probeDetail(ok, probes, `${cases.length} dt over nine grid samples of one second, each count as by hand, every sample's last step its own time`),
+      'issue #956: the gate states the steps between two samples, so the schedule that counts them is held to a count made by hand from the oracle\'s header',
+    );
+  }
+
+  // --- CK04: each component steps as spine-core does --
+  {
+    const probes: string[] = [];
+    const lines: string[] = [];
+    let samples = 0;
+    const shapes: Array<[string, Obj]> = [['x', { x: 1 }], ['y', { y: 1 }], ['rotate', { rotate: 1 }], ['scaleX', { scaleX: 1 }], ['shearX', { shearX: 1 }], ['rotate and shearX', { rotate: 0.7, shearX: 0.5 }], ['a negative shearX beside rotate', { rotate: 1, shearX: -0.4 }], ['scaleX under rotate', { scaleX: 1, rotate: 0.5 }], ['all five', { x: 1, y: 0.8, rotate: 1, scaleX: 0.6, shearX: 0.4 }]];
+    const N = 30;
+    for (const [label, comps] of shapes) {
+      const run = stepPopulation(N, 95601 + shapes.findIndex((s) => s[0] === label), (rnd) => oneStepProbe(rnd, comps), plantedRecord((r) => ({ ...r, mix: r.mix * 0.9 })));
+      samples += run.samples;
+      if (run.exact !== N) probes.push(`${label}: ${run.exact} of ${N} exact — ${run.misses.join('; ')}`);
+      if (run.planted === N) probes.push(`${label}: the mix scaled by 0.9 left every probe exact`);
+      lines.push(`${label} ${run.exact}/${N} (${N - run.planted} red planted)`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CK04_EACH_COMPONENT_STEPS_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${lines.join(', ')} — parents reflecting and sheared, bones amplified, dt among 1/60, 1/30, 1/120 and one between 0.005 and 0.05, grid and irr (${samples} bone-samples)`),
+      'issue #956: each component follows its own rule — the origin for x and y, the tip for the rotation, the shear and the scale, with the shown pose between two fixed steps — and a component read the wrong way reads a different pose',
+    );
+  }
+
+  // --- CK05: a probe per setting: each steps as spine-core does, and scaled in a copy reads another pose --
+  {
+    const probes: string[] = [];
+    const lines: string[] = [];
+    const SETTINGS: Array<[string, (r: CorePhysicsRecord) => CorePhysicsRecord]> = [
+      ['inertia', (r) => ({ ...r, inertia: r.inertia * 0.9 })],
+      ['strength', (r) => ({ ...r, strength: r.strength * 0.9 })],
+      ['damping', (r) => ({ ...r, damping: r.damping * 0.9 })],
+      ['mass', (r) => ({ ...r, massInverse: r.massInverse * 0.9 })],
+      ['wind', (r) => ({ ...r, wind: r.wind * 0.9 })],
+      ['gravity', (r) => ({ ...r, gravity: r.gravity * 0.9 })],
+      ['mix', (r) => ({ ...r, mix: r.mix * 0.9 })],
+      ['limit', (r) => ({ ...r, limit: r.limit * 0.9 })],
+      ['fps', (r) => ({ ...r, step: r.step * 0.9 })],
+    ];
+    const N = 25;
+    SETTINGS.forEach(([f, rewrite], i) => {
+      const run = stepPopulation(N, 95611 + i, (rnd) => oneStepProbe(rnd, { ...someComponents(rnd), [f]: settingValue(rnd, f) }), plantedRecord(rewrite));
+      if (run.exact !== N) probes.push(`${f}: ${run.exact} of ${N} exact — ${run.misses.join('; ')}`);
+      if (run.planted === N) probes.push(`${f} scaled by 0.9: every probe still exact`);
+      lines.push(`${f} ${run.exact}/${N} (${N - run.planted} red scaled)`);
+    });
+    const ok = probes.length === 0;
+    say(
+      'CK05_EACH_SETTING_STEPS_AS_SPINE_CORE_DOES_AND_SCALED_IN_A_COPY_READS_ANOTHER_POSE',
+      ok,
+      probeDetail(ok, probes, `a probe per setting, each varied alone over random components: ${lines.join(', ')}`),
+      'issue #956: a probe per parameter at tolerance 0 — each setting enters the step at its own place (the spring, the decay, the clamp, the fixed step), and each scaled in a copy must be seen',
+    );
+  }
+
+  // --- CK06: each physics timeline, the one naming no constraint and the reset, pose as spine-core does --
+  {
+    const probes: string[] = [];
+    const lines: string[] = [];
+    const KINDS = ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix'];
+    const N = 20;
+    const setupOf = new Map<string, CorePhysicsRecord>();
+    const ignoreTimelines: TimelinePlant = { physicsStep: (r, w, length, ctx) => stepPhysics(setupOf.get(r.name) ?? r, w, length, ctx) };
+    KINDS.forEach((f, i) => {
+      const keys = (rnd: () => number): Obj[] => [{ time: within(rnd)(0, 0.4), value: settingValue(rnd, f === 'mix' ? 'mix' : f) }, { time: within(rnd)(0.5, 1), value: settingValue(rnd, f) }];
+      let planted = 0;
+      let exact = 0;
+      const misses: string[] = [];
+      const rnd = lcg(95621 + i);
+      for (let k = 0; k < N; k++) {
+        const global = rnd() < 0.3;
+        const comps = someComponents(rnd);
+        const { pair, options } = oneStepProbe(rnd, { ...comps, ...(global ? { [`${f}Global`]: true } : {}) }, global ? undefined : { [f]: keys(rnd) }, global ? { [f]: keys(rnd) } : undefined);
+        ckModels.push(pair.model);
+        const c = stepCompare(pair, options);
+        if (c.identical) exact++;
+        else if (misses.length < 3) misses.push(`probe ${k}: ${c.first}`);
+        setupOf.clear();
+        for (const x of readModel(pair.model).constraints) if (x.record?.kind === 'physics') setupOf.set(x.name, x.record);
+        if (stepCompare(pair, options, ignoreTimelines).identical) planted++;
+      }
+      if (exact !== N) probes.push(`${f}: ${exact} of ${N} exact — ${misses.join('; ')}`);
+      if (planted === N) probes.push(`${f}: the timelines ignored left every probe exact`);
+      lines.push(`${f} ${exact}/${N}`);
+    });
+    // A mass key read directly rather than blended from setup: a parent thrown 3e11 units reads the last place.
+    const thrown = stepPair([{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'b', parent: 'p', length: 10 }], [{ type: 'physics', name: 'k', bone: 'b', x: 1, y: 1, limit: 1e15, mass: 0.3 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0, curve: 'stepped' }, { time: 0.1, x: 3e11, y: -2e11 }] } }, physics: { k: { mass: [{ time: 0, value: 0.7 }, { time: 1, value: 0.91 }] } } } });
+    ckModels.push(thrown.model);
+    const t = stepCompare(thrown, stepOptions(1 / 60, 30, 'irr'));
+    if (!t.identical) probes.push(`a mass key under a thrown parent: ${t.first}`);
+    // reset: from the key on, every step resets, so the bone shows no offset — its pose is the unstepped one; before it, it jiggles.
+    const bones = [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'b', parent: 'p', length: 40 }];
+    const reset = stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', x: 1, rotate: 1 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 90, y: 40 }] } }, physics: { k: { reset: [{ time: 0.5 }] } } } });
+    ckModels.push(reset.model);
+    const stepped = stepSpine(reset, stepOptions(1 / 60));
+    const none = stepSpine(reset, { phase: 'grid', samples: 9, skin: 'all', physics: 'none', dt: null });
+    const bRow = (d: OracleDump, i: number): string => JSON.stringify(d.animations[0].samples[i].bones.find((r) => r[0] === 'b'));
+    const held = [4, 5, 6, 7, 8].every((i) => bRow(stepped, i) === bRow(none, i));
+    const moved = [1, 2, 3].every((i) => bRow(stepped, i) !== bRow(none, i));
+    if (!held || !moved) probes.push(`a reset key at 0.5: the stepped bone ${held ? '' : 'moved after it '}${moved ? '' : 'held still before it'}`);
+    const rc = stepCompare(reset, stepOptions(1 / 60));
+    if (!rc.identical) probes.push(`the reset probe: ${rc.first}`);
+    const globalReset = stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', x: 1, rotate: 1 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 90, y: 40 }] } }, physics: { '': { reset: [{ time: 0.3 }] } } } });
+    ckModels.push(globalReset.model);
+    const gc = stepCompare(globalReset, stepOptions(1 / 30));
+    if (!gc.identical) probes.push(`a reset naming no constraint: ${gc.first}`);
+    // A constraint muted from 0 and keyed live at 0.3: at mix 0 it does nothing, its clock included, and it starts pending.
+    const muted = stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', x: 1, y: 1, rotate: 1, mix: 0 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 90, y: 40 }] } }, physics: { k: { mix: [{ time: 0, value: 0, curve: 'stepped' }, { time: 0.3, value: 1 }] } } } });
+    ckModels.push(muted.model);
+    const MUTED_PLANTS: Array<[string, TimelinePlant]> = [
+      ['a muted constraint reading its clock', { physicsStep: (r, w, length, ctx) => {
+        if (r.mix === 0) {
+          physicsState(ctx, r.name).lastTime = ctx.time;
+          return false;
+        }
+        return stepPhysics(r, w, length, ctx);
+      } }],
+      ['a constraint never updated not pending', { physicsStep: (r, w, length, ctx) => {
+        if (!ctx.states.has(r.name)) physicsState(ctx, r.name).pending = false;
+        return stepPhysics(r, w, length, ctx);
+      } }],
+    ];
+    const mc = stepCompare(muted, stepOptions(1 / 60, 12, 'irr'));
+    if (!mc.identical) probes.push(`a constraint muted to 0.3: ${mc.first}`);
+    for (const [label, plant] of MUTED_PLANTS) if (stepCompare(muted, stepOptions(1 / 60, 12, 'irr'), plant).identical) probes.push(`${label}, in a copy: still exact`);
+    const ok = probes.length === 0;
+    say(
+      'CK06_EACH_PHYSICS_TIMELINE_THE_ONE_NAMING_NO_CONSTRAINT_AND_THE_RESET_POSE_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${lines.join(', ')} — each keyed on the constraint or, flagged global, on the timeline naming none, and each red with the timelines ignored in a copy; a mass key under a parent thrown 3e11 units exact; a reset key at 0.5 holding the bone at its unstepped pose from the key on and not before, exact, and one naming no constraint exact; a constraint muted to 0.3 exact, and red in a copy that lets it read its clock at mix 0 or starts it not pending`),
+      'issue #956: a timeline blends from the setup value (the difference from the value itself is a unit in the last place, which a thrown parent reads), a mass key states the inverse\'s inverse, and the oracle applies the animation from 0 at every step, so a reset key resets at every step from it on',
+    );
+  }
+
+  // --- CK07: a random population of physics constraints among ik and transform, skins and two animations, steps as spine-core does --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(95631);
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const N = 150;
+    let exact = 0;
+    let planted = 0;
+    let samples = 0;
+    for (let i = 0; i < N; i++) {
+      const bones: Obj[] = [{ name: 'root' }];
+      for (let j = 1; j <= 6; j++) {
+        const b: Obj = { name: `b${j}`, parent: j === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+        if (rnd() < 0.3) Object.assign(b, { scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2), shearX: R(-30, 30), shearY: R(-30, 30) });
+        if (rnd() < 0.2) b.inherit = 'onlyTranslation';
+        bones.push(b);
+      }
+      const names = bones.slice(1).map((b) => b.name as string);
+      bones.push(...amplify(names[names.length - 1]), ...amplify(names[2]));
+      const parentOf = new Map(bones.map((b) => [b.name as string, b.parent as string | undefined]));
+      const below = (top: string, n: string): boolean => {
+        for (let at = parentOf.get(n); at !== undefined; at = parentOf.get(at)) if (at === top) return true;
+        return false;
+      };
+      const constraints: Obj[] = [];
+      const physics: Keyed = {};
+      for (let k = 0, n = 1 + Math.floor(rnd() * 5); k < n; k++) {
+        const kind = k === 0 ? 'physics' : pick(['physics', 'physics', 'ik', 'transform']);
+        if (kind === 'physics') {
+          const c: Obj = { type: 'physics', name: `k${k}`, bone: pick(names), ...someComponents(rnd) };
+          for (const f of ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix', 'limit', 'fps']) if (rnd() < 0.4) c[f] = settingValue(rnd, f);
+          for (const f of ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix']) if (rnd() < 0.3) c[`${f}Global`] = true;
+          if (rnd() < 0.1) c.skin = true;
+          constraints.push(c);
+          if (rnd() < 0.6) {
+            const tl: Record<string, Obj[]> = {};
+            for (const f of ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix', 'reset']) if (rnd() < 0.3) tl[f] = f === 'reset' ? [{ time: R(0.05, 0.95) }] : [{ time: R(0, 0.4), value: settingValue(rnd, f), ...(rnd() < 0.3 ? { curve: 'stepped' } : {}) }, { time: R(0.5, 1), value: settingValue(rnd, f) }];
+            if (Object.keys(tl).length > 0) physics[c.name as string] = tl;
+          }
+        } else if (kind === 'ik') {
+          const b = pick(names);
+          const targets = names.filter((n) => n !== b && !below(b, n));
+          if (targets.length > 0) constraints.push({ type: 'ik', name: `k${k}`, bones: [b], target: pick(targets), mix: pick([1, R(0, 1)]) });
+        } else {
+          const b = pick(names);
+          const sources = names.filter((n) => n !== b && !below(b, n));
+          if (sources.length > 0) constraints.push({ type: 'transform', name: `k${k}`, bones: [b], source: pick(sources), properties: { rotate: { to: { rotate: {} } } }, ...(rnd() < 0.4 ? { localTarget: true } : {}) });
+        }
+      }
+      if (rnd() < 0.5) physics[''] = { [pick(['inertia', 'strength', 'damping', 'wind', 'gravity', 'mix'])]: [{ time: R(0, 0.4), value: R(0.1, 1) }, { time: R(0.5, 1), value: R(0.1, 1) }] };
+      const anims: Record<string, StepAnim> = {
+        a: { bones: { [pick(names)]: { rotate: [{ time: 0, value: R(-90, 90) }, { time: 1, value: R(-90, 90) }] }, [pick(names)]: { translate: [{ time: 0, x: R(-30, 30), y: R(-30, 30) }, { time: R(0.2, 0.8), x: R(-30, 30), y: R(-30, 30) }, { time: 1, x: 0, y: 0 }] } }, ...(Object.keys(physics).length > 0 ? { physics } : {}) },
+        b: { bones: { [pick(names)]: { translate: [{ time: 0, x: 0, y: 0 }, { time: 0.5, x: R(-50, 50), y: R(-50, 50) }] } } },
+      };
+      const pair = stepPair(bones, constraints, anims);
+      ckModels.push(pair.model);
+      const options = stepOptions(pick([...STEP_DTS, R(0.005, 0.05)]), 9, pick(['grid', 'irr']));
+      const c = stepCompare(pair, options);
+      samples += c.boneSamples;
+      if (c.identical && posedSkips(c).length === 0) exact++;
+      else if (probes.length < 3) probes.push(`probe ${i}: ${posedSkips(c).join('; ') || c.first}`);
+      if (stepCompare(pair, options, REMAINDER_DROPPED).identical) planted++;
+    }
+    if (planted === N) probes.push('the remainder dropped in a copy left every probe exact');
+    const ok = probes.length === 0 && exact === N;
+    say(
+      'CK07_A_RANDOM_POPULATION_OF_PHYSICS_CONSTRAINTS_AMONG_IK_AND_TRANSFORM_STEPS_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} rigs exact at tolerance 0 (${samples} bone-samples) — one to five constraints each, physics with random components, settings, flags and timelines, some skin-required, ik and world- and local-space transforms among them, the timeline naming no constraint, two animations, parents reflecting and sheared, bones normal or onlyTranslation; ${N - planted} red with the remainder dropped in a copy`),
+      'issue #956: the rules hold together in the update order, a physics constraint re-posing what later ones read. The bones are normal or onlyTranslation because the other three modes are posed by ./world.ts to the grid but not to the bit, and a step amplifies a last-bit difference (src/core/constraints_physics.ts, *What is not exact*)',
+    );
+  }
+
+  // --- CK08: every row stepped poses its bones as spine-core does, and every row declaring physics is among them --
+  {
+    const probes: string[] = [];
+    const declaring: string[] = [];
+    let dense = 0;
+    for (const b of built) {
+      const row = rows.find((r) => r.name === b.name);
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      if (row === undefined || !existsSync(path)) continue;
+      if (row.stepped === undefined || row.stepped.verdict !== 'IDENTICAL') probes.push(`${b.name}: stepped ${row.stepped?.verdict ?? 'not run'} — ${row.stepped?.why ?? row.why}`);
+      if (row.stepped !== undefined && row.stepped.dt !== STEPPED_OPTIONS.dt) probes.push(`${b.name}: the documents state dt ${row.stepped.dt}, the gate's is ${STEPPED_OPTIONS.dt}`);
+      const model = readModel(readFileSync(path, 'utf8'), path);
+      if (!model.constraints.some((c) => c.kind === 'physics')) continue;
+      declaring.push(b.name);
+      // Again at another dt, not a multiple of the fixed step, over sixty irr samples.
+      const options = stepOptions(0.013, 60, 'irr');
+      const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), options);
+      const c = compareDumps(spine, coreDump(model, options), { xy: 0, m: 0 });
+      if (!c.identical) probes.push(`${b.name} at dt 0.013, sixty irr samples: ${c.first}`);
+      dense += c.boneSamples;
+    }
+    if (declaring.length === 0) probes.push(`no row declares a physics constraint${examplesHole === null ? '' : ` (${examplesHole})`}`);
+    const ok = probes.length === 0;
+    say(
+      'CK08_EVERY_ROW_STEPPED_POSES_ITS_BONES_AS_SPINE_CORE_DOES_AND_THE_PHYSICS_ROWS_AGAIN_AT_ANOTHER_DT',
+      ok,
+      probeDetail(ok, probes, `${gateVerdict(rows).line}: every row IDENTICAL on setup.bones and animations.bones under --physics step --dt 1/60, both documents stating that dt; the ${declaring.length} row(s) declaring a physics constraint (${declaring.join(', ')}) again at dt 0.013 over sixty irr samples, exact (${dense} bone-samples)`),
+      'issue #956\'s admission: the rows declaring physics identical with the step on — and every other row too, since a stepped walk re-poses every animated bone at every step',
+    );
+  }
+
+  // --- CK09: a setting scaled, or the remainder dropped, in a copy turns exactly the rows declaring physics red --
+  {
+    const probes: string[] = [];
+    const declares = (b: BuiltRow): boolean => existsSync(join(b.out, MODEL_DOCUMENT_FILE)) && readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.some((c) => c.kind === 'physics');
+    const using = built.filter(declares).map((b) => b.name).sort();
+    const PLANTS: Array<[string, TimelinePlant]> = [
+      ['every strength × 0.9', plantedRecord((r) => ({ ...r, strength: r.strength * 0.9 }))],
+      ['every inertia × 0.9', plantedRecord((r) => ({ ...r, inertia: r.inertia * 0.9 }))],
+      ['the remainder dropped', REMAINDER_DROPPED],
+    ];
+    const lines: string[] = [];
+    for (const [label, plant] of PLANTS) {
+      const red = gateBuilt(built, plant).filter((r) => r.stepped?.verdict === 'DIFF').map((r) => r.name).sort();
+      if (red.length === 0 || JSON.stringify(red) !== JSON.stringify(using)) probes.push(`${label}: red on [${red.join(', ')}], the rows declaring physics are [${using.join(', ')}]`);
+      lines.push(`${label} ${red.length} of ${built.length} red`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CK09_A_SETTING_SCALED_OR_THE_REMAINDER_DROPPED_IN_A_COPY_TURNS_EXACTLY_THE_ROWS_DECLARING_PHYSICS_RED',
+      ok,
+      probeDetail(ok, probes, `over the ${built.length} tree rows, ${using.length} declaring physics: ${lines.join('; ')}`),
+      'issue #380 §5: a construct is admitted when its planted difference turns the gate red on exactly the rows using it — one setting scaled, and the fixed step\'s remainder not carried from one update to the next',
+    );
+  }
+
+  // --- CK10: the stepped census counts a hand-made document as computed by hand --
+  {
+    const probes: string[] = [];
+    const pair = stepPair([{ name: 'root' }, { name: 'a', parent: 'root' }, { name: 'b', parent: 'a' }], [
+      { type: 'physics', name: 'one', bone: 'a', x: 1, rotate: -1, strength: 50, mass: 2 },
+      { type: 'physics', name: 'two', bone: 'b', rotate: 1, scaleX: 1, mix: 0, fps: 30, skin: true },
+      { type: 'physics', name: 'three', bone: 'b', shearX: 0.5, limit: 100, wind: 1 },
+    ], { a: { physics: { one: { mix: [{ time: 0, value: 0 }, { time: 1, value: 1 }], reset: [{ time: 0.5 }] }, '': { gravity: [{ time: 0, value: 1 }] } } } });
+    const c = steppedCensusOf(pair.model);
+    // By hand: x once, rotate once (the negative one is off), scaleX once, shearX once, one negative component;
+    // strength, mass, mix, fps, limit and wind each once off the parser's value; mix, reset and gravity keyed, the gravity
+    // on the timeline naming none; a mix of 0 at rest (two) and keyed (one); "two" and "three" share b, which is below a.
+    const expected: Partial<Record<SteppedCensusField, number>> = {
+      x: 1, y: 0, rotate: 1, scaleX: 1, shearX: 1, componentNegative: 1, inertia: 0, strength: 1, damping: 0, mass: 1, wind: 1, gravity: 0, mix: 1, limit: 1, fps: 1,
+      'timeline.mix': 1, 'timeline.reset': 1, 'timeline.gravity': 1, 'timeline.global': 1, 'timeline.inertia': 0, mixZero: 2, sameBone: 2, chain: 2, skin: 1,
+    };
+    for (const [f, n] of Object.entries(expected)) if (c[f as SteppedCensusField] !== n) probes.push(`${f}: counted ${c[f as SteppedCensusField]}, by hand ${n}`);
+    const ok = probes.length === 0;
+    say(
+      'CK10_THE_STEPPED_CENSUS_COUNTS_A_HAND_MADE_DOCUMENT_AS_COMPUTED_BY_HAND',
+      ok,
+      probeDetail(ok, probes, `${Object.keys(expected).length} stepped census fields of a three-constraint document counted as by hand`),
+      'issue #956: a census that miscounts turns a HOLE into a REACH in silence — held on a document whose every count is computed by hand',
+    );
+  }
+
+  // --- CK11: every stepped field no compared row reaches is a HOLE by name, and a CK probe reaches it --
+  {
+    const probes: string[] = [];
+    const lines = steppedReachLines(rows);
+    const holes = lines.filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  stepped '.length).split(':')[0]);
+    const reached = Object.fromEntries(STEPPED_CENSUS_FIELDS.map((f) => [f, 0])) as Record<SteppedCensusField, number>;
+    for (const text of ckModels) {
+      const c = steppedCensusOf(text);
+      for (const f of STEPPED_CENSUS_FIELDS) reached[f] += c[f];
+    }
+    const unreached = holes.filter((h) => reached[h as SteppedCensusField] === 0);
+    if (unreached.length > 0) probes.push(`HOLE(s) no CK probe reaches: ${unreached.join(', ')}`);
+    if (lines.length !== STEPPED_CENSUS_FIELDS.length) probes.push(`${lines.length} reach line(s) for ${STEPPED_CENSUS_FIELDS.length} field(s)`);
+    if (constraintReachLines(rows).some((l) => l.includes('physics.stepped'))) probes.push('the constraints\' census still names the stepped phase a HOLE');
+    const ok = probes.length === 0;
+    say(
+      'CK11_EVERY_STEPPED_FIELD_NO_COMPARED_ROW_REACHES_IS_A_HOLE_BY_NAME_AND_A_CK_PROBE_REACHES_IT',
+      ok,
+      probeDetail(ok, probes, `${holes.length} HOLE(s) over the rows stepped — ${holes.join(', ') || 'none'} — each reached by the CK probes at tolerance 0; the probes' census: ${STEPPED_CENSUS_FIELDS.map((f) => `${f} ${reached[f]}`).join(', ')}`),
+      'issue #956: the physics.stepped HOLE of issue #938 is replaced by a reach census per component, setting and timeline, and what the corpus does not reach is named and held by a probe instead',
+    );
+  }
+
+  // --- CK12: the stepped core dump is written twice to the byte from the command line --
+  {
+    const probes: string[] = [];
+    let detail = NOTHING_HELD;
+    const physicsRow = built.find((b) => existsSync(join(b.out, MODEL_DOCUMENT_FILE)) && readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.some((c) => c.kind === 'physics'));
+    if (physicsRow !== undefined) {
+      const outs = ['a', 'b'].map((x) => join(work, `stepped-core-${x}.json`));
+      for (const out of outs) {
+        const run = runOracle(['dump', '--core', join(physicsRow.out, MODEL_DOCUMENT_FILE), '--out', out, '--physics', 'step', '--dt', '1/30']);
+        if (run.status !== 0) probes.push(`dump --core --physics step exited ${run.status}: ${run.stderr.trim().slice(0, 200)}`);
+      }
+      const same = outs.every((o) => existsSync(o)) && readFileSync(outs[0]).equals(readFileSync(outs[1]));
+      if (!same) probes.push('two stepped core dumps of one document differ in their bytes, or one was not written');
+      const doc = existsSync(outs[0]) ? asOracleDocument(JSON.parse(readFileSync(outs[0], 'utf8')), outs[0]) : null;
+      if (doc !== null && (doc.options.physics !== 'step' || doc.options.dt !== 1 / 30)) probes.push(`options read ${JSON.stringify(doc.options)}`);
+      if (doc !== null && (doc.physics === null || doc.physics.length === 0)) probes.push('the physics block is absent from the stepped dump');
+      detail = `${physicsRow.name}: dumped twice under --physics step --dt 1/30 to the byte, options.dt 1/30 exactly, the physics block written`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'CK12_THE_STEPPED_CORE_DUMP_IS_WRITTEN_TWICE_TO_THE_BYTE_FROM_THE_COMMAND_LINE',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #956: the core poses --physics step, which it refused by name before; determinism is a contract, and a walk that read a clock or an unordered state would differ between two runs',
     );
   }
 
@@ -70186,6 +70703,49 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `${cases.length} hand-written orders of physics, slider, ik and transform around a weighted path with an offset, ${cases.filter((x) => x[2] === 'turned').length} reading the slot bone fresh and ${cases.filter((x) => x[2] === 'negated').length} not, each spine-core's reading as measured and the core exact at tolerance 0 over ${samples} bone-samples: a physics constraint orders its bone as a one-bone constraint does; a slider orders nothing and resets each bone its animation keys and what hangs below it`),
       'issue #938: the path cut measured the update order on ik, transform and path, and the physics and slider cut landed beside it; where the two meet — a physics constraint or a slider before a weighted path whose offset reads its slot bone — the order was measured again, and each rejected reading is a case here that it misses',
+    );
+  }
+
+  // --- CK14: a stepped physics constraint and a deformed walked path pose in the runtime's order, before and after the path --
+  {
+    const probes: string[] = [];
+    const xy = WALK_POINTS[3];
+    const deform = { slot: 'o', attachment: 'q', keys: [{ time: 0, offset: 2, vertices: [3, -4, 5, 6] }, { time: 1 }] };
+    const physics = { type: 'physics', name: 'k', bone: 's', x: 1, y: 1, rotate: 1, inertia: 0.7, strength: 60 };
+    const path = { type: 'path', name: 'p', bones: ['b', 'c'], slot: 'o', rotateMode: 'chain', spacingMode: 'proportional' };
+    const specOf = (order: 'physics first' | 'path first', deformed: boolean): PathSpec => ({
+      bones: [{ name: 'root' }, { name: 's', parent: 'root', x: 20, y: 10, length: 30 }, { name: 'b', parent: 'root', length: 10 }, { name: 'c', parent: 'b', x: 10, length: 10 }, ...amplify('c')],
+      slots: [{ name: 'o', bone: 's', attachment: 'q' }],
+      paths: { o: { q: { xy, closed: true, constantSpeed: false, lengths: pathLengthsOf(xy) } } },
+      constraints: order === 'physics first' ? [physics, path] : [path, physics],
+      boneKeys: { s: { translate: [{ time: 0, x: 0, y: 0 }, { time: 0.4, x: 40, y: -20 }, { time: 1, x: -10, y: 5 }] } },
+      ...(deformed ? { deform } : {}),
+    });
+    const lines: string[] = [];
+    for (const order of ['physics first', 'path first'] as const) {
+      const pair = pathPair(specOf(order, true));
+      ckModels.push(pair.model);
+      for (const options of [stepOptions(1 / 60), stepOptions(0.013, 30, 'irr')]) {
+        const c = pathCompare(pair, options);
+        const skipped = posedSkips(c).concat(c.skipped.filter((x) => /^animations\.(attachments|drawOrder|clips|events):/.test(x)));
+        if (!c.identical || skipped.length > 0) probes.push(`${order}, dt ${options.dt}: ${skipped.join('; ') || c.first}`);
+      }
+      const stepped = stepSpine(pair, stepOptions(1 / 60));
+      const unstepped = stepSpine(pair, GRID9);
+      const undeformed = stepSpine(pathPair(specOf(order, false)), stepOptions(1 / 60));
+      const cRows = (d: OracleDump): string => JSON.stringify(d.animations[0].samples.map((x) => x.bones.find((r) => r[0] === 'c')));
+      const physicsMoves = cRows(stepped) !== cRows(unstepped);
+      const deformMoves = cRows(stepped) !== cRows(undeformed);
+      if (order === 'physics first' && !physicsMoves) probes.push('physics first: the stepped physics did not move the walked chain, so the probe held nothing about the order');
+      if (!deformMoves) probes.push(`${order}: the deform did not move the walked chain`);
+      lines.push(`${order}: the chain ${physicsMoves ? 'moved' : 'unmoved'} by the step, moved by the deform`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CK14_A_STEPPED_PHYSICS_CONSTRAINT_AND_A_DEFORMED_WALKED_PATH_POSE_IN_THE_RUNTIMES_ORDER',
+      ok,
+      probeDetail(ok, probes, `a physics constraint on the slot bone of a deformed closed path walked by a two-bone chain, before and after the path constraint: ${lines.join('; ')}; every block of both documents exact at dt 1/60 over nine grid samples and at dt 0.013 over thirty irr samples`),
+      'issue #956 rebased onto #955: at each step the deform is applied with the animation and the physics constraint moves its bone inside the constraint pass, so a path after it walks the deformed curve on the stepped bone and a path before it the deformed curve on the animated one — the order is the runtime\'s, held here because no public row carries both',
     );
   }
 

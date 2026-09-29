@@ -198,6 +198,10 @@
  * `t` without posing again. spine-core integrates physics on its own fixed
  * `step` inside that call, carrying the remainder, so `dt` decides how often
  * the animated bones are re-posed under the simulation, not the integrator.
+ * Measured on issue #956 (`src/core/constraints_physics.ts`): the same rig
+ * under dt 1/60, 1/30 and 0.025 reads three trajectories — a bone under an
+ * `x` spring whose parent moves 60 units a second sat at 4.517945, 4.613321
+ * and 4.611427 at t = 0.125 — each reproduced by the core at tolerance 0.
  *
  * ## `dump --core` — the second dumper
  *
@@ -206,15 +210,23 @@
  * writes beside the Spine pair) — no spine-core call is made for it. `dumper`
  * is `"rigc-core"`; `source` is `{ "spine": null, "hash": null }`, since the
  * model states neither; `options` as given, and the core refuses (exit 2) any
- * `--skin` but `all` and any `--physics` but `none`. The rosters `bones`,
- * `slots`, `skins` and `constraints` are the document's own, in its order.
+ * `--skin` but `all`. Under `--physics step --dt <s>` the core walks the
+ * schedule above itself (issue #956, `poseSteppedAnimations` and
+ * `stepSchedule` in `src/core/constraints_physics.ts`): the setup pose is the
+ * reset pose, every animation a fresh state reset at 0 and stepped through
+ * the samples, each physics constraint integrated as that file's header
+ * states with its measurements, `options.dt` the `dt` given. The rosters
+ * `bones`, `slots`, `skins` and `constraints` are the document's own, in its
+ * order, and `physics` is each physics constraint's row as above, written
+ * from the model's record with the parser's value for a field it leaves out
+ * (`physicsRows`).
  * `paths` and `pathAttachments` are the document's path constraints and path
  * attachments as the runtime reads them (issue #938, second cut,
  * `src/core/constraints_path.ts`). `setup.bones` is the core's setup pose
  * with the document's ik, transform, path, physics and slider constraints
  * applied in its order (issue #938, `src/core/constraints.ts`; under
- * `--physics none` a physics constraint applies nothing, and a slider
- * applies its animation), or absent when a path walks a slot whose
+ * `--physics none` a physics constraint applies nothing, stepped it is
+ * reset, and a slider applies its animation), or absent when a path walks a slot whose
  * placeholder skins fill with different curves, or a slider's animation
  * keys a constraint timeline or deforms a walked curve; `setup.slots` is every slot's row as the pose
  * above words it (issue #928), each slider's slot timelines applied after
@@ -236,7 +248,9 @@
  * `animations.bones` absent when `setup.bones` is, when an animation keys
  * the attachment of a walked path's slot or deforms a walked path whose
  * placeholder several skins fill, or when a path's offset reads a slot bone from the previous pose
- * whose reflection changes across the samples; `animations.slots` absent
+ * whose reflection changes across the samples (under the step: whenever a
+ * path's offset reads a slot bone from the previous pose, which is then the
+ * previous step's); `animations.slots` absent
  * when a slider keys a slot on such a document or skins disagree over a
  * placeholder a slot shows — and, since issue #955, its `drawOrder` (the
  * sample's draw-order key over the setup order, then each slider's,
@@ -320,6 +334,7 @@ import {
 import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, readModel, type CompiledDocument } from '../src/core/index.ts';
 import { IRR_OFFSET as CORE_IRR_OFFSET, poseAnimations, sampleTime as coreSampleTime, type TimelinePlant } from '../src/core/animation.ts';
 import { pathAttachmentRows, pathRows, type CorePathRecord } from '../src/core/constraints_path.ts';
+import { PHYSICS_REFERENCE_SCALE, physicsRows, poseSteppedAnimations, type CorePhysicsRecord } from '../src/core/constraints_physics.ts';
 
 export const ORACLE_SPEC = 'pose-oracle/2';
 export const ORACLE_DUMPER = 'spine-core 4.3.13';
@@ -794,12 +809,11 @@ export function coreDump(doc: CompiledDocument, options: OracleOptions, plant: T
   if (options.skin !== 'all') {
     throw new OracleInputError(`dump --core: --skin ${JSON.stringify(options.skin)} — the core poses every skin at once (--skin all) and nothing else yet (issue #925)`);
   }
-  if (options.physics !== 'none') {
-    throw new OracleInputError(`dump --core: --physics ${JSON.stringify(options.physics)} — the core steps no physics: a physics constraint is posed under --physics none, where it applies nothing (issue #938), and the stepped phase is not admitted`);
-  }
-  const posed = poseSetup(doc, plant);
+  const stepped = options.physics === 'step';
+  if (stepped && (options.dt === null || !(options.dt > 0))) throw new OracleInputError('dump --core: --physics step needs a positive --dt');
+  const posed = stepped ? poseSetup(doc, plant, { phase: 'reset', time: 0, referenceScale: PHYSICS_REFERENCE_SCALE, states: new Map(), ...(plant.physicsStep ? { step: plant.physicsStep } : {}) }) : poseSetup(doc, plant);
   const { setup } = posed;
-  const sampled = poseAnimations(doc, options.phase, options.samples, plant);
+  const sampled = stepped ? poseSteppedAnimations(doc, options.phase, options.samples, options.dt as number, plant) : poseAnimations(doc, options.phase, options.samples, plant);
   const leftOut = new Set(sampled.absent.map((x) => x[0]));
   const absent = [...posed.absent, ...sampled.absent].sort((x, y) => ORACLE_BLOCKS.indexOf(x[0] as OracleBlock) - ORACLE_BLOCKS.indexOf(y[0] as OracleBlock));
   const animations: OracleDocumentAnimation[] = sampled.animations.map((a) => ({
@@ -819,13 +833,13 @@ export function coreDump(doc: CompiledDocument, options: OracleOptions, plant: T
     spec: ORACLE_SPEC,
     dumper: CORE_DUMPER,
     source: { spine: null, hash: null },
-    options: { phase: options.phase, samples: options.samples, skin: options.skin, physics: options.physics, dt: null },
+    options: { phase: options.phase, samples: options.samples, skin: options.skin, physics: options.physics, dt: stepped ? options.dt : null },
     absent,
     bones: doc.bones.map((b) => b.name),
     slots: doc.slots.map((s): [string, string] => [s.name, s.bone]),
     skins: doc.skins.map((s) => s.name),
     constraints: doc.constraints.map((c): [string, string] => [c.kind, c.name]),
-    physics: null,
+    physics: physicsRows(doc.constraints.flatMap((c) => (c.record?.kind === 'physics' ? [c.record as CorePhysicsRecord] : [])), gridRound) as unknown as OraclePhysicsRow[],
     paths: pathRows(doc.constraints.flatMap((c) => (c.record?.kind === 'path' ? [c.record as CorePathRecord] : [])), gridRound),
     pathAttachments: pathAttachmentRows(doc.skins, gridRound),
     setup,
@@ -1392,7 +1406,7 @@ const USAGE = [
   'usage:',
   '  bun tools/pose_oracle.ts dump <build dir> --out <json> [--samples 9] [--phase grid|off|irr|dense] [--skin all|<name>] [--physics none|step] [--dt 1/60]',
   '  bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]',
-  '  bun tools/pose_oracle.ts dump --core <skeleton.model.json> --out <json> [same flags; --skin all and --physics none only]',
+  '  bun tools/pose_oracle.ts dump --core <skeleton.model.json> --out <json> [same flags; --skin all only]',
   '  bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]',
 ].join('\n');
 
