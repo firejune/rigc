@@ -150,8 +150,10 @@
  * - `events` — `[name, time, int, float, string]` for every event an
  *   `EventTimeline` of the animation fires over `(previous sample's t, t]`,
  *   in firing order; the first sample's interval opens at `-1`, so an event
- *   keyed at 0 fires at the first sample. `string` is `null` when the event
- *   carries none. Events after the last sample are not listed.
+ *   keyed at 0 fires at the first sample. `string` is the key's, else the
+ *   event definition's, else `""` — measured on issue #955, where this line
+ *   said `null`: an event declared with no string fired `""`
+ *   (`src/core/events.ts`). Events after the last sample are not listed.
  *
  * ## How a pose is posed
  *
@@ -214,28 +216,37 @@
  * `--physics none` a physics constraint applies nothing, and a slider
  * applies its animation), or absent when a path walks a slot whose
  * placeholder skins fill with different curves, or a slider's animation
- * keys a constraint timeline; `setup.slots` is every slot's row as the pose
+ * keys a constraint timeline or deforms a walked curve; `setup.slots` is every slot's row as the pose
  * above words it (issue #928), each slider's slot timelines applied after
  * the bones, or absent when a slot's setup placeholder is filled
  * by skins that disagree, since which of them `--skin all` shows is the Spine
  * file's skin order and the model does not carry it (the core's header says
  * why, with the measurements); `setup.attachments` and `setup.clips` are the
  * world vertices of every region, mesh, linked mesh and clipping polygon shown
- * at setup, in slot order (issue #931, `src/core/vertices.ts`), absent when
+ * at setup, in the setup draw order (issue #931, `src/core/vertices.ts`),
+ * each slider's deform and sequence keys applied (issue #955), absent when
  * either block above is, and `setup.attachments` also when a shown region's
- * atlas rectangle is `null` in the model. `animations` is every animation of
+ * atlas rectangle is `null` in the model or a slider's timeline moves a
+ * record several skins fill. `animations` is every animation of
  * the model, in the model's order, sampled at the phase's times over its
  * runtime duration (issue #936, `src/core/animation.ts`): each sample's
  * `bones` and `slots` posed from the setup pose with the animation's bone and
  * slot timelines at alpha 1, then the constraints posed by their timelines
- * at the sample's time — `animations.bones` absent when `setup.bones` is,
- * when an animation keys the attachment of a walked path's slot or deforms
- * a path, or when a path's offset reads a slot bone from the previous pose
+ * at the sample's time, a path walking the curve the sample's deform left —
+ * `animations.bones` absent when `setup.bones` is, when an animation keys
+ * the attachment of a walked path's slot or deforms a walked path whose
+ * placeholder several skins fill, or when a path's offset reads a slot bone from the previous pose
  * whose reflection changes across the samples; `animations.slots` absent
  * when a slider keys a slot on such a document or skins disagree over a
- * placeholder a slot shows — and its `drawOrder`,
- * `attachments`, `clips` and `events` absent, each named. Every other block
- * is `null` and named in `absent`.
+ * placeholder a slot shows — and, since issue #955, its `drawOrder` (the
+ * sample's draw-order key over the setup order, then each slider's,
+ * `src/core/draw_order.ts`), its `attachments` and `clips` (through the
+ * sample's bones, in that draw order, with the deform and sequence
+ * timelines' state, `src/core/deform.ts`; absent when the bones or the slots
+ * are, and the attachments when a timeline moves a record several skins
+ * fill) and its `events` (`src/core/events.ts`). `setup.drawOrder` is the slot
+ * order with each slider's draw-order key applied. The physics parameters
+ * are `null` and named in `absent`.
  *
  * ## `compare` — two documents
  *
@@ -796,12 +807,12 @@ export function coreDump(doc: CompiledDocument, options: OracleOptions, plant: T
     duration: a.duration,
     samples: a.samples.map((x) => ({
       t: x.t,
-      events: null,
+      events: x.events,
       bones: leftOut.has('animations.bones') ? null : x.bones,
       slots: leftOut.has('animations.slots') ? null : x.slots,
-      drawOrder: null,
-      attachments: null,
-      clips: null,
+      drawOrder: leftOut.has('animations.drawOrder') ? null : x.drawOrder,
+      attachments: leftOut.has('animations.attachments') ? null : x.attachments,
+      clips: leftOut.has('animations.clips') ? null : x.clips,
     })),
   }));
   return {

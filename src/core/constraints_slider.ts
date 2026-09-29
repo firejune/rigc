@@ -89,11 +89,13 @@
  *
  * A slider whose animation keys a constraint timeline (ik, transform, path,
  * slider — writing a later constraint's pose, issue #665's case) is not
- * posed: the document's bones are absent, naming it. One whose animation
- * keys a deform or sequence timeline changes what a mesh draws at setup, so
- * `setup.attachments` is absent, naming it. Physics timelines under
- * `Physics.none` pose nothing (`./constraints_physics.ts`) and events a
- * slider does not fire, so neither leaves anything out.
+ * posed: the document's bones are absent, naming it; so is one whose
+ * animation deforms a curve a path constraint walks (unmeasured). A slider's
+ * deform, sequence and draw-order keys are posed since issue #955, after the
+ * sample's own (`./deform.ts`, `./draw_order.ts`; they were `sliderAttachmentsWhy`'s
+ * absence before). Physics timelines under `Physics.none` pose nothing
+ * (`./constraints_physics.ts`) and events a slider does not fire, so neither
+ * leaves anything out.
  *
  * ## Purity
  *
@@ -143,6 +145,8 @@ export interface SliderApplication {
   timelines: CoreAnimationTimelines;
   at: number;
   alpha: number;
+  /** The slider's `additive` — how its deform timelines blend (`./deform.ts`). */
+  additive: boolean;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -200,7 +204,7 @@ export function readSliderRecord(raw: Record<string, unknown>, name: string, whe
     if (b !== undefined) setup.set(b.name, b);
   }
   const record: CoreSliderRecord = {
-    kind: 'slider', name, animation: anim?.name ?? '', timelines: anim?.timelines ?? { declared: 0, duration: 0, bones: [], slots: [], later: [] }, setup,
+    kind: 'slider', name, animation: anim?.name ?? '', timelines: anim?.timelines ?? { declared: 0, duration: 0, bones: [], slots: [], later: [], attachments: [], drawOrder: [], events: [] }, setup,
     additive: flag('additive'), loop, mix: num('mix', 1), time: num('time', 0), bone, property,
     from: num('from', 0), to: num('to', 0), scale: num('scale', 1), local: flag('local'), skin: flag('skin'),
   };
@@ -332,7 +336,7 @@ export function applySlider(state: SolverState, r: CoreSliderRecord, applied?: S
   const time = sliderTime(state, r);
   const d = r.timelines.duration;
   const at = r.loop && d !== 0 ? time % d : time;
-  applied?.push({ name: r.name, timelines: r.timelines, at, alpha: r.mix });
+  applied?.push({ name: r.name, timelines: r.timelines, at, alpha: r.mix, additive: r.additive });
   const alpha = r.mix;
   const changed: string[] = [];
   for (const target of r.timelines.bones) {
@@ -420,8 +424,9 @@ export function applySliderSlots(slot: string, pose: SlotPoseState, applications
 
 /**
  * Why the document's bones cannot be posed because of a slider, or null: a
- * slider whose animation keys a constraint timeline other than physics (the
- * header's *What is left out*), named with the animation and the kinds.
+ * slider whose animation keys a constraint timeline other than physics, or
+ * deforms a curve a path constraint walks (the header's *What is left out*),
+ * named with the animation and the kinds or the attachments.
  */
 export function sliderBonesWhy(doc: CompiledDocument): string | null {
   const found: string[] = [];
@@ -433,18 +438,11 @@ export function sliderBonesWhy(doc: CompiledDocument): string | null {
     const sliderTimelines = k.slider.reduce((n, s) => n + (s.time === null ? 0 : 1) + (s.mix === null ? 0 : 1), 0);
     const paths = k.path.reduce((n, p) => n + [p.position, p.spacing, p.mix].filter((x) => x !== undefined).length, 0);
     const kinds = [k.ik.length > 0 ? 'ik' : null, k.transform.length > 0 ? 'transform' : null, paths > 0 ? 'path' : null, sliderTimelines > 0 ? 'slider' : null].filter((x): x is string => x !== null);
-    if (kinds.length > 0) found.push(`slider "${c.name}" applies animation "${c.animation}", which keys ${kinds.join(', ')} constraint timelines`);
+    if (kinds.length > 0) found.push(`slider "${c.name}" applies animation "${c.animation}", which keys ${kinds.join(', ')} constraint timelines — a slider writing a later constraint's pose is not posed by this cut`);
+    // A path constraint walks its slot's curve as the constraints before it left it; a slider's deform of that curve is not measured (issue #955).
+    const walked = doc.constraints.flatMap((p) => (p.record?.kind === 'path' ? [p.record.slot] : []));
+    const deformsPath = anim.timelines.attachments.filter((a) => a.deform !== null && walked.includes(a.slot) && doc.skins.find((s) => s.name === a.skin)?.attachments[a.slot]?.[a.attachment]?.geometry?.kind === 'path');
+    if (deformsPath.length > 0) found.push(`slider "${c.name}" applies animation "${c.animation}", which deforms walked path attachment(s) ${deformsPath.map((a) => `"${a.skin}/${a.slot}/${a.attachment}"`).join(', ')} — a slider's deform of a curve a path constraint walks is not posed by this cut`);
   }
-  return found.length === 0 ? null : `${found.join('; ')} — a slider writing a later constraint's pose is not posed by this cut`;
-}
-
-/** Why the setup attachments cannot be posed because a slider's animation keys a deform or sequence timeline, or null. */
-export function sliderAttachmentsWhy(doc: CompiledDocument): string | null {
-  const found: string[] = [];
-  for (const c of doc.constraints) {
-    if (c.kind !== 'slider') continue;
-    const anim = doc.animations.find((a) => a.name === c.animation);
-    if (anim?.timelines.later.some(([group]) => group === 'attachments')) found.push(`slider "${c.name}" applies animation "${c.animation}", which keys deform or sequence timelines`);
-  }
-  return found.length === 0 ? null : `${found.join('; ')} — what a mesh draws under a slider is not posed by this cut`;
+  return found.length === 0 ? null : found.join('; ');
 }

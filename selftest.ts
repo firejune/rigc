@@ -66265,8 +66265,11 @@ import { activeBones, CORE_CONSTRAINT_KINDS, CORE_DUMPER, CoreInputError, foldIn
 import { regionCorners, worldVertices, type VertexPoser } from './src/core/vertices.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
-import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField } from './tools/core_gate.ts';
-import { BEZIER_SIXTH, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
+import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, GATE_BLOCKS, REMAINDER_CENSUS_BLOCKS, timelineKindLines, type GateBlock, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField } from './tools/core_gate.ts';
+import { BEZIER_SIXTH, bezierPolyline, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
+import { deformAt, deformPercent, heldArray, SEQUENCE_MODES as CORE_SEQUENCE_MODES, sequenceFrameAt, type CoreDeformKey } from './src/core/deform.ts';
+import { drawOrderAt } from './src/core/draw_order.ts';
+import { eventsFired, type CoreEventRow } from './src/core/events.ts';
 import { modeMatrix, worldTransforms, type CoreInheritMode } from './src/core/world.ts';
 import { ADMITTED_CONSTRAINT_KINDS, TRANSFORM_PROPERTIES, type ConstraintPlant, type CoreConstraintRecord, type CoreTransformRecord } from './src/core/constraints.ts';
 
@@ -66363,7 +66366,7 @@ function srcPopulation(root: string): Map<string, string> {
 
 /** The core suite: `src/core/`'s reader and setup pose, the second dumper in `tools/pose_oracle.ts`, compare's absences, the gate's instrument and the tree rule. */
 function runCoreSuite(): number {
-  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots and attachments\' world vertices, and every animation\'s bones and slots at its samples, every constraint kind applied in their order, as pose-oracle/1 (issues #925, #928, #931, #936, #938) ──');
+  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots, draw order and attachments\' world vertices, and every animation\'s bones, slots, draw order, attachments and events at its samples, every constraint kind applied in their order, as pose-oracle/2 (issues #925, #928, #931, #936, #938, #955) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -67320,7 +67323,6 @@ function runCoreSuite(): number {
     let vertices = 0;
     let rowsHeld = 0;
     const offHierarchy: string[] = [];
-    const sliderDeformed: string[] = [];
     for (const r of rows) {
       for (const block of ['setup.attachments', 'setup.clips'] as const) {
         const v = r.blocks?.[block];
@@ -67335,17 +67337,12 @@ function runCoreSuite(): number {
       const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), ONE);
       const skipped = row.blocks['setup.attachments'].verdict === 'SKIP';
       const upstream = row.blocks['setup.bones'].verdict === 'SKIP' || row.blocks['setup.slots'].verdict === 'SKIP';
-      // Since issue #938 a slider whose animation deforms a mesh is its own reason (CQ08 measures the difference it makes).
-      const deformed = !upstream && (row.blocks['setup.attachments'].why ?? '').includes('which keys deform or sequence timelines');
-      if (skipped !== (upstream || deformed)) probes.push(`${b.name}: setup.attachments ${row.blocks['setup.attachments'].verdict} while bones ${row.blocks['setup.bones'].verdict} and slots ${row.blocks['setup.slots'].verdict}`);
-      if (deformed) {
-        sliderDeformed.push(b.name);
-        continue;
-      }
+      // A slider's deform at setup was its own reason from issue #938 until issue #955 posed it (CQ08, CD05, CD06): the block is skipped exactly where bones or slots are.
+      if (skipped !== upstream) probes.push(`${b.name}: setup.attachments ${row.blocks['setup.attachments'].verdict} while bones ${row.blocks['setup.bones'].verdict} and slots ${row.blocks['setup.slots'].verdict}`);
       if (skipped) {
         // By construct: posed off the hierarchy alone — the constraints dropped from a copy — the vertices move.
         const loose = poseSetup({ ...model, constraints: [] }).setup;
-        const absent: Array<[string, string]> = [...NOT_ADMITTED.map(([k, w]): [string, string] => [k, w]), ['setup.bones', 'left out'], ['setup.slots', 'left out'], ['setup.clips', 'left out']];
+        const absent: Array<[string, string]> = [...NOT_ADMITTED.map(([k, w]): [string, string] => [k, w]), ['setup.bones', 'left out'], ['setup.slots', 'left out'], ['setup.drawOrder', 'left out'], ['setup.clips', 'left out']];
         // The animations are left out too (issue #936's blocks): this judges the setup attachments alone.
         const c = compareDumps(spine, { ...coreDump(model, ONE), absent, setup: { bones: null, slots: null, drawOrder: null, attachments: loose.attachments, clips: null }, animations: null }, { xy: 0, m: 0 });
         if (c.identical) probes.push(`${b.name}: posed off its hierarchy alone its attachments read IDENTICAL, so skipping it holds back nothing`);
@@ -67365,7 +67362,7 @@ function runCoreSuite(): number {
     say(
       'CO16_EVERY_RECIPE_WITHOUT_A_CONSTRAINT_POSES_ITS_SETUP_ATTACHMENTS_AS_SPINE_CORE_DOES',
       held,
-      probeDetail(held, probes, `${gateVerdict(rows).line}: ${vertices} vertices over ${rowsHeld} recipe(s) exact at tolerance 0, in spine-core's draw order; the skipped rows exactly the ones whose bones or slots the core leaves out, and each of them posed off its hierarchy alone moves its vertices (worst Δ: ${offHierarchy.join(', ')}), so the skip holds back a real difference${sliderDeformed.length > 0 ? `; ${sliderDeformed.join(', ')} left out naming a slider's deform (CQ08)` : ''}`),
+      probeDetail(held, probes, `${gateVerdict(rows).line}: ${vertices} vertices over ${rowsHeld} recipe(s) exact at tolerance 0, in spine-core's draw order; the skipped rows exactly the ones whose bones or slots the core leaves out, and each of them posed off its hierarchy alone moves its vertices (worst Δ: ${offHierarchy.join(', ')}), so the skip holds back a real difference`),
       'issue #931, the third construct of #380 §5 admitted: every region\'s corners from its record and its carried trim, every mesh\'s vertices from its bindings by name through `Math.fround`, against spine-core\'s dump of the same build. A rig with a constraint is not judged: its vertices move with its bones, and those are the constraints\' admission',
     );
     for (const line of attachmentReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
@@ -67495,7 +67492,8 @@ function runCoreSuite(): number {
       bones: parts.bones.map(({ inherit, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }) })),
       slots: slots.map(({ attachment, ...s }) => ({ ...s, setup: attachment ?? null })),
       skins: [{ name: 'default', bones: [], constraints: {}, attachments: skinTable(true) }],
-      constraints: [], events: [],
+      // The event the keys fire, declared as the Spine file declares it (issue #955: readModel resolves a key's event by name).
+      constraints: [], events: parts.events ? [{ name: 'hit' }] : [],
       animations: [{
         name: 'a', duration: 0,
         bones: Object.entries(parts.bones_ ?? {}).map(([name, tls]) => ({ name, timelines: Object.entries(tls).map(([k, keys]) => ({ name: k, keys })) })),
@@ -68050,9 +68048,15 @@ function runCoreSuite(): number {
     const spine = spineDump(pair, GRID9);
     const core = coreDump(readModel(pair.model, 'the duration probe'), GRID9);
     const c = compareDumps(spine, core, { xy: 0, m: 0 });
-    const skipped = c.skipped.map((s) => s.slice(0, s.indexOf(':')));
-    const want = ['animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.events'];
-    if (!c.identical || !want.every((b) => skipped.includes(b))) probes.push(`a rotate timeline ending at 1 beside an event at 2.5 read ${c.identical ? 'IDENTICAL' : c.first}, skipping [${skipped.join(', ')}]`);
+    const skipped = c.skipped.map((s) => s.slice(0, s.indexOf(':'))).filter((b) => b !== 'physics');
+    // Since issue #955 the core poses every sample block, the event block included: nothing but the physics parameters is SKIPped.
+    if (!c.identical || skipped.length > 0) probes.push(`a rotate timeline ending at 1 beside an event at 2.5 read ${c.identical ? 'IDENTICAL' : c.first}, skipping [${skipped.join(', ')}]`);
+    // The one event fires at the last sample (t = 2.5) in both dumps, as the row the header states.
+    const firedAt = (samples: ReadonlyArray<{ events: unknown[] | null }>): string[] => samples.flatMap((x, i) => (x.events ?? []).map((e) => `${i}: ${JSON.stringify(e)}`));
+    const wantFired = [`${GRID9.samples - 1}: ["hit",2.5,0,0,""]`];
+    for (const [who, samples] of [['spine-core', spine.animations[0].samples], ['the core', core.animations?.[0]?.samples ?? []]] as const) {
+      if (JSON.stringify(firedAt(samples)) !== JSON.stringify(wantFired)) probes.push(`${who} fired [${firedAt(samples).join('; ')}], not [${wantFired.join('; ')}]`);
+    }
     if (core.animations?.[0]?.duration !== 2.5 || spine.animations[0].duration !== 2.5) probes.push(`the duration is ${core.animations?.[0]?.duration} in the core and ${spine.animations[0].duration} in spine-core, not the event's 2.5 (the model states 0)`);
     // Animation order is the file's spelling; compare matches animations by name.
     const reordered = { ...core, animations: [...(core.animations ?? [])].reverse() };
@@ -68067,21 +68071,26 @@ function runCoreSuite(): number {
         return (err as Error).message;
       }
     };
-    const carried = JSON.parse(JSON.stringify(core)) as OracleDocument;
+    // A document leaving a sample block out: null in every sample and named once — planted on the core's dump, which since issue #955 leaves none out.
+    const leftOut = JSON.parse(JSON.stringify(core)) as OracleDocument;
+    for (const a of leftOut.animations ?? []) for (const x of a.samples) x.drawOrder = null;
+    leftOut.absent = [...(leftOut.absent ?? []), ['animations.drawOrder', 'planted']];
+    if (readErr(leftOut) !== '') probes.push(`a sample block null in every sample and named was refused: ${readErr(leftOut)}`);
+    const carried = JSON.parse(JSON.stringify(leftOut)) as OracleDocument;
     (carried.animations ?? [])[0].samples[0].drawOrder = [];
     if (!readErr(carried).includes('animations.drawOrder is named absent and a sample carries it')) probes.push(`a sample carrying a block named absent was read: ${readErr(carried) || 'no refusal'}`);
     const unnamed = JSON.parse(JSON.stringify(core)) as OracleDocument;
-    unnamed.absent = (unnamed.absent ?? []).filter((x) => x[0] !== 'animations.clips');
+    for (const a of unnamed.animations ?? []) for (const x of a.samples) x.clips = null;
     if (!readErr(unnamed).includes('animations.clips is not named absent and a sample carries no list for it')) probes.push(`a sample block null and unnamed was read: ${readErr(unnamed) || 'no refusal'}`);
     const phases: SamplePhase[] = ['grid', 'off', 'irr', 'dense'];
     const drift = phases.filter((p) => [0, 1, 7].some((i) => oracleSampleTime(p, 2.5, i, 9) !== sampleTime(p, 2.5, i, 9)));
     if (drift.length > 0) probes.push(`the tool and the core sample at different times under ${drift.join(', ')}`);
     const ok = probes.length === 0;
     say(
-      'CA09_THE_SAMPLE_BLOCKS_ARE_ABSENT_BY_NAME_MATCHED_BY_ANIMATION_AND_TIMED_BY_EVERY_TIMELINE',
+      'CA09_A_SAMPLE_BLOCK_LEFT_OUT_IS_NAMED_ANIMATIONS_MATCH_BY_NAME_AND_EVERY_TIMELINE_TIMES_THE_SAMPLES',
       ok,
-      probeDetail(ok, probes, `a rotate ending at 1 beside an event at 2.5: duration 2.5 in both (the model states 0), IDENTICAL with the draw order, attachments, clips and events of every sample SKIPped by name; two documents listing animations in two orders IDENTICAL; a sample carrying a block its document names absent, and one leaving a block out without naming it, refused; the tool's sample times the core's under all four phases`),
-      'issue #936: a sample block the core does not pose is null in every sample and named once, the way a setup block is; the order animations are listed in is the Spine file\'s spelling, not a pose; and the runtime\'s duration is the last key of every timeline, the later constructs\' included, so the samples land where spine-core\'s do',
+      probeDetail(ok, probes, `a rotate ending at 1 beside an event at 2.5: duration 2.5 in both (the model states 0), IDENTICAL on every sample block, the event fired at the same sample in both; two documents listing animations in two orders IDENTICAL; a sample block null in every sample and named read, one carried by a sample its document names absent and one left out without naming it refused; the tool's sample times the core's under all four phases`),
+      'issue #936: a sample block a dumper does not pose is null in every sample and named once, the way a setup block is; the order animations are listed in is the Spine file\'s spelling, not a pose; and the runtime\'s duration is the last key of every timeline, every group\'s included, so the samples land where spine-core\'s do. Since issue #955 the core poses every sample block, so the absence rules are held on planted documents',
     );
   }
 
@@ -68103,7 +68112,9 @@ function runCoreSuite(): number {
     const want: Partial<Record<AnimationCensusField, number>> = {
       'bone.translate': 1, 'bone.translatex': 1, 'bone.inherit': 1, 'bone.shearx': 1, 'slot.rgba2': 1, 'slot.attachment': 1,
       'bone.linear': 1, 'bone.stepped': 1, 'bone.bezier': 1, 'slot.stepped': 1, 'slot.linear': 0,
-      beforeFirstKey: 2 + 4, afterLastKey: 2 + 8 + 8 + 4, overlappingBoneChannels: 1, laterTimelines: 0,
+      beforeFirstKey: 2 + 4, afterLastKey: 2 + 8 + 8 + 4, overlappingBoneChannels: 1,
+      // Construct 4's remainder (issue #955): the document keys none of it; CD12 counts a document that keys every field.
+      deform: 0, sequence: 0, drawOrder: 0, events: 0, eventPayload: 0,
     };
     for (const [field, n] of Object.entries(want)) if (census[field as AnimationCensusField] !== n) probes.push(`${field} counted ${census[field as AnimationCensusField]}, not ${n}`);
     if (census.animations !== 1) probes.push(`${census.animations} animation(s) counted`);
@@ -68121,15 +68132,17 @@ function runCoreSuite(): number {
     const probes: string[] = [];
     const holes = animationReachLines(rows).filter((l) => l.startsWith('  HOLE')).map((l) => /animations (\S+):/.exec(l)?.[1] ?? l);
     const probeCensus = animationCensusOf(allKindsProbe(7919).model, DENSE);
-    const covered = holes.filter((f) => f !== 'laterTimelines' && (probeCensus[f as AnimationCensusField] ?? 0) > 0);
-    const uncovered = holes.filter((f) => f !== 'laterTimelines' && !covered.includes(f));
+    // The fields of construct 4's remainder (issue #955) are CD12's: the CD probes reach them.
+    const own = holes.filter((f) => !(f in REMAINDER_CENSUS_BLOCKS));
+    const covered = own.filter((f) => (probeCensus[f as AnimationCensusField] ?? 0) > 0);
+    const uncovered = own.filter((f) => !covered.includes(f));
     if (uncovered.length > 0) probes.push(`no compared row and no probe reaches ${uncovered.join(', ')}`);
-    if (!holes.includes('laterTimelines')) probes.push('the later groups\' timelines were not named a HOLE');
+    if (animationReachLines(rows).some((l) => l.includes('later construct'))) probes.push('a timeline kind was named a later construct; since issue #955 none is');
     const ok = probes.length === 0;
     say(
       'CA11_EVERY_KIND_AND_CURVE_NO_COMPARED_ROW_REACHES_IS_A_HOLE_BY_NAME_AND_THE_PROBE_REACHES_IT',
       ok,
-      probeDetail(ok, probes, `${holes.length} HOLE(s) over the compared rows — ${holes.join(', ')} — each but the later groups reached by CA04's probe at tolerance 0; the later groups' timelines a HOLE this construct does not judge`),
+      probeDetail(ok, probes, `${holes.length} HOLE(s) over the compared rows — ${holes.join(', ')} — each bone and slot one reached by CA04's probe at tolerance 0, each of construct 4's remainder by CD12's; no timeline kind is left to a later construct`),
       'issue #380 §4: a construct no row uses is a HOLE, never a pass, and a HOLE is covered by a probe or it is not covered at all',
     );
     for (const line of animationReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
@@ -69258,17 +69271,21 @@ function runCoreSuite(): number {
     }), atlasOf(['m']), 'the deform probe'), ONE_SAMPLE).setup.attachments[0][3]);
     const [bare, deformed] = [meshAt(false), meshAt(true)];
     if (bare !== '[0,0,4,0,4,4,0,4]' || deformed !== '[2,3,4,0,4,4,0,4]') probes.push(`spine-core's mesh read ${bare} without the slider and ${deformed} with it, not the measurement`);
-    const deformKeyed = sliderPair([{ name: 'root' }], [{ name: 's', bone: 'root', attachment: 'q' }], [{ type: 'slider', name: 'sl', animation: 's', time: 0.5 }], { s: { deform: { s: [{ time: 0, offset: 0, vertices: [1, 2] }] } } });
-    const core = coreDump(readModel(deformKeyed.model), ONE_SAMPLE);
-    const deformWhy = core.absent?.find((a) => a[0] === 'setup.attachments')?.[1] ?? '';
-    if (core.setup.attachments !== null || !deformWhy.includes('slider "sl" applies animation "s", which keys deform or sequence timelines')) probes.push(`a slider keying a deform: setup.attachments ${core.setup.attachments === null ? `absent as "${deformWhy}"` : 'posed'}`);
-    if (core.setup.bones === null || core.setup.slots === null || core.setup.clips === null) probes.push('a slider keying a deform left more than the attachments out');
+    // Since issue #955 the core poses a slider's deform at setup (src/core/deform.ts): the same mesh, written as the model, reads spine-core's row.
+    const deformModel = modelOf({
+      bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root', setup: 'm' }],
+      skins: [{ name: 'default', bones: [], constraints: {}, attachments: { s: { m: { kind: 'mesh', uvs: [0, 0, 1, 0, 1, 1, 0, 1], triangles: [0, 1, 2, 2, 3, 0], vertices: { weighted: false, xy: [0, 0, 4, 0, 4, 4, 0, 4] }, hull: 4, edges: [], width: 4, height: 4 } } } }],
+      constraints: [{ kind: 'slider', name: 'sl', declaredIn: 'rig', animation: 'd', time: 0.5 }],
+      animations: [{ name: 'd', duration: 0, bones: [], slots: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [{ name: 'default', slots: [{ name: 's', attachments: [{ name: 'm', deform: [{ time: 0, vertices: [1, 2] }, { time: 1, vertices: [3, 4] }] }] }] }], drawOrder: [], events: [] }],
+    });
+    const core = coreDump(readModel(deformModel), ONE_SAMPLE);
+    if (JSON.stringify(core.setup.attachments?.[0]?.[3] ?? null) !== deformed) probes.push(`a slider keying a deform: the core's setup mesh read ${JSON.stringify(core.setup.attachments?.[0]?.[3] ?? null)}, spine-core's ${deformed}`);
     const ok = probes.length === 0;
     say(
       'CQ08_A_SKIN_REQUIRED_SLIDER_AND_ONE_ON_AN_INACTIVE_DIAL_ARE_NOT_APPLIED_AND_WHAT_IS_NOT_POSED_IS_LEFT_OUT_BY_NAME',
       ok,
-      probeDetail(ok, probes, `a slider applied (65°), skin-required and listed by no skin (20°, not applied) and on a skin-required dial no skin names (20°), read off spine-core and posed exactly by the core; a slider keying an ik timeline leaves the bones out naming it; a slider's deform moved spine-core's setup mesh from ${bare} to ${deformed}, and the core leaves setup.attachments out naming the slider and poses the rest`),
-      'issue #938: the constraint skin rule and the inactive-bone rule of the first cut hold for a slider; a slider writing a later constraint\'s pose (issue #665\'s case) and one whose animation deforms a mesh are constructs this cut does not pose, so they are absent by name, never a pass',
+      probeDetail(ok, probes, `a slider applied (65°), skin-required and listed by no skin (20°, not applied) and on a skin-required dial no skin names (20°), read off spine-core and posed exactly by the core; a slider keying an ik timeline leaves the bones out naming it; a slider's deform moved spine-core's setup mesh from ${bare} to ${deformed}, and the core's too (issue #955)`),
+      'issue #938: the constraint skin rule and the inactive-bone rule of the first cut hold for a slider; a slider writing a later constraint\'s pose (issue #665\'s case) is a construct this cut does not pose, so it is absent by name, never a pass. A slider whose animation deforms a mesh was absent the same way until issue #955 posed it',
     );
   }
 
@@ -69278,7 +69295,6 @@ function runCoreSuite(): number {
     let judged = 0;
     let denseSamples = 0;
     const kinds = new Set<string>();
-    const leftOut: string[] = [];
     for (const b of built) {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
       const row = rows.find((r) => r.name === b.name);
@@ -69287,14 +69303,10 @@ function runCoreSuite(): number {
       if (!model.constraints.some((c) => c.kind === 'physics' || c.kind === 'slider') || !model.constraints.every((c) => ADMITTED_CONSTRAINT_KINDS.includes(c.kind))) continue;
       judged++;
       for (const c of model.constraints) kinds.add(c.kind);
-      for (const block of ['setup.bones', 'setup.slots', 'setup.attachments', 'setup.clips', 'animations.bones', 'animations.slots'] as const) {
+      // Every block the gate judges; since issue #955 a slider's deform at setup is posed, so none is left out.
+      for (const block of GATE_BLOCKS) {
         const v = row.blocks[block];
-        if (v.verdict === 'IDENTICAL') continue;
-        if (v.verdict === 'SKIP' && block === 'setup.attachments' && (v.why ?? '').includes('which keys deform or sequence timelines')) {
-          leftOut.push(`${b.name} ${block}`);
-          continue;
-        }
-        probes.push(`${b.name}: ${block} ${v.verdict} — ${v.why}`);
+        if (v.verdict !== 'IDENTICAL') probes.push(`${b.name}: ${block} ${v.verdict} — ${v.why}`);
       }
       const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), DENSE);
       const c = compareDumps(spine, coreDump(model, DENSE), { xy: 0, m: 0 });
@@ -69308,8 +69320,8 @@ function runCoreSuite(): number {
     say(
       'CQ09_EVERY_ROW_DECLARING_A_PHYSICS_OR_SLIDER_CONSTRAINT_POSES_EVERY_BLOCK_AS_SPINE_CORE_DOES',
       ok,
-      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${judged} row(s) declaring a physics or slider constraint IDENTICAL on every posed block${leftOut.length > 0 ? ` but ${leftOut.join(', ')}, left out naming a slider's deform` : ''}, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); the physics and slider kind lines name no SKIP`),
-      'issue #938, construct 5\'s third cut admitted: the physics constraint under Physics.none and the slider, on the rows that declare them; a slider\'s deform at setup is a construct not admitted (deform timelines, #380 §5 item 4), so that one block stays absent by name rather than posed by the coincidence of a dial resting on a zero key',
+      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${judged} row(s) declaring a physics or slider constraint IDENTICAL on every block the gate judges, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); the physics and slider kind lines name no SKIP`),
+      'issue #938, construct 5\'s third cut admitted: the physics constraint under Physics.none and the slider, on the rows that declare them. A slider\'s deform at setup stayed absent by name until issue #955 posed deform timelines (src/core/deform.ts); gallery/look\'s setup.attachments, the one block it held back, is judged now',
     );
   }
 
@@ -69394,12 +69406,14 @@ function runCoreSuite(): number {
     };
     for (const [f, n] of Object.entries(expected)) if (c[f as ConstraintCensusField] !== n) probes.push(`${f}: counted ${c[f as ConstraintCensusField]}, by hand ${n}`);
     const anim = animationCensusOf(pair.model);
-    if (anim.laterTimelines !== 0) probes.push(`the animations' census counts ${anim.laterTimelines} later timeline(s); the physics and slider timelines are judged`);
+    // The document keys no deform, sequence, draw order or event: construct 4's remainder (issue #955) counts none of its constraint timelines.
+    const remainder = Object.keys(REMAINDER_CENSUS_BLOCKS).filter((f) => anim[f as AnimationCensusField] !== 0);
+    if (remainder.length > 0) probes.push(`the animations' census counts ${remainder.join(', ')} on a document keying only constraint, bone and slot timelines`);
     const ok = probes.length === 0;
     say(
       'CQ12_THE_PHYSICS_AND_SLIDER_CENSUS_COUNTS_A_HAND_MADE_DOCUMENT_AS_COMPUTED_BY_HAND',
       ok,
-      probeDetail(ok, probes, `${Object.keys(expected).length} census fields of a five-constraint document counted as by hand, and its physics and slider timelines no longer counted as later timelines`),
+      probeDetail(ok, probes, `${Object.keys(expected).length} census fields of a five-constraint document counted as by hand, and its physics and slider timelines counted as none of construct 4's remainder`),
       'issue #938: a census that miscounts turns a HOLE into a REACH in silence — held on a document whose every count is computed by hand',
     );
   }
@@ -70075,10 +70089,15 @@ function runCoreSuite(): number {
     // The same document through the gate's instrument, whole: the paths and pathAttachments blocks among what is compared.
     const whole = pathCompare(pathPair(spec), GRID9);
     if (!whole.identical) probes.push(`the hand-made document: ${whole.first}`);
-    // Left out by name: an attachment keyed on a path's slot, a path deformed, skins disagreeing over the slot's placeholder.
+    // A deformed path is posed since issue #955 (src/core/deform.ts): the walk reads the deformed curve, exact, and a different pose from the undeformed one.
+    const deformedSpec: PathSpec = { ...spec, deform: { slot: 'o', attachment: 'q', keys: [{ time: 0, offset: 2, vertices: [3, -4, 5, 6] }, { time: 1 }] } };
+    const deformedPath = pathCompare(pathPair(deformedSpec), GRID9);
+    if (!deformedPath.identical || deformedPath.skipped.some((x) => x.startsWith('animations.bones'))) probes.push(`a deformed path: ${deformedPath.skipped.find((x) => x.startsWith('animations.bones')) ?? deformedPath.first}`);
+    if (JSON.stringify(coreDump(readModel(pathPair(deformedSpec).model), GRID9).animations) === JSON.stringify(coreDump(readModel(text), GRID9).animations)) probes.push('a deformed path posed as the undeformed one, so the probe held nothing about the deform');
+    // Left out by name: an attachment keyed on a path's slot, a deformed path whose placeholder two skins fill, skins disagreeing over the slot's placeholder.
     const absences: Array<[string, PathSpec, string, string]> = [
       ['an attachment timeline on the slot a path walks', { ...spec, slotKeys: { o: [{ time: 0.5, name: null }] } }, 'animations.bones', 'keys the attachment of slot "o", which path constraint "two" walks'],
-      ['a deformed path', { ...spec, deform: { slot: 'o', attachment: 'q', keys: [{ time: 0, vertices: [1, 2] }, { time: 1 }] } }, 'animations.bones', 'deforms path attachment "q"'],
+      ['a deformed path whose placeholder two skins fill alike', { ...deformedSpec, skins: [{ name: 'other', paths: { o: { q: { xy, closed: true, constantSpeed: false, lengths: pathLengthsOf(xy) } } } }] }, 'animations.bones', 'deforms path attachment "q" (skin "default", slot "o"), a placeholder skins "default", "other" fill'],
       ['skins disagreeing over the slot a path walks', { ...spec, skins: [{ name: 'other', paths: { o: { q: { xy: xy.map((v) => v * 2), closed: true, lengths: pathLengthsOf(xy.map((v) => v * 2)) } } } }] }, 'setup.bones', 'path constraint "two" walks slot "o", whose placeholder "q" skins "default", "other" fill differently'],
     ];
     for (const [label, s, block, expectedWhy] of absences) {
@@ -70090,7 +70109,7 @@ function runCoreSuite(): number {
     say(
       'CP12_THE_PATHS_CENSUS_COUNTS_A_HAND_MADE_DOCUMENT_AS_COMPUTED_BY_HAND_AND_WHAT_THE_CORE_CANNOT_POSE_IS_LEFT_OUT_BY_NAME',
       ok,
-      probeDetail(ok, probes, `${Object.keys(expected).length} census fields of a three-path document counted as by hand, the document exact at nine samples with its paths and pathAttachments blocks; ${absences.length} documents the core cannot pose each left out naming why — an attachment timeline on a path's slot, a deformed path, skins disagreeing over a path's placeholder`),
+      probeDetail(ok, probes, `${Object.keys(expected).length} census fields of a three-path document counted as by hand, the document exact at nine samples with its paths and pathAttachments blocks, and exact again with its closed path deformed (issue #955); ${absences.length} documents the core cannot pose each left out naming why — an attachment timeline on a path's slot, a deformed path whose placeholder two skins fill, skins disagreeing over a path's placeholder`),
       'issue #938: a census that miscounts turns a HOLE into a REACH in silence; and a path the core cannot pose exactly is SKIP by name, never a guess',
     );
   }
@@ -70167,6 +70186,838 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `${cases.length} hand-written orders of physics, slider, ik and transform around a weighted path with an offset, ${cases.filter((x) => x[2] === 'turned').length} reading the slot bone fresh and ${cases.filter((x) => x[2] === 'negated').length} not, each spine-core's reading as measured and the core exact at tolerance 0 over ${samples} bone-samples: a physics constraint orders its bone as a one-bone constraint does; a slider orders nothing and resets each bone its animation keys and what hangs below it`),
       'issue #938: the path cut measured the update order on ik, transform and path, and the physics and slider cut landed beside it; where the two meet — a physics constraint or a slider before a weighted path whose offset reads its slot bone — the order was measured again, and each rejected reading is a case here that it misses',
+    );
+  }
+
+  // ===========================================================================
+  // Construct 4, its remainder (issue #955, step 2f): deform, sequence, draw
+  // order and events at a sample time. Each probe is one skeleton written
+  // twice — the Spine file for `dumpSkeleton` and the model for `readModel` —
+  // by `remainderPair`, and compared at tolerance 0 through `coreDump`, every
+  // block of the document compared. The rules and the measurements that fixed
+  // them are in src/core/deform.ts, draw_order.ts and events.ts.
+  // ===========================================================================
+  type RBinding = { bone: string; x: number; y: number; w: number };
+  type RAtt =
+    | { kind: 'region'; path?: string; frames?: number; setup?: number }
+    | { kind: 'mesh' | 'clipping' | 'boundingbox'; xy?: number[]; weighted?: RBinding[][]; end?: string }
+    | { kind: 'linkedmesh'; source: string; skin?: string; slot?: string; timelines?: boolean }
+    | { kind: 'path'; xy: number[]; lengths: number[]; closed?: boolean };
+  type RKeyed = { skin?: string; slot: string; attachment: string; keys: Obj[] };
+  interface RAnim { bones?: Keyed; slots?: Keyed; deform?: RKeyed[]; sequence?: RKeyed[]; drawOrder?: Array<{ time: number; offsets?: Array<{ slot: string; offset: number }> }>; events?: Obj[] }
+  interface RSpec { bones: Obj[]; slots: Array<{ name: string; bone: string; attachment?: string | null }>; skins: Record<string, Record<string, Record<string, RAtt>>>; constraints?: Obj[]; events?: Record<string, Obj>; anims: Record<string, RAnim> }
+  /** A frame's rectangle: frame `i` of a series is `i + 1` wide in an 8 by 8 original, so a region's corners tell which frame it draws. */
+  const frameRect = (i: number): Obj => ({ width: i + 1, height: 8, offsetX: 0, offsetY: 0, originalWidth: 8, originalHeight: 8 });
+  /** The skeleton of `spec` as the Spine file, its atlas, and as the model — one table, two spellings. */
+  const remainderPair = (spec: RSpec): { spine: string; model: string; atlas: string } => {
+    const index = new Map(spec.bones.map((b, i) => [b.name as string, i]));
+    const regions: string[] = [];
+    const series: Array<[string, number]> = [];
+    const vertexCount = (a: { xy?: number[]; weighted?: RBinding[][] }): number => (a.xy !== undefined ? a.xy.length / 2 : (a.weighted ?? []).length);
+    const spineVertices = (a: { xy?: number[]; weighted?: RBinding[][] }): number[] => a.xy ?? (a.weighted ?? []).flatMap((v) => [v.length, ...v.flatMap((b) => [index.get(b.bone) as number, b.x, b.y, b.w])]);
+    const modelVertices = (a: { xy?: number[]; weighted?: RBinding[][] }): Obj => (a.xy !== undefined ? { weighted: false, xy: a.xy } : { weighted: true, bindings: (a.weighted ?? []).map((v) => v.map((b) => ({ bone: b.bone, x: b.x, y: b.y, weight: b.w }))) });
+    const spineAtt = (name: string, a: RAtt): Obj => {
+      if (a.kind === 'region') {
+        if (a.frames === undefined) {
+          regions.push(a.path ?? name);
+          return { width: 8, height: 8, ...(a.path === undefined ? {} : { path: a.path }) };
+        }
+        series.push([a.path ?? name, a.frames]);
+        return { width: 8, height: 8, ...(a.path === undefined ? {} : { path: a.path }), sequence: { count: a.frames, start: 0, digits: 1, ...(a.setup === undefined ? {} : { setup: a.setup }) } };
+      }
+      if (a.kind === 'linkedmesh') {
+        regions.push(name);
+        return { type: 'linkedmesh', source: a.source, ...(a.slot === undefined ? {} : { slot: a.slot }), ...(a.skin === undefined ? {} : { skin: a.skin }), ...(a.timelines === undefined ? {} : { timelines: a.timelines }), width: 4, height: 4 };
+      }
+      if (a.kind === 'path') return { type: 'path', ...(a.closed === undefined ? {} : { closed: a.closed }), vertexCount: a.xy.length / 2, vertices: a.xy, lengths: a.lengths };
+      const n = vertexCount(a);
+      if (a.kind === 'mesh') {
+        regions.push(name);
+        return { type: 'mesh', uvs: new Array<number>(2 * n).fill(0), triangles: [0, 1, 2], vertices: spineVertices(a), hull: n, width: 4, height: 4 };
+      }
+      return { type: a.kind, ...(a.end === undefined ? {} : { end: a.end }), vertexCount: n, vertices: spineVertices(a) };
+    };
+    const modelAtt = (a: RAtt, slot: string): Obj => {
+      if (a.kind === 'region') {
+        return a.frames === undefined
+          ? { kind: 'region', ...(a.path === undefined ? {} : { path: a.path }), width: 8, height: 8, atlas: { width: 4, height: 4, offsetX: 0, offsetY: 0, originalWidth: 4, originalHeight: 4 } }
+          : { kind: 'region', ...(a.path === undefined ? {} : { path: a.path }), width: 8, height: 8, sequence: { count: a.frames, start: 0, digits: 1, ...(a.setup === undefined ? {} : { setup: a.setup }), atlas: Array.from({ length: a.frames }, (_v, i) => frameRect(i)) } };
+      }
+      if (a.kind === 'linkedmesh') return { kind: 'linkedmesh', source: a.source, skin: a.skin ?? 'default', slot: a.slot ?? slot, timelines: a.timelines ?? true, width: 4, height: 4 };
+      if (a.kind === 'path') return { kind: 'path', ...(a.closed === undefined ? {} : { closed: a.closed }), vertexCount: a.xy.length / 2, vertices: { weighted: false, xy: a.xy }, lengths: a.lengths };
+      const n = vertexCount(a);
+      if (a.kind === 'mesh') return { kind: 'mesh', uvs: new Array<number>(2 * n).fill(0), triangles: [0, 1, 2], vertices: modelVertices(a), hull: n, edges: [], width: 4, height: 4 };
+      return { kind: a.kind, ...(a.end === undefined ? {} : { end: a.end }), vertexCount: n, vertices: modelVertices(a) };
+    };
+    const table = (t: Record<string, Record<string, RAtt>>, model: boolean): Obj => Object.fromEntries(Object.entries(t).map(([slot, e]) => [slot, Object.fromEntries(Object.entries(e).map(([k, a]) => [k, model ? modelAtt(a, slot) : spineAtt(k, a)]))]));
+    const slotIndex = new Map(spec.slots.map((s, i) => [s.name, i]));
+    const byAttachment = (a: RAnim): Map<string, Map<string, Map<string, { deform?: Obj[]; sequence?: Obj[] }>>> => {
+      const out = new Map<string, Map<string, Map<string, { deform?: Obj[]; sequence?: Obj[] }>>>();
+      for (const [kind, list] of [['deform', a.deform ?? []], ['sequence', a.sequence ?? []]] as const) {
+        for (const k of list) {
+          const skin = k.skin ?? 'default';
+          if (!out.has(skin)) out.set(skin, new Map());
+          const slots = out.get(skin) as Map<string, Map<string, { deform?: Obj[]; sequence?: Obj[] }>>;
+          if (!slots.has(k.slot)) slots.set(k.slot, new Map());
+          const atts = slots.get(k.slot) as Map<string, { deform?: Obj[]; sequence?: Obj[] }>;
+          atts.set(k.attachment, { ...(atts.get(k.attachment) ?? {}), [kind]: k.keys });
+        }
+      }
+      return out;
+    };
+    const skinNames = Object.keys(spec.skins);
+    const spine = {
+      skeleton: { spine: '4.3.13' }, bones: spec.bones,
+      slots: spec.slots.map((s) => ({ name: s.name, bone: s.bone, ...(s.attachment === undefined || s.attachment === null ? {} : { attachment: s.attachment }) })),
+      ...(spec.constraints === undefined ? {} : { constraints: spec.constraints }),
+      skins: skinNames.map((k) => ({ name: k, attachments: table(spec.skins[k], false) })),
+      ...(spec.events === undefined ? {} : { events: spec.events }),
+      animations: Object.fromEntries(Object.entries(spec.anims).map(([n, a]) => {
+        const atts = byAttachment(a);
+        return [n, {
+          ...(a.bones === undefined ? {} : { bones: a.bones }), ...(a.slots === undefined ? {} : { slots: a.slots }),
+          ...(atts.size === 0 ? {} : { attachments: Object.fromEntries([...atts].map(([skin, slots]) => [skin, Object.fromEntries([...slots].map(([slot, m]) => [slot, Object.fromEntries(m)]))])) }),
+          // The Spine file lists a key's moves in slot order (the emitter sorts them); the model holds them as stated, reversed here.
+          ...(a.drawOrder === undefined ? {} : { drawOrder: a.drawOrder.map((k) => (k.offsets === undefined ? { time: k.time } : { time: k.time, offsets: [...k.offsets].sort((x, y) => (slotIndex.get(x.slot) ?? 0) - (slotIndex.get(y.slot) ?? 0)) })) }),
+          ...(a.events === undefined ? {} : { events: a.events }),
+        }];
+      })),
+    };
+    const named = (group: Keyed | undefined): Obj[] => Object.entries(group ?? {}).map(([name, tls]) => ({ name, timelines: Object.entries(tls).map(([k, keys]) => ({ name: k, keys })) }));
+    const model = JSON.stringify({
+      spec: 'rigc-compiled/1',
+      bones: spec.bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
+      slots: spec.slots.map((s) => ({ name: s.name, bone: s.bone, setup: s.attachment ?? null })),
+      skins: skinNames.map((k) => ({ name: k, bones: [], constraints: {}, attachments: table(spec.skins[k], true) })),
+      constraints: (spec.constraints ?? []).map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
+      events: Object.entries(spec.events ?? {}).map(([name, e]) => ({ name, ...e })),
+      animations: Object.entries(spec.anims).map(([name, a]) => ({
+        name, duration: 0, bones: named(a.bones), slots: named(a.slots),
+        constraints: { ik: [], transform: [], path: [], physics: [], slider: [] },
+        attachments: [...byAttachment(a)].map(([skin, slots]) => ({ name: skin, slots: [...slots].map(([slot, m]) => ({ name: slot, attachments: [...m].map(([att, t]) => ({ name: att, ...t })) })) })),
+        drawOrder: (a.drawOrder ?? []).map((k) => (k.offsets === undefined ? { time: k.time } : { time: k.time, offsets: [...k.offsets].reverse() })),
+        events: a.events ?? [],
+      })),
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+    });
+    const lines = [...new Set(regions)].map((n) => `${n}\n\tbounds: 0, 0, 4, 4\n`);
+    for (const [path, count] of series) for (let i = 0; i < count; i++) lines.push(`${path}${i}\n\tbounds: 0, 0, ${i + 1}, 8\n\toffsets: 0, 0, 8, 8\n`);
+    return { spine: JSON.stringify(spine), model, atlas: `page.png\n\tsize: 64, 64\n${lines.join('')}` };
+  };
+  const remainderSpine = (pair: { spine: string; atlas: string }, options: OracleOptions): OracleDump => dumpSkeleton(loadOracleData(pair.spine, pair.atlas, 'the remainder probe'), options);
+  const remainderCompare = (pair: { spine: string; model: string; atlas: string }, options: OracleOptions, plant: TimelinePlant = {}): ReturnType<typeof compareDumps> =>
+    compareDumps(remainderSpine(pair, options), coreDump(readModel(pair.model, 'the remainder probe'), options, plant), { xy: 0, m: 0 });
+  /** Every block a comparison skipped but the physics parameters' — a probe is exact only when none is. */
+  const blocksSkipped = (c: ReturnType<typeof compareDumps>): string[] => c.skipped.filter((x) => !x.startsWith('physics:'));
+  const cdModels: string[] = [];
+  /** Five decimals, not float32: the stored float32 of a key and the double the document states differ. */
+  const dec5 = (rnd: () => number) => (lo: number, hi: number): number => Math.round((lo + rnd() * (hi - lo)) * 1e5) / 1e5;
+  const FORTY_IRR: OracleOptions = { phase: 'irr', samples: 40, skin: 'all', physics: 'none', dt: null };
+  /** A random mesh — unweighted, or weighted over one to three of `bones` — of `n` vertices. */
+  const randomMesh = (rnd: () => number, n: number, weighted: boolean, bones: readonly string[]): RAtt => {
+    const D = dec5(rnd);
+    if (!weighted) return { kind: 'mesh', xy: Array.from({ length: 2 * n }, () => D(-50, 50)) };
+    return {
+      kind: 'mesh',
+      weighted: Array.from({ length: n }, () => {
+        const pick = [...bones].sort(() => rnd() - 0.5).slice(0, 1 + Math.floor(rnd() * Math.min(3, bones.length)));
+        const ws = pick.map(() => 0.1 + rnd());
+        const sum = ws.reduce((a, b) => a + b, 0);
+        return pick.map((bone, i) => ({ bone, x: D(-40, 40), y: D(-40, 40), w: Math.round((ws[i] / sum) * 1e5) / 1e5 }));
+      }),
+    };
+  };
+  /** A random deform timeline over an array `length` long: two to four keys, runs whole, short or offset, keys with no run, linear, stepped and Bézier segments. */
+  const randomDeformKeys = (rnd: () => number, length: number): Obj[] => {
+    const D = dec5(rnd);
+    const keys: Obj[] = [];
+    let t = D(0, 0.4);
+    const count = 2 + Math.floor(rnd() * 3);
+    for (let k = 0; k < count; k++) {
+      const key: Obj = { time: t };
+      const shape = rnd();
+      if (shape < 0.45) key.vertices = Array.from({ length }, () => D(-30, 30));
+      else if (shape < 0.8) {
+        const offset = Math.floor(rnd() * (length - 1));
+        if (offset > 0) key.offset = offset;
+        key.vertices = Array.from({ length: 1 + Math.floor(rnd() * (length - offset - 1)) }, () => D(-30, 30));
+      }
+      const next = t + D(0.1, 0.7);
+      if (k < count - 1) {
+        const c = rnd();
+        if (c < 0.2) key.curve = 'stepped';
+        else if (c < 0.65) {
+          const u = [rnd(), rnd()].sort((a, b) => a - b);
+          key.curve = [Math.round((t + (next - t) * u[0]) * 1e5) / 1e5, D(-0.5, 1.5), Math.round((t + (next - t) * u[1]) * 1e5) / 1e5, D(-0.5, 1.5)];
+        }
+      }
+      keys.push(key);
+      t = next;
+    }
+    return keys;
+  };
+  const deformLengthOf = (a: RAtt): number => (a.kind === 'path' ? a.xy.length : a.kind === 'mesh' || a.kind === 'clipping' || a.kind === 'boundingbox' ? (a.xy !== undefined ? a.xy.length : 2 * (a.weighted ?? []).reduce((n, v) => n + v.length, 0)) : 0);
+  /** The deform evaluator with its Bézier recurrence run to the far end 1 — the reading `DEFORM_CURVE_END` replaced. */
+  const deformEndOne = (vertices: ModelVertices, keys: readonly CoreDeformKey[], t: number): number[] | null => {
+    const i = keyIndexAt(keys, t);
+    if (i < 0) return null;
+    const a = keys[i];
+    const b = keys[i + 1];
+    if (b === undefined || !Array.isArray(a.curve)) return deformAt(vertices, keys, t);
+    const c = a.curve;
+    const points = [a.time, 0, ...bezierPolyline(a.stated, 0, c[0], c[1], c[2], c[3], b.stated, 1), b.time, 1];
+    let k = 2;
+    while (k < points.length - 2 && points[k] < t) k += 2;
+    const p = points[k - 1] + ((t - points[k - 2]) / (points[k] - points[k - 2])) * (points[k + 1] - points[k - 1]);
+    const held = heldArray(vertices, a);
+    const next = heldArray(vertices, b);
+    return held.map((v, j) => v + (next[j] - v) * p);
+  };
+  /** The deform evaluator holding an unweighted key as the double sum `fround(setup) + fround(offset)` rather than its float32 — a rejected reading. */
+  const deformDoubleSum = (vertices: ModelVertices, keys: readonly CoreDeformKey[], t: number): number[] | null => {
+    if (vertices.weighted) return deformAt(vertices, keys, t);
+    const setup = vertices.xy;
+    const held = (k: CoreDeformKey): number[] => {
+      const out = setup.map((v) => Math.fround(v));
+      k.vertices.forEach((v, j) => (out[k.offset + j] = out[k.offset + j] + Math.fround(v)));
+      return out;
+    };
+    const i = keyIndexAt(keys, t);
+    if (i < 0) return null;
+    const a = held(keys[i]);
+    const b = keys[i + 1];
+    if (b === undefined || keys[i].curve === 'stepped') return a;
+    const next = held(b);
+    const p = deformPercent(keys[i], b, t);
+    return a.map((v, j) => v + (next[j] - v) * p);
+  };
+  /** The deform evaluator with each weighted key held as a float32 position (bind plus offset), the unweighted rule applied to a weighted array — a rejected reading. */
+  const deformWeightedAsPositions = (vertices: ModelVertices, keys: readonly CoreDeformKey[], t: number): number[] | null => {
+    const d = deformAt(vertices, keys, t);
+    if (d === null || !vertices.weighted) return d;
+    const binds = vertices.bindings.flatMap((v) => v.flatMap((b) => [Math.fround(b.x), Math.fround(b.y)]));
+    const i = keyIndexAt(keys, t);
+    const held = (k: CoreDeformKey): number[] => heldArray(vertices, k).map((o, j) => Math.fround(binds[j] + o) - binds[j]);
+    const a = held(keys[i]);
+    const b = keys[i + 1];
+    if (b === undefined || keys[i].curve === 'stepped') return a;
+    const next = held(b);
+    const p = deformPercent(keys[i], b, t);
+    return a.map((v, j) => v + (next[j] - v) * p);
+  };
+
+  // --- CD01: readModel reads the attachment, draw-order and event timelines and refuses each plant by name --
+  {
+    const probes: string[] = [];
+    const base: RSpec = {
+      bones: [{ name: 'root' }],
+      slots: [{ name: 's', bone: 'root', attachment: 'm' }, { name: 'r', bone: 'root', attachment: 'q' }, { name: 'o', bone: 'root' }],
+      skins: { default: { s: { m: { kind: 'mesh', xy: [0, 0, 4, 0, 4, 4] } }, r: { q: { kind: 'region', path: 'seq', frames: 3 } } } },
+      events: { e: { int: 1 } },
+      anims: { a: { deform: [{ slot: 's', attachment: 'm', keys: [{ time: 0, offset: 2, vertices: [1, 2] }, { time: 1 }] }], sequence: [{ slot: 'r', attachment: 'q', keys: [{ time: 0, mode: 'loop', index: 2, delay: 0.1 }] }], drawOrder: [{ time: 0, offsets: [{ slot: 's', offset: 2 }] }, { time: 1 }], events: [{ time: 0, name: 'e' }, { time: 0, name: 'e', string: 'x' }] } },
+    };
+    const pair = remainderPair(base);
+    const read = coreRefusal(pair.model);
+    if (read !== '') probes.push(`the base document was refused: ${read}`);
+    type Doc = { animations: Array<{ attachments: Array<{ name: string; slots: Array<{ name: string; attachments: Array<Obj> }> }>; drawOrder: Obj[]; events: Obj[] }>; skins: Array<{ attachments: Record<string, Record<string, Obj>> }>; events: Obj[] };
+    const plant = (edit: (d: Doc) => void): string => {
+      const d = JSON.parse(pair.model) as Doc;
+      edit(d);
+      return JSON.stringify(d);
+    };
+    const att = (d: Doc, slot: string): Obj => d.animations[0].attachments[0].slots.find((s) => s.name === slot)?.attachments[0] as Obj;
+    const plants: Array<[string, string, string]> = [
+      ['a deform on a region', plant((d) => (att(d, 'r').deform = [{ time: 0 }])), 'a deform keys the vertices of a mesh, bounding box, clipping or path attachment, and this one is a region'],
+      ['a run past the end', plant((d) => (att(d, 's').deform = [{ time: 0, offset: 5, vertices: [1, 2] }])), 'the run starts at 5 and is 2 long, past the 6 numbers'],
+      ['an offset with no run', plant((d) => (att(d, 's').deform = [{ time: 0, offset: 1 }])), 'offset 1 with no vertices'],
+      ['a deform curve of two channels', plant((d) => (att(d, 's').deform = [{ time: 0, curve: [0, 0, 1, 1, 0, 0, 1, 1] }, { time: 1 }])), 'not "stepped" nor 4 finite numbers'],
+      ['an attachment no skin files', plant((d) => (att(d, 's').name = 'nothing')), 'skin "default" files no attachment "nothing" under slot "s"'],
+      ['a sequence on a mesh with no series', plant((d) => (att(d, 's').sequence = [{ time: 0 }])), 'this mesh carries no sequence'],
+      ['an index past the series', plant((d) => (att(d, 'r').sequence = [{ time: 0, index: 3 }])), 'index is 3, not a frame of the series\' 3'],
+      ['a mode no runtime names', plant((d) => (att(d, 'r').sequence = [{ time: 0, mode: 'bounce' }])), 'mode is "bounce", none of hold, once, loop'],
+      ['a negative delay', plant((d) => (att(d, 'r').sequence = [{ time: 0, delay: -0.1 }])), 'delay is -0.1, not a finite number of seconds at or above 0'],
+      ['a draw-order slot unknown', plant((d) => (d.animations[0].drawOrder = [{ time: 0, offsets: [{ slot: 'x', offset: 1 }] }])), '"x" is not a slot of this document'],
+      ['a slot moved twice', plant((d) => (d.animations[0].drawOrder = [{ time: 0, offsets: [{ slot: 's', offset: 1 }, { slot: 's', offset: 2 }] }])), 'slot "s" is moved twice in one key'],
+      ['a move outside the slots', plant((d) => (d.animations[0].drawOrder = [{ time: 0, offsets: [{ slot: 's', offset: 3 }] }])), 'lands at 3, outside the 3 slots'],
+      ['two moves on one place', plant((d) => (d.animations[0].drawOrder = [{ time: 0, offsets: [{ slot: 's', offset: 1 }, { slot: 'r', offset: 0 }] }])), 'where slot "s" lands too'],
+      ['draw-order times that do not increase', plant((d) => (d.animations[0].drawOrder = [{ time: 1 }, { time: 1 }])), 'is not after the key before it'],
+      ['an undeclared event', plant((d) => (d.animations[0].events = [{ time: 0, name: 'nope' }])), 'event "nope" is not declared in the document\'s events'],
+      ['event times going backwards', plant((d) => (d.animations[0].events = [{ time: 1, name: 'e' }, { time: 0.5, name: 'e' }])), 'is before the key before it'],
+      ['an event int that is not whole', plant((d) => (d.events = [{ name: 'e', int: 1.5 }])), 'int is 1.5, not a whole number'],
+      ['a linked mesh stating no timelines flag', plant((d) => (d.skins[0].attachments.o = { l: { kind: 'linkedmesh', source: 'm', skin: 'default', slot: 'o', width: 4, height: 4 } })), 'timelines is absent, not a boolean'],
+    ];
+    for (const [label, text, expected] of plants) {
+      const refusal = coreRefusal(text);
+      if (!refusal.includes(expected)) probes.push(`${label}: ${refusal === '' ? 'read' : `refused as "${refusal.slice(0, 200)}"`}, not naming ${JSON.stringify(expected)}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CD01_READ_MODEL_READS_THE_ATTACHMENT_DRAW_ORDER_AND_EVENT_TIMELINES_AND_REFUSES_EACH_PLANT_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `a document keying a partial deform run, a looping sequence, a draw-order move and a restore, two events at one time read; ${plants.length} plants each refused naming its path — a deform on a region, a run past the array, an offset with no run, a two-channel deform curve, an attachment no skin files, a sequence on a record with no series, an index past it, an unknown mode, a negative delay, a draw-order slot unknown, moved twice, moved outside, two moves on one place, times not increasing, an undeclared event, event times going backwards, a fractional int, a linked mesh with no timelines flag`),
+      'issue #955: the core reads construct 4\'s remainder field by field and refuses by name what the writer does not write or the runtime reads only by accident, rather than posing a guess',
+    );
+  }
+
+  // --- CD02: the deform Bézier runs its recurrence to 0.99999999, a bone channel's to its key — each on a population, each rejected reading missing --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(9551);
+    const D = dec5(rnd);
+    // One slot per curve, a 10⁵-unit run, so a percent a float32 step off is a vertex a grid step off.
+    const curves = Array.from({ length: 60 }, () => {
+      const t0 = D(0, 0.4);
+      const t1 = t0 + D(0.3, 1);
+      const u = [rnd(), rnd()].sort((a, b) => a - b);
+      return { t0, t1, c: [Math.round((t0 + (t1 - t0) * u[0]) * 1e5) / 1e5, D(-0.5, 1.5), Math.round((t0 + (t1 - t0) * u[1]) * 1e5) / 1e5, D(-0.5, 1.5)] };
+    });
+    // The u³ curve: its point at u = 0.6 is 0.216 exactly, whose float32 neighbours lie 9.3e-9 below and 5.6e-9 above — the far end decides which.
+    curves.push({ t0: 0, t1: 1, c: [1 / 3, 0, 2 / 3, 0] });
+    const pair = remainderPair({
+      bones: [{ name: 'root' }],
+      slots: curves.map((_c, i) => ({ name: `s${i}`, bone: 'root', attachment: 'm' })),
+      skins: { default: Object.fromEntries(curves.map((_c, i) => [`s${i}`, { m: { kind: 'mesh', xy: [0, 0, 0, 0, 0, 0] } as RAtt }])) },
+      anims: { a: { deform: curves.map((c, i) => ({ slot: `s${i}`, attachment: 'm', keys: [{ time: c.t0, vertices: [0, 0], curve: c.c }, { time: c.t1, vertices: [100000, 0] }] })) } },
+    });
+    cdModels.push(pair.model);
+    const exact = remainderCompare(pair, DENSE);
+    if (!exact.identical || blocksSkipped(exact).length > 0) probes.push(`${curves.length} curves at 200 dense samples: ${blocksSkipped(exact).join('; ') || exact.first}`);
+    const endOne = remainderCompare(pair, DENSE, { deform: deformEndOne });
+    const endOneOver = endOne.rows.reduce((n, r) => n + r.verticesOver, 0);
+    if (endOne.identical) probes.push('the recurrence run to 1 read IDENTICAL too, so the population held nothing about the far end');
+    // The same u³ handles on a bone channel (scalex 0 → 1, a child 10⁵ out): the bone reads the far end 1 — construct 4's rule, unchanged.
+    const bonePair = remainderPair({
+      bones: [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'amp', parent: 'p', x: 100000 }], slots: [], skins: { default: {} },
+      anims: { a: { bones: { p: { scalex: [{ time: 0, value: 0, curve: [1 / 3, 0, 2 / 3, 0] }, { time: 1, value: 1 }] } } } },
+    });
+    const bone = remainderCompare(bonePair, DENSE);
+    if (!bone.identical) probes.push(`the u³ curve on a bone channel: ${bone.first}`);
+    const ok = probes.length === 0;
+    say(
+      'CD02_THE_DEFORM_BEZIER_RUNS_ITS_RECURRENCE_TO_0_99999999_AND_THE_READING_OF_1_MISSES',
+      ok,
+      probeDetail(ok, probes, `${curves.length} deform curves (${curves.length - 1} random and the u³ curve) exact at 200 dense samples, tolerance 0, a 10⁵-unit run each; run to 1 instead, ${endOneOver} attachment-sample(s) over; the u³ handles on a bone's scalex exact with construct 4's far end, the key`),
+      'issue #955: a deform key\'s curve is one channel from 0 to 1, shaped as a bone channel\'s with one measured difference — its recurrence runs to 0.99999999 (src/core/deform.ts, 126 curves read point by point: 1 of 1,134 points missed, one whose piece held too few samples to fit; the far end 1 missed 64). The corpus holds it too: with the far end 1, spineboy-pro\'s hoverboard and gallery/flex read DIFF at 200 dense samples (CD06)',
+    );
+  }
+
+  // --- CD03: an unweighted deform population poses as spine-core does, and the double sum misses --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(9553);
+    const D = dec5(rnd);
+    let exact = 0;
+    let doubleMissed = 0;
+    let vertexSamples = 0;
+    const N = 40;
+    for (let i = 0; i < N; i++) {
+      const mesh = randomMesh(rnd, 4 + Math.floor(rnd() * 3), false, []);
+      const pair = remainderPair({
+        bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: D(-180, 180), scaleX: D(0.3, 2), scaleY: D(-2, 2), shearX: D(-30, 30), x: D(-20, 20), y: D(-20, 20) }],
+        slots: [{ name: 's', bone: 'b', attachment: 'm' }],
+        skins: { default: { s: { m: mesh } } },
+        anims: { a: { deform: [{ slot: 's', attachment: 'm', keys: randomDeformKeys(rnd, deformLengthOf(mesh)) }] } },
+      });
+      if (i < 3) cdModels.push(pair.model);
+      const c = remainderCompare(pair, FORTY_IRR);
+      vertexSamples += c.rows.reduce((n, r) => n + r.vertices, 0);
+      if (c.identical && blocksSkipped(c).length === 0) exact++;
+      else if (probes.length < 3) probes.push(`probe ${i}: ${blocksSkipped(c).join('; ') || c.first}`);
+      if (!remainderCompare(pair, FORTY_IRR, { deform: deformDoubleSum }).identical) doubleMissed++;
+    }
+    if (doubleMissed === 0) probes.push('the double sum read IDENTICAL on every probe, so the population held nothing about the float32 sum');
+    const ok = exact === N && probes.length === 0;
+    say(
+      'CD03_AN_UNWEIGHTED_DEFORM_POPULATION_POSES_AS_SPINE_CORE_DOES_AND_THE_DOUBLE_SUM_MISSES',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} random unweighted meshes exact at tolerance 0 over 40 samples (${vertexSamples} vertex-samples) — runs whole, short and offset, keys with no run, linear, stepped and Bézier segments, on a rotated, scaled, sheared bone; the key held as the double sum rather than its float32 missed on ${doubleMissed} of ${N}`),
+      'issue #955: an unweighted key is held as positions, each fround(fround(setup) + fround(offset)), lerped in double (src/core/deform.ts: 0 of 800 samples missed; the double sum 788)',
+    );
+  }
+
+  // --- CD04: a weighted deform population poses as spine-core does, and a key held as positions misses --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(9554);
+    const D = dec5(rnd);
+    let exact = 0;
+    let positionsMissed = 0;
+    let vertexSamples = 0;
+    const N = 40;
+    for (let i = 0; i < N; i++) {
+      const bones: Obj[] = [
+        { name: 'root' }, { name: 'b0', parent: 'root', rotation: D(-180, 180), scaleX: D(0.3, 2), x: D(-20, 20), y: D(-20, 20) },
+        { name: 'b1', parent: 'b0', rotation: D(-180, 180), scaleY: D(-2, 2), shearX: D(-30, 30), x: D(-20, 20) }, { name: 'b2', parent: 'root', rotation: D(-180, 180), x: D(-20, 20) },
+      ];
+      const mesh = randomMesh(rnd, 3 + Math.floor(rnd() * 3), true, ['b0', 'b1', 'b2']);
+      const pair = remainderPair({
+        bones, slots: [{ name: 's', bone: 'root', attachment: 'm' }], skins: { default: { s: { m: mesh } } },
+        anims: { a: { deform: [{ slot: 's', attachment: 'm', keys: randomDeformKeys(rnd, deformLengthOf(mesh)) }], bones: { b1: { rotate: [{ time: 0, value: 0 }, { time: 2, value: D(-90, 90) }] } } } },
+      });
+      if (i < 3) cdModels.push(pair.model);
+      const c = remainderCompare(pair, FORTY_IRR);
+      vertexSamples += c.rows.reduce((n, r) => n + r.vertices, 0);
+      if (c.identical && blocksSkipped(c).length === 0) exact++;
+      else if (probes.length < 3) probes.push(`probe ${i}: ${blocksSkipped(c).join('; ') || c.first}`);
+      if (!remainderCompare(pair, FORTY_IRR, { deform: deformWeightedAsPositions }).identical) positionsMissed++;
+    }
+    if (positionsMissed === 0) probes.push('holding a weighted key as float32 positions read IDENTICAL on every probe, so the population held nothing about the offsets');
+    const ok = exact === N && probes.length === 0;
+    say(
+      'CD04_A_WEIGHTED_DEFORM_POPULATION_POSES_AS_SPINE_CORE_DOES_AND_A_KEY_HELD_AS_POSITIONS_MISSES',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} random meshes weighted over one to three of three bones (one of them animated) exact at tolerance 0 over 40 samples (${vertexSamples} vertex-samples); each weighted key held as float32 positions instead of offsets missed on ${positionsMissed} of ${N}`),
+      'issue #955: a weighted key is held as offsets, fround(offset), added to each binding\'s float32 coordinate when the world vertices are computed (src/core/deform.ts: 0 of 1,600 samples missed; the float32 sum held as a position 1,555)',
+    );
+  }
+
+  // --- CD05: a slider's deform blends from the current deform, additive and not, at setup and at a sample, as spine-core does --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(9555);
+    const D = dec5(rnd);
+    const pick = pickOf(rnd);
+    let exact = 0;
+    let setupFromSetup = 0;
+    const N = 60;
+    for (let i = 0; i < N; i++) {
+      const weighted = rnd() < 0.5;
+      const mesh = randomMesh(rnd, 4, weighted, ['b']);
+      const length = deformLengthOf(mesh);
+      const own = rnd() < 0.6;
+      const slider: Obj = { type: 'slider', name: 'sl', animation: 'sa', time: D(0, 1.5), mix: pick([1, 0.5, D(-1, 2)]), additive: rnd() < 0.5 };
+      const pair = remainderPair({
+        bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: D(-180, 180), scaleX: D(0.3, 2), x: D(-20, 20) }],
+        slots: [{ name: 's', bone: weighted ? 'root' : 'b', attachment: 'm' }],
+        skins: { default: { s: { m: mesh } } },
+        constraints: [slider],
+        anims: {
+          sa: { deform: [{ slot: 's', attachment: 'm', keys: [{ time: 0.2, vertices: Array.from({ length }, () => D(-30, 30)) }, { time: 1.2, vertices: Array.from({ length }, () => D(-30, 30)) }] }] },
+          a: own ? { deform: [{ slot: 's', attachment: 'm', keys: [{ time: 0, vertices: Array.from({ length }, () => D(-30, 30)) }, { time: 1, vertices: Array.from({ length }, () => D(-30, 30)) }] }] } : { bones: { root: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 0 }] } } },
+        },
+      });
+      if (i < 3) cdModels.push(pair.model);
+      const c = remainderCompare(pair, { phase: 'irr', samples: 5, skin: 'all', physics: 'none', dt: null });
+      if (c.identical && blocksSkipped(c).length === 0) exact++;
+      else if (probes.length < 3) probes.push(`probe ${i} (${weighted ? 'weighted' : 'unweighted'}, ${JSON.stringify(slider)}): ${blocksSkipped(c).join('; ') || c.first}`);
+      // The rejected reading: a non-additive slider blending from the setup geometry rather than from the sample's deform.
+      if (own && slider.additive === false) {
+        const fromSetup = remainderCompare(pair, { phase: 'irr', samples: 5, skin: 'all', physics: 'none', dt: null }, {
+          deform: (v, keys, t) => (keys.length === 2 && keys[0].time === Math.fround(0.2) ? deformAt(v, keys, t) : null),
+        });
+        if (!fromSetup.identical) setupFromSetup++;
+      }
+    }
+    if (setupFromSetup === 0) probes.push('dropping the sample\'s own deform read IDENTICAL on every probe keying one, so the population held nothing about the current deform');
+    const ok = exact === N && probes.length === 0;
+    say(
+      'CD05_A_SLIDERS_DEFORM_BLENDS_FROM_THE_CURRENT_DEFORM_ADDITIVE_AND_NOT_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} random rigs exact at tolerance 0 at setup and five samples — weighted and not, additive and not, mix 1, 0.5 and in [−1, 2], a slider time before, between and past its keys, with and without a deform in the sample's own animation; the sample's deform dropped under a non-additive slider missed on ${setupFromSetup}`),
+      'issue #955: a slider applies its animation\'s deforms after the sample\'s own, from the current deform — current + (target − current)·mix, additive current + (target − setup)·mix, nothing before its first key (src/core/deform.ts: 0 of 300 samples missed)',
+    );
+  }
+
+  // --- CD06: every row carrying a deform, sequence, draw-order or event timeline reads IDENTICAL on the block it changes, at 200 dense samples too --
+  {
+    const probes: string[] = [];
+    const kindLines = timelineKindLines(rows);
+    for (const line of kindLines) if (!/ 0 SKIP$/.test(line) || / DIFF/.test(line)) probes.push(`a kind line names a SKIP or a DIFF: ${line.trim()}`);
+    let dense = 0;
+    let vertexSamples = 0;
+    const carrying: string[] = [];
+    for (const b of built) {
+      const row = rows.find((r) => r.name === b.name);
+      const census = row?.animationCensus;
+      if (row === undefined || census === null || census === undefined || (census.deform + census.sequence + census.drawOrder + census.events) === 0) continue;
+      carrying.push(b.name);
+      const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), DENSE);
+      const c = compareDumps(spine, coreDump(readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')), DENSE), { xy: 0, m: 0 });
+      if (!c.identical || blocksSkipped(c).length > 0) probes.push(`${b.name} at 200 dense samples: ${blocksSkipped(c).join('; ') || c.first}`);
+      else dense++;
+      vertexSamples += c.rows.reduce((n, r) => n + r.vertices, 0);
+    }
+    // gallery/look's setup.attachments: the one public SKIP #938 left, a slider applying its deform at setup — judged now.
+    const look = rows.find((r) => r.name === 'gallery/look');
+    if (look === undefined) probes.push('gallery/look was not gated, so the block #938 left out was not judged');
+    else if (look.blocks?.['setup.attachments'].verdict !== 'IDENTICAL') probes.push(`gallery/look setup.attachments ${look.blocks?.['setup.attachments'].verdict ?? look.verdict} — ${look.blocks?.['setup.attachments'].why ?? look.why}`);
+    if (carrying.length === 0) probes.push(`no row carries a timeline of construct 4's remainder${examplesHole === null ? '' : ` (${examplesHole})`}`);
+    const ok = probes.length === 0;
+    say(
+      'CD06_EVERY_ROW_CARRYING_A_DEFORM_SEQUENCE_DRAW_ORDER_OR_EVENT_TIMELINE_READS_IDENTICAL_ON_THE_BLOCK_IT_CHANGES',
+      ok,
+      probeDetail(ok, probes, `${gateVerdict(rows).line}; ${kindLines.map((l) => l.trim().replace(/ \(.*?\)/g, '')).join(' | ')}; ${dense} of ${carrying.length} row(s) carrying one exact on every block at 200 dense samples, tolerance 0 (${vertexSamples} vertex-samples); gallery/look's setup.attachments IDENTICAL`),
+      'issue #955, the remainder of construct 4 admitted per kind: the block each kind changes IDENTICAL on every corpus row carrying it — a deform the attachments (and gallery/look\'s setup, where a slider applies one), a draw-order key the draw order, an event key the events. No public row keys a sequence: CD08\'s probe is its only reading',
+    );
+    for (const line of kindLines) console.log(`          ${line.trim()}`);
+  }
+
+  // --- CD07: a deformed clipping polygon, a linked mesh playing its source's deform or not, and a deform keyed on an attachment not shown pose as spine-core does --
+  {
+    const probes: string[] = [];
+    const tri = [0, 0, 30, 0, 0, 30];
+    const keys = [{ time: 0, vertices: [1, 2, 3, 4] }, { time: 1, offset: 2, vertices: [-5, 6, 7] }];
+    const cases: Array<[string, RSpec]> = [
+      ['a deformed clipping polygon ending at a slot', {
+        bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: 30, scaleX: -1.5 }], slots: [{ name: 'c', bone: 'b', attachment: 'k' }, { name: 's', bone: 'root', attachment: 'm' }],
+        skins: { default: { c: { k: { kind: 'clipping', xy: tri, end: 's' } }, s: { m: { kind: 'mesh', xy: tri } } } },
+        anims: { a: { deform: [{ slot: 'c', attachment: 'k', keys }] } },
+      }],
+      ['a linked mesh playing its source\'s deform, and one that does not', {
+        bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: -20 }], slots: [{ name: 's', bone: 'b', attachment: 'l' }, { name: 't', bone: 'root', attachment: 'n' }],
+        skins: { default: { s: { m: { kind: 'mesh', xy: tri }, l: { kind: 'linkedmesh', source: 'm' } }, t: { m2: { kind: 'mesh', xy: tri }, n: { kind: 'linkedmesh', source: 'm2', timelines: false } } } },
+        anims: { a: { deform: [{ slot: 's', attachment: 'm', keys }, { slot: 't', attachment: 'm2', keys }] } },
+      }],
+      ['linked meshes sourced from another slot, moved with their source', {
+        bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: 15 }], slots: [{ name: 'y', bone: 'root', attachment: 'm' }, { name: 'x', bone: 'b', attachment: 'l' }, { name: 'z', bone: 'root', attachment: 'k' }],
+        skins: { default: { y: { m: { kind: 'mesh', xy: tri } }, x: { l: { kind: 'linkedmesh', source: 'm', slot: 'y' } }, z: { k: { kind: 'linkedmesh', source: 'm', slot: 'y' } } } },
+        anims: { a: { deform: [{ slot: 'y', attachment: 'm', keys }] } },
+      }],
+      ['a linked mesh moved while the slot the timeline names shows another mesh, then nothing', {
+        bones: [{ name: 'root' }], slots: [{ name: 'y', bone: 'root', attachment: 'o' }, { name: 'x', bone: 'root', attachment: 'l' }],
+        skins: { default: { y: { m: { kind: 'mesh', xy: tri }, o: { kind: 'mesh', xy: [5, 5, 6, 5, 5, 6] } }, x: { l: { kind: 'linkedmesh', source: 'm', slot: 'y' } } } },
+        anims: { a: { slots: { y: { attachment: [{ time: 0.5, name: null }] } }, deform: [{ slot: 'y', attachment: 'm', keys }] } },
+      }],
+      ['a weighted linked mesh', {
+        bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: 40, x: 3 }], slots: [{ name: 's', bone: 'root', attachment: 'l' }],
+        skins: { default: { s: { m: { kind: 'mesh', weighted: [[{ bone: 'b', x: 1, y: 2, w: 1 }], [{ bone: 'b', x: 5, y: 2, w: 0.5 }, { bone: 'root', x: 4, y: 4, w: 0.5 }], [{ bone: 'root', x: 0, y: 9, w: 1 }]] }, l: { kind: 'linkedmesh', source: 'm' } } } },
+        anims: { a: { deform: [{ slot: 's', attachment: 'm', keys: [{ time: 0, vertices: [1, 2, 3, 4, 5, 6, 7, 8] }, { time: 1 }] }] } },
+      }],
+      ['a deform keyed on an attachment the slot switches to and away from', {
+        bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root', attachment: 'm' }],
+        skins: { default: { s: { m: { kind: 'mesh', xy: tri }, m2: { kind: 'mesh', xy: [1, 1, 20, 1, 1, 20] } } } },
+        anims: { a: { slots: { s: { attachment: [{ time: 0.3, name: 'm2' }, { time: 0.7, name: 'm' }] } }, deform: [{ slot: 's', attachment: 'm2', keys }] } },
+      }],
+    ];
+    let samples = 0;
+    for (const [label, spec] of cases) {
+      const pair = remainderPair(spec);
+      cdModels.push(pair.model);
+      const c = remainderCompare(pair, DENSE);
+      samples += c.rows.reduce((n, r) => n + r.vertices, 0);
+      if (!c.identical || blocksSkipped(c).length > 0) probes.push(`${label}: ${blocksSkipped(c).join('; ') || c.first}`);
+      const bare = remainderPair({ ...spec, anims: { a: { ...spec.anims.a, deform: [] } } });
+      if (JSON.stringify(coreDump(readModel(bare.model), DENSE).animations) === JSON.stringify(coreDump(readModel(pair.model), DENSE).animations)) probes.push(`${label}: the same skeleton without its deform posed alike, so the probe held nothing`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CD07_A_DEFORMED_CLIP_A_LINKED_MESH_AND_A_DEFORM_ON_AN_ATTACHMENT_NOT_SHOWN_POSE_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${cases.length} hand-written skeletons exact at 200 dense samples, tolerance 0 (${samples} vertex-samples): a deformed clipping polygon on a reflected bone (the clips), a linked mesh with timelines true moved by its source's deform beside one with timelines false left alone, two sourced from another slot moved with it, one moved while the slot the timeline names shows another mesh and then nothing, a weighted linked mesh, and a deform on an attachment the slot shows only between two attachment keys; each without its deform poses otherwise`),
+      'issue #955: a deform timeline moves every slot showing the keyed record, or a linked mesh playing that record\'s timelines, whichever slot the timeline is filed under — measured here, where "the slot it names" was the first reading and missed; the rows no corpus reaches are read here (the census\'s deformClipping and deformLinked)',
+    );
+  }
+
+  // --- CD08: a sequence steps its frames by mode, index and delay as spine-core does, and the step without its epsilon misses --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(9558);
+    const pick = pickOf(rnd);
+    let exact = 0;
+    let noEpsilon = 0;
+    let shifted = 0;
+    const N = 40;
+    let samples = 0;
+    for (let i = 0; i < N; i++) {
+      const count = 1 + Math.floor(rnd() * 6);
+      // Delays built to put the quotient within a few millionths of a whole step on the grid's times.
+      const delay = pick([0.1, 0.05, 0.02, 0.04]) * (1 + pick([0, 1e-6, -1e-6, 3e-6, -3e-6, 8e-6, -8e-6, 1.5e-5, -1.5e-5]));
+      const keys: Obj[] = [{ time: Math.round(rnd() * 30) / 100, mode: pick(CORE_SEQUENCE_MODES), index: Math.floor(rnd() * count), delay }];
+      if (rnd() < 0.5) keys.push({ time: 1 + Math.round(rnd() * 30) / 100, ...(rnd() < 0.5 ? { mode: pick(CORE_SEQUENCE_MODES) } : {}), ...(rnd() < 0.5 ? { index: Math.floor(rnd() * count) } : {}), ...(rnd() < 0.5 ? { delay: pick([0.1, 0.05]) } : {}) });
+      const setup = rnd() < 0.5 ? Math.floor(rnd() * count) : undefined;
+      const pair = remainderPair({
+        bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: 25 }],
+        slots: [{ name: 's', bone: 'b', attachment: 'r' }],
+        skins: { default: { s: { r: { kind: 'region', path: 'seq', frames: count, ...(setup === undefined ? {} : { setup }) } } } },
+        anims: { a: { sequence: [{ slot: 's', attachment: 'r', keys }], bones: { root: { rotate: [{ time: 0, value: 0 }, { time: 2, value: 0 }] } } } },
+      });
+      if (i < 3) cdModels.push(pair.model);
+      const grid: OracleOptions = { phase: 'grid', samples: 201, skin: 'all', physics: 'none', dt: null };
+      const c = remainderCompare(pair, grid);
+      samples += c.rows.reduce((n, r) => n + r.samples, 0);
+      if (c.identical && blocksSkipped(c).length === 0) exact++;
+      else if (probes.length < 3) probes.push(`probe ${i} (count ${count}, ${JSON.stringify(keys)}): ${blocksSkipped(c).join('; ') || c.first}`);
+      const floorOnly = remainderCompare(pair, grid, { sequence: (k, n, t) => {
+        const f = sequenceFrameAt(k, n, t);
+        const j = keyIndexAt(k, t);
+        if (f === null || k[j].mode === 'hold' || k[j].delay <= 0) return f;
+        return sequenceFrameAt([{ ...k[j], delay: 0, index: k[j].index + Math.floor((t - k[j].time) / k[j].delay) }], n, t);
+      } });
+      if (!floorOnly.identical) noEpsilon++;
+      if (count > 1 && !remainderCompare(pair, grid, { sequence: (k, n, t) => { const f = sequenceFrameAt(k, n, t); return f === null ? null : (f + 1) % n; } }).identical) shifted++;
+    }
+    // A slider steps the series at setup, at any mix but 0.
+    const slid = remainderPair({
+      bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root', attachment: 'r' }, { name: 't', bone: 'root', attachment: 'q' }],
+      skins: { default: { s: { r: { kind: 'region', path: 'seq', frames: 5 } }, t: { q: { kind: 'region', path: 'two', frames: 3, setup: 2 } } } },
+      constraints: [{ type: 'slider', name: 'sl', animation: 'sa', time: 0.5, mix: -1 }],
+      anims: { sa: { sequence: [{ slot: 's', attachment: 'r', keys: [{ time: 0.3, mode: 'hold', index: 3 }] }, { slot: 't', attachment: 'q', keys: [{ time: 0.6, index: 0 }] }] }, a: { sequence: [{ slot: 's', attachment: 'r', keys: [{ time: 0, mode: 'loop', delay: 0.1 }] }] } },
+    });
+    cdModels.push(slid.model);
+    const slidC = remainderCompare(slid, GRID9);
+    if (!slidC.identical || blocksSkipped(slidC).length > 0) probes.push(`a slider stepping a series at setup: ${blocksSkipped(slidC).join('; ') || slidC.first}`);
+    if (noEpsilon === 0) probes.push('the step without its epsilon read IDENTICAL on every probe, so the population held nothing about it');
+    if (shifted === 0) probes.push('a frame index shifted one read IDENTICAL on every probe');
+    const ok = exact === N && probes.length === 0;
+    say(
+      'CD08_A_SEQUENCE_STEPS_ITS_FRAMES_BY_MODE_INDEX_AND_DELAY_AS_SPINE_CORE_DOES_AND_THE_STEP_WITHOUT_ITS_EPSILON_MISSES',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} random series of one to six frames exact at tolerance 0 over 201 grid samples each (${samples} samples) — every mode, keys stating and omitting mode, index and delay, a setup frame stated and not, delays within 1.5e-5 of a whole step; the floor without its 0.00001 missed on ${noEpsilon}, a frame index shifted one on ${shifted}; a slider stepping two series at setup at mix −1, one of them before its key, exact`),
+      'issue #955: a region\'s series shows its setup frame until a key, then index + floor((t − time)/delay + 0.00001) through the mode (src/core/deform.ts: 0 of 74,041 samples missed; no epsilon 440). No public row keys a sequence, so this probe is the construct\'s reading',
+    );
+  }
+
+  // --- CD09: the draw order at a sample — a key's moves over the setup order, a restore, a slider's key — as spine-core does --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(9559);
+    let exact = 0;
+    const N = 40;
+    let samples = 0;
+    for (let i = 0; i < N; i++) {
+      const n = 3 + Math.floor(rnd() * 6);
+      const slots = Array.from({ length: n }, (_v, k) => ({ name: `s${k}`, bone: 'root', attachment: 'm' }));
+      const keys: Array<{ time: number; offsets?: Array<{ slot: string; offset: number }> }> = [];
+      let t = Math.round(rnd() * 30) / 100;
+      for (let k = 0; k < 1 + Math.floor(rnd() * 4); k++) {
+        if (rnd() < 0.2) keys.push({ time: t });
+        else {
+          // One to three moves landing on distinct places inside the slots.
+          const moved = Array.from({ length: n }, (_v, q) => q).sort(() => rnd() - 0.5).slice(0, 1 + Math.floor(rnd() * Math.min(3, n)));
+          const landing = Array.from({ length: n }, (_v, q) => q).sort(() => rnd() - 0.5).slice(0, moved.length);
+          keys.push({ time: t, offsets: moved.map((q, j) => ({ slot: `s${q}`, offset: landing[j] - q })) });
+        }
+        t += Math.round((0.1 + rnd() * 0.5) * 100) / 100;
+      }
+      const pair = remainderPair({ bones: [{ name: 'root' }], slots, skins: { default: Object.fromEntries(slots.map((s) => [s.name, { m: { kind: 'mesh', xy: [0, 0, 1, 0, 0, 1] } as RAtt }])) }, anims: { a: { drawOrder: keys, bones: { root: { rotate: [{ time: 0, value: 0 }, { time: t, value: 0 }] } } } } });
+      if (i < 3) cdModels.push(pair.model);
+      const c = remainderCompare(pair, { phase: 'irr', samples: 30, skin: 'all', physics: 'none', dt: null });
+      samples += c.rows.reduce((q, r) => q + r.samples, 0);
+      if (c.identical && blocksSkipped(c).length === 0) exact++;
+      else if (probes.length < 3) probes.push(`probe ${i}: ${blocksSkipped(c).join('; ') || c.first}`);
+    }
+    // A slider's key after the sample's, at setup and at a sample; before its key it writes nothing.
+    const slotsS = ['a', 'b', 'c', 'd'].map((name) => ({ name, bone: 'root' }));
+    for (const [label, time] of [['a slider past its key', 0.5], ['a slider before its key', 0.1]] as const) {
+      const pair = remainderPair({
+        bones: [{ name: 'root' }], slots: slotsS, skins: { default: {} },
+        constraints: [{ type: 'slider', name: 'sl', animation: 'sa', time, mix: 0.25 }],
+        anims: { sa: { drawOrder: [{ time: 0.3, offsets: [{ slot: 'a', offset: 3 }] }] }, a: { drawOrder: [{ time: 0, offsets: [{ slot: 'd', offset: -2 }] }, { time: 0.5 }, { time: 1, offsets: [{ slot: 'b', offset: 1 }] }] } },
+      });
+      cdModels.push(pair.model);
+      const c = remainderCompare(pair, GRID9);
+      if (!c.identical || blocksSkipped(c).length > 0) probes.push(`${label}: ${blocksSkipped(c).join('; ') || c.first}`);
+    }
+    const swapped = remainderCompare(remainderPair({ bones: [{ name: 'root' }], slots: slotsS, skins: { default: {} }, anims: { a: { drawOrder: [{ time: 0, offsets: [{ slot: 'd', offset: -3 }] }] } } }), GRID9, { drawOrder: (count, k, t) => {
+      const o = drawOrderAt(count, k, t);
+      return o === null ? null : [o[1], o[0], ...o.slice(2)];
+    } });
+    if (swapped.identical) probes.push('two slots swapped in a draw-order key read IDENTICAL');
+    const ok = exact === N && probes.length === 0;
+    say(
+      'CD09_THE_DRAW_ORDER_AT_A_SAMPLE_IS_A_KEYS_MOVES_OVER_THE_SETUP_ORDER_AND_A_SLIDERS_KEY_AFTER_IT_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} random draw-order timelines exact at tolerance 0 over 30 samples (${samples} samples) — three to eight slots, one to four keys, one to three moves each held by the model in reverse of the file's slot order, restores among them; a slider at mix 0.25 past and before its key, over a sample's own keys, exact; two slots swapped in a key read DIFF`),
+      'issue #955: a key\'s moves permute the SETUP order, the rest filling in setup order, a key with no moves restoring it (src/core/draw_order.ts: 0 of 3,600 samples missed); a slider applies its key after the sample\'s at any mix but 0',
+    );
+  }
+
+  // --- CD10: the events a sample lists are the keys in (previous t, t], each field the key's, else the definition's, else the parser's --
+  {
+    const probes: string[] = [];
+    const events: Record<string, Obj> = { e: { int: 7, float: 1.5, string: 'hi' }, g: {}, au: { audio: 'x.ogg', volume: 0.5, balance: -0.2, int: 3, float: 0.1000065 } };
+    const cases: Array<[string, Obj[], OracleOptions]> = [
+      ['payloads defaulted and overridden, a string of "" and none', [{ time: 0, name: 'e' }, { time: 0.5, name: 'g' }, { time: 0.5, name: 'e', int: -2, string: '' }, { time: 1, name: 'au', float: 0.25 }], GRID9],
+      ['keys on sample times and between them, a float32 time', [{ time: 0.1, name: 'g' }, { time: 0.25, name: 'e' }, { time: 0.3, name: 'au' }, { time: 0.75, name: 'g', string: 'x' }], { phase: 'grid', samples: 5, skin: 'all', physics: 'none', dt: null }],
+      ['an animation of duration 0', [{ time: 0, name: 'e' }, { time: 0, name: 'g' }], GRID9],
+      ['a double float not float32', [{ time: 0.5, name: 'au' }, { time: 0.6, name: 'g', float: 0.1000065 }], { phase: 'irr', samples: 7, skin: 'all', physics: 'none', dt: null }],
+    ];
+    let rowsFired = 0;
+    for (const [label, keys, options] of cases) {
+      const pair = remainderPair({ bones: [{ name: 'root' }], slots: [], skins: { default: {} }, events, anims: { a: { events: keys } } });
+      cdModels.push(pair.model);
+      const spine = remainderSpine(pair, options);
+      rowsFired += spine.animations[0].samples.reduce((n, x) => n + x.events.length, 0);
+      const c = compareDumps(spine, coreDump(readModel(pair.model), options), { xy: 0, m: 0 });
+      if (!c.identical || blocksSkipped(c).length > 0) probes.push(`${label}: ${blocksSkipped(c).join('; ') || c.first}`);
+    }
+    // The measured facts the header states, read off spine-core directly.
+    const fired = remainderSpine(remainderPair({ bones: [{ name: 'root' }], slots: [], skins: { default: {} }, events, anims: { a: { events: [{ time: 0.1, name: 'g' }, { time: 1, name: 'au' }] } } }), { phase: 'grid', samples: 11, skin: 'all', physics: 'none', dt: null });
+    const at = (t: number): string => JSON.stringify(fired.animations[0].samples.find((x) => x.t === t)?.events ?? null);
+    if (at(0.1) !== '[]' || at(0.2) !== '[["g",0.1,0,0,""]]') probes.push(`an event keyed at 0.1 fired ${at(0.1)} at 0.1 and ${at(0.2)} at 0.2, not at the sample after its float32 time with a string of ""`);
+    if (at(1) !== '[["au",1,3,0.100007,""]]') probes.push(`the audio event fired ${at(1)}, not its definition's int 3 and double float 0.100007`);
+    const ok = probes.length === 0;
+    say(
+      'CD10_A_SAMPLE_LISTS_THE_EVENTS_KEYED_IN_THE_PREVIOUS_TO_ITS_TIME_EACH_FIELD_THE_KEYS_OR_THE_DEFINITIONS',
+      ok,
+      probeDetail(ok, probes, `${cases.length} hand-written animations exact at tolerance 0, ${rowsFired} event rows fired by spine-core — payloads defaulted and overridden, two keys at one time in key order, keys on and between sample times, an animation of duration 0, a double float; an event keyed at 0.1 fired at the sample after 0.1 with string "", the definition's float read as a double`),
+      'issue #955: the rows are [name, time, int, float, string] for the keys in (previous t, t], the first interval opening at −1, key times float32, each field the key\'s, else the definition\'s, else 0, 0, "" (src/core/events.ts)',
+    );
+  }
+
+  // --- CD11: a vertex offset scaled, a frame index shifted, two slots swapped and an event's int moved, each in a copy of the core, turn exactly the rows using them red --
+  {
+    const probes: string[] = [];
+    const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null));
+    const uses = (b: BuiltRow, field: AnimationCensusField): boolean => {
+      if ((rows.find((r) => r.name === b.name)?.animationCensus?.[field] ?? 0) === 0) return false;
+      if (field !== 'deform') return true;
+      // A scaled offset moves only a row whose deform keys carry a number other than 0 (sack-pro keys one empty key: the setup geometry).
+      const doc = readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'));
+      return doc.animations.some((a) => a.timelines.attachments.some((t) => (t.deform ?? []).some((k) => k.vertices.some((v) => v !== 0))));
+    };
+    const plants: Array<[string, TimelinePlant, AnimationCensusField, GateBlock]> = [
+      ['a vertex offset scaled by 1.5', { deform: (v, keys, t) => deformAt(v, keys.map((k) => ({ ...k, vertices: k.vertices.map((x) => x * 1.5) })), t) }, 'deform', 'animations.attachments'],
+      ['a frame index shifted one', { sequence: (keys, n, t) => { const f = sequenceFrameAt(keys, n, t); return f === null ? null : (f + 1) % n; } }, 'sequenceRegion', 'animations.attachments'],
+      ['two slots swapped in a draw-order key', { drawOrder: (count, keys, t) => { const o = drawOrderAt(count, keys, t); return o === null ? null : [o[1], o[0], ...o.slice(2)]; } }, 'drawOrder', 'animations.drawOrder'],
+      ['every fired event\'s int moved by one', { events: (keys, last, t) => eventsFired(keys, last, t).map((e): CoreEventRow => [e[0], e[1], e[2] + 1, e[3], e[4]]) }, 'events', 'animations.events'],
+    ];
+    const reached: string[] = [];
+    for (const [label, plant, field, block] of plants) {
+      const using = judged.filter((b) => uses(b, field)).map((b) => b.name);
+      const red = gateBuilt(judged, plant);
+      const turned = red.filter((r) => r.blocks?.[block].verdict === 'DIFF').map((r) => r.name);
+      const others = red.filter((r) => GATE_BLOCKS.some((x) => x !== block && r.blocks?.[x].verdict === 'DIFF' && !(field === 'deform' && x === 'setup.attachments'))).map((r) => r.name);
+      if (JSON.stringify(turned) !== JSON.stringify(using)) probes.push(`${label} turned [${turned.join(', ')}] red on ${block}; the rows using it are [${using.join(', ')}]`);
+      if (others.length > 0) probes.push(`${label} turned another block red on [${others.join(', ')}]`);
+      reached.push(using.length === 0 ? `${label}: no row uses it (a HOLE, CD08's probe reads it red)` : `${label} ${turned.length}/${judged.length}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CD11_A_SCALED_OFFSET_A_SHIFTED_FRAME_A_SWAP_AND_A_MOVED_INT_IN_A_COPY_OF_THE_CORE_TURN_EXACTLY_THE_ROWS_USING_THEM_RED',
+      ok,
+      probeDetail(ok, probes, `each plant passed as a copy, never in src/: ${reached.join('; ')} — exactly the rows keying the kind, on the block it changes and no other`),
+      'issue #955\'s positive control, one plant per kind: a gate nobody has seen fail is not a gate. A plant reddening a row that does not key the kind would be reading something else, and one reddening none would show the gate reads nothing',
+    );
+  }
+
+  // --- CD12: the remainder's census counts a hand-made document as computed by hand, and each field no row reaches is a HOLE a probe reaches --
+  {
+    const probes: string[] = [];
+    const pair = remainderPair({
+      bones: [{ name: 'root' }, { name: 'b', parent: 'root' }],
+      slots: [{ name: 's', bone: 'root', attachment: 'm' }, { name: 'w', bone: 'root', attachment: 'x' }, { name: 'c', bone: 'root', attachment: 'k' }, { name: 'r', bone: 'root', attachment: 'q' }, { name: 'l', bone: 'root', attachment: 'lm' }],
+      skins: { default: { s: { m: { kind: 'mesh', xy: [0, 0, 1, 0, 0, 1] } }, w: { x: { kind: 'mesh', weighted: [[{ bone: 'b', x: 0, y: 0, w: 1 }], [{ bone: 'b', x: 1, y: 0, w: 1 }], [{ bone: 'b', x: 0, y: 1, w: 1 }]] } }, c: { k: { kind: 'clipping', xy: [0, 0, 1, 0, 0, 1] } }, r: { q: { kind: 'region', path: 'seq', frames: 3 } }, l: { src: { kind: 'mesh', xy: [0, 0, 1, 0, 0, 1] }, lm: { kind: 'linkedmesh', source: 'src' } } } },
+      events: { e: { int: 1 }, g: {} },
+      constraints: [{ type: 'slider', name: 'sl', animation: 'sa', time: 0.5 }],
+      anims: {
+        a: {
+          deform: [
+            { slot: 's', attachment: 'm', keys: [{ time: 0, vertices: [1, 1, 1, 1, 1, 1], curve: [0.2, 0.1, 0.4, 0.9] }, { time: 1, offset: 2, vertices: [2] }, { time: 2 }] },
+            { slot: 'w', attachment: 'x', keys: [{ time: 0, vertices: [1, 1], curve: 'stepped' }, { time: 1, vertices: [1, 1, 1, 1, 1, 1] }] },
+            { slot: 'c', attachment: 'k', keys: [{ time: 0 }] },
+            { slot: 'l', attachment: 'src', keys: [{ time: 0, vertices: [3, 3] }] },
+          ],
+          sequence: [{ slot: 'r', attachment: 'q', keys: [{ time: 0, mode: 'loop', delay: 0.1 }] }],
+          drawOrder: [{ time: 0, offsets: [{ slot: 's', offset: 1 }] }, { time: 1 }],
+          events: [{ time: 0, name: 'e' }, { time: 1, name: 'g', string: 'x' }],
+        },
+        sa: { deform: [{ slot: 's', attachment: 'm', keys: [{ time: 0, vertices: [1] }] }], sequence: [{ slot: 'r', attachment: 'q', keys: [{ time: 0, index: 1 }] }], drawOrder: [{ time: 0 }] },
+      },
+    });
+    // Not pushed onto cdModels: this document is counted, not compared, and the HOLE coverage below reads the compared probes alone.
+    const census = animationCensusOf(pair.model, GRID9);
+    // By hand: five deform timelines (four in "a", one in the slider's "sa"), one weighted, one on a clipping polygon, one on a linked mesh's source;
+    // one Bézier and one stepped segment; partial runs: the offset one of "a"'s s, the short one of w, the short one of l's source, "sa"'s one number — four;
+    // keys with no run: s's last and the clip's — two; "sa" is a slider's animation: its deform, its sequence and its draw order.
+    const want: Partial<Record<AnimationCensusField, number>> = {
+      deform: 5, deformWeighted: 1, deformPath: 0, deformClipping: 1, deformLinked: 1, deformBezier: 1, deformStepped: 1, deformPartialRun: 4, deformEmptyKey: 2, deformSlider: 1,
+      sequence: 2, sequenceRegion: 2, sequenceSlider: 1, drawOrder: 2, drawOrderEmpty: 2, drawOrderSlider: 1, events: 1, eventPayload: 2,
+    };
+    for (const [field, n] of Object.entries(want)) if (census[field as AnimationCensusField] !== n) probes.push(`${field} counted ${census[field as AnimationCensusField]}, not ${n}`);
+    // The fields no compared row reaches are HOLEs; every one is reached by this suite's CD probes.
+    const holes = animationReachLines(rows).filter((l) => l.startsWith('  HOLE')).map((l) => /animations (\S+):/.exec(l)?.[1] ?? l).filter((f) => f in REMAINDER_CENSUS_BLOCKS);
+    const reachedByProbes = new Set(cdModels.flatMap((m) => Object.keys(REMAINDER_CENSUS_BLOCKS).filter((f) => (animationCensusOf(m, GRID9)[f as AnimationCensusField] ?? 0) > 0)));
+    // deformPath is CP12's: its deformed path is read there.
+    const uncovered = holes.filter((f) => f !== 'deformPath' && !reachedByProbes.has(f));
+    if (uncovered.length > 0) probes.push(`no compared row and no CD probe reaches ${uncovered.join(', ')}`);
+    const ok = probes.length === 0;
+    say(
+      'CD12_THE_REMAINDERS_CENSUS_COUNTS_A_HAND_MADE_DOCUMENT_AS_COMPUTED_BY_HAND_AND_EVERY_HOLE_IS_A_PROBES',
+      ok,
+      probeDetail(ok, probes, `${Object.keys(want).length} fields of a document keying every kind counted as by hand; ${holes.length} HOLE(s) over the compared rows — ${holes.join(', ')} — each reached by a CD probe at tolerance 0 (deformPath by CP12's deformed path)`),
+      'issue #955: the laterTimelines HOLE is replaced by a census per kind, and a census that miscounts turns a HOLE into a REACH in silence — held on a document whose every count is computed by hand',
+    );
+    for (const line of animationReachLines(rows)) if (line.startsWith('  HOLE') && holes.some((h) => line.includes(`animations ${h}:`))) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
+  }
+
+  // --- CD13: what the core cannot pose exactly is left out by name --
+  {
+    const probes: string[] = [];
+    const tri: RAtt = { kind: 'mesh', xy: [0, 0, 1, 0, 0, 1] };
+    const absences: Array<[string, RSpec, string, string]> = [
+      ['a deform on a placeholder two skins fill', {
+        bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root', attachment: 'm' }], skins: { default: { s: { m: tri } }, other: { s: { m: tri } } },
+        anims: { a: { deform: [{ slot: 's', attachment: 'm', keys: [{ time: 0, vertices: [1, 1] }] }] } },
+      }, 'animations.attachments', 'slot "s" shows placeholder "m", which skins "default", "other" fill'],
+    ];
+    for (const [label, spec, block, expected] of absences) {
+      const pair = remainderPair(spec);
+      const core = coreDump(readModel(pair.model, label), GRID9);
+      const why = core.absent?.find((x) => x[0] === block)?.[1] ?? '';
+      if (!why.includes(expected)) probes.push(`${label}: ${block} ${why === '' ? 'posed' : `left out as "${why.slice(0, 200)}"`}, not naming ${JSON.stringify(expected)}`);
+      const c = remainderCompare(pair, GRID9);
+      if (!c.skipped.some((x) => x.startsWith(`${block}:`))) probes.push(`${label}: compare did not SKIP ${block}`);
+    }
+    // A slider deforming a curve a path constraint walks leaves the bones out (src/core/constraints_slider.ts).
+    const walked = coreDump(readModel(remainderPair({
+      bones: [{ name: 'root' }, { name: 'b', parent: 'root', length: 5 }], slots: [{ name: 'p', bone: 'root', attachment: 'k' }],
+      skins: { default: { p: { k: { kind: 'path', xy: [0, 0, 10, 0, 20, 0, 30, 0, 40, 0, 50, 0], lengths: [50, 100] } } } },
+      constraints: [{ type: 'path', name: 'pc', bones: ['b'], slot: 'p' }, { type: 'slider', name: 'sl', animation: 'sa', time: 0.5 }],
+      anims: { sa: { deform: [{ slot: 'p', attachment: 'k', keys: [{ time: 0, vertices: [1, 2] }] }] } },
+    }).model, 'the walked-path probe'), GRID9);
+    const walkedWhy = walked.absent?.find((x) => x[0] === 'setup.bones')?.[1] ?? '';
+    if (!walkedWhy.includes('which deforms walked path attachment(s) "default/p/k"')) probes.push(`a slider deforming a walked path: setup.bones ${walkedWhy === '' ? 'posed' : `left out as "${walkedWhy.slice(0, 200)}"`}`);
+    const ok = probes.length === 0;
+    say(
+      'CD13_WHAT_THE_CORE_CANNOT_POSE_EXACTLY_IS_LEFT_OUT_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `${absences.length + 1} documents each left out naming why — a deform on a placeholder two skins fill (which record --skin all shows is the file's skin order), a slider deforming a curve a path walks (unmeasured) — and compare SKIPs the block by name`),
+      'issue #955: where the model does not hold what decides the pose, or the case was not measured, the block is SKIP by name, never a guess',
+    );
+  }
+
+  // --- CD14: a slider switching a slot to another attachment clears the deform and the frame the sample set, and naming the one shown keeps them --
+  {
+    const probes: string[] = [];
+    const m: RAtt = { kind: 'mesh', xy: [0, 0, 1, 0, 0, 1] };
+    const n: RAtt = { kind: 'mesh', xy: [10, 10, 11, 10, 10, 11] };
+    const deformOf = (att: string, v: number[]): RKeyed[] => [{ slot: 's', attachment: att, keys: [{ time: 0, vertices: v }] }];
+    const toN = { s: { attachment: [{ time: 0, name: 'n' }] } };
+    const meshCase = (sa: RAnim, a: RAnim): RSpec => ({ bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root', attachment: 'm' }], skins: { default: { s: { m, n } } }, constraints: [{ type: 'slider', name: 'sl', animation: 'sa', time: 0.5 }], anims: { sa, a } });
+    const seriesCase = (sa: RAnim, a: RAnim): RSpec => ({
+      bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root', attachment: 'r' }], skins: { default: { s: { r: { kind: 'region', path: 'a', frames: 4, setup: 1 }, q: { kind: 'region', path: 'b', frames: 4, setup: 2 } } } },
+      constraints: [{ type: 'slider', name: 'sl', animation: 'sa', time: 0.5 }], anims: { sa, a },
+    });
+    const stepOf = (att: string, index: number): RKeyed[] => [{ slot: 's', attachment: att, keys: [{ time: 0, index }] }];
+    const toQ = { s: { attachment: [{ time: 0, name: 'q' }] } };
+    // Each case with the sample's row spine-core gave: the attachment shown and its first vertex (a mesh) or its frame (a series).
+    const cases: Array<[string, RSpec, string]> = [
+      ['m to n over a sample deforming m', meshCase({ slots: toN }, { deform: deformOf('m', [100, 100]) }), 'n 10,10'],
+      ['m to n over a sample deforming n (it found m shown)', meshCase({ slots: toN }, { deform: deformOf('n', [100, 100]) }), 'n 10,10'],
+      ['naming m over a sample deforming m keeps it', meshCase({ slots: { s: { attachment: [{ time: 0, name: 'm' }] } } }, { deform: deformOf('m', [100, 100]) }), 'm 99.999998,100'],
+      ['m to n, then the slider\'s own deform of n', meshCase({ slots: toN, deform: deformOf('n', [7, 7]) }, { deform: deformOf('m', [100, 100]) }), 'n 17,17'],
+      ['r to q over a sample stepping r', seriesCase({ slots: toQ }, { sequence: stepOf('r', 3) }), 'q frame 2'],
+      ['naming r over a sample stepping r keeps it', seriesCase({ slots: { s: { attachment: [{ time: 0, name: 'r' }] } } }, { sequence: stepOf('r', 3) }), 'r frame 3'],
+      ['r to q, then the slider\'s own step of q', seriesCase({ slots: toQ, sequence: stepOf('q', 0) }, { sequence: stepOf('r', 3) }), 'q frame 0'],
+    ];
+    for (const [label, spec, expected] of cases) {
+      const pair = remainderPair(spec);
+      cdModels.push(pair.model);
+      const d = remainderSpine(pair, ONE_SAMPLE);
+      const row = d.animations.find((x) => x.name === 'a')?.samples[0].attachments[0];
+      const v = (row?.[3] ?? []) as number[];
+      const read = row === undefined ? 'none' : spec.skins.default.s[row[1]]?.kind === 'region' ? `${row[1]} frame ${Math.round(v[4] - v[0]) - 1}` : `${row[1]} ${v[0]},${v[1]}`;
+      if (read !== expected) probes.push(`${label}: spine-core's sample read ${read}, not the measured ${expected}`);
+      const c = remainderCompare(pair, ONE_SAMPLE);
+      if (!c.identical || blocksSkipped(c).length > 0) probes.push(`${label}: the core ${blocksSkipped(c).join('; ') || c.first}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CD14_A_SLIDER_SWITCHING_A_SLOT_CLEARS_THE_DEFORM_AND_THE_FRAME_THE_SAMPLE_SET_AND_NAMING_THE_ONE_SHOWN_KEEPS_THEM',
+      ok,
+      probeDetail(ok, probes, `${cases.length} hand-written switches, each spine-core's row as measured and the core exact at tolerance 0 at setup and at the sample: a switch to another mesh or series drew it undeformed at its setup frame — even over a sample keying the one switched to — naming the one shown kept the sample's deform and frame, and the slider's own keys after its switch applied`),
+      'issue #955: the sample\'s deform and sequence timelines are matched against what the slot shows after the sample\'s own switches, and a slider switching the slot to another attachment clears them (src/core/deform.ts, *A switch*). The first reading — every timeline matched against the slot\'s final attachment — posed the second case deformed, which spine-core does not',
     );
   }
 
