@@ -130,6 +130,8 @@ export interface CoreSliderRecord {
   scale: number;
   local: boolean;
   skin: boolean;
+  /** An applied skin's `slider` list names it — what applies a skin-required one (`./constraints.ts`'s header); set per skin view by `underSkin` in `./index.ts`. */
+  listedBySkin: boolean;
 }
 
 /** One slider's timelines in one animation: the `time` and `mix` keys, `null` where not keyed. */
@@ -206,7 +208,7 @@ export function readSliderRecord(raw: Record<string, unknown>, name: string, whe
   const record: CoreSliderRecord = {
     kind: 'slider', name, animation: anim?.name ?? '', timelines: anim?.timelines ?? { declared: 0, duration: 0, bones: [], slots: [], later: [], attachments: [], drawOrder: [], events: [] }, setup,
     additive: flag('additive'), loop, mix: num('mix', 1), time: num('time', 0), bone, property,
-    from: num('from', 0), to: num('to', 0), scale: num('scale', 1), local: flag('local'), skin: flag('skin'),
+    from: num('from', 0), to: num('to', 0), scale: num('scale', 1), local: flag('local'), skin: flag('skin'), listedBySkin: false,
   };
   return problems.length === before ? record : undefined;
 }

@@ -114,7 +114,9 @@
  * `--skin all` a placeholder several skins fill shows the LAST of them in the
  * Spine file's skin order, which the model does not hold (the slots' ⚠️ in
  * `./index.ts`), so a timeline keyed on such a placeholder is not posed: the
- * block is absent, naming it.
+ * block is absent, naming it. Under `--skin <name>` one record resolves —
+ * the named skin's, else the default's (`./skins.ts`) — and a timeline
+ * moves it exactly when it is keyed under that record's skin (`CN01`).
  *
  * ## Sequence
  *
@@ -149,6 +151,7 @@
 import type { ModelSlot, ModelVertices } from '../model.ts';
 import { bezierPolyline, keyIndexAt, type CoreAnimationTimelines, type CoreCurve } from './animation.ts';
 import { shownRow, type CompiledDocument, type CoreShown, type CoreSkin, type ShownResolution } from './index.ts';
+import { fillingSkins } from './skins.ts';
 import type { CoreGeometry, ShownGeometry } from './vertices.ts';
 
 /** The far end the deform curve's recurrence runs to — the header's measurement. */
@@ -553,7 +556,7 @@ export function attachmentStates(
     if (now === null) continue;
     const entry: ShownGeometry = { slot: slot.name, bone: slot.bone, name: shownRow(now.s).name, placeholder: now.s.placeholder, skin: now.s.skin, geometry: now.s.record.geometry as CoreGeometry };
     shown.push(entry);
-    const fillers = doc.skins.filter((k) => k.attachments[slot.name]?.[now.s.placeholder] !== undefined).map((k) => `"${k.name}"`);
+    const fillers = fillingSkins(doc, slot.name, now.s.placeholder).map((k) => `"${k}"`);
     if (seen.length > 0 && fillers.length > 1) {
       why.push(`slot "${slot.name}" shows placeholder "${now.s.placeholder}", which skins ${fillers.join(', ')} fill, and ${seen.map((x) => `"${x}"`).join(', ')} key(s) it — which record --skin all shows, and so whether the timeline moves it, is the Spine file's skin order, not the model's`);
       continue;

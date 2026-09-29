@@ -231,8 +231,12 @@
  * posing a `rigc-compiled/1` document (`skeleton.model.json`, which `build`
  * writes beside the Spine pair) — no spine-core call is made for it. `dumper`
  * is `"rigc-core"`; `source` is `{ "spine": null, "hash": null }`, since the
- * model states neither; `options` as given, and the core refuses (exit 2) any
- * `--skin` but `all`. Under `--physics step --dt <s>` the core walks the
+ * model states neither; `options` as given. `--skin` is `all` or a skin the
+ * model declares (issue #932, `underSkin` and `src/core/skins.ts`): under a
+ * named skin a slot shows the named skin's record, else the default skin's,
+ * else nothing, and only the named skin's `bones` and constraint lists are
+ * applied — the default skin's are not — each measured against the dump
+ * above; a skin the model does not declare is refused (exit 2) by name. Under `--physics step --dt <s>` the core walks the
  * schedule above itself (issue #956, `poseSteppedAnimations` and
  * `stepSchedule` in `src/core/constraints_physics.ts`): the setup pose is the
  * reset pose, every animation a fresh state reset at 0 and stepped through
@@ -255,7 +259,8 @@
  * the bones, or absent when a slot's setup placeholder is filled
  * by skins that disagree, since which of them `--skin all` shows is the Spine
  * file's skin order and the model does not carry it (the core's header says
- * why, with the measurements); `setup.attachments` and `setup.clips` are the
+ * why, with the measurements) — a case that arises under `all` only, and
+ * that the per-skin dumps judge; `setup.attachments` and `setup.clips` are the
  * world vertices of every region, mesh, linked mesh and clipping polygon shown
  * at setup, in the setup draw order (issue #931, `src/core/vertices.ts`),
  * each slider's deform and sequence keys applied (issue #955), absent when
@@ -355,7 +360,7 @@ import {
   TransformConstraintData,
   type Event,
 } from '@esotericsoftware/spine-core';
-import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, readModel, type CompiledDocument } from '../src/core/index.ts';
+import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, readModel, underSkin, type CompiledDocument } from '../src/core/index.ts';
 import { REGION_TRIANGLES, REGION_UVS } from '../src/core/clipping.ts';
 import { IRR_OFFSET as CORE_IRR_OFFSET, poseAnimations, sampleTime as coreSampleTime, type TimelinePlant } from '../src/core/animation.ts';
 import { pathAttachmentRows, pathRows, type CorePathRecord } from '../src/core/constraints_path.ts';
@@ -847,12 +852,17 @@ export function dumpText(dump: OracleDocument): string {
 /**
  * The second dumper: a `rigc-compiled/1` document posed by rigc's own core
  * (`src/core/index.ts`) into the same shape — see the header's *`dump --core`*.
- * The core poses under `--skin all` and `--physics none` only; any other
- * option is refused by name, since it names a pose the core does not produce.
+ * `options.skin` is `all` or a skin of the document (`underSkin`, issue
+ * #932); a skin it does not declare is refused by name, as the spine-core
+ * dump refuses it.
  */
-export function coreDump(doc: CompiledDocument, options: OracleOptions, plant: TimelinePlant = {}): OracleDocument {
-  if (options.skin !== 'all') {
-    throw new OracleInputError(`dump --core: --skin ${JSON.stringify(options.skin)} — the core poses every skin at once (--skin all) and nothing else yet (issue #925)`);
+export function coreDump(model: CompiledDocument, options: OracleOptions, plant: TimelinePlant = {}): OracleDocument {
+  let doc: CompiledDocument;
+  try {
+    doc = underSkin(model, options.skin);
+  } catch (err) {
+    if (err instanceof CoreInputError) throw new OracleInputError(`dump --core: ${err.message}`);
+    throw err;
   }
   const stepped = options.physics === 'step';
   if (stepped && (options.dt === null || !(options.dt > 0))) throw new OracleInputError('dump --core: --physics step needs a positive --dt');
@@ -1495,7 +1505,7 @@ const USAGE = [
   'usage:',
   '  bun tools/pose_oracle.ts dump <build dir> --out <json> [--samples 9] [--phase grid|off|irr|dense] [--skin all|<name>] [--physics none|step] [--dt 1/60]',
   '  bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]',
-  '  bun tools/pose_oracle.ts dump --core <skeleton.model.json> --out <json> [same flags; --skin all only]',
+  '  bun tools/pose_oracle.ts dump --core <skeleton.model.json> --out <json> [same flags]',
   '  bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]',
 ].join('\n');
 

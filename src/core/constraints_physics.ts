@@ -66,14 +66,17 @@
  * off that clock. The setup pose under the step is the reset pose.
  *
  * **Which constraints step.** A constraint on an inactive bone does not. A
- * constraint with `skin: true` steps exactly when a skin's
+ * constraint with `skin: true` steps exactly when an applied skin's
  * `constraints.physics` list names it — under `--skin all` every skin is
- * applied at once (`physicsListedBySkins`, `physicsActive`). Measured on the
+ * applied at once, under `--skin <name>` the named skin alone
+ * (`listedBySkin`, set per skin view by `underSkin` in `./index.ts`;
+ * `physicsActive`). Measured on the
  * commander's private-corpus finding (two rows DIFF, the core leaving such
  * constraints inert): hand-written documents dumped under `--physics step`
  * with `--skin all`, `--skin s1` and `--skin default` — named by no skin:
  * not stepped under any; named by `s1`: stepped under `all` and `s1`, not
- * under `default`; named by the default skin: stepped; a skin naming the
+ * under `default`; named by the default skin: stepped (under `all`, and —
+ * issue #932 — under `default` but not under `s1`); a skin naming the
  * constrained bone (skin-required or not), another physics constraint or an
  * ik constraint, but not this one: not stepped; no skins at all: not
  * stepped. The reading inherited from issue #938 — `skin: true` is never
@@ -250,7 +253,7 @@ export interface CorePhysicsRecord extends PhysicsPose {
   name: string;
   bone: string;
   skin: boolean;
-  /** A skin's `constraints.physics` list names it — what makes a skin-required constraint step under `--skin all` (the header's *Which constraints step*); set by `readModel` from the skins. */
+  /** An applied skin's `constraints.physics` list names it — what makes a skin-required constraint step (the header's *Which constraints step*); set per skin view by `underSkin` in `./index.ts`. */
   listedBySkin: boolean;
   x: number;
   y: number;
@@ -304,25 +307,7 @@ export function readPhysicsRecord(raw: Record<string, unknown>, name: string, wh
   };
 }
 
-/**
- * The physics constraints some skin of the model document lists
- * (`skins[].constraints.physics`) — under `--skin all` every skin is applied
- * at once, so a skin-required physics constraint steps exactly when one of
- * them names it (the header's *Which constraints step*). `readModel` has
- * already checked each skin's shape; a list that is not one of names reads
- * as naming nothing.
- */
-export function physicsListedBySkins(skins: unknown): Set<string> {
-  const out = new Set<string>();
-  if (!Array.isArray(skins)) return out;
-  for (const skin of skins) {
-    const list = isObject(skin) && isObject(skin.constraints) ? skin.constraints.physics : undefined;
-    if (Array.isArray(list)) for (const n of list) if (typeof n === 'string') out.add(n);
-  }
-  return out;
-}
-
-/** Whether a physics record steps under `--skin all`: its bone active, and not skin-required unless a skin lists it — measured, the header's *Which constraints step*. */
+/** Whether a physics record steps under the skin view posed: its bone active, and not skin-required unless an applied skin lists it — measured, the header's *Which constraints step*. */
 export function physicsActive(r: CorePhysicsRecord, active: ReadonlySet<string>): boolean {
   return (!r.skin || r.listedBySkin) && active.has(r.bone);
 }
