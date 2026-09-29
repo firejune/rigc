@@ -66124,9 +66124,10 @@ function runPoseOracleSuite(): number {
 // Its own statement, so the suite lands as one hunk (the convention the
 // slider-reader suite states at its imports).
 import { activeBones, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED, readColour, readModel, type CompiledDocument, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
-import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, type OracleDocument } from './tools/pose_oracle.ts';
+import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
-import { buildRecipes, censusOf, gateBuild, gateBuilt, gateVerdict, reachLines, slotCensusOf, slotReachLines, type BuiltRow } from './tools/core_gate.ts';
+import { animationCensusOf, animationReachLines, buildRecipes, censusOf, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, reachLines, slotCensusOf, slotReachLines, type AnimationCensusField, type BuiltRow } from './tools/core_gate.ts';
+import { BEZIER_SIXTH, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
 import { modeMatrix, worldTransforms, type CoreInheritMode } from './src/core/world.ts';
 
 /** What `readModel` refuses `text` with, or '' when it reads it. */
@@ -66217,7 +66218,7 @@ function srcPopulation(root: string): Map<string, string> {
 
 /** The core suite: `src/core/`'s reader and setup pose, the second dumper in `tools/pose_oracle.ts`, compare's absences, the gate's instrument and the tree rule. */
 function runCoreSuite(): number {
-  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones and slots as pose-oracle/1 (issues #925, #928) ──');
+  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones and slots, and every animation\'s bones and slots at its samples, as pose-oracle/1 (issues #925, #928, #936) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -66964,7 +66965,7 @@ function runCoreSuite(): number {
       slots: [{ name: 's', bone: 'root', setup: 'r' }],
       skins: [{ name: 'default', bones: [], constraints: {}, attachments: { s: records } }],
       constraints: [{ kind: 'slider', name: 'sl', declaredIn: 'rig', animation: 'a' }],
-      animations: [{ name: 'a', duration: 0, bones: [], slots, constraints: {}, attachments: [], drawOrder: [], events: [] }],
+      animations: [{ name: 'a', duration: 0, bones: [], slots, constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: [] }],
     });
     const core = coreDump(readModel(keyed([{ name: 's', timelines: [] }])), ONE);
     const why = core.absent?.find((x) => x[0] === 'setup.slots')?.[1] ?? '';
@@ -67013,6 +67014,681 @@ function runCoreSuite(): number {
       'issue #928\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the channel or the skin at all',
     );
     for (const label of holes) console.log(`          ⚠️ HOLE: no compared recipe has a row the plant "${label}" reaches, so it has no corpus row to turn red — CO11's probe is the only reading of it`);
+  }
+
+  // ===========================================================================
+  // Construct 4 (issue #936): the bone and slot timelines at a sample time.
+  // Every measurement below is taken by posing a skeleton written here through
+  // spine-core (`dumpSkeleton`), and the core is held to it at tolerance 0.
+  // ===========================================================================
+  const DENSE: OracleOptions = { phase: 'dense', samples: 200, skin: 'all', physics: 'none', dt: null };
+  const GRID9: OracleOptions = { phase: 'grid', samples: 9, skin: 'all', physics: 'none', dt: null };
+  const EMPTY_GROUPS = { constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: [] };
+  type Keyed = Record<string, Record<string, Array<Record<string, unknown>>>>;
+  /**
+   * One skeleton written twice — as the Spine file and as the model — from one
+   * table: bones (a stated `inherit` is the model's `inheritMode`), slots (a
+   * `null` attachment is the model's `null` setup), region placeholders per
+   * slot, and one animation `a` keyed per bone and per slot. Spine's key and the
+   * model's key are one object: the model's channels are named as the format's.
+   */
+  const timelinePair = (parts: { bones: Array<Record<string, unknown>>; slots?: Array<Record<string, unknown>>; regions?: Record<string, string[]>; bones_?: Keyed; slotKeys?: Keyed; events?: Array<Record<string, unknown>> }): { spine: string; model: string; atlas: string } => {
+    const slots = parts.slots ?? [];
+    const regions = parts.regions ?? {};
+    const skinTable = (kind: boolean): Record<string, Record<string, Record<string, unknown>>> =>
+      Object.fromEntries(Object.entries(regions).map(([slot, names]) => [slot, Object.fromEntries(names.map((n) => [n, kind ? { kind: 'region', width: 4, height: 4 } : { width: 4, height: 4 }]))]));
+    const names = [...new Set(Object.values(regions).flat())];
+    const spine = {
+      skeleton: { spine: '4.3.13' },
+      bones: parts.bones,
+      slots: slots.map(({ attachment, ...s }) => ({ ...s, ...(attachment === null || attachment === undefined ? {} : { attachment }) })),
+      skins: [{ name: 'default', attachments: skinTable(false) }],
+      ...(parts.events ? { events: { hit: {} } } : {}),
+      animations: { a: { bones: parts.bones_ ?? {}, slots: parts.slotKeys ?? {}, ...(parts.events ? { events: parts.events.map((e) => ({ ...e, name: 'hit' })) } : {}) } },
+    };
+    const model = JSON.stringify({
+      spec: 'rigc-compiled/1',
+      bones: parts.bones.map(({ inherit, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }) })),
+      slots: slots.map(({ attachment, ...s }) => ({ ...s, setup: attachment ?? null })),
+      skins: [{ name: 'default', bones: [], constraints: {}, attachments: skinTable(true) }],
+      constraints: [], events: [],
+      animations: [{
+        name: 'a', duration: 0,
+        bones: Object.entries(parts.bones_ ?? {}).map(([name, tls]) => ({ name, timelines: Object.entries(tls).map(([k, keys]) => ({ name: k, keys })) })),
+        slots: Object.entries(parts.slotKeys ?? {}).map(([name, tls]) => ({ name, timelines: Object.entries(tls).map(([k, keys]) => ({ name: k, keys })) })),
+        ...EMPTY_GROUPS,
+        ...(parts.events ? { events: parts.events.map((e) => ({ ...e, name: 'hit' })) } : {}),
+      }],
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+    });
+    return { spine: JSON.stringify(spine), model, atlas: names.length === 0 ? '' : atlasOf(names) };
+  };
+  const spineDump = (pair: { spine: string; atlas: string }, options: OracleOptions): OracleDump => dumpSkeleton(loadOracleData(pair.spine, pair.atlas, 'the timeline probe'), options);
+  const exactly = (pair: { spine: string; model: string; atlas: string }, options: OracleOptions, plant: TimelinePlant = {}): ReturnType<typeof compareDumps> =>
+    compareDumps(spineDump(pair, options), coreDump(readModel(pair.model, 'the timeline probe'), options, plant), { xy: 0, m: 0 });
+  /** A deterministic generator, so the probes are the same skeletons on every run. */
+  const lcg = (seed: number): (() => number) => {
+    let s = seed;
+    return () => {
+      s = (s * 1103515245 + 12345) % 2147483648;
+      return s / 2147483648;
+    };
+  };
+  /**
+   * The all-kinds probe: two bones per bone kind under parents turned, scaled
+   * and reflected, a bone keyed by `translate` and `translatex` together and one
+   * by `scalex` and `scale`, an `inherit` timeline through the five modes, two
+   * slots per colour kind (the two-colour ones on slots with a dark colour), an
+   * attachment timeline through a swap, `null` and a placeholder no skin fills,
+   * and one whose setup shows nothing; linear, stepped and Bézier segments
+   * drawn at random, colour curves overshooting [0, 1], and numbers stated to
+   * five or six decimals, so off the float32 grid.
+   */
+  const allKindsProbe = (seed: number): { spine: string; model: string; atlas: string } => {
+    const rnd = lcg(seed);
+    const pick = <T,>(l: readonly T[]): T => l[Math.floor(rnd() * l.length)];
+    const hex = (n: number): string => Array.from({ length: n }, () => Math.floor(rnd() * 256).toString(16).padStart(2, '0')).join('');
+    const keysOf = (channels: number, make: () => Record<string, unknown>, count: number, reach: number, span: [number, number]): Array<Record<string, unknown>> => {
+      const times: number[] = [];
+      let t = span[0] + rnd() * 0.3;
+      for (let i = 0; i < count; i++) {
+        times.push(Math.round(t * 1e5) / 1e5);
+        t += 0.05 + (rnd() * (span[1] - span[0])) / count;
+      }
+      return times.map((time, i) => {
+        const key: Record<string, unknown> = { time, ...make() };
+        if (i === times.length - 1) return key;
+        const r = rnd();
+        if (r < 0.2) key.curve = 'stepped';
+        else if (r < 0.7) {
+          const next = times[i + 1];
+          const curve: number[] = [];
+          for (let c = 0; c < channels; c++) curve.push(time + rnd() * (next - time), (rnd() - 0.5) * reach, time + rnd() * (next - time), (rnd() - 0.5) * reach);
+          key.curve = curve.map((v) => Math.round(v * 1e6) / 1e6);
+        }
+        return key;
+      });
+    };
+    const number = (scale: number): number => Math.round((rnd() - 0.5) * scale * 1e4) / 1e4;
+    const KINDS: Array<[string, string[], number]> = [
+      ['rotate', ['value'], 400], ['translate', ['x', 'y'], 300], ['translatex', ['value'], 300], ['translatey', ['value'], 300], ['scale', ['x', 'y'], 3],
+      ['scalex', ['value'], 3], ['scaley', ['value'], 3], ['shear', ['x', 'y'], 60], ['shearx', ['value'], 60], ['sheary', ['value'], 60],
+    ];
+    const bones: Array<Record<string, unknown>> = [{ name: 'root', rotation: 5, x: 3, y: -2 }];
+    const keyed: Keyed = {};
+    for (const [kind, channels, scale] of KINDS) {
+      for (let k = 0; k < 2; k++) {
+        const name = `b${bones.length}`;
+        bones.push({ name, parent: bones[Math.floor(rnd() * bones.length)].name, x: number(100), y: number(100), rotation: number(90), scaleX: pick([1, 0.5, -1.5, 2]), scaleY: pick([1, 0.75, -1, 1.25]), shearX: pick([0, 10, -5]), shearY: pick([0, 7]) });
+        const make = (): Record<string, unknown> => Object.fromEntries(channels.map((c) => [c, number(scale)]));
+        keyed[name] = { [kind]: keysOf(channels.length, make, 2 + Math.floor(rnd() * 4), scale * 1.5, [0.2, 2.5]) };
+        if (k === 1 && kind === 'translate') keyed[name].translatex = keysOf(1, () => ({ value: number(100) }), 2, 150, [0.8, 1.6]);
+        if (k === 1 && kind === 'scalex') keyed[name].scale = keysOf(2, () => ({ x: number(2), y: number(2) }), 2, 3, [0.1, 1.2]);
+      }
+    }
+    const MODES = ['onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection', 'normal'];
+    bones.push({ name: 'inh', parent: 'b3', rotation: 20, inherit: 'noScale' });
+    keyed.inh = { inherit: [0.3, 0.9, 1.4, 2.0, 2.4].map((time, i) => ({ time, inherit: MODES[i] })), rotate: keysOf(1, () => ({ value: number(90) }), 3, 135, [0, 2.5]) };
+    bones.push({ name: 'dur', parent: 'root' });
+    keyed.dur = { rotate: [{ time: 0, value: 0 }, { time: 3, value: 0 }] };
+    const slots: Array<Record<string, unknown>> = [];
+    const slotKeys: Keyed = {};
+    const COLOURS: Array<[string, number, () => Record<string, unknown>, boolean]> = [
+      ['rgba', 4, () => ({ color: hex(4) }), false], ['rgb', 3, () => ({ color: hex(3) }), false], ['alpha', 1, () => ({ value: Math.round(rnd() * 1e4) / 1e4 }), false],
+      ['rgba2', 7, () => ({ light: hex(4), dark: hex(3) }), true], ['rgb2', 6, () => ({ light: hex(3), dark: hex(3) }), true],
+    ];
+    for (const [kind, channels, make, dark] of COLOURS) {
+      for (let k = 0; k < 2; k++) {
+        const name = `${kind}${k}`;
+        slots.push({ name, bone: 'root', color: hex(4), ...(dark ? { dark: hex(3) } : {}) });
+        slotKeys[name] = { [kind]: keysOf(channels, make, 2 + Math.floor(rnd() * 4), 3, [0.1, 2.8]) };
+      }
+    }
+    slots.push({ name: 'swap', bone: 'b1', attachment: 'r' }, { name: 'late', bone: 'b2', attachment: null });
+    slotKeys.swap = { attachment: [{ time: 0.4, name: 'q' }, { time: 0.9, name: null }, { time: 1.3, name: 'nothing' }, { time: 1.7, name: 'r' }] };
+    slotKeys.late = { attachment: [{ time: 1.1, name: 'q' }] };
+    return timelinePair({ bones, slots, regions: { swap: ['r', 'q'], late: ['q'] }, bones_: keyed, slotKeys });
+  };
+
+  // --- CA01: readModel reads the timelines and refuses each plant by name --
+  {
+    const probes: string[] = [];
+    const base = timelinePair({
+      bones: [{ name: 'root' }, { name: 'b', parent: 'root' }],
+      slots: [{ name: 's', bone: 'root', color: 'ffffffff' }, { name: 'd', bone: 'root', dark: '102030' }],
+      bones_: { b: { translate: [{ time: 0, x: 1, y: 2, curve: [0.1, 1, 0.2, 3, 0.1, 2, 0.2, 4] }, { time: 1, x: 3, y: 4 }], inherit: [{ time: 0.5, inherit: 'noScale' }] } },
+      slotKeys: { s: { rgba: [{ time: 0, color: 'ff000080' }, { time: 1, color: '00ff00ff' }] }, d: { rgb2: [{ time: 0, light: 'ff0000', dark: '00ff00' }] } },
+    });
+    type Doc = { animations: Array<{ bones: Array<{ name: string; timelines: Array<{ name: string; keys: Array<Record<string, unknown>> }> }>; slots: Array<{ name: string; timelines: Array<{ name: string; keys: Array<Record<string, unknown>> }> }>; events: unknown[] }>; slots: Array<Record<string, unknown>> };
+    const plant = (edit: (d: Doc) => void): string => {
+      const copy = JSON.parse(base.model) as Doc;
+      edit(copy);
+      return JSON.stringify(copy);
+    };
+    const tr = (d: Doc): Array<Record<string, unknown>> => d.animations[0].bones[0].timelines[0].keys;
+    const plants: Array<[string, string, string[]]> = [
+      ['a bone timeline no construct reads', plant((d) => (d.animations[0].bones[0].timelines[0].name = 'rotation')), ['"rotation" is not a bone timeline this core reads']],
+      ['a key missing a channel', plant((d) => delete tr(d)[1].y), ['y is undefined, not a finite number']],
+      ['a curve of the wrong length', plant((d) => (tr(d)[0].curve = [0.1, 1, 0.2, 3])), ['not "stepped" nor 8 finite numbers']],
+      ['a curve on the last key', plant((d) => (tr(d)[1].curve = 'stepped')), ['the last key carries a curve']],
+      ['key times that do not increase', plant((d) => (tr(d)[1].time = 0)), ['is not after the key before it']],
+      ['an rgba colour of six digits', plant((d) => (d.animations[0].slots[0].timelines[0].keys[0].color = 'ff0000')), ['color is "ff0000", not 8 hex digits']],
+      ['a two-colour timeline on a slot with no dark colour', plant((d) => delete d.slots[1].dark), ['states no dark colour', 'makes the runtime throw']],
+      ['a target that is no bone', plant((d) => (d.animations[0].bones[0].name = 'nobody')), ['"nobody" is not a bone of this document']],
+      ['an inherit key naming no mode', plant((d) => (d.animations[0].bones[0].timelines[1].keys[0].inherit = 'sideways')), ['folds to no inherit mode']],
+      ['one kind keyed twice on a bone', plant((d) => d.animations[0].bones[0].timelines.push({ name: 'translate', keys: [{ time: 0, x: 0, y: 0 }] })), ['"translate" is keyed twice on b']],
+      ['a key field the writer does not write', plant((d) => (tr(d)[0].ease = 'glide')), ['field "ease" is not one this timeline\'s keys carry']],
+      ['a later group\'s key with no time', plant((d) => d.animations[0].events.push({ name: 'hit' })), ['events[0]: time is undefined']],
+    ];
+    if (coreRefusal(base.model) !== '') probes.push(`the unplanted document was refused: ${coreRefusal(base.model)}`);
+    for (const [label, text, expected] of plants) {
+      const refusal = coreRefusal(text);
+      if (!expected.every((e) => refusal.includes(e))) probes.push(`${label}: ${refusal === '' ? 'read' : `refused as "${refusal.slice(0, 300)}"`}, not naming ${expected.map((e) => JSON.stringify(e)).join(' and ')}`);
+    }
+    if (free !== null && free.model.animations.every((a) => a.timelines.bones.length === 0 && a.timelines.slots.length === 0)) probes.push(`${free.name}'s document was read with no bone or slot timeline`);
+    const ok = probes.length === 0;
+    say(
+      'CA01_READ_MODEL_READS_THE_TIMELINES_AND_REFUSES_EACH_PLANT_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `a document keying translate with a Bézier, inherit, rgba and rgb2 read; ${plants.length} plants — a kind no construct reads, a key missing a channel, a curve of the wrong length and one on the last key, times that do not increase, an rgba colour of six digits, a two-colour timeline on a slot with no dark colour, a target that is no bone, an inherit key naming no mode, one kind keyed twice, a field the writer does not write, a later group's key with no time — each refused naming its path; ${free?.name ?? 'the free build'}'s timelines read`),
+      'issue #936: the reader mirrors the writer — every key states every channel in the one spelling `compile` writes, and a curve is four numbers per channel or `stepped` — so a key the core would have to guess at is refused rather than posed; a two-colour timeline on a slot with no dark colour is refused because the runtime throws on it (CA05)',
+    );
+  }
+
+  // --- CA02: the Bézier is the runtime's ten-piece polyline, and each rejected reading misses --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    // The measurement: one bone, one translatex from (0, 0) to (1, 1000) through handles (0.1, 800) and (0.3, 1000).
+    const curve = [0.1, 800, 0.3, 1000];
+    const one = timelinePair({ bones: [{ name: 'root' }, { name: 'b', parent: 'root' }], bones_: { b: { translatex: [{ time: 0, value: 0, curve }, { time: 1, value: 1000 }] } } });
+    const N = 2000;
+    const fine: OracleOptions = { ...DENSE, samples: N };
+    const series = spineDump(one, fine).animations[0].samples.map((x) => [x.t as number, x.bones[1][1] as number] as const);
+    const cubic = (u: number, p: readonly number[]): number => (1 - u) ** 3 * p[0] + 3 * (1 - u) ** 2 * u * p[1] + 3 * (1 - u) * u * u * p[2] + u ** 3 * p[3];
+    const exactAt = (t: number): number => {
+      let lo = 0;
+      let hi = 1;
+      for (let i = 0; i < 60; i++) {
+        const mid = (lo + hi) / 2;
+        if (cubic(mid, [0, curve[0], curve[2], 1]) < t) lo = mid;
+        else hi = mid;
+      }
+      return cubic((lo + hi) / 2, [0, curve[1], curve[3], 1000]);
+    };
+    const below = series.filter(([t, x]) => t > 0.01 && t < 0.99 && x < exactAt(t)).length;
+    const inside = series.filter(([t]) => t > 0.01 && t < 0.99).length;
+    const worst = Math.max(...series.map(([t, x]) => exactAt(t) - x));
+    if (below !== inside) probes.push(`${inside - below} of ${inside} interior samples were not below the exact cubic`);
+    // Slopes between consecutive samples fall into runs; a run of four or more is a piece.
+    const slopes = series.slice(1).map(([t, x], i) => (x - series[i][1]) / (t - series[i][0]));
+    const runs: Array<{ from: number; to: number; slope: number }> = [];
+    slopes.forEach((m, i) => {
+      const last = runs[runs.length - 1];
+      if (last !== undefined && Math.abs(m - last.slope) < 1e-2 * Math.max(1, Math.abs(last.slope))) last.to = i;
+      else runs.push({ from: i, to: i, slope: m });
+    });
+    const pieces = runs.filter((r) => r.to - r.from >= 3).map((r) => {
+      const a = series[r.from];
+      const b = series[r.to + 1];
+      const m = (b[1] - a[1]) / (b[0] - a[0]);
+      return { m, c: a[1] - m * a[0] };
+    });
+    const corners = pieces.slice(1).map((p, i) => (p.c - pieces[i].c) / (pieces[i].m - p.m));
+    const tenths = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => cubic(k / 10, [0, curve[0], curve[2], 1]));
+    if (pieces.length !== 10 || corners.some((t, i) => Math.abs(t - tenths[i]) > 1e-3)) probes.push(`${pieces.length} pieces with corners at [${corners.map((t) => t.toFixed(4)).join(', ')}], not ten at the cubic's tenths [${tenths.map((t) => t.toFixed(4)).join(', ')}]`);
+    // The core, and each rejected reading as a plant, over the measurement and 24 random segments stated off the float32 grid.
+    const rnd = lcg(777);
+    const segments = [one];
+    for (let k = 0; k < 24; k++) {
+      const t0 = Math.round(rnd() * 30) / 30;
+      const t1 = Math.round((t0 + 0.2 + Math.round(rnd() * 60) / 30) * 1e5) / 1e5;
+      const scale = [1, 10, 1000, 2000, 100, 50000][k % 6];
+      const v0 = Math.round((rnd() - 0.5) * scale * 1e4) / 1e4;
+      const v1 = Math.round((rnd() - 0.5) * scale * 1e4) / 1e4;
+      const c = [t0 + rnd() * (t1 - t0), v0 + (rnd() - 0.5) * 1.5 * scale, t0 + rnd() * (t1 - t0), v1 + (rnd() - 0.5) * 1.5 * scale].map((v) => Math.round(v * 1e6) / 1e6);
+      segments.push(timelinePair({ bones: [{ name: 'root' }, { name: 'b', parent: 'root' }], bones_: { b: { translatex: [{ time: t0, value: v0, curve: c }, { time: t1, value: v1 }] } } }));
+    }
+    const walk = (sixth: number, store: (v: number) => number) => (p0: number, p1: number, p2: number, p3: number): number[] => {
+      const second = (p0 - 2 * p1 + p2) * 0.03;
+      const third = ((p1 - p2) * 3 - p0 + p3) * 0.006;
+      let first = (p1 - p0) * 0.3 + second + third * sixth;
+      let d2 = second * 2 + third;
+      let at = p0;
+      const out: number[] = [];
+      for (let i = 1; i < 10; i++) {
+        at += first;
+        first += d2;
+        d2 += third;
+        out.push(store(at));
+      }
+      return out;
+    };
+    const direct = (p0: number, p1: number, p2: number, p3: number): number[] => [1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => Math.fround(cubic(k / 10, [p0, p1, p2, p3])));
+    /** A channel evaluator drawing the polyline from `points` over `from` (the stated numbers or the stored ones). */
+    const reading = (points: (p0: number, p1: number, p2: number, p3: number) => number[], from: 'stated' | 'stored'): ChannelEvaluator => (keys, i, c, t) => {
+      const a = keys[i];
+      const b = keys[i + 1];
+      if (b === undefined || !Array.isArray(a.curve)) return channelAt(keys, i, c, t);
+      const q = a.curve.slice(c * 4, c * 4 + 4).map((v) => (from === 'stored' ? Math.fround(v) : v));
+      const [t0, v0, t1, v1] = from === 'stated' ? [a.stated.time, a.stated.values[c], b.stated.time, b.stated.values[c]] : [a.time, a.values[c], b.time, b.values[c]];
+      const xs = points(t0, q[0], q[2], t1);
+      const ys = points(v0, q[1], q[3], v1);
+      const all = [a.time, a.values[c], ...xs.flatMap((x, k) => [x, ys[k]]), b.time, b.values[c]];
+      let j = 2;
+      while (j < all.length - 2 && all[j] < t) j += 2;
+      return all[j - 1] + ((t - all[j - 2]) / (all[j] - all[j - 2])) * (all[j + 1] - all[j - 1]);
+    };
+    const exactCubic: ChannelEvaluator = (keys, i, c, t) => {
+      const a = keys[i];
+      const b = keys[i + 1];
+      if (b === undefined || !Array.isArray(a.curve)) return channelAt(keys, i, c, t);
+      const q = a.curve.slice(c * 4, c * 4 + 4);
+      let lo = 0;
+      let hi = 1;
+      for (let k = 0; k < 60; k++) {
+        const mid = (lo + hi) / 2;
+        if (cubic(mid, [a.time, q[0], q[2], b.time]) < t) lo = mid;
+        else hi = mid;
+      }
+      return cubic((lo + hi) / 2, [a.values[c], q[1], q[3], b.values[c]]);
+    };
+    const readings: Array<[string, ChannelEvaluator | null]> = [
+      ['the core', null],
+      ['the exact cubic solved for t', exactCubic],
+      ['the cubic\'s tenths evaluated directly', reading(direct, 'stated')],
+      ['forward differences with 1/6 exact', reading(walk(1 / 6, Math.fround), 'stated')],
+      ['forward differences with 1/6 as a float32', reading(walk(Math.fround(1 / 6), Math.fround), 'stated')],
+      ['the core\'s recurrence over the stored float32 numbers', reading(walk(BEZIER_SIXTH, Math.fround), 'stored')],
+    ];
+    const SEG: OracleOptions = { ...DENSE, samples: 400 };
+    const dumps = segments.map((s) => spineDump(s, SEG));
+    const models = segments.map((s) => readModel(s.model, 'a Bézier segment'));
+    const misses: string[] = [];
+    let samples = 0;
+    for (const [label, channel] of readings) {
+      let missed = 0;
+      samples = 0;
+      segments.forEach((_s, k) => {
+        const theirs = dumps[k].animations[0].samples;
+        const ours = coreDump(models[k], SEG, channel === null ? {} : { channel }).animations?.[0]?.samples ?? [];
+        theirs.forEach((x, i) => {
+          samples++;
+          if (x.bones[1][1] !== ours[i]?.bones?.[1]?.[1]) missed++;
+        });
+      });
+      misses.push(`${label} ${missed}`);
+      if (channel === null ? missed !== 0 : missed === 0) probes.push(`${label} missed ${missed} of ${samples} samples`);
+    }
+    detail = `one translatex (0, 0) → (1, 1000) through handles (0.1, 800) and (0.3, 1000) at ${N} dense samples: every interior sample below the exact cubic (worst ${worst.toFixed(4)}), the slopes in exactly ten runs cornered at the cubic's tenths [${corners.map((t) => t.toFixed(4)).join(', ')}]; over it and 24 segments stated off the float32 grid, ${samples} samples, missed by — ${misses.join(', ')}`;
+    const ok = probes.length === 0;
+    say(
+      'CA02_THE_BEZIER_IS_A_TEN_PIECE_POLYLINE_BY_FORWARD_DIFFERENCES_AND_EACH_REJECTED_READING_MISSES',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #936: the runtime does not evaluate the cubic — its samples lie on chords through the cubic\'s points at tenths of its parameter, and only the textbook forward-difference recurrence with its one-sixth as the eight-digit 0.16666667, over the numbers as the file states them, reproduces them at the oracle\'s rounding (src/core/animation.ts, the header). Each rejected reading is held here missing, so the choice is a measurement and not a guess',
+    );
+  }
+
+  // --- CA03: a hand-written probe holds the key search and each bone kind's rule --
+  {
+    const probes: string[] = [];
+    const pair = timelinePair({
+      bones: [
+        { name: 'root' }, { name: 'tx', parent: 'root', x: 5, y: 7 }, { name: 'rot', parent: 'root', rotation: 20 }, { name: 'sc', parent: 'root', scaleX: 2, scaleY: 0.5 },
+        { name: 'sh', parent: 'root', shearX: 10 }, { name: 'ov1', parent: 'root', x: 1, y: 2 }, { name: 'ov2', parent: 'root', x: 1, y: 2 },
+        { name: 'st', parent: 'root' }, { name: 'inh0', parent: 'root', rotation: 30, scaleX: 2 }, { name: 'inh', parent: 'inh0', rotation: 10 }, { name: 'dur', parent: 'root' },
+      ],
+      bones_: {
+        tx: { translatex: [{ time: 0.5, value: 10 }, { time: 1, value: 30, curve: 'stepped' }, { time: 1.5, value: 40 }] },
+        rot: { rotate: [{ time: 0, value: 350 }, { time: 1, value: 10 }] },
+        sc: { scale: [{ time: 0, x: 3, y: 1 }, { time: 2, x: 1, y: 3 }] },
+        sh: { shearx: [{ time: 0, value: 30 }, { time: 2, value: 50 }] },
+        ov1: { translate: [{ time: 0, x: 10, y: 10 }, { time: 2, x: 20, y: 20 }], translatex: [{ time: 1, value: 100 }, { time: 2, value: 100 }] },
+        ov2: { translatex: [{ time: 1, value: 100 }, { time: 2, value: 100 }], translate: [{ time: 0, x: 10, y: 10 }, { time: 2, x: 20, y: 20 }] },
+        st: { translatex: [{ time: 0.5, value: 10, curve: 'stepped' }, { time: 1, value: 30 }] },
+        inh: { inherit: [{ time: 0.5, inherit: 'onlyTranslation' }, { time: 1.5, inherit: 'normal' }] },
+        dur: { rotate: [{ time: 0, value: 0 }, { time: 2, value: 0 }] },
+      },
+    });
+    const spine = spineDump(pair, GRID9);
+    const at = (bone: string, i: number): number[] => spine.animations[0].samples[i].bones.find((b) => b[0] === bone)?.slice(1, 7) as number[];
+    const angle = (row: number[]): number => Math.round((Math.atan2(row[4], row[2]) * 180) / Math.PI * 1e3) / 1e3;
+    // Each rule read off the runtime's own dump, with the value the header states; t = 0, 0.25, …, 2.
+    const checks: Array<[string, number, number]> = [
+      ['translatex before its first key is the setup x (t 0.25)', at('tx', 1)[0], 5],
+      ['on a key exactly, that key (t 0.5)', at('tx', 2)[0], 15],
+      ['a stepped key at 1 read at 1 is that key, not the one before', at('st', 4)[0], 30],
+      ['a stepped segment holds (t 0.75)', at('st', 3)[0], 10],
+      ['after the last key, the last key (t 1.75)', at('tx', 7)[0], 45],
+      ['rotate adds, 350 → 10 passing 180 (t 0.5: 20 + 180)', angle(at('rot', 2)), -160],
+      ['scale multiplies (t 0: 2 × 3)', at('sc', 0)[2], 6],
+      ['shearx adds (t 0: x axis at 10 + 30)', angle(at('sh', 0)), 40],
+      ['translatex listed after translate poses the setup x before its first key (t 0)', at('ov1', 0)[0], 1],
+      ['translatex listed before translate is overwritten by it (t 0)', at('ov2', 0)[0], 11],
+    ];
+    for (const [label, found, want] of checks) if (found !== want) probes.push(`${label}: spine-core read ${found}, not ${want}`);
+    const inh = [0, 2, 6].map((i) => JSON.stringify(at('inh', i)));
+    if (inh[0] === inh[1] || inh[0] !== inh[2]) probes.push(`inherit: the matrix before 0.5, from 0.5 and from 1.5 read ${inh.join(' / ')} — the mode did not change at its key and back`);
+    const c = compareDumps(spine, coreDump(readModel(pair.model, 'the rule probe'), GRID9), { xy: 0, m: 0 });
+    if (!c.identical) probes.push(`the core read DIFF: ${c.first}`);
+    const dense = exactly(pair, DENSE);
+    if (!dense.identical) probes.push(`the core read DIFF at 200 dense samples: ${dense.first}`);
+    const ok = probes.length === 0;
+    say(
+      'CA03_A_HAND_WRITTEN_PROBE_HOLDS_THE_KEY_SEARCH_AND_EACH_BONE_KINDS_RULE',
+      ok,
+      probeDetail(ok, probes, `${checks.length + 1} rules read off spine-core's own dump — the setup value before the first key, the key itself on a key, the last key after it, a stepped hold and the key ending it, rotate adding and passing 180 rather than wrapping, scale multiplying, shear adding, a timeline posing its channel's setup value before its first key over one listed earlier, and inherit switching at its keys — and the core IDENTICAL to it at tolerance 0 on the grid and over ${dense.boneSamples} dense bone-samples`),
+      'issue #936: each rule the core poses by is measured, and the measurement is held here so a runtime that changed it would turn this red before the corpus did',
+    );
+  }
+
+  // --- CA04: every bone and slot timeline kind on a hand-written probe poses as spine-core does --
+  {
+    const probes: string[] = [];
+    const seeds = [7919, 15838, 23757];
+    let boneSamples = 0;
+    let slotRows = 0;
+    const kinds = new Set<string>();
+    for (const seed of seeds) {
+      const pair = allKindsProbe(seed);
+      const model = readModel(pair.model, 'the all-kinds probe');
+      for (const a of model.animations) for (const t of [...a.timelines.bones, ...a.timelines.slots]) for (const x of t.timelines) kinds.add(x.kind);
+      let c: ReturnType<typeof compareDumps>;
+      try {
+        c = exactly(pair, DENSE);
+      } catch (err) {
+        probes.push(`seed ${seed}: the probe did not pose: ${(err as Error).name}`);
+        continue;
+      }
+      boneSamples += c.boneSamples;
+      slotRows += DENSE.samples * model.slots.length;
+      if (!c.identical || c.skipped.some((s) => s.startsWith('animations.bones') || s.startsWith('animations.slots'))) probes.push(`seed ${seed}: ${c.identical ? 'a posed block was skipped' : `DIFF — ${c.first}`}`);
+    }
+    const every = [...BONE_TIMELINE_KINDS, ...SLOT_TIMELINE_KINDS];
+    const missing = every.filter((k) => !kinds.has(k));
+    if (missing.length > 0) probes.push(`the probe keys no ${missing.join(', ')}`);
+    const ok = probes.length === 0;
+    say(
+      'CA04_EVERY_BONE_AND_SLOT_TIMELINE_KIND_ON_A_HAND_WRITTEN_PROBE_POSES_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${seeds.length} probes keying all ${every.length} kinds — ${every.join(', ')} — with linear, stepped and Bézier segments drawn at random, numbers stated off the float32 grid, colour curves overshooting [0, 1], two timelines posing one bone channel, an attachment through a swap, null and an unfilled placeholder, under parents turned, scaled and reflected: IDENTICAL at tolerance 0 over ${boneSamples} bone-samples and ${slotRows} slot rows at 200 dense samples`),
+      'issue #936: the corpus reaches rotate, translate and its split axes, scale and its split axes, shear, attachment and rgba; this probe is the reading of every kind, and the only one of shearx, sheary, inherit, rgb, alpha, rgba2 and rgb2 (CA11 names each HOLE)',
+    );
+  }
+
+  // --- CA05: the colour rules — set not blended, clamped, and a two-colour timeline on a slot with no dark colour --
+  {
+    const probes: string[] = [];
+    const pair = timelinePair({
+      bones: [{ name: 'root' }, { name: 'dur', parent: 'root' }],
+      slots: [{ name: 'col', bone: 'root', color: 'ff0000ff' }, { name: 'rgb', bone: 'root', color: '10203040' }, { name: 'alp', bone: 'root', color: '10203040' }, { name: 'dark', bone: 'root', dark: '112233' }, { name: 'over', bone: 'root' }],
+      bones_: { dur: { rotate: [{ time: 0, value: 0 }, { time: 2, value: 0 }] } },
+      slotKeys: {
+        col: { rgba: [{ time: 0.5, color: '00ff0080' }, { time: 1.5, color: '0000ffff' }] },
+        rgb: { rgb: [{ time: 0, color: 'ff0000' }, { time: 2, color: '00ff00' }] },
+        alp: { alpha: [{ time: 0, value: 0.25 }, { time: 2, value: 0.75 }] },
+        dark: { rgba2: [{ time: 0.5, light: 'ff000080', dark: '00ff00' }, { time: 2, light: '0000ffff', dark: '0000ff' }] },
+        over: { rgba: [{ time: 0, color: 'ffffffff', curve: [0.5, 3, 1, 3, 0.5, -2, 1, -2, 0.5, 1, 1, 1, 0.5, 1, 1, 1] }, { time: 2, color: 'ffffffff' }] },
+      },
+    });
+    const spine = spineDump(pair, GRID9);
+    const row = (slot: string, i: number): SlotRow => spine.animations[0].samples[i].slots.find((s) => s[0] === slot) as SlotRow;
+    const checks: Array<[string, unknown, unknown]> = [
+      ['rgba before its first key is the setup colour (t 0.25)', row('col', 1).slice(2, 6), [1, 0, 0, 1]],
+      ['rgba sets, it does not blend with setup (t 0.5)', row('col', 2).slice(2, 6), [0, 1, 0, 0.501961]],
+      ['rgb keeps the setup alpha (t 1)', row('rgb', 4).slice(2, 6), [0.5, 0.5, 0, 0.25098]],
+      ['alpha keeps the setup rgb (t 1)', row('alp', 4).slice(2, 6), [0.062745, 0.12549, 0.188235, 0.5]],
+      ['rgba2 before its first key is the setup dark colour (t 0.25)', row('dark', 1)[6], [0.066667, 0.133333, 0.2]],
+      ['a curve past 1 and below 0 is clamped (t 0.5)', row('over', 2).slice(2, 4), [1, 0]],
+    ];
+    for (const [label, found, want] of checks) if (JSON.stringify(found) !== JSON.stringify(want)) probes.push(`${label}: spine-core read ${JSON.stringify(found)}, not ${JSON.stringify(want)}`);
+    const c = exactly(pair, DENSE);
+    if (!c.identical) probes.push(`the core read DIFF: ${c.first}`);
+    // What the curve itself reaches there, before the clamp: outside [0, 1], so the clamp is what the row shows.
+    const overKeys = readModel(pair.model, 'the colour probe').animations[0].timelines.slots.find((x) => x.name === 'over')?.timelines[0].keys ?? [];
+    const raw = overKeys.length === 0 ? [] : [0, 1].map((ch) => channelAt(overKeys, 0, ch, 0.5));
+    if (!(raw[0] > 1 && raw[1] < 0)) probes.push(`the overshooting curve reads [${raw.join(', ')}] at t 0.5 before the clamp, not above 1 and below 0`);
+    // A two-colour timeline on a slot with no dark colour: the runtime throws, and the reader refuses its model.
+    const noDark = timelinePair({ bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root' }], slotKeys: { s: { rgba2: [{ time: 0, light: 'ff000080', dark: '00ff00' }, { time: 1, light: '0000ffff', dark: '0000ff' }] } } });
+    let threw = '';
+    try {
+      spineDump(noDark, GRID9);
+    } catch (err) {
+      threw = (err as Error).name;
+    }
+    if (threw !== 'TypeError') probes.push(`spine-core posed an rgba2 timeline on a slot with no dark colour ${threw === '' ? 'without throwing' : `throwing ${threw}`}`);
+    if (!coreRefusal(noDark.model).includes('states no dark colour')) probes.push(`the reader read the model of it: ${coreRefusal(noDark.model) || 'no refusal'}`);
+    const ok = probes.length === 0;
+    say(
+      'CA05_A_COLOUR_TIMELINE_SETS_ITS_CHANNELS_CLAMPED_AND_TWO_COLOURS_NEED_A_DARK_COLOUR',
+      ok,
+      probeDetail(ok, probes, `${checks.length} rules read off spine-core's dump — setup before the first key, set rather than blended, rgb keeping alpha and alpha keeping rgb, the dark colour at setup before rgba2's first key, a curve clamped to [0, 1] — the core IDENTICAL at tolerance 0 over 200 dense samples and the curve itself above 1 and below 0 there; rgba2 on a slot with no dark colour throws ${threw} in the runtime and is refused by the reader`),
+      'issue #936: the colour kinds the corpus does not reach (rgb, alpha, rgba2, rgb2) are posed by rules measured here; a timeline the runtime cannot apply has no pose to hold a core to, so it is refused by name, as the compiler refuses it',
+    );
+  }
+
+  // The corpus: the gate's rows (grid, nine samples) and every row again at 200 dense samples.
+  const animationCompared = rows.filter((r) => r.blocks !== null && r.blocks['animations.bones'].verdict !== 'SKIP');
+  const animationSlotsCompared = rows.filter((r) => r.blocks !== null && r.blocks['animations.slots'].verdict !== 'SKIP');
+
+  // --- CA06: every recipe poses every animation's bones and slots as spine-core does, the constrained ones' bones skipped by construct --
+  {
+    const probes: string[] = [];
+    let denseBones = 0;
+    let animations = 0;
+    let boneAnimations = 0;
+    let slotAnimations = 0;
+    for (const r of rows) {
+      if (r.blocks === null) {
+        probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+        continue;
+      }
+      for (const block of ['animations.bones', 'animations.slots'] as const) if (r.blocks[block].verdict === 'DIFF') probes.push(`${r.name}: ${block} DIFF — ${r.blocks[block].why}`);
+      for (const a of r.animations) {
+        animations++;
+        if (a.bones === 'IDENTICAL') boneAnimations++;
+        if (a.slots === 'IDENTICAL') slotAnimations++;
+        if (a.bones === 'DIFF' || a.slots === 'DIFF') probes.push(`${r.name} animation "${a.name}": ${a.why}`);
+      }
+    }
+    for (const b of built) {
+      const row = rows.find((r) => r.name === b.name);
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      if (row === undefined || row.blocks === null || !existsSync(path)) continue;
+      const model = readModel(readFileSync(path, 'utf8'), path);
+      const declares = model.constraints.length > 0;
+      const skipped = row.blocks['animations.bones'].verdict === 'SKIP';
+      if (declares !== skipped) probes.push(`${b.name}: ${declares ? 'declares a constraint and its animation bones were not skipped' : 'declares none and its animation bones were skipped'}`);
+      if (skipped && !(row.blocks['animations.bones'].why ?? '').includes('constraints are not admitted')) probes.push(`${b.name}: skipped without naming the construct — ${row.blocks['animations.bones'].why}`);
+      // The same row at 200 dense samples, both animation blocks, tolerance 0.
+      const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), DENSE);
+      const c = compareDumps(spine, coreDump(model, DENSE), { xy: 0, m: 0 });
+      if (!c.identical) probes.push(`${b.name} at 200 dense samples: ${c.first}`);
+      denseBones += c.boneSamples;
+    }
+    if (animationCompared.length === 0 || animationSlotsCompared.length === 0) probes.push('no row\'s animations were compared, so the gate held nothing');
+    const ok = probes.length === 0;
+    say(
+      'CA06_EVERY_RECIPE_POSES_EVERY_ANIMATIONS_BONES_AND_SLOTS_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${animations} animation(s), ${boneAnimations} IDENTICAL on their bones and ${slotAnimations} on their slots at the gate's nine grid samples, the rest skipped by construct and named; every row again at 200 dense samples, IDENTICAL at tolerance 0 over ${denseBones} bone-samples; the rows whose bones were skipped exactly the ones declaring a constraint`),
+      'issue #936, construct 4 of #380 §5 admitted: every unconstrained recipe\'s every animation, bones and slots, against spine-core\'s dump of the same build — a rig with a constraint has its bones posed by the constraints after the animation (CA07), so they are a later construct\'s',
+    );
+  }
+
+  // --- CA07: a constrained row posed without its constraints differs, which is why its bones are left out --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    const candidate = built.find((b) => {
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      if (!existsSync(path)) return false;
+      const m = readModel(readFileSync(path, 'utf8'));
+      return m.constraints.length > 0 && m.constraints.every((c) => c.kind !== 'slider') && m.animations.some((a) => a.timelines.bones.length > 0);
+    });
+    if (candidate === undefined) probes.push('no built row declares a constraint (and no slider) and keys a bone');
+    else {
+      const model = readModel(readFileSync(join(candidate.out, MODEL_DOCUMENT_FILE), 'utf8'));
+      const spine = dumpSkeleton(loadOracleData(readFileSync(join(candidate.out, 'skeleton.json'), 'utf8'), readFileSync(join(candidate.out, 'skeleton.atlas'), 'utf8'), candidate.out), GRID9);
+      let moved = 0;
+      let compared = 0;
+      let worst = { d: 0, what: '' };
+      model.animations.forEach((a) => {
+        const theirs = spine.animations.find((x) => x.name === a.name);
+        if (theirs === undefined) return;
+        theirs.samples.forEach((x, i) => {
+          const ours = posedBoneRows(model, a.timelines, sampleTime('grid', a.timelines.duration, i, GRID9.samples));
+          for (const row of ours) {
+            const other = x.bones.find((b) => b[0] === row[0]);
+            if (other === undefined) continue;
+            compared++;
+            const d = Math.max(...[1, 2].map((k) => Math.abs((row[k] as number) - (other[k] as number))));
+            if (d > 1e-6) moved++;
+            if (d > worst.d) worst = { d, what: `bone "${row[0]}" in "${a.name}" t=${x.t}` };
+          }
+        });
+      });
+      if (moved === 0) probes.push(`${candidate.name}: the core's hierarchy alone agreed with spine-core on all ${compared} bone-samples, so the constraints were not shown to move a bone`);
+      const kinds = [...new Set(model.constraints.map((c) => c.kind))];
+      detail = `${candidate.name} (${kinds.join(', ')}): posed by the core's timelines and hierarchy alone, ${moved} of ${compared} bone-samples differ from spine-core's by more than one grid step, worst ${worst.d.toFixed(6)} at ${worst.what}`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'CA07_A_CONSTRAINED_ROW_POSED_WITHOUT_ITS_CONSTRAINTS_DIFFERS_SO_ITS_BONES_ARE_LEFT_OUT',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #936: the brief\'s seven constrained rows are SKIP by construct, and that is a claim — measured on one, the bones the constraints reach are not where the timelines and the hierarchy alone put them',
+    );
+  }
+
+  // --- CA08: a Bézier handle moved, a channel's sign flipped and the key search off by one each turn exactly the rows they move red --
+  {
+    const probes: string[] = [];
+    const reached: string[] = [];
+    const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null && (r.blocks['animations.bones'].verdict !== 'SKIP' || r.blocks['animations.slots'].verdict !== 'SKIP')));
+    const plants: Array<[string, TimelinePlant, (m: CompiledDocument) => boolean]> = [
+      ['a Bézier handle moved', { channel: (keys, i, c, t) => (Array.isArray(keys[i].curve) && keys[i + 1] !== undefined ? channelAt([...keys.slice(0, i), { ...keys[i], curve: (keys[i].curve as number[]).map((v, j) => (j === c * 4 + 1 ? v + 1 : v)) }, ...keys.slice(i + 1)], i, c, t) : channelAt(keys, i, c, t)) }, (m) => m.animations.some((a) => [...a.timelines.bones, ...a.timelines.slots].some((t) => t.timelines.some((x) => x.keys.some((k) => Array.isArray(k.curve)))))],
+      ['a channel\'s sign flipped', { channel: (keys, i, c, t) => (c === 1 ? -channelAt(keys, i, c, t) : channelAt(keys, i, c, t)) }, (m) => m.animations.some((a) => [...a.timelines.bones, ...a.timelines.slots].some((t) => t.timelines.some((x) => (x.keys[0]?.values.length ?? 0) > 1)))],
+      ['the key search off by one', { search: (keys, t) => Math.min(keys.length - 1, keyIndexAt(keys, t) + 1) }, (m) => m.animations.some((a) => [...a.timelines.bones, ...a.timelines.slots].some((t) => t.timelines.some((x) => x.keys.length > 1)))],
+    ];
+    for (const [label, plant, uses] of plants) {
+      // Where the plant moves the core's own dump is where the gate must read red, and nowhere else.
+      const moves = judged.filter((b) => {
+        const model = readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'));
+        return JSON.stringify(coreDump(model, GATE_OPTIONS).animations) !== JSON.stringify(coreDump(model, GATE_OPTIONS, plant).animations);
+      }).map((b) => b.name);
+      const users = judged.filter((b) => uses(readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')))).map((b) => b.name);
+      const red = gateBuilt(judged, plant).filter((r) => r.verdict === 'DIFF').map((r) => r.name);
+      if (JSON.stringify(red) !== JSON.stringify(moves)) probes.push(`${label} turned [${red.join(', ')}] red; it moved the core's dump on [${moves.join(', ')}]`);
+      if (moves.length === 0) probes.push(`${label} moved no row`);
+      const outside = moves.filter((n) => !users.includes(n));
+      if (outside.length > 0) probes.push(`${label} moved [${outside.join(', ')}], which do not use it`);
+      reached.push(`${label} ${red.length}/${judged.length} (of ${users.length} using it)`);
+    }
+    const ok = probes.length === 0 && judged.length > 0;
+    say(
+      'CA08_A_HANDLE_MOVED_A_SIGN_FLIPPED_AND_THE_KEY_SEARCH_OFF_BY_ONE_TURN_EXACTLY_THE_ROWS_THEY_MOVE_RED',
+      ok,
+      probeDetail(ok, judged.length === 0 ? [...probes, 'no row\'s animations were compared'] : probes, `each plant passed as a copy, never in src/: rows red of those compared — ${reached.join(', ')} — exactly the rows where the plant moves the core's own dump, each a row that uses what was planted`),
+      'issue #936\'s positive control: a gate nobody has seen fail is not a gate. A plant that reddened every row would not show the gate reads the curve, the channel or the search, and one that reddened a row where it moved nothing would be reading something else',
+    );
+  }
+
+  // --- CA09: the sample blocks — absent by name, compared by animation name, over the runtime's duration --
+  {
+    const probes: string[] = [];
+    const pair = timelinePair({
+      bones: [{ name: 'root' }, { name: 'b', parent: 'root' }],
+      bones_: { b: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 90 }] } },
+      events: [{ time: 2.5 }],
+    });
+    const spine = spineDump(pair, GRID9);
+    const core = coreDump(readModel(pair.model, 'the duration probe'), GRID9);
+    const c = compareDumps(spine, core, { xy: 0, m: 0 });
+    const skipped = c.skipped.map((s) => s.slice(0, s.indexOf(':')));
+    const want = ['animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.events'];
+    if (!c.identical || !want.every((b) => skipped.includes(b))) probes.push(`a rotate timeline ending at 1 beside an event at 2.5 read ${c.identical ? 'IDENTICAL' : c.first}, skipping [${skipped.join(', ')}]`);
+    if (core.animations?.[0]?.duration !== 2.5 || spine.animations[0].duration !== 2.5) probes.push(`the duration is ${core.animations?.[0]?.duration} in the core and ${spine.animations[0].duration} in spine-core, not the event's 2.5 (the model states 0)`);
+    // Animation order is the file's spelling; compare matches animations by name.
+    const reordered = { ...core, animations: [...(core.animations ?? [])].reverse() };
+    const twoAnims = { ...spine, animations: [...spine.animations, { ...spine.animations[0], name: 'z' }] };
+    const coreTwo = { ...core, animations: [{ ...(core.animations ?? [])[0], name: 'z' }, ...(core.animations ?? [])] };
+    if (!compareDumps(twoAnims, coreTwo, { xy: 0, m: 0 }).identical || !compareDumps(spine, reordered, { xy: 0, m: 0 }).identical) probes.push('two documents listing the same animations in two orders read DIFF');
+    const readErr = (v: unknown): string => {
+      try {
+        asOracleDocument(v, 'plant');
+        return '';
+      } catch (err) {
+        return (err as Error).message;
+      }
+    };
+    const carried = JSON.parse(JSON.stringify(core)) as OracleDocument;
+    (carried.animations ?? [])[0].samples[0].drawOrder = [];
+    if (!readErr(carried).includes('animations.drawOrder is named absent and a sample carries it')) probes.push(`a sample carrying a block named absent was read: ${readErr(carried) || 'no refusal'}`);
+    const unnamed = JSON.parse(JSON.stringify(core)) as OracleDocument;
+    unnamed.absent = (unnamed.absent ?? []).filter((x) => x[0] !== 'animations.clips');
+    if (!readErr(unnamed).includes('animations.clips is not named absent and a sample carries no list for it')) probes.push(`a sample block null and unnamed was read: ${readErr(unnamed) || 'no refusal'}`);
+    const phases: SamplePhase[] = ['grid', 'off', 'irr', 'dense'];
+    const drift = phases.filter((p) => [0, 1, 7].some((i) => oracleSampleTime(p, 2.5, i, 9) !== sampleTime(p, 2.5, i, 9)));
+    if (drift.length > 0) probes.push(`the tool and the core sample at different times under ${drift.join(', ')}`);
+    const ok = probes.length === 0;
+    say(
+      'CA09_THE_SAMPLE_BLOCKS_ARE_ABSENT_BY_NAME_MATCHED_BY_ANIMATION_AND_TIMED_BY_EVERY_TIMELINE',
+      ok,
+      probeDetail(ok, probes, `a rotate ending at 1 beside an event at 2.5: duration 2.5 in both (the model states 0), IDENTICAL with the draw order, attachments, clips and events of every sample SKIPped by name; two documents listing animations in two orders IDENTICAL; a sample carrying a block its document names absent, and one leaving a block out without naming it, refused; the tool's sample times the core's under all four phases`),
+      'issue #936: a sample block the core does not pose is null in every sample and named once, the way a setup block is; the order animations are listed in is the Spine file\'s spelling, not a pose; and the runtime\'s duration is the last key of every timeline, the later constructs\' included, so the samples land where spine-core\'s do',
+    );
+  }
+
+  // --- CA10: the animations' census counts a hand-made document as computed by hand --
+  {
+    const probes: string[] = [];
+    const pair = timelinePair({
+      bones: [{ name: 'root' }, { name: 'a', parent: 'root' }, { name: 'b', parent: 'root' }],
+      slots: [{ name: 's', bone: 'root', dark: '000000' }],
+      bones_: {
+        a: { translate: [{ time: 0.5, x: 0, y: 0, curve: 'stepped' }, { time: 1, x: 1, y: 1, curve: [1.1, 1, 1.2, 1, 1.1, 1, 1.2, 1] }, { time: 1.5, x: 0, y: 0 }], translatex: [{ time: 0, value: 1 }] },
+        b: { inherit: [{ time: 0, inherit: 'noScale' }], shearx: [{ time: 0, value: 1 }, { time: 2, value: 2 }] },
+      },
+      slotKeys: { s: { rgba2: [{ time: 0, light: 'ffffffff', dark: '000000', curve: 'stepped' }, { time: 2, light: '000000ff', dark: 'ffffff' }], attachment: [{ time: 1, name: null }] } },
+    });
+    const census = animationCensusOf(pair.model, GRID9);
+    // Grid of nine over 2 s: 0, 0.25, …, 2. translate's first key at 0.5 leaves two samples before it and its last at 1.5
+    // two after; translatex and inherit (one key at 0) leave eight after each; the attachment's key at 1 four before and four after.
+    const want: Partial<Record<AnimationCensusField, number>> = {
+      'bone.translate': 1, 'bone.translatex': 1, 'bone.inherit': 1, 'bone.shearx': 1, 'slot.rgba2': 1, 'slot.attachment': 1,
+      'bone.linear': 1, 'bone.stepped': 1, 'bone.bezier': 1, 'slot.stepped': 1, 'slot.linear': 0,
+      beforeFirstKey: 2 + 4, afterLastKey: 2 + 8 + 8 + 4, overlappingBoneChannels: 1, laterTimelines: 0,
+    };
+    for (const [field, n] of Object.entries(want)) if (census[field as AnimationCensusField] !== n) probes.push(`${field} counted ${census[field as AnimationCensusField]}, not ${n}`);
+    if (census.animations !== 1) probes.push(`${census.animations} animation(s) counted`);
+    const ok = probes.length === 0;
+    say(
+      'CA10_THE_ANIMATIONS_CENSUS_COUNTS_A_HAND_MADE_DOCUMENT_AS_COMPUTED_BY_HAND',
+      ok,
+      probeDetail(ok, probes, `one animation keying translate (stepped, Bézier, then a last key), translatex over it, inherit, shearx, rgba2 (stepped) and an attachment, counted ${Object.keys(want).length} fields as computed by hand — the curves per segment, the grid samples before a first key and after a last, and the bone with two timelines posing one channel`),
+      'issue #936: the census is what the next construct\'s probes are aimed by and what CA11 reads HOLEs off, so its counts are held to a document whose answer is known',
+    );
+  }
+
+  // --- CA11: every kind and curve no compared row reaches is a HOLE by name, and the all-kinds probe reaches it --
+  {
+    const probes: string[] = [];
+    const holes = animationReachLines(rows).filter((l) => l.startsWith('  HOLE')).map((l) => /animations (\S+):/.exec(l)?.[1] ?? l);
+    const probeCensus = animationCensusOf(allKindsProbe(7919).model, DENSE);
+    const covered = holes.filter((f) => f !== 'laterTimelines' && (probeCensus[f as AnimationCensusField] ?? 0) > 0);
+    const uncovered = holes.filter((f) => f !== 'laterTimelines' && !covered.includes(f));
+    if (uncovered.length > 0) probes.push(`no compared row and no probe reaches ${uncovered.join(', ')}`);
+    if (!holes.includes('laterTimelines')) probes.push('the later groups\' timelines were not named a HOLE');
+    const ok = probes.length === 0;
+    say(
+      'CA11_EVERY_KIND_AND_CURVE_NO_COMPARED_ROW_REACHES_IS_A_HOLE_BY_NAME_AND_THE_PROBE_REACHES_IT',
+      ok,
+      probeDetail(ok, probes, `${holes.length} HOLE(s) over the compared rows — ${holes.join(', ')} — each but the later groups reached by CA04's probe at tolerance 0; the later groups' timelines a HOLE this construct does not judge`),
+      'issue #380 §4: a construct no row uses is a HOLE, never a pass, and a HOLE is covered by a probe or it is not covered at all',
+    );
+    for (const line of animationReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
   }
 
   rmSync(work, { recursive: true, force: true });
@@ -82222,7 +82898,17 @@ function main(): void {
       'every channel to the runtime at tolerance zero; several skins on one placeholder shown to be the Spine ' +
       'file\'s order, which the model does not hold, and a disagreement left out by name; a slider shown to pose ' +
       'the slots its animation keys; and a channel misread and a wrong skin, each in a copy, turning exactly the ' +
-      'rows using them red)' +
+      'rows using them red; then construct four, issue #936, every animation\'s bone and slot timelines at the ' +
+      'oracle\'s sample times: the reader holding every key to the writer\'s channels and spellings and refusing ' +
+      'what the runtime cannot apply; the Bézier shown to be the runtime\'s ten-piece polyline by forward ' +
+      'differences over the numbers as stated, with every rejected reading held missing; the key search and each ' +
+      'bone kind\'s rule, and each colour rule, read off spine-core\'s own dump and posed exactly; every bone and ' +
+      'slot timeline kind on a hand-written probe at tolerance zero; every recipe\'s every animation posed exactly ' +
+      'as spine-core does, on the grid and densely, the constrained rows\' bones skipped by construct and one of ' +
+      'them shown to move; a handle moved, a sign flipped and the key search off by one each turning exactly the ' +
+      'rows they move red; the sample blocks absent by name, matched by animation and timed by every timeline; ' +
+      'the census held to a document counted by hand; and every kind and curve no row reaches a HOLE the probe ' +
+      'covers)' +
       (emitHashesBad === null
         ? ''
         : ', + ' + n('emit-hashes') + ' emit-hashes controls (issue #914 — `tools/emit_hashes.ts`, the byte-identity ' +

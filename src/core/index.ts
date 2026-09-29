@@ -12,10 +12,13 @@
  * its active flag and its parent (issue #925) — and **the slots at the setup
  * pose** — what each shows, its colour and dark colour, and the region path
  * the shown attachment names (issue #928, below). Both are rounded as the
- * oracle rounds (`gridRound`). Every other block of the oracle's document is a
- * construct not yet admitted (attachments, timelines, constraints, clipping),
- * and the core says so by name (`NOT_ADMITTED`) rather than writing a value
- * for it.
+ * oracle rounds (`gridRound`). A third, **every animation's bone and slot
+ * timelines at the oracle's sample times** (issue #936), is its own module,
+ * `./animation.ts`, which this reader calls for each animation record. Every
+ * other block of the oracle's document is a construct not yet admitted
+ * (attachments, the draw order, deform, events, constraints, clipping), and
+ * the core says so by name (`NOT_ADMITTED`) rather than writing a value for
+ * it.
  *
  * ⚠️ **A document that declares any constraint has no setup bones from the
  * core.** The oracle poses the setup pose with every constraint applied, so a
@@ -142,6 +145,7 @@
  */
 import type { ModelAtlasRect, ModelBone, ModelSlot, SkinTableEntry } from '../model.ts';
 import { worldTransforms, type CoreWorld } from './world.ts';
+import { readAnimationTimelines, type CoreAnimationTimelines } from './animation.ts';
 
 /** The document spec this reader takes. */
 export const CORE_DOCUMENT_SPEC = 'rigc-compiled/1';
@@ -224,10 +228,11 @@ export interface CoreConstraint {
   animation?: string;
 }
 
-/** One animation, as far as these constructs read it: its name and the slots its timelines key. */
+/** One animation: its name, the slots its timelines key, and its timelines as construct 4 reads them (`./animation.ts`). */
 export interface CoreAnimation {
   name: string;
   slots: string[];
+  timelines: CoreAnimationTimelines;
 }
 
 /**
@@ -425,7 +430,8 @@ function readSkins(value: unknown, bones: ReadonlySet<string>, slots: ReadonlySe
   return out;
 }
 
-function readAnimations(value: unknown, slots: ReadonlySet<string>, problems: string[]): CoreAnimation[] {
+function readAnimations(value: unknown, bones: ReadonlySet<string>, slotRecords: readonly ModelSlot[], problems: string[]): CoreAnimation[] {
+  const slots = new Set(slotRecords.map((s) => s.name));
   if (!Array.isArray(value)) {
     problems.push('animations is not a list');
     return [];
@@ -448,7 +454,7 @@ function readAnimations(value: unknown, slots: ReadonlySet<string>, problems: st
         else keyed.push(entry.name);
       });
     }
-    out.push({ name: typeof raw.name === 'string' ? raw.name : '', slots: keyed });
+    out.push({ name: typeof raw.name === 'string' ? raw.name : '', slots: keyed, timelines: readAnimationTimelines(raw, label, bones, slotRecords, problems) });
   });
   return out;
 }
@@ -504,7 +510,7 @@ export function readModel(text: string, where = 'the model document'): CompiledD
   const slots = readSlots(value.slots, names, problems);
   const slotNames = new Set(slots.map((x) => x.name));
   const skins = readSkins(value.skins, names, slotNames, problems);
-  const animations = readAnimations(value.animations, slotNames, problems);
+  const animations = readAnimations(value.animations, names, slots, problems);
   const constraints = readConstraints(value.constraints, new Set(animations.map((a) => a.name)), problems);
   if (problems.length > 0) throw new CoreInputError(`${where}: ${problems.length} problem(s): ${problems.join('; ')}`);
   return { spec: CORE_DOCUMENT_SPEC, bones, slots, skins, constraints, animations };
@@ -575,7 +581,10 @@ export const NOT_ADMITTED: ReadonlyArray<readonly [string, string]> = [
   ['setup.drawOrder', 'the draw order: not admitted (item 2)'],
   ['setup.attachments', 'attachment world vertices: not admitted (item 3)'],
   ['setup.clips', 'clipping polygons: not admitted (items 3 and 6)'],
-  ['animations', 'timelines and curves: not admitted (item 4)'],
+  ['animations.drawOrder', 'the draw order at a sample: draw-order timelines are not admitted (items 2 and 4)'],
+  ['animations.attachments', 'attachment world vertices at a sample: attachments and deform timelines are not admitted (items 3 and 4)'],
+  ['animations.clips', 'clipping polygons at a sample: not admitted (items 3 and 6)'],
+  ['animations.events', 'events fired: event timelines are not admitted (item 4)'],
 ];
 
 /** The two blocks the core poses, in the document's order: after `pathAttachments`, before `setup.drawOrder`. */
