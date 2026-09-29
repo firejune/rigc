@@ -812,20 +812,34 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  * the physics timeline that names no constraint keeps the model's name for it,
  * `*` (`EVERY_GLOBAL_PHYSICS`), not the empty name Spine spells it with.
  *
- * **Numbers** are written exactly as the model holds them — the numbers the
- * Spine file holds — so nothing is re-rounded; which of them are float32
- * values, and how a reader reads the rest, is the header's 🔸. A number JSON cannot carry
- * exactly — `-0`, `NaN`, an infinity — is refused by its path (`plain`).
+ * **Numbers** are written exactly as the model holds them, so nothing is
+ * re-rounded here; which of them are float32 values, and how a reader reads
+ * the rest, is the header's 🔸. A number JSON cannot carry exactly — `-0`,
+ * `NaN`, an infinity — is refused by its path (`plain`).
  *
- * ⚠️ **One carried report is the exception, and it is not machine-independent**
- * (issue #942). `meshes[].depth.ceiling` holds the fold angles `turnCeiling`
- * (`src/depth.ts`) computes with `Math.atan` as full doubles, and no Spine file
- * holds them: one ulp of the platform's `atan` changes their spelling. That is
- * the whole of the macOS/Linux difference in `gallery/look`'s document, measured
- * by reconstruction to the Linux file's hash. Over the nineteen recipes a
- * one-ulp perturbation of `atan2`, `cos`, `sin`, `hypot`, `log` and `log2`
- * moved no output byte; perturbing `atan` or `pow` moved this report only
- * (`pow` reaches it through the depth tone, `Math.pow(level, gamma)`).
+ * 🔒 **Every number the document spells is on one of two grids**: a fixed
+ * point of the compiler's float32 spelling (`f32(x) === x` — the shortest
+ * decimal naming a float, which is not the float's own double) or of the
+ * six-decimal grid (`Math.round(x·1e6)/1e6 === x`). `MX01` in `selftest.ts`
+ * holds it over every document the tree's recipes build, with a full double
+ * planted to turn it red by its path. A number on neither grid is a full
+ * double whose last digits are the platform libm's, which is how the rule was
+ * found (issue #942): `meshes[].depth.ceiling` carried `turnCeiling`'s fold
+ * figures (`src/depth.ts`) as full doubles from `Math.atan` and the depth
+ * tone, and `gallery/look`'s document differed between macOS and the Linux
+ * runner by exactly `/meshes/0/depth/ceiling/pitch/negative/{degrees,p1}`,
+ * `26.935130523311` against `26.935130523311003`, while its Spine files were
+ * identical. Those figures are reported on the six-decimal grid now, and a
+ * one-ulp `Math.atan` perturbation either way moves no byte of that document.
+ *
+ * ⚠️ A grid absorbs a difference in a value, not in a choice. Perturbing
+ * `Math.pow` by one ulp still moves `gallery/look`'s document: the depth tone
+ * reaches every `z`, two triangles whose fold angles round to the same
+ * six-decimal value trade places as the minimum, and the fold then names the
+ * other triangle, with its own `depthStep` and `stepShare`. Measured on this
+ * machine `pow(x, 1)` is `x` exactly (10^6 samples in 0..1), which is all
+ * that rig's `gamma: 1` asks of it; a platform whose `pow` is not exact there
+ * is not measured.
  *
  * **Left out, and why.** Each is something the model holds that is not a
  * statement about the rig:

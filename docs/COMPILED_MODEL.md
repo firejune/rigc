@@ -622,7 +622,9 @@ each item exactly. Each names the line that does it today.
 the number the runtime reads (§4), later compile stages compute from their output
 (`computeWorldTransforms` over f32'd bones, §1.4 row 1; the comment on `computeWorldTransforms` (`transform.ts:82`)
 says one bit there can move a float32 spelling in the file), and so the model has to
-carry what they return.
+carry what they return — and, added after this census by issue #942, the same two grids
+bound what the model document spells: every number in it is a fixed point of `f32` or of
+the six-decimal grid, the depth fold report included, and `MX01` in `selftest.ts` holds it.
 
 ---
 

@@ -185,6 +185,7 @@ import {
   editorNamesInOrder,
   editorSkinOrder,
   editorSlotKeyOrder,
+  f32,
   pathChain,
   pathCurveLengths,
   relativeImagesPath,
@@ -71200,6 +71201,54 @@ function modelDocumentProbe(): { result: CompileResult | null; again: CompileRes
   }
 }
 
+/**
+ * Whether the model document may spell `x` (issue #942): a fixed point of the
+ * Spine file's float32 spelling (`f32` — the shortest decimal naming a float,
+ * which is not the float's own double: `0.2` is on this grid and
+ * 0.20000000298023224 is not written), or of the six-decimal grid the
+ * generator's and the fold report's measured figures are on.
+ */
+function onDocumentGrid(x: number): boolean {
+  return f32(x) === x || Math.round(x * 1e6) / 1e6 === x;
+}
+
+/** Every number in a parsed document on neither grid, by JSON-pointer path, in document order. */
+function offDocumentGrid(value: unknown, at = ''): Array<{ path: string; value: number }> {
+  if (typeof value === 'number') return onDocumentGrid(value) ? [] : [{ path: at, value }];
+  if (Array.isArray(value)) return value.flatMap((v, i) => offDocumentGrid(v, `${at}/${i}`));
+  if (value !== null && typeof value === 'object') return Object.entries(value).flatMap(([k, v]) => offDocumentGrid(v, `${at}/${k}`));
+  return [];
+}
+
+/** Every number in a parsed document, in document order. */
+function documentNumbers(value: unknown): number[] {
+  if (typeof value === 'number') return [value];
+  if (Array.isArray(value)) return value.flatMap(documentNumbers);
+  if (value !== null && typeof value === 'object') return Object.values(value).flatMap(documentNumbers);
+  return [];
+}
+
+/** The JSON-pointer path of the first number in `value` whose path matches `pattern`, or null. */
+function firstNumberPath(value: unknown, pattern: RegExp, at = ''): string | null {
+  if (typeof value === 'number') return pattern.test(at) ? at : null;
+  const entries: Array<[string, unknown]> = Array.isArray(value) ? value.map((v, i) => [String(i), v]) : value !== null && typeof value === 'object' ? Object.entries(value) : [];
+  for (const [k, v] of entries) {
+    const found = firstNumberPath(v, pattern, `${at}/${k}`);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/** `doc` with the number at JSON-pointer `path` replaced by `x` (a deep copy; `doc` is not touched). */
+function withNumberAt(doc: unknown, path: string, x: number): unknown {
+  const copy = JSON.parse(JSON.stringify(doc)) as unknown;
+  const keys = path.split('/').slice(1);
+  let at = copy as Record<string, unknown>;
+  for (const key of keys.slice(0, -1)) at = at[key] as Record<string, unknown>;
+  at[keys[keys.length - 1]] = x;
+  return copy;
+}
+
 /** What `modelDocument` refuses `model` with, or '' when it writes it. */
 function modelDocumentRefusal(model: CompiledModel): string {
   try {
@@ -71517,6 +71566,95 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
         'issue #922\'s gate: the Spine files\' bytes do not move on any recipe, and the one expected difference from a base taken before the cut is the added file — nothing else, on every row',
       );
     }
+  }
+
+  // --- MX01: every number the document spells is on the f32 or the r6 grid (#942) --
+  //
+  // The one machine-dependent value the Linux artifact confirmed was a full
+  // double: `gallery/look`'s `/meshes/0/depth/ceiling/pitch/negative/degrees`
+  // and its `p1`, `26.935130523311` built on macOS against `26.935130523311003`
+  // on the Linux runner, one `Math.atan` ulp apart. Run on the tree before the
+  // fold report was put on the six-decimal grid, this read 28 numbers off both
+  // grids over the 19 recipes, and all 28 were that document's ceiling figures
+  // (`degrees`, `p1`, `depthStep`, `stepShare`); nothing else.
+  //
+  // ⚠️ "On the f32 grid" is `f32(x) === x`, a fixed point of the emitter's own
+  // spelling, and not `Math.fround(x) === x`: the emitter writes a float's
+  // shortest name (`0.2`), not its double, so that predicate would refuse the
+  // Spine file's own numbers. The third plant is that case and must stay green.
+  {
+    const probes: string[] = [];
+    const notes: string[] = [];
+    let recipes: Recipe[] = [];
+    try {
+      recipes = treeRecipes(import.meta.dir, (line) => notes.push(line));
+    } catch (err) {
+      probes.push(`the tree's recipes could not be listed: ${(err as Error).message}`);
+    }
+    const docs: Array<{ name: string; doc: unknown }> = [];
+    recipes.forEach((recipe, i) => {
+      const dir = join(work, 'grid', String(i));
+      try {
+        const r = runRecipe(recipe, dir, import.meta.dir);
+        const path = join(dir, 'out', MODEL_DOCUMENT_FILE);
+        if (r.exits.some((e) => e !== 0)) probes.push(`${recipe.name} exited [${r.exits.join(', ')}]; see ${dir}`);
+        else if (!existsSync(path)) probes.push(`${recipe.name} wrote no ${MODEL_DOCUMENT_FILE}`);
+        else docs.push({ name: recipe.name, doc: JSON.parse(readFileSync(path, 'utf8')) as unknown });
+      } catch (err) {
+        probes.push(`${recipe.name} could not be run: ${(err as Error).message}`);
+      }
+    });
+    const gallery = docs.filter((d) => d.name.startsWith('gallery/')).length;
+    if (gallery === 0) probes.push('no gallery recipe built a document, so the tree was not read');
+    const off = docs.flatMap((d) => offDocumentGrid(d.doc).map((o) => `${d.name} ${o.path} ${JSON.stringify(o.value)}`));
+    if (off.length > 0) probes.push(`${off.length} number(s) off both grids: ${off.slice(0, 12).join('; ')}${off.length > 12 ? '; …' : ''}`);
+    const numbers = docs.flatMap((d) => documentNumbers(d.doc));
+    const onF32 = numbers.filter((x) => f32(x) === x).length;
+    const onR6 = numbers.filter((x) => Math.round(x * 1e6) / 1e6 === x).length;
+    const froundRefuses = numbers.filter((x) => Math.fround(x) !== x && Math.round(x * 1e6) / 1e6 !== x).length;
+
+    // The plants: a full double where the card found one, a full double in a record the Spine file holds,
+    // and two numbers each on exactly one grid, which must not be read as off it.
+    const LINUX_CEILING = 26.935130523311003;
+    const F32_NAME = f32(1 / 3);
+    const R6_ONLY = 1234.567891;
+    const plantsRead: string[] = [];
+    // What a plant adds to a document's own reading — so a plant is read the same on a tree that is already red.
+    const plantedOff = (doc: unknown, path: string, x: number): Array<{ path: string; value: number }> => {
+      const before = offDocumentGrid(doc);
+      return offDocumentGrid(withNumberAt(doc, path, x)).filter((o) => !before.some((b) => b.path === o.path && b.value === o.value));
+    };
+    const ceilingAt = docs.map((d) => ({ d, path: firstNumberPath(d.doc, /\/depth\/ceiling\/pitch\/negative\/degrees$/) })).find((c) => c.path !== null);
+    const boneAt = docs.map((d) => ({ d, path: firstNumberPath(d.doc, /^\/bones\/\d+\/x$/) })).find((c) => c.path !== null);
+    const first = boneAt?.d;
+    const boneX = boneAt?.path ?? null;
+    if (ceilingAt === undefined || ceilingAt.path === null) probes.push('no document carries a pitch-negative depth ceiling, so the case the card measured has no place to be planted');
+    else {
+      const read = plantedOff(ceilingAt.d.doc, ceilingAt.path, LINUX_CEILING);
+      if (read.length !== 1 || read[0].path !== ceilingAt.path || read[0].value !== LINUX_CEILING) probes.push(`the Linux ceiling ${LINUX_CEILING} at ${ceilingAt.d.name} ${ceilingAt.path} read ${JSON.stringify(read)}`);
+      else plantsRead.push(`${LINUX_CEILING} at ${ceilingAt.d.name} ${ceilingAt.path} red naming it`);
+    }
+    if (first === undefined || boneX === null) probes.push('no document has a bone x to plant on');
+    else {
+      const sum = 0.1 + 0.2;
+      const read = plantedOff(first.doc, boneX, sum);
+      if (read.length !== 1 || read[0].path !== boneX) probes.push(`${sum} at ${first.name} ${boneX} read ${JSON.stringify(read)}`);
+      else plantsRead.push(`${sum} at ${first.name} ${boneX} red naming it`);
+      if (Math.fround(F32_NAME) === F32_NAME || Math.round(F32_NAME * 1e6) / 1e6 === F32_NAME) probes.push(`${F32_NAME} is not a float's shortest name that differs from its double, so its plant proves nothing`);
+      else if (plantedOff(first.doc, boneX, F32_NAME).length !== 0) probes.push(`${F32_NAME}, f32's spelling of 1/3, was read as off grid`);
+      else plantsRead.push(`${F32_NAME} (f32's name for 1/3, whose float is ${Math.fround(F32_NAME)}) green`);
+      if (f32(R6_ONLY) === R6_ONLY) probes.push(`${R6_ONLY} is on the f32 grid too, so its plant proves nothing`);
+      else if (plantedOff(first.doc, boneX, R6_ONLY).length !== 0) probes.push(`${R6_ONLY}, a six-decimal number no float names, was read as off grid`);
+      else plantsRead.push(`${R6_ONLY} (six decimals; f32 names it ${f32(R6_ONLY)}) green`);
+    }
+    for (const line of notes) if (line.startsWith('HOLE')) console.log(`          ⚠️ ${line} — the documents read here are the gallery's alone.`);
+    const ok = probes.length === 0;
+    say(
+      'MX01_EVERY_NUMBER_THE_MODEL_DOCUMENT_SPELLS_IS_ON_THE_F32_OR_THE_R6_GRID',
+      ok,
+      probeDetail(ok, probes, `${docs.length} document(s) built through \`tools/emit_hashes.ts\`'s recipes (${gallery} gallery, ${docs.length - gallery} fetched export(s)), ${numbers.length} number(s): ${onF32} on the f32 grid, ${onR6} on the r6 grid, 0 on neither — \`Math.fround(x) === x\` in place of \`f32(x) === x\` would have refused ${froundRefuses} of them; plants: ${plantsRead.join('; ')}`),
+      'issue #942: the document is read by a second implementation on another machine, and a number on neither grid is a full double whose last digits are the platform\'s libm — the Linux runner and macOS spelled gallery/look\'s pitch ceiling one ulp apart. On a grid a one-ulp difference moves a byte only at a rounding boundary',
+    );
   }
 
   probe.done();

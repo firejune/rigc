@@ -147,9 +147,10 @@
  * bytes `e15d81552ae1` on CI, while `skeleton.json` and `skeleton.atlas` were
  * identical on all seven rows. The field #942 found is not a six-decimal one:
  * it is a carried report, `meshes[].depth.ceiling.*.degrees`/`p1`, spelled as a
- * full double from `Math.atan`, whose macOS result sits 0.512 ulp below the
- * correctly rounded value Linux returns; every r6 field of the 19 recipes moved
- * by no byte under a ±1 ulp perturbation of every libm function. So the base
+ * full double from `Math.atan` until #942's closing cut put it on the r6 grid
+ * (macOS's atan sits 0.512 ulp below the correctly rounded value Linux
+ * returns); every r6 field of the 19 recipes moved by no byte under a ±1 ulp
+ * perturbation of every libm function. So the base
  * holds the Spine files only on every machine, and a fuller document named by
  * `RIGC_EMIT_HASHES_BASE` still
  * holds every file, the model document included. `MD07` reads this base in its
