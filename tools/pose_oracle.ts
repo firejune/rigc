@@ -58,10 +58,16 @@
  *   document, in document order, with the construct not yet admitted. A block
  *   is one of `bones`, `slots`, `skins`, `constraints`, `physics`, `paths`,
  *   `pathAttachments`, `setup.bones`, `setup.slots`, `setup.drawOrder`,
- *   `setup.attachments`, `setup.clips`, `animations` (`ORACLE_BLOCKS`). A
- *   `null` block the list does not name, or a name that is not a `null` block,
- *   makes the document unreadable (exit 2). The spine-core dump leaves nothing
- *   out and writes no `absent` key.
+ *   `setup.attachments`, `setup.clips`, `animations`, and the six a sample
+ *   carries — `animations.bones`, `animations.slots`, `animations.drawOrder`,
+ *   `animations.attachments`, `animations.clips`, `animations.events`
+ *   (`ORACLE_BLOCKS`). A sample block left out is `null` in EVERY sample and
+ *   named once; one not named is a list in every sample; with `animations`
+ *   itself `null` the sample blocks are nobody's and are not named. A `null`
+ *   block the list does not name, a name that is not a `null` block, or a
+ *   sample block `null` in some samples and not others makes the document
+ *   unreadable (exit 2). The spine-core dump leaves nothing out and writes no
+ *   `absent` key.
  * - `bones` — every bone name in skeleton order (`SkeletonData.bones`, which is
  *   parent-before-child).
  * - `slots` — `[name, bone]` per slot in setup order (`SkeletonData.slots`,
@@ -145,6 +151,12 @@
  * `d·(i+0.5)/N`; `irr` and `dense` — `d·(i+0.381966011)/N`, an offset of
  * `1 − 1/φ` so no sample lands on a key authored on a frame grid. `dense` is
  * `irr`'s formula under its own name, for a dump taken with a large `N`.
+ * The formula is held in the core (`sampleTime` in `src/core/animation.ts`)
+ * and this tool calls it, as it rounds with `gridRound`, so the two dumpers
+ * sample at one set of times. `d` is spine-core's `Animation.duration`: the
+ * last key time of every timeline in the animation, as float32 — measured
+ * against the model's declared duration on issue #936 (an animation whose
+ * bones stop at 1 and whose event fires at 2.5 samples over 2.5).
  *
  * `--physics none` (the default), which is the prototype's posing exactly: one
  * skeleton for the whole dump; the setup pose is `setupPose()` then
@@ -182,8 +194,15 @@
  * words it (issue #928), or absent when a slot's setup placeholder is filled
  * by skins that disagree, since which of them `--skin all` shows is the Spine
  * file's skin order and the model does not carry it (the core's header says
- * why, with the measurements); every other block is `null` and named in
- * `absent`.
+ * why, with the measurements). `animations` is every animation of the model,
+ * in the model's order, sampled at the phase's times over its runtime
+ * duration (issue #936, `src/core/animation.ts`): each sample's `bones` and
+ * `slots` posed from the setup pose with the animation's bone and slot
+ * timelines at alpha 1 — `animations.bones` absent when the document declares
+ * a constraint, `animations.slots` absent when a slider keys a slot or skins
+ * disagree over a placeholder a slot shows — and its `drawOrder`,
+ * `attachments`, `clips` and `events` absent, each named. Every other block
+ * is `null` and named in `absent`.
  *
  * ## `compare` — two documents
  *
@@ -193,9 +212,13 @@
  * exactly one side prints `SKIP <block>: not produced by <dumper>` (and the
  * absent side's reason) and is neither compared nor counted: IDENTICAL then
  * speaks for the blocks both documents carry, and its line says how many were
- * skipped and which. Otherwise every roster (bones,
- * slots, skins, animations, constraints, path attachments, sample counts) and
- * every name must agree exactly, and every number within tolerance: world
+ * skipped and which. A sample block is judged the same way inside the
+ * animations both documents carry, and not at all when either carries none.
+ * Otherwise every roster (bones, slots, skins, animations, constraints, path
+ * attachments, sample counts) and every name must agree exactly — skins and
+ * animations as sets, matched by name, because the order they are listed in
+ * is the Spine file's spelling (the emitter's editor order) and not a pose —
+ * and every number within tolerance: world
  * positions and vertex coordinates within `--tol-xy`, everything else (the
  * matrix, colours, times, parameters) within `--tol-m`. Both default to 1e-6,
  * one step of the rounding grid; deltas are computed on the grid, in integer
@@ -249,7 +272,8 @@ import {
   TransformConstraintData,
   type Event,
 } from '@esotericsoftware/spine-core';
-import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, readModel, type CompiledDocument, type CorePlant } from '../src/core/index.ts';
+import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, readModel, type CompiledDocument } from '../src/core/index.ts';
+import { IRR_OFFSET as CORE_IRR_OFFSET, poseAnimations, sampleTime as coreSampleTime, type TimelinePlant } from '../src/core/animation.ts';
 
 export const ORACLE_SPEC = 'pose-oracle/1';
 export const ORACLE_DUMPER = 'spine-core 4.3.13';
@@ -257,8 +281,8 @@ export const ORACLE_PHASES = ['grid', 'off', 'irr', 'dense'] as const;
 export type OraclePhase = (typeof ORACLE_PHASES)[number];
 export const ORACLE_PHYSICS = ['none', 'step'] as const;
 export type OraclePhysics = (typeof ORACLE_PHYSICS)[number];
-/** `1 − 1/φ`, the prototype's irrational offset, to the nine places it wrote. */
-export const IRR_OFFSET = 0.381966011;
+/** `1 − 1/φ`, the prototype's irrational offset, to the nine places it wrote — held by the core (`src/core/animation.ts`), so the two dumpers sample at one set of times. */
+export const IRR_OFFSET = CORE_IRR_OFFSET;
 /** The rounding grid: six decimals. */
 export const ORACLE_GRID = 1e6;
 /** The ill-conditioned bound on `|det|`, the prototype's `EPS_DET`. */
@@ -294,6 +318,23 @@ export interface OracleAnimation {
   name: string;
   duration: Num;
   samples: OracleSample[];
+}
+
+/** A sample in which a block may be absent (`null` in every sample, and named in `absent`). */
+export interface OracleDocumentSample {
+  t: Num;
+  events: EventRow[] | null;
+  bones: BoneRow[] | null;
+  slots: SlotRow[] | null;
+  drawOrder: string[] | null;
+  attachments: AttachmentRow[] | null;
+  clips: ClipRow[] | null;
+}
+
+export interface OracleDocumentAnimation {
+  name: string;
+  duration: Num;
+  samples: OracleDocumentSample[];
 }
 
 export interface OracleOptions {
@@ -380,8 +421,15 @@ export interface OracleDump {
 export const ORACLE_BLOCKS = [
   'bones', 'slots', 'skins', 'constraints', 'physics', 'paths', 'pathAttachments',
   'setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips', 'animations',
+  'animations.bones', 'animations.slots', 'animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.events',
 ] as const;
 export type OracleBlock = (typeof ORACLE_BLOCKS)[number];
+
+/** The blocks a sample carries, by their block names: absent from a document means `null` in every one of its samples. */
+export const SAMPLE_BLOCKS = ['animations.bones', 'animations.slots', 'animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.events'] as const;
+export type SampleBlock = (typeof SAMPLE_BLOCKS)[number];
+const sampleField = (block: SampleBlock): 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'events' =>
+  block.slice('animations.'.length) as 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'events';
 
 /** A setup pose in which a block may be absent. */
 export interface OracleDocumentPose {
@@ -412,7 +460,7 @@ export interface OracleDocument {
   paths: OraclePathRow[] | null;
   pathAttachments: OraclePathAttachmentRow[] | null;
   setup: OracleDocumentPose;
-  animations: OracleAnimation[] | null;
+  animations: OracleDocumentAnimation[] | null;
 }
 
 /**
@@ -426,9 +474,7 @@ export function r(v: number): Num {
 
 /** Sample `i` of `n` over duration `d` under `phase` — see the header. */
 export function sampleTime(phase: OraclePhase, d: number, i: number, n: number): number {
-  if (phase === 'off') return (d * (i + 0.5)) / n;
-  if (phase === 'irr' || phase === 'dense') return (d * (i + IRR_OFFSET)) / n;
-  return n === 1 ? 0 : (d * i) / (n - 1);
+  return coreSampleTime(phase, d, i, n);
 }
 
 /** `1/60`, `0.02` — a positive step in seconds, or a refusal naming the spelling. */
@@ -697,14 +743,31 @@ export function dumpText(dump: OracleDocument): string {
  * The core poses under `--skin all` and `--physics none` only; any other
  * option is refused by name, since it names a pose the core does not produce.
  */
-export function coreDump(doc: CompiledDocument, options: OracleOptions, plant: CorePlant = {}): OracleDocument {
+export function coreDump(doc: CompiledDocument, options: OracleOptions, plant: TimelinePlant = {}): OracleDocument {
   if (options.skin !== 'all') {
     throw new OracleInputError(`dump --core: --skin ${JSON.stringify(options.skin)} — the core poses every skin at once (--skin all) and nothing else yet (issue #925)`);
   }
   if (options.physics !== 'none') {
     throw new OracleInputError(`dump --core: --physics ${JSON.stringify(options.physics)} — the core steps no physics; physics is not admitted (issue #925)`);
   }
-  const { setup, absent } = poseSetup(doc, plant);
+  const posed = poseSetup(doc, plant);
+  const { setup } = posed;
+  const sampled = poseAnimations(doc, options.phase, options.samples, plant);
+  const leftOut = new Set(sampled.absent.map((x) => x[0]));
+  const absent = [...posed.absent, ...sampled.absent].sort((x, y) => ORACLE_BLOCKS.indexOf(x[0] as OracleBlock) - ORACLE_BLOCKS.indexOf(y[0] as OracleBlock));
+  const animations: OracleDocumentAnimation[] = sampled.animations.map((a) => ({
+    name: a.name,
+    duration: a.duration,
+    samples: a.samples.map((x) => ({
+      t: x.t,
+      events: null,
+      bones: leftOut.has('animations.bones') ? null : x.bones,
+      slots: leftOut.has('animations.slots') ? null : x.slots,
+      drawOrder: null,
+      attachments: null,
+      clips: null,
+    })),
+  }));
   return {
     spec: ORACLE_SPEC,
     dumper: CORE_DUMPER,
@@ -719,12 +782,21 @@ export function coreDump(doc: CompiledDocument, options: OracleOptions, plant: C
     paths: null,
     pathAttachments: null,
     setup,
-    animations: null,
+    animations,
   };
 }
 
-/** A block of a document, or `null` when the document leaves it absent. */
+/**
+ * A block of a document, or `null` when the document leaves it absent. A
+ * sample block is every sample's field, in order, or `null` when the document
+ * names it absent or carries no animations.
+ */
 export function blockOf(doc: OracleDocument, block: OracleBlock): unknown[] | null {
+  if ((SAMPLE_BLOCKS as readonly string[]).includes(block)) {
+    if (doc.animations === null || doc.absent?.some((x) => x[0] === block)) return null;
+    const field = sampleField(block as SampleBlock);
+    return doc.animations.flatMap((a) => a.samples.map((x) => x[field]));
+  }
   switch (block) {
     case 'setup.bones':
       return doc.setup.bones;
@@ -737,7 +809,7 @@ export function blockOf(doc: OracleDocument, block: OracleBlock): unknown[] | nu
     case 'setup.clips':
       return doc.setup.clips;
     default:
-      return doc[block];
+      return doc[block as 'bones' | 'slots' | 'skins' | 'constraints' | 'physics' | 'paths' | 'pathAttachments' | 'animations'];
   }
 }
 
@@ -847,17 +919,30 @@ export function asOracleDocument(value: unknown, where: string): OracleDocument 
     if (typeof v[key] !== 'object' || v[key] === null) throw new OracleInputError(`${where}: no ${key} object`);
   }
   const doc = value as OracleDocument;
-  const nulls: string[] = [];
-  for (const block of ORACLE_BLOCKS) {
-    const b = blockOf(doc, block);
-    if (b === undefined || (b !== null && !Array.isArray(b))) throw new OracleInputError(`${where}: ${block} is neither a list nor null`);
-    if (b === null) nulls.push(block);
-  }
   const absent = v.absent;
   if (absent !== undefined && !(Array.isArray(absent) && absent.every((x) => Array.isArray(x) && x.length === 2 && typeof x[0] === 'string' && typeof x[1] === 'string'))) {
     throw new OracleInputError(`${where}: absent is not a list of [block, why] pairs`);
   }
   const named = absent === undefined ? [] : (absent as Array<[string, string]>).map((x) => x[0]);
+  const nulls: string[] = [];
+  for (const block of ORACLE_BLOCKS) {
+    const sample = (SAMPLE_BLOCKS as readonly string[]).includes(block);
+    // With no animations the sample blocks are nobody's: the `animations` line speaks for them.
+    if (sample && doc.animations === null) continue;
+    if (sample) {
+      // Named absent: null in every sample. Not named: a list in every sample.
+      const field = sampleField(block as SampleBlock);
+      const cells = (doc.animations ?? []).flatMap((a) => (Array.isArray(a?.samples) ? a.samples.map((x) => x?.[field]) : [undefined]));
+      const leftOut = named.includes(block);
+      const odd = cells.findIndex((c) => (leftOut ? c !== null : !Array.isArray(c)));
+      if (odd >= 0) throw new OracleInputError(`${where}: ${block} is ${leftOut ? 'named absent and a sample carries it' : 'not named absent and a sample carries no list for it'} (sample ${odd} in document order)`);
+      if (leftOut) nulls.push(block);
+      continue;
+    }
+    const b = blockOf(doc, block);
+    if (b === undefined || (b !== null && !Array.isArray(b))) throw new OracleInputError(`${where}: ${block} is neither a list nor null`);
+    if (b === null) nulls.push(block);
+  }
   const unnamed = nulls.filter((b) => !named.includes(b));
   const extra = named.filter((b) => !nulls.includes(b));
   if (unnamed.length > 0) throw new OracleInputError(`${where}: ${unnamed.join(', ')} ${unnamed.length === 1 ? 'is' : 'are'} null and the absent list does not say why`);
@@ -1105,6 +1190,8 @@ export function compareDumps(a: OracleDocument, b: OracleDocument, tol: OracleTo
   const skipped: string[] = [];
   const carried = new Set<OracleBlock>();
   for (const block of ORACLE_BLOCKS) {
+    // A sample block is compared only where both documents carry animations; otherwise the `animations` line speaks for it.
+    if ((SAMPLE_BLOCKS as readonly string[]).includes(block) && (a.animations === null || b.animations === null)) continue;
     const na = blockOf(a, block) === null;
     const nb = blockOf(b, block) === null;
     if (na && nb) {
@@ -1135,7 +1222,7 @@ export function compareDumps(a: OracleDocument, b: OracleDocument, tol: OracleTo
         })
       : []),
     ...(has('skins') ? listDiff('skins', [...(a.skins ?? [])].sort(), [...(b.skins ?? [])].sort()) : []),
-    ...(has('animations') ? listDiff('animations', (a.animations ?? []).map((x) => x.name), (b.animations ?? []).map((x) => x.name)) : []),
+    ...(has('animations') ? listDiff('animations', (a.animations ?? []).map((x) => x.name).sort(), (b.animations ?? []).map((x) => x.name).sort()) : []),
     ...(has('constraints') ? listDiff('constraints', (a.constraints ?? []).map((c) => `${c[0]} ${c[1]}`), (b.constraints ?? []).map((c) => `${c[0]} ${c[1]}`)) : []),
   ];
   const byName = <T extends { name: string }>(l: T[]): Map<string, T> => new Map(l.map((x) => [x.name, x]));
@@ -1176,6 +1263,7 @@ export function compareDumps(a: OracleDocument, b: OracleDocument, tol: OracleTo
     rows.push(setupRow);
   }
   const animB = byName(has('animations') ? (b.animations ?? []) : []);
+  const sampleCarry = new Set<PoseBlock>((['bones', 'slots', 'drawOrder', 'attachments', 'clips'] as const).filter((k) => has(`animations.${k}`)));
   for (const anim of has('animations') ? (a.animations ?? []) : []) {
     const other = animB.get(anim.name);
     if (other === undefined) continue;
@@ -1198,8 +1286,8 @@ export function compareDumps(a: OracleDocument, b: OracleDocument, tol: OracleTo
         row.mismatches.time = (row.mismatches.time ?? 0) + 1;
         row.findings.push(`animation "${anim.name}" sample ${i}: t=${sa.t} vs ${sb.t}`);
       }
-      comparePose(row, sa.t, sa, sb, tolXy, tolM, slotBones);
-      compareEvents(row, sa.t, sa.events, sb.events, tolM);
+      comparePose(row, sa.t, sa, sb, tolXy, tolM, slotBones, sampleCarry);
+      if (has('animations.events')) compareEvents(row, sa.t, sa.events ?? [], sb.events ?? [], tolM);
     }
     rows.push(row);
   }
@@ -1325,6 +1413,8 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
         print(
           `pose_oracle: the core posed ${core}: ${model.bones.length} bones, setup.bones ${dump.setup.bones === null ? 'ABSENT' : 'posed'}, ` +
             `${model.slots.length} slots, setup.slots ${dump.setup.slots === null ? 'ABSENT' : 'posed'}; ` +
+            `${model.animations.length} animation(s) × ${options.samples} sample(s), animations.bones ${(dump.absent ?? []).some((x) => x[0] === 'animations.bones') ? 'ABSENT' : 'posed'}, ` +
+            `animations.slots ${(dump.absent ?? []).some((x) => x[0] === 'animations.slots') ? 'ABSENT' : 'posed'}; ` +
             `absent: ${(dump.absent ?? []).map((x) => x[0]).join(', ')} → ${out}`,
         );
         return 0;

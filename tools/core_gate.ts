@@ -20,9 +20,9 @@
  * `skeleton.json` + `skeleton.atlas` (spine-core) and `dump --core` of
  * `skeleton.model.json`, both under the default options (grid, nine samples,
  * every skin, no physics), then `compare`. Each block the core poses —
- * `setup.bones`, `setup.slots` (`GATE_BLOCKS`) — is judged on its own, by a
- * `compare` of the spine-core dump against the core's with the other posed
- * block left out, and reads:
+ * `setup.bones`, `setup.slots`, `animations.bones`, `animations.slots`
+ * (`GATE_BLOCKS`) — is judged on its own, by a `compare` of the spine-core
+ * dump against the core's with the other posed blocks left out, and reads:
  *
  *   - `IDENTICAL` — the block agrees;
  *   - `SKIP` — the core left the block out, with the construct it names (a
@@ -34,7 +34,9 @@
  * The row's own verdict is `DIFF` when any block is (or the whole comparison
  * is), `IDENTICAL` when every block is, `SKIP` otherwise — naming the blocks
  * skipped — and `REFUSED` when the build chain exited non-zero or a document
- * could not be read; a refused row is not measured and says why.
+ * could not be read; a refused row is not measured and says why. Under the
+ * row, one line per animation (issue #936): its verdict on `animations.bones`
+ * and on `animations.slots`, and the first difference of a DIFF.
  *
  * ## The census
  *
@@ -57,6 +59,14 @@
  * was compared reaches is a HOLE. ⚠️ `blend` is a HOLE however many rows state
  * one: the oracle's slot row has no blend field, so no comparison reads it.
  *
+ * And one line per row for the animations (`ANIMATION_CENSUS_FIELDS`, issue
+ * #936): the timelines of each bone and slot kind, the keys by the curve that
+ * leaves them, the gate's sample times before a timeline's first key and after
+ * its last, a bone keyed by two timelines posing one channel, and the
+ * timelines of the groups construct 4 does not pose. A field no row whose
+ * animation block was compared reaches is a HOLE, and the later groups'
+ * timelines are a HOLE however many rows carry them.
+ *
  * Exit codes: 0 when every row is IDENTICAL or SKIP; 1 when any row is DIFF or
  * REFUSED; 2 on a bad input, by name. `tools/` is not `src/`: this file runs
  * child processes (through `runRecipes`) and reads the disk.
@@ -64,7 +74,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { activeBones, CORE_INHERIT_MODES, CoreInputError, foldInheritMode, readModel, shownAttachment, shownRow, type CorePlant } from '../src/core/index.ts';
+import { activeBones, CORE_INHERIT_MODES, CoreInputError, foldInheritMode, readModel, shownAttachment, shownRow } from '../src/core/index.ts';
+import { BONE_TIMELINE_KINDS, sampleTime, SLOT_TIMELINE_KINDS, type TimelinePlant } from '../src/core/animation.ts';
 import { MODEL_DOCUMENT_FILE } from '../src/model.ts';
 import { HashesInputError, readRecipes, runRecipes, TREE_ROOT, treeRecipes, type Recipe } from './emit_hashes.ts';
 import {
@@ -72,9 +83,11 @@ import {
   coreDump,
   dumpSkeleton,
   loadOracleData,
+  ORACLE_BLOCKS,
   ORACLE_DEFAULT_SAMPLES,
   ORACLE_DEFAULT_TOL,
   OracleInputError,
+  type OracleBlock,
   type OracleComparison,
   type OracleDocument,
   type OracleOptions,
@@ -102,8 +115,35 @@ export type SlotCensusField = (typeof SLOT_CENSUS_FIELDS)[number];
 export type SlotCensusRow = Record<SlotCensusField, number> & { slots: number };
 
 /** The blocks the core poses, each judged on its own. */
-export const GATE_BLOCKS = ['setup.bones', 'setup.slots'] as const;
+export const GATE_BLOCKS = ['setup.bones', 'setup.slots', 'animations.bones', 'animations.slots'] as const;
 export type GateBlock = (typeof GATE_BLOCKS)[number];
+
+/**
+ * The animations' census fields (issue #936), in the order its table prints
+ * them: timelines of each bone and slot kind, keys by the curve that leaves
+ * them (`linear`, `stepped`, `bezier`, for bones and for slots), the sample
+ * times of the gate's options that fall before a timeline's first key and
+ * after its last, a bone keyed by two timelines that pose one channel
+ * (`translate` and `translatex`, …), and the timelines of the groups this
+ * construct does not pose.
+ */
+export const ANIMATION_CENSUS_FIELDS = [
+  ...BONE_TIMELINE_KINDS.map((k) => `bone.${k}`),
+  ...SLOT_TIMELINE_KINDS.map((k) => `slot.${k}`),
+  'bone.linear', 'bone.stepped', 'bone.bezier', 'slot.linear', 'slot.stepped', 'slot.bezier',
+  'beforeFirstKey', 'afterLastKey', 'overlappingBoneChannels', 'laterTimelines',
+] as const;
+export type AnimationCensusField = (typeof ANIMATION_CENSUS_FIELDS)[number];
+export type AnimationCensusRow = Record<AnimationCensusField, number> & { animations: number };
+
+/** One animation's verdict on each animation block. */
+export interface AnimationVerdict {
+  name: string;
+  bones: BlockVerdict;
+  slots: BlockVerdict;
+  /** The first difference, on a DIFF. */
+  why: string | null;
+}
 
 export type GateVerdict = 'IDENTICAL' | 'SKIP' | 'DIFF' | 'REFUSED';
 export type BlockVerdict = 'IDENTICAL' | 'SKIP' | 'DIFF';
@@ -123,6 +163,9 @@ export interface GateRow {
   worstM: number;
   census: CensusRow | null;
   slotCensus: SlotCensusRow | null;
+  /** Per animation, each animation block's verdict; empty on a REFUSED row. */
+  animations: AnimationVerdict[];
+  animationCensus: AnimationCensusRow | null;
 }
 
 /** A refusal about an input — the command exits 2 on it. */
@@ -184,31 +227,74 @@ export function slotCensusOf(modelText: string): SlotCensusRow {
   return out;
 }
 
+/**
+ * The animations' census of one model document — the fields of
+ * `ANIMATION_CENSUS_FIELDS`, each a count over every animation; the
+ * before/after counts over the gate's sample times (`options`).
+ */
+export function animationCensusOf(modelText: string, options: OracleOptions = GATE_OPTIONS): AnimationCensusRow {
+  const doc = readModel(modelText);
+  const out = { animations: doc.animations.length, ...Object.fromEntries(ANIMATION_CENSUS_FIELDS.map((f) => [f, 0])) } as AnimationCensusRow;
+  const channelsOf: Record<string, string[]> = {
+    translate: ['x', 'y'], translatex: ['x'], translatey: ['y'], scale: ['sx', 'sy'], scalex: ['sx'], scaley: ['sy'],
+    shear: ['hx', 'hy'], shearx: ['hx'], sheary: ['hy'], rotate: ['r'], inherit: ['mode'],
+  };
+  for (const anim of doc.animations) {
+    const tl = anim.timelines;
+    const times = Array.from({ length: options.samples }, (_v, i) => sampleTime(options.phase, tl.duration, i, options.samples));
+    const each = (group: 'bone' | 'slot', kind: string, keys: ReadonlyArray<{ time: number; curve: unknown }>): void => {
+      out[`${group}.${kind}` as AnimationCensusField]++;
+      keys.forEach((k, i) => {
+        if (i === keys.length - 1 || kind === 'attachment' || kind === 'inherit') return;
+        out[`${group}.${k.curve === 'linear' ? 'linear' : k.curve === 'stepped' ? 'stepped' : 'bezier'}` as AnimationCensusField]++;
+      });
+      out.beforeFirstKey += times.filter((t) => t < keys[0].time).length;
+      out.afterLastKey += times.filter((t) => t > keys[keys.length - 1].time).length;
+    };
+    for (const b of tl.bones) {
+      for (const x of b.timelines) each('bone', x.kind, x.keys);
+      const channels = b.timelines.flatMap((x) => channelsOf[x.kind] ?? []);
+      if (new Set(channels).size < channels.length) out.overlappingBoneChannels++;
+    }
+    for (const sl of tl.slots) for (const x of sl.timelines) each('slot', x.kind, x.keys);
+    out.laterTimelines += tl.later.reduce((sum, [, n]) => sum + n, 0);
+  }
+  return out;
+}
+
 /** The core's document with every posed block but `keep` left out — so a `compare` judges that block alone. */
 function only(core: OracleDocument, keep: GateBlock): OracleDocument {
   const drop = GATE_BLOCKS.filter((b) => b !== keep);
   const absent = [...(core.absent ?? [])];
   const setup = { ...core.setup };
+  let animations = core.animations;
   for (const block of drop) {
     if (block === 'setup.bones') setup.bones = null;
-    else setup.slots = null;
+    else if (block === 'setup.slots') setup.slots = null;
+    else {
+      const field = block === 'animations.bones' ? 'bones' : 'slots';
+      animations = (animations ?? []).map((a) => ({ ...a, samples: a.samples.map((x) => ({ ...x, [field]: null })) }));
+    }
     if (!absent.some((x) => x[0] === block)) absent.push([block, 'left out by core_gate to judge another block alone']);
   }
-  return { ...core, absent, setup };
+  absent.sort((x, y) => ORACLE_BLOCKS.indexOf(x[0] as OracleBlock) - ORACLE_BLOCKS.indexOf(y[0] as OracleBlock));
+  return { ...core, absent, setup, animations };
 }
 
 /** One built row: both dumps, the comparisons — whole and per block — and the census. `plant` replaces a part of the core (a control's plant). */
-export function gateBuild(name: string, outDir: string, plant: CorePlant = {}): GateRow {
+export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {}): GateRow {
   const skeleton = join(outDir, 'skeleton.json');
   const atlas = join(outDir, 'skeleton.atlas');
   const model = join(outDir, MODEL_DOCUMENT_FILE);
   const missing = [skeleton, atlas, model].filter((p) => !existsSync(p));
-  const refused = (why: string): GateRow => ({ name, verdict: 'REFUSED', why, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null });
+  const refused = (why: string): GateRow => ({ name, verdict: 'REFUSED', why, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, animations: [], animationCensus: null });
   if (missing.length > 0) return refused(`the build wrote no ${missing.map((p) => p.slice(outDir.length + 1)).join(', ')}`);
   let c: OracleComparison;
   let census: CensusRow;
   let slotCensus: SlotCensusRow;
+  let animationCensus: AnimationCensusRow;
   const blocks = {} as Record<GateBlock, { verdict: BlockVerdict; why: string | null }>;
+  const perAnimation = new Map<string, AnimationVerdict>();
   let slotRows = 0;
   try {
     const spine = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), GATE_OPTIONS);
@@ -224,16 +310,30 @@ export function gateBuild(name: string, outDir: string, plant: CorePlant = {}): 
       }
       const alone = compareDumps(spine, only(core, block), tol);
       blocks[block] = alone.identical ? { verdict: 'IDENTICAL', why: null } : { verdict: 'DIFF', why: alone.first };
+      if (block === 'animations.bones' || block === 'animations.slots') {
+        for (const row of alone.rows) {
+          if (row.name === '(setup)') continue;
+          const v = perAnimation.get(row.name) ?? { name: row.name, bones: 'SKIP', slots: 'SKIP', why: null };
+          const verdict: BlockVerdict = row.findings.length === 0 ? 'IDENTICAL' : 'DIFF';
+          if (block === 'animations.bones') v.bones = verdict;
+          else v.slots = verdict;
+          if (verdict === 'DIFF' && v.why === null) v.why = row.findings[0];
+          perAnimation.set(row.name, v);
+        }
+      }
     }
+    for (const a of core.animations ?? []) if (!perAnimation.has(a.name)) perAnimation.set(a.name, { name: a.name, bones: 'SKIP', slots: 'SKIP', why: null });
     if (core.setup.slots !== null) slotRows = core.setup.slots.length;
     const reflecting = new Set(spine.setup.bones.filter((b) => b[3] !== null && b[4] !== null && b[5] !== null && b[6] !== null && b[3] * b[6] - b[4] * b[5] < 0).map((b) => b[0]));
     census = censusOf(modelText, reflecting);
     slotCensus = slotCensusOf(modelText);
+    animationCensus = animationCensusOf(modelText);
   } catch (err) {
     if (err instanceof OracleInputError || err instanceof CoreInputError) return refused(err.message);
     throw err;
   }
-  const base = { name, blocks, boneSamples: c.boneSamples, slotRows, worstXy: c.worstXy, worstM: c.worstM, census, slotCensus };
+  const animations = [...perAnimation.values()];
+  const base = { name, blocks, boneSamples: c.boneSamples, slotRows, worstXy: c.worstXy, worstM: c.worstM, census, slotCensus, animations, animationCensus };
   if (!c.identical) return { ...base, verdict: 'DIFF', why: c.first };
   const skipped = GATE_BLOCKS.filter((b) => blocks[b].verdict === 'SKIP');
   if (skipped.length > 0) return { ...base, verdict: 'SKIP', why: skipped.map((b) => `${b}: ${blocks[b].why}`).join(' | ') };
@@ -255,16 +355,16 @@ export function buildRecipes(recipes: readonly Recipe[], work: string, root: str
 }
 
 /** Built rows gated; `plant` replaces a part of the core on every row (a control's plant). */
-export function gateBuilt(built: readonly BuiltRow[], plant: CorePlant = {}): GateRow[] {
+export function gateBuilt(built: readonly BuiltRow[], plant: TimelinePlant = {}): GateRow[] {
   return built.map((r) =>
     r.exits.some((e) => e !== 0)
-      ? { name: r.name, verdict: 'REFUSED' as const, why: `the build chain exited ${JSON.stringify(r.exits)}`, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null }
+      ? { name: r.name, verdict: 'REFUSED' as const, why: `the build chain exited ${JSON.stringify(r.exits)}`, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, animations: [], animationCensus: null }
       : gateBuild(r.name, r.out, plant),
   );
 }
 
 /** Every recipe built into `work` and gated, in name order. */
-export function gateRecipes(recipes: readonly Recipe[], work: string, root: string, progress: (line: string) => void = () => {}, plant: CorePlant = {}): GateRow[] {
+export function gateRecipes(recipes: readonly Recipe[], work: string, root: string, progress: (line: string) => void = () => {}, plant: TimelinePlant = {}): GateRow[] {
   return gateBuilt(buildRecipes(recipes, work, root, progress), plant);
 }
 
@@ -295,6 +395,40 @@ export function slotCensusTable(rows: readonly GateRow[]): string[] {
     out.push(`| ${row.name} | ${row.blocks?.['setup.slots'].verdict ?? row.verdict} | ${(values ?? head.slice(2).map(() => '—')).map(String).join(' | ')} |`);
   }
   out.push(`| **all** | | ${total.join(' | ')} |`);
+  return out;
+}
+
+/** The animations' census as a markdown table, one row per recipe, then the totals. */
+export function animationCensusTable(rows: readonly GateRow[]): string[] {
+  const head = ['row', 'animations.bones', 'animations.slots', 'animations', ...ANIMATION_CENSUS_FIELDS];
+  const out = [`| ${head.join(' | ')} |`, `| ${head.map((_h, i) => (i < 3 ? '---' : '---:')).join(' | ')} |`];
+  const total: number[] = new Array<number>(head.length - 3).fill(0);
+  for (const row of rows) {
+    const c = row.animationCensus;
+    const values = c === null ? null : [c.animations, ...ANIMATION_CENSUS_FIELDS.map((f) => c[f])];
+    if (values !== null) values.forEach((v, i) => (total[i] += v));
+    out.push(`| ${row.name} | ${row.blocks?.['animations.bones'].verdict ?? row.verdict} | ${row.blocks?.['animations.slots'].verdict ?? row.verdict} | ${(values ?? head.slice(3).map(() => '—')).map(String).join(' | ')} |`);
+  }
+  out.push(`| **all** | | | ${total.join(' | ')} |`);
+  return out;
+}
+
+/**
+ * Each animation census field the compared rows reach — a bone field on a row
+ * whose `animations.bones` was compared, a slot field on one whose
+ * `animations.slots` was — and the HOLEs: what no compared row reaches, and
+ * `laterTimelines`, which no comparison of this construct judges.
+ */
+export function animationReachLines(rows: readonly GateRow[]): string[] {
+  const out: string[] = [];
+  for (const f of ANIMATION_CENSUS_FIELDS) {
+    const block: GateBlock = f.startsWith('slot.') ? 'animations.slots' : 'animations.bones';
+    const compared = comparedOn(rows, block);
+    const on = compared.filter((r) => (r.animationCensus?.[f] ?? 0) > 0).map((r) => r.name);
+    const anywhere = rows.filter((r) => (r.animationCensus?.[f] ?? 0) > 0).map((r) => r.name);
+    if (f === 'laterTimelines') out.push(`  HOLE  animations ${f}: ${anywhere.length} row(s) carry one; constraint, deform, sequence, draw-order and event timelines are later constructs and none was judged`);
+    else out.push(on.length > 0 ? `  REACH animations ${f}: ${on.length} compared row(s)` : `  HOLE  animations ${f}: no compared row reaches it${anywhere.length > 0 ? ` (only ${anywhere.join(', ')}, which the core skips)` : ''}`);
+  }
   return out;
 }
 
@@ -391,14 +525,18 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
         `  ${row.verdict.padEnd(9)} ${row.name}${blocks}: ${row.boneSamples} bone-sample(s) and ${row.slotRows} slot row(s) compared, worst Δxy ${row.worstXy.toFixed(6)}, worst Δabcd ${row.worstM.toFixed(6)}` +
           (row.why === null ? '' : ` — ${row.why}`),
       );
+      for (const a of row.animations) print(`              animation ${JSON.stringify(a.name)}: bones ${a.bones}, slots ${a.slots}${a.why === null ? '' : ` — ${a.why}`}`);
     }
     print('');
     for (const line of censusTable(rows)) print(line);
     print('');
     for (const line of slotCensusTable(rows)) print(line);
     print('');
+    for (const line of animationCensusTable(rows)) print(line);
+    print('');
     for (const line of reachLines(rows)) print(line);
     for (const line of slotReachLines(rows)) print(line);
+    for (const line of animationReachLines(rows)) print(line);
     const verdict = gateVerdict(rows);
     print(verdict.line);
     return verdict.ok ? 0 : 1;
