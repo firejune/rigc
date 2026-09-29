@@ -20,22 +20,24 @@
  * oracle's sample times** (issue #936), is its own module, `./animation.ts`,
  * which this reader calls for each animation record. Every other block of the
  * oracle's document is a construct not yet admitted (the draw order, deform,
- * events, the path, physics and slider constraints, path attachments, and
+ * events, the path constraints and the physics parameters, path attachments, and
  * the attachments and clips at a sample), and
  * the core says so by name (`NOT_ADMITTED`) rather than writing a value for
  * it.
  *
  * **Constraints (construct 5, issue #938, `./constraints.ts`).** The oracle
  * poses the setup pose with every constraint applied, so a bone a constraint
- * moves is not where its hierarchy alone puts it. The core applies the ik and
- * transform constraints in the document's order after the hierarchy, as the
- * runtime's update order does (`./constraints.ts`'s header states it with its
- * measurements); a document declaring a path, physics or slider constraint —
- * later cuts — still has no setup bones from the core, with the kinds named
- * (`constraintsAbsentWhy`). Before issue #938, measured over the nineteen
- * recipes `tools/emit_hashes.ts` generates: seven declared a constraint, and
- * on each the runtime's setup pose differed from the hierarchy's alone; four
- * of them declare only ik and transform and read IDENTICAL now.
+ * moves is not where its hierarchy alone puts it. The core applies the ik,
+ * transform, physics and slider constraints in the document's order after
+ * the hierarchy, as the runtime's update order does (`./constraints.ts`'s
+ * header states it with its measurements; a physics constraint under
+ * `Physics.none` applies nothing, `./constraints_physics.ts`; a slider
+ * applies an animation, `./constraints_slider.ts`); a document declaring a
+ * path constraint — a later cut — still has no setup bones from the core,
+ * with the kind named (`constraintsAbsentWhy`). Before issue #938, measured
+ * over the nineteen recipes `tools/emit_hashes.ts` generates: seven declared
+ * a constraint, and on each the runtime's setup pose differed from the
+ * hierarchy's alone; six of them read IDENTICAL now, the path row left.
  *
  * 🔸 **Active** is measured rather than assumed. Posed through the runtime by
  * `tools/pose_oracle.ts dump` on a hand-written skeleton (issue #925's
@@ -113,15 +115,13 @@
  *   constraints: a hand-written slider whose animation keys a slot's `rgba`
  *   to `ff000080` and its attachment to `q` turned that slot's setup row from
  *   `r, 1, 1, 1, 1` to `q, 1, 0, 0, 0.501961`, with its dial bone and without
- *   one. So `setup.slots` is absent, naming the slider, its animation and the
- *   slots it keys, when any slider's animation keys a slot, until constraints
- *   are admitted (item 5). An ik, transform, path or physics constraint moves
- *   bones only: the six recipes declaring those and no slider that keys a slot
- *   read IDENTICAL on `setup.slots`. One recipe does declare such a slider
- *   (`gallery/look`, whose `turn` keys two slots' `rgba`) and read IDENTICAL
- *   too before this rule — only because its dial rests where `turn` keys the
- *   colours the slots already have; that is the rig's design, not a law the
- *   core could pose by (issue #928's report).
+ *   one. Issue #928 left `setup.slots` absent wherever a slider keys a slot;
+ *   since issue #938 each slider's slot timelines are applied after the
+ *   bones, in constraint order, at the time and mix it was applied with
+ *   (`applySliderSlots` in `./constraints_slider.ts`, which states the blend).
+ *   The slots are still absent, naming the slider, where the bones its time
+ *   is read from are absent. An ik, transform, path or physics constraint
+ *   moves bones only.
  * - **The blend mode** (issue #933) is the row's last cell, as the runtime's
  *   enum names it: `Normal`, `Additive`, `Multiply`, `Screen`. A slot that
  *   states none reads `Normal`. The runtime reads a stated blend by
@@ -158,6 +158,8 @@ import { worldTransforms, type CoreWorld } from './world.ts';
 import { readAnimationTimelines, type CoreAnimationTimelines } from './animation.ts';
 import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type RegionPoser, type ShownGeometry, type VertexPoser } from './vertices.ts';
 import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
+import { readPhysicsRecord } from './constraints_physics.ts';
+import { applySliderSlots, readSliderRecord, sliderAttachmentsWhy, type SliderApplication, type SlotPoseState } from './constraints_slider.ts';
 
 /** The document spec this reader takes. */
 export const CORE_DOCUMENT_SPEC = 'rigc-compiled/1';
@@ -246,7 +248,7 @@ export interface CoreConstraint {
   name: string;
   /** The animation a slider applies — the one constraint kind measured to pose a slot (the slots' ⚠️). */
   animation?: string;
-  /** An ik or transform constraint, read field by field (construct 5's first cut, issue #938). */
+  /** The constraint read field by field (construct 5, issue #938): ik and transform (`./constraints.ts`), physics (`./constraints_physics.ts`), slider (`./constraints_slider.ts`). */
   record?: CoreConstraintRecord;
 }
 
@@ -482,12 +484,12 @@ function readAnimations(value: unknown, bones: ReadonlySet<string>, slotRecords:
         else keyed.push(entry.name);
       });
     }
-    out.push({ name: typeof raw.name === 'string' ? raw.name : '', slots: keyed, timelines: readAnimationTimelines(raw, label, bones, slotRecords, problems), constraints: { ik: [], transform: [] } });
+    out.push({ name: typeof raw.name === 'string' ? raw.name : '', slots: keyed, timelines: readAnimationTimelines(raw, label, bones, slotRecords, problems), constraints: { ik: [], transform: [], physics: 0, slider: [] } });
   });
   return out;
 }
 
-function readConstraints(value: unknown, animations: ReadonlySet<string>, bones: readonly ModelBone[], problems: string[]): CoreConstraint[] {
+function readConstraints(value: unknown, animations: readonly CoreAnimation[], bones: readonly ModelBone[], problems: string[]): CoreConstraint[] {
   const names = new Set(bones.map((b) => b.name));
   const parents = new Map(bones.map((b) => [b.name, b.parent]));
   if (!Array.isArray(value)) {
@@ -505,8 +507,13 @@ function readConstraints(value: unknown, animations: ReadonlySet<string>, bones:
     if (kind === undefined) problems.push(`${where}: kind is ${JSON.stringify(raw.kind)}, none of ${CORE_CONSTRAINT_KINDS.join(', ')}`);
     if (typeof raw.name !== 'string' || raw.name === '') problems.push(`${where}: name is ${JSON.stringify(raw.name)}, not a non-empty string`);
     if (raw.declaredIn !== 'rig' && raw.declaredIn !== 'motion') problems.push(`${where}: declaredIn is ${JSON.stringify(raw.declaredIn)}, not "rig" or "motion"`);
-    if (kind === 'slider' && (typeof raw.animation !== 'string' || !animations.has(raw.animation))) problems.push(`${where}: a slider's animation is ${JSON.stringify(raw.animation)}, not an animation of this document`);
-    const record = (kind === 'ik' || kind === 'transform') && typeof raw.name === 'string' ? readConstraintRecord(raw, kind, raw.name, `${where} "${raw.name}"`, names, parents, problems) : undefined;
+    const at = `${where} "${String(raw.name)}"`;
+    let record: CoreConstraintRecord | undefined;
+    if (typeof raw.name === 'string') {
+      if (kind === 'ik' || kind === 'transform') record = readConstraintRecord(raw, kind, raw.name, at, names, parents, problems);
+      else if (kind === 'physics') record = readPhysicsRecord(raw, raw.name, at, names, problems);
+      else if (kind === 'slider') record = readSliderRecord(raw, raw.name, at, bones, animations, problems);
+    }
     if (kind !== undefined && typeof raw.name === 'string') out.push({ kind, name: raw.name, ...(kind === 'slider' && typeof raw.animation === 'string' ? { animation: raw.animation } : {}), ...(record !== undefined ? { record } : {}) });
   });
   return out;
@@ -543,7 +550,7 @@ export function readModel(text: string, where = 'the model document'): CompiledD
   const skins = readSkins(value.skins, names, slotNames, problems);
   problems.push(...linkProblems(skins));
   const animations = readAnimations(value.animations, names, slots, problems);
-  const constraints = readConstraints(value.constraints, new Set(animations.map((a) => a.name)), bones, problems);
+  const constraints = readConstraints(value.constraints, animations, bones, problems);
   if (Array.isArray(value.animations)) {
     value.animations.forEach((raw, i) => {
       if (isRecord(raw) && animations[i] !== undefined) animations[i].constraints = readConstraintTimelines(raw.constraints, `animations[${i}] "${animations[i].name}"`, constraints, problems);
@@ -655,8 +662,8 @@ export function constraintRecords(doc: CompiledDocument): CoreConstraintRecord[]
  * `poseSetup` gives.
  */
 export const NOT_ADMITTED: ReadonlyArray<readonly [string, string]> = [
-  ['physics', 'physics constraint parameters: physics constraints are not admitted (item 5; ik and transform are, issue #938)'],
-  ['paths', 'path constraint parameters: path constraints are not admitted (item 5; ik and transform are, issue #938)'],
+  ['physics', 'physics constraint parameters: under --physics none, the only phase the core poses, a physics constraint applies nothing (issue #938); its parameters are the stepped phase\'s inputs, and the stepped phase is not admitted'],
+  ['paths', 'path constraint parameters: path constraints are not admitted (item 5; ik, transform, physics and slider are, issue #938)'],
   ['pathAttachments', 'path attachments: attachments are not admitted (item 3)'],
   ['setup.drawOrder', 'the draw order: not admitted (item 2)'],
   ['animations.drawOrder', 'the draw order at a sample: draw-order timelines are not admitted (items 2 and 4)'],
@@ -756,10 +763,12 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
   const bonesWhy = constraintsAbsentWhy(doc);
   let bones: CoreBoneRow[] | null = null;
   let setupWorld: Map<string, CoreWorld> | null = null;
+  // Each slider as it was applied, in constraint order — what the slots are posed from (`./constraints_slider.ts`).
+  const applied: SliderApplication[] = [];
   if (bonesWhy === null) {
     const active = activeBones(doc);
     const records = constraintRecords(doc);
-    setupWorld = applyConstraints(doc.bones, evaluate(doc.bones, active), active, plant.constraints ? plant.constraints(records) : records);
+    setupWorld = applyConstraints(doc.bones, evaluate(doc.bones, active), active, plant.constraints ? plant.constraints(records) : records, applied);
     const world = setupWorld;
     bones = doc.bones.map((b): CoreBoneRow => {
       const t = world.get(b.name);
@@ -769,15 +778,25 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
   }
   const conflicts: string[] = [];
   const slotRows: CoreSlotRow[] = [];
+  // What each slot shows once the sliders have moved it: the attachments below pose these.
+  const posedSlot = new Map<string, ModelSlot>();
   for (const slot of doc.slots) {
-    const shown = resolve(doc, slot);
+    const pose: SlotPoseState = {
+      placeholder: slot.setup,
+      light: slot.color === undefined ? [1, 1, 1, 1] : [...colour(slot.color)],
+      dark: slot.dark === undefined ? null : readColour(slot.dark).slice(0, 3),
+    };
+    applySliderSlots(slot.name, pose, applied);
+    const posedRecord: ModelSlot = { ...slot, setup: pose.placeholder };
+    posedSlot.set(slot.name, posedRecord);
+    const shown = pose.placeholder === null ? null : resolve(doc, posedRecord);
     if (shown !== null && 'conflict' in shown) {
-      conflicts.push(`slot "${slot.name}" placeholder "${slot.setup}" is filled by skins ${shown.conflict.map((c) => `"${c.skin}" (shows ${JSON.stringify(c.shown)}, path ${JSON.stringify(c.path)})`).join(', ')}`);
+      conflicts.push(`slot "${slot.name}" placeholder "${pose.placeholder}" is filled by skins ${shown.conflict.map((c) => `"${c.skin}" (shows ${JSON.stringify(c.shown)}, path ${JSON.stringify(c.path)})`).join(', ')}`);
       continue;
     }
     const row = shown === null ? null : shownRow(shown);
-    const [r, g, b, a] = slot.color === undefined ? [1, 1, 1, 1] : colour(slot.color);
-    const dark = slot.dark === undefined ? null : readColour(slot.dark);
+    const [r, g, b, a] = pose.light;
+    const dark = pose.dark;
     slotRows.push([
       slot.name,
       row === null ? null : row.name,
@@ -787,20 +806,20 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
       blend(slot),
     ]);
   }
-  const slotsWhy = slidersWhy(doc) ?? (conflicts.length === 0
+  const slotsWhy = (bonesWhy === null ? null : slidersWhy(doc)) ?? (conflicts.length === 0
     ? null
     : `${conflicts.join('; ')} — under --skin all the LAST of them in the Spine file's skin order wins, and that order is the emitter's (default first, the rest in the editor's order), not the model's; posing one skin at a time is not admitted`);
   const slots = slotsWhy === null ? slotRows : null;
   const upstream = [bonesWhy === null ? null : `setup.bones is absent (${bonesWhy}), and every vertex goes through a bone's world matrix`, slotsWhy === null ? null : 'setup.slots is absent, so what a slot shows is not posed'].filter((x): x is string => x !== null);
   let attachments: CoreAttachmentRow[] | null = null;
   let clips: CoreClipRow[] | null = null;
-  let attachmentsWhy: string | null = upstream.length === 0 ? null : upstream.join('; ');
-  const clipsWhy = attachmentsWhy;
-  if (attachmentsWhy === null && setupWorld !== null) {
+  const clipsWhy: string | null = upstream.length === 0 ? null : upstream.join('; ');
+  let attachmentsWhy: string | null = clipsWhy;
+  if (clipsWhy === null && setupWorld !== null) {
     const world = setupWorld;
     const shown: ShownGeometry[] = [];
     for (const slot of doc.slots) {
-      const s = resolve(doc, slot);
+      const s = resolve(doc, posedSlot.get(slot.name) ?? slot);
       if (s === null || 'conflict' in s || s.record.geometry === undefined) continue;
       shown.push({ slot: slot.name, bone: slot.bone, name: shownRow(s).name, placeholder: s.placeholder, skin: s.skin, geometry: s.record.geometry });
     }
@@ -809,8 +828,9 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
       return g?.kind === 'mesh' ? g.vertices : (sourceProblem(doc.skins, skin, slot, source) ?? `the linked mesh's source "${source}" carries no vertices`);
     };
     const posed = poseGeometry(shown, world, sourceOf, gridRound, { region: plant.region, vertices: plant.vertices });
-    attachments = posed.attachments;
-    attachmentsWhy = posed.attachmentsWhy;
+    const deformed = sliderAttachmentsWhy(doc);
+    attachments = deformed === null ? posed.attachments : null;
+    attachmentsWhy = deformed ?? posed.attachmentsWhy;
     clips = posed.clips;
   }
   // `NOT_ADMITTED` is in document order; bones and slots stand before `setup.drawOrder`, attachments and clips after it.
@@ -824,12 +844,12 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
   return { setup: { bones, slots, drawOrder: null, attachments, clips }, absent };
 }
 
-/** Why the setup slots cannot be posed yet because a slider poses them, or null when no slider's animation keys a slot. */
+/** Why the setup slots cannot be posed because a slider poses them and the bones its time is read from are absent, or null when no slider's animation keys a slot. */
 function slidersWhy(doc: CompiledDocument): string | null {
   const keyed = doc.constraints.flatMap((c) => {
     if (c.kind !== 'slider') return [];
     const slots = doc.animations.find((a) => a.name === c.animation)?.slots ?? [];
     return slots.length === 0 ? [] : [`slider "${c.name}" applies animation "${c.animation}", which keys slot(s) ${slots.map((x) => `"${x}"`).join(', ')}`];
   });
-  return keyed.length === 0 ? null : `${keyed.join('; ')} — the oracle's setup applies sliders, and a slider poses the slots its animation keys; constraints are not admitted (item 5)`;
+  return keyed.length === 0 ? null : `${keyed.join('; ')} — the oracle's setup applies sliders, and a slider poses the slots its animation keys at a time read off the bones, which are absent`;
 }

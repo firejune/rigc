@@ -179,7 +179,9 @@
  * `Animation.apply(skeleton, 0, t, false, null, 1, MixFrom.setup, false,
  * false, false)`, then `updateWorldTransform(Physics.none)`. Physics
  * constraints are not simulated: they hold the bones where the animation left
- * them.
+ * them — measured on issue #938, the dump of a rig with its physics
+ * constraints and timelines is the dump of the rig without them
+ * (`src/core/constraints_physics.ts`).
  *
  * `--physics step --dt <s>`: a fresh skeleton per animation (and one for the
  * setup pose), `setupPose()`, `update(0)` and `updateWorldTransform(Physics.
@@ -204,11 +206,13 @@
  * model states neither; `options` as given, and the core refuses (exit 2) any
  * `--skin` but `all` and any `--physics` but `none`. The rosters `bones`,
  * `slots`, `skins` and `constraints` are the document's own, in its order.
- * `setup.bones` is the core's setup pose with the document's ik and
- * transform constraints applied in its order (issue #938,
- * `src/core/constraints.ts`), or absent when the document declares a path,
- * physics or slider constraint, which are later cuts; `setup.slots` is every slot's row as the pose above
- * words it (issue #928), or absent when a slot's setup placeholder is filled
+ * `setup.bones` is the core's setup pose with the document's ik, transform,
+ * physics and slider constraints applied in its order (issue #938,
+ * `src/core/constraints.ts`; under `--physics none` a physics constraint
+ * applies nothing, and a slider applies its animation), or absent when the
+ * document declares a path constraint, a later cut; `setup.slots` is every
+ * slot's row as the pose above words it (issue #928), each slider's slot
+ * timelines applied after the bones, or absent when a slot's setup placeholder is filled
  * by skins that disagree, since which of them `--skin all` shows is the Spine
  * file's skin order and the model does not carry it (the core's header says
  * why, with the measurements); `setup.attachments` and `setup.clips` are the
@@ -219,10 +223,10 @@
  * the model, in the model's order, sampled at the phase's times over its
  * runtime duration (issue #936, `src/core/animation.ts`): each sample's
  * `bones` and `slots` posed from the setup pose with the animation's bone and
- * slot timelines at alpha 1, then the ik and transform constraints posed
- * by their timelines at the sample's time — `animations.bones` absent when
- * the document declares a path, physics or slider constraint, `animations.slots` absent when a slider keys a slot
- * or skins disagree over a placeholder a slot shows — and its `drawOrder`,
+ * slot timelines at alpha 1, then the constraints posed by their timelines
+ * at the sample's time — `animations.bones` absent when the document declares
+ * a path constraint, `animations.slots` absent when a slider keys a slot on
+ * such a document or skins disagree over a placeholder a slot shows — and its `drawOrder`,
  * `attachments`, `clips` and `events` absent, each named. Every other block
  * is `null` and named in `absent`.
  *
@@ -772,7 +776,7 @@ export function coreDump(doc: CompiledDocument, options: OracleOptions, plant: T
     throw new OracleInputError(`dump --core: --skin ${JSON.stringify(options.skin)} — the core poses every skin at once (--skin all) and nothing else yet (issue #925)`);
   }
   if (options.physics !== 'none') {
-    throw new OracleInputError(`dump --core: --physics ${JSON.stringify(options.physics)} — the core steps no physics; physics is not admitted (issue #925)`);
+    throw new OracleInputError(`dump --core: --physics ${JSON.stringify(options.physics)} — the core steps no physics: a physics constraint is posed under --physics none, where it applies nothing (issue #938), and the stepped phase is not admitted`);
   }
   const posed = poseSetup(doc, plant);
   const { setup } = posed;
