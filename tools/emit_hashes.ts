@@ -309,15 +309,24 @@ export function readRecipes(path: string): Recipe[] {
   if (spec !== RECIPES_SPEC && spec !== HASHES_SPEC) {
     throw new HashesInputError(`${path}: spec is ${JSON.stringify(spec ?? value)}, not ${JSON.stringify(RECIPES_SPEC)} or ${JSON.stringify(HASHES_SPEC)}`);
   }
-  if (!Array.isArray(record.recipes) || record.recipes.length === 0) throw new HashesInputError(`${path}: recipes is not a non-empty array`);
+  return recipesOfValue(record.recipes, path, spec === HASHES_SPEC);
+}
+
+/**
+ * A recipes array as a recipes file or a hash document holds it, checked field
+ * by field and refused whole (every problem named). `measured` says the entries
+ * carry what a run measured beside their `name`, `stage` and `commands`, which
+ * is not read back as an input. Exported so `tools/render_hashes.ts` reads the
+ * recipes of its own documents with this reader rather than a second one.
+ */
+export function recipesOfValue(value: unknown, path: string, measured: boolean): Recipe[] {
+  if (!Array.isArray(value) || value.length === 0) throw new HashesInputError(`${path}: recipes is not a non-empty array`);
   const problems: string[] = [];
   const recipes: Recipe[] = [];
-  record.recipes.forEach((entry, i) => {
-    // A hash document's recipes are its `name`, `stage` and `commands`; the
-    // rest is what a run measured, and is not read back as an input.
+  value.forEach((entry, i) => {
     const e = entry as Record<string, unknown>;
     const r = recipeProblems(
-      spec === HASHES_SPEC && typeof entry === 'object' && entry !== null ? { name: e.name, stage: e.stage, commands: e.commands } : entry,
+      measured && typeof entry === 'object' && entry !== null ? { name: e.name, stage: e.stage, commands: e.commands } : entry,
       `recipes[${i}]`,
     );
     problems.push(...r.problems);
