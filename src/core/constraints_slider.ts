@@ -430,10 +430,8 @@ export function sliderBonesWhy(doc: CompiledDocument): string | null {
     const anim = doc.animations.find((a) => a.name === c.animation);
     if (anim === undefined) continue;
     const k = anim.constraints;
-    // The constraint group's timelines less those read by kind: what is left is the path constraint's.
-    const total = anim.timelines.later.find(([group]) => group === 'constraints')?.[1] ?? 0;
     const sliderTimelines = k.slider.reduce((n, s) => n + (s.time === null ? 0 : 1) + (s.mix === null ? 0 : 1), 0);
-    const paths = total - k.ik.length - k.transform.length - k.physics - sliderTimelines;
+    const paths = k.path.reduce((n, p) => n + [p.position, p.spacing, p.mix].filter((x) => x !== undefined).length, 0);
     const kinds = [k.ik.length > 0 ? 'ik' : null, k.transform.length > 0 ? 'transform' : null, paths > 0 ? 'path' : null, sliderTimelines > 0 ? 'slider' : null].filter((x): x is string => x !== null);
     if (kinds.length > 0) found.push(`slider "${c.name}" applies animation "${c.animation}", which keys ${kinds.join(', ')} constraint timelines`);
   }

@@ -206,13 +206,17 @@
  * model states neither; `options` as given, and the core refuses (exit 2) any
  * `--skin` but `all` and any `--physics` but `none`. The rosters `bones`,
  * `slots`, `skins` and `constraints` are the document's own, in its order.
- * `setup.bones` is the core's setup pose with the document's ik, transform,
- * physics and slider constraints applied in its order (issue #938,
- * `src/core/constraints.ts`; under `--physics none` a physics constraint
- * applies nothing, and a slider applies its animation), or absent when the
- * document declares a path constraint, a later cut; `setup.slots` is every
- * slot's row as the pose above words it (issue #928), each slider's slot
- * timelines applied after the bones, or absent when a slot's setup placeholder is filled
+ * `paths` and `pathAttachments` are the document's path constraints and path
+ * attachments as the runtime reads them (issue #938, second cut,
+ * `src/core/constraints_path.ts`). `setup.bones` is the core's setup pose
+ * with the document's ik, transform, path, physics and slider constraints
+ * applied in its order (issue #938, `src/core/constraints.ts`; under
+ * `--physics none` a physics constraint applies nothing, and a slider
+ * applies its animation), or absent when a path walks a slot whose
+ * placeholder skins fill with different curves, or a slider's animation
+ * keys a constraint timeline; `setup.slots` is every slot's row as the pose
+ * above words it (issue #928), each slider's slot timelines applied after
+ * the bones, or absent when a slot's setup placeholder is filled
  * by skins that disagree, since which of them `--skin all` shows is the Spine
  * file's skin order and the model does not carry it (the core's header says
  * why, with the measurements); `setup.attachments` and `setup.clips` are the
@@ -224,9 +228,12 @@
  * runtime duration (issue #936, `src/core/animation.ts`): each sample's
  * `bones` and `slots` posed from the setup pose with the animation's bone and
  * slot timelines at alpha 1, then the constraints posed by their timelines
- * at the sample's time — `animations.bones` absent when the document declares
- * a path constraint, `animations.slots` absent when a slider keys a slot on
- * such a document or skins disagree over a placeholder a slot shows — and its `drawOrder`,
+ * at the sample's time — `animations.bones` absent when `setup.bones` is,
+ * when an animation keys the attachment of a walked path's slot or deforms
+ * a path, or when a path's offset reads a slot bone from the previous pose
+ * whose reflection changes across the samples; `animations.slots` absent
+ * when a slider keys a slot on such a document or skins disagree over a
+ * placeholder a slot shows — and its `drawOrder`,
  * `attachments`, `clips` and `events` absent, each named. Every other block
  * is `null` and named in `absent`.
  *
@@ -301,6 +308,7 @@ import {
 } from '@esotericsoftware/spine-core';
 import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, readModel, type CompiledDocument } from '../src/core/index.ts';
 import { IRR_OFFSET as CORE_IRR_OFFSET, poseAnimations, sampleTime as coreSampleTime, type TimelinePlant } from '../src/core/animation.ts';
+import { pathAttachmentRows, pathRows, type CorePathRecord } from '../src/core/constraints_path.ts';
 
 export const ORACLE_SPEC = 'pose-oracle/2';
 export const ORACLE_DUMPER = 'spine-core 4.3.13';
@@ -807,8 +815,8 @@ export function coreDump(doc: CompiledDocument, options: OracleOptions, plant: T
     skins: doc.skins.map((s) => s.name),
     constraints: doc.constraints.map((c): [string, string] => [c.kind, c.name]),
     physics: null,
-    paths: null,
-    pathAttachments: null,
+    paths: pathRows(doc.constraints.flatMap((c) => (c.record?.kind === 'path' ? [c.record as CorePathRecord] : [])), gridRound),
+    pathAttachments: pathAttachmentRows(doc.skins, gridRound),
     setup,
     animations,
   };

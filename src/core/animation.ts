@@ -145,16 +145,19 @@
  * each out naming it. The constraints are applied after the timelines, posed
  * by their own timelines at `t` (issue #938, `./constraints.ts`), and each
  * slider's slot timelines after the sample's own (`./constraints_slider.ts`);
- * a document declaring a path constraint has no animation bones from the
- * core, for the reason its setup bones are absent; a slider whose animation
- * keys a slot on such a document, or a placeholder skins fill differently,
- * leaves the animation slots out as they leave the setup slots out. A deform,
+ * a document whose setup bones are absent has no animation bones from the
+ * core, for the same reason, and neither has one whose animation keys the
+ * attachment of a walked path's slot or deforms a path, or whose path offset
+ * reads a slot bone from the previous pose that changes its reflection
+ * (`./constraints_path.ts`); a slider whose animation keys a slot on such a
+ * document, or a placeholder skins fill differently, leaves the animation
+ * slots out as they leave the setup slots out. A deform,
  * sequence, draw-order or event timeline poses no bone and no slot row, so an
  * animation carrying one is still posed here.
  */
 import type { ModelBone, ModelSlot } from '../model.ts';
 import { worldTransforms } from './world.ts';
-import { applyConstraints, constraintsAbsentWhy, posedRecords, type CoreConstraintTimelines } from './constraints.ts';
+import { applyConstraints, constraintsAbsentWhy, pathAnimationsWhy, posedRecords, previousPassSlotBones, type CoreConstraintTimelines } from './constraints.ts';
 import { applySliderSlots, type SliderApplication } from './constraints_slider.ts';
 import {
   activeBones,
@@ -691,18 +694,23 @@ export function posedSlots(doc: CompiledDocument, timelines: CoreAnimationTimeli
 
 /**
  * The bone rows at `t`, in the oracle's shape and rounding. With `constraints`
- * — the animation's ik and transform timelines — the document's ik and
- * transform constraints are applied after the timelines, posed at `t`
- * (`./constraints.ts`, construct 5's first cut); without, the hierarchy and
- * the timelines alone.
+ * — the animation's constraint timelines — the document's constraints are
+ * applied after the timelines, posed at `t` (`./constraints.ts`, construct
+ * 5; each slider's application recorded into `sliders` for its slot
+ * timelines), with the setup pose standing for the
+ * previous pose a path's offset may read (`previousPassWhy` holds that);
+ * without, the hierarchy and the timelines alone.
  */
 export function posedBoneRows(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}, constraints?: CoreConstraintTimelines, sliders?: SliderApplication[]): CoreBoneRow[] {
   const active = activeBones(doc);
   const bones = posedBones(doc, timelines, t, plant);
   let world = (plant.evaluate ?? worldTransforms)(bones, active);
   if (constraints !== undefined) {
-    const records = posedRecords(constraintRecords(doc), constraints, t);
-    world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records, sliders);
+    const setupRecords = constraintRecords(doc);
+    const records = posedRecords(setupRecords, constraints, t);
+    // A path constraint may read a slot bone the runtime has not yet brought up to date in this pass, as the previous pass left it (`./constraints_path.ts`, *Which slot bone*); `poseAnimations` holds that pass to the setup pose's reading.
+    const previous = setupRecords.some((r) => r.kind === 'path') ? applyConstraints(doc.bones, (plant.evaluate ?? worldTransforms)(doc.bones, active), active, plant.constraints ? plant.constraints(setupRecords) : setupRecords) : null;
+    world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records, previous, sliders);
   }
   return bones.map((b): CoreBoneRow => {
     const w = world.get(b.name);
@@ -758,6 +766,36 @@ function slidersWhy(doc: CompiledDocument): string | null {
 }
 
 /**
+ * Why the samples' bones are left out although each was posed, or null: a
+ * path constraint whose offset reads its slot bone from the previous pass
+ * (`previousPassSlotBones`) is posed with the setup pose's reading of it,
+ * which is the runtime's exactly when that bone's world keeps the sign of
+ * its determinant — its reflection — at the setup pose and at every sample;
+ * the oracle's previous pass is the sample before, in its own order of
+ * animations, which the model does not hold.
+ */
+function previousPassWhy(doc: CompiledDocument, animations: readonly CoreAnimationPose[], plant: TimelinePlant): string | null {
+  const active = activeBones(doc);
+  const reads = previousPassSlotBones(doc, active);
+  if (reads.length === 0) return null;
+  const records = constraintRecords(doc);
+  const setup = applyConstraints(doc.bones, (plant.evaluate ?? worldTransforms)(doc.bones, active), active, plant.constraints ? plant.constraints(records) : records);
+  const bad: string[] = [];
+  for (const { constraint, bone } of reads) {
+    const w = setup.get(bone);
+    const sign = w === undefined ? 0 : Math.sign(w.a * w.d - w.b * w.c);
+    const flips = animations.flatMap((a) => a.samples.filter((x) => {
+      const row = x.bones?.find((r) => r[0] === bone);
+      if (row === undefined || row[3] === null || row[4] === null || row[5] === null || row[6] === null) return true;
+      const det = row[3] * row[6] - row[4] * row[5];
+      return Math.abs(det) < 1e-6 || Math.sign(det) !== sign;
+    }).map((x) => `${a.name}@${x.t}`));
+    if (sign === 0 || flips.length > 0) bad.push(`path constraint "${constraint}" reads slot bone "${bone}" from the previous pose, and its reflection is not the setup's at ${flips.slice(0, 3).join(', ')}${flips.length > 3 ? ` and ${flips.length - 3} more` : ''}`);
+  }
+  return bad.length === 0 ? null : `${bad.join('; ')} — the runtime's previous pose is the sample before in the Spine file's order of animations, which the model does not hold`;
+}
+
+/**
  * Every animation of the document sampled as the oracle samples it: `n`
  * samples in `phase` over each animation's runtime duration, each the bone
  * rows and the slot rows at `t`, in the model's order of animations. Returns
@@ -765,7 +803,7 @@ function slidersWhy(doc: CompiledDocument): string | null {
  * `animations.slots` in document order.
  */
 export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: number, plant: TimelinePlant = {}): { animations: CoreAnimationPose[]; absent: Array<[string, string]> } {
-  const bonesReason = constraintsAbsentWhy(doc);
+  let bonesReason = constraintsAbsentWhy(doc) ?? pathAnimationsWhy(doc);
   const slotConflicts: string[] = [];
   const animations = doc.animations.map((anim: CoreAnimation): CoreAnimationPose => {
     const d = anim.timelines.duration;
@@ -780,6 +818,8 @@ export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: num
     }
     return { name: anim.name, duration: gridRound(d), samples };
   });
+  if (bonesReason === null) bonesReason = previousPassWhy(doc, animations, plant);
+  if (bonesReason !== null) for (const a of animations) for (const s of a.samples) s.bones = null;
   const slotsReason = (bonesReason === null ? null : slidersWhy(doc)) ?? (slotConflicts.length === 0
     ? null
     : `${slotConflicts.slice(0, 5).join('; ')}${slotConflicts.length > 5 ? `; and ${slotConflicts.length - 5} more` : ''} — under --skin all the LAST of them in the Spine file's skin order wins, and that order is the emitter's, not the model's`);

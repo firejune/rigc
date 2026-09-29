@@ -128,7 +128,8 @@ export type CoreGeometry =
   | { kind: 'mesh'; vertices: ModelVertices }
   | { kind: 'linkedmesh'; skin: string; slot: string; source: string }
   | { kind: 'clipping'; end: string | null; vertices: ModelVertices }
-  | { kind: 'boundingbox' | 'path'; vertices: ModelVertices };
+  | { kind: 'boundingbox'; vertices: ModelVertices }
+  | { kind: 'path'; vertices: ModelVertices; closed: boolean; constantSpeed: boolean; lengths: number[] };
 
 /** One row of `setup.attachments`: `[slot, attachment, kind, vertices]`, the oracle's row. */
 export type CoreAttachmentRow = [string, string, 'region' | 'mesh', Array<number | null>];
@@ -305,9 +306,33 @@ export function readGeometry(raw: Record<string, unknown>, kind: CoreGeometry['k
       if (vertices === undefined || problems.length !== before) return undefined;
       if (kind === 'mesh') return { kind, vertices };
       if (kind === 'clipping') return { kind, end: typeof raw.end === 'string' ? raw.end : null, vertices };
-      return { kind, vertices };
+      if (kind === 'boundingbox') return { kind, vertices };
+      return readPathGeometry(raw, vertices, where, problems);
     }
   }
+}
+
+/**
+ * A path attachment's own fields past its vertices (construct 5's second cut,
+ * `./constraints_path.ts`): `closed` and `constantSpeed` as the writer states
+ * them — absent reads the parser's `false` and `true` (the `pathAttachments`
+ * block of a dump of a record stating neither) — and `lengths`, one finite
+ * entry per three points, as the writer always writes it (`buildRigPath` in
+ * `src/compile.ts`). `vertexCount` must be the vertices' own count and a
+ * multiple of 3: the writer refuses any other, and the curve walk reads
+ * groups of three.
+ */
+function readPathGeometry(raw: Record<string, unknown>, vertices: ModelVertices, where: string, problems: string[]): CoreGeometry | undefined {
+  const before = problems.length;
+  for (const key of ['closed', 'constantSpeed'] as const) if (raw[key] !== undefined && typeof raw[key] !== 'boolean') problems.push(`${where}: ${key} is ${JSON.stringify(raw[key])}, not a boolean`);
+  const count = vertices.weighted ? vertices.bindings.length : vertices.xy.length / 2;
+  if (raw.vertexCount !== count) problems.push(`${where}: vertexCount is ${JSON.stringify(raw.vertexCount) ?? 'absent'}, and the vertices hold ${count} point(s)`);
+  else if (count % 3 !== 0 || count < (raw.closed === true ? 3 : 6)) problems.push(`${where}: vertexCount is ${count}, not a multiple of 3 of at least ${raw.closed === true ? 3 : 6} — the curve walk reads knots and handles in threes`);
+  const lengths = raw.lengths;
+  if (!Array.isArray(lengths) || !lengths.every(finite)) problems.push(`${where}: lengths is not a list of finite numbers`);
+  else if (lengths.length !== count / 3) problems.push(`${where}: lengths has ${lengths.length} entry(ies) where the vertices make ${count / 3}`);
+  if (problems.length !== before) return undefined;
+  return { kind: 'path', vertices, closed: raw.closed === true, constantSpeed: raw.constantSpeed !== false, lengths: lengths as number[] };
 }
 
 /** One slot as the construct reads it: its name and bone, and what it shows — the record's name, kind and geometry — or nothing. */
