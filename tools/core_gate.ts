@@ -21,10 +21,12 @@
  * `skeleton.json` + `skeleton.atlas` (spine-core) and `dump --core` of
  * `skeleton.model.json`, both under the default options (grid, nine samples,
  * every skin, no physics), then `compare`. Each block the core poses —
- * `setup.bones`, `setup.slots`, `setup.attachments`, `setup.clips`,
- * `animations.bones`, `animations.slots`
- * (`GATE_BLOCKS`) — is judged on its own, by a `compare` of the spine-core
- * dump against the core's with the other posed blocks left out, and reads:
+ * `setup.bones`, `setup.slots`, `setup.drawOrder`, `setup.attachments`,
+ * `setup.clips`, and a sample's `bones`, `slots`, `drawOrder`,
+ * `attachments`, `clips` and `events` (`GATE_BLOCKS`; the last five and the
+ * setup's draw order since issue #955) — is judged on its own, by a
+ * `compare` of the spine-core dump against the core's with the other posed
+ * blocks left out, and reads:
  *
  *   - `IDENTICAL` — the block agrees;
  *   - `SKIP` — the core left the block out, with the construct it names (a
@@ -33,16 +35,18 @@
  *     constraint timeline, for the bones — every constraint kind is posed
  *     since issue #938; a slider keying a slot on such a row, or skins
  *     disagreeing over a placeholder, for the slots; either of those, a shown
- *     region whose atlas rectangle is `null`, or a slider keying a deform,
- *     for the attachments), so the row holds nothing about it;
+ *     region whose atlas rectangle is `null`, or a deform or sequence
+ *     timeline moving a record several skins fill, for the attachments; a
+ *     slider keying the draw order on a row whose bones are absent, for the
+ *     draw order), so the row holds nothing about it;
  *   - `DIFF` — with the first difference.
  *
  * The row's own verdict is `DIFF` when any block is (or the whole comparison
  * is), `IDENTICAL` when every block is, `SKIP` otherwise — naming the blocks
  * skipped — and `REFUSED` when the build chain exited non-zero or a document
  * could not be read; a refused row is not measured and says why. Under the
- * row, one line per animation (issue #936): its verdict on `animations.bones`
- * and on `animations.slots`, and the first difference of a DIFF.
+ * row, one line per animation (issue #936): its verdict on each sample
+ * block, and the first difference of a DIFF.
  *
  * ## The census
  *
@@ -71,10 +75,16 @@
  * And one line per row for the animations (`ANIMATION_CENSUS_FIELDS`, issue
  * #936): the timelines of each bone and slot kind, the keys by the curve that
  * leaves them, the gate's sample times before a timeline's first key and after
- * its last, a bone keyed by two timelines posing one channel, and the
- * timelines of the groups construct 4 does not pose. A field no row whose
- * animation block was compared reaches is a HOLE, and the later groups'
- * timelines are a HOLE however many rows carry them.
+ * its last, a bone keyed by two timelines posing one channel, and — since
+ * issue #955, which replaced the one `laterTimelines` HOLE — construct 4's
+ * remainder per kind: deform timelines (weighted, on a path, on a clipping
+ * polygon, played by a linked mesh; Bézier and stepped segments; partial
+ * runs and keys with no run; in a slider's animation), sequence timelines,
+ * draw-order timelines (restores; a slider's) and events (a payload stated),
+ * each judged on the block it changes (`REMAINDER_CENSUS_BLOCKS`). A field no
+ * row whose block was compared reaches is a HOLE. Then one `KIND` line per
+ * timeline kind — deform, sequence, draw order, events — the rows carrying
+ * it that are judged on its block, and those that stay SKIP.
  *
  * And one line per row for the constraints (`CONSTRAINT_CENSUS_FIELDS`, issue
  * #938): the ik and transform constraints and what each states, their
@@ -212,8 +222,11 @@ export const PATH_CENSUS_FIELDS = [
 export type PathCensusField = (typeof PATH_CENSUS_FIELDS)[number];
 export type PathCensusRow = Record<PathCensusField, number>;
 
-/** The blocks the core poses, each judged on its own. */
-export const GATE_BLOCKS = ['setup.bones', 'setup.slots', 'setup.attachments', 'setup.clips', 'animations.bones', 'animations.slots'] as const;
+/** The blocks the core poses, each judged on its own, in the document's order. */
+export const GATE_BLOCKS = [
+  'setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips',
+  'animations.bones', 'animations.slots', 'animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.events',
+] as const;
 export type GateBlock = (typeof GATE_BLOCKS)[number];
 
 /**
@@ -222,15 +235,36 @@ export type GateBlock = (typeof GATE_BLOCKS)[number];
  * them (`linear`, `stepped`, `bezier`, for bones and for slots), the sample
  * times of the gate's options that fall before a timeline's first key and
  * after its last, a bone keyed by two timelines that pose one channel
- * (`translate` and `translatex`, …), and the timelines of the groups this
- * construct does not pose.
+ * (`translate` and `translatex`, …) — and, since issue #955, construct 4's
+ * remainder per kind: deform timelines (weighted, on a path, on a clipping
+ * polygon, played by a linked mesh; keys left by a Bézier or a hold; runs
+ * that start past 0 or stop short; keys with no run; in a slider's
+ * animation), sequence timelines (on a region; in a slider's animation),
+ * draw-order timelines (keys restoring the setup order; in a slider's
+ * animation), event timelines, and event keys or definitions stating a
+ * payload.
  */
 export const ANIMATION_CENSUS_FIELDS = [
   ...BONE_TIMELINE_KINDS.map((k) => `bone.${k}`),
   ...SLOT_TIMELINE_KINDS.map((k) => `slot.${k}`),
   'bone.linear', 'bone.stepped', 'bone.bezier', 'slot.linear', 'slot.stepped', 'slot.bezier',
-  'beforeFirstKey', 'afterLastKey', 'overlappingBoneChannels', 'laterTimelines',
+  'beforeFirstKey', 'afterLastKey', 'overlappingBoneChannels',
+  'deform', 'deformWeighted', 'deformPath', 'deformClipping', 'deformLinked', 'deformBezier', 'deformStepped', 'deformPartialRun', 'deformEmptyKey', 'deformSlider',
+  'sequence', 'sequenceRegion', 'sequenceSlider', 'drawOrder', 'drawOrderEmpty', 'drawOrderSlider', 'events', 'eventPayload',
 ] as const;
+
+/**
+ * The block each field of construct 4's remainder (issue #955) is judged on:
+ * a deform moves the attachments' vertices (a clipping polygon's the clips,
+ * a walked path's the bones), a slider's deform, frame and order the setup's
+ * as well; a sequence reaches the dump only through a region's corners.
+ */
+export const REMAINDER_CENSUS_BLOCKS: Readonly<Record<string, GateBlock>> = {
+  deform: 'animations.attachments', deformWeighted: 'animations.attachments', deformPath: 'animations.bones', deformClipping: 'animations.clips', deformLinked: 'animations.attachments',
+  deformBezier: 'animations.attachments', deformStepped: 'animations.attachments', deformPartialRun: 'animations.attachments', deformEmptyKey: 'animations.attachments', deformSlider: 'setup.attachments',
+  sequence: 'animations.attachments', sequenceRegion: 'animations.attachments', sequenceSlider: 'setup.attachments',
+  drawOrder: 'animations.drawOrder', drawOrderEmpty: 'animations.drawOrder', drawOrderSlider: 'setup.drawOrder', events: 'animations.events', eventPayload: 'animations.events',
+};
 export type AnimationCensusField = (typeof ANIMATION_CENSUS_FIELDS)[number];
 export type AnimationCensusRow = Record<AnimationCensusField, number> & { animations: number };
 
@@ -239,9 +273,16 @@ export interface AnimationVerdict {
   name: string;
   bones: BlockVerdict;
   slots: BlockVerdict;
+  drawOrder: BlockVerdict;
+  attachments: BlockVerdict;
+  clips: BlockVerdict;
+  events: BlockVerdict;
   /** The first difference, on a DIFF. */
   why: string | null;
 }
+
+/** An animation's verdicts before any block is judged: every block SKIP. */
+const unjudged = (name: string): AnimationVerdict => ({ name, bones: 'SKIP', slots: 'SKIP', drawOrder: 'SKIP', attachments: 'SKIP', clips: 'SKIP', events: 'SKIP', why: null });
 
 export type GateVerdict = 'IDENTICAL' | 'SKIP' | 'DIFF' | 'REFUSED';
 export type BlockVerdict = 'IDENTICAL' | 'SKIP' | 'DIFF';
@@ -361,11 +402,45 @@ export function animationCensusOf(modelText: string, options: OracleOptions = GA
       if (new Set(channels).size < channels.length) out.overlappingBoneChannels++;
     }
     for (const sl of tl.slots) for (const x of sl.timelines) each('slot', x.kind, x.keys);
-    // The ik, transform, physics and slider timelines are judged since issue #938 (the constraints' census counts them), the path timelines since its second cut (the paths' census); the rest of the later groups are not.
-    const pathTimelines = anim.constraints.path.reduce((sum, p) => sum + [p.position, p.spacing, p.mix].filter((k) => k !== undefined).length, 0);
-    const sliderTimelines = anim.constraints.slider.reduce((n, x) => n + (x.time === null ? 0 : 1) + (x.mix === null ? 0 : 1), 0);
-    out.laterTimelines += tl.later.reduce((sum, [, n]) => sum + n, 0) - anim.constraints.ik.length - anim.constraints.transform.length - pathTimelines - anim.constraints.physics - sliderTimelines;
+    // Construct 4's remainder (issue #955): each deform and sequence timeline by what it keys, the draw order and the events.
+    const sliding = doc.constraints.some((c) => c.kind === 'slider' && c.animation === anim.name);
+    for (const a of tl.attachments) {
+      const record = doc.skins.find((k) => k.name === a.skin)?.attachments[a.slot]?.[a.attachment];
+      const g = record?.geometry;
+      const keys = a.deform;
+      if (keys !== null) {
+        out.deform++;
+        const vertices = g !== undefined && g.kind !== 'region' && g.kind !== 'linkedmesh' ? g.vertices : null;
+        if (vertices?.weighted === true) out.deformWeighted++;
+        if (g?.kind === 'path') out.deformPath++;
+        if (g?.kind === 'clipping') out.deformClipping++;
+        if (doc.skins.some((k) => Object.values(k.attachments).some((t) => Object.values(t).some((r) => r.geometry?.kind === 'linkedmesh' && r.timelines === true && r.geometry.skin === a.skin && r.geometry.slot === a.slot && r.geometry.source === a.attachment)))) out.deformLinked++;
+        const length = vertices === null ? 0 : vertices.weighted ? 2 * vertices.bindings.reduce((n, b) => n + b.length, 0) : vertices.xy.length;
+        keys.forEach((k, i) => {
+          if (i < keys.length - 1 && Array.isArray(k.curve)) out.deformBezier++;
+          if (i < keys.length - 1 && k.curve === 'stepped') out.deformStepped++;
+          if (k.vertices.length === 0) out.deformEmptyKey++;
+          else if (k.offset > 0 || k.vertices.length < length) out.deformPartialRun++;
+        });
+        if (sliding) out.deformSlider++;
+      }
+      if (a.sequence !== null) {
+        out.sequence++;
+        if (g?.kind === 'region') out.sequenceRegion++;
+        if (sliding) out.sequenceSlider++;
+      }
+    }
+    if (tl.drawOrder.length > 0) {
+      out.drawOrder++;
+      out.drawOrderEmpty += tl.drawOrder.filter((k) => k.moves.length === 0).length;
+      if (sliding) out.drawOrderSlider++;
+    }
+    if (tl.events.length > 0) out.events++;
   }
+  // An event key or definition stating a payload the row carries: the int, float or string a fired row reads.
+  const raw = JSON.parse(modelText) as { events?: Array<Record<string, unknown>>; animations?: Array<{ events?: Array<Record<string, unknown>> }> };
+  const payload = (e: Record<string, unknown>): boolean => e.int !== undefined || e.float !== undefined || e.string !== undefined;
+  out.eventPayload = (raw.events ?? []).filter(payload).length + (raw.animations ?? []).reduce((n, a) => n + (a.events ?? []).filter(payload).length, 0);
   return out;
 }
 
@@ -595,10 +670,11 @@ function only(core: OracleDocument, keep: GateBlock): OracleDocument {
   for (const block of drop) {
     if (block === 'setup.bones') setup.bones = null;
     else if (block === 'setup.slots') setup.slots = null;
+    else if (block === 'setup.drawOrder') setup.drawOrder = null;
     else if (block === 'setup.attachments') setup.attachments = null;
     else if (block === 'setup.clips') setup.clips = null;
     else {
-      const field = block === 'animations.bones' ? 'bones' : 'slots';
+      const field = block.slice('animations.'.length);
       animations = (animations ?? []).map((a) => ({ ...a, samples: a.samples.map((x) => ({ ...x, [field]: null })) }));
     }
     if (!absent.some((x) => x[0] === block)) absent.push([block, 'left out by core_gate to judge another block alone']);
@@ -640,19 +716,19 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
       }
       const alone = compareDumps(spine, only(core, block), tol);
       blocks[block] = alone.identical ? { verdict: 'IDENTICAL', why: null } : { verdict: 'DIFF', why: alone.first };
-      if (block === 'animations.bones' || block === 'animations.slots') {
+      if (block.startsWith('animations.')) {
+        const field = block.slice('animations.'.length) as 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'events';
         for (const row of alone.rows) {
           if (row.name === '(setup)') continue;
-          const v = perAnimation.get(row.name) ?? { name: row.name, bones: 'SKIP', slots: 'SKIP', why: null };
+          const v = perAnimation.get(row.name) ?? unjudged(row.name);
           const verdict: BlockVerdict = row.findings.length === 0 ? 'IDENTICAL' : 'DIFF';
-          if (block === 'animations.bones') v.bones = verdict;
-          else v.slots = verdict;
+          v[field] = verdict;
           if (verdict === 'DIFF' && v.why === null) v.why = row.findings[0];
           perAnimation.set(row.name, v);
         }
       }
     }
-    for (const a of core.animations ?? []) if (!perAnimation.has(a.name)) perAnimation.set(a.name, { name: a.name, bones: 'SKIP', slots: 'SKIP', why: null });
+    for (const a of core.animations ?? []) if (!perAnimation.has(a.name)) perAnimation.set(a.name, unjudged(a.name));
     if (core.setup.slots !== null) slotRows = core.setup.slots.length;
     attachmentRows = (core.setup.attachments?.length ?? 0) + (core.setup.clips?.length ?? 0);
     const reflecting = new Set(spine.setup.bones.filter((b) => b[3] !== null && b[4] !== null && b[5] !== null && b[6] !== null && b[3] * b[6] - b[4] * b[5] < 0).map((b) => b[0]));
@@ -752,18 +828,37 @@ export function animationCensusTable(rows: readonly GateRow[]): string[] {
 /**
  * Each animation census field the compared rows reach — a bone field on a row
  * whose `animations.bones` was compared, a slot field on one whose
- * `animations.slots` was — and the HOLEs: what no compared row reaches, and
- * `laterTimelines`, which no comparison of this construct judges.
+ * `animations.slots` was, a field of construct 4's remainder on one whose
+ * block (`REMAINDER_CENSUS_BLOCKS`) was — and the HOLEs: what no compared row
+ * reaches. Since issue #955 no timeline kind is left to a later construct.
  */
 export function animationReachLines(rows: readonly GateRow[]): string[] {
   const out: string[] = [];
   for (const f of ANIMATION_CENSUS_FIELDS) {
-    const block: GateBlock = f.startsWith('slot.') ? 'animations.slots' : 'animations.bones';
+    const block: GateBlock = REMAINDER_CENSUS_BLOCKS[f] ?? (f.startsWith('slot.') ? 'animations.slots' : 'animations.bones');
     const compared = comparedOn(rows, block);
     const on = compared.filter((r) => (r.animationCensus?.[f] ?? 0) > 0).map((r) => r.name);
     const anywhere = rows.filter((r) => (r.animationCensus?.[f] ?? 0) > 0).map((r) => r.name);
-    if (f === 'laterTimelines') out.push(`  HOLE  animations ${f}: ${anywhere.length} row(s) carry one; deform, sequence, draw-order and event timelines are later constructs and none was judged (ik, transform, physics and slider timelines are judged and counted in the constraints' census, path timelines in the paths')`);
-    else out.push(on.length > 0 ? `  REACH animations ${f}: ${on.length} compared row(s)` : `  HOLE  animations ${f}: no compared row reaches it${anywhere.length > 0 ? ` (only ${anywhere.join(', ')}, which the core skips)` : ''}`);
+    const where = f in REMAINDER_CENSUS_BLOCKS ? ` (judged on ${block})` : '';
+    out.push(on.length > 0 ? `  REACH animations ${f}: ${on.length} compared row(s)${where}` : `  HOLE  animations ${f}: no compared row reaches it${where}${anywhere.length > 0 ? ` (only ${anywhere.join(', ')}, which the core skips)` : ''}`);
+  }
+  return out;
+}
+
+/**
+ * Per timeline kind of construct 4's remainder (issue #955) — deform,
+ * sequence, draw order, events — the rows carrying one that are judged on
+ * the block it changes, with their verdict, and those left SKIP, named: the
+ * kind is admitted where every row carrying it reads IDENTICAL.
+ */
+export function timelineKindLines(rows: readonly GateRow[]): string[] {
+  const out: string[] = [];
+  for (const kind of ['deform', 'sequence', 'drawOrder', 'events'] as const) {
+    const block = REMAINDER_CENSUS_BLOCKS[kind];
+    const carrying = rows.filter((r) => (r.animationCensus?.[kind] ?? 0) > 0);
+    const judged = carrying.filter((r) => r.blocks !== null && r.blocks[block].verdict !== 'SKIP');
+    const skipped = carrying.filter((r) => !judged.includes(r));
+    out.push(`  KIND  ${kind} (${block}): ${judged.length} row(s) judged${judged.length > 0 ? ` (${judged.map((r) => `${r.name} ${r.blocks?.[block].verdict}`).join(', ')})` : ''}; ${skipped.length} SKIP${skipped.length > 0 ? ` (${skipped.map((r) => r.name).join(', ')})` : ''}`);
   }
   return out;
 }
@@ -981,7 +1076,7 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
         `  ${row.verdict.padEnd(9)} ${row.name}${blocks}: ${row.boneSamples} bone-sample(s), ${row.slotRows} slot row(s) and ${row.attachmentRows} attachment row(s) of ${row.vertices} vertices compared, worst Δxy ${row.worstXy.toFixed(6)}, worst Δabcd ${row.worstM.toFixed(6)}` +
           (row.why === null ? '' : ` — ${row.why}`),
       );
-      for (const a of row.animations) print(`              animation ${JSON.stringify(a.name)}: bones ${a.bones}, slots ${a.slots}${a.why === null ? '' : ` — ${a.why}`}`);
+      for (const a of row.animations) print(`              animation ${JSON.stringify(a.name)}: bones ${a.bones}, slots ${a.slots}, drawOrder ${a.drawOrder}, attachments ${a.attachments}, clips ${a.clips}, events ${a.events}${a.why === null ? '' : ` — ${a.why}`}`);
     }
     print('');
     for (const line of censusTable(rows)) print(line);
@@ -1008,6 +1103,7 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
       if (existsSync(path)) kinds.set(row.name, readModel(readFileSync(path, 'utf8')).constraints.map((c) => c.kind));
     }
     for (const line of constraintKindLines(rows, kinds)) print(line);
+    for (const line of timelineKindLines(rows)) print(line);
     const verdict = gateVerdict(rows);
     print(verdict.line);
     return verdict.ok ? 0 : 1;

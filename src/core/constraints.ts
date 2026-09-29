@@ -1157,25 +1157,28 @@ export function previousPassSlotBones(doc: CompiledDocument, active: ReadonlySet
 
 /**
  * Why an animation's bones cannot be posed by this cut though the setup's
- * can, or null: a path constraint's slot whose attachment an animation keys,
- * or a path attachment an animation deforms — the curve would not be the one
- * the setup reads, and neither is admitted (the attachment and deform
- * timelines are item 4's later groups).
+ * can, or null: a path constraint's slot whose attachment an animation keys
+ * — the curve would not be the one the setup reads, and a switch of the
+ * walked curve is not measured — or a path attachment an animation deforms
+ * whose placeholder several skins fill, so which record `--skin all` shows,
+ * and whether the deform moves it, is the Spine file's skin order. A deform
+ * of a walked path is otherwise posed (`./deform.ts`, issue #955).
  */
 export function pathAnimationsWhy(doc: CompiledDocument): string | null {
   const found: string[] = [];
   const paths = doc.constraints.flatMap((c) => (c.record?.kind === 'path' ? [c.record] : []));
   for (const a of doc.animations) {
     for (const r of paths) {
-      if (a.timelines.slots.some((s) => s.name === r.slot && s.timelines.some((t) => t.kind === 'attachment'))) found.push(`animation "${a.name}" keys the attachment of slot "${r.slot}", which path constraint "${r.name}" walks`);
+      if (a.timelines.slots.some((s) => s.name === r.slot && s.timelines.some((t) => t.kind === 'attachment'))) found.push(`animation "${a.name}" keys the attachment of slot "${r.slot}", which path constraint "${r.name}" walks — a switch of the walked curve is not measured`);
     }
     for (const d of a.deforms) {
       const [skin, slot, att] = d.split('/');
       const g = doc.skins.find((k) => k.name === skin)?.attachments[slot]?.[att]?.geometry;
-      if (g?.kind === 'path') found.push(`animation "${a.name}" deforms path attachment "${att}" (skin "${skin}", slot "${slot}")`);
+      const fillers = doc.skins.filter((k) => k.attachments[slot]?.[att] !== undefined).map((k) => `"${k.name}"`);
+      if (g?.kind === 'path' && fillers.length > 1) found.push(`animation "${a.name}" deforms path attachment "${att}" (skin "${skin}", slot "${slot}"), a placeholder skins ${fillers.join(', ')} fill — which of them --skin all walks, and so whether the deform moves it, is the Spine file's skin order, not the model's`);
     }
   }
-  return found.length === 0 ? null : `${found.join('; ')} — a path constraint then walks a curve other than the setup's, and attachment and deform timelines are not admitted (item 4)`;
+  return found.length === 0 ? null : found.join('; ');
 }
 
 /**

@@ -207,7 +207,7 @@
  */
 import type { ModelBone, ModelVertices } from '../model.ts';
 import { RUNTIME_PI, type CoreWorld } from './world.ts';
-import { worldVertices } from './vertices.ts';
+import { EXACT_COORDS, worldVertices } from './vertices.ts';
 import type { CoreCurve, CoreKey } from './animation.ts';
 import type { CoreConstraintRecord } from './constraints.ts';
 
@@ -231,6 +231,8 @@ export interface CorePathGeometry {
   closed: boolean;
   constantSpeed: boolean;
   lengths: number[];
+  /** Set when a deform timeline replaced the vertices at a sample (`./deform.ts`): their coordinates are read as they are, not through `Math.fround`. */
+  exact?: boolean;
 }
 
 /** The values a path constraint's timelines key. */
@@ -439,7 +441,7 @@ export interface PathSolverState {
 
 /** The slot's path vertices in world units, as the constraint reads them at the moment it runs. */
 function pathWorld(state: PathSolverState, c: CorePathRecord, g: CorePathGeometry): number[] {
-  return worldVertices(g.vertices, state.world.get(c.slotBone) as CoreWorld, state.world);
+  return worldVertices(g.vertices, state.world.get(c.slotBone) as CoreWorld, state.world, g.exact === true ? EXACT_COORDS : Math.fround);
 }
 
 function onLineBefore(p: number, x1: number, y1: number, x2: number, y2: number, out: number[], o: number): void {

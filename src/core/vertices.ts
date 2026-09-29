@@ -103,9 +103,22 @@
  * order (`ModelSlot`): measured the same order as spine-core's on 19 of 19
  * recipes. A bounding box and a path attachment have no row: the oracle's
  * dump writes no vertices for either, so neither can be posed against it.
+ *
+ * ## At a sample, and under a deform or a sequence (issue #955)
+ *
+ * `poseGeometry` poses a sample's attachments the same way, through the
+ * sample's bones and in its draw order. A slot a deform timeline moved
+ * carries its deform array (`ShownGeometry.deform`): the vertices are the
+ * array's (`deformedVertices` in `./deform.ts`) and their coordinates are read
+ * AS THEY ARE, not through `Math.fround` again — a lerped deform is a double
+ * the runtime does not round (`./deform.ts`'s header: the lerped positions
+ * rounded to float32 missed 791 of 800 samples). A region a sequence
+ * timeline stepped carries its frame (`ShownGeometry.frame`), and its corners
+ * read that frame's rectangle (`CoreRegionGeometry.frames`).
  */
 import type { ModelAtlasRect, ModelBinding, ModelVertices } from '../model.ts';
 import { RUNTIME_PI, type CoreWorld } from './world.ts';
+import { deformedVertices } from './deform.ts';
 
 const RAD = RUNTIME_PI / 180;
 
@@ -120,6 +133,8 @@ export interface CoreRegionGeometry {
   height: number;
   /** The rectangle drawn at setup, or `null` when the model states the build had none. */
   atlas: ModelAtlasRect | null;
+  /** A sequence's rectangles, one per frame (`sequence.atlas`) — what a sequence timeline's frame draws (`./deform.ts`). */
+  frames?: ModelAtlasRect[];
 }
 
 /** The geometry a record carries, by kind, as far as the construct reads it. */
@@ -139,7 +154,10 @@ export type CoreClipRow = [string, string, string | null, Array<number | null>];
 /** What computes a region's corners in the slot bone's world: `regionCorners` unless a caller passes another. */
 export type RegionPoser = (region: CoreRegionGeometry & { atlas: ModelAtlasRect }, bone: CoreWorld) => number[];
 /** What computes a vertex array's world positions: `worldVertices` unless a caller passes another. */
-export type VertexPoser = (vertices: ModelVertices, bone: CoreWorld, world: ReadonlyMap<string, CoreWorld>) => number[];
+export type VertexPoser = (vertices: ModelVertices, bone: CoreWorld, world: ReadonlyMap<string, CoreWorld>, coords?: (v: number) => number) => number[];
+
+/** A deformed array's coordinates are read as they are (`./deform.ts`, `deformedVertices`): they are not the stored float32s. */
+export const EXACT_COORDS = (v: number): number => v;
 
 /** A region's four corners in world units — the header's rule. */
 export function regionCorners(region: CoreRegionGeometry & { atlas: ModelAtlasRect }, bone: CoreWorld): number[] {
@@ -167,13 +185,18 @@ export function regionCorners(region: CoreRegionGeometry & { atlas: ModelAtlasRe
   return out;
 }
 
-/** A vertex array's world positions — the header's mesh rule, every stored number through `Math.fround`. */
-export function worldVertices(vertices: ModelVertices, bone: CoreWorld, world: ReadonlyMap<string, CoreWorld>): number[] {
+/**
+ * A vertex array's world positions — the header's mesh rule, every stored
+ * number through `Math.fround`; with `coords`, the coordinates through it
+ * instead (a deformed array's are read as they are, `EXACT_COORDS`), the
+ * weights through `Math.fround` still.
+ */
+export function worldVertices(vertices: ModelVertices, bone: CoreWorld, world: ReadonlyMap<string, CoreWorld>, coords: (v: number) => number = Math.fround): number[] {
   const out: number[] = [];
   if (!vertices.weighted) {
     for (let i = 0; i + 1 < vertices.xy.length; i += 2) {
-      const x = Math.fround(vertices.xy[i]);
-      const y = Math.fround(vertices.xy[i + 1]);
+      const x = coords(vertices.xy[i]);
+      const y = coords(vertices.xy[i + 1]);
       out.push(x * bone.a + y * bone.b + bone.worldX, x * bone.c + y * bone.d + bone.worldY);
     }
     return out;
@@ -184,8 +207,8 @@ export function worldVertices(vertices: ModelVertices, bone: CoreWorld, world: R
     for (const binding of influences) {
       const t = world.get(binding.bone);
       if (t === undefined) throw new Error(`a binding names bone "${binding.bone}", which has no world transform (readModel refuses it first)`);
-      const x = Math.fround(binding.x);
-      const y = Math.fround(binding.y);
+      const x = coords(binding.x);
+      const y = coords(binding.y);
       const weight = Math.fround(binding.weight);
       wx += (x * t.a + y * t.b + t.worldX) * weight;
       wy += (x * t.c + y * t.d + t.worldY) * weight;
@@ -264,6 +287,7 @@ export function readGeometry(raw: Record<string, unknown>, kind: CoreGeometry['k
       const hasRect = raw.atlas !== undefined;
       const hasSequence = raw.sequence !== undefined;
       let atlas: ModelAtlasRect | null | undefined;
+      let frames: ModelAtlasRect[] | undefined;
       if (hasRect === hasSequence) {
         problems.push(`${where}: the region carries ${hasRect ? 'both an atlas rectangle and a sequence' : 'neither an atlas rectangle nor a sequence'}; the writer states exactly one of the two, and a sequence holds a rectangle per frame (issue #935)`);
       } else if (hasRect) {
@@ -281,6 +305,7 @@ export function readGeometry(raw: Record<string, unknown>, kind: CoreGeometry['k
           else {
             const rects = seq.atlas.map((r, i) => readRect(r, `${where}.sequence.atlas[${i}]`, problems));
             if (typeof setup === 'number' && Number.isInteger(setup) && setup >= 0 && setup < rects.length) atlas = rects[setup];
+            if (rects.every((r) => r !== undefined)) frames = rects as ModelAtlasRect[];
           }
         }
       }
@@ -288,7 +313,7 @@ export function readGeometry(raw: Record<string, unknown>, kind: CoreGeometry['k
       const pick = (key: 'x' | 'y' | 'rotation' | 'scaleX' | 'scaleY'): { [k: string]: number } => (raw[key] === undefined ? {} : { [key]: raw[key] as number });
       return {
         kind: 'region',
-        region: { ...pick('x'), ...pick('y'), ...pick('rotation'), ...pick('scaleX'), ...pick('scaleY'), width: raw.width as number, height: raw.height as number, atlas },
+        region: { ...pick('x'), ...pick('y'), ...pick('rotation'), ...pick('scaleX'), ...pick('scaleY'), width: raw.width as number, height: raw.height as number, atlas, ...(frames === undefined ? {} : { frames }) },
       };
     }
     case 'linkedmesh': {
@@ -344,6 +369,10 @@ export interface ShownGeometry {
   placeholder: string;
   skin: string;
   geometry: CoreGeometry;
+  /** The deform array a deform timeline set on the slot (`./deform.ts`), or none. */
+  deform?: readonly number[];
+  /** The frame a sequence timeline set on a region's series (`./deform.ts`), or none: the setup frame. */
+  frame?: number;
 }
 
 /** Resolves a linked mesh's source to its vertex array, or names why not. */
@@ -371,20 +400,23 @@ export function poseGeometry(
     const bone = world.get(s.bone);
     if (bone === undefined) throw new Error(`slot "${s.slot}": bone "${s.bone}" has no world transform`);
     const g = s.geometry;
+    // A deform array replaces the stored vertices, its coordinates read as they are (`./deform.ts`).
+    const drawn = (v: ModelVertices): number[] => (s.deform === undefined ? vertices(v, bone, world) : vertices(deformedVertices(v, s.deform), bone, world, EXACT_COORDS));
     if (g.kind === 'region') {
-      if (g.region.atlas === null) {
+      const rect = s.frame === undefined ? g.region.atlas : (g.region.frames?.[s.frame] ?? g.region.atlas);
+      if (rect === null) {
         nulls.push(`slot "${s.slot}" shows region "${s.name}" (skin "${s.skin}", placeholder "${s.placeholder}")`);
         continue;
       }
-      attachments.push([s.slot, s.name, 'region', region({ ...g.region, atlas: g.region.atlas }, bone).map(round)]);
+      attachments.push([s.slot, s.name, 'region', region({ ...g.region, atlas: rect }, bone).map(round)]);
     } else if (g.kind === 'mesh') {
-      attachments.push([s.slot, s.name, 'mesh', vertices(g.vertices, bone, world).map(round)]);
+      attachments.push([s.slot, s.name, 'mesh', drawn(g.vertices).map(round)]);
     } else if (g.kind === 'linkedmesh') {
       const source = sourceOf(g.skin, g.slot, g.source);
       if (typeof source === 'string') throw new Error(`slot "${s.slot}": ${source} (readModel refuses it first)`);
-      attachments.push([s.slot, s.name, 'mesh', vertices(source, bone, world).map(round)]);
+      attachments.push([s.slot, s.name, 'mesh', drawn(source).map(round)]);
     } else if (g.kind === 'clipping') {
-      clips.push([s.slot, s.name, g.end, vertices(g.vertices, bone, world).map(round)]);
+      clips.push([s.slot, s.name, g.end, drawn(g.vertices).map(round)]);
     }
   }
   const attachmentsWhy = nulls.length === 0

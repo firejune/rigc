@@ -140,24 +140,43 @@
  *
  * ## What is left out, by name
  *
+ * The constraints are applied after the timelines, posed by their own
+ * timelines at `t` (issue #938, `./constraints.ts`), and each slider's slot
+ * timelines after the sample's own (`./constraints_slider.ts`); a document
+ * whose setup bones are absent has no animation bones from the core, for the
+ * same reason, and neither has one whose animation keys the attachment of a
+ * walked path's slot, deforms a walked path whose placeholder several skins
+ * fill, or whose path offset reads a slot bone from the previous pose that
+ * changes its reflection (`./constraints_path.ts`); a slider whose animation
+ * keys a slot on such a document, or a placeholder skins fill differently,
+ * leaves the animation slots out as they leave the setup slots out.
+ *
+ * ## The rest of a sample (issue #955)
+ *
  * The oracle's sample carries `drawOrder`, `attachments`, `clips` and
- * `events` too: those are constructs not yet admitted, and the core leaves
- * each out naming it. The constraints are applied after the timelines, posed
- * by their own timelines at `t` (issue #938, `./constraints.ts`), and each
- * slider's slot timelines after the sample's own (`./constraints_slider.ts`);
- * a document whose setup bones are absent has no animation bones from the
- * core, for the same reason, and neither has one whose animation keys the
- * attachment of a walked path's slot or deforms a path, or whose path offset
- * reads a slot bone from the previous pose that changes its reflection
- * (`./constraints_path.ts`); a slider whose animation keys a slot on such a
- * document, or a placeholder skins fill differently, leaves the animation
- * slots out as they leave the setup slots out. A deform,
- * sequence, draw-order or event timeline poses no bone and no slot row, so an
- * animation carrying one is still posed here.
+ * `events` too, and since issue #955 the core poses each: the draw order
+ * (`./draw_order.ts`), every drawn attachment's and clipping polygon's world
+ * vertices through the sample's bones, in that order, with what the deform
+ * and sequence timelines set on them (`./deform.ts`), and the events fired
+ * since the sample before (`./events.ts`); each module's header states its
+ * rules with the measurements. A path walks the curve the sample's deform
+ * timelines left on its slot (`pathDeformed`). The attachments and clips are
+ * absent where the bones or the slots are, and the attachments where a shown
+ * region's rectangle is `null` or a timeline moves a record several skins
+ * fill; the draw order where a slider keys it on a document whose bones are
+ * absent.
  */
 import type { ModelBone, ModelSlot } from '../model.ts';
+import { readAttachmentTimelines, type CoreAttachmentTimeline } from './deform.ts';
+import { readDrawOrderKeys, type CoreDrawOrderKey } from './draw_order.ts';
+import { readEventKeys, type CoreEventDef, type CoreEventKey } from './events.ts';
 import { worldTransforms } from './world.ts';
-import { applyConstraints, constraintsAbsentWhy, pathAnimationsWhy, posedRecords, previousPassSlotBones, type CoreConstraintTimelines } from './constraints.ts';
+import { applyConstraints, constraintsAbsentWhy, pathAnimationsWhy, posedRecords, previousPassSlotBones, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
+import { attachmentStates, deformAt, deformedVertices, timelineIdentity } from './deform.ts';
+import { drawOrderAt } from './draw_order.ts';
+import { eventsFired, type CoreEventRow } from './events.ts';
+import { poseGeometry, type CoreAttachmentRow, type CoreClipRow } from './vertices.ts';
+import type { CoreWorld } from './world.ts';
 import { applySliderSlots, type SliderApplication } from './constraints_slider.ts';
 import {
   activeBones,
@@ -169,10 +188,13 @@ import {
   readColour,
   shownAttachment,
   shownRow,
+  slidersKeyingWhy,
+  sourceOfDoc,
   type CompiledDocument,
   type CoreAnimation,
   type CoreBoneRow,
   type CorePlant,
+  type CoreSkin,
   type CoreSlotRow,
 } from './index.ts';
 
@@ -213,7 +235,13 @@ export type SlotColourKind = keyof typeof SLOT_COLOUR_TIMELINES;
 export const SLOT_TIMELINE_KINDS = ['attachment', ...(Object.keys(SLOT_COLOUR_TIMELINES) as SlotColourKind[])] as const;
 export type SlotTimelineKind = (typeof SLOT_TIMELINE_KINDS)[number];
 
-/** The groups of an animation this construct does not pose, in the document's order. */
+/**
+ * The groups of an animation after its bones and slots, in the document's
+ * order: the constraint timelines (construct 5, `./constraints.ts`) and this
+ * construct's remainder — attachment timelines (`./deform.ts`), the draw
+ * order (`./draw_order.ts`) and events (`./events.ts`). Every key time in
+ * them sets the runtime's duration.
+ */
 export const LATER_GROUPS = ['constraints', 'attachments', 'drawOrder', 'events'] as const;
 
 /** A key's curve as read: linear, a hold, or four float32 numbers per channel. */
@@ -260,6 +288,12 @@ export interface CoreAnimationTimelines {
   slots: Array<CoreTarget<SlotTimelineKind>>;
   /** Timelines per later group, in `LATER_GROUPS` order; a group holding none is not listed. */
   later: Array<[(typeof LATER_GROUPS)[number], number]>;
+  /** The deform and sequence timelines, each attachment's (`./deform.ts`). */
+  attachments: CoreAttachmentTimeline[];
+  /** The draw-order keys (`./draw_order.ts`); empty where the animation keys none. */
+  drawOrder: CoreDrawOrderKey[];
+  /** The event keys (`./events.ts`); empty where the animation fires none. */
+  events: CoreEventKey[];
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -376,8 +410,8 @@ function readSlotTimeline(kind: SlotTimelineKind, keysValue: unknown, where: str
   });
 }
 
-/** Every key time under a later group's value, for the runtime's duration; a time that is not a finite number is a problem. */
-function laterKeyTimes(group: (typeof LATER_GROUPS)[number], value: unknown, where: string, problems: string[]): { timelines: number; times: number[] } {
+/** Every key time under an animation's `constraints` group, for the runtime's duration; a time that is not a finite number is a problem. */
+function constraintKeyTimes(value: unknown, where: string, problems: string[]): { timelines: number; times: number[] } {
   const times: number[] = [];
   let timelines = 0;
   const keys = (list: unknown, at: string): void => {
@@ -401,23 +435,10 @@ function laterKeyTimes(group: (typeof LATER_GROUPS)[number], value: unknown, whe
     }
     list.forEach((entry, i) => (isRecord(entry) ? each(entry, `${at}[${i}]`) : problems.push(`${at}[${i}] is not an object`)));
   };
-  if (group === 'drawOrder' || group === 'events') {
-    if (!Array.isArray(value)) problems.push(`${where} is not a list`);
-    else if (value.length > 0) keys(value, where);
-  } else if (group === 'constraints') {
-    if (!isRecord(value)) problems.push(`${where} is not an object`);
-    else {
-      for (const kind of ['ik', 'transform'] as const) named(value[kind], `${where}.${kind}`, (e, at) => keys(e.keys, `${at}.keys`));
-      for (const kind of ['path', 'physics', 'slider'] as const) named(value[kind], `${where}.${kind}`, (e, at) => named(e.timelines, `${at}.timelines`, (tl, at2) => keys(tl.keys, `${at2}.keys`)));
-    }
-  } else {
-    named(value, where, (skin, at) =>
-      named(skin.slots, `${at}.slots`, (slot, at2) =>
-        named(slot.attachments, `${at2}.attachments`, (att, at3) => {
-          for (const k of ['deform', 'sequence'] as const) if (att[k] !== undefined) keys(att[k], `${at3}.${k}`);
-        }),
-      ),
-    );
+  if (!isRecord(value)) problems.push(`${where} is not an object`);
+  else {
+    for (const kind of ['ik', 'transform'] as const) named(value[kind], `${where}.${kind}`, (e, at) => keys(e.keys, `${at}.keys`));
+    for (const kind of ['path', 'physics', 'slider'] as const) named(value[kind], `${where}.${kind}`, (e, at) => named(e.timelines, `${at}.timelines`, (tl, at2) => keys(tl.keys, `${at2}.keys`)));
   }
   return { timelines, times };
 }
@@ -431,7 +452,14 @@ function laterKeyTimes(group: (typeof LATER_GROUPS)[number], value: unknown, whe
  * and `rgba2`/`rgb2` on a slot with no dark colour are each a problem, named —
  * and of the later groups only their key times.
  */
-export function readAnimationTimelines(raw: Record<string, unknown>, label: string, bones: ReadonlySet<string>, slots: readonly ModelSlot[], problems: string[]): CoreAnimationTimelines {
+export function readAnimationTimelines(
+  raw: Record<string, unknown>,
+  label: string,
+  bones: ReadonlySet<string>,
+  slots: readonly ModelSlot[],
+  problems: string[],
+  context: { skins: readonly CoreSkin[]; events: ReadonlyMap<string, CoreEventDef> },
+): CoreAnimationTimelines {
   const declared = typeof raw.duration === 'number' && Number.isFinite(raw.duration) ? raw.duration : 0;
   if (typeof raw.duration !== 'number' || !Number.isFinite(raw.duration)) problems.push(`${label}: duration is ${JSON.stringify(raw.duration)}, not a finite number`);
   const slotByName = new Map(slots.map((s) => [s.name, s]));
@@ -486,12 +514,20 @@ export function readAnimationTimelines(raw: Record<string, unknown>, label: stri
     return readSlotTimeline(kind, keys, at, problems);
   });
   const later: CoreAnimationTimelines['later'] = [];
-  for (const group of LATER_GROUPS) {
-    const found = laterKeyTimes(group, raw[group], `${label}.${group}`, problems);
-    times.push(...found.times);
-    if (found.timelines > 0) later.push([group, found.timelines]);
-  }
-  return { declared, duration: times.length === 0 ? 0 : Math.max(...times), bones: boneTargets, slots: slotTargets, later };
+  // The constraint timelines' key times only (construct 5 reads them, `./constraints.ts`); the other three groups are read in full here.
+  const constraintTimes = constraintKeyTimes(raw.constraints, `${label}.constraints`, problems);
+  times.push(...constraintTimes.times);
+  if (constraintTimes.timelines > 0) later.push(['constraints', constraintTimes.timelines]);
+  const attachments = readAttachmentTimelines(raw.attachments, label, context.skins, problems);
+  const drawOrder = readDrawOrderKeys(raw.drawOrder, label, slots, problems);
+  const events = readEventKeys(raw.events, label, context.events, problems);
+  for (const a of attachments) for (const k of [...(a.deform ?? []), ...(a.sequence ?? [])]) times.push(k.time);
+  for (const k of [...drawOrder, ...events]) times.push(k.time);
+  const attachmentTimelines = attachments.reduce((n, a) => n + (a.deform === null ? 0 : 1) + (a.sequence === null ? 0 : 1), 0);
+  if (attachmentTimelines > 0) later.push(['attachments', attachmentTimelines]);
+  if (drawOrder.length > 0) later.push(['drawOrder', 1]);
+  if (events.length > 0) later.push(['events', 1]);
+  return { declared, duration: times.length === 0 ? 0 : Math.max(...times), bones: boneTargets, slots: slotTargets, later, attachments, drawOrder, events };
 }
 
 // ---------------------------------------------------------------------------
@@ -551,7 +587,7 @@ export type ChannelEvaluator = (keys: readonly CoreKey[], index: number, channel
 export type KeySearch = (keys: readonly CoreKey[], t: number) => number;
 
 /** The last key at or before `t`, or −1 before the first — the header's key search. */
-export function keyIndexAt(keys: readonly CoreKey[], t: number): number {
+export function keyIndexAt(keys: ReadonlyArray<{ time: number }>, t: number): number {
   let found = -1;
   for (let i = 0; i < keys.length; i++) {
     if (keys[i].time <= t) found = i;
@@ -642,7 +678,15 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
  * that leave them out: a slot showing a placeholder several skins fill
  * differently (the setup slots' ⚠️, `shownAttachment`).
  */
-export function posedSlots(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}, sliders: readonly SliderApplication[] = []): { rows: CoreSlotRow[]; conflicts: string[] } {
+export function posedSlots(
+  doc: CompiledDocument,
+  timelines: CoreAnimationTimelines,
+  t: number,
+  plant: TimelinePlant = {},
+  sliders: readonly SliderApplication[] = [],
+  /** Filled with each slot's placeholder once the sample's own timelines have moved it, before the sliders — what the attachments are posed from (`attachmentStates`). */
+  placeholders?: Map<string, string | null>,
+): { rows: CoreSlotRow[]; conflicts: string[] } {
   const resolve = plant.shown ?? shownAttachment;
   const colour = plant.colour ?? readColour;
   const blend = plant.blend ?? readBlend;
@@ -670,6 +714,8 @@ export function posedSlots(doc: CompiledDocument, timelines: CoreAnimationTimeli
       });
     }
     // The sliders, after the animation, in constraint order (`./constraints_slider.ts`).
+    // What the slot shows after the sample's own timelines: the attachments' deform and sequence timelines are matched against it (`./deform.ts`, *A switch*).
+    placeholders?.set(slot.name, placeholder);
     const pose = { placeholder, light, dark };
     applySliderSlots(slot.name, pose, sliders);
     placeholder = pose.placeholder;
@@ -702,20 +748,44 @@ export function posedSlots(doc: CompiledDocument, timelines: CoreAnimationTimeli
  * without, the hierarchy and the timelines alone.
  */
 export function posedBoneRows(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}, constraints?: CoreConstraintTimelines, sliders?: SliderApplication[]): CoreBoneRow[] {
+  return posedBoneWorld(doc, timelines, t, plant, constraints, sliders).rows;
+}
+
+/** `posedBoneRows`, with the world transforms the rows were read off — what the sample's attachments are posed through. */
+export function posedBoneWorld(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}, constraints?: CoreConstraintTimelines, sliders?: SliderApplication[]): { rows: CoreBoneRow[]; world: Map<string, CoreWorld> } {
   const active = activeBones(doc);
   const bones = posedBones(doc, timelines, t, plant);
   let world = (plant.evaluate ?? worldTransforms)(bones, active);
   if (constraints !== undefined) {
     const setupRecords = constraintRecords(doc);
-    const records = posedRecords(setupRecords, constraints, t);
+    // A path walks the curve the sample's deform timelines left on its slot (`./deform.ts`); a slider's deform of a walked path leaves the bones out (`pathAnimationsWhy`).
+    const records = pathDeformed(doc, posedRecords(setupRecords, constraints, t), timelines, t, plant);
     // A path constraint may read a slot bone the runtime has not yet brought up to date in this pass, as the previous pass left it (`./constraints_path.ts`, *Which slot bone*); `poseAnimations` holds that pass to the setup pose's reading.
     const previous = setupRecords.some((r) => r.kind === 'path') ? applyConstraints(doc.bones, (plant.evaluate ?? worldTransforms)(doc.bones, active), active, plant.constraints ? plant.constraints(setupRecords) : setupRecords) : null;
     world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records, previous, sliders);
   }
-  return bones.map((b): CoreBoneRow => {
-    const w = world.get(b.name);
+  const posed = world;
+  const rows = bones.map((b): CoreBoneRow => {
+    const w = posed.get(b.name);
     if (w === undefined) throw new CoreInputError(`the evaluator returned no transform for bone "${b.name}"`);
     return [b.name, gridRound(w.worldX), gridRound(w.worldY), gridRound(w.a), gridRound(w.b), gridRound(w.c), gridRound(w.d), active.has(b.name) ? 1 : 0, b.parent ?? null];
+  });
+  return { rows, world: posed };
+}
+
+/** Each path record with the curve its slot shows deformed by the sample's own deform timelines at `t` (`./deform.ts`), or as it was. */
+function pathDeformed(doc: CompiledDocument, records: CoreConstraintRecord[], timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant): CoreConstraintRecord[] {
+  if (timelines.attachments.every((a) => a.deform === null)) return records;
+  return records.map((r) => {
+    if (r.kind !== 'path' || r.path === null) return r;
+    const slot = doc.slots.find((x) => x.name === r.slot);
+    const shown = slot === undefined ? null : (plant.shown ?? shownAttachment)(doc, slot);
+    if (shown === null || 'conflict' in shown) return r;
+    const identity = timelineIdentity(r.slot, shown);
+    const keyed = timelines.attachments.find((a) => a.deform !== null && `${a.skin}/${a.slot}/${a.attachment}` === identity);
+    if (keyed === undefined || keyed.deform === null) return r;
+    const d = (plant.deform ?? deformAt)(r.path.vertices, keyed.deform, t);
+    return d === null ? r : { ...r, path: { ...r.path, vertices: deformedVertices(r.path.vertices, d), exact: true } };
   });
 }
 
@@ -741,11 +811,15 @@ export function sampleTime(phase: SamplePhase, d: number, i: number, n: number):
   return n === 1 ? 0 : (d * i) / (n - 1);
 }
 
-/** One posed sample: the time and the two blocks this construct produces (`null` where it leaves one out). */
+/** One posed sample: the time and the blocks this construct produces (`null` where it leaves one out). */
 export interface CoreSample {
   t: number | null;
+  events: CoreEventRow[] | null;
   bones: CoreBoneRow[] | null;
   slots: CoreSlotRow[] | null;
+  drawOrder: string[] | null;
+  attachments: CoreAttachmentRow[] | null;
+  clips: CoreClipRow[] | null;
 }
 
 export interface CoreAnimationPose {
@@ -805,16 +879,40 @@ function previousPassWhy(doc: CompiledDocument, animations: readonly CoreAnimati
 export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: number, plant: TimelinePlant = {}): { animations: CoreAnimationPose[]; absent: Array<[string, string]> } {
   let bonesReason = constraintsAbsentWhy(doc) ?? pathAnimationsWhy(doc);
   const slotConflicts: string[] = [];
+  const attachmentWhy: string[] = [];
+  const resolve = plant.shown ?? shownAttachment;
   const animations = doc.animations.map((anim: CoreAnimation): CoreAnimationPose => {
     const d = anim.timelines.duration;
     const samples: CoreSample[] = [];
+    let last = -1;
     for (let i = 0; i < n; i++) {
       const t = sampleTime(phase, d, i, n);
       const sliders: SliderApplication[] = [];
-      const bones = bonesReason === null ? posedBoneRows(doc, anim.timelines, t, plant, anim.constraints, sliders) : null;
-      const slots = posedSlots(doc, anim.timelines, t, plant, sliders);
+      const posed = bonesReason === null ? posedBoneWorld(doc, anim.timelines, t, plant, anim.constraints, sliders) : null;
+      const placeholders = new Map<string, string | null>();
+      const slots = posedSlots(doc, anim.timelines, t, plant, sliders, placeholders);
       for (const c of slots.conflicts) if (!slotConflicts.includes(`${c} at animation "${anim.name}"`)) slotConflicts.push(`${c} at animation "${anim.name}"`);
-      samples.push({ t: gridRound(t), bones, slots: slots.rows });
+      // The draw order: the sample's key, or the setup order before it, then each slider's key (`./draw_order.ts`).
+      const evalOrder = plant.drawOrder ?? drawOrderAt;
+      let order = evalOrder(doc.slots.length, anim.timelines.drawOrder, t) ?? doc.slots.map((_s, k) => k);
+      for (const app of sliders) order = evalOrder(doc.slots.length, app.timelines.drawOrder, app.at) ?? order;
+      const drawOrder = order.map((k) => doc.slots[k].name);
+      // The attachments and clips, in the draw order, with the deform and sequence timelines' state (`./deform.ts`).
+      let attachments: CoreAttachmentRow[] | null = null;
+      let clips: CoreClipRow[] | null = null;
+      if (posed !== null) {
+        const states = attachmentStates(doc, resolve, placeholders, { timelines: anim.timelines, t }, sliders, plant);
+        for (const w of states.why) if (!attachmentWhy.includes(w)) attachmentWhy.push(w);
+        const rank = new Map(order.map((k, r) => [doc.slots[k].name, r]));
+        const shown = [...states.shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
+        const geometry = poseGeometry(shown, posed.world, sourceOfDoc(doc), gridRound, { region: plant.region, vertices: plant.vertices });
+        if (geometry.attachmentsWhy !== null && !attachmentWhy.includes(geometry.attachmentsWhy)) attachmentWhy.push(geometry.attachmentsWhy);
+        attachments = geometry.attachments;
+        clips = geometry.clips;
+      }
+      const events = (plant.events ?? eventsFired)(anim.timelines.events, last, t);
+      last = t;
+      samples.push({ t: gridRound(t), events, bones: posed === null ? null : posed.rows, slots: slots.rows, drawOrder, attachments, clips });
     }
     return { name: anim.name, duration: gridRound(d), samples };
   });
@@ -824,8 +922,19 @@ export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: num
     ? null
     : `${slotConflicts.slice(0, 5).join('; ')}${slotConflicts.length > 5 ? `; and ${slotConflicts.length - 5} more` : ''} — under --skin all the LAST of them in the Spine file's skin order wins, and that order is the emitter's, not the model's`);
   if (slotsReason !== null) for (const a of animations) for (const s of a.samples) s.slots = null;
+  const orderReason = bonesReason === null ? null : slidersKeyingWhy(doc, 'drawOrder');
+  if (orderReason !== null) for (const a of animations) for (const s of a.samples) s.drawOrder = null;
+  // Every vertex goes through a bone's world matrix and follows what the slot shows, so the attachments and clips need both blocks.
+  const upstream = [bonesReason === null ? null : `animations.bones is absent (${bonesReason}), and every vertex goes through a bone's world matrix`, slotsReason === null ? null : 'animations.slots is absent, so what a slot shows is not posed'].filter((x): x is string => x !== null);
+  const clipsReason = upstream.length > 0 ? upstream.join('; ') : attachmentWhy.some((w) => !w.includes('(atlas: null)')) ? attachmentWhy.filter((w) => !w.includes('(atlas: null)')).join('; ') : null;
+  const attachmentsReason = clipsReason ?? (attachmentWhy.length === 0 ? null : attachmentWhy.join('; '));
+  if (attachmentsReason !== null) for (const a of animations) for (const s of a.samples) s.attachments = null;
+  if (clipsReason !== null) for (const a of animations) for (const s of a.samples) s.clips = null;
   const absent: Array<[string, string]> = [];
   if (bonesReason !== null) absent.push(['animations.bones', bonesReason]);
   if (slotsReason !== null) absent.push(['animations.slots', slotsReason]);
+  if (orderReason !== null) absent.push(['animations.drawOrder', orderReason]);
+  if (attachmentsReason !== null) absent.push(['animations.attachments', attachmentsReason]);
+  if (clipsReason !== null) absent.push(['animations.clips', clipsReason]);
   return { animations, absent };
 }

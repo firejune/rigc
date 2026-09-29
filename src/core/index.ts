@@ -18,12 +18,14 @@
  * header states each measured rule). All are rounded as the oracle rounds
  * (`gridRound`). A fourth, **every animation's bone and slot timelines at the
  * oracle's sample times** (issue #936), is its own module, `./animation.ts`,
- * which this reader calls for each animation record. Every other block of the
- * oracle's document is a construct not yet admitted (the draw order, deform,
- * events, the physics parameters, and the attachments and clips at a
- * sample), and
- * the core says so by name (`NOT_ADMITTED`) rather than writing a value for
- * it.
+ * which this reader calls for each animation record. Its remainder (issue
+ * #955) — the draw order at setup and at a sample (`./draw_order.ts`), the
+ * deform and sequence timelines, which move what the attachments and clips
+ * draw at setup (under a slider) and at a sample (`./deform.ts`), and the
+ * events a sample fires (`./events.ts`) — is posed too. The one block of the
+ * oracle's document left is the physics parameters, the stepped phase's
+ * inputs, and the core says so by name (`NOT_ADMITTED`) rather than writing a
+ * value for it.
  *
  * **Constraints (construct 5, issue #938, `./constraints.ts`).** The oracle
  * poses the setup pose with every constraint applied, so a bone a constraint
@@ -160,11 +162,15 @@
 import type { ModelAtlasRect, ModelBone, ModelSlot, ModelVertices, SkinTableEntry } from '../model.ts';
 import { worldTransforms, type CoreWorld } from './world.ts';
 import { readAnimationTimelines, type CoreAnimationTimelines } from './animation.ts';
-import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type RegionPoser, type ShownGeometry, type VertexPoser } from './vertices.ts';
+import { readEventDefs, type CoreEventDef } from './events.ts';
+import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type RegionPoser, type VertexPoser } from './vertices.ts';
 import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
 import { readPathRecord } from './constraints_path.ts';
 import { readPhysicsRecord } from './constraints_physics.ts';
-import { applySliderSlots, readSliderRecord, sliderAttachmentsWhy, type SliderApplication, type SlotPoseState } from './constraints_slider.ts';
+import { applySliderSlots, readSliderRecord, type SliderApplication, type SlotPoseState } from './constraints_slider.ts';
+import { attachmentStates, type DeformEvaluator, type SequenceEvaluator } from './deform.ts';
+import { drawOrderAt, type DrawOrderEvaluator } from './draw_order.ts';
+import type { EventsFired } from './events.ts';
 
 /** The document spec this reader takes. */
 export const CORE_DOCUMENT_SPEC = 'rigc-compiled/1';
@@ -238,6 +244,10 @@ export interface CoreAttachment {
   path?: string;
   atlas?: ModelAtlasRect | null;
   geometry?: CoreGeometry;
+  /** How many frames the record's series holds, where it states a `sequence` — what a sequence key's index is checked against (`./deform.ts`). */
+  sequenceCount?: number;
+  /** A linked mesh's `timelines`: whether it plays its source's deform and sequence timelines (`./deform.ts`). */
+  timelines?: boolean;
 }
 
 /** One skin, as far as these constructs read it: its name, the bones it activates, and its table — slot, then placeholder. */
@@ -411,6 +421,16 @@ function readAttachments(value: Record<string, unknown>, bones: ReadonlySet<stri
       }
       const geometry = readGeometry(raw, kind, where, bones, slots, problems);
       if (geometry !== undefined) record.geometry = geometry;
+      // The series' length, whatever the kind: a sequence key's index is a frame of it (`./deform.ts`).
+      if (isRecord(raw.sequence)) {
+        const count = raw.sequence.count;
+        if (typeof count === 'number' && Number.isInteger(count) && count >= 1) record.sequenceCount = count;
+        else if (kind !== 'region') problems.push(`${where}.sequence: count is ${JSON.stringify(count)}, not a whole number of at least 1`);
+      }
+      if (kind === 'linkedmesh') {
+        if (typeof raw.timelines !== 'boolean') problems.push(`${where}: timelines is ${JSON.stringify(raw.timelines) ?? 'absent'}, not a boolean — the writer states whether the link plays its source's timelines`);
+        else record.timelines = raw.timelines;
+      }
       entries[placeholder] = record;
     }
     out[slot] = entries;
@@ -467,7 +487,7 @@ function readSkins(value: unknown, bones: ReadonlySet<string>, slots: ReadonlySe
   return out;
 }
 
-function readAnimations(value: unknown, bones: ReadonlySet<string>, slotRecords: readonly ModelSlot[], problems: string[]): CoreAnimation[] {
+function readAnimations(value: unknown, bones: ReadonlySet<string>, slotRecords: readonly ModelSlot[], skins: readonly CoreSkin[], events: ReadonlyMap<string, CoreEventDef>, problems: string[]): CoreAnimation[] {
   const slots = new Set(slotRecords.map((s) => s.name));
   if (!Array.isArray(value)) {
     problems.push('animations is not a list');
@@ -495,7 +515,7 @@ function readAnimations(value: unknown, bones: ReadonlySet<string>, slotRecords:
     // The structure is checked with the key times (`laterKeyTimes` in `./animation.ts`); here only the names are taken.
     const list = (v: unknown): Array<Record<string, unknown>> => (Array.isArray(v) ? v.filter(isRecord) : []);
     for (const skin of list(raw.attachments)) for (const slot of list(skin.slots)) for (const att of list(slot.attachments)) if (att.deform !== undefined) deforms.push(`${String(skin.name)}/${String(slot.name)}/${String(att.name)}`);
-    out.push({ name: typeof raw.name === 'string' ? raw.name : '', slots: keyed, timelines: readAnimationTimelines(raw, label, bones, slotRecords, problems), constraints: { ik: [], transform: [], path: [], physics: 0, slider: [] }, deforms });
+    out.push({ name: typeof raw.name === 'string' ? raw.name : '', slots: keyed, timelines: readAnimationTimelines(raw, label, bones, slotRecords, problems, { skins, events }), constraints: { ik: [], transform: [], path: [], physics: 0, slider: [] }, deforms });
   });
   return out;
 }
@@ -562,7 +582,8 @@ export function readModel(text: string, where = 'the model document'): CompiledD
   const slotNames = new Set(slots.map((x) => x.name));
   const skins = readSkins(value.skins, names, slotNames, problems);
   problems.push(...linkProblems(skins));
-  const animations = readAnimations(value.animations, names, slots, problems);
+  const events = readEventDefs(value.events, problems);
+  const animations = readAnimations(value.animations, names, slots, skins, events, problems);
   const constraints = readConstraints(value.constraints, animations, bones, slots, problems);
   if (Array.isArray(value.animations)) {
     value.animations.forEach((raw, i) => {
@@ -688,6 +709,14 @@ export interface CorePlant {
   vertices?: VertexPoser;
   /** The ik, transform and path constraints as posed, rewritten before they are applied (`./constraints.ts`). */
   constraints?: ConstraintPlant;
+  /** A deform timeline's array at a time (`deformAt` in `./deform.ts`). */
+  deform?: DeformEvaluator;
+  /** A sequence timeline's frame at a time (`sequenceFrameAt` in `./deform.ts`). */
+  sequence?: SequenceEvaluator;
+  /** A draw-order timeline's order at a time (`drawOrderAt` in `./draw_order.ts`). */
+  drawOrder?: DrawOrderEvaluator;
+  /** The events fired between two samples (`eventsFired` in `./events.ts`). */
+  events?: EventsFired;
 }
 
 /** The document's ik, transform and path constraint records, in its order — what `applyConstraints` runs. */
@@ -704,15 +733,10 @@ export function constraintRecords(doc: CompiledDocument): CoreConstraintRecord[]
  */
 export const NOT_ADMITTED: ReadonlyArray<readonly [string, string]> = [
   ['physics', 'physics constraint parameters: under --physics none, the only phase the core poses, a physics constraint applies nothing (issue #938); its parameters are the stepped phase\'s inputs, and the stepped phase is not admitted'],
-  ['setup.drawOrder', 'the draw order: not admitted (item 2)'],
-  ['animations.drawOrder', 'the draw order at a sample: draw-order timelines are not admitted (items 2 and 4)'],
-  ['animations.attachments', 'attachment world vertices at a sample: attachments and deform timelines are not admitted (items 3 and 4)'],
-  ['animations.clips', 'clipping polygons at a sample: not admitted (items 3 and 6)'],
-  ['animations.events', 'events fired: event timelines are not admitted (item 4)'],
 ];
 
-/** The blocks the core poses, in the document's order: bones and slots after `pathAttachments`, attachments and clips after `setup.drawOrder`. */
-const POSED_BLOCKS = ['setup.bones', 'setup.slots', 'setup.attachments', 'setup.clips'] as const;
+/** The setup blocks the core poses, in the document's order. */
+const POSED_BLOCKS = ['setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips'] as const;
 
 /** Bones active under every skin applied at once — the rule measured in the header. */
 export function activeBones(doc: CompiledDocument): Set<string> {
@@ -777,7 +801,7 @@ export function shownAttachment(doc: CompiledDocument, slot: ModelSlot): ShownRe
 export interface CoreSetup {
   bones: CoreBoneRow[] | null;
   slots: CoreSlotRow[] | null;
-  drawOrder: null;
+  drawOrder: string[] | null;
   attachments: CoreAttachmentRow[] | null;
   clips: CoreClipRow[] | null;
 }
@@ -817,8 +841,6 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
   }
   const conflicts: string[] = [];
   const slotRows: CoreSlotRow[] = [];
-  // What each slot shows once the sliders have moved it: the attachments below pose these.
-  const posedSlot = new Map<string, ModelSlot>();
   for (const slot of doc.slots) {
     const pose: SlotPoseState = {
       placeholder: slot.setup,
@@ -827,7 +849,6 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
     };
     applySliderSlots(slot.name, pose, applied);
     const posedRecord: ModelSlot = { ...slot, setup: pose.placeholder };
-    posedSlot.set(slot.name, posedRecord);
     const shown = pose.placeholder === null ? null : resolve(doc, posedRecord);
     if (shown !== null && 'conflict' in shown) {
       conflicts.push(`slot "${slot.name}" placeholder "${pose.placeholder}" is filled by skins ${shown.conflict.map((c) => `"${c.skin}" (shows ${JSON.stringify(c.shown)}, path ${JSON.stringify(c.path)})`).join(', ')}`);
@@ -850,37 +871,57 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
     : `${conflicts.join('; ')} — under --skin all the LAST of them in the Spine file's skin order wins, and that order is the emitter's (default first, the rest in the editor's order), not the model's; posing one skin at a time is not admitted`);
   const slots = slotsWhy === null ? slotRows : null;
   const upstream = [bonesWhy === null ? null : `setup.bones is absent (${bonesWhy}), and every vertex goes through a bone's world matrix`, slotsWhy === null ? null : 'setup.slots is absent, so what a slot shows is not posed'].filter((x): x is string => x !== null);
+  // The draw order: the slot order, then each slider's draw-order key (`./draw_order.ts`), which needs the sliders' times, read off the bones.
+  const orderWhy = bonesWhy === null ? null : slidersKeyingWhy(doc, 'drawOrder');
+  let drawOrder: string[] | null = null;
+  if (orderWhy === null) {
+    let order: number[] = doc.slots.map((_s, i) => i);
+    for (const app of applied) order = (plant.drawOrder ?? drawOrderAt)(doc.slots.length, app.timelines.drawOrder, app.at) ?? order;
+    drawOrder = order.map((i) => doc.slots[i].name);
+  }
   let attachments: CoreAttachmentRow[] | null = null;
   let clips: CoreClipRow[] | null = null;
-  const clipsWhy: string | null = upstream.length === 0 ? null : upstream.join('; ');
+  let clipsWhy: string | null = upstream.length === 0 ? null : upstream.join('; ');
   let attachmentsWhy: string | null = clipsWhy;
-  if (clipsWhy === null && setupWorld !== null) {
+  if (clipsWhy === null && setupWorld !== null && drawOrder !== null) {
     const world = setupWorld;
-    const shown: ShownGeometry[] = [];
-    for (const slot of doc.slots) {
-      const s = resolve(doc, posedSlot.get(slot.name) ?? slot);
-      if (s === null || 'conflict' in s || s.record.geometry === undefined) continue;
-      shown.push({ slot: slot.name, bone: slot.bone, name: shownRow(s).name, placeholder: s.placeholder, skin: s.skin, geometry: s.record.geometry });
-    }
-    const sourceOf = (skin: string, slot: string, source: string): ModelVertices | string => {
-      const g = doc.skins.find((k) => k.name === skin)?.attachments[slot]?.[source]?.geometry;
-      return g?.kind === 'mesh' ? g.vertices : (sourceProblem(doc.skins, skin, slot, source) ?? `the linked mesh's source "${source}" carries no vertices`);
-    };
-    const posed = poseGeometry(shown, world, sourceOf, gridRound, { region: plant.region, vertices: plant.vertices });
-    const deformed = sliderAttachmentsWhy(doc);
-    attachments = deformed === null ? posed.attachments : null;
-    attachmentsWhy = deformed ?? posed.attachmentsWhy;
-    clips = posed.clips;
+    // Each slot's shown record, with what the sliders' deform and sequence timelines set on it (`./deform.ts`), in the draw order.
+    // From the setup placeholders; `attachmentStates` applies each slider's attachment key, then its deform and sequence keys, in order.
+    const placeholders = new Map(doc.slots.map((sl) => [sl.name, sl.setup]));
+    const states = attachmentStates(doc, resolve, placeholders, null, applied, plant);
+    const rank = new Map(drawOrder.map((n, i) => [n, i]));
+    const shown = [...states.shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
+    const posed = poseGeometry(shown, world, sourceOfDoc(doc), gridRound, { region: plant.region, vertices: plant.vertices });
+    const stateWhy = states.why.length === 0 ? null : `${states.why.join('; ')}`;
+    attachments = stateWhy === null ? posed.attachments : null;
+    attachmentsWhy = stateWhy ?? posed.attachmentsWhy;
+    clips = stateWhy === null ? posed.clips : null;
+    clipsWhy = stateWhy;
   }
   // `NOT_ADMITTED` is in document order; bones and slots stand before `setup.drawOrder`, attachments and clips after it.
-  const why: Record<(typeof POSED_BLOCKS)[number], string | null> = { 'setup.bones': bonesWhy, 'setup.slots': slotsWhy, 'setup.attachments': attachmentsWhy, 'setup.clips': clipsWhy };
-  const absent: Array<[string, string]> = [];
-  for (const [block, reason] of NOT_ADMITTED) {
-    if (block === 'setup.drawOrder') for (const posed of ['setup.bones', 'setup.slots'] as const) if (why[posed] !== null) absent.push([posed, why[posed] as string]);
-    absent.push([block, reason]);
-    if (block === 'setup.drawOrder') for (const posed of ['setup.attachments', 'setup.clips'] as const) if (why[posed] !== null) absent.push([posed, why[posed] as string]);
-  }
-  return { setup: { bones, slots, drawOrder: null, attachments, clips }, absent };
+  const why: Record<(typeof POSED_BLOCKS)[number], string | null> = { 'setup.bones': bonesWhy, 'setup.slots': slotsWhy, 'setup.drawOrder': orderWhy, 'setup.attachments': attachmentsWhy, 'setup.clips': clipsWhy };
+  // `NOT_ADMITTED` (the physics parameters) stands before the setup blocks in the document's order.
+  const absent: Array<[string, string]> = NOT_ADMITTED.map(([block, reason]): [string, string] => [block, reason]);
+  for (const block of POSED_BLOCKS) if (why[block] !== null) absent.push([block, why[block] as string]);
+  return { setup: { bones, slots, drawOrder, attachments, clips }, absent };
+}
+
+/** A linked mesh's source vertices, or why they do not resolve — what `poseGeometry` reads a linked mesh through. */
+export function sourceOfDoc(doc: CompiledDocument): (skin: string, slot: string, source: string) => ModelVertices | string {
+  return (skin, slot, source) => {
+    const g = doc.skins.find((k) => k.name === skin)?.attachments[slot]?.[source]?.geometry;
+    return g?.kind === 'mesh' ? g.vertices : (sourceProblem(doc.skins, skin, slot, source) ?? `the linked mesh's source "${source}" carries no vertices`);
+  };
+}
+
+/** Why a block a slider's animation keys cannot be posed because the bones its time is read from are absent, or null: `drawOrder` for the draw order. */
+export function slidersKeyingWhy(doc: CompiledDocument, group: 'drawOrder'): string | null {
+  const keyed = doc.constraints.flatMap((c) => {
+    if (c.kind !== 'slider') return [];
+    const anim = doc.animations.find((a) => a.name === c.animation);
+    return anim !== undefined && anim.timelines[group].length > 0 ? [`slider "${c.name}" applies animation "${c.animation}", which keys the draw order`] : [];
+  });
+  return keyed.length === 0 ? null : `${keyed.join('; ')} — a slider's time is read off the bones, which are absent`;
 }
 
 /** Why the setup slots cannot be posed because a slider poses them and the bones its time is read from are absent, or null when no slider's animation keys a slot. */
