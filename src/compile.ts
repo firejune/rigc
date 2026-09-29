@@ -130,6 +130,7 @@ import {
 } from './transform.ts';
 import {
   boneIndexOf,
+  emitAnimations,
   emitBones,
   emitConstraints,
   emitEvents,
@@ -140,6 +141,8 @@ import {
 import {
   isModelVertexAttachment,
   type CarriedFromCompileResult,
+  type CompiledAnimation,
+  type ModelAttachmentTimelines,
   type ModelBinding,
   type ModelBone,
   type ModelBoundingBoxAttachment,
@@ -147,12 +150,14 @@ import {
   type ModelConstraint,
   type ModelConstraintKind,
   type ModelEvent,
+  type ModelKey,
   type ModelLinkedMeshAttachment,
   type ModelMeshAttachment,
   type ModelPathAttachment,
   type ModelRegionAttachment,
   type ModelSkin,
   type ModelSlot,
+  type ModelTimelines,
   type ModelVertices,
   type SkinTable,
   type SkinTableEntry,
@@ -178,7 +183,6 @@ import type {
   RigInfo,
   SpineSequence,
   SpineSkeletonJson,
-  SpineTimelineKey,
 } from './types.ts';
 
 export { CompileError, NotImplementedError };
@@ -310,11 +314,15 @@ const FRAME = 1 / 60;
  *
  * The comparator is hand-rolled and locale-independent, which `A18` requires:
  * `localeCompare` would make the emitted bytes a property of the machine.
+ *
+ * Handed to the Spine emitter as its `AnimationOrder` (issue #921): it takes
+ * the model's names and `emitAnimations` keys the object in the order this
+ * returns, so the refusal below is raised there, inside `compile`, in these
+ * words. Exported so the selftest hands it to the emitter the way the assembly
+ * does (`MA03`, `MA08`).
  */
-function editorAnimationOrder<T>(animations: Record<string, T>): Record<string, T> {
-  const ordered: Record<string, T> = {};
-  for (const name of editorNamesInOrder(Object.keys(animations), 'animations')) ordered[name] = animations[name];
-  return ordered;
+export function editorAnimationOrder(names: readonly string[]): string[] {
+  return editorNamesInOrder(names, 'animations');
 }
 
 /**
@@ -2867,8 +2875,8 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     constraintNamesOfKind.set(type, [...(constraintNamesOfKind.get(type) ?? []), name]);
   };
   /**
-   * ik constraint -> the booleans it declares that the timeline format would
-   * otherwise take away from it. Issue #273.
+   * ik constraint -> its three booleans IN EFFECT: the value it declares, or
+   * the parser's default where it declares none. Issue #273.
    *
    * 🚨 `SkeletonJson` reads `bendPositive`, `compress` and `stretch` in TWO
    * places with the same defaults: once on the constraint (`:155`) and once on
@@ -2877,11 +2885,14 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
    * `bendPositive: false` and an `ik` timeline that keys only `mix` produce a
    * constraint that bends the other way for the whole animation, with the field
    * still in the file and inert: four builds differing only in these flags posed
-   * one pose. What goes in this map is only the values that DIFFER from the
-   * per-key default, because a rig that says nothing and a key that says nothing
-   * already agree and there is nothing to carry.
+   * one pose. So a key that states no flag takes the constraint's from this
+   * map, and the model's ik key holds all three flags in effect (`ModelKey`).
+   * Which of them the file carries is the Spine emitter's: only those that
+   * differ from the per-key default (`emitAnimations`, issue #921), which is
+   * what this map held before — a rig that says nothing and a key that says
+   * nothing already agree, so nothing is written for them.
    */
-  const ikRigFlags = new Map<string, Record<string, boolean>>();
+  const ikFlagsInEffect = new Map<string, Record<string, boolean>>();
   // Which slots can actually show a path, for the path constraint's own check.
   // Read off the skin tables — the model records the file is emitted from —
   // rather than the spec, so it answers the question the runtime asks: is
@@ -2910,12 +2921,15 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     constraints.push(buildRigConstraint(spec, constraintCtx));
     declareConstraint(spec.name, spec.type);
     if (spec.type === 'ik') {
-      const carried: Record<string, boolean> = {};
+      // `flag.dflt` is the per-key default, and the constraint's own parser
+      // default is the same value for each of the three
+      // (`PARSER_DEFAULTS['ik constraint']` and `['ik key']` in keyorder.ts).
+      const inEffect: Record<string, boolean> = {};
       for (const flag of CONSTRAINT_TIMELINES.ik.flags) {
         const declared = spec[flag.field];
-        if (typeof declared === 'boolean' && declared !== flag.dflt) carried[flag.field] = declared;
+        inEffect[flag.field] = typeof declared === 'boolean' ? declared : flag.dflt;
       }
-      if (Object.keys(carried).length) ikRigFlags.set(spec.name, carried);
+      ikFlagsInEffect.set(spec.name, inEffect);
     }
   }
   withMotionSource(() => {
@@ -3000,7 +3014,9 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // the refusal below reports as the skins it looked in, so it is read from the
   // map rather than restated.
   const attachmentIndex: SlotAttachmentIndex = { bySlot: attachmentsBySlot, searched: [...skinTables.keys()] };
-  const animations: SpineSkeletonJson['animations'] = {};
+  // The model's animations, in the motion spec's order; `emitAnimations` keys
+  // them in the editor's at assembly.
+  const animations = new Map<string, CompiledAnimation>();
   const declaredDurations: Record<string, number> = {};
   const slotNames = new Set(slots.map((s) => s.name));
   // Which slots an `rgba2` timeline may be keyed on: the model slots with a
@@ -3015,13 +3031,24 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     checkMotionGroups(motion);
     for (const [animName, anim] of Object.entries(motion.animations)) {
       declaredDurations[animName] = anim.duration;
-      const slotTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
-      const boneTimelines: Record<string, Record<string, SpineTimelineKey[]>> = {};
-      /** One table per constraint family, keyed the way the file is. */
-      const familyTimelines: Record<ConstraintTrackFamily, Record<string, Record<string, SpineTimelineKey[]>>> = {
-        physics: {},
-        path: {},
-        slider: {},
+      const slotTimelines = new Map<string, ModelTimelines>();
+      const boneTimelines = new Map<string, ModelTimelines>();
+      /**
+       * One table per constraint family, target -> timelines. The physics
+       * timeline that names no constraint is filed under its own target,
+       * `EVERY_GLOBAL_PHYSICS`, in the position its track holds among the
+       * named ones (`CompiledAnimation`).
+       */
+      const familyTimelines: Record<ConstraintTrackFamily, Map<string, ModelTimelines>> = {
+        physics: new Map(),
+        path: new Map(),
+        slider: new Map(),
+      };
+      /** `targets.get(target)`, made on first use — the map keeps the order targets are first keyed in. */
+      const timelinesOf = (targets: Map<string, ModelTimelines>, target: string): ModelTimelines => {
+        let timelines = targets.get(target);
+        if (timelines === undefined) targets.set(target, (timelines = new Map()));
+        return timelines;
       };
       const claimed = new Set<string>();
       let compiledDuration = 0;
@@ -3121,7 +3148,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           // the fault is the pair, not a key.
           if (family === null && !isBoneTrack) {
             const mine = SLOT_COLOR_CHANNELS[track.property] ?? [];
-            for (const other of Object.keys(slotTimelines[target] ?? {})) {
+            for (const other of slotTimelines.get(target)?.keys() ?? []) {
               const shared = (SLOT_COLOR_CHANNELS[other] ?? []).filter((channel) => mine.includes(channel));
               if (shared.length === 0) continue;
               throw new CompileError(
@@ -3151,11 +3178,12 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
               : isBoneTrack
                 ? compileValueTrack(resolved, motion, animName, anim.duration, target, shift, BONE_TRACKS, 'bone')
                 : compileTrack(resolved, motion, animName, anim.duration, target, shift, attachmentIndex, darkSlots);
-          for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
-          // Under the empty name, which is the file's own spelling of it.
-          if (family !== null) (familyTimelines[family][everyGlobal ? '' : target] ??= {})[track.property] = keys;
-          else if (isBoneTrack) (boneTimelines[target] ??= {})[track.property] = keys;
-          else (slotTimelines[target] ??= {})[track.property] = keys;
+          for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time);
+          // The every-global physics timeline under its own target, `*`
+          // (`everyGlobal`); the empty name is the Spine emitter's spelling.
+          if (family !== null) timelinesOf(familyTimelines[family], target).set(track.property, keys);
+          else if (isBoneTrack) timelinesOf(boneTimelines, target).set(track.property, keys);
+          else timelinesOf(slotTimelines, target).set(track.property, keys);
         });
       }
 
@@ -3166,9 +3194,9 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       // The target is resolved by name AND by type: `findConstraint(name,
       // IkConstraintData)` misses a transform constraint of the same name and the
       // parser throws in the consumer's process, so the mismatch is named here.
-      const constraintTimelines: Record<'ik' | 'transform', Record<string, SpineTimelineKey[]>> = {
-        ik: {},
-        transform: {},
+      const constraintTimelines: Record<'ik' | 'transform', Map<string, ModelKey[]>> = {
+        ik: new Map(),
+        transform: new Map(),
       };
       for (const group of ['ik', 'transform'] as const) {
         // The array, the entries and their `constraint` names are shapes, so
@@ -3193,7 +3221,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
                   : `the rig declares no ${group} constraint at all`),
             );
           }
-          if (constraintTimelines[group][name]) {
+          if (constraintTimelines[group].has(name)) {
             throw new CompileError(
               `animation "${animName}" has two ${group} timelines on constraint "${name}"; ` +
                 'the group holds one timeline per constraint, so merge them into one',
@@ -3208,18 +3236,25 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
             // The ik table, asked only by the ik group: `leg` may also be a
             // transform constraint, and a transform key set carries no flag for
             // the rig's booleans to be stamped onto (issue #692).
-            group === 'ik' ? (ikRigFlags.get(name) ?? {}) : {},
+            group === 'ik' ? (ikFlagsInEffect.get(name) ?? {}) : {},
           );
-          for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
-          constraintTimelines[group][name] = keys;
+          for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time);
+          constraintTimelines[group].set(name, keys);
         }
       }
 
       // -- deform timelines: keyed on a skin/slot/attachment triple ----------
-      // Four deep, because the format is: skin -> slot -> attachment -> timeline
-      // name -> keys. `deform` is one of two timeline names an attachment can
-      // carry (the other is `sequence`), which is why the level exists at all.
-      const deformTimelines: Record<string, Record<string, Record<string, Record<string, SpineTimelineKey[]>>>> = {};
+      // skin -> slot -> attachment -> its `deform` and `sequence` keys: the two
+      // timelines an attachment can carry, which is why the last level exists.
+      const deformTimelines = new Map<string, Map<string, Map<string, ModelAttachmentTimelines>>>();
+      /** The triple's entry, made on first use in the order triples are first keyed. */
+      const attachmentTimelinesOf = (skin: string, slot: string): Map<string, ModelAttachmentTimelines> => {
+        let bySlot = deformTimelines.get(skin);
+        if (bySlot === undefined) deformTimelines.set(skin, (bySlot = new Map()));
+        let byAttachment = bySlot.get(slot);
+        if (byAttachment === undefined) bySlot.set(slot, (byAttachment = new Map()));
+        return byAttachment;
+      };
       const deformTracks: MotionDeformTrack[] = anim.deform ?? [];
       for (const track of deformTracks) {
         const skinName = track.skin ?? 'default';
@@ -3244,7 +3279,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
               `(it has: ${Object.keys(perSlot).join(', ')})`,
           );
         }
-        if (deformTimelines[skinName]?.[track.slot]?.[track.attachment]) {
+        if (deformTimelines.get(skinName)?.get(track.slot)?.has(track.attachment)) {
           throw new CompileError(`${at}: two deform timelines on one attachment; merge them into one`);
         }
         const keys = compileDeformTrack(
@@ -3258,8 +3293,8 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           },
           deformTransforms,
         );
-        for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
-        ((deformTimelines[skinName] ??= {})[track.slot] ??= {})[track.attachment] = { deform: keys };
+        for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time);
+        attachmentTimelinesOf(skinName, track.slot).set(track.attachment, { deform: keys });
       }
 
       // -- sequence timelines: the other attachment timeline (issue #729) -----
@@ -3291,22 +3326,22 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           );
         }
         const keys = compileSequenceTrack(track, anim.duration, attachment, at);
-        for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time as number);
-        const slot = ((deformTimelines[skinName] ??= {})[track.slot] ??= {});
-        if (slot[track.attachment]?.sequence) {
+        for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time);
+        const slot = attachmentTimelinesOf(skinName, track.slot);
+        if (slot.get(track.attachment)?.sequence) {
           throw new CompileError(`${at}: two sequence timelines on one attachment; merge them into one`);
         }
-        slot[track.attachment] = { ...(slot[track.attachment] ?? {}), sequence: keys };
+        slot.set(track.attachment, { ...(slot.get(track.attachment) ?? {}), sequence: keys });
       }
 
-      const drawOrder = anim.drawOrder ? compileDrawOrder(anim.drawOrder, animName, anim.duration, slots) : null;
-      if (drawOrder) for (const key of drawOrder) compiledDuration = Math.max(compiledDuration, key.time as number);
+      const drawOrder = anim.drawOrder ? compileDrawOrder(anim.drawOrder, animName, anim.duration, slots) : [];
+      for (const key of drawOrder) compiledDuration = Math.max(compiledDuration, key.time);
 
-      const eventKeys = anim.events ? compileEvents(anim.events, animName, anim.duration, rig.events ?? {}) : null;
+      const eventKeys = anim.events ? compileEvents(anim.events, animName, anim.duration, rig.events ?? {}) : [];
       // An event timeline counts towards the animation's length the same as any
       // other: `readAnimation` takes the duration from the longest timeline it
       // built, and `EventTimeline.getDuration()` is its last frame like the rest.
-      if (eventKeys) for (const key of eventKeys) compiledDuration = Math.max(compiledDuration, key.time as number);
+      for (const key of eventKeys) compiledDuration = Math.max(compiledDuration, key.time);
 
       // Rule 4: the declared duration is verified, because skeleton JSON does not
       // carry one — the loader takes the max key time.
@@ -3322,22 +3357,25 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           `animation "${animName}" declares duration ${anim.duration}s but its last key is at ${compiledDuration}s`,
         );
       }
-      // Group order is `readAnimation`'s own reading order, so an emitted file
-      // diffs cleanly against an editor export. Each line is conditional, which
-      // is what keeps a spec that uses none of the new groups byte-identical.
-      animations[animName] = {};
-      if (Object.keys(slotTimelines).length) animations[animName].slots = slotTimelines;
-      if (Object.keys(boneTimelines).length) animations[animName].bones = boneTimelines;
-      if (Object.keys(constraintTimelines.ik).length) animations[animName].ik = constraintTimelines.ik;
-      if (Object.keys(constraintTimelines.transform).length) {
-        animations[animName].transform = constraintTimelines.transform;
-      }
-      if (Object.keys(familyTimelines.path).length) animations[animName].path = familyTimelines.path;
-      if (Object.keys(familyTimelines.physics).length) animations[animName].physics = familyTimelines.physics;
-      if (Object.keys(familyTimelines.slider).length) animations[animName].slider = familyTimelines.slider;
-      if (Object.keys(deformTimelines).length) animations[animName].attachments = deformTimelines;
-      if (drawOrder) animations[animName].drawOrder = drawOrder;
-      if (eventKeys) animations[animName].events = eventKeys;
+      // The model's record of the animation. Which groups the file carries, in
+      // what order and under what spelling is the Spine emitter's
+      // (`emitAnimation`: `readAnimation`'s reading order, each group only when
+      // non-empty).
+      animations.set(animName, {
+        duration: anim.duration,
+        bones: boneTimelines,
+        slots: slotTimelines,
+        constraints: {
+          ik: constraintTimelines.ik,
+          transform: constraintTimelines.transform,
+          path: familyTimelines.path,
+          physics: familyTimelines.physics,
+          slider: familyTimelines.slider,
+        },
+        attachments: deformTimelines,
+        drawOrder,
+        events: eventKeys,
+      });
     }
   });
 
@@ -3413,11 +3451,13 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     ...(Object.keys(emittedEvents).length ? { events: emittedEvents } : {}),
     // Keyed in the editor's own order rather than the motion spec's, because a
     // slider's reference to an animation is an ordinal in the format and the
-    // editor re-sorts this object — see `editorAnimationOrder`. The sort is
-    // applied HERE and not to the loop above, so what the compiler reads, the
-    // order it reports durations in, and which animation a CompileError names
-    // first are all still the spec's own; only the emitted key order moves.
-    animations: editorAnimationOrder(animations),
+    // editor re-sorts this object — see `editorAnimationOrder`, which
+    // `emitAnimations` applies and whose refusal it raises. The sort is applied
+    // at emission and not to the loop above, so what the compiler reads, the
+    // order it reports durations in, which animation a CompileError names first
+    // and the model's `animations` are all still the spec's own; only the
+    // emitted key order moves.
+    animations: emitAnimations(animations, slots, editorAnimationOrder),
   };
   if (constraints.length) skeleton.constraints = emitConstraints(constraints);
 
@@ -3449,7 +3489,6 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     pageGrids: atlasIn === null ? [] : [...atlasIn.grids].map(([page, grid]) => ({ page, said: grid.said })),
     droppedStates,
     absentParts,
-    declaredDurations,
     meshBones: [...meshBones],
     meshes,
     physics: physicsReport,
@@ -3461,8 +3500,9 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     skeleton,
     skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
     atlasText,
+    declaredDurations,
     ...carried,
-    model: { bones, setupWorld: transforms, slots, skins, constraints, events, ...carried },
+    model: { bones, setupWorld: transforms, slots, skins, constraints, events, animations, ...carried },
   };
 }
 
@@ -7201,13 +7241,13 @@ function compileValueTrack(
   shift: number,
   shapes: Record<string, ValueTrackShape>,
   kind: string,
-): SpineTimelineKey[] {
+): ModelKey[] {
   const shape = shapes[track.property];
   if (!shape) throw new CompileError(`animation "${animName}": ${kind} "${target}" has no property "${track.property}"`);
   const where = `animation "${animName}" ${kind} "${target}" ${track.property}`;
   if (!track.keys.length) throw new CompileError(`${where}: no keys`);
 
-  const out: SpineTimelineKey[] = [];
+  const out: ModelKey[] = [];
   for (let i = 0; i < track.keys.length; i++) {
     const key = track.keys[i];
     const next = track.keys[i + 1];
@@ -7247,7 +7287,7 @@ function compileValueTrack(
     if (!Array.isArray(key.v) || key.v.length !== shape.fields.length) {
       throw new CompileError(`${where}: key value must be an array of ${shape.fields.length} number(s)`);
     }
-    const entry: SpineTimelineKey = { time };
+    const entry: ModelKey = { time };
     shape.fields.forEach((field, c) => {
       const v = key.v as number[];
       if (!Number.isFinite(v[c])) throw new CompileError(`${where}: non-finite value ${String(v[c])}`);
@@ -7312,7 +7352,8 @@ function compileValueTrack(
  *      than loading wrong. The author states a set of moves; the array order in
  *      the file is the parser's requirement and not a decision, so rigc sorts
  *      rather than making every caller remember. Deterministic: the key is the
- *      emitted slot index.
+ *      emitted slot index. The model holds the moves as stated and the Spine
+ *      emitter sorts them (`emitDrawOrderKey`, issue #921).
  *   2. **One slot per key.** Two entries for the same slot means two writes at
  *      one cursor position; the second silently wins and the first slot's place
  *      is left to the unchanged-fill.
@@ -7333,12 +7374,12 @@ function compileDrawOrder(
   animName: string,
   duration: number,
   slots: readonly ModelSlot[],
-): SpineTimelineKey[] {
+): ModelKey[] {
   const where = `animation "${animName}" drawOrder`;
   if (!keys.length) throw new CompileError(`${where}: no keys`);
   const indexOf = new Map(slots.map((s, i) => [s.name, i]));
 
-  const out: SpineTimelineKey[] = [];
+  const out: ModelKey[] = [];
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const time = keyTime(key.t);
@@ -7354,7 +7395,7 @@ function compileDrawOrder(
       continue;
     }
     const seen = new Set<string>();
-    const entries: Array<{ slot: string; offset: number; index: number }> = [];
+    const entries: Array<{ slot: string; offset: number }> = [];
     for (const off of key.offsets) {
       const index = indexOf.get(off.slot);
       if (index === undefined) {
@@ -7374,10 +7415,11 @@ function compileDrawOrder(
         );
       }
       seen.add(off.slot);
-      entries.push({ slot: off.slot, offset: off.offset, index });
+      entries.push({ slot: off.slot, offset: off.offset });
     }
-    entries.sort((a, b) => a.index - b.index);
-    out.push({ time, offsets: entries.map((e) => ({ slot: e.slot, offset: e.offset })) });
+    // In the order the spec states the moves: the setup-order sort the parser
+    // needs is the Spine emitter's (`emitDrawOrderKey`, issue #921).
+    out.push({ time, offsets: entries });
   }
   return out;
 }
@@ -7412,11 +7454,11 @@ function compileEvents(
   animName: string,
   duration: number,
   events: Record<string, RigEvent>,
-): SpineTimelineKey[] {
+): ModelKey[] {
   const where = `animation "${animName}" events`;
   if (!keys.length) throw new CompileError(`${where}: no keys`);
 
-  const out: SpineTimelineKey[] = [];
+  const out: ModelKey[] = [];
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     if (typeof key.name !== 'string' || key.name.length === 0) {
@@ -7439,7 +7481,7 @@ function compileEvents(
     }
     checkKeyTime(where, time, key.t, duration);
 
-    const entry: SpineTimelineKey = { time, name: key.name };
+    const entry: ModelKey = { time, name: key.name };
     if (key.int !== undefined) {
       if (!Number.isInteger(key.int)) {
         throw new CompileError(`${where} at t=${key.t}: int ${String(key.int)} is not an integer`);
@@ -7526,9 +7568,9 @@ function compileConstraintTrack(
   motion: MotionSpec,
   animName: string,
   duration: number,
-  /** Non-default ik booleans the rig declared, by field. Empty for `transform`. */
+  /** The ik constraint's three booleans in effect, by field. Empty for `transform`. */
   rigFlags: Record<string, boolean>,
-): SpineTimelineKey[] {
+): ModelKey[] {
   const shape = CONSTRAINT_TIMELINES[group];
   const article = group === 'ik' ? 'an' : 'a';
   const where = `animation "${animName}" ${group} constraint "${track.constraint}"`;
@@ -7577,7 +7619,7 @@ function compileConstraintTrack(
     return inherited === undefined ? channel.dflt : (inherited as number);
   };
 
-  const out: SpineTimelineKey[] = [];
+  const out: ModelKey[] = [];
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const next = keys[i + 1];
@@ -7587,7 +7629,7 @@ function compileConstraintTrack(
     }
     checkKeyTime(where, time, key.t, duration);
 
-    const entry: SpineTimelineKey = { time };
+    const entry: ModelKey = { time };
     for (const channel of shape.channels) {
       const v = read(key, channel.field);
       if (v === undefined) continue;
@@ -7607,10 +7649,10 @@ function compileConstraintTrack(
     for (const flag of shape.flags) {
       const v = read(key, flag.field);
       if (v === undefined) {
-        // The rig's value, stamped on this key because nothing else will carry
-        // it there. Absent from `rigFlags` means the rig's value IS the per-key
-        // default, so omitting the field says the same thing and the emitted
-        // bytes do not move.
+        // The constraint's flag in effect, held on this key because the parser
+        // reads the flag per key and does not inherit it. The model key holds
+        // every flag in effect; the Spine emitter writes one only where it
+        // differs from the per-key default (`emitAnimations`, issue #921).
         const carried = rigFlags[flag.field];
         if (carried !== undefined) entry[flag.field] = carried;
         continue;
@@ -7970,7 +8012,7 @@ function compileSequenceTrack(
   duration: number,
   attachment: SkinTableEntry,
   where: string,
-): SpineTimelineKey[] {
+): ModelKey[] {
   const series =
     attachment.kind === 'region' || attachment.kind === 'mesh' || attachment.kind === 'linkedmesh' ? attachment.sequence : undefined;
   if (series === undefined) {
@@ -7992,7 +8034,7 @@ function compileSequenceTrack(
     );
   }
   if (track.keys.length === 0) throw new CompileError(`${where}: no keys`);
-  const out: SpineTimelineKey[] = [];
+  const out: ModelKey[] = [];
   for (let i = 0; i < track.keys.length; i++) {
     const key = track.keys[i];
     const time = keyTime(key.t);
@@ -8007,7 +8049,7 @@ function compileSequenceTrack(
           'frame it does not name. `index` is 0-based.',
       );
     }
-    const entry: SpineTimelineKey = { time };
+    const entry: ModelKey = { time };
     if (key.mode !== undefined) entry.mode = key.mode;
     if (key.index !== undefined) entry.index = key.index;
     if (key.delay !== undefined) entry.delay = f32(key.delay);
@@ -8023,7 +8065,7 @@ function compileDeformTrack(
   duration: number,
   geometry: DeformGeometry,
   generated: CompileResult['deformTransforms'],
-): SpineTimelineKey[] {
+): ModelKey[] {
   const skin = track.skin ?? 'default';
   const where = `animation "${animName}" deform ${skin}/${track.slot}/${track.attachment}`;
   const keys = track.keys;
@@ -8032,7 +8074,7 @@ function compileDeformTrack(
   // skips the timeline, which is assertion A34's silent case.
   if (keys.length === 0) throw new CompileError(`${where}: no keys`);
 
-  const out: SpineTimelineKey[] = [];
+  const out: ModelKey[] = [];
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const time = keyTime(key.t);
@@ -8191,7 +8233,7 @@ function compileDeformTrack(
           'The parser copies into a Float32Array, so everything past the end is dropped without a word.',
       );
     }
-    const entry: SpineTimelineKey = { time };
+    const entry: ModelKey = { time };
     // `offset` defaults to 0 in the parser and the editor omits it there, so an
     // authored 0, an authored `fromVertex: 0` and an absent start all emit the
     // same bytes — one meaning, one file.
@@ -8319,15 +8361,15 @@ function deformStart(
  * than to a coordinate, and a raw curve is four numbers whose value axis is 0..1.
  */
 function deformKeyCurve(
-  entry: SpineTimelineKey,
+  entry: ModelKey,
   key: MotionDeformTrack['keys'][number],
   keys: MotionDeformTrack['keys'],
   index: number,
   motion: MotionSpec,
   where: string,
   /** The next key AS EMITTED, or undefined on the last key. */
-  next: SpineTimelineKey | undefined,
-): SpineTimelineKey {
+  next: ModelKey | undefined,
+): ModelKey {
   if (key.ease !== undefined && key.curve !== undefined) {
     throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
   }
@@ -8359,8 +8401,8 @@ function deformKeyCurve(
  * are three spellings of one geometry, and the comparison expands both keys onto
  * the same index range before reading them. The runs are already `f32`'d.
  */
-function sameDeform(a: SpineTimelineKey, b: SpineTimelineKey): boolean {
-  const runOf = (k: SpineTimelineKey): { start: number; run: number[] } => ({
+function sameDeform(a: ModelKey, b: ModelKey): boolean {
+  const runOf = (k: ModelKey): { start: number; run: number[] } => ({
     start: typeof k.offset === 'number' ? k.offset : 0,
     run: Array.isArray(k.vertices) ? (k.vertices as number[]) : [],
   });
@@ -8699,7 +8741,7 @@ function compileTrack(
   shift: number,
   attachments: SlotAttachmentIndex,
   darkSlots: ReadonlySet<string>,
-): SpineTimelineKey[] {
+): ModelKey[] {
   const where = `animation "${animName}" slot "${target}" ${track.property}`;
   // Before any key is shaped, and before the empty-track refusal: a property
   // the emitter has no branch for is the fault, and a track that names one has
@@ -8738,7 +8780,7 @@ function compileTrack(
   }
   if (!track.keys.length) throw new CompileError(`${where}: no keys`);
 
-  const out: SpineTimelineKey[] = [];
+  const out: ModelKey[] = [];
   for (let i = 0; i < track.keys.length; i++) {
     const key = track.keys[i];
     const next = track.keys[i + 1];
@@ -8801,7 +8843,7 @@ function compileTrack(
           'the posed alpha to that range after interpolating, so a value outside it is one no pose ever holds',
       );
     }
-    const entry: SpineTimelineKey = { time, ...colourOf(key.v) };
+    const entry: ModelKey = { time, ...colourOf(key.v) };
     if (key.ease !== undefined && key.curve !== undefined) {
       throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
     }

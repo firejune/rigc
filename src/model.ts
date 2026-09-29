@@ -6,8 +6,8 @@
  * ## What it is
  *
  * The record a posing core of rigc's own would read: bones with their inherit
- * modes, slots, every attachment kind rigc builds, skins, constraints and
- * events — and, in a later cut, animations. It is the neutral side of the census in `docs/COMPILED_MODEL.md`:
+ * modes, slots, every attachment kind rigc builds, skins, constraints, events
+ * and animations. It is the neutral side of the census in `docs/COMPILED_MODEL.md`:
  * a value belongs here when any backend posing this rig would need it, and a
  * spelling, a key order or an omission at a parser default belongs to the
  * emitter that writes one format. The Spine emitter (`src/emit_spine.ts`) is its
@@ -27,11 +27,12 @@
  * vertices name their bone (issue #917, cut 1c); and the remaining structural
  * records (issue #919, cut 1d): `slots`, the region and linked-mesh
  * attachments, `skins` holding every attachment as a model record,
- * `constraints` and `events`. Every other field is `CompileResult`'s own,
- * carried by reference under the same name (`CarriedFromCompileResult`) until
- * its own cut gives it a model-side form — the animations are the next one; the
- * skeleton object, its text and the atlas text are emitted artifacts and are
- * not part of the model at all.
+ * `constraints` and `events`; and `animations` (issue #921, cut 1e), each a
+ * `CompiledAnimation` whose timelines hold the keys the timeline compilers
+ * build. Every other field is `CompileResult`'s own, carried by reference under
+ * the same name (`CarriedFromCompileResult`) until its own cut gives it a
+ * model-side form; the skeleton object, its text and the atlas text are emitted
+ * artifacts and are not part of the model at all.
  *
  * ⭐ **A weighted vertex names its bone.** Spine's run binds a vertex to a bone by
  * its POSITION in the emitted bone array, and until cut 1c every vertex
@@ -66,7 +67,7 @@
  * the census's two `open` rows (docs/COMPILED_MODEL.md §5), decided at cut 1d:
  * they are the atlas emitter's constants, and the model does not carry them.
  *
- * Nothing here is serialised yet: `setupWorld` and `events` are `Map`s, and making the model
+ * Nothing here is serialised yet: `setupWorld`, `events` and `animations` are `Map`s, and making the model
  * a document (`rigc-compiled/1`) is a later cut of step 1.
  */
 import type { BoneTransform } from './transform.ts';
@@ -114,7 +115,6 @@ export type CarriedFromCompileResult = Pick<
   | 'pageGrids'
   | 'droppedStates'
   | 'absentParts'
-  | 'declaredDurations'
   | 'meshBones'
   | 'meshes'
   | 'physics'
@@ -352,6 +352,106 @@ export interface ModelEvent {
   balance?: number;
 }
 
+/**
+ * One timeline key, as the timeline compilers in `compile.ts` build it: `time`,
+ * then the channels its timeline defines, then `curve` — each in the order the
+ * compiler inserted it, which the Spine emitter keeps (a key's field order is a
+ * byte wherever the key-order table has no row for its kind).
+ *
+ * Every number is already on the float32 grid (`keyTime` for `time`, `f32` for
+ * the rest), for the reason the header gives.
+ *
+ * 🔸 **The channel names are Spine's** — `value`, `x`/`y`, `mix`, `mixRotate`,
+ * `color`, `offset`/`vertices`, `name`, `mode`/`index`/`delay` — because the
+ * motion spec's vocabulary is Spine's (docs/COMPILED_MODEL.md §1.1, *The input
+ * vocabulary is already Spine's*; docs/AUTHORING.md, *The vocabulary is
+ * Spine's*): a channel is named once, by the format the spec was written
+ * against, and a second backend maps from it. A later cut may give the model
+ * names of its own; this one does not.
+ *
+ * 🔸 **`curve` is absolute control points, four per channel, or `'stepped'`.**
+ * The points are what `bezierForChannel` computes from an easing's handles (the
+ * curve the runtime samples, not the handles an editor shows) or a raw curve's
+ * own numbers. `'stepped'` is the format's word for a hold, and the model keeps
+ * that word because its one consumer reads the same word: a named easing over a
+ * segment whose values do not move is held as `'stepped'` (`easingCurve`,
+ * issue #369) — a curve over a flat segment draws nothing, so the two encodings
+ * play one animation, and `'stepped'` is the one the editor writes. A later cut
+ * may spell the hold another way; this one does not.
+ *
+ * On an ik key the three flags `bendPositive`, `compress` and `stretch` are
+ * the flags IN EFFECT on that key: the key's own where the motion states one,
+ * else the constraint's, else the constraint's parser default (issue #273 — the
+ * 4.3 parser reads the flags per key without inheriting the constraint's, so
+ * which flag a key carries is a value). Which of them Spine writes is the
+ * emitter's (`emitAnimations`).
+ */
+export type ModelKey = { time: number; curve?: number[] | 'stepped' } & Record<string, unknown>;
+
+/** One target's timelines: timeline name (`rotate`, `rgba`, `mix` …) -> its keys, in the spec's order. */
+export type ModelTimelines = Map<string, ModelKey[]>;
+
+/** The two timelines an attachment can carry, `deform` compiled before `sequence`. */
+export interface ModelAttachmentTimelines {
+  deform?: ModelKey[];
+  sequence?: ModelKey[];
+}
+
+/**
+ * One animation: every timeline the motion spec's animation compiles to, each
+ * collection in the order the spec states its tracks (the order the timelines
+ * are built in), and the declared duration the compiler verified against the
+ * last key.
+ *
+ * A collection is empty when the animation keys nothing of its kind — `drawOrder`
+ * and `events` included, since the compiler refuses an empty key list for both.
+ * Which of them a format writes, in what order, and under what spelling is the
+ * emitter's.
+ *
+ * ⭐ **The physics timeline that names no constraint is held under
+ * `EVERY_GLOBAL_PHYSICS` (`'*'`, `src/motion.ts`)** — the motion spec's own
+ * name for the target that drives every physics constraint declaring the keyed
+ * property global (issue #726). It is a key of `constraints.physics` and not a
+ * collection of its own because its POSITION among the named physics
+ * constraints is a value: `readAnimation` builds the physics timelines in the
+ * order it reads them and applies them in that order, and the file interleaves
+ * it — a motion keying `wob_b`, then `*`, then `wob` writes `wob_b, "", wob`.
+ * `'*'` cannot name a constraint (the rig parse refuses a physics constraint of
+ * that name), so the key is unambiguous. Spine spells it as the empty name;
+ * that spelling is the emitter's.
+ */
+export interface CompiledAnimation {
+  /** The motion spec's declared duration, verified by the compiler to be the last key's time within a frame. */
+  duration: number;
+  /** bone -> its timelines. */
+  bones: Map<string, ModelTimelines>;
+  /** slot -> its timelines. */
+  slots: Map<string, ModelTimelines>;
+  /**
+   * By constraint kind: `ik` and `transform` hold one unnamed timeline per
+   * constraint, so a constraint maps straight to its keys; `path`, `physics`
+   * and `slider` hold timelines by name, like a bone.
+   */
+  constraints: {
+    ik: Map<string, ModelKey[]>;
+    transform: Map<string, ModelKey[]>;
+    path: Map<string, ModelTimelines>;
+    physics: Map<string, ModelTimelines>;
+    slider: Map<string, ModelTimelines>;
+  };
+  /** skin -> slot -> attachment placeholder -> its deform and/or sequence keys. */
+  attachments: Map<string, Map<string, Map<string, ModelAttachmentTimelines>>>;
+  /**
+   * Draw-order keys. A key's `offsets` are the moves as the motion spec states
+   * them, each resolved and checked; the order the format needs them in (by
+   * setup index) is the emitter's. A key with no `offsets` is "back to the setup
+   * order".
+   */
+  drawOrder: ModelKey[];
+  /** Event firings, in the spec's (non-decreasing time) order, each naming a declared event. */
+  events: ModelKey[];
+}
+
 export interface CompiledModel extends CarriedFromCompileResult {
   /** Every bone, in the rig's declaration order — parents first, as the runtime requires. */
   bones: ModelBone[];
@@ -369,4 +469,9 @@ export interface CompiledModel extends CarriedFromCompileResult {
   constraints: ModelConstraint[];
   /** Event definitions, in the rig's declared order. */
   events: Map<string, ModelEvent>;
+  /**
+   * Every animation, in the motion spec's order — NOT the editor's order the
+   * Spine emitter keys them in (`emitAnimations`).
+   */
+  animations: Map<string, CompiledAnimation>;
 }
