@@ -67,12 +67,14 @@
  * the census's two `open` rows (docs/COMPILED_MODEL.md §5), decided at cut 1d:
  * they are the atlas emitter's constants, and the model does not carry them.
  *
- * Nothing here is serialised yet: `setupWorld`, `events` and `animations` are `Map`s, and making the model
- * a document (`rigc-compiled/1`) is a later cut of step 1.
+ * 📄 **It is written as a document** (issue #922, cut 1f): `modelDocument` below
+ * spells it as `rigc-compiled/1`, and `build` writes that text into `--out` as
+ * `skeleton.model.json` beside the Spine files, after the gate, like them.
  */
+import { CompileError } from './errors.ts';
 import type { BoneTransform } from './transform.ts';
 import type { RigSkinConstraintKey } from './rig.ts';
-import type { CompileResult, SpineSequence } from './types.ts';
+import type { CompileResult } from './types.ts';
 
 /**
  * One bone, as `buildBone` computes it — a field is present exactly when the rig
@@ -152,6 +154,19 @@ export interface ModelBinding {
 export type ModelVertices = { weighted: false; xy: number[] } | { weighted: true; bindings: ModelBinding[][] };
 
 /**
+ * A numbered series of atlas regions an attachment draws in turn: the four
+ * fields exactly as the spec stated them, each optional one only when stated.
+ * Which of them Spine leaves out at the parser's default is the emitter's
+ * (`emitSequenceBlock`).
+ */
+export interface ModelSequence {
+  count: number;
+  start?: number;
+  digits?: number;
+  setup?: number;
+}
+
+/**
  * A mesh: `buildRigMesh`'s authored geometry, the five generators' output, and a
  * manifest part's ring or ribbon. Fields as the builders compute them today.
  */
@@ -174,7 +189,7 @@ export interface ModelMeshAttachment {
   edges: number[];
   width: number;
   height: number;
-  sequence?: SpineSequence;
+  sequence?: ModelSequence;
 }
 
 /** A bounding box: a polygon and nothing else. */
@@ -241,7 +256,7 @@ export interface ModelRegionAttachment {
   width: number;
   height: number;
   color?: string;
-  sequence?: SpineSequence;
+  sequence?: ModelSequence;
 }
 
 /**
@@ -268,7 +283,7 @@ export interface ModelLinkedMeshAttachment {
   width: number;
   height: number;
   color?: string;
-  sequence?: SpineSequence;
+  sequence?: ModelSequence;
 }
 
 /**
@@ -474,4 +489,264 @@ export interface CompiledModel extends CarriedFromCompileResult {
    * Spine emitter keys them in (`emitAnimations`).
    */
   animations: Map<string, CompiledAnimation>;
+}
+
+// ---------------------------------------------------------------------------
+// the document: `rigc-compiled/1` (issue #922, cut 1f)
+// ---------------------------------------------------------------------------
+
+/** The document's `spec` value. */
+export const MODEL_DOCUMENT_SPEC = 'rigc-compiled/1';
+
+/** The file `build` writes the document to, in `--out` beside `skeleton.json` and `skeleton.atlas`. */
+export const MODEL_DOCUMENT_FILE = 'skeleton.model.json';
+
+/** A value the document writes: what `JSON.stringify` reproduces exactly. */
+type DocValue = string | number | boolean | null | DocValue[] | { [key: string]: DocValue };
+
+/**
+ * `record`'s fields in `keys`' order, each only when present (`undefined` is
+ * absent, as `JSON.stringify` reads it). A field `keys` does not list is
+ * refused by name rather than dropped: a field added to a model record without
+ * a place in the document would otherwise vanish from it in silence.
+ */
+function ordered(record: object, keys: readonly string[], where: string, value: (key: string, v: unknown) => DocValue = (_k, v) => plain(v, `${where}.${_k}`)): { [key: string]: DocValue } {
+  const own = record as Record<string, unknown>;
+  for (const key of Object.keys(own)) {
+    if (!keys.includes(key)) {
+      throw new CompileError(`internal: the model document has no place for field "${key}" of ${where}; it writes [${keys.join(', ')}]`);
+    }
+  }
+  const out: { [key: string]: DocValue } = {};
+  for (const key of keys) if (own[key] !== undefined) out[key] = value(key, own[key]);
+  return out;
+}
+
+/**
+ * A value the model holds, as the document writes it: objects in their own
+ * key order, arrays in theirs. A number JSON cannot carry exactly is refused
+ * by its path — `-0` (written `0`), `NaN` and the infinities (written `null`)
+ * — and so are `undefined` inside an array (written `null`), a `Map` or `Set`
+ * (written `{}`), and anything that is not plain data. Each of those would
+ * make the document state a value the model does not hold.
+ */
+function plain(value: unknown, where: string): DocValue {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new CompileError(`internal: the model document cannot carry ${value} at ${where}; JSON writes it as null`);
+    if (Object.is(value, -0)) throw new CompileError(`internal: the model document cannot carry -0 at ${where}; JSON writes it as 0`);
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, i) => {
+      if (item === undefined) throw new CompileError(`internal: the model document cannot carry undefined at ${where}[${i}]; JSON writes it as null`);
+      return plain(item, `${where}[${i}]`);
+    });
+  }
+  if (typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+    const out: { [key: string]: DocValue } = {};
+    for (const [key, item] of Object.entries(value)) if (item !== undefined) out[key] = plain(item, `${where}.${key}`);
+    return out;
+  }
+  throw new CompileError(`internal: the model document cannot carry ${Object.prototype.toString.call(value)} at ${where}; it writes plain data only`);
+}
+
+/** A `Map` as the array of its entries in the map's order, each `{ name, … }`. */
+function named<V>(map: ReadonlyMap<string, V>, where: string, entry: (value: V, at: string) => { [key: string]: DocValue }): DocValue[] {
+  return [...map].map(([name, value]) => ({ name, ...entry(value, `${where}["${name}"]`) }));
+}
+
+/** Keys, as the model holds them: each key's own field order is the compiler's, and a byte for the emitter. */
+function keysOf(keys: readonly ModelKey[], where: string): DocValue {
+  return plain(keys, where);
+}
+
+/** One target's timelines: `[{ name, keys }]`, in the model's order. */
+function timelinesOf(timelines: ModelTimelines, where: string): DocValue[] {
+  return named(timelines, where, (keys, at) => ({ keys: keysOf(keys, at) }));
+}
+
+/** target -> timelines: `[{ name, timelines }]`, in the model's order. */
+function targetsOf(targets: ReadonlyMap<string, ModelTimelines>, where: string): DocValue[] {
+  return named(targets, where, (timelines, at) => ({ timelines: timelinesOf(timelines, at) }));
+}
+
+const BONE_FIELDS = ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inheritMode', 'skinRequired', 'editor'] as const;
+const SLOT_FIELDS = ['name', 'bone', 'setup', 'color', 'dark', 'blend'] as const;
+const SEQUENCE_FIELDS = ['count', 'start', 'digits', 'setup'] as const;
+const BINDING_FIELDS = ['bone', 'x', 'y', 'weight'] as const;
+const EVENT_FIELDS = ['int', 'float', 'string', 'audio', 'volume', 'balance'] as const;
+const CONSTRAINT_KINDS = ['ik', 'transform', 'path', 'physics', 'slider'] as const;
+const ATTACHMENT_FIELDS: Readonly<Record<SkinTableEntry['kind'], readonly string[]>> = {
+  mesh: ['kind', 'name', 'path', 'color', 'uvs', 'triangles', 'vertices', 'hull', 'edges', 'width', 'height', 'sequence'],
+  boundingbox: ['kind', 'name', 'vertexCount', 'vertices', 'editorColor'],
+  clipping: ['kind', 'name', 'end', 'convex', 'inverse', 'vertexCount', 'vertices', 'editorColor'],
+  path: ['kind', 'name', 'closed', 'constantSpeed', 'vertexCount', 'vertices', 'lengths', 'editorColor'],
+  region: ['kind', 'name', 'path', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'width', 'height', 'color', 'sequence'],
+  linkedmesh: ['kind', 'name', 'path', 'source', 'skin', 'slot', 'timelines', 'width', 'height', 'color', 'sequence'],
+};
+
+function verticesOf(vertices: ModelVertices, where: string): DocValue {
+  return vertices.weighted
+    ? ordered(vertices, ['weighted', 'bindings'], where, (key, v) =>
+        key === 'bindings'
+          ? vertices.bindings.map((influences, i) => influences.map((b, j) => ordered(b, BINDING_FIELDS, `${where}.bindings[${i}][${j}]`)))
+          : plain(v, `${where}.${key}`),
+      )
+    : ordered(vertices, ['weighted', 'xy'], where);
+}
+
+function attachmentOf(entry: SkinTableEntry, where: string): DocValue {
+  const fields = ATTACHMENT_FIELDS[entry.kind];
+  if (fields === undefined) throw new CompileError(`internal: the model document knows no attachment kind "${String(entry.kind)}" at ${where}`);
+  return ordered(entry, fields, where, (key, v) => {
+    if (key === 'vertices') return verticesOf(v as ModelVertices, `${where}.vertices`);
+    if (key === 'sequence') return ordered(v as object, SEQUENCE_FIELDS, `${where}.sequence`);
+    return plain(v, `${where}.${key}`);
+  });
+}
+
+function skinOf(skin: ModelSkin, where: string): DocValue {
+  return ordered(skin, ['name', 'bones', 'constraints', 'attachments'], where, (key, v) => {
+    if (key === 'constraints') return ordered(skin.constraints, CONSTRAINT_KINDS, `${where}.constraints`);
+    if (key !== 'attachments') return plain(v, `${where}.${key}`);
+    const bySlot: { [slot: string]: DocValue } = {};
+    for (const [slot, byPlaceholder] of Object.entries(skin.attachments)) {
+      const entries: { [placeholder: string]: DocValue } = {};
+      for (const [placeholder, entry] of Object.entries(byPlaceholder)) entries[placeholder] = attachmentOf(entry, `${where}.attachments["${slot}"]["${placeholder}"]`);
+      bySlot[slot] = entries;
+    }
+    return bySlot;
+  });
+}
+
+/** A constraint: `kind`, `name`, `declaredIn`, then every other field in the builder's order, which is a byte for the emitter. */
+function constraintOf(constraint: ModelConstraint, where: string): DocValue {
+  const { kind, name, declaredIn, ...rest } = constraint;
+  return { kind, name, declaredIn, ...(plain(rest, where) as { [key: string]: DocValue }) };
+}
+
+function animationOf(animation: CompiledAnimation, where: string): { [key: string]: DocValue } {
+  return ordered(animation, ['duration', 'bones', 'slots', 'constraints', 'attachments', 'drawOrder', 'events'], where, (key, v) => {
+    const at = `${where}.${key}`;
+    switch (key) {
+      case 'bones':
+      case 'slots':
+        return targetsOf(v as ReadonlyMap<string, ModelTimelines>, at);
+      case 'constraints': {
+        const c = animation.constraints;
+        return ordered(c, CONSTRAINT_KINDS, at, (kind, byName) =>
+          kind === 'ik' || kind === 'transform'
+            ? named(byName as ReadonlyMap<string, ModelKey[]>, `${at}.${kind}`, (keys, k) => ({ keys: keysOf(keys, k) }))
+            : targetsOf(byName as ReadonlyMap<string, ModelTimelines>, `${at}.${kind}`),
+        );
+      }
+      case 'attachments':
+        return named(animation.attachments, at, (bySlot, s) => ({
+          slots: named(bySlot, s, (byAttachment, a) => ({
+            attachments: named(byAttachment, a, (timelines, t) =>
+              ordered(timelines, ['deform', 'sequence'], t, (k, keys) => keysOf(keys as ModelKey[], `${t}.${k}`)),
+            ),
+          })),
+        }));
+      case 'drawOrder':
+      case 'events':
+        return keysOf(v as ModelKey[], at);
+      default:
+        return plain(v, at);
+    }
+  });
+}
+
+/** The model's fields the document writes, after `spec`, in its key order. */
+const MODEL_DOCUMENT_FIELDS: readonly string[] = [
+  'bones', 'slots', 'skins', 'constraints', 'events', 'animations',
+  'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig',
+];
+
+/** The model's fields the document leaves out — see `modelDocument`. */
+const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
+
+/**
+ * The compiled model as a document: `rigc-compiled/1`, `JSON.stringify(doc,
+ * null, 2)` and a newline — the text `build` writes to `skeleton.model.json`,
+ * and the record a posing core of rigc's own will read (issue #380, step 2).
+ * Nothing reads it yet.
+ *
+ * **Key order.** `spec`, then the model's fields in the order this file
+ * declares them — `bones`, `slots`, `skins`, `constraints`, `events`,
+ * `animations` — then the fields carried from `CompileResult` in
+ * `CarriedFromCompileResult`'s order: `images`, `pageGrids`, `droppedStates`,
+ * `absentParts`, `meshBones`, `meshes`, `physics`, `deformTransforms`,
+ * `trackDerivations`, `rig`. Inside a model record, its interface's field
+ * order (`ModelBone`, `ModelSlot`, `ModelSkin`, each attachment kind,
+ * `ModelBinding`, `ModelSequence`, `ModelEvent`, `CompiledAnimation`), each
+ * field only when the record carries it, and a field the interface does not
+ * list refused by name. Three kinds of record keep their own order, because
+ * there the order is the value: a constraint's fields after `kind`, `name`,
+ * `declaredIn` (the builder's order, which the emitter keeps and which reaches
+ * the file where the key-order table has no row), a timeline key's fields
+ * (`time`, its channels, `curve`, as the compiler inserted them), and the
+ * carried reports, written as `compile` builds them.
+ *
+ * **Collections.** Every `Map` is an array of `{ name, … }` in the map's
+ * order, and that order is the model's own: bones parents first (a weighted
+ * binding's index counts in it), slots the draw order (a draw-order offset
+ * counts in it), skins, constraints, events and animations in the spec's
+ * declared order, timelines and keys in the order they are applied. A skin's
+ * attachment table stays an object keyed slot -> placeholder, as the model
+ * holds it. An animation writes `bones` and `slots` as `[{ name, timelines:
+ * [{ name, keys }] }]`, its `ik` and `transform` constraints as `[{ name, keys
+ * }]` and the other three kinds like a bone, and `attachments` as `[{ name:
+ * skin, slots: [{ name, attachments: [{ name, deform?, sequence? }] }] }]`;
+ * the physics timeline that names no constraint keeps the model's name for it,
+ * `*` (`EVERY_GLOBAL_PHYSICS`), not the empty name Spine spells it with.
+ *
+ * **Numbers** are written exactly as the model holds them, and they are on the
+ * float32 grid already, so nothing is re-rounded. A number JSON cannot carry
+ * exactly — `-0`, `NaN`, an infinity — is refused by its path (`plain`).
+ *
+ * **Left out, and why.** Each is something the model holds that is not a
+ * statement about the rig:
+ *
+ *   - `setupWorld` — computed from `bones` by `computeWorldTransforms`
+ *     (`src/transform.ts`), so it states nothing `bones` does not, and a core
+ *     is to compute it rather than read it; and it is the one field holding a
+ *     `-0` (a root bone's `b` is `-sin 0`), which JSON cannot spell.
+ *   - `images[].absPath` — where the part was on this machine's disk, for the
+ *     size assertions.
+ *   - `droppedStates[].why` — the sentence names the `--atlas-in` file by its
+ *     absolute path.
+ *
+ * What the Spine emitter adds (`emitSkeleton`'s header, its spellings, its
+ * orders and omissions) is not in the model and so not here.
+ */
+export function modelDocument(model: CompiledModel): string {
+  for (const key of Object.keys(model)) {
+    if (!MODEL_DOCUMENT_FIELDS.includes(key) && !MODEL_DOCUMENT_LEFT_OUT.includes(key)) {
+      throw new CompileError(`internal: the model document has no place for the model's field "${key}"; it writes [${MODEL_DOCUMENT_FIELDS.join(', ')}] and leaves out [${MODEL_DOCUMENT_LEFT_OUT.join(', ')}]`);
+    }
+  }
+  const doc: { [key: string]: DocValue } = {
+    spec: MODEL_DOCUMENT_SPEC,
+    bones: model.bones.map((bone, i) =>
+      ordered(bone, BONE_FIELDS, `bones[${i}]`, (key, v) => (key === 'editor' ? ordered(v as object, ['color', 'icon'], `bones[${i}].editor`) : plain(v, `bones[${i}].${key}`))),
+    ),
+    slots: model.slots.map((slot, i) => ordered(slot, SLOT_FIELDS, `slots[${i}]`)),
+    skins: model.skins.map((skin, i) => skinOf(skin, `skins[${i}]`)),
+    constraints: model.constraints.map((constraint, i) => constraintOf(constraint, `constraints[${i}]`)),
+    events: named(model.events, 'events', (event, at) => ordered(event, EVENT_FIELDS, at)),
+    animations: named(model.animations, 'animations', (animation, at) => animationOf(animation, at)),
+    images: plain(model.images.map(({ absPath: _absPath, ...image }) => image), 'images'),
+    pageGrids: plain(model.pageGrids, 'pageGrids'),
+    droppedStates: plain(model.droppedStates.map(({ why: _why, ...state }) => state), 'droppedStates'),
+    absentParts: plain(model.absentParts, 'absentParts'),
+    meshBones: plain(model.meshBones, 'meshBones'),
+    meshes: plain(model.meshes, 'meshes'),
+    physics: plain(model.physics, 'physics'),
+    deformTransforms: plain(model.deformTransforms, 'deformTransforms'),
+    trackDerivations: plain(model.trackDerivations, 'trackDerivations'),
+    rig: plain(model.rig, 'rig'),
+  };
+  return `${JSON.stringify(doc, null, 2)}\n`;
 }

@@ -319,12 +319,13 @@ rigc validate spine
 ```
 
 `build` prints every assertion by name, then the shape of what it emitted, then
-the two files:
+the three files it wrote:
 
 ```
   ..    pages=3 regions=3 bones=4 slots=3 animations=1 version=4.3.13 regionAttachments=3 meshAttachments=0 physicsConstraints=0 rig=buoy profile=spine
 rigc: wrote …/buoy/spine/skeleton.json
 rigc: wrote …/buoy/spine/skeleton.atlas
+rigc: wrote …/buoy/spine/skeleton.model.json
 rigc: look at it: rigc preview --candidate …/buoy/spine
 ```
 

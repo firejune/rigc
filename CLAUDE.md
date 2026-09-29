@@ -200,7 +200,10 @@ sincere about it. rigc exists to convert that silence into a named failure.
   posing *is* running the runtime, and there is no honest way to read a posed
   vertex without it. What the rule protects has not moved: `src/compile.ts` must
   stay independent of the runtime so the compiler and the gate are not checking
-  each other's assumptions.
+  each other's assumptions. Since issue #922 that independence is held by
+  controls rather than by this sentence: `MD02` holds `compile.ts` free of every
+  Spine shape (`src/emit_spine.ts` is the one writer of Spine data, called once),
+  and `MD03` holds the set of modules naming those shapes to the one it measured.
 
   ⚠️ This sentence said **Two** for two weeks after the third file arrived
   (issue #379) — the rule eroded in exactly the way its own clause predicts,

@@ -80,6 +80,7 @@ import {
 } from './src/check.ts';
 import { writeCheckPictures } from './src/checkpics.ts';
 import { compile, CompileError, droppedStateReason, relativeImagesPath, type CompileOptions } from './src/compile.ts';
+import { MODEL_DOCUMENT_FILE, modelDocument } from './src/model.ts';
 import {
   skeletonDataFromText,
   surveyDeformKeys,
@@ -451,18 +452,21 @@ interface AtlasOverride {
 
 function runGate(
   result: CompileResult,
+  modelText: string,
   opts: CompileOptions,
   profile: ValidateProfile,
   atlas?: AtlasOverride,
 ): number {
-  // The determinism check compares a second, independent compile.
+  // The determinism check compares a second, independent compile — its model
+  // document included, which is the text `build` writes beside the pair.
   const again = compile(opts);
   const report = validate({
     skeletonText: result.skeletonText,
     atlasText: atlas ? atlas.text : result.atlasText,
     atlasDir: opts.outDir,
     declaredDurations: result.declaredDurations,
-    reEmit: { skeletonText: again.skeletonText, atlasText: atlas ? atlas.again : again.atlasText },
+    modelText,
+    reEmit: { skeletonText: again.skeletonText, atlasText: atlas ? atlas.again : again.atlasText, modelText: modelDocument(again.model) },
     rig: result.rig,
     profile,
   });
@@ -1456,8 +1460,12 @@ function cmdBuild(flags: Record<string, string>): void {
     );
   }
 
+  // The model's document is spelled before the gate, so the text A18 compares
+  // is the text written, and a model the document cannot carry is refused
+  // before anything is (issue #922).
+  const modelText = modelDocument(result.model);
   console.log(`  ..    validate (spine-core round trip + machine assertions, profile ${profile})`);
-  const failures = runGate(result, opts, profile);
+  const failures = runGate(result, modelText, opts, profile);
   if (failures > 0) {
     console.error(`rigc: ${failures} assertion(s) failed — nothing written`);
     process.exit(1);
@@ -1538,7 +1546,7 @@ function cmdBuild(flags: Record<string, string>): void {
       })),
       packOpts,
     );
-    const packFailures = runGate(result, opts, profile, { text: atlasText, again: packAgain.atlasText });
+    const packFailures = runGate(result, modelText, opts, profile, { text: atlasText, again: packAgain.atlasText });
     if (packFailures > 0) {
       console.error(
         `rigc: ${packFailures} assertion(s) failed on the PACKED atlas — the pages were written to ` +
@@ -1550,8 +1558,13 @@ function cmdBuild(flags: Record<string, string>): void {
 
   writeFileSync(join(opts.outDir, 'skeleton.json'), result.skeletonText);
   writeFileSync(join(opts.outDir, 'skeleton.atlas'), atlasText);
+  // rigc's own record of the compiled rig (`rigc-compiled/1`, issue #922),
+  // written with the pair and only after the same gate. Nothing reads it yet;
+  // the posing core of issue #380's step 2 is what will.
+  writeFileSync(join(opts.outDir, MODEL_DOCUMENT_FILE), modelText);
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.json')}`);
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.atlas')}`);
+  console.log(`rigc: wrote ${join(opts.outDir, MODEL_DOCUMENT_FILE)}`);
   // The next command is part of the message (issue #837). A green build is the
   // moment somebody wants to see what came out, and the one page rigc writes
   // for that is `preview` of exactly this directory — so the line names it,
@@ -3812,7 +3825,7 @@ function cmdSkills(flags: Record<string, string>, positional: string[]): void {
 const FLAG_MEANINGS: Record<string, string> = {
   rig: 'the rig spec — skeleton structure',
   motion: 'the motion spec — time',
-  out: 'directory for skeleton.json + skeleton.atlas; atlas page paths and skeleton.images are written relative to it',
+  out: 'directory for skeleton.json + skeleton.atlas (and, from build, skeleton.model.json); atlas page paths and skeleton.images are written relative to it',
   images: "override the rig spec's own images directory (relative to your working directory)",
   manifest: 'a cut manifest, for a rig with measured art behind it; a foreign skeleton has none',
   'copy-images':
