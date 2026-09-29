@@ -6,6 +6,8 @@
  *   bun tools/emit_hashes.ts run --recipes <recipes.json> --out <hashes.json>
  *                                [--work <dir>] [--root <dir>]
  *   bun tools/emit_hashes.ts compare <a.json> <b.json>
+ *   bun tools/emit_hashes.ts base [--check] [--file <hashes.json>]
+ *                                 [--work <dir>] [--root <dir>]
  *
  * ⭐ Why this exists. Step 1 of issue #380 constructs a compiled model before
  * the Spine emitter, and it is gated by byte identity: every build in every
@@ -121,7 +123,33 @@
  *
  * An absent `examples/` is printed as a HOLE on stderr, never silently empty.
  *
- * Exit codes throughout: 0 done (or IDENTICAL), 1 DIFF, 2 a bad input by name.
+ * ## `base` — the tracked base, `tools/emit_hashes.base.json` (issue #930)
+ *
+ * The five step-1 gates in `selftest.ts` (`MB07`, `MV09`, `MS12`, `MA12`,
+ * `MD07`) hold this tree's builds to a base hash document. CI names none, so
+ * until #930 each of them printed SKIP and a HOLE on every CI run. The tracked
+ * base is what they read when `RIGC_EMIT_HASHES_BASE` is unset; the variable
+ * still overrides it with a fuller document (the fetched exports' rows).
+ *
+ * ⚠️ **That file is a plain `emit-hashes/1` document and nothing else** — JSON
+ * carries no comment, so this paragraph is its header. It holds the gallery's
+ * rows only: every `gallery/<name>/` with a `rig.json`, built the way its README
+ * states (the same recipes `recipes` writes for the gallery). The fetched
+ * exports are left out because `examples/` is gitignored and absent in CI, so a
+ * row for them would be a row no CI run can build.
+ *
+ * 🔒 **It is written by one command and never by hand**: `bun tools/emit_hashes.ts
+ * base` regenerates it in place, and `--file` writes it elsewhere. A gallery row
+ * that exits non-zero is refused by name and nothing is written, because a base
+ * is a record of green builds. `base --check` builds the same rows afresh and
+ * compares the result with the file BYTE for byte: CURRENT exits 0; STALE exits
+ * 1 with each differing row and file and the command that refreshes it. A file
+ * whose hashes all agree but whose bytes do not is STALE too — that is a file
+ * somebody edited, which is the one way it may not change. `selftest.ts`'s
+ * `EH06` runs the check on the tree and `EH07` plants a moved gallery build.
+ *
+ * Exit codes throughout: 0 done (or IDENTICAL, or CURRENT), 1 DIFF (or STALE),
+ * 2 a bad input by name.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -135,6 +163,10 @@ export const RECIPES_SPEC = 'emit-hashes-recipes/1';
 /** The checkout this file belongs to: the default `--root`, and where `cli.ts` is. */
 export const TREE_ROOT = resolve(import.meta.dir, '..');
 const CLI = join(TREE_ROOT, 'cli.ts');
+
+/** The tracked base's place in the checkout, and the one command that writes it (issue #930). */
+export const BASE_FILE = 'tools/emit_hashes.base.json';
+export const BASE_COMMAND = 'bun tools/emit_hashes.ts base';
 
 /** A refusal about an input — the command exits 2 on it. */
 export class HashesInputError extends Error {}
@@ -577,13 +609,53 @@ export function treeRecipes(root: string, note: (line: string) => void): Recipe[
     }
   }
   if (trial !== null) rmSync(trial, { recursive: true, force: true });
-  for (const name of readdirSync(join(root, 'gallery')).sort(byCodeUnit)) {
-    if (!existsSync(join(root, 'gallery', name, 'rig.json'))) continue;
+  recipes.push(...galleryRecipes(root, note));
+  return recipes.sort((a, b) => byCodeUnit(a.name, b.name));
+}
+
+/** Every `gallery/<name>/` with a `rig.json`, as `galleryRecipe` states it — the tracked base's recipes. */
+export function galleryRecipes(root: string, note: (line: string) => void): Recipe[] {
+  const recipes: Recipe[] = [];
+  const gallery = join(root, 'gallery');
+  if (!existsSync(gallery)) throw new HashesInputError(`no gallery at ${gallery}`);
+  for (const name of readdirSync(gallery).sort(byCodeUnit)) {
+    if (!existsSync(join(gallery, name, 'rig.json'))) continue;
     const { recipe, finding } = galleryRecipe(root, name);
     if (finding !== null) note(`FINDING: ${finding}`);
     recipes.push(recipe);
   }
+  if (recipes.length === 0) throw new HashesInputError(`no gallery/<name>/rig.json under ${root}`);
   return recipes.sort((a, b) => byCodeUnit(a.name, b.name));
+}
+
+export interface BaseVerdict {
+  current: boolean;
+  lines: string[];
+}
+
+/**
+ * The file at `file` against `fresh`, a run of the gallery's recipes on this
+ * tree: CURRENT only when the file is byte-identical to what `base` writes.
+ * `shown` is how the file is named in the lines.
+ */
+export function baseVerdict(file: string, shown: string, fresh: HashesDocument, command: string = BASE_COMMAND): BaseVerdict {
+  const files = fresh.recipes.reduce((n, r) => n + r.files.length, 0);
+  const refresh = `regenerate it with \`${command}\` in the same change, and say in the pull request which rows moved and why`;
+  if (!existsSync(file)) return { current: false, lines: [`STALE — there is no base at ${shown}; ${refresh}`] };
+  if (readFileSync(file, 'utf8') === hashesText(fresh)) {
+    return { current: true, lines: [`CURRENT — ${shown} is byte-identical to a fresh run of the gallery's ${fresh.recipes.length} recipe(s), ${files} file(s)`] };
+  }
+  const lines: string[] = [];
+  try {
+    const c = compareHashes(readHashes(file), fresh);
+    if (c.identical) lines.push(`  ${shown} agrees with this tree on every exit code, size and hash, but not in its bytes: it was not written by \`${command}\``);
+    else lines.push(...comparisonLines(c).filter((l) => l.startsWith('  ')));
+  } catch (err) {
+    if (!(err instanceof HashesInputError)) throw err;
+    lines.push(`  ${err.message}`);
+  }
+  lines.push(`STALE — ${shown} is not what \`${command}\` writes on this tree (A = the file, B = this tree); a change that moves a gallery build's bytes on purpose must ${refresh}`);
+  return { current: false, lines };
 }
 
 export function recipesText(recipes: readonly Recipe[]): string {
@@ -603,9 +675,10 @@ const USAGE = [
   '  bun tools/emit_hashes.ts recipes --out <recipes.json>',
   '  bun tools/emit_hashes.ts run --recipes <recipes.json> --out <hashes.json> [--work <dir>] [--root <dir>]',
   '  bun tools/emit_hashes.ts compare <a.json> <b.json>',
+  '  bun tools/emit_hashes.ts base [--check] [--file <hashes.json>] [--work <dir>] [--root <dir>]',
 ].join('\n');
 
-function parseFlags(args: readonly string[], known: readonly string[]): { positional: string[]; flags: Map<string, string> } {
+function parseFlags(args: readonly string[], known: readonly string[], switches: readonly string[] = []): { positional: string[]; flags: Map<string, string> } {
   const positional: string[] = [];
   const flags = new Map<string, string>();
   for (let i = 0; i < args.length; i++) {
@@ -614,7 +687,12 @@ function parseFlags(args: readonly string[], known: readonly string[]): { positi
       positional.push(arg);
       continue;
     }
-    if (!known.includes(arg)) throw new HashesInputError(`unknown flag ${arg}; this command takes ${known.join(', ')}`);
+    if (switches.includes(arg)) {
+      if (flags.has(arg)) throw new HashesInputError(`${arg} given twice`);
+      flags.set(arg, '');
+      continue;
+    }
+    if (!known.includes(arg)) throw new HashesInputError(`unknown flag ${arg}; this command takes ${[...known, ...switches].join(', ')}`);
     const value = args[i + 1];
     if (value === undefined || value.startsWith('--')) throw new HashesInputError(`${arg} needs a value`);
     if (flags.has(arg)) throw new HashesInputError(`${arg} given twice`);
@@ -668,6 +746,43 @@ export function hashesMain(argv: readonly string[], print: (line: string) => voi
       const refused = doc.recipes.filter((r) => r.exits.some((e) => e !== 0)).length;
       print(`emit_hashes: ${doc.recipes.length} recipe(s), ${doc.recipes.length - refused} exit 0, ${refused} refused → ${out}`);
       warn(`emit_hashes: wall time ${seconds.toFixed(1)} s`);
+      return 0;
+    }
+    if (command === 'base') {
+      const { positional, flags } = parseFlags(rest, ['--file', '--work', '--root'], ['--check']);
+      if (positional.length > 0) throw new HashesInputError(`base takes no path, got ${positional.join(' ')}`);
+      const check = flags.has('--check');
+      const file = resolve(flags.get('--file') ?? join(TREE_ROOT, BASE_FILE));
+      const shown = flags.has('--file') ? file : BASE_FILE;
+      const root = resolve(flags.get('--root') ?? TREE_ROOT);
+      if (!existsSync(root) || !statSync(root).isDirectory()) throw new HashesInputError(`--root ${root} is not a directory`);
+      const recipes = galleryRecipes(root, warn);
+      const named = flags.get('--work');
+      let work: string;
+      if (named === undefined) work = mkdtempSync(join(tmpdir(), 'rigc-emit-hashes-base-'));
+      else {
+        work = resolve(named);
+        if (existsSync(work) && readdirSync(work).length > 0) throw new HashesInputError(`--work ${work} is not empty; every recipe runs in a fresh directory`);
+        mkdirSync(work, { recursive: true });
+      }
+      warn(`emit_hashes: ${recipes.length} gallery recipe(s), work directory ${work}`);
+      const started = performance.now();
+      const doc = runRecipes(recipes, work, root, print);
+      warn(`emit_hashes: wall time ${((performance.now() - started) / 1000).toFixed(1)} s`);
+      if (check) {
+        const verdict = baseVerdict(file, shown, doc, flags.has('--file') ? `${BASE_COMMAND} --file ${file}` : BASE_COMMAND);
+        for (const line of verdict.lines) print(line);
+        return verdict.current ? 0 : 1;
+      }
+      const refused = doc.recipes.filter((r) => r.exits.some((e) => e !== 0));
+      if (refused.length > 0) {
+        throw new HashesInputError(
+          `${refused.length} gallery build(s) refused, and a base is a record of green builds — nothing written: ` +
+            refused.map((r) => `${r.name} exited ${JSON.stringify(r.exits)} (log beside ${work})`).join('; '),
+        );
+      }
+      writeFileSync(file, hashesText(doc));
+      print(`emit_hashes: base of ${doc.recipes.length} gallery recipe(s), ${doc.recipes.reduce((n, r) => n + r.files.length, 0)} file(s) → ${shown}`);
       return 0;
     }
     if (command === 'compare') {

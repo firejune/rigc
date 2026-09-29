@@ -16,8 +16,10 @@
  *   bun selftest.ts --cuts <cuts.json>   plus an extra suite over those cuts
  *   RIGC_CUTS=<cuts.json> bun selftest.ts
  *   RIGC_EMIT_HASHES_BASE=<hashes.json> bun selftest.ts
- *                                        plus MB07: two gallery rigs hashed against
- *                                        that base document's rows (issue #915)
+ *                                        the step-1 gates (MB07, MV09, MS12, MA12,
+ *                                        MD07) held to that fuller base document
+ *                                        instead of the tracked gallery base,
+ *                                        tools/emit_hashes.base.json (issue #930)
  *
  * ## The public suite runs on fixtures this file generates
  *
@@ -501,6 +503,8 @@ import {
   parseDt,
 } from './tools/pose_oracle.ts';
 import {
+  BASE_COMMAND,
+  BASE_FILE,
   compareHashes,
   comparisonLines,
   galleryRecipe,
@@ -67783,6 +67787,31 @@ function withoutAtlasRects(text: string): string | null {
 }
 
 /**
+ * The base hash document the step-1 gates (`MB07`, `MV09`, `MS12`, `MA12`,
+ * `MD07`) hold this tree's builds to (issue #930): the one
+ * `RIGC_EMIT_HASHES_BASE` names when it names one — a fuller document, the
+ * fetched exports' rows included — else the tracked gallery base
+ * `tools/emit_hashes.base.json`, else none, which each gate prints as a HOLE.
+ *
+ * ⚠️ Until #930 CI named none, so all five were a SKIP and a HOLE on every CI
+ * run, and a HOLE on every run cannot be told from one that matters. The
+ * tracked base carries the gallery's rows only, because `examples/` is not in
+ * CI; `EH06` holds it to what `tools/emit_hashes.ts base` writes on this tree,
+ * so a gate reading it reads this tree's own record, not a stale copy.
+ *
+ * 🔸 `MG07` (issue #935) does not read it, deliberately: it measures the
+ * TRANSITION to the rectangles — a base whose documents lack them — and
+ * against a base taken after #935 it has no changed row to plant on and would
+ * go red for being current. It stays on `RIGC_EMIT_HASHES_BASE` alone.
+ */
+function gateBase(): { path: string; shown: string } | null {
+  const named = process.env.RIGC_EMIT_HASHES_BASE;
+  if (named !== undefined && named !== '') return { path: resolve(named), shown: named };
+  const tracked = resolve(import.meta.dir, BASE_FILE);
+  return existsSync(tracked) ? { path: tracked, shown: `${BASE_FILE} (the tracked gallery base; RIGC_EMIT_HASHES_BASE unset)` } : null;
+}
+
+/**
  * The bones of a rig spec, parsed. Only the fields the plants below touch are
  * typed; the rest of the spec is carried through `JSON.stringify` untouched.
  */
@@ -68073,6 +68102,92 @@ function runEmitHashesSuite(): number | null {
       'exit 2 is the third answer — not IDENTICAL, not DIFF, but "these cannot be compared" — and the one that ' +
         'matters most is one recipe name standing for two builds, where every verdict under it would be a statement ' +
         'about the recipes rather than the commits',
+    );
+  }
+
+  /** A copy of the whole gallery — every rig and the index README — with nothing a README's commands built beside it. */
+  const galleryCopy = (label: string): string => {
+    const root = join(work, `${label}-root`);
+    const built = /[\\/]gallery[\\/][^\\/]+[\\/](build|render|preview\.html)$/;
+    cpSync(galleryRoot, join(root, 'gallery'), { recursive: true, filter: (from) => !built.test(from) });
+    return root;
+  };
+  const trackedBase = resolve(import.meta.dir, BASE_FILE);
+  const stale = (run: ReturnType<typeof runHashes>): string[] => run.stdout.split('\n').filter((l) => l.startsWith('  DIFF') || l.startsWith('  ONLY') || l.startsWith('STALE') || l.startsWith('          '));
+
+  // --- EH06: the tracked base is exactly what `base` writes on this tree --
+  {
+    const probes: string[] = [];
+    const fresh = join(work, 'fresh-base.json');
+    const wrote = runHashes(['base', '--file', fresh, '--work', join(work, 'wf')]);
+    if (wrote.status !== 0) probes.push(`\`${BASE_COMMAND} --file …\` exited ${wrote.status}: ${wrote.stderr.trim().slice(0, 300)}`);
+    if (!existsSync(trackedBase)) probes.push(`there is no ${BASE_FILE}; write it with \`${BASE_COMMAND}\``);
+    else if (existsSync(fresh) && !readFileSync(fresh).equals(readFileSync(trackedBase))) {
+      probes.push(`${BASE_FILE} is not byte-identical to a fresh \`${BASE_COMMAND}\` on this tree`);
+    }
+    const check = runHashes(['base', '--check', '--work', join(work, 'wk')]);
+    const verdict = check.stdout.trim().split('\n').pop() ?? '';
+    if (check.status !== 0 || !verdict.startsWith('CURRENT')) probes.push(`\`${BASE_COMMAND} --check\` exited ${check.status}: ${stale(check).join(' | ') || JSON.stringify(verdict)}`);
+    // The plant: the tracked base with its bytes changed and not one hash — a hand edit — must read STALE and name the command.
+    const edited = join(work, 'hand-edited-base.json');
+    if (existsSync(trackedBase)) writeFileSync(edited, readFileSync(trackedBase, 'utf8').replace('{\n  "spec"', '{\n "spec"'));
+    const hand = runHashes(['base', '--check', '--file', edited, '--work', join(work, 'wh')]);
+    const handLines = stale(hand);
+    if (hand.status !== 1) probes.push(`a hand-edited copy of the base read exit ${hand.status}, not 1`);
+    if (!hand.stdout.includes('but not in its bytes') || !handLines.some((l) => l.startsWith('STALE') && l.includes(`\`${BASE_COMMAND} --file ${edited}\``))) {
+      probes.push(`a hand-edited copy of the base printed ${JSON.stringify(handLines)}, not a STALE naming its bytes and the command that rewrites it`);
+    }
+    const doc = existsSync(fresh) ? readHashes(fresh) : null;
+    const held = probes.length === 0;
+    say(
+      'EH06_THE_TRACKED_BASE_IS_BYTE_IDENTICAL_TO_WHAT_BASE_WRITES_ON_THIS_TREE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${BASE_FILE}, ${existsSync(trackedBase) ? statSync(trackedBase).size : 0} bytes over ${doc?.recipes.length ?? 0} gallery recipe(s) and ` +
+          `${doc?.recipes.reduce((n, r) => n + r.files.length, 0) ?? 0} file(s), equals a fresh \`${BASE_COMMAND}\` to the byte and \`--check\` reads ${verdict.split(' ')[0] || 'nothing'}; ` +
+          'a copy re-indented by one space, every hash unchanged, reads STALE with exit 1 naming its bytes and the command',
+      ),
+      'issue #930\'s currency rule: the five step-1 gates read the tracked base when no fuller one is named, so a base ' +
+        'that fell behind the tree would turn them into a record of the past. It is written by one command and never ' +
+        'by hand, and a file whose hashes agree but whose bytes do not is exactly a hand edit, so bytes are the criterion',
+    );
+  }
+
+  // --- EH07: a gallery build moved on purpose is named with the file and the command --
+  {
+    const probes: string[] = [];
+    const target = pair[1];
+    const root = galleryCopy('base-moved');
+    let what = '';
+    try {
+      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
+        const bone = [...bones].reverse().find((x) => typeof x.x === 'number');
+        if (bone === undefined) return '';
+        bone.x = (bone.x as number) + 1;
+        return `bone "${bone.name}" x ${bone.x - 1} → ${bone.x}`;
+      });
+    } catch (err) {
+      probes.push(`the plant could not be made: ${(err as Error).message}`);
+    }
+    if (what === '') probes.push(`gallery/${target}/rig.json has no bone with a numeric x to move`);
+    const check = runHashes(['base', '--check', '--root', root, '--work', join(work, 'wbm')]);
+    const lines = stale(check);
+    const rows = lines.filter((l) => l.startsWith('  DIFF') || l.startsWith('  ONLY'));
+    if (check.status !== 1) probes.push(`\`--check\` over the moved copy exited ${check.status}, not 1: ${check.stderr.trim().slice(0, 200)}`);
+    if (rows.length !== 1 || rows[0] !== `  DIFF  gallery/${target}`) probes.push(`the rows named are ${JSON.stringify(rows)}, not gallery/${target} alone`);
+    if (!lines.some((l) => l.trim().startsWith('skeleton.json differs:'))) probes.push('no line names skeleton.json as the file that moved');
+    const last = lines[lines.length - 1] ?? '';
+    if (!last.startsWith(`STALE — ${BASE_FILE} `) || !last.includes(`\`${BASE_COMMAND}\``)) probes.push(`the verdict ${JSON.stringify(last)} does not name ${BASE_FILE} and \`${BASE_COMMAND}\``);
+    const held = probes.length === 0;
+    say(
+      'EH07_A_GALLERY_BUILD_MOVED_ON_PURPOSE_IS_NAMED_WITH_THE_FILE_AND_THE_REGENERATION_COMMAND',
+      held,
+      probeDetail(held, probes, `${what} in a copy of the gallery, checked under --root: exit 1, DIFF naming gallery/${target} alone and skeleton.json in it, and a verdict naming ${BASE_FILE} and \`${BASE_COMMAND}\``),
+      'issue #930: a change that moves a gallery build on purpose is legitimate and must still go red until the base is ' +
+        'regenerated in the same change, and the red has to carry the three things the author acts on — the row, the ' +
+        'file and the one command — or it is a refusal nobody can clear',
     );
   }
 
@@ -68437,19 +68552,20 @@ function runModelBonesSuite(): { failures: number; gateHole: boolean } {
     );
   }
 
-  // --- MB07: two gallery rigs hash identical to a named base document's rows --
+  // --- MB07: two gallery rigs hash identical to the base document's rows --
   let gateHole = false;
   {
-    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
-    if (basePath === undefined || basePath === '') {
+    const gate = gateBase();
+    if (gate === null) {
       gateHole = true;
-      console.log('  SKIP  MB07 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
+      console.log(`  SKIP  MB07 did not run: RIGC_EMIT_HASHES_BASE names no base hash document and there is no ${BASE_FILE} (write it with \`${BASE_COMMAND}\`).`);
       console.log('          ⚠️ This is a HOLE in this run, not a pass — byte identity against a base commit was not measured here.');
     } else {
+      const basePath = gate.shown;
       const probes: string[] = [];
       let base: HashesDocument | null = null;
       try {
-        base = readHashes(resolve(basePath));
+        base = readHashes(gate.path);
       } catch (err) {
         probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
       }
@@ -68730,7 +68846,8 @@ function writeModelVerticesProbe(boneOrder: 'ab' | 'ba' = 'ab'): ProbeDirs {
  * writes its index once, against the model's bone order; each kind's keys come
  * out in the order its builder wrote them; the decoders that read the emitted
  * run back read the model instead and say the same numbers to the bit; and,
- * when a base hash document is named, every gallery rig lands byte-identical.
+ * against the base hash document (`gateBase`: the tracked gallery base, or a
+ * fuller one `RIGC_EMIT_HASHES_BASE` names), every gallery rig lands byte-identical.
  */
 function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
   console.log('\n── model-vertices: vertex attachments as model records, bound by bone name (issue #917) ──');
@@ -69178,19 +69295,20 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
     );
   }
 
-  // --- MV09: every gallery rig hashes identical to a named base document's rows --
+  // --- MV09: every gallery rig hashes identical to the base document's rows --
   let gateHole = false;
   {
-    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
-    if (basePath === undefined || basePath === '') {
+    const gate = gateBase();
+    if (gate === null) {
       gateHole = true;
-      console.log('  SKIP  MV09 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
+      console.log(`  SKIP  MV09 did not run: RIGC_EMIT_HASHES_BASE names no base hash document and there is no ${BASE_FILE} (write it with \`${BASE_COMMAND}\`).`);
       console.log('          ⚠️ This is a HOLE in this run, not a pass — the vertex attachments\' byte identity against a base commit was not measured here.');
     } else {
+      const basePath = gate.shown;
       const probes: string[] = [];
       let base: HashesDocument | null = null;
       try {
-        base = readHashes(resolve(basePath));
+        base = readHashes(gate.path);
       } catch (err) {
         probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
       }
@@ -69441,8 +69559,8 @@ function compileModelRecordsProbe(anim: Record<string, unknown> = {}): { result:
  * wrote them, each omission the constructors made inline is the emitter's and
  * leaves the value in the model, the editor's skin order is applied at
  * emission, the read-back sites read the model and refuse in the words they
- * did, `compile.ts` names no Spine record type, and — when a base hash document
- * is named — every recipe it lists lands byte-identical.
+ * did, `compile.ts` names no Spine record type, and — against the base hash
+ * document `gateBase` returns — every recipe it lists lands byte-identical.
  */
 function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
   console.log('\n── model-records: slots, skins, constraints and events as model records, the Spine emitter their one writer (issue #919) ──');
@@ -69868,19 +69986,20 @@ function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
     );
   }
 
-  // --- MS12: every recipe of a named base document hashes identical --
+  // --- MS12: every recipe of the base document hashes identical --
   let gateHole = false;
   {
-    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
-    if (basePath === undefined || basePath === '') {
+    const gate = gateBase();
+    if (gate === null) {
       gateHole = true;
-      console.log('  SKIP  MS12 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
+      console.log(`  SKIP  MS12 did not run: RIGC_EMIT_HASHES_BASE names no base hash document and there is no ${BASE_FILE} (write it with \`${BASE_COMMAND}\`).`);
       console.log('          ⚠️ This is a HOLE in this run, not a pass — the structural records\' byte identity against a base commit was not measured here.');
     } else {
+      const basePath = gate.shown;
       const probes: string[] = [];
       let base: HashesDocument | null = null;
       try {
-        base = readHashes(resolve(basePath));
+        base = readHashes(gate.path);
       } catch (err) {
         probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
       }
@@ -70085,8 +70204,8 @@ function compileAnimationSourceProblems(text: string): string[] {
  * physics timeline at the empty name in its track's position, an ik key's flags
  * in effect held and the default ones left out, a hold written `stepped`, the
  * draw-order sort, every key a fresh copy the passes cannot reach back through,
- * `compile.ts` naming no Spine animation type, and — when a base hash document
- * is named — every recipe it lists landing byte-identical.
+ * `compile.ts` naming no Spine animation type, and — against the base hash
+ * document `gateBase` returns — every recipe it lists landing byte-identical.
  */
 function runModelAnimationsSuite(): { failures: number; gateHole: boolean } {
   console.log('\n── model-animations: the animations as model records, the Spine emitter their writer (issue #921) ──');
@@ -70448,19 +70567,20 @@ function runModelAnimationsSuite(): { failures: number; gateHole: boolean } {
     );
   }
 
-  // --- MA12: every recipe of a named base document hashes identical --
+  // --- MA12: every recipe of the base document hashes identical --
   let gateHole = false;
   {
-    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
-    if (basePath === undefined || basePath === '') {
+    const gate = gateBase();
+    if (gate === null) {
       gateHole = true;
-      console.log('  SKIP  MA12 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
+      console.log(`  SKIP  MA12 did not run: RIGC_EMIT_HASHES_BASE names no base hash document and there is no ${BASE_FILE} (write it with \`${BASE_COMMAND}\`).`);
       console.log('          ⚠️ This is a HOLE in this run, not a pass — the animations\' byte identity against a base commit was not measured here.');
     } else {
+      const basePath = gate.shown;
       const probes: string[] = [];
       let base: HashesDocument | null = null;
       try {
-        base = readHashes(resolve(basePath));
+        base = readHashes(gate.path);
       } catch (err) {
         probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
       }
@@ -70619,8 +70739,9 @@ function modelDocumentRefusal(model: CompiledModel): string {
  * The compiled model as a document (issue #922, step 1f of #380): its shape
  * and key order, what it refuses to write, `A18` over it, `build` writing it,
  * #379's invariant as a scan of `compile.ts` and of every Spine-type importer,
- * and — when a base hash document is named — every recipe differing from that
- * base by exactly the added file.
+ * and — against the base hash document `gateBase` returns — every recipe
+ * differing from that base by exactly the added file, or not at all when the
+ * base already carries it.
  */
 function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
   console.log('\n── model-document: the compiled model written beside the Spine files as rigc-compiled/1 (issue #922) ──');
@@ -70845,19 +70966,20 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
     );
   }
 
-  // --- MD07: every recipe of a named base differs by exactly the added document --
+  // --- MD07: every recipe of the base differs by exactly the added document --
   let gateHole = false;
   {
-    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
-    if (basePath === undefined || basePath === '') {
+    const gate = gateBase();
+    if (gate === null) {
       gateHole = true;
-      console.log('  SKIP  MD07 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
+      console.log(`  SKIP  MD07 did not run: RIGC_EMIT_HASHES_BASE names no base hash document and there is no ${BASE_FILE} (write it with \`${BASE_COMMAND}\`).`);
       console.log('          ⚠️ This is a HOLE in this run, not a pass — that the model document is the only difference from a base commit was not measured here.');
     } else {
+      const basePath = gate.shown;
       const probes: string[] = [];
       let base: HashesDocument | null = null;
       try {
-        base = readHashes(resolve(basePath));
+        base = readHashes(gate.path);
       } catch (err) {
         probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
       }
@@ -82915,14 +83037,16 @@ function main(): void {
           'instrument step 1 of #380 is gated by: two gallery rigs built twice through the CLI, at two work depths, ' +
           'hashing equal to the byte; one number moved in a spec copy named as the one recipe and the one file it ' +
           'changed; a refused build recorded as its exit code and named against its green twin; the tree\'s recipes ' +
-          'covering every gallery rig and every fetched export with no finding; and bad inputs refused with exit 2 ' +
-          'and nothing written)') +
+          'covering every gallery rig and every fetched export with no finding; bad inputs refused with exit 2 ' +
+          'and nothing written; and — issue #930 — the tracked gallery base byte-identical to what `base` writes on ' +
+          'this tree, a hand-edited copy reading STALE, and a gallery build moved on purpose named by row, file and ' +
+          'the one command that refreshes the base)') +
       ', + ' + n('model-bones') + ' model-bones controls (issue #915 — the compiled model\'s first record: `emitBones` ' +
       'restating a bone with every key in the constructor\'s order, which the key-order pass cannot restore for a key its ' +
       'row does not list; a name alone emitting the name alone; the mode and the skin flag under the Spine spellings; a ' +
       'model chain and its emitted twin posing to the bit through every inherit mode; every compiled rig\'s bones being ' +
       'its model through the emitter, with its setup pose to the bit; `compile.ts` emitting the bones once and naming no ' +
-      'Spine bone; and, when a base document is named, two gallery rigs hashing identical to its rows)' +
+      'Spine bone; and, against the tracked gallery base or a fuller one `RIGC_EMIT_HASHES_BASE` names, two gallery rigs hashing identical to its rows)' +
       ', + ' + n('model-vertices') + ' model-vertices controls (issue #917 — mesh, path, bounding-box and clipping ' +
       'attachments as model records whose weighted vertices name their bone: the by-name binder through the emitter ' +
       'writing the removed index encoder\'s run number for number; a reversed bone order moving every emitted index and ' +
@@ -82930,7 +83054,7 @@ function main(): void {
       'emitted as stated, with the runs the model cannot hold refused by name; each kind\'s keys in its builder\'s ' +
       'order, which the key-order pass cannot restore; the deform geometry and a path\'s measured lengths read off the ' +
       'model equal to the old decode of the file, to the bit; every compiled rig\'s attachments being its model through ' +
-      'the emitter, with `compile.ts` binding by name; and, when a base document is named, every gallery rig hashing ' +
+      'the emitter, with `compile.ts` binding by name; and, against the tracked gallery base or a fuller one `RIGC_EMIT_HASHES_BASE` names, every gallery rig hashing ' +
       'identical to its rows)' +
       ', + ' + n('model-records') + ' model-records controls (issue #919 — slots, region and linked-mesh attachments, skins, ' +
       'constraints and events as model records, the Spine emitter their one writer: each record kind\'s keys in its ' +
@@ -82939,7 +83063,7 @@ function main(): void {
       'and left out of the file by the emitter; the physics table and the rig writing two orders; `default` first and ' +
       'the editor\'s order over three named skins; every compiled rig\'s records being its model through the emitter, ' +
       'untouched by the passes; a draw-order offset and an `rgba2` key refused off the model in the words they were; ' +
-      '`compile.ts` naming no Spine record type; and, when a base document is named, every recipe with its inputs ' +
+      '`compile.ts` naming no Spine record type; and, against the tracked gallery base or a fuller one `RIGC_EMIT_HASHES_BASE` names, every recipe with its inputs ' +
       'here hashing identical to its rows)' +
       ', + ' + n('model-animations') + ' model-animations controls (issue #921 — the animations as model records, the Spine emitter ' +
       'their writer: the groups in `readAnimation`\'s order, each only when non-empty; a name set the editor could key two ' +
@@ -82948,7 +83072,7 @@ function main(): void {
       'constraint\'s where the key is silent; a named easing over a hold held and written `stepped`; every key a fresh copy ' +
       'in its own order; every compiled rig\'s animations being its model through the emitter, untouched by the passes; ' +
       'draw-order moves held as stated and written in setup order; `compile.ts` naming no Spine animation type; the ' +
-      'model in the spec\'s order and the file in the editor\'s; and, when a base document is named, every recipe with ' +
+      'model in the spec\'s order and the file in the editor\'s; and, against the tracked gallery base or a fuller one `RIGC_EMIT_HASHES_BASE` names, every recipe with ' +
       'its inputs here hashing identical to its rows)' +
       ', + ' + n('chainfit') + ' chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
@@ -83041,11 +83165,11 @@ function main(): void {
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (emitHashesBad === null ? '\n  ⚠️ Fewer than two gallery rigs, so no build was hashed across two runs (issue #914) in this run.' : '') +
-      (modelBones.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so byte identity against a base commit (issue #915) was not measured in this run.' : '') +
-      (modelVertices.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the vertex attachments\' byte identity against a base commit (issue #917) was not measured in this run.' : '') +
-      (modelRecords.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the structural records\' byte identity against a base commit (issue #919) was not measured in this run.' : '') +
-      (modelAnimations.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the animations\' byte identity against a base commit (issue #921) was not measured in this run.' : '') +
-      (modelDocumentRun.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so that the model document is the only difference from a base commit (issue #922) was not measured in this run.' : '') +
+      (modelBones.gateHole ? '\n  ⚠️ Neither RIGC_EMIT_HASHES_BASE nor the tracked tools/emit_hashes.base.json gave a base hash document, so byte identity against a base commit (issue #915) was not measured in this run.' : '') +
+      (modelVertices.gateHole ? '\n  ⚠️ Neither RIGC_EMIT_HASHES_BASE nor the tracked tools/emit_hashes.base.json gave a base hash document, so the vertex attachments\' byte identity against a base commit (issue #917) was not measured in this run.' : '') +
+      (modelRecords.gateHole ? '\n  ⚠️ Neither RIGC_EMIT_HASHES_BASE nor the tracked tools/emit_hashes.base.json gave a base hash document, so the structural records\' byte identity against a base commit (issue #919) was not measured in this run.' : '') +
+      (modelAnimations.gateHole ? '\n  ⚠️ Neither RIGC_EMIT_HASHES_BASE nor the tracked tools/emit_hashes.base.json gave a base hash document, so the animations\' byte identity against a base commit (issue #921) was not measured in this run.' : '') +
+      (modelDocumentRun.gateHole ? '\n  ⚠️ Neither RIGC_EMIT_HASHES_BASE nor the tracked tools/emit_hashes.base.json gave a base hash document, so that the model document is the only difference from a base commit (issue #922) was not measured in this run.' : '') +
       (modelAtlas.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so that the atlas rectangles are the only change to the model document from a base commit (issue #935) was not measured in this run.' : '') +
       (launcher.startsWith(',') ? '' : launcher) +
       (gallery.examples > 0

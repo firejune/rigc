@@ -89,6 +89,17 @@ the tarball runs* is the argument.
   [docs/AUTHORING.md](docs/AUTHORING.md) changed too. That guide and the
   validator's messages are the only interface an agent that cannot see the rig
   actually has.
+- **A change that moves a gallery build's bytes on purpose regenerates the base
+  in the same pull request.** `tools/emit_hashes.base.json` records, hash by
+  hash, what every `gallery/<name>/` build writes, and five selftest gates hold
+  the tree to it on every run, CI included — so a moved build is red on your
+  branch until the file moves with it, and `EH06` names the row, the file and the
+  command. That command is `bun tools/emit_hashes.ts base`; run it, commit the
+  file, and say in the pull request which rows changed and why
+  (`bun tools/emit_hashes.ts base --check` prints them before you regenerate).
+  The file is written by that command and never by hand: a copy whose hashes all
+  agree but whose bytes do not is refused as stale too
+  ([#930](https://github.com/firejune/rigc/issues/930)).
 
 ## Commits
 
