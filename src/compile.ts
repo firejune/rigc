@@ -128,20 +128,34 @@ import {
   TransformError,
   type BoneTransform,
 } from './transform.ts';
-import { boneIndexOf, emitBones, emitSkinAttachments } from './emit_spine.ts';
 import {
-  attachmentTypeOf,
+  boneIndexOf,
+  emitBones,
+  emitConstraints,
+  emitEvents,
+  emitSkins,
+  emitSlots,
+  PHYSICS_PARAMS,
+} from './emit_spine.ts';
+import {
   isModelVertexAttachment,
   type CarriedFromCompileResult,
   type ModelBinding,
   type ModelBone,
   type ModelBoundingBoxAttachment,
   type ModelClippingAttachment,
+  type ModelConstraint,
+  type ModelConstraintKind,
+  type ModelEvent,
+  type ModelLinkedMeshAttachment,
   type ModelMeshAttachment,
   type ModelPathAttachment,
+  type ModelRegionAttachment,
+  type ModelSkin,
+  type ModelSlot,
   type ModelVertices,
+  type SkinTable,
   type SkinTableEntry,
-  type SkinTables,
 } from './model.ts';
 import type {
   CompileResult,
@@ -162,13 +176,8 @@ import type {
   MotionValueKey,
   MotionValueTrack,
   RigInfo,
-  SpineConstraint,
-  SpineEvent,
-  SpineLinkedMeshAttachment,
-  SpineRegionAttachment,
   SpineSequence,
   SpineSkeletonJson,
-  SpineSlot,
   SpineTimelineKey,
 } from './types.ts';
 
@@ -383,8 +392,12 @@ const DEFAULT_SKIN = 'default';
  * ⇒ Every skin name in this tree is lower-case ASCII without digits, so no
  * emitted byte moves and no rig is refused. What moves is the claim, and what
  * stops being refused is a rig with capitals, folders or digits in its skins.
+ *
+ * Exported, with `editorSlotKeyOrder`, because the Spine emitter applies both
+ * (`emitSkins` takes them as its `EditorOrder`, issue #919) and the selftest
+ * hands them to it the way the assembly does (`MS07`, `MS08`).
  */
-function editorSkinOrder<T extends { name: string }>(skins: readonly T[]): T[] {
+export function editorSkinOrder<T extends { name: string }>(skins: readonly T[]): T[] {
   const pinned = skins.filter((skin) => skin.name === DEFAULT_SKIN);
   const rest = skins.filter((skin) => skin.name !== DEFAULT_SKIN);
   // Ranked rather than looked up by name: two skins answering to one name are a
@@ -430,7 +443,7 @@ function editorSkinOrder<T extends { name: string }>(skins: readonly T[]): T[] {
  * attachment name holding `/` is the common case the folder question would
  * have to answer first.
  */
-function editorSlotKeyOrder<T>(attachments: Record<string, T>): Record<string, T> {
+export function editorSlotKeyOrder<T>(attachments: Record<string, T>): Record<string, T> {
   const names = Object.keys(attachments);
   if (names.some((name) => name.includes(NAME_FOLDER))) return attachments;
   for (let i = 0; i < names.length; i++) {
@@ -1196,7 +1209,7 @@ const BONE_TRACKS: Record<string, ValueTrackShape> = {
  * `:1062` and only `mix` reassigns it (`:1090`), so an `inertia` key that omits
  * `value` reads **0** — not the 0.5 that `:306` gives a constraint that states
  * no `inertia`. Two different tables of defaults sit forty lines apart in one
- * file (`PHYSICS_PARAMS` above holds the other one), and reading the setup
+ * file (`PHYSICS_PARAMS` in `src/emit_spine.ts` holds the other one), and reading the setup
  * column into this one would emit a `damping` timeline whose omitted keys mean
  * 0.85 to the author and 0 to the runtime. Nothing here depends on the number,
  * because `compileValueTrack` writes every field explicitly — it is recorded
@@ -1427,24 +1440,15 @@ const CONSTRAINT_TIMELINES: Record<'ik' | 'transform', ConstraintTimelineShape> 
 };
 
 /**
- * Physics constraint fields and their parser defaults (SkeletonJson.js:295-319).
+ * The five components a physics constraint drives. The parameters and their
+ * parser defaults are `PHYSICS_PARAMS`, which moved to `src/emit_spine.ts` with
+ * the omission it decides (issue #919).
  *
  * `PHYSICS_COMPONENTS` is exported for `ingest.ts`, which omits a constraint that
  * drives none of them (issue #731) and must read "drives" off the same five
  * names this module refuses an empty constraint with, not off a copy.
  */
 export const PHYSICS_COMPONENTS = ['x', 'y', 'rotate', 'scaleX', 'shearX'] as const;
-const PHYSICS_PARAMS: Array<[string, number]> = [
-  ['inertia', 0.5],
-  ['strength', 100],
-  ['damping', 0.85],
-  ['mass', 1],
-  ['wind', 0],
-  ['gravity', 0],
-  ['mix', 1],
-  ['fps', 60],
-  ['limit', 5000],
-];
 
 // ---------------------------------------------------------------------------
 // curves
@@ -2572,11 +2576,11 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // -- 4. slots + skins ------------------------------------------------------
   // Draw order IS the slots array order. No separate field,
   // and the rig's array is that order.
-  const slots: SpineSlot[] = [];
-  // Model records for the four vertex kinds, Spine objects for the rest until
-  // cut 1d (`SkinTableEntry`); the emitter turns the table into Spine's at assembly.
-  const skinTables: SkinTables = new Map();
-  const tableFor = (skinName: string): Record<string, Record<string, SkinTableEntry>> => {
+  const slots: ModelSlot[] = [];
+  // Every attachment is a model record (`SkinTableEntry`); the emitter turns the
+  // tables into Spine's at assembly, and `CompiledModel.skins` holds them.
+  const skinTables = new Map<string, SkinTable>();
+  const tableFor = (skinName: string): SkinTable => {
     let table = skinTables.get(skinName);
     if (!table) {
       table = {};
@@ -2714,8 +2718,9 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     if (setup?.color && rigSlot.color !== undefined) {
       throw new CompileError(`slot "${rigSlot.name}" has a setup colour in the rig spec AND in the motion spec`);
     }
-    const slot: SpineSlot = { name: rigSlot.name, bone: rigSlot.bone };
-    if (setupAttachment !== null) slot.attachment = setupAttachment;
+    // The setup attachment is held as the value it is, `null` included; leaving
+    // the key out for `null` is the emitter's (`emitSlots`).
+    const slot: ModelSlot = { name: rigSlot.name, bone: rigSlot.bone, setup: setupAttachment };
     if (setup?.color) slot.color = rgbaHex(setup.color);
     else if (rigSlot.color !== undefined) slot.color = rigSlot.color;
     if (rigSlot.dark !== undefined) slot.dark = rigSlot.dark;
@@ -2826,7 +2831,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // (structure), then the motion spec's physics table (tuning). A name in both is
   // refused: `mix` timelines resolve by name, and two constraints answering to
   // one name is a timeline driving something nobody chose.
-  const constraints: SpineConstraint[] = [];
+  const constraints: ModelConstraint[] = [];
   const physicsReport: CompileResult['physics'] = [];
   // Deform keys that stated a model instead of a run (issue #294). Declared here
   // rather than inside the animation loop because `explain` reports it across
@@ -2878,13 +2883,14 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
    */
   const ikRigFlags = new Map<string, Record<string, boolean>>();
   // Which slots can actually show a path, for the path constraint's own check.
-  // Read off the emitted skin tables rather than the spec, so it answers the
-  // question the runtime asks: is there an attachment of that type on that slot?
+  // Read off the skin tables — the model records the file is emitted from —
+  // rather than the spec, so it answers the question the runtime asks: is
+  // there an attachment of that kind on that slot? (By `kind` since issue #919.)
   const pathSlots = new Map<string, string[]>();
   for (const [skinName, table] of skinTables) {
     for (const [slotName, perSlot] of Object.entries(table)) {
       for (const att of Object.values(perSlot)) {
-        if (attachmentTypeOf(att) !== 'path') continue;
+        if (att.kind !== 'path') continue;
         pathSlots.set(slotName, [...(pathSlots.get(slotName) ?? []), skinName]);
         break;
       }
@@ -2927,17 +2933,17 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       if (!boneNames.has(spec.bone)) {
         throw new CompileError(`physics constraint "${name}" targets unknown bone "${spec.bone}"`);
       }
-      const entry: SpineConstraint = {
-        name,
-        type: 'physics',
-        bone: spec.bone,
-      };
+      // Every component and parameter the table states is held, 0 and the
+      // parser's default included; which of them Spine leaves out is the
+      // emitter's (`emitConstraint`). `components` is the report's list of the
+      // ones that DRIVE, as it always was.
+      const entry: ModelConstraint = { kind: 'physics', name, declaredIn: 'motion', bone: spec.bone };
       const components: string[] = [];
       for (const comp of PHYSICS_COMPONENTS) {
         const v = spec[comp];
-        if (v === undefined || v === 0) continue;
+        if (v === undefined) continue;
         entry[comp] = f32(v);
-        components.push(comp);
+        if (v !== 0) components.push(comp);
       }
       if (!components.length) {
         // The parser is happy with this and the constraint does nothing at all.
@@ -2946,9 +2952,9 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           `physics constraint "${name}" drives no component — set at least one of ${PHYSICS_COMPONENTS.join('/')}`,
         );
       }
-      for (const [param, dflt] of PHYSICS_PARAMS) {
+      for (const [param] of PHYSICS_PARAMS) {
         const v = spec[param as keyof typeof spec] as number | undefined;
-        if (v === undefined || v === dflt) continue;
+        if (v === undefined) continue;
         entry[param] = f32(v);
       }
       constraints.push(entry);
@@ -2997,9 +3003,10 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   const animations: SpineSkeletonJson['animations'] = {};
   const declaredDurations: Record<string, number> = {};
   const slotNames = new Set(slots.map((s) => s.name));
-  // Which slots an `rgba2` timeline may be keyed on: the ones the EMITTED file
-  // gives a `dark`, for the same reason `attachmentIndex` is built off the
-  // emitted skins — what the runtime does with a timeline depends on the file,
+  // Which slots an `rgba2` timeline may be keyed on: the model slots with a
+  // `dark` — the slots the file is emitted from, which `emitSlots` writes each
+  // `dark` of (issue #919) — for the same reason `attachmentIndex` is built off
+  // the skin tables: what the runtime does with a timeline depends on the file,
   // not on the spec that produced it. A slot whose `dark` never reached the
   // artifact is a slot the runtime allocates no dark colour for (issue #690).
   const darkSlots = new Set(slots.filter((s) => s.dark !== undefined).map((s) => s.name));
@@ -3042,7 +3049,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
             );
           }
           if (everyGlobal) {
-            const physics = constraints.filter((one) => one.type === 'physics');
+            const physics = constraints.filter((one) => one.kind === 'physics');
             const flag = `${track.property}Global`;
             const reached =
               track.property === 'reset'
@@ -3354,19 +3361,32 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   if (imagesPath !== undefined) header.images = imagesPath;
   if (rig.skeleton?.audio !== undefined) header.audio = rig.skeleton.audio;
 
-  // Event definitions. Emitted in the order the rig spec declares them — object
-  // key order is the spec's, not a set's, so A18 stays a contract.
-  const events: Record<string, SpineEvent> = {};
+  // Event definitions, in the order the rig spec declares them — the map's
+  // insertion order is the spec's, not a set's, so A18 stays a contract.
+  const events = new Map<string, ModelEvent>();
   for (const [name, def] of Object.entries(rig.events ?? {})) {
-    const entry: SpineEvent = {};
+    const entry: ModelEvent = {};
     if (def.int !== undefined) entry.int = def.int;
     if (def.float !== undefined) entry.float = f32(def.float);
     if (def.string !== undefined) entry.string = def.string;
     if (def.audio !== undefined) entry.audio = def.audio;
     if (def.volume !== undefined) entry.volume = f32(def.volume);
     if (def.balance !== undefined) entry.balance = f32(def.balance);
-    events[name] = entry;
+    events.set(name, entry);
   }
+  // Every skin with what it activates and its table, in the spec's order: the
+  // model's record of it. `splitRigSkin`'s lists, or none for a skin the spec
+  // does not declare (a manifest's `default`).
+  const skins: ModelSkin[] = [...skinTables].map(([name, attachments]) => {
+    const parts = skinParts.get(name);
+    return {
+      name,
+      bones: parts?.bones ?? [],
+      constraints: Object.fromEntries(RIG_SKIN_CONSTRAINT_KEYS.map((key) => [key, parts?.constraints[key] ?? []])) as ModelSkin['constraints'],
+      attachments,
+    };
+  });
+  const emittedEvents = emitEvents(events);
 
   // A weighted vertex's bone index is its bone's position in this array, the
   // one `emitBones` writes; the skin tables bind by name and are encoded here.
@@ -3377,37 +3397,20 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     // spellings and the insertion order the key-order pass leaves alone. Nothing
     // below reads this array back — `buildRigInfo` takes the model's bones.
     bones: emitBones(bones),
-    slots,
+    slots: emitSlots(slots),
     // A skin entry is `name`, then whatever it activates, then `attachments` —
-    // `readSkeletonData`'s own order (`:372-443`). Every member list is a
-    // conditional spread, so a rig that declares none emits the two-key entry it
-    // always did, byte for byte.
+    // `readSkeletonData`'s own order (`:372-443`); `emitSkins` writes it.
     //
     // Ordered the way `animations` is and for the same reason — the editor
     // rewrites this array and the binary half addresses it by ordinal — with the
-    // sort applied HERE rather than to `skinTables`, so everything upstream (the
-    // path-slot table, every refusal that lists skins) still reads the order the
-    // rig spec declared. See `editorSkinOrder`.
-    skins: editorSkinOrder(
-      [...skinTables.entries()].map(([name, attachments]) => {
-        const parts = skinParts.get(name);
-        return {
-          name,
-          ...(parts?.bones.length ? { bones: parts.bones } : {}),
-          ...Object.fromEntries(
-            RIG_SKIN_CONSTRAINT_KEYS.filter((key) => parts?.constraints[key].length).map((key) => [
-              key,
-              parts!.constraints[key],
-            ]),
-          ),
-          attachments: editorSlotKeyOrder(emitSkinAttachments(attachments, indexOf)),
-        };
-      }),
-    ),
+    // sort applied at emission rather than to `skinTables`, so everything
+    // upstream (the path-slot table, every refusal that lists skins) still reads
+    // the order the rig spec declared. See `editorSkinOrder`.
+    skins: emitSkins(skins, indexOf, { skins: editorSkinOrder, slotKeys: editorSlotKeyOrder }),
     // Between `skins` and `animations`, which is where the editor writes it. A
     // conditional spread rather than an assignment after the literal, so the key
     // lands in that position instead of at the end.
-    ...(Object.keys(events).length ? { events } : {}),
+    ...(Object.keys(emittedEvents).length ? { events: emittedEvents } : {}),
     // Keyed in the editor's own order rather than the motion spec's, because a
     // slider's reference to an animation is an ordinal in the format and the
     // editor re-sorts this object — see `editorAnimationOrder`. The sort is
@@ -3416,7 +3419,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     // first are all still the spec's own; only the emitted key order moves.
     animations: editorAnimationOrder(animations),
   };
-  if (constraints.length) skeleton.constraints = constraints;
+  if (constraints.length) skeleton.constraints = emitConstraints(constraints);
 
   for (const slot of slots) {
     if (!boneNames.has(slot.bone)) throw new CompileError(`slot "${slot.name}" has no bone`);
@@ -3459,7 +3462,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
     atlasText,
     ...carried,
-    model: { bones, setupWorld: transforms, attachments: skinTables, ...carried },
+    model: { bones, setupWorld: transforms, slots, skins, constraints, events, ...carried },
   };
 }
 
@@ -4611,10 +4614,10 @@ function buildRigRegion(
   placeholder: string,
   where: string,
   ctx: AttachmentContext,
-): SpineRegionAttachment {
+): ModelRegionAttachment {
   if (att.sequence !== undefined) {
     const size = sequenceFrameSize(sequenceFrames(att, placeholder, where, ctx), att, where);
-    const out: SpineRegionAttachment = { width: f32(size.width!), height: f32(size.height!) };
+    const out: ModelRegionAttachment = { kind: 'region', width: f32(size.width!), height: f32(size.height!) };
     if (att.path !== undefined) out.path = att.path;
     if (att.x !== undefined) out.x = f32(att.x);
     if (att.y !== undefined) out.y = f32(att.y);
@@ -4664,7 +4667,7 @@ function buildRigRegion(
       `${where}: a region needs width and height — give them, or give an "image" and rigc will measure the PNG`,
     );
   }
-  const out: SpineRegionAttachment = { width: f32(width), height: f32(height) };
+  const out: ModelRegionAttachment = { kind: 'region', width: f32(width), height: f32(height) };
   const path = attachmentPath(att, placeholder);
   if (path !== undefined) out.path = path;
   if (att.x !== undefined) out.x = f32(att.x);
@@ -4985,7 +4988,7 @@ function buildRigLinkedMesh(
   placeholder: string,
   where: string,
   ctx: AttachmentContext,
-): SpineLinkedMeshAttachment {
+): ModelLinkedMeshAttachment {
   // The mesh keys the parser does not reach on this branch. Named one by one,
   // because "remove what does not belong" is not an instruction an author can
   // act on and the remedy for each of these is the same single sentence.
@@ -5037,15 +5040,21 @@ function buildRigLinkedMesh(
       `${where}: a linked mesh needs width and height — give them, or give an "image" and rigc will measure the PNG`,
     );
   }
-  const out: SpineLinkedMeshAttachment = { type: 'linkedmesh', source, width: f32(width), height: f32(height) };
+  // The link in full — skin, slot and `timelines` as the parser resolves them.
+  // Writing each only where it differs from the parser's own default (a
+  // `timelines: true` or a `skin` of "default" would be a byte the editor's own
+  // export does not carry) is the emitter's (`emitLinkedMesh`).
+  const out: ModelLinkedMeshAttachment = {
+    kind: 'linkedmesh',
+    source,
+    skin: att.skin ?? 'default',
+    slot: att.slot ?? ctx.slotName,
+    timelines: att.timelines !== false,
+    width: f32(width),
+    height: f32(height),
+  };
   const path = attachmentPath(att, placeholder);
   if (path !== undefined) out.path = path;
-  // Only where they differ from the parser's own defaults. Writing `timelines:
-  // true`, or a `skin` of "default", would be a byte the editor's own export
-  // does not carry.
-  if (att.slot !== undefined && att.slot !== ctx.slotName) out.slot = att.slot;
-  if (att.skin !== undefined && att.skin !== 'default') out.skin = att.skin;
-  if (att.timelines === false) out.timelines = false;
   if (att.color !== undefined) out.color = att.color;
   if (att.sequence !== undefined) out.sequence = emitSequence(att.sequence);
   // 🚫 NOT registered in `ctx.meshes`, and that is a decision rather than an
@@ -5074,7 +5083,7 @@ function buildRigLinkedMesh(
  */
 function resolveLinkedMeshes(
   links: readonly PendingLink[],
-  tables: SkinTables,
+  tables: ReadonlyMap<string, SkinTable>,
 ): void {
   const skinNames = [...tables.keys()];
   for (const link of links) {
@@ -5115,7 +5124,7 @@ function resolveLinkedMeshes(
           "Left to the round trip this is the runtime's `Source mesh not found`.",
       );
     }
-    const type = attachmentTypeOf(found);
+    const type = found.kind;
     if (type === 'linkedmesh') {
       throw new CompileError(
         `${link.where}: "source" is ${JSON.stringify(link.source)}, which is itself a linked mesh, and a chain of ` +
@@ -6339,7 +6348,7 @@ interface ConstraintContext {
  * type matches no case is dropped with no error and no `default:` branch, so an
  * unimplemented type is refused here by name rather than emitted and lost.
  */
-function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): SpineConstraint {
+function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): ModelConstraint {
   const where = `rig constraint "${spec.name}"`;
   const boneNames = ctx.boneNames;
   const needBone = (name: unknown, field: string): string => {
@@ -6372,7 +6381,11 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
     }
     return value;
   };
-  const out: SpineConstraint = { name: spec.name, type: spec.type };
+  // The constraint's fields under their spec names; `made` puts the kind the
+  // branch has established and the name on them. `name, type` first and each
+  // kind's field order are the emitter's (`emitConstraint`).
+  const out: Record<string, unknown> = {};
+  const made = (kind: ModelConstraintKind): ModelConstraint => ({ kind, name: spec.name, declaredIn: 'rig', ...out });
   const copy = (fields: readonly string[]) => {
     for (const field of fields) {
       const v = spec[field];
@@ -6396,7 +6409,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
     // see `RIG_SCALE_Y_MODES`.
     if (spec.scaleY !== undefined) out.scaleY = needEnum(spec.scaleY, 'scaleY', RIG_SCALE_Y_MODES);
     copy(['mix', 'softness', 'bendPositive', 'compress', 'stretch', 'skin']);
-    return out;
+    return made('ik');
   }
   if (spec.type === 'transform') {
     out.bones = boneList();
@@ -6435,7 +6448,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
       'mixShearY',
       'skin',
     ]);
-    return out;
+    return made('transform');
   }
   if (spec.type === 'path') {
     out.bones = boneList();
@@ -6469,7 +6482,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
       if (spec[field] !== undefined) out[field] = f32(needNumber(spec[field], field));
     }
     copy(['skin']);
-    return out;
+    return made('path');
   }
   if (spec.type === 'slider') {
     // ⭐ The one field in a rig spec that points at the MOTION spec. It is
@@ -6861,7 +6874,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
       }
     }
     copy(['skin']);
-    return out;
+    return made('slider');
   }
   if (spec.type === 'physics') {
     out.bone = needBone(spec.bone, 'bone');
@@ -6892,7 +6905,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): S
       'mixGlobal',
       'skin',
     ]);
-    return out;
+    return made('physics');
   }
   // Every type 4.3 has is implemented, so this is now only reachable from a typo
   // — and a typo is exactly what the parser drops in silence (no `default:`
@@ -7028,26 +7041,23 @@ function checkAxisSelfConsistency(manifest: FaceManifest): void {
  * without it every slot hanging off a rotated axis bone would render tilted by
  * the cut's axis angle.
  *
- * On an unrotated bone sitting at its window centre both terms are zero and the
- * fields are omitted, which is why a formation with no axis emits the same
- * bytes it always did.
+ * On an unrotated bone sitting at its window centre both terms are zero, and the
+ * emitter leaves a zero out, which is why a formation with no axis emits the
+ * same bytes it always did.
  */
 function placeRegion(
   part: FaceManifestPart,
   manifest: FaceManifest,
   bone: BoneTransform,
   img: CompiledImage,
-): SpineRegionAttachment {
+): ModelRegionAttachment {
   const win = partWindow(part, manifest);
   // width/height are NOT optional: omitting them loads as NaN with no error.
   // The compiler fills them from the PNG.
-  const att: SpineRegionAttachment = { width: img.width, height: img.height };
   const [ax, ay] = toBoneLocal(bone, win.x + win.w / 2, cropToSpineY(win.y + win.h / 2, manifest.crop.h)).map(f32);
-  if (ax !== 0) att.x = ax;
-  if (ay !== 0) att.y = ay;
   const rotation = f32(normaliseDegrees(-bone.worldRotation));
-  if (rotation !== 0) att.rotation = rotation;
-  return att;
+  // All three held, 0 included: leaving a 0 out is the emitter's (`emitRegion`).
+  return { kind: 'region', width: img.width, height: img.height, x: ax, y: ay, rotation };
 }
 
 /**
@@ -7322,7 +7332,7 @@ function compileDrawOrder(
   keys: MotionDrawOrderKey[],
   animName: string,
   duration: number,
-  slots: SpineSlot[],
+  slots: readonly ModelSlot[],
 ): SpineTimelineKey[] {
   const where = `animation "${animName}" drawOrder`;
   if (!keys.length) throw new CompileError(`${where}: no keys`);
@@ -7736,7 +7746,7 @@ export function deformGeometryOf(
   /** Every bone's setup world transform, by name. */
   transforms: Map<string, BoneTransform>,
 ): DeformGeometry {
-  const type = attachmentTypeOf(att);
+  const type = att.kind;
   let worldVerticesLength: number;
   if (!isModelVertexAttachment(att)) {
     throw new CompileError(
@@ -7961,8 +7971,8 @@ function compileSequenceTrack(
   attachment: SkinTableEntry,
   where: string,
 ): SpineTimelineKey[] {
-  const type = attachmentTypeOf(attachment);
-  const series = (attachment as { sequence?: SpineSequence }).sequence;
+  const series =
+    attachment.kind === 'region' || attachment.kind === 'mesh' || attachment.kind === 'linkedmesh' ? attachment.sequence : undefined;
   if (series === undefined) {
     throw new CompileError(
       `${where}: attachment "${track.attachment}" carries no "sequence" block, so there is no series to step. The ` +
@@ -7971,8 +7981,8 @@ function compileSequenceTrack(
         'attachment a "sequence" in the rig spec, or remove the track.',
     );
   }
-  if (type === 'linkedmesh' && (attachment as SpineLinkedMeshAttachment).timelines !== false) {
-    const source = (attachment as SpineLinkedMeshAttachment).source;
+  if (attachment.kind === 'linkedmesh' && attachment.timelines) {
+    const source = attachment.source;
     throw new CompileError(
       `${where}: attachment "${track.attachment}" is a linked mesh that plays its source's timelines ("timelines" ` +
         `is not false), so its \`timelineAttachment\` is "${source}" (\`SkeletonJson.js:437-448\`) and ` +

@@ -1321,6 +1321,9 @@ export interface SpineSkeletonJson {
   >;
 }
 
+/** One entry of the emitted `skins` array — what `emitSkins` in `src/emit_spine.ts` writes per skin. */
+export type SpineSkin = SpineSkeletonJson['skins'][number];
+
 /** One entry of the emitted `events` map: the payload a firing inherits. */
 export interface SpineEvent {
   int?: number;

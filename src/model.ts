@@ -6,8 +6,8 @@
  * ## What it is
  *
  * The record a posing core of rigc's own would read: bones with their inherit
- * modes, and in later cuts slots, attachments, constraints, events and
- * animations. It is the neutral side of the census in `docs/COMPILED_MODEL.md`:
+ * modes, slots, every attachment kind rigc builds, skins, constraints and
+ * events — and, in a later cut, animations. It is the neutral side of the census in `docs/COMPILED_MODEL.md`:
  * a value belongs here when any backend posing this rig would need it, and a
  * spelling, a key order or an omission at a parser default belongs to the
  * emitter that writes one format. The Spine emitter (`src/emit_spine.ts`) is its
@@ -20,15 +20,18 @@
  * 19 of 19 builds). The model therefore holds exactly the numbers the file
  * holds, and the emitter copies them without touching one.
  *
- * ## What this cut fills
+ * ## What it holds
  *
- * `bones` and `setupWorld` (issue #915, cut 1b), and the four vertex-attachment
+ * `bones` and `setupWorld` (issue #915, cut 1b); the four vertex-attachment
  * kinds — mesh, path, bounding box, clipping — as records whose weighted
- * vertices name their bone (issue #917, cut 1c), held in `attachments`. Every
- * other field is `CompileResult`'s own, carried by reference under the same
- * name (`CarriedFromCompileResult`) until its own cut gives it a model-side
- * form; the skeleton object, its text and the atlas text are emitted artifacts
- * and are not part of the model at all.
+ * vertices name their bone (issue #917, cut 1c); and the remaining structural
+ * records (issue #919, cut 1d): `slots`, the region and linked-mesh
+ * attachments, `skins` holding every attachment as a model record,
+ * `constraints` and `events`. Every other field is `CompileResult`'s own,
+ * carried by reference under the same name (`CarriedFromCompileResult`) until
+ * its own cut gives it a model-side form — the animations are the next one; the
+ * skeleton object, its text and the atlas text are emitted artifacts and are
+ * not part of the model at all.
  *
  * ⭐ **A weighted vertex names its bone.** Spine's run binds a vertex to a bone by
  * its POSITION in the emitted bone array, and until cut 1c every vertex
@@ -38,19 +41,37 @@
  * emission, against `bones`' order (`emitVertices`). A bone inserted ahead of a
  * mesh then moves the emitted indexes and no binding.
  *
- * 🔸 **Region, point and linked-mesh attachments are still Spine objects**, and
- * a skin table's entry is therefore a union (`SkinTableEntry`): a model record
- * for the four vertex kinds, the Spine object for the others, told apart by the
- * model record's `kind` (a Spine attachment carries `type`, or nothing for a
- * region). Cut 1d gives the remaining kinds their records and removes the union.
- * rigc emits no point attachment at all today (`DEFERRED_ATTACHMENTS` in
- * `compile.ts`), so in practice the Spine half holds regions and linked meshes.
+ * 🔸 **Every omission at a parser fallback the constructors made inline is the
+ * emitter's now, and the model holds the value.** A slot's setup attachment is
+ * `null` rather than absent; a manifest region carries its `x`, `y` and
+ * `rotation` at 0; a physics constraint carries every component and parameter
+ * the spec stated, at 0 and at the parser's default included; a linked mesh
+ * carries the skin, slot and `timelines` flag it resolves through, its own
+ * slot, `default` and `true` included. The Spine emitter leaves each of those
+ * out where the constructor used to (`src/emit_spine.ts`).
  *
- * Nothing here is serialised yet: `setupWorld` is a `Map`, and making the model
+ * ⚠️ **One omission is still the builder's: `path`** on a region, a mesh and a
+ * linked mesh. It is present exactly when `attachmentPath` in `compile.ts`
+ * returns one — a stated `path` always, one derived from `image` only where the
+ * basename differs from the name the attachment carries. That is the value
+ * semantics cut 1c kept for a mesh, and it is not a rule the emitter could run
+ * on the model: a STATED `path` equal to the name is written today, a DERIVED
+ * one equal to it is not, and the record cannot tell the two apart. Holding
+ * the region an attachment resolves through always, and moving that omission
+ * to the emitter with a flag for which was stated, is a later decision.
+ *
+ * 🔸 **The atlas's two constants are not model content.** `filter: Linear,
+ * Linear` and `pma: false` (`writeAtlasText` in `src/atlas.ts`) are a sampling
+ * hint and an alpha convention the Spine backend chooses and no input states —
+ * the census's two `open` rows (docs/COMPILED_MODEL.md §5), decided at cut 1d:
+ * they are the atlas emitter's constants, and the model does not carry them.
+ *
+ * Nothing here is serialised yet: `setupWorld` and `events` are `Map`s, and making the model
  * a document (`rigc-compiled/1`) is a later cut of step 1.
  */
 import type { BoneTransform } from './transform.ts';
-import type { CompileResult, SpineLinkedMeshAttachment, SpineRegionAttachment, SpineSequence } from './types.ts';
+import type { RigSkinConstraintKey } from './rig.ts';
+import type { CompileResult, SpineSequence } from './types.ts';
 
 /**
  * One bone, as `buildBone` computes it — a field is present exactly when the rig
@@ -139,10 +160,10 @@ export interface ModelMeshAttachment {
   /** The spec's own `name`, present exactly when stated (issue #796). */
   name?: string;
   /**
-   * The atlas region, present exactly when it differs from the name the
-   * attachment is known by — `attachmentPath` in `compile.ts` still makes that
-   * omission, as it did before the model existed. Resolving it to the region
-   * always is a later cut's, with the region attachment's own.
+   * The atlas region, present exactly when `attachmentPath` in `compile.ts`
+   * returns one: stated, or derived from `image` where the basename differs from
+   * the name the attachment carries. See the header's ⚠️ — resolving it to the
+   * region always is a later decision, and so is moving that omission here.
    */
   path?: string;
   color?: string;
@@ -198,29 +219,137 @@ export type ModelVertexAttachment =
   | ModelPathAttachment;
 
 /**
- * What a skin table holds per placeholder in cut 1c: a model record for the four
- * vertex kinds, or the Spine object for a region or a linked mesh, which are not
- * model records until cut 1d. The emitter maps the first and passes the second
- * through; 1d removes this union.
+ * A region: one quad of one atlas region (or of a numbered series), placed on
+ * the slot's bone. `buildRigRegion` for a rig spec's, `placeRegion` for a
+ * manifest part's.
+ *
+ * `x`, `y`, `rotation`, `scaleX`, `scaleY` are present exactly when the spec
+ * stated them — and, for a manifest part, `x`, `y` and `rotation` ALWAYS, since
+ * `placeRegion` computes all three and 0 is a placement like any other. The
+ * Spine emitter leaves a 0 out (`emitRegion`).
  */
-export type SkinTableEntry = ModelVertexAttachment | SpineRegionAttachment | SpineLinkedMeshAttachment;
-
-/** Skin -> slot -> placeholder -> entry. */
-export type SkinTables = Map<string, Record<string, Record<string, SkinTableEntry>>>;
-
-/** Whether a skin-table entry is a model record (it has a `kind`) rather than a Spine object. */
-export function isModelVertexAttachment(entry: SkinTableEntry): entry is ModelVertexAttachment {
-  return 'kind' in entry;
+export interface ModelRegionAttachment {
+  kind: 'region';
+  name?: string;
+  /** As on a mesh: present exactly when `attachmentPath` returns one (see the header's ⚠️). */
+  path?: string;
+  x?: number;
+  y?: number;
+  rotation?: number;
+  scaleX?: number;
+  scaleY?: number;
+  width: number;
+  height: number;
+  color?: string;
+  sequence?: SpineSequence;
 }
 
 /**
- * The attachment type an entry would be read as: a model record's `kind`, which
- * for these four is Spine's `type` word for word, or a Spine object's `type`,
- * absent on a region. The one reader of both halves of `SkinTableEntry`.
+ * A linked mesh: another mesh's geometry under a region of its own.
+ *
+ * The link is held IN FULL — `skin`, `slot` and `timelines` as the parser
+ * resolves them, the defaults applied: `skin` "default" where none was stated,
+ * `slot` the attachment's own slot, `timelines` true unless stated false. The
+ * Spine emitter leaves out each one that equals the parser's fallback
+ * (`emitLinkedMesh`). Whether the author wrote a key or took its default is a
+ * fact only the refusals need, and it stays on `compile.ts`'s `PendingLink`.
  */
-export function attachmentTypeOf(entry: SkinTableEntry): string {
-  if (isModelVertexAttachment(entry)) return entry.kind;
-  return (entry as { type?: string }).type ?? 'region';
+export interface ModelLinkedMeshAttachment {
+  kind: 'linkedmesh';
+  name?: string;
+  /** As on a mesh: present exactly when `attachmentPath` returns one (see the header's ⚠️). */
+  path?: string;
+  /** The PLACEHOLDER of the source mesh in `skin`/`slot`. */
+  source: string;
+  skin: string;
+  slot: string;
+  /** Whether the link plays its source's deform and sequence timelines. */
+  timelines: boolean;
+  width: number;
+  height: number;
+  color?: string;
+  sequence?: SpineSequence;
+}
+
+/**
+ * What a skin table holds per placeholder: a model record of one of the six
+ * attachment kinds rigc builds, told apart by `kind`, whose words are Spine's
+ * `type` words (a region's `type` is the one the emitter leaves out). rigc
+ * emits no point attachment (`DEFERRED_ATTACHMENTS` in `compile.ts`).
+ */
+export type SkinTableEntry = ModelVertexAttachment | ModelRegionAttachment | ModelLinkedMeshAttachment;
+
+/** One skin's attachments: slot -> placeholder -> record, in the spec's order. */
+export type SkinTable = Record<string, Record<string, SkinTableEntry>>;
+
+/** Whether a skin-table entry is one of the four vertex kinds — the ones a deform timeline can key. */
+export function isModelVertexAttachment(entry: SkinTableEntry): entry is ModelVertexAttachment {
+  return entry.kind === 'mesh' || entry.kind === 'boundingbox' || entry.kind === 'clipping' || entry.kind === 'path';
+}
+
+/**
+ * One slot, as the slot loop computes it. The slot array IS the draw order, so
+ * `CompiledModel.slots` is in the rig's declaration order and a draw-order
+ * offset counts in it.
+ */
+export interface ModelSlot {
+  name: string;
+  bone: string;
+  /** The setup attachment's placeholder; `null` is "shows nothing", which Spine spells by leaving the key out. */
+  setup: string | null;
+  /**
+   * The setup tint as 8-bit hex channels: `rgbaHex` of the motion spec's setup
+   * colour (the rounding to the 8-bit grid is value), or the rig's as stated.
+   */
+  color?: string;
+  /** The two-colour tint's dark colour, as stated; a slot with none takes no `rgba2`/`rgb2` timeline. */
+  dark?: string;
+  blend?: string;
+}
+
+/**
+ * One skin. `bones` and `constraints` are what it activates (`splitRigSkin`'s
+ * member lists, empty for a skin the spec gives none — the manifest's `default`
+ * among them); `attachments` is its table, in the spec's order.
+ */
+export interface ModelSkin {
+  name: string;
+  bones: string[];
+  constraints: Record<RigSkinConstraintKey, string[]>;
+  attachments: SkinTable;
+}
+
+/** The five constraint kinds Spine 4.3 has. */
+export type ModelConstraintKind = 'ik' | 'transform' | 'path' | 'physics' | 'slider';
+
+/**
+ * One constraint: its `kind` and `name`, and every field `buildRigConstraint`
+ * (for a rig spec's) or the motion spec's physics table computes, under the
+ * name it has in the spec, numbers already `f32`'d.
+ *
+ * `declaredIn` says which of the two built it, and it is here because the
+ * bytes differ: the physics table writes a physics constraint's fields in
+ * another order than `buildRigConstraint`'s physics branch — `inertia` …
+ * `mix`, then `fps`, `limit`, where the builder writes `limit`, `fps` first —
+ * and the key-order table lists neither `fps` nor `limit`, so the order
+ * survives into the file (`MS05` plants it). A table constraint holds every
+ * component and parameter the spec stated, 0 and the parser's default
+ * included; which of them Spine leaves out is the emitter's.
+ */
+export type ModelConstraint = {
+  kind: ModelConstraintKind;
+  name: string;
+  declaredIn: 'rig' | 'motion';
+} & Record<string, unknown>;
+
+/** An event's payload, as the rig declares it; `float`, `volume`, `balance` `f32`'d. */
+export interface ModelEvent {
+  int?: number;
+  float?: number;
+  string?: string;
+  audio?: string;
+  volume?: number;
+  balance?: number;
 }
 
 export interface CompiledModel extends CarriedFromCompileResult {
@@ -228,12 +357,16 @@ export interface CompiledModel extends CarriedFromCompileResult {
   bones: ModelBone[];
   /** The setup world transform of every bone, computed from `bones`. Never emitted. */
   setupWorld: Map<string, BoneTransform>;
+  /** Every slot, in draw order — the rig's declaration order. */
+  slots: ModelSlot[];
   /**
-   * Every skin's attachments, in the order the spec declares skins, slots and
-   * placeholders — NOT the editor's order the emitter sorts skins and slot keys
-   * into. Vertex attachments are model records; the rest are the Spine objects
-   * the skeleton file carries (`SkinTableEntry`), which the emitter's two
-   * whole-object passes reach in place, as they did before the model existed.
+   * Every skin, in the order the spec declares them (`default` first when there
+   * is one), each with its attachments as model records in the spec's order —
+   * NOT the editor's order the emitter sorts skins and slot keys into.
    */
-  attachments: SkinTables;
+  skins: ModelSkin[];
+  /** The rig's constraints in declaration order, then the motion spec's physics table's. */
+  constraints: ModelConstraint[];
+  /** Event definitions, in the rig's declared order. */
+  events: Map<string, ModelEvent>;
 }
