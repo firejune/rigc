@@ -66261,7 +66261,7 @@ function runPoseOracleSuite(): number {
 
 // Its own statement, so the suite lands as one hunk (the convention the
 // slider-reader suite states at its imports).
-import { activeBones, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED, poseSetup, readBlend, readColour, readModel, shownAttachment, type CompiledDocument, type CoreBlendMode, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
+import { activeBones, CORE_CONSTRAINT_KINDS, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED, poseSetup, readBlend, readColour, readModel, shownAttachment, type CompiledDocument, type CoreBlendMode, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
 import { regionCorners, worldVertices, type VertexPoser } from './src/core/vertices.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
@@ -66269,6 +66269,9 @@ import { animationCensusOf, animationReachLines, attachmentReachLines, buildReci
 import { BEZIER_SIXTH, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
 import { modeMatrix, worldTransforms, type CoreInheritMode } from './src/core/world.ts';
 import { ADMITTED_CONSTRAINT_KINDS, TRANSFORM_PROPERTIES, type ConstraintPlant, type CoreConstraintRecord, type CoreTransformRecord } from './src/core/constraints.ts';
+
+/** The constraint kinds no cut of construct 5 poses yet — what a skipped row names. */
+const LATER_KINDS: readonly string[] = CORE_CONSTRAINT_KINDS.filter((k) => !ADMITTED_CONSTRAINT_KINDS.includes(k));
 
 /** What `readModel` refuses `text` with, or '' when it reads it. */
 function coreRefusal(text: string): string {
@@ -66367,7 +66370,8 @@ function runCoreSuite(): number {
   const work = mkdtempSync(join(tmpdir(), 'rigc-core-'));
   // Two gallery builds, chosen off what their models declare rather than by
   // name: the first with no constraint (the core poses its bones) and the
-  // first with one (the core leaves its bones out).
+  // first with a constraint of a kind the core does not pose yet (it leaves
+  // its bones out).
   const galleryRoot = join(root, 'gallery');
   const names = existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().filter((n) => existsSync(join(galleryRoot, n, 'rig.json'))) : [];
   const builds: Array<{ name: string; out: string; model: CompiledDocument; text: string }> = [];
@@ -66381,12 +66385,13 @@ function runCoreSuite(): number {
     }
     const text = readFileSync(modelPath, 'utf8');
     builds.push({ name: `gallery/${name}`, out: join(work, `g${i}`, 'out'), model: readModel(text, modelPath), text });
-    if (builds.some((b) => b.model.constraints.length === 0) && builds.some((b) => b.model.constraints.length > 0)) break;
+    if (builds.some((b) => b.model.constraints.length === 0) && builds.some((b) => b.model.constraints.some((c) => !ADMITTED_CONSTRAINT_KINDS.includes(c.kind)))) break;
   }
   const free = builds.find((b) => b.model.constraints.length === 0) ?? null;
-  const held = builds.find((b) => b.model.constraints.length > 0) ?? null;
+  // Since issue #938's third cut the core poses ik, transform, physics and slider: the rig held back is one declaring a later kind.
+  const held = builds.find((b) => b.model.constraints.some((c) => !ADMITTED_CONSTRAINT_KINDS.includes(c.kind))) ?? null;
   if (free === null) buildProblems.push('no gallery rig built a model that declares no constraint');
-  if (held === null) buildProblems.push('no gallery rig built a model that declares a constraint');
+  if (held === null) buildProblems.push(`no gallery rig built a model that declares a ${LATER_KINDS.join(', ')} constraint`);
 
   // --- CO01: readModel reads a built document and refuses each plant by name --
   {
@@ -66672,9 +66677,9 @@ function runCoreSuite(): number {
       const row = rows.find((r) => r.name === b.name);
       const path = join(b.out, MODEL_DOCUMENT_FILE);
       if (row === undefined || !existsSync(path)) continue;
-      // Since issue #938 the core poses ik and transform constraints; a row is skipped exactly when it declares a later kind (path, physics, slider).
+      // Since issue #938 the core poses ik, transform, physics and slider constraints; a row is skipped exactly when it declares a later kind (LATER_KINDS).
       const declares = readModel(readFileSync(path, 'utf8')).constraints.some((c) => !ADMITTED_CONSTRAINT_KINDS.includes(c.kind));
-      if (declares !== (row.blocks?.['setup.bones'].verdict === 'SKIP')) probes.push(`${b.name}: ${declares ? 'declares a path, physics or slider constraint and was not skipped' : 'declares none of those and was skipped'}`);
+      if (declares !== (row.blocks?.['setup.bones'].verdict === 'SKIP')) probes.push(`${b.name}: ${declares ? `declares a ${LATER_KINDS.join(', ')} constraint and was not skipped` : 'declares none of those and was skipped'}`);
     }
     if (compared.length === 0) probes.push('no row was compared, so the gate held nothing');
     const verdict = gateVerdict(rows);
@@ -66682,7 +66687,7 @@ function runCoreSuite(): number {
     say(
       'CO06_EVERY_RECIPE_WITHOUT_A_CONSTRAINT_POSES_ITS_SETUP_BONES_AS_SPINE_CORE_DOES',
       held,
-      probeDetail(held, probes, `${verdict.line}: ${compared.reduce((s, r) => s + r.boneSamples, 0)} bone-sample(s) over ${compared.length} row(s), every one exact (worst Δ 0), and the skipped rows exactly the ones declaring a path, physics or slider constraint, each naming its kinds`),
+      probeDetail(held, probes, `${verdict.line}: ${compared.reduce((s, r) => s + r.boneSamples, 0)} bone-sample(s) over ${compared.length} row(s), every one exact (worst Δ 0), and the skipped rows exactly the ones declaring a ${LATER_KINDS.join(', ')} constraint, each naming its kinds`),
       'issue #925, the first construct of #380 §5 admitted: the core\'s own evaluator (`src/core/world.ts`), written from measurement, against spine-core\'s dump of the same build on every recipe the tree generates. The runtime poses a setup with its constraints applied: since issue #938 the ik and transform constraints are posed too (the CC controls), and a rig with a path, physics or slider constraint — later cuts — is not judged here',
     );
     if (examplesHole !== null) console.log(`          ⚠️ ${examplesHole} — only the gallery rows ran`);
@@ -66854,9 +66859,10 @@ function runCoreSuite(): number {
       if (row === undefined || row.blocks === null || !existsSync(path)) continue;
       const text = readFileSync(path, 'utf8');
       const census = slotCensusOf(text);
-      const byConstruct = census.sliderKeysSlot > 0 || census.conflicting > 0;
+      // Since issue #938 a slider keying a slot is posed; its slots are left out only where the bones its time is read from are.
+      const byConstruct = (census.sliderKeysSlot > 0 && row.blocks['setup.bones'].verdict === 'SKIP') || census.conflicting > 0;
       const skipped = row.blocks['setup.slots'].verdict === 'SKIP';
-      if (byConstruct !== skipped) probes.push(`${b.name}: ${byConstruct ? 'a slider keys a slot, or skins disagree over a placeholder, and the slots were not skipped' : 'the slots were skipped with neither a slider keying a slot nor skins disagreeing'} (${row.blocks['setup.slots'].why})`);
+      if (byConstruct !== skipped) probes.push(`${b.name}: ${byConstruct ? 'skins disagree over a placeholder, or a slider keys a slot on a row whose bones are skipped, and the slots were not skipped' : 'the slots were skipped with neither skins disagreeing nor a slider keying a slot on a row whose bones are skipped'} (${row.blocks['setup.slots'].why})`);
       if (skipped) continue;
       const model = readModel(text, path);
       if (row.slotRows !== model.slots.length) probes.push(`${b.name}: ${row.slotRows} slot row(s) compared of ${model.slots.length}`);
@@ -66873,8 +66879,8 @@ function runCoreSuite(): number {
     say(
       'CO10_EVERY_RECIPE_POSES_ITS_SETUP_SLOTS_AS_SPINE_CORE_DOES_THE_CONSTRAINED_ONES_INCLUDED',
       held,
-      probeDetail(held, probes, `${gateVerdict(rows).line}: ${slotCompared.reduce((s, r) => s + r.slotRows, 0)} slot row(s) over ${slotCompared.length} recipe(s), exact at tolerance 0 on ${exact}, ${constrained} of them declaring a constraint; the skipped rows exactly the ones where a slider keys a slot, each naming it`),
-      'issue #928, the second construct of #380 §5 admitted: every slot\'s attachment, colour, dark colour and region path at the setup pose under --skin all, against spine-core\'s dump of the same build. An ik, transform, path or physics constraint moves bones and not slots, so a constrained recipe is judged here; a slider applies an animation, and one whose animation keys a slot is left out by name (CO13)',
+      probeDetail(held, probes, `${gateVerdict(rows).line}: ${slotCompared.reduce((s, r) => s + r.slotRows, 0)} slot row(s) over ${slotCompared.length} recipe(s), exact at tolerance 0 on ${exact}, ${constrained} of them declaring a constraint; the skipped rows exactly the ones where skins disagree or a slider keys a slot on a row whose bones are skipped, each naming it`),
+      'issue #928, the second construct of #380 §5 admitted: every slot\'s attachment, colour, dark colour and region path at the setup pose under --skin all, against spine-core\'s dump of the same build. An ik, transform, path or physics constraint moves bones and not slots, so a constrained recipe is judged here; a slider applies an animation, and since issue #938 the core applies it to the slots too (CO13, CQ05)',
     );
     for (const line of slotReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
   }
@@ -67093,7 +67099,7 @@ function runCoreSuite(): number {
     );
   }
 
-  // --- CO13: a slider keying a slot poses it at setup, and the core leaves the slots out by name --
+  // --- CO13: a slider keying a slot poses it at setup as the core does, and without bones its slots are left out by name --
   {
     const probes: string[] = [];
     const sliderSkeleton = (slider: boolean): string => JSON.stringify({
@@ -67107,24 +67113,34 @@ function runCoreSuite(): number {
     const [without, withSlider] = [false, true].map((s) => dumpSkeleton(loadOracleData(sliderSkeleton(s), atlas, 'the slider probe'), ONE).setup.slots[0]);
     if (JSON.stringify(without) !== JSON.stringify(['s', 'r', 1, 1, 1, 1, null, 'r', 'Normal']) || JSON.stringify(withSlider) !== JSON.stringify(['s', 'q', 1, 0, 0, 0.501961, null, 'q', 'Normal'])) probes.push(`spine-core's setup row is ${JSON.stringify(without)} without the slider and ${JSON.stringify(withSlider)} with it, not the header's measurement`);
     const records = { r: { kind: 'region', width: 4, height: 4, atlas: UNTRIMMED4 }, q: { kind: 'region', width: 4, height: 4, atlas: UNTRIMMED4 } };
-    const keyed = (slots: unknown[]): string => modelOf({
-      bones: [{ name: 'root' }, { name: 'dial', parent: 'root', rotation: 10 }],
+    const keys = [{ name: 's', timelines: [{ name: 'rgba', keys: [{ time: 0, color: 'ff000080' }] }, { name: 'attachment', keys: [{ time: 0, name: 'q' }] }] }];
+    const keyed = (slots: unknown[], unposedBones = false): string => modelOf({
+      bones: [{ name: 'root' }, { name: 'dial', parent: 'root', rotation: 10 }, { name: 't', parent: 'root', x: 5 }],
       slots: [{ name: 's', bone: 'root', setup: 'r' }],
       skins: [{ name: 'default', bones: [], constraints: {}, attachments: { s: records } }],
-      constraints: [{ kind: 'slider', name: 'sl', declaredIn: 'rig', animation: 'a' }],
-      animations: [{ name: 'a', duration: 0, bones: [], slots, constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: [] }],
+      constraints: [
+        { kind: 'slider', name: 'sl', declaredIn: 'rig', animation: 'a', bone: 'dial', property: 'rotate', from: 0, scale: 0.01 },
+        // A second slider keying an ik timeline: a construct this cut leaves out, so the bones are absent (CQ08).
+        ...(unposedBones ? [{ kind: 'slider', name: 'sl2', declaredIn: 'rig', animation: 'b', time: 0 }, { kind: 'ik', name: 'k', declaredIn: 'rig', bones: ['dial'], target: 't' }] : []),
+      ],
+      animations: [
+        { name: 'a', duration: 0, bones: [], slots, constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: [] },
+        ...(unposedBones ? [{ name: 'b', duration: 0, bones: [], slots: [], constraints: { ik: [{ name: 'k', keys: [{ time: 0, mix: 0.5 }] }], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: [] }] : []),
+      ],
     });
-    const core = coreDump(readModel(keyed([{ name: 's', timelines: [] }])), ONE);
-    const why = core.absent?.find((x) => x[0] === 'setup.slots')?.[1] ?? '';
-    if (core.setup.slots !== null || !why.includes('slider "sl" applies animation "a", which keys slot(s) "s"')) probes.push(`a slider keying a slot: the core ${core.setup.slots === null ? 'left the slots out' : 'posed the slots'} naming ${JSON.stringify(why)}`);
-    const quiet = coreDump(readModel(keyed([])), ONE);
-    if (quiet.setup.slots === null) probes.push(`a slider keying no slot left the slots out: ${JSON.stringify(quiet.absent)}`);
+    const core = coreDump(readModel(keyed(keys)), ONE);
+    if (JSON.stringify(core.setup.slots?.[0]) !== JSON.stringify(withSlider)) probes.push(`a slider keying a slot: the core posed ${JSON.stringify(core.setup.slots?.[0] ?? null)} (${JSON.stringify(core.absent?.find((x) => x[0] === 'setup.slots'))}), spine-core ${JSON.stringify(withSlider)}`);
+    // Without bones the slider's time cannot be read, and the slots are left out by name.
+    const unposed = coreDump(readModel(keyed(keys, true)), ONE);
+    const why = unposed.absent?.find((x) => x[0] === 'setup.slots')?.[1] ?? '';
+    if (unposed.setup.bones !== null) probes.push('the rig meant to leave its bones out posed them');
+    if (unposed.setup.slots !== null || !why.includes('slider "sl" applies animation "a", which keys slot(s) "s"')) probes.push(`a slider keying a slot on a rig whose bones are absent: the core ${unposed.setup.slots === null ? 'left the slots out' : 'posed the slots'} naming ${JSON.stringify(why)}`);
     const held = probes.length === 0;
     say(
-      'CO13_A_SLIDER_KEYING_A_SLOT_POSES_IT_AT_SETUP_AND_THE_CORE_LEAVES_THE_SLOTS_OUT_BY_NAME',
+      'CO13_A_SLIDER_KEYING_A_SLOT_POSES_IT_AT_SETUP_AS_SPINE_CORE_DOES_AND_WITHOUT_BONES_ITS_SLOTS_ARE_LEFT_OUT_BY_NAME',
       held,
-      probeDetail(held, probes, `a slider whose animation keys a slot's rgba and attachment turned spine-core's setup row from ${JSON.stringify(without)} to ${JSON.stringify(withSlider)}; the core leaves setup.slots out naming the slider, its animation and the slot, and poses them when the slider's animation keys no slot`),
-      'issue #928: the brief said constraints do not pose slots, and a slider does — it applies an animation, and the oracle\'s setup applies constraints. The corpus\'s one such slider (gallery/look) agreed only because its dial rests where the animation keys the colours the slots already have, so the core does not claim it until constraints are admitted',
+      probeDetail(held, probes, `a slider whose animation keys a slot's rgba and attachment turned spine-core's setup row from ${JSON.stringify(without)} to ${JSON.stringify(withSlider)}, and the core poses ${JSON.stringify(core.setup.slots?.[0] ?? null)}; on a rig whose bones the core does not pose, the slots are left out naming the slider, its animation and the slot`),
+      'issue #928 found a slider poses slots and left them out until constraints were admitted; issue #938 admits the slider (CQ05 holds its blend), so the slots are posed — and they are still left out where the bones a slider reads its time from are absent',
     );
   }
 
@@ -67293,6 +67309,7 @@ function runCoreSuite(): number {
     let vertices = 0;
     let rowsHeld = 0;
     const offHierarchy: string[] = [];
+    const sliderDeformed: string[] = [];
     for (const r of rows) {
       for (const block of ['setup.attachments', 'setup.clips'] as const) {
         const v = r.blocks?.[block];
@@ -67307,7 +67324,13 @@ function runCoreSuite(): number {
       const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), ONE);
       const skipped = row.blocks['setup.attachments'].verdict === 'SKIP';
       const upstream = row.blocks['setup.bones'].verdict === 'SKIP' || row.blocks['setup.slots'].verdict === 'SKIP';
-      if (skipped !== upstream) probes.push(`${b.name}: setup.attachments ${row.blocks['setup.attachments'].verdict} while bones ${row.blocks['setup.bones'].verdict} and slots ${row.blocks['setup.slots'].verdict}`);
+      // Since issue #938 a slider whose animation deforms a mesh is its own reason (CQ08 measures the difference it makes).
+      const deformed = !upstream && (row.blocks['setup.attachments'].why ?? '').includes('which keys deform or sequence timelines');
+      if (skipped !== (upstream || deformed)) probes.push(`${b.name}: setup.attachments ${row.blocks['setup.attachments'].verdict} while bones ${row.blocks['setup.bones'].verdict} and slots ${row.blocks['setup.slots'].verdict}`);
+      if (deformed) {
+        sliderDeformed.push(b.name);
+        continue;
+      }
       if (skipped) {
         // By construct: posed off the hierarchy alone — the constraints dropped from a copy — the vertices move.
         const loose = poseSetup({ ...model, constraints: [] }).setup;
@@ -67331,7 +67354,7 @@ function runCoreSuite(): number {
     say(
       'CO16_EVERY_RECIPE_WITHOUT_A_CONSTRAINT_POSES_ITS_SETUP_ATTACHMENTS_AS_SPINE_CORE_DOES',
       held,
-      probeDetail(held, probes, `${gateVerdict(rows).line}: ${vertices} vertices over ${rowsHeld} recipe(s) exact at tolerance 0, in spine-core's draw order; the skipped rows exactly the ones whose bones or slots the core leaves out, and each of them posed off its hierarchy alone moves its vertices (worst Δ: ${offHierarchy.join(', ')}), so the skip holds back a real difference`),
+      probeDetail(held, probes, `${gateVerdict(rows).line}: ${vertices} vertices over ${rowsHeld} recipe(s) exact at tolerance 0, in spine-core's draw order; the skipped rows exactly the ones whose bones or slots the core leaves out, and each of them posed off its hierarchy alone moves its vertices (worst Δ: ${offHierarchy.join(', ')}), so the skip holds back a real difference${sliderDeformed.length > 0 ? `; ${sliderDeformed.join(', ')} left out naming a slider's deform (CQ08)` : ''}`),
       'issue #931, the third construct of #380 §5 admitted: every region\'s corners from its record and its carried trim, every mesh\'s vertices from its bindings by name through `Math.fround`, against spine-core\'s dump of the same build. A rig with a constraint is not judged: its vertices move with its bones, and those are the constraints\' admission',
     );
     for (const line of attachmentReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
@@ -67909,7 +67932,7 @@ function runCoreSuite(): number {
       const model = readModel(readFileSync(path, 'utf8'), path);
       const declares = model.constraints.some((c) => !ADMITTED_CONSTRAINT_KINDS.includes(c.kind));
       const skipped = row.blocks['animations.bones'].verdict === 'SKIP';
-      if (declares !== skipped) probes.push(`${b.name}: ${declares ? 'declares a path, physics or slider constraint and its animation bones were not skipped' : 'declares none of those and its animation bones were skipped'}`);
+      if (declares !== skipped) probes.push(`${b.name}: ${declares ? `declares a ${LATER_KINDS.join(', ')} constraint and its animation bones were not skipped` : 'declares none of those and its animation bones were skipped'}`);
       if (skipped && !(row.blocks['animations.bones'].why ?? '').includes('constraints are not admitted')) probes.push(`${b.name}: skipped without naming the construct — ${row.blocks['animations.bones'].why}`);
       // The same row at 200 dense samples, both animation blocks, tolerance 0.
       const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), DENSE);
@@ -67922,7 +67945,7 @@ function runCoreSuite(): number {
     say(
       'CA06_EVERY_RECIPE_POSES_EVERY_ANIMATIONS_BONES_AND_SLOTS_AS_SPINE_CORE_DOES',
       ok,
-      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${animations} animation(s), ${boneAnimations} IDENTICAL on their bones and ${slotAnimations} on their slots at the gate's nine grid samples, the rest skipped by construct and named; every row again at 200 dense samples, IDENTICAL at tolerance 0 over ${denseBones} bone-samples; the rows whose bones were skipped exactly the ones declaring a path, physics or slider constraint`),
+      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${animations} animation(s), ${boneAnimations} IDENTICAL on their bones and ${slotAnimations} on their slots at the gate's nine grid samples, the rest skipped by construct and named; every row again at 200 dense samples, IDENTICAL at tolerance 0 over ${denseBones} bone-samples; the rows whose bones were skipped exactly the ones declaring a ${LATER_KINDS.join(', ')} constraint`),
       'issue #936, construct 4 of #380 §5 admitted: every recipe\'s every animation, bones and slots, against spine-core\'s dump of the same build — a rig\'s bones are posed by its constraints after the animation (CA07): the ik and transform constraints are posed since issue #938, and a rig with a path, physics or slider constraint has its bones left to those later cuts',
     );
   }
@@ -68571,7 +68594,8 @@ function runCoreSuite(): number {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
       if (!existsSync(path)) return null;
       const m = readModel(readFileSync(path, 'utf8'), path);
-      return m.constraints.length > 0 && m.constraints.every((c) => ADMITTED_CONSTRAINT_KINDS.includes(c.kind)) ? m : null;
+      // The ik and transform rows (issue #938's first cut); the physics and slider rows are CQ09's.
+      return m.constraints.length > 0 && m.constraints.every((c) => c.kind === 'ik' || c.kind === 'transform') ? m : null;
     };
     let judged = 0;
     let denseSamples = 0;
@@ -68593,14 +68617,14 @@ function runCoreSuite(): number {
     for (const r of rows) {
       if (r.blocks === null || r.blocks['setup.bones'].verdict !== 'SKIP') continue;
       const why = r.blocks['setup.bones'].why ?? '';
-      if (!/(path|physics|slider)[^;]*constraints are not admitted/.test(why)) probes.push(`${r.name}: skipped without naming a later kind — ${why}`);
+      if (!new RegExp(`(${LATER_KINDS.join('|')})[^;]*constraints are not admitted`).test(why)) probes.push(`${r.name}: skipped without naming a later kind — ${why}`);
     }
     if (judged === 0 || !kinds.has('ik') || !kinds.has('transform')) probes.push(`${judged} row(s) declare only ik and transform (kinds ${[...kinds].join(', ')}), so the corpus held ${judged === 0 ? 'nothing' : 'one kind only'}`);
     const ok = probes.length === 0;
     say(
       'CC09_EVERY_ROW_DECLARING_ONLY_IK_AND_TRANSFORM_POSES_ITS_BONES_VERTICES_AND_SAMPLES_AS_SPINE_CORE_DOES',
       ok,
-      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${judged} row(s) declaring only ik and transform IDENTICAL on setup.bones, setup.attachments, setup.clips and animations.bones, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); every row still skipped names path, physics or slider`),
+      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${judged} row(s) declaring only ik and transform IDENTICAL on setup.bones, setup.attachments, setup.clips and animations.bones, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); every row still skipped names ${LATER_KINDS.join(', ')}`),
       'issue #938, construct 5\'s first cut admitted: the rows whose constraints are all ik and transform are judged on every block the core poses, and a row carrying a later kind stays SKIP naming it (#380 §4 — a construct not admitted is SKIP by name, never a pass)',
     );
   }
@@ -68612,13 +68636,15 @@ function runCoreSuite(): number {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
       if (!existsSync(path)) return false;
       const m = readModel(readFileSync(path, 'utf8'), path);
-      return m.constraints.length > 0 && m.constraints.every((c) => ADMITTED_CONSTRAINT_KINDS.includes(c.kind));
+      // The ik and transform rows (issue #938's first cut); the physics and slider rows are CQ's.
+      return m.constraints.length > 0 && m.constraints.every((c) => c.kind === 'ik' || c.kind === 'transform');
     });
     const declares = (b: BuiltRow, test: (records: CoreConstraintRecord[]) => boolean): boolean => test(readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.flatMap((c) => (c.record === undefined ? [] : [c.record])));
     const swapFirstChain = (records: CoreConstraintRecord[]): CoreConstraintRecord[] => {
       // The first two constraints where the later one reads a bone the earlier one moves: swapping them changes what it reads.
       for (let i = 0; i + 1 < records.length; i++) {
         const [a, b] = [records[i], records[i + 1]];
+        if ((a.kind !== 'ik' && a.kind !== 'transform') || (b.kind !== 'ik' && b.kind !== 'transform')) continue;
         const moves = new Set(a.bones);
         const reads = b.kind === 'ik' ? b.target : b.source;
         if (moves.has(reads) || b.bones.some((x) => moves.has(x))) return [...records.slice(0, i), b, a, ...records.slice(i + 2)];
@@ -68661,14 +68687,15 @@ function runCoreSuite(): number {
     }
     // The skin rule is CC04's; `later` is the later cuts', which no probe here poses.
     const byCc04 = ['skin'];
-    const unreached = holes.filter((h) => h !== 'later' && !byCc04.includes(h) && reached[h as ConstraintCensusField] === 0);
+    // The physics and slider fields, and the stepped phase, are CQ11's.
+    const unreached = holes.filter((h) => h !== 'later' && !byCc04.includes(h) && !h.startsWith('physics') && !h.startsWith('slider') && reached[h as ConstraintCensusField] === 0);
     if (unreached.length > 0) probes.push(`HOLE(s) no probe reaches: ${unreached.join(', ')}`);
-    if (!holes.includes('later')) probes.push('the path, physics and slider constraints were not named a HOLE');
+    if (!holes.includes('later')) probes.push(`the ${LATER_KINDS.join(', ')} constraints were not named a HOLE`);
     const ok = probes.length === 0;
     say(
       'CC11_EVERY_CONSTRAINT_FIELD_NO_COMPARED_ROW_REACHES_IS_A_HOLE_BY_NAME_AND_A_PROBE_REACHES_IT',
       ok,
-      probeDetail(ok, probes, `${holes.length} HOLE(s) over the compared rows — ${holes.join(', ')} — each but the later kinds reached by the CC02–CC08 probes at tolerance 0 (the skin rule by CC04's); the probes' census: ${CONSTRAINT_CENSUS_FIELDS.filter((f) => f !== 'later').map((f) => `${f} ${reached[f]}`).join(', ')}`),
+      probeDetail(ok, probes, `${holes.length} HOLE(s) over the compared rows — ${holes.join(', ')} — each but the later kinds and the physics and slider fields (CQ11's) reached by the CC02–CC08 probes at tolerance 0 (the skin rule by CC04's); the probes' census: ${CONSTRAINT_CENSUS_FIELDS.filter((f) => f !== 'later' && !f.startsWith('physics') && !f.startsWith('slider')).map((f) => `${f} ${reached[f]}`).join(', ')}`),
       'issue #380 §4: a construct no row uses is a HOLE, never a pass, and a HOLE is covered by a probe or it is not covered at all',
     );
     for (const line of constraintReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
@@ -68707,6 +68734,663 @@ function runCoreSuite(): number {
     );
   }
 
+  // ===========================================================================
+  // Construct 5, third cut (issue #938, step 2e-iii): the physics constraint
+  // under Physics.none and the slider constraint. Each probe is one skeleton
+  // written twice — the Spine file for `dumpSkeleton` and the model for
+  // `readModel` — with slots and regions where a slider keys them, compared at
+  // tolerance 0 through `coreDump`.
+  // ===========================================================================
+  interface SliderAnim { bones?: Keyed; slots?: Keyed; slider?: Keyed; physics?: Keyed; ik?: Record<string, Obj[]>; deform?: Record<string, Obj[]> }
+  const SLIDER_REGIONS = ['q', 'r', 'u'];
+  const SLIDER_ATLAS = atlasOf(SLIDER_REGIONS);
+  const named = (group: Keyed | undefined): Obj[] => Object.entries(group ?? {}).map(([name, tls]) => ({ name, timelines: Object.entries(tls).map(([k, keys]) => ({ name: k, keys })) }));
+  /** A skeleton with slots over three regions, constraints and several animations, as the Spine file and as the model (a constraint's `type` the model's `kind`). */
+  const sliderPair = (bones: Obj[], slots: Obj[], constraints: Obj[], anims: Record<string, SliderAnim>): { spine: string; model: string } => {
+    const table = (model: boolean): Record<string, Record<string, Obj>> => Object.fromEntries(slots.map((s) => [s.name as string, Object.fromEntries(SLIDER_REGIONS.map((n) => [n, model ? { kind: 'region', width: 4, height: 4, atlas: UNTRIMMED4 } : { width: 4, height: 4 }]))]));
+    const spine = {
+      skeleton: { spine: '4.3.13' }, bones, slots, constraints,
+      skins: [{ name: 'default', attachments: table(false) }],
+      animations: Object.fromEntries(Object.entries(anims).map(([n, a]) => [n, {
+        ...(a.bones ? { bones: a.bones } : {}), ...(a.slots ? { slots: a.slots } : {}), ...(a.slider ? { slider: a.slider } : {}), ...(a.physics ? { physics: a.physics } : {}), ...(a.ik ? { ik: a.ik } : {}),
+        ...(a.deform ? { attachments: { default: Object.fromEntries(Object.entries(a.deform).map(([slot, keys]) => [slot, { q: { deform: keys } }])) } } : {}),
+      }])),
+    };
+    const model = JSON.stringify({
+      spec: 'rigc-compiled/1',
+      bones: bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
+      slots: slots.map(({ attachment, ...s }) => ({ ...s, setup: attachment ?? null })),
+      skins: [{ name: 'default', bones: [], constraints: {}, attachments: table(true) }],
+      constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
+      events: [],
+      animations: Object.entries(anims).map(([name, a]) => ({
+        name, duration: 0, bones: named(a.bones), slots: named(a.slots),
+        constraints: { ik: Object.entries(a.ik ?? {}).map(([n, keys]) => ({ name: n, keys })), transform: [], path: [], physics: named(a.physics), slider: named(a.slider) },
+        attachments: a.deform ? [{ name: 'default', slots: Object.entries(a.deform).map(([slot, keys]) => ({ name: slot, attachments: [{ name: 'q', deform: keys }] })) }] : [],
+        drawOrder: [], events: [],
+      })),
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+    });
+    return { spine: JSON.stringify(spine), model };
+  };
+  const sliderSpine = (pair: { spine: string }, options: OracleOptions): OracleDump => dumpSkeleton(loadOracleData(pair.spine, SLIDER_ATLAS, 'the slider probe'), options);
+  const sliderCompare = (pair: { spine: string; model: string }, options: OracleOptions, plant: CorePlant = {}): ReturnType<typeof compareDumps> =>
+    compareDumps(sliderSpine(pair, options), coreDump(readModel(pair.model, 'the slider probe'), options, plant), { xy: 0, m: 0 });
+  /** The blocks the core poses that a comparison skipped — a probe is exact only when none is. */
+  const posedSkips = (c: ReturnType<typeof compareDumps>): string[] => c.skipped.filter((x) => /^(setup\.(bones|slots|attachments|clips)|animations\.(bones|slots)):/.test(x));
+  const cqModels: string[] = [];
+  const SIX_IRR: OracleOptions = { phase: 'irr', samples: 6, skin: 'all', physics: 'none', dt: null };
+  const hexOf = (rnd: () => number, n: number): string => Array.from({ length: n }, () => Math.floor(rnd() * 256).toString(16).padStart(2, '0')).join('');
+
+  // --- CQ01: readModel reads each physics and slider record and timeline, and refuses each plant by name --
+  {
+    const probes: string[] = [];
+    const bones: Obj[] = [{ name: 'root' }, { name: 'd', parent: 'root', x: 3 }, { name: 'p', parent: 'root' }];
+    const base = sliderPair(bones, [{ name: 's', bone: 'p', attachment: 'q' }], [
+      { type: 'slider', name: 'sl', animation: 'x', bone: 'd', property: 'y', from: 1, to: 0.25, scale: 0.5, local: true, additive: true, loop: true, mix: 0.75, max: 3 },
+      { type: 'slider', name: 'free', animation: 'x', time: 0.5 },
+      { type: 'physics', name: 'ph', bone: 'p', rotate: 1, x: 0.5, inertia: 0.4, mass: 2, fps: 30, limit: 100, windGlobal: true, scaleY: 'Uniform' },
+    ], { x: { bones: { p: { rotate: [{ time: 0, value: 1 }, { time: 1, value: 2 }] } } }, a: { slider: { free: { time: [{ time: 0, value: 0.2, curve: [0.2, 0.3, 0.4, 0.5] }, { time: 1 }], mix: [{ time: 0.5, value: 0.5 }] } }, physics: { ph: { mix: [{ time: 0, value: 0.5 }], reset: [{ time: 0.2 }] } } } });
+    cqModels.push(base.model);
+    let read: CompiledDocument | null = null;
+    try {
+      read = readModel(base.model, 'the physics and slider probe');
+    } catch (err) {
+      probes.push(`the base document was refused: ${(err as Error).message}`);
+    }
+    if (read !== null) {
+      const sl = read.constraints[0].record;
+      const free = read.constraints[1].record;
+      const ph = read.constraints[2].record;
+      if (sl?.kind !== 'slider' || sl.bone !== 'd' || sl.property !== 'y' || sl.from !== 1 || sl.to !== 0.25 || sl.scale !== 0.5 || !sl.local || !sl.additive || !sl.loop || sl.mix !== 0.75 || sl.animation !== 'x' || !sl.setup.has('p')) probes.push(`the dial slider read ${JSON.stringify(sl)}`);
+      if (free?.kind !== 'slider' || free.bone !== null || free.time !== 0.5 || free.mix !== 1 || free.additive || free.loop || free.scale !== 1 || free.from !== 0) probes.push(`the bone-less slider read ${JSON.stringify(free)} — an absent mix 1, scale 1, from 0, flags false`);
+      if (ph?.kind !== 'physics' || ph.bone !== 'p') probes.push(`the physics record read ${JSON.stringify(ph)}`);
+      const keys = read.animations[1].constraints;
+      if (keys.slider[0]?.time?.[1].values[0] !== 1 || keys.slider[0].mix?.[0].values[0] !== 0.5 || keys.slider[0].time?.[0].curve.length !== 4) probes.push(`the slider keys read ${JSON.stringify(keys.slider)} — a key omitting value reads 1`);
+      if (keys.physics !== 2) probes.push(`the physics timelines counted ${keys.physics}, not 2`);
+    }
+    const plant = (edit: (d: { constraints: Obj[]; animations: Array<{ constraints: { slider: Obj[]; physics: Obj[] } }> }) => void): string => {
+      const copy = JSON.parse(base.model) as { constraints: Obj[]; animations: Array<{ constraints: { slider: Obj[]; physics: Obj[] } }> };
+      edit(copy);
+      return JSON.stringify(copy);
+    };
+    const firstKeys = (d: { animations: Array<{ constraints: { slider: Obj[] } }> }): Obj[] => ((d.animations[1].constraints.slider[0].timelines as Obj[])[0].keys as Obj[]);
+    const plants: Array<[string, string, string]> = [
+      ['a slider field the writer does not write', plant((d) => (d.constraints[0].speed = 1)), 'field "speed" is not one this reader knows'],
+      ['a slider applying no animation', plant((d) => (d.constraints[1].animation = 'none')), 'a slider\'s animation is "none", not an animation of this document'],
+      ['a dial that is not a bone', plant((d) => (d.constraints[0].bone = 'nowhere')), 'bone is "nowhere", not a bone of this document'],
+      ['a dial property that is not one', plant((d) => (d.constraints[0].property = 'skew')), 'property is "skew", none of rotate, x, y, scaleX, scaleY, shearY'],
+      ['a slider flag spelled as a number', plant((d) => (d.constraints[0].loop = 1)), 'loop is 1, not a boolean'],
+      ['a slider number spelled as a string', plant((d) => (d.constraints[0].scale = '2')), 'scale is "2", not a finite number'],
+      ['a physics field the writer does not write', plant((d) => (d.constraints[2].speed = 1)), 'field "speed" is not one this reader knows'],
+      ['a physics bone that is not one', plant((d) => (d.constraints[2].bone = 'nowhere')), 'bone is "nowhere", not a bone of this document'],
+      ['a physics number spelled as a string', plant((d) => (d.constraints[2].damping = '1')), 'damping is "1", not a finite number'],
+      ['a physics scaleY mode that is not one', plant((d) => (d.constraints[2].scaleY = 'squash')), 'scaleY is "squash", none of none, uniform, volume'],
+      ['a slider timeline naming no slider', plant((d) => (d.animations[1].constraints.slider[0].name = 'ph')), '"ph" is not a slider of this document'],
+      ['a slider timeline that is not time or mix', plant((d) => ((d.animations[1].constraints.slider[0].timelines as Obj[])[0].name = 'speed')), '"speed" is not a slider timeline; a slider keys time and mix'],
+      ['a slider key field it does not read', plant((d) => (firstKeys(d)[0].mix = 1)), 'field "mix" is not one this reader knows; it reads [time, value, curve]'],
+      ['slider key times that do not increase', plant((d) => (firstKeys(d)[1].time = 0)), 'is not after the key before it'],
+      ['a slider curve of the wrong length', plant((d) => (firstKeys(d)[0].curve = [0.1, 0.2])), 'not "stepped" nor 4 finite numbers'],
+    ];
+    for (const [label, text, expected] of plants) {
+      const refusal = coreRefusal(text);
+      if (!refusal.includes(expected)) probes.push(`${label}: ${refusal === '' ? 'read' : `refused as "${refusal.slice(0, 200)}"`}, not naming ${JSON.stringify(expected)}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CQ01_READ_MODEL_READS_EACH_PHYSICS_AND_SLIDER_RECORD_AND_TIMELINE_AND_REFUSES_EACH_PLANT_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `a dial slider, a bone-less slider and a physics constraint read with their timelines — an absent slider mix 1, scale 1, from 0, flags false, a slider key omitting value 1, the physics timelines counted; ${plants.length} plants each refused naming its path`),
+      'issue #938: the core reads the physics and slider records the writer writes (`buildRigConstraint` and the motion spec\'s physics table), and nothing else; an absent field reads the parser\'s value, measured (src/core/constraints_slider.ts), never a guess',
+    );
+  }
+
+  // --- CQ02: under Physics.none a physics constraint applies nothing, and the core poses it so --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(93802);
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    let withoutSame = 0;
+    let exact = 0;
+    let samples = 0;
+    const N = 240;
+    for (let i = 0; i < N; i++) {
+      const bones: Obj[] = [{ name: 'root' }];
+      for (let k = 1; k <= 7; k++) {
+        const b: Obj = { name: `b${k}`, parent: k === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+        if (rnd() < 0.25) b.inherit = pick(MODES5.slice(1));
+        bones.push(rnd() < 0.5 ? skewed(rnd, b) : b);
+      }
+      const parentOf = new Map(bones.map((b) => [b.name as string, b.parent as string | undefined]));
+      const below = (top: string, n: string): boolean => {
+        for (let at = parentOf.get(n); at !== undefined; at = parentOf.get(at)) if (at === top) return true;
+        return false;
+      };
+      const names = bones.slice(1).map((b) => b.name as string);
+      bones.push(...amplify('b1'), ...amplify(names[names.length - 1]));
+      const constraints: Obj[] = [];
+      const physics: Keyed = {};
+      for (let k = 0, n = 2 + Math.floor(rnd() * 4); k < n; k++) {
+        const kind = k === 0 ? 'physics' : pick(['physics', 'physics', 'ik', 'transform']);
+        if (kind === 'physics') {
+          const c: Obj = { type: 'physics', name: `k${k}`, bone: pick(names) };
+          for (const f of ['x', 'y', 'rotate', 'scaleX', 'shearX']) if (rnd() < 0.6) c[f] = pick([1, R(0, 2), R(-1, 1)]);
+          for (const f of ['limit', 'fps', 'inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix']) if (rnd() < 0.4) c[f] = f === 'fps' ? pick([30, 60, 120]) : f === 'mass' ? R(0.1, 3) : R(-2, 200);
+          for (const f of ['inertiaGlobal', 'windGlobal', 'mixGlobal']) if (rnd() < 0.3) c[f] = true;
+          constraints.push(c);
+          if (rnd() < 0.5) physics[c.name as string] = { mix: [{ time: 0, value: R(0, 1) }, { time: 0.8, value: 1 }], wind: [{ time: 0.3, value: R(-5, 5) }], reset: [{ time: 0.4 }] };
+        } else if (kind === 'ik') {
+          const b = pick(names);
+          const targets = names.filter((n) => n !== b && !below(b, n));
+          if (targets.length > 0) constraints.push({ type: 'ik', name: `k${k}`, bones: [b], target: pick(targets), mix: pick([1, R(0, 1)]) });
+        } else {
+          const b = pick(names);
+          const sources = names.filter((n) => n !== b && !below(b, n));
+          if (sources.length > 0) constraints.push({ type: 'transform', name: `k${k}`, bones: [b], source: pick(sources), properties: { [pick([...TRANSFORM_PROPERTIES])]: { to: { [pick([...TRANSFORM_PROPERTIES])]: {} } } }, ...(rnd() < 0.4 ? { localTarget: true } : {}) });
+        }
+      }
+      const swing: Keyed = { [pick(names)]: { rotate: [{ time: 0, value: R(-90, 90) }, { time: 1, value: R(-90, 90) }] }, [pick(names)]: { translate: [{ time: 0.2, x: R(-30, 30), y: R(-30, 30) }, { time: 0.9, x: 0, y: 0 }] } };
+      const pair = sliderPair(bones, [], constraints, { a: { bones: swing, ...(Object.keys(physics).length > 0 ? { physics } : {}) } });
+      const bare = sliderPair(bones, [], constraints.filter((c) => c.type !== 'physics'), { a: { bones: swing } });
+      cqModels.push(pair.model);
+      // The measurement: spine-core's dump with the physics constraints and without them, the rosters aside.
+      const withPhysics = sliderSpine(pair, SIX_IRR);
+      const same = compareDumps({ ...withPhysics, constraints: sliderSpine(bare, SIX_IRR).constraints, physics: [] }, sliderSpine(bare, SIX_IRR), { xy: 0, m: 0 });
+      if (same.identical) withoutSame++;
+      else if (probes.length < 3) probes.push(`probe ${i}: a physics constraint moved the pose under Physics.none — ${same.first}`);
+      const c = sliderCompare(pair, SIX_IRR);
+      samples += c.boneSamples;
+      if (c.identical && posedSkips(c).length === 0) exact++;
+      else if (probes.length < 3) probes.push(`probe ${i}: the core ${posedSkips(c).join('; ') || c.first}`);
+    }
+    const ok = withoutSame === N && exact === N;
+    say(
+      'CQ02_UNDER_PHYSICS_NONE_A_PHYSICS_CONSTRAINT_APPLIES_NOTHING_AND_THE_CORE_POSES_IT_SO',
+      ok,
+      probeDetail(ok, probes, `${N} rigs of two to five constraints — physics constraints with every component and parameter at random, keyed mix, wind and reset, among ik and world- and local-space transform constraints in random order, amplified — spine-core's dump identical with the physics constraints and without them on ${withoutSame}, and the core exact at tolerance 0 on ${exact} (${samples} bone-samples, six irr samples on the one skeleton the dump reuses)`),
+      'issue #938: what an unstepped physics constraint contributes was the first thing to measure, and it is nothing — the pose is the rig without it (src/core/constraints_physics.ts); the stepped phase, where it integrates, is its own card and the core refuses --physics step by name',
+    );
+  }
+
+  // --- CQ03: a dial's property maps to the slider's time — clamped at 0, or looped — as spine-core does --
+  {
+    const probes: string[] = [];
+    // The keyed bone p is at x = 100 · the time the slider applies (0..2 s), so the dump reads the time off p's worldX.
+    const timeOf = (slider: Obj, dial: Obj): { spine: number | null; exact: boolean; first: string | null } => {
+      const pair = sliderPair([{ name: 'root' }, { name: 'g', parent: 'root', rotation: 30, scaleX: 2 }, { name: 'd', parent: 'g', ...dial }, { name: 'p', parent: 'root' }], [], [{ type: 'slider', name: 'sl', animation: 's', bone: 'd', ...slider }], { s: { bones: { p: { translatex: [{ time: 0, value: 0 }, { time: 2, value: 200 }] } } } });
+      cqModels.push(pair.model);
+      const c = sliderCompare(pair, ONE_SAMPLE);
+      const x = (sliderSpine(pair, ONE_SAMPLE).setup.bones.find((b) => b[0] === 'p') as BoneRow)[1];
+      return { spine: x === null ? null : x / 100, exact: c.identical && posedSkips(c).length === 0, first: c.first };
+    };
+    const DEG = Math.PI / 180;
+    // Each expected time computed by hand from the mapping `to + (value − from) · scale`: world rotate is the x column's angle under g (30° turned, x scaled 2) in [0, 360).
+    const cases: Array<[string, Obj, Obj, number]> = [
+      ['local rotate 10 at 0.01', { property: 'rotate', local: true, scale: 0.01 }, { rotation: 10 }, 0.1],
+      ['local rotate 10, from 5, to 0.2', { property: 'rotate', local: true, from: 5, to: 0.2, scale: 0.01 }, { rotation: 10 }, 0.25],
+      ['local rotate −50: clamped at 0', { property: 'rotate', local: true, scale: 0.01 }, { rotation: -50 }, 0],
+      ['local rotate 150 at 0.02, loop: 3 mod 2', { property: 'rotate', local: true, scale: 0.02, loop: true }, { rotation: 150 }, 1],
+      ['local rotate −50 at 0.01, loop: 2 + (−0.5 mod 2)', { property: 'rotate', local: true, scale: 0.01, loop: true }, { rotation: -50 }, 1.5],
+      ['world rotate 10', { property: 'rotate', scale: 0.01 }, { rotation: 10 }, (30 + Math.atan2(Math.sin(10 * DEG), 2 * Math.cos(10 * DEG)) / DEG) * 0.01],
+      ['world rotate −50: into [0, 360)', { property: 'rotate', scale: 0.001 }, { rotation: -50 }, (360 + 30 + Math.atan2(Math.sin(-50 * DEG), 2 * Math.cos(-50 * DEG)) / DEG) * 0.001],
+      ['local x 7', { property: 'x', local: true, scale: 0.1 }, { x: 7 }, 0.7],
+      ['world x 7', { property: 'x', scale: 0.01 }, { x: 7 }, 2 * Math.cos(30 * DEG) * 7 * 0.01],
+      ['world y 7', { property: 'y', scale: 0.01 }, { x: 7 }, 2 * Math.sin(30 * DEG) * 7 * 0.01],
+      ['local scaleX 1.5', { property: 'scaleX', local: true }, { scaleX: 1.5 }, 1.5],
+      ['world scaleY 1.5', { property: 'scaleY' }, { scaleY: 1.5 }, 1.5],
+      ['local shearY 20', { property: 'shearY', local: true, scale: 0.01 }, { shearY: 20 }, 0.2],
+      ['a stated time beside the bone is not read', { property: 'x', local: true, scale: 0.1, time: 1.5 }, { x: 7 }, 0.7],
+    ];
+    const read: string[] = [];
+    for (const [label, slider, dial, expected] of cases) {
+      const r = timeOf(slider, dial);
+      read.push(`${label} ${r.spine}`);
+      if (r.spine === null || Math.abs(r.spine - expected) > 1e-6) probes.push(`${label}: spine-core applied ${r.spine}, the mapping gives ${expected.toFixed(6)}`);
+      if (!r.exact) probes.push(`${label}: the core ${r.first}`);
+    }
+    // Looping over an animation of duration 0: the runtime's time is NaN, and it applied the one key, as every other form did.
+    for (const slider of [{ bone: 'd', property: 'x', local: true, loop: true }, { bone: 'd', property: 'x', local: true }, { time: 0.5, loop: true }]) {
+      const pair = sliderPair([{ name: 'root' }, { name: 'd', parent: 'root', x: 3 }, { name: 'p', parent: 'root', rotation: 20 }], [], [{ type: 'slider', name: 'sl', animation: 'z', ...slider }], { z: { bones: { p: { rotate: [{ time: 0, value: 45 }] } } } });
+      const p = sliderSpine(pair, ONE_SAMPLE).setup.bones.find((b) => b[0] === 'p') as BoneRow;
+      const angle = p[3] === null || p[5] === null ? NaN : Math.atan2(p[5], p[3]) / DEG;
+      if (Math.abs(angle - 65) > 1e-4) probes.push(`${JSON.stringify(slider)} over a zero-length animation: spine-core posed ${angle.toFixed(4)}°, not 65`);
+      const c = sliderCompare(pair, ONE_SAMPLE);
+      if (!c.identical) probes.push(`${JSON.stringify(slider)} over a zero-length animation: the core ${c.first}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CQ03_A_DIALS_PROPERTY_MAPS_TO_THE_SLIDERS_TIME_CLAMPED_AT_0_OR_LOOPED_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${cases.length} dials under a parent turned 30° and scaled 2, each time read off spine-core's dump equal to the mapping computed by hand and the core exact at tolerance 0 — ${read.join('; ')}; and a looping dial over a zero-length animation applying its key as every other form does`),
+      'issue #938: the dial is read as a transform constraint reads its source with no offset, then `to + (value − from) · scale`, then max(0, ·) or `duration + (· mod duration)` and the animation\'s own loop wrap — each measured on a hand-written dial (src/core/constraints_slider.ts)',
+    );
+  }
+
+  // --- CQ04: a slider composes on the current pose by its mix, and additively when it says so, as spine-core does --
+  {
+    const probes: string[] = [];
+    const PROPS6 = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'] as const;
+    // p's local values read back through six localSource transforms written onto spare bones' x, after the slider.
+    const readBack = (slider: Obj): { sample: number[]; setup: number[]; exact: boolean; first: string | null } => {
+      const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', rotation: 20, x: 3, y: 4, scaleX: 2, scaleY: 0.5, shearX: 5, shearY: 7 }, ...PROPS6.map((p) => ({ name: `r_${p}`, parent: 'root' }))];
+      const readers: Obj[] = PROPS6.map((p) => ({ type: 'transform', name: `r_${p}`, bones: [`r_${p}`], source: 'p', localSource: true, localTarget: true, properties: { [p]: { to: { x: {} } } } }));
+      const pair = sliderPair(bones, [], [{ type: 'slider', name: 'sl', animation: 's', ...slider }, ...readers], {
+        s: { bones: { p: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 300 }], translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 100, y: 50 }], scale: [{ time: 0, x: 1, y: 1 }, { time: 1, x: 5, y: -3 }], shear: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 40, y: 80 }] } } },
+        a: { bones: { p: { rotate: [{ time: 0, value: 30 }], translate: [{ time: 0, x: 10, y: -10 }], scale: [{ time: 0, x: 3, y: -2 }], shear: [{ time: 0, x: 11, y: 13 }] } } },
+      });
+      cqModels.push(pair.model);
+      const d = sliderSpine(pair, ONE_SAMPLE);
+      const at = (rows: BoneRow[]): number[] => PROPS6.map((p) => (rows.find((r) => r[0] === `r_${p}`) as BoneRow)[1] as number);
+      const c = sliderCompare(pair, ONE_SAMPLE);
+      return { sample: at(d.animations.find((x) => x.name === 'a')?.samples[0].bones ?? []), setup: at(d.setup.bones), exact: c.identical && posedSkips(c).length === 0, first: c.first };
+    };
+    // By hand, from the header's rules: setup rotate 20, x 3, y 4, scale 2 × 0.5, shearY 7; the sample's animation leaves 50, 13, −6, 6 × −1, 20;
+    // the slider's animation at 0.5 keys 150, (50, 25), (3, −1), shearY 40 — at 0.9: 270, (90, 45), (4.6, −2.6), 72.
+    const table: Array<[string, Obj, number[], number[]]> = [
+      ['mix 1', { time: 0.5 }, [170, 53, 29, 6, -0.5, 47], [170, 53, 29, 6, -0.5, 47]],
+      ['mix 0.5: from the current pose; a scale toward the other sign starts from |current| with its sign', { time: 0.5, mix: 0.5 }, [110, 33, 11.5, 6, -0.75, 33.5], [95, 28, 16.5, 4, -0.5, 27]],
+      ['mix −0.5', { time: 0.5, mix: -0.5 }, [-10, -7, -23.5, 6, -1.25, 6.5], [-55, -22, -8.5, 0, -0.5, -13]],
+      ['additive', { time: 0.5, additive: true }, [200, 63, 19, 10, -2, 60], [170, 53, 29, 6, -0.5, 47]],
+      ['additive at 0.5', { time: 0.5, additive: true, mix: 0.5 }, [125, 38, 6.5, 8, -1.5, 40], [95, 28, 16.5, 4, 0, 27]],
+      ['mix 0.3 at 0.9: no wrap the short way round', { time: 0.9, mix: 0.3 }, [122, 37, 10.5, 6.96, -1.09, 37.7], [101, 30, 17.5, 4.16, -0.74, 28.6]],
+      ['before the first key: nothing written', { time: -0.2 }, [50, 13, -6, 6, -1, 20], [20, 3, 4, 2, 0.5, 7]],
+      ['mix 0: nothing applied', { time: 0.5, mix: 0 }, [50, 13, -6, 6, -1, 20], [20, 3, 4, 2, 0.5, 7]],
+    ];
+    for (const [label, slider, sample, setup] of table) {
+      const r = readBack(slider);
+      const off = (got: number[], want: number[]): boolean => got.some((g, i) => Math.abs(g - want[i]) > 1e-5);
+      if (off(r.sample, sample) || off(r.setup, setup)) probes.push(`${label}: spine-core read ${JSON.stringify(r.sample)} at the sample and ${JSON.stringify(r.setup)} at setup, by hand ${JSON.stringify(sample)} and ${JSON.stringify(setup)}`);
+      if (!r.exact) probes.push(`${label}: the core ${r.first}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CQ04_A_SLIDER_COMPOSES_ON_THE_CURRENT_POSE_BY_ITS_MIX_AND_ADDITIVELY_WHEN_IT_SAYS_SO_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${table.length} settings of one slider over a bone the sample's animation also keys — rotate, translate, scale and shear read back through local-source transforms — equal to the rules computed by hand at the sample and at setup, and the core exact at tolerance 0 on each: current + (setup + v − current)·mix, additive current + v·mix, a scale from |current| with the target's sign or current + (v − 1)·setup·mix, nothing before the first key or at mix 0`),
+      'issue #938: a slider applies its animation from the CURRENT pose — the setup at setup, the sample\'s animation at a sample — so where it sits is after the sample\'s animation, in constraint order; the arithmetic of each blend is a measurement, not a transcription (src/core/constraints_slider.ts)',
+    );
+  }
+
+  // --- CQ05: a slider's slot timelines blend from the current slot, clamped, as spine-core does --
+  {
+    const probes: string[] = [];
+    const slotRow = (slider: Obj, keys: Keyed[string]): { setup: SlotRow; sample: SlotRow; exact: boolean; first: string | null } => {
+      const pair = sliderPair([{ name: 'root' }], [{ name: 's', bone: 'root', attachment: 'r', color: '80406020', dark: '102030' }], [{ type: 'slider', name: 'sl', animation: 'x', ...slider }], {
+        x: { slots: { s: keys } },
+        a: { slots: { s: { rgba2: [{ time: 0, light: 'ff0000ff', dark: '00ff00' }], attachment: [{ time: 0, name: 'u' }] } } },
+      });
+      cqModels.push(pair.model);
+      const d = sliderSpine(pair, ONE_SAMPLE);
+      const c = sliderCompare(pair, ONE_SAMPLE);
+      return { setup: d.setup.slots[0], sample: d.animations.find((a) => a.name === 'a')?.samples[0].slots[0] as SlotRow, exact: c.identical && posedSkips(c).length === 0, first: c.first };
+    };
+    const twoColour = { rgba2: [{ time: 0, light: '00000000', dark: '000000' }, { time: 1, light: 'ffffffff', dark: 'ffffff' }], attachment: [{ time: 0.4, name: 'q' }] };
+    const setupLight = [128, 64, 96, 32].map((b) => b / 255);
+    const setupDark = [16, 32, 48].map((b) => b / 255);
+    const lerp = (from: number[], to: number, alpha: number): number[] => from.map((c) => Math.min(1, Math.max(0, c + (to - c) * alpha)));
+    // By hand: the slider's animation keys 0.5 on every channel at 0.5; the sample's leaves light (1, 0, 0, 1) and dark (0, 1, 0).
+    const cases: Array<[string, Obj, string | null, number[], number[] | null]> = [
+      ['mix 1', { time: 0.5 }, 'q', lerp(setupLight, 0.5, 1), lerp(setupDark, 0.5, 1)],
+      ['mix 0.5', { time: 0.5, mix: 0.5 }, 'q', lerp(setupLight, 0.5, 0.5), lerp(setupDark, 0.5, 0.5)],
+      ['additive 0.5: the same, a colour does not add', { time: 0.5, mix: 0.5, additive: true }, 'q', lerp(setupLight, 0.5, 0.5), lerp(setupDark, 0.5, 0.5)],
+      ['mix −1: clamped to 0', { time: 0.5, mix: -1 }, 'q', lerp(setupLight, 0.5, -1), lerp(setupDark, 0.5, -1)],
+      ['mix 2', { time: 0.5, mix: 2 }, 'q', lerp(setupLight, 0.5, 2), lerp(setupDark, 0.5, 2)],
+      ['mix 0.01: the attachment switches', { time: 0.5, mix: 0.01 }, 'q', lerp(setupLight, 0.5, 0.01), lerp(setupDark, 0.5, 0.01)],
+      ['before the attachment key, at 0.2', { time: 0.2, mix: 0.5 }, 'r', lerp(setupLight, 0.2, 0.5), lerp(setupDark, 0.2, 0.5)],
+      ['mix 0: nothing', { time: 0.5, mix: 0 }, 'r', setupLight, setupDark],
+    ];
+    for (const [label, slider, shows, light, dark] of cases) {
+      const r = slotRow(slider, twoColour);
+      const want = [shows, ...light.map((v) => Math.round(v * 1e6) / 1e6)];
+      const got = [r.setup[1], ...r.setup.slice(2, 6)];
+      const gotDark = r.setup[6] ?? [];
+      if (JSON.stringify(got) !== JSON.stringify(want) || (dark !== null && gotDark.some((v, i) => Math.abs((v ?? NaN) - dark[i]) > 1e-6))) probes.push(`${label}: spine-core's setup row ${JSON.stringify(r.setup)}, by hand ${JSON.stringify(want)} dark ${JSON.stringify(dark)}`);
+      if (!r.exact) probes.push(`${label}: the core ${r.first}`);
+    }
+    // rgb, alpha and rgb2 move only their channels; a key naming null shows nothing; the sample's own slot is the current one.
+    for (const keys of [{ rgb: [{ time: 0.3, color: '00ff00' }], alpha: [{ time: 0.3, value: 0.9 }] }, { rgb2: [{ time: 0.3, light: '00ff00', dark: '0000ff' }], attachment: [{ time: 0.3, name: null }] }] as Keyed[string][]) {
+      for (const time of [0.1, 0.5]) {
+        const r = slotRow({ time, mix: 0.5 }, keys);
+        if (!r.exact) probes.push(`${Object.keys(keys).join('+')} at ${time}: the core ${r.first}`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'CQ05_A_SLIDERS_SLOT_TIMELINES_BLEND_FROM_THE_CURRENT_SLOT_CLAMPED_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${cases.length} settings of a slider keying rgba2 and an attachment over a slot with a colour and a dark colour, spine-core's setup row equal to current + (v − current)·mix clamped to [0, 1] computed by hand, the attachment switched at any mix above 0 from its key on, and the core exact at tolerance 0 at setup and over a sample keying the same slot; rgb, alpha, rgb2 and a null attachment at two times each, exact`),
+      'issue #928 left the setup slots out wherever a slider keys one; this is the rule that admits them — a slider moves a slot from where the setup or the sample left it, and additive changes nothing for a colour',
+    );
+  }
+
+  // --- CQ06: a random population of sliders over sample animations, with ik, transform and physics among them, poses as spine-core does --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(93806);
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const BK = [...BONE_TIMELINE_KINDS];
+    const SK = [...SLOT_TIMELINE_KINDS];
+    const boneKeys = (kind: string, n: number, t0: number): Obj[] => {
+      const keys: Obj[] = [];
+      let t = t0;
+      for (let i = 0; i < n; i++) {
+        const k: Obj = { time: Math.round(t * 1000) / 1000 };
+        if (kind === 'inherit') k.inherit = pick(MODES5);
+        else if (kind === 'translate' || kind === 'shear') Object.assign(k, { x: R(-40, 40), y: R(-40, 40) });
+        else if (kind === 'scale') Object.assign(k, { x: R(-2, 2.5), y: R(-2, 2.5) });
+        else if (kind === 'scalex' || kind === 'scaley') k.value = R(-2, 2.5);
+        else k.value = kind === 'rotate' ? R(-200, 200) : R(-40, 40);
+        const channels = kind === 'translate' || kind === 'shear' || kind === 'scale' ? 2 : 1;
+        if (i < n - 1 && kind !== 'inherit' && rnd() < 0.3) k.curve = rnd() < 0.3 ? 'stepped' : Array.from({ length: channels * 4 }, (_v, j) => (j % 2 === 0 ? Math.round((t + 0.1) * 1000) / 1000 : R(-50, 50)));
+        keys.push(k);
+        t += R(0.1, 0.6);
+      }
+      return keys;
+    };
+    const slotKeys = (kind: string, n: number): Obj[] => {
+      const keys: Obj[] = [];
+      let t = R(0, 0.5);
+      const channels = { rgba: 4, rgb: 3, alpha: 1, rgba2: 7, rgb2: 6 }[kind] ?? 0;
+      for (let i = 0; i < n; i++) {
+        const k: Obj = { time: Math.round(t * 1000) / 1000 };
+        if (kind === 'attachment') k.name = pick(['q', 'r', 'u', null]);
+        else if (kind === 'rgba') k.color = hexOf(rnd, 4);
+        else if (kind === 'rgb') k.color = hexOf(rnd, 3);
+        else if (kind === 'alpha') k.value = R(0, 1);
+        else Object.assign(k, { light: hexOf(rnd, kind === 'rgba2' ? 4 : 3), dark: hexOf(rnd, 3) });
+        if (i < n - 1 && channels > 0 && rnd() < 0.3) k.curve = Array.from({ length: channels * 4 }, (_v, j) => (j % 2 === 0 ? Math.round((t + 0.05) * 1000) / 1000 : R(-0.5, 1.5)));
+        keys.push(k);
+        t += R(0.1, 0.5);
+      }
+      return keys;
+    };
+    let exact = 0;
+    let samples = 0;
+    const N = 300;
+    for (let i = 0; i < N; i++) {
+      const bones: Obj[] = [{ name: 'root' }, { name: 'g', parent: 'root', rotation: R(-180, 180), scaleX: R(0.5, 2) * pick([1, -1]), shearY: R(-20, 20) }];
+      for (let k = 1; k <= 5; k++) {
+        const b: Obj = { name: `b${k}`, parent: pick(['g', ...bones.slice(2).map((x) => x.name as string)]), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 50) };
+        if (rnd() < 0.2) b.inherit = pick(MODES5.slice(1));
+        bones.push(rnd() < 0.5 ? skewed(rnd, b) : b);
+      }
+      bones.push({ name: 'dial', parent: 'g', x: R(-20, 20), rotation: R(-100, 100), scaleX: R(0.2, 2), scaleY: R(0.2, 2), shearY: R(-20, 20) }, { name: 'dial2', parent: 'b1', rotation: R(-50, 50) });
+      bones.push(...amplify('b1'), ...amplify('b3'), ...amplify('b5'));
+      const slots: Obj[] = [0, 1, 2].map((k) => ({ name: `s${k}`, bone: `b${k + 1}`, ...(rnd() < 0.7 ? { attachment: pick(['q', 'r']) } : {}), ...(rnd() < 0.6 ? { color: hexOf(rnd, 4) } : {}), ...(rnd() < 0.5 ? { dark: hexOf(rnd, 3) } : {}) }));
+      const withDark = new Set(slots.filter((s) => s.dark !== undefined).map((s) => s.name as string));
+      const animBones = (n: number): Keyed => {
+        const out: Keyed = {};
+        for (let j = 0; j < n; j++) {
+          const b = pick(['b1', 'b2', 'b3', 'b4', 'b5']);
+          const kind = pick(BK);
+          out[b] = { ...(out[b] ?? {}), [kind]: boneKeys(kind, 1 + Math.floor(rnd() * 4), rnd() < 0.3 ? R(0.1, 0.8) : 0) };
+        }
+        return out;
+      };
+      const animSlots = (n: number): Keyed => {
+        const out: Keyed = {};
+        for (let j = 0; j < n; j++) {
+          const s = pick(['s0', 's1', 's2']);
+          let kind = pick(SK);
+          if ((kind === 'rgba2' || kind === 'rgb2') && !withDark.has(s)) kind = 'rgba';
+          out[s] = { ...(out[s] ?? {}), [kind]: slotKeys(kind, 1 + Math.floor(rnd() * 3)) };
+        }
+        return out;
+      };
+      const constraints: Obj[] = [];
+      const anims: Record<string, SliderAnim> = {};
+      for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
+        anims[`sa${k}`] = { bones: animBones(1 + Math.floor(rnd() * 3)), ...(rnd() < 0.6 ? { slots: animSlots(1 + Math.floor(rnd() * 2)) } : {}) };
+        const c: Obj = { type: 'slider', name: `sl${k}`, animation: `sa${k}` };
+        if (rnd() < 0.5) c.additive = true;
+        if (rnd() < 0.5) c.mix = pick([0, 1, R(0, 1), R(-1, 2)]);
+        if (rnd() < 0.3) c.loop = true;
+        if (rnd() < 0.65) {
+          Object.assign(c, { bone: pick(['dial', 'dial2', 'b2']), property: pick([...TRANSFORM_PROPERTIES]), scale: pick([R(0.001, 0.05), R(-0.05, -0.001), R(0.1, 1)]) });
+          if (rnd() < 0.5) c.local = true;
+          if (rnd() < 0.6) c.from = R(-50, 50);
+          if (rnd() < 0.6) c.to = R(0, 1);
+        } else if (rnd() < 0.8) c.time = R(-0.5, 3);
+        constraints.push(c);
+      }
+      if (rnd() < 0.5) constraints.splice(Math.floor(rnd() * (constraints.length + 1)), 0, { type: 'transform', name: 'tr', bones: [pick(['b2', 'b4', 'dial'])], source: 'b5', properties: { [pick([...TRANSFORM_PROPERTIES])]: { to: { [pick([...TRANSFORM_PROPERTIES])]: {} } } }, ...(rnd() < 0.5 ? { localTarget: true } : {}) });
+      if (rnd() < 0.3) constraints.splice(Math.floor(rnd() * (constraints.length + 1)), 0, { type: 'ik', name: 'ik', bones: ['b3'], target: 'dial2', mix: R(0, 1) });
+      if (rnd() < 0.3) constraints.splice(Math.floor(rnd() * (constraints.length + 1)), 0, { type: 'physics', name: 'ph', bone: pick(['b1', 'b2']), rotate: 1, x: 1 });
+      const sample: SliderAnim = { bones: { ...animBones(2), dial: { rotate: boneKeys('rotate', 3, 0), translate: boneKeys('translate', 2, 0) } }, slots: animSlots(2) };
+      const keyed: Keyed = {};
+      for (const c of constraints) {
+        if (c.type !== 'slider' || rnd() < 0.5) continue;
+        const tls: Keyed[string] = {};
+        if (rnd() < 0.7) tls.time = [{ time: 0, value: R(-0.2, 2) }, { time: 1, ...(rnd() < 0.7 ? { value: R(0, 2) } : {}) }];
+        if (rnd() < 0.7) tls.mix = [{ time: R(0, 0.5), value: R(0, 1) }, { time: 1.2, ...(rnd() < 0.7 ? { value: R(-0.5, 1.5) } : {}) }];
+        if (Object.keys(tls).length > 0) keyed[c.name as string] = tls;
+      }
+      if (Object.keys(keyed).length > 0) sample.slider = keyed;
+      anims.a = sample;
+      const pair = sliderPair(bones, slots, constraints, anims);
+      cqModels.push(pair.model);
+      const c = sliderCompare(pair, { phase: pick(['grid', 'irr', 'off']), samples: 6, skin: 'all', physics: 'none', dt: null });
+      samples += c.boneSamples;
+      if (c.identical && posedSkips(c).length === 0) exact++;
+      else if (probes.length < 3) probes.push(`probe ${i}: ${posedSkips(c).join('; ') || c.first}`);
+    }
+    const ok = exact === N;
+    say(
+      'CQ06_A_RANDOM_POPULATION_OF_SLIDERS_OVER_SAMPLE_ANIMATIONS_AND_OTHER_CONSTRAINTS_POSES_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} rigs exact at tolerance 0 on setup and sampled bones, slots and region vertices (${samples} bone-samples): one to three sliders each — dials local and world on every property, scale negative, from/to offset, bone-less times before, inside and past the animation, loop, additive, mix 0, 1, between and outside — over animations keying every bone and slot timeline kind with linear, stepped and Bézier segments, a sample animation keying the same bones, slots and the dial, slider time and mix keys, and ik, transform and physics constraints placed anywhere in the order`),
+      'issue #938: the rules in src/core/constraints_slider.ts were each fixed on a few hand-written numbers; this is the population that would show a rule right only on its own probe, amplified ten thousand units out so a difference of 1e-10 is a grid step',
+    );
+  }
+
+  // --- CQ07: the slider timelines' time and mix at a sample time pose as spine-core does --
+  {
+    const probes: string[] = [];
+    const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', rotation: 20, x: 5 }, ...amplify('p')];
+    const slots: Obj[] = [{ name: 's', bone: 'p', attachment: 'r', color: '80808080' }];
+    const constraints: Obj[] = [{ type: 'slider', name: 'free', animation: 'x', time: 0.25, mix: 0.8 }, { type: 'slider', name: 'dial', animation: 'x', bone: 'p', property: 'x', local: true, scale: 0.1, additive: true }];
+    const x: SliderAnim = { bones: { p: { rotate: [{ time: 0, value: 0 }, { time: 2, value: 180, curve: 'stepped' }, { time: 2.5, value: 190 }], translatey: [{ time: 0.5, value: 10 }, { time: 1.5, value: -10 }] } }, slots: { s: { rgba: [{ time: 0, color: 'ff000000' }, { time: 2, color: '00ff00ff' }] } } };
+    const keys: Keyed = {
+      free: { time: [{ time: 0.3, value: 0.1, curve: [0.5, 1.9, 0.8, 0.4] }, { time: 1.1, value: 2.2, curve: 'stepped' }, { time: 1.6 }], mix: [{ time: 0.2, value: 0.3 }, { time: 1.4, curve: [1.5, -0.3, 1.7, 1.2] }, { time: 1.9, value: 0.55555 }] },
+      dial: { time: [{ time: 0, value: 2 }], mix: [{ time: 0.7, value: 0.25 }, { time: 1.3 }] },
+    };
+    const span: Keyed = { root: { rotate: [{ time: 0, value: 0 }, { time: 2.2, value: 0 }] } };
+    const pair = sliderPair(bones, slots, constraints, { x, a: { bones: span, slider: keys } });
+    cqModels.push(pair.model);
+    const dense = sliderCompare(pair, DENSE);
+    if (!dense.identical || posedSkips(dense).length > 0) probes.push(`at 200 dense samples: ${posedSkips(dense).join('; ') || dense.first}`);
+    const unkeyed = compareDumps(sliderSpine(pair, DENSE), coreDump(readModel(sliderPair(bones, slots, constraints, { x, a: { bones: span } }).model, 'the unkeyed probe'), DENSE), { xy: 0, m: 0 });
+    if (unkeyed.identical) probes.push('the probe\'s pose did not depend on its slider timelines, so it held nothing about them');
+    const ok = probes.length === 0;
+    say(
+      'CQ07_THE_SLIDER_TIMELINES_TIME_AND_MIX_AT_A_SAMPLE_TIME_POSE_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `a bone-less slider's time and mix and a dial slider's mix keyed through Bézier, stepped and linear segments, keys omitting value (1), samples before each first key (the slider's own values), and a time key on a dial slider (not read) — exact at tolerance 0 at 200 dense samples (${dense.boneSamples} bone-samples, bones and slots); the same skeleton without its slider keys poses otherwise`),
+      'issue #938: a slider timeline keys time and mix, one channel each, read with construct 4\'s key search and curves (src/core/animation.ts); a dial slider takes its time from its dial, so its time key is data the runtime does not read',
+    );
+  }
+
+  // --- CQ08: a skin-required slider and one on an inactive dial are not applied, and what this cut does not pose is left out by name --
+  {
+    const probes: string[] = [];
+    const keyed: Keyed = { p: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 90 }] } };
+    const angleOf = (pair: { spine: string }): number => {
+      const p = sliderSpine(pair, ONE_SAMPLE).setup.bones.find((b) => b[0] === 'p') as BoneRow;
+      return Math.round((Math.atan2(p[5] as number, p[3] as number) * 180) / Math.PI * 1e4) / 1e4;
+    };
+    const cases: Array<[string, Obj[], Obj, number]> = [
+      ['applied', [], { time: 0.5 }, 65],
+      ['skin-required, listed by no skin', [], { time: 0.5, skin: true }, 20],
+      ['on a skin-required dial no skin names', [{ name: 'dd', parent: 'root', x: 50, skin: true }], { bone: 'dd', property: 'x', local: true, scale: 0.01 }, 20],
+    ];
+    for (const [label, extra, slider, angle] of cases) {
+      const pair = sliderPair([{ name: 'root' }, { name: 'p', parent: 'root', rotation: 20 }, ...extra], [], [{ type: 'slider', name: 'sl', animation: 's', ...slider }], { s: { bones: keyed } });
+      cqModels.push(pair.model);
+      const got = angleOf(pair);
+      if (got !== angle) probes.push(`${label}: spine-core posed ${got}°, not ${angle}°`);
+      const c = sliderCompare(pair, ONE_SAMPLE);
+      if (!c.identical || posedSkips(c).length > 0) probes.push(`${label}: the core ${posedSkips(c).join('; ') || c.first}`);
+    }
+    // A slider whose animation keys a later constraint's timeline: the bones are left out, naming it.
+    const ikKeyed = sliderPair([{ name: 'root' }, { name: 'p', parent: 'root', length: 10 }, { name: 't', parent: 'root', x: 5, y: 5 }], [], [{ type: 'slider', name: 'sl', animation: 's', time: 0.5 }, { type: 'ik', name: 'k', bones: ['p'], target: 't' }], { s: { ik: { k: [{ time: 0, mix: 0.5 }] } } });
+    const ikWhy = coreDump(readModel(ikKeyed.model), ONE_SAMPLE).absent?.find((a) => a[0] === 'setup.bones')?.[1] ?? '';
+    if (!ikWhy.includes('slider "sl" applies animation "s", which keys ik constraint timelines')) probes.push(`a slider keying an ik timeline: setup.bones ${ikWhy === '' ? 'posed' : `absent as "${ikWhy}"`}`);
+    // A slider whose animation keys a deform moves a mesh at setup (measured on spine-core), so the core leaves the setup attachments out, naming it.
+    const meshAt = (slider: boolean): string => JSON.stringify(dumpSkeleton(loadOracleData(JSON.stringify({
+      skeleton: { spine: '4.3.13' }, bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root', attachment: 'm' }],
+      skins: [{ name: 'default', attachments: { s: { m: { type: 'mesh', uvs: [0, 0, 1, 0, 1, 1, 0, 1], triangles: [0, 1, 2, 2, 3, 0], vertices: [0, 0, 4, 0, 4, 4, 0, 4], hull: 4, width: 4, height: 4 } } } }],
+      ...(slider ? { constraints: [{ type: 'slider', name: 'sl', animation: 'd', time: 0.5 }] } : {}),
+      animations: { d: { attachments: { default: { s: { m: { deform: [{ time: 0, vertices: [1, 2] }, { time: 1, vertices: [3, 4] }] } } } } } },
+    }), atlasOf(['m']), 'the deform probe'), ONE_SAMPLE).setup.attachments[0][3]);
+    const [bare, deformed] = [meshAt(false), meshAt(true)];
+    if (bare !== '[0,0,4,0,4,4,0,4]' || deformed !== '[2,3,4,0,4,4,0,4]') probes.push(`spine-core's mesh read ${bare} without the slider and ${deformed} with it, not the measurement`);
+    const deformKeyed = sliderPair([{ name: 'root' }], [{ name: 's', bone: 'root', attachment: 'q' }], [{ type: 'slider', name: 'sl', animation: 's', time: 0.5 }], { s: { deform: { s: [{ time: 0, offset: 0, vertices: [1, 2] }] } } });
+    const core = coreDump(readModel(deformKeyed.model), ONE_SAMPLE);
+    const deformWhy = core.absent?.find((a) => a[0] === 'setup.attachments')?.[1] ?? '';
+    if (core.setup.attachments !== null || !deformWhy.includes('slider "sl" applies animation "s", which keys deform or sequence timelines')) probes.push(`a slider keying a deform: setup.attachments ${core.setup.attachments === null ? `absent as "${deformWhy}"` : 'posed'}`);
+    if (core.setup.bones === null || core.setup.slots === null || core.setup.clips === null) probes.push('a slider keying a deform left more than the attachments out');
+    const ok = probes.length === 0;
+    say(
+      'CQ08_A_SKIN_REQUIRED_SLIDER_AND_ONE_ON_AN_INACTIVE_DIAL_ARE_NOT_APPLIED_AND_WHAT_IS_NOT_POSED_IS_LEFT_OUT_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `a slider applied (65°), skin-required and listed by no skin (20°, not applied) and on a skin-required dial no skin names (20°), read off spine-core and posed exactly by the core; a slider keying an ik timeline leaves the bones out naming it; a slider's deform moved spine-core's setup mesh from ${bare} to ${deformed}, and the core leaves setup.attachments out naming the slider and poses the rest`),
+      'issue #938: the constraint skin rule and the inactive-bone rule of the first cut hold for a slider; a slider writing a later constraint\'s pose (issue #665\'s case) and one whose animation deforms a mesh are constructs this cut does not pose, so they are absent by name, never a pass',
+    );
+  }
+
+  // --- CQ09: every row declaring a physics or slider constraint poses every block as spine-core does, or leaves one out by name --
+  {
+    const probes: string[] = [];
+    let judged = 0;
+    let denseSamples = 0;
+    const kinds = new Set<string>();
+    const leftOut: string[] = [];
+    for (const b of built) {
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      const row = rows.find((r) => r.name === b.name);
+      if (!existsSync(path) || row === undefined || row.blocks === null) continue;
+      const model = readModel(readFileSync(path, 'utf8'), path);
+      if (!model.constraints.some((c) => c.kind === 'physics' || c.kind === 'slider') || !model.constraints.every((c) => ADMITTED_CONSTRAINT_KINDS.includes(c.kind))) continue;
+      judged++;
+      for (const c of model.constraints) kinds.add(c.kind);
+      for (const block of ['setup.bones', 'setup.slots', 'setup.attachments', 'setup.clips', 'animations.bones', 'animations.slots'] as const) {
+        const v = row.blocks[block];
+        if (v.verdict === 'IDENTICAL') continue;
+        if (v.verdict === 'SKIP' && block === 'setup.attachments' && (v.why ?? '').includes('which keys deform or sequence timelines')) {
+          leftOut.push(`${b.name} ${block}`);
+          continue;
+        }
+        probes.push(`${b.name}: ${block} ${v.verdict} — ${v.why}`);
+      }
+      const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), DENSE);
+      const c = compareDumps(spine, coreDump(model, DENSE), { xy: 0, m: 0 });
+      if (!c.identical) probes.push(`${b.name} at 200 dense samples: ${c.first}`);
+      denseSamples += c.boneSamples;
+    }
+    if (!kinds.has('physics') || !kinds.has('slider')) probes.push(`the rows judged declare ${[...kinds].join(', ') || 'nothing'}, so the corpus held ${kinds.has('physics') ? 'no slider' : 'no physics constraint'}${examplesHole === null ? '' : ` (${examplesHole})`}`);
+    const kindLines = constraintKindLines(rows, new Map(built.map((b) => [b.name, existsSync(join(b.out, MODEL_DOCUMENT_FILE)) ? readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.map((x) => x.kind) : []])));
+    for (const line of kindLines.filter((l) => /KIND {2}(physics|slider):/.test(l))) if (!/ 0 SKIP$/.test(line)) probes.push(`a kind line still names a SKIP: ${line.trim()}`);
+    const ok = probes.length === 0;
+    say(
+      'CQ09_EVERY_ROW_DECLARING_A_PHYSICS_OR_SLIDER_CONSTRAINT_POSES_EVERY_BLOCK_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${judged} row(s) declaring a physics or slider constraint IDENTICAL on every posed block${leftOut.length > 0 ? ` but ${leftOut.join(', ')}, left out naming a slider's deform` : ''}, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); the physics and slider kind lines name no SKIP`),
+      'issue #938, construct 5\'s third cut admitted: the physics constraint under Physics.none and the slider, on the rows that declare them; a slider\'s deform at setup is a construct not admitted (deform timelines, #380 §5 item 4), so that one block stays absent by name rather than posed by the coincidence of a dial resting on a zero key',
+    );
+  }
+
+  // --- CQ10: a slider dropped, its mix scaled, its additive flipped and a physics constraint applied, each in a copy, turn exactly the rows using them red --
+  {
+    const probes: string[] = [];
+    const targets = built.filter((b) => {
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      if (!existsSync(path)) return false;
+      const m = readModel(readFileSync(path, 'utf8'), path);
+      return m.constraints.some((c) => c.kind === 'physics' || c.kind === 'slider') && m.constraints.every((c) => ADMITTED_CONSTRAINT_KINDS.includes(c.kind));
+    });
+    const declares = (b: BuiltRow, kind: string): boolean => readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.some((c) => c.kind === kind);
+    const PLANTS: Array<[string, ConstraintPlant, string]> = [
+      ['every slider dropped', (rs) => rs.filter((r) => r.kind !== 'slider'), 'slider'],
+      ['every slider mix × 0.9', (rs) => rs.map((r) => (r.kind === 'slider' ? { ...r, mix: r.mix * 0.9 } : r)), 'slider'],
+      ['every slider additive flipped', (rs) => rs.map((r) => (r.kind === 'slider' ? { ...r, additive: !r.additive } : r)), 'slider'],
+      [
+        'every physics constraint applied as a 1° local turn of its bone',
+        (rs) => rs.map((r): CoreConstraintRecord => (r.kind === 'physics'
+          ? { kind: 'transform', name: r.name, bones: [r.bone], source: r.bone, properties: [{ property: 'rotate', offset: 0, to: [{ property: 'rotate', offset: 1, scale: 0, max: 1 }] }], localSource: true, localTarget: true, additive: true, clamp: false, offsets: { rotate: 0, x: 0, y: 0, scaleX: 0, scaleY: 0, shearY: 0 }, mixes: { rotate: 1, x: 0, y: 0, scaleX: 0, scaleY: 0, shearY: 0 }, skin: false }
+          : r)),
+        'physics',
+      ],
+    ];
+    const lines: string[] = [];
+    for (const [label, plant, kind] of PLANTS) {
+      const planted = gateBuilt(targets, { constraints: plant });
+      const red = planted.filter((r) => r.blocks !== null && (['setup.bones', 'setup.slots', 'animations.bones', 'animations.slots'] as const).some((bl) => r.blocks?.[bl].verdict === 'DIFF')).map((r) => r.name);
+      const using = targets.filter((b) => declares(b, kind)).map((b) => b.name);
+      if (red.length === 0) probes.push(`${label}: no row went red`);
+      if (JSON.stringify([...red].sort()) !== JSON.stringify([...using].sort())) probes.push(`${label}: red on [${red.join(', ')}], the rows declaring a ${kind} constraint are [${using.join(', ')}]`);
+      lines.push(`${label} ${red.length} of ${targets.length} red (${using.length} declaring it)`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CQ10_A_SLIDER_DROPPED_OR_MISREAD_AND_A_PHYSICS_CONSTRAINT_APPLIED_IN_A_COPY_EACH_TURN_EXACTLY_THE_ROWS_USING_THEM_RED',
+      ok,
+      probeDetail(ok, probes, `over the ${targets.length} rows declaring a physics or slider constraint: ${lines.join('; ')}`),
+      'issue #380 §5: a construct is admitted when its planted difference turns the gate red on the rows using it; "applies nothing" is planted by making the physics constraint apply something, and the rows declaring one must be exactly the rows that go red',
+    );
+  }
+
+  // --- CQ11: every physics and slider field no compared row reaches is a HOLE by name, a probe reaches it, and the stepped phase is a HOLE --
+  {
+    const probes: string[] = [];
+    const lines = constraintReachLines(rows);
+    const holes = lines.filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  constraints '.length).split(':')[0]).filter((h) => h.startsWith('physics') || h.startsWith('slider'));
+    const reached = Object.fromEntries(CONSTRAINT_CENSUS_FIELDS.map((f) => [f, 0])) as Record<ConstraintCensusField, number>;
+    for (const text of cqModels) {
+      const c = constraintCensusOf(text);
+      for (const f of CONSTRAINT_CENSUS_FIELDS) reached[f] += c[f];
+    }
+    const unreached = holes.filter((h) => h !== 'physics.stepped' && reached[h as ConstraintCensusField] === 0);
+    if (unreached.length > 0) probes.push(`HOLE(s) no CQ probe reaches: ${unreached.join(', ')}`);
+    if (!holes.includes('physics.stepped')) probes.push('the stepped phase of a physics constraint was not named a HOLE');
+    const ours = CONSTRAINT_CENSUS_FIELDS.filter((f) => f.startsWith('physics') || f.startsWith('slider'));
+    const ok = probes.length === 0;
+    say(
+      'CQ11_EVERY_PHYSICS_AND_SLIDER_FIELD_NO_COMPARED_ROW_REACHES_IS_A_HOLE_BY_NAME_A_PROBE_REACHES_IT_AND_THE_STEPPED_PHASE_IS_A_HOLE',
+      ok,
+      probeDetail(ok, probes, `${holes.length} HOLE(s) over the compared rows — ${holes.join(', ')} — each but the stepped phase reached by the CQ01–CQ08 probes at tolerance 0; the probes' census: ${ours.map((f) => `${f} ${reached[f]}`).join(', ')}`),
+      'issue #380 §4: a construct no row uses is a HOLE, never a pass; the stepped physics phase is the one this cut names and does not cover — its own card',
+    );
+  }
+
+  // --- CQ12: the physics and slider census counts a hand-made document as computed by hand --
+  {
+    const probes: string[] = [];
+    const pair = sliderPair([{ name: 'root' }, { name: 'd', parent: 'root' }, { name: 'p', parent: 'root' }], [{ name: 's', bone: 'p', attachment: 'q' }], [
+      { type: 'slider', name: 'world', animation: 'x', bone: 'd', property: 'rotate', additive: true, mix: 0.5 },
+      { type: 'slider', name: 'local', animation: 'y', bone: 'd', property: 'x', local: true, loop: true },
+      { type: 'slider', name: 'free', animation: 'x', time: 0.2 },
+      { type: 'physics', name: 'ph', bone: 'p', rotate: 1 },
+      { type: 'physics', name: 'ph2', bone: 'd', x: 1 },
+    ], { x: { bones: { p: { rotate: [{ time: 0, value: 1 }] } }, slots: { s: { rgba: [{ time: 0, color: 'ffffffff' }] } } }, y: { bones: { p: { rotate: [{ time: 0, value: 2 }] } } }, a: { slider: { free: { time: [{ time: 0, value: 0.1 }], mix: [{ time: 0, value: 1 }] } }, physics: { ph: { mix: [{ time: 0, value: 1 }], wind: [{ time: 0, value: 1 }] } } } });
+    const c = constraintCensusOf(pair.model);
+    // By hand: three sliders — one on a world dial (additive, mix 0.5), one on a local dial (loop), one bone-less; two apply "x", which keys a bone and a slot, one "y", a bone;
+    // two physics constraints and two physics timelines; two slider timelines.
+    const expected: Partial<Record<ConstraintCensusField, number>> = {
+      physics: 2, 'physics.timeline': 2, slider: 3, 'slider.boneLocal': 1, 'slider.boneWorld': 1, 'slider.boneless': 1, 'slider.additive': 1, 'slider.mixPartial': 1, 'slider.loop': 1, 'slider.keysBone': 3, 'slider.keysSlot': 2, 'slider.timeline': 2, later: 0, ik: 0, transform: 0,
+    };
+    for (const [f, n] of Object.entries(expected)) if (c[f as ConstraintCensusField] !== n) probes.push(`${f}: counted ${c[f as ConstraintCensusField]}, by hand ${n}`);
+    const anim = animationCensusOf(pair.model);
+    if (anim.laterTimelines !== 0) probes.push(`the animations' census counts ${anim.laterTimelines} later timeline(s); the physics and slider timelines are judged`);
+    const ok = probes.length === 0;
+    say(
+      'CQ12_THE_PHYSICS_AND_SLIDER_CENSUS_COUNTS_A_HAND_MADE_DOCUMENT_AS_COMPUTED_BY_HAND',
+      ok,
+      probeDetail(ok, probes, `${Object.keys(expected).length} census fields of a five-constraint document counted as by hand, and its physics and slider timelines no longer counted as later timelines`),
+      'issue #938: a census that miscounts turns a HOLE into a REACH in silence — held on a document whose every count is computed by hand',
+    );
+  }
 
   rmSync(work, { recursive: true, force: true });
   return bad;

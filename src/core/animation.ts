@@ -142,19 +142,20 @@
  *
  * The oracle's sample carries `drawOrder`, `attachments`, `clips` and
  * `events` too: those are constructs not yet admitted, and the core leaves
- * each out naming it. The ik and transform constraints are applied after the
- * timelines, posed by their own timelines at `t` (issue #938,
- * `./constraints.ts`); a document declaring a path, physics or slider
- * constraint has no animation bones from the core, for the reason its setup
- * bones are absent; a slider
- * whose animation keys a slot, or a placeholder skins fill differently, leaves
- * the animation slots out as they leave the setup slots out. A deform,
+ * each out naming it. The constraints are applied after the timelines, posed
+ * by their own timelines at `t` (issue #938, `./constraints.ts`), and each
+ * slider's slot timelines after the sample's own (`./constraints_slider.ts`);
+ * a document declaring a path constraint has no animation bones from the
+ * core, for the reason its setup bones are absent; a slider whose animation
+ * keys a slot on such a document, or a placeholder skins fill differently,
+ * leaves the animation slots out as they leave the setup slots out. A deform,
  * sequence, draw-order or event timeline poses no bone and no slot row, so an
  * animation carrying one is still posed here.
  */
 import type { ModelBone, ModelSlot } from '../model.ts';
 import { worldTransforms } from './world.ts';
 import { applyConstraints, constraintsAbsentWhy, posedRecords, type CoreConstraintTimelines } from './constraints.ts';
+import { applySliderSlots, type SliderApplication } from './constraints_slider.ts';
 import {
   activeBones,
   constraintRecords,
@@ -638,7 +639,7 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
  * that leave them out: a slot showing a placeholder several skins fill
  * differently (the setup slots' ⚠️, `shownAttachment`).
  */
-export function posedSlots(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}): { rows: CoreSlotRow[]; conflicts: string[] } {
+export function posedSlots(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}, sliders: readonly SliderApplication[] = []): { rows: CoreSlotRow[]; conflicts: string[] } {
   const resolve = plant.shown ?? shownAttachment;
   const colour = plant.colour ?? readColour;
   const blend = plant.blend ?? readBlend;
@@ -665,6 +666,10 @@ export function posedSlots(doc: CompiledDocument, timelines: CoreAnimationTimeli
         else if (dark !== null && setupDark !== null) dark[at - 4] = v === null ? setupDark[at - 4] : clamp01(v[i]);
       });
     }
+    // The sliders, after the animation, in constraint order (`./constraints_slider.ts`).
+    const pose = { placeholder, light, dark };
+    applySliderSlots(slot.name, pose, sliders);
+    placeholder = pose.placeholder;
     const shown = placeholder === null ? null : resolve(doc, { ...slot, setup: placeholder });
     if (shown !== null && 'conflict' in shown) {
       conflicts.push(`slot "${slot.name}" shows placeholder "${placeholder}", filled by skins ${shown.conflict.map((c) => `"${c.skin}" (shows ${JSON.stringify(c.shown)})`).join(', ')}`);
@@ -691,13 +696,13 @@ export function posedSlots(doc: CompiledDocument, timelines: CoreAnimationTimeli
  * (`./constraints.ts`, construct 5's first cut); without, the hierarchy and
  * the timelines alone.
  */
-export function posedBoneRows(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}, constraints?: CoreConstraintTimelines): CoreBoneRow[] {
+export function posedBoneRows(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}, constraints?: CoreConstraintTimelines, sliders?: SliderApplication[]): CoreBoneRow[] {
   const active = activeBones(doc);
   const bones = posedBones(doc, timelines, t, plant);
   let world = (plant.evaluate ?? worldTransforms)(bones, active);
   if (constraints !== undefined) {
     const records = posedRecords(constraintRecords(doc), constraints, t);
-    world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records);
+    world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records, sliders);
   }
   return bones.map((b): CoreBoneRow => {
     const w = world.get(b.name);
@@ -742,14 +747,14 @@ export interface CoreAnimationPose {
 }
 
 
-/** Why the animation slots are left out because a slider poses them, or null. */
+/** Why the animation slots are left out because a slider poses them and the bones are absent, or null. */
 function slidersWhy(doc: CompiledDocument): string | null {
   const keyed = doc.constraints.flatMap((c) => {
     if (c.kind !== 'slider') return [];
     const slots = doc.animations.find((a) => a.name === c.animation)?.slots ?? [];
     return slots.length === 0 ? [] : [`slider "${c.name}" applies animation "${c.animation}", which keys slot(s) ${slots.map((x) => `"${x}"`).join(', ')}`];
   });
-  return keyed.length === 0 ? null : `${keyed.join('; ')} — the oracle applies sliders after every animation, and a slider poses the slots its animation keys; constraints are not admitted (item 5)`;
+  return keyed.length === 0 ? null : `${keyed.join('; ')} — the oracle applies sliders after every animation, and a slider poses the slots its animation keys at a time read off the bones, which are absent`;
 }
 
 /**
@@ -767,14 +772,15 @@ export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: num
     const samples: CoreSample[] = [];
     for (let i = 0; i < n; i++) {
       const t = sampleTime(phase, d, i, n);
-      const bones = bonesReason === null ? posedBoneRows(doc, anim.timelines, t, plant, anim.constraints) : null;
-      const slots = posedSlots(doc, anim.timelines, t, plant);
+      const sliders: SliderApplication[] = [];
+      const bones = bonesReason === null ? posedBoneRows(doc, anim.timelines, t, plant, anim.constraints, sliders) : null;
+      const slots = posedSlots(doc, anim.timelines, t, plant, sliders);
       for (const c of slots.conflicts) if (!slotConflicts.includes(`${c} at animation "${anim.name}"`)) slotConflicts.push(`${c} at animation "${anim.name}"`);
       samples.push({ t: gridRound(t), bones, slots: slots.rows });
     }
     return { name: anim.name, duration: gridRound(d), samples };
   });
-  const slotsReason = slidersWhy(doc) ?? (slotConflicts.length === 0
+  const slotsReason = (bonesReason === null ? null : slidersWhy(doc)) ?? (slotConflicts.length === 0
     ? null
     : `${slotConflicts.slice(0, 5).join('; ')}${slotConflicts.length > 5 ? `; and ${slotConflicts.length - 5} more` : ''} — under --skin all the LAST of them in the Spine file's skin order wins, and that order is the emitter's, not the model's`);
   if (slotsReason !== null) for (const a of animations) for (const s of a.samples) s.slots = null;

@@ -2,9 +2,12 @@
  * Construct 5 of the core, first cut (issue #938, step 2e-i of issue #380):
  * the update order, and the two constraint kinds that move bones only by
  * what the bones and their target say — `ik` and `transform` — at the setup
- * pose and at a sample time, with their timelines. `path`, `physics` and
- * `slider` are later cuts: a document declaring one still has no bones from
- * the core, and the reason names the kinds (`constraintsAbsentWhy`).
+ * pose and at a sample time, with their timelines. The third cut (2e-iii)
+ * adds `physics` under `Physics.none` (`./constraints_physics.ts`: it applies
+ * nothing) and `slider` (`./constraints_slider.ts`), each one more step of
+ * the update loop below; `path` is the second cut's, and until it lands a
+ * document declaring one has no bones from the core, the reason naming the
+ * kind (`constraintsAbsentWhy`).
  *
  * Every rule below was measured by posing hand-written skeletons through
  * `tools/pose_oracle.ts dump` (spine-core 4.3.13, `--skin all`,
@@ -257,12 +260,14 @@ import type { ModelBone } from '../model.ts';
 import { modeMatrix, RUNTIME_PI, worldTransforms, type CoreInheritMode, type CoreWorld } from './world.ts';
 import { channelAt, keyIndexAt, type CoreCurve, type CoreKey } from './animation.ts';
 import type { CompiledDocument, CoreConstraintKind } from './index.ts';
+import { physicsTimelineCount, type CorePhysicsRecord } from './constraints_physics.ts';
+import { applySlider, posedSlider, readSliderTimelines, sliderBonesWhy, type CoreSliderRecord, type CoreSliderTimeline, type SliderApplication } from './constraints_slider.ts';
 
 const DEG = 180 / RUNTIME_PI;
 const RAD = RUNTIME_PI / 180;
 
 /** The kinds this cut poses. */
-export const ADMITTED_CONSTRAINT_KINDS: readonly CoreConstraintKind[] = ['ik', 'transform'];
+export const ADMITTED_CONSTRAINT_KINDS: readonly CoreConstraintKind[] = ['ik', 'transform', 'physics', 'slider'];
 
 /** A transform constraint's six properties, in the order its timeline's channels run. */
 export const TRANSFORM_PROPERTIES = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'] as const;
@@ -329,7 +334,7 @@ export interface CoreTransformRecord {
   skin: boolean;
 }
 
-export type CoreConstraintRecord = CoreIkRecord | CoreTransformRecord;
+export type CoreConstraintRecord = CoreIkRecord | CoreTransformRecord | CorePhysicsRecord | CoreSliderRecord;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -494,6 +499,10 @@ export interface CoreIkKey extends CoreKey {
 export interface CoreConstraintTimelines {
   ik: Array<{ name: string; keys: CoreIkKey[] }>;
   transform: Array<{ name: string; keys: CoreKey[] }>;
+  /** How many physics timelines the animation holds — they pose nothing under `Physics.none` (`./constraints_physics.ts`). */
+  physics: number;
+  /** The slider timelines (`./constraints_slider.ts`). */
+  slider: CoreSliderTimeline[];
 }
 
 /** The ik key's curve channels, and the transform key's, in the order a curve indexes them. */
@@ -519,12 +528,16 @@ function keyCurve(raw: Record<string, unknown>, channels: number, last: boolean,
  * The ik and transform timelines of one animation record's `constraints`,
  * read: each names a declared constraint of its kind, its keys strictly
  * increase in time, each key carries only the fields the parser reads for
- * its kind. Path, physics and slider timelines are later cuts and read by
- * their key times only (`./animation.ts`).
+ * its kind; the physics timelines are counted (they pose nothing under
+ * `Physics.none`) and the slider timelines read by `./constraints_slider.ts`.
+ * Path timelines are a later cut and read by their key times only
+ * (`./animation.ts`).
  */
 export function readConstraintTimelines(value: unknown, label: string, declared: ReadonlyArray<{ kind: CoreConstraintKind; name: string }>, problems: string[]): CoreConstraintTimelines {
-  const out: CoreConstraintTimelines = { ik: [], transform: [] };
+  const out: CoreConstraintTimelines = { ik: [], transform: [], physics: 0, slider: [] };
   if (!isRecord(value)) return out;
+  out.physics = physicsTimelineCount(value.physics);
+  out.slider = readSliderTimelines(value.slider, label, declared, problems);
   for (const kind of ['ik', 'transform'] as const) {
     const list = value[kind];
     if (!Array.isArray(list)) continue;
@@ -589,7 +602,8 @@ export function posedRecords(records: readonly CoreConstraintRecord[], timelines
   const search = plant.search ?? keyIndexAt;
   const channel = plant.channel ?? channelAt;
   return records.map((r): CoreConstraintRecord => {
-    if (timelines === null) return r;
+    if (timelines === null || r.kind === 'physics') return r;
+    if (r.kind === 'slider') return posedSlider(r, timelines.slider, t, plant);
     if (r.kind === 'ik') {
       const tl = timelines.ik.find((x) => x.name === r.name);
       if (tl === undefined) return r;
@@ -907,8 +921,8 @@ function solveTwo(state: SolverState, c: CoreIkRecord): string[] {
   return [parent.name];
 }
 
-/** The source's value of `property` (the header's *transform*). */
-function sourceValue(state: SolverState, c: CoreTransformRecord, property: TransformProperty): number {
+/** The source's value of `property` (the header's *transform*); a slider reads its dial through it with no offset. */
+export function sourceValue(state: SolverState, c: Pick<CoreTransformRecord, 'source' | 'localSource' | 'offsets'>, property: TransformProperty): number {
   const s = bone(state, c.source);
   const o = c.offsets;
   if (c.localSource) {
@@ -1026,7 +1040,7 @@ function solveTransform(state: SolverState, c: CoreTransformRecord): { changed: 
 /** Why a constraint is not applied under `--skin all` (the header's measured rule), or null when it is. */
 function inactiveWhy(state: SolverState, c: CoreConstraintRecord): string | null {
   if (c.skin) return 'skin';
-  const named = [...c.bones, c.kind === 'ik' ? c.target : c.source];
+  const named = c.kind === 'ik' ? [...c.bones, c.target] : c.kind === 'transform' ? [...c.bones, c.source] : c.kind === 'slider' ? (c.bone === null ? [] : [c.bone]) : [c.bone];
   return named.every((n) => state.active.has(n)) ? null : 'inactive bone';
 }
 
@@ -1039,13 +1053,16 @@ export type ConstraintPlant = (records: CoreConstraintRecord[]) => CoreConstrain
  * `worldTransforms` posed them — the header's update order — and the world
  * transforms returned.
  */
-export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap<string, CoreWorld>, active: ReadonlySet<string>, records: readonly CoreConstraintRecord[]): Map<string, CoreWorld> {
+export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap<string, CoreWorld>, active: ReadonlySet<string>, records: readonly CoreConstraintRecord[], applied?: SliderApplication[]): Map<string, CoreWorld> {
   const state: SolverState = { bones: bones.map((b) => ({ ...b })), index: new Map(bones.map((b, i) => [b.name, i])), world: new Map(world), active };
   for (const c of records) {
-    if (inactiveWhy(state, c) !== null) continue;
+    // Under Physics.none a physics constraint applies nothing (`./constraints_physics.ts`).
+    if (c.kind === 'physics' || inactiveWhy(state, c) !== null) continue;
     let changed: string[];
     let inWorld: string[] = [];
-    if (c.kind === 'ik') {
+    if (c.kind === 'slider') {
+      changed = applySlider(state, c, applied);
+    } else if (c.kind === 'ik') {
       if (c.mix === 0) continue;
       changed = c.bones.length === 1 ? solveOne(state, c) : solveTwo(state, c);
     } else {
@@ -1068,13 +1085,14 @@ export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap
 
 /**
  * Why a document's bones cannot be posed by this cut, or null when they can:
- * it declares a constraint of a kind not admitted (path, physics, slider),
- * named with the counts of every kind it declares.
+ * it declares a constraint of a kind not admitted (`ADMITTED_CONSTRAINT_KINDS`),
+ * named with the counts of every kind it declares, or a slider whose
+ * animation keys a constraint timeline (`sliderBonesWhy`).
  */
 export function constraintsAbsentWhy(doc: CompiledDocument): string | null {
   const later = doc.constraints.filter((c) => !ADMITTED_CONSTRAINT_KINDS.includes(c.kind));
-  if (later.length === 0) return null;
+  if (later.length === 0) return sliderBonesWhy(doc);
   const kinds = [...new Set(doc.constraints.map((c) => c.kind))];
   const laterKinds = [...new Set(later.map((c) => c.kind))];
-  return `the document declares ${kinds.map((k) => `${k} ×${doc.constraints.filter((c) => c.kind === k).length}`).join(', ')}, and ${laterKinds.join(', ')} constraints are not admitted (item 5, cuts 2e-ii and 2e-iii; ik and transform are): the oracle applies them`;
+  return `the document declares ${kinds.map((k) => `${k} ×${doc.constraints.filter((c) => c.kind === k).length}`).join(', ')}, and ${laterKinds.join(', ')} constraints are not admitted (item 5, cut 2e-ii; ik, transform, physics and slider are): the oracle applies them`;
 }
