@@ -817,6 +817,16 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  * values, and how a reader reads the rest, is the header's 🔸. A number JSON cannot carry
  * exactly — `-0`, `NaN`, an infinity — is refused by its path (`plain`).
  *
+ * ⚠️ **One carried report is the exception, and it is not machine-independent**
+ * (issue #942). `meshes[].depth.ceiling` holds the fold angles `turnCeiling`
+ * (`src/depth.ts`) computes with `Math.atan` as full doubles, and no Spine file
+ * holds them: one ulp of the platform's `atan` changes their spelling. That is
+ * the whole of the macOS/Linux difference in `gallery/look`'s document, measured
+ * by reconstruction to the Linux file's hash. Over the nineteen recipes a
+ * one-ulp perturbation of `atan2`, `cos`, `sin`, `hypot`, `log` and `log2`
+ * moved no output byte; perturbing `atan` or `pow` moved this report only
+ * (`pow` reaches it through the depth tone, `Math.pow(level, gamma)`).
+ *
  * **Left out, and why.** Each is something the model holds that is not a
  * statement about the rig:
  *

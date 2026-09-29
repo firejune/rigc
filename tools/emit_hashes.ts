@@ -145,10 +145,13 @@
  * 36548303780) on exactly one row and one file: `gallery/look`'s
  * `skeleton.model.json`, 394523 bytes `6e0960b0a4c2` in the file against 394529
  * bytes `e15d81552ae1` on CI, while `skeleton.json` and `skeleton.atlas` were
- * identical on all seven rows. A value the Spine file's float32 spelling
- * absorbs survives into the document's six-decimal fields; why is a card of
- * its own. So the gates reading this base hold the bytes a consumer loads, on
- * every machine, and a fuller document named by `RIGC_EMIT_HASHES_BASE` still
+ * identical on all seven rows. The field #942 found is not a six-decimal one:
+ * it is a carried report, `meshes[].depth.ceiling.*.degrees`/`p1`, spelled as a
+ * full double from `Math.atan`, whose macOS result sits 0.512 ulp below the
+ * correctly rounded value Linux returns; every r6 field of the 19 recipes moved
+ * by no byte under a ±1 ulp perturbation of every libm function. So the base
+ * holds the Spine files only on every machine, and a fuller document named by
+ * `RIGC_EMIT_HASHES_BASE` still
  * holds every file, the model document included. `MD07` reads this base in its
  * original sense: every row differs from it by exactly the added document.
  *

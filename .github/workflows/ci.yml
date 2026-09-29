@@ -60,6 +60,33 @@ jobs:
       - run: bun run lint
       - run: bun run selftest
 
+      # The gallery's model documents as THIS machine writes them (issue #942).
+      # The tracked base holds the Spine files only, because `gallery/look`'s
+      # `skeleton.model.json` was measured to differ between a macOS build and
+      # this runner while `skeleton.json` and the atlas did not
+      # (tools/emit_hashes.ts, `## base`). A second machine's document can only
+      # be read here, so this uploads it: the whole `emit-hashes/1` run over the
+      # base's recipes (every row's hashes, the model documents included) and
+      # `gallery/look`'s three files. Measurement only: it gates nothing, and
+      # it runs after a red selftest too, since that is when it is most wanted.
+      - name: Build the gallery's model documents on Linux
+        if: ${{ !cancelled() }}
+        run: |
+          bun tools/emit_hashes.ts run --recipes tools/emit_hashes.base.json \
+            --out "$RUNNER_TEMP/eh/hashes.json" --work "$RUNNER_TEMP/eh/work"
+          rig=$(ls "$RUNNER_TEMP"/eh/work/*/gallery/look/rig.json)
+          mkdir -p "$RUNNER_TEMP/eh/look"
+          cp "${rig%/gallery/look/rig.json}"/out/* "$RUNNER_TEMP/eh/look/"
+      - name: Upload them as the model-documents-linux artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-documents-linux
+          path: |
+            ${{ runner.temp }}/eh/hashes.json
+            ${{ runner.temp }}/eh/look/
+          if-no-files-found: error
+
   # Whether the PACKAGE runs, which no other instrument here asks (issue #556).
   #
   # ROADMAP.md's fourth condition for 1.0 is that the published package works on
