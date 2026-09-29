@@ -37,7 +37,10 @@ bun run selftest     # the validator's own negative controls
 fixtures. If you have not run `bun run fetch-examples`, the suites that read the
 corpus will report a hole rather than a result — `TY20` prints them by name, so
 the run says which — and a run where nothing substantive executed exits 2 rather
-than printing green. Fetch the corpus before trusting a green.
+than printing green. Fetch the corpus before trusting a green. While iterating
+on one suite, `bun selftest.ts --only <suite>[,<suite>…]` runs just those and
+exits 2 naming every suite it skipped — it is never a verdict, so run the whole
+`bun run selftest` before you open a pull request.
 
 There is a fourth. It is fast — the whole battery was 9.4s on the machine it was
 written on — but it is out of the list above because it is not offline: it

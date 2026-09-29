@@ -14,6 +14,9 @@
  *
  *   bun selftest.ts                      the public suite: everything below
  *   bun selftest.ts --cuts <cuts.json>   plus an extra suite over those cuts
+ *   bun selftest.ts --only <suite>[,<suite>…]
+ *                                        a PARTIAL run for iterating: only the
+ *                                        named suites; never a verdict on the tree
  *   RIGC_CUTS=<cuts.json> bun selftest.ts
  *   RIGC_EMIT_HASHES_BASE=<hashes.json> bun selftest.ts
  *                                        plus MB07: two gallery rigs hashed against
@@ -50,6 +53,25 @@
  * result to the same gate — a regression test for the owning project, run against
  * the real geometry the fixtures only stand in for. Without one, that suite says
  * it was skipped and the run still passes on the public suite alone.
+ *
+ * ## What `--only` does, and why it always exits non-zero
+ *
+ * The whole run is long, and anyone iterating on one suite needs one section.
+ * `--only core,run-tally` runs the named suites exactly as the full run does,
+ * in the full run's order. A name is the key `main` registers the suite under
+ * (`tally.of('core', …)`), not its section's title; a name that matches none is
+ * refused with every key listed. Every other suite opens its section and prints one
+ * `SKIP  <suite>: not run — --only` line, so the floor holds it like any suite
+ * that did not run. The run then ends WITHOUT the summary: its last line says
+ * it was partial and names every suite it skipped, and it exits 2 even when
+ * every named suite is green. A partial green is a true statement about the
+ * suites named and none about the tree, and the summary's shape is a statement
+ * about the tree. A named suite that fails exits 1 as it would in the full run:
+ * a red found in part is a red in the whole. `--only` naming every suite is the
+ * full run and ends like one. `run-tally` measures the run it is part of, so it
+ * is skipped with that reason unless a suite before it printed a case — name
+ * one beside it, as above. It is a development aid — the full run, with no
+ * `--only`, is the verdict, and it is what a pull request is checked by.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -568,6 +590,47 @@ function readCutTable(): { file: string; dir: string; table: CutTable } | null {
 }
 
 const CUTS = readCutTable();
+
+/**
+ * The suites `--only` names, or `null` when the flag is absent and this is the
+ * full run (issue #937).
+ *
+ * ⚠️ Every malformed spelling exits 2 here rather than being read generously: a
+ * flag with no value, an empty name between commas, a name given twice, the flag
+ * given twice. Each is a run whose caller meant something this parser would
+ * otherwise have to guess, and the guess would decide which suites a verdict
+ * covers. Whether a name is one this file registers is NOT decided here: the
+ * registry is the sequence of `tally.of` calls in `main`, and a second list of
+ * suite names kept beside it is the hand-kept table this file refuses. So an
+ * unknown name is refused once the registry has been walked (`onlyRefusal`).
+ */
+function readOnlyList(argv: readonly string[]): ReadonlySet<string> | null {
+  const at = argv.indexOf('--only');
+  if (at === -1) return null;
+  if (argv.indexOf('--only', at + 1) !== -1) {
+    console.error('selftest: --only was given twice; name every suite in one comma-separated list');
+    process.exit(2);
+  }
+  const value = argv[at + 1];
+  if (value === undefined || value.startsWith('--')) {
+    console.error('selftest: --only needs a comma-separated list of suite names, e.g. --only core,run-tally');
+    process.exit(2);
+  }
+  const refusals: string[] = [];
+  const seen = new Set<string>();
+  for (const name of value.split(',')) {
+    if (name === '') refusals.push(`--only ${value} holds an empty name between its commas`);
+    else if (seen.has(name)) refusals.push(`--only ${value} names the suite "${name}" twice`);
+    seen.add(name);
+  }
+  if (refusals.length > 0) {
+    for (const refusal of refusals) console.error(`selftest: ${refusal}`);
+    process.exit(2);
+  }
+  return seen;
+}
+
+const ONLY = readOnlyList(process.argv.slice(2));
 
 function optsForCut(dir: string, entry: CutEntry): Options {
   const opts: Options = {
@@ -80443,6 +80506,14 @@ interface SuiteReads<T> {
   ran?: (value: T) => boolean;
   /** The failure count the value carries, when the value is not itself one. */
   failures?: (value: T) => number;
+  /**
+   * The suite measures the run it is part of — `run-tally` reads the blocks and
+   * the gutter tallied before it — so a partial run in which no earlier suite
+   * printed a case gives it nothing to read (issue #937). Named alone by
+   * `--only`, it went red at `TY02` and then threw out of `TY08` with a stack
+   * trace; with this set it is skipped by name, with the reason, instead.
+   */
+  live?: boolean;
 }
 
 /**
@@ -80650,6 +80721,33 @@ class RunTally {
   private failLines = 0;
   private quietLines = 0;
   private headerLines = 0;
+  /**
+   * The suites `--only` did not name, each with the header and the one `SKIP`
+   * line it printed instead of running (issue #937). Empty on the full run.
+   *
+   * Held apart from `blocks` rather than mixed into it because suites READ
+   * `blocks` while the run is in flight — `TY08` asks the first block for its
+   * count and `TY02` asks whether any case has been recognised yet — and a
+   * skipped suite at the head of that list would answer for a suite that never
+   * ran. The floor reads both lists together (`everyBlock`), so a skipped suite
+   * is held to the same rule as a corpus suite that did not run: one section,
+   * one line saying so, no case line.
+   */
+  readonly skipped: SuiteBlock[] = [];
+  /** Every key `of` was called with, in call order: the registry `--only` is checked against. */
+  readonly registered: string[] = [];
+
+  /**
+   * `only` is the set `--only` named, or `null` for the full run — which is the
+   * default, so every tally this file builds for a miniature is a full run
+   * unless it says otherwise.
+   */
+  constructor(readonly only: ReadonlySet<string> | null = null) {}
+
+  /** The run's suites and the ones `--only` skipped, which is what the floor holds. */
+  get everyBlock(): SuiteBlock[] {
+    return [...this.blocks, ...this.skipped];
+  }
 
   /** Count one line the run printed. */
   observe(line: string): void {
@@ -80691,6 +80789,34 @@ class RunTally {
     const headers = this.headerLines;
     const fails = this.failLines;
     const named = this.named.length;
+    this.registered.push(key);
+    const blind = this.only !== null && reads.live === true && !this.blocks.some((block) => block.controls > 0);
+    if (this.only !== null && (!this.only.has(key) || blind)) {
+      // ⚠️ The suite is not called, so there is no value of its type to hand
+      // back, and the cast below says so rather than inventing one. It is sound
+      // for one reason, which `main` holds: a run with `--only` leaves through
+      // `partialVerdict` before the summary reads a single returned value, and
+      // `reads` is not consulted here either — a skipped suite did not run and
+      // failed nothing, which is written down rather than asked of a value.
+      console.log(`\n── ${key} ──`);
+      console.log(
+        this.only.has(key)
+          ? `  SKIP  ${key}: not run — it measures the run it is part of, and no suite before it printed a case; ` +
+              'name one registered earlier beside it in --only'
+          : `  SKIP  ${key}: not run — --only`,
+      );
+      this.skipped.push({
+        key,
+        ran: false,
+        controls: this.controlLines - controls,
+        quiet: this.quietLines - quiet,
+        headers: this.headerLines - headers,
+        fails: this.failLines - fails,
+        returned: 0,
+        names: this.named.slice(named),
+      });
+      return undefined as unknown as T;
+    }
     const value = suite();
     this.blocks.push({
       key,
@@ -80757,6 +80883,231 @@ class RunTally {
     }
     return counted.controls;
   }
+}
+
+// ---------------------------------------------------------------------------
+// a partial run cannot read as green (#937)
+// ---------------------------------------------------------------------------
+//
+// `--only` exists because the whole run is long and anyone iterating on one
+// suite reruns all of it to read one section. What it must not become is a
+// second way to print a verdict. A green over three suites is a true statement
+// about three suites and nothing else, and the summary's shape — `green — N
+// deliberate breaks …` — is a statement about the tree. So a partial run never
+// reaches the summary: it leaves through `partialVerdict`, whose exit is 2 when
+// every named suite is green, 1 when one of them failed (a red found in part is
+// a red in the whole, so that verdict IS the tree's), and whose last line says
+// the run was partial and names every suite it did not run.
+
+/** What a run exits with, and the lines it says on the way out. */
+interface RunVerdict {
+  code: 1 | 2;
+  lines: string[];
+}
+
+/**
+ * The refusal for `--only` names this run never registered, or `null` when
+ * there is none — the full run, or a partial one whose every name was found.
+ *
+ * Read off `registered`, the keys `of` was actually called with, so the list a
+ * refusal offers is the registry itself rather than a copy of it. The price is
+ * that the refusal comes after the named suites have run rather than before;
+ * a name that is a typo leaves the ones spelled right measured and the run red
+ * by name, which is the cheaper failure than a list that drifts from `main`.
+ */
+function onlyRefusal(tally: RunTally): RunVerdict | null {
+  if (tally.only === null) return null;
+  const unknown = [...tally.only].filter((name) => !tally.registered.includes(name));
+  if (unknown.length === 0) return null;
+  return {
+    code: 2,
+    lines: [
+      `rigc selftest: --only names ${unknown.length} suite(s) this run does not register: ` +
+        `${unknown.map((name) => `"${name}"`).join(', ')} — nothing under that name was measured`,
+      `  the suites this run registers, in the order it runs them: ${tally.registered.join(', ')}`,
+    ],
+  };
+}
+
+/**
+ * How a run with `--only` ends, or `null` when it is not partial — no flag, or
+ * a flag that named every suite, which is the full run spelled longhand and
+ * gets the full run's summary and exit code.
+ *
+ * Called after the floor, so every suite it counts has been held to it: a
+ * skipped suite opened one section and printed one `SKIP`, and a named one
+ * ran and printed its cases.
+ */
+function partialVerdict(tally: RunTally): RunVerdict | null {
+  if (tally.only === null || tally.skipped.length === 0) return null;
+  const ran = tally.blocks.map((block) => block.key);
+  const skipped = tally.skipped.map((block) => block.key);
+  const partial =
+    `rigc selftest: PARTIAL run (--only) — not a verdict on the tree. ${ran.length} suite(s) ran ` +
+    `[${ran.join(', ')}] over ${tally.total} case line(s); ${skipped.length} suite(s) were not run ` +
+    `[${skipped.join(', ')}]. Run \`bun run selftest\` without --only before a pull request.`;
+  const bad = tally.failures;
+  return bad > 0 ? { code: 1, lines: [`rigc selftest: ${bad} control(s) failed`, partial] } : { code: 2, lines: [partial] };
+}
+
+/**
+ * `--only` against a miniature run of three suites, and the live run against
+ * the full run it claims to be (issue #937).
+ *
+ * The miniature is driven through a real `RunTally` with `console.log` routed
+ * into it the way `main` routes it, for `TY15`'s reason: the skip is a thing
+ * the tally PRINTS and then counts, and a table of synthetic blocks would
+ * assert the count without the printing.
+ */
+function runPartialRunSuite(live: RunTally): number {
+  console.log('\n── a partial run cannot read as green (issue #937) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+
+  const KEYS = ['alpha', 'beta', 'gamma'];
+  const miniature = (only: ReadonlySet<string> | null, failing: string | null = null, live: string | null = null): {
+    tally: RunTally;
+    called: string[];
+    lines: string[];
+  } => {
+    const tally = new RunTally(only);
+    const called: string[] = [];
+    const lines: string[] = [];
+    const real = console.log;
+    console.log = (...args: unknown[]): void => {
+      const line = args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ');
+      lines.push(line);
+      tally.observe(line);
+    };
+    try {
+      for (const key of KEYS) {
+        tally.of(key, () => {
+          called.push(key);
+          console.log(`\n── ${key} ──`);
+          return reportCase(`PROBE_${key}`, key !== failing, 'a detail line', 'an origin line');
+        }, { live: key === live });
+      }
+    } finally {
+      console.log = real;
+    }
+    return { tally, called, lines };
+  };
+  const skipLine = (key: string): string => `  SKIP  ${key}: not run — --only`;
+  const lastLine = (verdict: RunVerdict | null): string => verdict?.lines[verdict.lines.length - 1] ?? 'no verdict';
+
+  // --- RT01: a partial run skips every suite it was not given, by name -------
+  const partial = miniature(new Set(['beta']));
+  const partialFloor = tallyFaults(partial.tally.everyBlock, partial.tally.gutter, partial.tally.total, partial.tally.parts);
+  const partialEnd = partialVerdict(partial.tally);
+  const rt01Probes = [
+    ...(partial.called.join() === 'beta' ? [] : [`the suites actually called were [${partial.called.join(', ')}], not [beta]`]),
+    ...['alpha', 'gamma']
+      .filter((key) => !partial.lines.includes(skipLine(key)))
+      .map((key) => `"${key}" printed no line "${skipLine(key).trim()}"`),
+    ...(partial.lines.some((line) => line.startsWith('  PASS  PROBE_beta')) ? [] : ['the named suite\'s case line is not in the output']),
+    ...(partialFloor.length === 0 ? [] : [`the floor faulted: ${partialFloor.join('; ')}`]),
+    ...(partialEnd?.code === 2 ? [] : [`the run would exit ${partialEnd?.code ?? 'through the full summary'}, not 2`]),
+    ...(lastLine(partialEnd).includes('PARTIAL') && lastLine(partialEnd).includes('[alpha, gamma]')
+      ? []
+      : [`the last line does not say partial and name [alpha, gamma]: ${lastLine(partialEnd)}`]),
+    ...(onlyRefusal(partial.tally) === null ? [] : ['a name the run registers was refused']),
+  ];
+  say(
+    'RT01_A_PARTIAL_RUN_SKIPS_EVERY_UNNAMED_SUITE_BY_NAME_AND_EXITS_2_WHEN_GREEN',
+    rt01Probes.length === 0,
+    probeDetail(
+      rt01Probes.length === 0,
+      rt01Probes,
+      `--only beta over [${KEYS.join(', ')}] called [${partial.called.join(', ')}], printed ` +
+        `${partial.tally.skipped.length} SKIP section(s) the floor accepts, and ends with exit ${partialEnd?.code ?? 'none'} ` +
+        `on: ${lastLine(partialEnd)}`,
+    ),
+    'a green over the suites a caller named is true of those suites only, so the one exit it may not have is 0 and ' +
+      'the one line it may not print is the summary, whose shape is a statement about the whole tree',
+  );
+
+  // --- RT02: a named suite that fails is still red, and still partial -------
+  const red = miniature(new Set(['beta']), 'beta');
+  const redEnd = partialVerdict(red.tally);
+  say(
+    'RT02_A_NAMED_SUITE_THAT_FAILS_IN_A_PARTIAL_RUN_EXITS_1_AND_STILL_SAYS_PARTIAL',
+    redEnd?.code === 1 && redEnd.lines[0] === 'rigc selftest: 1 control(s) failed' && lastLine(redEnd).includes('PARTIAL'),
+    `the same run with PROBE_beta failing ends with exit ${redEnd?.code ?? 'none'} on ` +
+      `[${redEnd?.lines.join(' | ') ?? 'nothing'}]`,
+    'a failure found in part is a failure in the whole, so red is the one verdict a partial run can give about the ' +
+      'tree; it keeps the partial sentence so the failures counted are not read as every failure there is',
+  );
+
+  // --- RT03: a name the run does not register is refused, with the registry --
+  const typo = miniature(new Set(['beta', 'delta']));
+  const typoEnd = onlyRefusal(typo.tally);
+  say(
+    'RT03_A_SUITE_NAME_THE_RUN_DOES_NOT_REGISTER_IS_REFUSED_WITH_THE_REGISTRY',
+    typoEnd?.code === 2 &&
+      typoEnd.lines[0].includes('"delta"') &&
+      !typoEnd.lines[0].includes('"beta"') &&
+      typoEnd.lines.some((line) => line.endsWith(`in the order it runs them: ${KEYS.join(', ')}`)),
+    `--only beta,delta is refused with exit ${typoEnd?.code ?? 'none'}: [${typoEnd?.lines.join(' | ') ?? 'not refused'}]`,
+    'an unknown name read as "nothing to run" would turn a typo into a run that skipped the one suite its caller ' +
+      'wanted, and a refusal without the list sends the caller to read `main` for the spelling',
+  );
+
+  // --- RT04: the flag's existence changes nothing about the full run --------
+  const full = miniature(null);
+  const longhand = miniature(new Set(KEYS));
+  const rt04Probes = [
+    ...(full.called.join() === KEYS.join() ? [] : [`the full miniature called [${full.called.join(', ')}]`]),
+    ...(full.tally.skipped.length === 0 && longhand.tally.skipped.length === 0 ? [] : ['a full run skipped a suite']),
+    ...(partialVerdict(full.tally) === null && onlyRefusal(full.tally) === null ? [] : ['the run without --only ends through the partial path']),
+    ...(partialVerdict(longhand.tally) === null && onlyRefusal(longhand.tally) === null
+      ? []
+      : ['--only naming every suite ends through the partial path rather than the full summary']),
+    ...(full.lines.join('\n') === longhand.lines.join('\n') && JSON.stringify(full.tally.blocks) === JSON.stringify(longhand.tally.blocks)
+      ? []
+      : ['--only naming every suite printed or tallied differently from no flag at all']),
+    ...(live.only !== null || live.skipped.length === 0 ? [] : [`the live full run skipped [${live.skipped.map((one) => one.key).join(', ')}]`]),
+  ];
+  say(
+    'RT04_THE_FULL_RUN_IS_THE_SAME_RUN_WITH_THE_FLAG_ABSENT_OR_NAMING_EVERY_SUITE',
+    rt04Probes.length === 0,
+    probeDetail(
+      rt04Probes.length === 0,
+      rt04Probes,
+      `no flag and --only ${KEYS.join(',')} print the same ${full.lines.length} line(s), tally the same blocks, skip ` +
+        'nothing and end through the full summary; the live run is ' +
+        (live.only === null ? `full, with ${live.skipped.length} suite(s) skipped` : `partial (--only ${[...live.only].join(',')})`),
+    ),
+    'the negative control RT01 needs: a harness that skipped or went partial on every run would pass RT01 and ' +
+      'fail here, and the live half is what says the run reading this line is the one its summary describes',
+  );
+
+  // --- RT05: a suite that reads the run is not run over an empty one --------
+  const alone = miniature(new Set(['gamma']), null, 'gamma');
+  const paired = miniature(new Set(['alpha', 'gamma']), null, 'gamma');
+  const aloneSkip = alone.lines.find((line) => line.startsWith('  SKIP  gamma:')) ?? 'no SKIP line';
+  const rt05Probes = [
+    ...(alone.called.length === 0 ? [] : [`named alone, the live suite was called anyway: [${alone.called.join(', ')}]`]),
+    ...(aloneSkip.includes('measures the run it is part of') ? [] : [`its SKIP line does not give the reason: ${aloneSkip}`]),
+    ...(lastLine(partialVerdict(alone.tally)).includes('[alpha, beta, gamma]') ? [] : ['the partial line does not list it as not run']),
+    ...(paired.called.join() === 'alpha,gamma' ? [] : [`named after "alpha" it was not run: [${paired.called.join(', ')}]`]),
+  ];
+  say(
+    'RT05_A_SUITE_THAT_MEASURES_THE_RUN_IS_SKIPPED_BY_NAME_WHEN_NOTHING_RAN_BEFORE_IT',
+    rt05Probes.length === 0,
+    probeDetail(
+      rt05Probes.length === 0,
+      rt05Probes,
+      `--only gamma with gamma reading the run calls [${alone.called.join(', ')}] and prints "${aloneSkip.trim()}"; ` +
+        `--only alpha,gamma calls [${paired.called.join(', ')}]`,
+    ),
+    'measured before the rule: `--only run-tally` printed TY02 red and then threw out of TY08 with a stack trace, ' +
+      'because both read the suites tallied before them and there were none — a crash is not a message, and the ' +
+      'suite IS runnable once one earlier suite is named beside it',
+  );
+
+  return bad;
 }
 
 // ---------------------------------------------------------------------------
@@ -82142,7 +82493,7 @@ function main(): void {
   // the truth still fires, so the drift is silent, and silent in the direction
   // of weakening the only thing standing between a vacuous run and a green one.
   // The floor is now one per suite and it is checked by `tallyFaults`.
-  const tally = new RunTally();
+  const tally = new RunTally(ONLY);
   const printLine = console.log;
   console.log = (...args: unknown[]): void => {
     tally.observe(args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' '));
@@ -82216,7 +82567,8 @@ function main(): void {
   tally.of('generation', runGenerationSuite);
   tally.of('ingest', runIngestSuite);
   tally.of('loop-seam', runLoopSeamSuite);
-  tally.of('run-tally', () => runRunTallySuite(tally));
+  tally.of('run-tally', () => runRunTallySuite(tally), { live: true });
+  tally.of('partial-run', () => runPartialRunSuite(tally));
   tally.of('gate-helper', runGateHelperSuite);
   const gallery = tally.of('gallery-example', runGallerySuite, {
     ran: (value) => value.examples > 0,
@@ -82225,13 +82577,20 @@ function main(): void {
   const cuts = tally.of('registered-cut', runCutsSuite, { ran: (value) => value.cuts > 0, failures: (value) => value.failures });
   console.log = printLine;
 
+  // A name `--only` gave that no `tally.of` above registers (issue #937). Read
+  // off the calls that just ran rather than off a list kept beside them.
+  const refused = onlyRefusal(tally);
+  if (refused !== null) {
+    for (const line of refused.lines) console.error(line);
+    process.exit(refused.code);
+  }
   console.log('');
   // 🔒 The derivation before anything read off it. Every clause below is a way
   // this run could stop covering what its summary says it covers while still
   // printing green: a suite that ran and measured nothing, a suite call nobody
   // wrapped, a section opened twice or not at all, a gutter word the scan does
   // not recognise, a scan that matched nothing. `runRunTallySuite` plants each.
-  const floorFaults = tallyFaults(tally.blocks, tally.gutter, tally.total, tally.parts);
+  const floorFaults = tallyFaults(tally.everyBlock, tally.gutter, tally.total, tally.parts);
   if (floorFaults.length > 0) {
     console.error('rigc selftest: this run cannot account for itself — that is not a pass, it is an empty gate');
     for (const fault of floorFaults) console.error(`  ${fault}`);
@@ -82244,6 +82603,14 @@ function main(): void {
   // printed. Before this it was a `bad +=` at every call site — one chance per
   // suite to drop that suite's failures into a green run, none of them
   // checkable, because a sum that is too low is a sum that still adds up.
+  // ⚠️ A run with `--only` that skipped anything leaves here, before the summary
+  // reads a single value a suite handed back — which is what makes the skipped
+  // suites' missing values safe (see `RunTally.of`) — and never with exit 0.
+  const partial = partialVerdict(tally);
+  if (partial !== null) {
+    for (const line of partial.lines) console.error(line);
+    process.exit(partial.code);
+  }
   const bad = tally.failures;
   if (bad > 0) {
     console.error(`rigc selftest: ${bad} control(s) failed`);
