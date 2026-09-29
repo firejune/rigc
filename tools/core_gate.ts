@@ -56,11 +56,14 @@
  * second skin, a setup placeholder several skins fill (and those that
  * disagree), a `null` setup attachment, a placeholder no skin fills, a stated
  * colour (and one of six digits), a dark colour (and one of eight digits), a
- * blend mode, a shown record whose name is not its placeholder or whose path
- * is not its name, each kind shown at setup, a slot on an inactive bone, and a
- * slider whose animation keys a slot. Each field no row whose `setup.slots`
- * was compared reaches is a HOLE. ⚠️ `blend` is a HOLE however many rows state
- * one: the oracle's slot row has no blend field, so no comparison reads it.
+ * stated blend mode by the mode it reads (`blendNormal`, `blendAdditive`,
+ * `blendMultiply`, `blendScreen`; a slot stating none reads `Normal` and is
+ * judged on every compared row), a shown record whose name is not its
+ * placeholder or whose path is not its name, each kind shown at setup, a slot
+ * on an inactive bone, and a slider whose animation keys a slot. Each field no
+ * row whose `setup.slots` was compared reaches is a HOLE. The blend mode is
+ * the slot row's last cell since issue #933, so a stated one is judged like
+ * every other field.
  *
  * And one line per row for the animations (`ANIMATION_CENSUS_FIELDS`, issue
  * #936): the timelines of each bone and slot kind, the keys by the curve that
@@ -89,7 +92,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { activeBones, CORE_INHERIT_MODES, CoreInputError, foldInheritMode, readModel, shownAttachment, shownRow } from '../src/core/index.ts';
+import { activeBones, CORE_INHERIT_MODES, CoreInputError, foldInheritMode, readBlend, readModel, shownAttachment, shownRow } from '../src/core/index.ts';
 import { BONE_TIMELINE_KINDS, sampleTime, SLOT_TIMELINE_KINDS, type TimelinePlant } from '../src/core/animation.ts';
 import { MODEL_DOCUMENT_FILE } from '../src/model.ts';
 import { HashesInputError, readRecipes, runRecipes, TREE_ROOT, treeRecipes, type Recipe } from './emit_hashes.ts';
@@ -123,7 +126,7 @@ export interface CensusRow {
 
 /** The slots' census fields, in the order its table prints them — the header's list. */
 export const SLOT_CENSUS_FIELDS = [
-  'secondSkin', 'multiFilled', 'conflicting', 'nullSetup', 'unfilled', 'colour', 'colour6', 'dark', 'dark8', 'blend',
+  'secondSkin', 'multiFilled', 'conflicting', 'nullSetup', 'unfilled', 'colour', 'colour6', 'dark', 'dark8', 'blendNormal', 'blendAdditive', 'blendMultiply', 'blendScreen',
   'nameDiffers', 'pathDiffers', 'region', 'mesh', 'linkedmesh', 'boundingbox', 'clipping', 'path', 'inactiveBone', 'sliderKeysSlot',
 ] as const;
 export type SlotCensusField = (typeof SLOT_CENSUS_FIELDS)[number];
@@ -240,7 +243,7 @@ export function slotCensusOf(modelText: string): SlotCensusRow {
     if (slot.color !== undefined && slot.color.length === 6) out.colour6++;
     if (slot.dark !== undefined) out.dark++;
     if (slot.dark !== undefined && slot.dark.length === 8) out.dark8++;
-    if (slot.blend !== undefined) out.blend++;
+    if (slot.blend !== undefined) out[`blend${readBlend(slot)}`]++;
     if (!active.has(slot.bone)) out.inactiveBone++;
     const shown = shownAttachment(doc, slot);
     if (shown === null) continue;
@@ -525,20 +528,14 @@ function comparedOn(rows: readonly GateRow[], block: GateBlock): GateRow[] {
   return rows.filter((r) => r.blocks !== null && r.blocks[block].verdict !== 'SKIP');
 }
 
-/**
- * Each slot field the rows whose `setup.slots` was compared reach, and the
- * HOLEs. `blend` is a HOLE on every corpus: the oracle's slot row does not
- * carry it, so the line says how many compared rows state one and that none
- * was judged.
- */
+/** Each slot field the rows whose `setup.slots` was compared reach, and the HOLEs. */
 export function slotReachLines(rows: readonly GateRow[]): string[] {
   const compared = comparedOn(rows, 'setup.slots');
   const out: string[] = [];
   for (const f of SLOT_CENSUS_FIELDS) {
     const on = compared.filter((r) => (r.slotCensus?.[f] ?? 0) > 0).map((r) => r.name);
     const anywhere = rows.filter((r) => (r.slotCensus?.[f] ?? 0) > 0).map((r) => r.name);
-    if (f === 'blend') out.push(`  HOLE  slots ${f}: ${on.length} compared row(s) state one, and the oracle's slot row has no blend field, so none was judged`);
-    else out.push(on.length > 0 ? `  REACH slots ${f}: ${on.length} compared row(s)` : `  HOLE  slots ${f}: no compared row reaches it${anywhere.length > 0 ? ` (only ${anywhere.join(', ')}, which the core skips)` : ''}`);
+    out.push(on.length > 0 ? `  REACH slots ${f}: ${on.length} compared row(s)` : `  HOLE  slots ${f}: no compared row reaches it${anywhere.length > 0 ? ` (only ${anywhere.join(', ')}, which the core skips)` : ''}`);
   }
   return out;
 }

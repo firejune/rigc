@@ -513,6 +513,7 @@ import {
   type BoneRow,
   compareDumps,
   dumpSkeleton,
+  dumpText,
   loadOracleData,
   ORACLE_DEFAULT_DT,
   ORACLE_DEFAULT_SAMPLES,
@@ -65992,7 +65993,7 @@ function runPoseOracleSuite(): number {
       ['--dt without stepping', ['dump', buildDir, '--out', out, '--dt', '1/60'], '--physics none steps nothing'],
       ['a skin the rig does not declare', ['dump', buildDir, '--out', out, '--skin', 'nosuch'], '--skin "nosuch": no such skin; this skeleton declares [default, alt]'],
       ['a directory rigc did not build', ['dump', emptyDir, '--out', out], 'has no skeleton.json and no skeleton.atlas'],
-      ['a document that is not an oracle dump', ['compare', notOracle, noneA], 'spec is "rigc-frames/1", not "pose-oracle/1"'],
+      ['a document that is not an oracle dump', ['compare', notOracle, noneA], 'spec is "rigc-frames/1", not "pose-oracle/2"'],
       ['two dumps posed under different options', ['compare', noneA, stepA], 'posed under different options'],
     ];
     for (const [label, args, expect] of cases) {
@@ -66180,6 +66181,75 @@ function runPoseOracleSuite(): number {
     }
   }
 
+  // --- POR10: the slot row's blend mode, read off a hand-written skeleton stating every mode, and the spec's number --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    // Per slot: the blend the Spine file states (undefined: none) and the mode the header says the runtime reads.
+    const stated: Array<[string, string | undefined, string | null]> = [
+      ['unstated', undefined, 'Normal'],
+      ['normal', 'normal', 'Normal'],
+      ['additive', 'additive', 'Additive'],
+      ['multiply', 'multiply', 'Multiply'],
+      ['screen', 'screen', 'Screen'],
+      ['upperFirst', 'Additive', 'Additive'],
+      ['upperAll', 'ADDITIVE', null],
+    ];
+    const skeletonText = JSON.stringify({
+      skeleton: { spine: '4.3.13' }, bones: [{ name: 'root' }],
+      slots: stated.map(([name, blend]) => ({ name, bone: 'root', attachment: 'r', ...(blend === undefined ? {} : { blend }) })),
+      skins: [{ name: 'default', attachments: Object.fromEntries(stated.map(([name]) => [name, { r: { width: 4, height: 4 } }])) }],
+      // An animation keying every slot's colour: the mode is the slot's data, and no sample moves it.
+      animations: { tint: { slots: Object.fromEntries(stated.map(([name]) => [name, { rgba: [{ time: 0, color: 'ff000080' }, { time: 1, color: '00ff00ff' }] }])) } },
+    });
+    const atlasText = 'page.png\n\tsize: 64, 64\nr\n\tbounds: 0, 0, 4, 4\n';
+    try {
+      const data = loadOracleData(skeletonText, atlasText, 'the blend probe');
+      const dump = dumpSkeleton(data, { phase: 'grid', samples: 3, skin: 'all', physics: 'none', dt: null });
+      const poses = [dump.setup, ...dump.animations.flatMap((a) => a.samples)];
+      for (const pose of poses) {
+        for (const [name, , mode] of stated) {
+          const row = pose.slots.find((x) => x[0] === name);
+          if (row === undefined || row.length !== 9 || row[8] !== mode) probes.push(`slot "${name}" reads ${JSON.stringify(row?.[8])} in a ${row?.length ?? 0}-cell row, not ${JSON.stringify(mode)} in 9`);
+        }
+      }
+      // The header's field list, held: the pose carries no mode, the slot's data does.
+      const skeleton = new Skeleton(data);
+      skeleton.setupPose();
+      const poseFields = Object.keys(skeleton.slots[0].appliedPose).sort();
+      const POSE_FIELDS = ['attachment', 'color', 'darkColor', 'deform', 'sequenceIndex'];
+      if (JSON.stringify(poseFields) !== JSON.stringify(POSE_FIELDS)) probes.push(`a slot's pose carries [${poseFields.join(', ')}], not the header's [${POSE_FIELDS.join(', ')}] — a field the row may have to carry`);
+      if (!('blendMode' in data.slots[0])) probes.push('the slot data carries no blendMode, where the dumper reads it');
+      // A plant in one sample's blend is the one difference named.
+      const copy = JSON.parse(JSON.stringify(dump)) as OracleDump;
+      const target = copy.animations[0].samples[1].slots.find((x) => x[0] === 'additive');
+      if (target === undefined) probes.push('no additive row to plant into');
+      else {
+        target[8] = 'Screen';
+        const c = compareDumps(dump, copy, tol);
+        const all = [...c.document, ...c.rows.flatMap((r) => r.findings)];
+        if (all.length !== 1 || !all[0].includes('slot "additive" blend "Additive" vs "Screen"')) probes.push(`the planted blend read ${c.identical ? 'IDENTICAL' : `${all.length} difference(s): ${all.slice(0, 2).join(' | ')}`}`);
+      }
+      // The spec's number: a document one step older is refused by name, not compared on the cells it has.
+      const current = join(work, 'blend-2.json');
+      const older = join(work, 'blend-1.json');
+      writeFileSync(current, dumpText(dump));
+      writeFileSync(older, dumpText({ ...dump, spec: 'pose-oracle/1' }));
+      const refused = runOracle(['compare', older, current]);
+      if (refused.status !== 2 || !refused.stderr.includes('spec is "pose-oracle/1", not "pose-oracle/2"')) probes.push(`a pose-oracle/1 document: exit ${refused.status}, stderr ${JSON.stringify(refused.stderr.trim().slice(0, 160))}`);
+      detail = `${stated.length} slots stating none, the four modes, one with its first letter upper-cased and one all upper-case read [${stated.map((x) => String(x[2])).join(', ')}] in the setup row and in each of ${poses.length - 1} samples of an animation keying their colour; the pose's fields [${poseFields.join(', ')}] carry no mode; a blend planted in one sample is the one difference named; a pose-oracle/1 document exits 2 by name`;
+    } catch (err) {
+      probes.push(`the blend probe did not load or pose: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'POR10_THE_SLOT_ROW_CARRIES_THE_BLEND_MODE_THE_RUNTIME_READS_AND_THE_SPEC_NUMBER_MOVED_WITH_IT',
+      held,
+      probeDetail(held, probes, detail),
+      'issue #933: the row carried the attachment, the colours and the path and no blend mode, so 36 corpus slots stating one were never judged. The mode is the slot\'s data, read off `SlotData.blendMode`; the pose\'s own field list is held here so a runtime that poses a new slot field turns this red. compare reads a row by position, so a new cell moves the spec to /2 and a /1 reader refuses it rather than read IDENTICAL over the cell it cannot see',
+    );
+  }
+
   rmSync(work, { recursive: true, force: true });
   return bad;
 }
@@ -66190,7 +66260,7 @@ function runPoseOracleSuite(): number {
 
 // Its own statement, so the suite lands as one hunk (the convention the
 // slider-reader suite states at its imports).
-import { activeBones, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED, poseSetup, readColour, readModel, shownAttachment, type CompiledDocument, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
+import { activeBones, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED, poseSetup, readBlend, readColour, readModel, shownAttachment, type CompiledDocument, type CoreBlendMode, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
 import { regionCorners, worldVertices, type VertexPoser } from './src/core/vertices.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
@@ -67032,7 +67102,7 @@ function runCoreSuite(): number {
     });
     const atlas = atlasOf(['r', 'q']);
     const [without, withSlider] = [false, true].map((s) => dumpSkeleton(loadOracleData(sliderSkeleton(s), atlas, 'the slider probe'), ONE).setup.slots[0]);
-    if (JSON.stringify(without) !== JSON.stringify(['s', 'r', 1, 1, 1, 1, null, 'r']) || JSON.stringify(withSlider) !== JSON.stringify(['s', 'q', 1, 0, 0, 0.501961, null, 'q'])) probes.push(`spine-core's setup row is ${JSON.stringify(without)} without the slider and ${JSON.stringify(withSlider)} with it, not the header's measurement`);
+    if (JSON.stringify(without) !== JSON.stringify(['s', 'r', 1, 1, 1, 1, null, 'r', 'Normal']) || JSON.stringify(withSlider) !== JSON.stringify(['s', 'q', 1, 0, 0, 0.501961, null, 'q', 'Normal'])) probes.push(`spine-core's setup row is ${JSON.stringify(without)} without the slider and ${JSON.stringify(withSlider)} with it, not the header's measurement`);
     const records = { r: { kind: 'region', width: 4, height: 4, atlas: UNTRIMMED4 }, q: { kind: 'region', width: 4, height: 4, atlas: UNTRIMMED4 } };
     const keyed = (slots: unknown[]): string => modelOf({
       bones: [{ name: 'root' }, { name: 'dial', parent: 'root', rotation: 10 }],
@@ -68026,6 +68096,73 @@ function runCoreSuite(): number {
       'issue #380 §4: a construct no row uses is a HOLE, never a pass, and a HOLE is covered by a probe or it is not covered at all',
     );
     for (const line of animationReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
+  }
+
+  // --- CO19: the blend mode — a probe stating every mode posed as spine-core does, a bad spelling refused, the plant named on exactly the rows stating it --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    const MODES: Array<[string, string | undefined, string]> = [
+      ['unstated', undefined, 'Normal'], ['normal', 'normal', 'Normal'], ['additive', 'additive', 'Additive'],
+      ['multiply', 'multiply', 'Multiply'], ['screen', 'screen', 'Screen'], ['upperFirst', 'Additive', 'Additive'],
+    ];
+    const blendPair = (extra: Record<string, unknown> = {}): { spine: string; model: string; atlas: string } => timelinePair({
+      bones: [{ name: 'root' }],
+      slots: MODES.map(([name, blend], i) => ({ name, bone: 'root', attachment: 'r', ...(blend === undefined ? {} : { blend }), ...(i === 0 ? extra : {}) })),
+      regions: Object.fromEntries(MODES.map(([name]) => [name, ['r']])),
+      slotKeys: Object.fromEntries(MODES.map(([name]) => [name, { rgba: [{ time: 0, color: 'ff000080' }, { time: 1, color: '00ff00ff' }] }])),
+    });
+    /** The core's blend reading, planted: `Additive` read as `Screen`. */
+    const additiveAsScreen = (slot: ModelSlot): CoreBlendMode => (readBlend(slot) === 'Additive' ? 'Screen' : readBlend(slot));
+    const pair = blendPair();
+    const c = exactly(pair, GRID9);
+    const skippedSlots = c.skipped.filter((x) => x.startsWith('setup.slots') || x.startsWith('animations.slots'));
+    if (!c.identical || skippedSlots.length > 0) probes.push(`the blend probe read ${c.identical ? `IDENTICAL skipping ${skippedSlots.join(', ')}` : `DIFF — ${c.first}`}`);
+    const core = coreDump(readModel(pair.model, 'the blend probe'), GRID9);
+    const read = MODES.map(([name]) => core.setup.slots?.find((x) => x[0] === name)?.[8] ?? null);
+    if (JSON.stringify(read) !== JSON.stringify(MODES.map((m) => m[2]))) probes.push(`the core read [${read.join(', ')}], not [${MODES.map((m) => m[2]).join(', ')}]`);
+    const planted = exactly(pair, GRID9, { blend: additiveAsScreen });
+    if (planted.identical || !(planted.first ?? '').includes('slot "additive" blend "Additive" vs "Screen"')) probes.push(`Additive read as Screen, planted in the probe, read ${planted.identical ? 'IDENTICAL' : planted.first}`);
+    // The reader: the runtime reads ADDITIVE as no mode and throws on an empty one, so the core refuses both by name.
+    for (const [label, blend, expected] of [
+      ['all upper case', 'ADDITIVE', 'blend is "ADDITIVE", which the runtime reads as no mode'],
+      ['empty', '', 'blend is "", which the runtime reads as no mode'],
+      ['a number', 1, 'blend is 1, not a string'],
+    ] as Array<[string, unknown, string]>) {
+      const refusal = coreRefusal(blendPair({ blend }).model);
+      if (!refusal.includes(expected)) probes.push(`a blend ${label}: ${refusal === '' ? 'read' : `refused as "${refusal}"`}, not naming ${JSON.stringify(expected)}`);
+    }
+    // The corpus: the plant turns exactly the rows stating an additive slot red, on each slot block, and no other block.
+    const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null && (r.blocks['setup.slots'].verdict !== 'SKIP' || r.blocks['animations.slots'].verdict !== 'SKIP')));
+    const red = gateBuilt(judged, { blend: additiveAsScreen });
+    const reached: string[] = [];
+    for (const block of ['setup.slots', 'animations.slots'] as const) {
+      const using = judged.filter((b) => {
+        const row = rows.find((r) => r.name === b.name);
+        return row?.blocks?.[block].verdict !== 'SKIP' && (row?.slotCensus?.blendAdditive ?? 0) > 0;
+      }).map((b) => b.name);
+      const turned = red.filter((r) => r.blocks?.[block].verdict === 'DIFF').map((r) => r.name);
+      if (JSON.stringify(turned) !== JSON.stringify(using)) probes.push(`the plant turned [${turned.join(', ')}] red on ${block}; the rows stating an additive slot are [${using.join(', ')}]`);
+      if (using.length === 0) probes.push(`no compared row states an additive slot on ${block}, so the plant had no corpus row to turn red`);
+      reached.push(`${block} ${turned.length}/${judged.length}`);
+    }
+    const elsewhere = red.filter((r) => (['setup.bones', 'setup.attachments', 'setup.clips', 'animations.bones'] as const).some((b) => r.blocks?.[b].verdict === 'DIFF')).map((r) => r.name);
+    if (elsewhere.length > 0) probes.push(`the plant turned a block other than the slots red on [${elsewhere.join(', ')}]`);
+    // The census counts the modes, and every mode no compared row states is a HOLE the probe above covers.
+    const total = (f: 'blendNormal' | 'blendAdditive' | 'blendMultiply' | 'blendScreen'): number => rows.reduce((sum, r) => sum + (r.slotCensus?.[f] ?? 0), 0);
+    const holes = slotReachLines(rows).filter((l) => l.startsWith('  HOLE  slots blend')).map((l) => /slots (\S+):/.exec(l)?.[1] ?? l);
+    const probeCensus = slotCensusOf(pair.model);
+    const uncovered = holes.filter((f) => (probeCensus[f as 'blendNormal'] ?? 0) === 0);
+    if (uncovered.length > 0) probes.push(`no compared row and not the probe states ${uncovered.join(', ')}`);
+    if (slotReachLines(rows).some((l) => l.includes('no blend field'))) probes.push('the slots\' reach still says the row has no blend field');
+    detail = `${MODES.length} slots stating none, the four modes and one upper-cased first letter, under an animation keying their colour, exact at tolerance 0 against spine-core on setup.slots and animations.slots; ADDITIVE, an empty blend and a number refused by name; Additive read as Screen, planted, named at "additive" and red on exactly the compared rows stating an additive slot — ${reached.join(', ')} — no other block moved; the corpus states ${total('blendAdditive')} additive, ${total('blendMultiply')} multiply, ${total('blendScreen')} screen and ${total('blendNormal')} normal slot(s), the HOLE(s) [${holes.join(', ')}] each stated by the probe`;
+    const ok = probes.length === 0;
+    say(
+      'CO19_THE_BLEND_MODE_IS_POSED_AS_SPINE_CORE_DOES_AND_A_PLANT_TURNS_EXACTLY_THE_ROWS_STATING_IT_RED',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #933: the slot row gained the blend mode, so the 36 corpus slots stating one are judged; the reader takes the eight spellings the runtime was measured to read as a mode and refuses the rest, and a plant that reddened every row would not show the gate reads the mode at all',
+    );
   }
 
   rmSync(work, { recursive: true, force: true });
