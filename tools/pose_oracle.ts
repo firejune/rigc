@@ -178,8 +178,12 @@
  * `--skin` but `all` and any `--physics` but `none`. The rosters `bones`,
  * `slots`, `skins` and `constraints` are the document's own, in its order.
  * `setup.bones` is the core's setup pose, or absent when the document
- * declares a constraint (the core's header says why); every other block is
- * `null` and named in `absent`.
+ * declares a constraint; `setup.slots` is every slot's row as the pose above
+ * words it (issue #928), or absent when a slot's setup placeholder is filled
+ * by skins that disagree, since which of them `--skin all` shows is the Spine
+ * file's skin order and the model does not carry it (the core's header says
+ * why, with the measurements); every other block is `null` and named in
+ * `absent`.
  *
  * ## `compare` — two documents
  *
@@ -245,7 +249,7 @@ import {
   TransformConstraintData,
   type Event,
 } from '@esotericsoftware/spine-core';
-import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, readModel, type CompiledDocument, type SetupEvaluator } from '../src/core/index.ts';
+import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, readModel, type CompiledDocument, type CorePlant } from '../src/core/index.ts';
 
 export const ORACLE_SPEC = 'pose-oracle/1';
 export const ORACLE_DUMPER = 'spine-core 4.3.13';
@@ -693,14 +697,14 @@ export function dumpText(dump: OracleDocument): string {
  * The core poses under `--skin all` and `--physics none` only; any other
  * option is refused by name, since it names a pose the core does not produce.
  */
-export function coreDump(doc: CompiledDocument, options: OracleOptions, evaluate?: SetupEvaluator): OracleDocument {
+export function coreDump(doc: CompiledDocument, options: OracleOptions, plant: CorePlant = {}): OracleDocument {
   if (options.skin !== 'all') {
     throw new OracleInputError(`dump --core: --skin ${JSON.stringify(options.skin)} — the core poses every skin at once (--skin all) and nothing else yet (issue #925)`);
   }
   if (options.physics !== 'none') {
     throw new OracleInputError(`dump --core: --physics ${JSON.stringify(options.physics)} — the core steps no physics; physics is not admitted (issue #925)`);
   }
-  const { setup, absent } = poseSetup(doc, evaluate);
+  const { setup, absent } = poseSetup(doc, plant);
   return {
     spec: ORACLE_SPEC,
     dumper: CORE_DUMPER,
@@ -1319,7 +1323,8 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
         const dump = coreDump(model, options);
         writeFileSync(out, dumpText(dump));
         print(
-          `pose_oracle: the core posed ${core}: ${model.bones.length} bones, setup.bones ${dump.setup.bones === null ? 'ABSENT' : 'posed'}; ` +
+          `pose_oracle: the core posed ${core}: ${model.bones.length} bones, setup.bones ${dump.setup.bones === null ? 'ABSENT' : 'posed'}, ` +
+            `${model.slots.length} slots, setup.slots ${dump.setup.slots === null ? 'ABSENT' : 'posed'}; ` +
             `absent: ${(dump.absent ?? []).map((x) => x[0]).join(', ')} → ${out}`,
         );
         return 0;
