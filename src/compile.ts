@@ -2729,6 +2729,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     if (setup?.color) slot.color = rgbaHex(setup.color);
     else if (rigSlot.color !== undefined) slot.color = rigSlot.color;
     if (rigSlot.dark !== undefined) slot.dark = rigSlot.dark;
+    // As stated: `parseRigSpec` refused every spelling the runtime would read as no mode (issue #946).
     if (rigSlot.blend !== undefined) slot.blend = rigSlot.blend;
     slots.push(slot);
     // ...and nothing below this line has anything to build. An empty entry in a
