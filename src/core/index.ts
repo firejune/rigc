@@ -22,10 +22,9 @@
  * #955) — the draw order at setup and at a sample (`./draw_order.ts`), the
  * deform and sequence timelines, which move what the attachments and clips
  * draw at setup (under a slider) and at a sample (`./deform.ts`), and the
- * events a sample fires (`./events.ts`) — is posed too. The one block of the
- * oracle's document left is the physics parameters, the stepped phase's
- * inputs, and the core says so by name (`NOT_ADMITTED`) rather than writing a
- * value for it.
+ * events a sample fires (`./events.ts`) — is posed too. With the physics
+ * parameters (issue #956, `./constraints_physics.ts`) no block of the
+ * oracle's document is left: `NOT_ADMITTED` is empty.
  *
  * **Constraints (construct 5, issue #938, `./constraints.ts`).** The oracle
  * poses the setup pose with every constraint applied, so a bone a constraint
@@ -33,8 +32,10 @@
  * transform, path, physics and slider constraints in the document's order
  * after the hierarchy, as the runtime's update order does (`./constraints.ts`'s
  * header states it with its measurements, `./constraints_path.ts`'s the
- * path's; a physics constraint under `Physics.none` applies nothing,
- * `./constraints_physics.ts`; a slider applies an animation,
+ * path's; a physics constraint under `Physics.none` applies nothing, and
+ * under the stepped phase — `poseSetup`'s `physics` context, the reset —
+ * integrates, `./constraints_physics.ts`, whose `poseSteppedAnimations`
+ * walks the oracle's `--physics step` schedule; a slider applies an animation,
  * `./constraints_slider.ts`); a path the core cannot pose exactly (skins
  * that disagree over the curve it walks) leaves the setup bones out naming
  * it (`constraintsAbsentWhy`). Before issue #938, measured over the nineteen
@@ -166,7 +167,7 @@ import { readEventDefs, type CoreEventDef } from './events.ts';
 import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type RegionPoser, type VertexPoser } from './vertices.ts';
 import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
 import { readPathRecord } from './constraints_path.ts';
-import { readPhysicsRecord } from './constraints_physics.ts';
+import { physicsListedBySkins, readPhysicsRecord, type PhysicsStepContext, type PhysicsStepper } from './constraints_physics.ts';
 import { applySliderSlots, readSliderRecord, type SliderApplication, type SlotPoseState } from './constraints_slider.ts';
 import { attachmentStates, type DeformEvaluator, type SequenceEvaluator } from './deform.ts';
 import { drawOrderAt, type DrawOrderEvaluator } from './draw_order.ts';
@@ -585,6 +586,9 @@ export function readModel(text: string, where = 'the model document'): CompiledD
   const events = readEventDefs(value.events, problems);
   const animations = readAnimations(value.animations, names, slots, skins, events, problems);
   const constraints = readConstraints(value.constraints, animations, bones, slots, problems);
+  // A skin-required physics constraint steps when a skin lists it (issue #956, `./constraints_physics.ts`).
+  const listedPhysics = physicsListedBySkins(value.skins);
+  for (const c of constraints) if (c.record?.kind === 'physics') c.record.listedBySkin = listedPhysics.has(c.name);
   if (Array.isArray(value.animations)) {
     value.animations.forEach((raw, i) => {
       if (isRecord(raw) && animations[i] !== undefined) animations[i].constraints = readConstraintTimelines(raw.constraints, `animations[${i}] "${animations[i].name}"`, constraints, problems);
@@ -717,6 +721,8 @@ export interface CorePlant {
   drawOrder?: DrawOrderEvaluator;
   /** The events fired between two samples (`eventsFired` in `./events.ts`). */
   events?: EventsFired;
+  /** The stepped phase's step of one physics constraint (`stepPhysics` in `./constraints_physics.ts`). */
+  physicsStep?: PhysicsStepper;
 }
 
 /** The document's ik, transform and path constraint records, in its order — what `applyConstraints` runs. */
@@ -727,13 +733,12 @@ export function constraintRecords(doc: CompiledDocument): CoreConstraintRecord[]
 /**
  * The blocks of the oracle's document the core does not produce, each with the
  * construct that has to be admitted first (§5 of the design on issue #380), in the
- * document's key order. `setup.bones`, `setup.slots`, `setup.attachments` and
- * `setup.clips` are not here: each is produced, or absent for the reason
- * `poseSetup` gives.
+ * document's key order. Empty since issue #956 wrote the `physics` block, the
+ * last one; kept so a block left to a later construct has one place to be
+ * named. `setup.*` blocks are not here: each is produced, or absent for the
+ * reason `poseSetup` gives.
  */
-export const NOT_ADMITTED: ReadonlyArray<readonly [string, string]> = [
-  ['physics', 'physics constraint parameters: under --physics none, the only phase the core poses, a physics constraint applies nothing (issue #938); its parameters are the stepped phase\'s inputs, and the stepped phase is not admitted'],
-];
+export const NOT_ADMITTED: ReadonlyArray<readonly [string, string]> = [];
 
 /** The setup blocks the core poses, in the document's order. */
 const POSED_BLOCKS = ['setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips'] as const;
@@ -818,7 +823,7 @@ export interface CoreSetup {
  * what each slot shows — and the attachments also when a shown region's atlas
  * rectangle is `null`, every such slot named.
  */
-export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup: CoreSetup; absent: Array<[string, string]> } {
+export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?: PhysicsStepContext): { setup: CoreSetup; absent: Array<[string, string]> } {
   const evaluate = plant.evaluate ?? worldTransforms;
   const resolve = plant.shown ?? shownAttachment;
   const colour = plant.colour ?? readColour;
@@ -831,7 +836,7 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
   if (bonesWhy === null) {
     const active = activeBones(doc);
     const records = constraintRecords(doc);
-    setupWorld = applyConstraints(doc.bones, evaluate(doc.bones, active), active, plant.constraints ? plant.constraints(records) : records, null, applied);
+    setupWorld = applyConstraints(doc.bones, evaluate(doc.bones, active), active, plant.constraints ? plant.constraints(records) : records, null, applied, physics);
     const world = setupWorld;
     bones = doc.bones.map((b): CoreBoneRow => {
       const t = world.get(b.name);
@@ -900,7 +905,7 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
   }
   // `NOT_ADMITTED` is in document order; bones and slots stand before `setup.drawOrder`, attachments and clips after it.
   const why: Record<(typeof POSED_BLOCKS)[number], string | null> = { 'setup.bones': bonesWhy, 'setup.slots': slotsWhy, 'setup.drawOrder': orderWhy, 'setup.attachments': attachmentsWhy, 'setup.clips': clipsWhy };
-  // `NOT_ADMITTED` (the physics parameters) stands before the setup blocks in the document's order.
+  // `NOT_ADMITTED` (empty since issue #956) stands before the setup blocks in the document's order.
   const absent: Array<[string, string]> = NOT_ADMITTED.map(([block, reason]): [string, string] => [block, reason]);
   for (const block of POSED_BLOCKS) if (why[block] !== null) absent.push([block, why[block] as string]);
   return { setup: { bones, slots, drawOrder, attachments, clips }, absent };
