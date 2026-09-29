@@ -780,8 +780,9 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
 /**
  * The compiled model as a document: `rigc-compiled/1`, `JSON.stringify(doc,
  * null, 2)` and a newline — the text `build` writes to `skeleton.model.json`,
- * and the record a posing core of rigc's own will read (issue #380, step 2).
- * Nothing reads it yet.
+ * and the record rigc's own posing core reads (`readModel` in
+ * `src/core/index.ts`, issue #380, step 2). Its cost in a build is measured in
+ * docs/COMPILED_MODEL.md §6 (issue #926).
  *
  * **Key order.** `spec`, then the model's fields in the order this file
  * declares them — `bones`, `slots`, `skins`, `constraints`, `events`,
