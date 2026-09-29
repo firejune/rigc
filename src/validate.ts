@@ -355,8 +355,14 @@ export interface ValidateInput {
   atlasDir: string;
   /** Declared durations from the motion spec. */
   declaredDurations?: Record<string, number>;
-  /** Re-emitted artifacts, for the determinism check. */
-  reEmit?: { skeletonText: string; atlasText: string };
+  /**
+   * The compiled model's document (`modelDocument`, `rigc-compiled/1`) — the
+   * third file `build` writes. Required whenever `reEmit` is given, since `A18`
+   * compares it with the second compile's (issue #922).
+   */
+  modelText?: string;
+  /** Re-emitted artifacts, for the determinism check: a second, independent compile's three texts. */
+  reEmit?: { skeletonText: string; atlasText: string; modelText: string };
   /**
    * Structural expectations the artifact cannot state about itself: which mesh is
    * a ribbon, which bone carries the axis, which parentage is forbidden, what the
@@ -1121,6 +1127,19 @@ export function timelineAddBehaviour(data: ReturnType<SkeletonJson['readSkeleton
     }
   }
   return wrote ? 'overwrites' : 'inert';
+}
+
+/**
+ * Where two texts first differ, as A18 names it: the 1-based line and each
+ * side's line, trimmed and cut to 120 characters.
+ */
+function firstDifferingLine(first: string, second: string): string {
+  const a = first.split('\n');
+  const b = second.split('\n');
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+  const cut = (line: string | undefined): string => (line === undefined ? '(end of text)' : JSON.stringify(line.trim().slice(0, 120)));
+  return `${i + 1}: ${cut(a[i])} first, ${cut(b[i])} second`;
 }
 
 export function validate(input: ValidateInput): ValidateReport {
@@ -6148,6 +6167,15 @@ export function validate(input: ValidateInput): ValidateReport {
     }
     if (input.reEmit.atlasText !== input.atlasText) {
       fail('A18_DETERMINISTIC_EMIT', 'recompiling produced a different skeleton.atlas');
+    }
+    // The model document is compared like the Spine pair (issue #922): it is
+    // written beside them, and a map iterated in an order nothing fixed would
+    // reach it before it reached either of them — the document writes every
+    // `Map` of the model as an array in the map's order.
+    if (input.modelText === undefined) {
+      fail('A18_DETERMINISTIC_EMIT', 'a second compile was handed over with no first model document to compare its skeleton.model.json against');
+    } else if (input.reEmit.modelText !== input.modelText) {
+      fail('A18_DETERMINISTIC_EMIT', `recompiling produced a different skeleton.model.json (first differing line ${firstDifferingLine(input.modelText, input.reEmit.modelText)})`);
     }
   });
 

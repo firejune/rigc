@@ -41,7 +41,6 @@ import { parseJsonWithPosition } from './json-position.ts';
 import { dottedPath, nearMisses, refuseNumbersTheFileCannotCarry, refuseValuesOfTheWrongType, refuseValuesOutsideTheirSet } from './keys.ts';
 import type { ShapeVisit } from './keys.ts';
 import { MANIFEST_ENUMS, MANIFEST_TYPES } from './types.ts';
-import { inEditorKeyOrder, withoutParserDefaults } from './keyorder.ts';
 import { EVERY_GLOBAL_PHYSICS, parseMotionSpec } from './motion.ts';
 import {
   BONE_INHERIT_KNOWN,
@@ -128,16 +127,7 @@ import {
   TransformError,
   type BoneTransform,
 } from './transform.ts';
-import {
-  boneIndexOf,
-  emitAnimations,
-  emitBones,
-  emitConstraints,
-  emitEvents,
-  emitSkins,
-  emitSlots,
-  PHYSICS_PARAMS,
-} from './emit_spine.ts';
+import { emitSkeleton, PHYSICS_PARAMS, type SkeletonHeader } from './emit_spine.ts';
 import {
   isModelVertexAttachment,
   type CarriedFromCompileResult,
@@ -155,6 +145,7 @@ import {
   type ModelMeshAttachment,
   type ModelPathAttachment,
   type ModelRegionAttachment,
+  type ModelSequence,
   type ModelSkin,
   type ModelSlot,
   type ModelTimelines,
@@ -181,8 +172,6 @@ import type {
   MotionValueKey,
   MotionValueTrack,
   RigInfo,
-  SpineSequence,
-  SpineSkeletonJson,
 } from './types.ts';
 
 export { CompileError, NotImplementedError };
@@ -3381,23 +3370,21 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
 
   // -- 6. assemble -----------------------------------------------------------
   //
-  // The stage is four fields or none of them. `x`/`y` are the origin of the box
+  // What the skeleton carries that the model does not hold: the header. The
+  // stage is four fields or none of them — `x`/`y` are the origin of the box
   // `width`/`height` give an extent to, so a header carrying an origin for a box
-  // it does not declare would be a shape no export has — and the key ORDER here
-  // is the editor's own, which is what keeps a staged build byte-identical to
-  // what it emitted before the stage could be declared absent (issue #578).
-  const header: SpineSkeletonJson['skeleton'] = { spine: SPINE_VERSION };
-  if (stageWidth !== undefined && stageHeight !== undefined) {
-    header.x = rig.skeleton?.x ?? 0;
-    header.y = rig.skeleton?.y ?? 0;
-    header.width = stageWidth;
-    header.height = stageHeight;
-  }
-  if (rig.skeleton?.fps !== undefined) header.fps = rig.skeleton.fps;
-  if (rig.skeleton?.referenceScale !== undefined) header.referenceScale = rig.skeleton.referenceScale;
-  const imagesPath = skeletonImagesPath(rig.skeleton?.images, opts, outDir, partDirs);
-  if (imagesPath !== undefined) header.images = imagesPath;
-  if (rig.skeleton?.audio !== undefined) header.audio = rig.skeleton.audio;
+  // it does not declare would be a shape no export has (issue #578).
+  const header: SkeletonHeader = {
+    spine: SPINE_VERSION,
+    stage:
+      stageWidth !== undefined && stageHeight !== undefined
+        ? { x: rig.skeleton?.x ?? 0, y: rig.skeleton?.y ?? 0, width: stageWidth, height: stageHeight }
+        : null,
+    fps: rig.skeleton?.fps,
+    referenceScale: rig.skeleton?.referenceScale,
+    images: skeletonImagesPath(rig.skeleton?.images, opts, outDir, partDirs),
+    audio: rig.skeleton?.audio,
+  };
 
   // Event definitions, in the order the rig spec declares them — the map's
   // insertion order is the spec's, not a set's, so A18 stays a contract.
@@ -3424,63 +3411,24 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       attachments,
     };
   });
-  const emittedEvents = emitEvents(events);
 
-  // A weighted vertex's bone index is its bone's position in this array, the
-  // one `emitBones` writes; the skin tables bind by name and are encoded here.
-  const indexOf = boneIndexOf(bones);
-  const skeleton: SpineSkeletonJson = {
-    skeleton: header,
-    // The one place the model's bones become Spine's: `emitBones` owns the 4.3
-    // spellings and the insertion order the key-order pass leaves alone. Nothing
-    // below reads this array back — `buildRigInfo` takes the model's bones.
-    bones: emitBones(bones),
-    slots: emitSlots(slots),
-    // A skin entry is `name`, then whatever it activates, then `attachments` —
-    // `readSkeletonData`'s own order (`:372-443`); `emitSkins` writes it.
-    //
-    // Ordered the way `animations` is and for the same reason — the editor
-    // rewrites this array and the binary half addresses it by ordinal — with the
-    // sort applied at emission rather than to `skinTables`, so everything
-    // upstream (the path-slot table, every refusal that lists skins) still reads
-    // the order the rig spec declared. See `editorSkinOrder`.
-    skins: emitSkins(skins, indexOf, { skins: editorSkinOrder, slotKeys: editorSlotKeyOrder }),
-    // Between `skins` and `animations`, which is where the editor writes it. A
-    // conditional spread rather than an assignment after the literal, so the key
-    // lands in that position instead of at the end.
-    ...(Object.keys(emittedEvents).length ? { events: emittedEvents } : {}),
-    // Keyed in the editor's own order rather than the motion spec's, because a
-    // slider's reference to an animation is an ordinal in the format and the
-    // editor re-sorts this object — see `editorAnimationOrder`, which
-    // `emitAnimations` applies and whose refusal it raises. The sort is applied
-    // at emission and not to the loop above, so what the compiler reads, the
-    // order it reports durations in, which animation a CompileError names first
-    // and the model's `animations` are all still the spec's own; only the
-    // emitted key order moves.
-    animations: emitAnimations(animations, slots, editorAnimationOrder),
-  };
-  if (constraints.length) skeleton.constraints = emitConstraints(constraints);
+  // The skeleton: the Spine emitter's one entry (issue #922), which writes every
+  // section from the model, in the order and under the spellings the file has,
+  // and runs the parser-default and key-order passes on the finished object.
+  // What it is handed besides the model is what the model does not hold: the
+  // header above, and the editor's orders, which stay here (see `editorSkinOrder` and
+  // `editorAnimationOrder`): the sorts are applied at emission, so everything
+  // this function reads, and the model's `skins` and `animations`, keep the
+  // spec's own order.
+  const skeleton = emitSkeleton(
+    { bones, slots, skins, constraints, events, animations },
+    header,
+    { skins: editorSkinOrder, slotKeys: editorSlotKeyOrder, animations: editorAnimationOrder },
+  );
 
   for (const slot of slots) {
     if (!boneNames.has(slot.bone)) throw new CompileError(`slot "${slot.name}" has no bone`);
   }
-
-  // Every object's keys in the order the editor writes them, per kind, from the
-  // one table that says so (`src/keyorder.ts`, issue #716) — applied here, once,
-  // to the finished object and before the text exists, so the constructors above
-  // are free to build in whatever order reads best and none of them states the
-  // order a second time. It moves positions and nothing else: no key is added,
-  // dropped or re-valued, and what the gate and `A18` read is this object's text.
-  //
-  // Before it, and on the same finished object: every key whose value is the
-  // one the 4.3 parser reads in its absence is left out, the way the editor
-  // leaves it out (issue #716 tranche 3). One pass beside the other rather than
-  // folded into it, because each has its own table and the selftest plants a
-  // wrong row into each on its own; both walk the object through
-  // `forEachKindedObject`, so what a kind is stays said in one place. The spec
-  // is untouched — an author may still write `x: 0`, and it is still the record
-  // of what was written — and what the parser loads does not move (`S103`).
-  inEditorKeyOrder(withoutParserDefaults(skeleton));
 
   // The fields the model carries as `CompileResult` carries them, by reference:
   // one object, so the result and its model cannot say two different things.
@@ -4564,9 +4512,9 @@ function sequenceFrameRegion(stem: string, seq: RigSequence, i: number): string 
   return `${stem}${'0'.repeat(Math.max(0, (seq.digits ?? 0) - frame.length))}${frame}`;
 }
 
-/** The emitted `sequence` block: the four fields exactly as the spec stated them. */
-function emitSequence(seq: RigSequence): SpineSequence {
-  const out: SpineSequence = { count: seq.count };
+/** The model's `sequence` record: the four fields exactly as the spec stated them. */
+function buildSequence(seq: RigSequence): ModelSequence {
+  const out: ModelSequence = { count: seq.count };
   if (seq.start !== undefined) out.start = seq.start;
   if (seq.digits !== undefined) out.digits = seq.digits;
   if (seq.setup !== undefined) out.setup = seq.setup;
@@ -4665,7 +4613,7 @@ function buildRigRegion(
     if (att.scaleX !== undefined) out.scaleX = f32(att.scaleX);
     if (att.scaleY !== undefined) out.scaleY = f32(att.scaleY);
     if (att.color !== undefined) out.color = att.color;
-    out.sequence = emitSequence(att.sequence);
+    out.sequence = buildSequence(att.sequence);
     return out;
   }
   const img = att.image === undefined ? null : atlasedImage(att.image, where, ctx);
@@ -4975,7 +4923,7 @@ function buildRigMesh(
     width: f32(width),
     height: f32(height),
   };
-  if (att.sequence !== undefined) out.sequence = emitSequence(att.sequence);
+  if (att.sequence !== undefined) out.sequence = buildSequence(att.sequence);
   // Register it as `authored`: geometry rigc did not build and whose topology it
   // therefore gets to assume nothing about. The generator-topology assertions
   // read this and skip rather than measuring a ring that was never a ring.
@@ -5096,7 +5044,7 @@ function buildRigLinkedMesh(
   const path = attachmentPath(att, placeholder);
   if (path !== undefined) out.path = path;
   if (att.color !== undefined) out.color = att.color;
-  if (att.sequence !== undefined) out.sequence = emitSequence(att.sequence);
+  if (att.sequence !== undefined) out.sequence = buildSequence(att.sequence);
   // 🚫 NOT registered in `ctx.meshes`, and that is a decision rather than an
   // omission. `meshKinds` is keyed by SLOT and the commonest linked mesh shares
   // its source's slot from another skin, so an entry here would overwrite the

@@ -53,9 +53,10 @@
  * reference would come back out of the model that way.
  */
 import { CompileError } from './errors.ts';
-import { PARSER_DEFAULTS } from './keyorder.ts';
+import { inEditorKeyOrder, PARSER_DEFAULTS, withoutParserDefaults } from './keyorder.ts';
 import type {
   CompiledAnimation,
+  CompiledModel,
   ModelAttachmentTimelines,
   ModelBone,
   ModelBoundingBoxAttachment,
@@ -68,6 +69,7 @@ import type {
   ModelMeshAttachment,
   ModelPathAttachment,
   ModelRegionAttachment,
+  ModelSequence,
   ModelSkin,
   ModelSlot,
   ModelTimelines,
@@ -91,6 +93,7 @@ import type {
   SpinePathAttachment,
   SpineRegionAttachment,
   SpineSequence,
+  SpineSkeletonJson,
   SpineSkin,
   SpineSlot,
   SpineTimelineKey,
@@ -257,13 +260,13 @@ export function emitVertexAttachment(att: ModelVertexAttachment, indexOf: (bone:
 }
 
 /**
- * A `sequence` block, keys in `emitSequence`'s order in `compile.ts`:
+ * A `sequence` block, keys in `buildSequence`'s order in `compile.ts`:
  * `count, start, digits, setup`, each optional key only when stated. The key
  * order has no row for a sequence, so the order is this one's. A fresh object
  * every time: the parser-default pass removes `start: 1` and `setup: 0` in
  * place, and it must not reach into the model.
  */
-export function emitSequenceBlock(seq: SpineSequence): SpineSequence {
+export function emitSequenceBlock(seq: ModelSequence): SpineSequence {
   const out: SpineSequence = { count: seq.count };
   if (seq.start !== undefined) out.start = seq.start;
   if (seq.digits !== undefined) out.digits = seq.digits;
@@ -744,4 +747,93 @@ export function emitAnimations(
     out[name] = emitAnimation(animation, slotIndex);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// the skeleton: the emitter's one entry (issue #922, cut 1f)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the emitter adds that the model does not hold: the skeleton header.
+ * Each field is the assembly's, passed by name — none is a value a posing core
+ * reads off the rig.
+ *
+ *   - `spine` — the spine-core line the file is written for (`SPINE_VERSION`
+ *     in `compile.ts`).
+ *   - `stage` — the setup-pose box, four fields or none (`null`), issue #578.
+ *   - `fps`, `referenceScale`, `images`, `audio` — the rig spec's header
+ *     bookkeeping as stated, `images` spelled relative to `--out`
+ *     (`skeletonImagesPath`); each only when present.
+ */
+export interface SkeletonHeader {
+  spine: string;
+  stage: { x: number; y: number; width: number; height: number } | null;
+  fps?: number;
+  referenceScale?: number;
+  images?: string;
+  audio?: string | null;
+}
+
+/** The editor's orders the emitter applies, passed for the reason the header's 🔸 gives. */
+export interface SkeletonOrder extends EditorOrder {
+  animations: AnimationOrder;
+}
+
+/** The model fields a skeleton is written from. */
+export type SkeletonSource = Pick<CompiledModel, 'bones' | 'slots' | 'skins' | 'constraints' | 'events' | 'animations'>;
+
+/**
+ * The Spine 4.3 skeleton of a compiled model: the emitter's one entry, and
+ * the one object `compile` assembles — `CompileResult.skeleton` is its value.
+ *
+ * Top-level keys in the order the assembly wrote them before the model
+ * existed, each section by its own emitter:
+ *
+ *   `skeleton, bones, slots, skins, events, animations, constraints`
+ *
+ * — `events` only when the rig declares one (a conditional spread, so it lands
+ * between `skins` and `animations`, where the editor writes it), `constraints`
+ * only when the model holds one (assigned after, so it lands last until the
+ * key-order pass moves it). The header's keys: `spine, x, y, width, height,
+ * fps, referenceScale, images, audio`, the stage's four only together.
+ *
+ * Then, on the finished object and once: `withoutParserDefaults` drops every
+ * key at the value the 4.3 parser reads in its absence, and `inEditorKeyOrder`
+ * puts every kind's keys in the editor's order (`src/keyorder.ts`). Neither
+ * adds, drops or re-values anything the two tables do not list, and neither
+ * throws, so a refusal raised here is raised by a section emitter, in the
+ * order above.
+ *
+ * What the emitter adds that the model does not hold is `header`
+ * (`SkeletonHeader`); what it restates in Spine's words is every section
+ * emitter's own doc comment.
+ */
+export function emitSkeleton(model: SkeletonSource, header: SkeletonHeader, order: SkeletonOrder): SpineSkeletonJson {
+  const head: SpineSkeletonJson['skeleton'] = { spine: header.spine };
+  if (header.stage !== null) {
+    head.x = header.stage.x;
+    head.y = header.stage.y;
+    head.width = header.stage.width;
+    head.height = header.stage.height;
+  }
+  if (header.fps !== undefined) head.fps = header.fps;
+  if (header.referenceScale !== undefined) head.referenceScale = header.referenceScale;
+  if (header.images !== undefined) head.images = header.images;
+  if (header.audio !== undefined) head.audio = header.audio;
+
+  const events = emitEvents(model.events);
+  // A weighted vertex's bone index is its bone's position in the array
+  // `emitBones` writes; the skin tables bind by name and are encoded here.
+  const indexOf = boneIndexOf(model.bones);
+  const skeleton: SpineSkeletonJson = {
+    skeleton: head,
+    bones: emitBones(model.bones),
+    slots: emitSlots(model.slots),
+    skins: emitSkins(model.skins, indexOf, { skins: order.skins, slotKeys: order.slotKeys }),
+    ...(Object.keys(events).length ? { events } : {}),
+    animations: emitAnimations(model.animations, model.slots, order.animations),
+  };
+  if (model.constraints.length) skeleton.constraints = emitConstraints(model.constraints);
+  inEditorKeyOrder(withoutParserDefaults(skeleton));
+  return skeleton;
 }

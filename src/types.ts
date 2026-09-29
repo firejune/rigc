@@ -1563,6 +1563,11 @@ export interface CompileResult {
    * this result's own, carried by reference.
    */
   model: CompiledModel;
+  /**
+   * The Spine 4.3 skeleton: `emitSkeleton`'s value over `model` (issue #922),
+   * the one call the assembly makes. `build` writes its text, and beside it
+   * `modelDocument(model)` as `skeleton.model.json`.
+   */
   skeleton: SpineSkeletonJson;
   skeletonText: string;
   atlasText: string;

@@ -164,6 +164,7 @@ import {
   pathCurveLengths,
   relativeImagesPath,
   SPINE_VERSION,
+  type CompileOptions,
   type DeformGeometry,
 } from './src/compile.ts';
 import {
@@ -217,6 +218,9 @@ import {
 } from './src/emit_spine.ts';
 import {
   isModelVertexAttachment,
+  MODEL_DOCUMENT_FILE,
+  MODEL_DOCUMENT_SPEC,
+  modelDocument,
   type CompiledAnimation,
   type CompiledModel,
   type ModelKey,
@@ -454,6 +458,7 @@ import {
   validate,
   VALIDATE_PROFILES,
   type ValidateProfile,
+  type ValidateReport,
 } from './src/validate.ts';
 import {
   articulatedFixture,
@@ -7984,7 +7989,8 @@ function runRigSuite(): number {
           declaredDurations: first.declaredDurations,
           rig: first.rig,
           profile: 'spine-html',
-          reEmit: { skeletonText: second.skeletonText, atlasText: second.atlasText },
+          modelText: modelDocument(first.model),
+          reEmit: gateTextsOf(second),
         });
       } catch (err) {
         message = (err as Error).message;
@@ -8199,7 +8205,8 @@ function runRigSuite(): number {
           declaredDurations: first.declaredDurations,
           rig: first.rig,
           profile: 'spine-html',
-          reEmit: { skeletonText: second.skeletonText, atlasText: second.atlasText },
+          modelText: modelDocument(first.model),
+          reEmit: gateTextsOf(second),
         });
         if (report.failures.length > 0) probes.push(`the gate failed it: ${[...new Set(report.failures.map((f) => f.assertion))].join(', ')}`);
         if (!report.passed.includes('A18_DETERMINISTIC_EMIT')) probes.push('A18 did not pass on two compiles of it');
@@ -33242,7 +33249,8 @@ function runSegmentsMeshSuite(): number {
       declaredDurations: first.declaredDurations,
       rig: first.rig,
       profile,
-      reEmit: { skeletonText: second.skeletonText, atlasText: second.atlasText },
+      modelText: modelDocument(first.model),
+      reEmit: gateTextsOf(second),
     });
   const plain = gateUnder('spine');
   const policy = gateUnder('spine-html');
@@ -38681,7 +38689,8 @@ function runGroupMemberSuite(): number {
             atlasText: capitalResult.atlasText,
             atlasDir: chainDirs.outDir,
             declaredDurations: capitalResult.declaredDurations,
-            reEmit: { skeletonText: capitalResult.skeletonText, atlasText: capitalResult.atlasText },
+            modelText: modelDocument(capitalResult.model),
+            reEmit: gateTextsOf(capitalResult),
             rig: capitalResult.rig,
             profile: 'spine',
           });
@@ -40076,7 +40085,8 @@ function runSuite(suite: Suite): number {
     atlasDir: suite.opts.outDir,
     declaredDurations: pristine.declaredDurations,
     rig: pristine.rig,
-    reEmit: { skeletonText: compile(suite.opts).skeletonText, atlasText: compile(suite.opts).atlasText },
+    modelText: modelDocument(pristine.model),
+    reEmit: gateTextsOf(compile(suite.opts)),
     profile: MUTANT_PROFILE,
   });
   if (control.failures.length === 0) {
@@ -45177,7 +45187,8 @@ function runAtlasReaderSuite(): number | null {
           atlasDir: outDir,
           declaredDurations: built.declaredDurations,
           rig: built.rig,
-          reEmit: { skeletonText: importFrom(prefixedPath).skeletonText, atlasText: importFrom(prefixedPath).atlasText },
+          modelText: modelDocument(built.model),
+          reEmit: gateTextsOf(importFrom(prefixedPath)),
           profile: 'spine',
         });
         probes.push(...gate.failures.map((f) => `the gate refused the emission: ${f.assertion}: ${f.detail}`));
@@ -52876,7 +52887,8 @@ function currencyTruth(root: string): CurrencyTruth {
     atlasDir: fixture.outDir,
     declaredDurations: built.declaredDurations,
     rig: built.rig,
-    reEmit: { skeletonText: built.skeletonText, atlasText: built.atlasText },
+    modelText: modelDocument(built.model),
+    reEmit: gateTextsOf(built),
     profile: 'spine',
   });
   const reached = new Set([
@@ -66115,6 +66127,25 @@ function runHashes(args: string[]): { status: number | null; stdout: string; std
 }
 
 /**
+ * `after` with `skeleton.model.json` taken out of every row whose `base` row
+ * does not carry it — the Spine files `after` wrote, against a base document
+ * taken before issue #922 made `build` write the model beside them.
+ *
+ * ⚠️ This is what lets the step-1 byte-identity gates (`MB07`, `MV09`, `MS12`,
+ * `MA12`) keep meaning "the Spine bytes did not move" against a base older
+ * than the document. It does not excuse the added file: `MD07` holds that the
+ * difference from such a base is EXACTLY that one file on every row, and a
+ * base that carries the file is compared in full, the document included.
+ */
+function withoutAddedModelDocument(base: HashesDocument, after: HashesDocument): HashesDocument {
+  const baseCarries = new Map(base.recipes.map((r) => [r.name, r.files.some((f) => f.path === MODEL_DOCUMENT_FILE)] as const));
+  return {
+    ...after,
+    recipes: after.recipes.map((r) => (baseCarries.get(r.name) === false ? { ...r, files: r.files.filter((f) => f.path !== MODEL_DOCUMENT_FILE) } : r)),
+  };
+}
+
+/**
  * The bones of a rig spec, parsed. Only the fields the plants below touch are
  * typed; the rest of the spec is carried through `JSON.stringify` untouched.
  */
@@ -66189,6 +66220,9 @@ function runEmitHashesSuite(): number | null {
       for (const recipe of r.doc?.recipes ?? []) {
         if (recipe.exits.some((e) => e !== 0)) probes.push(`run ${label}: ${recipe.name} exited ${JSON.stringify(recipe.exits)}, not green`);
         if (!recipe.files.some((f) => f.path === 'skeleton.json')) probes.push(`run ${label}: ${recipe.name} hashed no skeleton.json`);
+        // The model document is a file `build` writes (issue #922), so the twin
+        // runs hold it byte-identical at two depths like the Spine pair.
+        if (!recipe.files.some((f) => f.path === MODEL_DOCUMENT_FILE)) probes.push(`run ${label}: ${recipe.name} hashed no ${MODEL_DOCUMENT_FILE}`);
       }
     }
     if (a.doc !== null && b.doc !== null && !readFileSync(a.out).equals(readFileSync(b.out))) probes.push('the two hash documents differ in their bytes');
@@ -66241,9 +66275,12 @@ function runEmitHashesSuite(): number | null {
       named = c.differ.map((d) => d.name);
       if (c.onlyA.length + c.onlyB.length > 0) probes.push(`recipes on one side only: ${[...c.onlyA, ...c.onlyB].join(', ')}`);
       if (named.length !== 1 || named[0] !== `gallery/${target}`) probes.push(`compare named [${named.join(', ')}], not gallery/${target} alone`);
+      // Two files and no third: the bone's number is in the Spine skeleton and
+      // in the model document written beside it (issue #922), and in no page.
       const findings = c.differ.flatMap((d) => d.findings);
-      if (findings.length !== 1 || !findings[0].startsWith('skeleton.json differs:')) {
-        probes.push(`the findings are ${JSON.stringify(findings)}, not skeleton.json alone — a bone's x moves no part's page`);
+      const changed = findings.map((f) => f.slice(0, f.indexOf(' differs:'))).sort();
+      if (findings.length !== 2 || JSON.stringify(changed) !== JSON.stringify(['skeleton.json', MODEL_DOCUMENT_FILE].sort())) {
+        probes.push(`the findings are ${JSON.stringify(findings)}, not skeleton.json and ${MODEL_DOCUMENT_FILE} alone — a bone's x moves no part's page`);
       }
       if (!run.stdout.includes(`DIFF  gallery/${target}`)) probes.push('the printed report does not carry the recipe\'s DIFF line');
     } else probes.push('a document to compare is missing');
@@ -66251,7 +66288,7 @@ function runEmitHashesSuite(): number | null {
     say(
       'EH02_ONE_NUMBER_EDITED_IN_A_SPEC_COPY_IS_THE_ONE_RECIPE_AND_FILE_COMPARE_NAMES',
       held,
-      probeDetail(held, probes, `${what} in a copy of gallery/${target}/rig.json, run under --root: compare exits 1 naming ${named.join(', ')} and skeleton.json in it, and nothing else`),
+      probeDetail(held, probes, `${what} in a copy of gallery/${target}/rig.json, run under --root: compare exits 1 naming ${named.join(', ')} and skeleton.json and ${MODEL_DOCUMENT_FILE} in it, and nothing else`),
       'the brief\'s row EH02: the smallest edit a cut could make by mistake, and the two names an agent needs to act ' +
         'on it. "Nothing else" is the half that keeps it from passing by making everything noisy — the untouched ' +
         'twin recipe and the untouched atlas both stay IDENTICAL',
@@ -66448,6 +66485,14 @@ function bonesAsFileText(bones: SpineBone[]): string {
   return JSON.stringify(holder.bones);
 }
 
+/**
+ * A compile's three texts as `A18` compares them — the Spine pair and the
+ * model document `build` writes beside it (issue #922).
+ */
+function gateTextsOf(result: CompileResult): { skeletonText: string; atlasText: string; modelText: string } {
+  return { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model) };
+}
+
 /** `src/compile.ts` with its comments blanked, so a scan reads code only. */
 function codeOnly(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
@@ -66458,8 +66503,11 @@ function compileSourceProblems(text: string): string[] {
   const code = codeOnly(text);
   const count = (re: RegExp): number => (code.match(re) ?? []).length;
   const problems: string[] = [];
+  // Since issue #922 the sections are emitted inside `emitSkeleton`, the
+  // assembly's one call (`MD02` holds that call and the emitter's body), so
+  // compile.ts calls no section emitter at all.
   const emits = count(/\bemitBones\(/g);
-  if (emits !== 1) problems.push(`emitBones is called ${emits} time(s); the skeleton's bones are emitted exactly once`);
+  if (emits !== 0) problems.push(`emitBones is called ${emits} time(s); the bones are emitted once, inside emitSkeleton`);
   const spine = count(/\bSpineBone\b/g);
   if (spine !== 0) problems.push(`SpineBone is named ${spine} time(s); compile builds model bones and names no Spine bone`);
   const readBack = count(/\bskeleton\.bones\b/g);
@@ -66746,7 +66794,7 @@ function runModelBonesSuite(): { failures: number; gateHole: boolean } {
     say(
       'MB06_COMPILE_EMITS_THE_BONES_ONCE_AND_NAMES_NO_SPINE_BONE',
       held,
-      probeDetail(held, probes, `\`src/compile.ts\`, comments aside: one \`emitBones\` call, no \`SpineBone\`, no read of \`skeleton.bones\`, no Spine spelling assigned to a bone; each of ${plants.length} plants raises exactly its own problem`),
+      probeDetail(held, probes, `\`src/compile.ts\`, comments aside: no \`emitBones\` call (the bones are emitted inside \`emitSkeleton\`, issue #922), no \`SpineBone\`, no read of \`skeleton.bones\`, no Spine spelling assigned to a bone; each of ${plants.length} plants raises exactly its own problem`),
       'issue #915\'s shape: the model holds values and the emitter owns the bytes, so the compiler builds `ModelBone`s ' +
         'and the one line that turns them into Spine\'s is the assembly',
     );
@@ -66785,7 +66833,7 @@ function runModelBonesSuite(): { failures: number; gateHole: boolean } {
           probes.push(`the run wrote no readable document: ${(err as Error).message}`);
         }
         if (after !== null) {
-          const c = compareHashes(baseRows, after);
+          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after));
           verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
           if (!c.identical) probes.push(`against the base: ${verdict}`);
           // The plant: the base with one hash flipped must read DIFF, or IDENTICAL above meant nothing.
@@ -66794,7 +66842,7 @@ function runModelBonesSuite(): { failures: number; gateHole: boolean } {
           if (file === undefined) probes.push(`${rows[0].name} has no hashed file in the base`);
           else {
             file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
-            const p = compareHashes(flipped, after);
+            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after));
             if (p.identical || p.differ.length !== 1 || p.differ[0].name !== rows[0].name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
           }
         }
@@ -66992,9 +67040,10 @@ function compileVertexSourceProblems(text: string): string[] {
   if (spineTypes !== 0) problems.push(`a Spine vertex-attachment type is named ${spineTypes} time(s); compile builds model records`);
   const encoders = count(/\b(encodeWeightedVertices|encodeNamedWeights)\b/g);
   if (encoders !== 0) problems.push(`an index encoder is named ${encoders} time(s); the run's bone index is the emitter's`);
-  // Since issue #919 the skins' attachments are emitted inside `emitSkins`, which the assembly calls once.
+  // Since issue #919 the skins' attachments are emitted inside `emitSkins`, and
+  // since issue #922 `emitSkins` is called inside `emitSkeleton` (`MD02`).
   const emits = count(/\bemitSkins\(/g);
-  if (emits !== 1) problems.push(`emitSkins is called ${emits} time(s); the skins' attachments are emitted exactly once`);
+  if (emits !== 0) problems.push(`emitSkins is called ${emits} time(s); the skins' attachments are emitted once, inside emitSkeleton`);
   const findIndex = count(/\.findIndex\(\(b\) => b\.name/g);
   if (findIndex !== 0) problems.push(`a bone's position is looked up ${findIndex} time(s); a binding names its bone`);
   const intake = count(/\bbindRawRun\(/g);
@@ -67487,7 +67536,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
     say(
       'MV08_COMPILED_ATTACHMENTS_ARE_THE_MODEL_THROUGH_THE_EMITTER_AND_COMPILE_BINDS_BY_NAME',
       held,
-      probeDetail(held, probes, `${rigs} rig(s) compiled in process — the four-kind probe and every gallery rig: ${records} model record(s), each carrying neither \`type\` nor \`color\`, through \`emitSkinAttachments\` and the two passes are the file's attachment text, and so are ${passedThrough} region or linked-mesh record(s); \`src/compile.ts\`, comments aside, names no Spine vertex-attachment type and no index encoder, emits the skins once, looks up no bone by position and decodes a raw run at exactly two intakes; each of ${plants.length} plants raises exactly its own problem`),
+      probeDetail(held, probes, `${rigs} rig(s) compiled in process — the four-kind probe and every gallery rig: ${records} model record(s), each carrying neither \`type\` nor \`color\`, through \`emitSkinAttachments\` and the two passes are the file's attachment text, and so are ${passedThrough} region or linked-mesh record(s); \`src/compile.ts\`, comments aside, names no Spine vertex-attachment type and no index encoder, calls no \`emitSkins\` (it runs inside \`emitSkeleton\`, issue #922), looks up no bone by position and decodes a raw run at exactly two intakes; each of ${plants.length} plants raises exactly its own problem`),
       'issue #917\'s shape: the model holds values and the emitter owns the bytes — the four vertex kinds are built as records, the skins\' attachments are turned into Spine\'s at one line of the assembly, and nothing in the compiler reads a bone index back',
     );
   }
@@ -67525,7 +67574,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
         }
         if (after !== null) {
           const baseRows: HashesDocument = { ...base, recipes: rows };
-          const c = compareHashes(baseRows, after);
+          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after));
           verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
           if (!c.identical) probes.push(`against the base: ${verdict}`);
           // The plant: the last row's first hash flipped must read DIFF naming that row.
@@ -67535,7 +67584,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
           if (file === undefined) probes.push(`${last.name} has no hashed file in the base`);
           else {
             file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
-            const p = compareHashes(flipped, after);
+            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after));
             if (p.identical || p.differ.length !== 1 || p.differ[0].name !== last.name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
           }
         }
@@ -67606,8 +67655,9 @@ function compileRecordSourceProblems(text: string): string[] {
   const spine = count(/\bSpine(Slot|Skin|Constraint|Event|RegionAttachment|LinkedMeshAttachment)\b/g);
   if (spine !== 0) problems.push(`a Spine slot, skin, constraint, event, region or linked-mesh type is named ${spine} time(s); compile builds model records`);
   for (const emitter of ['emitSlots', 'emitSkins', 'emitConstraints', 'emitEvents']) {
+    // Called inside `emitSkeleton` since issue #922 (`MD02`), so never here.
     const calls = count(new RegExp(`\\b${emitter}\\(`, 'g'));
-    if (calls !== 1) problems.push(`${emitter} is called ${calls} time(s); each section is emitted exactly once`);
+    if (calls !== 0) problems.push(`${emitter} is called ${calls} time(s); each section is emitted once, inside emitSkeleton`);
   }
   // A rig spec's own `type` is the input and is read (`spec.type`); a built record's is not.
   const typeReads = count(/(?<!\bspec)\.type === '(ik|transform|physics|path|slider|linkedmesh|region|mesh|boundingbox|clipping)'/g);
@@ -68175,7 +68225,7 @@ function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
     say(
       'MS11_COMPILE_NAMES_NO_SPINE_RECORD_TYPE_AND_EMITS_EACH_SECTION_ONCE',
       held,
-      probeDetail(held, probes, `\`src/compile.ts\`, comments aside, names none of \`SpineSlot\`, \`SpineSkin\`, \`SpineConstraint\`, \`SpineEvent\`, \`SpineRegionAttachment\`, \`SpineLinkedMeshAttachment\`, calls \`emitSlots\`, \`emitSkins\`, \`emitConstraints\` and \`emitEvents\` once each, compares no record's \`type\` and reads no transition union; each of ${plants.length} plants raises exactly its own problem`),
+      probeDetail(held, probes, `\`src/compile.ts\`, comments aside, names none of \`SpineSlot\`, \`SpineSkin\`, \`SpineConstraint\`, \`SpineEvent\`, \`SpineRegionAttachment\`, \`SpineLinkedMeshAttachment\`, calls none of \`emitSlots\`, \`emitSkins\`, \`emitConstraints\` and \`emitEvents\` (each runs once inside \`emitSkeleton\`, issue #922), compares no record's \`type\` and reads no transition union; each of ${plants.length} plants raises exactly its own problem`),
       'issue #919\'s shape, and #379\'s rule for these six records: the compiler builds model records and the assembly is the one place they become Spine\'s',
     );
   }
@@ -68216,7 +68266,7 @@ function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
         }
         if (after !== null) {
           const baseRows: HashesDocument = { ...base, recipes: rows };
-          const c = compareHashes(baseRows, after);
+          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after));
           verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
           if (!c.identical) probes.push(`against the base: ${verdict}`);
           const flipped: HashesDocument = JSON.parse(JSON.stringify(baseRows)) as HashesDocument;
@@ -68225,7 +68275,7 @@ function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
           if (file === undefined) probes.push(`${first.name} has no hashed file in the base`);
           else {
             file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
-            const p = compareHashes(flipped, after);
+            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after));
             if (p.identical || p.differ.length !== 1 || p.differ[0].name !== first.name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
           }
         }
@@ -68384,8 +68434,9 @@ function compileAnimationSourceProblems(text: string): string[] {
   if (spine !== 0) problems.push(`a Spine animation or timeline-key type is named ${spine} time(s); compile builds model keys`);
   const section = count(/SpineSkeletonJson\['animations'\]/g);
   if (section !== 0) problems.push(`the Spine \`animations\` section type is named ${section} time(s); the emitter writes it`);
+  // Called inside `emitSkeleton` since issue #922 (`MD02`), so never here.
   const calls = count(/\bemitAnimations\(/g);
-  if (calls !== 1) problems.push(`emitAnimations is called ${calls} time(s); the section is emitted exactly once`);
+  if (calls !== 0) problems.push(`emitAnimations is called ${calls} time(s); the section is emitted once, inside emitSkeleton`);
   return problems;
 }
 
@@ -68734,7 +68785,7 @@ function runModelAnimationsSuite(): { failures: number; gateHole: boolean } {
     say(
       'MA10_COMPILE_NAMES_NO_SPINE_ANIMATION_TYPE_AND_EMITS_THE_ANIMATIONS_ONCE',
       held,
-      probeDetail(held, probes, `\`src/compile.ts\`, comments aside, names neither \`SpineAnimation\` nor \`SpineTimelineKey\` nor the \`animations\` section's type, and calls \`emitAnimations\` once; each of ${plants.length} plants raises exactly its own problem`),
+      probeDetail(held, probes, `\`src/compile.ts\`, comments aside, names neither \`SpineAnimation\` nor \`SpineTimelineKey\` nor the \`animations\` section's type, and calls no \`emitAnimations\` (it runs once inside \`emitSkeleton\`, issue #922); each of ${plants.length} plants raises exactly its own problem`),
       'issue #921\'s shape, and #379\'s rule for the animations: the compilers build model keys and the assembly is the one place they become Spine\'s',
     );
   }
@@ -68794,7 +68845,7 @@ function runModelAnimationsSuite(): { failures: number; gateHole: boolean } {
         }
         if (after !== null) {
           const baseRows: HashesDocument = { ...base, recipes: rows };
-          const c = compareHashes(baseRows, after);
+          const c = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after));
           verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
           if (!c.identical) probes.push(`against the base: ${verdict}`);
           const flipped: HashesDocument = JSON.parse(JSON.stringify(baseRows)) as HashesDocument;
@@ -68803,7 +68854,7 @@ function runModelAnimationsSuite(): { failures: number; gateHole: boolean } {
           if (file === undefined) probes.push(`${last.name} has no hashed file in the base`);
           else {
             file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
-            const p = compareHashes(flipped, after);
+            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after));
             if (p.identical || p.differ.length !== 1 || p.differ[0].name !== last.name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
           }
         }
@@ -68819,6 +68870,418 @@ function runModelAnimationsSuite(): { failures: number; gateHole: boolean } {
     }
   }
 
+  rmSync(work, { recursive: true, force: true });
+  return { failures: bad, gateHole };
+}
+
+// ---------------------------------------------------------------------------
+// the model as a document (issue #922, step 1f of #380)
+// ---------------------------------------------------------------------------
+
+/** A value with every object's keys sorted, so two records compare by content and not by key order. */
+function canonicalText(value: unknown): string {
+  const sort = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sort);
+    if (v !== null && typeof v === 'object') return Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, x]) => [k, sort(x)]));
+    return v;
+  };
+  return JSON.stringify(sort(value));
+}
+
+/** Whether `keys` appear in `order`'s order (each one listed, none out of place). */
+function keysInOrder(keys: readonly string[], order: readonly string[]): boolean {
+  let at = -1;
+  for (const key of keys) {
+    const next = order.indexOf(key);
+    if (next <= at) return false;
+    at = next;
+  }
+  return true;
+}
+
+/** The Spine type names `src/types.ts` exports — every `export interface` or `export type` spelled `Spine` + a capital. */
+function spineTypeNames(typesText: string): string[] {
+  return [...typesText.matchAll(/^export (?:interface|type) (Spine[A-Z]\w*)/gm)].map((m) => m[1]).sort();
+}
+
+/**
+ * Which of `names` a module's code names, comments blanked the way `CUR18`
+ * blanks them, each as a whole identifier — so `cropToSpineY` and
+ * `screenToSpineDegrees`, coordinate helpers whose names carry the word, are
+ * not Spine shapes and are not read as one.
+ */
+function spineNamesIn(text: string, names: readonly string[]): string[] {
+  const code = codeOnly(text);
+  return names.filter((name) => new RegExp(`\\b${name}\\b`).test(code));
+}
+
+/** How many times `code` (comments blanked) calls `fn`. */
+function callsIn(text: string, fn: string): number {
+  return (codeOnly(text).match(new RegExp(`\\b${fn}\\(`, 'g')) ?? []).length;
+}
+
+/** The body of `emitSkeleton` in `src/emit_spine.ts`, from its signature to the closing brace at column 0. */
+function emitSkeletonBody(text: string): string {
+  const at = text.indexOf('export function emitSkeleton(');
+  if (at < 0) return '';
+  const end = text.indexOf('\n}\n', at);
+  return end < 0 ? '' : text.slice(at, end + 2);
+}
+
+/** The section emitters `emitSkeleton` calls, each exactly once, and the two passes it runs once. */
+const EMIT_SKELETON_CALLS = ['emitBones', 'emitSlots', 'emitSkins', 'emitEvents', 'emitAnimations', 'emitConstraints', 'withoutParserDefaults', 'inEditorKeyOrder'] as const;
+
+/** `compile.ts`'s #379 problems: a Spine type named, or the emitter's entry called other than once. */
+function compileSpineShapeProblems(compileText: string, names: readonly string[]): string[] {
+  const problems: string[] = [];
+  const named = spineNamesIn(compileText, names);
+  if (named.length > 0) problems.push(`src/compile.ts names ${named.join(', ')}; the allowed set is empty`);
+  const entry = callsIn(compileText, 'emitSkeleton');
+  if (entry !== 1) problems.push(`src/compile.ts calls emitSkeleton ${entry} time(s); the assembly is one call`);
+  return problems;
+}
+
+/** `emitSkeleton`'s body problems: a section emitter or pass called other than once. */
+function emitSkeletonBodyProblems(emitText: string): string[] {
+  const body = emitSkeletonBody(emitText);
+  if (body === '') return ['src/emit_spine.ts has no `export function emitSkeleton(` whose body this reader can find'];
+  return EMIT_SKELETON_CALLS.flatMap((fn) => {
+    const n = callsIn(body, fn);
+    return n === 1 ? [] : [`emitSkeleton calls ${fn} ${n} time(s), not once`];
+  });
+}
+
+/** The record probe with four animations — the spec's order `zeta, idle, Alpha, every`, not the editor's — kept on disk until `done`. */
+function modelDocumentProbe(): { result: CompileResult | null; again: CompileResult | null; refusal: string; outDir: string; done: () => void } {
+  const { dirs, motionPath } = writeModelRecordsProbe();
+  const body = { duration: 1, tracks: [{ bone: 'a', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [5] }] }] };
+  const done = (): void => rmSync(dirs.dir, { recursive: true, force: true });
+  try {
+    const motion = JSON.parse(readFileSync(motionPath, 'utf8')) as Record<string, unknown>;
+    const animations = { zeta: body, idle: ANIMATIONS_PROBE_IDLE, Alpha: body, every: EVERY_GROUP_ANIMATION };
+    writeFileSync(motionPath, `${JSON.stringify({ ...motion, easings: { glide: [0.42, 0, 0.58, 1] }, animations }, null, 2)}\n`);
+    const opts: CompileOptions = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
+    return { result: compile(opts), again: compile(opts), refusal: '', outDir: dirs.outDir, done };
+  } catch (err) {
+    return { result: null, again: null, refusal: (err as Error).message, outDir: dirs.outDir, done };
+  }
+}
+
+/** What `modelDocument` refuses `model` with, or '' when it writes it. */
+function modelDocumentRefusal(model: CompiledModel): string {
+  try {
+    modelDocument(model);
+    return '';
+  } catch (err) {
+    return err instanceof CompileError ? err.message : `not a CompileError: ${(err as Error).message}`;
+  }
+}
+
+/**
+ * The compiled model as a document (issue #922, step 1f of #380): its shape
+ * and key order, what it refuses to write, `A18` over it, `build` writing it,
+ * #379's invariant as a scan of `compile.ts` and of every Spine-type importer,
+ * and — when a base hash document is named — every recipe differing from that
+ * base by exactly the added file.
+ */
+function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
+  console.log('\n── model-document: the compiled model written beside the Spine files as rigc-compiled/1 (issue #922) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const work = mkdtempSync(join(tmpdir(), 'rigc-model-document-'));
+  const probe = modelDocumentProbe();
+  const model = probe.result?.model ?? null;
+
+  // --- MD01: the document's shape, in its declared key order ---------------
+  {
+    const probes: string[] = [];
+    // Hand-written, not imported: the writer's list and this one drifting apart is the failure.
+    const TOP = ['spec', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations', 'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig'];
+    const BONE = ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inheritMode', 'skinRequired', 'editor'];
+    const SLOT = ['name', 'bone', 'setup', 'color', 'dark', 'blend'];
+    let shape = '';
+    if (model === null) probes.push(`the probe did not compile: ${probe.refusal}`);
+    else {
+      const text = modelDocument(model);
+      const doc = JSON.parse(text) as Record<string, unknown> & {
+        spec: string;
+        bones: Array<Record<string, unknown>>;
+        slots: Array<Record<string, unknown>>;
+        events: Array<{ name: string }>;
+        animations: Array<{ name: string; constraints: { physics: Array<{ name: string }> } }>;
+        images: Array<Record<string, unknown>>;
+      };
+      if (JSON.stringify(Object.keys(doc)) !== JSON.stringify(TOP)) probes.push(`the top-level keys are [${Object.keys(doc).join(', ')}]`);
+      if (doc.spec !== MODEL_DOCUMENT_SPEC || MODEL_DOCUMENT_SPEC !== 'rigc-compiled/1') probes.push(`spec is ${JSON.stringify(doc.spec)}`);
+      if (`${JSON.stringify(doc, null, 2)}\n` !== text) probes.push('the text is not what it parses to, spelled back — a value was written that JSON reads as another');
+      if (text !== modelDocument(model)) probes.push('two writes of one model differ');
+      if (JSON.stringify(doc.bones.map((b) => b.name)) !== JSON.stringify(model.bones.map((b) => b.name))) probes.push(`bones are [${doc.bones.map((b) => b.name).join(', ')}], the model's [${model.bones.map((b) => b.name).join(', ')}]`);
+      if (canonicalText(doc.bones) !== canonicalText(model.bones)) probes.push('the bones carry other values than the model\'s');
+      for (const b of doc.bones) if (!keysInOrder(Object.keys(b), BONE)) probes.push(`bone "${String(b.name)}" writes [${Object.keys(b).join(', ')}], not ModelBone's order`);
+      if (canonicalText(doc.slots) !== canonicalText(model.slots)) probes.push('the slots are not the model\'s, in its order');
+      for (const s of doc.slots) if (!keysInOrder(Object.keys(s), SLOT)) probes.push(`slot "${String(s.name)}" writes [${Object.keys(s).join(', ')}]`);
+      if (JSON.stringify(doc.events.map((e) => e.name)) !== JSON.stringify([...model.events.keys()])) probes.push(`events are [${doc.events.map((e) => e.name).join(', ')}]`);
+      const held = doc.animations.map((a) => a.name);
+      const fileOrder = probe.result === null ? [] : Object.keys((JSON.parse(probe.result.skeletonText) as SpineSkeletonJson).animations);
+      if (JSON.stringify(held) !== JSON.stringify(['zeta', 'idle', 'Alpha', 'every'])) probes.push(`animations are [${held.join(', ')}], not the spec's order`);
+      if (JSON.stringify(held) === JSON.stringify(fileOrder)) probes.push('the file keys the animations in the spec\'s order too, so this probe cannot tell the two orders apart');
+      const physics = doc.animations.find((a) => a.name === 'every')?.constraints.physics.map((p) => p.name) ?? [];
+      if (!physics.includes(EVERY_GLOBAL_PHYSICS) || physics.includes('')) probes.push(`"every"'s physics targets are [${physics.map((p) => JSON.stringify(p)).join(', ')}], not the model's '*'`);
+      if ('setupWorld' in doc) probes.push('setupWorld is written');
+      if (doc.images.length === 0 || doc.images.some((i) => 'absPath' in i)) probes.push(`the ${doc.images.length} image(s) carry absPath, or there are none to see it on`);
+      shape = `${text.length}-byte document, ${doc.bones.length} bone(s), ${doc.slots.length} slot(s), ${doc.events.length} event(s), animations [${held.join(', ')}] where the file keys [${fileOrder.join(', ')}]`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'MD01_THE_DOCUMENT_IS_RIGC_COMPILED_1_IN_ITS_DECLARED_KEY_ORDER_AND_HOLDS_THE_MODELS_RECORDS',
+      ok,
+      probeDetail(ok, probes, `${shape}: keys \`spec\`, the six model fields, the ten carried; bones and slots equal the model's in order and in ModelBone's/ModelSlot's key order; the text is what it parses to; \`*\` kept for the unnamed physics target; no \`setupWorld\`, no \`absPath\``),
+      'issue #922: the document is what the second dumper of the pose oracle reads (docs/SECOND_ORACLE.md §1, §4), so its order is the model\'s — the spec\'s for animations, which the file re-sorts — and its key order is declared rather than whatever construction left',
+    );
+  }
+
+  // --- MD02: compile.ts names no Spine shape and makes one emitter call (#379) --
+  {
+    const probes: string[] = [];
+    const root = import.meta.dir;
+    const typesText = readFileSync(join(root, 'src', 'types.ts'), 'utf8');
+    const compileText = readFileSync(join(root, 'src', 'compile.ts'), 'utf8');
+    const emitText = readFileSync(join(root, 'src', 'emit_spine.ts'), 'utf8');
+    const names = spineTypeNames(typesText);
+    if (!names.includes('SpineBone') || !names.includes('SpineSkeletonJson')) probes.push(`the exported Spine names read are [${names.join(', ')}], without SpineBone or SpineSkeletonJson`);
+    probes.push(...compileSpineShapeProblems(compileText, names), ...emitSkeletonBodyProblems(emitText));
+    // The live file does carry the word, in coordinate helpers: a scan by bare prefix would be red on it.
+    const bare = (codeOnly(compileText).match(/Spine[A-Z]\w*/g) ?? []).length;
+    if (bare === 0) probes.push('compile.ts carries no `Spine[A-Z]` run at all, so the whole-identifier half of this scan is untested');
+    const plants: Array<[string, string, 'compile' | 'emit']> = [
+      ['a Spine bone named in compile.ts', `${compileText}\ntype Back = SpineBone;\n`, 'compile'],
+      ['the skeleton type named in compile.ts', `${compileText}\nconst s: SpineSkeletonJson | null = null;\n`, 'compile'],
+      ['a second emitter call in compile.ts', `${compileText}\nconst again = emitSkeleton(model, header, order);\n`, 'compile'],
+      ['a section emitted twice by emitSkeleton', emitText.replace('bones: emitBones(model.bones),', 'bones: emitBones(model.bones), extra: emitBones(model.bones),'), 'emit'],
+    ];
+    for (const [label, text, which] of plants) {
+      const raised = which === 'compile' ? compileSpineShapeProblems(text, names) : emitSkeletonBodyProblems(text);
+      if (text === (which === 'compile' ? compileText : emitText)) probes.push(`the plant "${label}" did not apply`);
+      else if (raised.length !== 1) probes.push(`the plant "${label}" raised ${raised.length} problem(s), not one`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'MD02_COMPILE_NAMES_NO_SPINE_SHAPE_AND_ASSEMBLES_WITH_ONE_EMITTER_CALL',
+      ok,
+      probeDetail(ok, probes, `\`src/compile.ts\`, comments aside, names none of the ${names.length} \`Spine*\` types \`src/types.ts\` exports (the allowed set is empty — the entry it imports, \`emitSkeleton\`, is not one of them) and calls \`emitSkeleton\` once; its ${bare} bare \`Spine[A-Z]\` run(s) are coordinate helpers, not types; \`emitSkeleton\` calls ${EMIT_SKELETON_CALLS.join(', ')} once each; each of ${plants.length} plants raises exactly its own problem`),
+      'issue #379, made a control by #922: CLAUDE.md requires `compile.ts` to stay independent of the runtime so the compiler and the gate do not check each other\'s assumptions, and step 1 of #380 makes the stronger half checkable — the compiler builds the model and names no Spine shape; one call hands it to the emitter',
+    );
+  }
+
+  // --- MD03: the modules that name a Spine type, measured and held ---------
+  {
+    const probes: string[] = [];
+    const root = import.meta.dir;
+    const names = spineTypeNames(readFileSync(join(root, 'src', 'types.ts'), 'utf8'));
+    // Measured on the tree #922 landed on, and held: the emitter writes Spine data, and chainfit reads a
+    // skeleton file as Spine data. `src/types.ts` declares them and is not an importer.
+    const EXPECTED = ['src/chainfit.ts', 'src/emit_spine.ts'];
+    const modules = trackedIn(root, 'src', (f) => f.endsWith('.ts')).filter((rel) => rel !== 'src/types.ts');
+    const texts = new Map(modules.map((rel) => [rel, readFileSync(join(root, rel), 'utf8')] as const));
+    const importers = (population: ReadonlyMap<string, string>): string[] => [...population].filter(([, text]) => spineNamesIn(text, names).length > 0).map(([rel]) => rel).sort();
+    const found = importers(texts);
+    if (JSON.stringify(found) !== JSON.stringify(EXPECTED)) probes.push(`the modules naming a Spine type are [${found.join(', ')}], not [${EXPECTED.join(', ')}]`);
+    for (const rel of ['src/model.ts', 'src/compile.ts']) if (!texts.has(rel)) probes.push(`${rel} is not in the tracked population this reads`);
+    const planted = new Map(texts);
+    planted.set('src/model.ts', `${texts.get('src/model.ts') ?? ''}\nexport type Back = SpineSequence;\n`);
+    if (JSON.stringify(importers(planted)) === JSON.stringify(found)) probes.push('a model.ts naming SpineSequence did not join the set');
+    const commented = new Map(texts);
+    commented.set('src/model.ts', `${texts.get('src/model.ts') ?? ''}\n// SpineSequence, in a comment\n`);
+    if (JSON.stringify(importers(commented)) !== JSON.stringify(found)) probes.push('a comment naming SpineSequence joined the set');
+    const ok = probes.length === 0;
+    say(
+      'MD03_THE_MODULES_NAMING_A_SPINE_TYPE_ARE_THE_EMITTER_AND_THE_ONE_READER_MEASURED',
+      ok,
+      probeDetail(ok, probes, `${modules.length} tracked module(s) under src/ besides types.ts; the ones naming any of ${names.length} Spine types are [${found.join(', ')}] — emit_spine.ts writes Spine data, chainfit.ts reads a skeleton file as it; a model.ts naming one joins the set, a comment naming one does not`),
+      'issue #922\'s second half: the model is to be read by a core that is not Spine\'s, so which modules speak Spine is a set to hold rather than a sentence — measured, it is not the six the brief listed; validate, render, deformmeasure, ingest and diff read Spine data through spine-core or as plain JSON and name none of these types',
+    );
+  }
+
+  // --- MD04: A18 compares the model document, and a map order the file cannot see turns it red --
+  {
+    const probes: string[] = [];
+    const a18 = 'A18_DETERMINISTIC_EMIT';
+    let detail = '';
+    if (probe.result === null || probe.again === null) probes.push(`the probe did not compile: ${probe.refusal}`);
+    else {
+      const first = probe.result;
+      const second = probe.again;
+      const gate = (modelText: string | undefined, reEmit: { skeletonText: string; atlasText: string; modelText: string }) =>
+        validate({ skeletonText: first.skeletonText, atlasText: first.atlasText, atlasDir: probe.outDir, declaredDurations: first.declaredDurations, rig: first.rig, profile: 'spine', modelText, reEmit });
+      const a18Failures = (report: ValidateReport): string[] => report.failures.filter((f) => f.assertion === a18).map((f) => f.detail);
+      const clean = gate(modelDocument(first.model), gateTextsOf(second));
+      if (!clean.passed.includes(a18)) probes.push(`two compiles of the probe do not pass A18: ${a18Failures(clean).join(' | ')}`);
+      // The plant: the second compile's animations inserted in reverse. The Spine emitter keys them in the
+      // editor's order, so skeleton.json cannot see it; the document writes the map in the map's order.
+      const reordered: CompiledModel = { ...second.model, animations: new Map([...second.model.animations].reverse()) };
+      const plantedText = modelDocument(reordered);
+      if (plantedText === modelDocument(second.model)) probes.push('reversing the animations map did not move the document');
+      const planted = gate(modelDocument(first.model), { ...gateTextsOf(second), modelText: plantedText });
+      const said = a18Failures(planted);
+      if (said.length !== 1 || !said[0].includes(MODEL_DOCUMENT_FILE) || !said[0].includes('first differing line')) probes.push(`the reordered map read ${JSON.stringify(said)}`);
+      const missing = a18Failures(gate(undefined, gateTextsOf(second)));
+      if (missing.length !== 1 || !missing[0].includes('no first model document')) probes.push(`a gate handed no first document read ${JSON.stringify(missing)}`);
+      detail = said[0] ?? '';
+    }
+    const ok = probes.length === 0;
+    say(
+      'MD04_A18_COMPARES_THE_MODEL_DOCUMENT_AND_A_MAP_ORDER_THE_FILE_CANNOT_SEE_TURNS_IT_RED',
+      ok,
+      probeDetail(ok, probes, `two compiles of the probe pass A18 with their documents compared; the second's animations map inserted in reverse — which skeleton.json, keyed in the editor's order, cannot show — fails A18 alone: "${detail}"; a second compile with no first document fails by name`),
+      'issue #922: A18 compares a second independent compile byte for byte, and the document is the one artifact where a `Map` iterated in an order nothing fixed would show before the Spine file does',
+    );
+  }
+
+  // --- MD05: build writes the document beside the pair, the same on two runs --
+  {
+    const probes: string[] = [];
+    const galleryRoot = resolve(import.meta.dir, 'gallery');
+    const name = existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().find((n) => existsSync(join(galleryRoot, n, 'rig.json')) && existsSync(join(galleryRoot, n, 'motion.json'))) : undefined;
+    let detail = '';
+    if (name === undefined) probes.push(`no gallery rig with a rig.json and motion.json under ${galleryRoot}`);
+    else {
+      const rigPath = join(galleryRoot, name, 'rig.json');
+      const motionPath = join(galleryRoot, name, 'motion.json');
+      const outs = ['a', 'b'].map((label) => join(work, 'cli', label));
+      const runs = outs.map((out) => runCli(['build', '--rig', rigPath, '--motion', motionPath, '--out', out]));
+      runs.forEach((run, i) => {
+        if (run.status !== 0) probes.push(`build ${i + 1} exited ${run.status}: ${run.stderr.trim().split('\n').slice(-2).join(' | ')}`);
+        const written = existsSync(outs[i]) ? readdirSync(outs[i]).sort() : [];
+        if (JSON.stringify(written) !== JSON.stringify(['skeleton.atlas', 'skeleton.json', MODEL_DOCUMENT_FILE])) probes.push(`build ${i + 1} wrote [${written.join(', ')}]`);
+        if (!run.stdout.includes(`wrote ${join(outs[i], MODEL_DOCUMENT_FILE)}`)) probes.push(`build ${i + 1} did not say it wrote the document`);
+      });
+      const texts = outs.map((out) => (existsSync(join(out, MODEL_DOCUMENT_FILE)) ? readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8') : ''));
+      if (texts[0] === '' || texts[0] !== texts[1]) probes.push('the two builds\' documents differ, or none was written');
+      else {
+        const doc = JSON.parse(texts[0]) as { spec: string; bones: unknown[] };
+        const compiled = compile({ rigPath, motionPath, outDir: outs[0] });
+        if (doc.spec !== MODEL_DOCUMENT_SPEC) probes.push(`spec is ${JSON.stringify(doc.spec)}`);
+        if (texts[0] !== modelDocument(compiled.model)) probes.push('the written document is not modelDocument of an in-process compile of the same build');
+        if (canonicalText(doc.bones) !== canonicalText(compiled.model.bones)) probes.push('the document\'s bones are not the model\'s, in order');
+        detail = `gallery/${name}: ${texts[0].length} bytes, ${doc.bones.length} bone(s)`;
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'MD05_BUILD_WRITES_THE_DOCUMENT_BESIDE_THE_PAIR_BYTE_IDENTICAL_ACROSS_TWO_RUNS',
+      ok,
+      probeDetail(ok, probes, `${detail}; two \`rigc build\` runs into sibling --out directories each wrote exactly skeleton.atlas, skeleton.json and ${MODEL_DOCUMENT_FILE}, said so, and wrote byte-identical documents equal to modelDocument of an in-process compile, whose bones are the model's in order`),
+      'issue #922: the document is an artifact like the pair — written by `build`, after the gate, and determinate through the CLI, not only inside one process',
+    );
+  }
+
+  // --- MD06: a value JSON cannot carry, or a field it has no place for, is refused by its path --
+  {
+    const probes: string[] = [];
+    let count = 0;
+    if (model === null) probes.push(`the probe did not compile: ${probe.refusal}`);
+    else {
+      if (modelDocumentRefusal(model) !== '') probes.push(`the live model is refused: ${modelDocumentRefusal(model)}`);
+      const bone0 = model.bones[0];
+      const plants: Array<[string, CompiledModel, string]> = [
+        ['a bone field the document does not list', { ...model, bones: [{ ...bone0, drawOrder: 1 } as ModelBone, ...model.bones.slice(1)] }, 'no place for field "drawOrder" of bones[0]'],
+        ['a -0', { ...model, bones: [{ ...bone0, x: -0 }, ...model.bones.slice(1)] }, 'cannot carry -0 at bones[0].x'],
+        ['a NaN in a constraint', { ...model, constraints: [{ ...model.constraints[0], mix: Number.NaN }, ...model.constraints.slice(1)] }, 'cannot carry NaN at constraints[0].mix'],
+        ['a Set in a carried report', { ...model, images: [{ ...model.images[0], seen: new Set<string>() } as CompiledImage, ...model.images.slice(1)] }, 'cannot carry [object Set] at images[0].seen'],
+        ['a model field the document has no place for', { ...model, poses: [] } as CompiledModel, 'no place for the model\'s field "poses"'],
+      ];
+      for (const [label, planted, expected] of plants) {
+        count += 1;
+        const refusal = modelDocumentRefusal(planted);
+        if (!refusal.includes(expected)) probes.push(`${label}: ${refusal === '' ? 'written' : `refused as "${refusal}"`}, not naming "${expected}"`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'MD06_A_VALUE_JSON_CANNOT_CARRY_OR_A_FIELD_WITH_NO_PLACE_IS_REFUSED_BY_ITS_PATH',
+      ok,
+      probeDetail(ok, probes, `the probe's model is written; ${count} plants — an unlisted bone field, a -0, a NaN, a Set, an unlisted model field — are each refused naming the path`),
+      'issue #922: JSON writes -0 as 0, NaN as null and a Set as {}, and a field the writer does not list would vanish — each is the document stating a value the model does not hold, which is the silence this tool exists to name. Measured over the nineteen recipes: the one -0 the model holds is `setupWorld`\'s `b` (157 of 2,492 entries, 18 of 19 rigs), which is why that derived field is left out rather than rounded',
+    );
+  }
+
+  // --- MD07: every recipe of a named base differs by exactly the added document --
+  let gateHole = false;
+  {
+    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
+    if (basePath === undefined || basePath === '') {
+      gateHole = true;
+      console.log('  SKIP  MD07 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
+      console.log('          ⚠️ This is a HOLE in this run, not a pass — that the model document is the only difference from a base commit was not measured here.');
+    } else {
+      const probes: string[] = [];
+      let base: HashesDocument | null = null;
+      try {
+        base = readHashes(resolve(basePath));
+      } catch (err) {
+        probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
+      }
+      const present = (from: string): boolean => existsSync(isAbsolute(from) ? from : resolve(import.meta.dir, from));
+      const rows = (base?.recipes ?? []).filter((r) => r.stage.every((s) => present(s.from)));
+      const absent = (base?.recipes ?? []).length - rows.length;
+      if (base !== null && rows.length === 0) probes.push('no row of the base document has its inputs in this tree');
+      let verdict = '';
+      if (base !== null && rows.length > 0) {
+        const recipesPath = join(work, 'gate-recipes.json');
+        writeFileSync(recipesPath, recipesText(rows.map((r) => ({ name: r.name, stage: r.stage, commands: r.commands }))));
+        const out = join(work, 'gate.json');
+        const run = runHashes(['run', '--recipes', recipesPath, '--out', out, '--work', join(work, 'gate')]);
+        if (run.status !== 0) probes.push(`the run exited ${run.status}: ${run.stderr.trim().slice(0, 200)}`);
+        let after: HashesDocument | null = null;
+        try {
+          after = readHashes(out);
+        } catch (err) {
+          probes.push(`the run wrote no readable document: ${(err as Error).message}`);
+        }
+        if (after !== null) {
+          const baseRows: HashesDocument = { ...base, recipes: rows };
+          const carried = rows.filter((r) => r.files.some((f) => f.path === MODEL_DOCUMENT_FILE)).map((r) => r.name);
+          const c = compareHashes(baseRows, after);
+          let added = 0;
+          for (const r of rows) {
+            if (carried.includes(r.name)) continue;
+            const findings = c.differ.find((d) => d.name === r.name)?.findings ?? [];
+            if (findings.length === 1 && findings[0].startsWith(`${MODEL_DOCUMENT_FILE} only in B (`)) added += 1;
+            else probes.push(`${r.name}: ${findings.length === 0 ? 'no difference — the document was not written' : findings.join('; ')}`);
+          }
+          for (const d of c.differ) if (carried.includes(d.name)) probes.push(`${d.name}, whose base carries the document: ${d.findings.join('; ')}`);
+          if (c.onlyA.length + c.onlyB.length > 0) probes.push(`recipes on one side only: ${[...c.onlyA, ...c.onlyB].join(', ')}`);
+          const spine = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after));
+          if (!spine.identical) probes.push(`without the added file: ${comparisonLines(spine).join(' | ')}`);
+          verdict = `${added} of ${rows.length} recipe(s) differ by exactly ${MODEL_DOCUMENT_FILE} only in the after run, ${carried.length} carried it in the base and match in full; the rest ${spine.identical ? `IDENTICAL over ${spine.files} file(s)` : 'DIFF'}`;
+          // The plant: one Spine hash flipped in the base must be read as a difference the projection does not excuse.
+          const flipped: HashesDocument = JSON.parse(JSON.stringify(baseRows)) as HashesDocument;
+          const last = flipped.recipes[flipped.recipes.length - 1];
+          const file = last.files.find((f) => f.path === 'skeleton.json');
+          if (file === undefined) probes.push(`${last.name} has no skeleton.json in the base`);
+          else {
+            file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
+            const p = compareHashes(flipped, withoutAddedModelDocument(flipped, after));
+            if (p.identical || p.differ.length !== 1 || p.differ[0].name !== last.name || !p.differ[0].findings.every((f) => f.startsWith('skeleton.json differs:'))) {
+              probes.push(`one flipped skeleton.json hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
+            }
+          }
+        }
+      }
+      if (absent > 0) console.log(`          ⚠️ HOLE: ${absent} row(s) of the base document were not run, their inputs are not in this tree (run \`bun run fetch-examples\`).`);
+      const ok = probes.length === 0;
+      say(
+        'MD07_EVERY_RECIPE_DIFFERS_FROM_THE_BASE_BY_EXACTLY_THE_ADDED_MODEL_DOCUMENT',
+        ok,
+        probeDetail(ok, probes, `${rows.length} row(s) of ${basePath} built through \`tools/emit_hashes.ts\` on this tree (${absent} without their inputs here): ${verdict}; the same rows with the last one's skeleton.json hash flipped read DIFF naming it alone`),
+        'issue #922\'s gate: the Spine files\' bytes do not move on any recipe, and the one expected difference from a base taken before the cut is the added file — nothing else, on every row',
+      );
+    }
+  }
+
+  probe.done();
   rmSync(work, { recursive: true, force: true });
   return { failures: bad, gateHole };
 }
@@ -71299,11 +71762,11 @@ function runGallerySuite(): { failures: number; examples: number } {
     const opts = { rigPath: join(dir, 'rig.json'), motionPath: join(dir, 'motion.json'), outDir };
     try {
       const result = compile(opts);
-      // Twice more, so A18's determinism claim means something over real art:
+      // Once more, so A18's determinism claim means something over real art:
       // the fixtures' numbers are all round and an example's are not. Compiled
       // once and read by both profiles below — the texts do not depend on which
       // rulebook judges them.
-      const reEmit = { skeletonText: compile(opts).skeletonText, atlasText: compile(opts).atlasText };
+      const reEmit = gateTextsOf(compile(opts));
       // 🚨 Both profiles, since 2026-09-03. Under `spine` every archetype rule
       // reads PROF, so a gallery gated only there exercises none of them — and
       // the gallery is the only place in this repository with a deform timeline
@@ -71317,6 +71780,7 @@ function runGallerySuite(): { failures: number; examples: number } {
           atlasDir: outDir,
           declaredDurations: result.declaredDurations,
           rig: result.rig,
+          modelText: modelDocument(result.model),
           reEmit,
           profile,
         });
@@ -71375,7 +71839,8 @@ function runCutsSuite(): { failures: number; cuts: number } {
         // Compiling twice is what makes A18 mean anything here: on real art the
         // determinism claim is worth more than on a fixture, because the manifest
         // carries floats nobody chose.
-        reEmit: { skeletonText: compile(opts).skeletonText, atlasText: compile(opts).atlasText },
+        modelText: modelDocument(result.model),
+        reEmit: gateTextsOf(compile(opts)),
         // `spine-html`, pinned: a registered cut is a rig this project ships, and
         // "can this project ship it" is the whole question the extra suite asks.
         // It is the reading this suite has always had, and it is now stated
@@ -72929,10 +73394,8 @@ function runIngestSuite(): number {
             atlasDir: outDir,
             declaredDurations: built.declaredDurations,
             rig: built.rig,
-            reEmit: (() => {
-              const second = compile({ rigPath, motionPath, outDir: join(root, `R${index}`), atlasInPath: candidate });
-              return { skeletonText: second.skeletonText, atlasText: second.atlasText };
-            })(),
+            modelText: modelDocument(built.model),
+            reEmit: gateTextsOf(compile({ rigPath, motionPath, outDir: join(root, `R${index}`), atlasInPath: candidate })),
             profile: 'spine',
           });
           if (verdict.failures.length > 0) {
@@ -79581,6 +80044,7 @@ function main(): void {
   const modelVertices = tally.of('model-vertices', runModelVerticesSuite, { failures: (value) => value.failures });
   const modelRecords = tally.of('model-records', runModelRecordsSuite, { failures: (value) => value.failures });
   const modelAnimations = tally.of('model-animations', runModelAnimationsSuite, { failures: (value) => value.failures });
+  const modelDocumentRun = tally.of('model-document', runModelDocumentSuite, { failures: (value) => value.failures });
   tally.of('chainfit', runChainFitSuite);
   tally.of('ballot', runBallotSuite);
   tally.of('copy-images', runCopyImagesSuite);
@@ -80392,9 +80856,10 @@ function main(): void {
       (modelVertices.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the vertex attachments\' byte identity against a base commit (issue #917) was not measured in this run.' : '') +
       (modelRecords.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the structural records\' byte identity against a base commit (issue #919) was not measured in this run.' : '') +
       (modelAnimations.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the animations\' byte identity against a base commit (issue #921) was not measured in this run.' : '') +
+      (modelDocumentRun.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so that the model document is the only difference from a base commit (issue #922) was not measured in this run.' : '') +
       (launcher.startsWith(',') ? '' : launcher) +
       (gallery.examples > 0
-        ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled three times and gated green under BOTH profiles`
+        ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled twice — once, and once more for the determinism check over every file build writes — and gated green under BOTH profiles`
         : '\n  ⚠️ No gallery/ directory, so no complete rig over real art was compiled in this run.') +
       (cuts.cuts > 0 ? `\n  + the extra suite gated ${cuts.cuts} registered cut(s) green` : '') +
       "\n  Each suite's own positive control is printed by name in its section above.",
