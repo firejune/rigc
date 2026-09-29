@@ -66265,9 +66265,10 @@ import { activeBones, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED
 import { regionCorners, worldVertices, type VertexPoser } from './src/core/vertices.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
-import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, censusOf, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, reachLines, slotCensusOf, slotReachLines, type AnimationCensusField, type BuiltRow } from './tools/core_gate.ts';
+import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, reachLines, slotCensusOf, slotReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField } from './tools/core_gate.ts';
 import { BEZIER_SIXTH, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
 import { modeMatrix, worldTransforms, type CoreInheritMode } from './src/core/world.ts';
+import { ADMITTED_CONSTRAINT_KINDS, TRANSFORM_PROPERTIES, type ConstraintPlant, type CoreConstraintRecord, type CoreTransformRecord } from './src/core/constraints.ts';
 
 /** What `readModel` refuses `text` with, or '' when it reads it. */
 function coreRefusal(text: string): string {
@@ -66357,7 +66358,7 @@ function srcPopulation(root: string): Map<string, string> {
 
 /** The core suite: `src/core/`'s reader and setup pose, the second dumper in `tools/pose_oracle.ts`, compare's absences, the gate's instrument and the tree rule. */
 function runCoreSuite(): number {
-  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots and attachments\' world vertices, and every animation\'s bones and slots at its samples, as pose-oracle/1 (issues #925, #928, #931, #936) ──');
+  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots and attachments\' world vertices, and every animation\'s bones and slots at its samples, the ik and transform constraints applied in their order, as pose-oracle/1 (issues #925, #928, #931, #936, #938) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -66671,8 +66672,9 @@ function runCoreSuite(): number {
       const row = rows.find((r) => r.name === b.name);
       const path = join(b.out, MODEL_DOCUMENT_FILE);
       if (row === undefined || !existsSync(path)) continue;
-      const declares = readModel(readFileSync(path, 'utf8')).constraints.length > 0;
-      if (declares !== (row.blocks?.['setup.bones'].verdict === 'SKIP')) probes.push(`${b.name}: ${declares ? 'declares a constraint and was not skipped' : 'declares none and was skipped'}`);
+      // Since issue #938 the core poses ik and transform constraints; a row is skipped exactly when it declares a later kind (path, physics, slider).
+      const declares = readModel(readFileSync(path, 'utf8')).constraints.some((c) => !ADMITTED_CONSTRAINT_KINDS.includes(c.kind));
+      if (declares !== (row.blocks?.['setup.bones'].verdict === 'SKIP')) probes.push(`${b.name}: ${declares ? 'declares a path, physics or slider constraint and was not skipped' : 'declares none of those and was skipped'}`);
     }
     if (compared.length === 0) probes.push('no row was compared, so the gate held nothing');
     const verdict = gateVerdict(rows);
@@ -66680,8 +66682,8 @@ function runCoreSuite(): number {
     say(
       'CO06_EVERY_RECIPE_WITHOUT_A_CONSTRAINT_POSES_ITS_SETUP_BONES_AS_SPINE_CORE_DOES',
       held,
-      probeDetail(held, probes, `${verdict.line}: ${compared.reduce((s, r) => s + r.boneSamples, 0)} bone-sample(s) over ${compared.length} row(s), every one exact (worst Δ 0), and the skipped rows exactly the ones declaring a constraint, each naming its kinds`),
-      'issue #925, the first construct of #380 §5 admitted: the core\'s own evaluator (`src/core/world.ts`), written from measurement, against spine-core\'s dump of the same build on every recipe the tree generates. A rig with a constraint is not judged here: the runtime poses its setup with the constraints applied, and those are later constructs',
+      probeDetail(held, probes, `${verdict.line}: ${compared.reduce((s, r) => s + r.boneSamples, 0)} bone-sample(s) over ${compared.length} row(s), every one exact (worst Δ 0), and the skipped rows exactly the ones declaring a path, physics or slider constraint, each naming its kinds`),
+      'issue #925, the first construct of #380 §5 admitted: the core\'s own evaluator (`src/core/world.ts`), written from measurement, against spine-core\'s dump of the same build on every recipe the tree generates. The runtime poses a setup with its constraints applied: since issue #938 the ik and transform constraints are posed too (the CC controls), and a rig with a path, physics or slider constraint — later cuts — is not judged here',
     );
     if (examplesHole !== null) console.log(`          ⚠️ ${examplesHole} — only the gallery rows ran`);
     for (const line of reachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
@@ -67905,9 +67907,9 @@ function runCoreSuite(): number {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
       if (row === undefined || row.blocks === null || !existsSync(path)) continue;
       const model = readModel(readFileSync(path, 'utf8'), path);
-      const declares = model.constraints.length > 0;
+      const declares = model.constraints.some((c) => !ADMITTED_CONSTRAINT_KINDS.includes(c.kind));
       const skipped = row.blocks['animations.bones'].verdict === 'SKIP';
-      if (declares !== skipped) probes.push(`${b.name}: ${declares ? 'declares a constraint and its animation bones were not skipped' : 'declares none and its animation bones were skipped'}`);
+      if (declares !== skipped) probes.push(`${b.name}: ${declares ? 'declares a path, physics or slider constraint and its animation bones were not skipped' : 'declares none of those and its animation bones were skipped'}`);
       if (skipped && !(row.blocks['animations.bones'].why ?? '').includes('constraints are not admitted')) probes.push(`${b.name}: skipped without naming the construct — ${row.blocks['animations.bones'].why}`);
       // The same row at 200 dense samples, both animation blocks, tolerance 0.
       const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), DENSE);
@@ -67920,12 +67922,12 @@ function runCoreSuite(): number {
     say(
       'CA06_EVERY_RECIPE_POSES_EVERY_ANIMATIONS_BONES_AND_SLOTS_AS_SPINE_CORE_DOES',
       ok,
-      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${animations} animation(s), ${boneAnimations} IDENTICAL on their bones and ${slotAnimations} on their slots at the gate's nine grid samples, the rest skipped by construct and named; every row again at 200 dense samples, IDENTICAL at tolerance 0 over ${denseBones} bone-samples; the rows whose bones were skipped exactly the ones declaring a constraint`),
-      'issue #936, construct 4 of #380 §5 admitted: every unconstrained recipe\'s every animation, bones and slots, against spine-core\'s dump of the same build — a rig with a constraint has its bones posed by the constraints after the animation (CA07), so they are a later construct\'s',
+      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${animations} animation(s), ${boneAnimations} IDENTICAL on their bones and ${slotAnimations} on their slots at the gate's nine grid samples, the rest skipped by construct and named; every row again at 200 dense samples, IDENTICAL at tolerance 0 over ${denseBones} bone-samples; the rows whose bones were skipped exactly the ones declaring a path, physics or slider constraint`),
+      'issue #936, construct 4 of #380 §5 admitted: every recipe\'s every animation, bones and slots, against spine-core\'s dump of the same build — a rig\'s bones are posed by its constraints after the animation (CA07): the ik and transform constraints are posed since issue #938, and a rig with a path, physics or slider constraint has its bones left to those later cuts',
     );
   }
 
-  // --- CA07: a constrained row posed without its constraints differs, which is why its bones are left out --
+  // --- CA07: a constrained row posed without its constraints differs, which is why the constraints are posed (construct 5, issue #938) --
   {
     const probes: string[] = [];
     let detail = '';
@@ -67963,10 +67965,10 @@ function runCoreSuite(): number {
     }
     const ok = probes.length === 0;
     say(
-      'CA07_A_CONSTRAINED_ROW_POSED_WITHOUT_ITS_CONSTRAINTS_DIFFERS_SO_ITS_BONES_ARE_LEFT_OUT',
+      'CA07_A_CONSTRAINED_ROW_POSED_WITHOUT_ITS_CONSTRAINTS_DIFFERS_SO_THE_CONSTRAINTS_ARE_POSED',
       ok,
       probeDetail(ok, probes, detail),
-      'issue #936: the brief\'s seven constrained rows are SKIP by construct, and that is a claim — measured on one, the bones the constraints reach are not where the timelines and the hierarchy alone put them',
+      'issue #936: the brief\'s seven constrained rows were SKIP by construct, and that was a claim — measured on one, the bones the constraints reach are not where the timelines and the hierarchy alone put them; since issue #938 the rows declaring only ik and transform pose them (CC09), and this still holds the difference the constraints make (`posedBoneRows` without its constraint timelines is the hierarchy alone)',
     );
   }
 
@@ -68165,6 +68167,546 @@ function runCoreSuite(): number {
       'issue #933: the slot row gained the blend mode, so the 36 corpus slots stating one are judged; the reader takes the eight spellings the runtime was measured to read as a mode and refuses the rest, and a plant that reddened every row would not show the gate reads the mode at all',
     );
   }
+
+  // ===========================================================================
+  // Construct 5, first cut (issue #938): the update order, and the ik and
+  // transform constraints with their timelines. Each probe is one skeleton
+  // written twice — the Spine file for `dumpSkeleton` and the model for
+  // `readModel` — and compared at tolerance 0 through `coreDump`. Most carry
+  // "amplifier" bones ten thousand units out along a bone's axes, so a
+  // difference of 1e-10 in its matrix reads as a grid step.
+  // ===========================================================================
+  type Obj = Record<string, unknown>;
+  const ONE_SAMPLE: OracleOptions = { phase: 'grid', samples: 1, skin: 'all', physics: 'none', dt: null };
+  /** The skeleton as the Spine file and as the model: a bone's `inherit` is the model's `inheritMode`, its `skin` the model's `skinRequired`; a constraint's `type` the model's `kind`. */
+  const constraintPair = (bones: Obj[], constraints: Obj[], keys: { ik?: Record<string, Obj[]>; transform?: Record<string, Obj[]>; bones?: Keyed } = {}, skins: Obj[] = [{ name: 'default' }]): { spine: string; model: string } => {
+    const spine = {
+      skeleton: { spine: '4.3.13' }, bones, slots: [], constraints,
+      skins: skins.map((k) => ({ name: k.name, ...(k.bones === undefined ? {} : { bones: k.bones }), ...(k.constraints === undefined ? {} : { constraints: k.constraints }), attachments: {} })),
+      animations: { a: { ...(keys.bones === undefined ? {} : { bones: keys.bones }), ...(keys.ik === undefined ? {} : { ik: keys.ik }), ...(keys.transform === undefined ? {} : { transform: keys.transform }) } },
+    };
+    const model = JSON.stringify({
+      spec: 'rigc-compiled/1',
+      bones: bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
+      slots: [],
+      skins: skins.map((k) => ({ name: k.name, bones: k.bones ?? [], constraints: k.constraints === undefined ? {} : { ik: k.constraints }, attachments: {} })),
+      constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
+      events: [],
+      animations: [{
+        name: 'a', duration: 0,
+        bones: Object.entries(keys.bones ?? {}).map(([name, tls]) => ({ name, timelines: Object.entries(tls).map(([k, ks]) => ({ name: k, keys: ks })) })),
+        slots: [],
+        ...EMPTY_GROUPS,
+        constraints: { ik: Object.entries(keys.ik ?? {}).map(([name, ks]) => ({ name, keys: ks })), transform: Object.entries(keys.transform ?? {}).map(([name, ks]) => ({ name, keys: ks })), path: [], physics: [], slider: [] },
+      }],
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+    });
+    return { spine: JSON.stringify(spine), model };
+  };
+  /** The two dumps of a pair compared at tolerance 0; `plant` rewrites the constraints the core applies. */
+  const constraintCompare = (pair: { spine: string; model: string }, options: OracleOptions = ONE_SAMPLE, plant: CorePlant = {}): ReturnType<typeof compareDumps> =>
+    compareDumps(dumpSkeleton(loadOracleData(pair.spine, '', 'the constraint probe'), options), coreDump(readModel(pair.model, 'the constraint probe'), options, plant), { xy: 0, m: 0 });
+  /** A probe population: `n` pairs from `make`, each compared; the misses named (the first three) and every model kept for the census. */
+  const probeModels: string[] = [];
+  const population = (n: number, seed: number, make: (rnd: () => number) => { spine: string; model: string }, options: OracleOptions = ONE_SAMPLE): { exact: number; misses: string[]; samples: number } => {
+    const rnd = lcg(seed);
+    let exact = 0;
+    let samples = 0;
+    const misses: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const pair = make(rnd);
+      probeModels.push(pair.model);
+      const c = constraintCompare(pair, options);
+      samples += c.boneSamples;
+      if (c.identical) exact++;
+      else if (misses.length < 3) misses.push(`probe ${i}: ${c.first}`);
+    }
+    return { exact, misses, samples };
+  };
+  const pickOf = (rnd: () => number) => <T,>(l: readonly T[]): T => l[Math.floor(rnd() * l.length)];
+  const within = (rnd: () => number) => (lo: number, hi: number): number => Math.round((lo + rnd() * (hi - lo)) * 1000) / 1000;
+  const MODES5 = ['normal', 'onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
+  // Ten thousand units: a difference of 1e-10 in the bone's matrix reads as a grid step, while a probe's
+  // skewed chain (scales up to 2 over three bones) keeps the amplifier's rows below 1e6, where a double
+  // still resolves the grid; at a million units a chain of that scale reached 1.7e9 and read one step of
+  // pure rounding apart.
+  const amplify = (bone: string): Obj[] => [{ name: `${bone}_ax`, parent: bone, x: 1e4 }, { name: `${bone}_ay`, parent: bone, y: 1e4 }];
+  const skewed = (rnd: () => number, b: Obj): Obj => {
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    return { ...b, scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2), shearX: R(-30, 30), shearY: R(-30, 30) };
+  };
+  /** A one-bone ik probe: a skewed grandparent and parent, the bone in any of the five modes, and every setting the solver reads. */
+  const ikOneProbe = (rnd: () => number): { spine: string; model: string } => {
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const g = skewed(rnd, { name: 'g', parent: 'root', x: R(-50, 50), y: R(-50, 50), rotation: R(-180, 180) });
+    const p = rnd() < 0.5 ? skewed(rnd, { name: 'p', parent: 'g', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180) }) : { name: 'p', parent: 'g', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180) };
+    const b: Obj = { name: 'b', parent: 'p', x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(10, 100), inherit: pick(MODES5) };
+    const bone = rnd() < 0.5 ? skewed(rnd, b) : b;
+    const c: Obj = { type: 'ik', name: 'k', bones: ['b'], target: 't', mix: pick([1, 0, R(0, 1)]), compress: rnd() < 0.5, stretch: rnd() < 0.5, scaleY: pick(['none', 'uniform', 'volume']) };
+    return constraintPair([{ name: 'root' }, g, p, bone, ...amplify('b'), { name: 't', parent: 'root', x: R(-150, 150), y: R(-150, 150) }], [c]);
+  };
+  /** A two-bone ik probe: grandparent skewed, the parent uniform or not and reflecting, the child offset and skewed, a target far or at the parent, softness, stretch and both bends. */
+  const ikTwoProbe = (rnd: () => number): { spine: string; model: string } => {
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const g = skewed(rnd, { name: 'g', parent: 'root', x: R(-50, 50), y: R(-50, 50), rotation: R(-180, 180) });
+    const s = R(0.3, 2);
+    const p: Obj = { name: 'p', parent: 'g', x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: 50, shearX: pick([0, R(-30, 30)]), shearY: pick([0, R(-30, 30)]) };
+    const shape = rnd();
+    if (shape < 0.4) Object.assign(p, { scaleX: s * pick([1, -1]), scaleY: s * pick([1, -1]) });
+    else if (shape < 0.8) Object.assign(p, { scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2) });
+    const c: Obj = { name: 'c', parent: 'p', x: R(10, 80), y: pick([0, R(-20, 20)]), rotation: R(-180, 180), length: R(10, 90) };
+    const child = rnd() < 0.4 ? skewed(rnd, c) : c;
+    if (rnd() < 0.08) (rnd() < 0.5 ? p : child).inherit = pick(MODES5.slice(1));
+    const near = rnd() < 0.3;
+    const t = near ? { name: 't', parent: 'g', x: (p.x as number) + R(-8, 8), y: (p.y as number) + R(-8, 8) } : { name: 't', parent: 'root', x: R(-150, 150), y: R(-150, 150) };
+    const k: Obj = { type: 'ik', name: 'k', bones: ['p', 'c'], target: 't', mix: pick([1, 1, 0, R(0, 1)]), bendPositive: rnd() < 0.5, stretch: rnd() < 0.4, softness: pick([0, R(0, 30), R(0, 100)]), scaleY: pick(['none', 'uniform', 'volume']) };
+    return constraintPair([{ name: 'root' }, g, p, child, { name: 'cc', parent: 'c', x: 7, y: 3 }, ...amplify('p'), ...amplify('c'), t], [k]);
+  };
+  /** A transform probe: every mapping at random (a property to several, several to one), every flag, every offset, the mixes, over skewed sources and targets in any of the five modes. */
+  const transformProbe = (rnd: () => number): { spine: string; model: string } => {
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const PROPS: string[] = [...TRANSFORM_PROPERTIES];
+    const properties: Obj = {};
+    for (const from of PROPS) {
+      if (rnd() >= 0.4) continue;
+      const to: Obj = {};
+      for (const q of PROPS) {
+        if (rnd() >= 0.3) continue;
+        to[q] = { ...(rnd() < 0.5 ? { offset: R(-20, 20) } : {}), ...(rnd() < 0.5 ? { scale: R(-2, 2) } : {}), ...(rnd() < 0.5 ? { max: R(-50, 50) } : {}) };
+      }
+      if (Object.keys(to).length === 0) to[pick(PROPS)] = {};
+      properties[from] = { ...(rnd() < 0.4 ? { offset: R(-20, 20) } : {}), to };
+    }
+    if (Object.keys(properties).length === 0) properties[pick(PROPS)] = { to: { [pick(PROPS)]: {} } };
+    const c: Obj = { type: 'transform', name: 'k', bones: ['b'], source: 's', properties };
+    for (const f of ['localSource', 'localTarget', 'additive', 'clamp']) if (rnd() < 0.4) c[f] = true;
+    for (const m of ['mixRotate', 'mixX', 'mixY', 'mixScaleX', 'mixScaleY', 'mixShearY']) if (rnd() < 0.5) c[m] = pick([0, 1, R(-1, 2)]);
+    for (const o of ['rotation', 'x', 'y', 'scaleX', 'scaleY', 'shearY']) if (rnd() < 0.4) c[o] = R(-30, 30);
+    const sp = skewed(rnd, { name: 'sp', parent: 'root', x: R(-20, 20), y: R(-20, 20), rotation: R(-180, 180) });
+    const q = skewed(rnd, { name: 'q', parent: 'root', x: R(-20, 20), y: R(-20, 20), rotation: R(-180, 180) });
+    const s = skewed(rnd, { name: 's', parent: 'sp', x: R(-50, 50), y: R(-50, 50), rotation: R(-180, 180) });
+    const b = skewed(rnd, { name: 'b', parent: 'q', x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), inherit: pick(MODES5) });
+    return constraintPair([{ name: 'root' }, sp, s, q, b, { name: 'bc', parent: 'b', x: 13, y: -7 }, ...amplify('b')], [c]);
+  };
+  /** An order probe: nine bones in a random tree, two to six ik and transform constraints in random order, reading each other's bones. */
+  const orderProbe = (rnd: () => number): { spine: string; model: string } => {
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const bones: Obj[] = [{ name: 'root' }];
+    for (let k = 1; k <= 9; k++) {
+      const b: Obj = { name: `b${k}`, parent: k === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+      if (rnd() < 0.2) b.inherit = pick(MODES5.slice(1));
+      bones.push(rnd() < 0.5 ? skewed(rnd, b) : b);
+    }
+    const parentOf = new Map(bones.map((b) => [b.name as string, b.parent as string | undefined]));
+    const below = (top: string, n: string): boolean => {
+      for (let at = parentOf.get(n); at !== undefined; at = parentOf.get(at)) if (at === top) return true;
+      return false;
+    };
+    const names = bones.slice(1).map((b) => b.name as string);
+    const constraints: Obj[] = [];
+    const count = 2 + Math.floor(rnd() * 5);
+    for (let k = 0; k < count; k++) {
+      const kind = pick(['ik1', 'ik2', 'transform']);
+      if (kind === 'ik2') {
+        const child = pick(names.filter((n) => parentOf.get(n) !== 'root'));
+        if (child === undefined) continue;
+        const parent = parentOf.get(child) as string;
+        const targets = names.filter((n) => n !== parent && n !== child && !below(parent, n));
+        if (targets.length === 0) continue;
+        constraints.push({ type: 'ik', name: `k${k}`, bones: [parent, child], target: pick(targets), mix: pick([1, R(0, 1)]), bendPositive: rnd() < 0.5, softness: pick([0, R(0, 20)]) });
+      } else if (kind === 'ik1') {
+        const b = pick(names);
+        const targets = names.filter((n) => n !== b && !below(b, n));
+        if (targets.length === 0) continue;
+        constraints.push({ type: 'ik', name: `k${k}`, bones: [b], target: pick(targets), mix: pick([1, R(0, 1)]), compress: rnd() < 0.3, stretch: rnd() < 0.3, scaleY: pick(['none', 'uniform', 'volume']) });
+      } else {
+        const b = pick(names);
+        const sources = names.filter((n) => n !== b && !below(b, n));
+        if (sources.length === 0) continue;
+        const from = pick([...TRANSFORM_PROPERTIES]);
+        const c: Obj = { type: 'transform', name: `k${k}`, bones: [b], source: pick(sources), properties: { [from]: { to: { [pick([...TRANSFORM_PROPERTIES])]: rnd() < 0.5 ? {} : { offset: R(-10, 10), scale: R(-2, 2) } } } } };
+        for (const f of ['localSource', 'localTarget', 'additive']) if (rnd() < 0.3) c[f] = true;
+        if (rnd() < 0.5) c.mixX = pick([0, R(-1, 2)]);
+        constraints.push(c);
+      }
+    }
+    return constraintPair(bones, constraints);
+  };
+  /** A read-back probe: a world-space transform on a bone in any mode, then a translation of nothing on its parent, which re-poses the bone from the local values read back. */
+  const readBackProbe = (rnd: () => number): { spine: string; model: string } => {
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const p = skewed(rnd, { name: 'p', parent: 'root', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180) });
+    const x = skewed(rnd, { name: 'x', parent: 'p', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180), inherit: pick(MODES5) });
+    const s: Obj = { name: 's', parent: 'root', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180), scaleX: R(0.5, 1.5), scaleY: R(0.5, 1.5) };
+    const prop = pick(['rotate', 'scaleX', 'scaleY', 'shearY', 'x']);
+    const edit: Obj = { type: 'transform', name: 'edit', bones: ['x'], source: 's', properties: { [prop]: { to: { [prop]: {} } } }, mixScaleY: 1 };
+    const nudge: Obj = { type: 'transform', name: 'nudge', bones: ['p'], source: 'root', additive: true, properties: { x: { to: { x: {} } } } };
+    return constraintPair([{ name: 'root' }, p, x, ...amplify('x'), s], [edit, nudge]);
+  };
+
+  // --- CC01: readModel reads each ik and transform record and timeline, and refuses each plant by name --
+  {
+    const probes: string[] = [];
+    const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', length: 30 }, { name: 'c', parent: 'p', x: 30, length: 30 }, { name: 'o', parent: 'root' }, { name: 't', parent: 'root', x: 20, y: 30 }];
+    const ik: Obj = { type: 'ik', name: 'k', bones: ['p', 'c'], target: 't', mix: 0.5, softness: 3, bendPositive: false, stretch: true, scaleY: 'Uniform' };
+    const tr: Obj = { type: 'transform', name: 'tr', bones: ['o'], source: 't', properties: { rotate: { offset: 2, to: { x: { scale: 2, max: 9, offset: 1 } } }, y: { to: { y: {} } } }, clamp: true, mixX: 0.25 };
+    const base = constraintPair(bones, [ik, tr], { ik: { k: [{ time: 0, mix: 0.5, curve: [0.1, 0.5, 0.2, 1, 0.1, 0, 0.2, 2] }, { time: 1, softness: 2, bendPositive: true }] }, transform: { tr: [{ time: 0.5, mixX: 0.2 }] } });
+    let read: CompiledDocument | null = null;
+    try {
+      read = readModel(base.model, 'the constraint probe');
+    } catch (err) {
+      probes.push(`the base document was refused: ${(err as Error).message}`);
+    }
+    if (read !== null) {
+      const k = read.constraints[0].record;
+      const t = read.constraints[1].record;
+      if (k?.kind !== 'ik' || k.scaleY !== 'uniform' || k.bendPositive || !k.stretch || k.compress || k.mix !== 0.5) probes.push(`the ik record read ${JSON.stringify(k)}`);
+      if (t?.kind !== 'transform' || t.mixes.x !== 0.25 || t.mixes.y !== 0.25 || t.mixes.rotate !== 0 || t.properties[0].to[0].max !== 9 || t.properties[1].to[0].max !== 1 || t.properties[1].to[0].scale !== 1) probes.push(`the transform record read ${JSON.stringify(t)} — mixY absent over a driven x reads mixX, an undriven mix 0, max absent 1`);
+      const keys = read.animations[0].constraints;
+      if (keys.ik[0]?.keys[1].values[0] !== 1 || !keys.ik[0].keys[1].flags.bendPositive || keys.ik[0].keys[0].flags.bendPositive !== true) probes.push(`the ik keys read ${JSON.stringify(keys.ik[0]?.keys)} — an absent mix reads 1, an absent bendPositive true`);
+      if (keys.transform[0]?.keys[0].values[2] !== Math.fround(0.2) || keys.transform[0].keys[0].values[0] !== 1) probes.push(`the transform key read ${JSON.stringify(keys.transform[0]?.keys)} — mixY absent reads the key's mixX, the rest 1`);
+    }
+    const plant = (edit: (d: { constraints: Obj[]; animations: Array<{ constraints: { ik: Obj[]; transform: Obj[] } }> }) => void): string => {
+      const copy = JSON.parse(base.model) as { constraints: Obj[]; animations: Array<{ constraints: { ik: Obj[]; transform: Obj[] } }> };
+      edit(copy);
+      return JSON.stringify(copy);
+    };
+    const plants: Array<[string, string, string]> = [
+      ['a field the writer does not write', plant((d) => (d.constraints[0].order = 1)), 'field "order" is not one this reader knows'],
+      ['a bone that is not one', plant((d) => (d.constraints[0].target = 'nowhere')), 'target is "nowhere", not a bone of this document'],
+      ['an ik on the root', plant((d) => (d.constraints[0].bones = ['root'])), 'spine-core throws posing an ik constraint on a bone with no parent'],
+      ['a second bone not the first\'s child', plant((d) => (d.constraints[0].bones = ['p', 'o'])), '"o" is not a child of "p"'],
+      ['three ik bones', plant((d) => (d.constraints[0].bones = ['p', 'c', 'o'])), 'names 3 bones'],
+      ['a scaleY mode that is not one', plant((d) => (d.constraints[0].scaleY = 'squash')), 'scaleY is "squash", none of none, uniform, volume'],
+      ['a flag spelled as a number', plant((d) => (d.constraints[0].stretch = 1)), 'stretch is 1, not a boolean'],
+      ['a source property that is not one', plant((d) => ((d.constraints[1].properties as Obj).skew = { to: { x: {} } })), '"skew" is none of rotate, x, y, scaleX, scaleY, shearY'],
+      ['a target property field that is not one', plant((d) => (((((d.constraints[1].properties as Obj).y as Obj).to as Obj).y as Obj).min = 0)), 'field "min" is not one this reader knows'],
+      ['a mix spelled as a string', plant((d) => (d.constraints[1].mixX = '1')), 'mixX is "1", not a finite number'],
+      ['a timeline naming no constraint of its kind', plant((d) => (d.animations[0].constraints.ik[0].name = 'tr')), '"tr" is not a ik constraint of this document'],
+      ['a key field its kind does not read', plant((d) => (((d.animations[0].constraints.transform[0].keys as Obj[])[0]).mix = 1)), 'keys[0]: field "mix" is not one this reader knows'],
+      ['a curve of the wrong length', plant((d) => (((d.animations[0].constraints.ik[0].keys as Obj[])[0]).curve = [0.1, 0.5, 0.2, 1])), 'not "stepped" nor 8 finite numbers'],
+      ['key times that do not increase', plant((d) => (((d.animations[0].constraints.ik[0].keys as Obj[])[1]).time = 0)), 'is not after the key before it'],
+    ];
+    for (const [label, text, expected] of plants) {
+      const refusal = coreRefusal(text);
+      if (!refusal.includes(expected)) probes.push(`${label}: ${refusal === '' ? 'read' : `refused as "${refusal.slice(0, 200)}"`}, not naming ${JSON.stringify(expected)}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CC01_READ_MODEL_READS_EACH_IK_AND_TRANSFORM_RECORD_AND_TIMELINE_AND_REFUSES_EACH_PLANT_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `a two-bone ik and a transform with their timelines read — the mode folded, an undriven mix 0, mixY over a driven x its mixX, max absent 1, an absent key mix 1 and bendPositive true, a key's absent mixY its mixX; ${plants.length} plants each refused naming its path: an unknown field, a bone that is none, an ik on the root (spine-core throws), a second bone not a child, three bones, an unknown scaleY mode, a flag as a number, an unknown source property, an unknown target field, a string mix, a timeline of the wrong kind, an unknown key field, a short curve, times not increasing`),
+      'issue #938: the core reads the constraint records the writer writes (`buildRigConstraint`), and nothing else; the parser\'s reading of an absent field is the measured value (`src/keyorder.ts` PARSER_DEFAULTS, and the transform mixes as the header of `src/core/constraints.ts` measures them), never a guess',
+    );
+  }
+
+  // --- CC02: a one-bone ik on a hand-written population poses as spine-core does --
+  {
+    const r = population(600, 9381, ikOneProbe);
+    const ok = r.exact === 600;
+    say(
+      'CC02_A_ONE_BONE_IK_ON_A_HAND_WRITTEN_POPULATION_POSES_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, r.misses, `${r.exact} of 600 probes exact at tolerance 0 at the ten-thousand-unit amplifier (${r.samples} bone-samples): skewed and reflecting grandparents and parents, the bone in all five inherit modes and skewed, compress, stretch, the three scaleY modes (volume below 0.7 on its measured constant), mix 0, 1 and between`),
+      'issue #938: the one-bone solver is measured, not transcribed — the frame each inherit mode reads the target in, the added 180 for a negative scaleX, the (−180, 180] wrap, the length test and the volume curve are each a reading the header of src/core/constraints.ts states with the probes that fixed it',
+    );
+  }
+
+  // --- CC03: a two-bone ik on a hand-written population poses as spine-core does --
+  {
+    const r = population(1200, 9382, ikTwoProbe);
+    const ok = r.exact === 1200;
+    say(
+      'CC03_A_TWO_BONE_IK_ON_A_HAND_WRITTEN_POPULATION_POSES_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, r.misses, `${r.exact} of 1200 probes exact at tolerance 0 at the amplifier (${r.samples} bone-samples): uniform, reflecting and not-uniform parents, sheared; children offset in y, skewed; targets far and at the parent (the fold); softness, stretch, the scaleY modes, both bends, mix 0 to 1; a bone in another mode leaving the chain alone`),
+      'issue #938: the two-bone solver is where arithmetic shows — the uniform bound (1e-5, not 1e-4), one atan2 for the uniform parent and a difference of two for the other, the stable quadratic, the folded bend in the runtime\'s π and the −180→180 wrap were each fixed by a probe going red',
+    );
+  }
+
+  // --- CC04: the degenerate cases read as measured, and what the runtime would throw on is refused --
+  {
+    const probes: string[] = [];
+    const g: Obj = { name: 'g', parent: 'root', x: 10, y: 5, rotation: 30 };
+    const cases: Array<[string, Obj[], Obj[], Obj[]?]> = [
+      ['the child at the parent\'s origin', [{ name: 'root' }, g, { name: 'p', parent: 'g', rotation: 20 }, { name: 'c', parent: 'p', rotation: 40, length: 30 }, { name: 't', parent: 'root', x: 40, y: 50 }], [{ type: 'ik', name: 'k', bones: ['p', 'c'], target: 't' }]],
+      ['the target at the parent\'s origin', [{ name: 'root' }, g, { name: 'p', parent: 'g', rotation: 20 }, { name: 'c', parent: 'p', x: 30, rotation: 40, length: 30 }, { name: 't', parent: 'g' }], [{ type: 'ik', name: 'k', bones: ['p', 'c'], target: 't' }]],
+      ['the chain exactly straight', [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'c', parent: 'p', x: 30, length: 30 }, { name: 't', parent: 'root', x: 60 }], [{ type: 'ik', name: 'k', bones: ['p', 'c'], target: 't' }]],
+      ['the chain exactly folded', [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'c', parent: 'p', x: 30, length: 30 }, { name: 't', parent: 'root', x: 0 }], [{ type: 'ik', name: 'k', bones: ['p', 'c'], target: 't' }]],
+      ['the softness at its end (sd = 2s)', [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'c', parent: 'p', x: 30, length: 30 }, { name: 't', parent: 'root', x: 70 }], [{ type: 'ik', name: 'k', bones: ['p', 'c'], target: 't', softness: 5 }]],
+      ['the softness at its onset (sd = 0)', [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'c', parent: 'p', x: 30, length: 30 }, { name: 't', parent: 'root', x: 55 }], [{ type: 'ik', name: 'k', bones: ['p', 'c'], target: 't', softness: 5 }]],
+      ['a child of length 0', [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'c', parent: 'p', x: 30 }, { name: 't', parent: 'root', x: 20, y: 7 }], [{ type: 'ik', name: 'k', bones: ['p', 'c'], target: 't' }]],
+      ['a one-bone ik of length 0 with stretch', [{ name: 'root' }, g, { name: 'b', parent: 'g', x: 5, rotation: 20 }, { name: 't', parent: 'root', x: 50, y: 1 }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't', stretch: true }]],
+      ['a one-bone ik whose target sits at its own origin (a direction of rounding noise)', [{ name: 'root' }, g, { name: 'b', parent: 'g', x: 5, rotation: 20, length: 30 }, { name: 't', parent: 'b' }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't' }]],
+      ['a one-bone ik reaching its target exactly', [{ name: 'root' }, { name: 'b', parent: 'root', length: 30 }, { name: 't', parent: 'root', x: 30 }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't', stretch: true, compress: true }]],
+      ['a skin-required ik named by a skin (not applied under every skin at once)', [{ name: 'root' }, { name: 'b', parent: 'root', x: 5, length: 20 }, { name: 't', parent: 'root', y: 30 }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't', skin: true }], [{ name: 'default' }, { name: 's1', constraints: ['k'] }]],
+      ['an ik whose target no skin activates (not applied)', [{ name: 'root' }, { name: 'b', parent: 'root', x: 5, length: 20 }, { name: 't', parent: 'root', y: 30, skin: true }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't' }]],
+      ['a transform whose source no skin activates (not applied)', [{ name: 'root' }, { name: 'b', parent: 'root', x: 5, length: 20 }, { name: 's', parent: 'root', y: 30, rotation: 40, skin: true }], [{ type: 'transform', name: 'k', bones: ['b'], source: 's', properties: { rotate: { to: { rotate: {} } } } }]],
+      ['a transform on the root bone', [{ name: 'root', x: 3, rotation: 10 }, { name: 's', parent: 'root', x: 20, y: 30, rotation: 40 }], [{ type: 'transform', name: 'k', bones: ['root'], source: 's', properties: { x: { to: { x: {} } }, rotate: { to: { rotate: {} } } } }]],
+      ['a clamped value with max absent (reads 1)', [{ name: 'root' }, { name: 'b', parent: 'root', x: 5 }, { name: 's', parent: 'root', x: 30, y: 40, rotation: 25 }], [{ type: 'transform', name: 'k', bones: ['b'], source: 's', clamp: true, properties: { x: { to: { x: {} } } } }]],
+    ];
+    for (const [label, bones, constraints, skins] of cases) {
+      const c = constraintCompare(constraintPair(bones, constraints, {}, skins));
+      if (!c.identical) probes.push(`${label}: ${c.first}`);
+    }
+    // Where spine-core throws, the core refuses: an ik whose first bone is the root.
+    let threw = '';
+    try {
+      dumpSkeleton(loadOracleData(constraintPair([{ name: 'b', length: 20 }, { name: 't', parent: 'b', x: 10, y: 10 }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't' }]).spine, '', 'the root probe'), ONE_SAMPLE);
+    } catch (err) {
+      threw = (err as Error).message;
+    }
+    if (threw === '') probes.push('spine-core posed an ik on the root bone; the refusal stands on its throwing');
+    const refused = coreRefusal(constraintPair([{ name: 'b', length: 20 }, { name: 't', parent: 'b', x: 10, y: 10 }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't' }]).model);
+    if (!refused.includes('is the root')) probes.push(`the core read an ik on the root: ${refused}`);
+    const ok = probes.length === 0;
+    say(
+      'CC04_THE_DEGENERATE_CASES_READ_AS_MEASURED_AND_AN_IK_ON_THE_ROOT_IS_REFUSED',
+      ok,
+      probeDetail(ok, probes, `${cases.length} cases exact at tolerance 0 — the child and the target at the parent's origin, the chain straight and folded, the softness onset and end, a child and a bone of length 0, a one-bone target at its own origin (its direction rounding noise, reproduced), a target at exactly the bone's length, a skin-required constraint and an inactive target and source (not applied), a transform on the root, a clamp with max absent; spine-core throws posing an ik on the root ("${threw.slice(0, 80)}") and the core refuses it by name`),
+      'issue #938: the brief asked for the degenerate cases measured — a straight, folded or fully softened chain is where the solver\'s arithmetic is ill-conditioned and only the runtime\'s own order of operations reads it; a target at a one-bone ik\'s own origin is ill-conditioned too — its direction is rounding noise — and only the target read from the parent\'s origin reproduces that noise; a collapsed parent is the oracle\'s ill-conditioned rule\'s',
+    );
+  }
+
+  // --- CC05: the update order on random rigs of several constraints poses as spine-core does --
+  {
+    const r = population(400, 9385, orderProbe);
+    const ok = r.exact === 400;
+    say(
+      'CC05_THE_UPDATE_ORDER_ON_RANDOM_RIGS_OF_SEVERAL_CONSTRAINTS_POSES_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, r.misses, `${r.exact} of 400 random nine-bone rigs exact at tolerance 0 (${r.samples} bone-samples), each with two to six one- and two-bone ik and transform constraints in random order reading each other's bones — skewed and reflecting bones, the four other inherit modes, softness, local and additive transforms, mixes of 0`),
+      'issue #938: the public documentation says the constraints run in the list\'s order and the bones below a constrained bone are posed again; what it does not say is measured — a mix of 0 touches nothing, and a world-space edit stands and is read back into local values at once (CC06)',
+    );
+  }
+
+  // --- CC06: a bone moved in world space is read back into local values the runtime's way, in all five modes --
+  {
+    const r = population(400, 9386, readBackProbe);
+    const ok = r.exact === 400;
+    say(
+      'CC06_A_BONE_MOVED_IN_WORLD_SPACE_IS_READ_BACK_INTO_LOCAL_VALUES_AS_THE_RUNTIME_READS_IT_IN_ALL_FIVE_MODES',
+      ok,
+      probeDetail(ok, r.misses, `${r.exact} of 400 probes exact at the amplifier (${r.samples} bone-samples): a world-space rotate, scale, shear or translate on a skewed bone in any of the five modes under a skewed parent, then a translation of nothing on the parent that re-poses the bone from the values read back`),
+      'issue #938: the read-back is invisible until something re-poses the bone, and then its representation is the pose — a negative scaleY with 180 added in degrees for a reflection, a collapsed x column as scaleX 0, the runtime\'s own π in every wrap; each was a probe red at the amplifier before it was a rule',
+    );
+  }
+
+  // --- CC07: a transform constraint over every property, mapping, flag and mode poses as spine-core does --
+  {
+    const r = population(900, 9387, transformProbe);
+    const ok = r.exact === 900;
+    say(
+      'CC07_A_TRANSFORM_CONSTRAINT_OVER_EVERY_PROPERTY_MAPPING_FLAG_AND_MODE_POSES_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, r.misses, `${r.exact} of 900 probes exact at the amplifier (${r.samples} bone-samples): random mappings of the six properties (one to several, several to one), from- and to-offsets, scales, clamps with max, local source, local target, additive, the constraint's six offsets, mixes of 0, 1, negative and over 1, over skewed and reflecting sources and targets in all five modes`),
+      'issue #938: 4.3\'s transform constraint maps properties; each rule — the world rotation read into [0, 360), the rotation offset negated for a reflecting source, an absent mixY reading mixX only when x is driven, max absent 1, the shear change wrapped with the runtime\'s π — is a measurement in the header of src/core/constraints.ts',
+    );
+  }
+
+  // --- CC08: the ik and transform timelines at a sample time pose as spine-core does --
+  {
+    const probes: string[] = [];
+    const bones: Obj[] = [
+      { name: 'root' }, { name: 'hip', parent: 'root', x: 10, y: 40, rotation: 5 },
+      { name: 'thigh', parent: 'hip', rotation: -80, length: 40.12345, scaleX: 1.01 }, { name: 'shin', parent: 'thigh', x: 40.12345, y: 2.5, length: 38.54321 }, { name: 'foot', parent: 'root', x: 30, y: -20 },
+      { name: 'arm', parent: 'hip', x: 5, y: 10, rotation: 30, length: 25.33333 }, { name: 'hand', parent: 'root', x: -30, y: 70 },
+      { name: 'aim', parent: 'root', x: 12.34567, y: 5.4321, rotation: 33.33333 }, { name: 'head', parent: 'hip', x: 3, y: 30, rotation: 90 },
+      ...amplify('thigh'), ...amplify('shin'), ...amplify('head'),
+    ];
+    const constraints: Obj[] = [
+      { type: 'ik', name: 'leg', bones: ['thigh', 'shin'], target: 'foot', bendPositive: false, softness: 4.444 },
+      { type: 'ik', name: 'reach', bones: ['arm'], target: 'hand', mix: 0.3, compress: true, scaleY: 'volume' },
+      { type: 'transform', name: 'look', bones: ['head'], source: 'aim', properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {}, y: { scale: 0.5 } } }, scaleX: { to: { scaleX: {} } } }, mixRotate: 0, mixX: 0, mixScaleX: 0 },
+    ];
+    const keys = {
+      ik: {
+        leg: [
+          { time: 0.4, mix: 0.2, softness: 1.23457, bendPositive: false, curve: [0.6, 0.93333, 0.8, 1.1, 0.5, 20.12345, 0.9, 3.3] },
+          { time: 1.2, mix: 1, softness: 12.34567, bendPositive: true, stretch: true, curve: 'stepped' },
+          { time: 1.6, softness: 0.5, bendPositive: false },
+          { time: 2.0, mix: 0.55555, softness: 30, compress: true },
+        ],
+        reach: [{ time: 0, mix: 0.1, compress: true, curve: [0.3, 0.9, 0.7, 0.2, 0.3, 0, 0.7, 0] }, { time: 1, mix: 0.95, stretch: true }, { time: 2.2, mix: 0.4 }],
+      },
+      transform: {
+        look: [
+          { time: 0.3 },
+          { time: 0.9, mixRotate: 0.5, mixX: 0.33333, curve: [1.0, 0.7, 1.2, 0.1, 1.0, 0.1, 1.2, 0.9, 1.0, 0.2, 1.2, 0.8, 1.0, 0.4, 1.2, 0.6, 1.0, 0.6, 1.2, 0.3, 1.0, 1.5, 1.2, -0.5] },
+          { time: 1.5, mixRotate: 1, mixX: 1, mixY: 0, mixScaleX: 2, mixScaleY: 0, mixShearY: 1 },
+          { time: 2.4, mixRotate: 0.25 },
+        ],
+      },
+    };
+    // A bone timeline over the whole span, so the keyed and the unkeyed documents sample at one set of times.
+    const span = { root: { rotate: [{ time: 0, value: 0 }, { time: 2.4, value: 0 }] } };
+    const pair = constraintPair(bones, constraints, { ...keys, bones: span });
+    probeModels.push(pair.model);
+    const dense = constraintCompare(pair, DENSE);
+    if (!dense.identical) probes.push(`at 200 dense samples: ${dense.first}`);
+    const grid = constraintCompare(pair, GRID9);
+    if (!grid.identical) probes.push(`at the grid: ${grid.first}`);
+    // The core posing the same skeleton without its constraint keys must differ from the keyed dump, or the probe held nothing about them.
+    const unkeyed = compareDumps(dumpSkeleton(loadOracleData(pair.spine, '', 'the timeline probe'), DENSE), coreDump(readModel(constraintPair(bones, constraints, { bones: span }).model, 'the unkeyed probe'), DENSE), { xy: 0, m: 0 });
+    if (unkeyed.identical) probes.push('the probe\'s pose did not depend on its constraint timelines, so it held nothing about them');
+    const ok = probes.length === 0;
+    say(
+      'CC08_THE_IK_AND_TRANSFORM_TIMELINES_AT_A_SAMPLE_TIME_POSE_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `a two-bone ik, a one-bone ik and a transform, keyed through Bézier, stepped and linear segments with numbers off the float32 grid — mix and softness curves, flags switching (bendPositive, stretch, compress), a key omitting mix (1) and softness, samples before the first key (the constraint's own values), a transform key stating nothing (every mix 1) and one stating mixX alone (mixY its mixX) — exact at tolerance 0 at 200 dense samples (${dense.boneSamples} bone-samples) and at the grid; the same skeleton without its keys poses otherwise`),
+      'issue #938: #936 left constraint timelines absent; an ik timeline keys two curve channels and three stepped flags, a transform timeline six channels, both read with construct 4\'s key search and curves (src/core/animation.ts) and each absent field as the parser reads it',
+    );
+  }
+
+  // --- CC09: every row declaring only ik and transform poses its bones, vertices and samples as spine-core does --
+  {
+    const probes: string[] = [];
+    const admittedOnly = (b: BuiltRow): CompiledDocument | null => {
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      if (!existsSync(path)) return null;
+      const m = readModel(readFileSync(path, 'utf8'), path);
+      return m.constraints.length > 0 && m.constraints.every((c) => ADMITTED_CONSTRAINT_KINDS.includes(c.kind)) ? m : null;
+    };
+    let judged = 0;
+    let denseSamples = 0;
+    const kinds = new Set<string>();
+    for (const b of built) {
+      const model = admittedOnly(b);
+      const row = rows.find((r) => r.name === b.name);
+      if (model === null || row === undefined || row.blocks === null) continue;
+      judged++;
+      for (const c of model.constraints) kinds.add(c.kind);
+      for (const block of ['setup.bones', 'setup.attachments', 'setup.clips', 'animations.bones'] as const) {
+        if (row.blocks[block].verdict !== 'IDENTICAL') probes.push(`${b.name}: ${block} ${row.blocks[block].verdict} — ${row.blocks[block].why}`);
+      }
+      const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), DENSE);
+      const c = compareDumps(spine, coreDump(model, DENSE), { xy: 0, m: 0 });
+      if (!c.identical) probes.push(`${b.name} at 200 dense samples: ${c.first}`);
+      denseSamples += c.boneSamples;
+    }
+    for (const r of rows) {
+      if (r.blocks === null || r.blocks['setup.bones'].verdict !== 'SKIP') continue;
+      const why = r.blocks['setup.bones'].why ?? '';
+      if (!/(path|physics|slider)[^;]*constraints are not admitted/.test(why)) probes.push(`${r.name}: skipped without naming a later kind — ${why}`);
+    }
+    if (judged === 0 || !kinds.has('ik') || !kinds.has('transform')) probes.push(`${judged} row(s) declare only ik and transform (kinds ${[...kinds].join(', ')}), so the corpus held ${judged === 0 ? 'nothing' : 'one kind only'}`);
+    const ok = probes.length === 0;
+    say(
+      'CC09_EVERY_ROW_DECLARING_ONLY_IK_AND_TRANSFORM_POSES_ITS_BONES_VERTICES_AND_SAMPLES_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${judged} row(s) declaring only ik and transform IDENTICAL on setup.bones, setup.attachments, setup.clips and animations.bones, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); every row still skipped names path, physics or slider`),
+      'issue #938, construct 5\'s first cut admitted: the rows whose constraints are all ik and transform are judged on every block the core poses, and a row carrying a later kind stays SKIP naming it (#380 §4 — a construct not admitted is SKIP by name, never a pass)',
+    );
+  }
+
+  // --- CC10: a mix scaled, a bend flipped and two constraints swapped in a copy each turn exactly the rows using them red --
+  {
+    const probes: string[] = [];
+    const targets = built.filter((b) => {
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      if (!existsSync(path)) return false;
+      const m = readModel(readFileSync(path, 'utf8'), path);
+      return m.constraints.length > 0 && m.constraints.every((c) => ADMITTED_CONSTRAINT_KINDS.includes(c.kind));
+    });
+    const declares = (b: BuiltRow, test: (records: CoreConstraintRecord[]) => boolean): boolean => test(readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.flatMap((c) => (c.record === undefined ? [] : [c.record])));
+    const swapFirstChain = (records: CoreConstraintRecord[]): CoreConstraintRecord[] => {
+      // The first two constraints where the later one reads a bone the earlier one moves: swapping them changes what it reads.
+      for (let i = 0; i + 1 < records.length; i++) {
+        const [a, b] = [records[i], records[i + 1]];
+        const moves = new Set(a.bones);
+        const reads = b.kind === 'ik' ? b.target : b.source;
+        if (moves.has(reads) || b.bones.some((x) => moves.has(x))) return [...records.slice(0, i), b, a, ...records.slice(i + 2)];
+      }
+      return records;
+    };
+    const PLANTS: Array<[string, ConstraintPlant, (records: CoreConstraintRecord[]) => boolean]> = [
+      ['every ik mix × 0.9', (rs) => rs.map((r) => (r.kind === 'ik' ? { ...r, mix: r.mix * 0.9 } : r)), (rs) => rs.some((r) => r.kind === 'ik' && r.mix !== 0)],
+      ['every two-bone bend flipped', (rs) => rs.map((r) => (r.kind === 'ik' && r.bones.length === 2 ? { ...r, bendPositive: !r.bendPositive } : r)), (rs) => rs.some((r) => r.kind === 'ik' && r.bones.length === 2)],
+      ['every transform mix × 0.9', (rs) => rs.map((r) => (r.kind === 'transform' ? { ...r, mixes: Object.fromEntries(Object.entries(r.mixes).map(([k, v]) => [k, v * 0.9])) as CoreTransformRecord['mixes'] } : r)), (rs) => rs.some((r) => r.kind === 'transform')],
+      ['the first two constraints of a chain swapped', swapFirstChain, (rs) => swapFirstChain(rs) !== rs],
+    ];
+    const lines: string[] = [];
+    for (const [label, plant, uses] of PLANTS) {
+      const planted = gateBuilt(targets, { constraints: plant });
+      const red = planted.filter((r) => r.blocks !== null && (r.blocks['setup.bones'].verdict === 'DIFF' || r.blocks['animations.bones'].verdict === 'DIFF')).map((r) => r.name);
+      const using = targets.filter((b) => declares(b, uses)).map((b) => b.name);
+      if (red.length === 0) probes.push(`${label}: no row went red`);
+      if (red.some((n) => !using.includes(n))) probes.push(`${label}: red on ${red.filter((n) => !using.includes(n)).join(', ')}, which do not use it`);
+      if (planted.some((r) => r.blocks !== null && r.blocks['setup.slots'].verdict === 'DIFF')) probes.push(`${label}: turned a slot row red`);
+      lines.push(`${label} ${red.length} of ${targets.length} red (${using.length} using it)`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CC10_A_MIX_SCALED_A_BEND_FLIPPED_AND_TWO_CONSTRAINTS_SWAPPED_IN_A_COPY_EACH_TURN_ONLY_ROWS_USING_THEM_RED',
+      ok,
+      probeDetail(ok, probes, `over the ${targets.length} rows declaring only ik and transform: ${lines.join('; ')}; no slot row moved`),
+      'issue #380 §5: a construct is admitted when its planted difference turns the gate red on the rows using it — a gate nobody has seen fail is not a gate. The plant is a copy passed through the core\'s `constraints` hook, never a change in src/',
+    );
+  }
+
+  // --- CC11: every constraint field no compared row reaches is a HOLE by name, and a probe reaches it --
+  {
+    const probes: string[] = [];
+    const holes = constraintReachLines(rows).filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  constraints '.length).split(':')[0]);
+    const reached = Object.fromEntries(CONSTRAINT_CENSUS_FIELDS.map((f) => [f, 0])) as Record<ConstraintCensusField, number>;
+    for (const text of probeModels) {
+      const c = constraintCensusOf(text);
+      for (const f of CONSTRAINT_CENSUS_FIELDS) reached[f] += c[f];
+    }
+    // The skin rule is CC04's; `later` is the later cuts', which no probe here poses.
+    const byCc04 = ['skin'];
+    const unreached = holes.filter((h) => h !== 'later' && !byCc04.includes(h) && reached[h as ConstraintCensusField] === 0);
+    if (unreached.length > 0) probes.push(`HOLE(s) no probe reaches: ${unreached.join(', ')}`);
+    if (!holes.includes('later')) probes.push('the path, physics and slider constraints were not named a HOLE');
+    const ok = probes.length === 0;
+    say(
+      'CC11_EVERY_CONSTRAINT_FIELD_NO_COMPARED_ROW_REACHES_IS_A_HOLE_BY_NAME_AND_A_PROBE_REACHES_IT',
+      ok,
+      probeDetail(ok, probes, `${holes.length} HOLE(s) over the compared rows — ${holes.join(', ')} — each but the later kinds reached by the CC02–CC08 probes at tolerance 0 (the skin rule by CC04's); the probes' census: ${CONSTRAINT_CENSUS_FIELDS.filter((f) => f !== 'later').map((f) => `${f} ${reached[f]}`).join(', ')}`),
+      'issue #380 §4: a construct no row uses is a HOLE, never a pass, and a HOLE is covered by a probe or it is not covered at all',
+    );
+    for (const line of constraintReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
+  }
+
+  // --- CC12: the constraints' census and the per-kind lines count a hand-made document as computed by hand --
+  {
+    const probes: string[] = [];
+    const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', scaleX: 2, length: 10 }, { name: 'c', parent: 'p', x: 10, y: 1, length: 10 }, { name: 'n', parent: 'root', inherit: 'noScale' }, { name: 't', parent: 'root' }];
+    const constraints: Obj[] = [
+      { type: 'transform', name: 'w', bones: ['c'], source: 't', properties: { rotate: { offset: 1, to: { x: { scale: 2 } } } }, mixX: -0.5 },
+      { type: 'ik', name: 'two', bones: ['p', 'c'], target: 't', mix: 0.5, softness: 2, bendPositive: false, stretch: true, scaleY: 'volume' },
+      { type: 'ik', name: 'one', bones: ['n'], target: 'c', mix: 0, compress: true, scaleY: 'uniform', skin: true },
+    ];
+    const text = constraintPair(bones, constraints, { ik: { two: [{ time: 0, mix: 0.5, bendPositive: false, curve: [0.1, 0.5, 0.2, 0.5, 0.1, 0, 0.2, 0] }, { time: 1, softness: 3 }] } }).model;
+    const c = constraintCensusOf(text);
+    // By hand: two ik (one one-bone, one two-bone), one transform; the two-bone's parent scaled 2 by 1 and its child at y 1;
+    // the transform maps rotate to x (a cross mapping, a from-offset, a to-scale, a negative mix) on c, which the ik on p re-poses,
+    // and the one-bone reads c, which the transform moved.
+    const expected: Partial<Record<ConstraintCensusField, number>> = {
+      ik: 2, 'ik.oneBone': 1, 'ik.twoBone': 1, 'ik.mixPartial': 1, 'ik.mixZero': 1, 'ik.softness': 1, 'ik.bendNegative': 1, 'ik.compress': 1, 'ik.stretch': 1,
+      'ik.scaleYUniform': 1, 'ik.scaleYVolume': 1, 'ik.nonNormal': 1, 'ik.nonUniformParent': 1, 'ik.childOffsetY': 1,
+      transform: 1, 'transform.x': 1, 'transform.rotate': 0, 'transform.crossMapping': 1, 'transform.fromOffset': 1, 'transform.toScale': 1, 'transform.mixNegative': 1, 'transform.mixPartial': 1,
+      'ik.timeline': 1, 'ik.timelineBezier': 1, 'ik.timelineFlags': 1, 'ik.timelineMixPartial': 1, 'ik.timelineSoftness': 1,
+      'order.readsMoved': 1, 'order.worldEditReposed': 1, skin: 1, later: 0,
+    };
+    for (const [f, n] of Object.entries(expected)) if (c[f as ConstraintCensusField] !== n) probes.push(`${f}: counted ${c[f as ConstraintCensusField]}, by hand ${n}`);
+    const kindLines = constraintKindLines(rows, new Map(built.map((b) => [b.name, existsSync(join(b.out, MODEL_DOCUMENT_FILE)) ? readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.map((x) => x.kind) : []])));
+    if (kindLines.length !== 5 || !kindLines[0].startsWith('  KIND  ik: ') || !kindLines[1].startsWith('  KIND  transform: ')) probes.push(`the kind lines read ${JSON.stringify(kindLines)}`);
+    const ok = probes.length === 0;
+    say(
+      'CC12_THE_CONSTRAINTS_CENSUS_AND_THE_KIND_LINES_COUNT_A_HAND_MADE_DOCUMENT_AS_COMPUTED_BY_HAND',
+      ok,
+      probeDetail(ok, probes, `${Object.keys(expected).length} census fields of a three-constraint document counted as by hand, the order effects included; the gate's five kind lines: ${kindLines.map((l) => l.trim().split(':').slice(0, 2).join(':').slice(0, 60)).join(' | ')}`),
+      'issue #938: a census that miscounts turns a HOLE into a REACH in silence — held on a document whose every count is computed by hand',
+    );
+  }
+
 
   rmSync(work, { recursive: true, force: true });
   return bad;
@@ -83955,7 +84497,14 @@ function main(): void {
       'them shown to move; a handle moved, a sign flipped and the key search off by one each turning exactly the ' +
       'rows they move red; the sample blocks absent by name, matched by animation and timed by every timeline; ' +
       'the census held to a document counted by hand; and every kind and curve no row reaches a HOLE the probe ' +
-      'covers)' +
+      'covers; then construct five\'s first cut, issue #938, the update order and the ik and transform constraints: ' +
+      'the reader holding each record and timeline to what the writer writes; the one- and two-bone solvers, the ' +
+      'transform over every mapping and mode, the order over random rigs of several constraints and a world-space ' +
+      'edit read back into local values each posed exactly as spine-core does at a ten-thousand-unit amplifier; the ' +
+      'degenerate cases measured and an ik on the root refused where spine-core throws; the timelines at a sample ' +
+      'time; every row declaring only ik and transform posed exactly on every block, the rest skipped naming the ' +
+      'later kinds; a mix scaled, a bend flipped and two constraints swapped turning only rows using them red; ' +
+      'every field no row reaches a HOLE a probe covers; and the census counted by hand)' +
       (emitHashesBad === null
         ? ''
         : ', + ' + n('emit-hashes') + ' emit-hashes controls (issue #914 — `tools/emit_hashes.ts`, the byte-identity ' +

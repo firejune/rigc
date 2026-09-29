@@ -20,24 +20,22 @@
  * oracle's sample times** (issue #936), is its own module, `./animation.ts`,
  * which this reader calls for each animation record. Every other block of the
  * oracle's document is a construct not yet admitted (the draw order, deform,
- * events, constraints, path attachments, and the attachments and clips at a
- * sample), and
+ * events, the path, physics and slider constraints, path attachments, and
+ * the attachments and clips at a sample), and
  * the core says so by name (`NOT_ADMITTED`) rather than writing a value for
  * it.
  *
- * ⚠️ **A document that declares any constraint has no setup bones from the
- * core.** The oracle poses the setup pose with every constraint applied, so a
- * bone an ik, transform, path or slider constraint moves is not where its
- * hierarchy alone puts it, and a physics constraint is left in the list
- * because no rig in the tree's corpora declares physics without another kind
- * beside it, so what it does to the setup under `--physics none` has not been
- * measured apart. Measured over the nineteen recipes `tools/emit_hashes.ts`
- * generates: seven declare a constraint, and on each of them, posed with the
- * evaluator that is exact on the other twelve (below), at least one bone of
- * the runtime's setup pose differs from its hierarchy's alone — on six by more
- * than the tolerance of one grid step.
- * Which bones a constraint reaches is the constraints' own admission; until
- * then the whole block is absent, with the kinds named.
+ * **Constraints (construct 5, issue #938, `./constraints.ts`).** The oracle
+ * poses the setup pose with every constraint applied, so a bone a constraint
+ * moves is not where its hierarchy alone puts it. The core applies the ik and
+ * transform constraints in the document's order after the hierarchy, as the
+ * runtime's update order does (`./constraints.ts`'s header states it with its
+ * measurements); a document declaring a path, physics or slider constraint —
+ * later cuts — still has no setup bones from the core, with the kinds named
+ * (`constraintsAbsentWhy`). Before issue #938, measured over the nineteen
+ * recipes `tools/emit_hashes.ts` generates: seven declared a constraint, and
+ * on each the runtime's setup pose differed from the hierarchy's alone; four
+ * of them declare only ik and transform and read IDENTICAL now.
  *
  * 🔸 **Active** is measured rather than assumed. Posed through the runtime by
  * `tools/pose_oracle.ts dump` on a hand-written skeleton (issue #925's
@@ -159,6 +157,7 @@ import type { ModelAtlasRect, ModelBone, ModelSlot, ModelVertices, SkinTableEntr
 import { worldTransforms, type CoreWorld } from './world.ts';
 import { readAnimationTimelines, type CoreAnimationTimelines } from './animation.ts';
 import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type RegionPoser, type ShownGeometry, type VertexPoser } from './vertices.ts';
+import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
 
 /** The document spec this reader takes. */
 export const CORE_DOCUMENT_SPEC = 'rigc-compiled/1';
@@ -241,19 +240,22 @@ export interface CoreSkin {
   attachments: Record<string, Record<string, CoreAttachment>>;
 }
 
-/** One constraint, as far as these constructs read it: its kind and name, and a slider's animation. */
+/** One constraint, as far as these constructs read it: its kind and name, a slider's animation, and an ik or transform constraint's record (`./constraints.ts`). */
 export interface CoreConstraint {
   kind: CoreConstraintKind;
   name: string;
   /** The animation a slider applies — the one constraint kind measured to pose a slot (the slots' ⚠️). */
   animation?: string;
+  /** An ik or transform constraint, read field by field (construct 5's first cut, issue #938). */
+  record?: CoreConstraintRecord;
 }
 
-/** One animation: its name, the slots its timelines key, and its timelines as construct 4 reads them (`./animation.ts`). */
+/** One animation: its name, the slots its timelines key, its timelines as construct 4 reads them (`./animation.ts`), and its ik and transform timelines (`./constraints.ts`). */
 export interface CoreAnimation {
   name: string;
   slots: string[];
   timelines: CoreAnimationTimelines;
+  constraints: CoreConstraintTimelines;
 }
 
 /**
@@ -480,12 +482,14 @@ function readAnimations(value: unknown, bones: ReadonlySet<string>, slotRecords:
         else keyed.push(entry.name);
       });
     }
-    out.push({ name: typeof raw.name === 'string' ? raw.name : '', slots: keyed, timelines: readAnimationTimelines(raw, label, bones, slotRecords, problems) });
+    out.push({ name: typeof raw.name === 'string' ? raw.name : '', slots: keyed, timelines: readAnimationTimelines(raw, label, bones, slotRecords, problems), constraints: { ik: [], transform: [] } });
   });
   return out;
 }
 
-function readConstraints(value: unknown, animations: ReadonlySet<string>, problems: string[]): CoreConstraint[] {
+function readConstraints(value: unknown, animations: ReadonlySet<string>, bones: readonly ModelBone[], problems: string[]): CoreConstraint[] {
+  const names = new Set(bones.map((b) => b.name));
+  const parents = new Map(bones.map((b) => [b.name, b.parent]));
   if (!Array.isArray(value)) {
     problems.push('constraints is not a list');
     return [];
@@ -502,7 +506,8 @@ function readConstraints(value: unknown, animations: ReadonlySet<string>, proble
     if (typeof raw.name !== 'string' || raw.name === '') problems.push(`${where}: name is ${JSON.stringify(raw.name)}, not a non-empty string`);
     if (raw.declaredIn !== 'rig' && raw.declaredIn !== 'motion') problems.push(`${where}: declaredIn is ${JSON.stringify(raw.declaredIn)}, not "rig" or "motion"`);
     if (kind === 'slider' && (typeof raw.animation !== 'string' || !animations.has(raw.animation))) problems.push(`${where}: a slider's animation is ${JSON.stringify(raw.animation)}, not an animation of this document`);
-    if (kind !== undefined && typeof raw.name === 'string') out.push({ kind, name: raw.name, ...(kind === 'slider' && typeof raw.animation === 'string' ? { animation: raw.animation } : {}) });
+    const record = (kind === 'ik' || kind === 'transform') && typeof raw.name === 'string' ? readConstraintRecord(raw, kind, raw.name, `${where} "${raw.name}"`, names, parents, problems) : undefined;
+    if (kind !== undefined && typeof raw.name === 'string') out.push({ kind, name: raw.name, ...(kind === 'slider' && typeof raw.animation === 'string' ? { animation: raw.animation } : {}), ...(record !== undefined ? { record } : {}) });
   });
   return out;
 }
@@ -538,7 +543,12 @@ export function readModel(text: string, where = 'the model document'): CompiledD
   const skins = readSkins(value.skins, names, slotNames, problems);
   problems.push(...linkProblems(skins));
   const animations = readAnimations(value.animations, names, slots, problems);
-  const constraints = readConstraints(value.constraints, new Set(animations.map((a) => a.name)), problems);
+  const constraints = readConstraints(value.constraints, new Set(animations.map((a) => a.name)), bones, problems);
+  if (Array.isArray(value.animations)) {
+    value.animations.forEach((raw, i) => {
+      if (isRecord(raw) && animations[i] !== undefined) animations[i].constraints = readConstraintTimelines(raw.constraints, `animations[${i}] "${animations[i].name}"`, constraints, problems);
+    });
+  }
   if (problems.length > 0) throw new CoreInputError(`${where}: ${problems.length} problem(s): ${problems.join('; ')}`);
   return { spec: CORE_DOCUMENT_SPEC, bones, slots, skins, constraints, animations };
 }
@@ -628,6 +638,13 @@ export interface CorePlant {
   region?: RegionPoser;
   /** A vertex array's world positions (`worldVertices` in `./vertices.ts`). */
   vertices?: VertexPoser;
+  /** The ik and transform constraints as posed, rewritten before they are applied (`./constraints.ts`). */
+  constraints?: ConstraintPlant;
+}
+
+/** The document's ik and transform constraint records, in its order — what `applyConstraints` runs. */
+export function constraintRecords(doc: CompiledDocument): CoreConstraintRecord[] {
+  return doc.constraints.flatMap((c) => (c.record === undefined ? [] : [c.record]));
 }
 
 /**
@@ -638,8 +655,8 @@ export interface CorePlant {
  * `poseSetup` gives.
  */
 export const NOT_ADMITTED: ReadonlyArray<readonly [string, string]> = [
-  ['physics', 'physics constraint parameters: constraints are not admitted (item 5)'],
-  ['paths', 'path constraint parameters: constraints are not admitted (item 5)'],
+  ['physics', 'physics constraint parameters: physics constraints are not admitted (item 5; ik and transform are, issue #938)'],
+  ['paths', 'path constraint parameters: path constraints are not admitted (item 5; ik and transform are, issue #938)'],
   ['pathAttachments', 'path attachments: attachments are not admitted (item 3)'],
   ['setup.drawOrder', 'the draw order: not admitted (item 2)'],
   ['animations.drawOrder', 'the draw order at a sample: draw-order timelines are not admitted (items 2 and 4)'],
@@ -736,11 +753,14 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
   const resolve = plant.shown ?? shownAttachment;
   const colour = plant.colour ?? readColour;
   const blend = plant.blend ?? readBlend;
-  const bonesWhy = constraintsWhy(doc);
+  const bonesWhy = constraintsAbsentWhy(doc);
   let bones: CoreBoneRow[] | null = null;
+  let setupWorld: Map<string, CoreWorld> | null = null;
   if (bonesWhy === null) {
     const active = activeBones(doc);
-    const world = evaluate(doc.bones, active);
+    const records = constraintRecords(doc);
+    setupWorld = applyConstraints(doc.bones, evaluate(doc.bones, active), active, plant.constraints ? plant.constraints(records) : records);
+    const world = setupWorld;
     bones = doc.bones.map((b): CoreBoneRow => {
       const t = world.get(b.name);
       if (t === undefined) throw new CoreInputError(`the evaluator returned no transform for bone "${b.name}"`);
@@ -776,8 +796,8 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}): { setup
   let clips: CoreClipRow[] | null = null;
   let attachmentsWhy: string | null = upstream.length === 0 ? null : upstream.join('; ');
   const clipsWhy = attachmentsWhy;
-  if (attachmentsWhy === null) {
-    const world = evaluate(doc.bones, activeBones(doc));
+  if (attachmentsWhy === null && setupWorld !== null) {
+    const world = setupWorld;
     const shown: ShownGeometry[] = [];
     for (const slot of doc.slots) {
       const s = resolve(doc, slot);
@@ -812,11 +832,4 @@ function slidersWhy(doc: CompiledDocument): string | null {
     return slots.length === 0 ? [] : [`slider "${c.name}" applies animation "${c.animation}", which keys slot(s) ${slots.map((x) => `"${x}"`).join(', ')}`];
   });
   return keyed.length === 0 ? null : `${keyed.join('; ')} — the oracle's setup applies sliders, and a slider poses the slots its animation keys; constraints are not admitted (item 5)`;
-}
-
-/** Why the setup bones cannot be posed yet, or null when they can. */
-function constraintsWhy(doc: CompiledDocument): string | null {
-  if (doc.constraints.length === 0) return null;
-  const counts = CORE_CONSTRAINT_KINDS.map((k) => [k, doc.constraints.filter((c) => c.kind === k).length] as const).filter(([, n]) => n > 0);
-  return `the document declares ${counts.map(([k, n]) => `${k} ×${n}`).join(', ')}, and constraints are not admitted (item 5): the oracle's setup applies them`;
 }

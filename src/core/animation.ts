@@ -142,8 +142,11 @@
  *
  * The oracle's sample carries `drawOrder`, `attachments`, `clips` and
  * `events` too: those are constructs not yet admitted, and the core leaves
- * each out naming it. A document that declares a constraint has no animation
- * bones from the core, for the reason its setup bones are absent; a slider
+ * each out naming it. The ik and transform constraints are applied after the
+ * timelines, posed by their own timelines at `t` (issue #938,
+ * `./constraints.ts`); a document declaring a path, physics or slider
+ * constraint has no animation bones from the core, for the reason its setup
+ * bones are absent; a slider
  * whose animation keys a slot, or a placeholder skins fill differently, leaves
  * the animation slots out as they leave the setup slots out. A deform,
  * sequence, draw-order or event timeline poses no bone and no slot row, so an
@@ -151,8 +154,10 @@
  */
 import type { ModelBone, ModelSlot } from '../model.ts';
 import { worldTransforms } from './world.ts';
+import { applyConstraints, constraintsAbsentWhy, posedRecords, type CoreConstraintTimelines } from './constraints.ts';
 import {
   activeBones,
+  constraintRecords,
   CoreInputError,
   foldInheritMode,
   gridRound,
@@ -679,11 +684,21 @@ export function posedSlots(doc: CompiledDocument, timelines: CoreAnimationTimeli
   return { rows, conflicts };
 }
 
-/** The bone rows at `t`, in the oracle's shape and rounding. */
-export function posedBoneRows(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}): CoreBoneRow[] {
+/**
+ * The bone rows at `t`, in the oracle's shape and rounding. With `constraints`
+ * — the animation's ik and transform timelines — the document's ik and
+ * transform constraints are applied after the timelines, posed at `t`
+ * (`./constraints.ts`, construct 5's first cut); without, the hierarchy and
+ * the timelines alone.
+ */
+export function posedBoneRows(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}, constraints?: CoreConstraintTimelines): CoreBoneRow[] {
   const active = activeBones(doc);
   const bones = posedBones(doc, timelines, t, plant);
-  const world = (plant.evaluate ?? worldTransforms)(bones, active);
+  let world = (plant.evaluate ?? worldTransforms)(bones, active);
+  if (constraints !== undefined) {
+    const records = posedRecords(constraintRecords(doc), constraints, t);
+    world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records);
+  }
   return bones.map((b): CoreBoneRow => {
     const w = world.get(b.name);
     if (w === undefined) throw new CoreInputError(`the evaluator returned no transform for bone "${b.name}"`);
@@ -726,12 +741,6 @@ export interface CoreAnimationPose {
   samples: CoreSample[];
 }
 
-/** Why the animation bones are left out — the setup bones' reason — or null. */
-function bonesWhy(doc: CompiledDocument): string | null {
-  if (doc.constraints.length === 0) return null;
-  const kinds = [...new Set(doc.constraints.map((c) => c.kind))];
-  return `the document declares ${kinds.map((k) => `${k} ×${doc.constraints.filter((c) => c.kind === k).length}`).join(', ')}, and constraints are not admitted (item 5): the oracle applies them after every animation`;
-}
 
 /** Why the animation slots are left out because a slider poses them, or null. */
 function slidersWhy(doc: CompiledDocument): string | null {
@@ -751,14 +760,14 @@ function slidersWhy(doc: CompiledDocument): string | null {
  * `animations.slots` in document order.
  */
 export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: number, plant: TimelinePlant = {}): { animations: CoreAnimationPose[]; absent: Array<[string, string]> } {
-  const bonesReason = bonesWhy(doc);
+  const bonesReason = constraintsAbsentWhy(doc);
   const slotConflicts: string[] = [];
   const animations = doc.animations.map((anim: CoreAnimation): CoreAnimationPose => {
     const d = anim.timelines.duration;
     const samples: CoreSample[] = [];
     for (let i = 0; i < n; i++) {
       const t = sampleTime(phase, d, i, n);
-      const bones = bonesReason === null ? posedBoneRows(doc, anim.timelines, t, plant) : null;
+      const bones = bonesReason === null ? posedBoneRows(doc, anim.timelines, t, plant, anim.constraints) : null;
       const slots = posedSlots(doc, anim.timelines, t, plant);
       for (const c of slots.conflicts) if (!slotConflicts.includes(`${c} at animation "${anim.name}"`)) slotConflicts.push(`${c} at animation "${anim.name}"`);
       samples.push({ t: gridRound(t), bones, slots: slots.rows });
