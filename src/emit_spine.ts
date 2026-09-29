@@ -1,14 +1,15 @@
 /**
  * The Spine emitter — the compiled model (`src/model.ts`) written as Spine 4.3
  * skeleton objects (issue #915, step 1b of #380; every structural record since
- * #919, cut 1d).
+ * #919, cut 1d; the animations since #921, cut 1e).
  *
  * The model holds values; this file owns the bytes. So every Spine 4.3
  * spelling of a model field lives here and nowhere in the model: a bone's
  * inherit mode is written under `inherit` (4.0/4.1 wrote `transform`, which 4.3
  * loads silently as Normal — `A02`), and its skin-required flag under `skin`; a
  * constraint's and an attachment's kind under `type` (a region's left out); a
- * slot's setup attachment under `attachment`.
+ * slot's setup attachment under `attachment`; the physics timeline that names
+ * no constraint under the empty name.
  *
  * 🔒 **Key insertion order is part of the byte contract.** `inEditorKeyOrder`
  * (`src/keyorder.ts`) permutes only the keys its row lists; a key the row does
@@ -36,37 +37,49 @@
  * bone's position in the model's bone array, which `emitBones` keeps in order.
  *
  * 🔸 **The editor's name comparator stays in `compile.ts`** and is handed to
- * `emitSkins` (`EditorOrder`): the same comparator keys `animations`, which are
- * still assembled there until their own cut, and the selftest's scans of the
- * fold read it in that file. The ORDER is applied here; the comparator is
- * passed in, not restated.
+ * `emitSkins` (`EditorOrder`) and to `emitAnimations` (`AnimationOrder`): the
+ * selftest's scans of the fold read it in that file, and importing it from
+ * here would make the two modules import each other. The ORDER is applied
+ * here, and so is the refusal that comes with it — a set of animation names
+ * the editor could key two ways is refused inside `emitAnimations`, in the
+ * words `compile.ts` gives it; the comparator is passed in, not restated.
  *
  * 🧪 Every object this file returns is a fresh one. The parser-default and
  * key-order passes run in place on the finished skeleton, and before issue
  * #919 they reached the region and linked-mesh objects the skin tables held;
- * no object of the model that those passes visit is handed to them.
+ * no object of the model that those passes visit is handed to them — a
+ * timeline key included (issue #921): the passes delete a first key's
+ * `time: 0` and re-key an ik key's fields in place, and a key handed over by
+ * reference would come back out of the model that way.
  */
 import { CompileError } from './errors.ts';
+import { PARSER_DEFAULTS } from './keyorder.ts';
 import type {
+  CompiledAnimation,
+  ModelAttachmentTimelines,
   ModelBone,
   ModelBoundingBoxAttachment,
   ModelClippingAttachment,
   ModelConstraint,
   ModelConstraintKind,
   ModelEvent,
+  ModelKey,
   ModelLinkedMeshAttachment,
   ModelMeshAttachment,
   ModelPathAttachment,
   ModelRegionAttachment,
   ModelSkin,
   ModelSlot,
+  ModelTimelines,
   ModelVertexAttachment,
   ModelVertices,
   SkinTable,
   SkinTableEntry,
 } from './model.ts';
+import { EVERY_GLOBAL_PHYSICS } from './motion.ts';
 import { RIG_SKIN_CONSTRAINT_KEYS, type RigSkinConstraintKey } from './rig.ts';
 import type {
+  SpineAnimation,
   SpineAttachment,
   SpineBone,
   SpineBoundingBoxAttachment,
@@ -80,6 +93,7 @@ import type {
   SpineSequence,
   SpineSkin,
   SpineSlot,
+  SpineTimelineKey,
 } from './types.ts';
 
 /**
@@ -521,6 +535,213 @@ export function emitEvents(events: ReadonlyMap<string, ModelEvent>): Record<stri
     if (def.volume !== undefined) entry.volume = def.volume;
     if (def.balance !== undefined) entry.balance = def.balance;
     out[name] = entry;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// animations (issue #921, cut 1e)
+// ---------------------------------------------------------------------------
+
+/**
+ * The order `animations` is keyed in, over the model's names — `compile.ts`'s
+ * `editorAnimationOrder`, which refuses by name every pair the editor could key
+ * two ways (`refuseNamesTheEditorCouldKeyDifferently`). Passed in, for the
+ * reason the header's 🔸 gives.
+ */
+export type AnimationOrder = (names: readonly string[]) => string[];
+
+/**
+ * One key as the file carries it: a fresh object with the model key's fields,
+ * in the model key's order — the order its compiler inserted them, which is a
+ * byte wherever the key-order table has no row (the `scalex`, `inherit`, `rgb`,
+ * `sequence`, path, slider and several physics keys) or lists only some of the
+ * fields. Arrays inside (`curve`, `vertices`) are shared: neither pass reaches
+ * into an array of numbers.
+ */
+function emitKey(key: ModelKey): SpineTimelineKey {
+  return { ...key };
+}
+
+function emitKeys(keys: readonly ModelKey[]): SpineTimelineKey[] {
+  return keys.map(emitKey);
+}
+
+/** One target's timelines, in the model's order. */
+function emitTimelines(timelines: ModelTimelines): Record<string, SpineTimelineKey[]> {
+  const out: Record<string, SpineTimelineKey[]> = {};
+  for (const [name, keys] of timelines) out[name] = emitKeys(keys);
+  return out;
+}
+
+/** target -> timelines, in the model's order; `rename` spells a target the format names otherwise. */
+function emitTargets(
+  targets: ReadonlyMap<string, ModelTimelines>,
+  rename: (target: string) => string = (target) => target,
+): Record<string, Record<string, SpineTimelineKey[]>> {
+  const out: Record<string, Record<string, SpineTimelineKey[]>> = {};
+  for (const [target, timelines] of targets) out[rename(target)] = emitTimelines(timelines);
+  return out;
+}
+
+/**
+ * The three ik-key flags, and the value `SkeletonJson` reads for each on a key
+ * that omits it (`PARSER_DEFAULTS['ik key']`, which the selftest holds to the
+ * parser row by row).
+ */
+const IK_KEY_FLAGS: ReadonlyArray<readonly [string, unknown]> = (['bendPositive', 'compress', 'stretch'] as const).map(
+  (flag) => [flag, PARSER_DEFAULTS['ik key'][flag]] as const,
+);
+
+/**
+ * An ik key. The model holds the flags IN EFFECT on every key (`ModelKey`); the
+ * file carries a flag only where it is not the parser's per-key default, which
+ * is where the restatement of issue #273 used to stop — the constraint's flag
+ * was carried onto a key only where it differed from that default. A key that
+ * STATED a flag at its default was written and then left out by the
+ * parser-default pass (its `ik key` row holds the same three values), so
+ * leaving it out here moves no byte. Every other field is copied in the key's
+ * own order.
+ */
+function emitIkKey(key: ModelKey): SpineTimelineKey {
+  const out: SpineTimelineKey = {};
+  for (const [field, value] of Object.entries(key)) {
+    if (IK_KEY_FLAGS.some(([flag, dflt]) => flag === field && value === dflt)) continue;
+    out[field] = value;
+  }
+  return out;
+}
+
+/** One draw-order move as the model holds it. */
+interface DrawOrderMove {
+  slot: string;
+  offset: number;
+}
+
+function isDrawOrderMoves(value: unknown): value is DrawOrderMove[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (move: unknown) =>
+        typeof move === 'object' &&
+        move !== null &&
+        typeof (move as { slot?: unknown }).slot === 'string' &&
+        typeof (move as { offset?: unknown }).offset === 'number',
+    )
+  );
+}
+
+/**
+ * A draw-order key. Its `offsets` are written in SETUP order — each move's
+ * slot's index in the model's slot array, which is the emitted draw order:
+ * `readDrawOrder` walks the offsets with a forward-only cursor over the setup
+ * order, so an entry whose slot sits before the previous entry's never lets the
+ * cursor meet it and the loader runs away (`compileDrawOrder`'s first refusal
+ * note). The model holds the moves as stated; the sort is the format's
+ * requirement and so the emitter's. Each move is a fresh `slot, offset` object.
+ * A slot the model does not have is refused by name — the compiler resolved
+ * every move against the same slots, so this is the emitter declining to guess
+ * a position, not a check an author can reach.
+ */
+function emitDrawOrderKey(key: ModelKey, slotIndex: ReadonlyMap<string, number>): SpineTimelineKey {
+  const out = emitKey(key);
+  if (key.offsets === undefined) return out;
+  if (!isDrawOrderMoves(key.offsets)) {
+    throw new CompileError(`internal: a draw-order key at t=${key.time} carries offsets that are not slot/offset moves`);
+  }
+  const indexOf = (slot: string): number => {
+    const at = slotIndex.get(slot);
+    if (at === undefined) throw new CompileError(`internal: a draw-order key at t=${key.time} moves slot "${slot}", which is not in the model's slot list`);
+    return at;
+  };
+  out.offsets = key.offsets
+    .map((move) => ({ at: indexOf(move.slot), move: { slot: move.slot, offset: move.offset } }))
+    .sort((a, b) => a.at - b.at)
+    .map(({ move }) => move);
+  return out;
+}
+
+/** An attachment's timelines: `deform` then `sequence`, each only when the model holds it. */
+function emitAttachmentTimelines(timelines: ModelAttachmentTimelines): Record<string, SpineTimelineKey[]> {
+  const out: Record<string, SpineTimelineKey[]> = {};
+  if (timelines.deform !== undefined) out.deform = emitKeys(timelines.deform);
+  if (timelines.sequence !== undefined) out.sequence = emitKeys(timelines.sequence);
+  return out;
+}
+
+/**
+ * One animation as Spine 4.3's `animations.<name>` object.
+ *
+ * The groups in `readAnimation`'s own reading order —
+ *
+ *   `slots, bones, ik, transform, path, physics, slider, attachments, drawOrder, events`
+ *
+ * — each only when the model holds something for it, so an animation that keys
+ * one kind of thing is an object of one group, as it always was. (The
+ * `animation` row of the key-order table lists eight of the ten; `path` and
+ * `slider` hold the positions written here.)
+ *
+ * ✂️ Spellings and omissions that are Spine's: the physics timeline that names
+ * no constraint (the model's `EVERY_GLOBAL_PHYSICS` target) is written under the
+ * empty name, which is what `readAnimation` resolves as "every global
+ * constraint", in the position the model holds it; an ik key's flags at their
+ * per-key default are left out (`emitIkKey`); draw-order moves are sorted into
+ * setup order (`emitDrawOrderKey`). Every key is a fresh object.
+ */
+export function emitAnimation(animation: CompiledAnimation, slotIndex: ReadonlyMap<string, number>): SpineAnimation {
+  const out: SpineAnimation = {};
+  if (animation.slots.size) out.slots = emitTargets(animation.slots);
+  if (animation.bones.size) out.bones = emitTargets(animation.bones);
+  const { ik, transform, path, physics, slider } = animation.constraints;
+  if (ik.size) {
+    const byConstraint: Record<string, SpineTimelineKey[]> = {};
+    for (const [name, keys] of ik) byConstraint[name] = keys.map(emitIkKey);
+    out.ik = byConstraint;
+  }
+  if (transform.size) {
+    const byConstraint: Record<string, SpineTimelineKey[]> = {};
+    for (const [name, keys] of transform) byConstraint[name] = emitKeys(keys);
+    out.transform = byConstraint;
+  }
+  if (path.size) out.path = emitTargets(path);
+  if (physics.size) out.physics = emitTargets(physics, (target) => (target === EVERY_GLOBAL_PHYSICS ? '' : target));
+  if (slider.size) out.slider = emitTargets(slider);
+  if (animation.attachments.size) {
+    const bySkin: NonNullable<SpineAnimation['attachments']> = {};
+    for (const [skin, bySlot] of animation.attachments) {
+      const slots: Record<string, Record<string, Record<string, SpineTimelineKey[]>>> = {};
+      for (const [slot, byAttachment] of bySlot) {
+        const attachments: Record<string, Record<string, SpineTimelineKey[]>> = {};
+        for (const [attachment, timelines] of byAttachment) attachments[attachment] = emitAttachmentTimelines(timelines);
+        slots[slot] = attachments;
+      }
+      bySkin[skin] = slots;
+    }
+    out.attachments = bySkin;
+  }
+  if (animation.drawOrder.length) out.drawOrder = animation.drawOrder.map((key) => emitDrawOrderKey(key, slotIndex));
+  if (animation.events.length) out.events = emitKeys(animation.events);
+  return out;
+}
+
+/**
+ * The `animations` object: the model's names keyed in `order`'s order — the
+ * editor's, which raises the refusal for a pair it could key two ways before
+ * anything is written — each written by `emitAnimation`. `slots` is the model's
+ * slot array, the draw order a draw-order move's index counts in.
+ */
+export function emitAnimations(
+  animations: ReadonlyMap<string, CompiledAnimation>,
+  slots: readonly ModelSlot[],
+  order: AnimationOrder,
+): Record<string, SpineAnimation> {
+  const names = order([...animations.keys()]);
+  const slotIndex = new Map(slots.map((slot, i) => [slot.name, i] as const));
+  const out: Record<string, SpineAnimation> = {};
+  for (const name of names) {
+    const animation = animations.get(name);
+    if (animation === undefined) throw new CompileError(`internal: the animation order named "${name}", which is not in the model`);
+    out[name] = emitAnimation(animation, slotIndex);
   }
   return out;
 }

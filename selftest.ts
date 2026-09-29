@@ -156,6 +156,7 @@ import {
   CompileError,
   deformGeometryOf,
   EDITOR_NAME_FOLD,
+  editorAnimationOrder,
   editorNamesInOrder,
   editorSkinOrder,
   editorSlotKeyOrder,
@@ -198,6 +199,8 @@ import {
 } from './src/keyorder.ts';
 import {
   boneIndexOf,
+  emitAnimation,
+  emitAnimations,
   emitBones,
   emitBoundingBox,
   emitClipping,
@@ -214,7 +217,10 @@ import {
 } from './src/emit_spine.ts';
 import {
   isModelVertexAttachment,
+  type CompiledAnimation,
   type CompiledModel,
+  type ModelKey,
+  type ModelTimelines,
   type ModelConstraint,
   type ModelEvent,
   type ModelLinkedMeshAttachment,
@@ -232,7 +238,7 @@ import {
   type ModelVertices,
 } from './src/model.ts';
 import { computeWorldTransforms, toBoneLocal, toWorld, type BoneTransform } from './src/transform.ts';
-import { MOTION_ENUMS, MOTION_KEYS, MOTION_TYPES, parseMotionSpec } from './src/motion.ts';
+import { EVERY_GLOBAL_PHYSICS, MOTION_ENUMS, MOTION_KEYS, MOTION_TYPES, parseMotionSpec } from './src/motion.ts';
 import { CHECKED_SPEC_VALUE_TYPES, FLOAT32_MAX, SPEC_VALUE_TYPES, type SpecEnumRule } from './src/keys.ts';
 import { MANIFEST_ENUMS, MANIFEST_MESH_KINDS, MANIFEST_TYPES } from './src/types.ts';
 import {
@@ -419,7 +425,7 @@ import {
   SLOT_COLOR_CHANNELS,
 } from './src/timelines.ts';
 import { readPngInfo } from './src/png.ts';
-import type { CompiledImage, CompileResult, SpineBone, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
+import type { CompiledImage, CompileResult, SpineAnimation, SpineBone, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
 import { skeletonDataFromText, stretchSingularValues, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
 import {
   ASSERTION_NAMES,
@@ -66656,8 +66662,11 @@ function runModelBonesSuite(): { failures: number; gateHole: boolean } {
       { label: 'the every-field probe rig', rigPath: join(every, 'rig.json'), motionPath: join(every, 'motion.json') },
       ...gallery.map((name) => ({ label: `gallery/${name}`, rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json') })),
     ];
+    // `CarriedFromCompileResult`'s keys. `declaredDurations` left the list at
+    // issue #921: each model animation holds its `duration` (`MA08` holds it
+    // equal to the result's, in the spec's order).
     const carriedKeys = [
-      'images', 'pageGrids', 'droppedStates', 'absentParts', 'declaredDurations', 'meshBones', 'meshes', 'physics',
+      'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics',
       'deformTransforms', 'trackDerivations', 'rig',
     ] as const;
     let bonesSeen = 0;
@@ -68228,6 +68237,584 @@ function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
         held,
         probeDetail(held, probes, `${rows.length} row(s) of ${basePath} built through \`tools/emit_hashes.ts\` on this tree (${absent} without their inputs here): ${verdict}; the same rows with the first one's hash flipped read DIFF naming it alone`),
         'issue #919\'s gate as a control: the null setups and the physics table\'s omitted defaults the corpus does reach live in the fetched exports and the gallery alike, so every row whose inputs are present is run rather than the gallery alone',
+      );
+    }
+  }
+
+  rmSync(work, { recursive: true, force: true });
+  return { failures: bad, gateHole };
+}
+
+// ---------------------------------------------------------------------------
+// the animations as model records, the Spine emitter their writer (issue #921)
+// ---------------------------------------------------------------------------
+
+/** A model key: `time` first, then `rest` in the order given — the order a compiler inserts. */
+function modelKey(time: number, rest: Record<string, unknown> = {}): ModelKey {
+  return { time, ...rest };
+}
+
+/** An animation with every collection empty, `patch` laid over it. */
+function modelAnimation(patch: Partial<CompiledAnimation> = {}): CompiledAnimation {
+  return {
+    duration: 1,
+    bones: new Map(),
+    slots: new Map(),
+    constraints: { ik: new Map(), transform: new Map(), path: new Map(), physics: new Map(), slider: new Map() },
+    attachments: new Map(),
+    drawOrder: [],
+    events: [],
+    ...patch,
+  };
+}
+
+/**
+ * The model's animations as one text — every `Map` spelled as its entry list,
+ * so an order the model holds is part of the text — to see whether anything
+ * reached into them.
+ */
+function modelAnimationsText(animations: ReadonlyMap<string, CompiledAnimation>): string {
+  return JSON.stringify(animations, (_key, value: unknown) => (value instanceof Map ? [...value.entries()] : value));
+}
+
+/** An emitted `animations` object through the two passes the compiler applies, and its text; a copy, so the passes stay off the caller's. */
+function animationsAsFileText(value: unknown): string {
+  const holder: Record<string, unknown> = { animations: structuredClone(value) };
+  inEditorKeyOrder(withoutParserDefaults(holder));
+  return JSON.stringify(holder.animations);
+}
+
+/** Every key of one model animation beside the key the emitter wrote for it, with the group it sits in. */
+function pairedKeys(model: CompiledAnimation, emitted: SpineAnimation): Array<{ group: string; model: ModelKey; emitted: Record<string, unknown> | undefined }> {
+  const out: Array<{ group: string; model: ModelKey; emitted: Record<string, unknown> | undefined }> = [];
+  const pair = (group: string, keys: readonly ModelKey[], written: unknown): void => {
+    keys.forEach((key, i) => out.push({ group, model: key, emitted: Array.isArray(written) ? (written[i] as Record<string, unknown>) : undefined }));
+  };
+  const byName = (group: 'bones' | 'slots' | 'path' | 'physics' | 'slider', targets: ReadonlyMap<string, ModelTimelines>): void => {
+    const written = (emitted[group] ?? {}) as Record<string, Record<string, unknown>>;
+    for (const [target, timelines] of targets) {
+      for (const [name, keys] of timelines) pair(group, keys, written[target === EVERY_GLOBAL_PHYSICS && group === 'physics' ? '' : target]?.[name]);
+    }
+  };
+  byName('bones', model.bones);
+  byName('slots', model.slots);
+  byName('path', model.constraints.path);
+  byName('physics', model.constraints.physics);
+  byName('slider', model.constraints.slider);
+  for (const group of ['ik', 'transform'] as const) {
+    const written = (emitted[group] ?? {}) as Record<string, unknown>;
+    for (const [name, keys] of model.constraints[group]) pair(group, keys, written[name]);
+  }
+  const attachments = (emitted.attachments ?? {}) as Record<string, Record<string, Record<string, Record<string, unknown>>>>;
+  for (const [skin, bySlot] of model.attachments) {
+    for (const [slot, byAttachment] of bySlot) {
+      for (const [attachment, timelines] of byAttachment) {
+        if (timelines.deform) pair('deform', timelines.deform, attachments[skin]?.[slot]?.[attachment]?.deform);
+        if (timelines.sequence) pair('sequence', timelines.sequence, attachments[skin]?.[slot]?.[attachment]?.sequence);
+      }
+    }
+  }
+  pair('drawOrder', model.drawOrder, emitted.drawOrder);
+  pair('events', model.events, emitted.events);
+  return out;
+}
+
+/** The three ik-key flags, which the emitter writes only off their per-key default. */
+const IK_FLAGS_AT_DEFAULT: Readonly<Record<string, boolean>> = { bendPositive: true, compress: false, stretch: false };
+
+/**
+ * The records probe's rig with a motion spec of its own: `animations` replaces
+ * the probe's, and `easings` its (empty) easing table. The rig's sliders apply
+ * `idle`, so a caller keeps one.
+ */
+function compileAnimationsProbe(
+  animations: Record<string, unknown>,
+  easings: Record<string, unknown> = {},
+): { result: CompileResult | null; refusal: string } {
+  const { dirs, motionPath } = writeModelRecordsProbe();
+  try {
+    const motion = JSON.parse(readFileSync(motionPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(motionPath, `${JSON.stringify({ ...motion, easings, animations }, null, 2)}\n`);
+    return { result: compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir }), refusal: '' };
+  } catch (err) {
+    return { result: null, refusal: err instanceof CompileError ? err.message : `not a CompileError: ${(err as Error).message}` };
+  } finally {
+    rmSync(dirs.dir, { recursive: true, force: true });
+  }
+}
+
+/** The records probe's own `idle`, which its sliders apply. */
+const ANIMATIONS_PROBE_IDLE = { duration: 1, tracks: [{ bone: 'a', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [5] }] }] };
+
+/**
+ * One animation of the records probe keying every group `readAnimation` reads,
+ * the tracks in an order that is not the file's: a slot, a motion-table
+ * physics constraint, a bone held under a named easing, the physics timeline
+ * that names no constraint, a bone moving under the same easing, a rig physics
+ * constraint, a path and a slider; an ik timeline that states no flag; a
+ * transform, a deform, a sequence, a draw-order key whose moves are stated in
+ * the reverse of setup order, and two events.
+ */
+const EVERY_GROUP_ANIMATION = {
+  duration: 1,
+  tracks: [
+    { slot: 'tint', property: 'alpha', keys: [{ t: 0, v: [1] }, { t: 1, v: [0.5] }] },
+    { physics: 'tq', property: 'strength', keys: [{ t: 0, v: [100] }, { t: 1, v: [50] }] },
+    { bone: 'a', property: 'rotate', keys: [{ t: 0, v: [5], ease: 'glide' }, { t: 1, v: [5] }] },
+    { physics: '*', property: 'mix', keys: [{ t: 0, v: [1] }, { t: 1, v: [0.5] }] },
+    { bone: 'b', property: 'rotate', keys: [{ t: 0, v: [0], ease: 'glide' }, { t: 1, v: [10] }] },
+    { physics: 'ph', property: 'wind', keys: [{ t: 0, v: [1] }, { t: 1, v: [3] }] },
+    { path: 'pc', property: 'position', keys: [{ t: 0, v: [0] }, { t: 1, v: [4] }] },
+    { slider: 'sl2', property: 'mix', keys: [{ t: 0, v: [1] }, { t: 1, v: [0.5] }] },
+  ],
+  ik: [{ constraint: 'ikc', keys: [{ t: 0, mix: 1 }, { t: 1, mix: 0.5 }] }],
+  transform: [{ constraint: 'tc', keys: [{ t: 0, mixRotate: 1 }, { t: 1, mixRotate: 0.5 }] }],
+  deform: [{ slot: 'meshslot', attachment: 'm', keys: [{ t: 0, vertices: [1, 1] }, { t: 1, vertices: [2, 2] }] }],
+  sequence: [{ slot: 'seq', attachment: 'glint_', keys: [{ t: 0, mode: 'loop', delay: 0.1 }] }],
+  drawOrder: [{ t: 0, offsets: [{ slot: 'trackslot', offset: -1 }, { slot: 'plain', offset: 1 }] }, { t: 1 }],
+  events: [{ t: 0, name: 'hit' }, { t: 1, name: 'bare' }],
+};
+
+/** The source rules `MA10` holds `compile.ts` to; each entry is a problem found. */
+function compileAnimationSourceProblems(text: string): string[] {
+  const code = codeOnly(text);
+  const count = (re: RegExp): number => (code.match(re) ?? []).length;
+  const problems: string[] = [];
+  const spine = count(/\bSpine(Animation|TimelineKey)\b/g);
+  if (spine !== 0) problems.push(`a Spine animation or timeline-key type is named ${spine} time(s); compile builds model keys`);
+  const section = count(/SpineSkeletonJson\['animations'\]/g);
+  if (section !== 0) problems.push(`the Spine \`animations\` section type is named ${section} time(s); the emitter writes it`);
+  const calls = count(/\bemitAnimations\(/g);
+  if (calls !== 1) problems.push(`emitAnimations is called ${calls} time(s); the section is emitted exactly once`);
+  return problems;
+}
+
+/**
+ * The compiled model's animations and the Spine emitter (issue #921): the
+ * groups in `readAnimation`'s order and only when non-empty, the editor's
+ * animation order and its refusal raised by the emitter, the every-global
+ * physics timeline at the empty name in its track's position, an ik key's flags
+ * in effect held and the default ones left out, a hold written `stepped`, the
+ * draw-order sort, every key a fresh copy the passes cannot reach back through,
+ * `compile.ts` naming no Spine animation type, and — when a base hash document
+ * is named — every recipe it lists landing byte-identical.
+ */
+function runModelAnimationsSuite(): { failures: number; gateHole: boolean } {
+  console.log('\n── model-animations: the animations as model records, the Spine emitter their writer (issue #921) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const work = mkdtempSync(join(tmpdir(), 'rigc-model-animations-'));
+  const slotsOf = (...names: string[]): ModelSlot[] => names.map((name) => ({ name, bone: 'root', setup: null }));
+  const glide = { glide: [0.42, 0, 0.58, 1] };
+  const everyCompiled = compileAnimationsProbe({ idle: ANIMATIONS_PROBE_IDLE, every: EVERY_GROUP_ANIMATION }, glide);
+  const everyModel = everyCompiled.result?.model.animations.get('every');
+  const everyFile = everyCompiled.result === null
+    ? undefined
+    : ((JSON.parse(everyCompiled.result.skeletonText) as SpineSkeletonJson).animations.every as Record<string, unknown> | undefined);
+
+  // A hand-built animation carrying one of everything, each collection inserted
+  // in the reverse of the file's order; its expected text is written by hand.
+  const everyGroup = (): CompiledAnimation => ({
+    duration: 1,
+    events: [modelKey(1, { name: 'hit' })],
+    drawOrder: [modelKey(0, { offsets: [{ slot: 's1', offset: -1 }, { slot: 's0', offset: 1 }] })],
+    attachments: new Map([['default', new Map([['s0', new Map([['m', { sequence: [modelKey(0, { mode: 'loop' })], deform: [modelKey(0, { vertices: [1] })] }]])]])]]),
+    constraints: {
+      slider: new Map([['sl', new Map([['mix', [modelKey(0, { value: 0.5 })]]])]]),
+      physics: new Map([['ph', new Map([['mix', [modelKey(0, { value: 0.5 })]]])], [EVERY_GLOBAL_PHYSICS, new Map([['wind', [modelKey(0, { value: 2 })]]])]]),
+      path: new Map([['pc', new Map([['position', [modelKey(0, { value: 0.25 })]]])]]),
+      transform: new Map([['tc', [modelKey(0, { mixRotate: 0.5 })]]]),
+      ik: new Map([['ikc', [modelKey(0, { mix: 0.5, bendPositive: false, compress: false, stretch: true })]]]),
+    },
+    bones: new Map([['b', new Map([['rotate', [modelKey(0, { value: 5, curve: 'stepped' }), modelKey(1, { value: 5 })]]])]]),
+    slots: new Map([['s0', new Map([['alpha', [modelKey(0, { value: 1 })]]])]]),
+  });
+  const everyGroupText =
+    '{"slots":{"s0":{"alpha":[{"time":0,"value":1}]}},' +
+    '"bones":{"b":{"rotate":[{"time":0,"value":5,"curve":"stepped"},{"time":1,"value":5}]}},' +
+    '"ik":{"ikc":[{"time":0,"mix":0.5,"bendPositive":false,"stretch":true}]},' +
+    '"transform":{"tc":[{"time":0,"mixRotate":0.5}]},' +
+    '"path":{"pc":{"position":[{"time":0,"value":0.25}]}},' +
+    '"physics":{"ph":{"mix":[{"time":0,"value":0.5}]},"":{"wind":[{"time":0,"value":2}]}},' +
+    '"slider":{"sl":{"mix":[{"time":0,"value":0.5}]}},' +
+    '"attachments":{"default":{"s0":{"m":{"deform":[{"time":0,"vertices":[1]}],"sequence":[{"time":0,"mode":"loop"}]}}}},' +
+    '"drawOrder":[{"time":0,"offsets":[{"slot":"s0","offset":1},{"slot":"s1","offset":-1}]}],' +
+    '"events":[{"time":1,"name":"hit"}]}';
+  const setupSlots = slotsOf('s0', 's1');
+  const setupIndex = new Map(setupSlots.map((slot, i) => [slot.name, i] as const));
+  const READ_ORDER = ['slots', 'bones', 'ik', 'transform', 'path', 'physics', 'slider', 'attachments', 'drawOrder', 'events'] as const;
+
+  // --- MA01: every group, in `readAnimation`'s order --------------------------
+  {
+    const probes: string[] = [];
+    const emitted = emitAnimation(everyGroup(), setupIndex);
+    const text = JSON.stringify(emitted);
+    if (text !== everyGroupText) probes.push(`the hand-built animation emits ${text}`);
+    // `path` and `slider` are the two groups the key-order table's `animation`
+    // row does not list, so their positions are this emitter's alone.
+    const moved = animationsAsFileText({ x: withKeyMoved(emitted, 'path', 'physics') });
+    if (moved === animationsAsFileText({ x: emitted })) probes.push('`path` moved after `physics` reads the same after both passes, so the emitter\'s position is not the byte');
+    const compiledGroups = everyFile === undefined ? [] : Object.keys(everyFile);
+    if (everyCompiled.result === null) probes.push(`the every-group probe did not compile: ${everyCompiled.refusal}`);
+    else if (JSON.stringify(compiledGroups) !== JSON.stringify(READ_ORDER)) probes.push(`compiled, "every" writes the groups [${compiledGroups.join(', ')}]`);
+    const held = probes.length === 0;
+    say(
+      'MA01_AN_ANIMATION_CARRYING_EVERY_GROUP_WRITES_THEM_IN_READANIMATIONS_ORDER',
+      held,
+      probeDetail(held, probes, `a model animation carrying all ten groups, each collection inserted in reverse, emits exactly ${everyGroupText}; \`path\` moved after \`physics\` still differs after both passes; compiled, the probe's "every" — tracks stated slot, physics, bone, physics "*", bone, physics, path, slider — writes [${compiledGroups.join(', ')}]`),
+      'issue #921: the ten groups are the emitter\'s, in `readAnimation`\'s reading order (census §3, *Layout and order*); the `animation` row of the key-order table lists eight of them, so `path` and `slider` sit where this emitter puts them and nowhere else restores them',
+    );
+  }
+
+  // --- MA02: one group alone -------------------------------------------------
+  {
+    const probes: string[] = [];
+    const full = everyGroup();
+    const only: Record<(typeof READ_ORDER)[number], CompiledAnimation> = {
+      slots: modelAnimation({ slots: full.slots }),
+      bones: modelAnimation({ bones: full.bones }),
+      ik: modelAnimation({ constraints: { ...modelAnimation().constraints, ik: full.constraints.ik } }),
+      transform: modelAnimation({ constraints: { ...modelAnimation().constraints, transform: full.constraints.transform } }),
+      path: modelAnimation({ constraints: { ...modelAnimation().constraints, path: full.constraints.path } }),
+      physics: modelAnimation({ constraints: { ...modelAnimation().constraints, physics: full.constraints.physics } }),
+      slider: modelAnimation({ constraints: { ...modelAnimation().constraints, slider: full.constraints.slider } }),
+      attachments: modelAnimation({ attachments: full.attachments }),
+      drawOrder: modelAnimation({ drawOrder: full.drawOrder }),
+      events: modelAnimation({ events: full.events }),
+    };
+    for (const group of READ_ORDER) {
+      const keys = Object.keys(emitAnimation(only[group], setupIndex));
+      if (JSON.stringify(keys) !== JSON.stringify([group])) probes.push(`an animation holding only ${group} writes [${keys.join(', ')}]`);
+    }
+    const none = JSON.stringify(emitAnimation(modelAnimation(), setupIndex));
+    if (none !== '{}') probes.push(`an animation holding nothing writes ${none}`);
+    const held = probes.length === 0;
+    say(
+      'MA02_AN_ANIMATION_HOLDING_ONE_GROUP_WRITES_THAT_GROUP_ALONE',
+      held,
+      probeDetail(held, probes, `each of the ${READ_ORDER.length} groups held alone writes an object of that one key, and an animation holding nothing writes {}`),
+      'issue #921: each group is written only when non-empty — the ten conditional lines the assembly had — which is what keeps an animation that keys one kind of thing an object of one group',
+    );
+  }
+
+  // --- MA03: the editor's animation order and its refusal, raised by the emitter --
+  {
+    const probes: string[] = [];
+    // `PS49`'s folder row: the pair the stored round trips leave open.
+    const names = ['idle', 'Fx/a', 'fx/b'];
+    const body = { duration: 1, tracks: [{ bone: 'a', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [5] }] }] };
+    const viaCompile = compileAnimationsProbe(Object.fromEntries(names.map((name) => [name, name === 'idle' ? ANIMATIONS_PROBE_IDLE : body])));
+    let viaEmitter = '';
+    try {
+      emitAnimations(new Map(names.map((name) => [name, modelAnimation()])), setupSlots, editorAnimationOrder);
+      probes.push('the emitter keyed the names instead of refusing them');
+    } catch (err) {
+      viaEmitter = err instanceof CompileError ? err.message : `not a CompileError: ${(err as Error).message}`;
+    }
+    if (viaCompile.result !== null) probes.push('compile() built the rig instead of refusing the names');
+    else if (viaEmitter !== viaCompile.refusal) probes.push(`the emitter says "${viaEmitter.slice(0, 160)}…" and compile() says "${viaCompile.refusal.slice(0, 160)}…"`);
+    if (!/have no one order/.test(viaEmitter) || !viaEmitter.includes('"Fx/a"') || !viaEmitter.includes('"fx/b"')) probes.push('the refusal does not name both names in the order refusal\'s words');
+    const ordered = Object.keys(emitAnimations(new Map(['turn10', 'turn2', 'zoom'].map((name) => [name, modelAnimation()])), setupSlots, editorAnimationOrder));
+    if (JSON.stringify(ordered) !== JSON.stringify(['turn2', 'turn10', 'zoom'])) probes.push(`turn10, turn2, zoom are keyed [${ordered.join(', ')}]`);
+    const asHeld = Object.keys(emitAnimations(new Map(['turn10', 'turn2', 'zoom'].map((name) => [name, modelAnimation()])), setupSlots, (list) => [...list]));
+    if (JSON.stringify(asHeld) !== JSON.stringify(['turn10', 'turn2', 'zoom'])) probes.push(`an identity order keys [${asHeld.join(', ')}], so the order is not the one passed in`);
+    const held = probes.length === 0;
+    say(
+      'MA03_A_NAME_SET_THE_EDITOR_COULD_KEY_TWO_WAYS_IS_REFUSED_BY_THE_EMITTER_IN_THE_WORDS_COMPILE_RAISES',
+      held,
+      probeDetail(held, probes, `[${names.join(', ')}] is refused by \`emitAnimations\` and by \`compile\` with one sentence, "${viaEmitter.slice(0, 90)}…"; turn10, turn2, zoom are keyed turn2, turn10, zoom; an identity order keys them as held`),
+      'issue #921: the name order and its refusal moved to where the names are keyed, and kept their sentence and class — `PS49` plants the same pair through `compile`, and this holds the two routes to one text',
+    );
+  }
+
+  // --- MA04: the every-global physics timeline at the empty name, in its position --
+  {
+    const probes: string[] = [];
+    const modelTargets = everyModel === undefined ? [] : [...everyModel.constraints.physics.keys()];
+    const fileTargets = Object.keys((everyFile?.physics ?? {}) as Record<string, unknown>);
+    if (JSON.stringify(modelTargets) !== JSON.stringify(['tq', EVERY_GLOBAL_PHYSICS, 'ph'])) probes.push(`the model holds the physics targets [${modelTargets.join(', ')}]`);
+    if (JSON.stringify(fileTargets) !== JSON.stringify(['tq', '', 'ph'])) probes.push(`the file writes the physics targets ${JSON.stringify(fileTargets)}`);
+    const first = modelAnimation({
+      constraints: {
+        ...modelAnimation().constraints,
+        physics: new Map([[EVERY_GLOBAL_PHYSICS, new Map([['mix', [modelKey(0)]]])], ['ph', new Map([['mix', [modelKey(0)]]])]]),
+      },
+    });
+    const firstTargets = Object.keys(emitAnimation(first, setupIndex).physics ?? {});
+    if (JSON.stringify(firstTargets) !== JSON.stringify(['', 'ph'])) probes.push(`held first, the every-global target is written at ${JSON.stringify(firstTargets)}`);
+    const held = probes.length === 0;
+    say(
+      'MA04_THE_PHYSICS_TIMELINE_THAT_NAMES_NO_CONSTRAINT_IS_WRITTEN_UNDER_THE_EMPTY_NAME_WHERE_ITS_TRACK_STANDS',
+      held,
+      probeDetail(held, probes, `tracks keying "tq", "*", "ph" are held as [${modelTargets.join(', ')}] and written ${JSON.stringify(fileTargets)}; held first, "*" is written first`),
+      'issue #921: the census drafted the every-global timelines as a collection of their own, and the base writes them BETWEEN named ones — `wob_b, "", wob` for tracks in that order, measured before the cut — which a separate collection cannot restate; `readAnimation` also applies the timelines in that order. So the model keys it by the motion spec\'s own name `*` in the physics map, and the empty name is the emitter\'s spelling',
+    );
+  }
+
+  // --- MA05: an ik key's flags in effect, and the ones the file carries --------
+  {
+    const probes: string[] = [];
+    const ikModel = everyModel?.constraints.ik.get('ikc') ?? [];
+    const ikFile = ((everyFile?.ik ?? {}) as Record<string, Array<Record<string, unknown>>>).ikc ?? [];
+    const flagsOf = (key: Record<string, unknown> | undefined): string =>
+      JSON.stringify(Object.fromEntries(Object.keys(IK_FLAGS_AT_DEFAULT).filter((flag) => key !== undefined && flag in key).map((flag) => [flag, key?.[flag]])));
+    // Measured at the base commit on this probe: `ikc` declares bendPositive
+    // false, compress true, stretch true, and a key stating none of them wrote
+    // all three.
+    const silent = '{"bendPositive":false,"compress":true,"stretch":true}';
+    if (ikModel.length !== 2 || ikModel.some((key) => flagsOf(key) !== silent)) probes.push(`the model's silent ik keys hold ${ikModel.map(flagsOf).join(', ')}`);
+    if (ikFile.length !== 2 || ikFile.some((key) => flagsOf(key) !== silent)) probes.push(`the file's silent ik keys carry ${ikFile.map(flagsOf).join(', ')}`);
+    const own = compileAnimationsProbe({
+      idle: ANIMATIONS_PROBE_IDLE,
+      own: { duration: 1, tracks: [], ik: [{ constraint: 'ikc', keys: [{ t: 0, mix: 1, bendPositive: true, compress: false }, { t: 1, mix: 0.5, bendPositive: true, compress: false }] }] },
+    });
+    const ownModel = own.result?.model.animations.get('own')?.constraints.ik.get('ikc') ?? [];
+    const ownFile = own.result === null ? [] : (((JSON.parse(own.result.skeletonText) as SpineSkeletonJson).animations.own?.ik ?? {}) as Record<string, Array<Record<string, unknown>>>).ikc ?? [];
+    if (own.result === null) probes.push(`the stated-flags probe did not compile: ${own.refusal}`);
+    if (ownModel.some((key) => flagsOf(key) !== '{"bendPositive":true,"compress":false,"stretch":true}')) probes.push(`keys stating bendPositive true, compress false hold ${ownModel.map(flagsOf).join(', ')}`);
+    if (ownFile.length !== 2 || ownFile.some((key) => flagsOf(key) !== '{"stretch":true}')) probes.push(`keys stating bendPositive true, compress false write ${ownFile.map(flagsOf).join(', ')}`);
+    const quiet = JSON.stringify(emitAnimation(modelAnimation({ constraints: { ...modelAnimation().constraints, ik: new Map([['q', [modelKey(1, { mix: 0.5, ...IK_FLAGS_AT_DEFAULT })]]]) } }), setupIndex).ik);
+    if (quiet !== '{"q":[{"time":1,"mix":0.5}]}') probes.push(`a key holding the three flags at their defaults writes ${quiet}`);
+    const held = probes.length === 0;
+    say(
+      'MA05_AN_IK_KEY_HOLDS_THE_FLAGS_IN_EFFECT_AND_THE_FILE_CARRIES_THE_CONSTRAINTS_WHERE_THE_KEY_IS_SILENT',
+      held,
+      probeDetail(held, probes, `under "ikc" (bendPositive false, compress true, stretch true) a key stating no flag holds and writes ${silent}; keys stating bendPositive true, compress false hold all three and write {"stretch":true}; a key holding the three defaults writes none`),
+      'issue #921, census §2.1 fifth bullet and issue #273: the 4.3 parser reads the flags per key without inheriting the constraint\'s, so the model\'s key holds the flag in effect and the emitter writes the ones off the per-key default — the bytes the restatement wrote, measured at the base on this probe',
+    );
+  }
+
+  // --- MA06: a named easing over a hold is `stepped` ------------------------
+  {
+    const probes: string[] = [];
+    const aModel = everyModel?.bones.get('a')?.get('rotate')?.[0];
+    const bModel = everyModel?.bones.get('b')?.get('rotate')?.[0];
+    const bonesFile = (everyFile?.bones ?? {}) as Record<string, Record<string, Array<Record<string, unknown>>>>;
+    const aFile = bonesFile.a?.rotate?.[0];
+    const bFile = bonesFile.b?.rotate?.[0];
+    if (aModel?.curve !== 'stepped' || aFile?.curve !== 'stepped') probes.push(`a held segment eased by "glide" holds ${JSON.stringify(aModel?.curve)} and writes ${JSON.stringify(aFile?.curve)}`);
+    if (!Array.isArray(bModel?.curve) || bModel.curve.length !== 4 || JSON.stringify(bFile?.curve) !== JSON.stringify(bModel.curve)) probes.push(`a moving segment eased by "glide" holds ${JSON.stringify(bModel?.curve)} and writes ${JSON.stringify(bFile?.curve)}`);
+    const held = probes.length === 0;
+    say(
+      'MA06_A_NAMED_EASING_OVER_A_HOLD_IS_HELD_AND_WRITTEN_STEPPED',
+      held,
+      probeDetail(held, probes, `bone "a" 5 -> 5 under "glide" holds and writes "stepped"; bone "b" 0 -> 10 holds four absolute control points, ${JSON.stringify(bModel?.curve)}, and writes the same`),
+      'issue #921 and #369: `stepped` is the format\'s word for a hold and the model keeps it because its one consumer reads the same word; a curve is absolute control points, as `bezierForChannel` computes them',
+    );
+  }
+
+  // --- MA07: every key a fresh copy in the model key's own order -------------
+  const gallery = existsSync(resolve(import.meta.dir, 'gallery'))
+    ? readdirSync(resolve(import.meta.dir, 'gallery')).sort().filter((name) => existsSync(resolve(import.meta.dir, 'gallery', name, 'rig.json')) && existsSync(resolve(import.meta.dir, 'gallery', name, 'motion.json')))
+    : [];
+  const compiled: Array<{ label: string; result: CompileResult }> = [];
+  if (everyCompiled.result !== null) compiled.push({ label: 'the every-group probe', result: everyCompiled.result });
+  const galleryFaults: string[] = [];
+  for (const [i, name] of gallery.entries()) {
+    try {
+      compiled.push({ label: `gallery/${name}`, result: compile({ rigPath: resolve(import.meta.dir, 'gallery', name, 'rig.json'), motionPath: resolve(import.meta.dir, 'gallery', name, 'motion.json'), outDir: join(work, `animations${i}`) }) });
+    } catch (err) {
+      galleryFaults.push(`gallery/${name} did not compile: ${(err as Error).message}`);
+    }
+  }
+  {
+    const probes: string[] = [...galleryFaults];
+    let keys = 0;
+    let atZero = 0;
+    for (const { label, result } of compiled) {
+      const slotIndex = new Map(result.model.slots.map((slot, i) => [slot.name, i] as const));
+      for (const [name, animation] of result.model.animations) {
+        const emitted = emitAnimation(animation, slotIndex);
+        for (const { group, model, emitted: key } of pairedKeys(animation, emitted)) {
+          keys++;
+          if (key === undefined) {
+            probes.push(`${label} "${name}" ${group}: a model key has no emitted key beside it`);
+            continue;
+          }
+          if (key === model) probes.push(`${label} "${name}" ${group}: the emitted key IS the model's object`);
+          const want: Record<string, unknown> = {};
+          for (const [field, value] of Object.entries(model)) {
+            if (group === 'ik' && field in IK_FLAGS_AT_DEFAULT && value === IK_FLAGS_AT_DEFAULT[field]) continue;
+            want[field] = value;
+          }
+          if (group === 'drawOrder' && Array.isArray(key.offsets) && Array.isArray(model.offsets)) {
+            if ((key.offsets as unknown[]).some((move) => (model.offsets as unknown[]).includes(move))) probes.push(`${label} "${name}": a draw-order move IS the model's object`);
+            want.offsets = key.offsets;
+          }
+          if (JSON.stringify(key) !== JSON.stringify(want)) probes.push(`${label} "${name}" ${group}: the model key ${JSON.stringify(model)} is emitted ${JSON.stringify(key)}`);
+        }
+      }
+      // The passes ran on the file's keys: a key at 0 still holds `time: 0` in the model.
+      const file = JSON.parse(result.skeletonText) as SpineSkeletonJson;
+      for (const [name, animation] of result.model.animations) {
+        for (const { model, emitted: key } of pairedKeys(animation, file.animations[name] ?? {})) {
+          if (model.time === 0 && key !== undefined && !('time' in key)) atZero++;
+        }
+      }
+    }
+    if (atZero === 0) probes.push('no model key at t=0 was found beside a file key that leaves `time` out, so nothing here shows the passes stayed off the model');
+    // What handing a key over by reference would do: the pass deletes `time: 0` from it.
+    const shared = modelKey(0, { value: 1 });
+    withoutParserDefaults({ animations: { x: { bones: { b: { rotate: [shared] } } } } });
+    if ('time' in shared) probes.push('the parser-default pass left `time: 0` on a key it was handed, so this control cannot tell a shared key from a copy');
+    const held = probes.length === 0;
+    say(
+      'MA07_EVERY_KEY_IS_WRITTEN_AS_A_FRESH_COPY_OF_THE_MODELS_IN_ITS_OWN_ORDER',
+      held,
+      probeDetail(held, probes, `${compiled.length} compiled rig(s), ${keys} model key(s): each is written as a new object whose fields are the model key's in the model key's order (an ik flag at its default and the draw-order sort aside); ${atZero} model key(s) at t=0 still hold \`time: 0\` where the file leaves it out; a key handed to the parser-default pass by reference loses its \`time\``),
+      'issue #921: the brief asked for the model\'s keys by identity, and identity is what would let the in-place passes delete a first key\'s `time: 0` and re-key an ik key inside the model — so the emitter copies, and a spread copy keeps the key\'s insertion order, which is the byte the brief wanted identity to guard',
+    );
+  }
+
+  // --- MA08: the compiled animations are the model through the emitter -----
+  {
+    const probes: string[] = [...galleryFaults];
+    for (const { label, result } of compiled) {
+      const before = modelAnimationsText(result.model.animations);
+      const file = JSON.parse(result.skeletonText) as SpineSkeletonJson;
+      const emitted = animationsAsFileText(emitAnimations(result.model.animations, result.model.slots, editorAnimationOrder));
+      if (emitted !== JSON.stringify(file.animations)) probes.push(`${label}: the model's animations through the emitter and the two passes are not the file's`);
+      if (modelAnimationsText(result.model.animations) !== before) probes.push(`${label}: emitting and the passes changed the model`);
+      const declared = [...result.model.animations.keys()];
+      if (JSON.stringify(declared) !== JSON.stringify(Object.keys(result.declaredDurations))) probes.push(`${label}: the model holds [${declared.join(', ')}] and the spec declares [${Object.keys(result.declaredDurations).join(', ')}]`);
+      for (const [name, animation] of result.model.animations) {
+        if (animation.duration !== result.declaredDurations[name]) probes.push(`${label} "${name}": the model's duration ${animation.duration} is not the declared ${result.declaredDurations[name]}`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'MA08_COMPILED_ANIMATIONS_ARE_THE_MODEL_THROUGH_THE_EMITTER_AND_THE_MODEL_IS_UNTOUCHED',
+      held,
+      probeDetail(held, probes, `${compiled.length} rig(s) — the every-group probe and every gallery rig: the model's animations through \`emitAnimations\` and the two passes are the file's \`animations\` text, the model reads the same after, and each animation holds the declared duration in the spec's order`),
+      'issue #921\'s shape: the model holds values and the emitter owns the bytes — the group order, the omissions, the name order and the spellings',
+    );
+  }
+
+  // --- MA09: draw-order moves held as stated, written in setup order --------
+  {
+    const probes: string[] = [];
+    const movesOf = (key: Record<string, unknown> | undefined): string =>
+      Array.isArray(key?.offsets) ? (key.offsets as Array<{ slot: string }>).map((move) => move.slot).join(', ') : '(none)';
+    const modelMoves = movesOf(everyModel?.drawOrder[0]);
+    const fileMoves = movesOf((everyFile?.drawOrder as Array<Record<string, unknown>> | undefined)?.[0]);
+    if (modelMoves !== 'trackslot, plain') probes.push(`the model holds the moves [${modelMoves}]`);
+    if (fileMoves !== 'plain, trackslot') probes.push(`the file writes the moves [${fileMoves}]`);
+    let refusal = '';
+    try {
+      emitAnimation(modelAnimation({ drawOrder: [modelKey(0, { offsets: [{ slot: 'nope', offset: 1 }] })] }), setupIndex);
+    } catch (err) {
+      refusal = err instanceof CompileError ? err.message : `not a CompileError: ${(err as Error).message}`;
+    }
+    if (!refusal.includes('"nope"')) probes.push(`a move naming a slot the model lacks is ${refusal === '' ? 'written' : `refused as "${refusal}"`}`);
+    const held = probes.length === 0;
+    say(
+      'MA09_DRAW_ORDER_MOVES_ARE_HELD_AS_STATED_AND_WRITTEN_IN_SETUP_ORDER',
+      held,
+      probeDetail(held, probes, `moves stated trackslot, plain are held [${modelMoves}] and written [${fileMoves}]; a move naming a slot the model lacks is refused by name`),
+      'issue #921, census §2.1 and §3: the setup-order sort is the format\'s requirement (`readDrawOrder`\'s forward-only cursor), so the model holds the moves as stated and the emitter sorts',
+    );
+  }
+
+  // --- MA10: compile.ts names no Spine animation type -----------------------
+  {
+    const probes: string[] = [];
+    const source = readFileSync(resolve(import.meta.dir, 'src', 'compile.ts'), 'utf8');
+    probes.push(...compileAnimationSourceProblems(source));
+    const plants: Array<[string, string]> = [
+      ['a Spine key named', `${source}\ntype Back = SpineTimelineKey;\n`],
+      ['the section type named', `${source}\ntype Section = SpineSkeletonJson['animations'];\n`],
+      ['a second emission', `${source}\nconst again = emitAnimations(animations, slots, editorAnimationOrder);\n`],
+    ];
+    for (const [label, text] of plants) {
+      if (compileAnimationSourceProblems(text).length !== 1) probes.push(`the plant "${label}" raised ${compileAnimationSourceProblems(text).length} problem(s), not one`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MA10_COMPILE_NAMES_NO_SPINE_ANIMATION_TYPE_AND_EMITS_THE_ANIMATIONS_ONCE',
+      held,
+      probeDetail(held, probes, `\`src/compile.ts\`, comments aside, names neither \`SpineAnimation\` nor \`SpineTimelineKey\` nor the \`animations\` section's type, and calls \`emitAnimations\` once; each of ${plants.length} plants raises exactly its own problem`),
+      'issue #921\'s shape, and #379\'s rule for the animations: the compilers build model keys and the assembly is the one place they become Spine\'s',
+    );
+  }
+
+  // --- MA11: the model in the spec's order, the file in the editor's --------
+  {
+    const probes: string[] = [];
+    const declared = ['zeta', 'idle', 'Alpha', 'beta10', 'beta2'];
+    const body = { duration: 1, tracks: [{ bone: 'a', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [5] }] }] };
+    const probe = compileAnimationsProbe(Object.fromEntries(declared.map((name) => [name, name === 'idle' ? ANIMATIONS_PROBE_IDLE : body])));
+    const modelOrder = probe.result === null ? [] : [...probe.result.model.animations.keys()];
+    const fileOrder = probe.result === null ? [] : Object.keys((JSON.parse(probe.result.skeletonText) as SpineSkeletonJson).animations);
+    if (probe.result === null) probes.push(`the order probe did not compile: ${probe.refusal}`);
+    if (JSON.stringify(modelOrder) !== JSON.stringify(declared)) probes.push(`the model holds [${modelOrder.join(', ')}]`);
+    if (JSON.stringify(fileOrder) !== JSON.stringify(['Alpha', 'beta2', 'beta10', 'idle', 'zeta'])) probes.push(`the file keys [${fileOrder.join(', ')}]`);
+    const held = probes.length === 0;
+    say(
+      'MA11_THE_MODEL_HOLDS_THE_ANIMATIONS_IN_THE_SPECS_ORDER_AND_THE_FILE_KEYS_THEM_IN_THE_EDITORS',
+      held,
+      probeDetail(held, probes, `declared [${declared.join(', ')}], held [${modelOrder.join(', ')}], keyed [${fileOrder.join(', ')}]`),
+      'issue #921, census §2: the order is the emitter\'s (a slider\'s animation is an ordinal the editor re-sorts, #535) and the model holds the spec\'s, which is also the order every refusal names first',
+    );
+  }
+
+  // --- MA12: every recipe of a named base document hashes identical --
+  let gateHole = false;
+  {
+    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
+    if (basePath === undefined || basePath === '') {
+      gateHole = true;
+      console.log('  SKIP  MA12 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
+      console.log('          ⚠️ This is a HOLE in this run, not a pass — the animations\' byte identity against a base commit was not measured here.');
+    } else {
+      const probes: string[] = [];
+      let base: HashesDocument | null = null;
+      try {
+        base = readHashes(resolve(basePath));
+      } catch (err) {
+        probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
+      }
+      const present = (from: string): boolean => existsSync(isAbsolute(from) ? from : resolve(import.meta.dir, from));
+      const rows = (base?.recipes ?? []).filter((r) => r.stage.every((s) => present(s.from)));
+      const absent = (base?.recipes ?? []).length - rows.length;
+      if (base !== null && rows.length === 0) probes.push('no row of the base document has its inputs in this tree');
+      let verdict = '';
+      if (base !== null && rows.length > 0) {
+        const recipesPath = join(work, 'gate-recipes.json');
+        writeFileSync(recipesPath, recipesText(rows.map((r) => ({ name: r.name, stage: r.stage, commands: r.commands }))));
+        const out = join(work, 'gate.json');
+        const run = runHashes(['run', '--recipes', recipesPath, '--out', out, '--work', join(work, 'gate')]);
+        if (run.status !== 0) probes.push(`the run exited ${run.status}: ${run.stderr.trim().slice(0, 200)}`);
+        let after: HashesDocument | null = null;
+        try {
+          after = readHashes(out);
+        } catch (err) {
+          probes.push(`the run wrote no readable document: ${(err as Error).message}`);
+        }
+        if (after !== null) {
+          const baseRows: HashesDocument = { ...base, recipes: rows };
+          const c = compareHashes(baseRows, after);
+          verdict = c.identical ? `IDENTICAL over ${c.recipes} recipe(s) and ${c.files} file(s)` : comparisonLines(c).join(' | ');
+          if (!c.identical) probes.push(`against the base: ${verdict}`);
+          const flipped: HashesDocument = JSON.parse(JSON.stringify(baseRows)) as HashesDocument;
+          const last = flipped.recipes[flipped.recipes.length - 1];
+          const file = last.files[0];
+          if (file === undefined) probes.push(`${last.name} has no hashed file in the base`);
+          else {
+            file.sha256 = `${file.sha256[0] === '0' ? '1' : '0'}${file.sha256.slice(1)}`;
+            const p = compareHashes(flipped, after);
+            if (p.identical || p.differ.length !== 1 || p.differ[0].name !== last.name) probes.push(`one flipped base hash read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
+          }
+        }
+      }
+      if (absent > 0) console.log(`          ⚠️ HOLE: ${absent} row(s) of the base document were not run, their inputs are not in this tree (run \`bun run fetch-examples\`).`);
+      const held = probes.length === 0;
+      say(
+        'MA12_EVERY_RECIPE_WITH_ITS_INPUTS_HERE_HASHES_IDENTICAL_TO_THE_BASE_DOCUMENT',
+        held,
+        probeDetail(held, probes, `${rows.length} row(s) of ${basePath} built through \`tools/emit_hashes.ts\` on this tree (${absent} without their inputs here): ${verdict}; the same rows with the last one's hash flipped read DIFF naming it alone`),
+        'issue #921\'s gate as a control: the ik flag restatement, the events and most draw-order keys the corpus reaches are in the fetched exports, so every row whose inputs are present is run rather than the gallery alone',
       );
     }
   }
@@ -78993,6 +79580,7 @@ function main(): void {
   const modelBones = tally.of('model-bones', runModelBonesSuite, { failures: (value) => value.failures });
   const modelVertices = tally.of('model-vertices', runModelVerticesSuite, { failures: (value) => value.failures });
   const modelRecords = tally.of('model-records', runModelRecordsSuite, { failures: (value) => value.failures });
+  const modelAnimations = tally.of('model-animations', runModelAnimationsSuite, { failures: (value) => value.failures });
   tally.of('chainfit', runChainFitSuite);
   tally.of('ballot', runBallotSuite);
   tally.of('copy-images', runCopyImagesSuite);
@@ -79700,6 +80288,15 @@ function main(): void {
       'untouched by the passes; a draw-order offset and an `rgba2` key refused off the model in the words they were; ' +
       '`compile.ts` naming no Spine record type; and, when a base document is named, every recipe with its inputs ' +
       'here hashing identical to its rows)' +
+      ', + ' + n('model-animations') + ' model-animations controls (issue #921 — the animations as model records, the Spine emitter ' +
+      'their writer: the groups in `readAnimation`\'s order, each only when non-empty; a name set the editor could key two ' +
+      'ways refused by the emitter in the words `compile` raises; the physics timeline that names no constraint written ' +
+      'under the empty name where its track stands; an ik key holding the flags in effect and the file carrying the ' +
+      'constraint\'s where the key is silent; a named easing over a hold held and written `stepped`; every key a fresh copy ' +
+      'in its own order; every compiled rig\'s animations being its model through the emitter, untouched by the passes; ' +
+      'draw-order moves held as stated and written in setup order; `compile.ts` naming no Spine animation type; the ' +
+      'model in the spec\'s order and the file in the editor\'s; and, when a base document is named, every recipe with ' +
+      'its inputs here hashing identical to its rows)' +
       ', + ' + n('chainfit') + ' chainfit controls (one skeleton rendered at two setups so every hinge is a subtraction: the chain ' +
       'composition reproducing the renderer to 0.001 px with one anchor and the hinge window shut, three parts ' +
       '`pose` declines — an arm across the trunk and one plate at two mirrored pivots — recovered inside a pixel ' +
@@ -79794,6 +80391,7 @@ function main(): void {
       (modelBones.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so byte identity against a base commit (issue #915) was not measured in this run.' : '') +
       (modelVertices.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the vertex attachments\' byte identity against a base commit (issue #917) was not measured in this run.' : '') +
       (modelRecords.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the structural records\' byte identity against a base commit (issue #919) was not measured in this run.' : '') +
+      (modelAnimations.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so the animations\' byte identity against a base commit (issue #921) was not measured in this run.' : '') +
       (launcher.startsWith(',') ? '' : launcher) +
       (gallery.examples > 0
         ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled three times and gated green under BOTH profiles`
