@@ -201,9 +201,11 @@ sincere about it. rigc exists to convert that silence into a named failure.
   vertex without it. What the rule protects has not moved: `src/compile.ts` must
   stay independent of the runtime so the compiler and the gate are not checking
   each other's assumptions. Since issue #922 that independence is held by
-  controls rather than by this sentence: `MD02` holds `compile.ts` free of every
-  Spine shape (`src/emit_spine.ts` is the one writer of Spine data, called once),
-  and `MD03` holds the set of modules naming those shapes to the one it measured.
+  controls rather than by this sentence: `MD02` holds the compiler free of every
+  Spine shape (the Spine emitter module is the one writer of Spine data, called
+  once), and `MD03` holds the set of modules naming those shapes to the one it
+  measured. Neither of those modules links spine-core; `CUR07` reads this bullet
+  for the ones that do, so they are not named here by path.
 
   ⚠️ This sentence said **Two** for two weeks after the third file arrived
   (issue #379) — the rule eroded in exactly the way its own clause predicts,
