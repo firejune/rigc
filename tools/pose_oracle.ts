@@ -204,8 +204,10 @@
  * model states neither; `options` as given, and the core refuses (exit 2) any
  * `--skin` but `all` and any `--physics` but `none`. The rosters `bones`,
  * `slots`, `skins` and `constraints` are the document's own, in its order.
- * `setup.bones` is the core's setup pose, or absent when the document
- * declares a constraint; `setup.slots` is every slot's row as the pose above
+ * `setup.bones` is the core's setup pose with the document's ik and
+ * transform constraints applied in its order (issue #938,
+ * `src/core/constraints.ts`), or absent when the document declares a path,
+ * physics or slider constraint, which are later cuts; `setup.slots` is every slot's row as the pose above
  * words it (issue #928), or absent when a slot's setup placeholder is filled
  * by skins that disagree, since which of them `--skin all` shows is the Spine
  * file's skin order and the model does not carry it (the core's header says
@@ -217,8 +219,9 @@
  * the model, in the model's order, sampled at the phase's times over its
  * runtime duration (issue #936, `src/core/animation.ts`): each sample's
  * `bones` and `slots` posed from the setup pose with the animation's bone and
- * slot timelines at alpha 1 — `animations.bones` absent when the document
- * declares a constraint, `animations.slots` absent when a slider keys a slot
+ * slot timelines at alpha 1, then the ik and transform constraints posed
+ * by their timelines at the sample's time — `animations.bones` absent when
+ * the document declares a path, physics or slider constraint, `animations.slots` absent when a slider keys a slot
  * or skins disagree over a placeholder a slot shows — and its `drawOrder`,
  * `attachments`, `clips` and `events` absent, each named. Every other block
  * is `null` and named in `absent`.

@@ -28,7 +28,8 @@
  *
  *   - `IDENTICAL` — the block agrees;
  *   - `SKIP` — the core left the block out, with the construct it names (a
- *     declared constraint for the bones; a slider keying a slot, or skins
+ *     declared path, physics or slider constraint for the bones — ik and
+ *     transform are posed since issue #938; a slider keying a slot, or skins
  *     disagreeing over a placeholder, for the slots; either of those, or a
  *     shown region whose atlas rectangle is `null`, for the attachments), so
  *     the row holds nothing about it;
@@ -73,6 +74,15 @@
  * animation block was compared reaches is a HOLE, and the later groups'
  * timelines are a HOLE however many rows carry them.
  *
+ * And one line per row for the constraints (`CONSTRAINT_CENSUS_FIELDS`, issue
+ * #938): the ik and transform constraints and what each states, their
+ * timelines, and the update order's two effects — a constraint reading a bone
+ * an earlier one moved, and a world-space edit a later one re-poses — each a
+ * HOLE when no row whose bones were compared reaches it; the path, physics and
+ * slider constraints (`later`) a HOLE however many rows declare one. Then one
+ * `KIND` line per constraint kind: the rows declaring it that are judged and
+ * those that stay SKIP.
+ *
  * And one line per row for the attachments (`ATTACHMENT_CENSUS_FIELDS`, issue
  * #931), each a count of slots whose setup attachment has it: a weighted mesh,
  * a mesh bound to several bones, a mesh bound to a bone whose setup world
@@ -94,6 +104,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { activeBones, CORE_INHERIT_MODES, CoreInputError, foldInheritMode, readBlend, readModel, shownAttachment, shownRow } from '../src/core/index.ts';
 import { BONE_TIMELINE_KINDS, sampleTime, SLOT_TIMELINE_KINDS, type TimelinePlant } from '../src/core/animation.ts';
+import { TRANSFORM_PROPERTIES } from '../src/core/constraints.ts';
 import { MODEL_DOCUMENT_FILE } from '../src/model.ts';
 import { HashesInputError, readRecipes, runRecipes, TREE_ROOT, treeRecipes, type Recipe } from './emit_hashes.ts';
 import {
@@ -142,6 +153,24 @@ export const ATTACHMENT_CENSUS_FIELDS = [
 ] as const;
 export type AttachmentCensusField = (typeof ATTACHMENT_CENSUS_FIELDS)[number];
 export type AttachmentCensusRow = Record<AttachmentCensusField, number>;
+
+/**
+ * The constraints' census fields (issue #938), in the order its table prints
+ * them: the ik and transform constraints and what they state, their
+ * timelines, and the order effects — a constraint whose target or source is
+ * a bone an earlier constraint moved or placed below one, and a bone a
+ * world-space transform moved that a later constraint re-poses. Each a count
+ * of constraints (or timelines), over the document.
+ */
+export const CONSTRAINT_CENSUS_FIELDS = [
+  'ik', 'ik.oneBone', 'ik.twoBone', 'ik.mixPartial', 'ik.mixZero', 'ik.softness', 'ik.bendNegative', 'ik.compress', 'ik.stretch', 'ik.scaleYUniform', 'ik.scaleYVolume', 'ik.nonNormal', 'ik.nonUniformParent', 'ik.childOffsetY',
+  'transform', ...TRANSFORM_PROPERTIES.map((p) => `transform.${p}`), 'transform.crossMapping', 'transform.localSource', 'transform.localTarget', 'transform.additive', 'transform.clamp',
+  'transform.fromOffset', 'transform.toOffset', 'transform.toScale', 'transform.offsets', 'transform.mixNegative', 'transform.mixPartial', 'transform.nonNormal',
+  'ik.timeline', 'ik.timelineBezier', 'ik.timelineFlags', 'ik.timelineMixPartial', 'ik.timelineSoftness', 'transform.timeline', 'transform.timelineBezier',
+  'order.readsMoved', 'order.worldEditReposed', 'skin', 'later',
+] as const;
+export type ConstraintCensusField = (typeof CONSTRAINT_CENSUS_FIELDS)[number];
+export type ConstraintCensusRow = Record<ConstraintCensusField, number>;
 
 /** The blocks the core poses, each judged on its own. */
 export const GATE_BLOCKS = ['setup.bones', 'setup.slots', 'setup.attachments', 'setup.clips', 'animations.bones', 'animations.slots'] as const;
@@ -199,6 +228,7 @@ export interface GateRow {
   attachmentRows: number;
   vertices: number;
   attachmentCensus: AttachmentCensusRow | null;
+  constraintCensus: ConstraintCensusRow | null;
 }
 
 /** A refusal about an input — the command exits 2 on it. */
@@ -290,7 +320,88 @@ export function animationCensusOf(modelText: string, options: OracleOptions = GA
       if (new Set(channels).size < channels.length) out.overlappingBoneChannels++;
     }
     for (const sl of tl.slots) for (const x of sl.timelines) each('slot', x.kind, x.keys);
-    out.laterTimelines += tl.later.reduce((sum, [, n]) => sum + n, 0);
+    // The ik and transform timelines are judged since issue #938 (the constraints' census counts them); the rest of the later groups are not.
+    out.laterTimelines += tl.later.reduce((sum, [, n]) => sum + n, 0) - anim.constraints.ik.length - anim.constraints.transform.length;
+  }
+  return out;
+}
+
+/**
+ * The constraints' census of one model document (issue #938) — the fields of
+ * `CONSTRAINT_CENSUS_FIELDS`. `later` counts the path, physics and slider
+ * constraints this cut does not pose.
+ */
+export function constraintCensusOf(modelText: string): ConstraintCensusRow {
+  const doc = readModel(modelText);
+  const out = Object.fromEntries(CONSTRAINT_CENSUS_FIELDS.map((f) => [f, 0])) as ConstraintCensusRow;
+  const byName = new Map(doc.bones.map((b) => [b.name, b]));
+  const parentOf = (n: string): string | undefined => byName.get(n)?.parent;
+  const under = (n: string, top: string): boolean => {
+    for (let at: string | undefined = n; at !== undefined; at = parentOf(at)) if (at === top) return true;
+    return false;
+  };
+  const nonNormal = (n: string): boolean => (byName.get(n)?.inheritMode ?? 'normal').toLowerCase() !== 'normal';
+  const moved: string[] = [];
+  const inWorld: string[] = [];
+  for (const c of doc.constraints) {
+    const r = c.record;
+    if (r === undefined) {
+      out.later++;
+      continue;
+    }
+    if (r.skin) out.skin++;
+    const read = r.kind === 'ik' ? r.target : r.source;
+    if (moved.some((m) => under(read, m))) out['order.readsMoved']++;
+    if (inWorld.some((w) => r.bones.some((b) => under(w, b) && w !== b))) out['order.worldEditReposed']++;
+    moved.push(...r.bones);
+    if (r.kind === 'ik') {
+      out.ik++;
+      out[r.bones.length === 1 ? 'ik.oneBone' : 'ik.twoBone']++;
+      if (r.mix === 0) out['ik.mixZero']++;
+      else if (r.mix !== 1) out['ik.mixPartial']++;
+      if (r.softness !== 0) out['ik.softness']++;
+      if (!r.bendPositive) out['ik.bendNegative']++;
+      if (r.compress) out['ik.compress']++;
+      if (r.stretch) out['ik.stretch']++;
+      if (r.scaleY === 'uniform') out['ik.scaleYUniform']++;
+      if (r.scaleY === 'volume') out['ik.scaleYVolume']++;
+      if (r.bones.some(nonNormal)) out['ik.nonNormal']++;
+      if (r.bones.length === 2) {
+        const p = byName.get(r.bones[0]);
+        if (p !== undefined && Math.abs(Math.abs(p.scaleX ?? 1) - Math.abs(p.scaleY ?? 1)) > 0.00001) out['ik.nonUniformParent']++;
+        if ((byName.get(r.bones[1])?.y ?? 0) !== 0) out['ik.childOffsetY']++;
+      }
+      continue;
+    }
+    out.transform++;
+    const driven = new Set(r.properties.flatMap((f) => f.to.map((t) => t.property)));
+    for (const p of driven) out[`transform.${p}` as ConstraintCensusField]++;
+    if (r.properties.some((f) => f.to.some((t) => t.property !== f.property))) out['transform.crossMapping']++;
+    if (r.localSource) out['transform.localSource']++;
+    if (r.localTarget) out['transform.localTarget']++;
+    if (r.additive) out['transform.additive']++;
+    if (r.clamp) out['transform.clamp']++;
+    if (r.properties.some((f) => f.offset !== 0)) out['transform.fromOffset']++;
+    if (r.properties.some((f) => f.to.some((t) => t.offset !== 0))) out['transform.toOffset']++;
+    if (r.properties.some((f) => f.to.some((t) => t.scale !== 1))) out['transform.toScale']++;
+    if (TRANSFORM_PROPERTIES.some((p) => r.offsets[p] !== 0)) out['transform.offsets']++;
+    if ([...driven].some((p) => r.mixes[p] < 0)) out['transform.mixNegative']++;
+    if ([...driven].some((p) => r.mixes[p] !== 0 && r.mixes[p] !== 1)) out['transform.mixPartial']++;
+    if (r.bones.some(nonNormal)) out['transform.nonNormal']++;
+    if (!r.localTarget) inWorld.push(...r.bones);
+  }
+  for (const a of doc.animations) {
+    for (const tl of a.constraints.ik) {
+      out['ik.timeline']++;
+      if (tl.keys.some((k, i) => i < tl.keys.length - 1 && Array.isArray(k.curve))) out['ik.timelineBezier']++;
+      if (tl.keys.some((k) => JSON.stringify(k.flags) !== JSON.stringify(tl.keys[0].flags))) out['ik.timelineFlags']++;
+      if (tl.keys.some((k) => k.values[0] !== 0 && k.values[0] !== 1)) out['ik.timelineMixPartial']++;
+      if (tl.keys.some((k) => k.values[1] !== 0)) out['ik.timelineSoftness']++;
+    }
+    for (const tl of a.constraints.transform) {
+      out['transform.timeline']++;
+      if (tl.keys.some((k, i) => i < tl.keys.length - 1 && Array.isArray(k.curve))) out['transform.timelineBezier']++;
+    }
   }
   return out;
 }
@@ -372,7 +483,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   const atlas = join(outDir, 'skeleton.atlas');
   const model = join(outDir, MODEL_DOCUMENT_FILE);
   const missing = [skeleton, atlas, model].filter((p) => !existsSync(p));
-  const refused = (why: string): GateRow => ({ name, verdict: 'REFUSED', why, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, attachmentRows: 0, vertices: 0, attachmentCensus: null, animations: [], animationCensus: null });
+  const refused = (why: string): GateRow => ({ name, verdict: 'REFUSED', why, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, attachmentRows: 0, vertices: 0, attachmentCensus: null, constraintCensus: null, animations: [], animationCensus: null });
   if (missing.length > 0) return refused(`the build wrote no ${missing.map((p) => p.slice(outDir.length + 1)).join(', ')}`);
   let c: OracleComparison;
   let census: CensusRow;
@@ -382,6 +493,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   const perAnimation = new Map<string, AnimationVerdict>();
   let slotRows = 0;
   let attachmentCensus: AttachmentCensusRow;
+  let constraintCensus: ConstraintCensusRow;
   let attachmentRows = 0;
   try {
     const spine = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), GATE_OPTIONS);
@@ -418,13 +530,14 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
     animationCensus = animationCensusOf(modelText);
     const sheared = new Set(spine.setup.bones.filter((b) => b[3] !== null && b[4] !== null && b[5] !== null && b[6] !== null && Math.abs(b[3] * b[4] + b[5] * b[6]) > 1e-6).map((b) => b[0]));
     attachmentCensus = attachmentCensusOf(modelText, reflecting, sheared);
+    constraintCensus = constraintCensusOf(modelText);
   } catch (err) {
     if (err instanceof OracleInputError || err instanceof CoreInputError) return refused(err.message);
     throw err;
   }
   const animations = [...perAnimation.values()];
   const setupRow = c.rows.find((x) => x.name === '(setup)');
-  const base = { name, blocks, boneSamples: c.boneSamples, slotRows, worstXy: c.worstXy, worstM: c.worstM, census, slotCensus, attachmentRows, vertices: setupRow?.vertices ?? 0, attachmentCensus, animations, animationCensus };
+  const base = { name, blocks, boneSamples: c.boneSamples, slotRows, worstXy: c.worstXy, worstM: c.worstM, census, slotCensus, attachmentRows, vertices: setupRow?.vertices ?? 0, attachmentCensus, constraintCensus, animations, animationCensus };
   if (!c.identical) return { ...base, verdict: 'DIFF', why: c.first };
   const skipped = GATE_BLOCKS.filter((b) => blocks[b].verdict === 'SKIP');
   if (skipped.length > 0) return { ...base, verdict: 'SKIP', why: skipped.map((b) => `${b}: ${blocks[b].why}`).join(' | ') };
@@ -449,7 +562,7 @@ export function buildRecipes(recipes: readonly Recipe[], work: string, root: str
 export function gateBuilt(built: readonly BuiltRow[], plant: TimelinePlant = {}): GateRow[] {
   return built.map((r) =>
     r.exits.some((e) => e !== 0)
-      ? { name: r.name, verdict: 'REFUSED' as const, why: `the build chain exited ${JSON.stringify(r.exits)}`, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, attachmentRows: 0, vertices: 0, attachmentCensus: null, animations: [], animationCensus: null }
+      ? { name: r.name, verdict: 'REFUSED' as const, why: `the build chain exited ${JSON.stringify(r.exits)}`, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, attachmentRows: 0, vertices: 0, attachmentCensus: null, constraintCensus: null, animations: [], animationCensus: null }
       : gateBuild(r.name, r.out, plant),
   );
 }
@@ -517,7 +630,7 @@ export function animationReachLines(rows: readonly GateRow[]): string[] {
     const compared = comparedOn(rows, block);
     const on = compared.filter((r) => (r.animationCensus?.[f] ?? 0) > 0).map((r) => r.name);
     const anywhere = rows.filter((r) => (r.animationCensus?.[f] ?? 0) > 0).map((r) => r.name);
-    if (f === 'laterTimelines') out.push(`  HOLE  animations ${f}: ${anywhere.length} row(s) carry one; constraint, deform, sequence, draw-order and event timelines are later constructs and none was judged`);
+    if (f === 'laterTimelines') out.push(`  HOLE  animations ${f}: ${anywhere.length} row(s) carry one; path, physics, slider, deform, sequence, draw-order and event timelines are later constructs and none was judged (ik and transform timelines are judged, and counted in the constraints' census)`);
     else out.push(on.length > 0 ? `  REACH animations ${f}: ${on.length} compared row(s)` : `  HOLE  animations ${f}: no compared row reaches it${anywhere.length > 0 ? ` (only ${anywhere.join(', ')}, which the core skips)` : ''}`);
   }
   return out;
@@ -574,6 +687,55 @@ export function attachmentReachLines(rows: readonly GateRow[]): string[] {
     else if (f === 'nullAtlas') out.push(on.length > 0 ? `  REACH attachments ${f}: ${on.length} compared row(s)` : `  HOLE  attachments ${f}: no compared row carries one — the core leaves the block out by name where one is shown${elsewhere}`);
     else if (f === 'trimmedRegion' && on.length === 0) out.push(`  HOLE  attachments ${f}: no compared row reaches it — only a pack that trims does (a private corpus under --recipes)${elsewhere}`);
     else out.push(on.length > 0 ? `  REACH attachments ${f}: ${on.length} compared row(s)` : `  HOLE  attachments ${f}: no compared row reaches it${anywhere.length > 0 ? ` (only ${anywhere.join(', ')}, which the core skips)` : ''}`);
+  }
+  return out;
+}
+
+/** The constraints' census as a markdown table, one row per recipe, then the totals. */
+export function constraintCensusTable(rows: readonly GateRow[]): string[] {
+  const head = ['row', 'setup.bones', 'animations.bones', ...CONSTRAINT_CENSUS_FIELDS];
+  const out = [`| ${head.join(' | ')} |`, `| ${head.map((_h, i) => (i < 3 ? '---' : '---:')).join(' | ')} |`];
+  const total: number[] = new Array<number>(CONSTRAINT_CENSUS_FIELDS.length).fill(0);
+  for (const row of rows) {
+    const c = row.constraintCensus;
+    const values = c === null ? null : CONSTRAINT_CENSUS_FIELDS.map((f) => c[f]);
+    if (values !== null) values.forEach((v, i) => (total[i] += v));
+    out.push(`| ${row.name} | ${row.blocks?.['setup.bones'].verdict ?? row.verdict} | ${row.blocks?.['animations.bones'].verdict ?? row.verdict} | ${(values ?? CONSTRAINT_CENSUS_FIELDS.map(() => '—')).map(String).join(' | ')} |`);
+  }
+  out.push(`| **all** | | | ${total.join(' | ')} |`);
+  return out;
+}
+
+/**
+ * Each constraint field the compared rows reach — a timeline field on a row
+ * whose `animations.bones` was compared, every other on one whose
+ * `setup.bones` was — and the HOLEs; `later` is a HOLE however many rows carry
+ * one, since this cut judges no path, physics or slider constraint.
+ */
+export function constraintReachLines(rows: readonly GateRow[]): string[] {
+  const out: string[] = [];
+  for (const f of CONSTRAINT_CENSUS_FIELDS) {
+    const block: GateBlock = f.includes('timeline') ? 'animations.bones' : 'setup.bones';
+    const on = comparedOn(rows, block).filter((r) => (r.constraintCensus?.[f] ?? 0) > 0).map((r) => r.name);
+    const anywhere = rows.filter((r) => (r.constraintCensus?.[f] ?? 0) > 0).map((r) => r.name);
+    if (f === 'later') out.push(`  HOLE  constraints ${f}: ${anywhere.length} row(s) declare a path, physics or slider constraint; those are later cuts and none was judged`);
+    else out.push(on.length > 0 ? `  REACH constraints ${f}: ${on.length} compared row(s)` : `  HOLE  constraints ${f}: no compared row reaches it${anywhere.length > 0 ? ` (only ${anywhere.join(', ')}, which the core skips)` : ''}`);
+  }
+  return out;
+}
+
+/**
+ * Per constraint kind, the rows now judged — every block compared on a row
+ * declaring the kind — and those that stay SKIP, named (issue #938: the
+ * seven constrained rows turned green one kind at a time).
+ */
+export function constraintKindLines(rows: readonly GateRow[], kinds: ReadonlyMap<string, readonly string[]>): string[] {
+  const out: string[] = [];
+  for (const kind of ['ik', 'transform', 'path', 'physics', 'slider']) {
+    const declaring = rows.filter((r) => (kinds.get(r.name) ?? []).includes(kind));
+    const judged = declaring.filter((r) => r.blocks !== null && r.blocks['setup.bones'].verdict !== 'SKIP');
+    const skipped = declaring.filter((r) => !judged.includes(r));
+    out.push(`  KIND  ${kind}: ${judged.length} row(s) judged${judged.length > 0 ? ` (${judged.map((r) => `${r.name} ${r.blocks?.['setup.bones'].verdict}`).join(', ')})` : ''}; ${skipped.length} SKIP${skipped.length > 0 ? ` (${skipped.map((r) => r.name).join(', ')})` : ''}`);
   }
   return out;
 }
@@ -659,10 +821,19 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     print('');
     for (const line of animationCensusTable(rows)) print(line);
     print('');
+    for (const line of constraintCensusTable(rows)) print(line);
+    print('');
     for (const line of reachLines(rows)) print(line);
     for (const line of slotReachLines(rows)) print(line);
     for (const line of attachmentReachLines(rows)) print(line);
     for (const line of animationReachLines(rows)) print(line);
+    for (const line of constraintReachLines(rows)) print(line);
+    const kinds = new Map<string, string[]>();
+    for (const row of rows) {
+      const path = join(work, String(rows.indexOf(row)).padStart(String(rows.length).length, '0'), 'out', MODEL_DOCUMENT_FILE);
+      if (existsSync(path)) kinds.set(row.name, readModel(readFileSync(path, 'utf8')).constraints.map((c) => c.kind));
+    }
+    for (const line of constraintKindLines(rows, kinds)) print(line);
     const verdict = gateVerdict(rows);
     print(verdict.line);
     return verdict.ok ? 0 : 1;
