@@ -69935,6 +69935,57 @@ function runCoreSuite(): number {
     );
   }
 
+  // --- CK13: a skin-required physics constraint steps exactly when a skin lists it, and the unlisted reading in a copy goes red --
+  {
+    const probes: string[] = [];
+    const KINDS = ['ik', 'transform', 'path', 'physics', 'slider'];
+    const listed = (skins: Array<{ name: string; bones?: string[]; physics?: string[] }>, boneSkin: boolean): { spine: string; model: string } => {
+      const bones = [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'b', parent: 'p', x: 10, length: 40, ...(boneSkin ? { skin: true } : {}) }, ...amplify('b')];
+      const keys = [{ time: 0, x: 0, y: 0 }, { time: 1, x: 60, y: 20 }];
+      const c = { type: 'physics', name: 'k', bone: 'b', x: 1, y: 1, rotate: 1, skin: true };
+      const spine = JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], constraints: [c], skins: skins.map((k) => ({ name: k.name, ...(k.bones ? { bones: k.bones } : {}), ...(k.physics ? { physics: k.physics } : {}), attachments: {} })), animations: { a: { bones: { p: { translate: keys } } } } });
+      const model = JSON.stringify({
+        spec: 'rigc-compiled/1',
+        bones: bones.map(({ skin, ...b }) => ({ ...b, ...(skin === true ? { skinRequired: true } : {}) })),
+        slots: [], skins: skins.map((k) => ({ name: k.name, bones: k.bones ?? [], constraints: Object.fromEntries(KINDS.map((x) => [x, x === 'physics' ? (k.physics ?? []) : []])), attachments: {} })),
+        constraints: [{ kind: 'physics', name: 'k', declaredIn: 'rig', bone: 'b', x: 1, y: 1, rotate: 1, skin: true }], events: [],
+        animations: [{ name: 'a', duration: 0, bones: [{ name: 'p', timelines: [{ name: 'translate', keys }] }], slots: [], ...EMPTY_GROUPS }],
+        images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+      });
+      return { spine, model };
+    };
+    const unlisted: TimelinePlant = { constraints: (rs) => rs.map((r) => (r.kind === 'physics' ? { ...r, listedBySkin: false } : r)) };
+    const cases: Array<[string, Array<{ name: string; bones?: string[]; physics?: string[] }>, boolean, boolean]> = [
+      ['named by no skin', [{ name: 'default' }, { name: 's1' }], false, false],
+      ['named by a second skin', [{ name: 'default' }, { name: 's1', physics: ['k'] }], false, true],
+      ['named by the default skin', [{ name: 'default', physics: ['k'] }], false, true],
+      ['a skin naming its skin-required bone, not it', [{ name: 'default' }, { name: 's1', bones: ['b'] }], true, false],
+      ['a skin naming its skin-required bone and it', [{ name: 'default' }, { name: 's1', bones: ['b'], physics: ['k'] }], true, true],
+    ];
+    const lines: string[] = [];
+    for (const [label, skins, boneSkin, steps] of cases) {
+      const pair = listed(skins, boneSkin);
+      ckModels.push(pair.model);
+      const options = stepOptions(1 / 60);
+      const spine = stepSpine(pair, options);
+      const still = stepSpine({ spine: pair.spine.replace('"rotate":1,"skin":true', '"rotate":1,"skin":true,"mix":0') }, options);
+      const moved = JSON.stringify(spine.animations) !== JSON.stringify(still.animations);
+      if (moved !== steps) probes.push(`${label}: spine-core ${moved ? 'stepped' : 'did not step'} it`);
+      const c = compareDumps(spine, coreDump(readModel(pair.model), options), { xy: 0, m: 0 });
+      if (!c.identical) probes.push(`${label}: ${c.first}`);
+      const red = !compareDumps(spine, coreDump(readModel(pair.model), options, unlisted), { xy: 0, m: 0 }).identical;
+      if (red !== steps) probes.push(`${label}: the unlisted reading in a copy ${red ? 'went red' : 'stayed exact'}`);
+      lines.push(`${label} ${moved ? 'stepped' : 'inert'}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CK13_A_SKIN_REQUIRED_PHYSICS_CONSTRAINT_STEPS_EXACTLY_WHEN_A_SKIN_LISTS_IT',
+      ok,
+      probeDetail(ok, probes, `under --skin all --physics step: ${lines.join(', ')} — each exact in the core, and the reading "skin: true never steps" planted in a copy red on exactly the listed probes`),
+      'issue #956, the commander\'s private-corpus finding: two rows DIFF because the core left skin-required physics constraints inert; the rule inherited from issue #938 was measured under Physics.none, where a physics constraint applies nothing either way. Measured under the step, a skin\'s constraints list decides',
+    );
+  }
+
   // ===========================================================================
   // Construct 5, second cut (issue #938): the path constraint. Each probe is
   // one skeleton written twice — the Spine file for `dumpSkeleton` and the

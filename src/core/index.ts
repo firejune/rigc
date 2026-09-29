@@ -167,7 +167,7 @@ import { readEventDefs, type CoreEventDef } from './events.ts';
 import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type RegionPoser, type VertexPoser } from './vertices.ts';
 import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
 import { readPathRecord } from './constraints_path.ts';
-import { readPhysicsRecord, type PhysicsStepContext, type PhysicsStepper } from './constraints_physics.ts';
+import { physicsListedBySkins, readPhysicsRecord, type PhysicsStepContext, type PhysicsStepper } from './constraints_physics.ts';
 import { applySliderSlots, readSliderRecord, type SliderApplication, type SlotPoseState } from './constraints_slider.ts';
 import { attachmentStates, type DeformEvaluator, type SequenceEvaluator } from './deform.ts';
 import { drawOrderAt, type DrawOrderEvaluator } from './draw_order.ts';
@@ -586,6 +586,9 @@ export function readModel(text: string, where = 'the model document'): CompiledD
   const events = readEventDefs(value.events, problems);
   const animations = readAnimations(value.animations, names, slots, skins, events, problems);
   const constraints = readConstraints(value.constraints, animations, bones, slots, problems);
+  // A skin-required physics constraint steps when a skin lists it (issue #956, `./constraints_physics.ts`).
+  const listedPhysics = physicsListedBySkins(value.skins);
+  for (const c of constraints) if (c.record?.kind === 'physics') c.record.listedBySkin = listedPhysics.has(c.name);
   if (Array.isArray(value.animations)) {
     value.animations.forEach((raw, i) => {
       if (isRecord(raw) && animations[i] !== undefined) animations[i].constraints = readConstraintTimelines(raw.constraints, `animations[${i}] "${animations[i].name}"`, constraints, problems);

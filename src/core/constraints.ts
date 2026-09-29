@@ -55,7 +55,12 @@
  *   child with the parent (the child's world rotation 180°); in the other
  *   order, 90°.
  * - A constraint with `skin: true` is not applied under `--skin all`, whether
- *   a skin lists it or not; an ik or transform whose target, source or
+ *   a skin lists it or not; ⚠️ issue #956 measured the contrary for a listed
+ *   one — an ik and a transform constraint with `skin: true` named by a
+ *   skin's list moved their bone under `--skin all --physics none` exactly as
+ *   with `skin: false` — so this reading is wrong for a listed constraint of
+ *   every kind; only physics is corrected here (`./constraints_physics.ts`),
+ *   the rest is its own card; an ik or transform whose target, source or
  *   constrained bone is inactive is not applied (measured on an ik with its
  *   target skin-required and named by no skin: the bone did not turn); a
  *   path constraint is applied exactly when its slot's bone is active
@@ -1072,7 +1077,8 @@ function solveTransform(state: SolverState, c: CoreTransformRecord): { changed: 
 
 /** Why a constraint is not applied under `--skin all` (the header's measured rule), or null when it is. */
 function inactiveWhy(state: SolverState, c: CoreConstraintRecord): string | null {
-  if (c.skin) return 'skin';
+  // A skin-required physics constraint steps when a skin lists it (issue #956, measured under the step); the other kinds keep 2e-i's rule, which that measurement contradicts (`./constraints_physics.ts`, *Which constraints step*).
+  if (c.skin && !(c.kind === 'physics' && c.listedBySkin)) return 'skin';
   // A path constraint is active when its slot's bone is (`./constraints_path.ts`, *Which constraints run*); every other kind when every bone it names is.
   const named = c.kind === 'path' ? [c.slotBone] : c.kind === 'ik' ? [...c.bones, c.target] : c.kind === 'transform' ? [...c.bones, c.source] : c.kind === 'slider' ? (c.bone === null ? [] : [c.bone]) : [c.bone];
   return named.every((n) => state.active.has(n)) ? null : 'inactive bone';

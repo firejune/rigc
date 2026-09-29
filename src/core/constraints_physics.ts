@@ -65,8 +65,21 @@
  * steps' deltas (`s − previous s`), not `s`: the constraint reads its delta
  * off that clock. The setup pose under the step is the reset pose.
  *
- * **Which constraints step.** A constraint with `skin: true` is not applied
- * under `--skin all`, nor one on an inactive bone — construct 5's rule. A
+ * **Which constraints step.** A constraint on an inactive bone does not. A
+ * constraint with `skin: true` steps exactly when a skin's
+ * `constraints.physics` list names it — under `--skin all` every skin is
+ * applied at once (`physicsListedBySkins`, `physicsActive`). Measured on the
+ * commander's private-corpus finding (two rows DIFF, the core leaving such
+ * constraints inert): hand-written documents dumped under `--physics step`
+ * with `--skin all`, `--skin s1` and `--skin default` — named by no skin:
+ * not stepped under any; named by `s1`: stepped under `all` and `s1`, not
+ * under `default`; named by the default skin: stepped; a skin naming the
+ * constrained bone (skin-required or not), another physics constraint or an
+ * ik constraint, but not this one: not stepped; no skins at all: not
+ * stepped. The reading inherited from issue #938 — `skin: true` is never
+ * applied under `--skin all` — was measured under `Physics.none`, where a
+ * physics constraint applies nothing either way; it is rejected (`CK13`
+ * plants it and turns the listed probe red). A
  * constraint whose `mix` is 0 does nothing at all at that update — not even
  * read its clock: a constraint muted from 0 to 0.3 s and then keyed to 1
  * integrates the whole 0.3 s on its first live update after the pending one
@@ -237,6 +250,8 @@ export interface CorePhysicsRecord extends PhysicsPose {
   name: string;
   bone: string;
   skin: boolean;
+  /** A skin's `constraints.physics` list names it — what makes a skin-required constraint step under `--skin all` (the header's *Which constraints step*); set by `readModel` from the skins. */
+  listedBySkin: boolean;
   x: number;
   y: number;
   rotate: number;
@@ -282,11 +297,34 @@ export function readPhysicsRecord(raw: Record<string, unknown>, name: string, wh
   const global = {} as Record<PhysicsParameter, boolean>;
   for (const p of PHYSICS_PARAMETERS) global[p] = raw[`${p}Global`] === true;
   return {
-    kind: 'physics', name, bone: raw.bone as string, skin: raw.skin === true,
+    kind: 'physics', name, bone: raw.bone as string, skin: raw.skin === true, listedBySkin: false,
     x: n('x'), y: n('y'), rotate: n('rotate'), scaleX: n('scaleX'), shearX: n('shearX'), limit: n('limit'), step: 1 / n('fps'),
     inertia: n('inertia'), strength: n('strength'), damping: n('damping'), massInverse: 1 / n('mass'), wind: n('wind'), gravity: n('gravity'), mix: n('mix'),
     global, scaleYMode,
   };
+}
+
+/**
+ * The physics constraints some skin of the model document lists
+ * (`skins[].constraints.physics`) — under `--skin all` every skin is applied
+ * at once, so a skin-required physics constraint steps exactly when one of
+ * them names it (the header's *Which constraints step*). `readModel` has
+ * already checked each skin's shape; a list that is not one of names reads
+ * as naming nothing.
+ */
+export function physicsListedBySkins(skins: unknown): Set<string> {
+  const out = new Set<string>();
+  if (!Array.isArray(skins)) return out;
+  for (const skin of skins) {
+    const list = isObject(skin) && isObject(skin.constraints) ? skin.constraints.physics : undefined;
+    if (Array.isArray(list)) for (const n of list) if (typeof n === 'string') out.add(n);
+  }
+  return out;
+}
+
+/** Whether a physics record steps under `--skin all`: its bone active, and not skin-required unless a skin lists it — measured, the header's *Which constraints step*. */
+export function physicsActive(r: CorePhysicsRecord, active: ReadonlySet<string>): boolean {
+  return (!r.skin || r.listedBySkin) && active.has(r.bone);
 }
 
 /** One physics timeline: the constraint it names (`EVERY_GLOBAL_PHYSICS` for none), what it keys, its keys (a `reset` key's `values` empty). */
@@ -735,7 +773,7 @@ export const PHYSICS_REFERENCE_SCALE = 100;
  */
 export function stepPhysicsRecords(records: readonly CoreConstraintRecord[], keyed: readonly CorePhysicsTimeline[], t: number, active: ReadonlySet<string>, ctx: PhysicsStepContext, before: number): CoreConstraintRecord[] {
   const physics = records.filter((r): r is CorePhysicsRecord => r.kind === 'physics');
-  const posed = posedPhysics(physics, keyed, t, (r) => !r.skin && active.has(r.bone));
+  const posed = posedPhysics(physics, keyed, t, (r) => physicsActive(r, active));
   for (const name of posed.reset) resetPhysicsState(physicsState(ctx, name), before);
   return records.map((r) => (r.kind === 'physics' ? (posed.records.get(r.name) as CorePhysicsRecord) : r));
 }
