@@ -1559,8 +1559,8 @@ function cmdBuild(flags: Record<string, string>): void {
   writeFileSync(join(opts.outDir, 'skeleton.json'), result.skeletonText);
   writeFileSync(join(opts.outDir, 'skeleton.atlas'), atlasText);
   // rigc's own record of the compiled rig (`rigc-compiled/1`, issue #922),
-  // written with the pair and only after the same gate. Nothing reads it yet;
-  // the posing core of issue #380's step 2 is what will.
+  // written with the pair and only after the same gate. rigc's own posing core
+  // reads it (`readModel`, `src/core/index.ts`, issue #380's step 2).
   writeFileSync(join(opts.outDir, MODEL_DOCUMENT_FILE), modelText);
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.json')}`);
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.atlas')}`);
