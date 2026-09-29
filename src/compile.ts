@@ -144,7 +144,9 @@ import {
   type ModelLinkedMeshAttachment,
   type ModelMeshAttachment,
   type ModelPathAttachment,
+  type ModelAtlasRect,
   type ModelRegionAttachment,
+  type ModelRegionSequence,
   type ModelSequence,
   type ModelSkin,
   type ModelSlot,
@@ -2779,6 +2781,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           imagesDir,
           depths: attachmentDepths,
           slotNames: new Set(rig.slots.map((s) => s.name)),
+          atlasRegions: atlasIn === null ? null : atlasIn.byName,
           links: pendingLinks,
         });
         // The name is put on AFTER the builder rather than inside it: six
@@ -3779,6 +3782,12 @@ interface AttachmentContext {
   /** Every slot the rig declares — a clipping attachment's `end` resolves here. */
   slotNames: Set<string>;
   /**
+   * The `--atlas-in` pack's regions by trimmed name, first match — the map
+   * `resolveFromAtlas` reads — or `null` on the loose route, where the regions
+   * are `images`. A region record's rectangle is looked up here (`regionAtlasRect`).
+   */
+  atlasRegions: ReadonlyMap<string, { region: AtlasRegion }> | null;
+  /**
    * Linked meshes whose `source` is still unresolved — `resolveLinkedMeshes`
    * empties it once every skin has been built.
    *
@@ -4604,7 +4613,8 @@ function buildRigRegion(
   ctx: AttachmentContext,
 ): ModelRegionAttachment {
   if (att.sequence !== undefined) {
-    const size = sequenceFrameSize(sequenceFrames(att, placeholder, where, ctx), att, where);
+    const frames = sequenceFrames(att, placeholder, where, ctx);
+    const size = sequenceFrameSize(frames, att, where);
     const out: ModelRegionAttachment = { kind: 'region', width: f32(size.width!), height: f32(size.height!) };
     if (att.path !== undefined) out.path = att.path;
     if (att.x !== undefined) out.x = f32(att.x);
@@ -4613,7 +4623,9 @@ function buildRigRegion(
     if (att.scaleX !== undefined) out.scaleX = f32(att.scaleX);
     if (att.scaleY !== undefined) out.scaleY = f32(att.scaleY);
     if (att.color !== undefined) out.color = att.color;
-    out.sequence = buildSequence(att.sequence);
+    // Each frame draws through its own rectangle (`Sequence.apply`), in frame order.
+    const sequence: ModelRegionSequence = { ...buildSequence(att.sequence), atlas: frames.map(imageAtlasRect) };
+    out.sequence = sequence;
     return out;
   }
   const img = att.image === undefined ? null : atlasedImage(att.image, where, ctx);
@@ -4664,7 +4676,58 @@ function buildRigRegion(
   if (att.scaleX !== undefined) out.scaleX = f32(att.scaleX);
   if (att.scaleY !== undefined) out.scaleY = f32(att.scaleY);
   if (att.color !== undefined) out.color = att.color;
+  // The region the runtime asks the atlas for: `path`, else the name
+  // (`getValue(map, "path", name)`), which is the stated `name`, else the placeholder.
+  out.atlas = regionAtlasRect(path ?? att.name ?? placeholder, ctx.images, ctx.atlasRegions);
   return out;
+}
+
+/**
+ * The rectangle a region draws through, as the atlas states it — the six
+ * fields `ModelAtlasRect` holds, copied, nothing derived.
+ */
+function atlasRectOf(region: AtlasRegion): ModelAtlasRect {
+  return {
+    width: region.width,
+    height: region.height,
+    offsetX: region.offsetX,
+    offsetY: region.offsetY,
+    originalWidth: region.originalWidth,
+    originalHeight: region.originalHeight,
+  };
+}
+
+/**
+ * The rectangle an atlased image draws through: the pack's region under
+ * `--atlas-in`, else the loose PNG as its own page, which is exactly the region
+ * `buildAtlasText` writes for it — kept size and original size the PNG's,
+ * offsets 0.
+ */
+function imageAtlasRect(img: CompiledImage): ModelAtlasRect {
+  if (img.atlas !== undefined) return atlasRectOf(img.atlas);
+  return { width: img.width, height: img.height, offsetX: 0, offsetY: 0, originalWidth: img.width, originalHeight: img.height };
+}
+
+/**
+ * The rectangle of the region named `name` in the build's one atlas source —
+ * the `--atlas-in` pack when there is one, else the images atlased from loose
+ * PNGs — or `null` when that source has no region of the name (issue #935).
+ *
+ * `null` is the build saying it has no source, never a guessed trim of 0: the
+ * atlas this build emits is that same source, so the region is missing from it
+ * too, and `A08_REGION_NAMES_MATCH_ATTACHMENTS` refuses the build by the name.
+ */
+function regionAtlasRect(
+  name: string,
+  images: readonly CompiledImage[],
+  atlasRegions: ReadonlyMap<string, { region: AtlasRegion }> | null,
+): ModelAtlasRect | null {
+  if (atlasRegions !== null) {
+    const found = atlasRegions.get(name);
+    return found === undefined ? null : atlasRectOf(found.region);
+  }
+  const img = images.find((im) => im.region === name);
+  return img === undefined ? null : imageAtlasRect(img);
 }
 
 /**
@@ -7045,7 +7108,7 @@ function placeRegion(
   const [ax, ay] = toBoneLocal(bone, win.x + win.w / 2, cropToSpineY(win.y + win.h / 2, manifest.crop.h)).map(f32);
   const rotation = f32(normaliseDegrees(-bone.worldRotation));
   // All three held, 0 included: leaving a 0 out is the emitter's (`emitRegion`).
-  return { kind: 'region', width: img.width, height: img.height, x: ax, y: ay, rotation };
+  return { kind: 'region', width: img.width, height: img.height, x: ax, y: ay, rotation, atlas: imageAtlasRect(img) };
 }
 
 /**

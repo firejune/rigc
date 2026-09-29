@@ -530,7 +530,10 @@ type Key = { time: F32; curve?: F32[] | 'stepped' } & Record<string, unknown>;
   because the 4.3 parser does not inherit them; the model has the constraint's flags
   and the key's own, and nothing holds the flag *in effect*.
 - **Region placement on a page for a loose part.** Implicit (the part is its page);
-  only an `--atlas-in` part carries `CompiledImage.atlas`.
+  only an `--atlas-in` part carries `CompiledImage.atlas`. Closed by #935 for what the
+  pose reads: every region record and sequence frame carries its rectangle's size, trim
+  and original size (`ModelAtlasRect`), image or none; the page and `x`/`y` stay the
+  atlas's, since `--pack` moves them after the model is written.
 
 ---
 
