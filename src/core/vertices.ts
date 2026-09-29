@@ -119,6 +119,7 @@
 import type { ModelAtlasRect, ModelBinding, ModelVertices } from '../model.ts';
 import { RUNTIME_PI, type CoreWorld } from './world.ts';
 import { deformedVertices } from './deform.ts';
+import { poseClipped, REGION_TRIANGLES, REGION_UVS, type CoreClippedRow, type DrawStep, type TriangleClipper } from './clipping.ts';
 
 const RAD = RUNTIME_PI / 180;
 
@@ -140,9 +141,9 @@ export interface CoreRegionGeometry {
 /** The geometry a record carries, by kind, as far as the construct reads it. */
 export type CoreGeometry =
   | { kind: 'region'; region: CoreRegionGeometry }
-  | { kind: 'mesh'; vertices: ModelVertices }
+  | { kind: 'mesh'; vertices: ModelVertices; uvs: number[]; triangles: number[] }
   | { kind: 'linkedmesh'; skin: string; slot: string; source: string }
-  | { kind: 'clipping'; end: string | null; vertices: ModelVertices }
+  | { kind: 'clipping'; end: string | null; vertices: ModelVertices; inverse: boolean }
   | { kind: 'boundingbox'; vertices: ModelVertices }
   | { kind: 'path'; vertices: ModelVertices; closed: boolean; constantSpeed: boolean; lengths: number[] };
 
@@ -328,13 +329,30 @@ export function readGeometry(raw: Record<string, unknown>, kind: CoreGeometry['k
     case 'path': {
       const vertices = readVertices(raw.vertices, `${where}.vertices`, bones, problems);
       if (kind === 'clipping' && raw.end !== undefined && (typeof raw.end !== 'string' || !slots.has(raw.end))) problems.push(`${where}: end is ${JSON.stringify(raw.end)}, not a slot of this document`);
+      if (kind === 'clipping') for (const key of ['inverse', 'convex'] as const) if (raw[key] !== undefined && typeof raw[key] !== 'boolean') problems.push(`${where}: ${key} is ${JSON.stringify(raw[key])}, not a boolean`);
+      const mesh = kind === 'mesh' && vertices !== undefined ? readMeshTriangles(raw, vertices, where, problems) : undefined;
       if (vertices === undefined || problems.length !== before) return undefined;
-      if (kind === 'mesh') return { kind, vertices };
-      if (kind === 'clipping') return { kind, end: typeof raw.end === 'string' ? raw.end : null, vertices };
+      if (kind === 'mesh') return mesh === undefined ? undefined : { kind, vertices, ...mesh };
+      if (kind === 'clipping') return { kind, end: typeof raw.end === 'string' ? raw.end : null, vertices, inverse: raw.inverse === true };
       if (kind === 'boundingbox') return { kind, vertices };
       return readPathGeometry(raw, vertices, where, problems);
     }
   }
+}
+
+/**
+ * A mesh's `uvs` and `triangles`, what the clipper reads besides its vertices
+ * (issue #964, `./clipping.ts`): one finite pair per vertex, and whole
+ * indices into the vertices in threes — as the writer writes them.
+ */
+function readMeshTriangles(raw: Record<string, unknown>, vertices: ModelVertices, where: string, problems: string[]): { uvs: number[]; triangles: number[] } | undefined {
+  const before = problems.length;
+  const count = vertices.weighted ? vertices.bindings.length : vertices.xy.length / 2;
+  const uvs = raw.uvs;
+  const triangles = raw.triangles;
+  if (!Array.isArray(uvs) || !uvs.every(finite) || uvs.length !== 2 * count) problems.push(`${where}.uvs is not ${2 * count} finite numbers, one pair per vertex`);
+  if (!Array.isArray(triangles) || triangles.length % 3 !== 0 || !triangles.every((i) => Number.isInteger(i) && i >= 0 && i < count)) problems.push(`${where}.triangles is not a list of whole indices below ${count}, in threes`);
+  return problems.length === before ? { uvs: uvs as number[], triangles: triangles as number[] } : undefined;
 }
 
 /**
@@ -379,10 +397,25 @@ export interface ShownGeometry {
 export type SourceOf = (skin: string, slot: string, source: string) => ModelVertices | string;
 
 /**
+ * What the draw walk of `./clipping.ts` needs past the shown records: the
+ * draw order (every slot, showing something or not — a clip ends at a slot
+ * whatever it shows), the active bones, and a mesh's `uvs` and `triangles`
+ * by where a linked mesh's source is filed.
+ */
+export interface DrawWalk {
+  order: readonly string[];
+  active: ReadonlySet<string>;
+  meshOf: (skin: string, slot: string, source: string) => { uvs: number[]; triangles: number[] } | undefined;
+  clip?: TriangleClipper;
+}
+
+/**
  * The two blocks from the slots' shown records, in slot order, every number
  * through `round` (the oracle's, `gridRound` in `./index.ts`), or — for
  * `attachments` — the reason it is absent: a shown region whose rectangle is
- * `null` (the header's ⛔), every one named.
+ * `null` (the header's ⛔), every one named. With `draw`, also the `clipped`
+ * block (issue #964, `./clipping.ts`) from the unrounded geometry, or why it
+ * is absent.
  */
 export function poseGeometry(
   shown: readonly ShownGeometry[],
@@ -390,12 +423,14 @@ export function poseGeometry(
   sourceOf: SourceOf,
   round: (v: number) => number | null,
   plant: { region?: RegionPoser; vertices?: VertexPoser } = {},
-): { attachments: CoreAttachmentRow[] | null; attachmentsWhy: string | null; clips: CoreClipRow[] } {
+  draw?: DrawWalk,
+): { attachments: CoreAttachmentRow[] | null; attachmentsWhy: string | null; clips: CoreClipRow[]; clipped: CoreClippedRow[] | null; clippedWhy: string | null } {
   const region = plant.region ?? regionCorners;
   const vertices = plant.vertices ?? worldVertices;
   const attachments: CoreAttachmentRow[] = [];
   const clips: CoreClipRow[] = [];
   const nulls: string[] = [];
+  const steps = new Map<string, DrawStep>();
   for (const s of shown) {
     const bone = world.get(s.bone);
     if (bone === undefined) throw new Error(`slot "${s.slot}": bone "${s.bone}" has no world transform`);
@@ -408,19 +443,38 @@ export function poseGeometry(
         nulls.push(`slot "${s.slot}" shows region "${s.name}" (skin "${s.skin}", placeholder "${s.placeholder}")`);
         continue;
       }
-      attachments.push([s.slot, s.name, 'region', region({ ...g.region, atlas: rect }, bone).map(round)]);
+      const corners = region({ ...g.region, atlas: rect }, bone);
+      attachments.push([s.slot, s.name, 'region', corners.map(round)]);
+      steps.set(s.slot, { slot: s.slot, kind: 'draw', attachment: s.name, vertices: corners, triangles: [...REGION_TRIANGLES], uvs: [...REGION_UVS] });
     } else if (g.kind === 'mesh') {
-      attachments.push([s.slot, s.name, 'mesh', drawn(g.vertices).map(round)]);
+      const world = drawn(g.vertices);
+      attachments.push([s.slot, s.name, 'mesh', world.map(round)]);
+      steps.set(s.slot, { slot: s.slot, kind: 'draw', attachment: s.name, vertices: world, triangles: g.triangles, uvs: g.uvs });
     } else if (g.kind === 'linkedmesh') {
       const source = sourceOf(g.skin, g.slot, g.source);
       if (typeof source === 'string') throw new Error(`slot "${s.slot}": ${source} (readModel refuses it first)`);
-      attachments.push([s.slot, s.name, 'mesh', drawn(source).map(round)]);
+      const world = drawn(source);
+      attachments.push([s.slot, s.name, 'mesh', world.map(round)]);
+      // A linked mesh draws its source's triangles over its source's UVs.
+      const mesh = draw?.meshOf(g.skin, g.slot, g.source);
+      if (draw !== undefined && mesh === undefined) throw new Error(`slot "${s.slot}": the linked mesh's source "${g.source}" carries no triangles (readModel refuses it first)`);
+      if (mesh !== undefined) steps.set(s.slot, { slot: s.slot, kind: 'draw', attachment: s.name, vertices: world, triangles: mesh.triangles, uvs: mesh.uvs });
     } else if (g.kind === 'clipping') {
-      clips.push([s.slot, s.name, g.end, drawn(g.vertices).map(round)]);
+      const polygon = drawn(g.vertices);
+      clips.push([s.slot, s.name, g.end, polygon.map(round)]);
+      steps.set(s.slot, { slot: s.slot, kind: 'clip', attachment: s.name, active: draw?.active.has(s.bone) ?? false, end: g.end, polygon, inverse: g.inverse });
     }
   }
   const attachmentsWhy = nulls.length === 0
     ? null
     : `${nulls.join('; ')} — the model states the build had no atlas rectangle for it (atlas: null), and its corners read the trim and original size; a trim of 0 is not assumed`;
-  return { attachments: attachmentsWhy === null ? attachments : null, attachmentsWhy, clips };
+  let clipped: CoreClippedRow[] | null = null;
+  let clippedWhy: string | null = draw === undefined ? 'the draw order was not given' : attachmentsWhy;
+  if (draw !== undefined && attachmentsWhy === null) {
+    const walk = draw.order.map((slot): DrawStep => steps.get(slot) ?? { slot, kind: 'none' });
+    const posed = poseClipped(walk, round, draw.clip);
+    clipped = posed.rows;
+    clippedWhy = posed.why;
+  }
+  return { attachments: attachmentsWhy === null ? attachments : null, attachmentsWhy, clips, clipped, clippedWhy };
 }

@@ -66072,7 +66072,7 @@ function runPoseOracleSuite(): number {
       ['--dt without stepping', ['dump', buildDir, '--out', out, '--dt', '1/60'], '--physics none steps nothing'],
       ['a skin the rig does not declare', ['dump', buildDir, '--out', out, '--skin', 'nosuch'], '--skin "nosuch": no such skin; this skeleton declares [default, alt]'],
       ['a directory rigc did not build', ['dump', emptyDir, '--out', out], 'has no skeleton.json and no skeleton.atlas'],
-      ['a document that is not an oracle dump', ['compare', notOracle, noneA], 'spec is "rigc-frames/1", not "pose-oracle/2"'],
+      ['a document that is not an oracle dump', ['compare', notOracle, noneA], 'spec is "rigc-frames/1", not "pose-oracle/3"'],
       ['two dumps posed under different options', ['compare', noneA, stepA], 'posed under different options'],
     ];
     for (const [label, args, expect] of cases) {
@@ -66313,10 +66313,10 @@ function runPoseOracleSuite(): number {
       const current = join(work, 'blend-2.json');
       const older = join(work, 'blend-1.json');
       writeFileSync(current, dumpText(dump));
-      writeFileSync(older, dumpText({ ...dump, spec: 'pose-oracle/1' }));
+      writeFileSync(older, dumpText({ ...dump, spec: 'pose-oracle/2' }));
       const refused = runOracle(['compare', older, current]);
-      if (refused.status !== 2 || !refused.stderr.includes('spec is "pose-oracle/1", not "pose-oracle/2"')) probes.push(`a pose-oracle/1 document: exit ${refused.status}, stderr ${JSON.stringify(refused.stderr.trim().slice(0, 160))}`);
-      detail = `${stated.length} slots stating none, the four modes, one with its first letter upper-cased and one all upper-case read [${stated.map((x) => String(x[2])).join(', ')}] in the setup row and in each of ${poses.length - 1} samples of an animation keying their colour; the pose's fields [${poseFields.join(', ')}] carry no mode; a blend planted in one sample is the one difference named; a pose-oracle/1 document exits 2 by name`;
+      if (refused.status !== 2 || !refused.stderr.includes('spec is "pose-oracle/2", not "pose-oracle/3"')) probes.push(`a pose-oracle/2 document: exit ${refused.status}, stderr ${JSON.stringify(refused.stderr.trim().slice(0, 160))}`);
+      detail = `${stated.length} slots stating none, the four modes, one with its first letter upper-cased and one all upper-case read [${stated.map((x) => String(x[2])).join(', ')}] in the setup row and in each of ${poses.length - 1} samples of an animation keying their colour; the pose's fields [${poseFields.join(', ')}] carry no mode; a blend planted in one sample is the one difference named; a document one spec older exits 2 by name`;
     } catch (err) {
       probes.push(`the blend probe did not load or pose: ${(err as Error).message}`);
     }
@@ -66341,9 +66341,10 @@ function runPoseOracleSuite(): number {
 // slider-reader suite states at its imports).
 import { activeBones, CORE_CONSTRAINT_KINDS, CORE_DUMPER, CoreInputError, foldBlend, foldInheritMode, gridRound, NOT_ADMITTED, poseSetup, readBlend, readColour, readModel, shownAttachment, type CompiledDocument, type CoreBlendMode, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
 import { regionCorners, worldVertices, type VertexPoser } from './src/core/vertices.ts';
+import { clipTriangles, type ClipReading, type TriangleClipper } from './src/core/clipping.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
-import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, GATE_BLOCKS, REMAINDER_CENSUS_BLOCKS, timelineKindLines, type GateBlock, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, STEPPED_CENSUS_FIELDS, STEPPED_OPTIONS, steppedCensusOf, steppedReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField, type SteppedCensusField } from './tools/core_gate.ts';
+import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, CLIPPED_CENSUS_FIELDS, clippedReachLines, GATE_BLOCKS, REMAINDER_CENSUS_BLOCKS, timelineKindLines, type GateBlock, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, STEPPED_CENSUS_FIELDS, STEPPED_OPTIONS, steppedCensusOf, steppedReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField, type SteppedCensusField } from './tools/core_gate.ts';
 import { BEZIER_SIXTH, bezierPolyline, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
 import { deformAt, deformPercent, heldArray, SEQUENCE_MODES as CORE_SEQUENCE_MODES, sequenceFrameAt, type CoreDeformKey } from './src/core/deform.ts';
 import { drawOrderAt } from './src/core/draw_order.ts';
@@ -66445,7 +66446,7 @@ function srcPopulation(root: string): Map<string, string> {
 
 /** The core suite: `src/core/`'s reader and setup pose, the second dumper in `tools/pose_oracle.ts`, compare's absences, the gate's instrument and the tree rule. */
 function runCoreSuite(): number {
-  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots, draw order and attachments\' world vertices, and every animation\'s bones, slots, draw order, attachments and events at its samples, every constraint kind applied in their order, as pose-oracle/2 (issues #925, #928, #931, #936, #938, #955) ──');
+  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots, draw order and attachments\' world vertices, and every animation\'s bones, slots, draw order, attachments and events at its samples, every constraint kind applied in their order, and the triangles drawn under a clip, as pose-oracle/3 (issues #925, #928, #931, #936, #938, #955, #964) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -67420,9 +67421,9 @@ function runCoreSuite(): number {
       if (skipped) {
         // By construct: posed off the hierarchy alone — the constraints dropped from a copy — the vertices move.
         const loose = poseSetup({ ...model, constraints: [] }).setup;
-        const absent: Array<[string, string]> = [...NOT_ADMITTED.map(([k, w]): [string, string] => [k, w]), ['setup.bones', 'left out'], ['setup.slots', 'left out'], ['setup.drawOrder', 'left out'], ['setup.clips', 'left out']];
+        const absent: Array<[string, string]> = [...NOT_ADMITTED.map(([k, w]): [string, string] => [k, w]), ['setup.bones', 'left out'], ['setup.slots', 'left out'], ['setup.drawOrder', 'left out'], ['setup.clips', 'left out'], ['setup.clipped', 'left out']];
         // The animations are left out too (issue #936's blocks): this judges the setup attachments alone.
-        const c = compareDumps(spine, { ...coreDump(model, ONE), absent, setup: { bones: null, slots: null, drawOrder: null, attachments: loose.attachments, clips: null }, animations: null }, { xy: 0, m: 0 });
+        const c = compareDumps(spine, { ...coreDump(model, ONE), absent, setup: { bones: null, slots: null, drawOrder: null, attachments: loose.attachments, clips: null, clipped: null }, animations: null }, { xy: 0, m: 0 });
         if (c.identical) probes.push(`${b.name}: posed off its hierarchy alone its attachments read IDENTICAL, so skipping it holds back nothing`);
         else offHierarchy.push(`${b.name.replace(/^examples\/[^/]+\//, '')} ${c.worstVertex.toFixed(6)}`);
         continue;
@@ -67532,6 +67533,237 @@ function runCoreSuite(): number {
       'issue #931\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the weights or the corner order at all',
     );
     for (const label of holes) console.log(`          ⚠️ HOLE: no compared recipe has a row the plant "${label}" reaches, so it has no corpus row to turn red — CO17's probe is the only reading of it`);
+  }
+
+  // ===========================================================================
+  // Construct 6 (issue #964): clipping applied to the draw — the `clipped` block, src/core/clipping.ts.
+  // One hand-written skeleton, written once as the Spine file and once as the model, holds every case of the walk
+  // and of the triangle rule; the corpus row drawing under a clip is judged with the rest of the gate.
+  type ClipSlot = { slot: string; bone: string; spine: Record<string, unknown>; model: Record<string, unknown> };
+  /** Region records of a 4x4 atlas region drawn at `w` x `h`, both sides. */
+  const clipRegion = (x: number, y: number, w: number, h: number, rotation = 0): { spine: Record<string, unknown>; model: Record<string, unknown> } => ({
+    spine: { path: 'r', x, y, rotation, width: w, height: h },
+    model: { kind: 'region', path: 'r', x, y, rotation, width: w, height: h, atlas: { width: 4, height: 4, offsetX: 0, offsetY: 0, originalWidth: 4, originalHeight: 4 } },
+  });
+  /** An unweighted mesh, both sides: local xy, triangles, uvs spelled with non-float32 decimals. */
+  const clipMesh = (xy: number[], triangles: number[]): { spine: Record<string, unknown>; model: Record<string, unknown> } => {
+    const n = xy.length / 2;
+    const uvs = Array.from({ length: 2 * n }, (_v, i) => ((i * 0.37119 + 0.05) % 1));
+    return {
+      spine: { type: 'mesh', path: 'm', uvs, triangles, vertices: xy, hull: n, width: 10, height: 10 },
+      model: { kind: 'mesh', path: 'm', uvs, triangles, vertices: { weighted: false, xy }, hull: n, edges: [], width: 10, height: 10 },
+    };
+  };
+  const clipBones = [
+    { name: 'root', x: 1.5, y: -2.25 },
+    { name: 'turned', parent: 'root', x: 3.3, y: 1.1, rotation: 17.77777, scaleX: 1.2, scaleY: 0.9, shearX: 5 },
+    { name: 'p', parent: 'root', x: -80 },
+    { name: 'b', parent: 'p', x: 10, length: 40 },
+  ];
+  /** The first clip's polygon, on `turned` — a convex quad; the shared vertex is its vertex 2. */
+  const polyA = [-30.11111, -20.22222, 40.33331, -25.44447, 45.55553, 30.66661, -25.77779, 35.88889];
+  /** The probe's slots in draw order: every case of clipping.ts's walk and triangle rule. */
+  const clipSlots: ClipSlot[] = [
+    { slot: 'clipA', bone: 'turned', spine: { type: 'clipping', end: 'rEnd', vertexCount: 4, vertices: polyA }, model: { kind: 'clipping', end: 'rEnd', vertexCount: 4, vertices: { weighted: false, xy: polyA } } },
+    { slot: 'rIn', bone: 'turned', ...clipRegion(5.12345, 3.3333, 12.5, 9.75) },
+    { slot: 'rOut', bone: 'turned', ...clipRegion(140.1, 3.3, 10, 10) },
+    { slot: 'rOne', bone: 'turned', ...clipRegion(40.77777, 5.1, 18.3, 10.7, 11.11) },
+    { slot: 'mTwo', bone: 'turned', ...clipMesh([30.1, 20.2, 70.3, 25.4, 60.5, 60.6, 20.7, 50.8, 0.9, 10.1], [0, 1, 2, 0, 2, 3, 0, 3, 4]) },
+    { slot: 'mShare', bone: 'turned', ...clipMesh([45.55553, 30.66661, 20.4, 60.1, 10.2, 5.3], [0, 1, 2]) },
+    { slot: 'rEnd', bone: 'turned', ...clipRegion(-30.5, 30.5, 20.1, 20.3) },
+    { slot: 'rAfter', bone: 'turned', ...clipRegion(-30.5, 30.5, 20.1, 20.3) },
+    { slot: 'clipB', bone: 'b', spine: { type: 'clipping', vertexCount: 3, vertices: [-20.3, -15.7, 30.9, -10.1, 5.5, 25.25] }, model: { kind: 'clipping', vertexCount: 3, vertices: { weighted: false, xy: [-20.3, -15.7, 30.9, -10.1, 5.5, 25.25] } } },
+    { slot: 'mB', bone: 'b', ...clipMesh([-30.1, -5.2, 20.3, -30.4, 25.5, 20.6, -10.7, 40.8], [0, 1, 2, 0, 2, 3]) },
+    { slot: 'clipC', bone: 'root', spine: { type: 'clipping', vertexCount: 5, vertices: [0, 0, 100, 0, 100, 100, 50, 40, 0, 100] }, model: { kind: 'clipping', vertexCount: 5, vertices: { weighted: false, xy: [0, 0, 100, 0, 100, 100, 50, 40, 0, 100] } } },
+    { slot: 'lB', bone: 'b', spine: { type: 'linkedmesh', path: 'm', source: 'a', slot: 'mTwo', width: 10, height: 10 }, model: { kind: 'linkedmesh', path: 'm', source: 'a', skin: 'default', slot: 'mTwo', timelines: true, width: 10, height: 10 } },
+  ];
+  const clipAtlas = 'page.png\n\tsize: 64, 64\nr\n\tbounds: 0, 0, 4, 4\nm\n\tbounds: 8, 0, 4, 4\n';
+  /** The deform of clipA's polygon and of mB, keyed at 0 and 1 — both sides. */
+  const deformA = [{ time: 0 }, { time: 1, vertices: [10.5, -3.25, 0, 0, -12.125, 4.5, 3.3, 3.3] }];
+  const deformB = [{ time: 0 }, { time: 1, offset: 2, vertices: [-7.75, 9.5] }];
+  const moveKeys = [{ time: 0, x: 0, y: 0 }, { time: 1, x: 60.5, y: 20.25 }];
+  /** The probe as the Spine file and as the model, with or without its physics constraint on `b`. */
+  const clipPair = (physics: boolean, slots: ClipSlot[] = clipSlots): { spine: string; model: string } => {
+    const table = (side: 'spine' | 'model'): Record<string, Record<string, Record<string, unknown>>> => Object.fromEntries(slots.map((s) => [s.slot, { a: s[side] }]));
+    // The deforms key the slots the probe carries; a reduced probe keys only those it has.
+    const deforms = ([['clipA', deformA], ['mB', deformB]] as const).filter(([slot]) => slots.some((s) => s.slot === slot));
+    const spine = JSON.stringify({
+      skeleton: { spine: '4.3.13' }, bones: clipBones, slots: slots.map((s) => ({ name: s.slot, bone: s.bone, attachment: 'a' })),
+      ...(physics ? { constraints: [{ type: 'physics', name: 'k', bone: 'b', x: 1, y: 1, rotate: 1 }] } : {}),
+      skins: [{ name: 'default', attachments: table('spine') }],
+      animations: { d: { bones: { p: { translate: moveKeys } }, attachments: { default: Object.fromEntries(deforms.map(([slot, keys]) => [slot, { a: { deform: keys } }])) } } },
+    });
+    const model = JSON.stringify({
+      spec: 'rigc-compiled/1', bones: clipBones, slots: slots.map((s) => ({ name: s.slot, bone: s.bone, setup: 'a' })),
+      skins: [{ name: 'default', bones: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: table('model') }],
+      constraints: physics ? [{ kind: 'physics', name: 'k', declaredIn: 'rig', bone: 'b', x: 1, y: 1, rotate: 1 }] : [], events: [],
+      animations: [{
+        name: 'd', duration: 1, bones: [{ name: 'p', timelines: [{ name: 'translate', keys: moveKeys }] }], slots: [],
+        constraints: { ik: [], transform: [], path: [], physics: [], slider: [] },
+        attachments: [{ name: 'default', slots: deforms.map(([slot, keys]) => ({ name: slot, attachments: [{ name: 'a', deform: keys }] })) }], drawOrder: [], events: [],
+      }],
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+    });
+    return { spine, model };
+  };
+  const CLIP_NONE: OracleOptions = { phase: 'grid', samples: 9, skin: 'all', physics: 'none', dt: null };
+  const CLIP_STEP: OracleOptions = { phase: 'grid', samples: 9, skin: 'all', physics: 'step', dt: 1 / 60 };
+  const clipRowsOf = (rows: ReadonlyArray<[string, string, 0 | 1, Array<number | null>, Array<number | null>, number[]]> | null): string => (rows ?? []).map((r) => `${r[0]}:${r[2]}:${r[5].length / 3}`).join(' ');
+
+  // --- CL01: a hand-written probe clips every case as spine-core's clipper does, at tolerance 0, with and without the physics step --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    try {
+      const want = 'rIn:0:2 rOut:1:0 rOne:1:3 mTwo:1:5 mShare:1:2 rEnd:1:4 mB:1:5 lB:1:1';
+      const dumps: Record<string, { spine: OracleDump; core: OracleDocument }> = {};
+      let vertices = 0;
+      for (const [label, physics, options] of [['Physics.none', false, CLIP_NONE], ['the stepped phase', true, CLIP_STEP]] as const) {
+        const pair = clipPair(physics);
+        const spine = dumpSkeleton(loadOracleData(pair.spine, clipAtlas, 'the clipping probe'), options);
+        const core = coreDump(readModel(pair.model, 'the clipping probe'), options);
+        dumps[label] = { spine, core };
+        const c = compareDumps(spine, core, { xy: 0, m: 0 });
+        if (!c.identical || c.skipped.length > 0) probes.push(`${label}: ${c.identical ? `IDENTICAL skipping [${c.skipped.join('; ')}]` : `DIFF — ${c.first}`}`);
+        vertices += c.rows.reduce((s, r) => s + r.vertices, 0);
+        const poses = [spine.setup.clipped, ...spine.animations.flatMap((a) => a.samples.map((x) => x.clipped))];
+        const off = poses.map(clipRowsOf).filter((x) => x !== want);
+        if (off.length > 0) probes.push(`${label}: spine-core's rows read [${off[0]}], not the probe's cases [${want}]`);
+      }
+      // What moved: the deform of clipA's polygon across the samples, and the step's spring on clipB's bone.
+      const plain = dumps['Physics.none'].spine;
+      const stepped = dumps['the stepped phase'].spine;
+      const at = (d: OracleDump, i: number, slot: string): string => JSON.stringify(d.animations[0].samples[i].clipped.find((r) => r[0] === slot)?.[3] ?? null);
+      if (at(plain, 0, 'rOne') === at(plain, 8, 'rOne')) probes.push('the deform of clipA did not move what rOne draws between the first and last sample, so the probe holds no clip under a deform');
+      if (at(plain, 4, 'mB') === at(stepped, 4, 'mB')) probes.push('the physics step did not move what mB draws, so the probe holds no clip under a step');
+      detail = `${clipSlots.length} slots on four bones, a rotated, scaled and sheared one among them, every coordinate spelled with non-float32 decimals — a region wholly inside (the clipper's 0, its own two triangles), one wholly outside (cut away), one across one edge, a mesh across two, a mesh sharing a vertex with the polygon, the end slot drawn and the slot after it not, a second clip under a physics constraint, a concave third clip ignored while it is active, a linked mesh — read [${want}] by spine-core at the setup pose and at every sample, and IDENTICAL at tolerance 0 under Physics.none and the stepped phase over ${vertices} vertex-sample(s); the first clip's polygon deformed across the samples and the second's bone stepped, each moving what it cuts`;
+    } catch (err) {
+      probes.push(`the probe did not load or pose: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CL01_A_HAND_WRITTEN_PROBE_CLIPS_EVERY_CASE_AS_SPINE_CORES_CLIPPER_DOES_UNDER_A_DEFORM_AND_A_PHYSICS_STEP',
+      held,
+      probeDetail(held, probes, detail),
+      'issue #964: the public corpus draws under one three-vertex clip, so each rule of src/core/clipping.ts — when a clip starts and ends, what a triangle wholly inside, wholly outside, across one or two edges and on a polygon vertex becomes, the UVs, the return value — is held on a skeleton written here and posed by the runtime\'s own clipper',
+    );
+  }
+
+  // --- CL02: the rejected readings, each in a copy, are named at exactly the slots they reach --
+  {
+    const probes: string[] = [];
+    let named = 0;
+    try {
+      const pair = clipPair(false);
+      const spine = dumpSkeleton(loadOracleData(pair.spine, clipAtlas, 'the clipping probe'), CLIP_NONE);
+      const model = readModel(pair.model, 'the clipping probe');
+      const every = ['clipped "lB/a"', 'clipped "mB/a"', 'clipped "mShare/a"', 'clipped "mTwo/a"', 'clipped "rEnd/a"', 'clipped "rIn/a"', 'clipped "rOne/a"'];
+      const readings: Array<[string, ClipReading, string[]]> = [
+        ['the polygon walked in its own winding', { ownWinding: true }, every],
+        ['the runtime\'s winding flipped', { flippedWinding: true }, every],
+        ['a triangle wholly inside returned rotated', { insideRotated: true }, ['clipped "rIn/a"']],
+      ];
+      for (const [label, reading, expected] of readings) {
+        const c = compareDumps(spine, coreDump(model, CLIP_NONE, { clip: (p, v, t, u) => clipTriangles(p, v, t, u, reading) }), { xy: 0, m: 0 });
+        const got = [...new Set(c.rows.flatMap((r) => r.findings).map((f) => /clipped "[^"]+"/.exec(f)?.[0] ?? f))].sort();
+        if (JSON.stringify(got) !== JSON.stringify(expected)) probes.push(`${label}: named [${got.join(', ')}], not [${expected.join(', ')}]`);
+        else named++;
+      }
+    } catch (err) {
+      probes.push(`the probe did not load or pose: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CL02_EACH_REJECTED_CLIPPING_READING_IN_A_COPY_IS_NAMED_AT_EXACTLY_THE_SLOTS_IT_REACHES',
+      held,
+      probeDetail(held, probes, `${named} readings passed as a copy, never in src/: the polygon in its own winding and the winding flipped named at every slot drawn under a clip, a triangle wholly inside returned rotated at rIn alone`),
+      'issue #964\'s probe control: a probe that read IDENTICAL under a wrong reading would hold nothing. The intersection from the clip edge and the UV weights by division differ from the rule by a float32 step or less, below the oracle\'s six-decimal grid on this probe; they were rejected on the clipper\'s raw output (src/core/clipping.ts\'s table)',
+    );
+  }
+
+  // --- CL03: a clip the core does not clip against leaves the block out by name, and readModel refuses what the clipper would read wrong --
+  {
+    const probes: string[] = [];
+    try {
+      const concave = [0, 0, 100, 0, 100, 100, 50, 40, 0, 100];
+      const cases: Array<[string, ClipSlot, string]> = [
+        ['a concave clip', { slot: 'clipX', bone: 'root', spine: { type: 'clipping', vertexCount: 5, vertices: concave }, model: { kind: 'clipping', vertexCount: 5, vertices: { weighted: false, xy: concave } } }, 'slot "clipX" starts clip "a", and vertex 3 turns against the others (a reflex vertex)'],
+        ['a clip with a collinear vertex', { slot: 'clipX', bone: 'root', spine: { type: 'clipping', vertexCount: 5, vertices: [0, 0, 50, 0, 100, 0, 100, 100, 0, 100] }, model: { kind: 'clipping', vertexCount: 5, vertices: { weighted: false, xy: [0, 0, 50, 0, 100, 0, 100, 100, 0, 100] } } }, 'slot "clipX" starts clip "a", and vertices 0, 1 and 2 are collinear or repeated'],
+        ['an inverse clip', { slot: 'clipX', bone: 'root', spine: { type: 'clipping', inverse: true, vertexCount: 4, vertices: polyA }, model: { kind: 'clipping', inverse: true, vertexCount: 4, vertices: { weighted: false, xy: polyA } } }, 'slot "clipX" starts clip "a", and it is inverse'],
+      ];
+      for (const [label, clip, why] of cases) {
+        const slots = [clip, { slot: 'rIn', bone: 'root', ...clipRegion(10.5, 10.5, 6, 6) }];
+        const pair = clipPair(false, slots);
+        const spine = dumpSkeleton(loadOracleData(pair.spine, clipAtlas, 'the clipping probe'), CLIP_NONE);
+        const core = coreDump(readModel(pair.model, 'the clipping probe'), CLIP_NONE);
+        for (const block of ['setup.clipped', 'animations.clipped']) {
+          const reason = core.absent?.find((x) => x[0] === block)?.[1] ?? '';
+          if (!reason.includes(why)) probes.push(`${label}: ${block} ${reason === '' ? 'posed' : `absent as "${reason}"`}, not naming "${why}"`);
+        }
+        const other = (core.absent ?? []).filter((x) => x[0] !== 'setup.clipped' && x[0] !== 'animations.clipped');
+        if (other.length > 0) probes.push(`${label}: also left out ${other.map((x) => x[0]).join(', ')}`);
+        if (spine.setup.clipped.length !== 1) probes.push(`${label}: spine-core drew ${spine.setup.clipped.length} row(s) under it, so the probe clips nothing`);
+      }
+      // readModel: what the clipper reads is checked field by field.
+      const text = clipPair(false).model;
+      const edit = (slot: string, change: (r: Record<string, unknown>) => void): string => {
+        const doc = JSON.parse(text) as { skins: Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }> };
+        change(doc.skins[0].attachments[slot].a);
+        return JSON.stringify(doc);
+      };
+      const at = (slot: string): string => `skins[0] "default".attachments["${slot}"]["a"]`;
+      const plants: Array<[string, string, string]> = [
+        ['a mesh with one UV short', edit('mTwo', (r) => (r.uvs as number[]).pop()), `${at('mTwo')}.uvs is not 10 finite numbers, one pair per vertex`],
+        ['a triangle index past the last vertex', edit('mTwo', (r) => ((r.triangles as number[])[2] = 5)), `${at('mTwo')}.triangles is not a list of whole indices below 5, in threes`],
+        ['a triangle list not in threes', edit('mShare', (r) => (r.triangles as number[]).push(0)), `${at('mShare')}.triangles is not a list of whole indices below 3, in threes`],
+        ['inverse spelled as a string', edit('clipA', (r) => (r.inverse = 'yes')), `${at('clipA')}: inverse is "yes", not a boolean`],
+      ];
+      for (const [label, planted, expected] of plants) {
+        const refusal = coreRefusal(planted);
+        if (!refusal.includes(expected)) probes.push(`${label}: ${refusal === '' ? 'read' : `refused as "${refusal}"`}, not naming "${expected}"`);
+      }
+    } catch (err) {
+      probes.push(`the probe did not load or pose: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CL03_A_CLIP_THE_CORE_DOES_NOT_CLIP_AGAINST_LEAVES_THE_BLOCK_OUT_BY_NAME_AND_READ_MODEL_REFUSES_EACH_PLANT',
+      held,
+      probeDetail(held, probes, 'a concave clip, one with a collinear vertex and an inverse one, each started over a region spine-core draws under it: setup.clipped and animations.clipped left out naming the slot and the reason, no other block; a UV short, a triangle index past the last vertex, a triangle list not in threes and a string inverse each refused naming its path'),
+      'issue #964\'s STOP, stated as a gate: the runtime decomposes a polygon that is not strictly convex into pieces of its own choosing, and clips the outside of an inverse one; neither was reproduced from the dump, so the block is absent by name where one starts — never posed by a guess, never a pass',
+    );
+  }
+
+  // --- CL04: every row drawing under a clip reads IDENTICAL, and a moved vertex and a flipped winding turn exactly those rows red --
+  {
+    const probes: string[] = [];
+    const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null));
+    const drawing = rows.filter((r) => (r.clippedCensus?.drawn ?? 0) > 0);
+    for (const r of drawing) for (const block of ['setup.clipped', 'animations.clipped'] as const) if (r.blocks?.[block].verdict !== 'IDENTICAL') probes.push(`${r.name}: ${block} ${r.blocks?.[block].verdict} — ${r.blocks?.[block].why}`);
+    if (drawing.length === 0) probes.push(`no compared row draws under a clip, so the gate held nothing${examplesHole === null ? '' : ` (${examplesHole})`}`);
+    const using = drawing.map((r) => r.name).sort();
+    const moved: TriangleClipper = (p, v, t, u) => {
+      const r = clipTriangles(p, v, t, u);
+      return r.vertices.length === 0 ? r : { ...r, vertices: [r.vertices[0] + 0.001, ...r.vertices.slice(1)] };
+    };
+    const reached: string[] = [];
+    for (const [label, plant] of [['one clipped vertex moved 0.001', moved], ['the winding flipped', (p: readonly number[], v: readonly number[], t: readonly number[], u: readonly number[]) => clipTriangles(p, v, t, u, { flippedWinding: true })]] as Array<[string, TriangleClipper]>) {
+      const red = gateBuilt(judged, { clip: plant });
+      const turned = red.filter((r) => r.blocks?.['setup.clipped'].verdict === 'DIFF' || r.blocks?.['animations.clipped'].verdict === 'DIFF').map((r) => r.name).sort();
+      const others = red.filter((r) => r.blocks !== null && GATE_BLOCKS.some((b) => b !== 'setup.clipped' && b !== 'animations.clipped' && r.blocks?.[b].verdict === 'DIFF')).map((r) => r.name);
+      if (JSON.stringify(turned) !== JSON.stringify(using)) probes.push(`${label} turned [${turned.join(', ')}] red on the clipped blocks; the rows drawing under a clip are [${using.join(', ')}]`);
+      if (others.length > 0) probes.push(`${label} turned another block red on [${others.join(', ')}]`);
+      reached.push(`${label} ${turned.length}/${judged.length}`);
+    }
+    const census = drawing.map((r) => `${r.name} (${CLIPPED_CENSUS_FIELDS.map((f) => `${f} ${r.clippedCensus?.[f]}`).join(', ')})`).join('; ');
+    const held = probes.length === 0;
+    say(
+      'CL04_EVERY_ROW_DRAWING_UNDER_A_CLIP_READS_IDENTICAL_AND_A_MOVED_VERTEX_AND_A_FLIPPED_WINDING_TURN_EXACTLY_THOSE_ROWS_RED',
+      held,
+      probeDetail(held, probes, `${gateVerdict(rows).line}: the rows drawing under a clip — ${census} — IDENTICAL on setup.clipped and animations.clipped; each plant passed as a copy, never in src/: ${reached.join(', ')} red, exactly those rows, and no other block`),
+      'issue #964, construct 6 of #380 §5 admitted: the triangles every region and mesh draws under a strictly convex clip, as spine-core\'s clipper returns them, on the corpus rows that draw under one — the step src/render.ts needs before it can clip through the core (step 3)',
+    );
+    for (const line of clippedReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
   }
 
   // ===========================================================================

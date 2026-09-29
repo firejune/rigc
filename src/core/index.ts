@@ -24,7 +24,11 @@
  * draw at setup (under a slider) and at a sample (`./deform.ts`), and the
  * events a sample fires (`./events.ts`) — is posed too. With the physics
  * parameters (issue #956, `./constraints_physics.ts`) no block of the
- * oracle's document is left: `NOT_ADMITTED` is empty.
+ * oracle's document is left: `NOT_ADMITTED` is empty. The `clipped` block
+ * (issue #964, `./clipping.ts`) — the triangles drawn under a clip, as the
+ * runtime's clipper returns them — is posed at setup and at every sample,
+ * and left out by name where a clip that is not strictly convex, or an
+ * inverse one, starts.
  *
  * **Constraints (construct 5, issue #938, `./constraints.ts`).** The oracle
  * poses the setup pose with every constraint applied, so a bone a constraint
@@ -164,7 +168,8 @@ import type { ModelAtlasRect, ModelBone, ModelSlot, ModelVertices, SkinTableEntr
 import { worldTransforms, type CoreWorld } from './world.ts';
 import { readAnimationTimelines, type CoreAnimationTimelines } from './animation.ts';
 import { readEventDefs, type CoreEventDef } from './events.ts';
-import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type RegionPoser, type VertexPoser } from './vertices.ts';
+import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type DrawWalk, type RegionPoser, type VertexPoser } from './vertices.ts';
+import type { CoreClippedRow, TriangleClipper } from './clipping.ts';
 import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
 import { readPathRecord } from './constraints_path.ts';
 import { physicsListedBySkins, readPhysicsRecord, type PhysicsStepContext, type PhysicsStepper } from './constraints_physics.ts';
@@ -723,6 +728,8 @@ export interface CorePlant {
   events?: EventsFired;
   /** The stepped phase's step of one physics constraint (`stepPhysics` in `./constraints_physics.ts`). */
   physicsStep?: PhysicsStepper;
+  /** One attachment's triangles against a clip polygon (`clipTriangles` in `./clipping.ts`). */
+  clip?: TriangleClipper;
 }
 
 /** The document's ik, transform and path constraint records, in its order — what `applyConstraints` runs. */
@@ -741,7 +748,7 @@ export function constraintRecords(doc: CompiledDocument): CoreConstraintRecord[]
 export const NOT_ADMITTED: ReadonlyArray<readonly [string, string]> = [];
 
 /** The setup blocks the core poses, in the document's order. */
-const POSED_BLOCKS = ['setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips'] as const;
+const POSED_BLOCKS = ['setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips', 'setup.clipped'] as const;
 
 /** Bones active under every skin applied at once — the rule measured in the header. */
 export function activeBones(doc: CompiledDocument): Set<string> {
@@ -809,6 +816,8 @@ export interface CoreSetup {
   drawOrder: string[] | null;
   attachments: CoreAttachmentRow[] | null;
   clips: CoreClipRow[] | null;
+  /** The triangles drawn under a clip, as the clipper returns them (issue #964, `./clipping.ts`). */
+  clipped: CoreClippedRow[] | null;
 }
 
 /**
@@ -888,6 +897,8 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
   let clips: CoreClipRow[] | null = null;
   let clipsWhy: string | null = upstream.length === 0 ? null : upstream.join('; ');
   let attachmentsWhy: string | null = clipsWhy;
+  let clipped: CoreClippedRow[] | null = null;
+  let clippedWhy: string | null = clipsWhy ?? orderWhy;
   if (clipsWhy === null && setupWorld !== null && drawOrder !== null) {
     const world = setupWorld;
     // Each slot's shown record, with what the sliders' deform and sequence timelines set on it (`./deform.ts`), in the draw order.
@@ -896,19 +907,35 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
     const states = attachmentStates(doc, resolve, placeholders, null, applied, plant);
     const rank = new Map(drawOrder.map((n, i) => [n, i]));
     const shown = [...states.shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
-    const posed = poseGeometry(shown, world, sourceOfDoc(doc), gridRound, { region: plant.region, vertices: plant.vertices });
+    const posed = poseGeometry(shown, world, sourceOfDoc(doc), gridRound, { region: plant.region, vertices: plant.vertices }, drawWalkOf(doc, drawOrder, plant));
     const stateWhy = states.why.length === 0 ? null : `${states.why.join('; ')}`;
     attachments = stateWhy === null ? posed.attachments : null;
     attachmentsWhy = stateWhy ?? posed.attachmentsWhy;
     clips = stateWhy === null ? posed.clips : null;
     clipsWhy = stateWhy;
+    clipped = stateWhy === null ? posed.clipped : null;
+    clippedWhy = stateWhy ?? posed.clippedWhy;
   }
   // `NOT_ADMITTED` is in document order; bones and slots stand before `setup.drawOrder`, attachments and clips after it.
-  const why: Record<(typeof POSED_BLOCKS)[number], string | null> = { 'setup.bones': bonesWhy, 'setup.slots': slotsWhy, 'setup.drawOrder': orderWhy, 'setup.attachments': attachmentsWhy, 'setup.clips': clipsWhy };
+  const why: Record<(typeof POSED_BLOCKS)[number], string | null> = { 'setup.bones': bonesWhy, 'setup.slots': slotsWhy, 'setup.drawOrder': orderWhy, 'setup.attachments': attachmentsWhy, 'setup.clips': clipsWhy, 'setup.clipped': clippedWhy };
   // `NOT_ADMITTED` (empty since issue #956) stands before the setup blocks in the document's order.
   const absent: Array<[string, string]> = NOT_ADMITTED.map(([block, reason]): [string, string] => [block, reason]);
   for (const block of POSED_BLOCKS) if (why[block] !== null) absent.push([block, why[block] as string]);
-  return { setup: { bones, slots, drawOrder, attachments, clips }, absent };
+  return { setup: { bones, slots, drawOrder, attachments, clips, clipped }, absent };
+}
+
+/** What the clipped block's draw walk reads (`DrawWalk` in `./vertices.ts`): the draw order, the active bones, and a linked mesh's source triangles. */
+export function drawWalkOf(doc: CompiledDocument, order: readonly string[], plant: CorePlant = {}): DrawWalk {
+  const active = activeBones(doc);
+  return {
+    order,
+    active,
+    meshOf: (skin, slot, source) => {
+      const g = doc.skins.find((k) => k.name === skin)?.attachments[slot]?.[source]?.geometry;
+      return g?.kind === 'mesh' ? { uvs: g.uvs, triangles: g.triangles } : undefined;
+    },
+    ...(plant.clip === undefined ? {} : { clip: plant.clip }),
+  };
 }
 
 /** A linked mesh's source vertices, or why they do not resolve — what `poseGeometry` reads a linked mesh through. */
