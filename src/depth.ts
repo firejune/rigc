@@ -371,6 +371,37 @@ export function compareTurnFields(input: {
 const CEILING_AREA_FLOOR = 1e-6;
 
 /**
+ * A measured figure of the fold report on the tree's six-decimal grid — the
+ * rule `src/mesh.ts`'s `r6` states for the generator's measured figures, and
+ * never "-0".
+ *
+ * ⭐ **Why the report is rounded at all (issue #942).** Every other number the
+ * model document spells is on the float32 grid the Spine file is written on,
+ * or on this one; these four were the only full doubles, and the one place a
+ * platform's libm reached the document. `gallery/look`'s document differed
+ * between macOS and the Linux runner by exactly two leaves,
+ * `/meshes/0/depth/ceiling/pitch/negative/{degrees,p1}`, `26.935130523311`
+ * against `26.935130523311003`: macOS's `Math.atan` returned 0.512 ulp below
+ * the exact arctangent and Linux the correctly rounded double above it.
+ * Measured on that rig, the nearest six-decimal boundary is at least 2.33e-8°
+ * from any of its ceiling angles against a one-ulp step of about 3.6e-15°, so
+ * a one-ulp difference no longer reaches a byte. What a grid cannot absorb is
+ * stated rather than hidden: a value within one ulp of a rounding boundary
+ * still moves, and two triangles within one ulp of each other can still swap
+ * which one is the minimum.
+ *
+ * 🔒 Applied after the minimum is chosen and the percentile ranked, so the
+ * triangle a fold names is the one the full doubles select; `TC01` still
+ * requires that triangle, at ±0.01°, to be the one `A39` fires on. A share or
+ * a step is a positive number and r6 only returns 0 for one under 5e-7; `TC07`
+ * reads every share it builds as `> 0`.
+ */
+function r6(n: number): number {
+  const v = Math.round(n * 1e6) / 1e6;
+  return v === 0 ? 0 : v;
+}
+
+/**
  * Where one triangle turns inside out, which triangle that is — and, beside it,
  * what the REST of this axis and side's triangles do.
  *
@@ -393,6 +424,10 @@ const CEILING_AREA_FLOOR = 1e-6;
  * smooths or rejects a sample — the ceiling stays the raw sheet read through
  * the mesh, which is the only thing `A39` will agree with. What to read off the
  * two numbers is stated in `docs/AUTHORING.md` §3.4, not decided here.
+ *
+ * 🔸 `degrees`, `depthStep`, `stepShare` and `p1` are reported on the
+ * six-decimal grid (`r6` above, issue #942); the choice among triangles is
+ * made on the full doubles before they are rounded.
  */
 export interface FoldLimit {
   /** Degrees from setup, in (0, 90). */
@@ -678,7 +713,10 @@ export function turnCeiling(
       const sorted = angles[axis][side].slice().sort((a, b) => a - b);
       const rank = nearestRankIndex(sorted.length, 0.01);
       held.count = sorted.length;
-      held.p1 = rank === 0 ? null : sorted[rank];
+      held.p1 = rank === 0 ? null : r6(sorted[rank]);
+      held.degrees = r6(held.degrees);
+      held.depthStep = r6(held.depthStep);
+      held.stepShare = r6(held.stepShare);
     }
   }
   return out;

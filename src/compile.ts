@@ -860,8 +860,14 @@ const FLOAT32_BITS = new Uint32Array(FLOAT32_SCRATCH.buffer);
  * `137.5`. What this does NOT do is snap a double's residue to zero: `r6`'s grid
  * was absolute and swallowed anything under 5e-7, a float's is relative, so a
  * residue of 1e-15 is a float in its own right and is emitted as one.
+ *
+ * 🔒 Exported for one reader: `MX01` in `selftest.ts` defines "on the float32
+ * grid" as a fixed point of this function, `f32(x) === x`, and holds every
+ * number the model document spells to it or to the six-decimal grid (issue
+ * #942). `Math.fround(x) === x` is not that test: this writes `0.2`, whose
+ * float is 0.20000000298023224, so it would refuse the emitter's own output.
  */
-function f32(n: number): number {
+export function f32(n: number): number {
   const f = Math.fround(n);
   if (f === 0 || !Number.isFinite(f)) return f === 0 ? 0 : f;
   const magnitude = Math.abs(f);
