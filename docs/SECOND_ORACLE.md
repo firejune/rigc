@@ -12,11 +12,15 @@ not the second backend, it is the second oracle.*
 
 A posing core of rigc's own — `src/core/`, pure, importing nothing from
 `@esotericsoftware/spine-core` — that reads rigc's own **compiled model** and poses it.
-That model does not exist yet: step 0a measured that `compile.ts` builds the Spine
+That model exists since 2026-09-29: step 0a measured that `compile.ts` built the Spine
 objects directly — 14 `Spine*` types, 111 references, the 4.3 spellings applied in the
-constructors, and 24 sites that read those objects back to compute later values
-([COMPILED_MODEL.md](COMPILED_MODEL.md), §1.4 and *The finding*) — so step 1 is a change
-to how `compile` builds, not a serialiser beside it. The core poses that model: bones with their inherit modes, slots and colours, every attachment kind's
+constructors, and 24 sites that read those objects back
+([COMPILED_MODEL.md](COMPILED_MODEL.md), §1.4 and *The finding*) — and step 1 changed
+how `compile` builds, in six cuts, each landing under byte identity of every Spine file
+on every corpus (§6). `build` now writes `skeleton.model.json` (`rigc-compiled/1`)
+beside the Spine pair, the Spine emitter (`src/emit_spine.ts`) is the one writer of
+Spine data, and `compile.ts` names no Spine shape, held by `MD02`/`MD03`. The core
+poses that document: bones with their inherit modes, slots and colours, every attachment kind's
 world vertices, deform, draw order, clipping, events, and the five constraint kinds; such
 that for **every spec in every corpus**, the pose our core produces from the compiled
 model equals the pose spine-core produces from the Spine backend's emission of the same
@@ -180,9 +184,14 @@ and each cut's diff boundary is a set of rows in [COMPILED_MODEL.md](COMPILED_MO
 | **1f** | the model written beside the Spine files (`rigc-compiled/1`, fixed key order), `A18` extended to it, and #379's rule made a control: `compile.ts` names no Spine shape | — |
 
 The `f32`/`keyTime` quantisation stays on the model side throughout (0a's first
-correction), and the two `open` rows (`filter`, `pma`) are decided at 1d. The tier of
-each cut is decided when it is briefed: 1a, 1b and 1f are closed by their rows; 1c and
-1e are where the judgement sits.
+correction), and the two `open` rows (`filter`, `pma`) are decided at 1d. Every cut landed on 2026-09-29 — 1a #916, 1b #918, 1c #920, 1d #923, 1e #924, 1f #927 —
+each byte-identical on the tree's 19 recipes and on a private corpus of 14 production
+rigs, each on the first run after its refactor, each briefed to an Opus squad from the
+census rows; what each cut found that the brief or the census had wrong is in its PR.
+The 19 recipes proved blind to most of the keys the later cuts moved (a second skin,
+linked meshes, event payloads, most constraint fields, slider and sequence timelines),
+so each cut also holds those with probe rigs; a probe corpus that reaches every key is
+a card of its own.
 
 ## 7. What this page does not change
 
