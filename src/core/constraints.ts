@@ -2,12 +2,13 @@
  * Construct 5 of the core, first cut (issue #938, step 2e-i of issue #380):
  * the update order, and the two constraint kinds that move bones only by
  * what the bones and their target say — `ik` and `transform` — at the setup
- * pose and at a sample time, with their timelines. The third cut (2e-iii)
- * adds `physics` under `Physics.none` (`./constraints_physics.ts`: it applies
- * nothing) and `slider` (`./constraints_slider.ts`), each one more step of
- * the update loop below; `path` is the second cut's, and until it lands a
- * document declaring one has no bones from the core, the reason naming the
- * kind (`constraintsAbsentWhy`).
+ * pose and at a sample time, with their timelines. The second cut (issue
+ * #938, step 2e-ii) adds `path`, whose record, walk and solver are
+ * `./constraints_path.ts`'s; the third cut (2e-iii) adds `physics` under
+ * `Physics.none` (`./constraints_physics.ts`: it applies nothing) and
+ * `slider` (`./constraints_slider.ts`). Each is one more step of the update
+ * loop below, so every constraint kind is posed; what the core still cannot
+ * pose exactly leaves the bones out by name (`constraintsAbsentWhy`).
  *
  * Every rule below was measured by posing hand-written skeletons through
  * `tools/pose_oracle.ts dump` (spine-core 4.3.13, `--skin all`,
@@ -51,9 +52,18 @@
  *   child with the parent (the child's world rotation 180°); in the other
  *   order, 90°.
  * - A constraint with `skin: true` is not applied under `--skin all`, whether
- *   a skin lists it or not; one whose target, source or constrained bone is
- *   inactive is not applied (measured on an ik with its target skin-required
- *   and named by no skin: the bone did not turn).
+ *   a skin lists it or not; an ik or transform whose target, source or
+ *   constrained bone is inactive is not applied (measured on an ik with its
+ *   target skin-required and named by no skin: the bone did not turn); a
+ *   path constraint is applied exactly when its slot's bone is active
+ *   (`./constraints_path.ts`, *Which constraints run*).
+ * - A path constraint moves its bones in world space, as a world-space
+ *   transform does, and reads the bones as the earlier constraints left
+ *   them — except its slot bone's world, which the offset's sign reads as
+ *   the runtime last set it: its update order is built before it poses, and
+ *   a weighted path does not ask for its slot bone (`slotBonePlan`,
+ *   *Which slot bone* there). This is the one place the order the runtime
+ *   builds is observable: ik and transform ask for every bone they read.
  *
  * ## Reading local values back from a world transform (`localFromWorld`)
  *
@@ -260,6 +270,7 @@ import type { ModelBone } from '../model.ts';
 import { modeMatrix, RUNTIME_PI, worldTransforms, type CoreInheritMode, type CoreWorld } from './world.ts';
 import { channelAt, keyIndexAt, type CoreCurve, type CoreKey } from './animation.ts';
 import type { CompiledDocument, CoreConstraintKind } from './index.ts';
+import { readPathTimelines, slotBonePlan, solvePath, type CorePathRecord, type CorePathTimelines, type SlotBoneEvent } from './constraints_path.ts';
 import { physicsTimelineCount, type CorePhysicsRecord } from './constraints_physics.ts';
 import { applySlider, posedSlider, readSliderTimelines, sliderBonesWhy, type CoreSliderRecord, type CoreSliderTimeline, type SliderApplication } from './constraints_slider.ts';
 
@@ -267,7 +278,7 @@ const DEG = 180 / RUNTIME_PI;
 const RAD = RUNTIME_PI / 180;
 
 /** The kinds this cut poses. */
-export const ADMITTED_CONSTRAINT_KINDS: readonly CoreConstraintKind[] = ['ik', 'transform', 'physics', 'slider'];
+export const ADMITTED_CONSTRAINT_KINDS: readonly CoreConstraintKind[] = ['ik', 'transform', 'path', 'physics', 'slider'];
 
 /** A transform constraint's six properties, in the order its timeline's channels run. */
 export const TRANSFORM_PROPERTIES = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'] as const;
@@ -334,7 +345,7 @@ export interface CoreTransformRecord {
   skin: boolean;
 }
 
-export type CoreConstraintRecord = CoreIkRecord | CoreTransformRecord | CorePhysicsRecord | CoreSliderRecord;
+export type CoreConstraintRecord = CoreIkRecord | CoreTransformRecord | CorePathRecord | CorePhysicsRecord | CoreSliderRecord;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -495,10 +506,12 @@ export interface CoreIkKey extends CoreKey {
   flags: { bendPositive: boolean; compress: boolean; stretch: boolean };
 }
 
-/** One animation's ik and transform timelines, by constraint name, in the animation's order. */
+/** One animation's ik, transform and path timelines, by constraint name, in the animation's order. */
 export interface CoreConstraintTimelines {
   ik: Array<{ name: string; keys: CoreIkKey[] }>;
   transform: Array<{ name: string; keys: CoreKey[] }>;
+  /** The path constraints' timelines (`./constraints_path.ts`). */
+  path: CorePathTimelines[];
   /** How many physics timelines the animation holds — they pose nothing under `Physics.none` (`./constraints_physics.ts`). */
   physics: number;
   /** The slider timelines (`./constraints_slider.ts`). */
@@ -525,17 +538,18 @@ function keyCurve(raw: Record<string, unknown>, channels: number, last: boolean,
 }
 
 /**
- * The ik and transform timelines of one animation record's `constraints`,
- * read: each names a declared constraint of its kind, its keys strictly
- * increase in time, each key carries only the fields the parser reads for
- * its kind; the physics timelines are counted (they pose nothing under
- * `Physics.none`) and the slider timelines read by `./constraints_slider.ts`.
- * Path timelines are a later cut and read by their key times only
- * (`./animation.ts`).
+ * The ik, transform and path timelines of one animation record's
+ * `constraints`, read: each names a declared constraint of its kind, its
+ * keys strictly increase in time, each key carries only the fields the
+ * parser reads for its kind (the path's, `readPathTimelines` in
+ * `./constraints_path.ts`); the physics timelines are counted (they pose
+ * nothing under `Physics.none`) and the slider timelines read by
+ * `./constraints_slider.ts`.
  */
 export function readConstraintTimelines(value: unknown, label: string, declared: ReadonlyArray<{ kind: CoreConstraintKind; name: string }>, problems: string[]): CoreConstraintTimelines {
-  const out: CoreConstraintTimelines = { ik: [], transform: [], physics: 0, slider: [] };
+  const out: CoreConstraintTimelines = { ik: [], transform: [], path: [], physics: 0, slider: [] };
   if (!isRecord(value)) return out;
+  out.path = readPathTimelines(value.path, label, new Set(declared.filter((c) => c.kind === 'path').map((c) => c.name)), problems);
   out.physics = physicsTimelineCount(value.physics);
   out.slider = readSliderTimelines(value.slider, label, declared, problems);
   for (const kind of ['ik', 'transform'] as const) {
@@ -604,6 +618,19 @@ export function posedRecords(records: readonly CoreConstraintRecord[], timelines
   return records.map((r): CoreConstraintRecord => {
     if (timelines === null || r.kind === 'physics') return r;
     if (r.kind === 'slider') return posedSlider(r, timelines.slider, t, plant);
+    if (r.kind === 'path') {
+      const tl = timelines.path.find((x) => x.name === r.name);
+      if (tl === undefined) return r;
+      const out = { ...r };
+      for (const [kind, fields] of [['position', ['position']], ['spacing', ['spacing']], ['mix', ['mixRotate', 'mixX', 'mixY']]] as const) {
+        const keys = tl[kind];
+        if (keys === undefined) continue;
+        const i = search(keys, t);
+        if (i < 0) continue;
+        fields.forEach((f, c) => (out[f] = channel(keys, i, c, t)));
+      }
+      return out;
+    }
     if (r.kind === 'ik') {
       const tl = timelines.ik.find((x) => x.name === r.name);
       if (tl === undefined) return r;
@@ -1040,7 +1067,8 @@ function solveTransform(state: SolverState, c: CoreTransformRecord): { changed: 
 /** Why a constraint is not applied under `--skin all` (the header's measured rule), or null when it is. */
 function inactiveWhy(state: SolverState, c: CoreConstraintRecord): string | null {
   if (c.skin) return 'skin';
-  const named = c.kind === 'ik' ? [...c.bones, c.target] : c.kind === 'transform' ? [...c.bones, c.source] : c.kind === 'slider' ? (c.bone === null ? [] : [c.bone]) : [c.bone];
+  // A path constraint is active when its slot's bone is (`./constraints_path.ts`, *Which constraints run*); every other kind when every bone it names is.
+  const named = c.kind === 'path' ? [c.slotBone] : c.kind === 'ik' ? [...c.bones, c.target] : c.kind === 'transform' ? [...c.bones, c.source] : c.kind === 'slider' ? (c.bone === null ? [] : [c.bone]) : [c.bone];
   return named.every((n) => state.active.has(n)) ? null : 'inactive bone';
 }
 
@@ -1053,46 +1081,117 @@ export type ConstraintPlant = (records: CoreConstraintRecord[]) => CoreConstrain
  * `worldTransforms` posed them — the header's update order — and the world
  * transforms returned.
  */
-export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap<string, CoreWorld>, active: ReadonlySet<string>, records: readonly CoreConstraintRecord[], applied?: SliderApplication[]): Map<string, CoreWorld> {
+export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap<string, CoreWorld>, active: ReadonlySet<string>, records: readonly CoreConstraintRecord[], previous: ReadonlyMap<string, CoreWorld> | null = null, applied?: SliderApplication[]): Map<string, CoreWorld> {
   const state: SolverState = { bones: bones.map((b) => ({ ...b })), index: new Map(bones.map((b, i) => [b.name, i])), world: new Map(world), active };
-  for (const c of records) {
-    // Under Physics.none a physics constraint applies nothing (`./constraints_physics.ts`).
-    if (c.kind === 'physics' || inactiveWhy(state, c) !== null) continue;
-    let changed: string[];
+  const skipped = new Set<number>();
+  records.forEach((c, i) => {
+    if (inactiveWhy(state, c) !== null) skipped.add(i);
+  });
+  // A path constraint's offset reads its slot bone's world as the runtime last brought it up to date (`./constraints_path.ts`, *Which slot bone*).
+  const plan = records.some((c) => c.kind === 'path') ? slotBonePlan(bones, active, records, skipped) : new Map<number, SlotBoneEvent | null>();
+  const snapshots = new Map<number, CoreWorld>();
+  const snap = (i: number, when: 'before' | 'after'): void => {
+    for (const [k, e] of plan) if (e !== null && e.at === i && e.when === when && !(k === i && when === 'before')) snapshots.set(k, { ...(state.world.get((records[k] as CorePathRecord).slotBone) as CoreWorld) });
+  };
+  for (let i = 0; i < records.length; i++) {
+    const c = records[i];
+    snap(i, 'before');
+    if (skipped.has(i)) continue;
+    let changed: string[] = [];
     let inWorld: string[] = [];
-    if (c.kind === 'slider') {
+    if (c.kind === 'physics') {
+      // Under Physics.none a physics constraint applies nothing (`./constraints_physics.ts`).
+    } else if (c.kind === 'slider') {
       changed = applySlider(state, c, applied);
     } else if (c.kind === 'ik') {
-      if (c.mix === 0) continue;
-      changed = c.bones.length === 1 ? solveOne(state, c) : solveTwo(state, c);
+      if (c.mix !== 0) changed = c.bones.length === 1 ? solveOne(state, c) : solveTwo(state, c);
+    } else if (c.kind === 'path') {
+      const e = plan.get(i) ?? null;
+      const stale = previous === null ? { a: 0, b: 0, c: 0, d: 0, worldX: 0, worldY: 0 } : (previous.get(c.slotBone) as CoreWorld);
+      const slotWorld = (e !== null && e.at === i) ? (state.world.get(c.slotBone) as CoreWorld) : e !== null ? (snapshots.get(i) as CoreWorld) : stale;
+      ({ changed, inWorld } = solvePath(state, c, slotWorld));
     } else {
       ({ changed, inWorld } = solveTransform(state, c));
     }
-    if (changed.length === 0) continue;
-    for (const name of inWorld) {
-      const b = bone(state, name);
-      localFromWorld(b, parentWorld(state, b), state.world.get(name) as CoreWorld);
-    }
-    const below = new Set(changed);
-    const keep = new Set(inWorld);
-    for (const b of state.bones) {
-      if (b.parent !== undefined && below.has(b.parent)) below.add(b.name);
-      if (below.has(b.name) && !keep.has(b.name)) poseBone(state, b);
-    }
+    if (changed.length > 0) repose(state, changed, inWorld);
+    snap(i, 'after');
   }
   return state.world;
 }
 
+/** After a constraint: the bones it moved in world space read back into local values, and every bone below one it moved posed again (the header's update order). */
+function repose(state: SolverState, changed: readonly string[], inWorld: readonly string[]): void {
+  for (const name of inWorld) {
+    const b = bone(state, name);
+    localFromWorld(b, parentWorld(state, b), state.world.get(name) as CoreWorld);
+  }
+  const below = new Set(changed);
+  const keep = new Set(inWorld);
+  for (const b of state.bones) {
+    if (b.parent !== undefined && below.has(b.parent)) below.add(b.name);
+    if (below.has(b.name) && !keep.has(b.name)) poseBone(state, b);
+  }
+}
+
+/**
+ * The slot bones a path constraint's offset reads from the PREVIOUS pass —
+ * those the runtime has not brought up to date in this one by the time the
+ * constraint runs (`./constraints_path.ts`, *Which slot bone*) — named with
+ * their constraint. Only a constraint with an offset reads its slot bone.
+ */
+export function previousPassSlotBones(doc: CompiledDocument, active: ReadonlySet<string>): Array<{ constraint: string; bone: string }> {
+  const records = doc.constraints.flatMap((c) => (c.record === undefined ? [] : [c.record]));
+  if (!records.some((r) => r.kind === 'path')) return [];
+  const state: SolverState = { bones: [...doc.bones], index: new Map(doc.bones.map((b, i) => [b.name, i])), world: new Map(), active };
+  const skipped = new Set<number>();
+  records.forEach((c, i) => {
+    if (inactiveWhy(state, c) !== null) skipped.add(i);
+  });
+  const out: Array<{ constraint: string; bone: string }> = [];
+  for (const [k, e] of slotBonePlan(doc.bones, active, records, skipped)) {
+    const r = records[k] as CorePathRecord;
+    if (e === null && r.offsetRotation !== 0) out.push({ constraint: r.name, bone: r.slotBone });
+  }
+  return out;
+}
+
+/**
+ * Why an animation's bones cannot be posed by this cut though the setup's
+ * can, or null: a path constraint's slot whose attachment an animation keys,
+ * or a path attachment an animation deforms — the curve would not be the one
+ * the setup reads, and neither is admitted (the attachment and deform
+ * timelines are item 4's later groups).
+ */
+export function pathAnimationsWhy(doc: CompiledDocument): string | null {
+  const found: string[] = [];
+  const paths = doc.constraints.flatMap((c) => (c.record?.kind === 'path' ? [c.record] : []));
+  for (const a of doc.animations) {
+    for (const r of paths) {
+      if (a.timelines.slots.some((s) => s.name === r.slot && s.timelines.some((t) => t.kind === 'attachment'))) found.push(`animation "${a.name}" keys the attachment of slot "${r.slot}", which path constraint "${r.name}" walks`);
+    }
+    for (const d of a.deforms) {
+      const [skin, slot, att] = d.split('/');
+      const g = doc.skins.find((k) => k.name === skin)?.attachments[slot]?.[att]?.geometry;
+      if (g?.kind === 'path') found.push(`animation "${a.name}" deforms path attachment "${att}" (skin "${skin}", slot "${slot}")`);
+    }
+  }
+  return found.length === 0 ? null : `${found.join('; ')} — a path constraint then walks a curve other than the setup's, and attachment and deform timelines are not admitted (item 4)`;
+}
+
 /**
  * Why a document's bones cannot be posed by this cut, or null when they can:
- * it declares a constraint of a kind not admitted (`ADMITTED_CONSTRAINT_KINDS`),
- * named with the counts of every kind it declares, or a slider whose
- * animation keys a constraint timeline (`sliderBonesWhy`).
+ * a path constraint walks a slot whose setup placeholder skins fill with
+ * different curves (`CorePathRecord.unresolved`), it declares a constraint
+ * of a kind not admitted (`ADMITTED_CONSTRAINT_KINDS` — since the path cut,
+ * none is left), named with the counts of every kind it declares, or a
+ * slider whose animation keys a constraint timeline (`sliderBonesWhy`).
  */
 export function constraintsAbsentWhy(doc: CompiledDocument): string | null {
+  const unresolved = doc.constraints.flatMap((c) => (c.record?.kind === 'path' && c.record.unresolved !== null ? [c.record.unresolved] : []));
+  if (unresolved.length > 0) return unresolved.join('; ');
   const later = doc.constraints.filter((c) => !ADMITTED_CONSTRAINT_KINDS.includes(c.kind));
   if (later.length === 0) return sliderBonesWhy(doc);
   const kinds = [...new Set(doc.constraints.map((c) => c.kind))];
   const laterKinds = [...new Set(later.map((c) => c.kind))];
-  return `the document declares ${kinds.map((k) => `${k} ×${doc.constraints.filter((c) => c.kind === k).length}`).join(', ')}, and ${laterKinds.join(', ')} constraints are not admitted (item 5, cut 2e-ii; ik, transform, physics and slider are): the oracle applies them`;
+  return `the document declares ${kinds.map((k) => `${k} ×${doc.constraints.filter((c) => c.kind === k).length}`).join(', ')}, and ${laterKinds.join(', ')} constraints are not admitted (item 5; ${ADMITTED_CONSTRAINT_KINDS.join(', ')} are): the oracle applies them`;
 }
