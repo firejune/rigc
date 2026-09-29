@@ -66122,10 +66122,10 @@ function runPoseOracleSuite(): number {
 
 // Its own statement, so the suite lands as one hunk (the convention the
 // slider-reader suite states at its imports).
-import { activeBones, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED, readModel, type CompiledDocument, type SetupEvaluator } from './src/core/index.ts';
+import { activeBones, CORE_DUMPER, CoreInputError, foldInheritMode, NOT_ADMITTED, readColour, readModel, type CompiledDocument, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, type OracleDocument } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
-import { buildRecipes, censusOf, gateBuild, gateBuilt, gateVerdict, reachLines, type BuiltRow } from './tools/core_gate.ts';
+import { buildRecipes, censusOf, gateBuild, gateBuilt, gateVerdict, reachLines, slotCensusOf, slotReachLines, type BuiltRow } from './tools/core_gate.ts';
 import { modeMatrix, worldTransforms, type CoreInheritMode } from './src/core/world.ts';
 
 /** What `readModel` refuses `text` with, or '' when it reads it. */
@@ -66216,7 +66216,7 @@ function srcPopulation(root: string): Map<string, string> {
 
 /** The core suite: `src/core/`'s reader and setup pose, the second dumper in `tools/pose_oracle.ts`, compare's absences, the gate's instrument and the tree rule. */
 function runCoreSuite(): number {
-  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones as pose-oracle/1 (issue #925) ──');
+  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones and slots as pose-oracle/1 (issues #925, #928) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -66315,13 +66315,14 @@ function runCoreSuite(): number {
         if (JSON.stringify(rows.map((r) => r[0])) !== JSON.stringify(free.model.bones.map((b) => b.name))) probes.push('setup.bones is not every bone in the document\'s order');
         if (JSON.stringify(rows.map((r) => r[8])) !== JSON.stringify(free.model.bones.map((b) => b.parent ?? null))) probes.push('a setup row\'s parent is not the document\'s');
         if (rows.some((r) => r[7] !== 1)) probes.push('a bone of a rig with no skin-required bone reads inactive');
+        if (JSON.stringify((doc.setup.slots ?? []).map((r) => r[0])) !== JSON.stringify(free.model.slots.map((x) => x.name))) probes.push('setup.slots is not every slot in the document\'s order');
         const nulls = ORACLE_BLOCKS.filter((b) => blockOf(doc as OracleDocument, b) === null);
         const named = (doc.absent ?? []).map((x) => x[0]);
         if (JSON.stringify(nulls) !== JSON.stringify(NOT_ADMITTED.map((x) => x[0])) || JSON.stringify(named) !== JSON.stringify(nulls)) {
           probes.push(`absent blocks [${nulls.join(', ')}], named [${named.join(', ')}], not the ${NOT_ADMITTED.length} the core has not admitted`);
         }
         if (JSON.stringify(doc.bones) !== JSON.stringify(free.model.bones.map((b) => b.name)) || JSON.stringify(doc.slots) !== JSON.stringify(free.model.slots.map((s) => [s.name, s.bone]))) probes.push('the rosters are not the document\'s');
-        detail = `${free.name}: ${statSync(outs[0]).size}-byte dump twice to the byte, ${rows.length} setup bone(s) in order, ${nulls.length} block(s) null and each named in \`absent\``;
+        detail = `${free.name}: ${statSync(outs[0]).size}-byte dump twice to the byte, ${rows.length} setup bone(s) and ${(doc.setup.slots ?? []).length} setup slot(s) in order, ${nulls.length} block(s) null and each named in \`absent\``;
       }
       const constrained = coreDump(held.model, { phase: 'grid', samples: ORACLE_DEFAULT_SAMPLES, skin: 'all', physics: 'none', dt: null });
       const why = constrained.absent?.find((x) => x[0] === 'setup.bones')?.[1] ?? '';
@@ -66503,7 +66504,7 @@ function runCoreSuite(): number {
   const built = buildRecipes(recipes, join(work, 'gate'), root);
   const rows = gateBuilt(built);
   const examplesHole = notes.find((l) => l.startsWith('HOLE')) ?? null;
-  const compared = rows.filter((r) => r.verdict === 'IDENTICAL' || r.verdict === 'DIFF');
+  const compared = rows.filter((r) => r.blocks !== null && r.blocks['setup.bones'].verdict !== 'SKIP');
   /** A non-root bone of `mode` in a built row's model — the rows a plant in that mode must turn red. */
   const usesMode = (r: BuiltRow, mode: CoreInheritMode): boolean => {
     const path = join(r.out, MODEL_DOCUMENT_FILE);
@@ -66521,15 +66522,16 @@ function runCoreSuite(): number {
   {
     const probes: string[] = [];
     for (const r of rows) {
-      if (r.verdict === 'DIFF' || r.verdict === 'REFUSED') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
-      if (r.verdict === 'IDENTICAL' && (r.worstXy !== 0 || r.worstM !== 0 || r.boneSamples === 0)) probes.push(`${r.name}: IDENTICAL within tolerance but not exact (Δxy ${r.worstXy}, Δabcd ${r.worstM}) or over no bone`);
+      const bones = r.blocks?.['setup.bones'];
+      if (bones === undefined || bones.verdict === 'DIFF') probes.push(`${r.name}: setup.bones ${bones?.verdict ?? r.verdict} — ${bones?.why ?? r.why}`);
+      if (bones?.verdict === 'IDENTICAL' && (r.worstXy !== 0 || r.worstM !== 0 || r.boneSamples === 0)) probes.push(`${r.name}: IDENTICAL within tolerance but not exact (Δxy ${r.worstXy}, Δabcd ${r.worstM}) or over no bone`);
     }
     for (const b of built) {
       const row = rows.find((r) => r.name === b.name);
       const path = join(b.out, MODEL_DOCUMENT_FILE);
       if (row === undefined || !existsSync(path)) continue;
       const declares = readModel(readFileSync(path, 'utf8')).constraints.length > 0;
-      if (declares !== (row.verdict === 'SKIP')) probes.push(`${b.name}: ${declares ? 'declares a constraint and was not skipped' : 'declares none and was skipped'}`);
+      if (declares !== (row.blocks?.['setup.bones'].verdict === 'SKIP')) probes.push(`${b.name}: ${declares ? 'declares a constraint and was not skipped' : 'declares none and was skipped'}`);
     }
     if (compared.length === 0) probes.push('no row was compared, so the gate held nothing');
     const verdict = gateVerdict(rows);
@@ -66592,7 +66594,7 @@ function runCoreSuite(): number {
     if (JSON.stringify(activity) !== JSON.stringify(expected)) probes.push(`spine-core's activity is ${JSON.stringify(activity)}, not the measured rule's ${JSON.stringify(expected)}`);
     // Each mode's plant turns the probe red at that mode's first bone.
     for (const mode of MODES) {
-      const p = compareDumps(spine, coreDump(probeModel, options, planted(mode)), { xy: 0, m: 0 });
+      const p = compareDumps(spine, coreDump(probeModel, options, { evaluate: planted(mode) }), { xy: 0, m: 0 });
       const named = /bone "([^"]+)"/.exec(p.first ?? '')?.[1];
       const namedMode = bones.find((b) => b.name === named)?.inherit ?? (named === undefined || named === 'root' ? undefined : 'normal');
       if (p.identical || namedMode !== mode) probes.push(`the ${mode} plant read ${p.identical ? 'IDENTICAL' : p.first}`);
@@ -66618,7 +66620,7 @@ function runCoreSuite(): number {
         holes.push(mode);
         continue;
       }
-      const red = gateBuilt(built.filter((b) => compared.some((r) => r.name === b.name)), planted(mode));
+      const red = gateBuilt(built.filter((b) => compared.some((r) => r.name === b.name)), { evaluate: planted(mode) });
       const turned = red.filter((r) => r.verdict === 'DIFF').map((r) => r.name);
       if (JSON.stringify(turned) !== JSON.stringify(using)) probes.push(`the ${mode} plant turned [${turned.join(', ')}] red; the rows using it are [${using.join(', ')}]`);
       reached.push(`${mode} ${turned.length}/${compared.length}`);
@@ -66631,6 +66633,385 @@ function runCoreSuite(): number {
       'issue #925\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the mode at all',
     );
     for (const mode of holes) console.log(`          ⚠️ HOLE: no compared recipe has a bone in ${mode}, so its plant has no corpus row to turn red — CO07's probe is the only reading of it`);
+  }
+
+  // --- CO09: readModel reads the slot records and refuses each plant by name --
+  {
+    const probes: string[] = [...buildProblems];
+    let count = 0;
+    if (free !== null) {
+      type Doc = Record<string, unknown> & {
+        slots: Array<Record<string, unknown>>;
+        skins: Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }>;
+        animations: Array<{ slots: Array<{ name: string }> }>;
+        constraints: Array<Record<string, unknown>>;
+      };
+      const plant = (edit: (doc: Doc) => void): string => {
+        const copy = JSON.parse(free.text) as Doc;
+        edit(copy);
+        return JSON.stringify(copy);
+      };
+      const firstTable = (d: Doc): Record<string, Record<string, unknown>> => Object.values(d.skins[0].attachments)[0];
+      const plants: Array<[string, string, string[]]> = [
+        ['a colour with a leading #', plant((d) => (d.slots[0].color = '#ff0000ff')), ['color is "#ff0000ff", not six or eight hex digits']],
+        ['a dark colour that is not hex', plant((d) => (d.slots[0].dark = 'zz0000')), ['dark is "zz0000", not six or eight hex digits']],
+        ['a colour of seven digits', plant((d) => (d.slots[0].color = 'ff80004')), ['color is "ff80004"']],
+        ['a skin table naming no slot', plant((d) => (d.skins[0].attachments.nowhere = {})), ['attachments["nowhere"]: "nowhere" is not a slot of this document']],
+        ['a record of no kind', plant((d) => (Object.values(firstTable(d))[0].kind = 'sprite')), ['kind is "sprite", none of']],
+        ['a field the record\'s kind does not write', plant((d) => {
+          const record = Object.values(firstTable(d))[0];
+          record.drawOrder = 1;
+        }), ['field "drawOrder" is not one this reader knows']],
+        ['a record name that is not a string', plant((d) => (Object.values(firstTable(d))[0].name = 7)), ['name is 7, not a non-empty string']],
+        ['an animation keying no slot', plant((d) => d.animations[0].slots.push({ name: 'nowhere' })), ['"nowhere" is not a slot of this document']],
+        ['a slider applying no animation', plant((d) => d.constraints.push({ kind: 'slider', name: 'planted', declaredIn: 'rig', animation: 'none' })), ['a slider\'s animation is "none", not an animation of this document']],
+      ];
+      for (const [label, text, expected] of plants) {
+        count++;
+        const refusal = coreRefusal(text);
+        if (!expected.every((e) => refusal.includes(e))) probes.push(`${label}: ${refusal === '' ? 'read' : `refused as "${refusal}"`}, not naming ${expected.map((e) => JSON.stringify(e)).join(' and ')}`);
+      }
+      const spellings = coreRefusal(plant((d) => {
+        d.slots[0].color = 'FF8000';
+        d.slots[0].dark = '10203040';
+      }));
+      if (spellings !== '') probes.push(`six upper-case digits of colour and eight of dark colour, both measured spellings, were refused: ${spellings}`);
+      if (free.model.skins.every((s) => Object.keys(s.attachments).length === 0)) probes.push(`${free.name}'s skins were read with no attachment table`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CO09_READ_MODEL_READS_THE_SLOT_RECORDS_AND_REFUSES_EACH_PLANT_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `${free?.name}'s document read with its skins' attachment tables; ${count} plants — a colour with a #, a dark colour not hex, seven digits, a table naming no slot, a record of no kind, a field its kind does not write, a record name that is not a string, an animation keying no slot, a slider applying no animation — each refused naming its path; six upper-case digits of colour and eight of dark colour read`),
+      'issue #928: the slots read colours, skins\' tables and which slots a slider\'s animation keys, so the reader holds those records to what the writer writes; a colour spelled any other way than six or eight hex digits is refused, because the runtime was measured to read such a spelling as something that is not a colour',
+    );
+  }
+
+  // Slot rows judged alone at tolerance 0: the spine-core dump against the core's with the bones left out.
+  const slotsAlone = (spine: OracleDump, core: OracleDocument): ReturnType<typeof compareDumps> =>
+    compareDumps(spine, { ...core, absent: [...(core.absent ?? []).filter((x) => x[0] !== 'setup.bones'), ['setup.bones', 'left out to judge the slots alone']], setup: { ...core.setup, bones: null } }, { xy: 0, m: 0 });
+  const ONE: OracleOptions = { phase: 'grid', samples: 1, skin: 'all', physics: 'none', dt: null };
+  const slotCompared = rows.filter((r) => r.blocks !== null && r.blocks['setup.slots'].verdict !== 'SKIP');
+
+  // --- CO10: every recipe poses its setup slots as spine-core does, the constrained ones included --
+  {
+    const probes: string[] = [];
+    let exact = 0;
+    let constrained = 0;
+    for (const r of rows) {
+      const v = r.blocks?.['setup.slots'];
+      if (v === undefined || v.verdict === 'DIFF') probes.push(`${r.name}: setup.slots ${v?.verdict ?? r.verdict} — ${v?.why ?? r.why}`);
+    }
+    for (const b of built) {
+      const row = rows.find((r) => r.name === b.name);
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      if (row === undefined || row.blocks === null || !existsSync(path)) continue;
+      const text = readFileSync(path, 'utf8');
+      const census = slotCensusOf(text);
+      const byConstruct = census.sliderKeysSlot > 0 || census.conflicting > 0;
+      const skipped = row.blocks['setup.slots'].verdict === 'SKIP';
+      if (byConstruct !== skipped) probes.push(`${b.name}: ${byConstruct ? 'a slider keys a slot, or skins disagree over a placeholder, and the slots were not skipped' : 'the slots were skipped with neither a slider keying a slot nor skins disagreeing'} (${row.blocks['setup.slots'].why})`);
+      if (skipped) continue;
+      const model = readModel(text, path);
+      if (row.slotRows !== model.slots.length) probes.push(`${b.name}: ${row.slotRows} slot row(s) compared of ${model.slots.length}`);
+      if (model.constraints.length > 0) constrained++;
+      // The gate reads at the default tolerance; the slots are held here at 0 as well.
+      const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), ONE);
+      const c = slotsAlone(spine, coreDump(model, ONE));
+      if (c.identical) exact++;
+      else probes.push(`${b.name}: setup.slots at tolerance 0 — ${c.first}`);
+    }
+    if (slotCompared.length === 0) probes.push('no row\'s setup.slots was compared, so the gate held nothing');
+    if (constrained === 0) probes.push('no row declaring a constraint had its slots compared, so the claim that ik, transform, path and physics leave the slots alone held nothing');
+    const held = probes.length === 0;
+    say(
+      'CO10_EVERY_RECIPE_POSES_ITS_SETUP_SLOTS_AS_SPINE_CORE_DOES_THE_CONSTRAINED_ONES_INCLUDED',
+      held,
+      probeDetail(held, probes, `${gateVerdict(rows).line}: ${slotCompared.reduce((s, r) => s + r.slotRows, 0)} slot row(s) over ${slotCompared.length} recipe(s), exact at tolerance 0 on ${exact}, ${constrained} of them declaring a constraint; the skipped rows exactly the ones where a slider keys a slot, each naming it`),
+      'issue #928, the second construct of #380 §5 admitted: every slot\'s attachment, colour, dark colour and region path at the setup pose under --skin all, against spine-core\'s dump of the same build. An ik, transform, path or physics constraint moves bones and not slots, so a constrained recipe is judged here; a slider applies an animation, and one whose animation keys a slot is left out by name (CO13)',
+    );
+    for (const line of slotReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
+  }
+
+  /** A `rigc-compiled/1` document from its bones, slots, skins, constraints and animations, every other section empty. */
+  const modelOf = (parts: { bones: unknown[]; slots: unknown[]; skins: unknown[]; constraints?: unknown[]; animations?: unknown[] }): string =>
+    JSON.stringify({
+      spec: 'rigc-compiled/1', bones: parts.bones, slots: parts.slots, skins: parts.skins, constraints: parts.constraints ?? [], events: [], animations: parts.animations ?? [],
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+    });
+  /** An atlas text of 4x4 regions of the given names on one page. */
+  const atlasOf = (regions: readonly string[]): string => `page.png\n\tsize: 64, 64\n${regions.map((n) => `${n}\n\tbounds: 0, 0, 4, 4\n`).join('')}`;
+  /** The core's slot resolution, planted: the placeholder looked up in the model's FIRST skin alone. */
+  const firstSkinOnly = (doc: CompiledDocument, slot: ModelSlot): ShownResolution => {
+    const skin = doc.skins[0];
+    const record = slot.setup === null || skin === undefined ? undefined : skin.attachments[slot.name]?.[slot.setup];
+    return record === undefined ? null : { skin: skin.name, placeholder: slot.setup as string, record };
+  };
+  /** The planted rule the file-order measurement rejects: the LAST skin in the MODEL's order that fills the placeholder, no agreement check. */
+  const lastInModelOrder = (doc: CompiledDocument, slot: ModelSlot): ShownResolution => {
+    if (slot.setup === null) return null;
+    const filling = doc.skins.filter((k) => k.attachments[slot.name]?.[slot.setup as string] !== undefined);
+    const skin = filling[filling.length - 1];
+    return skin === undefined ? null : { skin: skin.name, placeholder: slot.setup, record: skin.attachments[slot.name][slot.setup] };
+  };
+  /** The core's colour reading, planted: the red channel over 256 rather than 255. */
+  const redOver256 = (hex: string): [number, number, number, number] => {
+    const [, g, b, a] = readColour(hex);
+    return [Number.parseInt(hex.slice(0, 2), 16) / 256, g, b, a];
+  };
+  const hex2 = (v: number): string => (v % 256).toString(16).padStart(2, '0');
+
+  // --- CO11: a hand-written probe poses the skin rule, the colours and the paths as spine-core does --
+  {
+    const probes: string[] = [];
+    // One table, written once as the Spine file and once as the model: per slot its bone, setup placeholder,
+    // colours, and per skin the record filling it (Spine keys; the model's are derived below).
+    type Rec = { kind: 'region' | 'mesh' | 'linkedmesh' | 'boundingbox' | 'clipping' | 'path'; name?: string; path?: string; color?: string; sequence?: { count: number; start: number } };
+    type Row = { slot: string; bone?: string; setup: string | null; color?: string; dark?: string; fill: Record<string, Record<string, Rec>> };
+    const table: Row[] = [
+      { slot: 'nullSetup', setup: null, fill: { default: { r: { kind: 'region' } } } },
+      { slot: 'defaultOnly', setup: 'r', fill: { default: { r: { kind: 'region' } } } },
+      { slot: 'namedOnly', setup: 'p', fill: { s1: { p: { kind: 'region', name: 'r' } } } },
+      { slot: 'agreeing', setup: 'p', fill: { s1: { p: { kind: 'region', name: 'r' } }, s2: { p: { kind: 'region', name: 'r' } } } },
+      { slot: 'unfilled', setup: 'nothing', fill: { default: { r: { kind: 'region' } } } },
+      { slot: 'pathed', setup: 'p', fill: { default: { p: { kind: 'region', path: 'other' } } } },
+      { slot: 'named', setup: 'p', fill: { default: { p: { kind: 'region', name: 'n' } } } },
+      { slot: 'meshPathed', setup: 'm', fill: { default: { m: { kind: 'mesh', path: 'mp' } } } },
+      { slot: 'linked', setup: 'l', fill: { default: { l: { kind: 'linkedmesh', path: 'lm' } } } },
+      { slot: 'linkedNamed', setup: 'l', fill: { default: { l: { kind: 'linkedmesh', name: 'named' } } } },
+      { slot: 'box', setup: 'b', fill: { default: { b: { kind: 'boundingbox' } } } },
+      { slot: 'clip', setup: 'c', fill: { default: { c: { kind: 'clipping' } } } },
+      { slot: 'pathAttachment', setup: 'k', fill: { default: { k: { kind: 'path' } } } },
+      { slot: 'sequenced', setup: 'q', fill: { default: { q: { kind: 'region', path: 'seq', sequence: { count: 2, start: 1 } } } } },
+      { slot: 'tintedRecord', setup: 'r', fill: { default: { r: { kind: 'region', color: '00000080' } } } },
+      { slot: 'onInactiveBone', bone: 'req', setup: 'r', fill: { default: { r: { kind: 'region' } } } },
+      { slot: 'upperCase', setup: 'r', color: 'FF8000C0', fill: { default: { r: { kind: 'region' } } } },
+      { slot: 'sixDigits', setup: 'r', color: 'ff8000', fill: { default: { r: { kind: 'region' } } } },
+      { slot: 'darkEight', setup: 'r', dark: '10203040', fill: { default: { r: { kind: 'region' } } } },
+      { slot: 'darkSix', setup: 'r', color: '80808080', dark: '102030', fill: { default: { r: { kind: 'region' } } } },
+    ];
+    // Every byte value in every channel: slot i states light bytes 4i..4i+3 and dark bytes 3i..3i+2.
+    for (let i = 0; i < 86; i++) table.push({ slot: `sweep${i}`, setup: null, color: [0, 1, 2, 3].map((k) => hex2(4 * i + k)).join(''), dark: [0, 1, 2].map((k) => hex2(3 * i + k)).join(''), fill: {} });
+    const SKINS = ['default', 's1', 's2'];
+    const meshKeys = { uvs: [0, 0, 1, 0, 1, 1], triangles: [0, 1, 2], hull: 3, width: 4, height: 4 };
+    const spineRecord = (rec: Rec): Record<string, unknown> => {
+      const base = { ...(rec.name === undefined ? {} : { name: rec.name }), ...(rec.path === undefined ? {} : { path: rec.path }), ...(rec.color === undefined ? {} : { color: rec.color }) };
+      switch (rec.kind) {
+        case 'region':
+          return { ...base, width: 4, height: 4, ...(rec.sequence === undefined ? {} : { sequence: rec.sequence }) };
+        case 'mesh':
+          return { ...base, type: 'mesh', vertices: [0, 0, 4, 0, 4, 4], ...meshKeys };
+        case 'linkedmesh':
+          return { ...base, type: 'linkedmesh', source: 'm', slot: 'meshPathed', width: 4, height: 4 };
+        case 'boundingbox':
+        case 'clipping':
+          return { ...base, type: rec.kind, vertexCount: 3, vertices: [0, 0, 1, 0, 1, 1] };
+        case 'path':
+          return { ...base, type: 'path', vertexCount: 3, vertices: [0, 0, 1, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7], lengths: [1] };
+      }
+    };
+    const modelRecord = (rec: Rec): Record<string, unknown> => {
+      const named = { kind: rec.kind, ...(rec.name === undefined ? {} : { name: rec.name }) };
+      const pathed = { ...named, ...(rec.path === undefined ? {} : { path: rec.path }) };
+      switch (rec.kind) {
+        case 'region':
+          return { ...pathed, width: 4, height: 4, ...(rec.color === undefined ? {} : { color: rec.color }), ...(rec.sequence === undefined ? {} : { sequence: rec.sequence }) };
+        case 'mesh':
+          return { ...pathed, uvs: meshKeys.uvs, triangles: meshKeys.triangles, vertices: { weighted: false, xy: [0, 0, 4, 0, 4, 4] }, hull: 3, edges: [], width: 4, height: 4 };
+        case 'linkedmesh':
+          return { ...pathed, source: 'm', skin: 'default', slot: 'meshPathed', timelines: true, width: 4, height: 4 };
+        case 'boundingbox':
+        case 'clipping':
+          return { ...named, vertexCount: 3, vertices: { weighted: false, xy: [0, 0, 1, 0, 1, 1] } };
+        case 'path':
+          return { ...named, vertexCount: 3, vertices: { weighted: false, xy: [0, 0, 1, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7] }, lengths: [1] };
+      }
+    };
+    const skinTables = (make: (rec: Rec) => Record<string, unknown>): Array<[string, Record<string, Record<string, Record<string, unknown>>>]> =>
+      SKINS.map((skin) => [skin, Object.fromEntries(table.filter((t) => t.fill[skin] !== undefined).map((t) => [t.slot, Object.fromEntries(Object.entries(t.fill[skin]).map(([ph, rec]) => [ph, make(rec)]))]))]);
+    const bones = [{ name: 'root' }, { name: 'req', parent: 'root' }];
+    const skeletonText = JSON.stringify({
+      skeleton: { spine: '4.3.13' },
+      bones: [bones[0], { ...bones[1], skin: true }],
+      slots: table.map((t) => ({ name: t.slot, bone: t.bone ?? 'root', ...(t.setup === null ? {} : { attachment: t.setup }), ...(t.color === undefined ? {} : { color: t.color }), ...(t.dark === undefined ? {} : { dark: t.dark }) })),
+      skins: skinTables(spineRecord).map(([name, attachments]) => ({ name, attachments })),
+      animations: {},
+    });
+    const modelText = modelOf({
+      bones: [bones[0], { ...bones[1], skinRequired: true }],
+      slots: table.map((t) => ({ name: t.slot, bone: t.bone ?? 'root', setup: t.setup, ...(t.color === undefined ? {} : { color: t.color }), ...(t.dark === undefined ? {} : { dark: t.dark }) })),
+      skins: skinTables(modelRecord).map(([name, attachments]) => ({ name, bones: [], constraints: {}, attachments })),
+    });
+    const atlas = atlasOf(['r', 'n', 'other', 'mp', 'lm', 'named', 'seq1', 'seq2']);
+    let detail = '';
+    try {
+      const spine = dumpSkeleton(loadOracleData(skeletonText, atlas, 'the slot probe'), ONE);
+      const model = readModel(modelText, 'the slot probe');
+      const core = coreDump(model, ONE);
+      const c = compareDumps(spine, core, { xy: 0, m: 0 });
+      if (!c.identical || c.skipped.includes('setup.slots')) probes.push(`the probe read ${c.identical ? 'IDENTICAL' : `DIFF (${c.first})`}`);
+      // The rows the header states, read off spine-core's own dump — the measurement, held.
+      const want: Record<string, [string | null, string | null]> = {
+        nullSetup: [null, null], defaultOnly: ['r', 'r'], namedOnly: ['r', 'r'], agreeing: ['r', 'r'], unfilled: [null, null], pathed: ['p', 'other'], named: ['n', 'n'],
+        meshPathed: ['m', 'mp'], linked: ['l', 'lm'], linkedNamed: ['named', 'named'], box: ['b', null], clip: ['c', null], pathAttachment: ['k', null], sequenced: ['q', 'seq'],
+        tintedRecord: ['r', 'r'], onInactiveBone: ['r', 'r'],
+      };
+      for (const [slot, [shown, path]] of Object.entries(want)) {
+        const row = spine.setup.slots.find((s) => s[0] === slot);
+        if (row === undefined || row[1] !== shown || row[7] !== path) probes.push(`spine-core shows ${JSON.stringify(row?.[1])} path ${JSON.stringify(row?.[7])} on "${slot}", not the header's ${JSON.stringify(shown)} path ${JSON.stringify(path)}`);
+      }
+      const tinted = spine.setup.slots.find((s) => s[0] === 'tintedRecord');
+      if (JSON.stringify(tinted?.slice(2, 7)) !== JSON.stringify([1, 1, 1, 1, null])) probes.push(`the record's own tint entered the slot's row: ${JSON.stringify(tinted)}`);
+      const six = spine.setup.slots.find((s) => s[0] === 'sixDigits');
+      if (six?.[5] !== 1) probes.push(`six digits of colour read alpha ${JSON.stringify(six?.[5])}, not 1`);
+      // Each plant turns the probe red at the slot it reaches first.
+      const plants: Array<[string, CorePlant, string]> = [
+        ['the placeholder resolved in the first skin alone', { shown: firstSkinOnly }, 'slot "namedOnly" shows "r" vs null'],
+        ['the red channel over 256', { colour: redOver256 }, 'slot "upperCase" colour Δ'],
+      ];
+      for (const [label, plant, expected] of plants) {
+        const p = compareDumps(spine, coreDump(model, ONE, plant), { xy: 0, m: 0 });
+        if (p.identical || !(p.first ?? '').includes(expected)) probes.push(`${label}: ${p.identical ? 'IDENTICAL' : p.first}, not naming ${JSON.stringify(expected)}`);
+      }
+      detail = `${table.length} slots — a null setup, a placeholder the default skin fills, one a named skin alone fills, one two skins fill alike, one no skin fills, a region's path and a region's name apart from its placeholder, a mesh's and a linked mesh's path, a linked mesh's name, a box, a clip and a path shown with no region, a sequence's path, a record's own tint, a slot on an inactive bone, colours in upper case and six digits, dark colours in six and eight, and 86 slots sweeping every byte in every channel — exact at tolerance 0 against spine-core, ${spine.setup.slots.length} slot row(s) and every row the header states read off the runtime's own dump; the first-skin plant named at "namedOnly", the channel plant at "upperCase"`;
+    } catch (err) {
+      probes.push(`the probe did not load or pose: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CO11_A_HAND_WRITTEN_PROBE_POSES_THE_SKIN_RULE_COLOURS_AND_PATHS_AS_SPINE_CORE_DOES',
+      held,
+      probeDetail(held, probes, detail),
+      'issue #928: the corpus carries one skin per recipe, no dark colour, no name or path apart from its placeholder, and shows no linked mesh, box or clip at setup, so each rule the core poses by is held on a skeleton written here, both as the Spine file and as the model, and posed by the runtime',
+    );
+  }
+
+  // --- CO12: several skins on one placeholder are the file's order, and a disagreement is left out by name --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    // The measurement itself: three skins filling one placeholder with three names, in three file orders.
+    const orders = [['default', 's1', 's2'], ['s2', 's1', 'default'], ['s1', 'default', 's2']];
+    const shownUnder = orders.map((order) => {
+      const skeleton = JSON.stringify({
+        skeleton: { spine: '4.3.13' }, bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root', attachment: 'p' }],
+        skins: order.map((name) => ({ name, attachments: { s: { p: { name: `${name}-name`, width: 4, height: 4 } } } })), animations: {},
+      });
+      return dumpSkeleton(loadOracleData(skeleton, atlasOf(['default-name', 's1-name', 's2-name']), 'the order probe'), ONE).setup.slots[0][1];
+    });
+    const lastListed = orders.map((o) => `${o[o.length - 1]}-name`);
+    if (JSON.stringify(shownUnder) !== JSON.stringify(lastListed)) probes.push(`three skins in three file orders showed [${shownUnder.join(', ')}], not the last listed [${lastListed.join(', ')}]`);
+    // Through the tree: skins zulu and alpha filling one placeholder, built, so the file's order is the emitter's.
+    const dir = join(work, 'skin-order');
+    mkdirSync(join(dir, 'export'), { recursive: true });
+    writeFileSync(join(dir, 'export', 'p.atlas'), `p.png\n\tsize: 16, 16\n\tfilter: Linear, Linear\n${['a', 'b', 'c'].map((n, i) => `${n}\n\tbounds: ${i * 4}, 0, 4, 4\n`).join('')}`);
+    new Plate(16, 16).writePng(join(dir, 'export', 'p.png'));
+    const reg = (name: string): Record<string, unknown> => ({ name, width: 4, height: 4 });
+    writeFileSync(join(dir, 'export', 'p.json'), JSON.stringify({
+      skeleton: { spine: '4.3.13', x: -8, y: -8, width: 16, height: 16 }, bones: [{ name: 'root' }],
+      slots: [{ name: 's', bone: 'root', attachment: 'p' }, { name: 't', bone: 'root', attachment: 'q' }],
+      skins: [{ name: 'default', attachments: { t: { q: reg('a') } } }, { name: 'zulu', attachments: { s: { p: reg('b') } } }, { name: 'alpha', attachments: { s: { p: reg('c') } } }],
+      animations: { idle: {} },
+    }));
+    const ingest = runCli(['ingest', join(dir, 'export', 'p.json'), '--art', 'none', '--out', join(dir, 'specs')]);
+    const build = ingest.status === 0 ? runCli(['build', '--rig', join(dir, 'specs', 'rig.json'), '--motion', join(dir, 'specs', 'motion.json'), '--atlas-in', join(dir, 'export', 'p.atlas'), '--out', join(dir, 'out')]) : ingest;
+    if (build.status !== 0) probes.push(`the three-skin probe did not build: exit ${build.status}, ${build.stderr.trim().slice(-300)}`);
+    else {
+      const out = join(dir, 'out');
+      const skeletonText = readFileSync(join(out, 'skeleton.json'), 'utf8');
+      const model = readModel(readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8'), 'the three-skin build');
+      const fileOrder = (JSON.parse(skeletonText) as { skins: Array<{ name: string }> }).skins.map((s) => s.name);
+      const modelOrder = model.skins.map((s) => s.name);
+      if (JSON.stringify(fileOrder) === JSON.stringify(modelOrder)) probes.push(`the file and the model list the skins alike [${fileOrder.join(', ')}], so the build shows nothing about whose order wins`);
+      const spine = dumpSkeleton(loadOracleData(skeletonText, readFileSync(join(out, 'skeleton.atlas'), 'utf8'), out), ONE);
+      const shown = spine.setup.slots.find((s) => s[0] === 's')?.[1];
+      if (shown !== 'b') probes.push(`spine-core shows ${JSON.stringify(shown)} on slot "s", not zulu's "b" (last in the file's order)`);
+      const core = coreDump(model, ONE);
+      const why = core.absent?.find((x) => x[0] === 'setup.slots')?.[1] ?? '';
+      if (core.setup.slots !== null || !['slot "s" placeholder "p"', '"zulu"', '"alpha"', 'Spine file\'s skin order'].every((w) => why.includes(w))) probes.push(`the core ${core.setup.slots === null ? 'left the slots out' : 'posed the slots'} naming ${JSON.stringify(why)}`);
+      const planted = compareDumps(spine, coreDump(model, ONE, { shown: lastInModelOrder }), { xy: 0, m: 0 });
+      if (planted.identical || !(planted.first ?? '').includes('slot "s" shows "b" vs "c"')) probes.push(`last-in-the-model's-order, planted, read ${planted.identical ? 'IDENTICAL' : planted.first}`);
+      const gate = gateBuild('the three-skin build', out);
+      if (gate.blocks?.['setup.slots'].verdict !== 'SKIP' || gate.blocks['setup.bones'].verdict !== 'IDENTICAL') probes.push(`the gate read the build ${JSON.stringify(gate.blocks)}`);
+      detail = `three skins on one placeholder in three file orders showed the last listed each time [${shownUnder.join(', ')}]; built with skins ${modelOrder.join(', ')}, the file lists ${fileOrder.join(', ')} and spine-core shows zulu's "b"; the core leaves setup.slots out naming the slot, the placeholder and both skins, the gate reads it SKIP on the slots and IDENTICAL on the bones, and last-in-the-model's-order, planted, is named at "s" showing "c"`;
+    }
+    const held = probes.length === 0;
+    say(
+      'CO12_SEVERAL_SKINS_ON_ONE_PLACEHOLDER_ARE_THE_FILES_ORDER_AND_A_DISAGREEMENT_IS_LEFT_OUT_BY_NAME',
+      held,
+      probeDetail(held, probes, detail),
+      'issue #928: under --skin all the last skin in the Spine file wins a placeholder, and the file\'s skin order is the emitter\'s (default first, the rest in the editor\'s order) — a spelling the model rightly does not hold. So the core poses a placeholder several skins fill only where they agree, and otherwise leaves the block out by name rather than guess an order',
+    );
+  }
+
+  // --- CO13: a slider keying a slot poses it at setup, and the core leaves the slots out by name --
+  {
+    const probes: string[] = [];
+    const sliderSkeleton = (slider: boolean): string => JSON.stringify({
+      skeleton: { spine: '4.3.13' }, bones: [{ name: 'root' }, { name: 'dial', parent: 'root', rotation: 10 }],
+      slots: [{ name: 's', bone: 'root', attachment: 'r' }],
+      skins: [{ name: 'default', attachments: { s: { r: { width: 4, height: 4 }, q: { width: 4, height: 4 } } } }],
+      animations: { a: { slots: { s: { rgba: [{ time: 0, color: 'ff000080' }], attachment: [{ time: 0, name: 'q' }] } } } },
+      ...(slider ? { constraints: [{ name: 'sl', type: 'slider', animation: 'a', bone: 'dial', property: 'rotate', from: 0, scale: 0.01 }] } : {}),
+    });
+    const atlas = atlasOf(['r', 'q']);
+    const [without, withSlider] = [false, true].map((s) => dumpSkeleton(loadOracleData(sliderSkeleton(s), atlas, 'the slider probe'), ONE).setup.slots[0]);
+    if (JSON.stringify(without) !== JSON.stringify(['s', 'r', 1, 1, 1, 1, null, 'r']) || JSON.stringify(withSlider) !== JSON.stringify(['s', 'q', 1, 0, 0, 0.501961, null, 'q'])) probes.push(`spine-core's setup row is ${JSON.stringify(without)} without the slider and ${JSON.stringify(withSlider)} with it, not the header's measurement`);
+    const records = { r: { kind: 'region', width: 4, height: 4 }, q: { kind: 'region', width: 4, height: 4 } };
+    const keyed = (slots: unknown[]): string => modelOf({
+      bones: [{ name: 'root' }, { name: 'dial', parent: 'root', rotation: 10 }],
+      slots: [{ name: 's', bone: 'root', setup: 'r' }],
+      skins: [{ name: 'default', bones: [], constraints: {}, attachments: { s: records } }],
+      constraints: [{ kind: 'slider', name: 'sl', declaredIn: 'rig', animation: 'a' }],
+      animations: [{ name: 'a', duration: 0, bones: [], slots, constraints: {}, attachments: [], drawOrder: [], events: [] }],
+    });
+    const core = coreDump(readModel(keyed([{ name: 's', timelines: [] }])), ONE);
+    const why = core.absent?.find((x) => x[0] === 'setup.slots')?.[1] ?? '';
+    if (core.setup.slots !== null || !why.includes('slider "sl" applies animation "a", which keys slot(s) "s"')) probes.push(`a slider keying a slot: the core ${core.setup.slots === null ? 'left the slots out' : 'posed the slots'} naming ${JSON.stringify(why)}`);
+    const quiet = coreDump(readModel(keyed([])), ONE);
+    if (quiet.setup.slots === null) probes.push(`a slider keying no slot left the slots out: ${JSON.stringify(quiet.absent)}`);
+    const held = probes.length === 0;
+    say(
+      'CO13_A_SLIDER_KEYING_A_SLOT_POSES_IT_AT_SETUP_AND_THE_CORE_LEAVES_THE_SLOTS_OUT_BY_NAME',
+      held,
+      probeDetail(held, probes, `a slider whose animation keys a slot's rgba and attachment turned spine-core's setup row from ${JSON.stringify(without)} to ${JSON.stringify(withSlider)}; the core leaves setup.slots out naming the slider, its animation and the slot, and poses them when the slider's animation keys no slot`),
+      'issue #928: the brief said constraints do not pose slots, and a slider does — it applies an animation, and the oracle\'s setup applies constraints. The corpus\'s one such slider (gallery/look) agreed only because its dial rests where the animation keys the colours the slots already have, so the core does not claim it until constraints are admitted',
+    );
+  }
+
+  // --- CO14: a channel misread and a wrong skin, each in a copy of the core, turn exactly the rows using them red --
+  {
+    const probes: string[] = [];
+    const judged = built.filter((b) => slotCompared.some((r) => r.name === b.name));
+    const statesRed = (b: BuiltRow): boolean => readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).slots.some((s) => s.color !== undefined && s.color.slice(0, 2) !== '00');
+    const nonFirstSkin = (b: BuiltRow): boolean => {
+      const doc = readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'));
+      return doc.slots.some((s) => s.setup !== null && doc.skins.slice(1).some((k) => k.attachments[s.name]?.[s.setup as string] !== undefined));
+    };
+    const reached: string[] = [];
+    const holes: string[] = [];
+    const plants: Array<[string, CorePlant, (b: BuiltRow) => boolean]> = [
+      ['the red channel over 256', { colour: redOver256 }, statesRed],
+      ['the placeholder resolved in the first skin alone', { shown: firstSkinOnly }, nonFirstSkin],
+    ];
+    for (const [label, plant, uses] of plants) {
+      const using = judged.filter(uses).map((b) => b.name);
+      const red = gateBuilt(judged, plant);
+      const turned = red.filter((r) => r.blocks?.['setup.slots'].verdict === 'DIFF').map((r) => r.name);
+      const bonesMoved = red.filter((r) => r.blocks?.['setup.bones'].verdict === 'DIFF').map((r) => r.name);
+      if (JSON.stringify(turned) !== JSON.stringify(using)) probes.push(`${label} turned [${turned.join(', ')}] red on setup.slots; the rows using it are [${using.join(', ')}]`);
+      if (bonesMoved.length > 0) probes.push(`${label} turned setup.bones red on [${bonesMoved.join(', ')}]`);
+      if (using.length === 0) holes.push(label);
+      reached.push(`${label} ${turned.length}/${judged.length}`);
+    }
+    const held = probes.length === 0 && judged.length > 0;
+    say(
+      'CO14_A_CHANNEL_MISREAD_AND_A_WRONG_SKIN_IN_A_COPY_OF_THE_CORE_TURN_EXACTLY_THE_ROWS_USING_THEM_RED',
+      held,
+      probeDetail(held, judged.length === 0 ? [...probes, 'no row\'s slots were compared'] : probes, `each plant passed as a copy, never in src/: rows red on setup.slots of those compared — ${reached.join(', ')} — exactly the rows stating a colour with a red channel, and the rows with a placeholder a skin after the first fills; setup.bones untouched on every row`),
+      'issue #928\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the channel or the skin at all',
+    );
+    for (const label of holes) console.log(`          ⚠️ HOLE: no compared recipe has a row the plant "${label}" reaches, so it has no corpus row to turn red — CO11's probe is the only reading of it`);
   }
 
   rmSync(work, { recursive: true, force: true });
@@ -81254,7 +81635,15 @@ function main(): void {
       'exactly as spine-core does, the rows with one skipped by construct, and what no row reaches printed as a ' +
       'HOLE; a hand-written probe posing all five inherit modes under turned, scaled, sheared and reflecting ' +
       'parents and the skin-required rule exactly as the runtime does; and one mode\'s sign flipped in a copy of ' +
-      'the evaluator turning exactly the rows using it red)' +
+      'the evaluator turning exactly the rows using it red; then the slots at the setup pose, issue #928: the reader ' +
+      'holding colours, skins\' tables and sliders\' animations to what the writer writes and refusing every colour ' +
+      'spelling whose reading is not a colour; every recipe posing its setup slots exactly as spine-core does, the ' +
+      'ones with an ik, transform, path or physics constraint included, and a recipe whose slider keys a slot left ' +
+      'out by name; a hand-written probe holding the skin rule, the names, the region paths and every byte of ' +
+      'every channel to the runtime at tolerance zero; several skins on one placeholder shown to be the Spine ' +
+      'file\'s order, which the model does not hold, and a disagreement left out by name; a slider shown to pose ' +
+      'the slots its animation keys; and a channel misread and a wrong skin, each in a copy, turning exactly the ' +
+      'rows using them red)' +
       (emitHashesBad === null
         ? ''
         : ', + ' + n('emit-hashes') + ' emit-hashes controls (issue #914 — `tools/emit_hashes.ts`, the byte-identity ' +
