@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.6.2](https://github.com/firejune/rigc/compare/v1.6.1...v1.6.2) (2026-09-30)
+
+
+### Bug Fixes
+
+* **render:** the framing box is over the slots that pose — a drawn slot on a bone the skin leaves unposed no longer pulls the frame to the origin ([#1010](https://github.com/firejune/rigc/issues/1010)) ([96ce427](https://github.com/firejune/rigc/commit/96ce427590761d2c812ffc4ecc12c50ecb3cbd53)), closes [#1000](https://github.com/firejune/rigc/issues/1000)
+
+
+### Instrument
+
+* **selftest:** RG02 compares every seed over the reference length — a seed drawn fewer than 4,096 times no longer reads as a disagreement ([#1009](https://github.com/firejune/rigc/issues/1009)) ([d435eed](https://github.com/firejune/rigc/commit/d435eed10295ecfbddb3b904a8a3fb9e56bcaddc)), closes [#998](https://github.com/firejune/rigc/issues/998)
+* **selftest:** the core suite names an absent corpus as a HOLE, as every corpus suite does — a run with no examples/ exits as CONTRIBUTING says ([#1007](https://github.com/firejune/rigc/issues/1007)) ([c1991b5](https://github.com/firejune/rigc/commit/c1991b5a80f323133500fc36eac8dfad657dbf49)), closes [#1004](https://github.com/firejune/rigc/issues/1004)
+
 ## [1.6.1](https://github.com/firejune/rigc/compare/v1.6.0...v1.6.1) (2026-09-30)
 
 
