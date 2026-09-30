@@ -66352,6 +66352,10 @@ import { eventsFired, type CoreEventRow } from './src/core/events.ts';
 import { physicsState, stepPhysics, stepSchedule, type CorePhysicsRecord } from './src/core/constraints_physics.ts';
 import { modeMatrix, worldTransforms, type CoreInheritMode } from './src/core/world.ts';
 import { ADMITTED_CONSTRAINT_KINDS, TRANSFORM_PROPERTIES, type ConstraintPlant, type CoreConstraintRecord, type CoreTransformRecord } from './src/core/constraints.ts';
+// The per-skin view (issue #932), its own statements so the CN controls land as one hunk.
+import { CORE_ALL_SKINS, lookupSkins } from './src/core/skins.ts';
+import { underSkin } from './src/core/index.ts';
+import { skinReachLines } from './tools/core_gate.ts';
 
 /** The constraint kinds no cut of construct 5 poses yet — what a skipped row names. */
 const LATER_KINDS: readonly string[] = CORE_CONSTRAINT_KINDS.filter((k) => !ADMITTED_CONSTRAINT_KINDS.includes(k));
@@ -66569,7 +66573,8 @@ function runCoreSuite(): number {
         heldDetail = `; ${held.name}'s bones left out naming ${kinds.join(', ')}`;
       }
       const refusals: Array<[string, string[], string]> = [
-        ['one skin', ['--skin', 'default'], '--skin "default"'],
+        // Since issue #932 the core poses one skin by name; a skin the model does not declare is refused as spine-core's dump refuses it.
+        ['a skin the document does not declare', ['--skin', 'nosuch'], '--skin "nosuch": no such skin; this document declares ['],
         ['a second path', [free.out], 'takes the model document and no other path'],
         ['a missing document', [], 'no such file'],
       ];
@@ -67179,9 +67184,10 @@ function runCoreSuite(): number {
       if (core.setup.slots !== null || !['slot "s" placeholder "p"', '"zulu"', '"alpha"', 'Spine file\'s skin order'].every((w) => why.includes(w))) probes.push(`the core ${core.setup.slots === null ? 'left the slots out' : 'posed the slots'} naming ${JSON.stringify(why)}`);
       const planted = compareDumps(spine, coreDump(model, ONE, { shown: lastInModelOrder }), { xy: 0, m: 0 });
       if (planted.identical || !(planted.first ?? '').includes('slot "s" shows "b" vs "c"')) probes.push(`last-in-the-model's-order, planted, read ${planted.identical ? 'IDENTICAL' : planted.first}`);
+      // Since issue #932 the gate also runs each skin, and the slots the merged view leaves out are judged there (CN04).
       const gate = gateBuild('the three-skin build', out);
-      if (gate.blocks?.['setup.slots'].verdict !== 'SKIP' || gate.blocks['setup.bones'].verdict !== 'IDENTICAL') probes.push(`the gate read the build ${JSON.stringify(gate.blocks)}`);
-      detail = `three skins on one placeholder in three file orders showed the last listed each time [${shownUnder.join(', ')}]; built with skins ${modelOrder.join(', ')}, the file lists ${fileOrder.join(', ')} and spine-core shows zulu's "b"; the core leaves setup.slots out naming the slot, the placeholder and both skins, the gate reads it SKIP on the slots and IDENTICAL on the bones, and last-in-the-model's-order, planted, is named at "s" showing "c"`;
+      if (gate.blocks?.['setup.slots'].verdict !== 'IDENTICAL' || !(gate.blocks['setup.slots'].why ?? '').includes('the merged view leaves it out — slot "s" placeholder "p"') || gate.blocks['setup.bones'].verdict !== 'IDENTICAL') probes.push(`the gate read the build ${JSON.stringify(gate.blocks)}`);
+      detail = `three skins on one placeholder in three file orders showed the last listed each time [${shownUnder.join(', ')}]; built with skins ${modelOrder.join(', ')}, the file lists ${fileOrder.join(', ')} and spine-core shows zulu's "b"; the core's merged dump leaves setup.slots out naming the slot, the placeholder and both skins, the gate judges the slots per skin (IDENTICAL, saying the merged view left them out) and the bones IDENTICAL, and last-in-the-model's-order, planted, is named at "s" showing "c"`;
     }
     const held = probes.length === 0;
     say(
@@ -68539,7 +68545,8 @@ function runCoreSuite(): number {
   const constraintPair = (bones: Obj[], constraints: Obj[], keys: { ik?: Record<string, Obj[]>; transform?: Record<string, Obj[]>; bones?: Keyed } = {}, skins: Obj[] = [{ name: 'default' }]): { spine: string; model: string } => {
     const spine = {
       skeleton: { spine: '4.3.13' }, bones, slots: [], constraints,
-      skins: skins.map((k) => ({ name: k.name, ...(k.bones === undefined ? {} : { bones: k.bones }), ...(k.constraints === undefined ? {} : { constraints: k.constraints }), attachments: {} })),
+      // A skin's `constraints` are its ik list, written under `ik` as Spine 4.3 spells it — the model's `constraints.ik`. Until issue #932 this wrote a `constraints` key, which spine-core ignores, so the two spellings disagreed and CC04's listed probe held an unlisted file against a listed model.
+      skins: skins.map((k) => ({ name: k.name, ...(k.bones === undefined ? {} : { bones: k.bones }), ...(k.constraints === undefined ? {} : { ik: k.constraints }), attachments: {} })),
       animations: { a: { ...(keys.bones === undefined ? {} : { bones: keys.bones }), ...(keys.ik === undefined ? {} : { ik: keys.ik }), ...(keys.transform === undefined ? {} : { transform: keys.transform }) } },
     };
     const model = JSON.stringify({
@@ -68802,7 +68809,8 @@ function runCoreSuite(): number {
       ['a one-bone ik of length 0 with stretch', [{ name: 'root' }, g, { name: 'b', parent: 'g', x: 5, rotation: 20 }, { name: 't', parent: 'root', x: 50, y: 1 }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't', stretch: true }]],
       ['a one-bone ik whose target sits at its own origin (a direction of rounding noise)', [{ name: 'root' }, g, { name: 'b', parent: 'g', x: 5, rotation: 20, length: 30 }, { name: 't', parent: 'b' }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't' }]],
       ['a one-bone ik reaching its target exactly', [{ name: 'root' }, { name: 'b', parent: 'root', length: 30 }, { name: 't', parent: 'root', x: 30 }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't', stretch: true, compress: true }]],
-      ['a skin-required ik named by a skin (not applied under every skin at once)', [{ name: 'root' }, { name: 'b', parent: 'root', x: 5, length: 20 }, { name: 't', parent: 'root', y: 30 }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't', skin: true }], [{ name: 'default' }, { name: 's1', constraints: ['k'] }]],
+      ['a skin-required ik a skin\'s ik list names (applied under every skin at once, issue #932)', [{ name: 'root' }, { name: 'b', parent: 'root', x: 5, length: 20 }, { name: 't', parent: 'root', y: 30 }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't', skin: true }], [{ name: 'default' }, { name: 's1', constraints: ['k'] }]],
+      ['a skin-required ik no skin lists (not applied)', [{ name: 'root' }, { name: 'b', parent: 'root', x: 5, length: 20 }, { name: 't', parent: 'root', y: 30 }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't', skin: true }], [{ name: 'default' }, { name: 's1' }]],
       ['an ik whose target no skin activates (not applied)', [{ name: 'root' }, { name: 'b', parent: 'root', x: 5, length: 20 }, { name: 't', parent: 'root', y: 30, skin: true }], [{ type: 'ik', name: 'k', bones: ['b'], target: 't' }]],
       ['a transform whose source no skin activates (not applied)', [{ name: 'root' }, { name: 'b', parent: 'root', x: 5, length: 20 }, { name: 's', parent: 'root', y: 30, rotation: 40, skin: true }], [{ type: 'transform', name: 'k', bones: ['b'], source: 's', properties: { rotate: { to: { rotate: {} } } } }]],
       ['a transform on the root bone', [{ name: 'root', x: 3, rotation: 10 }, { name: 's', parent: 'root', x: 20, y: 30, rotation: 40 }], [{ type: 'transform', name: 'k', bones: ['root'], source: 's', properties: { x: { to: { x: {} } }, rotate: { to: { rotate: {} } } } }]],
@@ -68826,7 +68834,7 @@ function runCoreSuite(): number {
     say(
       'CC04_THE_DEGENERATE_CASES_READ_AS_MEASURED_AND_AN_IK_ON_THE_ROOT_IS_REFUSED',
       ok,
-      probeDetail(ok, probes, `${cases.length} cases exact at tolerance 0 — the child and the target at the parent's origin, the chain straight and folded, the softness onset and end, a child and a bone of length 0, a one-bone target at its own origin (its direction rounding noise, reproduced), a target at exactly the bone's length, a skin-required constraint and an inactive target and source (not applied), a transform on the root, a clamp with max absent; spine-core throws posing an ik on the root ("${threw.slice(0, 80)}") and the core refuses it by name`),
+      probeDetail(ok, probes, `${cases.length} cases exact at tolerance 0 — the child and the target at the parent's origin, the chain straight and folded, the softness onset and end, a child and a bone of length 0, a one-bone target at its own origin (its direction rounding noise, reproduced), a target at exactly the bone's length, a skin-required constraint a skin lists (applied) and one none lists, an inactive target and source (not applied), a transform on the root, a clamp with max absent; spine-core throws posing an ik on the root ("${threw.slice(0, 80)}") and the core refuses it by name`),
       'issue #938: the brief asked for the degenerate cases measured — a straight, folded or fully softened chain is where the solver\'s arithmetic is ill-conditioned and only the runtime\'s own order of operations reads it; a target at a one-bone ik\'s own origin is ill-conditioned too — its direction is rounding noise — and only the target read from the parent\'s origin reproduces that noise; a collapsed parent is the oracle\'s ill-conditioned rule\'s',
     );
   }
@@ -69652,7 +69660,7 @@ function runCoreSuite(): number {
       [
         'every physics constraint applied as a 1° local turn of its bone',
         (rs) => rs.map((r): CoreConstraintRecord => (r.kind === 'physics'
-          ? { kind: 'transform', name: r.name, bones: [r.bone], source: r.bone, properties: [{ property: 'rotate', offset: 0, to: [{ property: 'rotate', offset: 1, scale: 0, max: 1 }] }], localSource: true, localTarget: true, additive: true, clamp: false, offsets: { rotate: 0, x: 0, y: 0, scaleX: 0, scaleY: 0, shearY: 0 }, mixes: { rotate: 1, x: 0, y: 0, scaleX: 0, scaleY: 0, shearY: 0 }, skin: false }
+          ? { kind: 'transform', name: r.name, bones: [r.bone], source: r.bone, properties: [{ property: 'rotate', offset: 0, to: [{ property: 'rotate', offset: 1, scale: 0, max: 1 }] }], localSource: true, localTarget: true, additive: true, clamp: false, offsets: { rotate: 0, x: 0, y: 0, scaleX: 0, scaleY: 0, shearY: 0 }, mixes: { rotate: 1, x: 0, y: 0, scaleX: 0, scaleY: 0, shearY: 0 }, skin: false, listedBySkin: false }
           : r)),
         'physics',
       ],
@@ -71939,6 +71947,385 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `${cases.length} hand-written switches, each spine-core's row as measured and the core exact at tolerance 0 at setup and at the sample: a switch to another mesh or series drew it undeformed at its setup frame — even over a sample keying the one switched to — naming the one shown kept the sample's deform and frame, and the slider's own keys after its switch applied`),
       'issue #955: the sample\'s deform and sequence timelines are matched against what the slot shows after the sample\'s own switches, and a slider switching the slot to another attachment clears them (src/core/deform.ts, *A switch*). The first reading — every timeline matched against the slot\'s final attachment — posed the second case deformed, which spine-core does not',
+    );
+  }
+
+
+  // ===========================================================================
+  // Per skin (issue #932, and card #961's fix): the gate poses each declared
+  // skin with `--skin <name>` on both dumpers. Each rule was measured by
+  // dumping hand-written skeletons through spine-core under `--skin all`,
+  // `default` and a named skin, and is stated in src/core/skins.ts and
+  // src/core/constraints.ts; these controls hold those skeletons.
+  // ===========================================================================
+  const skinOf = (skin: string, physics: 'none' | 'step' = 'none', samples = 2): OracleOptions => ({ phase: 'grid', samples, skin, physics, dt: physics === 'step' ? 1 / 60 : null });
+  type SkinLists = { bones?: string[] } & Partial<Record<(typeof CORE_CONSTRAINT_KINDS)[number], string[]>>;
+  /** A `remainderPair` with each skin's `bones` and constraint lists written into both spellings. */
+  const withSkinLists = (pair: { spine: string; model: string; atlas: string }, lists: Record<string, SkinLists>): { spine: string; model: string; atlas: string } => {
+    const spine = JSON.parse(pair.spine) as { skins: Array<Obj & { name: string }> };
+    const model = JSON.parse(pair.model) as { skins: Array<Obj & { name: string }> };
+    for (const k of spine.skins) Object.assign(k, lists[k.name] ?? {});
+    for (const k of model.skins) {
+      const l = lists[k.name] ?? {};
+      k.bones = l.bones ?? [];
+      k.constraints = Object.fromEntries(CORE_CONSTRAINT_KINDS.map((x) => [x, l[x] ?? []]));
+    }
+    return { spine: JSON.stringify(spine), model: JSON.stringify(model), atlas: pair.atlas };
+  };
+  const skinCompare = (pair: { spine: string; model: string; atlas: string }, options: OracleOptions, plant: TimelinePlant = {}): { spine: OracleDump; core: OracleDocument; c: ReturnType<typeof compareDumps> } => {
+    const spine = remainderSpine(pair, options);
+    const core = coreDump(readModel(pair.model, 'the skin probe'), options, plant);
+    return { spine, core, c: compareDumps(spine, core, { xy: 0, m: 0 }) };
+  };
+  /** The core's slot resolution, planted: under a named skin, that skin alone — the default skin not consulted. */
+  const namedSkinOnly = (doc: CompiledDocument, slot: ModelSlot): ShownResolution => {
+    if (doc.skin === CORE_ALL_SKINS) return shownAttachment(doc, slot);
+    const skin = lookupSkins(doc)[0];
+    const record = slot.setup === null || skin === undefined ? undefined : skin.attachments[slot.name]?.[slot.setup];
+    return record === undefined ? null : { skin: skin.name, placeholder: slot.setup as string, record };
+  };
+
+  // --- CN01: under --skin <name> a slot shows the named skin's record, else the default skin's, and only the named skin's bones activate --
+  {
+    const probes: string[] = [];
+    const region = (path: string): RAtt => ({ kind: 'region', path });
+    const tri = (d: number): RAtt => ({ kind: 'mesh', xy: [d, 0, d + 1, 0, d, 1] });
+    const tables: Record<string, Record<string, Record<string, RAtt>>> = {
+      default: { a: { p: region('dA') }, b: { q: region('dB') }, c: { q: region('dQ') }, d: { p: region('dP') }, e: { p: region('dE') }, m: { m: tri(0) } },
+      s1: { a: { p: region('s1A') }, c: { r: region('s1C') }, e: { p: region('s1E') }, m: { m: tri(10) } },
+      s2: { a: { p: region('s2A') } },
+    };
+    const lists: Record<string, SkinLists> = { default: { bones: ['reqDef'] }, s1: { bones: ['reqS1', 'reqLeaf'] }, s2: { bones: ['reqS2'] } };
+    const probe = (order: readonly string[]): { spine: string; model: string; atlas: string } => withSkinLists(remainderPair({
+      bones: [
+        { name: 'root' }, { name: 'reqS1', parent: 'root', skin: true, x: 1 }, { name: 'reqDef', parent: 'root', skin: true, x: 2 }, { name: 'reqS2', parent: 'root', skin: true, x: 3 },
+        { name: 'reqPar', parent: 'root', skin: true, x: 4 }, { name: 'reqLeaf', parent: 'reqPar', skin: true, x: 5 }, { name: 'freeUnderS2', parent: 'reqS2', x: 6 },
+      ],
+      slots: [{ name: 'a', bone: 'root', attachment: 'p' }, { name: 'b', bone: 'root', attachment: 'q' }, { name: 'c', bone: 'root', attachment: 'r' }, { name: 'd', bone: 'root', attachment: 'z' }, { name: 'e', bone: 'reqS1', attachment: 'p' }, { name: 'm', bone: 'root', attachment: 'm' }],
+      skins: Object.fromEntries(order.map((k) => [k, tables[k]])),
+      anims: { anim: { slots: { c: { attachment: [{ time: 0, name: 'q' }, { time: 1, name: 'r' }] }, d: { attachment: [{ time: 0, name: 'p' }] } }, deform: [{ skin: 'default', slot: 'm', attachment: 'm', keys: [{ time: 0, vertices: [100, 100] }] }] } },
+    }), lists);
+    // What spine-core showed, measured: slot paths a..e at setup, then c and d at the two samples, the skin-required bones' activity, and mesh m's first vertex x at the sample.
+    const expected: Record<string, string> = {
+      default: 'setup a=dA b=dB c=- d=- e=dE | samples c=dQ,- d=dP,dP | active reqS1 0 reqDef 1 reqS2 0 reqPar 0 reqLeaf 0 freeUnderS2 1 | m.x 99.999998',
+      s1: 'setup a=s1A b=dB c=s1C d=- e=s1E | samples c=dQ,s1C d=dP,dP | active reqS1 1 reqDef 0 reqS2 0 reqPar 1 reqLeaf 1 freeUnderS2 1 | m.x 10',
+      s2: 'setup a=s2A b=dB c=- d=- e=dE | samples c=dQ,- d=dP,dP | active reqS1 0 reqDef 0 reqS2 1 reqPar 0 reqLeaf 0 freeUnderS2 1 | m.x 99.999998',
+    };
+    const read = (d: OracleDump): string => {
+      const path = (rows: SlotRow[], slot: string): string => rows.find((r) => r[0] === slot)?.[7] ?? '-';
+      const samples = d.animations[0].samples;
+      const req = d.setup.bones.filter((b) => b[0].startsWith('req') || b[0].startsWith('free')).map((b) => `${b[0]} ${b[7]}`).join(' ');
+      const m = samples[0].attachments.find((x) => x[0] === 'm');
+      return `setup ${['a', 'b', 'c', 'd', 'e'].map((s) => `${s}=${path(d.setup.slots, s)}`).join(' ')} | samples c=${samples.map((x) => path(x.slots, 'c')).join(',')} d=${samples.map((x) => path(x.slots, 'd')).join(',')} | active ${req} | m.x ${m?.[3][0] ?? 'none'}`;
+    };
+    let dumps = 0;
+    const redPlant: string[] = [];
+    const redBones: string[] = [];
+    for (const order of [['default', 's1', 's2'], ['s2', 's1', 'default']]) {
+      const pair = probe(order);
+      for (const skin of ['default', 's1', 's2']) {
+        const { spine, core, c } = skinCompare(pair, skinOf(skin));
+        dumps++;
+        const label = `file order ${order.join(', ')}, --skin ${skin}`;
+        if (read(spine) !== expected[skin]) probes.push(`${label}: spine-core read "${read(spine)}", not the measured "${expected[skin]}"`);
+        if (!c.identical || blocksSkipped(c).length > 0) probes.push(`${label}: the core ${blocksSkipped(c).join('; ') || c.first}`);
+        // The ill-conditioned rule keeps an inactive bone's all-zero rows out of compare, so the rows are held to each other directly.
+        const coreBones = JSON.stringify(core.setup.bones);
+        if (coreBones !== JSON.stringify(spine.setup.bones)) probes.push(`${label}: the setup bone rows differ: spine-core ${JSON.stringify(spine.setup.bones)}, the core ${coreBones}`);
+        if (!skinCompare(pair, skinOf(skin), { shown: namedSkinOnly }).c.identical) redPlant.push(`${order[0]}-first/${skin}`);
+        // The default skin's bones activated under a named skin, planted in a copy of the evaluator.
+        const model = readModel(pair.model, 'the skin probe');
+        const defaultBones = new Set(model.skins.find((k) => k.name === 'default')?.bones ?? []);
+        const planted = coreDump(model, skinOf(skin), { evaluate: (bones, active) => worldTransforms(bones, new Set([...active, ...defaultBones])) });
+        if (JSON.stringify(planted.setup.bones) !== JSON.stringify(spine.setup.bones)) redBones.push(`${order[0]}-first/${skin}`);
+      }
+    }
+    const wantRed = ['default-first/s1', 'default-first/s2', 's2-first/s1', 's2-first/s2'];
+    if (JSON.stringify(redPlant) !== JSON.stringify(wantRed)) probes.push(`the default skin left unconsulted, planted, went red on [${redPlant.join(', ')}], not exactly the named skins' dumps [${wantRed.join(', ')}]`);
+    if (JSON.stringify(redBones) !== JSON.stringify(wantRed)) probes.push(`the default skin's bones activated under a named skin, planted, went red on [${redBones.join(', ')}], not [${wantRed.join(', ')}]`);
+    const ok = probes.length === 0;
+    say(
+      'CN01_UNDER_A_NAMED_SKIN_A_SLOT_SHOWS_THAT_SKINS_RECORD_ELSE_THE_DEFAULTS_AND_ONLY_ITS_BONES_ACTIVATE',
+      ok,
+      probeDetail(ok, probes, `${dumps} dumps — three skins over six slots in two file orders, under default, s1 and s2 — each spine-core's measured row (the named skin's record, else the default's, else nothing; an attachment key resolving the same way; a deform keyed under the default skin moving the default's mesh and not s1's; the named skin's bones alone active) and the core exact at tolerance 0, every block; the default skin left unconsulted, planted, red on exactly the ${wantRed.length} s1 and s2 dumps (the default's own exact), and the default's bones activated under s1 and s2, planted, red on the same`),
+      'issue #932: posing one skin at a time has no file order to know, which is what lets the gate judge a placeholder several skins fill. The default skin fills what the named skin leaves empty; its bones do not activate under another skin — measured, not assumed, since both readings are one line apart in a resolver',
+    );
+  }
+
+  // --- CN02: a skin-required constraint of each kind is applied exactly when an applied skin's list for its kind names it (card #961) --
+  {
+    const probes: string[] = [];
+    const KINDS = CORE_CONSTRAINT_KINDS;
+    const constraintOf = (kind: (typeof KINDS)[number], mixZero: boolean): Obj => {
+      const base: Record<(typeof KINDS)[number], Obj> = {
+        ik: { type: 'ik', name: 'k', bones: ['b'], target: 't', mix: mixZero ? 0 : 1 },
+        transform: { type: 'transform', name: 'k', bones: ['b'], source: 't', properties: { rotate: { to: { rotate: {} } } }, mixRotate: mixZero ? 0 : 1 },
+        path: { type: 'path', name: 'k', bones: ['b'], slot: 'track', positionMode: 'percent', spacingMode: 'percent', rotateMode: 'tangent', position: 0.5, spacing: 0, mixRotate: mixZero ? 0 : 1, mixX: mixZero ? 0 : 1, mixY: mixZero ? 0 : 1 },
+        physics: { type: 'physics', name: 'k', bone: 'b', x: 1, y: 1, rotate: 1, mix: mixZero ? 0 : 1 },
+        slider: { type: 'slider', name: 'k', animation: 'turn', time: 0, mix: mixZero ? 0 : 1 },
+      };
+      return { ...base[kind], skin: true };
+    };
+    const pairOf = (kind: (typeof KINDS)[number], listedBy: string | null, mixZero: boolean): { spine: string; model: string; atlas: string } => withSkinLists(remainderPair({
+      bones: [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'b', parent: 'p', x: 10, length: 40 }, { name: 't', parent: 'root', x: 30, y: 30, rotation: 45 }, ...amplify('b')],
+      slots: [{ name: 'track', bone: 'root', attachment: 'track' }],
+      skins: { default: { track: { track: { kind: 'path', xy: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10], lengths: [30, 60] } } }, s1: {} },
+      constraints: [constraintOf(kind, mixZero)],
+      anims: { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 60, y: 20 }] } } }, turn: { bones: { b: { rotate: [{ time: 0, value: 90 }] } } } },
+    }), listedBy === null ? {} : { [listedBy]: { [kind]: ['k'] } });
+    const unlisted: TimelinePlant = { constraints: (rs) => rs.map((r) => ({ ...r, listedBySkin: false })) };
+    const table: string[] = [];
+    let readings = 0;
+    const redInherited: string[] = [];
+    const redDefault: string[] = [];
+    const applied: string[] = [];
+    for (const kind of KINDS) {
+      const physics = kind === 'physics' ? 'step' : 'none';
+      for (const listedBy of [null, 's1', 'default']) {
+        const cells: string[] = [];
+        for (const skin of ['all', 'default', 's1']) {
+          const options = skinOf(skin, physics, 5);
+          const pair = pairOf(kind, listedBy, false);
+          const { spine, c } = skinCompare(pair, options);
+          const still = remainderSpine(pairOf(kind, listedBy, true), options);
+          const moved = JSON.stringify([spine.setup.bones, spine.animations]) !== JSON.stringify([still.setup.bones, still.animations]);
+          const want = listedBy !== null && (skin === 'all' || skin === listedBy);
+          const label = `${kind} listed by ${listedBy ?? 'no skin'}, --skin ${skin}`;
+          readings++;
+          if (moved !== want) probes.push(`${label}: spine-core ${moved ? 'applied' : 'did not apply'} it, not the measured rule`);
+          if (!c.identical) probes.push(`${label}: ${c.first}`);
+          if (moved) applied.push(label);
+          if (!skinCompare(pair, options, unlisted).c.identical) redInherited.push(label);
+          // The default skin's list counted under a named skin, planted.
+          const defaultCounts: TimelinePlant = { constraints: (rs) => rs.map((r) => ({ ...r, listedBySkin: r.listedBySkin || (listedBy === 'default' && skin !== 'all') })) };
+          if (!skinCompare(pair, options, defaultCounts).c.identical) redDefault.push(label);
+          cells.push(`${skin} ${moved ? 'applied' : 'inert'}`);
+        }
+        table.push(`${kind}/${listedBy ?? 'none'}: ${cells.join(' ')}`);
+      }
+    }
+    if (JSON.stringify(redInherited) !== JSON.stringify(applied)) probes.push(`the inherited reading (skin: true never applied), planted, went red on [${redInherited.join('; ')}], not exactly the ${applied.length} applied readings`);
+    const wantDefault = KINDS.map((k) => `${k} listed by default, --skin s1`);
+    if (JSON.stringify(redDefault) !== JSON.stringify(wantDefault)) probes.push(`the default skin's list counted under a named skin, planted, went red on [${redDefault.join('; ')}], not [${wantDefault.join('; ')}]`);
+    // A name filed under another kind's list is refused by spine-core's loader, and by readModel.
+    const misfiled = withSkinLists(remainderPair({ bones: [{ name: 'root' }, { name: 'b', parent: 'root', length: 5 }, { name: 't', parent: 'root', x: 5 }], slots: [], skins: { default: {} }, constraints: [{ type: 'ik', name: 'k', bones: ['b'], target: 't', skin: true }], anims: {} }), { default: { transform: ['k'] } });
+    let loader = '';
+    try {
+      loadOracleData(misfiled.spine, misfiled.atlas, 'the misfiled probe');
+    } catch (err) {
+      loader = (err as Error).message;
+    }
+    let reader = '';
+    try {
+      readModel(misfiled.model, 'the misfiled probe');
+    } catch (err) {
+      reader = err instanceof CoreInputError ? err.message : `not a CoreInputError: ${(err as Error).message}`;
+    }
+    if (!loader.includes("Couldn't find transform constraint k for skin default")) probes.push(`spine-core loaded an ik constraint filed under a skin's transform list: ${JSON.stringify(loader)}`);
+    if (!reader.includes('skin "default".constraints.transform: "k" is not a transform constraint of this document')) probes.push(`readModel read it: ${JSON.stringify(reader)}`);
+    const ok = probes.length === 0;
+    say(
+      'CN02_A_SKIN_REQUIRED_CONSTRAINT_OF_EACH_KIND_IS_APPLIED_EXACTLY_WHEN_AN_APPLIED_SKINS_LIST_NAMES_IT',
+      ok,
+      probeDetail(ok, probes, `${readings} readings — ik, transform, path, physics (stepped) and slider, each listed by no skin, by s1 and by the default skin, under --skin all, default and s1 — spine-core's as measured (${applied.length} applied: a list names it and that skin is applied; the default skin's list does not count under s1) and the core exact at tolerance 0 on each; the inherited "skin: true never applies", planted, red on exactly those ${applied.length}, and the default's list counted under a named skin red on exactly its ${wantDefault.length}; a name under another kind's list refused by the runtime's loader and by readModel, by name`),
+      'issue #932 carries card #961: the rule 2e-i inherited ("a skin-required constraint is not applied under --skin all") was measured on unlisted constraints only; #956 corrected it for physics under the step. One rule now holds all five kinds, per applied skin, and a per-skin gate is what makes the named-skin half of it observable',
+    );
+  }
+
+  // --- CN03: both dumpers pose --skin <name> from the command line, and the core refuses a skin the model does not declare by name --
+  {
+    const probes: string[] = [];
+    const pair = withSkinLists(remainderPair({
+      bones: [{ name: 'root' }, { name: 'r1', parent: 'root', skin: true, x: 3 }],
+      slots: [{ name: 's', bone: 'r1', attachment: 'p' }, { name: 't', bone: 'root', attachment: 'q' }],
+      skins: { default: { t: { q: { kind: 'region', path: 'dq' } } }, one: { s: { p: { kind: 'region', path: 'op' } } }, two: { s: { p: { kind: 'region', path: 'tp' } } } },
+      anims: {},
+    }), { one: { bones: ['r1'] } });
+    const dir = join(work, 'per-skin-cli');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'skeleton.json'), pair.spine);
+    writeFileSync(join(dir, 'skeleton.atlas'), pair.atlas);
+    writeFileSync(join(dir, 'model.json'), pair.model);
+    const verdicts: string[] = [];
+    for (const skin of ['one', 'two', 'default']) {
+      const a = join(dir, `spine-${skin}.json`);
+      const b = join(dir, `core-${skin}.json`);
+      const ra = runOracle(['dump', join(dir, 'skeleton.json'), join(dir, 'skeleton.atlas'), '--out', a, '--skin', skin]);
+      const rb = runOracle(['dump', '--core', join(dir, 'model.json'), '--out', b, '--skin', skin]);
+      const cmp = ra.status === 0 && rb.status === 0 ? runOracle(['compare', a, b]) : null;
+      const last = cmp?.stdout.trim().split('\n').pop() ?? '';
+      if (cmp?.status !== 0 || !last.startsWith('IDENTICAL') || last.includes('SKIPPED')) probes.push(`--skin ${skin}: dump exits ${ra.status} and ${rb.status}, compare ${cmp?.status ?? 'not run'}: ${JSON.stringify(last || rb.stderr.trim())}`);
+      verdicts.push(`${skin} ${last.split(' ')[0]}`);
+    }
+    // The merged view leaves the slots out naming both skins; the per-skin dumps carried them.
+    const merged = coreDump(readModel(pair.model), skinOf('all'));
+    const why = merged.absent?.find((x) => x[0] === 'setup.slots')?.[1] ?? '';
+    if (merged.setup.slots !== null || !why.includes('"one"') || !why.includes('"two"') || !why.includes('the per-skin dumps (--skin <name>) judge it')) probes.push(`--skin all: the core ${merged.setup.slots === null ? 'left the slots out' : 'posed the slots'} naming ${JSON.stringify(why)}`);
+    const refused = runOracle(['dump', '--core', join(dir, 'model.json'), '--out', join(dir, 'refused.json'), '--skin', 'three']);
+    if (refused.status !== 2 || !refused.stderr.includes('--skin "three": no such skin; this document declares [default, one, two] (or pass all)') || existsSync(join(dir, 'refused.json'))) probes.push(`an undeclared skin: exit ${refused.status}, ${JSON.stringify(refused.stderr.trim())}`);
+    let direct = '';
+    try {
+      underSkin(readModel(pair.model), 'three');
+    } catch (err) {
+      direct = err instanceof CoreInputError ? err.message : `not a CoreInputError: ${(err as Error).message}`;
+    }
+    if (!direct.includes('no such skin')) probes.push(`underSkin read an undeclared skin: ${JSON.stringify(direct)}`);
+    const ok = probes.length === 0;
+    say(
+      'CN03_BOTH_DUMPERS_POSE_A_NAMED_SKIN_FROM_THE_COMMAND_LINE_AND_AN_UNDECLARED_ONE_IS_REFUSED_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `two skins filling one placeholder differently: the merged core dump leaves setup.slots out naming both and pointing at the per-skin dumps; \`dump\` and \`dump --core\` under each of --skin one, two and default compare [${verdicts.join(', ')}] with nothing skipped; --skin three exits 2 by name with nothing written, and underSkin refuses it in-process`),
+      'issue #932: the ask is --skin <name> on BOTH dumpers — the spine-core dump had it since issue #909, the core refused anything but all (issue #925). A skin the model does not declare is refused as spine-core\'s dump refuses one the skeleton does not',
+    );
+  }
+
+  // --- CN04: the gate runs every skin of a row declaring several, judges what the merged view leaves out per skin, and a per-skin plant turns it red --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    const out = join(work, 'skin-order', 'out');
+    if (!existsSync(join(out, MODEL_DOCUMENT_FILE))) probes.push(`CO12's three-skin build is not at ${out}, so the gate has no row declaring several skins to run`);
+    else {
+      const row = gateBuild('the three-skin build', out);
+      const runs = (row.perSkin ?? []).map((k) => `${k.skin} ${k.verdict}`);
+      if (JSON.stringify(runs) !== JSON.stringify(['default IDENTICAL', 'zulu IDENTICAL', 'alpha IDENTICAL'])) probes.push(`the per-skin runs read [${runs.join(', ')}] (${(row.perSkin ?? []).map((k) => k.why).filter((x) => x !== null).join(' | ')})`);
+      const slots = row.blocks?.['setup.slots'];
+      if (slots?.verdict !== 'IDENTICAL' || !(slots.why ?? '').startsWith('judged per skin (default IDENTICAL, zulu IDENTICAL, alpha IDENTICAL); the merged view leaves it out')) probes.push(`setup.slots read ${JSON.stringify(slots)}`);
+      if (row.verdict !== 'IDENTICAL') probes.push(`the row read ${row.verdict}: ${row.why}`);
+      const line = gateVerdict([row]).line;
+      if (!line.startsWith('GREEN') || !line.includes('per skin (--skin <name>): 1 row(s) declaring several skins, 3 skin run(s) 3 IDENTICAL, 0 SKIP, 0 DIFF, stepped 3 IDENTICAL, 0 SKIP, 0 DIFF')) probes.push(`the verdict line reads ${JSON.stringify(line)}`);
+      const reach = skinReachLines([row]);
+      if (JSON.stringify(reach) !== JSON.stringify(['  REACH per skin: the three-skin build — default IDENTICAL, zulu IDENTICAL, alpha IDENTICAL'])) probes.push(`the reach lines read ${JSON.stringify(reach)}`);
+      // The default skin left unconsulted: zulu and alpha leave slot "t" to the default skin, so exactly their runs go red.
+      const red = gateBuild('the three-skin build', out, { shown: namedSkinOnly });
+      const redRuns = (red.perSkin ?? []).filter((k) => k.verdict === 'DIFF').map((k) => k.skin);
+      const redLine = gateVerdict([red]).line;
+      if (JSON.stringify(redRuns) !== JSON.stringify(['zulu', 'alpha']) || red.verdict !== 'DIFF' || !(red.why ?? '').startsWith('--skin "zulu": ') || !redLine.startsWith('RED')) probes.push(`the default skin left unconsulted, planted: runs red [${redRuns.join(', ')}], the row ${red.verdict} (${red.why}), ${redLine.slice(0, 40)}`);
+      detail = `CO12's build (skins default, zulu, alpha; zulu and alpha filling one placeholder): the merged run leaves setup.slots out, the three per-skin runs are IDENTICAL on every block and the stepped bones, so setup.slots reads IDENTICAL "judged per skin" and the row IDENTICAL; the verdict line counts 1 row and 3 runs; the default skin left unconsulted, planted, turns exactly zulu's and alpha's runs red and the gate RED, naming zulu`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'CN04_THE_GATE_RUNS_EVERY_SKIN_OF_A_ROW_DECLARING_SEVERAL_AND_A_PER_SKIN_PLANT_TURNS_IT_RED',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #932: a block the merged view leaves out and every skin\'s run poses is judged by those runs — the SKIP for an ambiguous placeholder is retired where per-skin dumps exist; a gate nobody has seen fail is not a gate, so the per-skin runs are shown to go red on a planted resolver',
+    );
+  }
+
+  // --- CN05: on a row declaring one skin, that skin's dump is the merged dump, so the gate does not run it twice --
+  {
+    const probes: string[] = [];
+    let one = 0;
+    let dumps = 0;
+    for (const b of built) {
+      const skeleton = join(b.out, 'skeleton.json');
+      if (b.exits.some((e) => e !== 0) || !existsSync(skeleton)) continue;
+      const data = loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.name);
+      if (data.skins.length !== 1) continue;
+      one++;
+      for (const physics of ['none', 'step'] as const) {
+        const strip = (d: OracleDump): string => JSON.stringify({ ...d, options: null });
+        const merged = strip(dumpSkeleton(data, { ...GATE_OPTIONS, physics, dt: physics === 'step' ? 1 / 60 : null }));
+        const named = strip(dumpSkeleton(data, { ...GATE_OPTIONS, skin: data.skins[0].name, physics, dt: physics === 'step' ? 1 / 60 : null }));
+        dumps += 2;
+        if (named !== merged) probes.push(`${b.name}: under --physics ${physics}, --skin ${data.skins[0].name} and --skin all differ`);
+      }
+      const row = rows.find((r) => r.name === b.name);
+      if (row !== undefined && (row.perSkin ?? []).length !== 0) probes.push(`${b.name}: the gate ran ${(row.perSkin ?? []).length} per-skin run(s) on a one-skin row`);
+    }
+    if (one === 0) probes.push(`no built row declares exactly one skin${examplesHole === null ? '' : ` (${examplesHole})`}`);
+    const several = rows.filter((r) => (r.perSkin ?? []).length > 0).length;
+    const hole = skinReachLines(rows);
+    if (several === 0 && !hole[0].startsWith('  HOLE  per skin: no row declares several skins')) probes.push(`no row declares several skins and the reach line reads ${JSON.stringify(hole[0])}`);
+    const ok = probes.length === 0;
+    say(
+      'CN05_ON_A_ONE_SKIN_ROW_THAT_SKINS_DUMP_IS_THE_MERGED_DUMP_SO_THE_GATE_RUNS_IT_ONCE',
+      ok,
+      probeDetail(ok, probes, `${one} one-skin row(s), ${dumps} spine-core dumps: under --physics none and step, --skin <its skin> equals --skin all in every block; the gate ran no per-skin run on any of them, and with ${several} row(s) declaring several skins the reach line ${several === 0 ? 'names the HOLE' : 'names them'}`),
+      'issue #932: on a one-skin row the per-skin run would repeat the merged one, so the gate does not pay for it — the measurement that licenses that is re-taken on every run rather than asserted',
+    );
+    if (several === 0) console.log(`          ⚠️ HOLE: no tree row declares several skins, so the per-skin runs judge nothing here; CN01–CN04's probes are the reading of the rule`);
+  }
+
+  // --- CN06: a slot on a bone the applied skin leaves inactive is not animated; one on an active bone showing nothing is (the commander's private finding) --
+  {
+    const probes: string[] = [];
+    const KEYS: Record<string, Obj[]> = {
+      rgba: [{ time: 0, color: 'ffffff00' }],
+      rgb: [{ time: 0, color: '00ff00' }],
+      alpha: [{ time: 0, value: 0.25 }],
+      rgba2: [{ time: 0, light: 'ff0000ff', dark: '00ff00' }],
+      rgb2: [{ time: 0, light: 'ff0000', dark: '0000ff' }],
+      attachment: [{ time: 0, name: 'q' }],
+    };
+    const probe = (slider: boolean): { spine: string; model: string; atlas: string } => {
+      const anims: Record<string, RAnim> = { bend: { deform: [{ slot: 'w', attachment: 'w', keys: [{ time: 0, vertices: [5, 5] }] }] } };
+      // The commander's shape first: two animations keying the slot with one rgba key ffffff00 at 0.
+      anims.fade1 = { slots: { s: { rgba: KEYS.rgba }, t: { rgba: KEYS.rgba } } };
+      anims.fade2 = { slots: { s: { rgba: KEYS.rgba }, t: { rgba: KEYS.rgba } } };
+      for (const [kind, keys] of Object.entries(KEYS)) anims[`k_${kind}`] = { slots: { s: { [kind]: keys }, t: { [kind]: keys } } };
+      if (slider) anims.sk = { slots: { s: { rgba: [{ time: 0, color: 'ff000080' }] } } };
+      const pair = withSkinLists(remainderPair({
+        bones: [{ name: 'root' }, { name: 'req', parent: 'root', skin: true, x: 3 }],
+        // A clip on the root first, so every slot below is drawn under it and the samples carry `clipped` rows (issue #964).
+        slots: [{ name: 'c', bone: 'root', attachment: 'c' }, { name: 's', bone: 'req', attachment: 'p' }, { name: 't', bone: 'root', attachment: 'p' }, { name: 'w', bone: 'req', attachment: 'w' }],
+        skins: {
+          default: { c: { c: { kind: 'clipping', xy: [-0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5] } }, s: { q: { kind: 'region', path: 'dq' } }, t: { q: { kind: 'region', path: 'tq' } }, w: { w: { kind: 'mesh', weighted: [[{ bone: 'root', x: 0, y: 0, w: 1 }], [{ bone: 'root', x: 1, y: 0, w: 1 }], [{ bone: 'root', x: 0, y: 1, w: 1 }]] } } },
+          s1: { s: { p: { kind: 'region', path: 's1p' } } },
+        },
+        ...(slider ? { constraints: [{ type: 'slider', name: 'sl', animation: 'sk', time: 0 }] } : {}),
+        anims,
+      }), { s1: { bones: ['req'] } });
+      // Both slots carry a dark colour, so the two-colour keys have something to move.
+      const spine = JSON.parse(pair.spine) as { slots: Obj[] };
+      const model = JSON.parse(pair.model) as { slots: Obj[] };
+      for (const x of [...spine.slots, ...model.slots]) if (x.name === 's' || x.name === 't') x.dark = '000000';
+      return { spine: JSON.stringify(spine), model: JSON.stringify(model), atlas: pair.atlas };
+    };
+    const lines: string[] = [];
+    const red: string[] = [];
+    let dumps = 0;
+    let clippedRows = 0;
+    for (const slider of [false, true]) {
+      const pair = probe(slider);
+      for (const skin of ['all', 's1', 'default']) {
+        const options = skinOf(skin, 'none', 3);
+        const { spine, core, c } = skinCompare(pair, options);
+        dumps++;
+        const label = `${slider ? 'with a slider' : 'no slider'}, --skin ${skin}`;
+        const live = skin !== 'default';
+        const setupS = JSON.stringify(spine.setup.slots.find((r) => r[0] === 's')?.slice(1));
+        const setupT = JSON.stringify(spine.setup.slots.find((r) => r[0] === 't')?.slice(1));
+        // spine-core, as measured: slot s moves under a skin activating its bone and holds its setup row under one that does not; slot t (active, showing nothing) moves under every skin.
+        const sMoves = spine.animations.filter((a) => a.name !== 'bend' && a.name !== 'sk').map((a) => a.samples.every((x) => JSON.stringify(x.slots.find((r) => r[0] === 's')?.slice(1)) !== setupS));
+        const tMoves = spine.animations.filter((a) => a.name !== 'bend' && a.name !== 'sk').map((a) => a.samples.every((x) => JSON.stringify(x.slots.find((r) => r[0] === 't')?.slice(1)) !== setupT));
+        // With the slider, its own rgba key lands after each sample's and at setup, so the samples are read against the setup only without it.
+        if (!slider && sMoves.some((m) => m !== live)) probes.push(`${label}: spine-core moved slot s in [${sMoves.join(', ')}], not ${live ? 'every' : 'no'} animation`);
+        if (tMoves.some((m) => !m)) probes.push(`${label}: spine-core left slot t (active, showing nothing) still in some animation [${tMoves.join(', ')}]`);
+        const sliderMoved = JSON.stringify(spine.setup.slots.find((r) => r[0] === 's')?.slice(2, 6)) !== JSON.stringify([1, 1, 1, 1]);
+        if (slider && sliderMoved !== live) probes.push(`${label}: the slider ${sliderMoved ? 'moved' : 'did not move'} slot s at setup`);
+        const bent = spine.animations.find((a) => a.name === 'bend')?.samples[0].attachments.find((r) => r[0] === 'w')?.[3][0];
+        if ((bent === 5) !== live) probes.push(`${label}: the deform left mesh w's first x at ${bent}`);
+        if (!c.identical) probes.push(`${label}: ${c.first}`);
+        // The ill-conditioned rule keeps a mesh on an inactive bone's slot out of compare, so its rows are held to each other directly.
+        // The same for the `clipped` rows, where a clip cuts what such a slot draws (issue #964).
+        const rowsOf = (d: OracleDocument): string => JSON.stringify([d.setup.attachments, d.setup.clipped, (d.animations ?? []).map((a) => a.samples.map((x) => [x.attachments, x.clipped]))]);
+        if (rowsOf(spine) !== rowsOf(core)) probes.push(`${label}: the attachment or clipped rows differ between spine-core and the core`);
+        clippedRows += (spine.animations ?? []).reduce((n, a) => n + a.samples.reduce((m, x) => m + (x.clipped ?? []).filter((r) => r[0] === 'w' && r[2] === 1).length, 0), 0);
+        const planted = skinCompare(pair, options, { slotTimelines: () => true });
+        if (!planted.c.identical || rowsOf(planted.spine) !== rowsOf(planted.core)) red.push(label);
+        lines.push(`${label}: s ${live ? 'animated' : 'held at setup'}`);
+      }
+    }
+    const wantRed = ['no slider, --skin default', 'with a slider, --skin default'];
+    if (clippedRows === 0) probes.push('no sample drew mesh w cut by the clip, so the clipped rows held nothing');
+    if (JSON.stringify(red) !== JSON.stringify(wantRed)) probes.push(`slot timelines applied on an inactive bone, planted, went red on [${red.join('; ')}], not exactly [${wantRed.join('; ')}]`);
+    const ok = probes.length === 0;
+    say(
+      'CN06_A_SLOT_ON_A_BONE_THE_SKIN_LEAVES_INACTIVE_IS_NOT_ANIMATED_AND_ONE_SHOWING_NOTHING_ON_AN_ACTIVE_BONE_IS',
+      ok,
+      probeDetail(ok, probes, `${dumps} dumps at 3 samples — a slot on a skin-required bone only s1 names, keyed by rgba ffffff00 in two animations (the commander's shape) and by each of rgba, rgb, alpha, rgba2, rgb2 and attachment, a slider keying it, a deform on a mesh weighted to the root in its slot, all drawn under a clip on the root (${clippedRows} cut sample rows of the mesh, held with the attachment rows) — spine-core as measured (animated under all and s1, held at its setup row under default, the slider and the deform too; the slot on the root showing nothing animated under all three) and the core exact at tolerance 0; the timelines applied on an inactive bone, planted, red on exactly the ${wantRed.length} default dumps`),
+      'issue #932, the commander\'s private-corpus finding: a 19-skin rig read DIFF on 18 of its 19 skin runs, because the core applied a slot\'s rgba key while the slot\'s bone was inactive under the skin posed, and spine-core does not. The predicate is the slot bone\'s activity, not what the slot shows — a slot showing nothing on an active bone is animated',
     );
   }
 

@@ -37,7 +37,8 @@
  *     another case `src/core/constraints_path.ts` names, or a slider keying a
  *     constraint timeline, for the bones — every constraint kind is posed
  *     since issue #938; a slider keying a slot on such a row, or skins
- *     disagreeing over a placeholder, for the slots; either of those, a shown
+ *     disagreeing over a placeholder — under the merged view only, and
+ *     judged per skin below — for the slots; either of those, a shown
  *     region whose atlas rectangle is `null`, or a deform or sequence
  *     timeline moving a record several skins fill, for the attachments; a
  *     slider keying the draw order on a row whose bones are absent, for the
@@ -50,6 +51,29 @@
  * could not be read; a refused row is not measured and says why. Under the
  * row, one line per animation (issue #936): its verdict on each sample
  * block, and the first difference of a DIFF.
+ *
+ * ## Per skin (issue #932)
+ *
+ * The run above poses every skin merged (`--skin all`), which is the
+ * instrument's view and not a state a runtime is ever in: a placeholder
+ * several skins fill shows the last of them in the Spine file's order,
+ * which the model does not hold, so the core leaves such a block out. A row
+ * whose model declares several skins is therefore run once more per skin,
+ * both dumpers under `--skin <name>` (the named skin's record, else the
+ * default skin's; the named skin's bones and constraint lists alone —
+ * `src/core/skins.ts`), each block judged alone as above, the stepped run
+ * too. A block the merged run leaves out and every skin's run poses is
+ * judged by those runs — DIFF when any skin's is, IDENTICAL otherwise, its
+ * reason saying so — and a skin's DIFF makes the row DIFF, naming the skin.
+ * The merged run stays: it is what the rosters are compared on, and a
+ * block it poses is judged there as before. A row declaring one skin (or
+ * none) is not run again: its one skin and the merged view are the same
+ * pose — measured on the nineteen tree rows, spine-core's dump under
+ * `--skin <its skin>` equals its `--skin all` dump in every block
+ * (`CN05`) — so the per-skin runs cost nothing on a one-skin corpus. Each
+ * skin's verdict prints under its row, the verdict line counts the rows
+ * declaring several skins and their runs, and a corpus with none prints a
+ * `per skin` HOLE.
  *
  * ## The stepped run (issue #956)
  *
@@ -145,7 +169,7 @@
  * is reached only from a pack that trims, which the public examples do not.
  *
  * Exit codes: 0 when every row is IDENTICAL or SKIP; 1 when any row is DIFF or
- * REFUSED, or its stepped run is DIFF; 2 on a bad input, by name. `tools/` is not `src/`: this file runs
+ * REFUSED, or its stepped run or any skin's run is DIFF; 2 on a bad input, by name. `tools/` is not `src/`: this file runs
  * child processes (through `runRecipes`) and reads the disk.
  */
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -380,6 +404,24 @@ export interface GateRow {
   stepped?: SteppedRow;
   /** What the spine-core dump draws under a clip (issue #964); absent on a REFUSED row. */
   clippedCensus?: ClippedCensusRow;
+  /** One run per declared skin (issue #932) on a row declaring several; empty on a row declaring one or none, absent on a REFUSED row. */
+  perSkin?: SkinRun[];
+}
+
+/**
+ * One skin's run of a row declaring several (issue #932): both dumps under
+ * `--skin <name>`, each posed block judged alone as the merged run's are, and
+ * the stepped run under the same skin.
+ */
+export interface SkinRun {
+  skin: string;
+  verdict: BlockVerdict;
+  /** The DIFF's first difference, or the SKIP's blocks; null on IDENTICAL. */
+  why: string | null;
+  blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null }>;
+  /** Per animation, each animation block's verdict under this skin. */
+  animations: AnimationVerdict[];
+  stepped: SteppedRow;
 }
 
 /**
@@ -718,7 +760,7 @@ export function pathCensusOf(modelText: string): PathCensusRow {
   const out = Object.fromEntries(PATH_CENSUS_FIELDS.map((f) => [f, 0])) as PathCensusRow;
   const records = doc.constraints.flatMap((c) => (c.record === undefined ? [] : [c.record]));
   const active = activeBones(doc);
-  const skipped = new Set(records.flatMap((r, i) => (r.skin ? [i] : [])));
+  const skipped = new Set(records.flatMap((r, i) => (r.skin && !r.listedBySkin ? [i] : [])));
   const plan = slotBonePlan(doc.bones, active, records, skipped);
   const byName = new Map(doc.bones.map((b) => [b.name, b]));
   const under = (n: string, top: string): boolean => {
@@ -846,10 +888,11 @@ function only(core: OracleDocument, keep: GateBlock): OracleDocument {
  * (every block the core writes, #955's among them), the `dt` both documents
  * state, and the steps the core's schedule takes between samples.
  */
-export function steppedRun(skeletonText: string, atlasText: string, skeletonPath: string, modelText: string, modelPath: string, plant: TimelinePlant, tol: { xy: number; m: number }): SteppedRow {
-  const spine = dumpSkeleton(loadOracleData(skeletonText, atlasText, skeletonPath), STEPPED_OPTIONS);
+export function steppedRun(skeletonText: string, atlasText: string, skeletonPath: string, modelText: string, modelPath: string, plant: TimelinePlant, tol: { xy: number; m: number }, skin: string = STEPPED_OPTIONS.skin): SteppedRow {
+  const options: OracleOptions = { ...STEPPED_OPTIONS, skin };
+  const spine = dumpSkeleton(loadOracleData(skeletonText, atlasText, skeletonPath), options);
   const doc = readModel(modelText, modelPath);
-  const core = coreDump(doc, STEPPED_OPTIONS, plant);
+  const core = coreDump(doc, options, plant);
   const census = steppedCensusOf(modelText);
   const dt = spine.options.dt === core.options.dt ? core.options.dt : null;
   const steps = doc.animations.map((a) => ({ animation: a.name, counts: stepSchedule(STEPPED_OPTIONS.phase, a.timelines.duration, STEPPED_OPTIONS.samples, STEPPED_OPTIONS.dt as number).map((x) => x.length) }));
@@ -893,34 +936,47 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   let stepped: SteppedRow;
   let attachmentRows = 0;
   let clippedCensus: ClippedCensusRow;
+  const perSkin: SkinRun[] = [];
+  // What the per-skin runs compared, added to the merged run's figures.
+  const extra = { boneSamples: 0, slotRows: 0, attachmentRows: 0, worstXy: 0, worstM: 0 };
   try {
     const spine = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), GATE_OPTIONS);
     const modelText = readFileSync(model, 'utf8');
-    const core = coreDump(readModel(modelText, model), GATE_OPTIONS, plant);
+    const modelDoc = readModel(modelText, model);
+    const core = coreDump(modelDoc, GATE_OPTIONS, plant);
     const tol = { xy: ORACLE_DEFAULT_TOL, m: ORACLE_DEFAULT_TOL };
     c = compareDumps(spine, core, tol);
     clippedCensus = clippedCensusOf(spine);
-    for (const block of GATE_BLOCKS) {
-      const why = core.absent?.find((x) => x[0] === block)?.[1];
-      if (why !== undefined) {
-        blocks[block] = { verdict: 'SKIP', why };
-        continue;
+    const judged = judgeBlocks(spine, core, tol);
+    Object.assign(blocks, judged.blocks);
+    for (const [k, v] of judged.animations) perAnimation.set(k, v);
+    // A row declaring several skins is posed once per skin as well (issue #932): the merged view is an artefact of the instrument, each skin a state a runtime is in.
+    if (modelDoc.skins.length > 1) {
+      for (const k of modelDoc.skins) {
+        const options: OracleOptions = { ...GATE_OPTIONS, skin: k.name };
+        const spineK = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), options);
+        const coreK = coreDump(modelDoc, options, plant);
+        const whole = compareDumps(spineK, coreK, tol);
+        const j = judgeBlocks(spineK, coreK, tol);
+        const skippedK = GATE_BLOCKS.filter((b) => j.blocks[b].verdict === 'SKIP');
+        extra.boneSamples += whole.boneSamples;
+        extra.worstXy = Math.max(extra.worstXy, whole.worstXy);
+        extra.worstM = Math.max(extra.worstM, whole.worstM);
+        if (j.blocks['setup.slots'].verdict !== 'SKIP') extra.slotRows += coreK.setup.slots?.length ?? 0;
+        if (j.blocks['setup.attachments'].verdict !== 'SKIP') extra.attachmentRows += coreK.setup.attachments?.length ?? 0;
+        if (j.blocks['setup.clips'].verdict !== 'SKIP') extra.attachmentRows += coreK.setup.clips?.length ?? 0;
+        const steppedK = steppedRun(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton, modelText, model, plant, tol, k.name);
+        perSkin.push({
+          skin: k.name,
+          verdict: !whole.identical ? 'DIFF' : skippedK.length > 0 ? 'SKIP' : 'IDENTICAL',
+          why: !whole.identical ? whole.first : skippedK.length > 0 ? skippedK.map((b) => `${b}: ${j.blocks[b].why}`).join(' | ') : null,
+          blocks: j.blocks,
+          animations: [...j.animations.values()],
+          stepped: steppedK,
+        });
       }
-      const alone = compareDumps(spine, only(core, block), tol);
-      blocks[block] = alone.identical ? { verdict: 'IDENTICAL', why: null } : { verdict: 'DIFF', why: alone.first };
-      if (block.startsWith('animations.')) {
-        const field = block.slice('animations.'.length) as 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'clipped' | 'events';
-        for (const row of alone.rows) {
-          if (row.name === '(setup)') continue;
-          const v = perAnimation.get(row.name) ?? unjudged(row.name);
-          const verdict: BlockVerdict = row.findings.length === 0 ? 'IDENTICAL' : 'DIFF';
-          v[field] = verdict;
-          if (verdict === 'DIFF' && v.why === null) v.why = row.findings[0];
-          perAnimation.set(row.name, v);
-        }
-      }
+      promotePerSkin(blocks, perAnimation, perSkin);
     }
-    for (const a of core.animations ?? []) if (!perAnimation.has(a.name)) perAnimation.set(a.name, unjudged(a.name));
     if (core.setup.slots !== null) slotRows = core.setup.slots.length;
     attachmentRows = (core.setup.attachments?.length ?? 0) + (core.setup.clips?.length ?? 0);
     const reflecting = new Set(spine.setup.bones.filter((b) => b[3] !== null && b[4] !== null && b[5] !== null && b[6] !== null && b[3] * b[6] - b[4] * b[5] < 0).map((b) => b[0]));
@@ -938,11 +994,88 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   }
   const animations = [...perAnimation.values()];
   const setupRow = c.rows.find((x) => x.name === '(setup)');
-  const base = { name, blocks, boneSamples: c.boneSamples, slotRows, worstXy: c.worstXy, worstM: c.worstM, census, slotCensus, attachmentRows, vertices: setupRow?.vertices ?? 0, attachmentCensus, constraintCensus, pathCensus, animations, animationCensus, stepped, clippedCensus };
+  const base = {
+    name, blocks, boneSamples: c.boneSamples + extra.boneSamples, slotRows: slotRows + extra.slotRows, worstXy: Math.max(c.worstXy, extra.worstXy), worstM: Math.max(c.worstM, extra.worstM), census, slotCensus,
+    attachmentRows: attachmentRows + extra.attachmentRows, vertices: setupRow?.vertices ?? 0, attachmentCensus, constraintCensus, pathCensus, animations, animationCensus, stepped: combineStepped(stepped, perSkin), clippedCensus, perSkin,
+  };
   if (!c.identical) return { ...base, verdict: 'DIFF', why: c.first };
+  const redSkin = perSkin.find((k) => k.verdict === 'DIFF');
+  if (redSkin !== undefined) return { ...base, verdict: 'DIFF', why: `--skin ${JSON.stringify(redSkin.skin)}: ${redSkin.why}` };
   const skipped = GATE_BLOCKS.filter((b) => blocks[b].verdict === 'SKIP');
   if (skipped.length > 0) return { ...base, verdict: 'SKIP', why: skipped.map((b) => `${b}: ${blocks[b].why}`).join(' | ') };
   return { ...base, verdict: 'IDENTICAL', why: null };
+}
+
+/** Each posed block of one pair of dumps judged alone — the core's side with every other posed block left out — and each animation's verdict on each sample block. */
+function judgeBlocks(spine: OracleDocument, core: OracleDocument, tol: { xy: number; m: number }): { blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null }>; animations: Map<string, AnimationVerdict> } {
+  const blocks = {} as Record<GateBlock, { verdict: BlockVerdict; why: string | null }>;
+  const perAnimation = new Map<string, AnimationVerdict>();
+  for (const block of GATE_BLOCKS) {
+    const why = core.absent?.find((x) => x[0] === block)?.[1];
+    if (why !== undefined) {
+      blocks[block] = { verdict: 'SKIP', why };
+      continue;
+    }
+    const alone = compareDumps(spine, only(core, block), tol);
+    blocks[block] = alone.identical ? { verdict: 'IDENTICAL', why: null } : { verdict: 'DIFF', why: alone.first };
+    if (block.startsWith('animations.')) {
+      const field = block.slice('animations.'.length) as SampleField;
+      for (const row of alone.rows) {
+        if (row.name === '(setup)') continue;
+        const v = perAnimation.get(row.name) ?? unjudged(row.name);
+        const verdict: BlockVerdict = row.findings.length === 0 ? 'IDENTICAL' : 'DIFF';
+        v[field] = verdict;
+        if (verdict === 'DIFF' && v.why === null) v.why = row.findings[0];
+        perAnimation.set(row.name, v);
+      }
+    }
+  }
+  for (const a of core.animations ?? []) if (!perAnimation.has(a.name)) perAnimation.set(a.name, unjudged(a.name));
+  return { blocks, animations: perAnimation };
+}
+
+type SampleField = 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'clipped' | 'events';
+
+/**
+ * A block the merged run (`--skin all`) leaves out and EVERY per-skin run
+ * poses is judged by the per-skin runs (issue #932): the merged view's
+ * absence was then about merging — a placeholder several skins fill, whose
+ * winner is the Spine file's skin order — and every state a runtime is
+ * actually in was compared. It reads DIFF when any skin's does, else
+ * IDENTICAL, and says it was judged per skin; each animation's verdict on a
+ * sample block is taken the same way. A block some skin's run leaves out
+ * too stays SKIP with the merged run's reason.
+ */
+function promotePerSkin(blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null }>, perAnimation: Map<string, AnimationVerdict>, runs: readonly SkinRun[]): void {
+  for (const block of GATE_BLOCKS) {
+    if (blocks[block].verdict !== 'SKIP' || runs.some((k) => k.blocks[block].verdict === 'SKIP')) continue;
+    const red = runs.find((k) => k.blocks[block].verdict === 'DIFF');
+    const judged = `judged per skin (${runs.map((k) => `${k.skin} ${k.blocks[block].verdict}`).join(', ')}); the merged view leaves it out — ${blocks[block].why}`;
+    blocks[block] = red === undefined ? { verdict: 'IDENTICAL', why: judged } : { verdict: 'DIFF', why: `--skin ${JSON.stringify(red.skin)}: ${red.blocks[block].why}` };
+    if (!block.startsWith('animations.')) continue;
+    const field = block.slice('animations.'.length) as SampleField;
+    for (const [name, v] of perAnimation) {
+      const theirs = runs.map((k) => k.animations.find((a) => a.name === name));
+      const diff = theirs.find((a) => a !== undefined && a[field] === 'DIFF');
+      v[field] = diff !== undefined ? 'DIFF' : theirs.every((a) => a !== undefined && a[field] === 'IDENTICAL') ? 'IDENTICAL' : v[field];
+      if (diff !== undefined && v.why === null) v.why = diff.why;
+    }
+  }
+}
+
+/**
+ * The row's stepped verdict with its per-skin runs (issue #932): DIFF when any
+ * skin's is; a merged SKIP every skin's run judged IDENTICAL reads IDENTICAL,
+ * saying so; otherwise the merged run's.
+ */
+function combineStepped(merged: SteppedRow, runs: readonly SkinRun[]): SteppedRow {
+  if (runs.length === 0) return merged;
+  const red = runs.find((k) => k.stepped.verdict === 'DIFF');
+  if (merged.verdict !== 'DIFF' && red !== undefined) return { ...merged, verdict: 'DIFF', why: `--skin ${JSON.stringify(red.skin)}: ${red.stepped.why}` };
+  if (merged.verdict === 'SKIP' && runs.every((k) => k.stepped.verdict === 'IDENTICAL')) {
+    return { ...merged, verdict: 'IDENTICAL', why: `judged per skin (${runs.map((k) => `${k.skin} IDENTICAL`).join(', ')}); the merged view leaves it out — ${merged.why}`, boneSamples: merged.boneSamples + runs.reduce((n, k) => n + k.stepped.boneSamples, 0) };
+  }
+  return merged;
 }
 
 /** One recipe built: its name, its `{{out}}` and the chain's exit codes. */
@@ -1243,18 +1376,35 @@ export function steppedReachLines(rows: readonly GateRow[]): string[] {
   return out;
 }
 
+/**
+ * Which rows the per-skin runs judged (issue #932): each row declaring
+ * several skins, with its skins, or a HOLE when none does — the merged run
+ * then speaks for every row, and the core suite's `CN` probes are the only
+ * reading of the per-skin rule.
+ */
+export function skinReachLines(rows: readonly GateRow[]): string[] {
+  const several = rows.filter((r) => (r.perSkin?.length ?? 0) > 0);
+  if (several.length === 0) return ['  HOLE  per skin: no row declares several skins, so no per-skin run judged anything (each row\'s one skin is its merged view)'];
+  return several.map((r) => `  REACH per skin: ${r.name} — ${(r.perSkin ?? []).map((k) => `${k.skin} ${k.verdict}`).join(', ')}`);
+}
+
 /** The verdict line. */
 export function gateVerdict(rows: readonly GateRow[]): { ok: boolean; line: string } {
   const count = (v: GateVerdict): number => rows.filter((r) => r.verdict === v).length;
   const on = (block: GateBlock, v: BlockVerdict): number => rows.filter((r) => r.blocks?.[block].verdict === v).length;
   const stepped = (v: BlockVerdict): number => rows.filter((r) => r.stepped?.verdict === v).length;
-  const ok = count('DIFF') === 0 && count('REFUSED') === 0 && stepped('DIFF') === 0;
+  const several = rows.filter((r) => (r.perSkin?.length ?? 0) > 0);
+  const runs = several.flatMap((r) => r.perSkin ?? []);
+  const skin = (v: BlockVerdict): number => runs.filter((k) => k.verdict === v).length;
+  const skinStepped = (v: BlockVerdict): number => runs.filter((k) => k.stepped.verdict === v).length;
+  const ok = count('DIFF') === 0 && count('REFUSED') === 0 && stepped('DIFF') === 0 && skin('DIFF') === 0 && skinStepped('DIFF') === 0;
   return {
     ok,
     line:
       `${ok ? 'GREEN' : 'RED'} — ${rows.length} row(s): ` +
       GATE_BLOCKS.map((b) => `${b} ${on(b, 'IDENTICAL')} IDENTICAL, ${on(b, 'SKIP')} SKIP, ${on(b, 'DIFF')} DIFF`).join('; ') +
-      `; ${count('REFUSED')} REFUSED; stepped (--physics step --dt ${ORACLE_DEFAULT_DT}) bones ${stepped('IDENTICAL')} IDENTICAL, ${stepped('SKIP')} SKIP, ${stepped('DIFF')} DIFF`,
+      `; ${count('REFUSED')} REFUSED; stepped (--physics step --dt ${ORACLE_DEFAULT_DT}) bones ${stepped('IDENTICAL')} IDENTICAL, ${stepped('SKIP')} SKIP, ${stepped('DIFF')} DIFF` +
+      `; per skin (--skin <name>): ${several.length} row(s) declaring several skins, ${runs.length} skin run(s) ${skin('IDENTICAL')} IDENTICAL, ${skin('SKIP')} SKIP, ${skin('DIFF')} DIFF, stepped ${skinStepped('IDENTICAL')} IDENTICAL, ${skinStepped('SKIP')} SKIP, ${skinStepped('DIFF')} DIFF`,
   };
 }
 
@@ -1298,6 +1448,9 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
           (row.why === null ? '' : ` — ${row.why}`),
       );
       for (const a of row.animations) print(`              animation ${JSON.stringify(a.name)}: bones ${a.bones}, slots ${a.slots}, drawOrder ${a.drawOrder}, attachments ${a.attachments}, clips ${a.clips}, clipped ${a.clipped}, events ${a.events}${a.why === null ? '' : ` — ${a.why}`}`);
+      for (const k of row.perSkin ?? []) {
+        print(`              skin ${JSON.stringify(k.skin)}: ${k.verdict} [${GATE_BLOCKS.map((b) => `${b} ${k.blocks[b].verdict}`).join(', ')}], stepped bones ${k.stepped.verdict}${k.why === null ? '' : ` — ${k.why}`}${k.stepped.why === null ? '' : ` — stepped: ${k.stepped.why}`}`);
+      }
       const st = row.stepped;
       if (st !== undefined && ((row.constraintCensus?.physics ?? 0) > 0 || st.verdict !== 'IDENTICAL')) {
         print(`              stepped (--physics step, dt ${st.dt} in both documents): bones ${st.verdict}, ${st.boneSamples} bone-sample(s)${st.why === null ? '' : ` — ${st.why}`}`);
@@ -1327,6 +1480,7 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     for (const line of pathReachLines(rows)) print(line);
     for (const line of steppedReachLines(rows)) print(line);
     for (const line of clippedReachLines(rows)) print(line);
+    for (const line of skinReachLines(rows)) print(line);
     const kinds = new Map<string, string[]>();
     for (const row of rows) {
       const path = join(work, String(rows.indexOf(row)).padStart(String(rows.length).length, '0'), 'out', MODEL_DOCUMENT_FILE);

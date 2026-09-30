@@ -179,7 +179,8 @@
  *
  * ## Which constraints run
  *
- * One with `skin: true` does not under `--skin all`; one whose slot bone is
+ * One with `skin: true` runs exactly when an applied skin's `path` list
+ * names it (`./constraints.ts`'s header, issue #932); one whose slot bone is
  * inactive does not. One whose constrained bone is inactive still runs
  * (measured: its other bones move; the inactive one's matrix is collapsed
  * and the oracle's ill-conditioned rule excludes it). A weight bound to an
@@ -256,13 +257,17 @@ export interface CorePathRecord extends PathPose {
   rotateMode: PathRotateMode;
   offsetRotation: number;
   skin: boolean;
+  /** An applied skin's `path` list names it — what applies a skin-required one (`./constraints.ts`'s header); set per skin view by `underSkin` in `./index.ts`. */
+  listedBySkin: boolean;
   /** What the slot shows at setup: its path, `null` when it shows no path (the constraint then does nothing). Set once the skins are read. */
   path: CorePathGeometry | null;
   /** Why what the slot shows cannot be told — skins that disagree over its placeholder — or null. */
   unresolved: string | null;
   /**
    * The bones the runtime brings up to date for this constraint's slot before
-   * it runs, off every path attachment any skin files under the slot: a
+   * it runs, off every path attachment a skin the view can show files under
+   * the slot (every skin under `all`, the named and default skins under a
+   * named one, `lookupSkins` in `./skins.ts`): a
    * weighted one's bound bones, an unweighted one's slot bone (the header's
    * *Which slot bone*). Set once the skins are read.
    */
@@ -324,6 +329,7 @@ export function readPathRecord(raw: Record<string, unknown>, name: string, where
     mixX,
     mixY: num(raw, 'mixY', mixX, where, problems),
     skin: raw.skin === true,
+    listedBySkin: false,
     path: null,
     unresolved: null,
     slotDeps: [],

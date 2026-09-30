@@ -56,10 +56,12 @@
  * is active; a skin-required bone is active exactly when the applied skin
  * names it or names a bone below it — a skin-required parent of a named bone
  * is active, and a bone that is not skin-required stays active under an
- * inactive parent. The oracle's `--skin all`, the only skin option the core
- * takes, applies every skin at once, so under it `active` means: not
- * skin-required, or named — itself or a bone below it — by ANY skin's `bones`
- * list. An inactive bone is not posed (`worldTransforms` in `./world.ts`).
+ * inactive parent. The oracle's `--skin all` applies every skin at once, so
+ * under it `active` means: not skin-required, or named — itself or a bone
+ * below it — by ANY skin's `bones` list. Under `--skin <name>` (issue #932,
+ * `underSkin`) it is the named skin's list alone — the default skin's does
+ * not count (`./skins.ts`, measured). An inactive bone is not posed
+ * (`worldTransforms` in `./world.ts`).
  *
  ## The slots at the setup pose (issue #928)
  *
@@ -93,8 +95,10 @@
  *   the same shown name and path — the order cannot matter and the row is
  *   posed; where they differ, the whole `setup.slots` block is absent, naming
  *   the slot, the placeholder and the skins. Posing one skin at a time
- *   (`--skin <name>`) has no order to know, and is the construct that would
- *   admit it.
+ *   (`--skin <name>`, `underSkin`, issue #932) has no order to know — the
+ *   named skin's record, else the default skin's (`./skins.ts`) — so the
+ *   per-skin dumps judge what the merged view leaves out, and
+ *   `tools/core_gate.ts` runs one per skin on a row declaring several.
  * - **The name shown** is the record's own `name` where the model states one,
  *   else the placeholder: a region filed under `p` with `path: "other"` shows
  *   `p`; one stating `name: "n"` shows `n`.
@@ -172,7 +176,8 @@ import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, t
 import type { CoreClippedRow, TriangleClipper } from './clipping.ts';
 import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
 import { readPathRecord } from './constraints_path.ts';
-import { physicsListedBySkins, readPhysicsRecord, type PhysicsStepContext, type PhysicsStepper } from './constraints_physics.ts';
+import { readPhysicsRecord, type PhysicsStepContext, type PhysicsStepper } from './constraints_physics.ts';
+import { appliedSkins, CORE_ALL_SKINS, fillingSkins, listedByAppliedSkin, lookupSkins, slotTimelinesApply, type SlotTimelineGate } from './skins.ts';
 import { applySliderSlots, readSliderRecord, type SliderApplication, type SlotPoseState } from './constraints_slider.ts';
 import { attachmentStates, type DeformEvaluator, type SequenceEvaluator } from './deform.ts';
 import { drawOrderAt, type DrawOrderEvaluator } from './draw_order.ts';
@@ -256,10 +261,12 @@ export interface CoreAttachment {
   timelines?: boolean;
 }
 
-/** One skin, as far as these constructs read it: its name, the bones it activates, and its table — slot, then placeholder. */
+/** One skin, as far as these constructs read it: its name, the bones and constraints it activates, and its table — slot, then placeholder. */
 export interface CoreSkin {
   name: string;
   bones: string[];
+  /** The constraints it activates, by kind — a kind the document leaves out lists none (issue #932, `./skins.ts`). */
+  constraints: Record<CoreConstraintKind, string[]>;
   attachments: Record<string, Record<string, CoreAttachment>>;
 }
 
@@ -291,6 +298,12 @@ export interface CoreAnimation {
  */
 export interface CompiledDocument {
   spec: string;
+  /**
+   * The skin the document is posed under (issue #932, `./skins.ts`): `all` —
+   * every skin merged, the oracle's `--skin all` and `readModel`'s reading —
+   * or one skin's name, `underSkin`'s.
+   */
+  skin: string;
   bones: ModelBone[];
   slots: ModelSlot[];
   skins: CoreSkin[];
@@ -484,11 +497,20 @@ function readSkins(value: unknown, bones: ReadonlySet<string>, slots: ReadonlySe
         else members.push(b);
       });
     }
+    const lists = Object.fromEntries(CORE_CONSTRAINT_KINDS.map((k) => [k, [] as string[]])) as Record<CoreConstraintKind, string[]>;
     if (!isRecord(raw.constraints)) problems.push(`${label}: constraints is not an object`);
+    else {
+      for (const [kind, list] of Object.entries(raw.constraints)) {
+        const known = CORE_CONSTRAINT_KINDS.find((k) => k === kind);
+        if (known === undefined) problems.push(`${label}.constraints: "${kind}" is not a constraint kind; a skin lists ${CORE_CONSTRAINT_KINDS.join(', ')}`);
+        else if (!Array.isArray(list) || list.some((n) => typeof n !== 'string')) problems.push(`${label}.constraints.${kind} is not a list of constraint names`);
+        else lists[known] = list as string[];
+      }
+    }
     let attachments: Record<string, Record<string, CoreAttachment>> = {};
     if (!isRecord(raw.attachments)) problems.push(`${label}: attachments is not an object`);
     else attachments = readAttachments(raw.attachments, bones, slots, label, problems);
-    out.push({ name: typeof raw.name === 'string' ? raw.name : '', bones: members, attachments });
+    out.push({ name: typeof raw.name === 'string' ? raw.name : '', bones: members, constraints: lists, attachments });
   });
   return out;
 }
@@ -591,35 +613,70 @@ export function readModel(text: string, where = 'the model document'): CompiledD
   const events = readEventDefs(value.events, problems);
   const animations = readAnimations(value.animations, names, slots, skins, events, problems);
   const constraints = readConstraints(value.constraints, animations, bones, slots, problems);
-  // A skin-required physics constraint steps when a skin lists it (issue #956, `./constraints_physics.ts`).
-  const listedPhysics = physicsListedBySkins(value.skins);
-  for (const c of constraints) if (c.record?.kind === 'physics') c.record.listedBySkin = listedPhysics.has(c.name);
+  // Each skin's constraint lists name a constraint of that kind: the runtime's loader refuses any other name (`./skins.ts`).
+  for (const skin of skins) {
+    for (const kind of CORE_CONSTRAINT_KINDS) {
+      for (const name of skin.constraints[kind]) {
+        if (!constraints.some((c) => c.kind === kind && c.name === name)) problems.push(`skin "${skin.name}".constraints.${kind}: "${name}" is not a ${kind} constraint of this document — the runtime refuses the file ("Couldn't find … constraint ${name} for skin ${skin.name}.")`);
+      }
+    }
+  }
   if (Array.isArray(value.animations)) {
     value.animations.forEach((raw, i) => {
       if (isRecord(raw) && animations[i] !== undefined) animations[i].constraints = readConstraintTimelines(raw.constraints, `animations[${i}] "${animations[i].name}"`, constraints, problems);
     });
   }
   if (problems.length > 0) throw new CoreInputError(`${where}: ${problems.length} problem(s): ${problems.join('; ')}`);
-  const doc: CompiledDocument = { spec: CORE_DOCUMENT_SPEC, bones, slots, skins, constraints, animations };
+  const doc: CompiledDocument = { spec: CORE_DOCUMENT_SPEC, skin: CORE_ALL_SKINS, bones, slots, skins, constraints, animations };
+  resolveSkinView(doc);
+  return doc;
+}
+
+/**
+ * The document posed under one skin (issue #932): `name` is `all` — every
+ * skin merged, `readModel`'s reading — or a skin of the document, refused by
+ * name otherwise. The skins, rosters and records are the document's own; the
+ * constraint records are copied, so each view carries its own reading of
+ * which constraints apply and what a path walks (`resolveSkinView`).
+ */
+export function underSkin(doc: CompiledDocument, name: string): CompiledDocument {
+  if (name !== CORE_ALL_SKINS && !doc.skins.some((k) => k.name === name)) {
+    throw new CoreInputError(`--skin ${JSON.stringify(name)}: no such skin; this document declares [${doc.skins.map((k) => k.name).join(', ') || 'none'}] (or pass ${CORE_ALL_SKINS})`);
+  }
+  const view: CompiledDocument = { ...doc, skin: name, constraints: doc.constraints.map((c) => (c.record === undefined ? c : { ...c, record: { ...c.record } as CoreConstraintRecord })) };
+  resolveSkinView(view);
+  return view;
+}
+
+/**
+ * What a skin view decides on the constraint records: whether an applied
+ * skin's list names each (`listedBySkin`, `./skins.ts`), and what each path
+ * constraint walks — the curve its slot shows at setup, or why that cannot
+ * be told (`unresolved`) — and which bones its slot reads (`slotDeps`).
+ */
+function resolveSkinView(doc: CompiledDocument): void {
+  for (const c of doc.constraints) if (c.record !== undefined) c.record.listedBySkin = listedByAppliedSkin(doc, c.kind, c.name);
   // A path constraint walks what its slot shows at setup (construct 5's second cut, `./constraints_path.ts`).
-  for (const c of constraints) {
+  for (const c of doc.constraints) {
     const r = c.record;
     if (r?.kind !== 'path') continue;
-    const slot = slots.find((s) => s.name === r.slot) as ModelSlot;
+    r.path = null;
+    r.unresolved = null;
+    const slot = doc.slots.find((s) => s.name === r.slot) as ModelSlot;
     const shown = shownAttachment(doc, slot);
-    // Every skin filling the slot's setup placeholder: the curve walked is the LAST of them in the Spine file's skin order, which the model does not hold (the slots' ⚠️), so skins stating two curves leave it unresolved.
-    const fills = slot.setup === null ? [] : skins.flatMap((k) => {
-      const g = k.attachments[slot.name]?.[slot.setup as string]?.geometry;
-      return g === undefined ? [] : [{ skin: k.name, g: JSON.stringify(g) }];
+    // Under `all`, every skin filling the slot's setup placeholder: the curve walked is the LAST of them in the Spine file's skin order, which the model does not hold (the slots' ⚠️), so skins stating two curves leave it unresolved. Under a named skin one resolves (`fillingSkins`).
+    const fills = slot.setup === null ? [] : fillingSkins(doc, slot.name, slot.setup).flatMap((name) => {
+      const g = doc.skins.find((k) => k.name === name)?.attachments[slot.name]?.[slot.setup as string]?.geometry;
+      return g === undefined ? [] : [{ skin: name, g: JSON.stringify(g) }];
     });
-    if (fills.length > 1 && fills.some((f) => f.g !== fills[0].g)) r.unresolved = `path constraint "${r.name}" walks slot "${r.slot}", whose placeholder "${slot.setup}" skins ${fills.map((x) => `"${x.skin}"`).join(', ')} fill differently — which one --skin all shows is the Spine file's skin order, not the model's`;
-    else if (shown !== null && 'conflict' in shown) r.unresolved = `path constraint "${r.name}" walks slot "${r.slot}", whose placeholder "${slot.setup}" skins ${shown.conflict.map((x) => `"${x.skin}"`).join(', ')} fill differently — which one --skin all shows is the Spine file's skin order, not the model's`;
+    if (fills.length > 1 && fills.some((f) => f.g !== fills[0].g)) r.unresolved = `path constraint "${r.name}" walks slot "${r.slot}", whose placeholder "${slot.setup}" skins ${fills.map((x) => `"${x.skin}"`).join(', ')} fill differently — which one --skin all shows is the Spine file's skin order, not the model's; the per-skin dumps (--skin <name>) judge it`;
+    else if (shown !== null && 'conflict' in shown) r.unresolved = `path constraint "${r.name}" walks slot "${r.slot}", whose placeholder "${slot.setup}" skins ${shown.conflict.map((x) => `"${x.skin}"`).join(', ')} fill differently — which one --skin all shows is the Spine file's skin order, not the model's; the per-skin dumps (--skin <name>) judge it`;
     else if (shown !== null && shown.record.geometry?.kind === 'path') {
       const g = shown.record.geometry;
       r.path = { vertices: g.vertices, closed: g.closed, constantSpeed: g.constantSpeed, lengths: g.lengths };
     }
     const deps: string[] = [];
-    for (const skin of skins) {
+    for (const skin of lookupSkins(doc)) {
       for (const record of Object.values(skin.attachments[r.slot] ?? {})) {
         const g = record.geometry;
         if (g?.kind !== 'path') continue;
@@ -628,7 +685,6 @@ export function readModel(text: string, where = 'the model document'): CompiledD
     }
     r.slotDeps = deps;
   }
-  return doc;
 }
 
 /** Every linked mesh whose `skin`, `slot` and `source` do not resolve to a mesh record, named — the runtime refuses such a file too. */
@@ -730,6 +786,8 @@ export interface CorePlant {
   physicsStep?: PhysicsStepper;
   /** One attachment's triangles against a clip polygon (`clipTriangles` in `./clipping.ts`). */
   clip?: TriangleClipper;
+  /** Whether a slot's timelines apply (`slotTimelinesApply` in `./skins.ts`). */
+  slotTimelines?: SlotTimelineGate;
 }
 
 /** The document's ik, transform and path constraint records, in its order — what `applyConstraints` runs. */
@@ -750,9 +808,9 @@ export const NOT_ADMITTED: ReadonlyArray<readonly [string, string]> = [];
 /** The setup blocks the core poses, in the document's order. */
 const POSED_BLOCKS = ['setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips', 'setup.clipped'] as const;
 
-/** Bones active under every skin applied at once — the rule measured in the header. */
+/** Bones active under the skin view posed — the rule measured in the header (`all`) and in `./skins.ts` (a named skin). */
 export function activeBones(doc: CompiledDocument): Set<string> {
-  const named = new Set(doc.skins.flatMap((s) => s.bones));
+  const named = new Set(appliedSkins(doc).flatMap((s) => s.bones));
   const parentOf = new Map(doc.bones.map((b) => [b.name, b.parent]));
   const reached = new Set<string>();
   for (const name of named) {
@@ -798,6 +856,14 @@ export function shownRow(shown: CoreShown): { name: string; path: string | null 
 export function shownAttachment(doc: CompiledDocument, slot: ModelSlot): ShownResolution {
   if (slot.setup === null) return null;
   const placeholder = slot.setup;
+  // Under a named skin: that skin's record, else the default skin's, else nothing (`./skins.ts`).
+  if (doc.skin !== CORE_ALL_SKINS) {
+    for (const skin of lookupSkins(doc)) {
+      const record = skin.attachments[slot.name]?.[placeholder];
+      if (record !== undefined) return { skin: skin.name, placeholder, record };
+    }
+    return null;
+  }
   const filling: CoreShown[] = [];
   for (const skin of doc.skins) {
     const record = skin.attachments[slot.name]?.[placeholder];
@@ -855,13 +921,16 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
   }
   const conflicts: string[] = [];
   const slotRows: CoreSlotRow[] = [];
+  const liveBones = activeBones(doc);
+  const slotGate = plant.slotTimelines ?? slotTimelinesApply;
   for (const slot of doc.slots) {
     const pose: SlotPoseState = {
       placeholder: slot.setup,
       light: slot.color === undefined ? [1, 1, 1, 1] : [...colour(slot.color)],
       dark: slot.dark === undefined ? null : readColour(slot.dark).slice(0, 3),
     };
-    applySliderSlots(slot.name, pose, applied);
+    // A slot on an inactive bone is not animated, by a slider either (`./skins.ts`).
+    if (slotGate(doc, slot, liveBones)) applySliderSlots(slot.name, pose, applied);
     const posedRecord: ModelSlot = { ...slot, setup: pose.placeholder };
     const shown = pose.placeholder === null ? null : resolve(doc, posedRecord);
     if (shown !== null && 'conflict' in shown) {
@@ -882,7 +951,7 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
   }
   const slotsWhy = (bonesWhy === null ? null : slidersWhy(doc)) ?? (conflicts.length === 0
     ? null
-    : `${conflicts.join('; ')} — under --skin all the LAST of them in the Spine file's skin order wins, and that order is the emitter's (default first, the rest in the editor's order), not the model's; posing one skin at a time is not admitted`);
+    : `${conflicts.join('; ')} — under --skin all the LAST of them in the Spine file's skin order wins, and that order is the emitter's (default first, the rest in the editor's order), not the model's; the per-skin dumps (--skin <name>) judge it`);
   const slots = slotsWhy === null ? slotRows : null;
   const upstream = [bonesWhy === null ? null : `setup.bones is absent (${bonesWhy}), and every vertex goes through a bone's world matrix`, slotsWhy === null ? null : 'setup.slots is absent, so what a slot shows is not posed'].filter((x): x is string => x !== null);
   // The draw order: the slot order, then each slider's draw-order key (`./draw_order.ts`), which needs the sliders' times, read off the bones.

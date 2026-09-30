@@ -54,13 +54,22 @@
  *   child's world rotation, then an ik turning its parent by 90°, turned the
  *   child with the parent (the child's world rotation 180°); in the other
  *   order, 90°.
- * - A constraint with `skin: true` is not applied under `--skin all`, whether
- *   a skin lists it or not; ⚠️ issue #956 measured the contrary for a listed
- *   one — an ik and a transform constraint with `skin: true` named by a
- *   skin's list moved their bone under `--skin all --physics none` exactly as
- *   with `skin: false` — so this reading is wrong for a listed constraint of
- *   every kind; only physics is corrected here (`./constraints_physics.ts`),
- *   the rest is its own card; an ik or transform whose target, source or
+ * - A constraint with `skin: true` is applied exactly when an APPLIED skin's
+ *   list for its kind names it (`listedBySkin`, set per skin view by
+ *   `underSkin` in `./index.ts`): under `--skin all` any skin's, under
+ *   `--skin <name>` that skin's alone — the default skin's list does not
+ *   count there. Measured for all five kinds (issue #932, which carries card
+ *   #961's fix): a skin-required ik, transform, path, physics and slider
+ *   constraint on a probe where applying it moves a bone, dumped under
+ *   `--skin all`, `default` and `s1` against the same constraint at mix 0 —
+ *   named by no list: inert under all three; named by `s1`'s list: applied
+ *   under `all` and `s1`, inert under `default`; named by the default skin's
+ *   list: applied under `all` and `default`, inert under `s1` — the same
+ *   nine readings for every kind, 45 in all (the core suite's `CN02`). A name filed under another kind's list
+ *   is refused by the runtime's loader (`Couldn't find IK constraint k for
+ *   skin s1.`), and by `readModel`. The rule this replaced — `skin: true`
+ *   never applied (2e-i) — was measured only on unlisted constraints; issue
+ *   #956 corrected it for physics first. An ik or transform whose target, source or
  *   constrained bone is inactive is not applied (measured on an ik with its
  *   target skin-required and named by no skin: the bone did not turn); a
  *   path constraint is applied exactly when its slot's bone is active
@@ -278,6 +287,7 @@ import type { ModelBone } from '../model.ts';
 import { modeMatrix, RUNTIME_PI, worldTransforms, type CoreInheritMode, type CoreWorld } from './world.ts';
 import { channelAt, keyIndexAt, type CoreCurve, type CoreKey } from './animation.ts';
 import type { CompiledDocument, CoreConstraintKind } from './index.ts';
+import { fillingSkins } from './skins.ts';
 import { readPathTimelines, slotBonePlan, solvePath, type CorePathRecord, type CorePathTimelines, type SlotBoneEvent } from './constraints_path.ts';
 import { physicsTimelineCount, readPhysicsTimelines, stepPhysics, type CorePhysicsRecord, type CorePhysicsTimeline, type PhysicsStepContext } from './constraints_physics.ts';
 import { applySlider, posedSlider, readSliderTimelines, sliderBonesWhy, type CoreSliderRecord, type CoreSliderTimeline, type SliderApplication } from './constraints_slider.ts';
@@ -321,6 +331,8 @@ export interface CoreIkRecord extends IkPose {
   target: string;
   scaleY: IkScaleYMode;
   skin: boolean;
+  /** An applied skin's `ik` list names it — what applies a skin-required one (the header's rule); set per skin view by `underSkin` in `./index.ts`. */
+  listedBySkin: boolean;
 }
 
 export interface CoreTransformTo {
@@ -351,6 +363,8 @@ export interface CoreTransformRecord {
   /** The resolved mixes, by property — the header's reading of an absent one. */
   mixes: Record<TransformProperty, number>;
   skin: boolean;
+  /** An applied skin's `transform` list names it (the header's rule); set per skin view by `underSkin` in `./index.ts`. */
+  listedBySkin: boolean;
 }
 
 export type CoreConstraintRecord = CoreIkRecord | CoreTransformRecord | CorePathRecord | CorePhysicsRecord | CoreSliderRecord;
@@ -441,7 +455,7 @@ export function readConstraintRecord(raw: Record<string, unknown>, kind: 'ik' | 
       else scaleY = mode;
     }
     const record: CoreIkRecord = {
-      kind, name, bones: list, target, scaleY, skin,
+      kind, name, bones: list, target, scaleY, skin, listedBySkin: false,
       mix: num(raw, 'mix', 1, where, problems),
       softness: num(raw, 'softness', 0, where, problems),
       bendPositive: flag(raw, 'bendPositive', true, where, problems),
@@ -496,7 +510,7 @@ export function readConstraintRecord(raw: Record<string, unknown>, kind: 'ik' | 
     mixes[p] = resolvedMix(raw, p, driven, where, problems);
   }
   const record: CoreTransformRecord = {
-    kind, name, bones: list, source, properties, skin, offsets, mixes,
+    kind, name, bones: list, source, properties, skin, listedBySkin: false, offsets, mixes,
     localSource: flag(raw, 'localSource', false, where, problems),
     localTarget: flag(raw, 'localTarget', false, where, problems),
     additive: flag(raw, 'additive', false, where, problems),
@@ -1075,10 +1089,10 @@ function solveTransform(state: SolverState, c: CoreTransformRecord): { changed: 
   return { changed, inWorld };
 }
 
-/** Why a constraint is not applied under `--skin all` (the header's measured rule), or null when it is. */
+/** Why a constraint is not applied under the skin view posed (the header's measured rule), or null when it is. */
 function inactiveWhy(state: SolverState, c: CoreConstraintRecord): string | null {
-  // A skin-required physics constraint steps when a skin lists it (issue #956, measured under the step); the other kinds keep 2e-i's rule, which that measurement contradicts (`./constraints_physics.ts`, *Which constraints step*).
-  if (c.skin && !(c.kind === 'physics' && c.listedBySkin)) return 'skin';
+  // A skin-required constraint of any kind is applied when an applied skin's list for its kind names it (issue #932, card #961; physics first by issue #956).
+  if (c.skin && !c.listedBySkin) return 'skin';
   // A path constraint is active when its slot's bone is (`./constraints_path.ts`, *Which constraints run*); every other kind when every bone it names is.
   const named = c.kind === 'path' ? [c.slotBone] : c.kind === 'ik' ? [...c.bones, c.target] : c.kind === 'transform' ? [...c.bones, c.source] : c.kind === 'slider' ? (c.bone === null ? [] : [c.bone]) : [c.bone];
   return named.every((n) => state.active.has(n)) ? null : 'inactive bone';
@@ -1183,7 +1197,8 @@ export function previousPassSlotBones(doc: CompiledDocument, active: ReadonlySet
  * — the curve would not be the one the setup reads, and a switch of the
  * walked curve is not measured — or a path attachment an animation deforms
  * whose placeholder several skins fill, so which record `--skin all` shows,
- * and whether the deform moves it, is the Spine file's skin order. A deform
+ * and whether the deform moves it, is the Spine file's skin order (under a
+ * named skin one record resolves, `./skins.ts`). A deform
  * of a walked path is otherwise posed (`./deform.ts`, issue #955).
  */
 export function pathAnimationsWhy(doc: CompiledDocument): string | null {
@@ -1196,7 +1211,7 @@ export function pathAnimationsWhy(doc: CompiledDocument): string | null {
     for (const d of a.deforms) {
       const [skin, slot, att] = d.split('/');
       const g = doc.skins.find((k) => k.name === skin)?.attachments[slot]?.[att]?.geometry;
-      const fillers = doc.skins.filter((k) => k.attachments[slot]?.[att] !== undefined).map((k) => `"${k.name}"`);
+      const fillers = fillingSkins(doc, slot, att).map((k) => `"${k}"`);
       if (g?.kind === 'path' && fillers.length > 1) found.push(`animation "${a.name}" deforms path attachment "${att}" (skin "${skin}", slot "${slot}"), a placeholder skins ${fillers.join(', ')} fill — which of them --skin all walks, and so whether the deform moves it, is the Spine file's skin order, not the model's`);
     }
   }

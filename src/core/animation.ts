@@ -180,6 +180,7 @@ import { poseGeometry, type CoreAttachmentRow, type CoreClipRow } from './vertic
 import type { CoreClippedRow } from './clipping.ts';
 import type { CoreWorld } from './world.ts';
 import { applySliderSlots, type SliderApplication } from './constraints_slider.ts';
+import { slotTimelinesApply } from './skins.ts';
 import {
   activeBones,
   constraintRecords,
@@ -696,12 +697,16 @@ export function posedSlots(
   const byName = new Map(timelines.slots.map((s) => [s.name, s]));
   const rows: CoreSlotRow[] = [];
   const conflicts: string[] = [];
+  const active = activeBones(doc);
+  const gate = plant.slotTimelines ?? slotTimelinesApply;
   for (const slot of doc.slots) {
     let placeholder = slot.setup;
     const light = slot.color === undefined ? [1, 1, 1, 1] : colour(slot.color);
     const setupDark = slot.dark === undefined ? null : readColour(slot.dark);
     const dark = setupDark === null ? null : [setupDark[0], setupDark[1], setupDark[2]];
-    for (const tl of byName.get(slot.name)?.timelines ?? []) {
+    // A slot on a bone the skin leaves inactive is not animated — not by the sample's timelines, not by a slider (`./skins.ts`).
+    const live = gate(doc, slot, active);
+    for (const tl of live ? (byName.get(slot.name)?.timelines ?? []) : []) {
       if (tl.kind === 'attachment') {
         const key = keyAt(tl.keys, t, plant);
         placeholder = key === null ? slot.setup : (key.name ?? null);
@@ -720,7 +725,7 @@ export function posedSlots(
     // What the slot shows after the sample's own timelines: the attachments' deform and sequence timelines are matched against it (`./deform.ts`, *A switch*).
     placeholders?.set(slot.name, placeholder);
     const pose = { placeholder, light, dark };
-    applySliderSlots(slot.name, pose, sliders);
+    if (live) applySliderSlots(slot.name, pose, sliders);
     placeholder = pose.placeholder;
     const shown = placeholder === null ? null : resolve(doc, { ...slot, setup: placeholder });
     if (shown !== null && 'conflict' in shown) {
