@@ -17,7 +17,22 @@
  * *The update order*): it reads its dial bone as the constraints before it
  * left it, writes the local values of the bones its animation keys, and those
  * bones and everything below them are posed again before the next
- * constraint. The runtime's setup pose and every sample apply it: at setup
+ * constraint. **Every bone its animation keys is posed again, whether or not
+ * a timeline wrote it** (issue #989): a slider before a timeline's first key
+ * writes nothing (below), and the bone is still posed again from its local
+ * values — which is observable only on a bone an earlier constraint moved in
+ * world space, whose world transform the runtime then rebuilds from the
+ * local values read back from it (`localFromWorld` in `./constraints.ts`,
+ * last-bit lossy against the world it came from). Measured on the three rigs
+ * of `CQ06`'s population the lcg never drew (each a world-space transform on
+ * `b2`, then a slider before its first key keying `b2` or its parent): `b2`'s
+ * y column read 1e-7 relative off with the world kept, exact with it posed
+ * again; so did every bone below. A slider at `mix` 0 poses nothing again
+ * (the same three at mix 0 read exact only without it), nor does a bone
+ * the animation names with no timeline (a `"b2": {}` entry). `CZ01` holds
+ * the three, and plants the reading before.
+ *
+ * The runtime's setup pose and every sample apply it: at setup
  * the sliders compose on the setup pose; at a sample on the pose the sample's
  * own animation left (applied at alpha 1 from the setup pose, construct 4),
  * so **the sample's animation first, then each slider in constraint order**.
@@ -65,10 +80,18 @@
  *   rotation 20 and a sample at 50, the slider's value 150: 170 at mix 1,
  *   110 at 0.5, −10 at −0.5 (no clamp); additive 200 and 125. No wrap to the
  *   short way round: 50 toward 290 at 0.3 read 122.
- * - `scale`/`x`/`y`: the target is `setup · v`; `current + (target −
+ * - `scale`/`x`/`y`: the target is `setup · v`; `current' + (target −
  *   current') · mix` where `current'` is |current| with the TARGET's sign — a
- *   setup `scaleY` 0.5 toward −0.5 at mix 0.5 read −0.5, not 0; **additive**:
- *   `current + (v − 1) · setup · mix` (a current 6 on setup 2, v 3 read 10).
+ *   setup `scaleY` 0.5 toward −0.5 at mix 0.5 read −0.5, not 0 — and ⚠️ at
+ *   mix exactly 1 the target itself (issue #989: `current' + (target −
+ *   current')·1` reads 11 of `CZ02`'s 50 absolute bones at mix 1 last-bit
+ *   off under `--raw`, the target none); **additive**: `current + (v · setup
+ *   − setup) · mix` (a current 6 on setup 2, v 3 read 10; issue #989:
+ *   `(v − 1) · setup · mix`, the reading before, reads 65 of `CZ02`'s 250
+ *   additive bones last-bit off, this none). The other kinds read 1,122 of
+ *   1,122 probes of issue #989's scratch population bit-exact at every mix,
+ *   over the setup and over a current an earlier slider moved, and were left
+ *   as they are.
  * - `inherit`: the key's mode, from its first key on (`CQ06` holds it).
  * - Slot colours (`rgba`, `rgb`, `alpha`, `rgba2`, `rgb2`): each channel the
  *   timeline names moves from the current value toward the key's by the mix
@@ -371,10 +394,16 @@ export function applySlider(state: SolverState, r: CoreSliderRecord, applied?: S
         const current = b[field] ?? 1;
         const s = setup[field] ?? 1;
         if (r.additive) {
-          b[field] = current + (v[i] - 1) * s * alpha;
+          // #989: the key's product with the setup less the setup, then the mix — `(v − 1)·setup·mix` reads last-bit off (CZ02).
+          b[field] = state.rules.sliderAdditiveScaleProduct ? current + (v[i] * s - s) * alpha : current + (v[i] - 1) * s * alpha;
           return;
         }
         const target = s * v[i];
+        // #989: at mix exactly 1 the target itself — `from + (target − from)·1` reads last-bit off (CZ02).
+        if (alpha === 1 && state.rules.sliderScaleMixOneIsTarget) {
+          b[field] = target;
+          return;
+        }
         const from = Math.abs(current) * Math.sign(target);
         b[field] = from + (target - from) * alpha;
       };
@@ -391,7 +420,8 @@ export function applySlider(state: SolverState, r: CoreSliderRecord, applied?: S
         case 'scaley': times('scaleY', 0); break;
       }
     }
-    if (wrote) changed.push(target.name);
+    // #989: a bone the animation keys is posed again whether or not a timeline wrote it (the header's update order).
+    if (wrote || (state.rules.sliderReposesKeyedBones && target.timelines.length > 0)) changed.push(target.name);
   }
   return changed;
 }

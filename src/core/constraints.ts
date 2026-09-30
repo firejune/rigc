@@ -54,6 +54,11 @@
  *   child's world rotation, then an ik turning its parent by 90°, turned the
  *   child with the parent (the child's world rotation 180°); in the other
  *   order, 90°.
+ * - **A slider poses again every bone its animation keys**, a timeline
+ *   before its first key included (issue #989, `./constraints_slider.ts`,
+ *   *Where it stands*): on a bone a transform moved in world space that
+ *   rebuilds the world from the read-back local values, which the runtime
+ *   does and keeping the world did not (`CZ01`).
  * - A constraint with `skin: true` is applied exactly when an APPLIED skin's
  *   list for its kind names it (`listedBySkin`, set per skin view by
  *   `underSkin` in `./index.ts`): under `--skin all` any skin's, under
@@ -902,6 +907,12 @@ export interface SolverRules {
   ikStretchMinLength: number;
   /** A two-bone ik whose child's origin is nearer the parent's than this, in the grandparent frame, is a one-bone ik on the parent with the child at rotation 0 (issue #966); negative, never. */
   ikTwoBoneNearChild: number;
+  /** A slider poses again every bone its animation keys, whether or not a timeline wrote it — before its first key too (issue #989) — not only the bones a timeline wrote. */
+  sliderReposesKeyedBones: boolean;
+  /** A slider's additive scale key: `current + (v·setup − setup)·mix` (issue #989), not `current + (v − 1)·setup·mix`. */
+  sliderAdditiveScaleProduct: boolean;
+  /** A slider's scale key at mix exactly 1 writes `setup·v` itself (issue #989), not `from + (setup·v − from)·1`. */
+  sliderScaleMixOneIsTarget: boolean;
 }
 
 /** The runtime's rules, as measured. */
@@ -921,6 +932,9 @@ export const RUNTIME_SOLVER_RULES: Readonly<SolverRules> = {
   ikZeroScaleSignPositive: true,
   ikStretchMinLength: 0.00001,
   ikTwoBoneNearChild: 0.00001,
+  sliderReposesKeyedBones: true,
+  sliderAdditiveScaleProduct: true,
+  sliderScaleMixOneIsTarget: true,
 };
 
 /** The runtime's rules with a plant's over them. */
