@@ -75481,6 +75481,69 @@ function runCoreSuite(): number {
     );
   }
 
+  // --- CZ03: a slider timeline's keyed time and mix reach the slider through the setup blend --
+  {
+    const probes: string[] = [];
+    const RAW_SIX_IRR: OracleOptions = { ...SIX_IRR, raw: true };
+    // Typed in, no generator: the rig issue #991 was reduced to (CQ06's probe 213 under the new sequence) — a looped dial on world
+    // scaleX keying b2's shear and b5's translate, its mix keyed — and two cut further: the same shear key under a bone-less,
+    // unlooped slider with the same mix key, and under one whose time is keyed instead. The loop and the dial are not the rule's.
+    const bones: Obj[] = [
+      { name: 'root' }, { name: 'g', parent: 'root', rotation: -98.104, scaleX: 1.239, shearY: 12.487 },
+      { name: 'b2', parent: 'g', x: 15.871, y: -14.581, rotation: -66.707, length: 7.08, scaleX: -0.772, scaleY: 1.595, shearX: 24.147, shearY: 0.68 },
+      { name: 'b5', parent: 'b2', x: -27.515, y: 1.291, rotation: 12.746, length: 30.562, inherit: 'noRotationOrReflection', scaleX: 1.635, scaleY: 0.712, shearX: 26.069, shearY: -12.52 },
+      { name: 'dial', parent: 'g', x: 13.866, rotation: 74.089, scaleX: 1.456, scaleY: 1.989, shearY: 3.976 },
+    ];
+    const shear: Obj[] = [{ time: 0, x: -35.592, y: -4.584 }, { time: 0.521, x: 8.192, y: 28.113, curve: [0.621, -49.957, 0.621, -47.514, 0.621, 39.163, 0.621, 16.573] }, { time: 1.051, x: 31.905, y: -9.587 }];
+    const translate: Obj[] = [{ time: 0.31, x: 1.893, y: 2.934, curve: 'stepped' }, { time: 0.909, x: 20.475, y: -22.161 }, { time: 1.176, x: 28.069, y: -0.831 }];
+    const dialKeys: Obj[] = [{ time: 0, value: 139.906, curve: 'stepped' }, { time: 0.264, value: 174.994 }, { time: 0.558, value: 80.935 }];
+    const mixKeys: Obj[] = [{ time: 0.389, value: 0.462 }, { time: 1.2, value: 0.152 }];
+    const timeKeys: Obj[] = [{ time: 0.1, value: 0.2 }, { time: 1.2, value: 1.1 }];
+    const looped: Obj = { type: 'slider', name: 'sl', animation: 'sa', loop: true, bone: 'dial', property: 'scaleX', scale: 0.201, to: 0.86 };
+    const rigs: Array<{ label: string; channel: 'mix' | 'time'; bones: Obj[]; slider: Obj; anims: Record<string, SliderAnim> }> = [
+      { label: 'the looped dial of issue #991, its mix keyed', channel: 'mix', bones, slider: looped, anims: { sa: { bones: { b2: { shear }, b5: { translate } } }, a: { bones: { dial: { rotate: dialKeys } }, slider: { sl: { mix: mixKeys } } } } },
+      { label: 'a bone-less unlooped slider at 0.3, its mix keyed', channel: 'mix', bones: bones.slice(0, 4), slider: { type: 'slider', name: 'sl', animation: 'sa', time: 0.3 }, anims: { sa: { bones: { b2: { shear } } }, a: { bones: { b5: { rotate: dialKeys } }, slider: { sl: { mix: mixKeys } } } } },
+      { label: 'a bone-less unlooped slider at mix 0.6, its time keyed', channel: 'time', bones: bones.slice(0, 4), slider: { type: 'slider', name: 'sl', animation: 'sa', time: 0.3, mix: 0.6 }, anims: { sa: { bones: { b2: { shear } } }, a: { bones: { b5: { rotate: dialKeys } }, slider: { sl: { time: timeKeys } } } } },
+    ];
+    /** The value as keyed planted on the keyed channel in place of `own + (value − own)·1` — a record rewrite that finds the sample by the blended value it was posed with (CY01's plant). */
+    const asKeyedPlant = (pair: { spine: string; model: string }, channel: 'mix' | 'time'): ConstraintPlant => {
+      const model = readModel(pair.model, 'the cz03 probe');
+      const setup = model.constraints[0].record;
+      const tl = model.animations.find((a) => a.name === 'a')?.constraints.slider[0]?.[channel];
+      if (setup === undefined || setup.kind !== 'slider' || tl === undefined || tl === null) throw new Error(`the cz03 probe declares one slider whose ${channel} animation "a" keys`);
+      const own = setup[channel];
+      const keyed = new Map<number, number>();
+      for (const s of sliderSpine(pair, RAW_SIX_IRR).animations.find((a) => a.name === 'a')?.samples ?? []) {
+        const n = keyIndexAt(tl, s.t as number);
+        if (n < 0) continue;
+        const v = channelAt(tl, n, 0, s.t as number);
+        keyed.set(own + (v - own) * 1, v);
+      }
+      return (records) => records.map((r) => (r.kind !== 'slider' || r[channel] === own || !keyed.has(r[channel]) ? r : { ...r, [channel]: keyed.get(r[channel]) }));
+    };
+    const read: string[] = [];
+    for (const rig of rigs) {
+      const pair = sliderPair(rig.bones, [], [rig.slider], rig.anims);
+      const exact = sliderCompare(pair, RAW_SIX_IRR);
+      if (!exact.identical || posedSkips(exact).length > 0) probes.push(`${rig.label}: ${posedSkips(exact).join('; ') || exact.first}`);
+      const planted = sliderCompare(pair, RAW_SIX_IRR, { constraints: asKeyedPlant(pair, rig.channel) });
+      const off = planted.rows.reduce((n, r) => n + r.findings.length, 0);
+      if (off === 0) probes.push(`${rig.label}: the ${rig.channel} as keyed, planted, read every bone exact — the rig does not separate the two readings`);
+      read.push(`${rig.label} — the ${rig.channel} as keyed reads ${off} bone row(s) off`);
+    }
+    // The edge: the looped dial with its mix unkeyed is exact, and the plant has nothing to reach there — the rule is the keyed channel's.
+    const unkeyed = sliderPair(bones, [], [looped], { sa: rigs[0].anims.sa, a: { bones: { dial: { rotate: dialKeys } } } });
+    const quiet = sliderCompare(unkeyed, RAW_SIX_IRR);
+    if (!quiet.identical || posedSkips(quiet).length > 0) probes.push(`the looped dial with its mix unkeyed: ${posedSkips(quiet).join('; ') || quiet.first}`);
+    const ok = probes.length === 0;
+    say(
+      'CZ03_A_SLIDER_TIMELINES_KEYED_TIME_AND_MIX_REACH_THE_SLIDER_THROUGH_THE_SETUP_BLEND',
+      ok,
+      probeDetail(ok, probes, `${rigs.length} typed-in rigs bit-exact under --raw at tolerance 0 at 6 irrational samples, and the looped dial exact with its mix unkeyed; the keyed value planted in place of own + (value − own)·1: ${read.join('; ')}`),
+      'issue #991: a looped dial slider with its mix keyed read 1–7 ulp off at two samples; the slider\'s time and mix timelines were read as keyed where the ik, transform and path timelines go through the setup blend, and the loop, the dial and the translate key the issue was reduced with were incidental',
+    );
+  }
+
   rmSync(work, { recursive: true, force: true });
   return bad;
 }

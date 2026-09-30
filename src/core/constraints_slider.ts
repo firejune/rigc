@@ -111,6 +111,24 @@
  * compiler's note on the parser, measured again by `CQ07`). A bone-driven
  * slider ignores a `time` key: its time is its dial's.
  *
+ * The keyed value reaches the slider through the setup blend at alpha 1,
+ * `own + (value − own)·1` with `own` the slider's own `time` or `mix` —
+ * the rule the ik, transform and path timelines follow (`./constraints.ts`,
+ * *The timelines*). The two agree on the grid and part in the last bit: a
+ * mix keyed linearly from 0.462 to 0.152 read 0.3521456338160804 as keyed
+ * and 0.35214563381608044 through the blend at one sample, and the
+ * partial-mix blend of a shear key then carried that ulp into the pose (issue
+ * #991, which found it on a looped dial; the loop, the dial and the
+ * translate key it was reduced with each turned out incidental — the same
+ * rig without them misses on 44 to 71 of 200 draws of its two mix values as
+ * keyed and on none through the blend). Measured on the issue's scratch
+ * population — 500 rigs of one or two sliders, looped and unlooped dials and
+ * bone-less ones, over own mixes in [−1, 2], mix keys and time keys in
+ * linear, stepped and Bézier segments, under `--raw` at tolerance 0 — the
+ * value as keyed read 351 of 500 exact, the blend on `mix` alone 465, on
+ * `time` alone 375, on both 500. `CZ03` holds a reduced rig and plants the
+ * value as keyed.
+ *
  * ## What is left out, by name
  *
  * A slider whose animation keys a constraint timeline (ik, transform, path,
@@ -327,10 +345,11 @@ export function posedSlider(r: CoreSliderRecord, timelines: readonly CoreSliderT
   if (tl === undefined) return r;
   const search = plant.search ?? keyIndexAt;
   const channel = plant.channel ?? channelAt;
+  // Through the setup blend at alpha 1, `own + (value − own)·1` (issue #991), as the ik, transform and path timelines are: the value as keyed read 351 of 500 of the issue's scratch population bit-exact under --raw, the blend 500 (CZ03).
   const at = (keys: CoreKey[] | null, own: number): number => {
     if (keys === null) return own;
     const i = search(keys, t);
-    return i < 0 ? own : channel(keys, i, 0, t);
+    return i < 0 ? own : own + (channel(keys, i, 0, t) - own) * 1;
   };
   return { ...r, time: at(tl.time, r.time), mix: at(tl.mix, r.mix) };
 }
