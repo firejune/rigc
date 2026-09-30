@@ -73680,6 +73680,8 @@ function dmPair(spec: DmSpec): DmTexts {
   };
   const model = {
     spec: 'rigc-compiled/1',
+    // #958: every model document states its reference scale; these probes' Spine headers state none, so the compiler's unstated value.
+    referenceScale: UNSTATED_REFERENCE_SCALE,
     bones: spec.bones.map(({ inherit, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }) })),
     slots: spec.slots.map(({ attachment, ...s }) => ({ ...s, setup: attachment ?? null })),
     skins: skinNames.map((k) => ({ name: k, bones: [], constraints: {}, attachments: table(k, true) })),
