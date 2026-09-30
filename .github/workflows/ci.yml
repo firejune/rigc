@@ -87,6 +87,32 @@ jobs:
             ${{ runner.temp }}/eh/look/
           if-no-files-found: error
 
+      # Every render of every recipe as THIS machine draws it (issue #965, step
+      # 3a of #380). The tracked render base (`tools/render_hashes.base.json`)
+      # holds the gallery PNGs' PIXEL hashes only — this runner's PNG encoder
+      # wrote different bytes for the same pixels than the macOS base's (PR
+      # #972) — and `RH05` in the selftest above checks it on every run. The
+      # run uploaded here carries both hashes per PNG; the geometry files, the frames sidecar, the bone snapshots
+      # and the framing numbers carry full doubles off libm and were measured to
+      # move under a one-ulp change of it (tools/render_hashes.ts, `## base`), so
+      # a second machine's reading of them — and of the fetched exports' rows,
+      # which no tracked file holds — can only be taken here. Measurement only:
+      # it gates nothing, and it runs after a red selftest too.
+      - name: Render every recipe on Linux
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/rh"
+          bun tools/emit_hashes.ts recipes --out "$RUNNER_TEMP/rh/recipes.json"
+          bun tools/render_hashes.ts run --recipes "$RUNNER_TEMP/rh/recipes.json" \
+            --out "$RUNNER_TEMP/rh/hashes.json" --work "$RUNNER_TEMP/rh/work"
+      - name: Upload them as the render-hashes-linux artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-hashes-linux
+          path: ${{ runner.temp }}/rh/hashes.json
+          if-no-files-found: error
+
   # Whether the PACKAGE runs, which no other instrument here asks (issue #556).
   #
   # ROADMAP.md's fourth condition for 1.0 is that the published package works on

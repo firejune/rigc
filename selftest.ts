@@ -415,6 +415,7 @@ import {
   SHEET_COLUMNS,
   SHEET_FILE,
   SHEET_GAP,
+  spinePoser,
   substituteTexture,
   textureSubstitutionFromText,
   unionBounds,
@@ -429,6 +430,8 @@ import {
   type Mesh,
   type Piece,
   type Posable,
+  type Posed,
+  type Poser,
   type Viewport,
 } from './src/render.ts';
 import {
@@ -538,6 +541,17 @@ import {
   recipesText,
   treeRecipes,
 } from './tools/emit_hashes.ts';
+import {
+  compareRenderHashes,
+  readRenderHashes,
+  RENDER_BASE_COMMAND,
+  RENDER_BASE_FILE,
+  pixelHash,
+  RENDER_HASHES_SPEC,
+  renderHashesText,
+  type RenderFile,
+  type RenderHashesDocument,
+} from './tools/render_hashes.ts';
 import {
   diffSummaryLines,
   EDITOR_DEFAULTS,
@@ -62450,6 +62464,38 @@ function frameFiles(dir: string): string[] {
     .sort();
 }
 
+/**
+ * The functions on the generic side of `src/render.ts`'s posing seam (issue
+ * #965): everything that samples, frames or exports a pose through `Poser`.
+ */
+const SEAM_GENERIC = ['sampleAnimation', 'sampleSetupPose', 'sampleAll', 'framingViewport', 'geometryFileOf', 'nonFinitePoseOf', 'drawResolver', 'frameOf'] as const;
+
+/**
+ * Which of `SEAM_GENERIC` names an identifier render.ts imports from
+ * spine-core, read off `text`; a function the text no longer declares is a
+ * fault too, so a rename cannot empty the scan.
+ */
+function seamLeaks(text: string): { names: string[]; faults: string[] } {
+  const block = /import\s*\{([^}]*)\}\s*from\s*'@esotericsoftware\/spine-core'/.exec(text)?.[1] ?? '';
+  const names = block
+    .split(',')
+    .map((entry) => entry.trim().replace(/^type\s+/, ''))
+    .filter((name) => /^\w+$/.test(name));
+  const faults: string[] = [];
+  for (const fn of SEAM_GENERIC) {
+    const at = text.search(new RegExp(`\\nfunction ${fn}\\(|\\nexport function ${fn}\\(`));
+    if (at < 0) {
+      faults.push(`render.ts declares no function ${fn}`);
+      continue;
+    }
+    const end = text.indexOf('\n}\n', at);
+    const body = text.slice(at, end < 0 ? text.length : end).split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*\*)/.test(line)).join('\n');
+    const hit = names.filter((name) => new RegExp(`\\b${name}\\b`).test(body));
+    if (hit.length > 0) faults.push(`${fn} names ${hit.join(', ')} from spine-core`);
+  }
+  return { names, faults };
+}
+
 function runSeeItSuite(): number {
   console.log('\n── seeing the result: render + preview (issues #216, #226) ──');
   let bad = 0;
@@ -63113,6 +63159,100 @@ function runSeeItSuite(): number {
     ),
     'the viewport is a property of the shot, like the one `--slot`/`--hide` keep: framed on clipped geometry, adding ' +
       'or keying a mask would move every pixel it leaves drawn and strand every frames.json already written for the rig',
+  );
+
+  // --- R16–R17: the posing seam (issue #965, step 3a of #380) ---------------
+  //
+  // Every sampler poses through `Poser`, so the core-backed poser of #968 can
+  // be handed to them as a second implementation. R16 holds that the samplers
+  // draw what the poser hands them and nothing else — a relay changes no byte,
+  // a poser that moves its pieces moves exactly those — and R17 that the
+  // samplers' own bodies name nothing from spine-core, which is what "behind
+  // one interface" means in text.
+  const seamProbes: string[] = [];
+  let seamDetail = 'the probe rig did not build';
+  if (build.status !== 0) seamProbes.push(`the probe rig did not build (exit ${String(build.status)}), so no poser was measured`);
+  else {
+    const seamPosable = loadPosable(join(dirs.outDir, 'skeleton.json'), join(dirs.outDir, 'skeleton.atlas'), dirs.outDir);
+    const spine = spinePoser(seamPosable.data);
+    const relay: Poser = { ...spine };
+    const shift = (posed: Posed): Posed => ({
+      ...posed,
+      pieces: (draw) => posed.pieces(draw).map((piece) => ({ ...piece, world: piece.world.map((v, i) => (i % 2 === 0 ? v + 1 : v)) })),
+    });
+    const shifted: Poser = {
+      ...spine,
+      setup: (skin) => shift(spine.setup(skin)),
+      animation: (name, skin, fps, count, visit) => spine.animation(name, skin, fps, count, (i, posed) => visit(i, shift(posed))),
+    };
+    const plainBox = framingViewport(seamPosable.data, 256);
+    if (plainBox === null) seamProbes.push('the probe rig framed to nothing');
+    else {
+      const sampling = { bones: true, geometry: true };
+      const plain = sampleAll(seamPosable.data, PROTOCOL_FPS, sampling);
+      const relayed = sampleAll(relay, PROTOCOL_FPS, sampling);
+      const moved = sampleAll(shifted, PROTOCOL_FPS, sampling);
+      const pngs = (sets: Map<string, Frame[]>): Buffer[] =>
+        [...sets.values()].flat().map((frame) => Buffer.from(renderFrame(frame, seamPosable.pages, plainBox, BACKGROUND).data));
+      const [plainPngs, relayPngs, movedPngs] = [pngs(plain), pngs(relayed), pngs(moved)];
+      const geometryOf = (source: Poser | typeof seamPosable.data, sets: Map<string, Frame[]>): string =>
+        [...sets].map(([name, frames]) => geometryText(geometryFileOf(source, name, PROTOCOL_FPS, frames, plainBox, undefined))).join('');
+      if (JSON.stringify(framingViewport(relay, 256)) !== JSON.stringify(plainBox)) seamProbes.push('a relaying poser framed to a different box');
+      if (plainPngs.length === 0) seamProbes.push('the probe rig sampled no frame');
+      if (relayPngs.length !== plainPngs.length || relayPngs.some((b, i) => !b.equals(plainPngs[i]))) seamProbes.push('a relaying poser drew a frame that differs from the spine-core path');
+      if (geometryOf(relay, relayed) !== geometryOf(seamPosable.data, plain)) seamProbes.push('a relaying poser wrote a geometry file that differs from the spine-core path');
+      const movedFrames = movedPngs.filter((b, i) => !b.equals(plainPngs[i])).length;
+      if (movedFrames !== plainPngs.length) seamProbes.push(`a poser moving every piece one world unit right changed ${movedFrames} of ${plainPngs.length} frame(s)`);
+      const plainUnion = unionBounds(plain.values());
+      const movedUnion = unionBounds(moved.values());
+      if (movedUnion.minX !== plainUnion.minX + 1 || movedUnion.maxX !== plainUnion.maxX + 1 || movedUnion.minY !== plainUnion.minY || movedUnion.maxY !== plainUnion.maxY) {
+        seamProbes.push(`the moved poser's pieces span ${JSON.stringify(movedUnion)} against ${JSON.stringify(plainUnion)}; x should move by exactly one and y not at all`);
+      }
+      if (geometryOf(shifted, moved) !== geometryOf(seamPosable.data, plain)) seamProbes.push('moving the pieces moved the geometry file too, which reads attachments, not pieces');
+      seamDetail =
+        `${plainPngs.length} frame(s) of the probe rig: a poser relaying spine-core's draws every frame, the framing box and the ` +
+        `geometry file byte-identical to the SkeletonData path; one moving every piece one world unit right changes ` +
+        `${movedFrames} of ${plainPngs.length} frame(s) and moves the pieces' box by exactly (1, 0) while the geometry file, ` +
+        'read off the attachments, stays byte-identical';
+    }
+  }
+  const seamHeld = seamProbes.length === 0;
+  say(
+    'R16_THE_SAMPLERS_DRAW_WHAT_THE_POSER_HANDS_THEM_AND_NOTHING_ELSE',
+    seamHeld,
+    probeDetail(seamHeld, seamProbes, seamDetail),
+    'issue #965: step 3 of #380 swaps the runtime behind render.ts, and the swap is only a second implementation of ' +
+      'one interface if every sampler reads the pose through it. A relay changing no byte is the half that shows the ' +
+      'seam costs nothing; a planted poser changing exactly its own pieces is the half that shows the samplers ' +
+      'cannot be reading around it',
+  );
+
+  const renderText = readFileSync(join(import.meta.dir, 'src', 'render.ts'), 'utf8');
+  const cleanScan = seamLeaks(renderText);
+  const plantedScan = seamLeaks(
+    renderText.replace(/(export function sampleAnimation\([^)]*\)[^{]*\{\n)/, '$1  new Skeleton(poserOf(source) as unknown as SkeletonData);\n'),
+  );
+  const leakProbes = [
+    ...cleanScan.faults,
+    ...(cleanScan.names.length > 0 ? [] : ['no spine-core name was read off render.ts\'s import, so the scan looked for nothing']),
+    ...(plantedScan.faults.some((f) => f.includes('sampleAnimation') && f.includes('Skeleton'))
+      ? []
+      : [`a \`new Skeleton(...)\` planted in sampleAnimation's body was read as ${JSON.stringify(plantedScan.faults)}`]),
+  ];
+  const leakHeld = leakProbes.length === 0;
+  say(
+    'R17_THE_SAMPLERS_BODIES_NAME_NOTHING_FROM_SPINE_CORE',
+    leakHeld,
+    probeDetail(
+      leakHeld,
+      leakProbes,
+      `${SEAM_GENERIC.length} function(s) on the generic side of the seam (${SEAM_GENERIC.join(', ')}) name none of the ` +
+        `${cleanScan.names.length} identifier(s) render.ts imports from spine-core; a \`new Skeleton(...)\` planted in ` +
+        `sampleAnimation's body is named as ${JSON.stringify(plantedScan.faults[0] ?? '')}`,
+    ),
+    'issue #965: the seam is only a seam while the samplers cannot reach past it. A spine-core call added to a ' +
+      'sampler would work, render the same bytes, and leave #968 a rewrite instead of a second implementation — ' +
+      'silent in every other control, so it is named here',
   );
   for (const probe of [clipped, bare, ended]) rmSync(probe.dir, { recursive: true, force: true });
 
@@ -72827,6 +72967,380 @@ function runEmitHashesSuite(): number | null {
       'issue #930: a change that moves a gallery build on purpose is legitimate and must still go red until the base is ' +
         'regenerated in the same change, and the red has to carry the three things the author acts on — the row, the ' +
         'file and the one command — or it is a refusal nobody can clear',
+    );
+  }
+
+  rmSync(work, { recursive: true, force: true });
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// the render-identity instrument: tools/render_hashes.ts (issue #965, step 3a of #380)
+// ---------------------------------------------------------------------------
+
+/** The render-hashes command in a child process, as a caller runs it. */
+function runRenderHashes(args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, ['tools/render_hashes.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/**
+ * `tools/render_hashes.ts` held the way `emit_hashes` is: two gallery rigs
+ * rendered twice, one bone moved, one build refused, the refusals, and the
+ * tracked gallery base. Returns null — a HOLE — when `gallery/` has fewer than
+ * two rigs.
+ *
+ * 💰 Cost: five runs over two gallery rigs (each a build, a `render
+ * --geometry` and the in-process extras), and three `base` runs over the
+ * gallery's seven for RH04 and RH05. The corpus's nineteen rows are never run
+ * here; that is PR and CI-artifact material.
+ */
+function runRenderHashesSuite(): number | null {
+  console.log('\n── render-hashes: every render of every build hashed, and two runs compared (issue #965) ──');
+  const galleryRoot = resolve(import.meta.dir, 'gallery');
+  const pair = existsSync(galleryRoot)
+    ? readdirSync(galleryRoot)
+        .sort()
+        .filter((name) => existsSync(join(galleryRoot, name, 'rig.json')))
+        .slice(0, 2)
+    : [];
+  if (pair.length < 2) {
+    console.log(`  SKIP  RH01–RH07 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
+    return null;
+  }
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const work = mkdtempSync(join(tmpdir(), 'rigc-render-hashes-selftest-'));
+  const recipes = pair.map((name) => galleryRecipe(import.meta.dir, name).recipe);
+  const recipesPath = join(work, 'recipes.json');
+  writeFileSync(recipesPath, recipesText(recipes));
+  const runAt = (label: string, workDir: string, root?: string): { run: ReturnType<typeof runRenderHashes>; out: string; doc: RenderHashesDocument | null } => {
+    const out = join(work, `${label}.json`);
+    const run = runRenderHashes(['run', '--recipes', recipesPath, '--out', out, '--work', workDir, ...(root === undefined ? [] : ['--root', root])]);
+    let doc: RenderHashesDocument | null = null;
+    try {
+      doc = existsSync(out) ? readRenderHashes(out) : null;
+    } catch {
+      doc = null;
+    }
+    return { run, out, doc };
+  };
+  const plantRoot = (label: string): string => {
+    const root = join(work, `${label}-root`);
+    for (const name of pair) cpSync(join(galleryRoot, name), join(root, 'gallery', name), { recursive: true });
+    return root;
+  };
+
+  // --- RH01: two runs of one recipe set, at two work depths, are byte-identical --
+  const a = runAt('a', join(work, 'wa'));
+  const b = runAt('b', join(work, 'w', 'one', 'level', 'deeper', 'wb'));
+  {
+    const probes: string[] = [];
+    for (const [label, r] of [['A', a], ['B', b]] as const) {
+      if (r.run.status !== 0) probes.push(`run ${label} exited ${r.run.status}: ${r.run.stderr.trim().slice(0, 200)}`);
+      if (r.doc === null) probes.push(`run ${label} wrote no readable ${RENDER_HASHES_SPEC} document`);
+      for (const row of r.doc?.recipes ?? []) {
+        if (row.renderExit !== 0) probes.push(`run ${label}: ${row.name} rendered with exit ${String(row.renderExit)}`);
+        if (row.framing === null) probes.push(`run ${label}: ${row.name} recorded no framing box`);
+        for (const want of ['render/frames.json', 'extra/setup.png', 'extra/bones/setup-pose.jsonl']) {
+          if (!row.files.some((f) => f.path === want)) probes.push(`run ${label}: ${row.name} hashed no ${want}`);
+        }
+        for (const suffix of ['/geometry.json', '/f0000.png']) {
+          if (!row.files.some((f) => f.path.startsWith('render/') && f.path.endsWith(suffix))) probes.push(`run ${label}: ${row.name} hashed no render/…${suffix}`);
+        }
+      }
+    }
+    if (a.doc !== null && b.doc !== null && !readFileSync(a.out).equals(readFileSync(b.out))) probes.push('the two documents differ in their bytes');
+    const same = runRenderHashes(['compare', a.out, b.out]);
+    const last = same.stdout.trim().split('\n').pop() ?? '';
+    if (same.status !== 0 || !last.startsWith('IDENTICAL')) probes.push(`compare of the twins exited ${same.status}: ${JSON.stringify(last)}`);
+    const files = a.doc?.recipes.reduce((n, r) => n + r.files.length, 0) ?? 0;
+    const held = probes.length === 0;
+    say(
+      'RH01_TWO_RUNS_OF_ONE_RECIPE_SET_AT_TWO_WORK_DEPTHS_RENDER_BYTE_IDENTICAL',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${pair.map((n) => `gallery/${n}`).join(' and ')} built and rendered twice, the second work directory four levels ` +
+          `deeper: ${existsSync(a.out) ? statSync(a.out).size : 0}-byte documents equal to the byte over ${files} hashed ` +
+          `file(s) — frames, sheets, geometry, the sidecar, the setup pose and the bone snapshots — and compare reads ${JSON.stringify(last)}`,
+      ),
+      'the instrument stands on this: a render that moved between two runs of one commit would make every DIFF across ' +
+        'two commits a statement about the run. Step 3 of #380 is gated by it',
+    );
+  }
+
+  // --- RH02: one bone moved in a spec copy is the one row compare names --
+  {
+    const probes: string[] = [];
+    const target = pair[1];
+    const root = plantRoot('moved');
+    let what = '';
+    try {
+      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
+        const bone = [...bones].reverse().find((x) => typeof x.x === 'number');
+        if (bone === undefined) return '';
+        bone.x = (bone.x as number) + 1;
+        return `bone "${bone.name}" x ${bone.x - 1} → ${bone.x}`;
+      });
+    } catch (err) {
+      probes.push(`the plant could not be made: ${(err as Error).message}`);
+    }
+    if (what === '') probes.push(`gallery/${target}/rig.json has no bone with a numeric x to move`);
+    const moved = runAt('moved', join(work, 'wm'), root);
+    const run = runRenderHashes(['compare', a.out, moved.out]);
+    let named: string[] = [];
+    let geometry = 0;
+    if (moved.run.status !== 0) probes.push(`the planted run exited ${moved.run.status}: ${moved.run.stderr.trim().slice(0, 200)}`);
+    if (run.status !== 1) probes.push(`compare exited ${run.status} over the plant, not 1`);
+    if (a.doc !== null && moved.doc !== null) {
+      const c = compareRenderHashes(a.doc, moved.doc);
+      named = c.differ.map((d) => d.name);
+      if (named.length !== 1 || named[0] !== `gallery/${target}`) probes.push(`compare named [${named.join(', ')}], not gallery/${target} alone`);
+      const findings = c.differ.flatMap((d) => d.findings);
+      geometry = findings.filter((f) => /^render\/.*\/geometry\.json differs:/.test(f)).length;
+      if (geometry === 0) probes.push(`no geometry.json is named among ${JSON.stringify(findings.slice(0, 6))}`);
+      if (!run.stdout.includes(`DIFF  gallery/${target}`)) probes.push('the printed report does not carry the row\'s DIFF line');
+    } else probes.push('a document to compare is missing');
+    const held = probes.length === 0;
+    say(
+      'RH02_ONE_BONE_MOVED_IN_A_SPEC_COPY_IS_THE_ONE_ROW_COMPARE_NAMES',
+      held,
+      probeDetail(held, probes, `${what} in a copy of gallery/${target}/rig.json, run under --root: compare exits 1 naming ${named.join(', ')} alone, ${geometry} geometry file(s) among what moved`),
+      'the smallest edit a refactor could make by mistake, and the row an agent needs to act on it; the twin row staying ' +
+        'IDENTICAL is the half that keeps the verdict from passing by making everything noisy',
+    );
+  }
+
+  // --- RH03: a refused build is its exit code, no render, named against its green twin --
+  {
+    const probes: string[] = [];
+    const target = pair[0];
+    const root = plantRoot('refused');
+    let what = '';
+    try {
+      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
+        const bone = [...bones].reverse().find((x) => typeof x.parent === 'string');
+        if (bone === undefined) return '';
+        bone.parent = '__render_hashes_no_such_bone';
+        return `bone "${bone.name}"'s parent renamed to a bone that does not exist`;
+      });
+    } catch (err) {
+      probes.push(`the plant could not be made: ${(err as Error).message}`);
+    }
+    const refused = runAt('refused', join(work, 'wr'), root);
+    const row = refused.doc?.recipes.find((r) => r.name === `gallery/${target}`);
+    if (refused.run.status !== 0) probes.push(`the run exited ${refused.run.status} over a refusing recipe; a refusal is data, not a failed run`);
+    if (row === undefined) probes.push(`the planted document has no row for gallery/${target} — the refusal was dropped`);
+    else {
+      if (!row.exits.some((e) => e !== 0)) probes.push(`gallery/${target} recorded build exits ${JSON.stringify(row.exits)}; it was planted to refuse`);
+      if (row.renderExit !== null || row.framing !== null || row.files.length !== 0) probes.push(`a refused build still recorded render exit ${String(row.renderExit)} and ${row.files.length} file(s)`);
+    }
+    if (a.doc !== null && refused.doc !== null) {
+      const c = compareRenderHashes(a.doc, refused.doc);
+      const findings = c.differ.flatMap((d) => d.findings);
+      if (c.differ.length !== 1 || c.differ[0].name !== `gallery/${target}`) probes.push(`compare named [${c.differ.map((d) => d.name).join(', ')}], not gallery/${target} alone`);
+      for (const want of ['build exit codes [0] in A', 'render exit 0 in A, null in B', 'render/frames.json only in A']) {
+        if (!findings.some((f) => f.startsWith(want))) probes.push(`no finding starts ${JSON.stringify(want)}`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'RH03_A_REFUSED_BUILD_IS_RECORDED_UNRENDERED_AND_NAMED_AGAINST_ITS_GREEN_TWIN',
+      held,
+      probeDetail(held, probes, `${what} in a copy of gallery/${target}/rig.json: the run exits 0 and records the refusal with no render and no file; compare names the build's exit codes, the render that did not run and every file only the green twin wrote`),
+      'a refactor that makes a green row refuse is the loudest regression there is, and an instrument that skipped it ' +
+        'would read it as a smaller corpus',
+    );
+  }
+
+  // --- RH04: a bad input exits 2, by name, and writes nothing --
+  {
+    const probes: string[] = [];
+    const out = join(work, 'bad-input-out.json');
+    const emitDoc = join(work, 'emit-doc.json');
+    writeFileSync(emitDoc, '{"spec":"emit-hashes/1","recipes":[]}\n');
+    const otherRender = join(work, 'other-render.json');
+    const otherSet = join(work, 'other-set.json');
+    if (a.doc !== null) {
+      const copy = JSON.parse(readFileSync(a.out, 'utf8')) as RenderHashesDocument;
+      writeFileSync(otherRender, renderHashesText({ ...copy, render: [...copy.render, '--fps', '24'] }));
+      copy.recipes[0].commands[0] = [...copy.recipes[0].commands[0], '--profile', 'spine-html'];
+      writeFileSync(otherSet, renderHashesText(copy));
+    }
+    const full = join(work, 'full');
+    mkdirSync(full, { recursive: true });
+    writeFileSync(join(full, 'left-over'), '');
+    const cases: Array<[string, string[], string]> = [
+      ['a file that does not exist', ['compare', join(work, 'absent.json'), a.out], 'no such file'],
+      ['a document that is not a render-hashes document', ['compare', emitDoc, a.out], `not ${JSON.stringify(RENDER_HASHES_SPEC)}`],
+      ['two documents from two different renders', ['compare', a.out, otherRender], 'ran different renders'],
+      ['one name standing for two builds', ['compare', a.out, otherSet], 'different recipe sets'],
+      ['a work directory that is not fresh', ['run', '--recipes', recipesPath, '--out', out, '--work', full], 'is not empty'],
+      ['an unknown command', ['hash'], 'unknown command "hash"'],
+    ];
+    for (const [label, args, expect] of cases) {
+      const run = runRenderHashes(args);
+      if (run.status !== 2) probes.push(`${label}: exit ${run.status}, not 2`);
+      if (!run.stderr.includes(expect)) probes.push(`${label}: stderr ${JSON.stringify(run.stderr.trim().slice(0, 200))} does not say ${JSON.stringify(expect)}`);
+      if (existsSync(out)) {
+        probes.push(`${label}: ${basename(out)} was written by a refused run`);
+        rmSync(out);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'RH04_A_BAD_INPUT_EXITS_2_BY_NAME_AND_WRITES_NOTHING',
+      held,
+      probeDetail(held, probes, `${cases.length} refusals, each exit 2 with its sentence and no document written: ${cases.map(([l]) => l).join('; ')}`),
+      'exit 2 is the third answer — not IDENTICAL, not DIFF, but "these cannot be compared"; two documents from two ' +
+        'different render commands would otherwise read DIFF on every frame and blame the commit',
+    );
+  }
+
+  const trackedBase = resolve(import.meta.dir, RENDER_BASE_FILE);
+  const staleLines = (run: ReturnType<typeof runRenderHashes>): string[] => run.stdout.split('\n').filter((l) => l.startsWith('  DIFF') || l.startsWith('  ONLY') || l.startsWith('STALE') || l.startsWith('          '));
+
+  // --- RH05: the tracked base is what `base` writes on this tree, PNGs only --
+  {
+    const probes: string[] = [];
+    const fresh = join(work, 'fresh-base.json');
+    const wrote = runRenderHashes(['base', '--file', fresh, '--work', join(work, 'wf')]);
+    if (wrote.status !== 0) probes.push(`\`${RENDER_BASE_COMMAND} --file …\` exited ${wrote.status}: ${wrote.stderr.trim().slice(0, 300)}`);
+    if (!existsSync(trackedBase)) probes.push(`there is no ${RENDER_BASE_FILE}; write it with \`${RENDER_BASE_COMMAND}\``);
+    else if (existsSync(fresh) && !readFileSync(fresh).equals(readFileSync(trackedBase))) probes.push(`${RENDER_BASE_FILE} is not byte-identical to a fresh \`${RENDER_BASE_COMMAND}\` on this tree`);
+    const doc = existsSync(fresh) ? readRenderHashes(fresh) : null;
+    const notPng = doc?.recipes.flatMap((r) => r.files.filter((f) => !f.path.endsWith('.png')).map((f) => `${r.name} ${f.path}`)) ?? [];
+    if (notPng.length > 0) probes.push(`the base holds ${notPng.length} file(s) that are not PNGs, e.g. ${notPng[0]} — those carry full doubles off libm`);
+    const notPixels = doc?.recipes.flatMap((r) => r.files.filter((f) => f.pixels === undefined || f.sha256 !== undefined || f.size !== undefined).map((f) => `${r.name} ${f.path}`)) ?? [];
+    if (notPixels.length > 0) probes.push(`${notPixels.length} base entr(ies) carry file bytes or no pixel hash, e.g. ${notPixels[0]} — the PNG encoder's bytes differ between macOS and Linux (PR #972)`);
+    if (doc?.recipes.some((r) => r.framing !== null)) probes.push('the base records a framing box, whose numbers carry full doubles off libm');
+    const check = runRenderHashes(['base', '--check', '--work', join(work, 'wk')]);
+    const verdict = check.stdout.trim().split('\n').pop() ?? '';
+    if (check.status !== 0 || !verdict.startsWith('CURRENT')) probes.push(`\`${RENDER_BASE_COMMAND} --check\` exited ${check.status}: ${staleLines(check).join(' | ') || JSON.stringify(verdict)}`);
+    const edited = join(work, 'hand-edited-base.json');
+    if (existsSync(trackedBase)) writeFileSync(edited, readFileSync(trackedBase, 'utf8').replace('{\n  "spec"', '{\n "spec"'));
+    const hand = runRenderHashes(['base', '--check', '--file', edited, '--work', join(work, 'wh')]);
+    if (hand.status !== 1 || !hand.stdout.includes('but not in its bytes') || !staleLines(hand).some((l) => l.startsWith('STALE') && l.includes(`\`${RENDER_BASE_COMMAND} --file ${edited}\``))) {
+      probes.push(`a hand-edited copy of the base exited ${hand.status} and printed ${JSON.stringify(staleLines(hand))}, not a STALE naming its bytes and the command`);
+    }
+    const held = probes.length === 0;
+    say(
+      'RH05_THE_TRACKED_RENDER_BASE_IS_BYTE_IDENTICAL_TO_WHAT_BASE_WRITES_AND_HOLDS_PIXEL_HASHES_ONLY',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${RENDER_BASE_FILE}, ${existsSync(trackedBase) ? statSync(trackedBase).size : 0} bytes over ${doc?.recipes.length ?? 0} gallery row(s) and ` +
+          `${doc?.recipes.reduce((n, r) => n + r.files.length, 0) ?? 0} PNG pixel hash(es) with no file bytes and no framing box, equals a fresh \`${RENDER_BASE_COMMAND}\` to the byte and ` +
+          `\`--check\` reads ${verdict.split(' ')[0] || 'nothing'}; a copy re-indented by one space reads STALE with exit 1 naming its bytes and the command`,
+      ),
+      'issue #965: the base CI checks on every run is the half of a render a second machine can be held to — the PNGs\' ' +
+        'pixels, which a one-ulp change of every libm result moved by no byte, where every geometry file, sidecar, bone ' +
+        'snapshot and framing box moved; and pixels rather than file bytes, because the first Linux run read every gallery ' +
+        'PNG\'s bytes differently from the macOS base (PR #972). Written by one command and never by hand, so the file\'s ' +
+        'own bytes are the criterion',
+    );
+  }
+
+  // --- RH06: a gallery render moved on purpose is named with the row and the command --
+  {
+    const probes: string[] = [];
+    const target = pair[1];
+    const root = join(work, 'base-moved-root');
+    const built = /[\\/]gallery[\\/][^\\/]+[\\/](build|render|preview\.html)$/;
+    cpSync(galleryRoot, join(root, 'gallery'), { recursive: true, filter: (from) => !built.test(from) });
+    let what = '';
+    try {
+      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
+        const bone = [...bones].reverse().find((x) => typeof x.x === 'number');
+        if (bone === undefined) return '';
+        bone.x = (bone.x as number) + 1;
+        return `bone "${bone.name}" x ${bone.x - 1} → ${bone.x}`;
+      });
+    } catch (err) {
+      probes.push(`the plant could not be made: ${(err as Error).message}`);
+    }
+    const check = runRenderHashes(['base', '--check', '--root', root, '--work', join(work, 'wbm')]);
+    const lines = staleLines(check);
+    const rows = lines.filter((l) => l.startsWith('  DIFF') || l.startsWith('  ONLY'));
+    if (check.status !== 1) probes.push(`\`--check\` over the moved copy exited ${check.status}, not 1: ${check.stderr.trim().slice(0, 200)}`);
+    if (rows.length !== 1 || rows[0] !== `  DIFF  gallery/${target}`) probes.push(`the rows named are ${JSON.stringify(rows)}, not gallery/${target} alone`);
+    if (!lines.some((l) => /^\s+render\/.*\.png differs:/.test(l))) probes.push('no line names a PNG that moved');
+    const last = lines[lines.length - 1] ?? '';
+    if (!last.startsWith(`STALE — ${RENDER_BASE_FILE} `) || !last.includes(`\`${RENDER_BASE_COMMAND}\``)) probes.push(`the verdict ${JSON.stringify(last)} does not name ${RENDER_BASE_FILE} and \`${RENDER_BASE_COMMAND}\``);
+    const held = probes.length === 0;
+    say(
+      'RH06_A_GALLERY_RENDER_MOVED_ON_PURPOSE_IS_NAMED_WITH_THE_ROW_AND_THE_REGENERATION_COMMAND',
+      held,
+      probeDetail(held, probes, `${what} in a copy of the gallery, checked under --root: exit 1, DIFF naming gallery/${target} alone with the PNGs that moved, and a verdict naming ${RENDER_BASE_FILE} and \`${RENDER_BASE_COMMAND}\``),
+      'a change that moves a gallery render on purpose is legitimate and must still go red until the base is regenerated ' +
+        'in the same change, and the red has to carry the row, the file and the one command',
+    );
+  }
+
+  // --- RH07: a re-encoded PNG is the same render; a moved pixel is not --
+  {
+    const probes: string[] = [];
+    let figures = '';
+    const row = a.doc?.recipes.find((r) => r.files.some((f) => f.path.endsWith('.png')));
+    const file = row?.files.find((f) => f.path.endsWith('.png'));
+    const onDisk = row === undefined || file === undefined ? null : join(work, 'wa', String(a.doc?.recipes.indexOf(row) ?? 0), file.path);
+    if (a.doc === null || row === undefined || file === undefined || onDisk === null || !existsSync(onDisk)) probes.push('run A left no PNG on disk to re-encode');
+    else {
+      const bytes = readFileSync(onDisk);
+      const plate = decodePng(bytes);
+      const stride = plate.width * 4 + 1;
+      const raw = new Uint8Array(plate.height * stride);
+      for (let y = 0; y < plate.height; y++) raw.set(plate.data.subarray(y * plate.width * 4, (y + 1) * plate.width * 4), y * stride + 1);
+      const ihdr = new Uint8Array(13);
+      new DataView(ihdr.buffer).setUint32(0, plate.width);
+      new DataView(ihdr.buffer).setUint32(4, plate.height);
+      ihdr[8] = 8;
+      ihdr[9] = 6;
+      const levelOne = Buffer.concat([PNG_SIGNATURE, pngChunk('IHDR', ihdr), pngChunk('IDAT', new Uint8Array(deflateSync(raw, { level: 1 }))), pngChunk('IEND', new Uint8Array(0))].map((c) => Buffer.from(c)));
+      const moved = new Plate(plate.width, plate.height);
+      moved.data.set(plate.data);
+      moved.data[0] = (moved.data[0] + 1) & 255;
+      const reencoded = join(work, 'reencoded.png');
+      const movedPath = join(work, 'moved.png');
+      writeFileSync(reencoded, levelOne);
+      moved.writePng(movedPath);
+      const [p0, p1, p2] = [pixelHash(bytes), pixelHash(levelOne), pixelHash(readFileSync(movedPath))];
+      if (levelOne.equals(bytes)) probes.push('the level-1 re-encoding wrote the same bytes, so it measured nothing');
+      if (p1.sha256 !== p0.sha256) probes.push('re-encoding at deflate level 1 changed the pixel hash');
+      if (p2.sha256 === p0.sha256) probes.push('one red channel moved by one left the pixel hash unchanged');
+      // The same two plants through `compare`: a document whose PNG bytes differ and pixels agree, and one whose pixels differ.
+      const doc = a.doc;
+      const plant = (label: string, edit: (f: RenderFile) => RenderFile): { status: number | null; out: string } => {
+        const path = join(work, `${label}.json`);
+        writeFileSync(path, renderHashesText({ ...doc, recipes: doc.recipes.map((r) => (r.name !== row.name ? r : { ...r, files: r.files.map((f) => (f.path === file.path ? edit(f) : f)) })) }));
+        const run = runRenderHashes(['compare', a.out, path]);
+        return { status: run.status, out: run.stdout };
+      };
+      const encoded = plant('encoded', (f) => ({ ...f, size: levelOne.length, sha256: createHash('sha256').update(levelOne).digest('hex'), pixels: p1 }));
+      const pixelled = plant('pixelled', (f) => ({ ...f, pixels: p2 }));
+      const encodedLast = encoded.out.trim().split('\n').pop() ?? '';
+      if (encoded.status !== 0 || !encodedLast.startsWith('IDENTICAL IN PIXELS') || !encoded.out.includes(`  BYTES  ${row.name}`) || !encoded.out.includes(`${file.path}: bytes differ`)) {
+        probes.push(`the re-encoded document read exit ${String(encoded.status)} ${JSON.stringify(encodedLast)}, not IDENTICAL IN PIXELS naming ${file.path}`);
+      }
+      if (pixelled.status !== 1 || !pixelled.out.includes(`${file.path} differs: pixels`)) probes.push(`the moved-pixel document read exit ${String(pixelled.status)}, not a DIFF naming ${file.path}'s pixels`);
+      figures =
+        `${row.name} ${file.path}: ${bytes.length} bytes at deflate level 9 and ${levelOne.length} at level 1, pixel hash ${p0.sha256.slice(0, 12)} for both; ` +
+        `one red channel +1 hashes ${p2.sha256.slice(0, 12)}. Through compare: the re-encoded document reads IDENTICAL IN PIXELS with exit 0 naming the file under BYTES, the moved pixel a DIFF with exit 1`;
+    }
+    const held = probes.length === 0;
+    say(
+      'RH07_A_REENCODED_PNG_IS_THE_SAME_RENDER_AND_A_MOVED_PIXEL_IS_NOT',
+      held,
+      probeDetail(held, probes, figures),
+      'PR #972: the first Linux run read every gallery PNG\'s bytes differently from the macOS base on an unmoved renderer. ' +
+        'A render is its pixels, so the pixel hash has to be blind to the encoder and sighted for one channel of one ' +
+        'pixel, and an encoder-only difference is its own named verdict rather than a DIFF or a silent pass',
     );
   }
 
@@ -87383,6 +87897,7 @@ function main(): void {
   tally.of('pose-oracle', runPoseOracleSuite);
   tally.of('core', runCoreSuite);
   const emitHashesBad = tally.of('emit-hashes', runEmitHashesSuite, { ran: ranIt });
+  const renderHashesBad = tally.of('render-hashes', runRenderHashesSuite, { ran: ranIt });
   const modelBones = tally.of('model-bones', runModelBonesSuite, { failures: (value) => value.failures });
   const modelVertices = tally.of('model-vertices', runModelVerticesSuite, { failures: (value) => value.failures });
   const modelRecords = tally.of('model-records', runModelRecordsSuite, { failures: (value) => value.failures });
@@ -88136,6 +88651,15 @@ function main(): void {
           'and nothing written; and — issue #930 — the tracked gallery base byte-identical to what `base` writes on ' +
           'this tree, a hand-edited copy reading STALE, and a gallery build moved on purpose named by row, file and ' +
           'the one command that refreshes the base)') +
+      (renderHashesBad === null
+        ? ''
+        : ', + ' + n('render-hashes') + ' render-hashes controls (issue #965 — `tools/render_hashes.ts`, the render-identity ' +
+          'instrument step 3 of #380 is gated by: two gallery rigs built and rendered twice, at two work depths, hashing ' +
+          'equal to the byte over frames, sheets, geometry, the sidecar, the setup pose and the bone snapshots; one bone ' +
+          'moved in a spec copy named as the one row; a refused build recorded unrendered and named against its green ' +
+          'twin; bad inputs refused with exit 2 and nothing written; the tracked gallery base byte-identical to what ' +
+          '`base` writes and holding PNG pixel hashes only; a gallery render moved on purpose named by row and the one ' +
+          'command; and a PNG re-encoded at another deflate level read as the same render while one moved channel is not)') +
       ', + ' + n('model-bones') + ' model-bones controls (issue #915 — the compiled model\'s first record: `emitBones` ' +
       'restating a bone with every key in the constructor\'s order, which the key-order pass cannot restore for a key its ' +
       'row does not list; a name alone emitting the name alone; the mode and the skin flag under the Spine spellings; a ' +
@@ -88260,6 +88784,7 @@ function main(): void {
       corpus +
       (meshRung.startsWith(',') ? '' : meshRung) +
       (emitHashesBad === null ? '\n  ⚠️ Fewer than two gallery rigs, so no build was hashed across two runs (issue #914) in this run.' : '') +
+      (renderHashesBad === null ? '\n  ⚠️ Fewer than two gallery rigs, so no render was hashed across two runs (issue #965) in this run.' : '') +
       (modelBones.gateHole ? '\n  ⚠️ Neither RIGC_EMIT_HASHES_BASE nor the tracked tools/emit_hashes.base.json gave a base hash document, so byte identity against a base commit (issue #915) was not measured in this run.' : '') +
       (modelVertices.gateHole ? '\n  ⚠️ Neither RIGC_EMIT_HASHES_BASE nor the tracked tools/emit_hashes.base.json gave a base hash document, so the vertex attachments\' byte identity against a base commit (issue #917) was not measured in this run.' : '') +
       (modelRecords.gateHole ? '\n  ⚠️ Neither RIGC_EMIT_HASHES_BASE nor the tracked tools/emit_hashes.base.json gave a base hash document, so the structural records\' byte identity against a base commit (issue #919) was not measured in this run.' : '') +

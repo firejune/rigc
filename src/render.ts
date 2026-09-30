@@ -96,7 +96,7 @@ import {
   SkeletonJson,
   TextureAtlas,
   TextureAtlasRegion,
-  type SkeletonData,
+  SkeletonData,
   type Slot,
 } from '@esotericsoftware/spine-core';
 import { readFileSync } from 'node:fs';
@@ -528,18 +528,6 @@ function skeletonUnderSkin(data: SkeletonData, skin: string | undefined): Skelet
 }
 
 /**
- * The same options with the skin taken off — what the samplers hand `piecesOf`.
- *
- * Spelled once, so the one function that must not see a `skin` cannot come to
- * see one because a second call site forgot.
- */
-function piecesOptions(opts: PoseOptions | undefined): PoseOptions | undefined {
-  if (opts === undefined || opts.skin === undefined) return opts;
-  const { skin: _applied, ...rest } = opts;
-  return rest;
-}
-
-/**
  * One bone's world transform in one posed frame.
  *
  * ⚠️ Read off `spine-core`'s own `BonePose` and derived by its own routines —
@@ -740,50 +728,134 @@ export function posableFromText(skeletonText: string, atlasText: string, atlasDi
   return { data, pages };
 }
 
+// ---------------------------------------------------------------------------
+// the posing seam (issue #965, step 3a of #380)
+// ---------------------------------------------------------------------------
+//
+// ⭐ Everything this file reads off a posed skeleton goes through one
+// interface, `Poser`, and the samplers below are written against it alone. The
+// implementation behind it today is spine-core's (`spinePoser`, further down);
+// the core-backed poser of issue #968 is a SECOND implementation of the same
+// interface, handed to the same samplers, rather than a rewrite of them. What
+// the interface fixes is exactly what a consumer of a posed frame reads:
+//
+// - the setup pose, under a skin or under none;
+// - an animation's frames at `i/fps` for `i = 0..count`, one continuous
+//   trajectory stepped once per frame (the stepping recipe is the
+//   implementation's; the schedule — which `i`, what `count`, what time a
+//   frame is filed under — is the sampler's, and stays here);
+// - per posed frame: the pieces in draw order (world vertices, page UVs,
+//   triangles, tint, dark, page, clip output), the bone snapshots, and every
+//   slot's whole attachment geometry;
+// - the rest table, and the names a geometry file and a slot subset read.
+//
+// The framing samples are not a fourth entry: `framingViewport` is the same
+// animation entry at `FRAMING_FPS` with the clip off.
+//
+// 🔒 What stays spine-core's and outside the seam, deliberately: the atlas
+// (`posableFromText`'s pages, `substituteTexture`'s region lookup — step 3c of
+// #380) and `nonFiniteOfPosed`, which `validate.ts` calls on a spine-core
+// skeleton it stepped itself (A10), so the round trip keeps its spine-core
+// entry whatever poses the renders.
+
+/** What a sampler hands a posed frame's draw walk — `PoseOptions` with the subset already resolved. */
+export interface DrawOptions {
+  /** The slots drawn, resolved against the posed skeleton (`slotSubsetOf`); `undefined` draws every slot. */
+  subset: SlotSubset | undefined;
+  /** Every attachment whole, no clip applied — the framing box's reading. */
+  unclipped: boolean;
+  /** Also record each piece's original-art UVs — see `PieceTexture`. */
+  texture: boolean;
+}
+
+/**
+ * One posed moment, readable only while the `Poser` call that produced it is
+ * running: an implementation may step one skeleton in place, so a reader takes
+ * what it needs before the next frame is posed.
+ */
+export interface Posed {
+  /** The drawables in draw order — see `piecesOf` for the walk and the clip. */
+  pieces(draw: DrawOptions): Piece[];
+  /** Every bone's world transform, in the skeleton's declaration order. */
+  bones(): BoneSnapshot[];
+  /** Every slot's region or mesh attachment, whole, in the posed draw order. */
+  attachments(): AttachmentPose[];
+}
+
+/**
+ * The posing seam: one skeleton, posed on demand.
+ *
+ * Named for what it does rather than for the runtime behind it, because the
+ * point of the name is that there are two: `spinePoser` today, the core's at
+ * #968. Every sampler, the framing, the geometry export and the non-finite
+ * sentence take one (or a `SkeletonData`, which they wrap in `spinePoser`).
+ */
+export interface Poser {
+  /** Every animation, in declaration order, with its duration in seconds. */
+  readonly animations: ReadonlyArray<{ name: string; duration: number }>;
+  /** Every bone in declaration order, and its parent's name. */
+  readonly bones: ReadonlyArray<{ name: string; parent: string | null }>;
+  /** Every slot in declaration order, and the bone it hangs from. */
+  readonly slots: ReadonlyArray<{ name: string; bone: string }>;
+  /** `slotSubsetOf` against this skeleton posed under `skin` — refused by `SlotSubsetError`. */
+  subset(opts: Pick<PoseOptions, 'slots' | 'hidden'> | undefined, skin: string | undefined): SlotSubset | undefined;
+  /** The setup pose under `skin` (absent: no skin set at all). */
+  setup(skin: string | undefined): Posed;
+  /**
+   * Animation `name` under `skin`, not looping: `visit(i, posed)` for every
+   * `i` from 0 to `count`, the pose at `i/fps`. The caller has checked `name`.
+   */
+  animation(name: string, skin: string | undefined, fps: number, count: number, visit: (index: number, posed: Posed) => void): void;
+  /** The rest table for the (slot, attachment) pairs `shown` holds — see `AttachmentRest`. */
+  rest(skin: string | undefined, shown: readonly AttachmentPose[][]): AttachmentRest[];
+}
+
+/** What every sampler takes: a poser, or spine-core's parsed skeleton, which is posed through `spinePoser`. */
+export type PoseSource = Poser | SkeletonData;
+
+function poserOf(source: PoseSource): Poser {
+  return source instanceof SkeletonData ? spinePoser(source) : source;
+}
+
+/** A sampler's `PoseOptions` as a draw walk reads them, the subset resolved once, on the first frame posed. */
+function drawResolver(poser: Poser, opts: PoseOptions | undefined): () => DrawOptions {
+  let draw: DrawOptions | undefined;
+  return () => {
+    draw ??= { subset: poser.subset(opts, opts?.skin), unclipped: opts?.unclipped === true, texture: opts?.texture === true };
+    return draw;
+  };
+}
+
+/** One frame off one posed moment, with what `opts` asked to record beside the pieces. */
+function frameOf(index: number, time: number, posed: Posed, draw: DrawOptions, opts: PoseOptions | undefined): Frame {
+  return {
+    index,
+    time,
+    pieces: posed.pieces(draw),
+    ...(opts?.bones ? { bones: posed.bones() } : {}),
+    ...(opts?.geometry ? { attachments: posed.attachments() } : {}),
+  };
+}
+
 /**
  * Sample one animation at a fixed rate and collect the posed pieces per frame.
  *
- * The pose is driven through `AnimationState` rather than `Animation.apply`
- * because that is the path a runtime actually takes, and 4.3's `Animation.apply`
- * takes a `MixFrom` that only the state machine has any business choosing.
+ * Frame `i` is the pose at `i/fps`, for `i = 0..round(duration·fps)` — the
+ * schedule is this function's; how a pose reaches `i/fps` is the poser's.
  */
-export function sampleAnimation(data: SkeletonData, name: string, fps: number, opts?: PoseOptions): Frame[] {
-  const animation = data.findAnimation(name);
+export function sampleAnimation(source: PoseSource, name: string, fps: number, opts?: PoseOptions): Frame[] {
+  const poser = poserOf(source);
+  const animation = poser.animations.find((a) => a.name === name);
   if (!animation) {
     throw new Error(
-      `no animation "${name}" in this skeleton; it has [${data.animations.map((a) => a.name).join(', ') || 'none'}]`,
+      `no animation "${name}" in this skeleton; it has [${poser.animations.map((a) => a.name).join(', ') || 'none'}]`,
     );
   }
-  const skeleton = skeletonUnderSkin(data, opts?.skin);
-  const pieceOpts = piecesOptions(opts);
-  const state = new AnimationState(new AnimationStateData(data));
-  // Not looping: the last frame sits at the animation's duration, and a looping
-  // entry would wrap it back onto the first pose.
-  state.setAnimation(0, name, false);
-  skeleton.setupPose();
-
   const step = 1 / fps;
   const count = Math.round(animation.duration * fps);
+  const draw = drawResolver(poser, opts);
   const frames: Frame[] = [];
-  for (let i = 0; i <= count; i++) {
-    if (i > 0) {
-      state.update(step);
-      state.apply(skeleton);
-      skeleton.update(step);
-      skeleton.updateWorldTransform(Physics.update);
-    } else {
-      state.apply(skeleton);
-      skeleton.update(0);
-      skeleton.updateWorldTransform(Physics.reset);
-    }
-    frames.push({
-      index: i,
-      time: i * step,
-      pieces: piecesOf(skeleton, pieceOpts),
-      ...(opts?.bones ? { bones: boneSnapshots(skeleton) } : {}),
-      ...(opts?.geometry ? { attachments: attachmentsOf(skeleton) } : {}),
-    });
-  }
+  poser.animation(name, opts?.skin, fps, count, (i, posed) => frames.push(frameOf(i, i * step, posed, draw(), opts)));
   return frames;
 }
 
@@ -795,17 +867,69 @@ export function sampleAnimation(data: SkeletonData, name: string, fps: number, o
  * ladder's first rung ships one (`1-weight-and-mass`'s second export), and its
  * whole content is the setup pose.
  */
-export function sampleSetupPose(data: SkeletonData, opts?: PoseOptions): Frame[] {
-  const skeleton = setupPosed(data, opts?.skin);
-  return [
-    {
-      index: 0,
-      time: 0,
-      pieces: piecesOf(skeleton, piecesOptions(opts)),
-      ...(opts?.bones ? { bones: boneSnapshots(skeleton) } : {}),
-      ...(opts?.geometry ? { attachments: attachmentsOf(skeleton) } : {}),
+export function sampleSetupPose(source: PoseSource, opts?: PoseOptions): Frame[] {
+  const poser = poserOf(source);
+  const posed = poser.setup(opts?.skin);
+  return [frameOf(0, 0, posed, drawResolver(poser, opts)(), opts)];
+}
+
+// ---------------------------------------------------------------------------
+// the spine-core implementation of the seam
+// ---------------------------------------------------------------------------
+
+/**
+ * `Poser` over spine-core: the runtime's own `Skeleton`, `AnimationState` and
+ * `SkeletonClipping`, stepped the way a runtime steps them.
+ *
+ * The pose is driven through `AnimationState` rather than `Animation.apply`
+ * because that is the path a runtime actually takes, and 4.3's
+ * `Animation.apply` takes a `MixFrom` that only the state machine has any
+ * business choosing. Frame 0 applies, updates by 0 and resets physics; every
+ * later frame is one `state.update(1/fps)`, apply, `skeleton.update(1/fps)` and
+ * `Physics.update` — one continuous trajectory, so the track time of frame `i`
+ * is the sum of `i` steps.
+ */
+export function spinePoser(data: SkeletonData): Poser {
+  return {
+    animations: data.animations.map((a) => ({ name: a.name, duration: a.duration })),
+    bones: data.bones.map((bone) => ({ name: bone.name, parent: bone.parent?.name ?? null })),
+    slots: data.slots.map((slot) => ({ name: slot.name, bone: slot.boneData.name })),
+    subset: (opts, skin) => slotSubsetOf(data, opts, skin),
+    setup: (skin) => spinePosed(setupPosed(data, skin)),
+    animation: (name, skin, fps, count, visit) => {
+      const skeleton = skeletonUnderSkin(data, skin);
+      const state = new AnimationState(new AnimationStateData(data));
+      // Not looping: the last frame sits at the animation's duration, and a looping
+      // entry would wrap it back onto the first pose.
+      state.setAnimation(0, name, false);
+      skeleton.setupPose();
+      const step = 1 / fps;
+      const posed = spinePosed(skeleton);
+      for (let i = 0; i <= count; i++) {
+        if (i > 0) {
+          state.update(step);
+          state.apply(skeleton);
+          skeleton.update(step);
+          skeleton.updateWorldTransform(Physics.update);
+        } else {
+          state.apply(skeleton);
+          skeleton.update(0);
+          skeleton.updateWorldTransform(Physics.reset);
+        }
+        visit(i, posed);
+      }
     },
-  ];
+    rest: (skin, shown) => restOf(data, skin, shown),
+  };
+}
+
+/** A spine-core skeleton as it stands posed, read through the seam's `Posed`. */
+function spinePosed(skeleton: Skeleton): Posed {
+  return {
+    pieces: (draw) => drawPieces(skeleton, draw),
+    bones: () => boneSnapshots(skeleton),
+    attachments: () => attachmentsOf(skeleton),
+  };
 }
 
 /**
@@ -826,10 +950,11 @@ function setupPosed(data: SkeletonData, skin: string | undefined): Skeleton {
  * filed under. A skeleton with no animation at all contributes its setup pose
  * under `SETUP_POSE_DIR`.
  */
-export function sampleAll(data: SkeletonData, fps: number, opts?: PoseOptions): Map<string, Frame[]> {
+export function sampleAll(source: PoseSource, fps: number, opts?: PoseOptions): Map<string, Frame[]> {
+  const poser = poserOf(source);
   const out = new Map<string, Frame[]>();
-  if (data.animations.length === 0) out.set(SETUP_POSE_DIR, sampleSetupPose(data, opts));
-  else for (const animation of data.animations) out.set(animation.name, sampleAnimation(data, animation.name, fps, opts));
+  if (poser.animations.length === 0) out.set(SETUP_POSE_DIR, sampleSetupPose(poser, opts));
+  else for (const animation of poser.animations) out.set(animation.name, sampleAnimation(poser, animation.name, fps, opts));
   return out;
 }
 
@@ -888,8 +1013,14 @@ export function piecesOf(skeleton: Skeleton, opts?: PoseOptions): Piece[] {
   // it was set to — so a name that draws nothing is refused here, where the one
   // application point is, rather than matching no piece in silence.
   const subset = slotSubsetOf(skeleton.data, opts, skeleton.skin?.name);
+  return drawPieces(skeleton, { subset, unclipped: opts?.unclipped === true, texture: opts?.texture === true });
+}
+
+/** `piecesOf`'s walk over a posed spine-core skeleton, the subset already resolved — the spine poser's `Posed.pieces`. */
+function drawPieces(skeleton: Skeleton, draw: DrawOptions): Piece[] {
+  const { subset } = draw;
   const named = subset === undefined ? undefined : new Set(subset.names);
-  const clipper = opts?.unclipped === true ? null : new SkeletonClipping();
+  const clipper = draw.unclipped ? null : new SkeletonClipping();
   const pieces: Piece[] = [];
   for (const slot of skeleton.drawOrder.appliedPose) {
     const attachment = slot.appliedPose.attachment;
@@ -903,7 +1034,7 @@ export function piecesOf(skeleton: Skeleton, opts?: PoseOptions): Piece[] {
       continue;
     }
     const drawn = subset === undefined || named === undefined || named.has(slot.data.name) === (subset.mode === 'slots');
-    const piece = drawn ? pieceOf(skeleton, slot, opts, clipper) : null;
+    const piece = drawn ? pieceOf(skeleton, slot, draw.texture, clipper) : null;
     if (piece !== null) pieces.push(piece);
     clipper?.clipEnd(slot);
   }
@@ -921,7 +1052,7 @@ const QUAD_TRIANGLES = [0, 1, 2, 2, 3, 0];
 function pieceOf(
   skeleton: Skeleton,
   slot: Slot,
-  opts: PoseOptions | undefined,
+  withTexture: boolean,
   clipper: SkeletonClipping | null,
 ): Piece | null {
   const pose = slot.appliedPose;
@@ -946,7 +1077,7 @@ function pieceOf(
   const dark: [number, number, number] | undefined =
     darkPose === null ? undefined : [darkPose.r, darkPose.g, darkPose.b];
   const common = { tint, dark, slot: slot.data.name, page: region.page.name };
-  const texture = opts?.texture !== true ? undefined : artUvsOf(attachment, region);
+  const texture = withTexture ? artUvsOf(attachment, region) : undefined;
   const uvs = attachment.sequence.getUVs(index);
 
   let piece: Piece;
@@ -1166,7 +1297,7 @@ export function sidecarViewport(v: Viewport): FramesSidecar['viewport'] {
  * vertex (or the bone), when any number in it is not finite.
  */
 export function geometryFileOf(
-  data: SkeletonData,
+  source: PoseSource,
   animation: string | null,
   fps: number,
   frames: Frame[],
@@ -1187,7 +1318,8 @@ export function geometryFileOf(
     time: frame.time,
     ...geometryFrame(frame, `frame ${frame.index}`),
   }));
-  const setupFrame = sampleSetupPose(data, { ...(skin === undefined ? {} : { skin }), bones: true, geometry: true })[0];
+  const poser = poserOf(source);
+  const setupFrame = sampleSetupPose(poser, { ...(skin === undefined ? {} : { skin }), bones: true, geometry: true })[0];
   const setup = geometryFrame(setupFrame, 'the setup pose');
   const file: GeometryFile = {
     spec: GEOMETRY_SPEC,
@@ -1196,9 +1328,9 @@ export function geometryFileOf(
     ...(skin === undefined ? {} : { skin }),
     fps,
     viewport: sidecarViewport(viewport),
-    bones: data.bones.map((bone) => ({ name: bone.name, parent: bone.parent?.name ?? null })),
-    slots: data.slots.map((slot) => ({ name: slot.name, bone: slot.boneData.name })),
-    rest: restOf(data, skin, [setup.attachments, ...posed.map((frame) => frame.attachments)]),
+    bones: poser.bones.map(({ name, parent }) => ({ name, parent })),
+    slots: poser.slots.map(({ name, bone }) => ({ name, bone })),
+    rest: poser.rest(skin, [setup.attachments, ...posed.map((frame) => frame.attachments)]),
     setup,
     frames: posed,
   };
@@ -1215,7 +1347,7 @@ export function geometryFileOf(
  * frames drew. A region's rest corners are read for the sequence frame the setup
  * pose resolves, which is the frame its setup pose draws.
  */
-function restOf(data: SkeletonData, skin: string | undefined, shown: AttachmentPose[][]): AttachmentRest[] {
+function restOf(data: SkeletonData, skin: string | undefined, shown: readonly AttachmentPose[][]): AttachmentRest[] {
   const skeleton = setupPosed(data, skin);
   // Slot, then attachment: two maps rather than one joined key, so no pair of
   // names can fold into another's entry whatever characters they carry.
@@ -1384,10 +1516,11 @@ function refuseNonFinite(file: GeometryFile): void {
  * pays for it.
  */
 export function nonFinitePoseOf(
-  data: SkeletonData,
+  source: PoseSource,
   skin: string | undefined,
   sets: ReadonlyArray<{ animation: string | null; fps: number }>,
 ): string | null {
+  const poser = poserOf(source);
   const opts: PoseOptions = { ...(skin === undefined ? {} : { skin }), bones: true, geometry: true };
   // Every attachment list the frames showed, for the rest table's roster.
   const shown: AttachmentPose[][] = [];
@@ -1398,11 +1531,11 @@ export function nonFinitePoseOf(
     shown.push(frame.attachments);
     return { where, attachments: frame.attachments, bones: frame.bones };
   };
-  const setup = named(sampleSetupPose(data, opts)[0], 'the setup pose');
+  const setup = named(sampleSetupPose(poser, opts)[0], 'the setup pose');
   const frames = sets.flatMap(({ animation, fps }) =>
     animation === null
       ? []
-      : sampleAnimation(data, animation, fps, opts).map((frame) =>
+      : sampleAnimation(poser, animation, fps, opts).map((frame) =>
           named(frame, frameWhere(animation, frame.index, frame.time, fps)),
         ),
   );
@@ -1410,7 +1543,7 @@ export function nonFinitePoseOf(
   // what they show, and would be posing the same overflow a third time.
   const found = nonFiniteSentence(setup, frames, []);
   if (found !== null) return found;
-  return nonFiniteSentence({ attachments: [], bones: [] }, [], restOf(data, skin, shown));
+  return nonFiniteSentence({ attachments: [], bones: [] }, [], poser.rest(skin, shown));
 }
 
 /**
@@ -1829,7 +1962,8 @@ export function trimmedUnionBounds(
  * holding a vertex at Infinity or NaN is refused by a `GeometryError` naming the
  * bone or vertex and its value (issue #873), never answered `null`.
  */
-export function framingViewport(data: SkeletonData, maxSide: number, opts?: PoseOptions): Viewport | null {
+export function framingViewport(source: PoseSource, maxSide: number, opts?: PoseOptions): Viewport | null {
+  const poser = poserOf(source);
   // The skin belongs here as much as in the frames: the union box is over the
   // attachments that POSE, and two skins fill a slot with art of different sizes
   // in different places. Framing one skin's shot with another skin's box would
@@ -1848,9 +1982,9 @@ export function framingViewport(data: SkeletonData, maxSide: number, opts?: Pose
   const { slots: _drawn, hidden: _hidden, bones: _bones, geometry: _geometry, ...whole } = opts ?? {};
   const framed: PoseOptions = { ...whole, unclipped: true };
   const sets =
-    data.animations.length === 0
-      ? [sampleSetupPose(data, framed)]
-      : data.animations.map((a) => sampleAnimation(data, a.name, FRAMING_FPS, framed));
+    poser.animations.length === 0
+      ? [sampleSetupPose(poser, framed)]
+      : poser.animations.map((a) => sampleAnimation(poser, a.name, FRAMING_FPS, framed));
   // ⚠️ Two different reasons a box is not finite, told apart here and nowhere
   // else (issue #873). A skeleton that posed no vertex at all has nothing to
   // draw, and that is `null`. One that posed a vertex at Infinity or NaN has a
@@ -1864,11 +1998,11 @@ export function framingViewport(data: SkeletonData, maxSide: number, opts?: Pose
   const box = unionBounds(sets);
   if (![box.minX, box.minY, box.maxX, box.maxY].every(Number.isFinite)) {
     const found = nonFinitePoseOf(
-      data,
+      poser,
       framed.skin,
-      data.animations.length === 0
+      poser.animations.length === 0
         ? [{ animation: null, fps: FRAMING_FPS }]
-        : data.animations.map((a) => ({ animation: a.name, fps: FRAMING_FPS })),
+        : poser.animations.map((a) => ({ animation: a.name, fps: FRAMING_FPS })),
     );
     // Reaching here with nothing found would mean the pieces and the whole
     // attachments disagree about one pose — a defect here, said as one.
