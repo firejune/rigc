@@ -75050,6 +75050,115 @@ function runCoreSuite(): number {
     );
   }
 
+  // --- CZ01: a slider poses again every bone its animation keys, a timeline before its first key included --
+  {
+    const probes: string[] = [];
+    // The three rigs of CQ06's population the old lcg never drew (issue #989), reduced to a world-space transform on b2 and one
+    // slider after it that keys b2 or its parent before the timeline's first key — so it writes nothing, and b2 is still posed again.
+    const rigs: Array<{ label: string; bones: Obj[]; constraints: Obj[]; anims: Record<string, SliderAnim>; slider: string }> = [
+      {
+        label: 'a dial on b2 itself, its time clamped to 0 before a scaleY key at 0.277',
+        bones: [{ name: 'root' }, { name: 'g', parent: 'root', rotation: 57.812, scaleX: 1.005, shearY: -2.815 }, { name: 'b1', parent: 'g', x: 25.543, y: -11.455, rotation: -60.412, length: 28.022, inherit: 'noScaleOrReflection', scaleX: -0.547, scaleY: -0.85, shearX: 24.827, shearY: 22.886 }, { name: 'b2', parent: 'b1', x: 9.446, y: -10.452, rotation: 160.423, length: 25.304 }, { name: 'b5', parent: 'b1', x: -25.591, y: -14.127, rotation: 85.632, length: 34.567 }],
+        constraints: [{ type: 'transform', name: 'tr', bones: ['b2'], source: 'b5', properties: { rotate: { to: { rotate: {} } } } }, { type: 'slider', name: 'sl', animation: 'sa', bone: 'b2', property: 'y', scale: 0.646, local: true, to: 0.893 }],
+        anims: { sa: { bones: { b2: { scaley: [{ time: 0.277, value: 1.568 }, { time: 0.467, value: 0.918 }, { time: 0.978, value: -1.075 }] } } } },
+        slider: 'sl',
+      },
+      {
+        label: 'a bone-less slider at −0.471 keying b2\'s parent from 0.176',
+        bones: [{ name: 'root' }, { name: 'g', parent: 'root', rotation: -139.331, scaleX: 0.619, shearY: -3.068 }, { name: 'b1', parent: 'g', x: -20.988, y: 10.617, rotation: 3.507, length: 7.153 }, { name: 'b2', parent: 'b1', x: -12.667, y: -18.728, rotation: 73.506, length: 38.563, scaleX: -1.464, scaleY: 1.246, shearX: -21.258, shearY: -18.452 }, { name: 'b5', parent: 'b2', x: -35.073, y: -3.554, rotation: 161.52, length: 48.894, inherit: 'noRotationOrReflection' }],
+        constraints: [{ type: 'transform', name: 'tr', bones: ['b2'], source: 'b5', properties: { rotate: { to: { x: {} } } } }, { type: 'slider', name: 'sl', animation: 'sa', time: -0.471 }],
+        anims: { sa: { bones: { b1: { scaley: [{ time: 0.176, value: -0.093 }, { time: 0.744, value: -0.163 }] } } } },
+        slider: 'sl',
+      },
+      {
+        label: 'a looped bone-less slider at −0.103 keying b2 at 0',
+        bones: [{ name: 'root' }, { name: 'g', parent: 'root', rotation: -98.104, scaleX: 1.239, shearY: 12.487 }, { name: 'b2', parent: 'g', x: 15.871, y: -14.581, rotation: -66.707, length: 7.08, scaleX: -0.772, scaleY: 1.595, shearX: 24.147, shearY: 0.68 }, { name: 'b5', parent: 'b2', x: -27.515, y: 1.291, rotation: 12.746, length: 30.562, inherit: 'noRotationOrReflection', scaleX: 1.635, scaleY: 0.712, shearX: 26.069, shearY: -12.52 }],
+        constraints: [{ type: 'transform', name: 'tr', bones: ['b2'], source: 'b5', properties: { shearY: { to: { rotate: {} } } } }, { type: 'slider', name: 'sl', animation: 'sa', loop: true, time: -0.103 }],
+        anims: { sa: { bones: { b2: { scale: [{ time: 0, x: -0.608, y: 1.301 }] } } } },
+        slider: 'sl',
+      },
+    ];
+    const read: string[] = [];
+    for (const rig of rigs) {
+      const variant = (constraints: Obj[], anims: Record<string, SliderAnim>): { spine: string; model: string } => sliderPair(rig.bones, [], constraints, anims);
+      const pair = variant(rig.constraints, rig.anims);
+      const exact = sliderCompare(pair, RAW_ONE);
+      if (!exact.identical || posedSkips(exact).length > 0) probes.push(`${rig.label}: ${posedSkips(exact).join('; ') || exact.first}`);
+      // Planted: only the bones a timeline wrote posed again — the reading before, which kept the transform's world on b2.
+      const planted = sliderCompare(pair, RAW_ONE, { solver: { sliderReposesKeyedBones: false } });
+      const off = new Set(planted.rows[0].findings.filter((f) => f.startsWith('the setup pose: bone')).map((f) => /bone "([^"]+)"/.exec(f)?.[1]));
+      if (!off.has('b2')) probes.push(`${rig.label}: the written bones alone posed again, planted, did not read b2 off — ${planted.first ?? 'exact'}`);
+      // The rule's edges, each exact with nothing planted: at mix 0 nothing is posed again, nor is a bone the animation names with no timeline.
+      const atMixZero = variant(rig.constraints.map((c) => (c.name === rig.slider ? { ...c, mix: 0 } : c)), rig.anims);
+      const zero = sliderCompare(atMixZero, RAW_ONE);
+      if (!zero.identical) probes.push(`${rig.label}, the slider at mix 0: ${zero.first}`);
+      const keyed = Object.keys(rig.anims.sa.bones ?? {});
+      const emptied = variant(rig.constraints, { sa: { bones: Object.fromEntries(keyed.map((b) => [b, {}])) } });
+      const empty = sliderCompare(emptied, RAW_ONE);
+      if (!empty.identical) probes.push(`${rig.label}, its animation naming ${keyed.join(', ')} with no timeline: ${empty.first}`);
+      read.push(`${rig.label} — planted, ${[...off].sort().join(', ')} off`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CZ01_A_SLIDER_POSES_AGAIN_EVERY_BONE_ITS_ANIMATION_KEYS_A_TIMELINE_BEFORE_ITS_FIRST_KEY_INCLUDED',
+      ok,
+      probeDetail(ok, probes, `${rigs.length} rigs, each a world-space transform on b2 and a slider after it keying b2 or its parent before the timeline's first key, bit-exact under --raw at tolerance 0 on every bone, and exact again with the slider at mix 0 and with its animation naming the keyed bone with no timeline; only the bones a timeline wrote posed again, planted, reads each off: ${read.join('; ')}`),
+      'issue #989: the old lcg\'s 10,466-state cycle never drew these three of CQ06\'s 300 rigs; the runtime rebuilds a slider-keyed bone\'s world from the local values read back after a world-space constraint, 1e-7 relative off the world the constraint wrote, even where the slider writes nothing',
+    );
+  }
+
+  // --- CZ02: a slider's scale keys blend to the bit — additive as v·setup − setup, and the target itself at mix 1 --
+  {
+    const probes: string[] = [];
+    // Typed in, no generator: five setup scales, five key values, five mixes, additive or not, over the setup or over a current an earlier slider moved.
+    const SETUPS = [-1.7, -0.35, 0.4, 1.3, 2];
+    const VALUES = [-1.9, -0.6, 0.45, 1.1, 2.3];
+    const MIXES = [1, 0.5, 0.37, -0.6, 1.8];
+    const plants: Array<[string, Partial<SolverRules>]> = [['additive as (v − 1)·setup·mix', { sliderAdditiveScaleProduct: false }], ['mix 1 as current\' + (target − current\')·1', { sliderScaleMixOneIsTarget: false }]];
+    const red = plants.map(() => 0);
+    let rigsExact = 0;
+    let rigCount = 0;
+    let boneCount = 0;
+    for (const mix of MIXES) {
+      for (const additive of [false, true]) {
+        for (const moved of [false, true]) {
+          const bones: Obj[] = [{ name: 'root' }];
+          const keys: Keyed = {};
+          const pre: Keyed = {};
+          SETUPS.forEach((s, i) => VALUES.forEach((v, j) => {
+            const x = (i + j) % 2 === 0;
+            const name = `p${i}${j}`;
+            bones.push({ name, parent: 'root', rotation: 17 * i - 31 * j, [x ? 'scaleX' : 'scaleY']: s });
+            keys[name] = { [x ? 'scalex' : 'scaley']: [{ time: 0, value: v }] };
+            pre[name] = { [x ? 'scalex' : 'scaley']: [{ time: 0, value: VALUES[(j + 2) % VALUES.length] }] };
+          }));
+          const constraints: Obj[] = [...(moved ? [{ type: 'slider', name: 'pre', animation: 'pa' }] : []), { type: 'slider', name: 'sl', animation: 'sa', mix, ...(additive ? { additive: true } : {}) }];
+          const pair = sliderPair(bones, [], constraints, { sa: { bones: keys }, ...(moved ? { pa: { bones: pre } } : {}) });
+              rigCount++;
+          boneCount += bones.length - 1;
+          const c = sliderCompare(pair, RAW_ONE);
+          const label = `mix ${mix}${additive ? ', additive' : ''}${moved ? ', over a moved current' : ''}`;
+          if (c.identical && posedSkips(c).length === 0) rigsExact++;
+          else if (probes.length < 3) probes.push(`${label}: ${posedSkips(c).join('; ') || c.first}`);
+          plants.forEach(([, plant], p) => {
+            red[p] += sliderCompare(pair, RAW_ONE, { solver: plant }).rows[0].findings.filter((f) => f.startsWith('the setup pose: bone')).length;
+          });
+        }
+      }
+    }
+    if (rigsExact !== rigCount) probes.push(`${rigsExact} of ${rigCount} rigs bit-exact`);
+    plants.forEach(([name], p) => {
+      if (red[p] === 0) probes.push(`${name}, planted, read every bone exact — the rigs do not separate the two readings`);
+    });
+    const ok = probes.length === 0;
+    say(
+      'CZ02_A_SLIDERS_SCALE_KEYS_BLEND_TO_THE_BIT_ADDITIVE_AS_V_TIMES_SETUP_LESS_SETUP_AND_THE_TARGET_ITSELF_AT_MIX_1',
+      ok,
+      probeDetail(ok, probes, `${rigsExact} of ${rigCount} rigs (${boneCount} bones, each keyed by scalex or scaley) bit-exact under --raw at tolerance 0: ${SETUPS.length} setup scales by ${VALUES.length} key values, at ${MIXES.length} mixes, additive or not, over the setup or over a current an earlier slider moved; planted, ${plants.map(([name], p) => `${name} reads ${red[p]} bones off`).join(', ')}`),
+      'issue #989: found beside CZ01, grid-invisible — the additive form multiplied (v − 1) by the setup, and the absolute form at mix 1 blended from |current| where the runtime writes the target',
+    );
+  }
+
   rmSync(work, { recursive: true, force: true });
   return bad;
 }
