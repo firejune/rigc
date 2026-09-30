@@ -386,6 +386,9 @@ interface CompiledModel {
   stage: { x: F32; y: F32; width: F32; height: F32 } | null;
   /** `rig.skeleton.referenceScale` (:3341); physics reads it. */
   referenceScale?: number;
+  // Added after this census by issue #958: `CompiledModel.referenceScale` is required,
+  // the stated number or the parser's 100, and the document writes it after `spec`;
+  // the emitter takes it from the model, not from the header it is handed.
   /** Header bookkeeping: `rig.skeleton.fps` (:3340), `imagesPath` (:3342), `rig.skeleton.audio` (:3344). */
   bookkeeping: { fps?: number; images?: string; audio?: string | null };
 

@@ -40,7 +40,8 @@
  * vertices name their bone (issue #917, cut 1c); and the remaining structural
  * records (issue #919, cut 1d): `slots`, the region and linked-mesh
  * attachments, `skins` holding every attachment as a model record,
- * `constraints` and `events`; and `animations` (issue #921, cut 1e), each a
+ * `constraints` and `events`; the skeleton's `referenceScale` (issue #958),
+ * which wind and gravity act over; and `animations` (issue #921, cut 1e), each a
  * `CompiledAnimation` whose timelines hold the keys the timeline compilers
  * build; and every region's atlas rectangle (issue #935, `ModelAtlasRect`). Every other field is `CompileResult`'s own, carried by reference under
  * the same name (`CarriedFromCompileResult`) until its own cut gives it a
@@ -566,6 +567,27 @@ export interface CompiledAnimation {
 }
 
 export interface CompiledModel extends CarriedFromCompileResult {
+  /**
+   * The skeleton's reference scale, which a physics constraint's `wind` and
+   * `gravity` act over (issue #958): the rig spec's `skeleton.referenceScale`
+   * exactly as stated, or — stating none — the 100 the parser reads a header
+   * without one as (`UNSTATED_REFERENCE_SCALE` in `src/emit_spine.ts`). It is
+   * the number the Spine file is read as either way: the emitter writes this
+   * value into the header and the parser-default pass drops it at 100.
+   *
+   * ⭐ **Why the model holds it.** A Spine header stating 50 moved 30 of 50
+   * wind-and-gravity probes under the stepped oracle, and none without wind
+   * or gravity (issue #956); the core read the parser's 100 as a constant
+   * until this field. A value any backend posing the rig needs belongs here.
+   *
+   * 🔸 Not `f32`'d: the runtime reads it as the double the header spells
+   * (`SkeletonJson` multiplies it by the loader's `scale` and stores it), so
+   * it is the rig's number unchanged, and on the grids `modelDocument`
+   * states exactly when the rig spec wrote it on one. It is not a libm
+   * result, so no platform moves it; none of the nineteen recipes states one,
+   * and all nineteen documents carry 100.
+   */
+  referenceScale: number;
   /** Every bone, in the rig's declaration order — parents first, as the runtime requires. */
   bones: ModelBone[];
   /** The setup world transform of every bone, computed from `bones`. Never emitted. */
@@ -778,7 +800,7 @@ function animationOf(animation: CompiledAnimation, where: string): { [key: strin
 
 /** The model's fields the document writes, after `spec`, in its key order. */
 const MODEL_DOCUMENT_FIELDS: readonly string[] = [
-  'bones', 'slots', 'skins', 'constraints', 'events', 'animations',
+  'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations',
   'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig',
 ];
 
@@ -793,8 +815,8 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  * docs/COMPILED_MODEL.md §6 (issue #926).
  *
  * **Key order.** `spec`, then the model's fields in the order this file
- * declares them — `bones`, `slots`, `skins`, `constraints`, `events`,
- * `animations` — then the fields carried from `CompileResult` in
+ * declares them — `referenceScale` (issue #958), `bones`, `slots`, `skins`,
+ * `constraints`, `events`, `animations` — then the fields carried from `CompileResult` in
  * `CarriedFromCompileResult`'s order: `images`, `pageGrids`, `droppedStates`,
  * `absentParts`, `meshBones`, `meshes`, `physics`, `deformTransforms`,
  * `trackDerivations`, `rig`. Inside a model record, its interface's field
@@ -831,7 +853,10 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  * decimal naming a float, which is not the float's own double) or of the
  * six-decimal grid (`Math.round(x·1e6)/1e6 === x`). `MX01` in `selftest.ts`
  * holds it over every document the tree's recipes build, with a full double
- * planted to turn it red by its path. A number on neither grid is a full
+ * planted to turn it red by its path. One field is the rig spec's number
+ * carried unchanged rather than computed, `referenceScale` (issue #958): the
+ * runtime reads the header's double, so rounding it here would pose another
+ * skeleton; it is on a grid when the spec wrote it on one. A number on neither grid is a full
  * double whose last digits are the platform libm's, which is how the rule was
  * found (issue #942): `meshes[].depth.ceiling` carried `turnCeiling`'s fold
  * figures (`src/depth.ts`) as full doubles from `Math.atan` and the depth
@@ -873,6 +898,7 @@ export function modelDocument(model: CompiledModel): string {
   }
   const doc: { [key: string]: DocValue } = {
     spec: MODEL_DOCUMENT_SPEC,
+    referenceScale: plain(model.referenceScale, 'referenceScale'),
     bones: model.bones.map((bone, i) =>
       ordered(bone, BONE_FIELDS, `bones[${i}]`, (key, v) => (key === 'editor' ? ordered(v as object, ['color', 'icon'], `bones[${i}].editor`) : plain(v, `bones[${i}].${key}`))),
     ),

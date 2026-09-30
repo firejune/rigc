@@ -418,6 +418,19 @@ export function emitSlots(slots: readonly ModelSlot[]): SpineSlot[] {
 }
 
 /**
+ * The `referenceScale` a header stating none is read as: the parser's
+ * `getValue(skeletonMap, "referenceScale", 100)`, taken from
+ * `PARSER_DEFAULTS.header` (which the selftest loads rather than believes) so
+ * the model and the omission pass cannot name two different numbers.
+ * `compile.ts` gives the model this value when the rig spec states none.
+ */
+export const UNSTATED_REFERENCE_SCALE: number = ((): number => {
+  const v = PARSER_DEFAULTS.header?.referenceScale;
+  if (typeof v !== 'number') throw new Error(`internal: PARSER_DEFAULTS.header.referenceScale is ${JSON.stringify(v)}, not a number`);
+  return v;
+})();
+
+/**
  * A physics constraint's parameters and their parser defaults
  * (`SkeletonJson.js:295-319`), in the order the motion spec's physics table
  * writes them. The same values are `PARSER_DEFAULTS['physics constraint']`'s;
@@ -761,15 +774,19 @@ export function emitAnimations(
  *   - `spine` — the spine-core line the file is written for (`SPINE_VERSION`
  *     in `compile.ts`).
  *   - `stage` — the setup-pose box, four fields or none (`null`), issue #578.
- *   - `fps`, `referenceScale`, `images`, `audio` — the rig spec's header
- *     bookkeeping as stated, `images` spelled relative to `--out`
- *     (`skeletonImagesPath`); each only when present.
+ *   - `fps`, `images`, `audio` — the rig spec's header bookkeeping as
+ *     stated, `images` spelled relative to `--out` (`skeletonImagesPath`);
+ *     each only when present.
+ *
+ * `referenceScale` is not here: wind and gravity act over it, so a posing
+ * core reads it, and the model holds it (`CompiledModel.referenceScale`,
+ * issue #958). The emitter writes the model's value into the header, where
+ * `withoutParserDefaults` drops it at the parser's 100.
  */
 export interface SkeletonHeader {
   spine: string;
   stage: { x: number; y: number; width: number; height: number } | null;
   fps?: number;
-  referenceScale?: number;
   images?: string;
   audio?: string | null;
 }
@@ -780,7 +797,7 @@ export interface SkeletonOrder extends EditorOrder {
 }
 
 /** The model fields a skeleton is written from. */
-export type SkeletonSource = Pick<CompiledModel, 'bones' | 'slots' | 'skins' | 'constraints' | 'events' | 'animations'>;
+export type SkeletonSource = Pick<CompiledModel, 'referenceScale' | 'bones' | 'slots' | 'skins' | 'constraints' | 'events' | 'animations'>;
 
 /**
  * The Spine 4.3 skeleton of a compiled model: the emitter's one entry, and
@@ -804,6 +821,10 @@ export type SkeletonSource = Pick<CompiledModel, 'bones' | 'slots' | 'skins' | '
  * throws, so a refusal raised here is raised by a section emitter, in the
  * order above.
  *
+ * `referenceScale` is the model's, written always and dropped by the
+ * parser-default pass at 100 — so a rig stating none and a rig stating 100
+ * write the same bytes, as they did when the header carried the stated value.
+ *
  * What the emitter adds that the model does not hold is `header`
  * (`SkeletonHeader`); what it restates in Spine's words is every section
  * emitter's own doc comment.
@@ -817,7 +838,7 @@ export function emitSkeleton(model: SkeletonSource, header: SkeletonHeader, orde
     head.height = header.stage.height;
   }
   if (header.fps !== undefined) head.fps = header.fps;
-  if (header.referenceScale !== undefined) head.referenceScale = header.referenceScale;
+  head.referenceScale = model.referenceScale;
   if (header.images !== undefined) head.images = header.images;
   if (header.audio !== undefined) head.audio = header.audio;
 

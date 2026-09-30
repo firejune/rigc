@@ -149,11 +149,10 @@
  *
  * **referenceScale.** `R` above is the skeleton's `referenceScale`. A Spine
  * header stating 50 moved 30 of 50 wind-and-gravity probes, and moved none
- * without them. ⚠️ The model document does not carry the skeleton header
- * (`src/compile.ts` step 6 keeps it for the Spine file), so the core reads
- * the parser's 100 (`PHYSICS_REFERENCE_SCALE`); no tree or example rig
- * states another. A rig spec stating one would DIFF at the gate by name — a
- * card for the model's writer, not a value to guess here.
+ * without them. The model document states it (`referenceScale`, issue
+ * #958): `readModel` refuses a document without it by name and stamps it on
+ * every physics record (`CorePhysicsRecord.referenceScale`), which is what
+ * the step reads. Until #958 the core read the parser's 100 as a constant.
  *
  * ## The timelines
  *
@@ -263,6 +262,8 @@ export interface CorePhysicsRecord extends PhysicsPose {
   limit: number;
   /** `1 / fps`, the integrator's fixed step in seconds. */
   step: number;
+  /** The skeleton's reference scale — the document's `referenceScale` (issue #958), which wind and gravity act over. */
+  referenceScale: number;
   /** Each `…Global` flag, by the value it opts in to being driven by the timeline that names no constraint. */
   global: Record<PhysicsParameter, boolean>;
   scaleYMode: 'None' | 'Uniform' | 'Volume';
@@ -272,9 +273,10 @@ export interface CorePhysicsRecord extends PhysicsPose {
  * A physics constraint's record, read field by field — every field the writer
  * can write for the kind and no other, each of its type, its bone a bone of
  * the document — or `undefined` with the problems named. A field left out
- * reads the parser's value (`PHYSICS_DEFAULTS`).
+ * reads the parser's value (`PHYSICS_DEFAULTS`). `referenceScale` is the
+ * document's, read by `readModel` (issue #958), and stamped on the record.
  */
-export function readPhysicsRecord(raw: Record<string, unknown>, name: string, where: string, bones: ReadonlySet<string>, problems: string[]): CorePhysicsRecord | undefined {
+export function readPhysicsRecord(raw: Record<string, unknown>, name: string, where: string, bones: ReadonlySet<string>, referenceScale: number, problems: string[]): CorePhysicsRecord | undefined {
   const before = problems.length;
   for (const key of Object.keys(raw)) {
     if (key === 'kind' || key === 'name' || key === 'declaredIn') continue;
@@ -301,7 +303,7 @@ export function readPhysicsRecord(raw: Record<string, unknown>, name: string, wh
   for (const p of PHYSICS_PARAMETERS) global[p] = raw[`${p}Global`] === true;
   return {
     kind: 'physics', name, bone: raw.bone as string, skin: raw.skin === true, listedBySkin: false,
-    x: n('x'), y: n('y'), rotate: n('rotate'), scaleX: n('scaleX'), shearX: n('shearX'), limit: n('limit'), step: 1 / n('fps'),
+    x: n('x'), y: n('y'), rotate: n('rotate'), scaleX: n('scaleX'), shearX: n('shearX'), limit: n('limit'), step: 1 / n('fps'), referenceScale,
     inertia: n('inertia'), strength: n('strength'), damping: n('damping'), massInverse: 1 / n('mass'), wind: n('wind'), gravity: n('gravity'), mix: n('mix'),
     global, scaleYMode,
   };
@@ -525,8 +527,6 @@ export interface PhysicsStepContext {
   phase: PhysicsPhase;
   /** The skeleton's clock: the sum of every step's delta so far. */
   time: number;
-  /** The skeleton's reference scale (the header's *referenceScale*). */
-  referenceScale: number;
   /** Each constraint's state, by name, carried from update to update. */
   states: Map<string, PhysicsState>;
   /** The step itself; a control passes a planted copy. */
@@ -579,7 +579,7 @@ export function stepPhysics(r: CorePhysicsRecord, w: CoreWorld, length: number, 
     let a = s.remaining;
     const i = r.inertia;
     const t = r.step;
-    const f = ctx.referenceScale;
+    const f = r.referenceScale;
     let d = -1;
     const qx = r.limit * delta;
     const qy = qx;
@@ -746,9 +746,6 @@ export function physicsRows(records: readonly CorePhysicsRecord[], round: (v: nu
 // the walk
 // ---------------------------------------------------------------------------
 
-/** The skeleton's reference scale the stepped phase reads (the header's *referenceScale*). */
-export const PHYSICS_REFERENCE_SCALE = 100;
-
 /**
  * One step's constraint records: every physics record posed by the
  * animation's physics timelines at `t` (`posedPhysics`), and each constraint
@@ -765,7 +762,7 @@ export function stepPhysicsRecords(records: readonly CoreConstraintRecord[], key
 
 /** A fresh step context for one animation's walk (or the setup's reset), the plant's step in place of `stepPhysics` when a control passes one. */
 export function freshStepContext(step?: PhysicsStepper): PhysicsStepContext {
-  return { phase: 'reset', time: 0, referenceScale: PHYSICS_REFERENCE_SCALE, states: new Map(), ...(step ? { step } : {}) };
+  return { phase: 'reset', time: 0, states: new Map(), ...(step ? { step } : {}) };
 }
 
 /**

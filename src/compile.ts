@@ -127,7 +127,7 @@ import {
   TransformError,
   type BoneTransform,
 } from './transform.ts';
-import { emitSkeleton, PHYSICS_PARAMS, type SkeletonHeader } from './emit_spine.ts';
+import { emitSkeleton, PHYSICS_PARAMS, UNSTATED_REFERENCE_SCALE, type SkeletonHeader } from './emit_spine.ts';
 import {
   isModelVertexAttachment,
   type CarriedFromCompileResult,
@@ -3391,7 +3391,6 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         ? { x: rig.skeleton?.x ?? 0, y: rig.skeleton?.y ?? 0, width: stageWidth, height: stageHeight }
         : null,
     fps: rig.skeleton?.fps,
-    referenceScale: rig.skeleton?.referenceScale,
     images: skeletonImagesPath(rig.skeleton?.images, opts, outDir, partDirs),
     audio: rig.skeleton?.audio,
   };
@@ -3430,8 +3429,13 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // `editorAnimationOrder`): the sorts are applied at emission, so everything
   // this function reads, and the model's `skins` and `animations`, keep the
   // spec's own order.
+  // The skeleton's reference scale, which wind and gravity act over (issue
+  // #958): the rig's stated number as it is, or the value the parser reads a
+  // header stating none as. The model holds it; the emitter writes it into the
+  // header, where the parser-default pass drops it at 100 as before.
+  const referenceScale = rig.skeleton?.referenceScale ?? UNSTATED_REFERENCE_SCALE;
   const skeleton = emitSkeleton(
-    { bones, slots, skins, constraints, events, animations },
+    { referenceScale, bones, slots, skins, constraints, events, animations },
     header,
     { skins: editorSkinOrder, slotKeys: editorSlotKeyOrder, animations: editorAnimationOrder },
   );
@@ -3460,7 +3464,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     atlasText,
     declaredDurations,
     ...carried,
-    model: { bones, setupWorld: transforms, slots, skins, constraints, events, animations, ...carried },
+    model: { referenceScale, bones, setupWorld: transforms, slots, skins, constraints, events, animations, ...carried },
   };
 }
 
