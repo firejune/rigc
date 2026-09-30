@@ -69,11 +69,12 @@
  *   is refused by the runtime's loader (`Couldn't find IK constraint k for
  *   skin s1.`), and by `readModel`. The rule this replaced — `skin: true`
  *   never applied (2e-i) — was measured only on unlisted constraints; issue
- *   #956 corrected it for physics first. An ik or transform whose target, source or
- *   constrained bone is inactive is not applied (measured on an ik with its
- *   target skin-required and named by no skin: the bone did not turn); a
- *   path constraint is applied exactly when its slot's bone is active
- *   (`./constraints_path.ts`, *Which constraints run*).
+ *   #956 corrected it for physics first. An ik whose target is inactive is
+ *   not applied (measured on an ik with its target skin-required and named by
+ *   no skin: the bone did not turn), nor a transform whose source is; an ik
+ *   and a transform are applied to every bone they name, inactive ones
+ *   included (*Unposed bones and collapsed frames*, below); a path constraint is applied exactly when its
+ *   slot's bone is active (`./constraints_path.ts`, *Which constraints run*).
  * - A path constraint moves its bones in world space, as a world-space
  *   transform does, and reads the bones as the earlier constraints left
  *   them — except its slot bone's world, which the offset's sign reads as
@@ -81,6 +82,90 @@
  *   a weighted path does not ask for its slot bone (`slotBonePlan`,
  *   *Which slot bone* there). This is the one place the order the runtime
  *   builds is observable: ik and transform ask for every bone they read.
+ *
+ * ## Unposed bones and collapsed frames (issue #979)
+ *
+ * A bone the posed skin leaves unposed — inactive, or below an inactive bone
+ * — holds the zero matrix, so a constraint over it works in a collapsed
+ * frame. The grid compare never reads such a bone (the oracle's
+ * ill-conditioned rule, and a document spells `-0` as `0`), so every rule here
+ * was measured through `tools/pose_oracle.ts unposed`, which compares those
+ * rows by `Object.is`, and on posed "reader" bones that carry a bone's local
+ * values through a local transform constraint. The rules, planted back one at
+ * a time by the core suite's `CC13` and `CC14` (`SolverRules`):
+ *
+ * - **An ik frame of determinant at most 0.00001 is collapsed** — exactly
+ *   0.00001 collapses, the next double above does not, on a posed parent
+ *   (`CC14`). A one-bone ik then reads the target at the frame's origin (the
+ *   offset `(0, 0)`, so `atan2` is 0): the bone turns to 0 less its `shearX`,
+ *   plus 180 when it reflects, and `compress` scales it by `mix` toward 0.
+ *   A two-bone ik reads its grandparent's inverse as zero, so the target and
+ *   the child's origin are both the grandparent frame's origin. Before this
+ *   the core divided by the determinant and wrote NaN into every field.
+ * - **A one-bone ik under a `noRotationOrReflection` parent floors the
+ *   parent x axis's squared length at 0.00001** when it builds the conformal
+ *   frame (`k = |det| / max(0.00001, a² + c²)`): solving for the floor on
+ *   five parents whose x axes are under it read 1.0000000166e-5 on each, and
+ *   with 0.00001 written 432 of 432 probes over three modes, eight parent x
+ *   scales, three y scales, three rotations and with or without
+ *   `compress`/`stretch` read exact, where no floor read 33 off. `./world.ts`'s frame for the same mode has no floor.
+ * - **`localFromWorld` under a collapsed parent** reads x and y as the
+ *   division leaves them (NaN or infinite), `scaleX` 0, `shearY` 0, `scaleY`
+ *   the y column's length (NaN) and `rotation` 0: a local x column that is not
+ *   above 0.0001 — NaN included — is collapsed, and a y column no longer than
+ *   0.00001 reads `rotation` 0 when the x column is collapsed too, and
+ *   `shearY` 0 when it is not (measured by bisection: 1e-5 reads 0, the next
+ *   double above reads the column's angle).
+ * - **A world-space `rotate` source negates the constraint's `rotation`
+ *   unless its determinant is above 0**: a source of determinant 0 negates it.
+ * - **An inactive bone is not posed again** when a constraint moves a bone
+ *   above it — it keeps its zeros, or what a constraint wrote into them — and
+ *   the bones below it are posed again only when a constraint moved it
+ *   itself (a path on an inactive bone moves the bones below it; a transform
+ *   on its parent does not).
+ * - **A transform constraint is applied when its source is active, to every
+ *   bone it names**: one inactive bone among them did not stop it moving a
+ *   posed one (the core skipped the whole constraint), and it wrote the
+ *   source's position into the inactive one.
+ *
+ * Under these, transform (six flag sets, five modes), path, physics (under
+ * `none` and the step) and one- and two-bone ik over unposed bones, and iks
+ * aimed at them, read every bone row equal to spine-core's, the sign of every
+ * zero included (`CC13`).
+ *
+ * ⚠️ **What the runtime writes into an INACTIVE constrained bone depends on
+ * the pass before.** An ik naming an inactive bone is applied by the runtime
+ * reading that bone's ancestors before it brings them up to date in the pass
+ * — the previous pass's worlds, or zeros on a fresh skeleton — and a
+ * transform or path writing into an inactive bone starts from the world the
+ * previous pass left in it (the runtime does not reset it). Measured by
+ * posing one skeleton sample after sample, as the oracle's dump does, against
+ * a fresh skeleton per sample: an ik on `arm, hand` with `arm` inactive, a
+ * transform onto an inactive bone at mix 0.5, additive or at mix 1, and a
+ * path at mix 0.5 each read differently at 4 of 5 sample times (the mix-1
+ * transform at 1 of 5, by 2.4e-17 in a `worldX` of 5.8e-7). The runtime
+ * disagrees with itself there, so there is no rule of the format to hold, and
+ * the core poses as a function of the model, the skin and the time: it reads
+ * this class as a fresh skeleton does, which is the runtime's own setup pose.
+ * A transform or path writes into an inactive bone from zeros; an ik naming
+ * an inactive bone reads the frame above its first bone as zeros unless the
+ * pass has brought that bone up to date before the ik (`frameUpdatedBefore`,
+ * the order `slotBonePlan` walks), and as posed otherwise. Held against the
+ * fresh reading on every row, and against the sequential one wherever the
+ * two agree (`CC13`; `pose_oracle unposed` classes the rest HISTORY by
+ * measurement). An ik on `arm, hand` with its target under `arm`'s parent, or
+ * after a transform on that parent, read no history at all.
+ *
+ * The render never reads an unposed bone (the seam's zero snapshot), so the
+ * history reaches a picture only through a POSED bone that a constraint moves
+ * while reading a bone the history reached — and that pose is refused by
+ * name (`unposedLeakWhy`), which the render meets by falling back to
+ * spine-core. The taint is by bone and by what the reader reads, its world
+ * or its local values: measured on 48 writer-and-reader probes (`CC15`),
+ * every one whose posed rows spine-core's two readings disagree on (14) is
+ * refused, and 8 are refused where the reader reads a part of the bone the
+ * history does not move — a refusal costs a named fallback, a miss a picture
+ * that depends on which frame played before.
  *
  * ## Reading local values back from a world transform (`localFromWorld`)
  *
@@ -315,7 +400,7 @@
 import type { ModelBone } from '../model.ts';
 import { modeMatrix, RUNTIME_PI, worldTransforms, type CoreInheritMode, type CoreWorld } from './world.ts';
 import { channelAt, keyIndexAt, type CoreCurve, type CoreKey } from './animation.ts';
-import type { CompiledDocument, CoreConstraintKind } from './index.ts';
+import { activeBones, type CompiledDocument, type CoreConstraintKind } from './index.ts';
 import { fillingSkins } from './skins.ts';
 import { readPathTimelines, slotBonePlan, solvePath, type CorePathRecord, type CorePathTimelines, type SlotBoneEvent } from './constraints_path.ts';
 import { physicsTimelineCount, readPhysicsTimelines, stepPhysics, type CorePhysicsRecord, type CorePhysicsTimeline, type PhysicsStepContext } from './constraints_physics.ts';
@@ -721,6 +806,48 @@ function modeOf(bone: ModelBone): CoreInheritMode {
   return folded === 'onlyTranslation' || folded === 'noRotationOrReflection' || folded === 'noScale' || folded === 'noScaleOrReflection' ? folded : 'normal';
 }
 
+/**
+ * The rules issue #979 measured on collapsed frames and on bones the posed
+ * skin leaves unposed (the header's *Unposed bones and collapsed frames*),
+ * as one object so that a control can plant each one back to the reading
+ * before it (`CorePlant.solver`); nothing else passes another.
+ */
+export interface SolverRules {
+  /** An ik frame whose determinant is at most this in magnitude is collapsed: a one-bone ik reads the target at the frame's origin, a two-bone ik reads its grandparent's inverse as zero. */
+  ikCollapsedDet: number;
+  /** A one-bone ik under a `noRotationOrReflection` parent: the floor under the parent x axis's squared length. */
+  ikXAxisFloor: number;
+  /** `localFromWorld`: a local x column that is not above 0.0001 — NaN included — reads as collapsed, and a y column no longer than 0.00001 reads rotation 0 (x collapsed too) or shearY 0. */
+  readBackCollapsed: boolean;
+  /** A world-space `rotate` source negates the constraint's `rotation` unless its determinant is above 0 — at 0 too. */
+  offsetNegatedAtZeroDet: boolean;
+  /** An inactive bone is never posed again, and the bones below it are posed again only when a constraint moved it. */
+  inactiveHoldsItsWorld: boolean;
+  /** A transform constraint is applied when its source is active, to every bone it names. */
+  transformIgnoresBoneActivity: boolean;
+  /** A pose in which a posed bone reads a bone whose value depends on the runtime's previous pass is refused by name (`unposedLeakWhy`). */
+  refuseHistoryLeak: boolean;
+  /** An ik naming an inactive bone is applied when its target is active, reading the frame above its first bone as a fresh skeleton holds it: zeros unless the pass brought that bone up to date before the ik (`frameUpdatedBefore`). */
+  ikOverInactiveFresh: boolean;
+}
+
+/** The runtime's rules, as measured. */
+export const RUNTIME_SOLVER_RULES: Readonly<SolverRules> = {
+  ikCollapsedDet: 0.00001,
+  ikXAxisFloor: 0.00001,
+  readBackCollapsed: true,
+  offsetNegatedAtZeroDet: true,
+  inactiveHoldsItsWorld: true,
+  transformIgnoresBoneActivity: true,
+  ikOverInactiveFresh: true,
+  refuseHistoryLeak: true,
+};
+
+/** The runtime's rules with a plant's over them. */
+export function solverRules(plant: Partial<SolverRules> | undefined): Readonly<SolverRules> {
+  return plant === undefined ? RUNTIME_SOLVER_RULES : { ...RUNTIME_SOLVER_RULES, ...plant };
+}
+
 /** The runtime's `scaleY` for a bone an ik scaled by `s` along its length (the header's `volume` measurement). */
 function volumeScaleY(scaleY: number, s: number): number {
   return scaleY / (s < 0.7 ? 0.25 + s * 0.642857 : s);
@@ -732,6 +859,8 @@ export interface SolverState {
   index: Map<string, number>;
   world: Map<string, CoreWorld>;
   active: ReadonlySet<string>;
+  /** `RUNTIME_SOLVER_RULES` unless a plant passes others. */
+  rules: Readonly<SolverRules>;
 }
 
 function bone(state: SolverState, name: string): ModelBone {
@@ -744,8 +873,9 @@ function parentWorld(state: SolverState, b: ModelBone): CoreWorld {
 
 /** One bone's world transform from its local values under its parent's current world transform — `./world.ts`'s arithmetic. */
 function poseBone(state: SolverState, b: ModelBone): void {
+  // An inactive bone is not posed again: it keeps its zeros, or what a constraint wrote into them (issue #979).
   if (!state.active.has(b.name)) {
-    state.world.set(b.name, { a: 0, b: 0, c: 0, d: 0, worldX: 0, worldY: 0 });
+    if (!state.rules.inactiveHoldsItsWorld) state.world.set(b.name, { a: 0, b: 0, c: 0, d: 0, worldX: 0, worldY: 0 });
     return;
   }
   if (b.parent === undefined) {
@@ -760,7 +890,7 @@ function poseBone(state: SolverState, b: ModelBone): void {
 }
 
 /** The bone's local values read back from its world transform — the header's `localFromWorld`. */
-export function localFromWorld(b: ModelBone, p: CoreWorld, w: CoreWorld): void {
+export function localFromWorld(b: ModelBone, p: CoreWorld, w: CoreWorld, rules: Readonly<SolverRules> = RUNTIME_SOLVER_RULES): void {
   const mode = b.parent === undefined ? 'normal' : modeOf(b);
   const pid = 1 / (p.a * p.d - p.b * p.c);
   const dx = w.worldX - p.worldX;
@@ -777,7 +907,7 @@ export function localFromWorld(b: ModelBone, p: CoreWorld, w: CoreWorld): void {
     const flip = mode === 'noScale' && det < 0 ? -1 : 1;
     const lb = ux * w.b + uy * w.d;
     const ld = (ux * w.d - uy * w.b) * flip;
-    decompose(b, length, 0, lb, ld);
+    decompose(b, length, 0, lb, ld, rules);
     b.rotation = Math.atan2((uy * p.a - ux * p.c) / det, (ux * p.d - uy * p.b) / det) * DEG;
     return;
   }
@@ -792,25 +922,26 @@ export function localFromWorld(b: ModelBone, p: CoreWorld, w: CoreWorld): void {
     const [ca, cb, cc, cd] = [p.a, -p.c * k, p.c, p.a * k];
     const cdet = ca * cd - cb * cc;
     [la, lb, lc, ld] = [(cd * w.a - cb * w.c) / cdet, (cd * w.b - cb * w.d) / cdet, (ca * w.c - cc * w.a) / cdet, (ca * w.d - cc * w.b) / cdet];
-    decompose(b, la, lc, lb, ld);
+    decompose(b, la, lc, lb, ld, rules);
     b.rotation = (b.rotation ?? 0) + Math.atan2(p.c, p.a) * DEG;
     return;
   } else {
     const [ia, ib, ic, id] = [p.d * pid, p.b * pid, p.c * pid, p.a * pid];
     [la, lb, lc, ld] = [ia * w.a - ib * w.c, ia * w.b - ib * w.d, id * w.c - ic * w.a, id * w.d - ic * w.b];
   }
-  decompose(b, la, lc, lb, ld);
+  decompose(b, la, lc, lb, ld, rules);
 }
 
 /** A local matrix `[la lb; lc ld]` (columns `(la, lc)` and `(lb, ld)`) as rotation, scales and shear — the header's rule. */
-function decompose(b: ModelBone, la: number, lc: number, lb: number, ld: number): void {
+function decompose(b: ModelBone, la: number, lc: number, lb: number, ld: number, rules: Readonly<SolverRules>): void {
   const sx = Math.sqrt(la * la + lc * lc);
   const yLength = Math.sqrt(lb * lb + ld * ld);
-  if (sx <= 0.0001) {
+  // Not above the bound, NaN included (issue #979: a collapsed parent's inverse is NaN, and the runtime reads scaleX 0 and shearY 0 from it); a y column no longer than 0.00001 reads rotation 0.
+  if (rules.readBackCollapsed ? !(sx > 0.0001) : sx <= 0.0001) {
     b.scaleX = 0;
     b.scaleY = yLength;
     b.shearY = 0;
-    b.rotation = Math.atan2(ld, lb) * DEG - 90;
+    b.rotation = !rules.readBackCollapsed || yLength > 0.00001 ? Math.atan2(ld, lb) * DEG - 90 : 0;
     return;
   }
   const rotation = Math.atan2(lc, la) * DEG;
@@ -823,13 +954,14 @@ function decompose(b: ModelBone, la: number, lc: number, lb: number, ld: number)
   // The inverse of the forward frame's `rotation + 90 + shearY` (issue #966): `yAngle − rotation − 90` agrees on the grid; `yAngle − (rotation + 90)` reads bit-exact on more of the read-back population (164 of 400 against 97 with both changes, the rest named in the header's ⚠️).
   let shear = yAngle - (rotation + 90);
   shear = shear > 180 ? shear - 360 : shear < -180 ? shear + 360 : shear;
-  b.shearY = shear;
+  // A y column no longer than 0.00001 reads shearY 0 (issue #979), as it reads rotation 0 when the x column is collapsed too.
+  b.shearY = !rules.readBackCollapsed || yLength > 0.00001 ? shear : 0;
 }
 
 /** A one-bone ik (the header's *ik — one bone*): returns the bone changed, or none. */
-function solveOne(state: SolverState, c: CoreIkRecord): string[] {
+function solveOne(state: SolverState, c: CoreIkRecord, frame: CoreWorld | null = null): string[] {
   const b = bone(state, c.bones[0]);
-  const p = parentWorld(state, b);
+  const p = frame ?? parentWorld(state, b);
   const bw = state.world.get(b.name) as CoreWorld;
   const t = state.world.get(c.target) as CoreWorld;
   const mode = modeOf(b);
@@ -838,15 +970,15 @@ function solveOne(state: SolverState, c: CoreIkRecord): string[] {
   let lx: number;
   let ly: number;
   if (mode === 'noRotationOrReflection') {
-    const k = Math.abs(pa * pd - pb * pc) / (pa * pa + pc * pc);
+    // The x axis's squared length is floored here (issue #979, `ikXAxisFloor`) — not in `./world.ts`'s frame for the same mode.
+    const k = Math.abs(pa * pd - pb * pc) / Math.max(state.rules.ikXAxisFloor, pa * pa + pc * pc);
     pb = -pc * k;
     pd = pa * k;
     turn = Math.atan2(pc, pa) * DEG;
     const det = pa * pd - pb * pc;
     const x = t.worldX - p.worldX;
     const y = t.worldY - p.worldY;
-    lx = (x * pd - y * pb) / det - (b.x ?? 0);
-    ly = (y * pa - x * pc) / det - (b.y ?? 0);
+    [lx, ly] = Math.abs(det) <= state.rules.ikCollapsedDet ? [0, 0] : [(x * pd - y * pb) / det - (b.x ?? 0), (y * pa - x * pc) / det - (b.y ?? 0)];
   } else {
     if (mode === 'onlyTranslation') {
       lx = t.worldX - bw.worldX;
@@ -855,8 +987,7 @@ function solveOne(state: SolverState, c: CoreIkRecord): string[] {
       const det = pa * pd - pb * pc;
       const x = t.worldX - p.worldX;
       const y = t.worldY - p.worldY;
-      lx = (x * pd - y * pb) / det - (b.x ?? 0);
-      ly = (y * pa - x * pc) / det - (b.y ?? 0);
+      [lx, ly] = Math.abs(det) <= state.rules.ikCollapsedDet ? [0, 0] : [(x * pd - y * pb) / det - (b.x ?? 0), (y * pa - x * pc) / det - (b.y ?? 0)];
     }
   }
   const rotation = b.rotation ?? 0;
@@ -881,14 +1012,16 @@ function solveOne(state: SolverState, c: CoreIkRecord): string[] {
 }
 
 /** A two-bone ik (the header's *ik — two bones*): returns the parent changed (the child is below it), or none. */
-function solveTwo(state: SolverState, c: CoreIkRecord): string[] {
+function solveTwo(state: SolverState, c: CoreIkRecord, frame: CoreWorld | null = null): string[] {
   const parent = bone(state, c.bones[0]);
   const child = bone(state, c.bones[1]);
   if (modeOf(parent) !== 'normal' || modeOf(child) !== 'normal') return [];
-  const g = parentWorld(state, parent);
+  const g = frame ?? parentWorld(state, parent);
   const pw = state.world.get(parent.name) as CoreWorld;
   const t = state.world.get(c.target) as CoreWorld;
-  const gid = 1 / (g.a * g.d - g.b * g.c);
+  const gdet = g.a * g.d - g.b * g.c;
+  // A collapsed grandparent frame (issue #979): its inverse reads as zero, so every point in it is its origin.
+  const gid = Math.abs(gdet) <= state.rules.ikCollapsedDet ? 0 : 1 / gdet;
   const inGrand = (wx: number, wy: number): [number, number] => {
     const x = wx - g.worldX;
     const y = wy - g.worldY;
@@ -1024,7 +1157,9 @@ export function sourceValue(state: SolverState, c: Pick<CoreTransformRecord, 'so
   const w = state.world.get(c.source) as CoreWorld;
   switch (property) {
     case 'rotate': {
-      let r = Math.atan2(w.c, w.a) * DEG + (w.a * w.d - w.b * w.c < 0 ? -o.rotate : o.rotate);
+      // The offset is negated unless the determinant is above 0 — a collapsed source (determinant 0, issue #979) negates it too.
+      const det = w.a * w.d - w.b * w.c;
+      let r = Math.atan2(w.c, w.a) * DEG + ((state.rules.offsetNegatedAtZeroDet ? det > 0 : det >= 0) ? o.rotate : -o.rotate);
       if (r < 0) r += 360;
       return r;
     }
@@ -1132,8 +1267,75 @@ function inactiveWhy(state: SolverState, c: CoreConstraintRecord): string | null
   // A skin-required constraint of any kind is applied when an applied skin's list for its kind names it (issue #932, card #961; physics first by issue #956).
   if (c.skin && !c.listedBySkin) return 'skin';
   // A path constraint is active when its slot's bone is (`./constraints_path.ts`, *Which constraints run*); every other kind when every bone it names is.
-  const named = c.kind === 'path' ? [c.slotBone] : c.kind === 'ik' ? [...c.bones, c.target] : c.kind === 'transform' ? [...c.bones, c.source] : c.kind === 'slider' ? (c.bone === null ? [] : [c.bone]) : [c.bone];
+  // A transform constraint is applied when its source is, to every bone it names, inactive ones included (issue #979: an inactive bone among them did not stop it moving the others, and it wrote into the inactive one). An ik naming an inactive bone is left unapplied: the runtime applies it from ancestors it has not brought up to date (the header's *Unposed bones*).
+  const named = c.kind === 'path' ? [c.slotBone] : c.kind === 'ik' ? (state.rules.ikOverInactiveFresh ? [c.target] : [...c.bones, c.target]) : c.kind === 'transform' ? (state.rules.transformIgnoresBoneActivity ? [c.source] : [...c.bones, c.source]) : c.kind === 'slider' ? (c.bone === null ? [] : [c.bone]) : [c.bone];
   return named.every((n) => state.active.has(n)) ? null : 'inactive bone';
+}
+
+/**
+ * For each ik naming an inactive bone, by its index in `records`: whether the
+ * pass has brought the bone above its first bone up to date by the time the
+ * ik runs (the header's *Unposed bones and collapsed frames*). The runtime
+ * orders its update before it poses, each constraint bringing up to date the
+ * bones it reads, parents first; an inactive bone counts as already ordered,
+ * so ordering one does not reach its parent. A bone ordered once in the pass
+ * holds a world from this pass; one never ordered holds what the skeleton
+ * held before, which on a fresh skeleton is zeros. The same walk as
+ * `slotBonePlan` in `./constraints_path.ts`.
+ */
+export function frameUpdatedBefore(bones: readonly ModelBone[], active: ReadonlySet<string>, records: readonly CoreConstraintRecord[], skipped: ReadonlySet<number>): Map<number, boolean> {
+  const parent = new Map(bones.map((b) => [b.name, b.parent]));
+  const children = new Map<string, string[]>();
+  for (const b of bones) if (b.parent !== undefined) children.set(b.parent, [...(children.get(b.parent) ?? []), b.name]);
+  const ordered = new Map(bones.map((b) => [b.name, !active.has(b.name)]));
+  const ever = new Set<string>();
+  const orderBone = (name: string): void => {
+    if (ordered.get(name)) return;
+    const p = parent.get(name);
+    if (p !== undefined) orderBone(p);
+    ordered.set(name, true);
+    ever.add(name);
+  };
+  const unorder = (names: readonly string[]): void => {
+    for (const n of names) {
+      if (!active.has(n)) continue;
+      if (ordered.get(n)) unorder(children.get(n) ?? []);
+      ordered.set(n, false);
+    }
+  };
+  const out = new Map<number, boolean>();
+  records.forEach((c, m) => {
+    if (skipped.has(m)) return;
+    if (c.kind === 'slider') {
+      unorder(c.timelines.bones.map((t) => t.name));
+      return;
+    }
+    if (c.kind === 'ik') {
+      orderBone(c.target);
+      orderBone(c.bones[0]);
+      if (c.bones.length > 1) orderBone(c.bones[c.bones.length - 1]);
+      if (c.bones.some((b) => !active.has(b))) {
+        const f = parent.get(c.bones[0]);
+        out.set(m, f === undefined || ever.has(f));
+      }
+      unorder(children.get(c.bones[0]) ?? []);
+      if (c.bones.length > 1) ordered.set(c.bones[c.bones.length - 1], true);
+      return;
+    }
+    const moved = c.kind === 'physics' ? [c.bone] : c.bones;
+    if (c.kind === 'transform') orderBone(c.source);
+    else if (c.kind === 'path') for (const d of c.slotDeps) orderBone(d);
+    for (const b of moved) orderBone(b);
+    for (const b of moved) unorder(children.get(b) ?? []);
+    for (const b of moved) ordered.set(b, true);
+  });
+  return out;
+}
+
+/** The frame an ik over an inactive bone reads (`frameUpdatedBefore`): zeros when the pass has not brought it up to date, null (the current one) otherwise. */
+function inactiveIkFrame(state: SolverState, c: CoreIkRecord, i: number, updated: ReadonlyMap<number, boolean>): CoreWorld | null {
+  if (!state.rules.ikOverInactiveFresh || updated.get(i) !== false) return null;
+  return { a: 0, b: 0, c: 0, d: 0, worldX: 0, worldY: 0 };
 }
 
 /** A plant a control passes in place of the solving: the records as posed, rewritten (a mix scaled, a bend flipped, two swapped). */
@@ -1147,14 +1349,16 @@ export type ConstraintPlant = (records: CoreConstraintRecord[]) => CoreConstrain
  * physics constraint is stepped on its bone (`stepPhysics` in
  * `./constraints_physics.ts`); without it, it applies nothing.
  */
-export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap<string, CoreWorld>, active: ReadonlySet<string>, records: readonly CoreConstraintRecord[], previous: ReadonlyMap<string, CoreWorld> | null = null, applied?: SliderApplication[], physics?: PhysicsStepContext, settled?: (state: SolverState) => void): Map<string, CoreWorld> {
-  const state: SolverState = { bones: bones.map((b) => ({ ...b })), index: new Map(bones.map((b, i) => [b.name, i])), world: new Map(world), active };
+export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap<string, CoreWorld>, active: ReadonlySet<string>, records: readonly CoreConstraintRecord[], previous: ReadonlyMap<string, CoreWorld> | null = null, applied?: SliderApplication[], physics?: PhysicsStepContext, settled?: (state: SolverState) => void, rules: Readonly<SolverRules> = RUNTIME_SOLVER_RULES): Map<string, CoreWorld> {
+  const state: SolverState = { bones: bones.map((b) => ({ ...b })), index: new Map(bones.map((b, i) => [b.name, i])), world: new Map(world), active, rules };
   const skipped = new Set<number>();
   records.forEach((c, i) => {
     if (inactiveWhy(state, c) !== null) skipped.add(i);
   });
   // A path constraint's offset reads its slot bone's world as the runtime last brought it up to date (`./constraints_path.ts`, *Which slot bone*).
   const plan = records.some((c) => c.kind === 'path') ? slotBonePlan(bones, active, records, skipped) : new Map<number, SlotBoneEvent | null>();
+  // An ik over an inactive bone reads the frame above it as the pass left it (issue #979).
+  const updated = records.some((c) => c.kind === 'ik' && c.bones.some((b) => !active.has(b))) ? frameUpdatedBefore(bones, active, records, skipped) : new Map<number, boolean>();
   const snapshots = new Map<number, CoreWorld>();
   const snap = (i: number, when: 'before' | 'after'): void => {
     for (const [k, e] of plan) if (e !== null && e.at === i && e.when === when && !(k === i && when === 'before')) snapshots.set(k, { ...(state.world.get((records[k] as CorePathRecord).slotBone) as CoreWorld) });
@@ -1178,7 +1382,10 @@ export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap
     } else if (c.kind === 'slider') {
       changed = applySlider(state, c, applied);
     } else if (c.kind === 'ik') {
-      if (c.mix !== 0) changed = c.bones.length === 1 ? solveOne(state, c) : solveTwo(state, c);
+      if (c.mix !== 0) {
+        const frame = inactiveIkFrame(state, c, i, updated);
+        changed = c.bones.length === 1 ? solveOne(state, c, frame) : solveTwo(state, c, frame);
+      }
     } else if (c.kind === 'path') {
       const e = plan.get(i) ?? null;
       const stale = previous === null ? { a: 0, b: 0, c: 0, d: 0, worldX: 0, worldY: 0 } : (previous.get(c.slotBone) as CoreWorld);
@@ -1199,12 +1406,14 @@ export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap
 function repose(state: SolverState, changed: readonly string[], inWorld: readonly string[]): void {
   for (const name of inWorld) {
     const b = bone(state, name);
-    localFromWorld(b, parentWorld(state, b), state.world.get(name) as CoreWorld);
+    localFromWorld(b, parentWorld(state, b), state.world.get(name) as CoreWorld, state.rules);
   }
+  const moved = new Set(changed);
   const below = new Set(changed);
   const keep = new Set(inWorld);
   for (const b of state.bones) {
-    if (b.parent !== undefined && below.has(b.parent)) below.add(b.name);
+    // Not through an inactive bone the constraint did not move itself (issue #979): the bones below it keep what the constraints wrote into them.
+    if (b.parent !== undefined && below.has(b.parent) && (!state.rules.inactiveHoldsItsWorld || state.active.has(b.parent) || moved.has(b.parent))) below.add(b.name);
     if (below.has(b.name) && !keep.has(b.name)) poseBone(state, b);
   }
 }
@@ -1218,7 +1427,7 @@ function repose(state: SolverState, changed: readonly string[], inWorld: readonl
 export function previousPassSlotBones(doc: CompiledDocument, active: ReadonlySet<string>): Array<{ constraint: string; bone: string }> {
   const records = doc.constraints.flatMap((c) => (c.record === undefined ? [] : [c.record]));
   if (!records.some((r) => r.kind === 'path')) return [];
-  const state: SolverState = { bones: [...doc.bones], index: new Map(doc.bones.map((b, i) => [b.name, i])), world: new Map(), active };
+  const state: SolverState = { bones: [...doc.bones], index: new Map(doc.bones.map((b, i) => [b.name, i])), world: new Map(), active, rules: RUNTIME_SOLVER_RULES };
   const skipped = new Set<number>();
   records.forEach((c, i) => {
     if (inactiveWhy(state, c) !== null) skipped.add(i);
@@ -1266,12 +1475,109 @@ export function pathAnimationsWhy(doc: CompiledDocument): string | null {
  * none is left), named with the counts of every kind it declares, or a
  * slider whose animation keys a constraint timeline (`sliderBonesWhy`).
  */
-export function constraintsAbsentWhy(doc: CompiledDocument): string | null {
+export function constraintsAbsentWhy(doc: CompiledDocument, rules: Readonly<SolverRules> = RUNTIME_SOLVER_RULES): string | null {
   const unresolved = doc.constraints.flatMap((c) => (c.record?.kind === 'path' && c.record.unresolved !== null ? [c.record.unresolved] : []));
   if (unresolved.length > 0) return unresolved.join('; ');
   const later = doc.constraints.filter((c) => !ADMITTED_CONSTRAINT_KINDS.includes(c.kind));
-  if (later.length === 0) return sliderBonesWhy(doc);
+  if (later.length === 0) return sliderBonesWhy(doc) ?? (rules.refuseHistoryLeak ? unposedLeakWhy(doc) : null);
   const kinds = [...new Set(doc.constraints.map((c) => c.kind))];
   const laterKinds = [...new Set(later.map((c) => c.kind))];
   return `the document declares ${kinds.map((k) => `${k} ×${doc.constraints.filter((c) => c.kind === k).length}`).join(', ')}, and ${laterKinds.join(', ')} constraints are not admitted (item 5; ${ADMITTED_CONSTRAINT_KINDS.join(', ')} are): the oracle applies them`;
+}
+
+/**
+ * Why the core refuses a pose because a posed bone would read a value the
+ * runtime makes depend on its previous pass, or null (issue #979, the
+ * header's ⚠️ under *Unposed bones and collapsed frames*). A constraint that
+ * writes into an inactive constrained bone — an ik reading a frame the pass
+ * has not brought up to date (`frameUpdatedBefore`), a transform or a path —
+ * taints that bone (and, for a world write or a two-bone ik's child, the
+ * bones below it): the runtime's value there differs between a skeleton
+ * posed sample after sample and a fresh one. A later constraint reading a
+ * tainted bone — an ik's target, a transform's or a slider's source, a
+ * path's slot bone or the bones weighting its curve — taints what it moves
+ * when that is unposed too, and is refused by name when it moves a posed
+ * bone: that is where the history would reach the picture. The rendered
+ * value of an unposed bone is the seam's zero snapshot, so nothing else of
+ * this class reaches a frame.
+ */
+export function unposedLeakWhy(doc: CompiledDocument): string | null {
+  return historyTaint(doc).refusal;
+}
+
+/** A constraint writing into an inactive constrained bone — what a history-dependent value started from. */
+export interface HistoryWriter {
+  kind: CoreConstraintKind;
+  name: string;
+  inactive: string;
+}
+
+/**
+ * The walk `unposedLeakWhy` reads: every bone a writer into an inactive bone
+ * reaches, world or local, with its writer (the first, in constraint order),
+ * and the refusal where a posed bone would read one — the walk stops there.
+ * `tools/pose_oracle.ts unposed` classes a stepped bone-sample by it (no fresh
+ * reading is taken under the step).
+ */
+export function historyTaint(doc: CompiledDocument): { refusal: string | null; tainted: Map<string, HistoryWriter> } {
+  const records = doc.constraints.flatMap((c) => (c.record === undefined ? [] : [c.record]));
+  const active = activeBones(doc);
+  if (doc.bones.every((b) => active.has(b.name))) return { refusal: null, tainted: new Map() };
+  const parent = new Map(doc.bones.map((b) => [b.name, b.parent]));
+  const unposed = new Set<string>();
+  for (const b of doc.bones) if (!active.has(b.name) || (b.parent !== undefined && unposed.has(b.parent))) unposed.add(b.name);
+  const below = (root: string): string[] => doc.bones.filter((b) => {
+    for (let at: string | undefined = b.name; at !== undefined; at = parent.get(at)) if (at === root) return true;
+    return false;
+  }).map((b) => b.name);
+  const state: SolverState = { bones: [...doc.bones], index: new Map(doc.bones.map((b, i) => [b.name, i])), world: new Map(), active, rules: RUNTIME_SOLVER_RULES };
+  const skipped = new Set<number>();
+  records.forEach((c, i) => {
+    if (inactiveWhy(state, c) !== null) skipped.add(i);
+  });
+  const updated = frameUpdatedBefore(doc.bones, active, records, skipped);
+  // What of a bone the previous pass reaches: its world (read by a world-space source, an ik's target, a path's slot) or its local values (read by a local source).
+  const world = new Map<string, HistoryWriter>();
+  const local = new Map<string, HistoryWriter>();
+  const spell = (w: HistoryWriter): string => `${w.kind} constraint "${w.name}" writes into inactive bone "${w.inactive}"`;
+  const union = (): Map<string, HistoryWriter> => {
+    const out = new Map(world);
+    for (const [k, v] of local) if (!out.has(k)) out.set(k, v);
+    return out;
+  };
+  const taint = (into: Map<string, HistoryWriter>, names: readonly string[], origin: HistoryWriter): void => {
+    for (const n of names) if (!into.has(n)) into.set(n, origin);
+  };
+  const label = (c: CoreConstraintRecord): string => `${c.kind} constraint "${c.name}"`;
+  for (let i = 0; i < records.length; i++) {
+    if (skipped.has(i)) continue;
+    const c = records[i];
+    const moved = c.kind === 'physics' ? [c.bone] : c.kind === 'slider' ? c.timelines.bones.map((t) => t.name) : c.bones;
+    const readsLocal = (c.kind === 'transform' && c.localSource) || (c.kind === 'slider' && c.local);
+    const operands = c.kind === 'ik' ? [c.target] : c.kind === 'transform' ? [c.source] : c.kind === 'path' ? [c.slotBone, ...c.slotDeps] : c.kind === 'slider' ? (c.bone === null ? [] : [c.bone]) : [];
+    const from = readsLocal ? local : world;
+    const read = operands.find((o) => from.has(o));
+    if (read !== undefined) {
+      const posed = moved.find((b) => !unposed.has(b));
+      const origin = from.get(read) as HistoryWriter;
+      if (posed !== undefined) return { refusal: `${label(c)} moves posed bone "${posed}" and reads ${readsLocal ? 'the local values' : 'the world transform'} of bone "${read}", a bone whose value depends on the runtime's previous pass (${spell(origin)}) — the runtime's own sample-after-sample and fresh-skeleton readings disagree there, so there is no one value to pose`, tainted: union() };
+      taint(world, moved.flatMap(below), origin);
+      taint(local, moved, origin);
+    }
+    const inactive = moved.find((b) => !active.has(b));
+    if (inactive === undefined || c.kind === 'physics' || c.kind === 'slider') continue;
+    const origin: HistoryWriter = { kind: c.kind, name: c.name, inactive };
+    if (c.kind === 'ik') {
+      // Its local values move; for a two-bone ik the child's, and with them the world of the child and the bones below it.
+      if (updated.get(i) !== false) continue;
+      taint(local, c.bones, origin);
+      if (c.bones.length > 1) taint(world, below(c.bones[1]), origin);
+    } else if (c.kind === 'transform' && c.localTarget) taint(local, moved, origin);
+    else {
+      // A world write: the bones moved and every bone below them, in world; their own local values read back from it.
+      taint(world, moved.flatMap(below), origin);
+      taint(local, moved, origin);
+    }
+  }
+  return { refusal: null, tainted: union() };
 }

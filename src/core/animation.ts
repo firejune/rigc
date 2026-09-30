@@ -171,7 +171,7 @@ import { readAttachmentTimelines, type CoreAttachmentTimeline } from './deform.t
 import { readDrawOrderKeys, type CoreDrawOrderKey } from './draw_order.ts';
 import { readEventKeys, type CoreEventDef, type CoreEventKey } from './events.ts';
 import { worldTransforms } from './world.ts';
-import { applyConstraints, constraintsAbsentWhy, pathAnimationsWhy, posedRecords, previousPassSlotBones, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
+import { applyConstraints, constraintsAbsentWhy, pathAnimationsWhy, posedRecords, previousPassSlotBones, solverRules, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
 import { attachmentStates, deformAt, deformedVertices, timelineIdentity } from './deform.ts';
 import { freshStepContext, stepPhysicsRecords, stepSchedule, steppedPreviousPassWhy, type PhysicsStepContext } from './constraints_physics.ts';
 import { drawOrderAt } from './draw_order.ts';
@@ -768,14 +768,14 @@ export function posedBoneWorld(doc: CompiledDocument, timelines: CoreAnimationTi
   if (constraints !== undefined && step !== undefined) {
     // One step of the stepped phase (issue #956, `./constraints_physics.ts`): the physics records posed by their timelines and stepped under the walk's context; the deformed curve a path walks as above. No previous pass: under the step it is the previous step's, and `poseAnimations` leaves such bones out.
     const records = stepPhysicsRecords(pathDeformed(doc, posedRecords(constraintRecords(doc), constraints, t), timelines, t, plant), constraints.physicsKeyed ?? [], t, active, step.ctx, step.before);
-    world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records, null, sliders, step.ctx);
+    world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records, null, sliders, step.ctx, undefined, solverRules(plant.solver));
   } else if (constraints !== undefined) {
     const setupRecords = constraintRecords(doc);
     // A path walks the curve the sample's deform timelines left on its slot (`./deform.ts`); a slider's deform of a walked path leaves the bones out (`pathAnimationsWhy`).
     const records = pathDeformed(doc, posedRecords(setupRecords, constraints, t), timelines, t, plant);
     // A path constraint may read a slot bone the runtime has not yet brought up to date in this pass, as the previous pass left it (`./constraints_path.ts`, *Which slot bone*); `poseAnimations` holds that pass to the setup pose's reading.
-    const previous = setupRecords.some((r) => r.kind === 'path') ? applyConstraints(doc.bones, (plant.evaluate ?? worldTransforms)(doc.bones, active), active, plant.constraints ? plant.constraints(setupRecords) : setupRecords) : null;
-    world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records, previous, sliders);
+    const previous = setupRecords.some((r) => r.kind === 'path') ? applyConstraints(doc.bones, (plant.evaluate ?? worldTransforms)(doc.bones, active), active, plant.constraints ? plant.constraints(setupRecords) : setupRecords, null, undefined, undefined, undefined, solverRules(plant.solver)) : null;
+    world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records, previous, sliders, undefined, undefined, solverRules(plant.solver));
   }
   const posed = world;
   const round = plant.round ?? gridRound;
@@ -869,7 +869,7 @@ function previousPassWhy(doc: CompiledDocument, animations: readonly CoreAnimati
   const reads = previousPassSlotBones(doc, active);
   if (reads.length === 0) return null;
   const records = constraintRecords(doc);
-  const setup = applyConstraints(doc.bones, (plant.evaluate ?? worldTransforms)(doc.bones, active), active, plant.constraints ? plant.constraints(records) : records);
+  const setup = applyConstraints(doc.bones, (plant.evaluate ?? worldTransforms)(doc.bones, active), active, plant.constraints ? plant.constraints(records) : records, null, undefined, undefined, undefined, solverRules(plant.solver));
   const bad: string[] = [];
   for (const { constraint, bone } of reads) {
     const w = setup.get(bone);
@@ -893,7 +893,7 @@ function previousPassWhy(doc: CompiledDocument, animations: readonly CoreAnimati
  * `animations.slots` in document order.
  */
 export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: number, plant: TimelinePlant = {}, dt?: number): { animations: CoreAnimationPose[]; absent: Array<[string, string]> } {
-  let bonesReason = constraintsAbsentWhy(doc) ?? pathAnimationsWhy(doc) ?? (dt === undefined ? null : steppedPreviousPassWhy(doc));
+  let bonesReason = constraintsAbsentWhy(doc, solverRules(plant.solver)) ?? pathAnimationsWhy(doc) ?? (dt === undefined ? null : steppedPreviousPassWhy(doc));
   const slotConflicts: string[] = [];
   const attachmentWhy: string[] = [];
   const clippedWhy: string[] = [];

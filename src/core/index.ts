@@ -174,7 +174,7 @@ import { readAnimationTimelines, type CoreAnimationTimelines } from './animation
 import { readEventDefs, type CoreEventDef } from './events.ts';
 import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type DrawWalk, type RegionPoser, type ShownGeometry, type VertexPoser } from './vertices.ts';
 import type { CoreClippedRow, ShapeClipper, TriangleClipper } from './clipping.ts';
-import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
+import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, solverRules, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines, type SolverRules } from './constraints.ts';
 import { readPathRecord } from './constraints_path.ts';
 import { readPhysicsRecord, type PhysicsStepContext, type PhysicsStepper } from './constraints_physics.ts';
 import { appliedSkins, CORE_ALL_SKINS, fillingSkins, listedByAppliedSkin, lookupSkins, slotTimelinesApply, type SlotTimelineGate } from './skins.ts';
@@ -824,6 +824,8 @@ export interface CorePlant {
   vertices?: VertexPoser;
   /** The ik, transform and path constraints as posed, rewritten before they are applied (`./constraints.ts`). */
   constraints?: ConstraintPlant;
+  /** Issue #979's solver rules, one planted back to the reading before it (`RUNTIME_SOLVER_RULES` in `./constraints.ts`). */
+  solver?: Partial<SolverRules>;
   /** A deform timeline's array at a time (`deformAt` in `./deform.ts`). */
   deform?: DeformEvaluator;
   /** A sequence timeline's frame at a time (`sequenceFrameAt` in `./deform.ts`). */
@@ -962,7 +964,7 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
   const colour = plant.colour ?? readColour;
   const blend = plant.blend ?? readBlend;
   const round = plant.round ?? gridRound;
-  const bonesWhy = constraintsAbsentWhy(doc);
+  const bonesWhy = constraintsAbsentWhy(doc, solverRules(plant.solver));
   let bones: CoreBoneRow[] | null = null;
   let setupWorld: Map<string, CoreWorld> | null = null;
   // Each slider as it was applied, in constraint order — what the slots are posed from (`./constraints_slider.ts`).
@@ -970,7 +972,7 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
   if (bonesWhy === null) {
     const active = activeBones(doc);
     const records = constraintRecords(doc);
-    setupWorld = applyConstraints(doc.bones, evaluate(doc.bones, active), active, plant.constraints ? plant.constraints(records) : records, null, applied, physics);
+    setupWorld = applyConstraints(doc.bones, evaluate(doc.bones, active), active, plant.constraints ? plant.constraints(records) : records, null, applied, physics, undefined, solverRules(plant.solver));
     const world = setupWorld;
     bones = doc.bones.map((b): CoreBoneRow => {
       const t = world.get(b.name);

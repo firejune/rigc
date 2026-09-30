@@ -66519,6 +66519,10 @@ import { NO_ATLAS_WHY } from './tools/pose_oracle.ts';
 import { poseRawAnimation, poseRawSetup, type RawPose } from './src/core/raw.ts';
 import { ORACLE_RAW_SPEC, ulpDistance } from './tools/pose_oracle.ts';
 import { rawCensusLines } from './tools/core_gate.ts';
+// Unposed bones and collapsed frames (issue #979), its own statements so the CC13, CC14, CC15 and CO20 controls land as one hunk.
+import { compareUnposed, oracleMain, signedText, unposedOf } from './tools/pose_oracle.ts';
+import { historyTaint, type SolverRules } from './src/core/constraints.ts';
+import { COLLAPSED_X_AXIS_SQ, type InheritComputation } from './src/core/world.ts';
 import { CORE_INHERIT_MODES as CORE_INHERIT_MODES_ALL } from './src/core/index.ts';
 import type { RegionPoser } from './src/core/vertices.ts';
 
@@ -73132,6 +73136,391 @@ function runCoreSuite(): number {
   }
 
   // ===========================================================================
+  // Unposed bones and collapsed frames (issue #979): a constraint over a bone
+  // the posed skin leaves unposed — inactive, or below an inactive bone — and
+  // over a posed bone whose frame is collapsed. Every probe is posed under a
+  // named skin that leaves `arm` inactive, both dumpers keeping their doubles
+  // and the sign of every zero (`dump`'s `signed` reading, `pose_oracle
+  // unposed`), and held to spine-core by `Object.is` on every bone row — the
+  // unposed rows `compare` never reads included. The rules are stated in
+  // src/core/constraints.ts (*Unposed bones and collapsed frames*) and
+  // src/core/world.ts; each is planted back here (`CorePlant.solver`).
+  // ===========================================================================
+  const signedOf = (skin: string, physics: 'none' | 'step' = 'none', samples = 5): OracleOptions => ({ ...skinOf(skin, physics, samples), raw: true, signed: true });
+  /** Every bone row of every pose, by `Object.is` — a value that is not finite (`null`) equal only to another; the first difference, or null. */
+  /** With `fresh` (spine-core posing every sample on a skeleton of its own), a row where the runtime's two readings disagree is HISTORY — compared with nothing, and counted in `history`. */
+  const strictBones = (a: OracleDocument, b: OracleDocument, fresh: OracleDocument | null = null, history: { count: number } = { count: 0 }): string | null => {
+    const poses: Array<[string, BoneRow[] | null, BoneRow[] | null, BoneRow[] | null]> = [['setup', a.setup.bones, b.setup.bones, fresh?.setup.bones ?? null]];
+    for (const anim of a.animations ?? []) {
+      const other = (b.animations ?? []).find((x) => x.name === anim.name);
+      const twin = (fresh?.animations ?? []).find((x) => x.name === anim.name);
+      anim.samples.forEach((s, i) => poses.push([`"${anim.name}" #${i}`, s.bones, other?.samples[i]?.bones ?? null, twin?.samples[i]?.bones ?? null]));
+    }
+    for (const [where, ra, rb, rf] of poses) {
+      if (ra === null || rb === null) return `${where}: bones absent (${JSON.stringify(b.absent ?? a.absent ?? [])})`;
+      for (const x of ra) {
+        const f = rf?.find((r) => r[0] === x[0]);
+        if (f !== undefined && ![1, 2, 3, 4, 5, 6].every((i) => Object.is(x[i], f[i]))) {
+          history.count++;
+          continue;
+        }
+        const y = rb.find((r) => r[0] === x[0]);
+        if (y === undefined || ![1, 2, 3, 4, 5, 6].every((i) => Object.is(x[i], y[i]))) return `${where}: bone "${x[0]}" spine-core [${x.slice(1, 7).map((v) => signedText(v as number | null)).join(', ')}], the core [${(y ?? []).slice(1, 7).map((v) => signedText(v as number | null)).join(', ')}]`;
+      }
+    }
+    return null;
+  };
+  const LOCAL_PROPERTIES = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'] as const;
+  const SIX_IDENTITY: Obj = Object.fromEntries(LOCAL_PROPERTIES.map((p) => [p, { to: { [p]: {} } }]));
+  /** One posed reader per local property of each source, amplified — a transform constraint reading the source's local value onto it — so a bone's local values, which no row carries, are read on posed rows; one NaN hides no other. */
+  const localReaders = (sources: readonly string[]): { bones: Obj[]; constraints: Obj[] } => ({
+    bones: sources.flatMap((s) => LOCAL_PROPERTIES.flatMap((p) => [{ name: `r_${s}_${p}`, parent: 'root' }, { name: `r_${s}_${p}_ax`, parent: `r_${s}_${p}`, x: 1e4 }, { name: `r_${s}_${p}_ay`, parent: `r_${s}_${p}`, y: 1e4 }])),
+    constraints: sources.flatMap((s) => LOCAL_PROPERTIES.map((p) => ({ type: 'transform', name: `read_${s}_${p}`, bones: [`r_${s}_${p}`], source: s, localSource: true, localTarget: true, mixRotate: 1, mixX: 1, mixY: 1, mixScaleX: 1, mixScaleY: 1, mixShearY: 1, properties: { [p]: { to: { [p]: {} } } } }))),
+  });
+  const TRACK: RAtt = { kind: 'path', xy: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10], lengths: [30, 60] };
+  /**
+   * The unposed probe: `arm` skin-required and named by skin `extra` only, so
+   * under `default` it is inactive and `hand`, `tip`, `side` below it are
+   * active and never posed; `mid`, `t`, `leaf` posed, and animated.
+   */
+  const unposedPair = (constraints: Obj[], opts: { hand?: Obj; tip?: Obj; read?: string[]; trail?: string; onMid?: boolean } = {}): { spine: string; model: string; atlas: string } => {
+    const rd = localReaders(opts.read ?? []);
+    return withSkinLists(remainderPair({
+      bones: [
+        { name: 'root' }, { name: 'mid', parent: 'root', x: 3, rotation: 10 }, { name: 't', parent: 'root', x: 30, y: 20, rotation: 15 },
+        { name: 'leaf', parent: 'root', x: -6, y: 5, rotation: 20, length: 6 }, { name: 'leaf2', parent: 'leaf', x: 6, rotation: -15, length: 4 }, ...amplify('leaf2'),
+        { name: 'arm', parent: 'mid', x: 10, y: 4, rotation: 30, length: 8, skin: true },
+        { name: 'hand', parent: 'arm', x: 8, y: -1, rotation: -25, scaleX: 1.2, length: 4, ...(opts.hand ?? {}) },
+        { name: 'tip', parent: 'hand', x: 4, rotation: 40, length: 3, ...(opts.tip ?? {}) }, { name: 'side', parent: 'arm', x: 2, y: -5, rotation: 70, length: 3 },
+        ...(opts.onMid === true ? [{ name: 'onMid', parent: 'mid', x: 25, y: 12 }] : []),
+        ...rd.bones,
+      ],
+      slots: opts.trail === undefined ? [] : [{ name: 'trail', bone: opts.trail, attachment: 'trail' }],
+      skins: { default: opts.trail === undefined ? {} : { trail: { trail: TRACK } }, extra: {} },
+      constraints: [...constraints, ...rd.constraints],
+      anims: { a: { bones: { t: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: -40, y: 10 }], rotate: [{ time: 0, value: 0 }, { time: 1, value: 200 }] }, mid: { rotate: [{ time: 0, value: 0 }, { time: 1, value: -150 }] }, leaf: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 95 }] } } } },
+    }), { extra: { bones: ['arm'] } });
+  };
+  type UnposedProbe = { label: string; pair: { spine: string; model: string; atlas: string }; physics: 'none' | 'step' };
+  /** A probe against spine-core under `--skin default`: every bone row by `Object.is`, and the unposed instrument's count; the first difference or null. */
+  const judgeUnposed = (probe: UnposedProbe, plant: TimelinePlant = {}): { first: string | null; unposed: number; history: number } => {
+    const options = signedOf('default', probe.physics);
+    const spine = remainderSpine(probe.pair, options);
+    // The runtime's second reading, each sample on a fresh skeleton — under the step a pass carries the one before by design, so none is taken there.
+    const fresh = probe.physics === 'none' ? remainderSpine(probe.pair, { ...options, fresh: true }) : null;
+    const core = coreDump(readModel(probe.pair.model, 'the unposed probe'), options, plant);
+    const history = { count: 0 };
+    const first = strictBones(spine, core, fresh, history);
+    let unposed = 0;
+    try {
+      unposed = compareUnposed(spine, core, fresh).boneSamples;
+    } catch (err) {
+      if (!(err instanceof OracleInputError)) throw err;
+      return { first: first ?? err.message, unposed, history: history.count };
+    }
+    return { first, unposed, history: history.count };
+  };
+
+  // --- CC13: a constraint over a bone the posed skin leaves unposed poses as spine-core does, signed zeros included (issue #979) --
+  {
+    const probes: string[] = [];
+    const population: UnposedProbe[] = [];
+    const add = (label: string, pair: { spine: string; model: string; atlas: string }, physics: 'none' | 'step' = 'none'): void => {
+      population.push({ label, pair, physics });
+    };
+    const MODES = ['normal', 'noScale', 'noScaleOrReflection', 'noRotationOrReflection', 'onlyTranslation'] as const;
+    const inheritOf = (m: string): Obj => (m === 'normal' ? {} : { inherit: m });
+    for (const m of MODES) {
+      for (const [o, opt] of [['', {}], [' mix 0.5', { mix: 0.5 }], [' compress+stretch', { compress: true, stretch: true, scaleY: 'uniform' }]] as const) {
+        add(`one-bone ik on hand, ${m}${o}`, unposedPair([{ type: 'ik', name: 'k', bones: ['hand'], target: 't', ...opt }], { hand: { shearX: 12, ...inheritOf(m) }, read: ['hand'] }));
+      }
+    }
+    for (const [o, opt] of [['', {}], [' bend -', { bendPositive: false }], [' softness 5 + stretch', { softness: 5, stretch: true, scaleY: 'volume' }]] as const) {
+      for (const [h, hand] of [['', {}], [' hand scale 1', { scaleX: 1 }]] as const) {
+        add(`two-bone ik on hand, tip${o}${h}`, unposedPair([{ type: 'ik', name: 'k', bones: ['hand', 'tip'], target: 't', ...opt }], { hand, tip: { y: 2 }, read: ['hand', 'tip'] }));
+      }
+    }
+    add('one-bone ik on posed leaf, target hand', unposedPair([{ type: 'ik', name: 'k', bones: ['leaf'], target: 'hand' }]));
+    add('two-bone ik on posed leaf, leaf2, target hand', unposedPair([{ type: 'ik', name: 'k', bones: ['leaf', 'leaf2'], target: 'hand' }]));
+    const TMODES: Array<[string, Obj]> = [['world', {}], ['local', { localSource: true, localTarget: true }], ['additive', { additive: true }], ['local additive', { localSource: true, localTarget: true, additive: true }], ['local source', { localSource: true }], ['local target', { localTarget: true }]];
+    for (const [tm, flags] of TMODES) {
+      // An additive world-space shearY is last-bit off on posed bones too (issue #966's HOLE), so the additive world probes leave it out.
+      const properties = flags.additive === true && flags.localTarget !== true ? Object.fromEntries(Object.entries(SIX_IDENTITY).filter(([k]) => k !== 'shearY')) : SIX_IDENTITY;
+      const T = (bones: string[], source: string): Obj => ({ type: 'transform', name: 'k', bones, source, rotation: 10, x: 2, y: 1, scaleX: 0.1, shearY: 3, mixRotate: 1, mixX: 1, mixY: 1, mixScaleX: 1, mixScaleY: 1, mixShearY: 1, properties, ...flags });
+      for (const m of MODES) {
+        add(`${tm} transform onto hand (${m}), source posed t`, unposedPair([T(['hand'], 't')], { hand: inheritOf(m), read: ['hand'] }));
+        add(`${tm} transform onto posed leaf, source hand (${m})`, unposedPair([T(['leaf'], 'hand')], { hand: inheritOf(m) }));
+        add(`${tm} transform onto hand (${m}), source side, unposed too`, unposedPair([T(['hand'], 'side')], { hand: inheritOf(m), read: ['hand'] }));
+      }
+    }
+    add('world transform onto hand, then mid moved by a later constraint', unposedPair([{ type: 'transform', name: 'k', bones: ['hand'], source: 't', mixRotate: 1, mixX: 1, mixY: 1, properties: SIX_IDENTITY }, { type: 'transform', name: 'mv', bones: ['mid'], source: 't', mixX: 0.5, properties: { x: { to: { x: {} } } } }], { read: ['hand'] }));
+    add('path on hand, tip, its slot on the root', unposedPair([{ type: 'path', name: 'k', slot: 'trail', bones: ['hand', 'tip'], positionMode: 'percent', spacingMode: 'percent', rotateMode: 'chain', position: 0.3, spacing: 0.1, rotation: 25, mixRotate: 1, mixX: 1, mixY: 1 }], { trail: 'root', read: ['hand'] }));
+    add('path on posed leaf, leaf2, its slot on hand', unposedPair([{ type: 'path', name: 'k', slot: 'trail', bones: ['leaf', 'leaf2'], positionMode: 'percent', spacingMode: 'length', position: 0.3, spacing: 2, mixRotate: 1, mixX: 1, mixY: 1 }], { trail: 'hand' }));
+    add('path on inactive arm, then mid moved by a later constraint', unposedPair([{ type: 'path', name: 'k', slot: 'trail', bones: ['arm'], positionMode: 'percent', spacingMode: 'percent', position: 0.3, spacing: 0, mixRotate: 1, mixX: 1, mixY: 1 }, { type: 'transform', name: 'mv', bones: ['mid'], source: 't', mixX: 0.5, properties: { x: { to: { x: {} } } } }], { trail: 'root' }));
+    for (const physics of ['none', 'step'] as const) add(`physics on hand, --physics ${physics}`, unposedPair([{ type: 'physics', name: 'k', bone: 'hand', x: 1, y: 1, rotate: 1, scaleX: 1, shearX: 1, inertia: 0.5, strength: 50, damping: 0.8, gravity: 20 }], { read: ['hand'] }), physics);
+    // One inactive bone among a transform's did not stop it moving the posed one; what it wrote into the inactive one reads the previous pass (HISTORY where the runtime's two readings disagree).
+    add('world transform onto posed leaf and inactive arm', unposedPair([{ type: 'transform', name: 'k', bones: ['leaf', 'arm'], source: 't', mixRotate: 1, mixX: 1, properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } } } }]));
+    // An ik naming the inactive `arm`, applied from the frame a fresh skeleton holds above it: zeros where the pass has not brought `mid` up to date, `mid` as posed where it has (its target below `mid`, or a transform on `mid` first).
+    add('ik over inactive: one-bone ik on arm', unposedPair([{ type: 'ik', name: 'k', bones: ['arm'], target: 't' }]));
+    add('ik over inactive: two-bone ik on arm, hand', unposedPair([{ type: 'ik', name: 'k', bones: ['arm', 'hand'], target: 't' }]));
+    add('ik over inactive: two-bone ik on arm, hand, bend -, softness 4, mix 0.6', unposedPair([{ type: 'ik', name: 'k', bones: ['arm', 'hand'], target: 't', bendPositive: false, softness: 4, mix: 0.6 }]));
+    add('ik over inactive: two-bone ik on arm, hand after a transform on mid', unposedPair([{ type: 'transform', name: 'm0', bones: ['mid'], source: 'leaf', mixX: 0.3, properties: { x: { to: { x: {} } } } }, { type: 'ik', name: 'k', bones: ['arm', 'hand'], target: 't' }]));
+    add('ik over inactive: two-bone ik on arm, hand aimed at a target on mid', unposedPair([{ type: 'ik', name: 'k', bones: ['arm', 'hand'], target: 'onMid' }], { onMid: true }));
+    let unposedSamples = 0;
+    let historySamples = 0;
+    for (const p of population) {
+      const r = judgeUnposed(p);
+      unposedSamples += r.unposed;
+      historySamples += r.history;
+      if (r.first !== null) probes.push(`${p.label}: ${r.first}`);
+      if (r.unposed === 0) probes.push(`${p.label}: no unposed bone was compared`);
+    }
+    // Each rule planted back to the reading before issue #979: red on the probes that reach it, never on none.
+    const plants: Array<[string, Partial<SolverRules>, RegExp]> = [
+      ['an ik frame never collapsed', { ikCollapsedDet: -1 }, /ik on hand|^ik over inactive: two-bone ik on arm, hand(, bend| aimed|$)/],
+      ['the x-axis floor of a noRotationOrReflection ik removed', { ikXAxisFloor: 0 }, /one-bone ik on hand, noRotationOrReflection/],
+      // A path and a stepped physics constraint move their bones in world space too, and read them back the same way.
+      ['a NaN or short column read back as it was', { readBackCollapsed: false }, /transform onto hand|transform onto posed leaf, source hand|path on hand|physics on hand, --physics step/],
+      ['a rotate source of determinant 0 not negating the offset', { offsetNegatedAtZeroDet: false }, /source (hand|side)/],
+      ['an inactive bone posed again as zeros, and its subtree with it', { inactiveHoldsItsWorld: false }, /then mid moved/],
+      ['a transform left unapplied when one bone it names is inactive', { transformIgnoresBoneActivity: false }, /onto posed leaf and inactive arm$/],
+      ['an ik naming an inactive bone left unapplied', { ikOverInactiveFresh: false }, /^ik over inactive: two-bone/],
+    ];
+    const planted: string[] = [];
+    for (const [label, solver, reaches] of plants) {
+      const red = population.filter((p) => judgeUnposed(p, { solver }).first !== null);
+      const outside = red.filter((p) => !reaches.test(p.label));
+      if (red.length === 0) probes.push(`${label}, planted: no probe went red`);
+      if (outside.length > 0) probes.push(`${label}, planted: red on ${outside.map((p) => `"${p.label}"`).join(', ')}, which does not reach the rule`);
+      planted.push(`${label} red on ${red.length}`);
+    }
+    // The world frame of a noRotationOrReflection child under a collapsed x axis (src/core/world.ts): its y column turned over, planted in a copy of the evaluator.
+    const turned: InheritComputation = (mode, parent, bone) => {
+      const m = modeMatrix(mode, parent, bone);
+      return mode === 'noRotationOrReflection' && parent.a * parent.a + parent.c * parent.c <= COLLAPSED_X_AXIS_SQ ? [m[0], -m[1], m[2], -m[3]] : m;
+    };
+    const worldRed = population.filter((p) => judgeUnposed(p, { evaluate: (bones, active) => worldTransforms(bones, active, turned) }).first !== null);
+    if (worldRed.length === 0) probes.push('the collapsed-x-axis frame turned over, planted: no probe went red');
+    if (worldRed.some((p) => !/noRotationOrReflection/.test(p.label))) probes.push(`the collapsed-x-axis frame turned over, planted: red on ${worldRed.filter((p) => !/noRotationOrReflection/.test(p.label)).map((p) => `"${p.label}"`).join(', ')}`);
+    planted.push(`the collapsed-x-axis frame turned over red on ${worldRed.length}`);
+    const ok = probes.length === 0;
+    say(
+      'CC13_A_CONSTRAINT_OVER_A_BONE_THE_POSED_SKIN_LEAVES_UNPOSED_POSES_AS_SPINE_CORE_DOES_SIGNED_ZEROS_INCLUDED',
+      ok,
+      probeDetail(ok, probes, `${population.length} probes under --skin default, which leaves the skin-required "arm" inactive and "hand", "tip", "side" below it unposed — one- and two-bone iks on them in every inherit mode, iks aimed at them, transforms onto and from them in six flag sets and five modes, paths on them and walking a slot on one, physics under none and step, a later constraint moving their posed ancestor, a transform naming a posed and an inactive bone, and one- and two-bone iks naming the inactive bone (its frame zero or brought up to date first) — each bone's local values read onto posed rows: every bone row of every pose equal to spine-core's by Object.is where spine-core's two readings — sample after sample and on a fresh skeleton — agree (${unposedSamples} unposed bone-samples among them, through pose_oracle's unposed reading; ${historySamples} bone-samples where they disagree are HISTORY, compared with nothing); ${planted.join(', ')}, each only on probes reaching it`),
+      'issue #979: the core wrote NaN into a bone an ik moved under an inactive parent where spine-core writes zeros, and an active constraint reading such a bone carried it on. The rules are measured on these rows, not on the grid compare reads — it excludes every unposed bone and spells -0 as 0',
+    );
+  }
+
+  // --- CC14: a posed bone under a collapsed frame poses as spine-core does (issue #979) --
+  {
+    const probes: string[] = [];
+    type Posed = { label: string; pair: { spine: string; model: string; atlas: string } };
+    const population: Posed[] = [];
+    const posedPair = (bones: Obj[], constraints: Obj[]): { spine: string; model: string; atlas: string } => remainderPair({
+      bones: [{ name: 'root' }, ...bones, { name: 't', parent: 'root', x: 30, y: 20 }],
+      slots: [], skins: { default: {} }, constraints,
+      anims: { a: { bones: { t: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: -40, y: 10 }] } } } },
+    });
+    // The bound itself: this parent's determinant is 1e-5 exactly (measured through this evaluator), the next scale up is above it.
+    const AT_BOUND = 0.000010000000000000006;
+    const ABOVE_BOUND = 0.000010000000000000008;
+    for (const m of ['normal', 'noScale', 'noScaleOrReflection', 'noRotationOrReflection', 'onlyTranslation']) {
+      for (const sx of [AT_BOUND, ABOVE_BOUND, 0.9e-5, 2e-5]) {
+        for (const prot of [0, 40]) {
+          population.push({ label: `one-bone ik, ${m}, parent ${sx} x 1 at ${prot}°`, pair: posedPair([{ name: 'p', parent: 'root', rotation: prot, scaleX: sx, x: 2, y: 1 }, { name: 'b', parent: 'p', x: 10, y: 3, rotation: 17, shearX: 12, length: 5, ...(m === 'normal' ? {} : { inherit: m }) }, ...amplify('b')], [{ type: 'ik', name: 'k', bones: ['b'], target: 't', compress: true, stretch: true, scaleY: 'volume' }]) });
+        }
+      }
+    }
+    for (const sx of [0.005, 1e-3, 1e-4]) {
+      for (const sy of [10, 1000]) {
+        population.push({ label: `one-bone ik, noRotationOrReflection, parent ${sx} x ${sy} (x axis under the floor)`, pair: posedPair([{ name: 'p', parent: 'root', rotation: 40, scaleX: sx, scaleY: sy, x: 2, y: 1 }, { name: 'b', parent: 'p', x: 0.01, y: 0.003, rotation: 17, shearX: 4, length: 5, inherit: 'noRotationOrReflection' }, ...amplify('b')], [{ type: 'ik', name: 'k', bones: ['b'], target: 't' }]) });
+      }
+    }
+    for (const gsx of [AT_BOUND, ABOVE_BOUND, 0.99e-5, 5e-5]) {
+      population.push({ label: `two-bone ik, grandparent ${gsx} x 1`, pair: posedPair([{ name: 'g', parent: 'root', scaleX: gsx, x: 2, y: 1 }, { name: 'h', parent: 'g', x: 1, y: 2, rotation: 20, length: 4 }, { name: 'c', parent: 'h', x: 4, rotation: 30, length: 3 }, ...amplify('h'), ...amplify('c')], [{ type: 'ik', name: 'k', bones: ['h', 'c'], target: 't' }]) });
+    }
+    for (const sx of [1e-5, 1.0000000000000002e-5, 1e-9, 1e-15]) {
+      for (const crot of [100, 170]) {
+        population.push({ label: `a noRotationOrReflection child under a parent x axis ${sx} long, y 1e-3/${sx}, rotated ${crot}°`, pair: remainderPair({ bones: [{ name: 'root' }, { name: 'p', parent: 'root', rotation: 35, scaleX: sx, scaleY: 1e-3 / sx, x: 2, y: 1 }, { name: 'b', parent: 'p', x: 0.01, y: 0.003, rotation: crot, shearX: 7, shearY: 33, scaleX: -1.4, scaleY: 0.6, length: 5, inherit: 'noRotationOrReflection' }, ...amplify('b')], slots: [], skins: { default: {} }, anims: { a: { bones: { p: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 90 }] } } } } }) });
+      }
+    }
+    const options = signedOf('all', 'none', 5);
+    const judge = (p: Posed, plant: TimelinePlant = {}): string | null => strictBones(remainderSpine(p.pair, options), coreDump(readModel(p.pair.model, 'the collapsed probe'), options, plant));
+    for (const p of population) {
+      const first = judge(p);
+      if (first !== null) probes.push(`${p.label}: ${first}`);
+    }
+    const plants: Array<[string, TimelinePlant, RegExp]> = [
+      ['an ik frame never collapsed', { solver: { ikCollapsedDet: -1 } }, /ik/],
+      ['the ik bound read as below 1e-5, not at most', { solver: { ikCollapsedDet: 0.000009999999999999999 } }, new RegExp(`${AT_BOUND}`)],
+      // Every noRotationOrReflection parent here has an x axis under the floor: the collapsed ones too.
+      ['the x-axis floor of a noRotationOrReflection ik removed', { solver: { ikXAxisFloor: 0 } }, /one-bone ik, noRotationOrReflection/],
+      ['the collapsed-x-axis frame turned over', { evaluate: (bones, active) => worldTransforms(bones, active, (mode, parent, bone) => { const m = modeMatrix(mode, parent, bone); return mode === 'noRotationOrReflection' && parent.a * parent.a + parent.c * parent.c <= COLLAPSED_X_AXIS_SQ ? [m[0], -m[1], m[2], -m[3]] : m; }) }, /child under a parent x axis/],
+    ];
+    const planted: string[] = [];
+    for (const [label, plant, reaches] of plants) {
+      const red = population.filter((p) => judge(p, plant) !== null);
+      if (red.length === 0) probes.push(`${label}, planted: no probe went red`);
+      const outside = red.filter((p) => !reaches.test(p.label));
+      if (outside.length > 0) probes.push(`${label}, planted: red on ${outside.map((p) => `"${p.label}"`).join(', ')}, which does not reach the rule`);
+      planted.push(`${label} red on ${red.length}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CC14_A_POSED_BONE_UNDER_A_COLLAPSED_FRAME_POSES_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${population.length} probes, every bone row equal to spine-core's by Object.is: one-bone iks in all five modes under a parent whose determinant is exactly 1e-5, the next scale above, and either side of it; noRotationOrReflection iks whose parent x axis is under the 1e-5 floor while its determinant is not; two-bone iks under the same grandparents; noRotationOrReflection children under an x axis collapsed to 1e-5 and past it; ${planted.join(', ')}`),
+      'issue #979: the bounds the runtime reads a collapsed frame by were measured on the bones the posed skin leaves unposed, whose frame is all zeros, and hold on posed bones as well — where the grid compare does read them',
+    );
+  }
+
+  // --- CC15: a posed bone reading a value the runtime makes depend on its previous pass is refused by name (issue #979) --
+  {
+    const probes: string[] = [];
+    const writers: Record<string, Obj> = {
+      'one-bone ik on arm': { type: 'ik', name: 'w', bones: ['arm'], target: 't' },
+      'two-bone ik on arm, hand': { type: 'ik', name: 'w', bones: ['arm', 'hand'], target: 't' },
+      'world transform onto arm at mix 0.5': { type: 'transform', name: 'w', bones: ['arm'], source: 't', mixX: 0.5, mixY: 0.5, properties: { x: { to: { x: {} } }, y: { to: { y: {} } } } },
+      'additive world transform onto arm': { type: 'transform', name: 'w', bones: ['arm'], source: 't', additive: true, mixX: 1, properties: { x: { to: { x: {} } } } },
+      'local transform onto arm': { type: 'transform', name: 'w', bones: ['arm'], source: 't', localSource: true, localTarget: true, mixRotate: 0.5, mixX: 0.5, properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } } } },
+      'path on arm at mix 0.5': { type: 'path', name: 'w', slot: 'trail', bones: ['arm'], positionMode: 'percent', spacingMode: 'percent', position: 0.3, spacing: 0, mixRotate: 0.5, mixX: 0.5, mixY: 0.5 },
+    };
+    const readers = (b: string): Record<string, Obj> => ({
+      'world transform': { type: 'transform', name: 'r', bones: ['leaf'], source: b, mixX: 1, mixY: 1, mixRotate: 1, properties: { x: { to: { x: {} } }, y: { to: { y: {} } }, rotate: { to: { rotate: {} } } } },
+      'world shearY': { type: 'transform', name: 'r', bones: ['leaf'], source: b, mixShearY: 1, properties: { shearY: { to: { shearY: {} } } } },
+      'local transform': { type: 'transform', name: 'r', bones: ['leaf'], source: b, localSource: true, localTarget: true, mixRotate: 1, mixX: 1, properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } } } },
+      'ik target': { type: 'ik', name: 'r', bones: ['leaf'], target: b },
+    });
+    const options = signedOf('default', 'none', 5);
+    const posedRows = ['leaf', 'leaf2', 'leaf2_ax', 'leaf2_ay'];
+    let leaks = 0;
+    let quiet = 0;
+    let over = 0;
+    let silent = 0;
+    for (const [wk, w] of Object.entries(writers)) {
+      for (const bone of ['hand', 'side']) {
+        for (const [rk, r] of Object.entries(readers(bone))) {
+          const label = `${wk}, then a ${rk} reading ${bone} onto posed leaf`;
+          const pair = unposedPair([w, r], { trail: 'root' });
+          const spine = remainderSpine(pair, options);
+          const fresh = remainderSpine(pair, { ...options, fresh: true });
+          const rowsOf = (d: OracleDocument): BoneRow[][] => [d.setup.bones ?? [], ...(d.animations ?? []).flatMap((a) => a.samples.map((x) => x.bones ?? []))];
+          const [S, F] = [rowsOf(spine), rowsOf(fresh)];
+          // Measured, not predicted: a posed row where spine-core's two readings disagree is the history reaching the picture.
+          const history = S.some((ps, i) => ps.some((x) => posedRows.includes(x[0]) && ![1, 2, 3, 4, 5, 6].every((k) => Object.is(x[k], F[i].find((y) => y[0] === x[0])?.[k]))));
+          const model = readModel(pair.model, 'the leak probe');
+          const core = coreDump(model, options);
+          const refusal = (core.absent ?? []).find((x) => x[0] === 'setup.bones')?.[1] ?? null;
+          if (history) leaks++;
+          if (refusal !== null) {
+            if (!refusal.includes('constraint "r" moves posed bone "leaf"') || !refusal.includes(`bone "${bone}", a bone whose value depends on the runtime's previous pass`) || !refusal.includes('constraint "w" writes into inactive bone "arm"')) probes.push(`${label}: refused as ${JSON.stringify(refusal)}, not naming the reader, the posed bone, the bone read and the writer`);
+            if (!history) over++;
+          } else {
+            if (history) probes.push(`${label}: spine-core's two readings disagree on a posed row, and the core posed it without a word`);
+            const first = strictBones(spine, core, fresh);
+            if (first !== null) probes.push(`${label}: not refused, and ${first}`);
+            quiet++;
+          }
+          // Planted: the refusal switched off — the pose comes out silently, carrying the fresh reading into a posed row the sequential reading disagrees with.
+          if (history) {
+            const plantedCore = coreDump(model, options, { solver: { refuseHistoryLeak: false } });
+            if (plantedCore.setup.bones === null) probes.push(`${label}: with the refusal switched off the core still left the bones out`);
+            else if (strictBones(spine, plantedCore) !== null) silent++;
+          }
+        }
+      }
+    }
+    if (leaks === 0) probes.push('no probe carried the history into a posed row');
+    if (silent !== leaks) probes.push(`with the refusal switched off, ${silent} of the ${leaks} leaking probes posed a row the sequential reading disagrees with, not all`);
+    const total = Object.keys(writers).length * 2 * 4;
+    const ok = probes.length === 0;
+    say(
+      'CC15_A_POSED_BONE_READING_A_VALUE_THE_RUNTIME_MAKES_DEPEND_ON_ITS_PREVIOUS_PASS_IS_REFUSED_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `${total} probes under --skin default — six constraints writing into the inactive "arm" (one- and two-bone ik, a world transform at mix 0.5, an additive and a local one, a path at mix 0.5), each followed by four readers (a world transform, a world shearY, a local transform, an ik target) of "hand" or "side" below it onto the posed "leaf": the ${leaks} whose posed rows spine-core reads differently sample after sample and on a fresh skeleton each refused by name — reader, posed bone, bone read, writer; ${quiet} not refused, their every row equal to spine-core's where its two readings agree; ${over} refused where the reader reads a part of the bone the history does not move (the taint is by bone and by world or local, not by component); with the refusal switched off, planted, all ${silent} leaking poses came out silently, a posed row off the sequential reading`),
+      'issue #979: what the runtime writes into an inactive constrained bone depends on the pass before, and only a posed bone reading it can reach the picture — so that is where the core refuses, and the render falls back to spine-core naming it',
+    );
+  }
+
+  // --- CO20: pose_oracle unposed compares the bones compare leaves out, to the bit and the sign of zero (issue #979) --
+  {
+    const probes: string[] = [];
+    const row = (name: string, v: number[], active: 0 | 1, parent: string | null): BoneRow => [name, v[0], v[1], v[2], v[3], v[4], v[5], active, parent];
+    const docOf = (bones: BoneRow[]): OracleDocument => ({ spec: ORACLE_RAW_SPEC, dumper: 'hand', source: { spine: null, hash: null }, options: signedOf('default'), bones: bones.map((b) => b[0]), slots: [], skins: ['default'], constraints: [], physics: [], paths: [], pathAttachments: [], setup: { bones, slots: [], drawOrder: [], attachments: [], clips: [], clipped: [], uvs: [] }, animations: [] });
+    const posed = row('root', [0, 0, 1, 0, 0, 1], 1, null);
+    const a = docOf([posed, row('arm', [0, 0, 0, 0, 0, 0], 0, 'root'), row('hand', [0, 0, 0, -0, 0, -0], 1, 'arm')]);
+    const b = docOf([posed, row('arm', [0, 0, 0, 0, 0, 0], 0, 'root'), row('hand', [0, 0, 0, 0, 0, 0], 1, 'arm')]);
+    // What `compare` reads of the pair: nothing — both unposed bones are ill-conditioned — and the documents' JSON spells -0 as 0.
+    if (!compareDumps(a, b, { xy: 0, m: 0 }).identical) probes.push('compare found the planted -0, so the instrument would not be needed');
+    if (JSON.stringify(a) !== JSON.stringify(b)) probes.push('the two documents\' JSON differ, so a written document would carry the sign');
+    const u = compareUnposed(a, b);
+    if (u.findings.length !== 1 || !u.findings[0].includes('bone "hand"') || !u.findings[0].includes('-0')) probes.push(`the unposed reading of a -0 against a 0 found ${JSON.stringify(u.findings)}`);
+    if (compareUnposed(a, a).findings.length !== 0) probes.push('the unposed reading of a document against itself found a difference');
+    // A fresh reading disagreeing with the sequential one on `hand`: HISTORY, compared with nothing — neither IDENTICAL-by-agreement nor DIFF.
+    const h = compareUnposed(a, b, b);
+    if (h.history !== 1 || h.findings.length !== 0 || h.boneSamples !== 1) probes.push(`a -0 the runtime's fresh reading does not share read ${h.history} HISTORY, ${h.findings.length} DIFF over ${h.boneSamples} compared, not 1, 0 and 1`);
+    const unposedNames = [...unposedOf(a.setup.bones ?? [])].join(',');
+    if (unposedNames !== 'arm,hand') probes.push(`the unposed bones read [${unposedNames}], not the inactive "arm" and "hand" below it (flagged active)`);
+    // The command on a build: IDENTICAL where the core reproduces spine-core, a refusal (exit 2) where no bone is unposed.
+    const lines: string[] = [];
+    const run = (args: string[]): number => oracleMain(args, (l) => lines.push(l), (l) => lines.push(l));
+    const pair = unposedPair([{ type: 'ik', name: 'k', bones: ['hand'], target: 't' }]);
+    const dir = join(work, 'co20');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'skeleton.json'), pair.spine);
+    writeFileSync(join(dir, 'skeleton.atlas'), pair.atlas);
+    writeFileSync(join(dir, MODEL_DOCUMENT_FILE), pair.model);
+    const same = run(['unposed', dir, '--skin', 'default']);
+    if (same !== 0 || !lines.some((l) => l.startsWith('IDENTICAL — ') && l.includes('signed zeros included'))) probes.push(`unposed --skin default exited ${same}: ${lines.slice(-1)[0]}`);
+    lines.length = 0;
+    const none = run(['unposed', dir, '--skin', 'extra']);
+    if (none !== 2 || !lines.some((l) => l.includes('nothing to compare, which is not a pass'))) probes.push(`unposed --skin extra, which poses every bone, exited ${none}: ${lines.slice(-1)[0]}`);
+    lines.length = 0;
+    rmSync(join(dir, MODEL_DOCUMENT_FILE));
+    const bare = run(['unposed', dir, '--skin', 'default']);
+    if (bare !== 2 || !lines.some((l) => l.includes('has no skeleton.model.json'))) probes.push(`unposed on a build with no model document exited ${bare}: ${lines.slice(-1)[0]}`);
+    // A two-bone ik naming the inactive "arm": the runtime's two readings disagree on "hand" and "tip" at some samples — HISTORY by name, exit 0 — and agree at the rest, where the core is held.
+    lines.length = 0;
+    const histPair = unposedPair([{ type: 'ik', name: 'k', bones: ['arm', 'hand'], target: 't' }]);
+    const histDir = join(work, 'co20-history');
+    mkdirSync(histDir, { recursive: true });
+    writeFileSync(join(histDir, 'skeleton.json'), histPair.spine);
+    writeFileSync(join(histDir, 'skeleton.atlas'), histPair.atlas);
+    writeFileSync(join(histDir, MODEL_DOCUMENT_FILE), histPair.model);
+    const hist = run(['unposed', histDir, '--skin', 'default']);
+    const histLine = lines.find((l) => l.includes('HISTORY ik/k on inactive arm: the runtime\'s value depends on the previous pass — sequential vs fresh differ at ')) ?? '';
+    const verdict = lines.find((l) => l.startsWith('IDENTICAL — ')) ?? '';
+    const counted = /; (\d+) HISTORY bone-sample\(s\)/.exec(verdict);
+    if (hist !== 0 || histLine === '' || counted === null || Number(counted[1]) === 0) probes.push(`unposed on a two-bone ik naming the inactive arm exited ${hist}, HISTORY line ${JSON.stringify(histLine)}, verdict ${JSON.stringify(verdict)}`);
+    // Planted: the ik left unapplied, so the core writes another value where the runtime's two readings agree — DIFF, not folded into HISTORY.
+    const histOptions = signedOf('default', 'none', ORACLE_DEFAULT_SAMPLES);
+    const planted = compareUnposed(remainderSpine(histPair, histOptions), coreDump(readModel(histPair.model, 'the co20 probe'), histOptions, { solver: { ikOverInactiveFresh: false } }), remainderSpine(histPair, { ...histOptions, fresh: true }));
+    if (planted.findings.length === 0) probes.push('the ik left unapplied, planted, read no DIFF where the runtime\'s two readings agree');
+    // Under the step no fresh reading is taken: the same probe's differing bone-samples are HISTORY by the writer's taint, exit 0.
+    lines.length = 0;
+    const stepped = run(['unposed', histDir, '--skin', 'default', '--physics', 'step', '--dt', '1/60']);
+    const taintLine = lines.find((l) => l.includes('HISTORY (by the writer\'s taint; no fresh reading under the step) ik/k on inactive arm: ')) ?? '';
+    const steppedVerdict = lines.find((l) => l.startsWith('IDENTICAL — ')) ?? '';
+    const byTaint = /and (\d+) by a writer's taint \(the step\)/.exec(steppedVerdict);
+    if (stepped !== 0 || taintLine === '' || byTaint === null || Number(byTaint[1]) === 0) probes.push(`unposed --physics step on the two-bone ik naming the inactive arm exited ${stepped}, by-taint line ${JSON.stringify(taintLine)}, verdict ${JSON.stringify(steppedVerdict)}`);
+    // Planted under the step: a bone no writer into an inactive bone reaches ("side", under a one-bone ik of its own) posed wrong — DIFF, not HISTORY.
+    const untainted = unposedPair([{ type: 'ik', name: 'k', bones: ['arm', 'hand'], target: 't' }, { type: 'ik', name: 's', bones: ['side'], target: 't' }]);
+    const stepOptions = signedOf('default', 'step', ORACLE_DEFAULT_SAMPLES);
+    const untaintedModel = readModel(untainted.model, 'the co20 probe');
+    const taintOf = new Map([...historyTaint(underSkin(untaintedModel, 'default')).tainted].map(([bone, w]) => [bone, `${w.kind}/${w.name} on inactive ${w.inactive}`]));
+    const stepPlant = compareUnposed(remainderSpine(untainted, stepOptions), coreDump(untaintedModel, stepOptions, { solver: { ikCollapsedDet: -1 } }), null, taintOf);
+    if (taintOf.has('side') || !stepPlant.findings.some((f) => f.includes('bone "side"'))) probes.push(`a stepped wrong value on the untainted "side", planted, read ${stepPlant.findings.length} DIFF (${stepPlant.findings.slice(0, 1).join('')}) with "side" ${taintOf.has('side') ? 'in' : 'outside'} the taint`);
+    const ok = probes.length === 0;
+    say(
+      'CO20_POSE_ORACLE_UNPOSED_COMPARES_THE_BONES_COMPARE_LEAVES_OUT_TO_THE_BIT_AND_THE_SIGN_OF_ZERO',
+      ok,
+      probeDetail(ok, probes, 'two hand-made documents differing only by a -0 in an unposed bone\'s matrix: compare IDENTICAL on them and their JSON byte-equal, the unposed reading naming the bone and the -0; the unposed bones read as the inactive bone and the active one below it; a fresh reading disagreeing on that bone makes it HISTORY, compared with nothing; on a build, the command IDENTICAL under a skin leaving a bone unposed, and refused by name (exit 2) under one posing every bone and on a build with no model document; a two-bone ik naming the inactive bone exit 0 with its HISTORY line and count, and the same ik left unapplied in the core, planted, DIFF where the runtime\'s two readings agree; under --physics step, where no fresh reading is taken, the same probe exit 0 with its by-taint HISTORY line and count, and a wrong value planted on a bone outside the taint still DIFF'),
+      'issue #979: compare excludes every unposed bone by the ill-conditioned rule and a document spells -0 as 0, so the gate that holds the core to spine-core on those bones had to be built before the rule could be measured',
+    );
+  }
+
+  // ===========================================================================
   // The raw entry (issue #966, step 3b of issue #380): full doubles, no grid.
   // The populations above re-run through `dump --raw` on both dumpers and
   // compared in ulps at tolerance 0 — the reading the render consumes — and
@@ -75738,8 +76127,10 @@ function runRenderHashesSuite(): number | null {
     // RC07 — a bone the posed skin leaves unposed: `arm` skin-required and named by no skin the render poses,
     // `hand` below it (not skin-required, so the runtime's flag reads it active), and a two-bone ik over both
     // that writes into their zero matrices. Measured: spine-core leaves `hand`'s b and d at -0 (rotationY
-    // -179.99999734), the core at +0 (rotationY 0); a one-bone ik on `hand` leaves spine-core's at zeros and
-    // the core's at NaN. The seam writes every unposed bone as the zero transform (`inactiveBoneSnapshot`).
+    // -179.99999734), the core at +0 (rotationY 0) until issue #979, which applies an ik naming an inactive bone
+    // from the frame a fresh skeleton holds; a one-bone ik on `hand` left spine-core's at zeros and the core's at
+    // NaN until the same issue. Both now agree to the sign of every zero, and the -0 is still there for the seam to
+    // replace: it writes every unposed bone as the zero transform (`inactiveBoneSnapshot`).
     const probes: string[] = [];
     let figures = '';
     const makeProbe = (label: string, ik: string[]): { dirs: ProbeDirs; status: number | null; stderr: string } => {
@@ -75784,9 +76175,10 @@ function runRenderHashesSuite(): number | null {
       const coreHand = poseRawSetup(underSkin(readModel(readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8')), 'default')).bones.find((b) => b.name === 'hand');
       const sign = (v: number | undefined): string => (v === undefined ? '?' : Object.is(v, -0) ? '-0' : String(v));
       const held = `spine-core b ${sign(spineHand?.b)}, core b ${sign(coreHand?.b)}`;
-      if (spineHand !== undefined && coreHand !== undefined && Object.is(spineHand.b, coreHand.b) && Object.is(spineHand.d, coreHand.d)) {
-        probes.push(`the ${label} probe's runtimes agree on hand's matrix (${held}), so it does not exercise the rule`);
-      }
+      const agree = spineHand !== undefined && coreHand !== undefined && [spineHand.a, spineHand.b, spineHand.c, spineHand.d].every((v, i) => Object.is(v, [coreHand.a, coreHand.b, coreHand.c, coreHand.d][i]));
+      // Since issue #979 both probes' runtimes agree on a fresh skeleton, the sign of every zero included; the two-bone probe still leaves a -0 in hand's b, which the snapshot would read as rotationY -179.99999734 — the value the seam's zero snapshot exists to replace.
+      if (!agree) probes.push(`the ${label} probe's runtimes differ on hand's matrix (${held}) — issue #979 made them agree`);
+      if (label === 'two-bone' && !Object.is(spineHand?.b, -0)) probes.push(`the two-bone probe left hand's b at ${sign(spineHand?.b)}, not -0, so the zero snapshot has nothing to replace`);
       const bones = (poser: Poser): Array<BoneSnapshot[] | null> => sampleAnimation(poser, 'spin', PROTOCOL_FPS, { bones: true }).map((f) => f.bones ?? null);
       const a = bones(choice.core);
       const b = bones(choice.spine);
@@ -75804,14 +76196,14 @@ function runRenderHashesSuite(): number | null {
       rmSync(probe.dirs.dir, { recursive: true, force: true });
     }
     figures =
-      `a skin-required "arm" no posed skin names and its child "hand" (flagged active, never posed), under ${read.join('; ')}: both posers write the zero snapshot for ` +
+      `a skin-required "arm" no posed skin names and its child "hand" (flagged active, never posed), under ${read.join('; ')} — both probes' runtimes agreeing to the sign of every zero since issue #979, the two-bone probe's -0 left for the seam to replace: both posers write the zero snapshot for ` +
       'the two unposed bones in every frame and the posed ones as posed, and `render --geometry` through the core is byte-identical to --poser spine';
     const held = probes.length === 0 && read.length === 2;
     say(
       'RC07_A_BONE_THE_POSED_SKIN_LEAVES_UNPOSED_IS_THE_ZERO_SNAPSHOT_IN_BOTH_POSERS',
       held,
       probeDetail(held, probes, figures),
-      'issue #968, the private corpus: two rigs read 508 bone rotations of 179.99999734 through spine-core and 0 through the core, every pixel equal — the sign of a zero in an unposed bone\'s matrix, which a constraint over it wrote. A value neither runtime poses is defined by the seam, not relayed from one of them',
+      'issue #968, the private corpus: two rigs read 508 bone rotations of 179.99999734 through spine-core and 0 through the core, every pixel equal — the sign of a zero in an unposed bone\'s matrix, which a constraint over it wrote. A value neither runtime poses is defined by the seam, not relayed from one of them. Issue #979 made both iks agree on a fresh skeleton; the two-bone ik names an inactive bone, and sample after sample what the runtime writes there depends on the pass before, which the snapshot does not relay',
     );
   }
 
