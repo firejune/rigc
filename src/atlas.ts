@@ -398,6 +398,31 @@ export function parseAtlasText(text: string): ParsedAtlas {
 }
 
 /**
+ * The region an attachment draws under a name, and the page it sits on —
+ * `TextureAtlas.findRegion` and `region.page`, as the loader resolves a
+ * region, a mesh and each frame of a series (issue #967).
+ *
+ * The FIRST region of that name in file order: an atlas naming two regions
+ * alike draws the first (measured through spine-core 4.3.13's loader, whose
+ * attachment drew the first of two regions named `seq`, and whose `index:`
+ * lines did not enter the lookup — a series' frame is found by its NAME,
+ * `frameRegionName` in [`src/core/uvs.ts`](core/uvs.ts)). The name is matched
+ * exactly as `parseAtlasText` keeps it, the raw line: a region line `art `
+ * is not found as `art`, as the runtime does not find it.
+ *
+ * Returned as a function over the parsed atlas so the core — which reads no
+ * file and links nothing — takes it as an input (`UvLookup`); the page UVs
+ * themselves are the core's (`regionPageUvs`, `computeUvs`), measured there.
+ */
+export function atlasRegionLookup(parsed: ParsedAtlas): (name: string) => { page: AtlasPage; region: AtlasRegion } | null {
+  const first = new Map<string, { page: AtlasPage; region: AtlasRegion }>();
+  for (const page of parsed.pages) {
+    for (const region of page.regions) if (!first.has(region.name)) first.set(region.name, { page, region });
+  }
+  return (name) => first.get(name) ?? null;
+}
+
+/**
  * The same atlas text with every page's name line replaced.
  *
  * This is how `--atlas-in` emits: the imported atlas passes through verbatim —

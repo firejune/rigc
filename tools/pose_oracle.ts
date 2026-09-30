@@ -6,7 +6,7 @@
  *                                 [--samples 9] [--phase grid|off|irr|dense]
  *                                 [--skin all|<name>] [--physics none|step] [--dt 1/60]
  *   bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]
- *   bun tools/pose_oracle.ts dump --core <skeleton.model.json> --out <json> [same flags]
+ *   bun tools/pose_oracle.ts dump --core <skeleton.model.json> [--atlas <atlas>] --out <json> [same flags]
  *   bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]
  *
  * ⭐ Why this is a document and not a function. The equivalence gate issue
@@ -26,15 +26,16 @@
  * world vertices (with deform and weights), the draw order, clipping, events,
  * stepped physics and posing under one skin.
  *
- * ## `dump` — the document, `"spec": "pose-oracle/3"`
+ * ## `dump` — the document, `"spec": "pose-oracle/4"`
  *
  * 🔢 **The number in `spec` changes whenever a field is added, removed or
  * moved.** `compare` reads a row by position and a reader refuses any `spec`
  * but its own, so a document with a cell the reader does not know is refused
  * by name rather than compared on the cells the reader does know — which
  * would read IDENTICAL over a difference it never looked at. `/1` became `/2`
- * when the slot row gained its blend mode (issue #933), and `/2` became `/3`
- * when a pose gained its `clipped` block (issue #964).
+ * when the slot row gained its blend mode (issue #933), `/2` became `/3`
+ * when a pose gained its `clipped` block (issue #964), and `/3` became `/4`
+ * when it gained its `uvs` block (issue #967).
  *
  * One JSON object on one line, then a newline. Key order is fixed and is the
  * order written here. Two dumps of one input are byte-identical: no clock, no
@@ -50,7 +51,7 @@
  *
  * Top level, in order:
  *
- * - `spec` — the string `"pose-oracle/3"`.
+ * - `spec` — the string `"pose-oracle/4"`.
  * - `dumper` — who posed it, free text (`"spine-core 4.3.13"` here). Never
  *   compared.
  * - `source` — `{ "spine": <string|null>, "hash": <string|null> }`, the
@@ -66,10 +67,11 @@
  *   document, in document order, with the construct not yet admitted. A block
  *   is one of `bones`, `slots`, `skins`, `constraints`, `physics`, `paths`,
  *   `pathAttachments`, `setup.bones`, `setup.slots`, `setup.drawOrder`,
- *   `setup.attachments`, `setup.clips`, `setup.clipped`, `animations`, and the
- *   seven a sample carries — `animations.bones`, `animations.slots`,
- *   `animations.drawOrder`, `animations.attachments`, `animations.clips`,
- *   `animations.clipped`, `animations.events`
+ *   `setup.attachments`, `setup.clips`, `setup.clipped`, `setup.uvs`,
+ *   `animations`, and the eight a sample carries — `animations.bones`,
+ *   `animations.slots`, `animations.drawOrder`, `animations.attachments`,
+ *   `animations.clips`, `animations.clipped`, `animations.uvs`,
+ *   `animations.events`
  *   (`ORACLE_BLOCKS`). A sample block left out is `null` in EVERY sample and
  *   named once; one not named is a list in every sample; with `animations`
  *   itself `null` the sample blocks are nobody's and are not named. A `null`
@@ -165,6 +167,15 @@
  *   arrays are `clippedVerticesTyped`, `clippedUVsTyped` and
  *   `clippedTrianglesTyped` as returned, whichever it is. Empty when nothing
  *   is drawn under a clip.
+ * - `uvs` (issue #967) — `[slot, attachment, page, uvs]` for every slot, in
+ *   draw order, whose attachment is a region or a mesh — the slots
+ *   `attachments` lists: the frame `index = sequence.resolveIndex(
+ *   slot.appliedPose)`, `page` the name of `sequence.regions[index]`'s page
+ *   (`TextureAtlasRegion.page.name`, the atlas's page line trimmed) and `uvs`
+ *   `sequence.getUVs(index)` as the attachment holds it — a region's four
+ *   corners in the corner order above, a mesh's one pair per vertex. These
+ *   are what `src/render.ts`'s `pieceOf` draws with; the rules that
+ *   reproduce them from the atlas are `src/core/uvs.ts`'s.
  *
  * A sample adds, before its pose:
  *
@@ -288,10 +299,20 @@
  * fill) and its `events` (`src/core/events.ts`). `setup.drawOrder` is the slot
  * order with each slider's draw-order key applied. The physics parameters
  * are `null` and named in `absent`.
+ * `setup.uvs` and `animations.uvs` (issue #967, `src/core/uvs.ts`) are each
+ * pose's page and page UVs, from the atlas given by `--atlas <file>` — the
+ * build's `skeleton.atlas`, read by rigc's own reader (`parseAtlasText`,
+ * `atlasRegionLookup` in `src/atlas.ts`): the model carries no page layout,
+ * so without `--atlas` both blocks are absent, saying so. They are absent
+ * too where what a slot shows is not posed (that pose's slots or draw order
+ * absent), under `--physics step` when a slider keys a slot's attachment or
+ * a sequence, and where `src/core/uvs.ts` names a case it does not pose; an
+ * atlas lacking a region the pose draws is refused (exit 2), as spine-core
+ * refuses to load the pair.
  *
  * ## `compare` — two documents
  *
- * Refused (exit 2) when either file is not a `pose-oracle/3` document, when
+ * Refused (exit 2) when either file is not a `pose-oracle/4` document, when
  * the two were taken under different `options`, or when a block is absent
  * from BOTH — there is then nothing to compare it with. A block absent from
  * exactly one side prints `SKIP <block>: not produced by <dumper>` (and the
@@ -305,7 +326,9 @@
  * is the Spine file's spelling (the emitter's editor order) and not a pose —
  * and every number within tolerance: world
  * positions and vertex coordinates within `--tol-xy`, everything else (the
- * matrix, colours, times, parameters) within `--tol-m`. Both default to 1e-6,
+ * matrix, colours, times, parameters, page UVs) within `--tol-m`; `uvs` rows
+ * matched by slot and attachment as the attachments are, each row's page name
+ * and length exactly. Both default to 1e-6,
  * one step of the rounding grid; deltas are computed on the grid, in integer
  * millionths, so a rounding tie cannot read as over.
  *
@@ -357,6 +380,7 @@ import {
   SliderData,
   SpacingMode,
   TextureAtlas,
+  TextureAtlasRegion,
   TransformConstraintData,
   type Event,
 } from '@esotericsoftware/spine-core';
@@ -365,8 +389,10 @@ import { REGION_TRIANGLES, REGION_UVS } from '../src/core/clipping.ts';
 import { IRR_OFFSET as CORE_IRR_OFFSET, poseAnimations, sampleTime as coreSampleTime, type TimelinePlant } from '../src/core/animation.ts';
 import { pathAttachmentRows, pathRows, type CorePathRecord } from '../src/core/constraints_path.ts';
 import { PHYSICS_REFERENCE_SCALE, physicsRows, poseSteppedAnimations, type CorePhysicsRecord } from '../src/core/constraints_physics.ts';
+import { poseUvs, readUvSequences, shownAtSample, shownAtSetup, steppedUvsWhy, type UvReading, type UvSource } from '../src/core/uvs.ts';
+import { atlasRegionLookup, parseAtlasText } from '../src/atlas.ts';
 
-export const ORACLE_SPEC = 'pose-oracle/3';
+export const ORACLE_SPEC = 'pose-oracle/4';
 export const ORACLE_DUMPER = 'spine-core 4.3.13';
 export const ORACLE_PHASES = ['grid', 'off', 'irr', 'dense'] as const;
 export type OraclePhase = (typeof ORACLE_PHASES)[number];
@@ -391,6 +417,8 @@ export type SlotRow = [string, string | null, Num, Num, Num, Num, [Num, Num, Num
 export type AttachmentRow = [string, string, 'region' | 'mesh', Num[]];
 export type ClipRow = [string, string, string | null, Num[]];
 export type ClippedRow = [string, string, 0 | 1, Num[], Num[], number[]];
+/** One row of `uvs` (issue #967): `[slot, attachment, page, uvs]`. */
+export type UvRow = [string, string, string, Num[]];
 export type EventRow = [string, Num, number, Num, string | null];
 
 export interface OraclePose {
@@ -400,6 +428,7 @@ export interface OraclePose {
   attachments: AttachmentRow[];
   clips: ClipRow[];
   clipped: ClippedRow[];
+  uvs: UvRow[];
 }
 
 export interface OracleSample extends OraclePose {
@@ -423,6 +452,7 @@ export interface OracleDocumentSample {
   attachments: AttachmentRow[] | null;
   clips: ClipRow[] | null;
   clipped: ClippedRow[] | null;
+  uvs: UvRow[] | null;
 }
 
 export interface OracleDocumentAnimation {
@@ -514,16 +544,16 @@ export interface OracleDump {
  */
 export const ORACLE_BLOCKS = [
   'bones', 'slots', 'skins', 'constraints', 'physics', 'paths', 'pathAttachments',
-  'setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips', 'setup.clipped', 'animations',
-  'animations.bones', 'animations.slots', 'animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.clipped', 'animations.events',
+  'setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips', 'setup.clipped', 'setup.uvs', 'animations',
+  'animations.bones', 'animations.slots', 'animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.clipped', 'animations.uvs', 'animations.events',
 ] as const;
 export type OracleBlock = (typeof ORACLE_BLOCKS)[number];
 
 /** The blocks a sample carries, by their block names: absent from a document means `null` in every one of its samples. */
-export const SAMPLE_BLOCKS = ['animations.bones', 'animations.slots', 'animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.clipped', 'animations.events'] as const;
+export const SAMPLE_BLOCKS = ['animations.bones', 'animations.slots', 'animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.clipped', 'animations.uvs', 'animations.events'] as const;
 export type SampleBlock = (typeof SAMPLE_BLOCKS)[number];
-const sampleField = (block: SampleBlock): 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'clipped' | 'events' =>
-  block.slice('animations.'.length) as 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'clipped' | 'events';
+const sampleField = (block: SampleBlock): 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'clipped' | 'uvs' | 'events' =>
+  block.slice('animations.'.length) as 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'clipped' | 'uvs' | 'events';
 
 /** A setup pose in which a block may be absent. */
 export interface OracleDocumentPose {
@@ -533,10 +563,11 @@ export interface OracleDocumentPose {
   attachments: AttachmentRow[] | null;
   clips: ClipRow[] | null;
   clipped: ClippedRow[] | null;
+  uvs: UvRow[] | null;
 }
 
 /**
- * A `pose-oracle/3` document from either dumper: an `OracleDump` is one with
+ * A `pose-oracle/4` document from either dumper: an `OracleDump` is one with
  * nothing absent. `absent` names every `null` block with the construct its
  * dumper has not admitted; a spine-core dump carries none and writes no
  * `absent` key.
@@ -633,6 +664,14 @@ function readPose(skeleton: Skeleton): OraclePose {
   const attachments: AttachmentRow[] = [];
   const clips: ClipRow[] = [];
   const clipped: ClippedRow[] = [];
+  const uvs: UvRow[] = [];
+  // The page and page UVs the renderer draws with (`pieceOf` in src/render.ts) — see the header's `uvs`.
+  const drawUvs = (slot: Slot, att: MeshAttachment | RegionAttachment): void => {
+    const index = att.sequence.resolveIndex(slot.appliedPose);
+    const region = att.sequence.regions[index];
+    if (!(region instanceof TextureAtlasRegion)) throw new OracleInputError(`slot "${slot.data.name}" attachment "${att.name}" resolved to no atlas region at frame ${index}`);
+    uvs.push([slot.data.name, att.name, region.page.name, Array.from(att.sequence.getUVs(index)).map(r)]);
+  };
   // The renderer's walk (`piecesOf` in src/render.ts), with the attachment's local UVs — see the header's `clipped`.
   const clipper = new SkeletonClipping();
   const drawClipped = (slot: Slot, name: string, world: number[], triangles: ArrayLike<number>, uvs: ArrayLike<number>): void => {
@@ -649,11 +688,13 @@ function readPose(skeleton: Skeleton): OraclePose {
       att.computeWorldVertices(skeleton, slot, 0, att.worldVerticesLength, out, 0, 2);
       attachments.push([slot.data.name, att.name, 'mesh', out.map(r)]);
       drawClipped(slot, att.name, out, att.triangles, att.regionUVs);
+      drawUvs(slot, att);
     } else if (att instanceof RegionAttachment) {
       const out = new Array<number>(8).fill(0);
       att.computeWorldVertices(slot, att.getOffsets(slot.appliedPose), out, 0, 2);
       attachments.push([slot.data.name, att.name, 'region', out.map(r)]);
       drawClipped(slot, att.name, out, REGION_TRIANGLES, REGION_UVS);
+      drawUvs(slot, att);
     } else if (att instanceof ClippingAttachment) {
       const out = new Array<number>(att.worldVerticesLength).fill(0);
       att.computeWorldVertices(skeleton, slot, 0, att.worldVerticesLength, out, 0, 2);
@@ -665,7 +706,7 @@ function readPose(skeleton: Skeleton): OraclePose {
     clipper.clipEnd(slot);
   }
   clipper.clipEnd();
-  return { bones, slots, drawOrder, attachments, clips, clipped };
+  return { bones, slots, drawOrder, attachments, clips, clipped, uvs };
 }
 
 function firedBetween(skeleton: Skeleton, anim: Animation, last: number, t: number): EventRow[] {
@@ -856,7 +897,7 @@ export function dumpText(dump: OracleDocument): string {
  * #932); a skin it does not declare is refused by name, as the spine-core
  * dump refuses it.
  */
-export function coreDump(model: CompiledDocument, options: OracleOptions, plant: TimelinePlant = {}): OracleDocument {
+export function coreDump(model: CompiledDocument, options: OracleOptions, plant: TimelinePlant = {}, uv: UvSource | null = null): OracleDocument {
   let doc: CompiledDocument;
   try {
     doc = underSkin(model, options.skin);
@@ -869,12 +910,13 @@ export function coreDump(model: CompiledDocument, options: OracleOptions, plant:
   const posed = stepped ? poseSetup(doc, plant, { phase: 'reset', time: 0, referenceScale: PHYSICS_REFERENCE_SCALE, states: new Map(), ...(plant.physicsStep ? { step: plant.physicsStep } : {}) }) : poseSetup(doc, plant);
   const { setup } = posed;
   const sampled = stepped ? poseSteppedAnimations(doc, options.phase, options.samples, options.dt as number, plant) : poseAnimations(doc, options.phase, options.samples, plant);
-  const leftOut = new Set(sampled.absent.map((x) => x[0]));
-  const absent = [...posed.absent, ...sampled.absent].sort((x, y) => ORACLE_BLOCKS.indexOf(x[0] as OracleBlock) - ORACLE_BLOCKS.indexOf(y[0] as OracleBlock));
-  const animations: OracleDocumentAnimation[] = sampled.animations.map((a) => ({
+  const uvs = coreUvs(doc, options, uv, setup, posed.absent, sampled);
+  const leftOut = new Set([...sampled.absent, ...uvs.absent].map((x) => x[0]));
+  const absent = [...posed.absent, ...sampled.absent, ...uvs.absent].sort((x, y) => ORACLE_BLOCKS.indexOf(x[0] as OracleBlock) - ORACLE_BLOCKS.indexOf(y[0] as OracleBlock));
+  const animations: OracleDocumentAnimation[] = sampled.animations.map((a, ai) => ({
     name: a.name,
     duration: a.duration,
-    samples: a.samples.map((x) => ({
+    samples: a.samples.map((x, si) => ({
       t: x.t,
       events: x.events,
       bones: leftOut.has('animations.bones') ? null : x.bones,
@@ -883,6 +925,7 @@ export function coreDump(model: CompiledDocument, options: OracleOptions, plant:
       attachments: leftOut.has('animations.attachments') ? null : x.attachments,
       clips: leftOut.has('animations.clips') ? null : x.clips,
       clipped: leftOut.has('animations.clipped') ? null : x.clipped,
+      uvs: leftOut.has('animations.uvs') ? null : (uvs.samples[ai]?.[si] ?? null),
     })),
   }));
   return {
@@ -898,9 +941,99 @@ export function coreDump(model: CompiledDocument, options: OracleOptions, plant:
     physics: physicsRows(doc.constraints.flatMap((c) => (c.record?.kind === 'physics' ? [c.record as CorePhysicsRecord] : [])), gridRound) as unknown as OraclePhysicsRow[],
     paths: pathRows(doc.constraints.flatMap((c) => (c.record?.kind === 'path' ? [c.record as CorePathRecord] : [])), gridRound),
     pathAttachments: pathAttachmentRows(doc.skins, gridRound),
-    setup,
+    setup: { ...setup, uvs: uvs.setup },
     animations,
   };
+}
+
+// ---------------------------------------------------------------------------
+// the core's uvs blocks (issue #967)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the core's `uvs` blocks read besides the model: the atlas text — the
+ * build's `skeleton.atlas`, read by rigc's own reader — and the model text,
+ * whose sequences `readUvSequences` reads (`readModel` keeps a series' count
+ * only). `reading` is a plant's (`UvReading`); nothing else passes one.
+ */
+export function uvSourceOf(atlasText: string, modelText: string, reading?: UvReading): UvSource {
+  let document: unknown;
+  try {
+    document = JSON.parse(modelText);
+  } catch (err) {
+    throw new OracleInputError(`the model document is not JSON — ${(err as Error).message}`);
+  }
+  let sequences;
+  try {
+    sequences = readUvSequences(document);
+  } catch (err) {
+    if (err instanceof CoreInputError) throw new OracleInputError(`dump --core: ${err.message}`);
+    throw err;
+  }
+  return { lookup: atlasRegionLookup(parseAtlasText(atlasText)), sequences, ...(reading === undefined ? {} : { reading }) };
+}
+
+/** Why no `uvs` block is posed without an atlas — the header's `dump --core`. */
+export const NO_ATLAS_WHY = 'no atlas was given (dump --core <model> --atlas <file>); the model carries no page layout — the page, x, y and rotate are the packer\'s (ModelAtlasRect in src/model.ts)';
+
+/**
+ * The core's `setup.uvs` and every sample's `uvs` (`src/core/uvs.ts`), or the
+ * blocks left out with their reasons — the header's `dump --core`. A region
+ * the atlas lacks is refused (`OracleInputError`, exit 2).
+ */
+function coreUvs(
+  doc: CompiledDocument,
+  options: OracleOptions,
+  uv: UvSource | null,
+  setup: { slots: unknown[] | null; drawOrder: string[] | null },
+  setupAbsent: ReadonlyArray<[string, string]>,
+  sampled: { animations: Array<{ samples: Array<{ slots: unknown[] | null; drawOrder: string[] | null }> }>; absent: ReadonlyArray<[string, string]> },
+): { setup: UvRow[] | null; samples: Array<Array<UvRow[] | null>>; absent: Array<[string, string]> } {
+  const none = { setup: null, samples: [] };
+  if (uv === null) return { ...none, absent: [['setup.uvs', NO_ATLAS_WHY], ['animations.uvs', NO_ATLAS_WHY]] };
+  const stepWhy = options.physics === 'step' ? steppedUvsWhy(doc) : null;
+  const slidersWithoutBones = (bones: string): string | null => (doc.constraints.some((c) => c.kind === 'slider') ? `${bones} is absent, and a slider's time — which can switch what a slot shows and its frame — is read off the bones` : null);
+  const upstream = (absent: ReadonlyArray<[string, string]>, prefix: 'setup' | 'animations'): string | null => {
+    const has = (block: string): boolean => absent.some((x) => x[0] === block);
+    if (has(`${prefix}.slots`)) return `${prefix}.slots is absent, so what a slot shows is not posed`;
+    if (has(`${prefix}.drawOrder`)) return `${prefix}.drawOrder is absent, and the rows are in the draw order`;
+    return has(`${prefix}.bones`) ? slidersWithoutBones(`${prefix}.bones`) : null;
+  };
+  const posedRows = (shown: { shown: Parameters<typeof poseUvs>[1]; why: string[] }, order: readonly string[]): { rows: UvRow[] | null; why: string | null } => {
+    if (shown.why.length > 0) return { rows: null, why: shown.why.join('; ') };
+    try {
+      return poseUvs(doc, shown.shown, order, uv, gridRound);
+    } catch (err) {
+      if (err instanceof CoreInputError) throw new OracleInputError(`dump --core: ${err.message}`);
+      throw err;
+    }
+  };
+  const absent: Array<[string, string]> = [];
+  let setupRows: UvRow[] | null = null;
+  const setupWhy = stepWhy ?? upstream(setupAbsent, 'setup');
+  if (setupWhy === null && setup.drawOrder !== null) {
+    const posed = posedRows(shownAtSetup(doc), setup.drawOrder);
+    setupRows = posed.rows;
+    if (posed.why !== null) absent.push(['setup.uvs', posed.why]);
+  } else absent.push(['setup.uvs', setupWhy ?? 'setup.drawOrder is absent, and the rows are in the draw order']);
+  const samples: Array<Array<UvRow[] | null>> = [];
+  const sampleWhy = stepWhy ?? upstream(sampled.absent, 'animations');
+  const whys: string[] = [];
+  if (sampleWhy === null) {
+    doc.animations.forEach((anim, ai) => {
+      const out: Array<UvRow[] | null> = [];
+      (sampled.animations[ai]?.samples ?? []).forEach((x, i) => {
+        const t = coreSampleTime(options.phase, anim.timelines.duration, i, options.samples);
+        const posed = x.drawOrder === null ? { rows: null, why: 'the sample\'s draw order is absent' } : posedRows(shownAtSample(doc, anim, t), x.drawOrder);
+        if (posed.why !== null && !whys.includes(posed.why)) whys.push(posed.why);
+        out.push(posed.rows);
+      });
+      samples.push(out);
+    });
+  }
+  if (sampleWhy !== null) absent.push(['animations.uvs', sampleWhy]);
+  else if (whys.length > 0) absent.push(['animations.uvs', whys.join('; ')]);
+  return { setup: setupRows, samples, absent };
 }
 
 /**
@@ -927,6 +1060,8 @@ export function blockOf(doc: OracleDocument, block: OracleBlock): unknown[] | nu
       return doc.setup.clips;
     case 'setup.clipped':
       return doc.setup.clipped;
+    case 'setup.uvs':
+      return doc.setup.uvs;
     default:
       return doc[block as 'bones' | 'slots' | 'skins' | 'constraints' | 'physics' | 'paths' | 'pathAttachments' | 'animations'];
   }
@@ -1141,8 +1276,8 @@ function newRow(name: string): OracleRowReport {
 }
 
 /** The pose blocks a comparison reads; a setup pose one side leaves partly absent passes fewer. */
-type PoseBlock = 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'clipped';
-const EVERY_POSE_BLOCK: ReadonlySet<PoseBlock> = new Set<PoseBlock>(['bones', 'slots', 'drawOrder', 'attachments', 'clips', 'clipped']);
+type PoseBlock = 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'clipped' | 'uvs';
+const EVERY_POSE_BLOCK: ReadonlySet<PoseBlock> = new Set<PoseBlock>(['bones', 'slots', 'drawOrder', 'attachments', 'clips', 'clipped', 'uvs']);
 
 function comparePose(
   row: OracleRowReport,
@@ -1161,8 +1296,8 @@ function comparePose(
   };
   // A block not carried is compared as empty on both sides, which is nothing.
   const take = <T>(block: PoseBlock, l: T[] | null): T[] => (carry.has(block) && l !== null ? l : []);
-  const a = { bones: take('bones', pa.bones), slots: take('slots', pa.slots), drawOrder: take('drawOrder', pa.drawOrder), attachments: take('attachments', pa.attachments), clips: take('clips', pa.clips), clipped: take('clipped', pa.clipped) };
-  const b = { bones: take('bones', pb.bones), slots: take('slots', pb.slots), drawOrder: take('drawOrder', pb.drawOrder), attachments: take('attachments', pb.attachments), clips: take('clips', pb.clips), clipped: take('clipped', pb.clipped) };
+  const a = { bones: take('bones', pa.bones), slots: take('slots', pa.slots), drawOrder: take('drawOrder', pa.drawOrder), attachments: take('attachments', pa.attachments), clips: take('clips', pa.clips), clipped: take('clipped', pa.clipped), uvs: take('uvs', pa.uvs) };
+  const b = { bones: take('bones', pb.bones), slots: take('slots', pb.slots), drawOrder: take('drawOrder', pb.drawOrder), attachments: take('attachments', pb.attachments), clips: take('clips', pb.clips), clipped: take('clipped', pb.clipped), uvs: take('uvs', pb.uvs) };
   row.samples++;
   const bBones = new Map(b.bones.map((x) => [x[0], x]));
   const excluded = illConditioned(a.bones, bBones);
@@ -1323,6 +1458,40 @@ function comparePose(
       if (worstUv > tolM) note('clippedUv', `clipped "${ckey(x)}" UV Δ ${fmt(worstUv)}`);
     });
   }
+
+  // Each drawn attachment's page and page UVs (issue #967): matched by slot and attachment, as the attachments are — their order is the draw order's, which that block judges; the page and the count exact, every UV within --tol-m. Not excused by the ill-conditioned rule: a UV reads no bone.
+  const ukey = (x: UvRow): string => `${x[0]}/${x[1]}`;
+  const ub = new Map(b.uvs.map((x) => [ukey(x), x]));
+  for (const x of a.uvs) {
+    const y = ub.get(ukey(x));
+    if (y === undefined) {
+      note('uvRoster', `uvs "${ukey(x)}" is drawn in A and not in B`);
+      continue;
+    }
+    if (x[2] !== y[2]) note('uvPage', `uvs "${ukey(x)}": page ${JSON.stringify(x[2])} in A and ${JSON.stringify(y[2])} in B`);
+    if (x[3].length !== y[3].length) {
+      note('uvCount', `uvs "${ukey(x)}" has ${x[3].length / 2} UV pair(s) in A and ${y[3].length / 2} in B`);
+      continue;
+    }
+    let worst = 0;
+    let worstAt = -1;
+    let nonFinite = false;
+    for (let k = 0; k < x[3].length; k++) {
+      const d = numDelta(x[3][k], y[3][k]);
+      if (d === 'nonfinite') {
+        nonFinite = true;
+        continue;
+      }
+      if (d > worst) {
+        worst = d;
+        worstAt = k;
+      }
+    }
+    if (nonFinite) note('nonFinite', `uvs "${ukey(x)}" has a non-finite UV in A or B`);
+    if (worst > tolM) note('uv', `uvs "${ukey(x)}" ${worstAt % 2 === 0 ? 'u' : 'v'} of pair ${worstAt >> 1} Δ ${fmt(worst)} — A ${x[3][worstAt]} B ${y[3][worstAt]}`);
+  }
+  const ua = new Set(a.uvs.map(ukey));
+  for (const y of b.uvs) if (!ua.has(ukey(y))) note('uvRoster', `uvs "${ukey(y)}" is drawn in B and not in A`);
 }
 
 function compareEvents(row: OracleRowReport, t: Num, a: EventRow[], b: EventRow[], tolM: number): void {
@@ -1417,14 +1586,14 @@ export function compareDumps(a: OracleDocument, b: OracleDocument, tol: OracleTo
   for (const q of bPa) if (!pab.has(paKey(q)) || !aPa.some((p) => paKey(p) === paKey(q))) document.push(`path attachment "${paKey(q)}" only in B`);
 
   const rows: OracleRowReport[] = [];
-  const setupCarry = new Set<PoseBlock>((['bones', 'slots', 'drawOrder', 'attachments', 'clips', 'clipped'] as const).filter((k) => has(`setup.${k}`)));
+  const setupCarry = new Set<PoseBlock>((['bones', 'slots', 'drawOrder', 'attachments', 'clips', 'clipped', 'uvs'] as const).filter((k) => has(`setup.${k}`)));
   if (setupCarry.size > 0) {
     const setupRow = newRow('(setup)');
     comparePose(setupRow, null, a.setup, b.setup, tolXy, tolM, slotBones, setupCarry);
     rows.push(setupRow);
   }
   const animB = byName(has('animations') ? (b.animations ?? []) : []);
-  const sampleCarry = new Set<PoseBlock>((['bones', 'slots', 'drawOrder', 'attachments', 'clips', 'clipped'] as const).filter((k) => has(`animations.${k}`)));
+  const sampleCarry = new Set<PoseBlock>((['bones', 'slots', 'drawOrder', 'attachments', 'clips', 'clipped', 'uvs'] as const).filter((k) => has(`animations.${k}`)));
   for (const anim of has('animations') ? (a.animations ?? []) : []) {
     const other = animB.get(anim.name);
     if (other === undefined) continue;
@@ -1505,7 +1674,7 @@ const USAGE = [
   'usage:',
   '  bun tools/pose_oracle.ts dump <build dir> --out <json> [--samples 9] [--phase grid|off|irr|dense] [--skin all|<name>] [--physics none|step] [--dt 1/60]',
   '  bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]',
-  '  bun tools/pose_oracle.ts dump --core <skeleton.model.json> --out <json> [same flags]',
+  '  bun tools/pose_oracle.ts dump --core <skeleton.model.json> [--atlas <atlas>] --out <json> [same flags]',
   '  bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]',
 ].join('\n');
 
@@ -1554,11 +1723,15 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
   const [command, ...rest] = argv;
   try {
     if (command === 'dump') {
-      const { positional, flags } = parseFlags(rest, ['--out', '--samples', '--phase', '--skin', '--physics', '--dt', '--core']);
+      const { positional, flags } = parseFlags(rest, ['--out', '--samples', '--phase', '--skin', '--physics', '--dt', '--core', '--atlas']);
       const out = flags.get('--out');
       if (out === undefined) throw new OracleInputError('dump: --out <json> is required');
       const options = dumpOptions(flags);
       const core = flags.get('--core');
+      const atlasFlag = flags.get('--atlas');
+      // The spine-core dump reads its atlas as the second path; --atlas is the core's, which reads no page layout off the model.
+      if (atlasFlag !== undefined && core === undefined) throw new OracleInputError('--atlas is the core dump\'s (dump --core <model> --atlas <file>); the spine-core dump takes its atlas as the second path, <skeleton.json> <atlas>');
+      if (atlasFlag !== undefined && !existsSync(atlasFlag)) throw new OracleInputError(`dump --core: --atlas ${atlasFlag}: no such file`);
       if (core !== undefined) {
         if (positional.length > 0) throw new OracleInputError(`dump --core takes the model document and no other path, got ${positional.join(' ')}`);
         if (!existsSync(core)) throw new OracleInputError(`dump --core: no such file ${core}`);
@@ -1569,14 +1742,15 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
           if (err instanceof CoreInputError) throw new OracleInputError(err.message);
           throw err;
         }
-        const dump = coreDump(model, options);
+        const dump = coreDump(model, options, {}, atlasFlag === undefined ? null : uvSourceOf(readFileSync(atlasFlag, 'utf8'), readFileSync(core, 'utf8')));
         writeFileSync(out, dumpText(dump));
         print(
           `pose_oracle: the core posed ${core}: ${model.bones.length} bones, setup.bones ${dump.setup.bones === null ? 'ABSENT' : 'posed'}, ` +
             `${model.slots.length} slots, setup.slots ${dump.setup.slots === null ? 'ABSENT' : 'posed'}, ` +
             `setup.attachments ${dump.setup.attachments === null ? 'ABSENT' : `${dump.setup.attachments.length} posed`}, setup.clips ${dump.setup.clips === null ? 'ABSENT' : `${dump.setup.clips.length} posed`}, setup.clipped ${dump.setup.clipped === null ? 'ABSENT' : `${dump.setup.clipped.length} posed`}; ` +
             `${model.animations.length} animation(s) × ${options.samples} sample(s), animations.bones ${(dump.absent ?? []).some((x) => x[0] === 'animations.bones') ? 'ABSENT' : 'posed'}, ` +
-            `animations.slots ${(dump.absent ?? []).some((x) => x[0] === 'animations.slots') ? 'ABSENT' : 'posed'}; ` +
+            `animations.slots ${(dump.absent ?? []).some((x) => x[0] === 'animations.slots') ? 'ABSENT' : 'posed'}, ` +
+            `setup.uvs ${dump.setup.uvs === null ? 'ABSENT' : `${dump.setup.uvs.length} posed`}, animations.uvs ${(dump.absent ?? []).some((x) => x[0] === 'animations.uvs') ? 'ABSENT' : 'posed'}; ` +
             `absent: ${(dump.absent ?? []).map((x) => x[0]).join(', ')} → ${out}`,
         );
         return 0;
