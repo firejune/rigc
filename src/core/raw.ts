@@ -56,9 +56,16 @@
  *   under `setup`.
  *
  * Every step poses the animation from the setup pose at its animation time
- * (the setup blend at alpha 1), as the oracle's stepped dump does; the one
- * difference from `--physics step` is where the steps fall, which is the
- * caller's.
+ * (the setup blend at alpha 1), as the oracle's stepped dump does, applied
+ * from the animation time of the step before (−1 before the first): a
+ * physics `reset` key fires on the step that crosses it, once. Until issue
+ * #960 this walk fired such a key at every step from it on (the oracle's
+ * reading then), and against the recipe above a probe with a key at 0.5
+ * read 32 of 61 frames bit-exact at 60 fps, the rest off by up to 53 units;
+ * with the key crossed once, 61 of 61 at 60 fps and 13 of 13 at 12. None of
+ * the nineteen tree rows keys a `reset`, which is why the raw gate never
+ * saw it. The one difference from `--physics step` is where the steps fall,
+ * which is the caller's.
  *
  * ## What a pose carries
  *

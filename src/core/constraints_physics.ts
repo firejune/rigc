@@ -63,7 +63,10 @@
  * reset; then from each sample's predecessor `p`, a step to `p + k·dt` while
  * that is before `t`, then to `t`. The skeleton's clock is the SUM of the
  * steps' deltas (`s − previous s`), not `s`: the constraint reads its delta
- * off that clock. The setup pose under the step is the reset pose.
+ * off that clock. The setup pose under the step is the reset pose. Each step
+ * applies the animation from the time the walk last applied it at
+ * (`PhysicsStepContext.last`, −1 before the first), as a player does — which
+ * decides only when a `reset` key fires (*reset*, below).
  *
  * **Which constraints step.** A constraint on an inactive bone does not. A
  * constraint with `skin: true` steps exactly when an applied skin's
@@ -171,11 +174,18 @@
  * names no constraint (`*`) writes every active constraint whose `…Global`
  * flag for that value is on, and resets every active constraint.
  *
- * **reset.** The oracle applies the animation from 0 to the step's time at
- * every step, so a `reset` key resets its constraints at EVERY step at or
- * after it — the rig is held still from the key on — never when every key
- * is at 0, and from the second key on when the first is at 0
- * (`resetFires`). Ignoring it, or firing it once, kept 278 of 400.
+ * **reset.** A `reset` key resets its constraints on the step whose apply
+ * crosses it — a key in `(last, t]`, `last` the time the walk last applied
+ * the animation at, −1 before the first (`resetCrossed`) — so once, as a
+ * player crosses it (issue #960, measured against `Animation.apply(last,
+ * t)` and against `AnimationState` with one track, which agreed to the bit:
+ * `tools/pose_oracle.ts` §`--physics step`). Until issue #960 the oracle
+ * applied the animation from 0 at every step, and this walk mirrored it: a
+ * key reset its constraints at EVERY step from it on, holding the rig still
+ * (ignoring the key, or firing it once, kept 278 of 400 under that
+ * oracle). That
+ * reading is rejected as a schedule no player runs; the core suite's `SC`
+ * controls plant it and turn the probe red on the steps after the key.
  *
  * ## What is not exact, and why
  *
@@ -424,10 +434,11 @@ export interface PhysicsTimelinePlant {
 /**
  * Every physics record posed by the animation's physics timelines at `t`, in
  * the timelines' order (the header's *The timelines*), and the names of the
- * constraints a `reset` key resets while the animation is applied. `active`
+ * constraints a `reset` key resets while the animation is applied from
+ * `last` to `t` (`resetCrossed`). `active`
  * says whether a constraint is applied at all (its skin and its bone).
  */
-export function posedPhysics(records: readonly CorePhysicsRecord[], timelines: readonly CorePhysicsTimeline[], t: number, active: (r: CorePhysicsRecord) => boolean, plant: PhysicsTimelinePlant = {}): { records: Map<string, CorePhysicsRecord>; reset: Set<string> } {
+export function posedPhysics(records: readonly CorePhysicsRecord[], timelines: readonly CorePhysicsTimeline[], t: number, last: number, active: (r: CorePhysicsRecord) => boolean, plant: PhysicsTimelinePlant = {}): { records: Map<string, CorePhysicsRecord>; reset: Set<string> } {
   const search = plant.search ?? keyIndexAt;
   const channel = plant.channel ?? channelAt;
   const setupOf = new Map(records.map((r) => [r.name, r]));
@@ -438,7 +449,7 @@ export function posedPhysics(records: readonly CorePhysicsRecord[], timelines: r
       ? [...posed.values()].filter((r) => active(r) && (tl.kind === 'reset' || r.global[tl.kind]))
       : [posed.get(tl.name) as CorePhysicsRecord].filter((r) => active(r));
     if (tl.kind === 'reset') {
-      if (resetFires(tl.keys, t)) for (const r of targets) reset.add(r.name);
+      if (resetCrossed(tl.keys, last, t)) for (const r of targets) reset.add(r.name);
       continue;
     }
     const i = search(tl.keys, t);
@@ -458,16 +469,13 @@ export function posedPhysics(records: readonly CorePhysicsRecord[], timelines: r
 
 /**
  * Whether a `reset` timeline resets its constraints when the animation is
- * applied from 0 to `t` — the oracle applies it so at every step (the
- * header's *reset*): never when every key is at 0, never before the first
- * key, at every step from the first key on when it is after 0, and from the
- * second key on when the first is at 0.
+ * applied from `last` to `t`, as a player applies it (the header's *reset*,
+ * issue #960): exactly when a key lies in `(last, t]` — so a key is crossed
+ * once, by the step that reaches it, and `last` is −1 before the walk's
+ * first apply, where a key at 0 is crossed.
  */
-export function resetFires(keys: readonly CoreKey[], t: number): boolean {
-  if (keys[keys.length - 1].time <= 0) return false;
-  if (t < keys[0].time) return false;
-  if (keys[0].time > 0) return true;
-  return t >= keys[keyIndexAt(keys, 0) + 1].time;
+export function resetCrossed(keys: readonly CoreKey[], last: number, t: number): boolean {
+  return keys.some((k) => last < k.time && k.time <= t);
 }
 
 // ---------------------------------------------------------------------------
@@ -531,6 +539,13 @@ export interface PhysicsStepContext {
   states: Map<string, PhysicsState>;
   /** The step itself; a control passes a planted copy. */
   step?: PhysicsStepper;
+  /**
+   * The animation time the walk last applied the animation at, −1 before its
+   * first apply — a fresh track's `TrackEntry.animationLast`, read −1 on
+   * spine-core 4.3.13 (issue #960). A `reset` key fires on an apply from it
+   * to the step's time (`resetCrossed`).
+   */
+  last: number;
 }
 
 /** A constraint's state in `ctx`, created fresh on its first update. */
@@ -755,14 +770,15 @@ export function physicsRows(records: readonly CorePhysicsRecord[], round: (v: nu
  */
 export function stepPhysicsRecords(records: readonly CoreConstraintRecord[], keyed: readonly CorePhysicsTimeline[], t: number, active: ReadonlySet<string>, ctx: PhysicsStepContext, before: number): CoreConstraintRecord[] {
   const physics = records.filter((r): r is CorePhysicsRecord => r.kind === 'physics');
-  const posed = posedPhysics(physics, keyed, t, (r) => physicsActive(r, active));
+  const posed = posedPhysics(physics, keyed, t, ctx.last, (r) => physicsActive(r, active));
+  ctx.last = t;
   for (const name of posed.reset) resetPhysicsState(physicsState(ctx, name), before);
   return records.map((r) => (r.kind === 'physics' ? (posed.records.get(r.name) as CorePhysicsRecord) : r));
 }
 
 /** A fresh step context for one animation's walk (or the setup's reset), the plant's step in place of `stepPhysics` when a control passes one. */
 export function freshStepContext(step?: PhysicsStepper): PhysicsStepContext {
-  return { phase: 'reset', time: 0, states: new Map(), ...(step ? { step } : {}) };
+  return { phase: 'reset', time: 0, states: new Map(), last: -1, ...(step ? { step } : {}) };
 }
 
 /**

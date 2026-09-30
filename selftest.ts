@@ -66524,6 +66524,7 @@ import { compareUnposed, oracleMain, signedText, unposedOf } from './tools/pose_
 import { historyTaint, type SolverRules } from './src/core/constraints.ts';
 import { COLLAPSED_X_AXIS_SQ, type InheritComputation } from './src/core/world.ts';
 import { CORE_INHERIT_MODES as CORE_INHERIT_MODES_ALL } from './src/core/index.ts';
+import { MixFrom, Skin } from '@esotericsoftware/spine-core';
 import type { RegionPoser } from './src/core/vertices.ts';
 
 /** The constraint kinds no cut of construct 5 poses yet — what a skipped row names. */
@@ -70308,16 +70309,16 @@ function runCoreSuite(): number {
     ckModels.push(thrown.model);
     const t = stepCompare(thrown, stepOptions(1 / 60, 30, 'irr'));
     if (!t.identical) probes.push(`a mass key under a thrown parent: ${t.first}`);
-    // reset: from the key on, every step resets, so the bone shows no offset — its pose is the unstepped one; before it, it jiggles.
+    // reset (issue #960): the step that crosses the key resets, so at the key the bone shows no offset — its pose is the unstepped one; before it and after it, it jiggles.
     const bones = [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'b', parent: 'p', length: 40 }];
     const reset = stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', x: 1, rotate: 1 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 90, y: 40 }] } }, physics: { k: { reset: [{ time: 0.5 }] } } } });
     ckModels.push(reset.model);
     const stepped = stepSpine(reset, stepOptions(1 / 60));
     const none = stepSpine(reset, { phase: 'grid', samples: 9, skin: 'all', physics: 'none', dt: null });
     const bRow = (d: OracleDump, i: number): string => JSON.stringify(d.animations[0].samples[i].bones.find((r) => r[0] === 'b'));
-    const held = [4, 5, 6, 7, 8].every((i) => bRow(stepped, i) === bRow(none, i));
-    const moved = [1, 2, 3].every((i) => bRow(stepped, i) !== bRow(none, i));
-    if (!held || !moved) probes.push(`a reset key at 0.5: the stepped bone ${held ? '' : 'moved after it '}${moved ? '' : 'held still before it'}`);
+    const held = bRow(stepped, 4) === bRow(none, 4);
+    const moved = [1, 2, 3, 5, 6, 7, 8].every((i) => bRow(stepped, i) !== bRow(none, i));
+    if (!held || !moved) probes.push(`a reset key at 0.5: the stepped bone ${held ? '' : 'moved at the key '}${moved ? '' : 'held still before or after it'}`);
     const rc = stepCompare(reset, stepOptions(1 / 60));
     if (!rc.identical) probes.push(`the reset probe: ${rc.first}`);
     const globalReset = stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', x: 1, rotate: 1 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 90, y: 40 }] } }, physics: { '': { reset: [{ time: 0.3 }] } } } });
@@ -70347,8 +70348,8 @@ function runCoreSuite(): number {
     say(
       'CK06_EACH_PHYSICS_TIMELINE_THE_ONE_NAMING_NO_CONSTRAINT_AND_THE_RESET_POSE_AS_SPINE_CORE_DOES',
       ok,
-      probeDetail(ok, probes, `${lines.join(', ')} — each keyed on the constraint or, flagged global, on the timeline naming none, and each red with the timelines ignored in a copy; a mass key under a parent thrown 3e11 units exact; a reset key at 0.5 holding the bone at its unstepped pose from the key on and not before, exact, and one naming no constraint exact; a constraint muted to 0.3 exact, and red in a copy that lets it read its clock at mix 0 or starts it not pending`),
-      'issue #956: a timeline blends from the setup value (the difference from the value itself is a unit in the last place, which a thrown parent reads), a mass key states the inverse\'s inverse, and the oracle applies the animation from 0 at every step, so a reset key resets at every step from it on',
+      probeDetail(ok, probes, `${lines.join(', ')} — each keyed on the constraint or, flagged global, on the timeline naming none, and each red with the timelines ignored in a copy; a mass key under a parent thrown 3e11 units exact; a reset key at 0.5 putting the bone at its unstepped pose at the key and at no other sample, exact, and one naming no constraint exact; a constraint muted to 0.3 exact, and red in a copy that lets it read its clock at mix 0 or starts it not pending`),
+      'issue #956: a timeline blends from the setup value (the difference from the value itself is a unit in the last place, which a thrown parent reads), a mass key states the inverse\'s inverse, and a reset key resets on the one step that crosses it, as a player applies the animation (issue #960; until then the oracle applied it from 0 at every step and the key reset at every step from it on)',
     );
   }
 
@@ -71495,6 +71496,257 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `${N} wind-and-gravity probes exact with both spellings stating ${OTHER} (${samples} bone-samples), ${moved} of ${N} red with the document alone stating it against a file read as ${UNSTATED_REFERENCE_SCALE} and ${constant} of ${N} with the step reading ${UNSTATED_REFERENCE_SCALE} as a constant in a copy, and ${still} of ${N} without wind or gravity exact under the same plant; over the ${built.length} tree rows with every document stating ${OTHER}: ${tree}; declaring physics and reading neither, exact: [${quiet.join(', ')}]`),
       'issue #958: the core stepped wind and gravity over the parser\'s 100 as a constant; the document now states the skeleton\'s reference scale and the step reads it, so a document disagreeing with the file it came from turns red exactly where wind or gravity reads it — a row declaring physics that reads neither is untouched by it',
+    );
+  }
+
+  // ===========================================================================
+  // The stepped schedule (issue #960): a physics `reset` key is crossed once,
+  // by the step that reaches it, as a player applies the animation — both
+  // dumpers and the raw walk. The probe is one bone under a physics
+  // constraint whose history shows (inertia 0.9, strength 40, damping 0.95),
+  // its parent keyed before and after the key; the readings of spine-core it
+  // is held to are taken here through the runtime's public API, not through
+  // the oracle's code: `Animation.apply` from the previous step's time, and
+  // `AnimationState` with one track.
+  // ===========================================================================
+  const SC_BONES: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', x: 10, y: 5 }, { name: 'b', parent: 'p', x: 20, y: 0, rotation: 30, length: 40 }, { name: 'c', parent: 'b', x: 40, y: 0, length: 20 }];
+  const SC_CONSTRAINT: Obj = { type: 'physics', name: 'k', bone: 'b', x: 1, y: 1, rotate: 1, inertia: 0.9, strength: 40, damping: 0.95 };
+  const SC_KEY = 0.5;
+  const scPair = (resetKeys: readonly number[]): { spine: string; model: string } => stepPair(SC_BONES, [SC_CONSTRAINT], {
+    a: {
+      bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 0.3, x: 80, y: 30 }, { time: 0.7, x: -40, y: 60 }, { time: 1, x: 20, y: 0 }] } },
+      ...(resetKeys.length > 0 ? { physics: { k: { reset: resetKeys.map((time) => ({ time })) } } } : {}),
+    },
+  });
+  const SC_OPTIONS = stepOptions(1 / 60);
+  const SC_RAW: OracleOptions = { ...SC_OPTIONS, raw: true };
+  /** The samples after `key` on the probe's grid — where a key crossed again moves the bone. */
+  const scAfter = (key: number): number[] => Array.from({ length: SC_OPTIONS.samples }, (_x, i) => i).filter((i) => oracleSampleTime('grid', 1, i, SC_OPTIONS.samples) > key);
+  /** The core's old schedule, in a copy: after every step the walk's last applied time is put back to 0, so every key after 0 is crossed again at every later step. */
+  const FROM_ZERO: TimelinePlant = {
+    physicsStep: (r, w, length, ctx) => {
+      const moved = stepPhysics(r, w, length, ctx);
+      ctx.last = 0;
+      return moved;
+    },
+  };
+  /** A key crossed twice, in a copy: the walk's last applied time lags one step, so each key is crossed by the step that reaches it and by the next. */
+  const crossedTwice = (): TimelinePlant => {
+    const prior = new WeakMap<object, number>();
+    return {
+      physicsStep: (r, w, length, ctx) => {
+        const moved = stepPhysics(r, w, length, ctx);
+        const t = ctx.last;
+        ctx.last = prior.get(ctx) ?? -1;
+        prior.set(ctx, t);
+        return moved;
+      },
+    };
+  };
+  type ScReading = 'player' | 'from0' | 'track';
+  /** Every animation of a Spine file walked through spine-core on the oracle's stepped schedule (`stepSchedule`), every skin applied: per animation, the bones' world matrices at each sample, full doubles. `player` — `Animation.apply` from the previous step's time (−1 before the first); `from0` — from 0 at every step, the oracle's reading until issue #960; `track` — `AnimationState`, one non-looping track, `update(s − previous s)` then `apply`. */
+  const scSpineWalk = (spine: string, atlas: string, reading: ScReading, options: OracleOptions): number[][][][] => {
+    const data = loadOracleData(spine, atlas, 'the #960 walk');
+    const all = new Skin('__all');
+    for (const s of data.skins) all.addSkin(s);
+    return data.animations.map((anim) => {
+      const sk = new Skeleton(data);
+      sk.setSkin(all);
+      const read = (): number[][] => sk.bones.map((b) => [b.appliedPose.worldX, b.appliedPose.worldY, b.appliedPose.a, b.appliedPose.b, b.appliedPose.c, b.appliedPose.d]);
+      const out: number[][][] = [];
+      let now = 0;
+      const schedule = stepSchedule(options.phase, anim.duration, options.samples, options.dt as number);
+      if (reading === 'track') {
+        const state = new AnimationState(new AnimationStateData(data));
+        state.setAnimation(0, anim, false);
+        state.apply(sk);
+        sk.update(0);
+        sk.updateWorldTransform(Physics.reset);
+        for (const steps of schedule) {
+          for (const s of steps) {
+            state.update(s - now);
+            state.apply(sk);
+            sk.update(s - now);
+            sk.updateWorldTransform(Physics.update);
+            now = s;
+          }
+          out.push(read());
+        }
+        return out;
+      }
+      let applied = -1;
+      const poseAt = (s: number): void => {
+        sk.setupPose();
+        anim.apply(sk, reading === 'from0' ? 0 : applied, s, false, null, 1, MixFrom.setup, false, false, false);
+        applied = s;
+      };
+      poseAt(0);
+      sk.update(0);
+      sk.updateWorldTransform(Physics.reset);
+      for (const steps of schedule) {
+        for (const s of steps) {
+          poseAt(s);
+          sk.update(s - now);
+          sk.updateWorldTransform(Physics.update);
+          now = s;
+        }
+        out.push(read());
+      }
+      return out;
+    });
+  };
+  /** A dump's bone matrices per animation and sample, as `scSpineWalk` holds them (a `--raw` dump's doubles; `null` read as NaN). */
+  const scRows = (d: OracleDocument): number[][][][] => (d.animations ?? []).map((a) => a.samples.map((x) => (x.bones ?? []).map((r) => [r[1], r[2], r[3], r[4], r[5], r[6]].map((v) => (typeof v === 'number' ? v : Number.NaN)))));
+  /** The samples of animation `ai` where the two readings differ in any bit of any bone. */
+  const scOff = (a: number[][][][], b: number[][][][], ai = 0): number[] => a[ai].map((s, i) => (s.every((row, k) => row.every((v, m) => Object.is(v, b[ai][i]?.[k]?.[m]))) ? -1 : i)).filter((i) => i >= 0);
+  const scList = (xs: readonly number[]): string => `[${xs.join(', ')}]`;
+
+  // --- SC01: the probe under the player's schedule — the oracle is spine-core's player to the bit, both dumpers IDENTICAL, and the old schedule and a key crossed twice go red after the key --
+  {
+    const probes: string[] = [];
+    const pair = scPair([SC_KEY]);
+    ckModels.push(pair.model);
+    const oracle = scRows(dumpSkeleton(loadOracleData(pair.spine, '', 'the #960 probe'), SC_RAW));
+    const player = scSpineWalk(pair.spine, '', 'player', SC_OPTIONS);
+    const track = scSpineWalk(pair.spine, '', 'track', SC_OPTIONS);
+    const from0 = scSpineWalk(pair.spine, '', 'from0', SC_OPTIONS);
+    const after = scAfter(SC_KEY);
+    if (scOff(oracle, player).length > 0) probes.push(`the oracle's stepped dump against Animation.apply from the previous step: off at samples ${scList(scOff(oracle, player))}`);
+    if (scOff(player, track).length > 0) probes.push(`Animation.apply from the previous step against AnimationState: off at samples ${scList(scOff(player, track))}`);
+    if (JSON.stringify(scOff(oracle, from0)) !== JSON.stringify(after)) probes.push(`the old schedule (from 0 at every step) off at samples ${scList(scOff(oracle, from0))}, the samples after the key are ${scList(after)}`);
+    const grid = stepCompare(pair, SC_OPTIONS);
+    if (!grid.identical) probes.push(`the two dumpers on the grid: ${grid.first}`);
+    const raw = compareDumps(dumpSkeleton(loadOracleData(pair.spine, '', 'the #960 probe'), SC_RAW), coreDump(readModel(pair.model, 'the #960 probe'), SC_RAW), { xy: 0, m: 0 });
+    if (!raw.identical) probes.push(`the two dumpers under --raw: ${raw.first}`);
+    const model = readModel(pair.model, 'the #960 probe');
+    const planted: Array<[string, TimelinePlant]> = [['the old schedule (every key after 0 crossed at every step)', FROM_ZERO], ['a key crossed twice', crossedTwice()]];
+    const plantLines: string[] = [];
+    for (const [label, plant] of planted) {
+      const off = scOff(oracle, scRows(coreDump(model, SC_RAW, plant)));
+      if (off.length === 0) probes.push(`${label}, in a copy of the core's walk: still exact`);
+      else if (off.some((i) => !after.includes(i))) probes.push(`${label}, in a copy: off at samples ${scList(off)}, before the key`);
+      plantLines.push(`${label} off at samples ${scList(off)}`);
+    }
+    // Where the key falls: at 0, just after it, between two steps, at the last step, two keys with one at 0, two after 0 — each exact both ways.
+    const PLACES: number[][] = [[0], [0.0001], [0.51], [1], [0, 0.5], [0.2, 0.6]];
+    let placed = 0;
+    for (const keys of PLACES) {
+      const p = scPair(keys);
+      ckModels.push(p.model);
+      const o = scRows(dumpSkeleton(loadOracleData(p.spine, '', 'the #960 probe'), SC_RAW));
+      const c = compareDumps(dumpSkeleton(loadOracleData(p.spine, '', 'the #960 probe'), SC_RAW), coreDump(readModel(p.model, 'the #960 probe'), SC_RAW), { xy: 0, m: 0 });
+      const t = scSpineWalk(p.spine, '', 'track', SC_OPTIONS);
+      if (!c.identical) probes.push(`reset keys ${scList(keys)}: the two dumpers — ${c.first}`);
+      else if (scOff(o, t).length > 0) probes.push(`reset keys ${scList(keys)}: the oracle against AnimationState off at samples ${scList(scOff(o, t))}`);
+      else placed++;
+    }
+    const ok = probes.length === 0;
+    say(
+      'SC01_A_RESET_KEY_IS_CROSSED_ONCE_AS_A_PLAYER_CROSSES_IT_AND_THE_OLD_SCHEDULE_OR_A_KEY_CROSSED_TWICE_GOES_RED_AFTER_IT',
+      ok,
+      probeDetail(ok, probes, `a reset key at ${SC_KEY} under dt 1/60, ${SC_OPTIONS.samples} grid samples: the oracle's --raw dump equal to the bit to Animation.apply from the previous step and to AnimationState with one track at every sample, and off from the old schedule (from 0 at every step) at exactly the samples after the key ${scList(after)}; both dumpers IDENTICAL on the grid and under --raw; in a copy of the core's walk, ${plantLines.join(', ')}; the key at ${PLACES.map(scList).join(', ')}: ${placed} of ${PLACES.length} IDENTICAL both ways and equal to AnimationState to the bit`),
+      'issue #960: the stepped dump applied the animation from 0 at every step, so a reset key reset its constraints at every step from it on and the rig was held still where a player crosses the key once — both dumpers agreed on a schedule no player runs; the dump now applies it from the previous step\'s time, which AnimationState agrees with to the bit',
+    );
+  }
+
+  // --- SC02: without a reset key the schedule change moves nothing — the probe and every tree row stepped read the same bytes under either reading --
+  {
+    const probes: string[] = [];
+    const bare = scPair([]);
+    ckModels.push(bare.model);
+    const bareModel = readModel(bare.model, 'the #960 probe without its key');
+    if (scOff(scSpineWalk(bare.spine, '', 'player', SC_OPTIONS), scSpineWalk(bare.spine, '', 'from0', SC_OPTIONS)).length > 0) probes.push('the probe without its key: spine-core moves between the two readings');
+    if (JSON.stringify(coreDump(bareModel, SC_RAW)) !== JSON.stringify(coreDump(bareModel, SC_RAW, FROM_ZERO))) probes.push('the probe without its key: the core\'s dump moves under the old schedule');
+    const keyed = rows.filter((r) => (r.stepped?.census['timeline.reset'] ?? 0) > 0).map((r) => r.name);
+    const physicsRows: string[] = [];
+    let animations = 0;
+    for (const b of built) {
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      if (!existsSync(path)) continue;
+      const model = readModel(readFileSync(path, 'utf8'), path);
+      if (!model.constraints.some((c) => c.kind === 'physics') || keyed.includes(b.name)) continue;
+      physicsRows.push(b.name);
+      for (const options of [{ ...STEPPED_OPTIONS, raw: true }, STEPPED_OPTIONS]) {
+        if (JSON.stringify(coreDump(model, options)) !== JSON.stringify(coreDump(model, options, FROM_ZERO))) probes.push(`${b.name}${options.raw === true ? ' under --raw' : ''}: the core's stepped dump moves under the old schedule`);
+      }
+      const spine = readFileSync(join(b.out, 'skeleton.json'), 'utf8');
+      const atlas = readFileSync(join(b.out, 'skeleton.atlas'), 'utf8');
+      const oracle = scRows(dumpSkeleton(loadOracleData(spine, atlas, b.out), { ...STEPPED_OPTIONS, raw: true }));
+      const from0 = scSpineWalk(spine, atlas, 'from0', STEPPED_OPTIONS);
+      oracle.forEach((_a, ai) => {
+        animations++;
+        const off = scOff(oracle, from0, ai);
+        if (off.length > 0) probes.push(`${b.name} animation ${ai}: the oracle's stepped dump off the old schedule at samples ${scList(off)}`);
+      });
+    }
+    if (physicsRows.length === 0) probes.push(`no tree row declares a physics constraint without a reset key${examplesHole === null ? '' : ` (${examplesHole})`}`);
+    const ok = probes.length === 0;
+    say(
+      'SC02_WITHOUT_A_RESET_KEY_THE_SCHEDULE_CHANGE_MOVES_NOTHING_ON_THE_PROBE_OR_A_TREE_ROW',
+      ok,
+      probeDetail(ok, probes, `the probe without its key: spine-core and the core read the same bytes under both readings; ${keyed.length} of ${built.length} tree rows key a physics reset${keyed.length === 0 ? ' (the stepped census\'s timeline.reset HOLE: SC01\'s probe is the only reading of a crossed key)' : ` (${keyed.join(', ')})`}; the ${physicsRows.length} row(s) declaring physics without one (${physicsRows.join(', ')}): the core's stepped dump the same bytes under the old schedule, grid and --raw, and the oracle's --raw bones equal to the old schedule's to the bit over ${animations} animation(s)`),
+      'issue #960: the schedule change decides only when a reset key fires, so a row keying none must read the same bytes before and after it — the stepped gate\'s rows moved by it are exactly the rows keying a reset',
+    );
+  }
+
+  // --- SC03: the raw walk and the stepped grid agree on the probe — the same schedule at two precisions — and the raw walk crosses the key once as render's AnimationState recipe does --
+  {
+    const probes: string[] = [];
+    const pair = scPair([SC_KEY]);
+    const model = readModel(pair.model, 'the #960 probe');
+    const schedule = stepSchedule('grid', 1, SC_OPTIONS.samples, SC_OPTIONS.dt as number);
+    const deltas: number[] = [];
+    const at: number[] = [];
+    let now = 0;
+    for (const steps of schedule) {
+      for (const s of steps) {
+        deltas.push(s - now);
+        now = s;
+      }
+      at.push(deltas.length);
+    }
+    const walked = poseRawAnimation(model, 'a', deltas);
+    const grid = coreDump(model, SC_OPTIONS);
+    const rawDump = scRows(coreDump(model, SC_RAW));
+    let gridEqual = 0;
+    let bitEqual = 0;
+    at.forEach((k, i) => {
+      const pose = walked[k];
+      const want = grid.animations?.[0]?.samples[i]?.bones ?? [];
+      const got = pose.bones.map((b) => [b.worldX, b.worldY, b.a, b.b, b.c, b.d].map(gridRound));
+      if (got.every((row, j) => row.every((v, m) => Object.is(v, want[j]?.[m + 1])))) gridEqual++;
+      else probes.push(`sample ${i} (t ${oracleSampleTime('grid', 1, i, SC_OPTIONS.samples)}): the raw walk's pose on the grid is not the stepped dump's`);
+      if (pose.bones.every((b, j) => [b.worldX, b.worldY, b.a, b.b, b.c, b.d].every((v, m) => Object.is(v, rawDump[0][i][j][m])))) bitEqual++;
+    });
+    // Render's recipe at 60 fps through the key: AnimationState, frame 0 applied and reset, then one step of 1/60 per frame.
+    const FPS = 60;
+    const data = loadOracleData(pair.spine, '', 'the #960 probe');
+    const sk = new Skeleton(data);
+    const state = new AnimationState(new AnimationStateData(data));
+    state.setAnimation(0, data.animations[0], false);
+    const recipe: number[][][] = [];
+    for (let i = 0; i <= FPS; i++) {
+      const dt = i === 0 ? 0 : 1 / FPS;
+      if (i > 0) state.update(dt);
+      state.apply(sk);
+      sk.update(dt);
+      sk.updateWorldTransform(i === 0 ? Physics.reset : Physics.update);
+      recipe.push(sk.bones.map((b) => [b.appliedPose.worldX, b.appliedPose.worldY, b.appliedPose.a, b.appliedPose.b, b.appliedPose.c, b.appliedPose.d]));
+    }
+    const frames = (plant: TimelinePlant): number[][][] => poseRawAnimation(model, 'a', new Array<number>(FPS).fill(1 / FPS), plant).map((p) => p.bones.map((b) => [b.worldX, b.worldY, b.a, b.b, b.c, b.d]));
+    const offFrames = (got: number[][][]): number[] => scOff([recipe], [got]);
+    const own = offFrames(frames({}));
+    if (own.length > 0) probes.push(`the raw walk at ${FPS} fps against AnimationState: off at frames ${scList(own)}`);
+    const old = offFrames(frames(FROM_ZERO));
+    const keyFrame = recipe.findIndex((_f, i) => i / FPS > SC_KEY);
+    if (old.length === 0) probes.push('the old schedule, in a copy of the raw walk: still exact against AnimationState');
+    else if (Math.min(...old) < keyFrame) probes.push(`the old schedule, in a copy of the raw walk: off from frame ${Math.min(...old)}, before the key`);
+    const ok = probes.length === 0;
+    say(
+      'SC03_THE_RAW_WALK_AND_THE_STEPPED_GRID_AGREE_ON_THE_PROBE_AND_THE_RAW_WALK_CROSSES_THE_KEY_ONCE_AS_ANIMATIONSTATE_DOES',
+      ok,
+      probeDetail(ok, probes, `the raw walk given the stepped schedule's ${deltas.length} steps: at ${gridEqual} of ${at.length} samples its bones rounded to the grid are the stepped dump's (agreeing on the r6 grid is the claim: the raw walk's time is the running sum of the steps, the grid walk's each step's own time), and ${bitEqual} of ${at.length} also equal to the bit to the --raw dump; the raw walk at ${FPS} fps through the key at ${SC_KEY} equal to render's AnimationState recipe to the bit on ${FPS + 1 - own.length} of ${FPS + 1} frames, and the old schedule in a copy off from frame ${old.length === 0 ? 'none' : Math.min(...old)} (${old.length} frame(s))`),
+      'issue #960: src/core/raw.ts is the consumers\' walk, AnimationState at render\'s steps — its header said so, and yet a reset key fired at every step from it on there too, since it shares the stepped walk\'s reset reading; measured 32 of 61 frames bit-exact on this probe before the fix. None of the nineteen tree rows keys a reset, which is why the raw gate never saw it',
     );
   }
 

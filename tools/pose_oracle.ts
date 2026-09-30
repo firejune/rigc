@@ -226,10 +226,39 @@
  * sample in order: from the previous sample's time `p` (0 at the start), for
  * `k = 1, 2, …` while `p + k·dt < t`, one step to `p + k·dt`, and then one step
  * to `t` itself unless the walk is already there. A step to time `s` is
- * `setupPose()`, `Animation.apply(skeleton, 0, s, false, null, 1,
- * MixFrom.setup, false, false, false)`, `update(s − previous s)` and
- * `updateWorldTransform(Physics.update)`; the pose is read after the step to
- * `t` without posing again. spine-core integrates physics on its own fixed
+ * `setupPose()`, `Animation.apply(skeleton, last, s, false, null, 1,
+ * MixFrom.setup, false, false, false)` — `last` the time the walk last
+ * applied the animation at, −1 before the apply at 0 — `update(s − previous
+ * s)` and `updateWorldTransform(Physics.update)`; the pose is read after the
+ * step to `t` without posing again.
+ *
+ * ⏱️ **`last`, not 0: the animation is applied as a player applies it**
+ * (issue #960). Until then every step applied it from 0, so a physics
+ * `reset` key at `k` reset its constraints at EVERY step from `k` on — the
+ * rig held still — where a player crosses it once. Measured on a probe (a
+ * bone under a physics constraint, `x`, `y` and `rotate` at 1, inertia 0.9,
+ * strength 40, damping 0.95, its parent keyed at 0, 0.3, 0.7 and 1, a
+ * `reset` key at 0.5; nine grid samples at dt 1/60) under three schedules
+ * in full doubles: (a) apply from 0 at every step; (b1) `Animation.apply`
+ * from the previous step's time, −1 before the first; (b2) `AnimationState`
+ * with one non-looping track, `update(s − previous s)` then `apply` —
+ * `src/core/raw.ts`'s recipe, with and without `setupPose()` first. (b1) and
+ * (b2) agreed to the bit at every sample, and with reset keys at 0, 0.0001,
+ * 0.51, 1, {0, 0.5} and {0.2, 0.6}; (a) agreed with them up to and at the
+ * first key after 0 and was off by whole units from the step after it (the
+ * bone 30.0, 24.0, 24.6 and 48.1 units off at 0.625, 0.75, 0.875 and 1 on
+ * the probe). A key at 0 changes nothing under either reading (the walk
+ * resets at 0 anyway) and a key at the last step's time fires in both. So
+ * the dump walks (b1): the instrument measures what a player plays, and the
+ * core's walk (`resetCrossed` in `src/core/constraints_physics.ts`) crosses
+ * a key once — a key in `(last, s]` — with it. Keeping (a) was rejected: it
+ * is a schedule no player runs, which both dumpers agreeing on proves
+ * nothing about. None of the nineteen tree rows keys a `reset` (the
+ * stepped census's `timeline.reset`, `tools/core_gate.ts`), and every
+ * stepped dump of them, both dumpers, grid and `--raw`, was byte-identical
+ * before and after the change.
+ *
+ * spine-core integrates physics on its own fixed
  * `step` inside that call, carrying the remainder, so `dt` decides how often
  * the animated bones are re-posed under the simulation, not the integrator.
  * Measured on issue #956 (`src/core/constraints_physics.ts`): the same rig
@@ -892,9 +921,12 @@ export function dumpSkeleton(data: SkeletonData, options: OracleOptions): Oracle
     setup = readPose(rest, r);
     for (const anim of data.animations) {
       const skeleton = fresh();
+      // #960: applied from the time it was last applied at (−1 before the first, a fresh track's `animationLast`), as a player applies it, so a physics `reset` key is crossed once.
+      let applied = -1;
       const poseAt = (s: number): void => {
         skeleton.setupPose();
-        anim.apply(skeleton, 0, s, false, null, 1, MixFrom.setup, false, false, false);
+        anim.apply(skeleton, applied, s, false, null, 1, MixFrom.setup, false, false, false);
+        applied = s;
       };
       poseAt(0);
       skeleton.update(0);
