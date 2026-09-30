@@ -288,7 +288,7 @@ import {
   parseRigSpec,
   resolveBoneInherit,
 } from './src/rig.ts';
-import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, type FieldAgreement, type FoldLimit } from './src/depth.ts';
+import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, foldPrecedes, turnCeiling, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
   bindWeightedVertices,
   buildGridMesh,
@@ -32741,6 +32741,241 @@ function runContourMeshSuite(): number {
           'any density — and the two figures already in the report both read it as healthy, a band reaching the ' +
           'limit together with plenty of levels across it. The form is the half that must NOT fire: a diagnostic ' +
           'that pinned on both would separate nothing, and one that fell on both would miss the cliff',
+      );
+    }
+
+    // --- which triangle, when two fold at one reported angle (issue #949) ---
+    //
+    // `turnCeiling` used to take the minimum on full doubles, so two triangles
+    // folding within a few ulps of each other were ordered by the platform's
+    // libm: on `gallery/look` a one-ulp `Math.pow` perturbation (through the
+    // depth tone, into every z) named triangle 50 for 49 and 215 for 174, and
+    // 5 or 10 leaves of the model document moved while no printed angle did.
+    // The choice is now made on the six-decimal grid the angle is reported on,
+    // lowest ordinal first (`foldPrecedes`), which is the order `A39` names
+    // reversed triangles in.
+    //
+    // Run red first, with `foldPrecedes` comparing the full doubles (ordinal
+    // clause kept) — the rule before #949 — and all three went red while
+    // TC01–TC07 stayed green: TB01 (turnCeiling named triangle 1 with the
+    // larger double first and 0 with it second), TB02 (pow +1 moved 5 leaves
+    // of gallery/look, pow −1 moved 10, all sixteen functions 5 each way;
+    // atan alone nothing), and TB03 (the ceiling named triangle 4 of a
+    // 154-triangle tie while A39 named triangle 0 first).
+    {
+      /** The double one ulp above `x`, for a positive finite `x`. */
+      const ulpUp = (x: number): number => {
+        const f = new Float64Array([x]);
+        const b = new BigInt64Array(f.buffer);
+        b[0] += 1n;
+        return f[0];
+      };
+      /** `turnCeiling`'s own yaw angle for a triangle with unit area and a depth step `dz` along x. */
+      const yawOf = (dz: number): number => (Math.atan(Math.abs(1 / dz)) * 180) / Math.PI;
+      const onGrid = (d: number): number => Math.round(d * 1e6) / 1e6;
+      // A depth step whose next double up changes the angle's double and not
+      // its six-decimal value, found by walking from a stated start rather
+      // than typed in: the plant is "one ulp apart", and a walk is how the
+      // fixture knows it has one.
+      let dz = 0.75;
+      for (let i = 0; i < 64 && yawOf(dz) === yawOf(ulpUp(dz)); i++) dz = ulpUp(dz);
+      const dzUp = ulpUp(dz);
+      const lo = Math.min(yawOf(dz), yawOf(dzUp));
+      const hi = Math.max(yawOf(dz), yawOf(dzUp));
+      // How far the pair sits from a six-decimal rounding boundary, in degrees:
+      // a pair straddling one would be two reported values, not a tie.
+      const boundary = Math.abs(((lo * 1e6) % 1) - 0.5) / 1e6;
+      const planted = lo !== hi && onGrid(lo) === onGrid(hi) && boundary > 1e-9;
+      // Two unit triangles side by side, the first given one depth step and
+      // the second the other; `order` swaps which carries the larger double.
+      const pairMesh = (first: number, second: number) =>
+        turnCeiling(
+          [[0, 0], [1, 0], [0, 1], [10, 0], [11, 0], [10, 1]],
+          [0, first, 0, 0, second, 0],
+          [0, 1, 2, 3, 4, 5],
+        ).yaw.positive;
+      const a = pairMesh(dz, dzUp);
+      const b = pairMesh(dzUp, dz);
+      const endToEnd = a !== null && b !== null && a.triangle === 0 && b.triangle === 0 && a.degrees === b.degrees;
+      /** The minimum of a candidate list under a rule, as `turnCeiling` walks it: in ordinal order. */
+      type Fold = { degrees: number; triangle: number };
+      const pick = (list: Fold[], precedes: (x: Fold, y: Fold) => boolean): number =>
+        list.reduce((held, c) => (precedes(c, held) ? c : held)).triangle;
+      const eitherOrder = (precedes: (x: Fold, y: Fold) => boolean): [number, number] => [
+        pick([{ degrees: hi, triangle: 0 }, { degrees: lo, triangle: 1 }], precedes),
+        pick([{ degrees: lo, triangle: 0 }, { degrees: hi, triangle: 1 }], precedes),
+      ];
+      const real = eitherOrder(foldPrecedes);
+      // The plant: the rule before #949, the doubles compared as they are.
+      const doubles = eitherOrder((x, y) => x.degrees < y.degrees || (x.degrees === y.degrees && x.triangle < y.triangle));
+      const plantRed = doubles[0] !== doubles[1];
+      say(
+        'TB01_TWO_TRIANGLES_ONE_ULP_APART_ON_ONE_REPORTED_ANGLE_NAME_THE_SAME_TRIANGLE_IN_EITHER_ORDER',
+        planted && endToEnd && real[0] === 0 && real[1] === 0 && plantRed,
+        `a pair of fold angles ${lo} and ${hi} (one ulp of the depth step apart, dz ${dz} and ${dzUp}; both ` +
+          `${onGrid(lo)} on the grid, ${boundary.toExponential(2)}° from a rounding boundary` +
+          `${planted ? '' : ' — NOT A PLANTED TIE'}): turnCeiling names triangle ${a?.triangle ?? 'none'} with the ` +
+          `larger double first and ${b?.triangle ?? 'none'} with it second, at ${a?.degrees}° and ${b?.degrees}°` +
+          `${endToEnd ? '' : ' — THE CHOICE MOVED'}; foldPrecedes picks [${real.join(', ')}] over the two orders, and ` +
+          `the planted full-double rule picks [${doubles.join(', ')}]${plantRed ? ' (red, as it must be)' : ' — THE PLANT DID NOT FIRE'}`,
+        'a minimum taken on full doubles is taken by the platform libm whenever two triangles fold within an ulp, ' +
+          'and the fold names its triangle with that triangle\'s own ids and depth step — so the document moves by ' +
+          'whole fields while the angle it prints does not',
+      );
+
+      // TB02 — the perturbation #948 measured through a `--preload`, re-run
+      // here in process over every gallery row: every libm-backed `Math`
+      // function nudged one ulp either way, the row compiled, and its model
+      // document compared leaf by leaf with the unperturbed one.
+      const galleryRoot = resolve(import.meta.dir, 'gallery');
+      const rows = existsSync(galleryRoot)
+        ? readdirSync(galleryRoot)
+            .sort()
+            .filter((n) => existsSync(join(galleryRoot, n, 'rig.json')) && existsSync(join(galleryRoot, n, 'motion.json')))
+        : [];
+      const LIBM = ['atan', 'pow', 'atan2', 'cos', 'sin', 'hypot', 'log', 'log2', 'exp', 'tan', 'asin', 'acos', 'log10', 'cbrt', 'expm1', 'log1p'] as const;
+      const mathTable = Math as unknown as Record<string, (...args: number[]) => number>;
+      /** Compile every row with `names` wrapped by `nudge`; the documents and how many results moved. */
+      const documentsUnder = (names: readonly string[], nudge: (r: number) => number): { docs: Map<string, string>; moved: number } => {
+        const saved = names.map((n) => [n, mathTable[n]] as const);
+        let moved = 0;
+        for (const [n, f] of saved) {
+          mathTable[n] = (...args: number[]): number => {
+            const r = f(...args);
+            const s = nudge(r);
+            if (s !== r) moved++;
+            return s;
+          };
+        }
+        const docs = new Map<string, string>();
+        const work = mkdtempSync(join(tmpdir(), 'rigc-tie-'));
+        try {
+          for (const row of rows) {
+            const built = compile({ rigPath: join(galleryRoot, row, 'rig.json'), motionPath: join(galleryRoot, row, 'motion.json'), outDir: join(work, row) });
+            docs.set(row, modelDocument(built.model, built.skeletonText));
+          }
+        } finally {
+          for (const [n, f] of saved) mathTable[n] = f;
+        }
+        return { docs, moved };
+      };
+      /** One ulp away from zero (`dir` 1) or towards it (−1); 0, integers and non-finite results are exact and kept. */
+      const oneUlp = (dir: 1 | -1) => (r: number): number => {
+        if (!Number.isFinite(r) || r === 0 || Number.isInteger(r)) return r;
+        const f = new Float64Array([r]);
+        const b = new BigInt64Array(f.buffer);
+        b[0] += BigInt(dir);
+        return f[0];
+      };
+      const leaves = (x: unknown, y: unknown): number => {
+        if (x !== null && y !== null && typeof x === 'object' && typeof y === 'object') {
+          const X = x as Record<string, unknown>;
+          const Y = y as Record<string, unknown>;
+          return [...new Set([...Object.keys(X), ...Object.keys(Y)])].reduce((n, k) => n + leaves(X[k], Y[k]), 0);
+        }
+        return JSON.stringify(x) === JSON.stringify(y) ? 0 : 1;
+      };
+      const movedLeaves = (base: Map<string, string>, run: Map<string, string>): string[] =>
+        rows.flatMap((row) => {
+          const x = base.get(row);
+          const y = run.get(row);
+          if (x === undefined || y === undefined) return [`${row}: not built`];
+          if (x === y) return [];
+          return [`${row}: ${leaves(JSON.parse(x), JSON.parse(y))} leaf/leaves`];
+        });
+      if (rows.length === 0) {
+        console.log(`  SKIP  TB02 did not run: no gallery rig under ${galleryRoot}.`);
+        console.log('          ⚠️ This is a HOLE in this run, not a pass — the perturbation was not re-run on any row.');
+      } else {
+        const base = documentsUnder([], (r) => r);
+        const runs: Array<[string, readonly string[], 1 | -1]> = [
+          ['atan +1', ['atan'], 1],
+          ['atan -1', ['atan'], -1],
+          ['pow +1', ['pow'], 1],
+          ['pow -1', ['pow'], -1],
+          [`all ${LIBM.length} +1`, LIBM, 1],
+          [`all ${LIBM.length} -1`, LIBM, -1],
+        ];
+        const readings: string[] = [];
+        let still = 0;
+        let reached = 0;
+        for (const [label, names, dir] of runs) {
+          const run = documentsUnder(names, oneUlp(dir));
+          const moved = movedLeaves(base.docs, run.docs);
+          if (moved.length === 0) still++;
+          if (run.moved > 0) reached++;
+          readings.push(`${label}: ${run.moved} result(s) nudged, ${moved.length === 0 ? 'no leaf moved' : moved.join(', ')}`);
+        }
+        // The positive control: the same wrapping, made large enough that the
+        // grid cannot absorb it, has to move a document — or "no leaf moved"
+        // above would also be what a wrapping that never reached the compiler
+        // prints. `pow` is the depth tone's, into every z of a depth mesh.
+        const loud = documentsUnder(['pow'], (r) => (Number.isFinite(r) && r !== 0 && !Number.isInteger(r) ? r * (1 + 1e-3) : r));
+        const loudMoved = movedLeaves(base.docs, loud.docs);
+        say(
+          'TB02_A_ONE_ULP_LIBM_PERTURBATION_MOVES_NO_LEAF_OF_ANY_GALLERY_DOCUMENT',
+          still === runs.length && reached === runs.length && loudMoved.length > 0,
+          `${rows.length} gallery row(s), ${still}/${runs.length} perturbation(s) moving no leaf of any model document ` +
+            `(${readings.join('; ')}); the positive control, pow scaled by 1+1e-3 on ${loud.moved} result(s), moves ` +
+            `${loudMoved.length === 0 ? 'NOTHING — the wrapping did not reach the compiler' : loudMoved.join(', ')}`,
+          'the document is the record a second machine is compared against, and a choice among tied triangles is ' +
+            'the one thing in it a grid does not absorb; measured before the fix, pow alone moved 5 leaves of ' +
+            'gallery/look one way and 10 the other',
+        );
+      }
+
+      // TB03 — the report and the gate on one exact tie. A staircase rising
+      // one level per mesh cell folds every triangle at one yaw (TC06), so the
+      // whole mesh is tied at the ceiling; turned just past it, every triangle
+      // reverses and A39 names them in ascending ordinal order. The first one
+      // it names has to be the one the report names.
+      const CELL = 8;
+      const TIE_ZSCALE = 1020;
+      const tieRig = (motion?: Record<string, unknown>) =>
+        buildContourRig(
+          {
+            type: 'mesh',
+            image: 'blob.png',
+            generator: {
+              kind: 'grid',
+              us: centres(12, 0.5, CELL, CONTOUR_W),
+              vs: centres(8, 0.5, CELL, CONTOUR_H),
+              depth: { image: 'blob_depth.png', near: 'white', zScale: TIE_ZSCALE },
+            },
+          },
+          { depthLevels: (x) => Math.floor(x / CELL), invariants: { meshSlots: 1, meshTriangles: 4000 }, motion },
+        );
+      const tied = tieRig().result.meshes[0].depth?.ceiling.yaw.positive ?? null;
+      let firstNamed: number | null = null;
+      let reversedCount = 'none';
+      if (tied !== null) {
+        const past = tieRig(turnMotion('yaw', tied.degrees + NUDGE));
+        const gated = validate({
+          skeletonText: past.result.skeletonText,
+          atlasText: past.result.atlasText,
+          atlasDir: past.opts.outDir,
+          declaredDurations: past.result.declaredDurations,
+          rig: past.result.rig,
+          profile: 'spine-html',
+        });
+        const hit = gated.failures.find((f) => f.assertion === A39);
+        const m = hit ? /(\d+) of (\d+) triangle\(s\) reverse winding — triangle (\d+) \[/.exec(hit.detail) : null;
+        if (m) {
+          firstNamed = Number(m[3]);
+          reversedCount = `${m[1]} of ${m[2]}`;
+        }
+      }
+      const agree = tied !== null && firstNamed === tied.triangle && tied.p1 === tied.degrees;
+      say(
+        'TB03_A39_NAMES_FIRST_THE_TRIANGLE_THE_CEILING_NAMES_ON_A_TIED_MESH',
+        agree,
+        `a one-level-per-cell staircase at zScale ${TIE_ZSCALE}: the ceiling is yaw +${tied?.degrees}° on triangle ` +
+          `${tied?.triangle ?? 'none'} of a population of ${tied?.count ?? 0} with p1 ${tied?.p1 ?? 'unranked'}` +
+          `${tied !== null && tied.p1 === tied.degrees ? ' (tied)' : ' — NOT A TIE'}; turned +${NUDGE}° past it, A39 ` +
+          `reverses ${reversedCount} and names triangle ${firstNamed ?? 'none'} first` +
+          `${agree ? '' : ' — THE REPORT AND THE GATE NAME DIFFERENT TRIANGLES'}`,
+        'the report exists to say, before a key is written, what the gate will refuse and where; on a tie the two ' +
+          'have to break it the same way, or the triangle an author is sent to fix is not the one the refusal names',
       );
     }
   }

@@ -2193,6 +2193,13 @@ by 245 levels and the same sheet reports **6.08°** — and `A39` refuses at bot
 to 0°. The number is not lying. 99 % of that mesh still turns to 64.80° and one
 triangle does not, and nothing on the first line says so.
 
+When several triangles fold at the same angle to the six decimals the report
+carries, the triangle named is the **lowest-numbered** of them — the one `A39`
+names first when a key turns just past the ceiling, since it lists the
+triangles a key reverses in ascending order. The choice is made on the reported
+angle rather than on the full double, so a platform's last-bit difference in
+`atan` or `pow` does not change which triangle, step and share are printed.
+
 | the figure | how to read it |
 | --- | --- |
 | `x1.003` — the **1st percentile over the ceiling** | near 1 means a *band* of the mesh reaches the limit together, and near 10 means **one triangle** does, which is what a bad texel looks like. The clean and stray sheets above read `x1.003` and `x10.652`. ⚠️ A band is **not** sufficient evidence of a form, which is the third case: **an outline is a band**. A depth sheet estimated over cut-out art has a cliff along the whole silhouette, so its ceiling is a band too and this figure reads 1.02–2.17 — healthy — on a mesh whose angle means nothing. The row below is what tells those two apart |
