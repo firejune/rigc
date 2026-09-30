@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/firejune/rigc/compare/v1.6.0...v1.6.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **release:** the publish gate runs the selftest over the example corpus, as CI does — the core suite's corpus controls are red without it ([#1005](https://github.com/firejune/rigc/issues/1005)) ([5423dff](https://github.com/firejune/rigc/commit/5423dff810a52a0ae6dabf6db05ea229871e029d)), closes [#1003](https://github.com/firejune/rigc/issues/1003)
+
 ## [1.6.0](https://github.com/firejune/rigc/compare/v1.5.3...v1.6.0) (2026-09-30)
 
 
