@@ -73601,6 +73601,671 @@ function runCoreSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// the deform survey through rigc's own core (issue #969, step 3e of #380) — band DM
+// ---------------------------------------------------------------------------
+
+// Its own statements, so the suite lands as one hunk.
+import { deformPosers, surveyOfBuild, type DeformSurvey } from './src/deformmeasure.ts';
+import { deformReportBlock } from './src/deformreport.ts';
+import { DIAL_BONE_FIELDS, float32Rows, meshWorld, poseJump } from './src/core/hooks.ts';
+import { underSkin as dmUnderSkin } from './src/core/index.ts';
+import { canonicalJson, compareSurveyHashes, deformBlockOf, HOOKS, hookCensus, hookLines, surveyComparisonLines, SURVEY_HASHES_SPEC, type Hook, type HookCensus, type SurveyHashesDocument } from './tools/survey_hashes.ts';
+
+type DmObj = Record<string, unknown>;
+interface DmBinding { bone: string; x: number; y: number; w: number }
+type DmAtt =
+  | { kind: 'mesh'; xy?: number[]; weighted?: DmBinding[][]; color?: string }
+  | { kind: 'linkedmesh'; source: string; timelines: boolean; color?: string }
+  | { kind: 'region' };
+interface DmAnim { bones?: Record<string, Record<string, DmObj[]>>; slots?: Record<string, Record<string, DmObj[]>>; deform?: Array<{ skin?: string; slot: string; attachment: string; keys: DmObj[] }> }
+interface DmSpec { bones: DmObj[]; slots: Array<{ name: string; bone: string; attachment?: string; color?: string }>; skins: Record<string, Record<string, Record<string, DmAtt>>>; constraints?: DmObj[]; anims: Record<string, DmAnim> }
+interface DmTexts { skeletonText: string; atlasText: string; modelText: string }
+
+/**
+ * One hand-written skeleton spelled twice — the Spine file and its atlas, and
+ * the model document — the way the core suite's probe builders spell theirs
+ * (a mesh's triangles a fan, its uvs 0.5; a linked mesh in its source's slot
+ * and skin; a constraint's `type` the model's `kind`).
+ */
+function dmPair(spec: DmSpec): DmTexts {
+  const index = new Map(spec.bones.map((b, i) => [b.name as string, i]));
+  const regions = new Set<string>();
+  const count = (a: { xy?: number[]; weighted?: DmBinding[][] }): number => (a.xy !== undefined ? a.xy.length / 2 : (a.weighted ?? []).length);
+  const fan = (n: number): number[] => Array.from({ length: n - 2 }, (_v, i) => [0, i + 1, i + 2]).flat();
+  const colour = (c: string | undefined): DmObj => (c === undefined ? {} : { color: c });
+  const spineAtt = (name: string, a: DmAtt): DmObj => {
+    regions.add(name);
+    if (a.kind === 'region') return { width: 8, height: 8 };
+    if (a.kind === 'linkedmesh') return { type: 'linkedmesh', source: a.source, timelines: a.timelines, width: 4, height: 4, ...colour(a.color) };
+    const n = count(a);
+    const vertices = a.xy ?? (a.weighted ?? []).flatMap((v) => [v.length, ...v.flatMap((b) => [index.get(b.bone) as number, b.x, b.y, b.w])]);
+    return { type: 'mesh', uvs: new Array<number>(2 * n).fill(0.5), triangles: fan(n), vertices, hull: n, width: 4, height: 4, ...colour(a.color) };
+  };
+  const modelAtt = (a: DmAtt, skin: string, slot: string): DmObj => {
+    if (a.kind === 'region') return { kind: 'region', width: 8, height: 8, atlas: { width: 4, height: 4, offsetX: 0, offsetY: 0, originalWidth: 4, originalHeight: 4 } };
+    if (a.kind === 'linkedmesh') return { kind: 'linkedmesh', source: a.source, skin, slot, timelines: a.timelines, width: 4, height: 4, ...colour(a.color) };
+    const n = count(a);
+    const vertices = a.xy !== undefined ? { weighted: false, xy: a.xy } : { weighted: true, bindings: (a.weighted ?? []).map((v) => v.map((b) => ({ bone: b.bone, x: b.x, y: b.y, weight: b.w }))) };
+    return { kind: 'mesh', uvs: new Array<number>(2 * n).fill(0.5), triangles: fan(n), vertices, hull: n, edges: [], width: 4, height: 4, ...colour(a.color) };
+  };
+  const skinNames = Object.keys(spec.skins);
+  const table = (skin: string, model: boolean): DmObj =>
+    Object.fromEntries(Object.entries(spec.skins[skin]).map(([slot, e]) => [slot, Object.fromEntries(Object.entries(e).map(([k, a]) => [k, model ? modelAtt(a, skin, slot) : spineAtt(k, a)]))]));
+  const named = (group: Record<string, Record<string, DmObj[]>> | undefined): DmObj[] => Object.entries(group ?? {}).map(([name, tls]) => ({ name, timelines: Object.entries(tls).map(([k, keys]) => ({ name: k, keys })) }));
+  const grouped = (a: DmAnim): Map<string, Map<string, Map<string, DmObj[]>>> => {
+    const out = new Map<string, Map<string, Map<string, DmObj[]>>>();
+    for (const d of a.deform ?? []) {
+      const skin = d.skin ?? 'default';
+      if (!out.has(skin)) out.set(skin, new Map());
+      const slots = out.get(skin) as Map<string, Map<string, DmObj[]>>;
+      if (!slots.has(d.slot)) slots.set(d.slot, new Map());
+      (slots.get(d.slot) as Map<string, DmObj[]>).set(d.attachment, d.keys);
+    }
+    return out;
+  };
+  const spine = {
+    skeleton: { spine: '4.3.13' },
+    bones: spec.bones,
+    slots: spec.slots.map((s) => ({ name: s.name, bone: s.bone, ...(s.attachment === undefined ? {} : { attachment: s.attachment }), ...colour(s.color) })),
+    ...(spec.constraints === undefined ? {} : { constraints: spec.constraints }),
+    skins: skinNames.map((k) => ({ name: k, attachments: table(k, false) })),
+    animations: Object.fromEntries(Object.entries(spec.anims).map(([n, a]) => {
+      const g = grouped(a);
+      return [n, {
+        ...(a.bones === undefined ? {} : { bones: a.bones }),
+        ...(a.slots === undefined ? {} : { slots: a.slots }),
+        ...(g.size === 0 ? {} : { attachments: Object.fromEntries([...g].map(([skin, slots]) => [skin, Object.fromEntries([...slots].map(([slot, m]) => [slot, Object.fromEntries([...m].map(([att, keys]) => [att, { deform: keys }]))]))])) }),
+      }];
+    })),
+  };
+  const model = {
+    spec: 'rigc-compiled/1',
+    // #958: every model document states its reference scale; these probes' Spine headers state none, so the compiler's unstated value.
+    referenceScale: UNSTATED_REFERENCE_SCALE,
+    bones: spec.bones.map(({ inherit, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }) })),
+    slots: spec.slots.map(({ attachment, ...s }) => ({ ...s, setup: attachment ?? null })),
+    skins: skinNames.map((k) => ({ name: k, bones: [], constraints: {}, attachments: table(k, true) })),
+    constraints: (spec.constraints ?? []).map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
+    events: [],
+    animations: Object.entries(spec.anims).map(([name, a]) => ({
+      name, duration: 0, bones: named(a.bones), slots: named(a.slots),
+      constraints: { ik: [], transform: [], path: [], physics: [], slider: [] },
+      attachments: [...grouped(a)].map(([skin, slots]) => ({ name: skin, slots: [...slots].map(([slot, m]) => ({ name: slot, attachments: [...m].map(([att, keys]) => ({ name: att, deform: keys })) })) })),
+      drawOrder: [], events: [],
+    })),
+    images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+  };
+  const atlasText = `page.png\n\tsize: 64, 64\n${[...regions].map((n) => `${n}\n\tbounds: 0, 0, 4, 4\n`).join('')}`;
+  return { skeletonText: JSON.stringify(spine), atlasText, modelText: JSON.stringify(model) };
+}
+
+/**
+ * A random skeleton for the hooks: bones under a parent turned, scaled and
+ * reflected (some in the four non-normal inherit modes); an unweighted mesh, a
+ * linked mesh of it and a smaller mesh on one slot, a weighted mesh and a
+ * linked mesh with `timelines` false on another, a region, and a placeholder a
+ * second skin fills with a weighted mesh of another vertex count; colours on
+ * slots and meshes; an animation keying bones, the slots' attachments and
+ * alpha (0 among them) and linear and stepped deforms on every mesh — never a
+ * Bézier deform segment, which is the raw core's named HOLE (issue #975) — and,
+ * `withSliders`, one to three sliders applying animations of their own:
+ * dials local and world on every property, from/to/scale, loop, additive, mix
+ * 0, 1 and between, and bone-less times.
+ */
+function dmRandomSpec(rnd: () => number, withSliders: boolean): DmSpec {
+  const R = (lo: number, hi: number): number => Math.round((lo + rnd() * (hi - lo)) * 1e4) / 1e4;
+  const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)];
+  const hex = (): string => Array.from({ length: 4 }, () => Math.floor(rnd() * 256).toString(16).padStart(2, '0')).join('');
+  const bones: DmObj[] = [{ name: 'root' }, { name: 'g', parent: 'root', rotation: R(-180, 180), scaleX: R(0.5, 2) * pick([1, -1]), scaleY: R(0.5, 2), shearY: R(-20, 20) }];
+  for (let k = 1; k <= 4; k++) {
+    const b: DmObj = { name: `b${k}`, parent: pick(['g', ...bones.slice(2).map((x) => x.name as string)]), x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180), scaleX: R(0.6, 1.6) * pick([1, 1, -1]), shearX: R(-10, 10) };
+    if (rnd() < 0.25) b.inherit = pick(['onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection']);
+    bones.push(b);
+  }
+  bones.push({ name: 'dial', parent: 'g', x: R(-20, 20), y: R(-20, 20), rotation: R(-100, 100), scaleX: R(0.3, 2), scaleY: R(0.3, 2), shearY: R(-20, 20) }, { name: 'dial2', parent: 'b1', rotation: R(-50, 50), x: R(-5, 5) });
+  const BONES = ['root', 'b1', 'b2', 'b3', 'b4'];
+  const xy = (n: number): number[] => Array.from({ length: 2 * n }, () => R(-60, 60));
+  const weighted = (n: number): DmBinding[][] =>
+    Array.from({ length: n }, () => {
+      const k = 1 + Math.floor(rnd() * 3);
+      const ws = Array.from({ length: k }, () => R(0.1, 1));
+      const sum = ws.reduce((a, b) => a + b, 0);
+      return ws.map((w, i) => ({ bone: pick(BONES), x: R(-40, 40), y: R(-40, 40), w: i === k - 1 ? Math.round((1 - ws.slice(0, -1).reduce((a, b) => a + Math.round((b / sum) * 1e4) / 1e4, 0)) * 1e4) / 1e4 : Math.round((w / sum) * 1e4) / 1e4 }));
+    });
+  const maybe = (c: string): { color?: string } => (rnd() < 0.5 ? { color: c } : {});
+  const m1 = weighted(3 + Math.floor(rnd() * 3));
+  const dress = weighted(4);
+  const skins: DmSpec['skins'] = {
+    default: {
+      s0: { m0: { kind: 'mesh', xy: xy(4), ...maybe(hex()) }, l0: { kind: 'linkedmesh', source: 'm0', timelines: rnd() < 0.7, ...maybe(hex()) }, n0: { kind: 'mesh', xy: xy(3) } },
+      s1: { m1: { kind: 'mesh', weighted: m1, ...maybe(hex()) }, l1: { kind: 'linkedmesh', source: 'm1', timelines: false } },
+      s2: { r: { kind: 'region' } },
+      s3: { d0: { kind: 'mesh', xy: xy(5) } },
+    },
+    dress: { s3: { d0: { kind: 'mesh', weighted: dress, ...maybe(hex()) } } },
+  };
+  const slots: DmSpec['slots'] = [
+    { name: 's0', bone: 'b1', attachment: pick(['m0', 'l0']), ...maybe(hex()) },
+    { name: 's1', bone: 'b2', attachment: pick(['m1', 'l1']), ...maybe(hex()) },
+    { name: 's2', bone: 'b3', attachment: 'r' },
+    { name: 's3', bone: 'b4', attachment: 'd0', ...maybe(hex()) },
+  ];
+  const times = (n: number, from = 0): number[] => {
+    const out: number[] = [];
+    let t = from;
+    for (let i = 0; i < n; i++) {
+      out.push(Math.round(t * 1e4) / 1e4);
+      t += R(0.1, 0.6);
+    }
+    return out;
+  };
+  const deformKeys = (length: number): DmObj[] =>
+    times(2 + Math.floor(rnd() * 3), rnd() < 0.3 ? R(0.05, 0.3) : 0).map((time, i, all) => {
+      const k: DmObj = { time };
+      if (rnd() < 0.85) {
+        const offset = rnd() < 0.3 ? 2 * Math.floor(rnd() * (length / 2)) : 0;
+        k.vertices = Array.from({ length: Math.max(1, length - offset - (rnd() < 0.3 ? 2 : 0)) }, () => R(-25, 25));
+        if (offset > 0) k.offset = offset;
+      }
+      if (i < all.length - 1 && rnd() < 0.2) k.curve = 'stepped';
+      return k;
+    });
+  const bindings = (w: DmBinding[][]): number => 2 * w.reduce((n, v) => n + v.length, 0);
+  const boneKeys = (): Record<string, Record<string, DmObj[]>> => {
+    const out: Record<string, Record<string, DmObj[]>> = {};
+    for (let j = 0; j < 2; j++) {
+      const b = pick(['b1', 'b2', 'b3', 'b4', 'dial']);
+      out[b] = { ...(out[b] ?? {}), rotate: times(2 + Math.floor(rnd() * 2)).map((time) => ({ time, value: R(-90, 90) })), translate: times(2).map((time) => ({ time, x: R(-20, 20), y: R(-20, 20) })) };
+    }
+    return out;
+  };
+  const alpha = (): DmObj[] => times(2 + Math.floor(rnd() * 2)).map((time) => ({ time, value: pick([0, 1, R(0, 1)]) }));
+  const anims: Record<string, DmAnim> = {
+    a: {
+      bones: boneKeys(),
+      slots: {
+        s0: { attachment: times(1 + Math.floor(rnd() * 2), R(0.2, 0.5)).map((time) => ({ time, name: pick(['m0', 'l0', 'n0', null]) })), alpha: alpha() },
+        s1: { alpha: alpha() },
+        ...(rnd() < 0.4 ? { s3: { attachment: [{ time: R(0.3, 0.8), name: null }] } } : {}),
+      },
+      deform: [
+        { slot: 's0', attachment: 'm0', keys: deformKeys(8) },
+        { slot: 's1', attachment: 'm1', keys: deformKeys(bindings(m1)) },
+        ...(rnd() < 0.6 ? [{ slot: 's0', attachment: 'n0', keys: deformKeys(6) }] : []),
+        { slot: 's3', attachment: 'd0', keys: deformKeys(10) },
+        { skin: 'dress', slot: 's3', attachment: 'd0', keys: deformKeys(bindings(dress)) },
+      ],
+    },
+  };
+  const constraints: DmObj[] = [];
+  if (withSliders) {
+    for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
+      anims[`sa${k}`] = {
+        bones: boneKeys(),
+        slots: rnd() < 0.5 ? { s1: { alpha: alpha() } } : {},
+        deform: [{ slot: 's0', attachment: 'm0', keys: deformKeys(8) }, ...(rnd() < 0.5 ? [{ slot: 's1', attachment: 'm1', keys: deformKeys(bindings(m1)) }] : [])],
+      };
+      const c: DmObj = { type: 'slider', name: `sl${k}`, animation: `sa${k}` };
+      if (rnd() < 0.3) c.additive = true;
+      if (rnd() < 0.4) c.mix = pick([0, 1, R(0.2, 0.9)]);
+      if (rnd() < 0.3) c.loop = true;
+      if (rnd() < 0.75) {
+        Object.assign(c, { bone: pick(['dial', 'dial2', 'b2']), property: pick(['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY']), scale: pick([R(0.001, 0.05), R(-0.05, -0.001), R(0.1, 1)]) });
+        if (rnd() < 0.5) c.local = true;
+        if (rnd() < 0.6) c.from = R(-50, 50);
+        if (rnd() < 0.6) c.to = R(0, 1);
+      } else c.time = R(-0.5, 2);
+      constraints.push(c);
+    }
+  }
+  return { bones, slots, skins, constraints, anims };
+}
+
+/** Every census of `rows` summed per hook: calls, exact, and the first off. */
+function dmTotals(censuses: readonly HookCensus[]): Record<Hook, { exact: number; calls: number; first: string | null }> {
+  const total = Object.fromEntries(HOOKS.map((h) => [h, { exact: 0, calls: 0, first: null as string | null }])) as Record<Hook, { exact: number; calls: number; first: string | null }>;
+  for (const c of censuses) {
+    for (const h of HOOKS) {
+      total[h].exact += c.hooks[h].exact;
+      total[h].calls += c.hooks[h].calls;
+      total[h].first ??= c.hooks[h].first;
+    }
+  }
+  return total;
+}
+
+/**
+ * The deform survey through rigc's own core (issue #969): each hook of
+ * `src/core/hooks.ts` held to spine-core at tolerance 0 on hand-written
+ * populations, the survey and `explain`'s DEFORM block both ways identical on
+ * the gallery's rows, plants in the model going red on exactly the rows that
+ * read them, the source named, and `tools/survey_hashes.ts`'s document.
+ * Returns null — a HOLE — when `gallery/` is absent.
+ */
+function runDeformCoreSuite(): number | null {
+  console.log('\n── deform-core: the deform survey poses through rigc\'s own core when the input carries a model document, each hook held to spine-core at tolerance 0 (issue #969) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const lcgOf = (seed: number): (() => number) => {
+    let s = seed;
+    return () => {
+      s = (s * 1103515245 + 12345) % 2147483648;
+      return s / 2147483648;
+    };
+  };
+  const fmt = (t: { exact: number; calls: number }): string => `${t.exact}/${t.calls}`;
+
+  // --- DM01: the jump, its world vertices and its draw reading, on a hand-written population --
+  const N = 60;
+  const population: Array<{ texts: DmTexts; census: HookCensus }> = [];
+  {
+    const probes: string[] = [];
+    const rnd = lcgOf(96901);
+    for (let i = 0; i < N; i++) {
+      const texts = dmPair(dmRandomSpec(rnd, true));
+      let census: HookCensus;
+      try {
+        census = hookCensus(texts);
+      } catch (err) {
+        probes.push(`rig ${i}: the census threw — ${(err as Error).message.slice(0, 300)}`);
+        continue;
+      }
+      if (census.refused !== null) probes.push(`rig ${i}: the core refused — ${census.refused.slice(0, 300)}`);
+      population.push({ texts, census });
+    }
+    const total = dmTotals(population.map((p) => p.census));
+    const jump = HOOKS.filter((h) => h.startsWith('jump.'));
+    for (const h of jump) {
+      if (total[h].calls === 0) probes.push(`${h} was never called: the population reads nothing`);
+      else if (total[h].exact !== total[h].calls) probes.push(`${h} ${fmt(total[h])} — first ${total[h].first}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'DM01_THE_JUMP_ITS_WORLD_VERTICES_AND_ITS_DRAW_READING_MATCH_SPINE_CORE_BIT_FOR_BIT_ON_A_HAND_WRITTEN_POPULATION',
+      held,
+      probeDetail(held, probes, `${population.length} random rigs (bones turned, scaled, reflected and in every inherit mode; unweighted, weighted and linked meshes, a smaller mesh the slot switches to, a second skin's weighted mesh; slot and mesh colours; attachment, alpha and linear and stepped deform keys), posed by spine-core's deformmeasure recipe and by poseJump at every key time, every midpoint and past the duration: ${jump.map((h) => `${h} ${fmt(total[h])}`).join(', ')}`),
+      'issue #969: the survey\'s `poseAt` is a fresh skeleton, a reset at the setup pose and one update of `time`; the core answers it with the raw walk\'s `setup` reset, and every reading the survey takes off the pose — the skin, what each slot shows and at what alpha, the mesh\'s vertices with the deform as posed, cleared and replaced — is held here to the bit',
+    );
+  }
+
+  // --- DM02: another mesh's deform array on the slot is read as the runtime reads it --
+  {
+    const probes: string[] = [];
+    // m0 (four vertices) and n0 (three) on one slot; at 0.5 the slot switches to n0, which a timeline deforms, while m0's key at 0.75 is asked of it.
+    const spec: DmSpec = {
+      bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: 33, x: 4 }],
+      slots: [{ name: 's', bone: 'b', attachment: 'm0' }, { name: 't', bone: 'root', attachment: 'w0' }],
+      skins: { default: { s: { m0: { kind: 'mesh', xy: [0, 0, 20, 0, 20, 20, 0, 20] }, n0: { kind: 'mesh', xy: [1, 1, 9, 1, 1, 9] } }, t: { w0: { kind: 'mesh', weighted: [[{ bone: 'b', x: 1, y: 2, w: 1 }], [{ bone: 'b', x: 5, y: 2, w: 0.5 }, { bone: 'root', x: 4, y: 4, w: 0.5 }], [{ bone: 'root', x: 0, y: 9, w: 1 }]] }, v0: { kind: 'mesh', xy: [2, 2, 8, 2, 8, 8, 2, 8, 5, 5] } } } },
+      anims: {
+        a: {
+          slots: { s: { attachment: [{ time: 0.5, name: 'n0' }] }, t: { attachment: [{ time: 0.5, name: 'v0' }] } },
+          deform: [
+            { slot: 's', attachment: 'm0', keys: [{ time: 0, vertices: [1, 2, 3, 4, 5, 6, 7, 8] }, { time: 0.75, vertices: [-1, -2, -3, -4, -5, -6, -7, -8] }] },
+            { slot: 's', attachment: 'n0', keys: [{ time: 0.25, vertices: [3, 3, 3, 3, 3, 3] }, { time: 1, vertices: [-3, 2, -3, 2, -3, 2] }] },
+            { slot: 't', attachment: 'w0', keys: [{ time: 0, vertices: [1, 1, 2, 2, 3, 3, 4, 4] }, { time: 0.75, vertices: [4, 4, 3, 3, 2, 2, 1, 1] }] },
+            { slot: 't', attachment: 'v0', keys: [{ time: 0.25, vertices: [9, 9, 9, 9, 9, 9, 9, 9, 9, 9] }, { time: 1 }] },
+          ],
+        },
+      },
+    };
+    const texts = dmPair(spec);
+    const census = hookCensus(texts);
+    if (census.refused !== null) probes.push(`the core refused: ${census.refused}`);
+    const total = dmTotals([census]);
+    for (const h of HOOKS.filter((x) => x.startsWith('jump.'))) if (total[h].exact !== total[h].calls || total[h].calls === 0) probes.push(`${h} ${fmt(total[h])} — first ${total[h].first}`);
+    // That the mismatched arrays were reached: at 0.75 slot s carries n0's six numbers and slot t v0's ten, asked of m0 (eight) and w0 (eight).
+    const doc = dmUnderSkin(readModel(texts.modelText), 'default');
+    const pose = poseJump(doc, 'a', 0.75);
+    const lengths = ['s', 't'].map((slot) => pose.shown.find((x) => x.slot === slot)?.deform?.length ?? 0);
+    if (lengths[0] !== 6 || lengths[1] !== 10) probes.push(`at 0.75 the slots carry ${lengths.join(' and ')} deform number(s), not 6 and 10 — the mismatch is not reached`);
+    const short = meshWorld(pose, 's', { skin: 'default', slot: 's', placeholder: 'm0' }, 'posed');
+    const long = meshWorld(pose, 't', { skin: 'default', slot: 't', placeholder: 'w0' }, 'posed');
+    const nans = short.filter((v) => Number.isNaN(v)).length;
+    if (nans !== 2) probes.push(`m0 read through n0's six numbers gave ${nans} NaN coordinate(s), not the 2 past the array's end`);
+    if (long.some((v) => Number.isNaN(v))) probes.push('w0 read through v0\'s ten numbers carries a NaN; it reads the first eight');
+    const held = probes.length === 0;
+    say(
+      'DM02_ANOTHER_MESHS_DEFORM_ARRAY_ON_THE_SLOT_IS_READ_AS_THE_RUNTIME_READS_IT_SHORT_AND_LONG',
+      held,
+      probeDetail(held, probes, `a slot switched at 0.5 to a smaller mesh a timeline deforms, and another switched to a larger one: the four-vertex mesh's key at 0.75 read through the three-vertex mesh's six numbers (two NaN coordinates past the end) and the weighted mesh's through the larger mesh's ten (the first eight), both bit-exact against spine-core with the rest of the jump: ${HOOKS.filter((x) => x.startsWith('jump.')).map((h) => `${h} ${fmt(total[h])}`).join(', ')}`),
+      'issue #969: the survey asks for a key\'s geometry at its own time whatever the slot shows, and the runtime reads the slot\'s array, not the attachment\'s — so a key whose slot shows another deformed mesh is measured on that array. A39 passes such a key over (the slot does not draw the mesh); the survey still carries its figures, so the core reproduces them rather than refusing',
+    );
+  }
+
+  // --- DM03: the dial pose — a bone's local field overridden — reads as spine-core's --
+  const sliderTotal = dmTotals(population.map((p) => p.census));
+  {
+    const probes: string[] = [];
+    for (const h of ['dial.base', 'dial.applied', 'dial.under', 'dial.shown', 'dial.float32.posed', 'dial.float32.cleared'] as const) {
+      if (sliderTotal[h].calls === 0) probes.push(`${h} was never called`);
+      else if (sliderTotal[h].exact !== sliderTotal[h].calls) probes.push(`${h} ${fmt(sliderTotal[h])} — first ${sliderTotal[h].first}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'DM03_A_DIAL_POSE_WITH_A_BONES_LOCAL_FIELD_OVERRIDDEN_POSES_AND_TIMES_ITS_SLIDER_AS_SPINE_CORE_DOES',
+      held,
+      probeDetail(held, probes, `every slider with a bone of the ${population.length} rigs, under both skins, each of the six local fields at its setup value, a probe step on, 2.5 below, 37.125 above and −1.5 times plus 0.3: dial.base ${fmt(sliderTotal['dial.base'])}, SliderPose.time ${fmt(sliderTotal['dial.applied'])} (a slider with mix 0 keeping its pose's time), and the pose each field's last value left — skin ${fmt(sliderTotal['dial.under'])}, draw ${fmt(sliderTotal['dial.shown'])}, deformed ${fmt(sliderTotal['dial.float32.posed'])} and cleared ${fmt(sliderTotal['dial.float32.cleared'])} world vertices`),
+      'issue #969: the survey solves a slider\'s dial by writing a bone\'s local field after the setup pose and re-posing under Physics.reset; the core writes the field into the pose (the view), never into the setup a slider\'s non-additive blend reads',
+    );
+  }
+
+  // --- DM04: the property a slider reads off its dial, on every property local and world --
+  {
+    const probes: string[] = [];
+    const h = sliderTotal['dial.read'];
+    if (h.calls === 0) probes.push('dial.read was never called');
+    else if (h.exact !== h.calls) probes.push(`dial.read ${fmt(h)} — first ${h.first}`);
+    // Every property, local and world, reached by the population.
+    const reached = new Set<string>();
+    for (const p of population) {
+      for (const c of (JSON.parse(p.texts.skeletonText) as { constraints?: DmObj[] }).constraints ?? []) if (typeof c.bone === 'string') reached.add(`${String(c.property)} ${c.local === true ? 'local' : 'world'}`);
+    }
+    for (const prop of ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY']) for (const where of ['local', 'world']) if (!reached.has(`${prop} ${where}`)) probes.push(`no slider in the population reads ${prop} ${where}`);
+    const held = probes.length === 0;
+    say(
+      'DM04_THE_PROPERTY_A_SLIDER_READS_OFF_ITS_DIAL_MATCHES_SPINE_CORES_FROM_PROPERTY_ON_EVERY_PROPERTY_LOCAL_AND_WORLD',
+      held,
+      probeDetail(held, probes, `FromProperty.value(skeleton, bone.appliedPose, local, zeros) after the whole update (validateLocalTransform first when local) against sourceValue over the core solver's last state: ${fmt(h)} readings bit-exact, over the ${reached.size} property/space pairs [${[...reached].sort().join(', ')}]`),
+      'issue #969: the dial reading is what the survey inverts a slider\'s mapping through; the core reads it with `sourceValue` (the transform constraint\'s source reading, no offset) over the solver state `applyConstraints` hands its `settled` sink, so a constraint moving the dial after the slider is read as the runtime reads it',
+    );
+  }
+
+  // --- DM05: a bone-less slider's time overridden, and SliderPose.time read back --
+  {
+    const probes: string[] = [];
+    const h = sliderTotal['dial.time.applied'];
+    if (h.calls === 0) probes.push('dial.time.applied was never called');
+    else if (h.exact !== h.calls) probes.push(`dial.time.applied ${fmt(h)} — first ${h.first}`);
+    const held = probes.length === 0;
+    say(
+      'DM05_A_BONE_LESS_SLIDERS_TIME_OVERRIDDEN_IS_THE_TIME_SPINE_CORE_STORES',
+      held,
+      probeDetail(held, probes, `every bone-less slider of the population under both skins at −0.5, 0, 0.3, half its animation, its duration and one past it (looping and not, mix 0 among them): SliderPose.time ${fmt(h)} bit-exact`),
+      'issue #969: a bone-less slider\'s dial is its pose\'s time; the core writes it into the slider record of the view and reads back the time `sliderTime` stored (SliderApplication.time), or the pose\'s own where the slider did not run',
+    );
+  }
+
+  // --- DM06: the float32 rows are the store of doubles that are themselves exact --
+  {
+    const probes: string[] = [];
+    const rowsHooks = ['jump.rows.posed', 'jump.rows.cleared', 'jump.rows.replaced'] as const;
+    for (const h of rowsHooks) if (sliderTotal[h].exact !== sliderTotal[h].calls || sliderTotal[h].calls === 0) probes.push(`${h} ${fmt(sliderTotal[h])} — first ${sliderTotal[h].first}`);
+    // The store itself, on the values a store can move: −0, a subnormal float32, past float32's range, NaN, and a double between two floats.
+    const specials = [-0, 1e-45, 3.5e38, -3.5e38, Number.NaN, 0.1, 1 / 3];
+    const ours = float32Rows(specials);
+    const theirs = new Float32Array(specials.length);
+    specials.forEach((v, i) => (theirs[i] = v));
+    for (let i = 0; i < specials.length; i++) if (!Object.is(ours[i], theirs[i])) probes.push(`float32Rows(${specials[i]}) is ${ours[i]}, a Float32Array store ${theirs[i]}`);
+    // Why the doubles are held and not only the rows: one ulp added to every double of the population's posed rows is seen by every row's doubles and by far fewer of its float32 rows.
+    let rows = 0;
+    let seenDoubles = 0;
+    let seenFloats = 0;
+    const nudge = (v: number): number => {
+      const b = new Float64Array([v]);
+      const u = new BigInt64Array(b.buffer);
+      u[0] += 1n;
+      return b[0];
+    };
+    for (const p of population.slice(0, 10)) {
+      const { data, core } = deformPosers(p.texts);
+      const skin = data.findSkin('default');
+      for (const anim of data.animations) {
+        for (const tl of anim.timelines) {
+          if (!(tl instanceof DeformTimeline) || !(tl.attachment instanceof MeshAttachment) || data.slots[tl.slotIndex].name !== 's0') continue;
+          const posed = core.track(skin, anim.name, tl.frames[tl.frames.length - 1]);
+          const exact = posed.rows(tl.slotIndex, tl.attachment, 'posed');
+          const off = exact.map(nudge);
+          rows++;
+          if (exact.some((v, k) => !Object.is(v, off[k]))) seenDoubles++;
+          const a = float32Rows(exact);
+          const b = float32Rows(off);
+          if (a.some((v, k) => !Object.is(v, b[k]))) seenFloats++;
+        }
+      }
+    }
+    if (rows === 0) probes.push('no posed row of the population was nudged');
+    else if (seenDoubles !== rows) probes.push(`a one-ulp nudge showed in the doubles of ${seenDoubles} of ${rows} rows`);
+    const held = probes.length === 0;
+    say(
+      'DM06_THE_FLOAT32_ROWS_ARE_THE_STORE_OF_DOUBLES_THAT_ARE_EXACT_AND_THE_DOUBLES_ARE_THE_SHARPER_READING',
+      held,
+      probeDetail(held, probes, `the population's world vertices as doubles against spine-core computing into a plain array — ${rowsHooks.map((h) => `${h} ${fmt(sliderTotal[h])}`).join(', ')} — so the float32 rows the survey holds are a store of exact doubles; float32Rows equals a Float32Array store on −0, a subnormal, past the range, NaN, 0.1 and 1/3; and a one-ulp nudge of every double shows in the doubles of ${seenDoubles} of ${rows} rows and in the float32 rows of only ${seenFloats}`),
+      'issue #969: the survey stores world vertices in a Float32Array, so a float32 comparison alone would pass a core off in the last bits of a double on most rows — the census holds the doubles too, which is why the rows are called exact rather than float32-equal',
+    );
+  }
+
+  // The gallery's rows, compiled in this process: what `explain` hands the survey.
+  const galleryRoot = resolve(import.meta.dir, 'gallery');
+  const galleryNames = existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().filter((n) => existsSync(join(galleryRoot, n, 'rig.json')) && existsSync(join(galleryRoot, n, 'motion.json'))) : [];
+  if (galleryNames.length === 0) {
+    console.log(`  SKIP  DM07–DM11 did not run: no gallery rig under ${galleryRoot}.`);
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — the survey was not held both ways on a built row.');
+    return bad;
+  }
+  const work = mkdtempSync(join(tmpdir(), 'rigc-deform-core-'));
+  const gallery = galleryNames.flatMap((name) => {
+    try {
+      const result = compile({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir: join(work, name) });
+      return [{ name: `gallery/${name}`, dir: name, result, texts: { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model) } }];
+    } catch {
+      return [];
+    }
+  });
+
+  // --- DM07: the survey through the model and through spine-core is one survey on every gallery row, and every hook is exact there --
+  const surveys = new Map<string, { spine: DeformSurvey; model: DeformSurvey }>();
+  {
+    const probes: string[] = [];
+    if (gallery.length !== galleryNames.length) probes.push(`${galleryNames.length - gallery.length} gallery rig(s) did not compile in this process`);
+    let keys = 0;
+    let carrying = 0;
+    const censuses: HookCensus[] = [];
+    for (const g of gallery) {
+      const spine = surveyOfBuild(g.texts, new Set(), 'spine-core');
+      const model = surveyOfBuild(g.texts, new Set(), 'model');
+      surveys.set(g.name, { spine, model });
+      if (spine.source.used !== 'spine-core' || model.source.used !== 'model' || model.source.why !== null) probes.push(`${g.name}: sources ${JSON.stringify(spine.source)} and ${JSON.stringify(model.source)}`);
+      if (canonicalJson(spine) !== canonicalJson(model)) probes.push(`${g.name}: the two surveys differ (${canonicalJson(spine).length} and ${canonicalJson(model).length} characters)`);
+      keys += model.keys.length;
+      if (model.timelines > 0) carrying++;
+      const census = hookCensus(g.texts);
+      censuses.push(census);
+      if (census.refused !== null) probes.push(`${g.name}: the core refused — ${census.refused}`);
+    }
+    const total = dmTotals(censuses);
+    for (const h of HOOKS) if (total[h].exact !== total[h].calls) probes.push(`${h} ${fmt(total[h])} on the gallery — first ${total[h].first}`);
+    if (carrying === 0) probes.push('no gallery row carries a deform timeline, so the survey read nothing');
+    if (total['dial.read'].calls === 0) probes.push('no gallery row carries a slider, so the dial was not read on a built row');
+    const held = probes.length === 0;
+    say(
+      'DM07_THE_SURVEY_THROUGH_THE_MODEL_AND_THROUGH_SPINE_CORE_IS_ONE_SURVEY_ON_EVERY_GALLERY_ROW_AND_EVERY_HOOK_IS_EXACT_THERE',
+      held,
+      probeDetail(held, probes, `${gallery.length} gallery rows compiled in this process, ${carrying} carrying a deform timeline (${keys} keys): the DeformSurvey's canonical JSON identical through the model document and through spine-core on every one, each naming its poser; every hook bit-exact — ${HOOKS.map((h) => `${h} ${fmt(total[h])}`).join(', ')}`),
+      'issue #969\'s gate in-tree: `tools/survey_hashes.ts` holds the same identity over every corpus row across two commits, and the private corpus is the commander\'s',
+    );
+  }
+
+  // --- DM08: explain's DEFORM block renders the same off either survey, and is what `rigc explain` prints --
+  {
+    const probes: string[] = [];
+    let lines = 0;
+    for (const g of gallery) {
+      const s = surveys.get(g.name);
+      if (s === undefined) continue;
+      const exempt = new Set(g.result.rig.deformMayFold);
+      const a = deformReportBlock(s.spine, g.result.deformTransforms, exempt);
+      const b = deformReportBlock(s.model, g.result.deformTransforms, exempt);
+      if (a.join('\n') !== b.join('\n')) probes.push(`${g.name}: the block differs off the two surveys`);
+      lines += a.length;
+    }
+    // The product path: `rigc explain` on the row with sliders, whose survey took the model document.
+    const look = gallery.find((g) => g.name === 'gallery/look') ?? gallery.find((g) => (surveys.get(g.name)?.model.keys.length ?? 0) > 0);
+    let printed = 0;
+    if (look === undefined) probes.push('no gallery row carries a deform key to print');
+    else {
+      const run = spawnSync(process.execPath, ['cli.ts', 'explain', '--rig', join('gallery', look.dir, 'rig.json'), '--motion', join('gallery', look.dir, 'motion.json'), '--out', join(work, 'explain-out')], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+      const block = deformBlockOf(run.stdout);
+      printed = block.length;
+      const s = surveys.get(look.name);
+      const expected = s === undefined ? [] : deformReportBlock(s.spine, look.result.deformTransforms, new Set(look.result.rig.deformMayFold)).slice(1);
+      if (run.status !== 0) probes.push(`rigc explain ${look.name} exited ${run.status}: ${run.stderr.trim().slice(0, 200)}`);
+      else if (block.join('\n') !== expected.join('\n')) probes.push(`rigc explain ${look.name} printed a ${block.length}-line block where the spine-core survey renders ${expected.length} lines`);
+    }
+    const held = probes.length === 0;
+    say(
+      'DM08_EXPLAINS_DEFORM_BLOCK_RENDERS_THE_SAME_OFF_EITHER_SURVEY_AND_IS_WHAT_RIGC_EXPLAIN_PRINTS',
+      held,
+      probeDetail(held, probes, `deformReportBlock off the spine-core and the model survey of ${gallery.length} gallery rows, ${lines} lines, identical; \`rigc explain\` on ${look?.name ?? 'no row'} (through the model document) printed its ${printed}-line block equal to the one the spine-core survey renders`),
+      'issue #969: the DEFORM block moved out of cli.ts whole (src/deformreport.ts) so it can be rendered off a survey taken through either poser; `explain` now hands the survey the model document the build carries',
+    );
+  }
+
+  // --- DM09: a plant in the model document goes red on exactly the rows that read it --
+  {
+    const probes: string[] = [];
+    const planted = (text: string, edit: (doc: DmObj) => boolean): string | null => {
+      const doc = JSON.parse(text) as DmObj;
+      return edit(doc) ? JSON.stringify(doc) : null;
+    };
+    const plants: Array<[string, (doc: DmObj) => boolean]> = [
+      ['every deform key\'s first number +0.5', (doc) => {
+        let hit = false;
+        for (const anim of doc.animations as Array<{ attachments: Array<{ slots: Array<{ attachments: Array<{ deform?: Array<{ vertices?: number[] }> }> }> }> }>) {
+          for (const skin of anim.attachments) for (const slot of skin.slots) for (const att of slot.attachments) for (const key of att.deform ?? []) {
+            if (key.vertices !== undefined && key.vertices.length > 0) {
+              key.vertices[0] += 0.5;
+              hit = true;
+            }
+          }
+        }
+        return hit;
+      }],
+      ['every slider\'s scale x1.01', (doc) => {
+        let hit = false;
+        for (const c of doc.constraints as DmObj[]) {
+          if (c.kind !== 'slider' || typeof c.bone !== 'string') continue;
+          c.scale = (typeof c.scale === 'number' ? c.scale : 1) * 1.01;
+          hit = true;
+        }
+        return hit;
+      }],
+    ];
+    const verdicts: string[] = [];
+    for (const [label, edit] of plants) {
+      const red: string[] = [];
+      const reading: string[] = [];
+      for (const g of gallery) {
+        const s = surveys.get(g.name);
+        if (s === undefined) continue;
+        const text = planted(g.texts.modelText, edit);
+        if (text === null) continue;
+        // The rows that READ it: a deform key the survey poses, or a slider a deform key is posed through.
+        const reads = label.startsWith('every deform') ? s.spine.keys.length > 0 : s.spine.keys.some((k) => k.reach.kind === 'slider');
+        if (reads) reading.push(g.name);
+        let survey: DeformSurvey;
+        try {
+          survey = surveyOfBuild({ ...g.texts, modelText: text }, new Set(), 'model');
+        } catch (err) {
+          probes.push(`${label}: ${g.name} refused — ${(err as Error).message.slice(0, 200)}`);
+          continue;
+        }
+        if (canonicalJson(survey) !== canonicalJson(s.spine)) red.push(g.name);
+      }
+      if (reading.length === 0) probes.push(`${label}: no gallery row reads the plant`);
+      if (red.join() !== reading.join()) probes.push(`${label}: red on [${red.join(', ')}], the rows reading it [${reading.join(', ')}]`);
+      verdicts.push(`${label} red on ${red.length} row(s) [${red.join(', ')}]`);
+    }
+    const held = probes.length === 0;
+    say(
+      'DM09_A_PLANT_IN_THE_MODEL_DOCUMENT_GOES_RED_ON_EXACTLY_THE_GALLERY_ROWS_WHOSE_SURVEY_READS_IT',
+      held,
+      probeDetail(held, probes, `${verdicts.join('; ')} — each exactly the rows whose spine-core survey poses a deform key (or one through a slider), and no other`),
+      'issue #969: the identity in DM07 is worth something only if the model document is what the core posed — a plant spine-core cannot see moves exactly the rows that read it',
+    );
+  }
+
+  // --- DM10: the survey names its source, and refuses or falls back by name --
+  {
+    const probes: string[] = [];
+    const g = gallery.find((x) => (surveys.get(x.name)?.model.keys.length ?? 0) > 0) ?? gallery[0];
+    const noModel = { skeletonText: g.texts.skeletonText, atlasText: g.texts.atlasText, modelText: null };
+    const auto = surveyOfBuild(noModel, new Set(), 'auto');
+    if (auto.source.used !== 'spine-core' || !(auto.source.why ?? '').includes('carries no model document')) probes.push(`auto with no model document: ${JSON.stringify(auto.source)}`);
+    let strict = '';
+    try {
+      surveyOfBuild(noModel, new Set(), 'model');
+    } catch (err) {
+      strict = err instanceof CoreInputError ? err.message : `not a CoreInputError: ${(err as Error).message}`;
+    }
+    if (!strict.includes('the input carries none')) probes.push(`model asked with no model document: ${JSON.stringify(strict)}`);
+    // A model the core refuses: auto falls back naming it; model asked throws it.
+    const broken = { ...g.texts, modelText: g.texts.modelText.replace('"rigc-compiled/1"', '"rigc-compiled/9"') };
+    const fell = surveyOfBuild(broken, new Set(), 'auto');
+    if (fell.source.used !== 'spine-core' || !(fell.source.why ?? '').includes('the core refused to pose the model document') || !(fell.source.why ?? '').includes('rigc-compiled/9')) probes.push(`auto over a refused model: ${JSON.stringify(fell.source)}`);
+    if (canonicalJson(fell) !== canonicalJson(surveys.get(g.name)?.spine)) probes.push('the fallback survey is not the spine-core survey');
+    let thrown = '';
+    try {
+      surveyOfBuild(broken, new Set(), 'model');
+    } catch (err) {
+      thrown = (err as Error).message;
+    }
+    if (!thrown.includes('rigc-compiled/9')) probes.push(`model asked over a refused model: ${JSON.stringify(thrown)}`);
+    // validate's A39 call stays on spine-core's SkeletonData, and says so.
+    const validated = surveyDeformKeys(skeletonDataFromText(g.texts.skeletonText, g.texts.atlasText));
+    if (validated.source.used !== 'spine-core' || validated.source.why !== null) probes.push(`validate's call: ${JSON.stringify(validated.source)}`);
+    // The instrument's canonical JSON leaves out the top-level source alone, and spells −0 and the non-finite apart.
+    if (canonicalJson({ source: 1, a: { source: 2 } }) !== '{"a":{"source":2}}') probes.push(`canonicalJson of a nested source: ${canonicalJson({ source: 1, a: { source: 2 } })}`);
+    if (canonicalJson([0, -0, Number.NaN, Infinity, null]) !== '[0,-0,"NaN","Infinity",null]') probes.push(`canonicalJson of −0 and the non-finite: ${canonicalJson([0, -0, Number.NaN, Infinity, null])}`);
+    const held = probes.length === 0;
+    say(
+      'DM10_THE_SURVEY_NAMES_ITS_SOURCE_AND_FALLS_BACK_OR_REFUSES_BY_NAME',
+      held,
+      probeDetail(held, probes, `on ${g.name}: auto with no model document posed spine-core naming why; model asked with none refused; a model the core refuses (a wrong spec) fell back to spine-core naming the refusal, the same survey; model asked over it threw the refusal; validate's call names spine-core with no reason; the canonical JSON drops only the top-level source and spells −0 and the non-finite apart`),
+      'issue #969: two sources behind one seam, and the survey\'s record says which it used — a survey that silently changed poser would make the two sources\' identity unreadable',
+    );
+  }
+
+  // --- DM11: the instrument's document — compare names the switch as SOURCE and a planted row as DIFF --
+  {
+    const probes: string[] = [];
+    const rowOf = (name: string, source: 'spine-core' | 'model', sha: string): SurveyHashesDocument['recipes'][number] => ({
+      name, stage: [{ from: name, to: name }], commands: [['build', '--rig', `{{work}}/${name}/rig.json`, '--out', '{{out}}']], exits: [0], used: source, why: null,
+      survey: { sha256: sha, keys: 1, spans: 0, timelines: 1 }, explainExit: 0, explain: { sha256: sha, lines: 1 }, a39: { sha256: sha, lines: 1 },
+    });
+    const surveyHash = (s: DeformSurvey): string => createHash('sha256').update(canonicalJson(s)).digest('hex');
+    const docOf = (source: 'spine-core' | 'model', planted: string | null): SurveyHashesDocument => ({
+      spec: SURVEY_HASHES_SPEC, source,
+      recipes: gallery.map((g) => {
+        const s = surveys.get(g.name);
+        const sha = s === undefined ? '0'.repeat(64) : surveyHash(source === 'model' ? s.model : s.spine);
+        return rowOf(g.name, source, g.name === planted ? 'f'.repeat(64) : sha);
+      }),
+    });
+    const before = docOf('spine-core', null);
+    const after = docOf('model', null);
+    const switched = compareSurveyHashes(before, after);
+    const lines = surveyComparisonLines(switched);
+    if (!switched.identical || switched.sources.length !== gallery.length) probes.push(`the switch compared ${switched.identical ? 'IDENTICAL' : 'DIFF'} with ${switched.sources.length} SOURCE row(s) of ${gallery.length}`);
+    if (!lines[lines.length - 1].startsWith('IDENTICAL')) probes.push(`the verdict line reads ${JSON.stringify(lines[lines.length - 1])}`);
+    const target = gallery[gallery.length - 1].name;
+    const plantedCompare = compareSurveyHashes(before, docOf('model', target));
+    if (plantedCompare.identical || plantedCompare.differ.map((d) => d.name).join() !== target) probes.push(`a planted row compared as [${plantedCompare.differ.map((d) => d.name).join(', ')}], not ${target} alone`);
+    const held = probes.length === 0;
+    say(
+      'DM11_SURVEY_HASHES_COMPARE_NAMES_THE_POSER_SWITCH_AS_SOURCE_AND_A_PLANTED_ROW_AS_ITS_ONE_DIFF',
+      held,
+      probeDetail(held, probes, `documents over ${gallery.length} gallery rows hashed off the spine-core and the model survey compare IDENTICAL with ${switched.sources.length} SOURCE line(s); one row's survey hash planted is the one DIFF (${target})`),
+      'issue #969: the instrument is the gate — a switch of poser is named rather than read as a difference, and a difference is named by its row',
+    );
+  }
+
+  rmSync(work, { recursive: true, force: true });
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // the byte-identity instrument: tools/emit_hashes.ts (issue #914, step 1a of #380)
 // ---------------------------------------------------------------------------
 
@@ -89082,6 +89747,7 @@ function main(): void {
   tally.of('core', runCoreSuite);
   const emitHashesBad = tally.of('emit-hashes', runEmitHashesSuite, { ran: ranIt });
   const renderHashesBad = tally.of('render-hashes', runRenderHashesSuite, { ran: ranIt });
+  tally.of('deform-core', runDeformCoreSuite, { ran: ranIt });
   const modelBones = tally.of('model-bones', runModelBonesSuite, { failures: (value) => value.failures });
   const modelVertices = tally.of('model-vertices', runModelVerticesSuite, { failures: (value) => value.failures });
   const modelRecords = tally.of('model-records', runModelRecordsSuite, { failures: (value) => value.failures });

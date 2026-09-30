@@ -72,7 +72,10 @@
  * - `inherit`: the key's mode, from its first key on (`CQ06` holds it).
  * - Slot colours (`rgba`, `rgb`, `alpha`, `rgba2`, `rgb2`): each channel the
  *   timeline names moves from the current value toward the key's by the mix
- *   and is then clamped to [0, 1] (a mix of −1 read alpha 0, of 2 read
+ *   and is then clamped to [0, 1] — ⚠️ at mix exactly 1 it IS the key's value:
+ *   `current + (v − current)·1` read 1 ulp off spine-core on 30 of 13,950
+ *   slot readings of issue #969's hand-written population (`DM01`), the key's
+ *   value on none (a mix of −1 read alpha 0, of 2 read
  *   0.87451 from 0.12549 toward 0.5); `additive` changes nothing for them.
  * - `attachment`: the key's placeholder from its first key on, whatever the
  *   mix above 0 (0.01 switched it); `null` shows nothing.
@@ -149,6 +152,8 @@ export interface SliderApplication {
   alpha: number;
   /** The slider's `additive` — how its deform timelines blend (`./deform.ts`). */
   additive: boolean;
+  /** #969: the time it stored — `sliderTime`, before the animation's loop wrap — what the runtime's `SliderPose.time` reads (`./hooks.ts`). */
+  time: number;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -338,7 +343,7 @@ export function applySlider(state: SolverState, r: CoreSliderRecord, applied?: S
   const time = sliderTime(state, r);
   const d = r.timelines.duration;
   const at = r.loop && d !== 0 ? time % d : time;
-  applied?.push({ name: r.name, timelines: r.timelines, at, alpha: r.mix, additive: r.additive });
+  applied?.push({ name: r.name, timelines: r.timelines, at, alpha: r.mix, additive: r.additive, time });
   const alpha = r.mix;
   const changed: string[] = [];
   for (const target of r.timelines.bones) {
@@ -416,8 +421,9 @@ export function applySliderSlots(slot: string, pose: SlotPoseState, applications
         const v = valuesAt(tl.keys, app.at);
         if (v === null) continue;
         COLOUR_CHANNELS[tl.kind].forEach((at, i) => {
-          if (at < 4) pose.light[at] = clamp01(pose.light[at] + (v[i] - pose.light[at]) * app.alpha);
-          else if (pose.dark !== null) pose.dark[at - 4] = clamp01(pose.dark[at - 4] + (v[i] - pose.dark[at - 4]) * app.alpha);
+          // #969: at mix 1 the key's value itself, not `current + (v − current)·1`, which is last-bit off it (measured, below).
+          if (at < 4) pose.light[at] = app.alpha === 1 ? clamp01(v[i]) : clamp01(pose.light[at] + (v[i] - pose.light[at]) * app.alpha);
+          else if (pose.dark !== null) pose.dark[at - 4] = app.alpha === 1 ? clamp01(v[i]) : clamp01(pose.dark[at - 4] + (v[i] - pose.dark[at - 4]) * app.alpha);
         });
       }
     }

@@ -76,8 +76,11 @@
  * the sample set none (the setup positions unweighted, zero offsets
  * weighted) — with alpha its mix: `current + (target − current)·mix`, and
  * `additive` `current + (target − setup)·mix` (the setup positions
- * unweighted, zeros weighted). Before the timeline's first key it writes
- * nothing. Measured on 300 samples of 60 random rigs — weighted and not,
+ * unweighted, zeros weighted). ⚠️ At mix exactly 1, not additive, it IS the
+ * target: `current + (target − current)·1` read 1 ulp off spine-core on 27
+ * of 2,790 posed rows of issue #969's hand-written population (`DM01`, the
+ * survey's doubles), the target on none. Before the timeline's first key it
+ * writes nothing. Measured on 300 samples of 60 random rigs — weighted and not,
  * additive and not, mix 1, 0.5 and in [−1, 2], with and without a deform in
  * the sample's own animation: 0 misses; reading the non-additive blend from
  * the setup geometry missed 45, reading additive as the key's positions
@@ -407,6 +410,8 @@ export function deformAt(vertices: ModelVertices, keys: readonly CoreDeformKey[]
 export function blendDeform(vertices: ModelVertices, current: readonly number[] | null, target: readonly number[], alpha: number, additive: boolean): number[] {
   const setup = setupArray(vertices);
   const from = current ?? setup;
+  // #969: non-additive at mix 1 the target itself, not `c + (target − c)·1`, which is last-bit off it (measured, `./hooks.ts`' DM01).
+  if (!additive && alpha === 1) return [...target];
   return from.map((c, k) => (additive ? c + (target[k] - setup[k]) * alpha : c + (target[k] - c) * alpha));
 }
 

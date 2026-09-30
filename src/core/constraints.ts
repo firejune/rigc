@@ -1147,7 +1147,7 @@ export type ConstraintPlant = (records: CoreConstraintRecord[]) => CoreConstrain
  * physics constraint is stepped on its bone (`stepPhysics` in
  * `./constraints_physics.ts`); without it, it applies nothing.
  */
-export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap<string, CoreWorld>, active: ReadonlySet<string>, records: readonly CoreConstraintRecord[], previous: ReadonlyMap<string, CoreWorld> | null = null, applied?: SliderApplication[], physics?: PhysicsStepContext): Map<string, CoreWorld> {
+export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap<string, CoreWorld>, active: ReadonlySet<string>, records: readonly CoreConstraintRecord[], previous: ReadonlyMap<string, CoreWorld> | null = null, applied?: SliderApplication[], physics?: PhysicsStepContext, settled?: (state: SolverState) => void): Map<string, CoreWorld> {
   const state: SolverState = { bones: bones.map((b) => ({ ...b })), index: new Map(bones.map((b, i) => [b.name, i])), world: new Map(world), active };
   const skipped = new Set<number>();
   records.forEach((c, i) => {
@@ -1190,6 +1190,8 @@ export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap
     if (changed.length > 0) repose(state, changed, inWorld);
     snap(i, 'after');
   }
+  // #969: the solver's last state — every bone's local values as the constraints left them — for a caller reading a dial off it (`./hooks.ts`).
+  settled?.(state);
   return state.world;
 }
 
