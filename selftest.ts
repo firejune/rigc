@@ -241,6 +241,7 @@ import {
   emitSkins,
   emitSlots,
   emitVertices,
+  UNSTATED_REFERENCE_SCALE,
 } from './src/emit_spine.ts';
 import {
   isModelVertexAttachment,
@@ -66881,7 +66882,7 @@ function runCoreSuite(): number {
       { name: 'c', parent: 'b', scaleY: 2, skinRequired: true, inheritMode: 'noRotationOrReflection' },
       { name: 'd', parent: 'root', inheritMode: 'normal' },
     ];
-    const text = JSON.stringify({ spec: 'rigc-compiled/1', bones, slots: [], skins: [{ name: 'default', bones: ['c'], constraints: {}, attachments: {} }], constraints: [], events: [], animations: [], images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {} });
+    const text = JSON.stringify({ spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones, slots: [], skins: [{ name: 'default', bones: ['c'], constraints: {}, attachments: {} }], constraints: [], events: [], animations: [], images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {} });
     const census = censusOf(text, new Set(['root']));
     const want = { bones: 5, modes: { normal: 2, onlyTranslation: 1, noRotationOrReflection: 1, noScale: 1, noScaleOrReflection: 0 }, fields: { length: 1, scaleX: 1, scaleY: 1, shearX: 1, shearY: 1, skinRequired: 1, negativeScale: 1, rotation360: 1, reflectingParent: 2 } };
     if (JSON.stringify(census) !== JSON.stringify(want)) probes.push(`the census of the hand-made document is ${JSON.stringify(census)}, not ${JSON.stringify(want)}`);
@@ -66973,7 +66974,7 @@ function runCoreSuite(): number {
     const skinBones = ['req.leaf', 'req.named'];
     const skeletonText = JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], skins: [{ name: 'default' }, { name: 'extra', bones: skinBones }], animations: {} });
     const modelText = JSON.stringify({
-      spec: 'rigc-compiled/1',
+      spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
       bones: bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
       slots: [],
       skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }, { name: 'extra', bones: skinBones, constraints: {}, attachments: {} }],
@@ -67142,7 +67143,7 @@ function runCoreSuite(): number {
   /** A `rigc-compiled/1` document from its bones, slots, skins, constraints and animations, every other section empty. */
   const modelOf = (parts: { bones: unknown[]; slots: unknown[]; skins: unknown[]; constraints?: unknown[]; animations?: unknown[] }): string =>
     JSON.stringify({
-      spec: 'rigc-compiled/1', bones: parts.bones, slots: parts.slots, skins: parts.skins, constraints: parts.constraints ?? [], events: [], animations: parts.animations ?? [],
+      spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones: parts.bones, slots: parts.slots, skins: parts.skins, constraints: parts.constraints ?? [], events: [], animations: parts.animations ?? [],
       images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
     });
   /** The rectangle `atlasOf` gives every region, as the model states it (issue #935). */
@@ -67757,7 +67758,7 @@ function runCoreSuite(): number {
       animations: { d: { bones: { p: { translate: moveKeys } }, attachments: { default: Object.fromEntries(deforms.map(([slot, keys]) => [slot, { a: { deform: keys } }])) } } },
     });
     const model = JSON.stringify({
-      spec: 'rigc-compiled/1', bones: clipBones, slots: slots.map((s) => ({ name: s.slot, bone: s.bone, setup: 'a' })),
+      spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones: clipBones, slots: slots.map((s) => ({ name: s.slot, bone: s.bone, setup: 'a' })),
       skins: [{ name: 'default', bones: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: table('model') }],
       constraints: physics ? [{ kind: 'physics', name: 'k', declaredIn: 'rig', bone: 'b', x: 1, y: 1, rotate: 1 }] : [], events: [],
       animations: [{
@@ -67961,7 +67962,7 @@ function runCoreSuite(): number {
       animations: { a: { bones: parts.bones_ ?? {}, slots: parts.slotKeys ?? {}, ...(parts.events ? { events: parts.events.map((e) => ({ ...e, name: 'hit' })) } : {}) } },
     };
     const model = JSON.stringify({
-      spec: 'rigc-compiled/1',
+      spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
       bones: parts.bones.map(({ inherit, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }) })),
       slots: slots.map(({ attachment, ...s }) => ({ ...s, setup: attachment ?? null })),
       skins: [{ name: 'default', bones: [], constraints: {}, attachments: skinTable(true) }],
@@ -68707,7 +68708,7 @@ function runCoreSuite(): number {
       animations: { a: { ...(keys.bones === undefined ? {} : { bones: keys.bones }), ...(keys.ik === undefined ? {} : { ik: keys.ik }), ...(keys.transform === undefined ? {} : { transform: keys.transform }) } },
     };
     const model = JSON.stringify({
-      spec: 'rigc-compiled/1',
+      spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
       bones: bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
       slots: [],
       skins: skins.map((k) => ({ name: k.name, bones: k.bones ?? [], constraints: k.constraints === undefined ? {} : { ik: k.constraints }, attachments: {} })),
@@ -69257,7 +69258,7 @@ function runCoreSuite(): number {
       }])),
     };
     const model = JSON.stringify({
-      spec: 'rigc-compiled/1',
+      spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
       bones: bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
       slots: slots.map(({ attachment, ...s }) => ({ ...s, setup: attachment ?? null })),
       skins: [{ name: 'default', bones: [], constraints: {}, attachments: table(true) }],
@@ -69910,6 +69911,7 @@ function runCoreSuite(): number {
     const physicsOf = (group: Keyed | undefined): Obj[] => Object.entries(group ?? {}).map(([name, tls]) => ({ name: name === '' ? '*' : name, timelines: Object.entries(tls).map(([k, keys]) => ({ name: k, keys })) }));
     const model = JSON.stringify({
       spec: 'rigc-compiled/1',
+      referenceScale: typeof head.referenceScale === 'number' ? head.referenceScale : UNSTATED_REFERENCE_SCALE,
       bones: bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
       slots: [], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }],
       constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
@@ -70420,7 +70422,7 @@ function runCoreSuite(): number {
       const c = { type: 'physics', name: 'k', bone: 'b', x: 1, y: 1, rotate: 1, skin: true };
       const spine = JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], constraints: [c], skins: skins.map((k) => ({ name: k.name, ...(k.bones ? { bones: k.bones } : {}), ...(k.physics ? { physics: k.physics } : {}), attachments: {} })), animations: { a: { bones: { p: { translate: keys } } } } });
       const model = JSON.stringify({
-        spec: 'rigc-compiled/1',
+        spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
         bones: bones.map(({ skin, ...b }) => ({ ...b, ...(skin === true ? { skinRequired: true } : {}) })),
         slots: [], skins: skins.map((k) => ({ name: k.name, bones: k.bones ?? [], constraints: Object.fromEntries(KINDS.map((x) => [x, x === 'physics' ? (k.physics ?? []) : []])), attachments: {} })),
         constraints: [{ kind: 'physics', name: 'k', declaredIn: 'rig', bone: 'b', x: 1, y: 1, rotate: 1, skin: true }], events: [],
@@ -70532,7 +70534,7 @@ function runCoreSuite(): number {
       },
     };
     const model = JSON.stringify({
-      spec: 'rigc-compiled/1',
+      spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
       bones: spec.bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
       slots: spec.slots.map((s) => ({ name: s.name, bone: s.bone, setup: s.attachment ?? null })),
       skins: skins.map((k) => ({ name: k.name, bones: [], constraints: {}, attachments: table(k.paths, modelAtt) })),
@@ -71177,7 +71179,7 @@ function runCoreSuite(): number {
       const all: Record<string, Keys> = { a: { o: { rotate: [{ time: 0, value: 1 }, { time: 1, value: 2 }] } }, ...anims };
       const spine = { skeleton: { spine: '4.3.13' }, bones, slots: [{ name: 's', bone: 'sb', attachment: 'p' }], constraints, skins: [{ name: 'default', attachments: { s: { p: spineAtt } } }], animations: Object.fromEntries(Object.entries(all).map(([n, k]) => [n, { bones: k }])) };
       const model = {
-        spec: 'rigc-compiled/1', bones, slots: [{ name: 's', bone: 'sb', setup: 'p' }],
+        spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones, slots: [{ name: 's', bone: 'sb', setup: 'p' }],
         skins: [{ name: 'default', bones: [], constraints: {}, attachments: { s: { p: modelAtt } } }],
         constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })), events: [],
         animations: Object.entries(all).map(([name, k]) => ({ name, duration: 0, bones: Object.entries(k).map(([n, tls]) => ({ name: n, timelines: Object.entries(tls).map(([t, keys]) => ({ name: t, keys })) })), slots: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: [] })),
@@ -71272,6 +71274,81 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `a physics constraint on the slot bone of a deformed closed path walked by a two-bone chain, before and after the path constraint: ${lines.join('; ')}; every block of both documents exact at dt 1/60 over nine grid samples and at dt 0.013 over thirty irr samples`),
       'issue #956 rebased onto #955: at each step the deform is applied with the animation and the physics constraint moves its bone inside the constraint pass, so a path after it walks the deformed curve on the stepped bone and a path before it the deformed curve on the animated one — the order is the runtime\'s, held here because no public row carries both',
+    );
+  }
+
+  // --- CK15: the step reads the document's referenceScale, and a document stating 50 against a file read as 100 goes red (#958) --
+  {
+    const probes: string[] = [];
+    const OTHER = UNSTATED_REFERENCE_SCALE / 2;
+    /** The pair with both spellings stating `spine` and `model` as the reference scale (`undefined`: the Spine header omits it). */
+    const rescaled = (pair: { spine: string; model: string }, spine: number | undefined, model: number): { spine: string; model: string } => {
+      const file = JSON.parse(pair.spine) as { skeleton: Obj };
+      if (spine === undefined) delete file.skeleton.referenceScale;
+      else file.skeleton.referenceScale = spine;
+      return { spine: JSON.stringify(file), model: JSON.stringify({ ...(JSON.parse(pair.model) as Obj), referenceScale: model }) };
+    };
+    const N = 50;
+    const rnd = lcg(95801);
+    let agreeing = 0;
+    let moved = 0;
+    let constant = 0;
+    let still = 0;
+    let samples = 0;
+    for (let i = 0; i < N; i++) {
+      const R = within(rnd);
+      const withWind = oneStepProbe(rnd, { ...someComponents(rnd), wind: R(-50, 50), gravity: R(-50, 50) });
+      const without = oneStepProbe(rnd, someComponents(rnd));
+      ckModels.push(withWind.pair.model);
+      // Both spellings stating the other value: the core reads the document's, so it is exact.
+      const both = stepCompare(rescaled(withWind.pair, OTHER, OTHER), withWind.options);
+      samples += both.boneSamples;
+      if (both.identical && posedSkips(both).length === 0) agreeing++;
+      else if (probes.length < 3) probes.push(`probe ${i}, both stating ${OTHER}: ${posedSkips(both).join('; ') || both.first}`);
+      // The step reading the parser's value as a constant, as it did before #958, in a copy: red where the plant below is.
+      if (!stepCompare(rescaled(withWind.pair, OTHER, OTHER), withWind.options, plantedRecord((r) => ({ ...r, referenceScale: UNSTATED_REFERENCE_SCALE }))).identical) constant++;
+      // The planted document: stating the other value against a file whose header omits it (read as the parser's).
+      if (!stepCompare(rescaled(withWind.pair, undefined, OTHER), withWind.options).identical) moved++;
+      // Without wind or gravity the field reaches nothing: the same plant stays exact.
+      if (stepCompare(rescaled(without.pair, undefined, OTHER), without.options).identical) still++;
+      else if (probes.length < 3) probes.push(`probe ${i} without wind or gravity went red with the document stating ${OTHER}`);
+    }
+    if (agreeing !== N) probes.push(`${agreeing} of ${N} probes exact with both spellings stating ${OTHER}`);
+    if (moved === 0) probes.push(`the document stating ${OTHER} against a file read as ${UNSTATED_REFERENCE_SCALE} left every wind-and-gravity probe exact`);
+    if (constant !== moved) probes.push(`the step reading ${UNSTATED_REFERENCE_SCALE} as a constant in a copy turned ${constant} of ${N} red, the planted document ${moved}`);
+    // The tree: each row's document rewritten to state the other value, its Spine files untouched.
+    const reads = (text: string): boolean => {
+      const doc = readModel(text);
+      const stated = doc.constraints.some((c) => c.record?.kind === 'physics' && (c.record.wind !== 0 || c.record.gravity !== 0));
+      const keyed = doc.animations.some((a) => (a.constraints.physicsKeyed ?? []).some((t) => t.kind === 'wind' || t.kind === 'gravity'));
+      return stated || keyed;
+    };
+    const planted: BuiltRow[] = [];
+    const declaring: string[] = [];
+    const reading: string[] = [];
+    for (const b of built) {
+      const path = join(b.out, MODEL_DOCUMENT_FILE);
+      if (!existsSync(path)) continue;
+      const text = readFileSync(path, 'utf8');
+      if (readModel(text).constraints.some((c) => c.kind === 'physics')) declaring.push(b.name);
+      if (reads(text)) reading.push(b.name);
+      const dir = join(work, 'refscale', basename(dirname(b.out)));
+      cpSync(dirname(b.out), dir, { recursive: true });
+      const out = join(dir, basename(b.out));
+      writeFileSync(join(out, MODEL_DOCUMENT_FILE), `${JSON.stringify({ ...(JSON.parse(text) as Obj), referenceScale: OTHER }, null, 2)}\n`);
+      planted.push({ ...b, out });
+    }
+    const red = gateBuilt(planted).filter((r) => r.stepped?.verdict === 'DIFF').map((r) => r.name).sort();
+    reading.sort();
+    if (JSON.stringify(red) !== JSON.stringify(reading)) probes.push(`the tree with every document stating ${OTHER}: red on [${red.join(', ')}], the rows reading wind or gravity are [${reading.join(', ')}]`);
+    const quiet = declaring.filter((n) => !reading.includes(n));
+    const tree = reading.length === 0 ? `HOLE: no tree row reads wind or gravity${examplesHole === null ? '' : ` (${examplesHole})`}, so the tree half turned nothing red` : `red on exactly [${red.join(', ')}], the ${reading.length} row(s) reading wind or gravity`;
+    const ok = probes.length === 0;
+    say(
+      'CK15_THE_STEP_READS_THE_DOCUMENTS_REFERENCE_SCALE_AND_A_DOCUMENT_STATING_ANOTHER_THAN_THE_FILE_TURNS_THE_WIND_AND_GRAVITY_ROWS_RED',
+      ok,
+      probeDetail(ok, probes, `${N} wind-and-gravity probes exact with both spellings stating ${OTHER} (${samples} bone-samples), ${moved} of ${N} red with the document alone stating it against a file read as ${UNSTATED_REFERENCE_SCALE} and ${constant} of ${N} with the step reading ${UNSTATED_REFERENCE_SCALE} as a constant in a copy, and ${still} of ${N} without wind or gravity exact under the same plant; over the ${built.length} tree rows with every document stating ${OTHER}: ${tree}; declaring physics and reading neither, exact: [${quiet.join(', ')}]`),
+      'issue #958: the core stepped wind and gravity over the parser\'s 100 as a constant; the document now states the skeleton\'s reference scale and the step reads it, so a document disagreeing with the file it came from turns red exactly where wind or gravity reads it — a row declaring physics that reads neither is untouched by it',
     );
   }
 
@@ -71371,7 +71448,7 @@ function runCoreSuite(): number {
     };
     const named = (group: Keyed | undefined): Obj[] => Object.entries(group ?? {}).map(([name, tls]) => ({ name, timelines: Object.entries(tls).map(([k, keys]) => ({ name: k, keys })) }));
     const model = JSON.stringify({
-      spec: 'rigc-compiled/1',
+      spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
       bones: spec.bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
       slots: spec.slots.map((s) => ({ name: s.name, bone: s.bone, setup: s.attachment ?? null })),
       skins: skinNames.map((k) => ({ name: k, bones: [], constraints: {}, attachments: table(spec.skins[k], true) })),
@@ -72187,7 +72264,7 @@ function runCoreSuite(): number {
       animations: { a: { bones: { root: { rotate: spin } }, attachments: { default: Object.fromEntries(keyed.map(([slot, keys]) => [slot, { a: { sequence: keys } }])) } } },
     });
     const model = JSON.stringify({
-      spec: 'rigc-compiled/1', bones, slots: slots.map((s) => ({ name: s.slot, bone: 'root', setup: 'a' })),
+      spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones, slots: slots.map((s) => ({ name: s.slot, bone: 'root', setup: 'a' })),
       skins: [{ name: 'default', bones: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: table('model') }],
       constraints: [], events: [],
       animations: [{
@@ -77008,7 +77085,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
   {
     const probes: string[] = [];
     // Hand-written, not imported: the writer's list and this one drifting apart is the failure.
-    const TOP = ['spec', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations', 'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig'];
+    const TOP = ['spec', 'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations', 'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig'];
     const BONE = ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inheritMode', 'skinRequired', 'editor'];
     const SLOT = ['name', 'bone', 'setup', 'color', 'dark', 'blend'];
     let shape = '';
@@ -77025,6 +77102,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
       };
       if (JSON.stringify(Object.keys(doc)) !== JSON.stringify(TOP)) probes.push(`the top-level keys are [${Object.keys(doc).join(', ')}]`);
       if (doc.spec !== MODEL_DOCUMENT_SPEC || MODEL_DOCUMENT_SPEC !== 'rigc-compiled/1') probes.push(`spec is ${JSON.stringify(doc.spec)}`);
+      if (doc.referenceScale !== model.referenceScale) probes.push(`referenceScale is ${JSON.stringify(doc.referenceScale)}, the model's ${model.referenceScale}`);
       if (`${JSON.stringify(doc, null, 2)}\n` !== text) probes.push('the text is not what it parses to, spelled back — a value was written that JSON reads as another');
       if (text !== modelDocument(model)) probes.push('two writes of one model differ');
       if (JSON.stringify(doc.bones.map((b) => b.name)) !== JSON.stringify(model.bones.map((b) => b.name))) probes.push(`bones are [${doc.bones.map((b) => b.name).join(', ')}], the model's [${model.bones.map((b) => b.name).join(', ')}]`);
@@ -77047,7 +77125,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
     say(
       'MD01_THE_DOCUMENT_IS_RIGC_COMPILED_1_IN_ITS_DECLARED_KEY_ORDER_AND_HOLDS_THE_MODELS_RECORDS',
       ok,
-      probeDetail(ok, probes, `${shape}: keys \`spec\`, the six model fields, the ten carried; bones and slots equal the model's in order and in ModelBone's/ModelSlot's key order; the text is what it parses to; \`*\` kept for the unnamed physics target; no \`setupWorld\`, no \`absPath\``),
+      probeDetail(ok, probes, `${shape}: keys \`spec\`, the seven model fields (\`referenceScale\` first), the ten carried; bones and slots equal the model's in order and in ModelBone's/ModelSlot's key order; the text is what it parses to; \`*\` kept for the unnamed physics target; no \`setupWorld\`, no \`absPath\``),
       'issue #922: the document is what the second dumper of the pose oracle reads (docs/SECOND_ORACLE.md §1, §4), so its order is the model\'s — the spec\'s for animations, which the file re-sorts — and its key order is declared rather than whatever construction left',
     );
   }
@@ -77381,6 +77459,62 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
       ok,
       probeDetail(ok, probes, `${docs.length} document(s) built through \`tools/emit_hashes.ts\`'s recipes (${gallery} gallery, ${docs.length - gallery} fetched export(s)), ${numbers.length} number(s): ${onF32} on the f32 grid, ${onR6} on the r6 grid, 0 on neither — \`Math.fround(x) === x\` in place of \`f32(x) === x\` would have refused ${froundRefuses} of them; plants: ${plantsRead.join('; ')}`),
       'issue #942: the document is read by a second implementation on another machine, and a number on neither grid is a full double whose last digits are the platform\'s libm — the Linux runner and macOS spelled gallery/look\'s pitch ceiling one ulp apart. On a grid a one-ulp difference moves a byte only at a rounding boundary',
+    );
+  }
+
+  // --- MD10: the document carries referenceScale as the Spine file is read, and readModel refuses one without it (#958) --
+  {
+    const probes: string[] = [];
+    const { dirs, motionPath } = writeModelRecordsProbe();
+    const rig = JSON.parse(readFileSync(dirs.rigPath, 'utf8')) as { skeleton: Record<string, unknown> };
+    // The rig stating none, the parser's own value, and another: the model holds what spine-core reads the written header as.
+    const STATED: Array<number | undefined> = [undefined, UNSTATED_REFERENCE_SCALE, UNSTATED_REFERENCE_SCALE / 2];
+    const lines: string[] = [];
+    let text = '';
+    STATED.forEach((stated, i) => {
+      const rigPath = join(dirs.dir, `scale-${i}.rig.json`);
+      writeFileSync(rigPath, `${JSON.stringify({ ...rig, skeleton: { ...rig.skeleton, ...(stated === undefined ? {} : { referenceScale: stated }) } }, null, 2)}\n`);
+      const label = stated === undefined ? 'stating none' : `stating ${stated}`;
+      try {
+        const built = compile({ rigPath, motionPath, outDir: join(dirs.dir, `out-${i}`), imagesDir: dirs.dir });
+        const header = (JSON.parse(built.skeletonText) as SpineSkeletonJson).skeleton as Record<string, unknown>;
+        const read = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(built.atlasText))).readSkeletonData(built.skeletonText).referenceScale;
+        const doc = modelDocument(built.model);
+        const core = readModel(doc).referenceScale;
+        const want = stated ?? UNSTATED_REFERENCE_SCALE;
+        if (built.model.referenceScale !== want) probes.push(`a rig ${label}: the model holds ${built.model.referenceScale}, not ${want}`);
+        if (read !== built.model.referenceScale) probes.push(`a rig ${label}: spine-core reads the header as ${read}, the model holds ${built.model.referenceScale}`);
+        if (core !== built.model.referenceScale) probes.push(`a rig ${label}: readModel reads ${core}, the model holds ${built.model.referenceScale}`);
+        if (('referenceScale' in header) !== (want !== UNSTATED_REFERENCE_SCALE)) probes.push(`a rig ${label}: the header ${'referenceScale' in header ? 'states' : 'omits'} referenceScale — it is omitted exactly at the parser's ${UNSTATED_REFERENCE_SCALE}`);
+        lines.push(`${label}: header ${'referenceScale' in header ? `states ${String(header.referenceScale)}` : 'omits it'}, spine-core reads ${read}, the document ${core}`);
+        if (stated === undefined) text = doc;
+      } catch (err) {
+        probes.push(`a rig ${label} did not compile: ${(err as Error).message}`);
+      }
+    });
+    const refusals: string[] = [];
+    if (text !== '') {
+      const base = JSON.parse(text) as Record<string, unknown>;
+      const PLANTS: Array<[string, (d: Record<string, unknown>) => void, string]> = [
+        ['referenceScale left out', (d) => delete d.referenceScale, 'section "referenceScale" is missing'],
+        ['referenceScale spelled as a string', (d) => (d.referenceScale = String(UNSTATED_REFERENCE_SCALE)), `referenceScale is "${UNSTATED_REFERENCE_SCALE}", not a finite number`],
+        ['referenceScale null', (d) => (d.referenceScale = null), 'referenceScale is null, not a finite number'],
+      ];
+      for (const [label, edit, expected] of PLANTS) {
+        const copy = JSON.parse(JSON.stringify(base)) as Record<string, unknown>;
+        edit(copy);
+        const why = coreRefusal(JSON.stringify(copy));
+        if (!why.includes(expected)) probes.push(`${label}: refused with ${JSON.stringify(why.slice(0, 200))}, not naming ${JSON.stringify(expected)}`);
+        else refusals.push(label);
+      }
+    }
+    rmSync(dirs.dir, { recursive: true, force: true });
+    const ok = probes.length === 0;
+    say(
+      'MD10_THE_DOCUMENT_CARRIES_REFERENCE_SCALE_AS_SPINE_CORE_READS_THE_HEADER_AND_READ_MODEL_REFUSES_IT_MISSING',
+      ok,
+      probeDetail(ok, probes, `three rigs — ${lines.join('; ')}; plants refused by name: ${refusals.join(', ')}`),
+      'issue #958: a physics constraint\'s wind and gravity act over the skeleton\'s referenceScale, so the model states the number the Spine file is read as — the stated one, or the parser\'s value where the header omits it — and a document without it would leave the core to guess',
     );
   }
 

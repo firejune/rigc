@@ -194,7 +194,7 @@ export class CoreInputError extends Error {}
 
 /** The document's sections after `spec`, in its key order (`modelDocument` in `src/model.ts`). */
 export const CORE_SECTIONS = [
-  'bones', 'slots', 'skins', 'constraints', 'events', 'animations',
+  'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations',
   'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig',
 ] as const;
 
@@ -308,6 +308,8 @@ export interface CompiledDocument {
    * or one skin's name, `underSkin`'s.
    */
   skin: string;
+  /** The skeleton's reference scale (issue #958), which every physics record carries too (`CorePhysicsRecord.referenceScale`). */
+  referenceScale: number;
   bones: ModelBone[];
   slots: ModelSlot[];
   skins: CoreSkin[];
@@ -560,7 +562,7 @@ function readAnimations(value: unknown, bones: ReadonlySet<string>, slotRecords:
   return out;
 }
 
-function readConstraints(value: unknown, animations: readonly CoreAnimation[], bones: readonly ModelBone[], slots: readonly ModelSlot[], problems: string[]): CoreConstraint[] {
+function readConstraints(value: unknown, animations: readonly CoreAnimation[], bones: readonly ModelBone[], slots: readonly ModelSlot[], referenceScale: number, problems: string[]): CoreConstraint[] {
   const names = new Set(bones.map((b) => b.name));
   const slotBones = new Map(slots.map((s) => [s.name, s.bone]));
   const parents = new Map(bones.map((b) => [b.name, b.parent]));
@@ -584,7 +586,7 @@ function readConstraints(value: unknown, animations: readonly CoreAnimation[], b
     if (typeof raw.name === 'string') {
       if (kind === 'ik' || kind === 'transform') record = readConstraintRecord(raw, kind, raw.name, at, names, parents, problems);
       else if (kind === 'path') record = readPathRecord(raw, raw.name, at, names, slotBones, problems);
-      else if (kind === 'physics') record = readPhysicsRecord(raw, raw.name, at, names, problems);
+      else if (kind === 'physics') record = readPhysicsRecord(raw, raw.name, at, names, referenceScale, problems);
       else if (kind === 'slider') record = readSliderRecord(raw, raw.name, at, bones, animations, problems);
     }
     if (kind !== undefined && typeof raw.name === 'string') out.push({ kind, name: raw.name, ...(kind === 'slider' && typeof raw.animation === 'string' ? { animation: raw.animation } : {}), ...(record !== undefined ? { record } : {}) });
@@ -594,8 +596,9 @@ function readConstraints(value: unknown, animations: readonly CoreAnimation[], b
 
 /**
  * Read a `rigc-compiled/1` document from its text, refusing by name a text
- * that is not JSON, a wrong `spec`, a missing section, a section the document
- * does not have, and — in the records these constructs read (bones, slots,
+ * that is not JSON, a wrong `spec`, a missing section (`referenceScale`
+ * among them, issue #958), a section the document does not have, a
+ * `referenceScale` that is not a finite number, and — in the records these constructs read (bones, slots,
  * skins and their attachment tables) — a field the writer does not write (the
  * writer's own rule, `ordered` in `src/model.ts`, mirrored), a value of the
  * wrong type, a colour spelled other than six or eight hex digits, a parent
@@ -616,6 +619,9 @@ export function readModel(text: string, where = 'the model document'): CompiledD
   for (const key of Object.keys(value)) {
     if (key !== 'spec' && !(CORE_SECTIONS as readonly string[]).includes(key)) problems.push(`section "${key}" is not one a ${CORE_DOCUMENT_SPEC} document has`);
   }
+  // The skeleton's reference scale (issue #958): wind and gravity act over it, so a missing one is the section refusal above, and a value the runtime could not read as a number is refused here by name.
+  const referenceScale = typeof value.referenceScale === 'number' && Number.isFinite(value.referenceScale) ? value.referenceScale : NaN;
+  if ('referenceScale' in value && Number.isNaN(referenceScale)) problems.push(`referenceScale is ${JSON.stringify(value.referenceScale)}, not a finite number — wind and gravity act over it`);
   const bones = readBones(value.bones, problems);
   const names = new Set(bones.map((b) => b.name));
   const slots = readSlots(value.slots, names, problems);
@@ -624,7 +630,7 @@ export function readModel(text: string, where = 'the model document'): CompiledD
   problems.push(...linkProblems(skins));
   const events = readEventDefs(value.events, problems);
   const animations = readAnimations(value.animations, names, slots, skins, events, problems);
-  const constraints = readConstraints(value.constraints, animations, bones, slots, problems);
+  const constraints = readConstraints(value.constraints, animations, bones, slots, referenceScale, problems);
   // Each skin's constraint lists name a constraint of that kind: the runtime's loader refuses any other name (`./skins.ts`).
   for (const skin of skins) {
     for (const kind of CORE_CONSTRAINT_KINDS) {
@@ -639,7 +645,7 @@ export function readModel(text: string, where = 'the model document'): CompiledD
     });
   }
   if (problems.length > 0) throw new CoreInputError(`${where}: ${problems.length} problem(s): ${problems.join('; ')}`);
-  const doc: CompiledDocument = { spec: CORE_DOCUMENT_SPEC, skin: CORE_ALL_SKINS, bones, slots, skins, constraints, animations };
+  const doc: CompiledDocument = { spec: CORE_DOCUMENT_SPEC, skin: CORE_ALL_SKINS, referenceScale, bones, slots, skins, constraints, animations };
   resolveSkinView(doc);
   return doc;
 }

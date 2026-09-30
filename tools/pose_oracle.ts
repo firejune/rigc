@@ -405,7 +405,7 @@ import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, rawNumber, readModel
 import { REGION_TRIANGLES, REGION_UVS } from '../src/core/clipping.ts';
 import { IRR_OFFSET as CORE_IRR_OFFSET, poseAnimations, sampleTime as coreSampleTime, type TimelinePlant } from '../src/core/animation.ts';
 import { pathAttachmentRows, pathRows, type CorePathRecord } from '../src/core/constraints_path.ts';
-import { PHYSICS_REFERENCE_SCALE, physicsRows, poseSteppedAnimations, type CorePhysicsRecord } from '../src/core/constraints_physics.ts';
+import { freshStepContext, physicsRows, poseSteppedAnimations, type CorePhysicsRecord } from '../src/core/constraints_physics.ts';
 import { poseUvs, readUvSequences, shownAtSample, shownAtSetup, steppedUvsWhy, type UvReading, type UvSource } from '../src/core/uvs.ts';
 import { atlasRegionLookup, parseAtlasText } from '../src/atlas.ts';
 
@@ -955,7 +955,7 @@ export function coreDump(model: CompiledDocument, options: OracleOptions, plant:
   // `--raw` (issue #966): the core writes its rows' doubles unrounded.
   const round = roundOf(options);
   if (options.raw === true) plant = { ...plant, round };
-  const posed = stepped ? poseSetup(doc, plant, { phase: 'reset', time: 0, referenceScale: PHYSICS_REFERENCE_SCALE, states: new Map(), ...(plant.physicsStep ? { step: plant.physicsStep } : {}) }) : poseSetup(doc, plant);
+  const posed = stepped ? poseSetup(doc, plant, freshStepContext(plant.physicsStep)) : poseSetup(doc, plant);
   const { setup } = posed;
   const sampled = stepped ? poseSteppedAnimations(doc, options.phase, options.samples, options.dt as number, plant) : poseAnimations(doc, options.phase, options.samples, plant);
   const uvs = coreUvs(doc, options, uv, setup, posed.absent, sampled);
