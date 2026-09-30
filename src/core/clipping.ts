@@ -59,7 +59,12 @@
  * written. The clipper stores vertices and UVs as float32: every number
  * written goes through `Math.fround`.
  *
- * Each point's UV is barycentric over the source triangle, from the unrounded
+ * A triangle no side of which was outside any edge keeps its corners' own
+ * UVs (through `Math.fround`) rather than weighing them — the two agree on
+ * the grid, and on three rows of `spineboy-pro`'s portal the weighed UV of a
+ * corner at 0 read `2e-17` where the runtime holds 0 (issue #966, `dump
+ * --raw`). Each point of a triangle that was cut has a UV barycentric over
+ * the source triangle, from the unrounded
  * point: with `d = 1 / ((b.y − c.y)(a.x − c.x) + (c.x − b.x)(a.y − c.y))`,
  * `wa = ((b.y − c.y)(x − c.x) + (c.x − b.x)(y − c.y))·d`,
  * `wb = ((c.y − a.y)(x − c.x) + (a.x − c.x)(y − c.y))·d`, `wc = 1 − wa − wb`,
@@ -257,6 +262,15 @@ export function clipTriangles(polygon: readonly number[], vertices: readonly num
     const d = 1 / det;
     const weigh = (v: number): number => (reading.uvByDivision === true ? v / det : v * d);
     const base = outV.length / 2;
+    // A triangle no side of which was outside any edge keeps its own corner UVs (issue #966): weighed barycentrically, a corner's UV of 0 reads 2e-17 off it, 3 rows of `spineboy-pro`'s portal.
+    if (!cut && reading.insideRotated !== true) {
+      tri.forEach(([x, y], k2) => {
+        outV.push(f(x), f(y));
+        outUv.push(tuv[k2][0], tuv[k2][1]);
+      });
+      for (let j = 1; j + 1 < points.length; j++) outT.push(base, base + j, base + j + 1);
+      continue;
+    }
     for (const [x, y] of points) {
       const wa = weigh(d0 * (x - c[0]) + d1 * (y - c[1]));
       const wb = weigh(d4 * (x - c[0]) + d2 * (y - c[1]));

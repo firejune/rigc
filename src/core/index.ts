@@ -172,7 +172,7 @@ import type { ModelAtlasRect, ModelBone, ModelSlot, ModelVertices, SkinTableEntr
 import { worldTransforms, type CoreWorld } from './world.ts';
 import { readAnimationTimelines, type CoreAnimationTimelines } from './animation.ts';
 import { readEventDefs, type CoreEventDef } from './events.ts';
-import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type DrawWalk, type RegionPoser, type VertexPoser } from './vertices.ts';
+import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type DrawWalk, type RegionPoser, type ShownGeometry, type VertexPoser } from './vertices.ts';
 import type { CoreClippedRow, TriangleClipper } from './clipping.ts';
 import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
 import { readPathRecord } from './constraints_path.ts';
@@ -259,6 +259,10 @@ export interface CoreAttachment {
   sequenceCount?: number;
   /** A linked mesh's `timelines`: whether it plays its source's deform and sequence timelines (`./deform.ts`). */
   timelines?: boolean;
+  /** The record's `color`, six or eight hex digits, where stated (issue #966): what the raw entry's attachment colour reads (`./raw.ts`); white where unstated. */
+  color?: string;
+  /** The frame its `sequence` shows at setup (`sequence.setup`, 0 unstated), where it states one (issue #966): the raw entry's sequence index when no timeline set another. */
+  sequenceSetup?: number;
 }
 
 /** One skin, as far as these constructs read it: its name, the bones and constraints it activates, and its table — slot, then placeholder. */
@@ -445,6 +449,14 @@ function readAttachments(value: Record<string, unknown>, bones: ReadonlySet<stri
         const count = raw.sequence.count;
         if (typeof count === 'number' && Number.isInteger(count) && count >= 1) record.sequenceCount = count;
         else if (kind !== 'region') problems.push(`${where}.sequence: count is ${JSON.stringify(count)}, not a whole number of at least 1`);
+        const setupFrame = raw.sequence.setup ?? 0;
+        if (typeof setupFrame === 'number' && Number.isInteger(setupFrame) && setupFrame >= 0 && (typeof count !== 'number' || setupFrame < count)) record.sequenceSetup = setupFrame;
+        else if (kind !== 'region') problems.push(`${where}.sequence: setup is ${JSON.stringify(raw.sequence.setup)}, not a frame of the ${JSON.stringify(count)}`);
+      }
+      // The attachment's own colour (issue #966): the raw entry forms the tint from it and the slot's.
+      if (raw.color !== undefined) {
+        if (typeof raw.color !== 'string' || !HEX_COLOUR.test(raw.color)) problems.push(`${where}: color is ${JSON.stringify(raw.color)}, not six or eight hex digits`);
+        else record.color = raw.color;
       }
       if (kind === 'linkedmesh') {
         if (typeof raw.timelines !== 'boolean') problems.push(`${where}: timelines is ${JSON.stringify(raw.timelines) ?? 'absent'}, not a boolean — the writer states whether the link plays its source's timelines`);
@@ -725,6 +737,17 @@ export function gridRound(v: number): number | null {
   return out === 0 ? 0 : out;
 }
 
+/**
+ * The raw entry's number (issue #966): the double as computed, `null` for a
+ * value that is not finite, and a `-0` written as `0` — what `JSON.stringify`
+ * writes for it anyway, so an in-process row and its document agree. No grid:
+ * `pose_oracle.ts dump --raw` writes both dumpers' numbers through this.
+ */
+export function rawNumber(v: number): number | null {
+  if (!Number.isFinite(v)) return null;
+  return v === 0 ? 0 : v;
+}
+
 /** One bone of a posed setup: `[name, worldX, worldY, a, b, c, d, active, parent]`, the oracle's row. */
 export type CoreBoneRow = [string, number | null, number | null, number | null, number | null, number | null, number | null, 0 | 1, string | null];
 
@@ -788,6 +811,12 @@ export interface CorePlant {
   clip?: TriangleClipper;
   /** Whether a slot's timelines apply (`slotTimelinesApply` in `./skins.ts`). */
   slotTimelines?: SlotTimelineGate;
+  /**
+   * Not a plant: what every number of a row is written as — `gridRound` (the
+   * oracle's grid) unless the raw entry (`./raw.ts`, issue #966) passes
+   * `rawNumber`, the unrounded double.
+   */
+  round?: (v: number) => number | null;
 }
 
 /** The document's ik, transform and path constraint records, in its order — what `applyConstraints` runs. */
@@ -898,11 +927,12 @@ export interface CoreSetup {
  * what each slot shows — and the attachments also when a shown region's atlas
  * rectangle is `null`, every such slot named.
  */
-export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?: PhysicsStepContext): { setup: CoreSetup; absent: Array<[string, string]> } {
+export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?: PhysicsStepContext): { setup: CoreSetup; absent: Array<[string, string]>; world: Map<string, CoreWorld> | null; shown: ShownGeometry[] | null } {
   const evaluate = plant.evaluate ?? worldTransforms;
   const resolve = plant.shown ?? shownAttachment;
   const colour = plant.colour ?? readColour;
   const blend = plant.blend ?? readBlend;
+  const round = plant.round ?? gridRound;
   const bonesWhy = constraintsAbsentWhy(doc);
   let bones: CoreBoneRow[] | null = null;
   let setupWorld: Map<string, CoreWorld> | null = null;
@@ -916,7 +946,7 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
     bones = doc.bones.map((b): CoreBoneRow => {
       const t = world.get(b.name);
       if (t === undefined) throw new CoreInputError(`the evaluator returned no transform for bone "${b.name}"`);
-      return [b.name, gridRound(t.worldX), gridRound(t.worldY), gridRound(t.a), gridRound(t.b), gridRound(t.c), gridRound(t.d), active.has(b.name) ? 1 : 0, b.parent ?? null];
+      return [b.name, round(t.worldX), round(t.worldY), round(t.a), round(t.b), round(t.c), round(t.d), active.has(b.name) ? 1 : 0, b.parent ?? null];
     });
   }
   const conflicts: string[] = [];
@@ -943,8 +973,8 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
     slotRows.push([
       slot.name,
       row === null ? null : row.name,
-      gridRound(r), gridRound(g), gridRound(b), gridRound(a),
-      dark === null ? null : [gridRound(dark[0]), gridRound(dark[1]), gridRound(dark[2])],
+      round(r), round(g), round(b), round(a),
+      dark === null ? null : [round(dark[0]), round(dark[1]), round(dark[2])],
       row === null ? null : row.path,
       blend(slot),
     ]);
@@ -968,6 +998,8 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
   let attachmentsWhy: string | null = clipsWhy;
   let clipped: CoreClippedRow[] | null = null;
   let clippedWhy: string | null = clipsWhy ?? orderWhy;
+  // What the raw entry reads past the rows (issue #966, `./raw.ts`): the unrounded world transforms and the shown records in draw order.
+  let shownInOrder: ShownGeometry[] | null = null;
   if (clipsWhy === null && setupWorld !== null && drawOrder !== null) {
     const world = setupWorld;
     // Each slot's shown record, with what the sliders' deform and sequence timelines set on it (`./deform.ts`), in the draw order.
@@ -976,7 +1008,8 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
     const states = attachmentStates(doc, resolve, placeholders, null, applied, plant);
     const rank = new Map(drawOrder.map((n, i) => [n, i]));
     const shown = [...states.shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
-    const posed = poseGeometry(shown, world, sourceOfDoc(doc), gridRound, { region: plant.region, vertices: plant.vertices }, drawWalkOf(doc, drawOrder, plant));
+    shownInOrder = states.why.length === 0 ? shown : null;
+    const posed = poseGeometry(shown, world, sourceOfDoc(doc), round, { region: plant.region, vertices: plant.vertices }, drawWalkOf(doc, drawOrder, plant));
     const stateWhy = states.why.length === 0 ? null : `${states.why.join('; ')}`;
     attachments = stateWhy === null ? posed.attachments : null;
     attachmentsWhy = stateWhy ?? posed.attachmentsWhy;
@@ -990,7 +1023,7 @@ export function poseSetup(doc: CompiledDocument, plant: CorePlant = {}, physics?
   // `NOT_ADMITTED` (empty since issue #956) stands before the setup blocks in the document's order.
   const absent: Array<[string, string]> = NOT_ADMITTED.map(([block, reason]): [string, string] => [block, reason]);
   for (const block of POSED_BLOCKS) if (why[block] !== null) absent.push([block, why[block] as string]);
-  return { setup: { bones, slots, drawOrder, attachments, clips, clipped }, absent };
+  return { setup: { bones, slots, drawOrder, attachments, clips, clipped }, absent, world: setupWorld, shown: shownInOrder };
 }
 
 /** What the clipped block's draw walk reads (`DrawWalk` in `./vertices.ts`): the draw order, the active bones, and a linked mesh's source triangles. */

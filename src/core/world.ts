@@ -54,6 +54,23 @@
  *   the bone's own shear and scale are applied on that frame.
  * - `noScaleOrReflection` — as `noScale`, never turned for a reflection.
  *
+ * ## To the bit (issue #966)
+ *
+ * The rules above were measured on the oracle's six-decimal grid; three of
+ * the modes matched it and not the runtime's last bit (issue #959). Held
+ * against `pose_oracle.ts dump --raw` at tolerance 0 — a bone in the mode
+ * under a parent rotated, scaled, sheared and reflecting, two children 1e9
+ * units out (the core suite's `CR02`, 300 per mode) — three operation orders
+ * are the runtime's and the grid could not tell them:
+ *
+ * - a radian angle is turned into degrees by multiplying with `180 / pi`
+ *   (`RUNTIME_DEG`), not by dividing by `pi / 180`: the division read 106
+ *   of 300 `noRotationOrReflection` bones off;
+ * - `noRotationOrReflection`'s y angle is `r + shearY + 90`, the shear
+ *   added before the right angle (`r + 90 + shearY` read 46 of 300 off);
+ * - `noScale`'s direction is normalised by multiplying with the reciprocal
+ *   of its length (dividing read 138 of 300 off).
+ *
  * Measured: `normal` on 12 recipes, `onlyTranslation` on 1 and
  * `noRotationOrReflection` on 2 of the tree's corpus; all five, under rotated,
  * scaled, sheared and reflecting parents, on the hand-written probe the core
@@ -65,6 +82,8 @@ import type { ModelBone } from '../model.ts';
 /** Pi as the runtime converts degrees with it — see the header. */
 export const RUNTIME_PI = 3.1415927;
 const RAD = RUNTIME_PI / 180;
+/** Radians to degrees as the runtime converts them (issue #966): multiplied by `180 / pi`, not divided by `pi / 180` — the two differ in the last bit. */
+export const RUNTIME_DEG = 180 / RUNTIME_PI;
 
 /** One bone's world transform: the matrix `[a b; c d]` and the origin, y up. */
 export interface CoreWorld {
@@ -115,12 +134,16 @@ function modeMatrix(mode: CoreInheritMode, parent: CoreWorld, bone: ModelBone): 
       if (xLengthSq > 0) {
         const k = Math.abs(p[0] * p[3] - p[1] * p[2]) / xLengthSq;
         conformal = [p[0], -p[2] * k, p[2], p[0] * k];
-        parentAngle = Math.atan2(p[2], p[0]) / RAD;
+        parentAngle = Math.atan2(p[2], p[0]) * RUNTIME_DEG;
       } else {
         conformal = [0, p[1], 0, p[3]];
-        parentAngle = Math.atan2(p[3], p[1]) / RAD - 90;
+        parentAngle = Math.atan2(p[3], p[1]) * RUNTIME_DEG - 90;
       }
-      return times(conformal, frame(rotation - parentAngle, shearX, shearY, scaleX, scaleY));
+      // The y angle adds the shear before the right angle here, unlike `frame` (issue #966): `(r + 90 + shearY)` reads last-bit off on 81 of 205 sheared or scaled bones at a 1e9 amplifier, `(r + shearY + 90)` on none; `r = rotation − parentAngle` taken first (adding the shear before the parent's angle is taken off reads 102 of 205 off).
+      const r = rotation - parentAngle;
+      const xAngle = (r + shearX) * RAD;
+      const yAngle = (r + shearY + 90) * RAD;
+      return times(conformal, [Math.cos(xAngle) * scaleX, Math.cos(yAngle) * scaleY, Math.sin(xAngle) * scaleX, Math.sin(yAngle) * scaleY]);
     }
     case 'noScale':
     case 'noScaleOrReflection': {
@@ -129,9 +152,10 @@ function modeMatrix(mode: CoreInheritMode, parent: CoreWorld, bone: ModelBone): 
       const sin = Math.sin(r);
       let ux = p[0] * cos + p[1] * sin;
       let uy = p[2] * cos + p[3] * sin;
-      const length = Math.sqrt(ux * ux + uy * uy);
-      ux /= length;
-      uy /= length;
+      // Normalised by multiplying with the reciprocal of the length, not by dividing by it (issue #966): the division reads 1 ulp off on 375 bone-samples of the corpus's `noScale` row.
+      const inverse = 1 / Math.sqrt(ux * ux + uy * uy);
+      ux *= inverse;
+      uy *= inverse;
       const flip = mode === 'noScale' && p[0] * p[3] - p[1] * p[2] < 0 ? -1 : 1;
       const turned: M2 = [ux, -uy * flip, uy, ux * flip];
       return times(turned, frame(0, shearX, shearY, scaleX, scaleY));

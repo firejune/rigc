@@ -5,7 +5,15 @@
  * what the corpus reaches (issue #925, step 2a; the slots, issue #928; the
  * attachments' world vertices and the clipping polygons, issue #931).
  *
- *   bun tools/core_gate.ts [--recipes <recipes.json>] [--root <dir>] [--work <dir>]
+ *   bun tools/core_gate.ts [--recipes <recipes.json>] [--root <dir>] [--work <dir>] [--raw]
+ *
+ * `--raw` (issue #966) runs every dump below under `pose_oracle.ts dump
+ * --raw` — full doubles, both dumpers — and every `compare` at tolerance 0
+ * in ulps: the census of last-bit gaps the grid hides. The verdict line is
+ * prefixed `RAW`, each row's worst deltas are in ulps, and before it one
+ * `RAW` line per block (`rawCensusLines`) counts the rows exact, off and
+ * skipped, the worst distance and its row, then the stepped and per-skin
+ * runs the same way.
  *
  * With no `--recipes`, the tree's own: `tools/emit_hashes.ts`'s `treeRecipes`
  * (every fetched editor export and every gallery rig — nineteen when
@@ -388,7 +396,7 @@ export interface GateRow {
   /** Why: the SKIP's constructs, the DIFF's first difference, the REFUSED's cause; null on IDENTICAL. */
   why: string | null;
   /** Each posed block's own verdict and why; null on a REFUSED row. */
-  blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null }> | null;
+  blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null; worst?: number }> | null;
   /** Bone-samples `compare` compared (the setup pose's bones, when carried). */
   boneSamples: number;
   /** Slot rows compared (the setup pose's slots, when carried). */
@@ -426,7 +434,7 @@ export interface SkinRun {
   verdict: BlockVerdict;
   /** The DIFF's first difference, or the SKIP's blocks; null on IDENTICAL. */
   why: string | null;
-  blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null }>;
+  blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null; worst?: number }>;
   /** Per animation, each animation block's verdict under this skin. */
   animations: AnimationVerdict[];
   stepped: SteppedRow;
@@ -961,8 +969,8 @@ function only(core: OracleDocument, keep: GateBlock): OracleDocument {
  * (every block the core writes, #955's among them), the `dt` both documents
  * state, and the steps the core's schedule takes between samples.
  */
-export function steppedRun(skeletonText: string, atlasText: string, skeletonPath: string, modelText: string, modelPath: string, plant: TimelinePlant, tol: { xy: number; m: number }, skin: string = STEPPED_OPTIONS.skin, uvReading?: UvReading): SteppedRow {
-  const options: OracleOptions = { ...STEPPED_OPTIONS, skin };
+export function steppedRun(skeletonText: string, atlasText: string, skeletonPath: string, modelText: string, modelPath: string, plant: TimelinePlant, tol: { xy: number; m: number }, skin: string = STEPPED_OPTIONS.skin, uvReading?: UvReading, raw = false): SteppedRow {
+  const options: OracleOptions = rawOptions({ ...STEPPED_OPTIONS, skin }, raw);
   const spine = dumpSkeleton(loadOracleData(skeletonText, atlasText, skeletonPath), options);
   const doc = readModel(modelText, modelPath);
   const core = coreDump(doc, options, plant, uvSourceOf(atlasText, modelText, uvReading));
@@ -988,8 +996,8 @@ export function steppedRun(skeletonText: string, atlasText: string, skeletonPath
   return skipped.length === 0 ? { verdict: 'IDENTICAL', why: null, dt, boneSamples, steps, census } : { verdict: 'SKIP', why: skipped.join(' | '), dt, boneSamples, steps, census };
 }
 
-/** One built row: both dumps, the comparisons — whole and per block — and the census. `plant` replaces a part of the core (a control's plant), `uvReading` a rejected page-UV reading (`src/core/uvs.ts`). */
-export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {}, uvReading?: UvReading): GateRow {
+/** One built row: both dumps, the comparisons — whole and per block — and the census. `plant` replaces a part of the core (a control's plant), `uvReading` a rejected page-UV reading (`src/core/uvs.ts`), `raw` every dump under `--raw` (issue #966). */
+export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {}, uvReading?: UvReading, raw = false): GateRow {
   const skeleton = join(outDir, 'skeleton.json');
   const atlas = join(outDir, 'skeleton.atlas');
   const model = join(outDir, MODEL_DOCUMENT_FILE);
@@ -1000,7 +1008,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   let census: CensusRow;
   let slotCensus: SlotCensusRow;
   let animationCensus: AnimationCensusRow;
-  const blocks = {} as Record<GateBlock, { verdict: BlockVerdict; why: string | null }>;
+  const blocks = {} as Record<GateBlock, { verdict: BlockVerdict; why: string | null; worst?: number }>;
   const perAnimation = new Map<string, AnimationVerdict>();
   let slotRows = 0;
   let attachmentCensus: AttachmentCensusRow;
@@ -1014,14 +1022,14 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   // What the per-skin runs compared, added to the merged run's figures.
   const extra = { boneSamples: 0, slotRows: 0, attachmentRows: 0, worstXy: 0, worstM: 0 };
   try {
-    const spine = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), GATE_OPTIONS);
+    const spine = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), rawOptions(GATE_OPTIONS, raw));
     const modelText = readFileSync(model, 'utf8');
     const modelDoc = readModel(modelText, model);
     // The core's page UVs read the build's own atlas beside the model (issue #967): the model carries no page layout.
     const atlasText = readFileSync(atlas, 'utf8');
     const uv = uvSourceOf(atlasText, modelText, uvReading);
-    const core = coreDump(modelDoc, GATE_OPTIONS, plant, uv);
-    const tol = { xy: ORACLE_DEFAULT_TOL, m: ORACLE_DEFAULT_TOL };
+    const core = coreDump(modelDoc, rawOptions(GATE_OPTIONS, raw), plant, uv);
+    const tol = raw ? RAW_TOLERANCE : { xy: ORACLE_DEFAULT_TOL, m: ORACLE_DEFAULT_TOL };
     c = compareDumps(spine, core, tol);
     clippedCensus = clippedCensusOf(spine);
     uvCensus = uvCensusOf(modelDoc, uvSourceOf(atlasText, modelText), GATE_OPTIONS);
@@ -1031,7 +1039,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
     // A row declaring several skins is posed once per skin as well (issue #932): the merged view is an artefact of the instrument, each skin a state a runtime is in.
     if (modelDoc.skins.length > 1) {
       for (const k of modelDoc.skins) {
-        const options: OracleOptions = { ...GATE_OPTIONS, skin: k.name };
+        const options: OracleOptions = rawOptions({ ...GATE_OPTIONS, skin: k.name }, raw);
         const spineK = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), options);
         const coreK = coreDump(modelDoc, options, plant, uv);
         const whole = compareDumps(spineK, coreK, tol);
@@ -1043,7 +1051,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
         if (j.blocks['setup.slots'].verdict !== 'SKIP') extra.slotRows += coreK.setup.slots?.length ?? 0;
         if (j.blocks['setup.attachments'].verdict !== 'SKIP') extra.attachmentRows += coreK.setup.attachments?.length ?? 0;
         if (j.blocks['setup.clips'].verdict !== 'SKIP') extra.attachmentRows += coreK.setup.clips?.length ?? 0;
-        const steppedK = steppedRun(readFileSync(skeleton, 'utf8'), atlasText, skeleton, modelText, model, plant, tol, k.name, uvReading);
+        const steppedK = steppedRun(readFileSync(skeleton, 'utf8'), atlasText, skeleton, modelText, model, plant, tol, k.name, uvReading, raw);
         perSkin.push({
           skin: k.name,
           verdict: !whole.identical ? 'DIFF' : skippedK.length > 0 ? 'SKIP' : 'IDENTICAL',
@@ -1065,7 +1073,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
     attachmentCensus = attachmentCensusOf(modelText, reflecting, sheared);
     constraintCensus = constraintCensusOf(modelText);
     pathCensus = pathCensusOf(modelText);
-    stepped = steppedRun(readFileSync(skeleton, 'utf8'), atlasText, skeleton, modelText, model, plant, tol, STEPPED_OPTIONS.skin, uvReading);
+    stepped = steppedRun(readFileSync(skeleton, 'utf8'), atlasText, skeleton, modelText, model, plant, tol, STEPPED_OPTIONS.skin, uvReading, raw);
   } catch (err) {
     if (err instanceof OracleInputError || err instanceof CoreInputError) return refused(err.message);
     throw err;
@@ -1085,8 +1093,8 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
 }
 
 /** Each posed block of one pair of dumps judged alone — the core's side with every other posed block left out — and each animation's verdict on each sample block. */
-function judgeBlocks(spine: OracleDocument, core: OracleDocument, tol: { xy: number; m: number }): { blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null }>; animations: Map<string, AnimationVerdict> } {
-  const blocks = {} as Record<GateBlock, { verdict: BlockVerdict; why: string | null }>;
+function judgeBlocks(spine: OracleDocument, core: OracleDocument, tol: { xy: number; m: number }): { blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null; worst?: number }>; animations: Map<string, AnimationVerdict> } {
+  const blocks = {} as Record<GateBlock, { verdict: BlockVerdict; why: string | null; worst?: number }>;
   const perAnimation = new Map<string, AnimationVerdict>();
   for (const block of GATE_BLOCKS) {
     const why = core.absent?.find((x) => x[0] === block)?.[1];
@@ -1096,7 +1104,8 @@ function judgeBlocks(spine: OracleDocument, core: OracleDocument, tol: { xy: num
     }
     // The page UVs are judged at tolerance 0 on the grid (issue #967): a UV off by one grid step is a different texel on a page of 10⁶ or more.
     const alone = compareDumps(spine, only(core, block), block.endsWith('.uvs') ? UV_TOL : tol);
-    blocks[block] = alone.identical ? { verdict: 'IDENTICAL', why: null } : { verdict: 'DIFF', why: alone.first };
+    const worst = Math.max(alone.worstXy, alone.worstM, alone.worstVertex);
+    blocks[block] = alone.identical ? { verdict: 'IDENTICAL', why: null, worst } : { verdict: 'DIFF', why: alone.first, worst };
     if (block.startsWith('animations.')) {
       const field = block.slice('animations.'.length) as SampleField;
       for (const row of alone.rows) {
@@ -1125,7 +1134,7 @@ type SampleField = 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | '
  * sample block is taken the same way. A block some skin's run leaves out
  * too stays SKIP with the merged run's reason.
  */
-function promotePerSkin(blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null }>, perAnimation: Map<string, AnimationVerdict>, runs: readonly SkinRun[]): void {
+function promotePerSkin(blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null; worst?: number }>, perAnimation: Map<string, AnimationVerdict>, runs: readonly SkinRun[]): void {
   for (const block of GATE_BLOCKS) {
     if (blocks[block].verdict !== 'SKIP' || runs.some((k) => k.blocks[block].verdict === 'SKIP')) continue;
     const red = runs.find((k) => k.blocks[block].verdict === 'DIFF');
@@ -1171,18 +1180,18 @@ export function buildRecipes(recipes: readonly Recipe[], work: string, root: str
   return built.recipes.map((r, i) => ({ name: r.name, out: join(work, String(i).padStart(width, '0'), 'out'), exits: r.exits }));
 }
 
-/** Built rows gated; `plant` replaces a part of the core on every row (a control's plant), `uvReading` a rejected page-UV reading. */
-export function gateBuilt(built: readonly BuiltRow[], plant: TimelinePlant = {}, uvReading?: UvReading): GateRow[] {
+/** Built rows gated; `plant` replaces a part of the core on every row (a control's plant), `uvReading` a rejected page-UV reading, `raw` every dump under `--raw` (issue #966). */
+export function gateBuilt(built: readonly BuiltRow[], plant: TimelinePlant = {}, uvReading?: UvReading, raw = false): GateRow[] {
   return built.map((r) =>
     r.exits.some((e) => e !== 0)
       ? { name: r.name, verdict: 'REFUSED' as const, why: `the build chain exited ${JSON.stringify(r.exits)}`, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, attachmentRows: 0, vertices: 0, attachmentCensus: null, constraintCensus: null, pathCensus: null, animations: [], animationCensus: null }
-      : gateBuild(r.name, r.out, plant, uvReading),
+      : gateBuild(r.name, r.out, plant, uvReading, raw),
   );
 }
 
 /** Every recipe built into `work` and gated, in name order. */
-export function gateRecipes(recipes: readonly Recipe[], work: string, root: string, progress: (line: string) => void = () => {}, plant: TimelinePlant = {}): GateRow[] {
-  return gateBuilt(buildRecipes(recipes, work, root, progress), plant);
+export function gateRecipes(recipes: readonly Recipe[], work: string, root: string, progress: (line: string) => void = () => {}, plant: TimelinePlant = {}, raw = false): GateRow[] {
+  return gateBuilt(buildRecipes(recipes, work, root, progress), plant, undefined, raw);
 }
 
 /** The census as a markdown table, one row per recipe, then the totals. */
@@ -1467,6 +1476,48 @@ export function skinReachLines(rows: readonly GateRow[]): string[] {
   return several.map((r) => `  REACH per skin: ${r.name} — ${(r.perSkin ?? []).map((k) => `${k.skin} ${k.verdict}`).join(', ')}`);
 }
 
+// --- #966 raw: begin ---
+/** Every tolerance of a `--raw` run: 0, in ulps (issue #966). */
+export const RAW_TOLERANCE = { xy: 0, m: 0 } as const;
+
+/** `options` under `--raw` (issue #966), or as they are. */
+export function rawOptions(options: OracleOptions, raw: boolean): OracleOptions {
+  return raw ? { ...options, raw: true } : options;
+}
+
+/**
+ * The raw census (issue #966): per block, the rows exact, off and skipped
+ * under the merged run, the worst distance in ulps with its row, and each
+ * row off with its first difference; then the stepped run and the per-skin
+ * runs the same way.
+ */
+export function rawCensusLines(rows: readonly GateRow[]): string[] {
+  const out: string[] = ['', 'raw census (full doubles, tolerance 0; worst in ulps over the bones\' matrix and origin and every vertex):'];
+  for (const block of GATE_BLOCKS) {
+    const judged = rows.filter((r) => r.blocks !== null);
+    const exact = judged.filter((r) => r.blocks?.[block].verdict === 'IDENTICAL');
+    const off = judged.filter((r) => r.blocks?.[block].verdict === 'DIFF');
+    const skip = judged.filter((r) => r.blocks?.[block].verdict === 'SKIP');
+    let worst = 0;
+    let at = '';
+    for (const r of judged) {
+      const w = r.blocks?.[block].worst ?? 0;
+      if (w > worst) {
+        worst = w;
+        at = r.name;
+      }
+    }
+    out.push(`  RAW   ${block}: ${exact.length} exact, ${off.length} off, ${skip.length} SKIP; worst ${worst} ulp${at === '' ? '' : ` (${at})`}${off.length === 0 ? '' : ` — off: ${off.map((r) => r.name).join(', ')}`}`);
+  }
+  const stepped = rows.filter((r) => r.stepped !== undefined);
+  const sOff = stepped.filter((r) => r.stepped?.verdict === 'DIFF');
+  out.push(`  RAW   stepped (--physics step --dt ${ORACLE_DEFAULT_DT}): ${stepped.filter((r) => r.stepped?.verdict === 'IDENTICAL').length} exact, ${sOff.length} off, ${stepped.filter((r) => r.stepped?.verdict === 'SKIP').length} SKIP${sOff.length === 0 ? '' : ` — off: ${sOff.map((r) => r.name).join(', ')}`}`);
+  const runs = rows.flatMap((r) => (r.perSkin ?? []).map((k) => ({ row: r.name, k })));
+  out.push(`  RAW   per skin: ${runs.length} run(s), ${runs.filter((x) => x.k.verdict === 'IDENTICAL').length} exact, ${runs.filter((x) => x.k.verdict === 'DIFF').length} off, ${runs.filter((x) => x.k.verdict === 'SKIP').length} SKIP`);
+  return out;
+}
+// --- #966 raw: end ---
+
 /** The verdict line. */
 export function gateVerdict(rows: readonly GateRow[]): { ok: boolean; line: string } {
   const count = (v: GateVerdict): number => rows.filter((r) => r.verdict === v).length;
@@ -1487,10 +1538,16 @@ export function gateVerdict(rows: readonly GateRow[]): { ok: boolean; line: stri
   };
 }
 
-function parseFlags(args: readonly string[], known: readonly string[]): Map<string, string> {
+function parseFlags(args: readonly string[], known: readonly string[], switches: readonly string[] = []): Map<string, string> {
   const flags = new Map<string, string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
+    // A switch takes no value (`--raw`, issue #966).
+    if (switches.includes(arg)) {
+      if (flags.has(arg)) throw new GateInputError(`${arg} given twice`);
+      flags.set(arg, 'true');
+      continue;
+    }
     if (!known.includes(arg)) throw new GateInputError(`unknown argument ${arg}; this command takes ${known.join(', ')}`);
     const value = args[i + 1];
     if (value === undefined || value.startsWith('--')) throw new GateInputError(`${arg} needs a value`);
@@ -1504,7 +1561,8 @@ function parseFlags(args: readonly string[], known: readonly string[]): Map<stri
 /** The command; returns the exit code. */
 export function gateMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error): number {
   try {
-    const flags = parseFlags(argv, ['--recipes', '--root', '--work']);
+    const flags = parseFlags(argv, ['--recipes', '--root', '--work'], ['--raw']);
+    const raw = flags.has('--raw');
     const root = resolve(flags.get('--root') ?? TREE_ROOT);
     if (!existsSync(root) || !statSync(root).isDirectory()) throw new GateInputError(`--root ${root} is not a directory`);
     const named = flags.get('--recipes');
@@ -1519,11 +1577,11 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
       mkdirSync(work, { recursive: true });
     }
     warn(`core_gate: ${recipes.length} recipe(s), work directory ${work}`);
-    const rows = gateRecipes(recipes, work, root, warn);
+    const rows = gateRecipes(recipes, work, root, warn, {}, raw);
     for (const row of rows) {
       const blocks = row.blocks === null ? '' : ` [${GATE_BLOCKS.map((b) => `${b} ${row.blocks?.[b].verdict}`).join(', ')}]`;
       print(
-        `  ${row.verdict.padEnd(9)} ${row.name}${blocks}: ${row.boneSamples} bone-sample(s), ${row.slotRows} slot row(s) and ${row.attachmentRows} attachment row(s) of ${row.vertices} vertices compared, worst Δxy ${row.worstXy.toFixed(6)}, worst Δabcd ${row.worstM.toFixed(6)}` +
+        `  ${row.verdict.padEnd(9)} ${row.name}${blocks}: ${row.boneSamples} bone-sample(s), ${row.slotRows} slot row(s) and ${row.attachmentRows} attachment row(s) of ${row.vertices} vertices compared, worst Δxy ${raw ? `${row.worstXy} ulp` : row.worstXy.toFixed(6)}, worst Δabcd ${raw ? `${row.worstM} ulp` : row.worstM.toFixed(6)}` +
           (row.why === null ? '' : ` — ${row.why}`),
       );
       for (const a of row.animations) print(`              animation ${JSON.stringify(a.name)}: bones ${a.bones}, slots ${a.slots}, drawOrder ${a.drawOrder}, attachments ${a.attachments}, clips ${a.clips}, clipped ${a.clipped}, uvs ${a.uvs}, events ${a.events}${a.why === null ? '' : ` — ${a.why}`}`);
@@ -1568,8 +1626,11 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     }
     for (const line of constraintKindLines(rows, kinds)) print(line);
     for (const line of timelineKindLines(rows)) print(line);
+    // --- #966 raw: begin ---
+    if (raw) for (const line of rawCensusLines(rows)) print(line);
+    // --- #966 raw: end ---
     const verdict = gateVerdict(rows);
-    print(verdict.line);
+    print(raw ? `RAW (full doubles, tolerance 0, worst in ulps) ${verdict.line}` : verdict.line);
     return verdict.ok ? 0 : 1;
   } catch (err) {
     if (err instanceof GateInputError || err instanceof HashesInputError) {
