@@ -22,9 +22,12 @@
  * `skeleton.model.json`, both under the default options (grid, nine samples,
  * every skin, no physics), then `compare`. Each block the core poses —
  * `setup.bones`, `setup.slots`, `setup.drawOrder`, `setup.attachments`,
- * `setup.clips`, and a sample's `bones`, `slots`, `drawOrder`,
- * `attachments`, `clips` and `events` (`GATE_BLOCKS`; the last five and the
- * setup's draw order since issue #955) — is judged on its own, by a
+ * `setup.clips`, `setup.clipped`, and a sample's `bones`, `slots`,
+ * `drawOrder`, `attachments`, `clips`, `clipped` and `events` (`GATE_BLOCKS`;
+ * the sample's draw order, attachments, clips and events and the setup's draw
+ * order since issue #955, both `clipped` blocks since issue #964, with a
+ * clipping census — `CLIPPED_CENSUS_FIELDS` — off the spine-core dump) — is
+ * judged on its own, by a
  * `compare` of the spine-core dump against the core's with the other posed
  * blocks left out, and reads:
  *
@@ -285,8 +288,8 @@ export type PathCensusRow = Record<PathCensusField, number>;
 
 /** The blocks the core poses, each judged on its own, in the document's order. */
 export const GATE_BLOCKS = [
-  'setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips',
-  'animations.bones', 'animations.slots', 'animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.events',
+  'setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips', 'setup.clipped',
+  'animations.bones', 'animations.slots', 'animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.clipped', 'animations.events',
 ] as const;
 export type GateBlock = (typeof GATE_BLOCKS)[number];
 
@@ -337,13 +340,14 @@ export interface AnimationVerdict {
   drawOrder: BlockVerdict;
   attachments: BlockVerdict;
   clips: BlockVerdict;
+  clipped: BlockVerdict;
   events: BlockVerdict;
   /** The first difference, on a DIFF. */
   why: string | null;
 }
 
 /** An animation's verdicts before any block is judged: every block SKIP. */
-const unjudged = (name: string): AnimationVerdict => ({ name, bones: 'SKIP', slots: 'SKIP', drawOrder: 'SKIP', attachments: 'SKIP', clips: 'SKIP', events: 'SKIP', why: null });
+const unjudged = (name: string): AnimationVerdict => ({ name, bones: 'SKIP', slots: 'SKIP', drawOrder: 'SKIP', attachments: 'SKIP', clips: 'SKIP', clipped: 'SKIP', events: 'SKIP', why: null });
 
 export type GateVerdict = 'IDENTICAL' | 'SKIP' | 'DIFF' | 'REFUSED';
 export type BlockVerdict = 'IDENTICAL' | 'SKIP' | 'DIFF';
@@ -374,6 +378,52 @@ export interface GateRow {
   pathCensus: PathCensusRow | null;
   /** The stepped run (issue #956); absent on a REFUSED row. */
   stepped?: SteppedRow;
+  /** What the spine-core dump draws under a clip (issue #964); absent on a REFUSED row. */
+  clippedCensus?: ClippedCensusRow;
+}
+
+/**
+ * The clipping census's fields (issue #964), each a count of rows of the
+ * spine-core dump's `clipped` blocks — the setup and every sample: a slot
+ * drawn under a clip, one the clipper left whole (`clipped` 0), one it cut,
+ * and one it cut away entirely (no triangle left).
+ */
+export const CLIPPED_CENSUS_FIELDS = ['drawn', 'whole', 'cut', 'gone'] as const;
+export type ClippedCensusRow = Record<(typeof CLIPPED_CENSUS_FIELDS)[number], number>;
+
+/** The clipping census of one spine-core dump. */
+export function clippedCensusOf(spine: OracleDocument): ClippedCensusRow {
+  const out: ClippedCensusRow = { drawn: 0, whole: 0, cut: 0, gone: 0 };
+  const poses = [spine.setup.clipped ?? [], ...(spine.animations ?? []).flatMap((a) => a.samples.map((x) => x.clipped ?? []))];
+  for (const rows of poses) {
+    for (const r of rows) {
+      out.drawn++;
+      if (r[2] === 0) out.whole++;
+      else if (r[5].length === 0) out.gone++;
+      else out.cut++;
+    }
+  }
+  return out;
+}
+
+/**
+ * One line per row drawing under a clip, then each field REACHed by a row
+ * whose `animations.clipped` (or, with no animation, `setup.clipped`) was
+ * compared, or a HOLE.
+ */
+export function clippedReachLines(rows: readonly GateRow[]): string[] {
+  const out: string[] = [];
+  for (const r of rows) {
+    const c = r.clippedCensus;
+    if (c === undefined || c.drawn === 0) continue;
+    out.push(`  CLIP  ${r.name}: ${CLIPPED_CENSUS_FIELDS.map((f) => `${f} ${c[f]}`).join(', ')} — setup.clipped ${r.blocks?.['setup.clipped'].verdict}, animations.clipped ${r.blocks?.['animations.clipped'].verdict}`);
+  }
+  const judged = rows.filter((r) => r.blocks !== null && r.blocks['setup.clipped'].verdict === 'IDENTICAL' && r.blocks['animations.clipped'].verdict === 'IDENTICAL');
+  for (const f of CLIPPED_CENSUS_FIELDS) {
+    const on = judged.filter((r) => (r.clippedCensus?.[f] ?? 0) > 0).map((r) => r.name);
+    out.push(on.length > 0 ? `  REACH clipped ${f}: ${on.join(', ')}` : `  HOLE  clipped ${f}: no compared row reaches it — the core suite's CL probes are its only reading`);
+  }
+  return out;
 }
 
 /** A refusal about an input — the command exits 2 on it. */
@@ -778,6 +828,7 @@ function only(core: OracleDocument, keep: GateBlock): OracleDocument {
     else if (block === 'setup.drawOrder') setup.drawOrder = null;
     else if (block === 'setup.attachments') setup.attachments = null;
     else if (block === 'setup.clips') setup.clips = null;
+    else if (block === 'setup.clipped') setup.clipped = null;
     else {
       const field = block.slice('animations.'.length);
       animations = (animations ?? []).map((a) => ({ ...a, samples: a.samples.map((x) => ({ ...x, [field]: null })) }));
@@ -841,12 +892,14 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   let pathCensus: PathCensusRow;
   let stepped: SteppedRow;
   let attachmentRows = 0;
+  let clippedCensus: ClippedCensusRow;
   try {
     const spine = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), GATE_OPTIONS);
     const modelText = readFileSync(model, 'utf8');
     const core = coreDump(readModel(modelText, model), GATE_OPTIONS, plant);
     const tol = { xy: ORACLE_DEFAULT_TOL, m: ORACLE_DEFAULT_TOL };
     c = compareDumps(spine, core, tol);
+    clippedCensus = clippedCensusOf(spine);
     for (const block of GATE_BLOCKS) {
       const why = core.absent?.find((x) => x[0] === block)?.[1];
       if (why !== undefined) {
@@ -856,7 +909,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
       const alone = compareDumps(spine, only(core, block), tol);
       blocks[block] = alone.identical ? { verdict: 'IDENTICAL', why: null } : { verdict: 'DIFF', why: alone.first };
       if (block.startsWith('animations.')) {
-        const field = block.slice('animations.'.length) as 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'events';
+        const field = block.slice('animations.'.length) as 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'clipped' | 'events';
         for (const row of alone.rows) {
           if (row.name === '(setup)') continue;
           const v = perAnimation.get(row.name) ?? unjudged(row.name);
@@ -885,7 +938,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   }
   const animations = [...perAnimation.values()];
   const setupRow = c.rows.find((x) => x.name === '(setup)');
-  const base = { name, blocks, boneSamples: c.boneSamples, slotRows, worstXy: c.worstXy, worstM: c.worstM, census, slotCensus, attachmentRows, vertices: setupRow?.vertices ?? 0, attachmentCensus, constraintCensus, pathCensus, animations, animationCensus, stepped };
+  const base = { name, blocks, boneSamples: c.boneSamples, slotRows, worstXy: c.worstXy, worstM: c.worstM, census, slotCensus, attachmentRows, vertices: setupRow?.vertices ?? 0, attachmentCensus, constraintCensus, pathCensus, animations, animationCensus, stepped, clippedCensus };
   if (!c.identical) return { ...base, verdict: 'DIFF', why: c.first };
   const skipped = GATE_BLOCKS.filter((b) => blocks[b].verdict === 'SKIP');
   if (skipped.length > 0) return { ...base, verdict: 'SKIP', why: skipped.map((b) => `${b}: ${blocks[b].why}`).join(' | ') };
@@ -1244,7 +1297,7 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
         `  ${row.verdict.padEnd(9)} ${row.name}${blocks}: ${row.boneSamples} bone-sample(s), ${row.slotRows} slot row(s) and ${row.attachmentRows} attachment row(s) of ${row.vertices} vertices compared, worst Δxy ${row.worstXy.toFixed(6)}, worst Δabcd ${row.worstM.toFixed(6)}` +
           (row.why === null ? '' : ` — ${row.why}`),
       );
-      for (const a of row.animations) print(`              animation ${JSON.stringify(a.name)}: bones ${a.bones}, slots ${a.slots}, drawOrder ${a.drawOrder}, attachments ${a.attachments}, clips ${a.clips}, events ${a.events}${a.why === null ? '' : ` — ${a.why}`}`);
+      for (const a of row.animations) print(`              animation ${JSON.stringify(a.name)}: bones ${a.bones}, slots ${a.slots}, drawOrder ${a.drawOrder}, attachments ${a.attachments}, clips ${a.clips}, clipped ${a.clipped}, events ${a.events}${a.why === null ? '' : ` — ${a.why}`}`);
       const st = row.stepped;
       if (st !== undefined && ((row.constraintCensus?.physics ?? 0) > 0 || st.verdict !== 'IDENTICAL')) {
         print(`              stepped (--physics step, dt ${st.dt} in both documents): bones ${st.verdict}, ${st.boneSamples} bone-sample(s)${st.why === null ? '' : ` — ${st.why}`}`);
@@ -1273,6 +1326,7 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     for (const line of constraintReachLines(rows)) print(line);
     for (const line of pathReachLines(rows)) print(line);
     for (const line of steppedReachLines(rows)) print(line);
+    for (const line of clippedReachLines(rows)) print(line);
     const kinds = new Map<string, string[]>();
     for (const row of rows) {
       const path = join(work, String(rows.indexOf(row)).padStart(String(rows.length).length, '0'), 'out', MODEL_DOCUMENT_FILE);

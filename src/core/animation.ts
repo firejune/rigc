@@ -177,12 +177,14 @@ import { freshStepContext, stepPhysicsRecords, stepSchedule, steppedPreviousPass
 import { drawOrderAt } from './draw_order.ts';
 import { eventsFired, type CoreEventRow } from './events.ts';
 import { poseGeometry, type CoreAttachmentRow, type CoreClipRow } from './vertices.ts';
+import type { CoreClippedRow } from './clipping.ts';
 import type { CoreWorld } from './world.ts';
 import { applySliderSlots, type SliderApplication } from './constraints_slider.ts';
 import {
   activeBones,
   constraintRecords,
   CoreInputError,
+  drawWalkOf,
   foldInheritMode,
   gridRound,
   readBlend,
@@ -825,6 +827,8 @@ export interface CoreSample {
   drawOrder: string[] | null;
   attachments: CoreAttachmentRow[] | null;
   clips: CoreClipRow[] | null;
+  /** The triangles drawn under a clip (issue #964, `./clipping.ts`). */
+  clipped: CoreClippedRow[] | null;
 }
 
 export interface CoreAnimationPose {
@@ -885,6 +889,7 @@ export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: num
   let bonesReason = constraintsAbsentWhy(doc) ?? pathAnimationsWhy(doc) ?? (dt === undefined ? null : steppedPreviousPassWhy(doc));
   const slotConflicts: string[] = [];
   const attachmentWhy: string[] = [];
+  const clippedWhy: string[] = [];
   const resolve = plant.shown ?? shownAttachment;
   const animations = doc.animations.map((anim: CoreAnimation): CoreAnimationPose => {
     const d = anim.timelines.duration;
@@ -922,19 +927,22 @@ export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: num
       // The attachments and clips, in the draw order, with the deform and sequence timelines' state (`./deform.ts`).
       let attachments: CoreAttachmentRow[] | null = null;
       let clips: CoreClipRow[] | null = null;
+      let clipped: CoreClippedRow[] | null = null;
       if (posed !== null) {
         const states = attachmentStates(doc, resolve, placeholders, { timelines: anim.timelines, t }, sliders, plant);
         for (const w of states.why) if (!attachmentWhy.includes(w)) attachmentWhy.push(w);
         const rank = new Map(order.map((k, r) => [doc.slots[k].name, r]));
         const shown = [...states.shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
-        const geometry = poseGeometry(shown, posed.world, sourceOfDoc(doc), gridRound, { region: plant.region, vertices: plant.vertices });
+        const geometry = poseGeometry(shown, posed.world, sourceOfDoc(doc), gridRound, { region: plant.region, vertices: plant.vertices }, drawWalkOf(doc, drawOrder, plant));
         if (geometry.attachmentsWhy !== null && !attachmentWhy.includes(geometry.attachmentsWhy)) attachmentWhy.push(geometry.attachmentsWhy);
         attachments = geometry.attachments;
         clips = geometry.clips;
+        clipped = geometry.clipped;
+        if (geometry.clippedWhy !== null && geometry.attachmentsWhy === null && !clippedWhy.includes(geometry.clippedWhy)) clippedWhy.push(geometry.clippedWhy);
       }
       const events = (plant.events ?? eventsFired)(anim.timelines.events, last, t);
       last = t;
-      samples.push({ t: gridRound(t), events, bones: posed === null ? null : posed.rows, slots: slots.rows, drawOrder, attachments, clips });
+      samples.push({ t: gridRound(t), events, bones: posed === null ? null : posed.rows, slots: slots.rows, drawOrder, attachments, clips, clipped });
     }
     return { name: anim.name, duration: gridRound(d), samples };
   });
@@ -952,11 +960,15 @@ export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: num
   const attachmentsReason = clipsReason ?? (attachmentWhy.length === 0 ? null : attachmentWhy.join('; '));
   if (attachmentsReason !== null) for (const a of animations) for (const s of a.samples) s.attachments = null;
   if (clipsReason !== null) for (const a of animations) for (const s of a.samples) s.clips = null;
+  // The clipped triangles follow the attachments and the clips, and are left out where a clip starts over a polygon the core does not clip against (`./clipping.ts`).
+  const clippedReason = attachmentsReason ?? orderReason ?? (clippedWhy.length === 0 ? null : clippedWhy.join('; '));
+  if (clippedReason !== null) for (const a of animations) for (const s of a.samples) s.clipped = null;
   const absent: Array<[string, string]> = [];
   if (bonesReason !== null) absent.push(['animations.bones', bonesReason]);
   if (slotsReason !== null) absent.push(['animations.slots', slotsReason]);
   if (orderReason !== null) absent.push(['animations.drawOrder', orderReason]);
   if (attachmentsReason !== null) absent.push(['animations.attachments', attachmentsReason]);
   if (clipsReason !== null) absent.push(['animations.clips', clipsReason]);
+  if (clippedReason !== null) absent.push(['animations.clipped', clippedReason]);
   return { animations, absent };
 }
