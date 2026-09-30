@@ -117,6 +117,35 @@
  * edit on the bone, then a translation-only edit on its parent that makes the
  * bone re-posed from its re-derived values (`CC06`).
  *
+ * ## To the bit (issue #966)
+ *
+ * Held against `pose_oracle.ts dump --raw` at tolerance 0 (the core suite's
+ * `CR01`, the `CC` populations and seeds; the corpus through `core_gate
+ * --raw`), these orders are the runtime's where the grid could not tell:
+ *
+ * - a one-bone ik accumulates the change from the bone's own angles first,
+ *   `−shearX − rotation + turn + atan2·DEG` (the target's direction first
+ *   read 53 of 600 random iks off);
+ * - a two-bone ik takes the child's offset angle off in radians before
+ *   turning the change into degrees, `(a1 − offset)·DEG` (`a1·DEG −
+ *   offset·DEG` read 44 bone findings on `spineboy-pro` against 4);
+ * - an ik timeline's keyed mix and softness reach the pose through the
+ *   setup blend, `setup + (value − setup)·1` (the value as keyed read a
+ *   Bézier-eased mix 2 ulp off on `spineboy-pro`'s jump);
+ * - a world-space rotate turns the change in radians, wrapped at the
+ *   runtime's pi (the degree form read 113 bone findings on `spineboy-pro`
+ *   against 44);
+ * - `localFromWorld` forms the inverse's entries before applying them, and
+ *   reads the shear as `yAngle − (rotation + 90)`.
+ *
+ * ⚠️ Two HOLEs remain, each named by `CR01` on every probe it reaches:
+ * `localFromWorld` is not yet the runtime's to the bit (164 of 400 read-back
+ * probes exact, 97 before the two changes above — a reflected bone's y
+ * column is where the rest differ; the decompositions tried and rejected are
+ * in the PR of issue #966), and an ADDITIVE world-space `shearY` is last-bit
+ * off on 35 of the 132 transform probes that key one. The corpus reaches
+ * neither: every tree row reads bit-exact.
+ *
  * ## ik — one bone
  *
  * The bone turns so its x axis points at the target. With `v` the target in
@@ -661,7 +690,8 @@ export function posedRecords(records: readonly CoreConstraintRecord[], timelines
       if (tl === undefined) return r;
       const i = search(tl.keys, t);
       if (i < 0) return r;
-      return { ...r, mix: channel(tl.keys, i, 0, t), softness: channel(tl.keys, i, 1, t), ...tl.keys[i].flags };
+      // The keyed values reach the pose through the setup blend at alpha 1, `setup + (value − setup)·1` (issue #966): the value as keyed agrees on the grid and reads off in the last bit — a Bézier-eased mix of 0.3899 on `spineboy-pro`'s jump moved its two-bone ik 2 ulp.
+      return { ...r, mix: r.mix + (channel(tl.keys, i, 0, t) - r.mix) * 1, softness: r.softness + (channel(tl.keys, i, 1, t) - r.softness) * 1, ...tl.keys[i].flags };
     }
     const tl = timelines.transform.find((x) => x.name === r.name);
     if (tl === undefined) return r;
@@ -735,8 +765,9 @@ export function localFromWorld(b: ModelBone, p: CoreWorld, w: CoreWorld): void {
   const pid = 1 / (p.a * p.d - p.b * p.c);
   const dx = w.worldX - p.worldX;
   const dy = w.worldY - p.worldY;
-  b.x = dx * p.d * pid - dy * p.b * pid;
-  b.y = dy * p.a * pid - dx * p.c * pid;
+  // The inverse's entries are formed first, then applied (issue #966): `dx·d·pid` reads last-bit off where `dx·(d·pid)` does not.
+  b.x = dx * (p.d * pid) - dy * (p.b * pid);
+  b.y = dy * (p.a * pid) - dx * (p.c * pid);
   b.shearX = 0;
   if (mode === 'noScale' || mode === 'noScaleOrReflection') {
     const length = Math.sqrt(w.a * w.a + w.c * w.c);
@@ -789,7 +820,8 @@ function decompose(b: ModelBone, la: number, lc: number, lb: number, ld: number)
   b.rotation = rotation;
   b.scaleX = sx;
   b.scaleY = det < 0 ? -yLength : yLength;
-  let shear = yAngle - rotation - 90;
+  // The inverse of the forward frame's `rotation + 90 + shearY` (issue #966): `yAngle − rotation − 90` agrees on the grid; `yAngle − (rotation + 90)` reads bit-exact on more of the read-back population (164 of 400 against 97 with both changes, the rest named in the header's ⚠️).
+  let shear = yAngle - (rotation + 90);
   shear = shear > 180 ? shear - 360 : shear < -180 ? shear + 360 : shear;
   b.shearY = shear;
 }
@@ -829,7 +861,8 @@ function solveOne(state: SolverState, c: CoreIkRecord): string[] {
   }
   const rotation = b.rotation ?? 0;
   const scaleX = b.scaleX ?? 1;
-  let r = Math.atan2(ly, lx) * DEG - (b.shearX ?? 0) - rotation + turn;
+  // Accumulated from the bone's own angles first and the target's direction last (issue #966): `atan2·DEG − shearX − rotation + turn` agrees on the grid and reads last-bit off on 53 of 600 random one-bone iks, this order on none.
+  let r = -(b.shearX ?? 0) - rotation + turn + Math.atan2(ly, lx) * DEG;
   if (scaleX < 0) r += 180;
   b.rotation = rotation + wrap180(r) * c.mix;
   const len = (b.length ?? 0) * scaleX;
@@ -961,9 +994,10 @@ function solveTwo(state: SolverState, c: CoreIkRecord): string[] {
   }
   const signs = Math.sign(psx) * Math.sign(psy);
   const offset = Math.atan2(cy, cx);
-  const parentTarget = a1 * DEG - signs * offset * DEG + (psx < 0 ? 180 : 0);
+  // The child's offset angle is taken off in radians before the change is turned into degrees (issue #966): `a1·DEG − offset·DEG` agrees on the grid and reads 1–4 ulp off on `spineboy-pro`'s two-bone iks (44 bone findings of a raw compare against 4, the four the ik mix's setup blend below).
   const parentRotation = parent.rotation ?? 0;
-  parent.rotation = parentRotation + wrap180(parentTarget - parentRotation) * c.mix;
+  const parentChange = (a1 - signs * offset) * DEG + (psx < 0 ? 180 : 0) - parentRotation;
+  parent.rotation = parentRotation + wrap180(parentChange) * c.mix;
   parent.scaleX = sx;
   parent.scaleY = sy;
   const childTarget = ((a2 + signs * offset) * DEG - (child.shearX ?? 0)) * signs + (csx < 0 ? 180 : 0);
@@ -1005,7 +1039,11 @@ export function sourceValue(state: SolverState, c: Pick<CoreTransformRecord, 'so
 function applyWorld(w: CoreWorld, property: TransformProperty, v: number, mix: number, additive: boolean): void {
   switch (property) {
     case 'rotate': {
-      const r = wrap180(additive ? v : v - Math.atan2(w.c, w.a) * DEG) * mix * RAD;
+      // In radians, the change wrapped at the runtime's pi (issue #966): the degree form `wrap180(v − atan2·DEG)·mix·RAD` agrees on the grid and reads 1–2 ulp off on the corpus's `spineboy-pro` (202 findings of a raw compare, 113 of them bones, against 96 with this reading, the rest the two-bone ik below); this reading is exact on the row once those are fixed too.
+      let r = additive ? v * RAD : v * RAD - Math.atan2(w.c, w.a);
+      if (r > RUNTIME_PI) r -= 2 * RUNTIME_PI;
+      else if (r < -RUNTIME_PI) r += 2 * RUNTIME_PI;
+      r *= mix;
       const cos = Math.cos(r);
       const sin = Math.sin(r);
       const [a, b] = [w.a, w.b];

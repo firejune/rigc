@@ -694,6 +694,7 @@ export function posedSlots(
   const resolve = plant.shown ?? shownAttachment;
   const colour = plant.colour ?? readColour;
   const blend = plant.blend ?? readBlend;
+  const round = plant.round ?? gridRound;
   const byName = new Map(timelines.slots.map((s) => [s.name, s]));
   const rows: CoreSlotRow[] = [];
   const conflicts: string[] = [];
@@ -736,8 +737,8 @@ export function posedSlots(
     rows.push([
       slot.name,
       row === null ? null : row.name,
-      gridRound(light[0]), gridRound(light[1]), gridRound(light[2]), gridRound(light[3]),
-      dark === null ? null : [gridRound(dark[0]), gridRound(dark[1]), gridRound(dark[2])],
+      round(light[0]), round(light[1]), round(light[2]), round(light[3]),
+      dark === null ? null : [round(dark[0]), round(dark[1]), round(dark[2])],
       row === null ? null : row.path,
       // The slot's data, not its pose: no timeline moves it (the index header's blend rule).
       blend(slot),
@@ -777,10 +778,11 @@ export function posedBoneWorld(doc: CompiledDocument, timelines: CoreAnimationTi
     world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records, previous, sliders);
   }
   const posed = world;
+  const round = plant.round ?? gridRound;
   const rows = bones.map((b): CoreBoneRow => {
     const w = posed.get(b.name);
     if (w === undefined) throw new CoreInputError(`the evaluator returned no transform for bone "${b.name}"`);
-    return [b.name, gridRound(w.worldX), gridRound(w.worldY), gridRound(w.a), gridRound(w.b), gridRound(w.c), gridRound(w.d), active.has(b.name) ? 1 : 0, b.parent ?? null];
+    return [b.name, round(w.worldX), round(w.worldY), round(w.a), round(w.b), round(w.c), round(w.d), active.has(b.name) ? 1 : 0, b.parent ?? null];
   });
   return { rows, world: posed };
 }
@@ -896,6 +898,7 @@ export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: num
   const attachmentWhy: string[] = [];
   const clippedWhy: string[] = [];
   const resolve = plant.shown ?? shownAttachment;
+  const round = plant.round ?? gridRound;
   const animations = doc.animations.map((anim: CoreAnimation): CoreAnimationPose => {
     const d = anim.timelines.duration;
     const samples: CoreSample[] = [];
@@ -938,18 +941,18 @@ export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: num
         for (const w of states.why) if (!attachmentWhy.includes(w)) attachmentWhy.push(w);
         const rank = new Map(order.map((k, r) => [doc.slots[k].name, r]));
         const shown = [...states.shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
-        const geometry = poseGeometry(shown, posed.world, sourceOfDoc(doc), gridRound, { region: plant.region, vertices: plant.vertices }, drawWalkOf(doc, drawOrder, plant));
+        const geometry = poseGeometry(shown, posed.world, sourceOfDoc(doc), round, { region: plant.region, vertices: plant.vertices }, drawWalkOf(doc, drawOrder, plant));
         if (geometry.attachmentsWhy !== null && !attachmentWhy.includes(geometry.attachmentsWhy)) attachmentWhy.push(geometry.attachmentsWhy);
         attachments = geometry.attachments;
         clips = geometry.clips;
         clipped = geometry.clipped;
         if (geometry.clippedWhy !== null && geometry.attachmentsWhy === null && !clippedWhy.includes(geometry.clippedWhy)) clippedWhy.push(geometry.clippedWhy);
       }
-      const events = (plant.events ?? eventsFired)(anim.timelines.events, last, t);
+      const events = (plant.events ?? eventsFired)(anim.timelines.events, last, t, round);
       last = t;
-      samples.push({ t: gridRound(t), events, bones: posed === null ? null : posed.rows, slots: slots.rows, drawOrder, attachments, clips, clipped });
+      samples.push({ t: round(t), events, bones: posed === null ? null : posed.rows, slots: slots.rows, drawOrder, attachments, clips, clipped });
     }
-    return { name: anim.name, duration: gridRound(d), samples };
+    return { name: anim.name, duration: round(d), samples };
   });
   if (bonesReason === null && dt === undefined) bonesReason = previousPassWhy(doc, animations, plant);
   if (bonesReason !== null) for (const a of animations) for (const s of a.samples) s.bones = null;

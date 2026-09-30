@@ -141,7 +141,7 @@ export interface CoreRegionGeometry {
 /** The geometry a record carries, by kind, as far as the construct reads it. */
 export type CoreGeometry =
   | { kind: 'region'; region: CoreRegionGeometry }
-  | { kind: 'mesh'; vertices: ModelVertices; uvs: number[]; triangles: number[] }
+  | { kind: 'mesh'; vertices: ModelVertices; uvs: number[]; triangles: number[]; hull?: number }
   | { kind: 'linkedmesh'; skin: string; slot: string; source: string }
   | { kind: 'clipping'; end: string | null; vertices: ModelVertices; inverse: boolean }
   | { kind: 'boundingbox'; vertices: ModelVertices }
@@ -179,8 +179,9 @@ export function regionCorners(region: CoreRegionGeometry & { atlas: ModelAtlasRe
   const y = region.y ?? 0;
   const out: number[] = [];
   for (const [px, py] of [[x1, y1], [x1, y2], [x2, y2], [x2, y1]]) {
-    const lx = px * cos - py * sin + x;
-    const ly = px * sin + py * cos + y;
+    // The operation order is measured to the bit (issue #966): the placement is added to the cosine term before the sine term is taken off — `px·cos − py·sin + x` reads 1 ulp off on 748 attachment-samples of six corpus rows.
+    const lx = px * cos + x - py * sin;
+    const ly = py * cos + y + px * sin;
     out.push(bone.a * lx + bone.b * ly + bone.worldX, bone.c * lx + bone.d * ly + bone.worldY);
   }
   return out;
@@ -345,14 +346,17 @@ export function readGeometry(raw: Record<string, unknown>, kind: CoreGeometry['k
  * (issue #964, `./clipping.ts`): one finite pair per vertex, and whole
  * indices into the vertices in threes — as the writer writes them.
  */
-function readMeshTriangles(raw: Record<string, unknown>, vertices: ModelVertices, where: string, problems: string[]): { uvs: number[]; triangles: number[] } | undefined {
+function readMeshTriangles(raw: Record<string, unknown>, vertices: ModelVertices, where: string, problems: string[]): { uvs: number[]; triangles: number[]; hull?: number } | undefined {
   const before = problems.length;
   const count = vertices.weighted ? vertices.bindings.length : vertices.xy.length / 2;
   const uvs = raw.uvs;
   const triangles = raw.triangles;
   if (!Array.isArray(uvs) || !uvs.every(finite) || uvs.length !== 2 * count) problems.push(`${where}.uvs is not ${2 * count} finite numbers, one pair per vertex`);
   if (!Array.isArray(triangles) || triangles.length % 3 !== 0 || !triangles.every((i) => Number.isInteger(i) && i >= 0 && i < count)) problems.push(`${where}.triangles is not a list of whole indices below ${count}, in threes`);
-  return problems.length === before ? { uvs: uvs as number[], triangles: triangles as number[] } : undefined;
+  // The hull's vertex count (issue #966, retained for the raw entry): a whole number no larger than the vertices.
+  const hull = raw.hull;
+  if (hull !== undefined && !(typeof hull === 'number' && Number.isInteger(hull) && hull >= 0 && hull <= count)) problems.push(`${where}.hull is ${JSON.stringify(hull)}, not a whole number of vertices from 0 to ${count}`);
+  return problems.length === before ? { uvs: uvs as number[], triangles: triangles as number[], ...(hull === undefined ? {} : { hull: hull as number }) } : undefined;
 }
 
 /**

@@ -4,7 +4,7 @@
  *
  *   bun tools/pose_oracle.ts dump <build dir> --out <json>
  *                                 [--samples 9] [--phase grid|off|irr|dense]
- *                                 [--skin all|<name>] [--physics none|step] [--dt 1/60]
+ *                                 [--skin all|<name>] [--physics none|step] [--dt 1/60] [--raw]
  *   bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]
  *   bun tools/pose_oracle.ts dump --core <skeleton.model.json> [--atlas <atlas>] --out <json> [same flags]
  *   bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]
@@ -310,6 +310,23 @@
  * atlas lacking a region the pose draws is refused (exit 2), as spine-core
  * refuses to load the pair.
  *
+ * ## `--raw` — full doubles (issue #966)
+ *
+ * `dump --raw` (either dumper) writes the same document with every number the
+ * double as computed — `JSON.stringify` of the number, no grid: `rawNumber`
+ * in `src/core/index.ts`, `null` for a value that is not finite and `-0`
+ * written `0` as above — under the spec `pose-oracle-raw/3` (`ORACLE_RAW_SPEC`,
+ * derived from `ORACLE_SPEC`, so a field added there moves both). Nothing
+ * else changes: the fields, their order, the options (which carry no `raw`
+ * key — the spec says it), the sample times and the walk. A reader of the
+ * rounded spec refuses a raw document by name rather than comparing full
+ * doubles on the grid. `compare` reads two raw documents in units in the
+ * last place (`ulpDistance`: the count of doubles between the two, `0` and
+ * `-0` equal) at tolerance 0, and refuses a raw document against a rounded
+ * one, and a `--tol-xy` or `--tol-m` other than 0 on two raw ones (exit 2):
+ * a raw comparison has no tolerance to widen. The reports print each delta
+ * as `N ulp`. The ill-conditioned rule applies unchanged.
+ *
  * ## `compare` — two documents
  *
  * Refused (exit 2) when either file is not a `pose-oracle/4` document, when
@@ -384,7 +401,7 @@ import {
   TransformConstraintData,
   type Event,
 } from '@esotericsoftware/spine-core';
-import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, readModel, underSkin, type CompiledDocument } from '../src/core/index.ts';
+import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, rawNumber, readModel, underSkin, type CompiledDocument } from '../src/core/index.ts';
 import { REGION_TRIANGLES, REGION_UVS } from '../src/core/clipping.ts';
 import { IRR_OFFSET as CORE_IRR_OFFSET, poseAnimations, sampleTime as coreSampleTime, type TimelinePlant } from '../src/core/animation.ts';
 import { pathAttachmentRows, pathRows, type CorePathRecord } from '../src/core/constraints_path.ts';
@@ -393,6 +410,31 @@ import { poseUvs, readUvSequences, shownAtSample, shownAtSetup, steppedUvsWhy, t
 import { atlasRegionLookup, parseAtlasText } from '../src/atlas.ts';
 
 export const ORACLE_SPEC = 'pose-oracle/4';
+// --- #966 raw: begin ---
+/**
+ * The raw document's spec (issue #966): `pose-oracle/N`'s shape, field for
+ * field, with every number the double as computed (`rawNumber`) instead of on
+ * the grid — derived from `ORACLE_SPEC`, so a field added there moves both.
+ * A reader of the rounded spec refuses it by name rather than comparing full
+ * doubles on the grid, and `compare` compares two raw documents in ulps at
+ * tolerance 0 and refuses a raw document against a rounded one.
+ */
+export const ORACLE_RAW_SPEC = ORACLE_SPEC.replace('pose-oracle/', 'pose-oracle-raw/');
+/** The number a dump writes: the grid (`gridRound`), or under `--raw` the double itself (`rawNumber`). */
+export const roundOf = (options: { raw?: boolean }): ((v: number) => Num) => (options.raw === true ? rawNumber : gridRound);
+/** The distance between two doubles in units in the last place — 0 for equal values (`0` and `-0` included), the count of representable doubles between them otherwise. */
+export function ulpDistance(a: number, b: number): number {
+  if (a === b) return 0;
+  const f = new Float64Array(2);
+  const i = new BigInt64Array(f.buffer);
+  f[0] = a;
+  f[1] = b;
+  // Map the sign-magnitude bit patterns onto one ordered integer line.
+  const ordered = (x: bigint): bigint => (x < 0n ? -(x & 0x7fffffffffffffffn) : x);
+  const d = ordered(i[0]) - ordered(i[1]);
+  return Number(d < 0n ? -d : d);
+}
+// --- #966 raw: end ---
 export const ORACLE_DUMPER = 'spine-core 4.3.13';
 export const ORACLE_PHASES = ['grid', 'off', 'irr', 'dense'] as const;
 export type OraclePhase = (typeof ORACLE_PHASES)[number];
@@ -467,6 +509,8 @@ export interface OracleOptions {
   skin: string;
   physics: OraclePhysics;
   dt: number | null;
+  /** `dump --raw` (issue #966): every number unrounded and the spec `ORACLE_RAW_SPEC`. Not written into the document's `options`: the spec says it. */
+  raw?: boolean;
 }
 
 export interface OraclePhysicsRow {
@@ -638,7 +682,7 @@ function constraintType(c: unknown, name: string): string {
   throw new OracleInputError(`constraint "${name}" is none of ik, transform, path, physics, slider — this dumper has no row for it`);
 }
 
-function readPose(skeleton: Skeleton): OraclePose {
+function readPose(skeleton: Skeleton, r: (v: number) => Num = gridRound): OraclePose {
   const bones: BoneRow[] = skeleton.bones.map((b) => {
     const p = b.appliedPose;
     return [b.data.name, r(p.worldX), r(p.worldY), r(p.a), r(p.b), r(p.c), r(p.d), b.active ? 1 : 0, b.parent ? b.parent.data.name : null];
@@ -709,7 +753,7 @@ function readPose(skeleton: Skeleton): OraclePose {
   return { bones, slots, drawOrder, attachments, clips, clipped, uvs };
 }
 
-function firedBetween(skeleton: Skeleton, anim: Animation, last: number, t: number): EventRow[] {
+function firedBetween(skeleton: Skeleton, anim: Animation, last: number, t: number, r: (v: number) => Num = gridRound): EventRow[] {
   const fired: Event[] = [];
   for (const timeline of anim.timelines) {
     if (timeline instanceof EventTimeline) timeline.apply(skeleton, last, t, fired, 1, MixFrom.setup, false, false, false);
@@ -719,6 +763,7 @@ function firedBetween(skeleton: Skeleton, anim: Animation, last: number, t: numb
 
 /** Pose one skeleton into a `pose-oracle/3` document — see the header for every field. */
 export function dumpSkeleton(data: SkeletonData, options: OracleOptions): OracleDump {
+  const r = roundOf(options);
   let skin: Skin;
   if (options.skin === 'all') {
     skin = new Skin('__all');
@@ -815,7 +860,7 @@ export function dumpSkeleton(data: SkeletonData, options: OracleOptions): Oracle
     const skeleton = fresh();
     skeleton.setupPose();
     skeleton.updateWorldTransform(Physics.none);
-    setup = readPose(skeleton);
+    setup = readPose(skeleton, r);
     for (const anim of data.animations) {
       const samples: OracleSample[] = [];
       let last = -1;
@@ -824,9 +869,9 @@ export function dumpSkeleton(data: SkeletonData, options: OracleOptions): Oracle
         skeleton.setupPose();
         anim.apply(skeleton, 0, t, false, null, 1, MixFrom.setup, false, false, false);
         skeleton.updateWorldTransform(Physics.none);
-        const events = firedBetween(skeleton, anim, last, t);
+        const events = firedBetween(skeleton, anim, last, t, r);
         last = t;
-        samples.push({ t: r(t), events, ...readPose(skeleton) });
+        samples.push({ t: r(t), events, ...readPose(skeleton, r) });
       }
       animations.push({ name: anim.name, duration: r(anim.duration), samples });
     }
@@ -836,7 +881,7 @@ export function dumpSkeleton(data: SkeletonData, options: OracleOptions): Oracle
     rest.setupPose();
     rest.update(0);
     rest.updateWorldTransform(Physics.reset);
-    setup = readPose(rest);
+    setup = readPose(rest, r);
     for (const anim of data.animations) {
       const skeleton = fresh();
       const poseAt = (s: number): void => {
@@ -860,16 +905,16 @@ export function dumpSkeleton(data: SkeletonData, options: OracleOptions): Oracle
         const from = now;
         for (let k = 1; from + k * dt < t; k++) stepTo(from + k * dt);
         if (t > now) stepTo(t);
-        const events = firedBetween(skeleton, anim, last, t);
+        const events = firedBetween(skeleton, anim, last, t, r);
         last = t;
-        samples.push({ t: r(t), events, ...readPose(skeleton) });
+        samples.push({ t: r(t), events, ...readPose(skeleton, r) });
       }
       animations.push({ name: anim.name, duration: r(anim.duration), samples });
     }
   }
 
   return {
-    spec: ORACLE_SPEC,
+    spec: options.raw === true ? ORACLE_RAW_SPEC : ORACLE_SPEC,
     dumper: ORACLE_DUMPER,
     source: { spine: data.version ?? null, hash: data.hash ?? null },
     options: { phase: options.phase, samples: options.samples, skin: options.skin, physics: options.physics, dt: options.physics === 'step' ? options.dt : null },
@@ -907,6 +952,9 @@ export function coreDump(model: CompiledDocument, options: OracleOptions, plant:
   }
   const stepped = options.physics === 'step';
   if (stepped && (options.dt === null || !(options.dt > 0))) throw new OracleInputError('dump --core: --physics step needs a positive --dt');
+  // `--raw` (issue #966): the core writes its rows' doubles unrounded.
+  const round = roundOf(options);
+  if (options.raw === true) plant = { ...plant, round };
   const posed = stepped ? poseSetup(doc, plant, { phase: 'reset', time: 0, referenceScale: PHYSICS_REFERENCE_SCALE, states: new Map(), ...(plant.physicsStep ? { step: plant.physicsStep } : {}) }) : poseSetup(doc, plant);
   const { setup } = posed;
   const sampled = stepped ? poseSteppedAnimations(doc, options.phase, options.samples, options.dt as number, plant) : poseAnimations(doc, options.phase, options.samples, plant);
@@ -929,7 +977,7 @@ export function coreDump(model: CompiledDocument, options: OracleOptions, plant:
     })),
   }));
   return {
-    spec: ORACLE_SPEC,
+    spec: options.raw === true ? ORACLE_RAW_SPEC : ORACLE_SPEC,
     dumper: CORE_DUMPER,
     source: { spine: null, hash: null },
     options: { phase: options.phase, samples: options.samples, skin: options.skin, physics: options.physics, dt: stepped ? options.dt : null },
@@ -938,9 +986,9 @@ export function coreDump(model: CompiledDocument, options: OracleOptions, plant:
     slots: doc.slots.map((s): [string, string] => [s.name, s.bone]),
     skins: doc.skins.map((s) => s.name),
     constraints: doc.constraints.map((c): [string, string] => [c.kind, c.name]),
-    physics: physicsRows(doc.constraints.flatMap((c) => (c.record?.kind === 'physics' ? [c.record as CorePhysicsRecord] : [])), gridRound) as unknown as OraclePhysicsRow[],
-    paths: pathRows(doc.constraints.flatMap((c) => (c.record?.kind === 'path' ? [c.record as CorePathRecord] : [])), gridRound),
-    pathAttachments: pathAttachmentRows(doc.skins, gridRound),
+    physics: physicsRows(doc.constraints.flatMap((c) => (c.record?.kind === 'physics' ? [c.record as CorePhysicsRecord] : [])), round) as unknown as OraclePhysicsRow[],
+    paths: pathRows(doc.constraints.flatMap((c) => (c.record?.kind === 'path' ? [c.record as CorePathRecord] : [])), round),
+    pathAttachments: pathAttachmentRows(doc.skins, round),
     setup: { ...setup, uvs: uvs.setup },
     animations,
   };
@@ -1002,7 +1050,7 @@ function coreUvs(
   const posedRows = (shown: { shown: Parameters<typeof poseUvs>[1]; why: string[] }, order: readonly string[]): { rows: UvRow[] | null; why: string | null } => {
     if (shown.why.length > 0) return { rows: null, why: shown.why.join('; ') };
     try {
-      return poseUvs(doc, shown.shown, order, uv, gridRound);
+      return poseUvs(doc, shown.shown, order, uv, roundOf(options));
     } catch (err) {
       if (err instanceof CoreInputError) throw new OracleInputError(`dump --core: ${err.message}`);
       throw err;
@@ -1123,6 +1171,8 @@ export interface OracleRowReport {
 }
 
 export interface OracleComparison {
+  /** Two `--raw` documents (issue #966): every worst below is in ulps, and every tolerance was 0. */
+  raw?: boolean;
   identical: boolean;
   /**
    * `<block>: not produced by <dumper>[ — why]`, one per block exactly one side
@@ -1143,7 +1193,24 @@ export interface OracleComparison {
 
 /** Integer millionths — the grid every number was rounded to. */
 const units = (v: number): number => Math.round(v * ORACLE_GRID);
-const fmt = (u: number): string => (u / ORACLE_GRID).toFixed(6);
+// --- #966 raw: begin ---
+/**
+ * How two numbers are measured apart: on the grid, in integer millionths; on
+ * two raw documents (issue #966), in ulps (`ulpDistance`), with every
+ * tolerance 0. `compareDumps` sets it for the one comparison it runs.
+ */
+interface Metric {
+  raw: boolean;
+  delta: (a: number, b: number) => number;
+  fmt: (d: number) => string;
+  /** What a tolerance in the document's units is multiplied by to read in the metric's. */
+  scale: number;
+}
+const GRID_METRIC: Metric = { raw: false, delta: (a, b) => Math.abs(units(a) - units(b)), fmt: (u) => (u / ORACLE_GRID).toFixed(6), scale: ORACLE_GRID };
+const RAW_METRIC: Metric = { raw: true, delta: ulpDistance, fmt: (u) => `${u} ulp`, scale: 1 };
+let metric: Metric = GRID_METRIC;
+const fmt = (u: number): string => metric.fmt(u);
+// --- #966 raw: end ---
 const at = (row: string, t: Num): string => (row === '(setup)' ? 'the setup pose' : `animation "${row}" t=${t ?? 'null'}`);
 
 /** Throws naming the first field that is not what a `pose-oracle/3` document has. */
@@ -1168,7 +1235,7 @@ export function asOracleDump(value: unknown, where: string): OracleDump {
 export function asOracleDocument(value: unknown, where: string): OracleDocument {
   if (typeof value !== 'object' || value === null) throw new OracleInputError(`${where}: not a JSON object`);
   const v = value as Record<string, unknown>;
-  if (v.spec !== ORACLE_SPEC) throw new OracleInputError(`${where}: spec is ${JSON.stringify(v.spec)}, not "${ORACLE_SPEC}"`);
+  if (v.spec !== ORACLE_SPEC && v.spec !== ORACLE_RAW_SPEC) throw new OracleInputError(`${where}: spec is ${JSON.stringify(v.spec)}, not "${ORACLE_SPEC}" (or "${ORACLE_RAW_SPEC}", a --raw dump)`);
   for (const key of ['options', 'setup', 'source'] as const) {
     if (typeof v[key] !== 'object' || v[key] === null) throw new OracleInputError(`${where}: no ${key} object`);
   }
@@ -1233,7 +1300,7 @@ function listDiff(kind: string, a: readonly string[], b: readonly string[]): str
 
 function numDelta(a: Num, b: Num): number | 'nonfinite' {
   if (a === null || b === null) return 'nonfinite';
-  return Math.abs(units(a) - units(b));
+  return metric.delta(a, b);
 }
 
 function paramDiffs(kind: string, key: string, a: Record<string, unknown>, b: Record<string, unknown>, tolM: number): string[] {
@@ -1243,11 +1310,11 @@ function paramDiffs(kind: string, key: string, a: Record<string, unknown>, b: Re
     const va = a[k];
     const vb = b[k];
     if (typeof va === 'number' && typeof vb === 'number') {
-      const d = Math.abs(units(va) - units(vb));
+      const d = metric.delta(va, vb);
       if (d > tolM) out.push(`${kind} "${key}" ${k}: ${va} vs ${vb}`);
     } else if (JSON.stringify(va) !== JSON.stringify(vb)) {
       if (Array.isArray(va) && Array.isArray(vb) && va.length === vb.length && va.every((x) => typeof x === 'number')) {
-        const d = Math.max(...va.map((x, i) => Math.abs(units(x as number) - units(vb[i] as number))));
+        const d = Math.max(...va.map((x, i) => metric.delta(x as number, vb[i] as number)));
         if (d > tolM) out.push(`${kind} "${key}" ${k}: worst Δ ${fmt(d)}`);
       } else {
         out.push(`${kind} "${key}" ${k}: ${JSON.stringify(va)} vs ${JSON.stringify(vb)}`);
@@ -1512,6 +1579,21 @@ function compareEvents(row: OracleRowReport, t: Num, a: EventRow[], b: EventRow[
 
 /** Compare two `pose-oracle/3` documents — see the header. */
 export function compareDumps(a: OracleDocument, b: OracleDocument, tol: OracleTolerance): OracleComparison {
+  // --- #966 raw: begin ---
+  if (a.spec !== b.spec) throw new OracleInputError(`the two documents are ${a.spec} (A) and ${b.spec} (B): a --raw dump compares only with a --raw dump`);
+  const raw = a.spec === ORACLE_RAW_SPEC;
+  if (raw && (tol.xy !== 0 || tol.m !== 0)) throw new OracleInputError(`two --raw documents compare at tolerance 0 in ulps; --tol-xy ${tol.xy} / --tol-m ${tol.m} would widen it`);
+  const saved = metric;
+  metric = raw ? RAW_METRIC : GRID_METRIC;
+  try {
+    return compareWith(a, b, tol);
+  } finally {
+    metric = saved;
+  }
+}
+
+function compareWith(a: OracleDocument, b: OracleDocument, tol: OracleTolerance): OracleComparison {
+  // --- #966 raw: end ---
   const oa = JSON.stringify(a.options);
   const ob = JSON.stringify(b.options);
   if (oa !== ob) throw new OracleInputError(`the two documents were posed under different options: A ${oa} vs B ${ob}`);
@@ -1536,8 +1618,8 @@ export function compareDumps(a: OracleDocument, b: OracleDocument, tol: OracleTo
     skipped.push(`${block}: not produced by ${side.dumper}${why === undefined ? '' : ` — ${why}`}`);
   }
   const has = (block: OracleBlock): boolean => carried.has(block);
-  const tolXy = tol.xy * ORACLE_GRID;
-  const tolM = tol.m * ORACLE_GRID;
+  const tolXy = tol.xy * metric.scale;
+  const tolM = tol.m * metric.scale;
   const aSlots = a.slots ?? [];
   const bSlots = b.slots ?? [];
   const slotBones = new Map((a.slots ?? bSlots).map((s) => [s[0], s[1]]));
@@ -1623,14 +1705,15 @@ export function compareDumps(a: OracleDocument, b: OracleDocument, tol: OracleTo
   }
   const all = [...document, ...rows.flatMap((x) => x.findings)];
   return {
+    raw: metric.raw,
     identical: all.length === 0,
     skipped,
     rows,
     document,
     first: all[0] ?? null,
-    worstXy: Math.max(0, ...rows.map((x) => x.worstXy.d)) / ORACLE_GRID,
-    worstM: Math.max(0, ...rows.map((x) => x.worstM.d)) / ORACLE_GRID,
-    worstVertex: Math.max(0, ...rows.map((x) => x.worstVertex.d)) / ORACLE_GRID,
+    worstXy: Math.max(0, ...rows.map((x) => x.worstXy.d)) / metric.scale,
+    worstM: Math.max(0, ...rows.map((x) => x.worstM.d)) / metric.scale,
+    worstVertex: Math.max(0, ...rows.map((x) => x.worstVertex.d)) / metric.scale,
     excluded: rows.reduce((s, x) => s + x.excluded, 0),
     boneSamples: rows.reduce((s, x) => s + x.boneSamples, 0),
   };
@@ -1638,6 +1721,16 @@ export function compareDumps(a: OracleDocument, b: OracleDocument, tol: OracleTo
 
 /** The report `compare` prints, one line per row, then the verdict. */
 export function comparisonLines(c: OracleComparison, listed = 5): string[] {
+  const saved = metric;
+  metric = c.raw === true ? RAW_METRIC : GRID_METRIC;
+  try {
+    return linesOf(c, listed);
+  } finally {
+    metric = saved;
+  }
+}
+
+function linesOf(c: OracleComparison, listed: number): string[] {
   const out: string[] = [];
   for (const s of c.skipped) out.push(`  SKIP  ${s}`);
   for (const d of c.document.slice(0, listed * 4)) out.push(`  DOC   ${d}`);
@@ -1672,13 +1765,13 @@ export function comparisonLines(c: OracleComparison, listed = 5): string[] {
 
 const USAGE = [
   'usage:',
-  '  bun tools/pose_oracle.ts dump <build dir> --out <json> [--samples 9] [--phase grid|off|irr|dense] [--skin all|<name>] [--physics none|step] [--dt 1/60]',
+  '  bun tools/pose_oracle.ts dump <build dir> --out <json> [--samples 9] [--phase grid|off|irr|dense] [--skin all|<name>] [--physics none|step] [--dt 1/60] [--raw]',
   '  bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]',
   '  bun tools/pose_oracle.ts dump --core <skeleton.model.json> [--atlas <atlas>] --out <json> [same flags]',
   '  bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]',
 ].join('\n');
 
-function parseFlags(args: readonly string[], known: readonly string[]): { positional: string[]; flags: Map<string, string> } {
+function parseFlags(args: readonly string[], known: readonly string[], switches: readonly string[] = []): { positional: string[]; flags: Map<string, string> } {
   const positional: string[] = [];
   const flags = new Map<string, string>();
   for (let i = 0; i < args.length; i++) {
@@ -1687,7 +1780,13 @@ function parseFlags(args: readonly string[], known: readonly string[]): { positi
       positional.push(arg);
       continue;
     }
-    if (!known.includes(arg)) throw new OracleInputError(`unknown flag ${arg}; this command takes ${known.join(', ')}`);
+    // A switch takes no value (`--raw`, issue #966).
+    if (switches.includes(arg)) {
+      if (flags.has(arg)) throw new OracleInputError(`${arg} given twice`);
+      flags.set(arg, 'true');
+      continue;
+    }
+    if (!known.includes(arg)) throw new OracleInputError(`unknown flag ${arg}; this command takes ${[...known, ...switches].join(', ')}`);
     const value = args[i + 1];
     if (value === undefined || value.startsWith('--')) throw new OracleInputError(`${arg} needs a value`);
     if (flags.has(arg)) throw new OracleInputError(`${arg} given twice`);
@@ -1715,7 +1814,9 @@ export function dumpOptions(flags: Map<string, string>): OracleOptions {
   if (!(ORACLE_PHYSICS as readonly string[]).includes(physics)) throw new OracleInputError(`--physics ${JSON.stringify(physics)} is not one of ${ORACLE_PHYSICS.join(', ')}`);
   if (physics === 'none' && flags.has('--dt')) throw new OracleInputError('--dt is the stepping interval and --physics none steps nothing; pass --physics step or drop --dt');
   const dt = physics === 'step' ? parseDt(flags.get('--dt') ?? ORACLE_DEFAULT_DT) : null;
-  return { phase: phase as OraclePhase, samples, skin: flags.get('--skin') ?? 'all', physics: physics as OraclePhysics, dt };
+  const options: OracleOptions = { phase: phase as OraclePhase, samples, skin: flags.get('--skin') ?? 'all', physics: physics as OraclePhysics, dt };
+  if (flags.has('--raw')) options.raw = true;
+  return options;
 }
 
 /** The command; returns the exit code. */
@@ -1723,7 +1824,7 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
   const [command, ...rest] = argv;
   try {
     if (command === 'dump') {
-      const { positional, flags } = parseFlags(rest, ['--out', '--samples', '--phase', '--skin', '--physics', '--dt', '--core', '--atlas']);
+      const { positional, flags } = parseFlags(rest, ['--out', '--samples', '--phase', '--skin', '--physics', '--dt', '--core', '--atlas'], ['--raw']);
       const out = flags.get('--out');
       if (out === undefined) throw new OracleInputError('dump: --out <json> is required');
       const options = dumpOptions(flags);
@@ -1780,7 +1881,9 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
       };
       const a = read(positional[0]);
       const b = read(positional[1]);
-      const c = compareDumps(a, b, { xy: tolerance('--tol-xy', flags.get('--tol-xy')), m: tolerance('--tol-m', flags.get('--tol-m')) });
+      // Two --raw documents compare at tolerance 0 (issue #966): a tolerance flag on them is refused by compareDumps, and none given means 0, not the grid's default.
+      const rawPair = a.spec === ORACLE_RAW_SPEC && b.spec === ORACLE_RAW_SPEC;
+      const c = compareDumps(a, b, rawPair && !flags.has('--tol-xy') && !flags.has('--tol-m') ? { xy: 0, m: 0 } : { xy: tolerance('--tol-xy', flags.get('--tol-xy')), m: tolerance('--tol-m', flags.get('--tol-m')) });
       print(`pose_oracle compare A=${positional[0]} B=${positional[1]}`);
       for (const line of comparisonLines(c)) print(line);
       return c.identical ? 0 : 1;

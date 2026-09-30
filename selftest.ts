@@ -66506,6 +66506,12 @@ import { computeUvs, frameRegionName, meshPageUvs, readUvSequences, regionPageUv
 import { atlasRegionLookup } from './src/atlas.ts';
 import { isTrimmed, UV_CENSUS_FIELDS, uvDrawnOf, uvReachLines } from './tools/core_gate.ts';
 import { NO_ATLAS_WHY } from './tools/pose_oracle.ts';
+// The raw entry (issue #966), its own statements so the CR controls land as one hunk.
+import { poseRawAnimation, poseRawSetup, type RawPose } from './src/core/raw.ts';
+import { ORACLE_RAW_SPEC, ulpDistance } from './tools/pose_oracle.ts';
+import { rawCensusLines } from './tools/core_gate.ts';
+import { CORE_INHERIT_MODES as CORE_INHERIT_MODES_ALL } from './src/core/index.ts';
+import type { RegionPoser } from './src/core/vertices.ts';
 
 /** The constraint kinds no cut of construct 5 poses yet — what a skipped row names. */
 const LATER_KINDS: readonly string[] = CORE_CONSTRAINT_KINDS.filter((k) => !ADMITTED_CONSTRAINT_KINDS.includes(k));
@@ -72904,6 +72910,613 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `${dumps} dumps at 3 samples — a slot on a skin-required bone only s1 names, keyed by rgba ffffff00 in two animations (the commander's shape) and by each of rgba, rgb, alpha, rgba2, rgb2 and attachment, a slider keying it, a deform on a mesh weighted to the root in its slot, all drawn under a clip on the root (${clippedRows} cut sample rows of the mesh, held with the attachment rows) — spine-core as measured (animated under all and s1, held at its setup row under default, the slider and the deform too; the slot on the root showing nothing animated under all three) and the core exact at tolerance 0; the timelines applied on an inactive bone, planted, red on exactly the ${wantRed.length} default dumps`),
       'issue #932, the commander\'s private-corpus finding: a 19-skin rig read DIFF on 18 of its 19 skin runs, because the core applied a slot\'s rgba key while the slot\'s bone was inactive under the skin posed, and spine-core does not. The predicate is the slot bone\'s activity, not what the slot shows — a slot showing nothing on an active bone is animated',
     );
+  }
+
+  // ===========================================================================
+  // The raw entry (issue #966, step 3b of issue #380): full doubles, no grid.
+  // The populations above re-run through `dump --raw` on both dumpers and
+  // compared in ulps at tolerance 0 — the reading the render consumes — and
+  // the raw walk (`src/core/raw.ts`) held against spine-core running the two
+  // consumers' own recipes.
+  // ===========================================================================
+  const RAW_ONE: OracleOptions = { ...ONE_SAMPLE, raw: true };
+  /** A population compared raw: how many read bit-exact, and the misses `explained` does not account for, the first three named. */
+  const rawPopulation = (n: number, seed: number, make: (rnd: () => number) => { spine: string; model: string }, explained: (model: string) => boolean = () => false, options: OracleOptions = RAW_ONE, plant: CorePlant = {}): { exact: number; explainedMisses: number; unexplained: string[] } => {
+    const rnd = lcg(seed);
+    let exact = 0;
+    let explainedMisses = 0;
+    const unexplained: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const pair = make(rnd);
+      const c = constraintCompare(pair, options, plant);
+      if (c.identical) exact++;
+      else if (explained(pair.model)) explainedMisses++;
+      else if (unexplained.length < 3) unexplained.push(`probe ${i}: ${c.first}`);
+    }
+    return { exact, explainedMisses, unexplained };
+  };
+  type RawConstraint = { kind: string; localTarget?: boolean; additive?: boolean; properties?: Record<string, { to: Record<string, unknown> }> };
+  const constraintsOfModel = (model: string): RawConstraint[] => (JSON.parse(model) as { constraints: RawConstraint[] }).constraints;
+  /** A world-space transform: the bone it moves is read back into local values (`localFromWorld`, the read-back HOLE). */
+  const readsBack = (model: string): boolean => constraintsOfModel(model).some((c) => c.kind === 'transform' && c.localTarget !== true);
+  /** An additive world-space transform onto `shearY` (the shear HOLE). */
+  const additiveWorldShear = (model: string): boolean => constraintsOfModel(model).some((c) => c.kind === 'transform' && c.localTarget !== true && c.additive === true && Object.values(c.properties ?? {}).some((f) => 'shearY' in f.to));
+
+  // --- CR01: every constraint population reads bit-exact through --raw, or misses only inside a HOLE named by its construct --
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    const holes: string[] = [];
+    const exactRuns: Array<[string, number, number, (rnd: () => number) => { spine: string; model: string }]> = [['one-bone ik', 600, 9381, ikOneProbe], ['two-bone ik', 1200, 9382, ikTwoProbe]];
+    for (const [label, n, seed, make] of exactRuns) {
+      const r = rawPopulation(n, seed, make);
+      read.push(`${label} ${r.exact} of ${n}`);
+      if (r.exact !== n) probes.push(`${label}: ${r.exact} of ${n} bit-exact — ${r.unexplained.join(' | ')}`);
+    }
+    const holeRuns: Array<[string, number, number, (rnd: () => number) => { spine: string; model: string }, (model: string) => boolean, string]> = [
+      ['read back', 400, 9386, readBackProbe, readsBack, 'localFromWorld'],
+      ['update order', 400, 9385, orderProbe, readsBack, 'localFromWorld'],
+      ['transform', 900, 9387, transformProbe, additiveWorldShear, 'additive world-space shearY'],
+    ];
+    for (const [label, n, seed, make, explained, hole] of holeRuns) {
+      const r = rawPopulation(n, seed, make, explained);
+      read.push(`${label} ${r.exact} of ${n}`);
+      if (r.unexplained.length > 0) probes.push(`${label}: a miss outside the ${hole} HOLE — ${r.unexplained.join(' | ')}`);
+      if (r.explainedMisses > 0) holes.push(`${label}: ${r.explainedMisses} of ${n} probes last-bit off, every one inside the ${hole} HOLE`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CR01_EVERY_CONSTRAINT_POPULATION_READS_BIT_EXACT_THROUGH_THE_RAW_DUMP_OR_MISSES_INSIDE_A_NAMED_HOLE',
+      ok,
+      probeDetail(ok, probes, `the CC controls' populations and seeds, both dumpers under --raw, compared in ulps at tolerance 0: ${read.join(', ')} — every miss a probe whose transform moves a bone in world space (read back through localFromWorld) or, in the transform population, adds to shearY in world space`),
+      'issue #966: the grid hid last-bit gaps the render reads, and the raw comparison is where an operation order is decided; what the core does not yet reproduce to the bit is a HOLE by construct, never a tolerance',
+    );
+    for (const h of holes) console.log(`          ⚠️ HOLE: ${h}`);
+  }
+
+  // --- CR02: every inherit mode reads bit-exact under a 1e9 amplifier, and each rejected operation order is named --
+  {
+    const probes: string[] = [];
+    const modeProbe = (mode: string) => (rnd: () => number): { spine: string; model: string } => {
+      const R = within(rnd);
+      const p: Obj = { name: 'p', parent: 'root', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180) };
+      const b: Obj = { name: 'b', parent: 'p', x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), inherit: mode };
+      return constraintPair([{ name: 'root' }, rnd() < 0.5 ? skewed(rnd, p) : p, rnd() < 0.5 ? skewed(rnd, b) : b, { name: 'b_ax', parent: 'b', x: 1e9 }, { name: 'b_ay', parent: 'b', y: 1e9 }], []);
+    };
+    const RAD = 3.1415927 / 180;
+    /** The orders issue #966 rejected, each planted in a copy of the mode computation. */
+    const rejected: Array<[string, CoreInheritMode, (parent: { a: number; b: number; c: number; d: number }, bone: { rotation?: number; shearX?: number; shearY?: number; scaleX?: number; scaleY?: number }) => [number, number, number, number]]> = [
+      ['the parent angle divided by pi/180', 'noRotationOrReflection', (p, bone) => {
+        const k = Math.abs(p.a * p.d - p.b * p.c) / (p.a * p.a + p.c * p.c);
+        const r = (bone.rotation ?? 0) - Math.atan2(p.c, p.a) / RAD;
+        const x = (r + (bone.shearX ?? 0)) * RAD;
+        const y = (r + (bone.shearY ?? 0) + 90) * RAD;
+        const l = [Math.cos(x) * (bone.scaleX ?? 1), Math.cos(y) * (bone.scaleY ?? 1), Math.sin(x) * (bone.scaleX ?? 1), Math.sin(y) * (bone.scaleY ?? 1)];
+        const cv = [p.a, -p.c * k, p.c, p.a * k];
+        return [cv[0] * l[0] + cv[1] * l[2], cv[0] * l[1] + cv[1] * l[3], cv[2] * l[0] + cv[3] * l[2], cv[2] * l[1] + cv[3] * l[3]];
+      }],
+      ['the right angle added before the shear', 'noRotationOrReflection', (p, bone) => {
+        const k = Math.abs(p.a * p.d - p.b * p.c) / (p.a * p.a + p.c * p.c);
+        const r = (bone.rotation ?? 0) - Math.atan2(p.c, p.a) * (180 / 3.1415927);
+        const x = (r + (bone.shearX ?? 0)) * RAD;
+        const y = (r + 90 + (bone.shearY ?? 0)) * RAD;
+        const l = [Math.cos(x) * (bone.scaleX ?? 1), Math.cos(y) * (bone.scaleY ?? 1), Math.sin(x) * (bone.scaleX ?? 1), Math.sin(y) * (bone.scaleY ?? 1)];
+        const cv = [p.a, -p.c * k, p.c, p.a * k];
+        return [cv[0] * l[0] + cv[1] * l[2], cv[0] * l[1] + cv[1] * l[3], cv[2] * l[0] + cv[3] * l[2], cv[2] * l[1] + cv[3] * l[3]];
+      }],
+      ['the direction divided by its length', 'noScale', (p, bone) => {
+        const r = (bone.rotation ?? 0) * RAD;
+        let ux = p.a * Math.cos(r) + p.b * Math.sin(r);
+        let uy = p.c * Math.cos(r) + p.d * Math.sin(r);
+        const length = Math.sqrt(ux * ux + uy * uy);
+        ux /= length;
+        uy /= length;
+        const flip = p.a * p.d - p.b * p.c < 0 ? -1 : 1;
+        const x = (bone.shearX ?? 0) * RAD;
+        const y = (90 + (bone.shearY ?? 0)) * RAD;
+        const l = [Math.cos(x) * (bone.scaleX ?? 1), Math.cos(y) * (bone.scaleY ?? 1), Math.sin(x) * (bone.scaleX ?? 1), Math.sin(y) * (bone.scaleY ?? 1)];
+        const t = [ux, -uy * flip, uy, ux * flip];
+        return [t[0] * l[0] + t[1] * l[2], t[0] * l[1] + t[1] * l[3], t[2] * l[0] + t[3] * l[2], t[2] * l[1] + t[3] * l[3]];
+      }],
+    ];
+    const read: string[] = [];
+    CORE_INHERIT_MODES_ALL.forEach((mode, i) => {
+      const r = rawPopulation(300, 96601 + i, modeProbe(mode));
+      read.push(`${mode} ${r.exact} of 300`);
+      if (r.exact !== 300) probes.push(`${mode}: ${r.exact} of 300 bit-exact — ${r.unexplained.join(' | ')}`);
+    });
+    const reds: string[] = [];
+    for (const [label, mode, order] of rejected) {
+      const plant: CorePlant = { evaluate: (bones, active) => worldTransforms(bones, active, (m, parent, bone) => (m === mode ? order(parent, bone) : modeMatrix(m, parent, bone))) };
+      const own = rawPopulation(300, 96601 + CORE_INHERIT_MODES_ALL.indexOf(mode), modeProbe(mode), () => false, RAW_ONE, plant);
+      const other = rawPopulation(100, 96611, modeProbe('normal'), () => false, RAW_ONE, plant);
+      reds.push(`${label} ${300 - own.exact} of 300 red`);
+      if (own.exact === 300) probes.push(`${label}, planted: every ${mode} probe still bit-exact`);
+      if (other.exact !== 100) probes.push(`${label}, planted: ${100 - other.exact} normal probe(s) red, which it does not reach`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CR02_EVERY_INHERIT_MODE_READS_BIT_EXACT_UNDER_A_1E9_AMPLIFIER_AND_EACH_REJECTED_ORDER_IS_NAMED',
+      ok,
+      probeDetail(ok, probes, `a bone in each mode under a parent rotated, scaled, sheared and reflecting or not, itself skewed or not, two amplifier children 1e9 units out, under --raw at tolerance 0: ${read.join(', ')}; each order issue #966 rejected, planted in a copy — ${reds.join(', ')} — and no normal probe red`),
+      'issue #959: the three modes matched spine-core on the r6 grid and not to the bit; the step amplified the gap tenfold per 0.1 s',
+    );
+  }
+
+  // --- CR03: the raw walk poses every built row as spine-core's render and deform-measure recipes do, bit for bit --
+  {
+    const probes: string[] = [];
+    const tally = { frames: 0, bones: 0, drawn: 0, events: 0, jumps: 0, setups: 0 };
+    let redSum = 0;
+    let redReset = 0;
+    const FPS = 12;
+    const sameBones = (skeleton: Skeleton, pose: RawPose): string | null => {
+      for (const [i, bone] of skeleton.bones.entries()) {
+        const p = bone.appliedPose;
+        const r = pose.bones[i];
+        const theirs = [p.a, p.b, p.c, p.d, p.worldX, p.worldY, p.getWorldRotationX(), p.getWorldRotationY(), p.getWorldScaleX(), p.getWorldScaleY()];
+        const ours = [r.a, r.b, r.c, r.d, r.worldX, r.worldY, r.rotationX, r.rotationY, r.scaleX, r.scaleY];
+        const k = theirs.findIndex((v, j) => v !== ours[j] && !(Number.isNaN(v) && Number.isNaN(ours[j])));
+        if (k >= 0) return `bone "${bone.data.name}" reading ${k}: ${theirs[k]} vs ${ours[k]}`;
+      }
+      return null;
+    };
+    const sameDrawn = (skeleton: Skeleton, pose: RawPose): string | null => {
+      const order = skeleton.drawOrder.appliedPose.map((x) => x.data.name).join();
+      if (order !== pose.drawOrder.join()) return 'the draw order';
+      let k = 0;
+      for (const slot of skeleton.drawOrder.appliedPose) {
+        const att = slot.appliedPose.attachment;
+        if (!(att instanceof MeshAttachment) && !(att instanceof RegionAttachment)) continue;
+        const d = pose.drawn[k++];
+        if (d === undefined || d.slot !== slot.data.name) return `the drawn roster at slot "${slot.data.name}"`;
+        const world = new Array<number>(att instanceof MeshAttachment ? att.worldVerticesLength : 8).fill(0);
+        if (att instanceof MeshAttachment) att.computeWorldVertices(skeleton, slot, 0, att.worldVerticesLength, world, 0, 2);
+        else att.computeWorldVertices(slot, att.getOffsets(slot.appliedPose), world, 0, 2);
+        const uvs = att instanceof MeshAttachment ? Array.from(att.regionUVs) : [0, 1, 0, 0, 1, 0, 1, 1];
+        const triangles = att instanceof MeshAttachment ? Array.from(att.triangles) : [0, 1, 2, 2, 3, 0];
+        const hull = att instanceof MeshAttachment ? att.hullLength / 2 : null;
+        const seq = att.sequence === null ? null : att.sequence.resolveIndex(slot.appliedPose);
+        const c = att.color;
+        if (world.some((v, j) => v !== d.vertices[j])) return `slot "${d.slot}" vertices`;
+        if (uvs.join() !== d.uvs.join() || triangles.join() !== d.triangles.join() || hull !== d.hull) return `slot "${d.slot}" uvs, triangles or hull`;
+        if (seq !== d.sequenceIndex) return `slot "${d.slot}" sequence frame ${seq} vs ${d.sequenceIndex}`;
+        if ([c.r, c.g, c.b, c.a].join() !== d.colour.join()) return `slot "${d.slot}" attachment colour`;
+      }
+      for (const [i, s] of skeleton.slots.entries()) {
+        const p = s.appliedPose;
+        const r = pose.slots[i];
+        const theirs = [p.color.r, p.color.g, p.color.b, p.color.a, ...(p.darkColor === null ? [] : [p.darkColor.r, p.darkColor.g, p.darkColor.b])].join();
+        if (theirs !== [r[2], r[3], r[4], r[5], ...(r[6] ?? [])].join() || (p.attachment?.name ?? null) !== r[1]) return `slot "${s.data.name}" colour or attachment`;
+      }
+      return null;
+    };
+    for (const b of built) {
+      if (b.exits.some((e) => e !== 0)) continue;
+      const data = loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.name);
+      const model = readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name);
+      const doc = underSkin(model, data.defaultSkin?.name ?? 'default');
+      try {
+        // Render's setup pose: setupPose, update(0), Physics.reset.
+        const rest = new Skeleton(data);
+        rest.setupPose();
+        rest.update(0);
+        rest.updateWorldTransform(Physics.reset);
+        const setup = poseRawSetup(doc);
+        const why = sameBones(rest, setup) ?? sameDrawn(rest, setup);
+        if (why !== null) probes.push(`${b.name} setup: ${why}`);
+        tally.setups++;
+        for (const anim of data.animations) {
+          const n = Math.round(anim.duration * FPS);
+          const step = 1 / FPS;
+          const poses = poseRawAnimation(doc, anim.name, new Array<number>(n).fill(step));
+          // The frames the track-time rule decides: where the running sum is not i·dt, the reading spine-core's track time rejects.
+          const byIndex = poses.map((q, i) => q.trackTime === i * step);
+          const skeleton = new Skeleton(data);
+          const state = new AnimationState(new AnimationStateData(data));
+          const fired: string[] = [];
+          state.addListener({ event: (_entry, e) => fired.push(`${e.data.name}@${e.time}`) });
+          const entry = state.setAnimation(0, anim.name, false);
+          skeleton.setupPose();
+          for (let i = 0; i <= n; i++) {
+            fired.length = 0;
+            if (i > 0) {
+              state.update(step);
+              state.apply(skeleton);
+              skeleton.update(step);
+              skeleton.updateWorldTransform(Physics.update);
+            } else {
+              state.apply(skeleton);
+              skeleton.update(0);
+              skeleton.updateWorldTransform(Physics.reset);
+            }
+            const p = poses[i];
+            tally.frames++;
+            if (entry.trackTime !== p.trackTime || entry.getAnimationTime() !== p.animationTime) probes.push(`${b.name} "${anim.name}" frame ${i}: track ${entry.trackTime} / animation ${entry.getAnimationTime()} vs ${p.trackTime} / ${p.animationTime}`);
+            if (!byIndex[i]) redSum++;
+            const why2 = sameBones(skeleton, p) ?? sameDrawn(skeleton, p);
+            if (why2 !== null && probes.length < 12) probes.push(`${b.name} "${anim.name}" frame ${i}: ${why2}`);
+            tally.bones += p.bones.length;
+            tally.drawn += p.drawn.length;
+            const ours = p.events.map((e) => `${e[0]}@${e[1]}`).join();
+            tally.events += fired.length;
+            if (ours !== fired.join()) probes.push(`${b.name} "${anim.name}" frame ${i}: events [${fired.join()}] vs [${ours}]`);
+          }
+          // Deform-measure's poseAt: reset at the setup pose, then one step of `time`.
+          for (const time of [anim.duration * 0.37, anim.duration + 0.25]) {
+            const sk = new Skeleton(data);
+            const st = new AnimationState(new AnimationStateData(data));
+            st.setAnimation(0, anim.name, false);
+            sk.setupPose();
+            sk.update(0);
+            sk.updateWorldTransform(Physics.reset);
+            st.update(time);
+            st.apply(sk);
+            sk.update(time);
+            sk.updateWorldTransform(Physics.update);
+            const q = poseRawAnimation(doc, anim.name, [time], {}, 'setup');
+            const why3 = sameBones(sk, q[1]);
+            if (why3 !== null) probes.push(`${b.name} "${anim.name}" one step of ${time}: ${why3}`);
+            if (sameBones(sk, poseRawAnimation(doc, anim.name, [time], {}, 'animation')[1]) !== null) redReset++;
+            tally.jumps++;
+          }
+        }
+      } catch (err) {
+        if (err instanceof CoreInputError) probes.push(`${b.name}: refused — ${err.message}`);
+        else throw err;
+      }
+    }
+    if (tally.frames === 0) probes.push('no built row walked a frame');
+    if (redSum === 0) probes.push('no frame\'s running-sum track time differs from i·dt, so the rule is not read');
+    const ok = probes.length === 0;
+    say(
+      'CR03_THE_RAW_WALK_POSES_EVERY_BUILT_ROW_AS_SPINE_CORES_RENDER_AND_DEFORM_MEASURE_RECIPES_DO',
+      ok,
+      probeDetail(ok, probes.slice(0, 12), `${built.length} built row(s): ${tally.setups} setup poses, ${tally.frames} frames at ${FPS} fps (AnimationState, one non-looping track, one step of 1/${FPS} per frame) and ${tally.jumps} one-step jumps — ${tally.bones} bone readings with the four getters, ${tally.drawn} drawn attachments with their UVs, triangles, hull, sequence frame and colour, every slot row, the draw order and ${tally.events} events bit-exact; the track time the running sum on every frame, where i·dt reads another on ${redSum}; a jump reset at the animation rather than the setup off on ${redReset}`),
+      'issue #966: the consumers step, they do not sample a phase grid — render one step of 1/fps per frame, deform-measure one step of the time asked; the raw entry is posed to their walks, and held to spine-core running them',
+    );
+    if (examplesHole !== null) console.log(`          ⚠️ HOLE: ${examplesHole} — the walk was held on the gallery's rows alone`);
+  }
+
+  // --- CR04: the raw entry and the model reader refuse by name, and retain the colour, hull and sequence frame --
+  {
+    const probes: string[] = [];
+    if (free !== null) {
+      const refusal = (f: () => unknown): string => {
+        try {
+          f();
+          return '';
+        } catch (err) {
+          if (err instanceof CoreInputError) return err.message;
+          throw err;
+        }
+      };
+      const anim = free.model.animations[0]?.name;
+      if (anim === undefined) probes.push(`${free.name} has no animation to walk`);
+      else {
+        const unknown = refusal(() => poseRawAnimation(free.model, '__nope', []));
+        if (!unknown.includes('"__nope" is not one of this document')) probes.push(`an unknown animation: ${JSON.stringify(unknown)}`);
+        const negative = refusal(() => poseRawAnimation(free.model, anim, [0.1, -0.5]));
+        if (!negative.includes('step 1 is -0.5, not a finite time at or above 0')) probes.push(`a negative step: ${JSON.stringify(negative)}`);
+        const walked = poseRawAnimation(free.model, anim, [0.1, 0.2]);
+        if (walked.length !== 3 || walked[2].trackTime !== 0.1 + 0.2) probes.push(`two steps walked ${walked.length} pose(s) ending at track time ${walked[walked.length - 1]?.trackTime}`);
+      }
+      // A merged view whose skins disagree over a placeholder is left out by the core, so the raw entry refuses it.
+      const conflicted = refusal(() => poseRawSetup(readModel(modelOf({
+        bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root', setup: 'a' }],
+        skins: [{ name: 'default', bones: [], constraints: {}, attachments: { s: { a: { kind: 'region', path: 'p', width: 4, height: 4, atlas: UNTRIMMED4 } } } }, { name: 'k', bones: [], constraints: {}, attachments: { s: { a: { kind: 'region', path: 'q', width: 4, height: 4, atlas: UNTRIMMED4 } } } }],
+      }))));
+      if (!conflicted.includes('setup.slots out')) probes.push(`skins disagreeing under the merged view: ${JSON.stringify(conflicted)}`);
+    } else probes.push('no gallery rig built a model that declares no constraint');
+    // The model reader keeps what the raw entry reads, and refuses a bad value by name.
+    const record = (extra: Record<string, unknown>): string => modelOf({
+      bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root', setup: 'a' }],
+      skins: [{ name: 'default', bones: [], constraints: {}, attachments: { s: { a: { kind: 'mesh', path: 'm', uvs: [0, 0, 1, 0, 0, 1], triangles: [0, 1, 2], vertices: { weighted: false, xy: [0, 0, 4, 0, 0, 4] }, hull: 3, edges: [], width: 4, height: 4, ...extra } } } }],
+    });
+    const kept = readModel(record({ color: 'ff800040', sequence: { count: 3, setup: 2, start: 1, digits: 0, mode: 'hold', delay: 0 } })).skins[0].attachments.s.a;
+    const g = kept.geometry;
+    if (kept.color !== 'ff800040' || kept.sequenceSetup !== 2 || g?.kind !== 'mesh' || g.hull !== 3) probes.push(`kept colour ${kept.color}, sequence setup ${kept.sequenceSetup}, hull ${g?.kind === 'mesh' ? g.hull : 'none'}`);
+    for (const [label, extra, want] of [
+      ['a colour of five digits', { color: 'ff800' }, 'color is "ff800", not six or eight hex digits'],
+      ['a hull past the vertices', { hull: 4 }, 'hull is 4, not a whole number of vertices from 0 to 3'],
+      ['a sequence setup frame past the series', { sequence: { count: 2, setup: 2 } }, 'setup is 2, not a frame of the 2'],
+    ] as const) {
+      const why = coreRefusal(record(extra));
+      if (!why.includes(want)) probes.push(`${label}: refused ${JSON.stringify(why)}, not naming ${JSON.stringify(want)}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CR04_THE_RAW_ENTRY_AND_THE_MODEL_READER_REFUSE_BY_NAME_AND_RETAIN_THE_COLOUR_HULL_AND_SEQUENCE_FRAME',
+      ok,
+      probeDetail(ok, probes, 'an unknown animation, a negative step and skins disagreeing under the merged view refused by name; two steps walked three poses at the running sum; an attachment colour, a hull and a sequence\'s setup frame kept, and a five-digit colour, a hull past the vertices and a setup frame past the series each refused naming the field'),
+      'issue #966: the render forms its tint from the attachment colour and draws the frame a sequence shows, which the core did not retain; a construct the core leaves out is a refusal, never a pose with a block missing',
+    );
+  }
+
+  // --- CR05: pose_oracle --raw writes full doubles under its own spec, and compare reads them in ulps at tolerance 0 --
+  {
+    const probes: string[] = [];
+    if (free !== null) {
+      const text = (options: OracleOptions): string => dumpText(dumpSkeleton(loadOracleData(readFileSync(join(free.out, 'skeleton.json'), 'utf8'), readFileSync(join(free.out, 'skeleton.atlas'), 'utf8'), free.out), options));
+      const RAW3: OracleOptions = { phase: 'grid', samples: 3, skin: 'all', physics: 'none', dt: null, raw: true };
+      const a = text(RAW3);
+      if (a !== text(RAW3)) probes.push('two raw dumps of one build are not byte-identical');
+      const doc = JSON.parse(a) as OracleDocument;
+      if (doc.spec !== ORACLE_RAW_SPEC || 'raw' in doc.options) probes.push(`the raw dump's spec is ${doc.spec} and its options ${JSON.stringify(doc.options)}`);
+      const core = coreDump(free.model, RAW3);
+      const same = compareDumps(doc, core, { xy: 0, m: 0 });
+      if (!same.identical || same.raw !== true) probes.push(`${free.name} raw: ${same.first}`);
+      // One bone's a moved by one ulp: named in ulps.
+      const moved = JSON.parse(a) as OracleDocument;
+      const row = moved.setup.bones?.find((r) => r[3] !== null && r[3] !== 0);
+      if (row === undefined || row[3] === null) probes.push('no setup bone with a non-zero a to move');
+      else {
+        const f = new Float64Array([row[3]]);
+        const i = new BigInt64Array(f.buffer);
+        i[0] += 1n;
+        row[3] = f[0];
+        const c = compareDumps(moved, core, { xy: 0, m: 0 });
+        if (c.identical || !(c.first ?? '').includes(`bone "${row[0]}"`) || !(c.first ?? '').includes('Δabcd 1 ulp')) probes.push(`one ulp on bone "${row[0]}": ${c.identical ? 'IDENTICAL' : c.first}`);
+        // On the grid the same one-ulp move is invisible: the grid documents of the build compare IDENTICAL.
+        if (!compareDumps(asOracleDocument(JSON.parse(text({ ...RAW3, raw: false })), 'grid'), coreDump(free.model, { ...RAW3, raw: false }), { xy: 0, m: 0 }).identical) probes.push('the grid reading of the same build is not IDENTICAL');
+      }
+      if (ulpDistance(0, -0) !== 0 || ulpDistance(1, 1 + Number.EPSILON) !== 1 || ulpDistance(-Number.MIN_VALUE, Number.MIN_VALUE) !== 2) probes.push('ulpDistance miscounts 0/-0, 1/1+eps or the two smallest subnormals');
+      const refused = (f: () => unknown, want: string, label: string): void => {
+        try {
+          f();
+          probes.push(`${label}: not refused`);
+        } catch (err) {
+          if (!(err instanceof OracleInputError) || !err.message.includes(want)) probes.push(`${label}: ${(err as Error).message}`);
+        }
+      };
+      refused(() => compareDumps(doc, coreDump(free.model, { ...RAW3, raw: false }), { xy: 0, m: 0 }), 'a --raw dump compares only with a --raw dump', 'a raw document against a grid one');
+      refused(() => compareDumps(doc, core, { xy: 1e-6, m: 0 }), 'compare at tolerance 0 in ulps', 'a tolerance on two raw documents');
+      refused(() => asOracleDocument({ ...doc, spec: 'pose-oracle-raw/0' }, 'old'), 'spec is "pose-oracle-raw/0"', 'another raw spec');
+    } else probes.push('no gallery rig built a model that declares no constraint');
+    const ok = probes.length === 0;
+    say(
+      'CR05_POSE_ORACLE_RAW_WRITES_FULL_DOUBLES_UNDER_ITS_OWN_SPEC_AND_COMPARE_READS_THEM_IN_ULPS',
+      ok,
+      probeDetail(ok, probes, `two raw dumps byte-identical under spec ${ORACLE_RAW_SPEC} (no raw key in the options), the core's raw dump IDENTICAL to spine-core's, one ulp on a bone's a named "Δabcd 1 ulp", ulps counted across 0 and -0 and the subnormals; a raw document against a grid one, a tolerance on two raw ones and another raw spec each refused by name`),
+      'issue #966: the grid compare measured agreement to 1e-6 and nothing finer; a raw document is refused by a grid reader rather than compared on the grid, and two raw documents compare at tolerance 0',
+    );
+  }
+
+  // --- CR06: core_gate --raw reads every built row bit-exact, and a rejected corner order planted in a copy turns the rows drawing regions red --
+  {
+    const probes: string[] = [];
+    const rawRows = gateBuilt(built, {}, undefined, true);
+    for (const r of rawRows) if (r.verdict === 'DIFF' || r.verdict === 'REFUSED' || r.stepped?.verdict === 'DIFF') probes.push(`${r.name}: ${r.verdict}, stepped ${r.stepped?.verdict} — ${r.why ?? r.stepped?.why}`);
+    const lines = rawCensusLines(rawRows);
+    for (const block of GATE_BLOCKS) if (!lines.some((l) => l.startsWith(`  RAW   ${block}: `))) probes.push(`the raw census prints no line for ${block}`);
+    // The corners with the placement added after the sine term — the order issue #966 rejected.
+    const lateAdd: RegionPoser = (region, bone) => {
+      const W = region.width;
+      const H = region.height;
+      const sx = region.scaleX ?? 1;
+      const sy = region.scaleY ?? 1;
+      const a = region.atlas;
+      const kx = (W / a.originalWidth) * sx;
+      const ky = (H / a.originalHeight) * sy;
+      const x1 = (-W / 2) * sx + a.offsetX * kx;
+      const y1 = (-H / 2) * sy + a.offsetY * ky;
+      const angle = (region.rotation ?? 0) * (3.1415927 / 180);
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const out: number[] = [];
+      for (const [px, py] of [[x1, y1], [x1, y1 + a.height * ky], [x1 + a.width * kx, y1 + a.height * ky], [x1 + a.width * kx, y1]]) {
+        const lx = px * cos - py * sin + (region.x ?? 0);
+        const ly = px * sin + py * cos + (region.y ?? 0);
+        out.push(bone.a * lx + bone.b * ly + bone.worldX, bone.c * lx + bone.d * ly + bone.worldY);
+      }
+      return out;
+    };
+    const planted = gateBuilt(built, { region: lateAdd }, undefined, true);
+    const red = planted.filter((r) => r.blocks?.['setup.attachments'].verdict === 'DIFF' || r.blocks?.['animations.attachments'].verdict === 'DIFF').map((r) => r.name);
+    const gridRed = gateBuilt(built, { region: lateAdd }).filter((r) => r.verdict === 'DIFF').map((r) => r.name);
+    if (red.length === 0) probes.push('the late-added placement, planted, turned no row red under --raw');
+    if (gridRed.length > 0) probes.push(`the late-added placement turned [${gridRed.join(', ')}] red on the grid too, so the grid would have caught it and the raw gate proves nothing new`);
+    const ok = probes.length === 0;
+    say(
+      'CR06_CORE_GATE_RAW_READS_EVERY_BUILT_ROW_BIT_EXACT_AND_A_REJECTED_CORNER_ORDER_IS_NAMED',
+      ok,
+      probeDetail(ok, probes, `${rawRows.length} built row(s) IDENTICAL under --raw in every block, stepped too, a RAW census line per block; the corners' placement added after the sine term, planted, red under --raw on [${red.join(', ')}] and on no row on the grid`),
+      'issue #966: `core_gate --raw` is the census of last-bit gaps on every corpus; a plant only the raw reading sees is what shows the raw reading sees more than the grid',
+    );
+    if (examplesHole !== null) console.log(`          ⚠️ HOLE: ${examplesHole} — the raw gate read the gallery's rows alone`);
+  }
+
+  // --- CR07: the stepped physics population with every inherit mode reads bit-exact through --raw --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(96631);
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const N = 150;
+    let exact = 0;
+    let moded = 0;
+    let readBackMisses = 0;
+    let readBackRigs = 0;
+    for (let i = 0; i < N; i++) {
+      const bones: Obj[] = [{ name: 'root' }];
+      for (let j = 1; j <= 6; j++) {
+        const b: Obj = { name: `b${j}`, parent: j === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+        if (rnd() < 0.3) Object.assign(b, { scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2), shearX: R(-30, 30), shearY: R(-30, 30) });
+        if (rnd() < 0.4) b.inherit = pick(MODES5.slice(1));
+        bones.push(b);
+      }
+      if (bones.some((b) => b.inherit !== undefined && b.inherit !== 'onlyTranslation')) moded++;
+      const names = bones.slice(1).map((b) => b.name as string);
+      bones.push(...amplify(names[names.length - 1]), ...amplify(names[2]));
+      const constraints: Obj[] = [];
+      for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
+        const c: Obj = { type: 'physics', name: `k${k}`, bone: pick(names), ...someComponents(rnd) };
+        for (const f of ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix']) if (rnd() < 0.4) c[f] = settingValue(rnd, f);
+        constraints.push(c);
+      }
+      const anims: Record<string, StepAnim> = { a: { bones: { [pick(names)]: { rotate: [{ time: 0, value: R(-90, 90) }, { time: 1, value: R(-90, 90) }] }, [pick(names)]: { translate: [{ time: 0, x: R(-30, 30), y: R(-30, 30) }, { time: 1, x: 0, y: 0 }] } } } };
+      const pair = stepPair(bones, constraints, anims);
+      const options = { ...stepOptions(pick([...STEP_DTS]), 9, pick(['grid', 'irr'])), raw: true };
+      const c = stepCompare(pair, options);
+      // A physics constraint listed before one on its bone's ancestor: its bone is re-posed from the local values read back from its world (`localFromWorld`, the read-back HOLE).
+      const parentOf = new Map(bones.map((b) => [b.name as string, b.parent as string | undefined]));
+      const above = (top: string, n: string): boolean => {
+        for (let at = parentOf.get(n); at !== undefined; at = parentOf.get(at)) if (at === top) return true;
+        return false;
+      };
+      const on = constraints.map((x) => x.bone as string);
+      const readBack = on.some((bi, k) => on.some((bj, j) => j > k && above(bj, bi)));
+      if (readBack) readBackRigs++;
+      if (c.identical) exact++;
+      else if (readBack) readBackMisses++;
+      else if (probes.length < 3) probes.push(`probe ${i}: ${c.first}`);
+    }
+    const ok = probes.length === 0 && exact + readBackMisses === N && moded > N / 4;
+    say(
+      'CR07_THE_STEPPED_PHYSICS_POPULATION_WITH_EVERY_INHERIT_MODE_READS_BIT_EXACT_THROUGH_THE_RAW_DUMP',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} rigs bit-exact under --raw at tolerance 0 — one to three physics constraints on six bones, ${moded} of them with a bone in noRotationOrReflection, noScale or noScaleOrReflection (the modes CK07 held out), two amplifiers each, stepped at 1/60, 1/30 or 1/120 on grid or irrational samples; every other rig one whose physics bone is re-posed from local values read back after a later constraint on its ancestor`),
+      'issue #959: the step amplified a last-bit gap in three inherit modes tenfold per 0.1 s; with the modes exact to the bit, the stepped population is widened to them, and what is left is the read-back HOLE',
+    );
+    if (readBackMisses > 0) console.log(`          ⚠️ HOLE: ${readBackMisses} of the ${readBackRigs} stepped rigs whose physics bone is read back through localFromWorld are last-bit off — the read-back HOLE, amplified by the step`);
+  }
+
+  // --- CR08: the bone channels' Bézier, the deform curve, the weighted sum and the region corners read bit-exact at a 1e9 amplifier --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(96681);
+    const D = dec5(rnd);
+    const RAW_DENSE: OracleOptions = { ...DENSE, raw: true };
+    const RAW_FORTY: OracleOptions = { ...FORTY_IRR, raw: true };
+    const read: string[] = [];
+    // Bone channels: every kind keyed by a random Bézier on a bone with two children 1e9 units out.
+    const kinds = ['rotate', 'translate', 'scale', 'shear'];
+    let bezierExact = 0;
+    const NB = 40;
+    for (let i = 0; i < NB; i++) {
+      const kind = kinds[i % kinds.length];
+      const curve = (): number[] => {
+        const u = [rnd(), rnd()].sort((a, b) => a - b);
+        return kind === 'rotate' ? [D(0, 0.2) + 0.1 * u[0], D(-90, 90), 0.3 + 0.2 * u[1], D(-90, 90)] : [0.1 * u[0], D(-2, 2), 0.3 + 0.2 * u[1], D(-2, 2), 0.1 * u[0], D(-2, 2), 0.3 + 0.2 * u[1], D(-2, 2)];
+      };
+      const key = (time: number, withCurve: boolean): Obj => {
+        const value = kind === 'rotate' ? { value: D(-180, 180) } : kind === 'scale' ? { x: D(0.3, 2), y: D(0.3, 2) } : { x: D(-40, 40), y: D(-40, 40) };
+        return { time, ...value, ...(withCurve ? { curve: curve() } : {}) };
+      };
+      const pair = remainderPair({
+        bones: [{ name: 'root' }, { name: 'p', parent: 'root', rotation: D(-180, 180), x: D(-20, 20) }, { name: 'amp', parent: 'p', x: 1e9 }, { name: 'ampY', parent: 'p', y: 1e9 }],
+        slots: [], skins: { default: {} },
+        anims: { a: { bones: { p: { [kind]: [key(0, true), key(D(0.3, 0.6), true), key(1, false)] } } } },
+      });
+      const c = remainderCompare(pair, RAW_DENSE);
+      if (c.identical && blocksSkipped(c).length === 0) bezierExact++;
+      else if (probes.length < 3) probes.push(`${kind} Bézier probe ${i}: ${blocksSkipped(c).join('; ') || c.first}`);
+    }
+    read.push(`${bezierExact} of ${NB} Bézier bone channels at 200 dense samples`);
+    if (bezierExact !== NB) probes.push(`Bézier bone channels: ${bezierExact} of ${NB} bit-exact`);
+    // Deform curves and the weighted sum: CD03's and CD04's populations, their bone under a 1e9 amplifier, raw.
+    // A miss here is the deform HOLE (named below): the corpus's deformed rows read bit-exact (CR06), these random keys do not all.
+    let unweighted = 0;
+    let weighted = 0;
+    const deformMisses: string[] = [];
+    const ND = 30;
+    for (let i = 0; i < ND; i++) {
+      const plain = randomMesh(rnd, 4 + Math.floor(rnd() * 3), false, []);
+      const pairU = remainderPair({
+        bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: D(-180, 180), scaleX: D(0.3, 2), scaleY: D(-2, 2), shearX: D(-30, 30), x: D(-20, 20), y: D(-20, 20) }, { name: 'amp', parent: 'b', x: 1e9 }],
+        slots: [{ name: 's', bone: 'b', attachment: 'm' }], skins: { default: { s: { m: plain } } },
+        anims: { a: { deform: [{ slot: 's', attachment: 'm', keys: randomDeformKeys(rnd, deformLengthOf(plain)) }] } },
+      });
+      const cu = remainderCompare(pairU, RAW_FORTY);
+      if (cu.identical && blocksSkipped(cu).length === 0) unweighted++;
+      else if (blocksSkipped(cu).length > 0) probes.push(`unweighted deform probe ${i}: ${blocksSkipped(cu).join('; ')}`);
+      else if (deformMisses.length < 3) deformMisses.push(`unweighted probe ${i}: ${cu.first}`);
+      const bound = randomMesh(rnd, 3 + Math.floor(rnd() * 3), true, ['b0', 'b1', 'b2']);
+      const pairW = remainderPair({
+        bones: [
+          { name: 'root' }, { name: 'b0', parent: 'root', rotation: D(-180, 180), scaleX: D(0.3, 2), x: D(-20, 20), y: D(-20, 20) },
+          { name: 'b1', parent: 'b0', rotation: D(-180, 180), scaleY: D(-2, 2), shearX: D(-30, 30), x: D(-20, 20) }, { name: 'b2', parent: 'root', rotation: D(-180, 180), x: D(-20, 20) }, { name: 'amp', parent: 'b1', x: 1e9 },
+        ],
+        slots: [{ name: 's', bone: 'root', attachment: 'm' }], skins: { default: { s: { m: bound } } },
+        anims: { a: { deform: [{ slot: 's', attachment: 'm', keys: randomDeformKeys(rnd, deformLengthOf(bound)) }], bones: { b1: { rotate: [{ time: 0, value: 0 }, { time: 2, value: D(-90, 90) }] } } } },
+      });
+      const cw = remainderCompare(pairW, RAW_FORTY);
+      if (cw.identical && blocksSkipped(cw).length === 0) weighted++;
+      else if (blocksSkipped(cw).length > 0) probes.push(`weighted deform probe ${i}: ${blocksSkipped(cw).join('; ')}`);
+      else if (deformMisses.length < 3) deformMisses.push(`weighted probe ${i}: ${cw.first}`);
+    }
+    read.push(`${unweighted} of ${ND} unweighted and ${weighted} of ${ND} weighted deformed meshes at 40 samples (the rest the deform HOLE)`);
+    // Region corners: CO17's attachment probe — trimmed and turned on a scaled page, mirrored, a sequence frame, weighted and linked meshes, clips — raw.
+    const spineAttach = dumpSkeleton(loadOracleData(probeSkeleton, probeAtlas, 'the attachment probe'), { ...ONE, raw: true });
+    const coreAttach = coreDump(readModel(probeModelText, 'the attachment probe'), { ...ONE, raw: true });
+    const ca = compareDumps(spineAttach, coreAttach, { xy: 0, m: 0 });
+    if (!ca.identical) probes.push(`the attachment probe: ${ca.first}`);
+    else read.push(`CO17's attachment probe (${ca.rows[0]?.vertices ?? 0} vertices)`);
+    const ok = probes.length === 0;
+    say(
+      'CR08_THE_BEZIER_THE_DEFORM_CURVE_THE_WEIGHTED_SUM_AND_THE_REGION_CORNERS_READ_BIT_EXACT_AT_A_1E9_AMPLIFIER',
+      ok,
+      probeDetail(ok, probes, `under --raw at tolerance 0, the animated bone or the mesh's bone carrying a child 1e9 units out: ${read.join('; ')}`),
+      'issue #966 ask 3: each evaluator the census could implicate held to the bit on a probe where a last-bit difference reads as whole units',
+    );
+    if (unweighted + weighted < 2 * ND) console.log(`          ⚠️ HOLE: deform — ${2 * ND - unweighted - weighted} of ${2 * ND} randomly keyed deformed meshes last-bit off (${deformMisses.join(' | ')}); measured on issue #966, the lerp as weights and the percent through float32 read fewer exact (5 and 7, 5 and 3 of 30 against 24 and 27), so the lerp's form is not what is off`);
+  }
+
+  // --- CR09: the deform gap reduced — a linear deform segment is bit-exact, a Bézier one is the HOLE, whatever the key vertices' float32-ness --
+  {
+    const probes: string[] = [];
+    const counts: Record<string, number> = {};
+    const N = 60;
+    const RAW_IRR: OracleOptions = { phase: 'irr', samples: 40, skin: 'all', physics: 'none', dt: null, raw: true };
+    for (const bezier of [false, true]) {
+      for (const f32 of [false, true]) {
+        const rnd = lcg(4242);
+        const dec = (lo: number, hi: number): number => {
+          const v = Math.round((lo + rnd() * (hi - lo)) * 1e5) / 1e5;
+          return f32 ? Math.fround(v) : v;
+        };
+        let exact = 0;
+        for (let i = 0; i < N; i++) {
+          const n = 5;
+          const xy = Array.from({ length: 2 * n }, () => dec(-200, 200));
+          const keyV = (): number[] => Array.from({ length: 2 * n }, () => dec(-60, 60));
+          const t1 = Math.round((0.3 + rnd()) * 1e4) / 1e4;
+          const u = [rnd(), rnd()].sort((a, b) => a - b);
+          const handles = [Math.round(t1 * u[0] * 1e4) / 1e4, Math.round(rnd() * 1e4) / 1e4, Math.round(t1 * u[1] * 1e4) / 1e4, Math.round(rnd() * 1e4) / 1e4];
+          const k0 = { time: 0, vertices: keyV(), ...(bezier ? { curve: handles } : {}) };
+          const k1 = { time: t1, vertices: keyV() };
+          const uvs = Array.from({ length: 2 * n }, () => rnd());
+          const triangles = [0, 1, 2, 0, 2, 3, 0, 3, 4];
+          const bones = [{ name: 'root' }, { name: 'b', parent: 'root', rotation: dec(-180, 180), x: dec(-20, 20) }];
+          const spine = {
+            skeleton: { spine: '4.3.13' }, bones, slots: [{ name: 's', bone: 'b', attachment: 'm' }],
+            skins: [{ name: 'default', attachments: { s: { m: { type: 'mesh', path: 'm', uvs, triangles, vertices: xy, hull: n, width: 10, height: 10 } } } }],
+            animations: { a: { attachments: { default: { s: { m: { deform: [k0, k1] } } } } } },
+          };
+          const model = modelOf({
+            bones, slots: [{ name: 's', bone: 'b', setup: 'm' }],
+            skins: [{ name: 'default', bones: [], constraints: {}, attachments: { s: { m: { kind: 'mesh', path: 'm', uvs, triangles, vertices: { weighted: false, xy }, hull: n, edges: [], width: 10, height: 10 } } } }],
+            animations: [{ name: 'a', duration: 0, bones: [], slots: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [{ name: 'default', slots: [{ name: 's', attachments: [{ name: 'm', deform: [k0, k1] }] }] }], drawOrder: [], events: [] }],
+          });
+          const c = compareDumps(dumpSkeleton(loadOracleData(JSON.stringify(spine), atlasOf(['m']), 'the deform probe'), RAW_IRR), coreDump(readModel(model, 'the deform probe'), RAW_IRR), { xy: 0, m: 0 });
+          const skippedAttachments = c.skipped.some((x) => x.startsWith('animations.attachments'));
+          if (skippedAttachments) probes.push(`probe ${i}: the core left the attachments out`);
+          else if (c.identical) exact++;
+          else if (!bezier && probes.length < 3) probes.push(`linear probe ${i}${f32 ? ' (float32 keys)' : ''}: ${c.first}`);
+        }
+        counts[`${bezier ? 'bezier' : 'linear'}${f32 ? ' f32' : ''}`] = exact;
+      }
+    }
+    if (counts.linear !== N || counts['linear f32'] !== N) probes.push(`linear segments ${counts.linear} and ${counts['linear f32']} of ${N} bit-exact`);
+    if (counts.bezier === N && counts['bezier f32'] === N) probes.push('every Bézier segment read bit-exact: the HOLE is closed, and this control should say so');
+    const ok = probes.length === 0;
+    say(
+      'CR09_A_LINEAR_DEFORM_SEGMENT_IS_BIT_EXACT_AND_THE_DEFORM_GAP_IS_THE_BEZIER_PERCENT',
+      ok,
+      probeDetail(ok, probes, `an unweighted five-vertex mesh, one deform segment sampled at 40 irrational times, under --raw at tolerance 0: linear ${counts.linear} and ${counts['linear f32']} of ${N} (key vertices spelled with five decimals, then float32-exact); Bézier ${counts.bezier} and ${counts['bezier f32']} of ${N} — the float32-ness of the keys changes nothing, and the lerp is exact wherever the percent is linear`),
+      'the commander\'s private-corpus finding on issue #966: one unweighted mesh 1 ulp off inside a Bézier deform segment. Reduced here: the gap is the Bézier segment\'s percent (the curve position), not the key vertices\' reading and not the blend',
+    );
+    console.log(`          ⚠️ HOLE: the deform Bézier percent — ${2 * N - counts.bezier - counts['bezier f32']} of ${2 * N} Bézier deform segments last-bit off at a mid-segment sample (1–64 ulp); rejected on issue #966: the key times through float32 in the table (11 of 60), the handles through float32 (7), the percent as (t − x0)(y1 − y0)/(x1 − x0) (25), against 30 as it stands`);
   }
 
   rmSync(work, { recursive: true, force: true });

@@ -127,9 +127,9 @@ export function readEventKeys(value: unknown, label: string, defs: ReadonlyMap<s
 }
 
 /** What lists the events fired over `(last, t]`: `eventsFired` unless a plant passes another. */
-export type EventsFired = (keys: readonly CoreEventKey[], last: number, t: number) => CoreEventRow[];
+export type EventsFired = (keys: readonly CoreEventKey[], last: number, t: number, round?: (v: number) => number | null) => CoreEventRow[];
 
 /** The rows of the keys fired over `(last, t]`, in key order — the header's rules, rounded as the oracle rounds. */
-export function eventsFired(keys: readonly CoreEventKey[], last: number, t: number): CoreEventRow[] {
-  return keys.filter((k) => k.time > last && k.time <= t).map((k): CoreEventRow => [k.name, gridRound(k.time), k.int, gridRound(k.float), k.string]);
+export function eventsFired(keys: readonly CoreEventKey[], last: number, t: number, round: (v: number) => number | null = gridRound): CoreEventRow[] {
+  return keys.filter((k) => k.time > last && k.time <= t).map((k): CoreEventRow => [k.name, round(k.time), k.int, round(k.float), k.string]);
 }
