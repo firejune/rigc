@@ -86,7 +86,11 @@
  *   unstated) — so the caller forms the tint, slot colour times attachment
  *   colour, itself. Where a region sits on a page is not the model's
  *   (`ModelAtlasRect`'s 🔸); the page UVs are issue #967's.
- * - `clips`, `clipped` — the oracle's rows as doubles.
+ * - `clips`, `clipped` — the oracle's rows as doubles; `clipped` is what the
+ *   core DRAWS, which is the oracle's block wherever the core poses it and,
+ *   under a clip that is not strictly convex or is inverse (a block the core
+ *   leaves out), the core's own convex decomposition (`clipThrough` in
+ *   `./clipping.ts`, issue #964), held to spine-core by the render's pixels.
  * - `events` — the oracle's event rows as doubles.
  *
  * ⛔ **Nothing is posed that the core would leave out.** Where the oracle's
@@ -222,7 +226,11 @@ function rawBones(doc: CompiledDocument, world: ReadonlyMap<string, CoreWorld>):
 function rawDrawn(doc: CompiledDocument, shown: readonly ShownGeometry[], world: ReadonlyMap<string, CoreWorld>, order: readonly string[], plant: CorePlant): { drawn: RawDrawn[]; clips: RawClip[]; clipped: RawClipped[] } {
   const geometry = poseGeometry(shown, world, sourceOfDoc(doc), rawNumber, { region: plant.region, vertices: plant.vertices }, drawWalkOf(doc, order, plant));
   if (geometry.attachments === null) throw new CoreInputError(`the raw pose leaves the attachments out: ${geometry.attachmentsWhy}`);
-  if (geometry.clipped === null) throw new CoreInputError(`the raw pose leaves the clipped triangles out: ${geometry.clippedWhy}`);
+  // The drawn rows (issue #964): the oracle's `clipped` rows where it is posed, and a concave or inverse clip cut through the core's own decomposition.
+  if (geometry.drawnClipped === null) throw new CoreInputError(`the raw pose leaves the clipped triangles out: ${geometry.drawnClippedWhy}`);
+  // Under a concave or inverse clip the oracle's `clipped` block is absent (the runtime's own triangle list); what the core draws is `drawnClipped`,
+  // its own decomposition, and the render samples each drawn triangle at its source triangle's affine UV, so the pixels are the decomposition's
+  // coverage alone (issue #964, `Mesh.source` in src/render.ts).
   const rows = geometry.attachments;
   const drawn: RawDrawn[] = [];
   let k = 0;
@@ -250,7 +258,7 @@ function rawDrawn(doc: CompiledDocument, shown: readonly ShownGeometry[], world:
     drawn.push({ slot: s.slot, attachment: row[1], kind: row[2], vertices: row[3].map((v) => finite(v, `vertex of slot "${s.slot}"`)), uvs, triangles, hull, sequenceIndex, colour });
   }
   const clips = geometry.clips.map((c): RawClip => [c[0], c[1], c[2], c[3].map((v) => finite(v, `clip vertex of slot "${c[0]}"`))]);
-  const clipped = geometry.clipped.map((c): RawClipped => [c[0], c[1], c[2], c[3].map((v) => finite(v, `clipped vertex of slot "${c[0]}"`)), c[4].map((v) => finite(v, `clipped uv of slot "${c[0]}"`)), c[5]]);
+  const clipped = geometry.drawnClipped.map((c): RawClipped => [c[0], c[1], c[2], c[3].map((v) => finite(v, `clipped vertex of slot "${c[0]}"`)), c[4].map((v) => finite(v, `clipped uv of slot "${c[0]}"`)), c[5]]);
   return { drawn, clips, clipped };
 }
 
@@ -261,7 +269,9 @@ function rawDrawn(doc: CompiledDocument, shown: readonly ShownGeometry[], world:
  */
 export function poseRawSetup(doc: CompiledDocument, plant: CorePlant = {}): RawPose {
   const posed = poseSetup(doc, { ...plant, ...RAW_PLANT }, freshStepContext(plant.physicsStep));
-  if (posed.absent.length > 0) throw new CoreInputError(`the raw setup pose leaves ${posed.absent.map(([b, why]) => `${b} out (${why})`).join('; ')}`);
+  // `setup.clipped` is the oracle's block, left out under a concave or inverse clip whose triangle list is the runtime's own; what the core draws there is `rawDrawn`'s to refuse or pose (issue #964).
+  const absent = posed.absent.filter(([block]) => block !== 'setup.clipped');
+  if (absent.length > 0) throw new CoreInputError(`the raw setup pose leaves ${absent.map(([b, why]) => `${b} out (${why})`).join('; ')}`);
   const { setup, world, shown } = posed;
   if (world === null || shown === null || setup.slots === null || setup.drawOrder === null) throw new CoreInputError('the raw setup pose was not posed');
   const drawn = rawDrawn(doc, shown, world, setup.drawOrder, plant);
@@ -295,7 +305,8 @@ export function poseRawAnimation(doc: CompiledDocument, animation: string, steps
   if (reset === 'setup') {
     // The reset taken at the setup pose, before the animation is applied (`src/deformmeasure.ts`'s `poseAt`): pose 0 is the setup pose.
     const setup = poseSetup(doc, { ...plant, ...RAW_PLANT }, ctx);
-    if (setup.absent.length > 0) throw new CoreInputError(`the raw walk's reset pose leaves ${setup.absent.map(([b, w]) => `${b} out (${w})`).join('; ')}`);
+    const absent = setup.absent.filter(([block]) => block !== 'setup.clipped');
+    if (absent.length > 0) throw new CoreInputError(`the raw walk's reset pose leaves ${absent.map(([b, w]) => `${b} out (${w})`).join('; ')}`);
     if (setup.world === null || setup.shown === null || setup.setup.slots === null || setup.setup.drawOrder === null) throw new CoreInputError('the raw walk\'s reset pose was not posed');
     ctx.phase = 'update';
     poses.push({ trackTime: 0, animationTime: 0, bones: rawBones(doc, setup.world), slots: setup.setup.slots, drawOrder: setup.setup.drawOrder, ...rawDrawn(doc, setup.shown, setup.world, setup.setup.drawOrder, plant), events: [], shown: drawOrderOf(setup.shown, setup.setup.drawOrder) });

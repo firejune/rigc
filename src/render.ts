@@ -108,7 +108,7 @@ import { Plate, readPlate, type RGBA } from '../tools/plate.ts';
 import { pageFootprint } from './atlas.ts';
 import { CoreInputError } from './core/index.ts';
 import { MODEL_DOCUMENT_FILE } from './model.ts';
-import { corePoser, inactiveBoneSnapshot, SlotSubsetError, subsetOver, unposedBones } from './render_core.ts';
+import { clipSourceOf, corePoser, inactiveBoneSnapshot, SlotSubsetError, subsetOver, unposedBones } from './render_core.ts';
 
 /** Opaque, and light: both of rung 3's parts are dark slate, so is every ground. */
 export const BACKGROUND: RGBA = [232, 232, 232, 255];
@@ -322,6 +322,12 @@ export interface PieceTexture {
   region: string;
   /** Original-art coordinates, `u, v` per vertex, parallel to `uvs`. */
   artUvs: number[];
+  /**
+   * A clipped piece only (`Mesh.source`): the original-art UVs of each drawn
+   * triangle's SOURCE triangle, six numbers per drawn triangle, parallel to
+   * `Mesh.source.uvs` — what `substituteTexture` re-seats the source map with.
+   */
+  sourceArtUvs?: number[];
 }
 
 /** A page-UV rectangle outside which a piece samples nothing. */
@@ -585,6 +591,23 @@ export interface Mesh extends PieceCommon {
   uvs: ArrayLike<number>;
   /** Vertex index triplets. */
   triangles: ArrayLike<number>;
+  /**
+   * A piece a clip cut only: for each drawn triangle, in triangle order, the
+   * SOURCE triangle it was cut from — its three world corners and their page
+   * UVs, six numbers each per drawn triangle (`ClipSource`). The rasteriser
+   * samples such a triangle's pixels at the source triangle's affine UV map,
+   * so the picture does not depend on which convex pieces the clipper cut
+   * (issue #964). Absent on every piece no clip cut, whose path is unchanged.
+   */
+  source?: ClipSource;
+}
+
+/** The source triangles of a clipped piece's drawn triangles — see `Mesh.source`. */
+export interface ClipSource {
+  /** Three world corners (`x, y` each) per drawn triangle. */
+  world: number[];
+  /** The page UVs of those corners, parallel to `world`. */
+  uvs: number[];
 }
 
 /** One drawable in a posed frame. */
@@ -1043,7 +1066,7 @@ export function candidatePosers(
 /**
  * `run` through the chosen poser: the core one when there is one, and
  * spine-core otherwise — or when the core refuses the input partway
- * (`CoreInputError`, e.g. a concave or inverse clip it does not reproduce), in
+ * (`CoreInputError`, e.g. a clip polygon that is not simple), in
  * which case `run` starts again from nothing on spine-core and `note` names the
  * refusal. Under `--poser core` that refusal is a `PoserChoiceError` instead.
  * `run` must write nothing: a fallback re-runs it whole.
@@ -1095,6 +1118,17 @@ export function throughPoser<T>(choice: PoserChoice, run: (poser: Poser) => T): 
  * bit. One that is cut becomes a `Mesh` — the clipper's output is a triangle
  * list — and one wholly outside becomes a mesh with no triangle, which keeps the
  * slot in the frame, undrawn, rather than absent.
+ *
+ * ⭐ A cut piece's pixels are sampled at each drawn triangle's SOURCE triangle's
+ * affine UV (`Mesh.source`), not at its own float32 corner UVs (issue #964):
+ * which convex pieces a clipper cuts a concave polygon into is the clipper's —
+ * spine-core's, the core's, or spine-core's under another spelling of the same
+ * polygon — and only this keeps the picture from depending on it. Measured: the
+ * same notched square spelled from four start vertices moved up to 18 pixels one
+ * level against itself through spine-core before, 0 after; the 19 tree rows'
+ * renders did not move (spineboy-pro's portal, the one clipped row, included).
+ * An unclipped piece carries no `source` and is rasterised as before, byte for
+ * byte.
  *
  * The clip is applied whatever `slots`/`hidden` draw: a hidden clip still masks
  * what is shown, so a subset frame is the whole frame's pixels for those slots.
@@ -1266,7 +1300,20 @@ function clippedPiece(piece: Piece, triangles: number[], uvs: Float32Array, clip
   const world = Array.from(clipper.clippedVerticesTyped);
   const clippedUvs = Array.from(clipper.clippedUVsTyped);
   const clipped = Array.from(clipper.clippedTrianglesTyped);
+  // Which source triangle each drawn triangle was cut from (`Mesh.source`): the clipper cuts triangle by triangle, so each source
+  // triangle is clipped alone and its drawn triangles counted; the concatenation is held to the whole call's output, vertex for vertex.
+  const sources: number[] = [];
+  const again: number[] = [];
+  for (let t = 0; t + 2 < triangles.length; t += 3) {
+    clipper.clipTrianglesUnpacked(piece.world, 0, triangles.slice(t, t + 3), 3, uvs, 2);
+    for (let k = 0; k < clipper.clippedTrianglesTyped.length; k += 3) sources.push(t / 3);
+    again.push(...clipper.clippedVerticesTyped);
+  }
+  if (sources.length !== clipped.length / 3 || again.length !== world.length || again.some((v, i) => v !== world[i])) {
+    throw new Error(`slot "${piece.slot}": the clipper cut ${clipped.length / 3} triangle(s) in one call and ${sources.length} triangle by triangle, over other vertices — the source of each drawn triangle cannot be named`);
+  }
   let texture = piece.texture;
+  const source = clipSourceOf(piece.world, Array.from(uvs), triangles, sources, texture?.artUvs);
   if (texture !== undefined) {
     clipper.clipTrianglesUnpacked(piece.world, 0, triangles, triangles.length, texture.artUvs, 2);
     const artUvs = Array.from(clipper.clippedUVsTyped);
@@ -1276,10 +1323,10 @@ function clippedPiece(piece: Piece, triangles: number[], uvs: Float32Array, clip
           `${artUvs.length / 2} for the original-art UVs over the same geometry`,
       );
     }
-    texture = { region: texture.region, artUvs };
+    texture = { region: texture.region, artUvs, sourceArtUvs: source.artUvs };
   }
   const { tint, dark, slot, page } = piece;
-  return { kind: 'mesh', tint, dark, slot, page, texture, world, uvs: clippedUvs, triangles: clipped };
+  return { kind: 'mesh', tint, dark, slot, page, texture, world, uvs: clippedUvs, triangles: clipped, source: { world: source.world, uvs: source.uvs } };
 }
 
 // ---------------------------------------------------------------------------
@@ -1876,6 +1923,14 @@ export function substituteTexture(
     // handled. Calling it rather than repeating it is what keeps this from being
     // a second opinion about the atlas format.
     MeshAttachment.computeUVs(region, texture.artUvs, uvs);
+    // A clipped piece's source map is re-seated the same way, through the drawing's own coordinates (`Mesh.source`).
+    if (piece.kind === 'mesh' && piece.source !== undefined) {
+      if (texture.sourceArtUvs === undefined) throw new Error(`slot "${piece.slot}": a clipped piece carries no original-art UVs for its source triangles`);
+      const sourceUvs = new Array<number>(texture.sourceArtUvs.length).fill(0);
+      MeshAttachment.computeUVs(region, texture.sourceArtUvs, sourceUvs);
+      pieces.push({ ...piece, page: SUBSTITUTE_PAGE + region.page.name, uvs, uvWindow: windowOf(region), source: { world: piece.source.world, uvs: sourceUvs } });
+      continue;
+    }
     pieces.push({ ...piece, page: SUBSTITUTE_PAGE + region.page.name, uvs, uvWindow: windowOf(region) });
   }
   return { frame: { ...frame, pieces }, unmatched };
@@ -2383,6 +2438,10 @@ export function rasteriseMesh(
     const u2 = mesh.uvs[i2 * 2];
     const v2 = mesh.uvs[i2 * 2 + 1];
 
+    // A clipped piece (`Mesh.source`, issue #964): the UV of a pixel is the SOURCE triangle's affine map, in doubles from its own
+    // projected corners and page UVs, so which convex pieces the clipper cut changes no pixel. Coverage is still this triangle's.
+    const src = mesh.source === undefined ? null : sourceMap(mesh.source, t / 3, project);
+
     for (let y = minY; y <= maxY; y++) {
       const sy = y + 0.5;
       for (let x = minX; x <= maxX; x++) {
@@ -2394,11 +2453,15 @@ export function rasteriseMesh(
         const w2 = (x1 - x0) * (sy - y0) - (y1 - y0) * (sx - x0);
         if (topLeft2 ? w2 < 0 : w2 <= 0) continue;
 
-        const b0 = w0 / area;
-        const b1 = w1 / area;
-        const b2 = w2 / area;
-        const u = b0 * u0 + b1 * u1 + b2 * u2;
-        const v = b0 * v0 + b1 * v1 + b2 * v2;
+        let u: number;
+        let v: number;
+        if (src === null) {
+          const b0 = w0 / area;
+          const b1 = w1 / area;
+          const b2 = w2 / area;
+          u = b0 * u0 + b1 * u1 + b2 * u2;
+          v = b0 * v0 + b1 * v1 + b2 * v2;
+        } else [u, v] = src(sx, sy);
         if (outsideWindow(mesh.uvWindow, u, v)) continue;
         const sample = bilinear(page, u * page.width - 0.5, v * page.height - 0.5);
         const alpha = sample[3] * mesh.tint[3];
@@ -2414,6 +2477,28 @@ export function rasteriseMesh(
       }
     }
   }
+}
+
+/**
+ * The UV map of a clipped piece's drawn triangle `t`: its source triangle's
+ * affine map (`Mesh.source`), from the three projected source corners and their
+ * page UVs, in doubles — the barycentric weights of the pixel centre in the
+ * projected source triangle times the corners' UVs. The same for every
+ * decomposition of the source triangle, which is the point (issue #964).
+ */
+function sourceMap(source: ClipSource, t: number, project: (wx: number, wy: number) => [number, number]): (sx: number, sy: number) => [number, number] {
+  const o = t * 6;
+  const [ax, ay] = project(source.world[o], source.world[o + 1]);
+  const [bx, by] = project(source.world[o + 2], source.world[o + 3]);
+  const [cx, cy] = project(source.world[o + 4], source.world[o + 5]);
+  const uv = source.uvs;
+  const area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  return (sx, sy) => {
+    const wa = ((cx - bx) * (sy - by) - (cy - by) * (sx - bx)) / area;
+    const wb = ((ax - cx) * (sy - cy) - (ay - cy) * (sx - cx)) / area;
+    const wc = ((bx - ax) * (sy - ay) - (by - ay) * (sx - ax)) / area;
+    return [wa * uv[o] + wb * uv[o + 2] + wc * uv[o + 4], wa * uv[o + 1] + wb * uv[o + 3] + wc * uv[o + 5]];
+  };
 }
 
 /**

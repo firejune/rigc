@@ -39,7 +39,7 @@
  * - **The clip.** Which slot a clip covers is the core's walk
  *   (`./core/clipping.ts`, issue #964), whose rows the raw pose carries with
  *   the attachment's LOCAL UVs. The render samples PAGE UVs, so each clipped
- *   row is cut again with `clipTriangles` over the page UVs — the UV rule is
+ *   row is cut again with `clipThrough` over the page UVs — the UV rule is
  *   linear in the corner UVs, and the vertices and triangles depend on
  *   positions alone, so the second cut must return the core's vertices,
  *   triangles and verdict to the bit, and a disagreement is thrown as a
@@ -47,9 +47,14 @@
  *   polygon from the pose's `clips` rows, and the walk that pairs a slot with
  *   the clip over it is the core's rule restated: a clip whose bone is active
  *   starts when none is active, and ends after its end slot is walked.
- * - **A concave or inverse clip** is refused by the raw entry, naming the
- *   slot (`CoreInputError`); the render then falls back to `spinePoser` for
- *   that input and says so (`throughPoser` in `src/render.ts`).
+ * - **A concave or inverse clip** is cut through the core's own convex
+ *   decomposition (`clipThrough`, issue #964), and each drawn triangle carries
+ *   its source triangle (`clipSourceOf`, `Mesh.source`): the rasteriser
+ *   samples it at the source triangle's affine UV, so the pixels are the
+ *   spine-core render's whatever pieces either clipper cut (`RC08`). A clip
+ *   that is not simple is refused by the raw entry, naming the slot
+ *   (`CoreInputError`); the render then falls back to `spinePoser` for that
+ *   input and says so (`throughPoser` in `src/render.ts`).
  *
  * ## The skin
  *
@@ -79,7 +84,7 @@ import type {
 } from './render.ts';
 import { atlasRegionLookup, parseAtlasText, type AtlasRegion } from './atlas.ts';
 import { spineFileSha256 } from './model.ts';
-import { clipTriangles } from './core/clipping.ts';
+import { clipThrough, type ClipShape, type ShapeClipper } from './core/clipping.ts';
 import { CoreInputError, readModel, sourceOfDoc, underSkin, type CompiledDocument, type CoreSlotRow } from './core/index.ts';
 import { poseRawAnimation, poseRawSetup, type RawDrawn, type RawPose } from './core/raw.ts';
 import { CORE_ALL_SKINS, CORE_DEFAULT_SKIN, lookupSkins } from './core/skins.ts';
@@ -211,6 +216,40 @@ export function unposedBones(bones: ReadonlyArray<{ name: string; parent: string
 }
 
 // ---------------------------------------------------------------------------
+// a clipped piece's source triangles, spelled once for both posers
+// ---------------------------------------------------------------------------
+
+/**
+ * `Mesh.source` of a clipped piece (issue #964): for each drawn triangle, in
+ * order, its source triangle's world corners and page UVs — and, with
+ * `artUvs`, their original-art UVs — six numbers each, read off the UNCLIPPED
+ * piece's own arrays. `sources[i]` is the source triangle of drawn triangle `i`
+ * (an index into `triangles` by threes). The rasteriser samples a drawn
+ * triangle at that source triangle's affine map, so the pixels do not depend on
+ * which convex pieces a clipper cut.
+ */
+export function clipSourceOf(
+  world: ArrayLike<number>,
+  uvs: ArrayLike<number>,
+  triangles: ArrayLike<number>,
+  sources: readonly number[],
+  artUvs?: ArrayLike<number>,
+): { world: number[]; uvs: number[]; artUvs: number[] | undefined } {
+  const w: number[] = [];
+  const u: number[] = [];
+  const a: number[] | undefined = artUvs === undefined ? undefined : [];
+  for (const t of sources) {
+    for (let k = 0; k < 3; k++) {
+      const i = triangles[3 * t + k];
+      w.push(world[2 * i], world[2 * i + 1]);
+      u.push(uvs[2 * i], uvs[2 * i + 1]);
+      if (a !== undefined && artUvs !== undefined) a.push(artUvs[2 * i], artUvs[2 * i + 1]);
+    }
+  }
+  return { world: w, uvs: u, artUvs: a };
+}
+
+// ---------------------------------------------------------------------------
 // the core poser
 // ---------------------------------------------------------------------------
 
@@ -285,27 +324,28 @@ function artUvsOf(drawn: RawDrawn, region: AtlasRegion): PieceTexture | undefine
  * slot with its polygon; `clippedPieces` holds its answer to the core's own
  * rows.
  */
-function clipCover(pose: RawPose, active: ReadonlySet<string>): Map<string, number[]> {
+function clipCover(pose: RawPose, active: ReadonlySet<string>): Map<string, ClipShape> {
   const polygons = new Map(pose.clips.map((c) => [c[0], { end: c[2], polygon: c[3] }]));
   const kinds = new Map(pose.shown.map((s) => [s.slot, s]));
-  const cover = new Map<string, number[]>();
-  let current: { end: string | null; polygon: number[] } | null = null;
+  const cover = new Map<string, ClipShape>();
+  let current: { end: string | null; shape: ClipShape } | null = null;
   for (const slot of pose.drawOrder) {
     const shown = kinds.get(slot);
-    const clip = shown?.geometry.kind === 'clipping' ? polygons.get(slot) : undefined;
-    if (shown !== undefined && clip !== undefined) {
+    const g = shown?.geometry;
+    const clip = g?.kind === 'clipping' ? polygons.get(slot) : undefined;
+    if (shown !== undefined && g?.kind === 'clipping' && clip !== undefined) {
       if (current !== null && current.end === slot) current = null;
-      if (active.has(shown.bone) && current === null) current = clip;
+      if (active.has(shown.bone) && current === null) current = { end: clip.end, shape: { polygon: clip.polygon, inverse: g.inverse, convex: g.convex } };
       continue;
     }
-    if (current !== null) cover.set(slot, current.polygon);
+    if (current !== null) cover.set(slot, current.shape);
     if (current !== null && current.end === slot) current = null;
   }
   return cover;
 }
 
 /** One posed moment of the core, read through the seam's `Posed`. */
-function corePosed(input: CoreInput, pose: RawPose): Posed {
+function corePosed(input: CoreInput, pose: RawPose, through: ShapeClipper): Posed {
   const slotRows = new Map<string, CoreSlotRow>(pose.slots.map((row) => [row[0], row]));
   let regions: Map<string, DrawnRegion> | null = null;
   const regionsOf = (): Map<string, DrawnRegion> => {
@@ -330,7 +370,7 @@ function corePosed(input: CoreInput, pose: RawPose): Posed {
     return dark === null ? undefined : [channel(dark[0], d.slot), channel(dark[1], d.slot), channel(dark[2], d.slot)];
   };
   return {
-    pieces: (draw: DrawOptions): Piece[] => pieces(input, pose, draw, regionsOf(), tintOf, darkOf),
+    pieces: (draw: DrawOptions): Piece[] => pieces(input, pose, draw, regionsOf(), tintOf, darkOf, through),
     bones: (): BoneSnapshot[] => {
       const unposed = unposedBones(pose.bones);
       return pose.bones.map((b) => !unposed.has(b.name) ? ({
@@ -360,9 +400,10 @@ function pieces(
   regions: Map<string, DrawnRegion>,
   tintOf: (d: RawDrawn) => [number, number, number, number],
   darkOf: (d: RawDrawn) => [number, number, number] | undefined,
+  through: ShapeClipper,
 ): Piece[] {
   const named = draw.subset === undefined ? undefined : new Set(draw.subset.names);
-  const cover = draw.unclipped ? new Map<string, number[]>() : clipCover(pose, new Set(pose.bones.filter((b) => b.active).map((b) => b.name)));
+  const cover = draw.unclipped ? new Map<string, ClipShape>() : clipCover(pose, new Set(pose.bones.filter((b) => b.active).map((b) => b.name)));
   const rows = new Map(pose.clipped.map((row) => [row[0], row]));
   if (!draw.unclipped) {
     const walked = [...cover.keys()].filter((slot) => pose.drawn.some((d) => d.slot === slot)).join();
@@ -385,8 +426,8 @@ function pieces(
       d.kind === 'mesh'
         ? { kind: 'mesh', ...common, texture, world, uvs, triangles: [...d.triangles] }
         : { kind: 'region', ...common, texture, world, uvs };
-    const polygon = cover.get(d.slot);
-    out.push(polygon === undefined ? piece : clippedPiece(piece, d, polygon, uvs, rows.get(d.slot)));
+    const shape = cover.get(d.slot);
+    out.push(shape === undefined ? piece : clippedPiece(piece, d, shape, uvs, rows.get(d.slot), through));
   }
   return out;
 }
@@ -397,25 +438,27 @@ function pieces(
  * `src/render.ts`. The cut's vertices, triangles and verdict are held to the
  * core's own row for the slot.
  */
-function clippedPiece(piece: Piece, d: RawDrawn, polygon: number[], uvs: number[], row: RawPose['clipped'][number] | undefined): Piece {
-  const cut = clipTriangles(polygon, d.vertices, d.triangles, uvs);
+function clippedPiece(piece: Piece, d: RawDrawn, shape: ClipShape, uvs: number[], row: RawPose['clipped'][number] | undefined, through: ShapeClipper): Piece {
+  const cut = through(shape, d.vertices, d.triangles, uvs);
+  if (cut === null) throw new Error(`slot "${d.slot}": the clip over it is one the core does not draw, and the raw pose carried it — a defect in src/render_core.ts`);
   if (row === undefined || (row[2] === 1) !== cut.clipped || row[3].join() !== cut.vertices.join() || row[5].join() !== cut.triangles.join()) {
     throw new Error(`slot "${d.slot}": the clip over the page UVs cut other geometry than the core's clipped row — a defect in src/render_core.ts`);
   }
   if (!cut.clipped) return piece;
   let texture = piece.texture;
+  const source = clipSourceOf(d.vertices, uvs, d.triangles, cut.sources, texture?.artUvs);
   if (texture !== undefined) {
-    const art = clipTriangles(polygon, d.vertices, d.triangles, texture.artUvs);
-    if (art.uvs.length !== cut.uvs.length) {
+    const art = through(shape, d.vertices, d.triangles, texture.artUvs);
+    if (art === null || art.uvs.length !== cut.uvs.length) {
       throw new Error(
         `slot "${piece.slot}": the clip cut ${cut.uvs.length / 2} vertices for the page UVs and ` +
-          `${art.uvs.length / 2} for the original-art UVs over the same geometry`,
+          `${(art?.uvs.length ?? 0) / 2} for the original-art UVs over the same geometry`,
       );
     }
-    texture = { region: texture.region, artUvs: art.uvs };
+    texture = { region: texture.region, artUvs: art.uvs, sourceArtUvs: source.artUvs };
   }
   const { tint, dark, slot, page } = piece;
-  return { kind: 'mesh', tint, dark, slot, page, texture, world: cut.vertices, uvs: cut.uvs, triangles: cut.triangles };
+  return { kind: 'mesh', tint, dark, slot, page, texture, world: cut.vertices, uvs: cut.uvs, triangles: cut.triangles, source: { world: source.world, uvs: source.uvs } };
 }
 
 /**
@@ -480,7 +523,7 @@ function restOf(view: CompiledDocument, setup: RawPose, shown: readonly Attachme
  * `CoreInputError`, naming why, where the document or the atlas cannot be read; a pose the core leaves a block of out
  * is refused the same way when it is asked for (the header).
  */
-export function corePoser(modelText: string, atlasText: string, where = 'skeleton.model.json', skeleton?: { path: string; bytes: Uint8Array }): Poser {
+export function corePoser(modelText: string, atlasText: string, where = 'skeleton.model.json', skeleton?: { path: string; bytes: Uint8Array }, through: ShapeClipper = clipThrough): Poser {
   const doc = readModel(modelText, where);
   // The document poses the rig it was built with; the Spine file beside it must be that build's (issue #968).
   if (skeleton !== undefined) {
@@ -523,13 +566,13 @@ export function corePoser(modelText: string, atlasText: string, where = 'skeleto
     subset: (opts, skin) => subsetOver(roster, opts, skin),
     setup: (skin) => {
       const input = inputOf(skin);
-      return corePosed(input, poseRawSetup(input.doc));
+      return corePosed(input, poseRawSetup(input.doc, { through }), through);
     },
     animation: (name, skin, fps, count, visit) => {
       const input = inputOf(skin);
       const step = 1 / fps;
-      const poses = poseRawAnimation(input.doc, name, new Array<number>(count).fill(step), {}, 'animation');
-      poses.forEach((pose, i) => visit(i, corePosed(input, pose)));
+      const poses = poseRawAnimation(input.doc, name, new Array<number>(count).fill(step), { through }, 'animation');
+      poses.forEach((pose, i) => visit(i, corePosed(input, pose, through)));
     },
     rest: (skin, shown) => {
       const input = inputOf(skin);

@@ -119,7 +119,7 @@
 import type { ModelAtlasRect, ModelBinding, ModelVertices } from '../model.ts';
 import { RUNTIME_PI, type CoreWorld } from './world.ts';
 import { deformedVertices } from './deform.ts';
-import { poseClipped, REGION_TRIANGLES, REGION_UVS, type CoreClippedRow, type DrawStep, type TriangleClipper } from './clipping.ts';
+import { poseClipped, REGION_TRIANGLES, REGION_UVS, type CoreClippedRow, type DrawStep, type ShapeClipper, type TriangleClipper } from './clipping.ts';
 
 const RAD = RUNTIME_PI / 180;
 
@@ -143,7 +143,7 @@ export type CoreGeometry =
   | { kind: 'region'; region: CoreRegionGeometry }
   | { kind: 'mesh'; vertices: ModelVertices; uvs: number[]; triangles: number[]; hull?: number }
   | { kind: 'linkedmesh'; skin: string; slot: string; source: string }
-  | { kind: 'clipping'; end: string | null; vertices: ModelVertices; inverse: boolean }
+  | { kind: 'clipping'; end: string | null; vertices: ModelVertices; inverse: boolean; convex: boolean }
   | { kind: 'boundingbox'; vertices: ModelVertices }
   | { kind: 'path'; vertices: ModelVertices; closed: boolean; constantSpeed: boolean; lengths: number[] };
 
@@ -334,7 +334,7 @@ export function readGeometry(raw: Record<string, unknown>, kind: CoreGeometry['k
       const mesh = kind === 'mesh' && vertices !== undefined ? readMeshTriangles(raw, vertices, where, problems) : undefined;
       if (vertices === undefined || problems.length !== before) return undefined;
       if (kind === 'mesh') return mesh === undefined ? undefined : { kind, vertices, ...mesh };
-      if (kind === 'clipping') return { kind, end: typeof raw.end === 'string' ? raw.end : null, vertices, inverse: raw.inverse === true };
+      if (kind === 'clipping') return { kind, end: typeof raw.end === 'string' ? raw.end : null, vertices, inverse: raw.inverse === true, convex: raw.convex === true };
       if (kind === 'boundingbox') return { kind, vertices };
       return readPathGeometry(raw, vertices, where, problems);
     }
@@ -411,6 +411,8 @@ export interface DrawWalk {
   active: ReadonlySet<string>;
   meshOf: (skin: string, slot: string, source: string) => { uvs: number[]; triangles: number[] } | undefined;
   clip?: TriangleClipper;
+  /** What the drawn rows are cut through (`clipThrough`), replaceable by the render suite's plants. */
+  through?: ShapeClipper;
 }
 
 /**
@@ -428,7 +430,7 @@ export function poseGeometry(
   round: (v: number) => number | null,
   plant: { region?: RegionPoser; vertices?: VertexPoser } = {},
   draw?: DrawWalk,
-): { attachments: CoreAttachmentRow[] | null; attachmentsWhy: string | null; clips: CoreClipRow[]; clipped: CoreClippedRow[] | null; clippedWhy: string | null } {
+): { attachments: CoreAttachmentRow[] | null; attachmentsWhy: string | null; clips: CoreClipRow[]; clipped: CoreClippedRow[] | null; clippedWhy: string | null; drawnClipped: CoreClippedRow[] | null; drawnClippedWhy: string | null } {
   const region = plant.region ?? regionCorners;
   const vertices = plant.vertices ?? worldVertices;
   const attachments: CoreAttachmentRow[] = [];
@@ -466,7 +468,7 @@ export function poseGeometry(
     } else if (g.kind === 'clipping') {
       const polygon = drawn(g.vertices);
       clips.push([s.slot, s.name, g.end, polygon.map(round)]);
-      steps.set(s.slot, { slot: s.slot, kind: 'clip', attachment: s.name, active: draw?.active.has(s.bone) ?? false, end: g.end, polygon, inverse: g.inverse });
+      steps.set(s.slot, { slot: s.slot, kind: 'clip', attachment: s.name, active: draw?.active.has(s.bone) ?? false, end: g.end, polygon, inverse: g.inverse, convex: g.convex });
     }
   }
   const attachmentsWhy = nulls.length === 0
@@ -474,11 +476,15 @@ export function poseGeometry(
     : `${nulls.join('; ')} — the model states the build had no atlas rectangle for it (atlas: null), and its corners read the trim and original size; a trim of 0 is not assumed`;
   let clipped: CoreClippedRow[] | null = null;
   let clippedWhy: string | null = draw === undefined ? 'the draw order was not given' : attachmentsWhy;
+  let drawnClipped: CoreClippedRow[] | null = null;
+  let drawnClippedWhy: string | null = clippedWhy;
   if (draw !== undefined && attachmentsWhy === null) {
     const walk = draw.order.map((slot): DrawStep => steps.get(slot) ?? { slot, kind: 'none' });
-    const posed = poseClipped(walk, round, draw.clip);
+    const posed = poseClipped(walk, round, draw.clip, draw.through);
     clipped = posed.rows;
     clippedWhy = posed.why;
+    drawnClipped = posed.drawn;
+    drawnClippedWhy = posed.drawnWhy;
   }
-  return { attachments: attachmentsWhy === null ? attachments : null, attachmentsWhy, clips, clipped, clippedWhy };
+  return { attachments: attachmentsWhy === null ? attachments : null, attachmentsWhy, clips, clipped, clippedWhy, drawnClipped, drawnClippedWhy };
 }

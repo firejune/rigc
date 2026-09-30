@@ -111,6 +111,10 @@
  *   decomposition of the triangle around it (a covering triangle came back as
  *   fifteen vertices in five fans). Not measured past that.
  *
+ * What the core DRAWS under such a clip — a decomposition of its own, the
+ * `clipped` block still left out — is the last section of this file
+ * (`clipThrough`, issue #964).
+ *
  * `convex: true` on a strictly convex polygon changes nothing: 400 of 400
  * cases byte-identical with and without it. On a polygon that is not, the
  * runtime clips against its convex hull (a notched square with `convex` read
@@ -125,6 +129,8 @@ export interface ClipResult {
   vertices: number[];
   uvs: number[];
   triangles: number[];
+  /** The source triangle (an index into the attachment's triangles by threes) each returned triangle was cut from — what the render samples it at (issue #964). */
+  sources: number[];
 }
 
 type Pt = [number, number];
@@ -245,12 +251,14 @@ export function clipTriangles(polygon: readonly number[], vertices: readonly num
   const outV: number[] = [];
   const outUv: number[] = [];
   const outT: number[] = [];
+  const sources: number[] = [];
   let clipped = false;
   for (let k = 0; k + 2 < triangles.length; k += 3) {
     const idx = [triangles[k], triangles[k + 1], triangles[k + 2]];
     const tri = idx.map((i): Pt => [vertices[2 * i], vertices[2 * i + 1]]);
     const tuv = idx.map((i): Pt => [f(uvs[2 * i]), f(uvs[2 * i + 1])]);
     const { points, cut } = clipTriangle(tri, poly, reading);
+    for (let j = 1; j + 1 < points.length; j++) sources.push(k / 3);
     clipped ||= cut;
     if (points.length < 3) continue;
     const [a, b, c] = tri;
@@ -280,7 +288,7 @@ export function clipTriangles(polygon: readonly number[], vertices: readonly num
     }
     for (let j = 1; j + 1 < points.length; j++) outT.push(base, base + j, base + j + 1);
   }
-  return { clipped, vertices: outV, uvs: outUv, triangles: outT };
+  return { clipped, vertices: outV, uvs: outUv, triangles: outT, sources };
 }
 
 /** The clipper's reading of one attachment, replaceable by the suite's plants. */
@@ -288,7 +296,7 @@ export type TriangleClipper = (polygon: readonly number[], vertices: readonly nu
 
 /** One step of the draw walk: a slot, what its bone's activity is, and what it shows as the walk reads it. */
 export type DrawStep =
-  | { slot: string; kind: 'clip'; attachment: string; active: boolean; end: string | null; polygon: number[]; inverse: boolean }
+  | { slot: string; kind: 'clip'; attachment: string; active: boolean; end: string | null; polygon: number[]; inverse: boolean; convex: boolean }
   | { slot: string; kind: 'draw'; attachment: string; vertices: number[]; triangles: number[]; uvs: number[] }
   | { slot: string; kind: 'none' };
 
@@ -297,34 +305,392 @@ export const REGION_UVS: readonly number[] = [0, 1, 0, 0, 1, 0, 1, 1];
 /** A region's two triangles over its four corners — the runtime's quad triangulation (`src/render.ts`'s `QUAD_TRIANGLES`). */
 export const REGION_TRIANGLES: readonly number[] = [0, 1, 2, 2, 3, 0];
 
+/** `clipThrough`'s shape, replaceable by the render suite's plants (`RC08`'s dropped region). */
+export type ShapeClipper = (shape: ClipShape, vertices: readonly number[], triangles: readonly number[], uvs: readonly number[]) => ClipResult | null;
+
 /**
  * The `clipped` block from the draw walk (the header's first table), every
  * number through `round`, or why it is absent: a clip that starts over a
- * polygon the core does not clip against, each named.
+ * polygon the core does not reproduce the runtime's triangle list for (not
+ * strictly convex, or inverse), each named.
+ *
+ * Beside it, `drawn`: the same walk's rows as the core DRAWS them — the block's
+ * own rows wherever the block is posed, and, where a clip that is not strictly
+ * convex or is inverse starts, that clip cut through `clipThrough` (a
+ * decomposition of the core's own, held to the runtime by the render's pixels,
+ * issue #964). `drawnWhy` names a clip the core does not draw at all (a
+ * polygon that is not simple).
  */
-export function poseClipped(walk: readonly DrawStep[], round: (v: number) => number | null, clip: TriangleClipper = clipTriangles): { rows: CoreClippedRow[] | null; why: string | null } {
+export function poseClipped(
+  walk: readonly DrawStep[],
+  round: (v: number) => number | null,
+  clip: TriangleClipper = clipTriangles,
+  through: ShapeClipper = (shape, v, t, uv) => clipThrough(shape, v, t, uv, clip),
+): { rows: CoreClippedRow[] | null; why: string | null; drawn: CoreClippedRow[] | null; drawnWhy: string | null } {
   const rows: CoreClippedRow[] = [];
   const refused: string[] = [];
-  let active: { end: string | null; polygon: number[] } | null = null;
+  const undrawn: string[] = [];
+  let active: { end: string | null; shape: ClipShape } | null = null;
   for (const step of walk) {
     if (step.kind === 'clip') {
       if (active !== null && active.end === step.slot) active = null;
       if (step.active && active === null) {
         const why = step.inverse ? 'it is inverse' : convexWhy(step.polygon);
         if (why !== null) refused.push(`slot "${step.slot}" starts clip "${step.attachment}", and ${why}`);
-        active = { end: step.end, polygon: step.polygon };
+        const shape: ClipShape = { polygon: step.polygon, inverse: step.inverse, convex: step.convex };
+        const plan = clipShapeOf(shape);
+        if (plan.kind === 'refused') undrawn.push(`slot "${step.slot}" starts clip "${step.attachment}", and ${plan.why}`);
+        active = { end: step.end, shape };
       }
       continue;
     }
     if (step.kind === 'draw' && active !== null) {
-      const r = clip(active.polygon, step.vertices, step.triangles, step.uvs);
-      rows.push([step.slot, step.attachment, r.clipped ? 1 : 0, r.vertices.map(round), r.uvs.map(round), r.triangles]);
+      const r = through(active.shape, step.vertices, step.triangles, step.uvs);
+      if (r !== null) rows.push([step.slot, step.attachment, r.clipped ? 1 : 0, r.vertices.map(round), r.uvs.map(round), r.triangles]);
     }
     if (active !== null && active.end === step.slot) active = null;
   }
+  const drawnWhy = undrawn.length === 0
+    ? null
+    : `${undrawn.join('; ')} — the runtime's coverage of a polygon that is not simple is its own triangulation's, measured not to be the polygon's area (src/core/clipping.ts)`;
+  const drawn = drawnWhy === null ? rows : null;
   if (refused.length > 0) {
-    return { rows: null, why: `${refused.join('; ')} — the runtime decomposes such a polygon into convex pieces of its own choosing, or clips the outside of an inverse one, and neither was reproduced from the dump (src/core/clipping.ts)` };
+    return { rows: null, why: `${refused.join('; ')} — the runtime decomposes such a polygon into convex pieces of its own choosing, or clips the outside of an inverse one, and neither was reproduced from the dump (src/core/clipping.ts)`, drawn, drawnWhy };
   }
-  return { rows, why: null };
+  return { rows, why: null, drawn, drawnWhy };
 }
 
+// ---------------------------------------------------------------------------
+// #964 what the core draws under a concave or inverse clip
+// ---------------------------------------------------------------------------
+//
+// The oracle's `clipped` block under such a clip is the runtime's own triangle list and stays
+// absent by name (above). What the core DRAWS there is a decomposition of its own, and the claim
+// it makes is coverage, not the list: the union of the pieces is the polygon whatever the pieces
+// are. Every reading below was fixed by running spine-core 4.3.13's `SkeletonClipping` (the calls
+// `src/render.ts` makes) and reading the area it returned; the source was not read, and the
+// runtime's decomposition was not reconstructed. The runtime's documentation of the two flags
+// (`ClippingAttachment.convex` / `.inverse` in its public type declarations) says `convex` clips
+// by the convex hull of a polygon that is not convex, and that inverse clipping is always convex.
+//
+// | polygon | the core | measured against spine-core |
+// | --- | --- | --- |
+// | strictly convex, not inverse | the measured rule above, one piece: the oracle's rows | the header's 2641 cases |
+// | simple, a reflex or a collinear vertex | collinear vertices dropped, ear clipping from vertex 0, pieces merged while strictly convex (Hertel–Mehlhorn); each triangle clipped against each piece in turn by the rule above | area and return value equal on every case of `CL05` |
+// | `convex: true`, simple | its convex hull, one piece | area equal (`CL05`); the hull is the documented reading |
+// | `inverse: true`, simple | the triangle outside the hull: for each hull edge in the walk, the part outside it and inside every edge before it | area and return value equal (`CL05`): the return value is `true` for every triangle, cut or not, as the runtime's was |
+// | an otherwise strictly convex polygon with a repeated vertex, not inverse | the rule above as it stands: its zero-length edge has no inside, so nothing is drawn | the runtime drew nothing on 141 of 141 random cases |
+// | a repeated vertex anywhere else | **refused**, naming the vertices | the runtime drew nothing on 11 of 159 random non-convex cases and the polygon's area on the other 148 — which, is its decomposition's |
+// | not simple (edges crossing or touching) | **refused**, naming the edges | a self-overlapping six-vertex fan read an area of 2.67 where its even-odd fill is 26.7, its non-zero fill 29.4 and its shoelace area 32; its `convex` and `inverse` readings used the same 2.67 |
+//
+// ⭐ The render draws through this pixel for pixel as spine-core draws (`RC08`), because the
+// rasteriser samples each drawn triangle at its SOURCE triangle's affine UV (`Mesh.source` in
+// `src/render.ts`, the source index being `ClipResult.sources`): before that, a pixel falling in
+// a sub-triangle other than the runtime's was sampled at a UV a few float32 steps off, and one
+// level of one channel moved on up to 50 pixels of a probe's frame set — as much as the runtime's
+// own render moved when the same polygon was spelled from another start vertex.
+
+/**
+ * A clip as the draw reads it: its world polygon and its two flags. Which
+ * reading `clipThrough` takes is `clipShapeOf`'s (the table in this section's
+ * header, `clipThrough`).
+ */
+export interface ClipShape {
+  polygon: readonly number[];
+  inverse: boolean;
+  convex: boolean;
+}
+
+/**
+ * How a clip is drawn through the core: `convex` — the measured rule above,
+ * one piece, the oracle's `clipped` block reproduced to the bit; `pieces` —
+ * a simple polygon that is not strictly convex, cut into convex pieces of the
+ * core's own choosing; `inverse` — the outside of the polygon's convex hull;
+ * `empty` — an otherwise strictly convex polygon with a repeated vertex, which
+ * the measured rule itself clips everything away against. `refused` names why
+ * the core does not draw it.
+ */
+export type ClipPlan =
+  | { kind: 'convex'; polygon: readonly number[] }
+  | { kind: 'pieces'; pieces: Pt[][] }
+  | { kind: 'inverse'; hull: Pt[] }
+  | { kind: 'refused'; why: string };
+
+function pointsOf(polygon: readonly number[]): Pt[] {
+  const pts: Pt[] = [];
+  for (let i = 0; i + 1 < polygon.length; i += 2) pts.push([polygon[i], polygon[i + 1]]);
+  return pts;
+}
+
+function cross3(o: Pt, a: Pt, b: Pt): number {
+  return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+}
+
+/** Whether segments `ab` and `cd` meet, touching included (exact arithmetic on the doubles given). */
+function segmentsMeet(a: Pt, b: Pt, c: Pt, d: Pt): boolean {
+  const d1 = cross3(c, d, a);
+  const d2 = cross3(c, d, b);
+  const d3 = cross3(a, b, c);
+  const d4 = cross3(a, b, d);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  const on = (p: Pt, q: Pt, r: Pt): boolean => Math.min(p[0], q[0]) <= r[0] && r[0] <= Math.max(p[0], q[0]) && Math.min(p[1], q[1]) <= r[1] && r[1] <= Math.max(p[1], q[1]);
+  return (d1 === 0 && on(c, d, a)) || (d2 === 0 && on(c, d, b)) || (d3 === 0 && on(a, b, c)) || (d4 === 0 && on(a, b, d));
+}
+
+/** Why a polygon of distinct vertices is not simple — two edges that are not neighbours meet, or a neighbour folds back over its edge — or null. */
+function selfCrossingWhy(pts: readonly Pt[]): string | null {
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % n];
+    // A neighbour folding back: the next edge runs back along this one.
+    const c = pts[(i + 2) % n];
+    if (cross3(a, b, c) === 0 && (c[0] - b[0]) * (a[0] - b[0]) + (c[1] - b[1]) * (a[1] - b[1]) > 0) return `edges ${i} and ${(i + 1) % n} fold back over each other at vertex ${(i + 1) % n}`;
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue;
+      if (segmentsMeet(a, b, pts[j], pts[(j + 1) % n])) return `edges ${i} and ${j} cross or touch (the polygon is not simple)`;
+    }
+  }
+  return null;
+}
+
+/** The polygon with every vertex dropped that lies on the line through its two neighbours — the area is the same. */
+function withoutCollinear(pts: readonly Pt[]): Pt[] {
+  let out = [...pts];
+  for (let changed = true; changed && out.length > 3; ) {
+    changed = false;
+    for (let i = 0; i < out.length; i++) {
+      const prev = out[(i + out.length - 1) % out.length];
+      const next = out[(i + 1) % out.length];
+      if (cross3(prev, out[i], next) === 0) {
+        out = [...out.slice(0, i), ...out.slice(i + 1)];
+        changed = true;
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/** The convex hull (Andrew's monotone chain), counter-clockwise, no collinear vertex, from the lowest-leftmost point. */
+function convexHull(pts: readonly Pt[]): Pt[] {
+  const sorted = [...pts].sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  const half = (list: readonly Pt[]): Pt[] => {
+    const h: Pt[] = [];
+    for (const p of list) {
+      while (h.length >= 2 && cross3(h[h.length - 2], h[h.length - 1], p) <= 0) h.pop();
+      h.push(p);
+    }
+    h.pop();
+    return h;
+  };
+  return [...half(sorted), ...half([...sorted].reverse())];
+}
+
+function ccw(pts: readonly Pt[]): Pt[] {
+  const flat = pts.flat();
+  return signedArea2(flat) < 0 ? [...pts].reverse() : [...pts];
+}
+
+/**
+ * A simple counter-clockwise polygon with no collinear vertex cut into convex
+ * pieces: ear clipping into triangles (the first ear from vertex 0, walking
+ * forward), then every diagonal removed whose two pieces merge into a strictly
+ * convex polygon (Hertel–Mehlhorn), in the order the diagonals were cut. Each
+ * piece is counter-clockwise, over the polygon's own vertices — none added,
+ * every one used.
+ */
+export function convexPieces(polygon: readonly number[]): number[][] {
+  return piecesOf(ccw(withoutCollinear(pointsOf(polygon)))).map((piece) => piece.flat());
+}
+
+function piecesOf(pts: readonly Pt[]): Pt[][] {
+  const n = pts.length;
+  const idx = pts.map((_, i) => i);
+  const tris: number[][] = [];
+  const inTri = (p: Pt, a: Pt, b: Pt, c: Pt): boolean => cross3(a, b, p) >= 0 && cross3(b, c, p) >= 0 && cross3(c, a, p) >= 0;
+  while (idx.length > 3) {
+    let cut = false;
+    for (let k = 0; k < idx.length; k++) {
+      const i0 = idx[(k + idx.length - 1) % idx.length];
+      const i1 = idx[k];
+      const i2 = idx[(k + 1) % idx.length];
+      if (cross3(pts[i0], pts[i1], pts[i2]) <= 0) continue;
+      if (idx.some((j) => j !== i0 && j !== i1 && j !== i2 && inTri(pts[j], pts[i0], pts[i1], pts[i2]))) continue;
+      tris.push([i0, i1, i2]);
+      idx.splice(k, 1);
+      cut = true;
+      break;
+    }
+    if (!cut) throw new Error(`convexPieces: no ear left among vertices [${idx.join(', ')}] of a polygon the caller held simple — a defect in src/core/clipping.ts`);
+  }
+  tris.push([...idx]);
+  // Hertel–Mehlhorn: merge across a shared edge while the union stays strictly convex.
+  let pieces = tris.map((t) => [...t]);
+  const strictlyConvex = (ring: readonly number[]): boolean => ring.every((v, i) => cross3(pts[ring[(i + ring.length - 1) % ring.length]], pts[v], pts[ring[(i + 1) % ring.length]]) > 0);
+  for (let merged = true; merged; ) {
+    merged = false;
+    search: for (let a = 0; a < pieces.length; a++) {
+      for (let b = a + 1; b < pieces.length; b++) {
+        const A = pieces[a];
+        const B = pieces[b];
+        for (let i = 0; i < A.length; i++) {
+          const u = A[i];
+          const v = A[(i + 1) % A.length];
+          const j = B.indexOf(v);
+          if (j < 0 || B[(j + 1) % B.length] !== u) continue;
+          // A walks u→v, B walks v→u: splice B's other vertices in between.
+          const rest: number[] = [];
+          for (let k = (j + 2) % B.length; k !== j; k = (k + 1) % B.length) rest.push(B[k]);
+          const ring = [...A.slice(0, i + 1), ...rest, ...A.slice(i + 1)];
+          if (!strictlyConvex(ring)) continue;
+          pieces = [...pieces.slice(0, a), ring, ...pieces.slice(a + 1, b), ...pieces.slice(b + 1)];
+          merged = true;
+          break search;
+        }
+      }
+    }
+  }
+  if (n !== new Set(pieces.flat()).size) throw new Error('convexPieces: a vertex is in no piece — a defect in src/core/clipping.ts');
+  return pieces.map((ring) => ring.map((v) => pts[v]));
+}
+
+/**
+ * Which reading a clip is drawn through (this section's `ClipPlan`), from its
+ * world polygon and flags. A strictly convex polygon (`convexWhy` null) is the
+ * measured rule whatever its flags say but `inverse`; `convex` on any other
+ * simple polygon, and `inverse` always, read its convex hull, as the
+ * runtime's own documentation of the two flags states.
+ */
+export function clipShapeOf(shape: ClipShape): ClipPlan {
+  const pts = pointsOf(shape.polygon);
+  if (pts.length < 3) return { kind: 'refused', why: `it has ${pts.length} vertex(es)` };
+  const repeated: string[] = [];
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) if (pts[i][0] === pts[j][0] && pts[i][1] === pts[j][1]) repeated.push(`${i} and ${j}`);
+  if (repeated.length > 0) {
+    // Consecutive repeats of an otherwise strictly convex polygon: the measured rule, whose zero-length edge has no inside.
+    const distinct = pts.filter((p, i) => { const q = pts[(i + 1) % pts.length]; return p[0] !== q[0] || p[1] !== q[1]; });
+    if (!shape.inverse && distinct.length === pts.length - repeated.length && distinct.length >= 3 && convexWhy(distinct.flat()) === null) return { kind: 'convex', polygon: shape.polygon };
+    return { kind: 'refused', why: `vertices ${repeated.join(', ')} are the same point` };
+  }
+  const crossing = selfCrossingWhy(pts);
+  if (crossing !== null) return { kind: 'refused', why: crossing };
+  const simple = withoutCollinear(pts);
+  if (cross3(simple[0], simple[1], simple[2]) === 0 && simple.length === 3) return { kind: 'refused', why: 'every vertex lies on one line' };
+  if (shape.inverse) return { kind: 'inverse', hull: convexHull(simple) };
+  if (convexWhy(shape.polygon) === null) return { kind: 'convex', polygon: shape.polygon };
+  if (shape.convex) return { kind: 'convex', polygon: convexHull(simple).flat() };
+  const pieces = piecesOf(ccw(simple));
+  return pieces.length === 1 ? { kind: 'convex', polygon: pieces[0].flat() } : { kind: 'pieces', pieces };
+}
+
+/** Clip `input` to the inside of the edge `(p, q)` — one Sutherland–Hodgman step of `clipTriangle`, the same inside test and intersection. */
+function clipHalf(input: readonly Pt[], p: Pt, q: Pt): { points: Pt[]; cut: boolean } {
+  const inside = (v: Pt): boolean => (q[0] - p[0]) * (v[1] - p[1]) - (q[1] - p[1]) * (v[0] - p[0]) < 0;
+  const out: Pt[] = [];
+  let cut = false;
+  for (let k = 0; k < input.length; k++) {
+    const s = input[k];
+    const e = input[(k + 1) % input.length];
+    const si = inside(s);
+    const ei = inside(e);
+    if (si) {
+      if (ei) out.push(e);
+      else {
+        out.push(intersect(s, e, p, q));
+        cut = true;
+      }
+    } else {
+      cut = true;
+      if (ei) out.push(intersect(s, e, p, q), e);
+    }
+  }
+  return { points: out, cut };
+}
+
+/**
+ * An attachment's triangles clipped against any clip the core draws
+ * (`clipShapeOf`): the measured convex rule for a strictly convex polygon —
+ * `clipTriangles` itself, so the oracle's rows stand — and otherwise, triangle
+ * by triangle in the attachment's order, each convex region of the plan in
+ * turn, every region cut exactly as a convex clip cuts it (a region a triangle
+ * lies wholly inside keeps its corners and their UVs; a cut one is weighed and
+ * fanned from its first point). `null` where the plan is refused.
+ *
+ * `inverse`: the regions are the triangle's parts outside the clockwise hull,
+ * one per hull edge in the walk's order — outside edge `i` and inside every
+ * edge before it — so they tile the triangle minus the hull without overlap.
+ */
+export function clipThrough(
+  shape: ClipShape,
+  vertices: readonly number[],
+  triangles: readonly number[],
+  uvs: readonly number[],
+  clip: TriangleClipper = clipTriangles,
+  reading: { dropRegion?: number } = {},
+): ClipResult | null {
+  const plan = clipShapeOf(shape);
+  if (plan.kind === 'refused') return null;
+  if (plan.kind === 'convex') return clip(plan.polygon, vertices, triangles, uvs);
+  const f = Math.fround;
+  const outV: number[] = [];
+  const outUv: number[] = [];
+  const outT: number[] = [];
+  const sources: number[] = [];
+  let clipped = false;
+  const regions = plan.kind === 'pieces' ? plan.pieces.map((piece) => clockwise(piece.flat(), {})) : null;
+  const hull = plan.kind === 'inverse' ? clockwise(plan.hull.flat(), {}) : [];
+  for (let k = 0; k + 2 < triangles.length; k += 3) {
+    const idx = [triangles[k], triangles[k + 1], triangles[k + 2]];
+    const tri = idx.map((i): Pt => [vertices[2 * i], vertices[2 * i + 1]]);
+    const tuv = idx.map((i): Pt => [f(uvs[2 * i]), f(uvs[2 * i + 1])]);
+    const parts: Array<{ points: Pt[]; cut: boolean }> = [];
+    if (regions !== null) for (const poly of regions) parts.push(clipTriangle(tri, poly, {}));
+    else {
+      let remaining: Pt[] = [...tri];
+      let cutSoFar = false;
+      for (let i = 0; i < hull.length && remaining.length > 0; i++) {
+        const p = hull[i];
+        const q = hull[(i + 1) % hull.length];
+        const outside = clipHalf(remaining, q, p);
+        parts.push({ points: outside.cut || cutSoFar ? outside.points : [...tri], cut: outside.cut || cutSoFar });
+        const inside = clipHalf(remaining, p, q);
+        cutSoFar ||= inside.cut;
+        remaining = inside.points;
+      }
+      clipped = true;
+    }
+    const [a, b, c] = tri;
+    const d0 = b[1] - c[1];
+    const d1 = c[0] - b[0];
+    const d2 = a[0] - c[0];
+    const d4 = c[1] - a[1];
+    const d = 1 / (d0 * d2 + d1 * (a[1] - c[1]));
+    for (const [r, { points, cut }] of parts.entries()) {
+      clipped ||= cut;
+      // `CL05`'s plant: one region of the plan dropped. Nothing but a plant sets it.
+      if (r === reading.dropRegion) continue;
+      if (points.length < 3) continue;
+      const base = outV.length / 2;
+      if (!cut) {
+        tri.forEach(([x, y], k2) => {
+          outV.push(f(x), f(y));
+          outUv.push(tuv[k2][0], tuv[k2][1]);
+        });
+      } else {
+        for (const [x, y] of points) {
+          const wa = (d0 * (x - c[0]) + d1 * (y - c[1])) * d;
+          const wb = (d4 * (x - c[0]) + d2 * (y - c[1])) * d;
+          const wc = 1 - wa - wb;
+          outV.push(f(x), f(y));
+          outUv.push(f(tuv[0][0] * wa + tuv[1][0] * wb + tuv[2][0] * wc), f(tuv[0][1] * wa + tuv[1][1] * wb + tuv[2][1] * wc));
+        }
+      }
+      for (let j = 1; j + 1 < points.length; j++) {
+        outT.push(base, base + j, base + j + 1);
+        sources.push(k / 3);
+      }
+    }
+  }
+  return { clipped, vertices: outV, uvs: outUv, triangles: outT, sources };
+}
