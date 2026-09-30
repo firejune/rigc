@@ -184,19 +184,23 @@
  *   the runtime read `rotation` −248.958 (the unwrapped y angle less 90) and
  *   `scaleX` 0. Otherwise `rotation` is the x column's angle, `scaleY` the y
  *   column's length — NEGATIVE when the determinant is — and `shearY` the y
- *   column's angle (turned 180° by adding 180 in degrees when the determinant
- *   is negative) less the rotation less 90, brought once into (−180, 180].
- *   The negative `scaleY` and the 180 added in degrees are what reproduce the
- *   runtime's ±2.66e-6° residual on a reflected bone: 138 of 400 reflected
- *   and sheared probes missed with a positive `scaleY`, 0 with this.
+ *   column's angle less `rotation + 90`, or less `rotation − 90` when the
+ *   determinant is negative, brought once into (−180, 180]. The negative
+ *   `scaleY` and the right angle taken off the other way are what reproduce
+ *   the runtime's ±2.66e-6° residual on a reflected bone: 138 of 400
+ *   reflected and sheared probes missed with a positive `scaleY`; turning the
+ *   y angle by 180 first agrees to 1e-10 and not to the bit (below).
  * - `onlyTranslation`: the world matrix is the local matrix.
  * - `noRotationOrReflection`: the local matrix is taken against the parent's
  *   conformal matrix (the frame `./world.ts` builds for that mode), and the
  *   parent's x-axis angle is added to the rotation.
- * - `noScale`, `noScaleOrReflection`: `scaleX` is the world x column's length,
- *   `rotation` the angle of the parent's inverse applied to that column's
- *   direction, and the y column is read in the frame that direction spans
- *   (flipped when the parent reflects, for `noScale`).
+ * - `noScale`, `noScaleOrReflection`: `rotation` is the angle of the parent's
+ *   inverse applied to the world x column; the frame the forward pose builds
+ *   from that rotation (`noScaleDirection` in `./world.ts`) is formed, both
+ *   world columns are read in it (flipped when the parent reflects, for
+ *   `noScale`), and that local matrix is decomposed with its x column's
+ *   angle — a residual of rounding — kept as `shearX`, and `shearY` measured
+ *   from 0, as the forward frame `frame(0, shearX, shearY, …)` reads them.
  *
  * Each of the five held on 300 probes at the million-unit amplifier: a world
  * edit on the bone, then a translation-only edit on its parent that makes the
@@ -221,15 +225,27 @@
  *   runtime's pi (the degree form read 113 bone findings on `spineboy-pro`
  *   against 44);
  * - `localFromWorld` forms the inverse's entries before applying them, and
- *   reads the shear as `yAngle − (rotation + 90)`.
+ *   reads the shear as `yAngle − (rotation + 90)`;
+ * - and, in the second cut (the band `CW` controls; each rule planted back to
+ *   the reading before it by a `SolverRules` flag), the three read-back forms
+ *   above — a reflected bone's shear as the y angle less `rotation − 90`
+ *   (`CW01`); `noRotationOrReflection`'s columns as `(pa·wa + pc·wc)·(1/(pa² +
+ *   pc²))` and `(pa·wc − pc·wa)·(1/|det|)` (`CW02`); the `noScale` modes read
+ *   in the frame of the rotation read first, the residual kept as `shearX`
+ *   (`CW03`) — which bring the read-back population from 164 to 400 of 400,
+ *   the update-order population from 389 to 400 and the stepped physics
+ *   population (`CR07`) from 140 to 150 of 150; an additive world-space
+ *   `shearY` as `(v + 90)·RAD − 90·RAD` (`CW04`: the transform population
+ *   from 865 to 900 of 900); a transform timeline's mixes through the setup
+ *   blend (`CW05`); and the two-bone ik over a parent whose scale is 0, below.
  *
- * ⚠️ Two HOLEs remain, each named by `CR01` on every probe it reaches:
- * `localFromWorld` is not yet the runtime's to the bit (164 of 400 read-back
- * probes exact, 97 before the two changes above — a reflected bone's y
- * column is where the rest differ; the decompositions tried and rejected are
- * in the PR of issue #966), and an ADDITIVE world-space `shearY` is last-bit
- * off on 35 of the 132 transform probes that key one. The corpus reaches
- * neither: every tree row reads bit-exact.
+ * The local values were read to the bit rather than through the re-posed
+ * world: a reader bone's `x` driven by a local transform from the bone's
+ * `rotate`, `x`, `y`, `scaleX`, `scaleY` or `shearY` at scale 1 under the
+ * root is the value itself in the raw dump. That separated a wrong local
+ * value from a right one the forward pose reads differently — the `noScale`
+ * modes' local values read bit-exact before their world did, which is how
+ * the kept `shearX` was found.
  *
  * ## ik — one bone
  *
@@ -254,7 +270,9 @@
  *   (−180, 180], times `mix`, added to the rotation.
  * - `compress` / `stretch`: with `len` the bone's `length` times `scaleX` and
  *   `d` the length of `v` — of the world offset for the two `noScale` modes —
- *   when `len` is above 0.0001 and the target is nearer (`compress`) or
+ *   when `len` is above 0.00001 (issue #966, by bisection: 0.00001 exactly is
+ *   left alone and the double above is scaled; 0.0001, the reading before,
+ *   left every bone between the two unscaled) and the target is nearer (`compress`) or
  *   farther (`stretch`), `scaleX` is multiplied by `(d / len − 1) · mix + 1`.
  *   With `scaleY` `uniform` `scaleY` is multiplied by the same `s`; with
  *   `volume` it is divided by `s`, except below 0.7 where it is divided by
@@ -338,6 +356,24 @@
  * oracle's ill-conditioned rule, which excludes the bone and everything below
  * it — the one case where the core's value is not the runtime's.
  *
+ * **A parent whose scale is 0** (issue #966, reducing #959's third class, "a
+ * transform collapsing a bone's scale, with an ik below it", to a two-bone ik
+ * with no transform at all; `CW06`–`CW08`, compared by `Object.is` on every
+ * bone, the ones compare's ill-conditioned rule leaves out included):
+ *
+ * - a scale of 0 counts as POSITIVE in the product of the parent's scale
+ *   signs that turns the child's offset and angle — `Math.sign` read it as 0
+ *   and read 59 of 300 iks over a parent of `scaleY` 0 exact;
+ * - **a child whose origin is nearer the parent's than 0.00001** in the
+ *   grandparent frame (`l1`) makes the constraint a one-bone ik on the parent
+ *   — stretched as the constraint says, never compressed, its `scaleY` mode
+ *   read as none — with the child posed at rotation 0 and the local `y` the
+ *   solver set. A parent `scaleX` of 0 puts every child there (2 of 300
+ *   exact before). By bisection on the parent's x scale at three child
+ *   offsets and three rotations the edge is the distance, not the scale:
+ *   0.00001 exactly solves and the double below folds (`CW07`). The child at
+ *   the parent's origin (`CC04`) is the same fold.
+ *
  * ## transform
  *
  * 4.3's form: `properties` maps each source property (`rotate`, `x`, `y`,
@@ -368,7 +404,9 @@
  *   `scaleY` scale a column to the value (or by it, additive: `1 + (v−1)·mix`);
  *   `shearY` turns the y column to `v + 90` degrees from the x column, the
  *   change brought once into (−π, π] with the RUNTIME's π (78 of 300 missed
- *   with Math.PI), keeping its length. **Local**: the local field moves
+ *   with Math.PI), keeping its length — additive, it turns the y column by
+ *   `((v + 90)·RAD − 90·RAD)·mix`, unwrapped (issue #966, `CW04`: `v·RAD`
+ *   agrees on the grid and read 35 of 132 probes last-bit off). **Local**: the local field moves
  *   toward the value by the mix (additive: adds `v·mix`, or scales by
  *   `1 + (v−1)·mix`).
  *
@@ -390,7 +428,11 @@
  * constraint's own values; a key omitting a field reads the parser's value
  * for it — `mix` 1, `softness` 0, `bendPositive` true, `compress` and
  * `stretch` false; a transform key's mixes 1, `mixY` the key's `mixX`
- * (`src/keyorder.ts`, `PARSER_DEFAULTS`). `CC08` holds each.
+ * (`src/keyorder.ts`, `PARSER_DEFAULTS`). `CC08` holds each. The keyed values
+ * reach the pose through the setup blend at alpha 1, `setup + (value −
+ * setup)·1`, for both kinds (issue #966: the ik's mix on the corpus, the
+ * transform's six mixes on `CW05`'s probe, where the value as keyed read 0
+ * of 60 exact).
  *
  * ## Purity
  *
@@ -398,7 +440,7 @@
  * from `src/transform.ts`, no clock, no randomness, no I/O.
  */
 import type { ModelBone } from '../model.ts';
-import { modeMatrix, RUNTIME_PI, worldTransforms, type CoreInheritMode, type CoreWorld } from './world.ts';
+import { modeMatrix, noScaleDirection, RUNTIME_PI, worldTransforms, type CoreInheritMode, type CoreWorld } from './world.ts';
 import { channelAt, keyIndexAt, type CoreCurve, type CoreKey } from './animation.ts';
 import { activeBones, type CompiledDocument, type CoreConstraintKind } from './index.ts';
 import { fillingSkins } from './skins.ts';
@@ -783,7 +825,8 @@ export function posedRecords(records: readonly CoreConstraintRecord[], timelines
     const i = search(tl.keys, t);
     if (i < 0) return r;
     const mixes = {} as Record<TransformProperty, number>;
-    TRANSFORM_PROPERTIES.forEach((p, c) => (mixes[p] = channel(tl.keys, i, c, t)));
+    // Through the setup blend at alpha 1 too (issue #966): on 60 probes keying all six mixes by Bézier segments over setup mixes in [−1, 2], sampled at 40 irrational times, the value as keyed read 0 bit-exact and the blend 60 (CW05).
+    TRANSFORM_PROPERTIES.forEach((p, c) => (mixes[p] = r.mixes[p] + (channel(tl.keys, i, c, t) - r.mixes[p]) * 1));
     return { ...r, mixes };
   });
 }
@@ -829,6 +872,20 @@ export interface SolverRules {
   refuseHistoryLeak: boolean;
   /** An ik naming an inactive bone is applied when its target is active, reading the frame above its first bone as a fresh skeleton holds it: zeros unless the pass brought that bone up to date before the ik (`frameUpdatedBefore`). */
   ikOverInactiveFresh: boolean;
+  /** `localFromWorld`, a reflected local matrix: `shearY` is the y angle less `rotation − 90` (issue #966), not the y angle turned by 180 less `rotation + 90`. */
+  readBackReflectedShear: boolean;
+  /** `localFromWorld` in `noRotationOrReflection`: the conformal frame's inverse applied as the parent x axis over its squared length and its y axis over |det| (issue #966), not divided by the conformal determinant. */
+  readBackConformalInverse: boolean;
+  /** `localFromWorld` in the two `noScale` modes: the world columns read in the frame the forward pose builds from the rotation just read, the x column's residual angle kept as `shearX` (issue #966), not the x column's length with `shearX` 0. */
+  readBackNoScaleFrame: boolean;
+  /** An additive world-space `shearY`: `(v + 90)·RAD − 90·RAD` (issue #966), not `v·RAD`. */
+  additiveShearRightAngle: boolean;
+  /** A two-bone ik: a parent scale of 0 counts as positive in the product of the scale signs (issue #966), not as 0. */
+  ikZeroScaleSignPositive: boolean;
+  /** A one-bone ik compresses or stretches only a bone whose length times scaleX is above this (issue #966; the reading before, 0.0001, left bones between the two unscaled). */
+  ikStretchMinLength: number;
+  /** A two-bone ik whose child's origin is nearer the parent's than this, in the grandparent frame, is a one-bone ik on the parent with the child at rotation 0 (issue #966); negative, never. */
+  ikTwoBoneNearChild: number;
 }
 
 /** The runtime's rules, as measured. */
@@ -841,6 +898,13 @@ export const RUNTIME_SOLVER_RULES: Readonly<SolverRules> = {
   transformIgnoresBoneActivity: true,
   ikOverInactiveFresh: true,
   refuseHistoryLeak: true,
+  readBackReflectedShear: true,
+  readBackConformalInverse: true,
+  readBackNoScaleFrame: true,
+  additiveShearRightAngle: true,
+  ikZeroScaleSignPositive: true,
+  ikStretchMinLength: 0.00001,
+  ikTwoBoneNearChild: 0.00001,
 };
 
 /** The runtime's rules with a plant's over them. */
@@ -900,15 +964,23 @@ export function localFromWorld(b: ModelBone, p: CoreWorld, w: CoreWorld, rules: 
   b.y = dy * (p.a * pid) - dx * (p.c * pid);
   b.shearX = 0;
   if (mode === 'noScale' || mode === 'noScaleOrReflection') {
-    const length = Math.sqrt(w.a * w.a + w.c * w.c);
-    const ux = w.a / length;
-    const uy = w.c / length;
     const det = p.a * p.d - p.b * p.c;
     const flip = mode === 'noScale' && det < 0 ? -1 : 1;
-    const lb = ux * w.b + uy * w.d;
-    const ld = (ux * w.d - uy * w.b) * flip;
-    decompose(b, length, 0, lb, ld, rules);
-    b.rotation = Math.atan2((uy * p.a - ux * p.c) / det, (ux * p.d - uy * p.b) / det) * DEG;
+    if (!rules.readBackNoScaleFrame) {
+      // The reading before issue #966's second cut, kept for the control that plants it back (CW03).
+      const length = Math.sqrt(w.a * w.a + w.c * w.c);
+      const [ux, uy] = [w.a / length, w.c / length];
+      decompose(b, length, 0, ux * w.b + uy * w.d, (ux * w.d - uy * w.b) * flip, rules);
+      b.rotation = Math.atan2((uy * p.a - ux * p.c) / det, (ux * p.d - uy * p.b) / det) * DEG;
+      return;
+    }
+    // The rotation first: the angle of the parent's adjugate applied to the world x column, both parts negated when the parent reflects (issue #966).
+    const sign = det < 0 ? -1 : 1;
+    const rotation = Math.atan2((p.a * w.c - p.c * w.a) * sign, (p.d * w.a - p.b * w.c) * sign) * DEG;
+    // Then the frame the forward pose builds from that rotation, and the world columns read in it — its transpose, flipped for noScale under a reflecting parent.
+    const [ux, uy] = noScaleDirection([p.a, p.b, p.c, p.d], rotation);
+    decompose(b, ux * w.a + uy * w.c, (ux * w.c - uy * w.a) * flip, ux * w.b + uy * w.d, (ux * w.d - uy * w.b) * flip, rules, 'shearX');
+    b.rotation = rotation;
     return;
   }
   let la: number;
@@ -918,10 +990,18 @@ export function localFromWorld(b: ModelBone, p: CoreWorld, w: CoreWorld, rules: 
   if (mode === 'onlyTranslation') {
     [la, lb, lc, ld] = [w.a, w.b, w.c, w.d];
   } else if (mode === 'noRotationOrReflection') {
-    const k = Math.abs(p.a * p.d - p.b * p.c) / (p.a * p.a + p.c * p.c);
-    const [ca, cb, cc, cd] = [p.a, -p.c * k, p.c, p.a * k];
-    const cdet = ca * cd - cb * cc;
-    [la, lb, lc, ld] = [(cd * w.a - cb * w.c) / cdet, (cd * w.b - cb * w.d) / cdet, (ca * w.c - cc * w.a) / cdet, (ca * w.d - cc * w.b) / cdet];
+    if (rules.readBackConformalInverse) {
+      // The conformal frame's inverse as its axes over their lengths (issue #966): the x axis over its squared length, the y axis over |det|, each reciprocal multiplied in.
+      const xLengthInverse = 1 / (p.a * p.a + p.c * p.c);
+      const detInverse = 1 / Math.abs(p.a * p.d - p.b * p.c);
+      [la, lb, lc, ld] = [(p.a * w.a + p.c * w.c) * xLengthInverse, (p.a * w.b + p.c * w.d) * xLengthInverse, (p.a * w.c - p.c * w.a) * detInverse, (p.a * w.d - p.c * w.b) * detInverse];
+    } else {
+      // The reading before issue #966's second cut, kept for the control that plants it back (CW02).
+      const k = Math.abs(p.a * p.d - p.b * p.c) / (p.a * p.a + p.c * p.c);
+      const [ca, cb, cc, cd] = [p.a, -p.c * k, p.c, p.a * k];
+      const cdet = ca * cd - cb * cc;
+      [la, lb, lc, ld] = [(cd * w.a - cb * w.c) / cdet, (cd * w.b - cb * w.d) / cdet, (ca * w.c - cc * w.a) / cdet, (ca * w.d - cc * w.b) / cdet];
+    }
     decompose(b, la, lc, lb, ld, rules);
     b.rotation = (b.rotation ?? 0) + Math.atan2(p.c, p.a) * DEG;
     return;
@@ -932,8 +1012,14 @@ export function localFromWorld(b: ModelBone, p: CoreWorld, w: CoreWorld, rules: 
   decompose(b, la, lc, lb, ld, rules);
 }
 
-/** A local matrix `[la lb; lc ld]` (columns `(la, lc)` and `(lb, ld)`) as rotation, scales and shear — the header's rule. */
-function decompose(b: ModelBone, la: number, lc: number, lb: number, ld: number, rules: Readonly<SolverRules>): void {
+/**
+ * A local matrix `[la lb; lc ld]` (columns `(la, lc)` and `(lb, ld)`) as rotation, scales and shears — the header's rule.
+ * `xAngleIn` says which field takes the x column's angle: `rotation` (every mode but the two `noScale` ones), or `shearX`
+ * — the two `noScale` modes, whose rotation is read first (issue #966: the runtime keeps the residual angle of the x
+ * column, in the frame built from that rotation, as `shearX`, and measures `shearY` from 0, as the forward frame
+ * `frame(0, shearX, shearY, …)` reads them).
+ */
+function decompose(b: ModelBone, la: number, lc: number, lb: number, ld: number, rules: Readonly<SolverRules>, xAngleIn: 'rotation' | 'shearX' = 'rotation'): void {
   const sx = Math.sqrt(la * la + lc * lc);
   const yLength = Math.sqrt(lb * lb + ld * ld);
   // Not above the bound, NaN included (issue #979: a collapsed parent's inverse is NaN, and the runtime reads scaleX 0 and shearY 0 from it); a y column no longer than 0.00001 reads rotation 0.
@@ -944,15 +1030,22 @@ function decompose(b: ModelBone, la: number, lc: number, lb: number, ld: number,
     b.rotation = !rules.readBackCollapsed || yLength > 0.00001 ? Math.atan2(ld, lb) * DEG - 90 : 0;
     return;
   }
-  const rotation = Math.atan2(lc, la) * DEG;
+  const xAngle = Math.atan2(lc, la) * DEG;
   const det = la * ld - lb * lc;
   let yAngle = Math.atan2(ld, lb) * DEG;
-  if (det < 0) yAngle += 180;
-  b.rotation = rotation;
+  if (xAngleIn === 'rotation') b.rotation = xAngle;
+  else b.shearX = xAngle;
   b.scaleX = sx;
   b.scaleY = det < 0 ? -yLength : yLength;
-  // The inverse of the forward frame's `rotation + 90 + shearY` (issue #966): `yAngle − rotation − 90` agrees on the grid; `yAngle − (rotation + 90)` reads bit-exact on more of the read-back population (164 of 400 against 97 with both changes, the rest named in the header's ⚠️).
-  let shear = yAngle - (rotation + 90);
+  // The inverse of the forward frame's `rotation + 90 + shearY` (issue #966): the y angle less `rotation + 90`, or, when the determinant is negative (the
+  // reflection carried by the negative scaleY), less `rotation − 90` — the reading before turned the y angle by 180 first and then took `rotation + 90` off.
+  const from = xAngleIn === 'rotation' ? xAngle : 0;
+  let right = 90;
+  if (det < 0) {
+    if (rules.readBackReflectedShear) right = -90;
+    else yAngle += 180;
+  }
+  let shear = yAngle - (from + right);
   shear = shear > 180 ? shear - 360 : shear < -180 ? shear + 360 : shear;
   // A y column no longer than 0.00001 reads shearY 0 (issue #979), as it reads rotation 0 when the x column is collapsed too.
   b.shearY = !rules.readBackCollapsed || yLength > 0.00001 ? shear : 0;
@@ -997,7 +1090,7 @@ function solveOne(state: SolverState, c: CoreIkRecord, frame: CoreWorld | null =
   if (scaleX < 0) r += 180;
   b.rotation = rotation + wrap180(r) * c.mix;
   const len = (b.length ?? 0) * scaleX;
-  if ((c.compress || c.stretch) && len > 0.0001) {
+  if ((c.compress || c.stretch) && len > state.rules.ikStretchMinLength) {
     const wx = t.worldX - bw.worldX;
     const wy = t.worldY - bw.worldY;
     const d = mode === 'noScale' || mode === 'noScaleOrReflection' ? Math.sqrt(wx * wx + wy * wy) : Math.sqrt(lx * lx + ly * ly);
@@ -1043,6 +1136,15 @@ function solveTwo(state: SolverState, c: CoreIkRecord, frame: CoreWorld | null =
   const dy = oy - py;
   const l1 = Math.sqrt(dx * dx + dy * dy);
   let l2 = (child.length ?? 0) * Math.abs(csx);
+  // The child's origin nearer the parent's than 0.00001 in the grandparent frame (issue #966): the constraint turns the parent as a one-bone ik would,
+  // stretching it but neither compressing it nor scaling its y (its `scaleY` mode read as none), and poses the child at rotation 0 with the local y the solver set. Measured on parents whose x scale is 0 (CW06), and by bisection
+  // on the x scale at three child offsets and three rotations: an l1 of exactly 0.00001 solves, the double below folds.
+  if (l1 < state.rules.ikTwoBoneNearChild) {
+    solveOne(state, { ...c, bones: [parent.name], compress: false, scaleY: 'none' }, frame);
+    child.rotation = 0;
+    child.y = cy;
+    return [parent.name];
+  }
   let [tx, ty] = inGrand(t.worldX, t.worldY);
   tx -= px;
   ty -= py;
@@ -1125,7 +1227,8 @@ function solveTwo(state: SolverState, c: CoreIkRecord, frame: CoreWorld | null =
       a2 = pick.angle * bend;
     }
   }
-  const signs = Math.sign(psx) * Math.sign(psy);
+  // A scale of 0 counts as positive (issue #966): `Math.sign` read 0 for it and zeroed both offsets and the child's angle — 59 of 300 two-bone iks over a parent of scaleY 0 exact, against 300 (CW06).
+  const signs = state.rules.ikZeroScaleSignPositive ? (psx < 0 ? -1 : 1) * (psy < 0 ? -1 : 1) : Math.sign(psx) * Math.sign(psy);
   const offset = Math.atan2(cy, cx);
   // The child's offset angle is taken off in radians before the change is turned into degrees (issue #966): `a1·DEG − offset·DEG` agrees on the grid and reads 1–4 ulp off on `spineboy-pro`'s two-bone iks (44 bone findings of a raw compare against 4, the four the ik mix's setup blend below).
   const parentRotation = parent.rotation ?? 0;
@@ -1171,7 +1274,7 @@ export function sourceValue(state: SolverState, c: Pick<CoreTransformRecord, 'so
   }
 }
 
-function applyWorld(w: CoreWorld, property: TransformProperty, v: number, mix: number, additive: boolean): void {
+function applyWorld(w: CoreWorld, property: TransformProperty, v: number, mix: number, additive: boolean, rules: Readonly<SolverRules>): void {
   switch (property) {
     case 'rotate': {
       // In radians, the change wrapped at the runtime's pi (issue #966): the degree form `wrap180(v − atan2·DEG)·mix·RAD` agrees on the grid and reads 1–2 ulp off on the corpus's `spineboy-pro` (202 findings of a raw compare, 113 of them bones, against 96 with this reading, the rest the two-bone ik below); this reading is exact on the row once those are fixed too.
@@ -1207,7 +1310,8 @@ function applyWorld(w: CoreWorld, property: TransformProperty, v: number, mix: n
     case 'shearY': {
       const yAngle = Math.atan2(w.d, w.b);
       const xAngle = Math.atan2(w.c, w.a);
-      let r = additive ? v * RAD : (v + 90) * RAD - (yAngle - xAngle);
+      // Additive (issue #966): the value is turned into radians with the right angle on, and the right angle taken off after — `(v + 90)·RAD − 90·RAD`, unwrapped — as the absolute form takes the columns' angle off the same sum; `v·RAD` read 35 of 132 of the transform population's additive world-shear probes last-bit off, and 123 of 300 single-mapping probes (CW04).
+      let r = additive && !rules.additiveShearRightAngle ? v * RAD : (v + 90) * RAD - (additive ? 90 * RAD : yAngle - xAngle);
       if (!additive) r = r > RUNTIME_PI ? r - 2 * RUNTIME_PI : r < -RUNTIME_PI ? r + 2 * RUNTIME_PI : r;
       const angle = yAngle + r * mix;
       const s = Math.sqrt(w.b * w.b + w.d * w.d);
@@ -1249,7 +1353,7 @@ function solveTransform(state: SolverState, c: CoreTransformRecord): { changed: 
         }
         applied = true;
         if (c.localTarget) applyLocal(b, to.property, v, mix, c.additive);
-        else applyWorld(w, to.property, v, mix, c.additive);
+        else applyWorld(w, to.property, v, mix, c.additive, state.rules);
       }
     }
     if (!applied) continue;

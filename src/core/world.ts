@@ -128,6 +128,24 @@ function times(p: M2, q: M2): M2 {
   return [p[0] * q[0] + p[1] * q[2], p[0] * q[1] + p[1] * q[3], p[2] * q[0] + p[3] * q[2], p[2] * q[1] + p[3] * q[3]];
 }
 
+/**
+ * The unit direction a `noScale` / `noScaleOrReflection` bone's x axis takes:
+ * its local rotation carried through the parent's matrix and normalised. Shared
+ * by the forward frame and `localFromWorld`'s read-back (`./constraints.ts`),
+ * which builds the frame to read the bone's columns in from the rotation it
+ * has just read, through this same arithmetic (issue #966).
+ */
+export function noScaleDirection(p: M2, rotation: number): [number, number] {
+  const r = rotation * RAD;
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  const ux = p[0] * cos + p[1] * sin;
+  const uy = p[2] * cos + p[3] * sin;
+  // Normalised by multiplying with the reciprocal of the length, not by dividing by it (issue #966): the division reads 1 ulp off on 375 bone-samples of the corpus's `noScale` row.
+  const inverse = 1 / Math.sqrt(ux * ux + uy * uy);
+  return [ux * inverse, uy * inverse];
+}
+
 /** The world matrix of a child under `parent` in `mode`. */
 function modeMatrix(mode: CoreInheritMode, parent: CoreWorld, bone: ModelBone): M2 {
   const rotation = bone.rotation ?? 0;
@@ -161,15 +179,7 @@ function modeMatrix(mode: CoreInheritMode, parent: CoreWorld, bone: ModelBone): 
     }
     case 'noScale':
     case 'noScaleOrReflection': {
-      const r = rotation * RAD;
-      const cos = Math.cos(r);
-      const sin = Math.sin(r);
-      let ux = p[0] * cos + p[1] * sin;
-      let uy = p[2] * cos + p[3] * sin;
-      // Normalised by multiplying with the reciprocal of the length, not by dividing by it (issue #966): the division reads 1 ulp off on 375 bone-samples of the corpus's `noScale` row.
-      const inverse = 1 / Math.sqrt(ux * ux + uy * uy);
-      ux *= inverse;
-      uy *= inverse;
+      const [ux, uy] = noScaleDirection(p, rotation);
       const flip = mode === 'noScale' && p[0] * p[3] - p[1] * p[2] < 0 ? -1 : 1;
       const turned: M2 = [ux, -uy * flip, uy, ux * flip];
       return times(turned, frame(0, shearX, shearY, scaleX, scaleY));

@@ -73496,9 +73496,7 @@ function runCoreSuite(): number {
     add('two-bone ik on posed leaf, leaf2, target hand', unposedPair([{ type: 'ik', name: 'k', bones: ['leaf', 'leaf2'], target: 'hand' }]));
     const TMODES: Array<[string, Obj]> = [['world', {}], ['local', { localSource: true, localTarget: true }], ['additive', { additive: true }], ['local additive', { localSource: true, localTarget: true, additive: true }], ['local source', { localSource: true }], ['local target', { localTarget: true }]];
     for (const [tm, flags] of TMODES) {
-      // An additive world-space shearY is last-bit off on posed bones too (issue #966's HOLE), so the additive world probes leave it out.
-      const properties = flags.additive === true && flags.localTarget !== true ? Object.fromEntries(Object.entries(SIX_IDENTITY).filter(([k]) => k !== 'shearY')) : SIX_IDENTITY;
-      const T = (bones: string[], source: string): Obj => ({ type: 'transform', name: 'k', bones, source, rotation: 10, x: 2, y: 1, scaleX: 0.1, shearY: 3, mixRotate: 1, mixX: 1, mixY: 1, mixScaleX: 1, mixScaleY: 1, mixShearY: 1, properties, ...flags });
+      const T = (bones: string[], source: string): Obj => ({ type: 'transform', name: 'k', bones, source, rotation: 10, x: 2, y: 1, scaleX: 0.1, shearY: 3, mixRotate: 1, mixX: 1, mixY: 1, mixScaleX: 1, mixScaleY: 1, mixShearY: 1, properties: SIX_IDENTITY, ...flags });
       for (const m of MODES) {
         add(`${tm} transform onto hand (${m}), source posed t`, unposedPair([T(['hand'], 't')], { hand: inheritOf(m), read: ['hand'] }));
         add(`${tm} transform onto posed leaf, source hand (${m})`, unposedPair([T(['leaf'], 'hand')], { hand: inheritOf(m) }));
@@ -73795,43 +73793,28 @@ function runCoreSuite(): number {
     }
     return { exact, explainedMisses, unexplained };
   };
-  type RawConstraint = { kind: string; localTarget?: boolean; additive?: boolean; properties?: Record<string, { to: Record<string, unknown> }> };
-  const constraintsOfModel = (model: string): RawConstraint[] => (JSON.parse(model) as { constraints: RawConstraint[] }).constraints;
-  /** A world-space transform: the bone it moves is read back into local values (`localFromWorld`, the read-back HOLE). */
-  const readsBack = (model: string): boolean => constraintsOfModel(model).some((c) => c.kind === 'transform' && c.localTarget !== true);
-  /** An additive world-space transform onto `shearY` (the shear HOLE). */
-  const additiveWorldShear = (model: string): boolean => constraintsOfModel(model).some((c) => c.kind === 'transform' && c.localTarget !== true && c.additive === true && Object.values(c.properties ?? {}).some((f) => 'shearY' in f.to));
 
   // --- CR01: every constraint population reads bit-exact through --raw, or misses only inside a HOLE named by its construct --
   {
     const probes: string[] = [];
     const read: string[] = [];
-    const holes: string[] = [];
-    const exactRuns: Array<[string, number, number, (rnd: () => number) => { spine: string; model: string }]> = [['one-bone ik', 600, 9381, ikOneProbe], ['two-bone ik', 1200, 9382, ikTwoProbe]];
+    // The read-back, update-order and transform populations carried two HOLEs until issue #966's second cut (localFromWorld, an additive world-space shearY); both are closed (CW01–CW04), so every probe of every population must now read exact.
+    const exactRuns: Array<[string, number, number, (rnd: () => number) => { spine: string; model: string }]> = [
+      ['one-bone ik', 600, 9381, ikOneProbe], ['two-bone ik', 1200, 9382, ikTwoProbe],
+      ['read back', 400, 9386, readBackProbe], ['update order', 400, 9385, orderProbe], ['transform', 900, 9387, transformProbe],
+    ];
     for (const [label, n, seed, make] of exactRuns) {
       const r = rawPopulation(n, seed, make);
       read.push(`${label} ${r.exact} of ${n}`);
       if (r.exact !== n) probes.push(`${label}: ${r.exact} of ${n} bit-exact — ${r.unexplained.join(' | ')}`);
     }
-    const holeRuns: Array<[string, number, number, (rnd: () => number) => { spine: string; model: string }, (model: string) => boolean, string]> = [
-      ['read back', 400, 9386, readBackProbe, readsBack, 'localFromWorld'],
-      ['update order', 400, 9385, orderProbe, readsBack, 'localFromWorld'],
-      ['transform', 900, 9387, transformProbe, additiveWorldShear, 'additive world-space shearY'],
-    ];
-    for (const [label, n, seed, make, explained, hole] of holeRuns) {
-      const r = rawPopulation(n, seed, make, explained);
-      read.push(`${label} ${r.exact} of ${n}`);
-      if (r.unexplained.length > 0) probes.push(`${label}: a miss outside the ${hole} HOLE — ${r.unexplained.join(' | ')}`);
-      if (r.explainedMisses > 0) holes.push(`${label}: ${r.explainedMisses} of ${n} probes last-bit off, every one inside the ${hole} HOLE`);
-    }
     const ok = probes.length === 0;
     say(
       'CR01_EVERY_CONSTRAINT_POPULATION_READS_BIT_EXACT_THROUGH_THE_RAW_DUMP_OR_MISSES_INSIDE_A_NAMED_HOLE',
       ok,
-      probeDetail(ok, probes, `the CC controls' populations and seeds, both dumpers under --raw, compared in ulps at tolerance 0: ${read.join(', ')} — every miss a probe whose transform moves a bone in world space (read back through localFromWorld) or, in the transform population, adds to shearY in world space`),
-      'issue #966: the grid hid last-bit gaps the render reads, and the raw comparison is where an operation order is decided; what the core does not yet reproduce to the bit is a HOLE by construct, never a tolerance',
+      probeDetail(ok, probes, `the CC controls' populations and seeds, both dumpers under --raw, compared in ulps at tolerance 0: ${read.join(', ')} — no HOLE left to miss inside`),
+      'issue #966: the grid hid last-bit gaps the render reads, and the raw comparison is where an operation order is decided; the two HOLEs this control named by construct (localFromWorld on 236 of 400 read-back and 11 of 400 update-order probes, an additive world-space shearY on 35 of 900 transform probes) closed in the second cut, so a miss anywhere is now red',
     );
-    for (const h of holes) console.log(`          ⚠️ HOLE: ${h}`);
   }
 
   // --- CR02: every inherit mode reads bit-exact under a 1e9 amplifier, and each rejected operation order is named --
@@ -74195,7 +74178,6 @@ function runCoreSuite(): number {
     const N = 150;
     let exact = 0;
     let moded = 0;
-    let readBackMisses = 0;
     let readBackRigs = 0;
     for (let i = 0; i < N; i++) {
       const bones: Obj[] = [{ name: 'root' }];
@@ -74218,7 +74200,7 @@ function runCoreSuite(): number {
       const pair = stepPair(bones, constraints, anims);
       const options = { ...stepOptions(pick([...STEP_DTS]), 9, pick(['grid', 'irr'])), raw: true };
       const c = stepCompare(pair, options);
-      // A physics constraint listed before one on its bone's ancestor: its bone is re-posed from the local values read back from its world (`localFromWorld`, the read-back HOLE).
+      // A physics constraint listed before one on its bone's ancestor: its bone is re-posed from the local values read back from its world (`localFromWorld`) — the read-back HOLE until issue #966's second cut, counted so the detail says the population reaches it.
       const parentOf = new Map(bones.map((b) => [b.name as string, b.parent as string | undefined]));
       const above = (top: string, n: string): boolean => {
         for (let at = parentOf.get(n); at !== undefined; at = parentOf.get(at)) if (at === top) return true;
@@ -74228,17 +74210,16 @@ function runCoreSuite(): number {
       const readBack = on.some((bi, k) => on.some((bj, j) => j > k && above(bj, bi)));
       if (readBack) readBackRigs++;
       if (c.identical) exact++;
-      else if (readBack) readBackMisses++;
-      else if (probes.length < 3) probes.push(`probe ${i}: ${c.first}`);
+      else if (probes.length < 3) probes.push(`probe ${i}${readBack ? ' (read back)' : ''}: ${c.first}`);
     }
-    const ok = probes.length === 0 && exact + readBackMisses === N && moded > N / 4;
+    if (readBackRigs === 0) probes.push('no rig re-poses a physics bone from values read back after a later constraint on its ancestor — the population no longer reaches localFromWorld');
+    const ok = probes.length === 0 && exact === N && moded > N / 4;
     say(
       'CR07_THE_STEPPED_PHYSICS_POPULATION_WITH_EVERY_INHERIT_MODE_READS_BIT_EXACT_THROUGH_THE_RAW_DUMP',
       ok,
-      probeDetail(ok, probes, `${exact} of ${N} rigs bit-exact under --raw at tolerance 0 — one to three physics constraints on six bones, ${moded} of them with a bone in noRotationOrReflection, noScale or noScaleOrReflection (the modes CK07 held out), two amplifiers each, stepped at 1/60, 1/30 or 1/120 on grid or irrational samples; every other rig one whose physics bone is re-posed from local values read back after a later constraint on its ancestor`),
-      'issue #959: the step amplified a last-bit gap in three inherit modes tenfold per 0.1 s; with the modes exact to the bit, the stepped population is widened to them, and what is left is the read-back HOLE',
+      probeDetail(ok, probes, `${exact} of ${N} rigs bit-exact under --raw at tolerance 0 — one to three physics constraints on six bones, ${moded} of them with a bone in noRotationOrReflection, noScale or noScaleOrReflection (the modes CK07 held out), two amplifiers each, stepped at 1/60, 1/30 or 1/120 on grid or irrational samples; ${readBackRigs} of them re-pose a physics bone from local values read back after a later constraint on its ancestor`),
+      'issue #959: the step amplified a last-bit gap in three inherit modes tenfold per 0.1 s; with the modes exact to the bit the stepped population was widened to them, and the read-back HOLE left (10 of 23 read-back rigs last-bit off) closed in issue #966\'s second cut (CW01–CW03)',
     );
-    if (readBackMisses > 0) console.log(`          ⚠️ HOLE: ${readBackMisses} of the ${readBackRigs} stepped rigs whose physics bone is read back through localFromWorld are last-bit off — the read-back HOLE, amplified by the step`);
   }
 
   // --- CR08: the bone channels' Bézier, the deform curve, the weighted sum and the region corners read bit-exact at a 1e9 amplifier --
@@ -74402,6 +74383,305 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `an unweighted five-vertex mesh, one deform segment sampled at 40 irrational times, under --raw at tolerance 0: linear ${counts.linear} and ${counts['linear f32']} of ${N}, Bézier ${counts.bezier} and ${counts['bezier f32']} of ${N} (key vertices spelled with five decimals, then float32-exact); the first piece read in the between form, planted, red on ${counts['bezier first']} and ${counts['bezier f32 first']}, the last piece on ${counts['bezier last']} and ${counts['bezier f32 last']}`),
       'issue #975: the deform timeline\'s Bézier percent reads its first piece as y1·(t − x0)/(x1 − x0) and its last as y0 + (1 − y0)·(t − x0)/(x1 − x0), each product before its division, where a bone channel reads every piece as y0 + (t − x0)/(x1 − x0)·(y1 − y0); the commander\'s private-corpus finding on issue #966 (one mesh 1 ulp off inside a Bézier deform segment) was this',
+    );
+  }
+
+  // ===========================================================================
+  // The raw gate's remaining HOLEs closed (issue #966's second cut, #959, #380)
+  // — band CW. Each population is compared against spine-core under --raw at
+  // tolerance 0 (every bone row, or by `Object.is` where a bone is collapsed
+  // and compare would leave it out), and each rule the dump decided is
+  // planted back to the reading before it (`SolverRules`, or a record
+  // rewrite), which must turn the same population red.
+  // ===========================================================================
+  /** A read-back probe in one inherit mode: `readBackProbe`'s world edit then a translation of nothing on the parent, with the edited bone's six local values read onto posed readers. */
+  const readBackIn = (mode: string) => (rnd: () => number): { spine: string; model: string } => {
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const p = skewed(rnd, { name: 'p', parent: 'root', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180) });
+    const x = skewed(rnd, { name: 'x', parent: 'p', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180), inherit: mode });
+    const s: Obj = { name: 's', parent: 'root', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180), scaleX: R(0.5, 1.5), scaleY: R(0.5, 1.5) };
+    const prop = pick(['rotate', 'scaleX', 'scaleY', 'shearY', 'x']);
+    const edit: Obj = { type: 'transform', name: 'edit', bones: ['x'], source: 's', properties: { [prop]: { to: { [prop]: {} } } }, mixScaleY: 1 };
+    const nudge: Obj = { type: 'transform', name: 'nudge', bones: ['p'], source: 'root', additive: true, properties: { x: { to: { x: {} } } } };
+    const rd = localReaders(['x']);
+    return constraintPair([{ name: 'root' }, p, x, ...amplify('x'), s, ...rd.bones], [edit, nudge, ...rd.constraints]);
+  };
+  /** A read-back population in `modes`, raw, and the same probes with `plant`: how many read exact each way, the first misses named. */
+  const readBackRun = (modes: readonly string[], n: number, seed: number, plant: Partial<SolverRules>): { exact: number; plantedExact: number; misses: string[] } => {
+    const rnd = lcg(seed);
+    const pick = pickOf(rnd);
+    let exact = 0;
+    let plantedExact = 0;
+    const misses: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const pair = readBackIn(pick(modes))(rnd);
+      const c = constraintCompare(pair, RAW_ONE);
+      if (c.identical) exact++;
+      else if (misses.length < 3) misses.push(`probe ${i}: ${c.first}`);
+      if (constraintCompare(pair, RAW_ONE, { solver: plant }).identical) plantedExact++;
+    }
+    return { exact, plantedExact, misses };
+  };
+
+  // --- CW01: localFromWorld reads a reflected bone's shear to the bit — the right angle taken off the other way, not the y angle turned by 180 --
+  {
+    const probes: string[] = [];
+    const N = 300;
+    const r = readBackRun(['normal', 'onlyTranslation'], N, 96621, { readBackReflectedShear: false });
+    if (r.exact !== N) probes.push(`${r.exact} of ${N} normal and onlyTranslation read-back probes bit-exact — ${r.misses.join(' | ')}`);
+    if (r.plantedExact === N) probes.push('the y angle turned by 180 before `rotation + 90` is taken off, planted back, read every probe exact — the population reaches no reflected bone');
+    const ok = probes.length === 0;
+    say(
+      'CW01_LOCAL_FROM_WORLD_READS_A_REFLECTED_BONES_SHEAR_TO_THE_BIT',
+      ok,
+      probeDetail(ok, probes, `${r.exact} of ${N} read-back probes in normal and onlyTranslation bit-exact under --raw at tolerance 0 — a world edit of rotate, scaleX, scaleY, shearY or x on a sheared, scaled, reflecting bone under a reflecting parent, re-posed by a later constraint, its six local values read onto posed readers; the y angle turned by 180 first (the reading before), planted, exact on ${r.plantedExact}`),
+      'issue #966: with the determinant negative the runtime reads shearY as the y angle less `rotation − 90`; turning the y angle by 180 and taking `rotation + 90` off agrees on the grid and read 39 of 50 reflected normal bones exact in the read-back population (CR01\'s seed), this reading 50 of 50',
+    );
+  }
+
+  // --- CW02: localFromWorld in noRotationOrReflection inverts the conformal frame as its axes over their lengths --
+  {
+    const probes: string[] = [];
+    const N = 200;
+    const r = readBackRun(['noRotationOrReflection'], N, 96622, { readBackConformalInverse: false });
+    if (r.exact !== N) probes.push(`${r.exact} of ${N} noRotationOrReflection read-back probes bit-exact — ${r.misses.join(' | ')}`);
+    if (r.plantedExact === N) probes.push('the conformal frame divided by its determinant, planted back, read every probe exact');
+    const ok = probes.length === 0;
+    say(
+      'CW02_LOCAL_FROM_WORLD_IN_NO_ROTATION_OR_REFLECTION_INVERTS_THE_CONFORMAL_FRAME_BY_ITS_AXES',
+      ok,
+      probeDetail(ok, probes, `${r.exact} of ${N} noRotationOrReflection read-back probes bit-exact under --raw, their local values read too; the conformal frame's inverse as the adjugate over its determinant (the reading before), planted, exact on ${r.plantedExact}`),
+      'issue #966: the runtime reads the local columns as `(pa·wa + pc·wc)·(1/(pa² + pc²))` and `(pa·wc − pc·wa)·(1/|det|)` — the x axis over its squared length, the y axis over |det|; the division by the conformal determinant read 26 of 86 of CR01\'s read-back probes in this mode exact, twelve other groupings 15 to 80',
+    );
+  }
+
+  // --- CW03: localFromWorld in the noScale modes reads the columns in the frame of the rotation it reads first, the residual kept as shearX --
+  {
+    const probes: string[] = [];
+    const N = 300;
+    const r = readBackRun(['noScale', 'noScaleOrReflection'], N, 96623, { readBackNoScaleFrame: false });
+    if (r.exact !== N) probes.push(`${r.exact} of ${N} noScale and noScaleOrReflection read-back probes bit-exact — ${r.misses.join(' | ')}`);
+    if (r.plantedExact === N) probes.push('the x column\'s length with shearX 0, planted back, read every probe exact');
+    const ok = probes.length === 0;
+    say(
+      'CW03_LOCAL_FROM_WORLD_IN_THE_NO_SCALE_MODES_READS_THE_COLUMNS_IN_THE_FRAME_OF_THE_ROTATION_IT_READS_FIRST',
+      ok,
+      probeDetail(ok, probes, `${r.exact} of ${N} noScale and noScaleOrReflection read-back probes bit-exact under --raw, their local values read too; the x column's length and direction with shearX 0 (the reading before), planted, exact on ${r.plantedExact}`),
+      'issue #966: the runtime reads the rotation first — atan2 of the parent\'s adjugate applied to the world x column, both parts negated under a reflecting parent — builds the forward frame from it, reads both world columns in that frame, keeps the x column\'s residual angle as shearX and measures shearY from 0; with the local values bit-exact and shearX 0 the re-posed world still read 17 of 87 noScale probes exact, with the residual kept 87',
+    );
+  }
+
+  // --- CW04: an additive world-space shearY turns the y column by (v + 90)·RAD − 90·RAD --
+  {
+    const probes: string[] = [];
+    const N = 300;
+    const rnd = lcg(96624);
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    let exact = 0;
+    let plantedExact = 0;
+    for (let i = 0; i < N; i++) {
+      const from = pick([...TRANSFORM_PROPERTIES]);
+      const to: Obj = { ...(rnd() < 0.5 ? { offset: R(-20, 20) } : {}), ...(rnd() < 0.5 ? { scale: R(-2, 2) } : {}) };
+      const c: Obj = { type: 'transform', name: 'k', bones: ['b'], source: 's', additive: true, properties: { [from]: { ...(rnd() < 0.4 ? { offset: R(-20, 20) } : {}), to: { shearY: to } } }, mixShearY: pick([1, R(-1, 2)]) };
+      if (rnd() < 0.5) c.localSource = true;
+      const sp = skewed(rnd, { name: 'sp', parent: 'root', x: R(-20, 20), y: R(-20, 20), rotation: R(-180, 180) });
+      const q = skewed(rnd, { name: 'q', parent: 'root', x: R(-20, 20), y: R(-20, 20), rotation: R(-180, 180) });
+      const s = skewed(rnd, { name: 's', parent: 'sp', x: R(-50, 50), y: R(-50, 50), rotation: R(-180, 180) });
+      const b = skewed(rnd, { name: 'b', parent: 'q', x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), inherit: pick(MODES5) });
+      const pair = constraintPair([{ name: 'root' }, sp, s, q, b, ...amplify('b')], [c]);
+      const cmp = constraintCompare(pair, RAW_ONE);
+      if (cmp.identical) exact++;
+      else if (probes.length < 3) probes.push(`probe ${i} (${from} to shearY): ${cmp.first}`);
+      if (constraintCompare(pair, RAW_ONE, { solver: { additiveShearRightAngle: false } }).identical) plantedExact++;
+    }
+    if (plantedExact === N) probes.push('the additive shear as v·RAD, planted back, read every probe exact');
+    const ok = probes.length === 0 && exact === N;
+    say(
+      'CW04_AN_ADDITIVE_WORLD_SPACE_SHEAR_Y_TURNS_THE_Y_COLUMN_BY_THE_VALUE_WITH_THE_RIGHT_ANGLE_ON_AND_OFF',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} additive world-space transforms of one source property onto shearY bit-exact under --raw — world and local sources, offsets, scales, mixes in [−1, 2], targets in all five modes under reflecting, sheared parents; the change as v·RAD (the reading before), planted, exact on ${plantedExact}`),
+      'issue #966: the runtime turns the additive value into radians with the right angle on and takes it off after, `(v + 90)·RAD − 90·RAD`, unwrapped — the absolute form takes the columns\' angle off the same sum; v·RAD read 97 of the 132 additive world-shear probes of CR01\'s transform population exact, eight other compositions (the value times the mix first, the degrees, the angle from the x column, a wrap at either pi, the y column turned by a rotation) 34 to 97',
+    );
+  }
+
+  // --- CW05: a transform timeline's keyed mixes reach the pose through the setup blend --
+  {
+    const probes: string[] = [];
+    const N = 60;
+    const MIXES = ['mixRotate', 'mixX', 'mixY', 'mixScaleX', 'mixScaleY', 'mixShearY'];
+    const rnd = lcg(96625);
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const RAW_FORTY_IRR: OracleOptions = { phase: 'irr', samples: 40, skin: 'all', physics: 'none', dt: null, raw: true };
+    const RAW_ONE_IRR: OracleOptions = { ...RAW_FORTY_IRR, samples: 1 };
+    let exact = 0;
+    let red = 0;
+    for (let i = 0; i < N; i++) {
+      const c: Obj = { type: 'transform', name: 'k', bones: ['b'], source: 's', properties: SIX_IDENTITY };
+      for (const f of ['localSource', 'localTarget', 'additive']) if (rnd() < 0.3) c[f] = true;
+      for (const m of MIXES) c[m] = R(-1, 2);
+      const keys: Obj[] = [];
+      let t = 0;
+      for (let k = 0; k < 3; k++) {
+        const key: Obj = { time: t };
+        for (const m of MIXES) key[m] = R(-1, 2);
+        keys.push(key);
+        t = Math.round((t + 0.7 + rnd()) * 1000) / 1000;
+      }
+      for (let k = 0; k < 2; k++) {
+        const t0 = keys[k].time as number;
+        const t1 = keys[k + 1].time as number;
+        keys[k].curve = MIXES.flatMap(() => [t0 + (t1 - t0) * 0.25, R(-1, 2), t0 + (t1 - t0) * 0.75, R(-1, 2)]);
+      }
+      const s = skewed(rnd, { name: 's', parent: 'root', x: R(-50, 50), y: R(-50, 50), rotation: R(-180, 180) });
+      const q = skewed(rnd, { name: 'q', parent: 'root', x: R(-20, 20), y: R(-20, 20), rotation: R(-180, 180) });
+      const b = skewed(rnd, { name: 'b', parent: 'q', x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), inherit: pick(MODES5) });
+      const pair = constraintPair([{ name: 'root' }, s, q, b, ...amplify('b')], [c], { transform: { k: keys }, bones: { root: { rotate: [{ time: 0, value: 0 }, { time: t, value: 0 }] } } });
+      const forty = constraintCompare(pair, RAW_FORTY_IRR);
+      if (forty.identical) exact++;
+      else if (probes.length < 3) probes.push(`probe ${i}: ${forty.first}`);
+      // Planted: the mixes as keyed, at the one sample's time, in place of the blend — a record rewrite, recognised by mixes that differ from the setup's.
+      const model = readModel(pair.model, 'the cw05 probe');
+      const spine = dumpSkeleton(loadOracleData(pair.spine, '', 'the cw05 probe'), RAW_ONE_IRR);
+      const at = spine.animations[0].samples[0].t as number;
+      const tl = model.animations[0].constraints.transform[0].keys;
+      const setup = model.constraints[0].record as CoreTransformRecord;
+      const keyed: ConstraintPlant = (records) => records.map((r) => {
+        if (r.kind !== 'transform' || TRANSFORM_PROPERTIES.every((p) => r.mixes[p] === setup.mixes[p])) return r;
+        const k = keyIndexAt(tl, at);
+        return { ...r, mixes: Object.fromEntries(TRANSFORM_PROPERTIES.map((p, ch) => [p, channelAt(tl, k, ch, at)])) as CoreTransformRecord['mixes'] };
+      });
+      if (!compareDumps(spine, coreDump(model, RAW_ONE_IRR, { constraints: keyed }), { xy: 0, m: 0 }).identical) red++;
+    }
+    if (red === 0) probes.push('the mixes as keyed, planted in place of the setup blend, read every probe exact — the population does not separate the two readings');
+    const ok = probes.length === 0 && exact === N;
+    say(
+      'CW05_A_TRANSFORM_TIMELINES_KEYED_MIXES_REACH_THE_POSE_THROUGH_THE_SETUP_BLEND',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} transform constraints keying all six mixes by Bézier segments over setup mixes in [−1, 2], in every mode and flag set, bit-exact under --raw at 40 irrational samples; the mixes as keyed, planted in place of setup + (value − setup)·1 at one irrational sample, red on ${red}`),
+      'issue #966: the ik timeline\'s mix was measured going through the setup blend on the corpus, and the transform timeline\'s two readings both read exact there; on this population the value as keyed read 0 of 60 exact at 40 samples, the blend 60',
+    );
+  }
+
+  // --- CW06: a two-bone ik over a parent whose scale is 0 poses as spine-core does --
+  {
+    const probes: string[] = [];
+    const N = 300;
+    const rnd = lcg(96626);
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const RAW_STRICT = signedOf('all', 'none', 1);
+    const counts = { exact: 0, zeroY: 0, zeroX: 0, signRed: 0, foldRed: 0 };
+    for (let i = 0; i < N; i++) {
+      const g = rnd() < 0.5 ? skewed(rnd, { name: 'g', parent: 'root', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180) }) : { name: 'g', parent: 'root', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180) };
+      const zero = pick(['scaleX', 'scaleY']);
+      const p: Obj = { name: 'p', parent: 'g', x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180), length: R(5, 60), scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2), [zero]: 0 };
+      if (rnd() < 0.5) p.shearX = R(-30, 30);
+      const c: Obj = { name: 'c', parent: 'p', x: R(-60, 60), y: rnd() < 0.5 ? 0 : R(-20, 20), rotation: R(-180, 180), length: R(5, 60) };
+      if (rnd() < 0.4) Object.assign(c, { scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2), shearX: R(-30, 30), shearY: R(-30, 30) });
+      const ik: Obj = { type: 'ik', name: 'k', bones: ['p', 'c'], target: 't', mix: pick([1, R(0, 1)]), bendPositive: rnd() < 0.5, softness: pick([0, 0, R(0, 10)]), stretch: rnd() < 0.3, compress: rnd() < 0.3, scaleY: pick(['none', 'uniform', 'volume']) };
+      const rd = localReaders(['p', 'c']);
+      const pair = constraintPair([{ name: 'root' }, g, p, c, { name: 't', parent: 'root', x: R(-80, 80), y: R(-80, 80) }, ...amplify('c'), ...rd.bones], [ik, ...rd.constraints]);
+      if (zero === 'scaleY') counts.zeroY++;
+      else counts.zeroX++;
+      const spine = dumpSkeleton(loadOracleData(pair.spine, '', 'the cw06 probe'), RAW_STRICT);
+      const model = readModel(pair.model, 'the cw06 probe');
+      const first = strictBones(spine, coreDump(model, RAW_STRICT));
+      if (first === null) counts.exact++;
+      else if (probes.length < 3) probes.push(`probe ${i} (parent ${zero} 0): ${first}`);
+      if (strictBones(spine, coreDump(model, RAW_STRICT, { solver: { ikZeroScaleSignPositive: false } })) !== null) counts.signRed++;
+      if (strictBones(spine, coreDump(model, RAW_STRICT, { solver: { ikTwoBoneNearChild: -1 } })) !== null) counts.foldRed++;
+    }
+    if (counts.signRed === 0) probes.push('a scale of 0 read as sign 0, planted back, read every probe exact');
+    if (counts.foldRed === 0) probes.push('the fold removed (the child always solved for), planted, read every probe exact');
+    const ok = probes.length === 0 && counts.exact === N;
+    say(
+      'CW06_A_TWO_BONE_IK_OVER_A_PARENT_WHOSE_SCALE_IS_ZERO_POSES_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${counts.exact} of ${N} two-bone iks bit-exact by Object.is on every bone, the collapsed ones included, and both bones' local values read after — ${counts.zeroY} with the parent's scaleY 0, ${counts.zeroX} with its scaleX 0, every ik setting at random; a scale of 0 read as sign 0 (the reading before), planted, red on ${counts.signRed}; the fold removed, planted, red on ${counts.foldRed}`),
+      'issue #959\'s third class, reduced: "a transform collapsing a bone\'s scale, with an ik below it" is a two-bone ik whose parent\'s scale is 0, with no transform needed. A scaleY of 0 counts as positive in the product of the scale signs (Math.sign read 59 of 300 exact); a scaleX of 0 puts the child\'s origin on the parent\'s, and a child nearer than 0.00001 makes the constraint a one-bone ik on the parent — stretched, never compressed, its scaleY mode read as none — with the child at rotation 0 (2 of 300 exact before)',
+    );
+  }
+
+  // --- CW07: the ik thresholds the zero-scale probes found, each held at its edge --
+  {
+    const probes: string[] = [];
+    const RAW_STRICT = signedOf('all', 'none', 1);
+    const judge = (pair: { spine: string; model: string }, solver: Partial<SolverRules> = {}): string | null => strictBones(dumpSkeleton(loadOracleData(pair.spine, '', 'the cw07 probe'), RAW_STRICT), coreDump(readModel(pair.model, 'the cw07 probe'), RAW_STRICT, { solver }));
+    // The fold: a parent under the root at the origin, its x scale s and the child 1 along it, so the child's origin is s from the parent's — 0.00001 exactly solves, the double below folds.
+    const foldPair = (s: number): { spine: string; model: string } => constraintPair([{ name: 'root' }, { name: 'p', parent: 'root', rotation: 0, length: 30, scaleX: s, scaleY: 1.5 }, { name: 'c', parent: 'p', x: 1, rotation: 20, length: 25 }, { name: 't', parent: 'root', x: 20, y: 35 }, ...amplify('c')], [{ type: 'ik', name: 'k', bones: ['p', 'c'], target: 't' }]);
+    const EDGE = 0.00001;
+    const below = EDGE - EDGE * Number.EPSILON;
+    const above = EDGE + EDGE * Number.EPSILON * 2;
+    for (const [label, s, plant] of [['at 0.00001 exactly', EDGE, { ikTwoBoneNearChild: above }], ['just below', below, { ikTwoBoneNearChild: below }]] as const) {
+      const pair = foldPair(s);
+      const as = judge(pair);
+      if (as !== null) probes.push(`fold ${label}: ${as}`);
+      if (judge(pair, plant) === null) probes.push(`fold ${label}: the edge moved one side (ikTwoBoneNearChild ${plant.ikTwoBoneNearChild}), planted, still read exact`);
+    }
+    // One-bone stretch: a bone of length 3 whose length times scaleX is 0.00001 exactly is not stretched, the double above is; 0.0001 (the reading before) left it unstretched.
+    const stretchPair = (s: number): { spine: string; model: string } => constraintPair([{ name: 'root' }, { name: 'p', parent: 'root', x: 3, y: 4, rotation: 10, length: 3, scaleX: s, scaleY: 1.5 }, { name: 't', parent: 'root', x: 20, y: 35 }, ...amplify('p')], [{ type: 'ik', name: 'k', bones: ['p'], target: 't', stretch: true }]);
+    for (const [label, s, plant] of [['at 0.00001 exactly', EDGE / 3, { ikStretchMinLength: EDGE - EDGE * Number.EPSILON }], ['just above', (EDGE + EDGE * Number.EPSILON * 2) / 3, { ikStretchMinLength: 0.0001 }]] as const) {
+      const pair = stretchPair(s);
+      const as = judge(pair);
+      if (as !== null) probes.push(`stretch ${label}: ${as}`);
+      if (judge(pair, plant) === null) probes.push(`stretch ${label}: ikStretchMinLength ${plant.ikStretchMinLength}, planted, still read exact`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CW07_THE_TWO_IK_LENGTH_EDGES_HOLD_AT_THE_DOUBLE',
+      ok,
+      probeDetail(ok, probes, 'a two-bone ik whose child sits 0.00001 from its parent solves and one a double nearer folds, each edge moved one side and planted red; a one-bone ik over a bone 0.00001 long is not stretched and one a double longer is, a threshold a double lower and the reading before (0.0001) each planted red'),
+      'issue #966: both edges found by bisection on the parent\'s x scale — the fold at three child offsets and three rotations, the stretch at three lengths — and held at the double, since a population never lands on them',
+    );
+  }
+
+  // --- CW08: #959's transform-collapse population — a transform collapsing a bone's scale, with an ik below it — reads every bone as spine-core does --
+  {
+    const probes: string[] = [];
+    const N = 400;
+    const rnd = lcg(96628);
+    const R = within(rnd);
+    const pick = pickOf(rnd);
+    const RAW_STRICT = signedOf('all', 'none', 1);
+    let exact = 0;
+    let red = 0;
+    for (let i = 0; i < N; i++) {
+      const bones: Obj[] = [{ name: 'root' }];
+      for (let j = 1; j <= 6; j++) {
+        let b: Obj = { name: `b${j}`, parent: j === 1 ? 'root' : `b${j - 1 - (j > 3 && rnd() < 0.3 ? 1 : 0)}`, x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+        if (rnd() < 0.4) b = skewed(rnd, b);
+        if (rnd() < 0.4) b.inherit = pick(MODES5.slice(1));
+        bones.push(b);
+      }
+      bones.push({ name: 't', parent: 'root', x: R(-60, 60), y: R(-60, 60) }, { name: 's', parent: 'root', x: R(-60, 60), y: R(-60, 60), rotation: R(-180, 180) }, ...amplify('b6'), ...amplify('b4'));
+      const prop = pick(['scaleX', 'scaleY']);
+      const tc: Obj = { type: 'transform', name: 'col', bones: [pick(['b1', 'b2', 'b3'])], source: 's', properties: { [prop]: { to: { [prop]: { scale: 0, offset: pick([0, 0, 1e-5, 1e-6, 1e-4]) } } } }, [prop === 'scaleX' ? 'mixScaleX' : 'mixScaleY']: pick([1, 1, 0.99999]) };
+      if (rnd() < 0.5) tc.localTarget = true;
+      const constraints: Obj[] = [tc];
+      if (rnd() < 0.5) constraints.push({ type: 'ik', name: 'k', bones: [pick(['b4', 'b5', 'b6'])], target: 't', mix: pick([1, R(0, 1)]), compress: rnd() < 0.3, stretch: rnd() < 0.3 });
+      else {
+        const child = pick(['b5', 'b6']);
+        constraints.push({ type: 'ik', name: 'k', bones: [(bones.find((b) => b.name === child) as Obj).parent as string, child], target: 't', mix: pick([1, R(0, 1)]), bendPositive: rnd() < 0.5, softness: pick([0, R(0, 10)]) });
+      }
+      if (rnd() < 0.3) constraints.reverse();
+      const pair = constraintPair(bones, constraints);
+      const spine = dumpSkeleton(loadOracleData(pair.spine, '', 'the cw08 probe'), RAW_STRICT);
+      const model = readModel(pair.model, 'the cw08 probe');
+      const first = strictBones(spine, coreDump(model, RAW_STRICT));
+      if (first === null) exact++;
+      else if (probes.length < 3) probes.push(`probe ${i}: ${first}`);
+      if (strictBones(spine, coreDump(model, RAW_STRICT, { solver: { ikZeroScaleSignPositive: false } })) !== null) red++;
+    }
+    if (red === 0) probes.push('a scale of 0 read as sign 0, planted back, read every probe exact — the population no longer reaches the class');
+    const ok = probes.length === 0 && exact === N;
+    say(
+      'CW08_THE_TRANSFORM_COLLAPSE_POPULATION_READS_EVERY_BONE_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} six-bone rigs bit-exact by Object.is on every bone under Physics.none — a transform (world or local) setting a bone's scaleX or scaleY to 0 or near it, a one- or two-bone ik below it, in either order, bones in all five modes; a scale of 0 read as sign 0, planted back, red on ${red}`),
+      'issue #959: its third class ("wrong under --physics none as well") had not been reduced; this is the population it came from, compared on the bones compare\'s ill-conditioned rule leaves out as well — before this cut two of 500 of it were whole units off, both a two-bone ik over the collapsed parent (CW06)',
     );
   }
 
