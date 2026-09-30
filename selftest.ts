@@ -64659,8 +64659,156 @@ function runGeometryExportSuite(): number {
           'as well — the two sentences are what tells a reader to change a skin from what tells them to change a bone',
       );
     }
+
+    // --- GY20–GY22: the framing box is over the slots that pose (issue #1000) ---
+    // Measured on main before the change, through both posers: a rig with one
+    // posed slot `live` at (30, 20) and one drawn slot `block` on a `skin: true`
+    // bone no posed skin activates framed at 256x94 — the unposed slot's eight
+    // zeros sat in the union box and pulled it to the origin, where nothing is
+    // drawn — and the same rig without `block` at 256x55. A slot below an
+    // active bone, on a child the skin leaves unposed, did the same.
+    const liveBone = { name: 'live', parent: 'root', x: 30, y: 20, length: 12 };
+    const liveSlot = { name: 'live', bone: 'live', attachment: 'live' };
+    const liveArt = { live: { image: 'block.png' } };
+    // The posed slot alone: the box every rig below must frame to.
+    const liveRig = writeProbeRig({
+      bones: [{ name: 'root' }, liveBone],
+      slots: [liveSlot],
+      skins: { default: { live: liveArt } },
+    });
+    const mixedRig = writeProbeRig({
+      bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12, skin: true }, liveBone],
+      slots: [...oneSlot, liveSlot],
+      skins: { default: { ...defaultSkin, live: liveArt }, extra: { bones: ['block'], attachments: {} } },
+    });
+    // Unposed BELOW a posed chain: `arm` is active, its child `hand` is skin-required and unnamed, and the slot
+    // hangs from `finger`, a bone with no skin flag of its own that is unposed only because its parent is.
+    const belowRig = writeProbeRig({
+      bones: [
+        { name: 'root' },
+        { name: 'arm', parent: 'root', x: -20, y: -10, length: 12 },
+        { name: 'hand', parent: 'arm', x: 5, y: 0, length: 12, skin: true },
+        { name: 'finger', parent: 'hand', x: 3, y: 0, length: 6 },
+        liveBone,
+      ],
+      slots: [{ name: 'finger', bone: 'finger', attachment: 'block' }, liveSlot],
+      skins: { default: { finger: { block: { image: 'block.png' } }, live: liveArt }, extra: { bones: ['hand'], attachments: {} } },
+    });
+    const framingProbe = [...buildOf(liveRig, slide), ...buildOf(mixedRig, slide), ...buildOf(belowRig, slide)];
+    const viewportOf = (out: string): string => {
+      const path = join(work, out, FRAMES_SIDECAR);
+      return existsSync(path) ? JSON.stringify((JSON.parse(readFileSync(path, 'utf8')) as FramesSidecar).viewport) : 'none';
+    };
+    const sizeOf = (viewport: string): string => {
+      if (viewport === 'none') return 'none';
+      const v = JSON.parse(viewport) as FramesSidecar['viewport'];
+      return `${v.pixelWidth}x${v.pixelHeight}`;
+    };
+    // Every frame PNG under `a` byte-equal to the same path under `b` — the poser's name in frames.json aside.
+    const framesDiffer = (a: string, b: string): string[] => {
+      const pngs = filesUnder(join(work, a)).filter((f) => f.endsWith('.png'));
+      const other = filesUnder(join(work, b)).filter((f) => f.endsWith('.png'));
+      if (pngs.length === 0) return [`${a} holds no PNG`];
+      if (pngs.join('|') !== other.join('|')) return [`${a} holds ${pngs.length} PNG(s), ${b} ${other.length}`];
+      return pngs.filter((f) => !readFileSync(join(work, a, f)).equals(readFileSync(join(work, b, f)))).map((f) => `${a}/${f} differs from ${b}'s`);
+    };
+    const libraryBox = (dir: string, through: 'data' | 'core'): string => {
+      try {
+        const posable = loadPosable(join(dir, 'skeleton.json'), join(dir, 'skeleton.atlas'), dir);
+        if (through === 'data') return JSON.stringify(framingViewport(posable.data, 256));
+        const choice = candidatePosers(posable.data, join(dir, 'skeleton.json'), join(dir, 'skeleton.atlas'), 'core');
+        if (choice.core === null) return `no core poser: ${choice.why}`;
+        return JSON.stringify(framingViewport(choice.core, 256, undefined, skinRosterOf(posable.data)));
+      } catch (err) {
+        return `threw: ${(err as Error).message}`;
+      }
+    };
+    const liveRun = renderOf(liveRig.outDir, 'gy20-live');
+    if (liveRun.status !== 0) framingProbe.push(`the posed slot alone: render exited ${String(liveRun.status)}`);
+    const liveBox = viewportOf('gy20-live');
+    const liveLibrary = libraryBox(liveRig.outDir, 'data');
+
+    // GY20/GY21 — a drawn slot on an unposed bone beside a posed one, and one below a posed chain: framed to the posed slot alone.
+    for (const [code, rig, label, why] of [
+      [
+        'RF139_A_DRAWN_SLOT_ON_A_BONE_THE_SKIN_LEAVES_UNPOSED_IS_NOT_IN_THE_FRAMING_BOX_THROUGH_EITHER_POSER',
+        mixedRig,
+        'gy20',
+        'issue #1000, measured before the change: the unposed slot drew no pixel, yet its eight zeros sat in the union box — ' +
+          '256x94 frames through both posers where the posed slot alone gives 256x55, every frame of the shot framed to the origin',
+      ],
+      [
+        'RF140_A_DRAWN_SLOT_BELOW_AN_ACTIVE_BONE_ON_A_CHILD_THE_SKIN_LEAVES_UNPOSED_IS_NOT_IN_THE_FRAMING_BOX_EITHER',
+        belowRig,
+        'gy21',
+        'issue #1000: "unposed" is the bone and every ancestor (`unposedBones`), so a slot on a plain bone below a ' +
+          'skin-required one is off the box as well — the half the runtime\'s own `active` flag does not say',
+      ],
+    ] as const) {
+      const probes = [...framingProbe];
+      for (const [poser, extra] of [['core', []], ['spine', ['--poser', 'spine']]] as const) {
+        const run = renderOf(rig.outDir, `${label}-${poser}`, [...extra]);
+        if (run.status !== 0) probes.push(`${poser}: render exited ${String(run.status)}: ${run.stderr.trim().slice(0, 200)}`);
+        const box = viewportOf(`${label}-${poser}`);
+        if (box !== liveBox) probes.push(`${poser}: framed to ${sizeOf(box)} ${box}, the posed slot alone to ${sizeOf(liveBox)} ${liveBox}`);
+      }
+      // Both posers draw the same bytes, and the unposed slot adds no pixel to the posed slot's frames.
+      probes.push(...framesDiffer(`${label}-core`, `${label}-spine`), ...framesDiffer(`${label}-core`, 'gy20-live'));
+      for (const through of ['data', 'core'] as const) {
+        const box = libraryBox(rig.outDir, through);
+        if (box !== liveLibrary) probes.push(`framingViewport over the ${through} said ${box}, over the posed slot alone ${liveLibrary}`);
+      }
+      // The same rig under the skin that poses the bone counts the slot again: the box follows the skin, not the name.
+      const posedUnder = renderOf(rig.outDir, `${label}-extra`, ['--skin', 'extra']);
+      if (posedUnder.status !== 0) probes.push(`--skin extra: render exited ${String(posedUnder.status)}`);
+      else if (viewportOf(`${label}-extra`) === liveBox) probes.push('--skin extra framed to the posed slot alone, though it poses the other slot too');
+      const held = probes.length === 0;
+      say(
+        code,
+        held,
+        probeDetail(
+          held,
+          probes,
+          `both posers framed to ${sizeOf(liveBox)}, the posed slot's own box, frames byte-identical to it; ` +
+            `--skin extra, which poses the slot, frames to ${sizeOf(viewportOf(`${label}-extra`))}`,
+        ),
+        why,
+      );
+    }
+
+    // GY22 — the plant: the box counted over every drawn slot again, as before #1000, reads the origin-pulled frame.
+    {
+      const probes = [...framingProbe];
+      let detail = '';
+      try {
+        const posable = loadPosable(join(mixedRig.outDir, 'skeleton.json'), join(mixedRig.outDir, 'skeleton.atlas'), mixedRig.outDir);
+        // A copy of the pre-#1000 box: every drawn piece, the unposed slot's included.
+        const sets = posable.data.animations.map((a) => sampleAnimation(posable.data, a.name, FRAMING_FPS, { unclipped: true }));
+        const box = unionBounds(sets);
+        const pad = Math.max(box.maxX - box.minX, box.maxY - box.minY) * PAD;
+        const old = viewportFor(box.minX - pad, box.minY - pad, box.maxX + pad, box.maxY + pad, 256);
+        const now = framingViewport(posable.data, 256);
+        const alone = JSON.parse(liveLibrary) as ReturnType<typeof framingViewport>;
+        const oldSize = `${old.width}x${old.height}`;
+        const aloneSize = alone === null ? 'none' : `${alone.width}x${alone.height}`;
+        if (JSON.stringify(old) === liveLibrary) probes.push('the planted box is the posed slot\'s own, so the controls above cannot tell the two apart');
+        if (!(box.minX <= 0 && box.minY <= 0)) probes.push(`the planted box does not reach the origin: (${box.minX}, ${box.minY})`);
+        if (JSON.stringify(now) !== liveLibrary) probes.push(`the framing as it stands said ${JSON.stringify(now)}, not the posed slot's ${liveLibrary}`);
+        detail = `the old box reaches (${box.minX}, ${box.minY}) and frames ${oldSize}; the posed slot alone and the framing now ${aloneSize}`;
+      } catch (err) {
+        probes.push(`the plant did not run: ${(err as Error).message}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'RF141_THE_PRE_1000_BOX_OVER_EVERY_DRAWN_SLOT_PLANTED_BACK_IS_PULLED_TO_THE_ORIGIN_AND_READ',
+        held,
+        probeDetail(held, probes, detail),
+        'issue #1000: a gate nobody has seen fail is not a gate — the plant is the box with the unposed slot counted ' +
+          'again, and it has to differ from the box the controls above hold',
+      );
+    }
     rmSync(work, { recursive: true, force: true });
-    for (const dirs of [unposedRig, posedRig, collapsedRig]) rmSync(dirs.dir, { recursive: true, force: true });
+    for (const dirs of [unposedRig, posedRig, collapsedRig, liveRig, mixedRig, belowRig]) rmSync(dirs.dir, { recursive: true, force: true });
   }
 
   rmSync(turn.dir, { recursive: true, force: true });

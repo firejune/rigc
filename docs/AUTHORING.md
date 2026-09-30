@@ -235,7 +235,10 @@ spine-core's own `SkeletonClipping`, in spine-webgl's call order — so a slot f
 the clip's through its `end` slot draws only what falls inside the polygon, in
 `render`, `check` and every other picture rigc's own rasteriser draws (`preview`
 plays in Spine's player, which always clipped); the framing box still counts
-what the clip removes, so adding or keying a mask moves no pixel it leaves drawn. Three commands take `--out`: a directory for `render`
+what the clip removes, so adding or keying a mask moves no pixel it leaves drawn,
+and it never counts a slot whose bone the posed skin leaves unposed (a `"skin": true`
+bone the skin does not name, or any bone below one, §3.4.1), which draws no pixel;
+when every drawn slot is such a slot, the render is refused by name (§3.4). Three commands take `--out`: a directory for `render`
 (default `render/`), the `.html` file for `preview` (default `preview.html`) and
 for `vote` (default `ballot.html`).
 
