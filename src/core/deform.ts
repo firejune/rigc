@@ -68,6 +68,20 @@
  *   channel shaped by the same handles read the far end 1 (`CD02` holds
  *   both): the deform curve is its own reading. The last piece, from the
  *   ninth point to the next key, read exact.
+ *   ⚠️ **Which form each piece takes (issue #975)**: the first piece, from
+ *   the key to the first point, is `y1·(t − x0) / (x1 − x0)`; the last, from
+ *   the ninth point to the next key, `y0 + (1 − y0)·(t − x0) / (x1 − x0)`
+ *   (each product before its division); the eight between are the bone
+ *   channel's `y0 + (t − x0) / (x1 − x0) · (y1 − y0)`. A bone channel reads
+ *   all ten pieces in the between form (`channelAt`, bit-exact at a 1e9
+ *   amplifier, `CR08`). The forms differ below the oracle's six-decimal grid,
+ *   so they were read off `pose_oracle --raw` at tolerance 0 on `CR09`'s
+ *   cells (60 five-vertex meshes, one deform segment each, 40 irrational
+ *   samples; five-decimal keys / float32-exact keys): every piece in the
+ *   between form 30 / 31 of 60 exact; the first piece's product alone 52 /
+ *   53; the last piece's alone 37 / 37; both 60 / 60 (and 60 / 60 on another
+ *   seed at 200 samples, where the between form read 14 / 14). The far end
+ *   stays `0.99999999`: with both forms and the far end 1, 38 / 38.
  *
  * ## Under a slider
  *
@@ -387,6 +401,9 @@ export function deformPercent(a: CoreDeformKey, b: CoreDeformKey, t: number): nu
   let i = 2;
   while (i < points.length - 2 && points[i] < t) i += 2;
   const [x0, y0, x1, y1] = [points[i - 2], points[i - 1], points[i], points[i + 1]];
+  // The two end pieces multiply before they divide — the header's *which form each piece takes*.
+  if (i === 2) return (y1 * (t - x0)) / (x1 - x0);
+  if (i === points.length - 2) return y0 + ((1 - y0) * (t - x0)) / (x1 - x0);
   return y0 + ((t - x0) / (x1 - x0)) * (y1 - y0);
 }
 

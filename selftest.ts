@@ -66499,7 +66499,7 @@ import { runRecipe } from './tools/emit_hashes.ts';
 import { corePoser } from './src/render_core.ts';
 import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, CLIPPED_CENSUS_FIELDS, clippedReachLines, GATE_BLOCKS, REMAINDER_CENSUS_BLOCKS, timelineKindLines, type GateBlock, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, STEPPED_CENSUS_FIELDS, STEPPED_OPTIONS, steppedCensusOf, steppedReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField, type SteppedCensusField } from './tools/core_gate.ts';
 import { BEZIER_SIXTH, bezierPolyline, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
-import { deformAt, deformPercent, heldArray, SEQUENCE_MODES as CORE_SEQUENCE_MODES, sequenceFrameAt, type CoreDeformKey } from './src/core/deform.ts';
+import { DEFORM_CURVE_END, deformAt, deformPercent, heldArray, SEQUENCE_MODES as CORE_SEQUENCE_MODES, sequenceFrameAt, type CoreDeformKey } from './src/core/deform.ts';
 import { drawOrderAt } from './src/core/draw_order.ts';
 import { eventsFired, type CoreEventRow } from './src/core/events.ts';
 import { physicsState, stepPhysics, stepSchedule, type CorePhysicsRecord } from './src/core/constraints_physics.ts';
@@ -73499,7 +73499,7 @@ function runCoreSuite(): number {
     read.push(`${bezierExact} of ${NB} Bézier bone channels at 200 dense samples`);
     if (bezierExact !== NB) probes.push(`Bézier bone channels: ${bezierExact} of ${NB} bit-exact`);
     // Deform curves and the weighted sum: CD03's and CD04's populations, their bone under a 1e9 amplifier, raw.
-    // A miss here is the deform HOLE (named below): the corpus's deformed rows read bit-exact (CR06), these random keys do not all.
+    // Every one bit-exact since issue #975 (the deform Bézier percent's end pieces); a miss is a probe line.
     let unweighted = 0;
     let weighted = 0;
     const deformMisses: string[] = [];
@@ -73514,7 +73514,7 @@ function runCoreSuite(): number {
       const cu = remainderCompare(pairU, RAW_FORTY);
       if (cu.identical && blocksSkipped(cu).length === 0) unweighted++;
       else if (blocksSkipped(cu).length > 0) probes.push(`unweighted deform probe ${i}: ${blocksSkipped(cu).join('; ')}`);
-      else if (deformMisses.length < 3) deformMisses.push(`unweighted probe ${i}: ${cu.first}`);
+      else if (deformMisses.length < 3) deformMisses.push(`unweighted deform probe ${i}: ${cu.first}`);
       const bound = randomMesh(rnd, 3 + Math.floor(rnd() * 3), true, ['b0', 'b1', 'b2']);
       const pairW = remainderPair({
         bones: [
@@ -73527,9 +73527,10 @@ function runCoreSuite(): number {
       const cw = remainderCompare(pairW, RAW_FORTY);
       if (cw.identical && blocksSkipped(cw).length === 0) weighted++;
       else if (blocksSkipped(cw).length > 0) probes.push(`weighted deform probe ${i}: ${blocksSkipped(cw).join('; ')}`);
-      else if (deformMisses.length < 3) deformMisses.push(`weighted probe ${i}: ${cw.first}`);
+      else if (deformMisses.length < 3) deformMisses.push(`weighted deform probe ${i}: ${cw.first}`);
     }
-    read.push(`${unweighted} of ${ND} unweighted and ${weighted} of ${ND} weighted deformed meshes at 40 samples (the rest the deform HOLE)`);
+    read.push(`${unweighted} of ${ND} unweighted and ${weighted} of ${ND} weighted deformed meshes at 40 samples`);
+    if (unweighted + weighted < 2 * ND) probes.push(`deformed meshes ${unweighted} and ${weighted} of ${ND} bit-exact: ${deformMisses.join(' | ')}`);
     // Region corners: CO17's attachment probe — trimmed and turned on a scaled page, mirrored, a sequence frame, weighted and linked meshes, clips — raw.
     const spineAttach = dumpSkeleton(loadOracleData(probeSkeleton, probeAtlas, 'the attachment probe'), { ...ONE, raw: true });
     const coreAttach = coreDump(readModel(probeModelText, 'the attachment probe'), { ...ONE, raw: true });
@@ -73543,15 +73544,33 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `under --raw at tolerance 0, the animated bone or the mesh's bone carrying a child 1e9 units out: ${read.join('; ')}`),
       'issue #966 ask 3: each evaluator the census could implicate held to the bit on a probe where a last-bit difference reads as whole units',
     );
-    if (unweighted + weighted < 2 * ND) console.log(`          ⚠️ HOLE: deform — ${2 * ND - unweighted - weighted} of ${2 * ND} randomly keyed deformed meshes last-bit off (${deformMisses.join(' | ')}); measured on issue #966, the lerp as weights and the percent through float32 read fewer exact (5 and 7, 5 and 3 of 30 against 24 and 27), so the lerp's form is not what is off`);
   }
 
-  // --- CR09: the deform gap reduced — a linear deform segment is bit-exact, a Bézier one is the HOLE, whatever the key vertices' float32-ness --
+  // --- CR09: a deform segment, linear or Bézier, reads bit-exact whatever the key vertices' float32-ness; each end piece's form planted back is red --
   {
     const probes: string[] = [];
     const counts: Record<string, number> = {};
     const N = 60;
     const RAW_IRR: OracleOptions = { phase: 'irr', samples: 40, skin: 'all', physics: 'none', dt: null, raw: true };
+    /** The deform evaluator with one end piece read in the between pieces' form `y0 + (t − x0)/(x1 − x0)·(y1 − y0)` — the reading issue #975 replaced. */
+    const endPieceAsBetween = (end: 'first' | 'last') => (vertices: ModelVertices, keys: readonly CoreDeformKey[], t: number): number[] | null => {
+      const i = keyIndexAt(keys, t);
+      if (i < 0) return null;
+      const a = keys[i];
+      const b = keys[i + 1];
+      if (b === undefined || !Array.isArray(a.curve)) return deformAt(vertices, keys, t);
+      const c = a.curve;
+      const points = [a.time, 0, ...bezierPolyline(a.stated, 0, c[0], c[1], c[2], c[3], b.stated, DEFORM_CURVE_END), b.time, 1];
+      let k = 2;
+      while (k < points.length - 2 && points[k] < t) k += 2;
+      const [x0, y0, x1, y1] = [points[k - 2], points[k - 1], points[k], points[k + 1]];
+      const between = (end === 'first' && k === 2) || (end === 'last' && k === points.length - 2);
+      const p = between || (k !== 2 && k !== points.length - 2) ? y0 + ((t - x0) / (x1 - x0)) * (y1 - y0) : k === 2 ? (y1 * (t - x0)) / (x1 - x0) : y0 + ((1 - y0) * (t - x0)) / (x1 - x0);
+      const held = heldArray(vertices, a);
+      const next = heldArray(vertices, b);
+      return held.map((v, j) => v + (next[j] - v) * p);
+    };
+    const plants = { first: endPieceAsBetween('first'), last: endPieceAsBetween('last') };
     for (const bezier of [false, true]) {
       for (const f32 of [false, true]) {
         const rnd = lcg(4242);
@@ -73559,7 +73578,9 @@ function runCoreSuite(): number {
           const v = Math.round((lo + rnd() * (hi - lo)) * 1e5) / 1e5;
           return f32 ? Math.fround(v) : v;
         };
+        const cell = `${bezier ? 'bezier' : 'linear'}${f32 ? ' f32' : ''}`;
         let exact = 0;
+        const plantedRed = { first: 0, last: 0 };
         for (let i = 0; i < N; i++) {
           const n = 5;
           const xy = Array.from({ length: 2 * n }, () => dec(-200, 200));
@@ -73577,30 +73598,35 @@ function runCoreSuite(): number {
             skins: [{ name: 'default', attachments: { s: { m: { type: 'mesh', path: 'm', uvs, triangles, vertices: xy, hull: n, width: 10, height: 10 } } } }],
             animations: { a: { attachments: { default: { s: { m: { deform: [k0, k1] } } } } } },
           };
-          const model = modelOf({
+          const model = readModel(modelOf({
             bones, slots: [{ name: 's', bone: 'b', setup: 'm' }],
             skins: [{ name: 'default', bones: [], constraints: {}, attachments: { s: { m: { kind: 'mesh', path: 'm', uvs, triangles, vertices: { weighted: false, xy }, hull: n, edges: [], width: 10, height: 10 } } } }],
             animations: [{ name: 'a', duration: 0, bones: [], slots: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [{ name: 'default', slots: [{ name: 's', attachments: [{ name: 'm', deform: [k0, k1] }] }] }], drawOrder: [], events: [] }],
-          });
-          const c = compareDumps(dumpSkeleton(loadOracleData(JSON.stringify(spine), atlasOf(['m']), 'the deform probe'), RAW_IRR), coreDump(readModel(model, 'the deform probe'), RAW_IRR), { xy: 0, m: 0 });
+          }), 'the deform probe');
+          const spineDoc = dumpSkeleton(loadOracleData(JSON.stringify(spine), atlasOf(['m']), 'the deform probe'), RAW_IRR);
+          const c = compareDumps(spineDoc, coreDump(model, RAW_IRR), { xy: 0, m: 0 });
           const skippedAttachments = c.skipped.some((x) => x.startsWith('animations.attachments'));
           if (skippedAttachments) probes.push(`probe ${i}: the core left the attachments out`);
           else if (c.identical) exact++;
-          else if (!bezier && probes.length < 3) probes.push(`linear probe ${i}${f32 ? ' (float32 keys)' : ''}: ${c.first}`);
+          else if (probes.length < 3) probes.push(`${cell} probe ${i}: ${c.first}`);
+          if (bezier) for (const end of ['first', 'last'] as const) if (!compareDumps(spineDoc, coreDump(model, RAW_IRR, { deform: plants[end] }), { xy: 0, m: 0 }).identical) plantedRed[end]++;
         }
-        counts[`${bezier ? 'bezier' : 'linear'}${f32 ? ' f32' : ''}`] = exact;
+        counts[cell] = exact;
+        if (bezier) {
+          counts[`${cell} first`] = plantedRed.first;
+          counts[`${cell} last`] = plantedRed.last;
+          for (const end of ['first', 'last'] as const) if (plantedRed[end] === 0) probes.push(`${cell}: the ${end} piece read in the between form, planted, turned no probe red`);
+        }
       }
     }
-    if (counts.linear !== N || counts['linear f32'] !== N) probes.push(`linear segments ${counts.linear} and ${counts['linear f32']} of ${N} bit-exact`);
-    if (counts.bezier === N && counts['bezier f32'] === N) probes.push('every Bézier segment read bit-exact: the HOLE is closed, and this control should say so');
+    for (const cell of ['linear', 'linear f32', 'bezier', 'bezier f32']) if (counts[cell] !== N) probes.push(`${cell} segments ${counts[cell]} of ${N} bit-exact`);
     const ok = probes.length === 0;
     say(
-      'CR09_A_LINEAR_DEFORM_SEGMENT_IS_BIT_EXACT_AND_THE_DEFORM_GAP_IS_THE_BEZIER_PERCENT',
+      'CR09_A_DEFORM_SEGMENT_LINEAR_OR_BEZIER_IS_BIT_EXACT_AND_EACH_END_PIECE_FORM_PLANTED_BACK_IS_RED',
       ok,
-      probeDetail(ok, probes, `an unweighted five-vertex mesh, one deform segment sampled at 40 irrational times, under --raw at tolerance 0: linear ${counts.linear} and ${counts['linear f32']} of ${N} (key vertices spelled with five decimals, then float32-exact); Bézier ${counts.bezier} and ${counts['bezier f32']} of ${N} — the float32-ness of the keys changes nothing, and the lerp is exact wherever the percent is linear`),
-      'the commander\'s private-corpus finding on issue #966: one unweighted mesh 1 ulp off inside a Bézier deform segment. Reduced here: the gap is the Bézier segment\'s percent (the curve position), not the key vertices\' reading and not the blend',
+      probeDetail(ok, probes, `an unweighted five-vertex mesh, one deform segment sampled at 40 irrational times, under --raw at tolerance 0: linear ${counts.linear} and ${counts['linear f32']} of ${N}, Bézier ${counts.bezier} and ${counts['bezier f32']} of ${N} (key vertices spelled with five decimals, then float32-exact); the first piece read in the between form, planted, red on ${counts['bezier first']} and ${counts['bezier f32 first']}, the last piece on ${counts['bezier last']} and ${counts['bezier f32 last']}`),
+      'issue #975: the deform timeline\'s Bézier percent reads its first piece as y1·(t − x0)/(x1 − x0) and its last as y0 + (1 − y0)·(t − x0)/(x1 − x0), each product before its division, where a bone channel reads every piece as y0 + (t − x0)/(x1 − x0)·(y1 − y0); the commander\'s private-corpus finding on issue #966 (one mesh 1 ulp off inside a Bézier deform segment) was this',
     );
-    console.log(`          ⚠️ HOLE: the deform Bézier percent — ${2 * N - counts.bezier - counts['bezier f32']} of ${2 * N} Bézier deform segments last-bit off at a mid-segment sample (1–64 ulp); rejected on issue #966: the key times through float32 in the table (11 of 60), the handles through float32 (7), the percent as (t − x0)(y1 − y0)/(x1 − x0) (25), against 30 as it stands`);
   }
 
   rmSync(work, { recursive: true, force: true });
