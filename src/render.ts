@@ -1056,7 +1056,8 @@ export function candidatePosers(
       } else why = `${modelPath} does not describe ${resolve(skeletonPath)}: ${differs}`;
     } catch (err) {
       if (!(err instanceof CoreInputError)) throw err;
-      why = `the core refused ${modelPath}: ${err.message}`;
+      // The reader names the document itself (`readModel`'s `where`), so a message that already starts with its path is not given it twice.
+      why = `the core refused ${err.message.startsWith(`${modelPath}: `) ? err.message : `${modelPath}: ${err.message}`}`;
     }
   }
   if (forced === 'core' && core === null) throw new PoserChoiceError(`--poser core: ${why}`);
