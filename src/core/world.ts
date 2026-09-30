@@ -43,10 +43,21 @@
  *   from it with length `|det| / |x axis|` (so the area, the scale the parent
  *   carries, is kept and its sign is not); the local matrix is built at the
  *   bone's rotation MINUS the parent's x-axis angle; the product is the world.
- *   A parent whose x axis has zero length reads its angle off the y axis
- *   instead; such a parent has `det = 0`, which the oracle's ill-conditioned
- *   rule excludes with its subtree, so that branch cannot be measured and is
- *   stated rather than claimed.
+ *   ⚠️ **A parent x axis whose squared length is at most `1e-5` squared is
+ *   collapsed** (issue #979, `COLLAPSED_X_AXIS_SQ`): the conformal frame is
+ *   then the parent's y column with its x component negated, beside a zero x
+ *   column, and the local matrix is built at the rotation less 90 plus the y
+ *   column's angle, summed in that order. Measured on a child of such a
+ *   parent: by bisection on the x axis's length, 1e-5 reads collapsed and the
+ *   next double above does not, at parent rotations 0, 30 and 45 (whether the
+ *   runtime compares the squared length with `1e-5 · 1e-5` or the length with
+ *   `1e-5`, 200,000 parents searched separated no pair); 480 probes of x axes
+ *   from 1e-4 down to 1e-20 and 0 under y axes up to 2e17, sheared, scaled and
+ *   reflected, read exact, where the reading this replaced (collapsed only at
+ *   length 0, the y column as it is, the angle less 90) read 71 of 96 off and
+ *   the rotation-first sum `rotation − (90 − angle)` 10 of 480. The zero
+ *   matrix of a bone below an inactive one is the collapsed case at length 0,
+ *   and it fixes the signs of zero of every child in this mode there (`CC13`).
  * - `noScale` — the parent's rotation (and reflection), not its scale: the
  *   bone's local rotation is carried through the parent's matrix as a
  *   direction, normalised to unit length; the y axis is that direction turned
@@ -84,6 +95,9 @@ export const RUNTIME_PI = 3.1415927;
 const RAD = RUNTIME_PI / 180;
 /** Radians to degrees as the runtime converts them (issue #966): multiplied by `180 / pi`, not divided by `pi / 180` — the two differ in the last bit. */
 export const RUNTIME_DEG = 180 / RUNTIME_PI;
+
+/** A parent x axis whose squared length is at most this is collapsed for `noRotationOrReflection` (issue #979): `1e-5` squared, as measured — see the header. */
+export const COLLAPSED_X_AXIS_SQ = 0.00001 * 0.00001;
 
 /** One bone's world transform: the matrix `[a b; c d]` and the origin, y up. */
 export interface CoreWorld {
@@ -130,17 +144,17 @@ function modeMatrix(mode: CoreInheritMode, parent: CoreWorld, bone: ModelBone): 
     case 'noRotationOrReflection': {
       const xLengthSq = p[0] * p[0] + p[2] * p[2];
       let conformal: M2;
-      let parentAngle: number;
-      if (xLengthSq > 0) {
+      let r: number;
+      if (xLengthSq > COLLAPSED_X_AXIS_SQ) {
         const k = Math.abs(p[0] * p[3] - p[1] * p[2]) / xLengthSq;
         conformal = [p[0], -p[2] * k, p[2], p[0] * k];
-        parentAngle = Math.atan2(p[2], p[0]) * RUNTIME_DEG;
+        r = rotation - Math.atan2(p[2], p[0]) * RUNTIME_DEG;
       } else {
-        conformal = [0, p[1], 0, p[3]];
-        parentAngle = Math.atan2(p[3], p[1]) * RUNTIME_DEG - 90;
+        // A collapsed x axis (issue #979): the parent's y column with its x component negated, and the rotation less 90 plus the y column's angle — see the header.
+        conformal = [0, -p[1], 0, p[3]];
+        r = rotation - 90 + Math.atan2(p[3], p[1]) * RUNTIME_DEG;
       }
       // The y angle adds the shear before the right angle here, unlike `frame` (issue #966): `(r + 90 + shearY)` reads last-bit off on 81 of 205 sheared or scaled bones at a 1e9 amplifier, `(r + shearY + 90)` on none; `r = rotation − parentAngle` taken first (adding the shear before the parent's angle is taken off reads 102 of 205 off).
-      const r = rotation - parentAngle;
       const xAngle = (r + shearX) * RAD;
       const yAngle = (r + shearY + 90) * RAD;
       return times(conformal, [Math.cos(xAngle) * scaleX, Math.cos(yAngle) * scaleY, Math.sin(xAngle) * scaleX, Math.sin(yAngle) * scaleY]);

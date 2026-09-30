@@ -8,6 +8,7 @@
  *   bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]
  *   bun tools/pose_oracle.ts dump --core <skeleton.model.json> [--atlas <atlas>] --out <json> [same flags]
  *   bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]
+ *   bun tools/pose_oracle.ts unposed <build dir> [dump's flags but --out, --raw, --core, --atlas]
  *
  * ⭐ Why this is a document and not a function. The equivalence gate issue
  * #380 stands on (`P_ours(M) ≡ P_spine(B)`) compares the pose spine-core gives
@@ -401,6 +402,7 @@ import {
   TransformConstraintData,
   type Event,
 } from '@esotericsoftware/spine-core';
+import { historyTaint } from '../src/core/constraints.ts';
 import { CORE_DUMPER, CoreInputError, gridRound, poseSetup, rawNumber, readModel, underSkin, type CompiledDocument } from '../src/core/index.ts';
 import { REGION_TRIANGLES, REGION_UVS } from '../src/core/clipping.ts';
 import { IRR_OFFSET as CORE_IRR_OFFSET, poseAnimations, sampleTime as coreSampleTime, type TimelinePlant } from '../src/core/animation.ts';
@@ -421,7 +423,7 @@ export const ORACLE_SPEC = 'pose-oracle/4';
  */
 export const ORACLE_RAW_SPEC = ORACLE_SPEC.replace('pose-oracle/', 'pose-oracle-raw/');
 /** The number a dump writes: the grid (`gridRound`), or under `--raw` the double itself (`rawNumber`). */
-export const roundOf = (options: { raw?: boolean }): ((v: number) => Num) => (options.raw === true ? rawNumber : gridRound);
+export const roundOf = (options: { raw?: boolean; signed?: boolean }): ((v: number) => Num) => (options.signed === true ? signedNumber : options.raw === true ? rawNumber : gridRound);
 /** The distance between two doubles in units in the last place — 0 for equal values (`0` and `-0` included), the count of representable doubles between them otherwise. */
 export function ulpDistance(a: number, b: number): number {
   if (a === b) return 0;
@@ -511,6 +513,10 @@ export interface OracleOptions {
   dt: number | null;
   /** `dump --raw` (issue #966): every number unrounded and the spec `ORACLE_RAW_SPEC`. Not written into the document's `options`: the spec says it. */
   raw?: boolean;
+  /** The `unposed` command's in-memory reading (issue #979): every number the double as computed with its sign of zero kept (`signedNumber`). Never written: JSON spells `-0` as `0`. */
+  signed?: boolean;
+  /** The `unposed` command's second runtime reading (issue #979): under `--physics none`, every sample posed on a skeleton of its own rather than on the one before it. Never written. */
+  fresh?: boolean;
 }
 
 export interface OraclePhysicsRow {
@@ -857,7 +863,7 @@ export function dumpSkeleton(data: SkeletonData, options: OracleOptions): Oracle
   const animations: OracleAnimation[] = [];
   let setup: OraclePose;
   if (options.physics === 'none') {
-    const skeleton = fresh();
+    let skeleton = fresh();
     skeleton.setupPose();
     skeleton.updateWorldTransform(Physics.none);
     setup = readPose(skeleton, r);
@@ -866,6 +872,8 @@ export function dumpSkeleton(data: SkeletonData, options: OracleOptions): Oracle
       let last = -1;
       for (let i = 0; i < n; i++) {
         const t = sampleTime(options.phase, anim.duration, i, n);
+        // #979: the fresh reading poses each sample on a skeleton no earlier pass has touched.
+        if (options.fresh === true) skeleton = fresh();
         skeleton.setupPose();
         anim.apply(skeleton, 0, t, false, null, 1, MixFrom.setup, false, false, false);
         skeleton.updateWorldTransform(Physics.none);
@@ -954,7 +962,7 @@ export function coreDump(model: CompiledDocument, options: OracleOptions, plant:
   if (stepped && (options.dt === null || !(options.dt > 0))) throw new OracleInputError('dump --core: --physics step needs a positive --dt');
   // `--raw` (issue #966): the core writes its rows' doubles unrounded.
   const round = roundOf(options);
-  if (options.raw === true) plant = { ...plant, round };
+  if (options.raw === true || options.signed === true) plant = { ...plant, round };
   const posed = stepped ? poseSetup(doc, plant, freshStepContext(plant.physicsStep)) : poseSetup(doc, plant);
   const { setup } = posed;
   const sampled = stepped ? poseSteppedAnimations(doc, options.phase, options.samples, options.dt as number, plant) : poseAnimations(doc, options.phase, options.samples, plant);
@@ -1759,6 +1767,234 @@ function linesOf(c: OracleComparison, listed: number): string[] {
   return out;
 }
 
+// --- #979 unposed: begin ---
+/**
+ * `unposed` — the bones a posed skin leaves unposed, compared to the bit with
+ * their signs of zero (issue #979).
+ *
+ *   bun tools/pose_oracle.ts unposed <build dir> [--samples 9] [--phase grid|off|irr|dense]
+ *                                    [--skin all|<name>] [--physics none|step] [--dt 1/60]
+ *
+ * `compare` never reads these rows: an unposed bone — inactive, or below an
+ * inactive bone — holds a zero matrix, so the ill-conditioned rule excludes
+ * it and its subtree at every sample, and a document spells `-0` as `0`.
+ * Yet a constraint can write into such a bone (issue #968's private reading:
+ * a world transform constraint wrote `worldX` 19.99999979 into one; a
+ * two-bone ik wrote `-0` into `b` and `d`), and what it wrote is read on: a
+ * later constraint taking the bone as its source reads `atan2` of those
+ * zeros, where `+0` and `-0` are 0 and 180 degrees apart.
+ *
+ * So this command poses the build twice in memory — `skeleton.json` and
+ * `skeleton.atlas` through spine-core (`dumpSkeleton`), `skeleton.model.json`
+ * through the core (`coreDump`) — under the given options, with every number
+ * the double as computed and its sign of zero kept (`signedNumber`; nothing
+ * is written, so JSON's spelling never reaches it), and compares, at the
+ * setup pose and every sample, every bone unposed in EITHER pose (`unposedOf`
+ * over the rows' `active` and `parent` columns): `worldX`, `worldY`, `a`,
+ * `b`, `c`, `d` by `Object.is`, so `0` against `-0` is a difference and a
+ * value that is not finite (`null`) equals only another. It prints each
+ * unposed bone's distinct rows on both sides with `-0` spelled, then
+ * `IDENTICAL` (exit 0) or `DIFF` and every difference (exit 1). A build with
+ * no unposed bone under the options is refused (exit 2): a comparison of
+ * nothing is not a pass. A block the core leaves absent is refused by name.
+ *
+ * ⏳ **HISTORY, by measurement.** Under `--physics none` spine-core poses the
+ * build a second time with every sample on a skeleton of its own
+ * (`OracleOptions.fresh`). A bone-sample where the two runtime readings
+ * disagree by `Object.is` is HISTORY: the runtime's value there depends on
+ * the pass before (issue #979 — a constraint writing into an inactive bone),
+ * so it is compared with nothing, never folded into IDENTICAL and never
+ * counted as DIFF. Each constraint writing into an inactive bone above such
+ * a bone prints `HISTORY <kind>/<name> on inactive <bone>: the runtime's value
+ * depends on the previous pass — sequential vs fresh differ at N of M
+ * samples`, and the verdict line counts them; where the runtime's two
+ * readings agree and the core does not, it is DIFF (exit 1). Under
+ * `--physics step` no fresh reading is taken — a stepped pass carries the
+ * one before by design, and the core walks the same steps — and the header
+ * line says so. There a differing bone-sample is HISTORY **by taint, not by
+ * measurement**: when its bone is one a constraint writing into an inactive
+ * bone reaches (`historyTaint` in src/core/constraints.ts, the walk the core's
+ * leak refusal reads), it prints per writer as `HISTORY (by the writer's
+ * taint; no fresh reading under the step) <kind>/<name> on inactive <bone>:
+ * N of M samples (bones …)` and is counted apart on the verdict line; a
+ * differing bone-sample outside the taint stays DIFF (exit 1).
+ */
+export function signedNumber(v: number): Num {
+  return Number.isFinite(v) ? v : null;
+}
+
+/** A number as `unposed` prints it: `-0` spelled, `null` for a value that is not finite. */
+export function signedText(v: Num): string {
+  return v === null ? 'null' : Object.is(v, -0) ? '-0' : String(v);
+}
+
+/** The bones of one pose that nothing poses: inactive (`active` 0), or below such a bone — the rows are parent-before-child. */
+export function unposedOf(rows: readonly BoneRow[]): Set<string> {
+  const out = new Set<string>();
+  for (const row of rows) if (row[7] === 0 || (row[8] !== null && out.has(row[8]))) out.add(row[0]);
+  return out;
+}
+
+export interface UnposedComparison {
+  /** Poses read: the setup and every sample of every animation. */
+  poses: number;
+  /** Unposed bone-samples compared, and how many agreed in all six numbers. */
+  boneSamples: number;
+  exact: number;
+  /** Bone-samples where the runtime's two readings — sample after sample (A) and on a fresh skeleton (`fresh`) — disagree: HISTORY, neither IDENTICAL nor DIFF. */
+  history: number;
+  /** Per bone, the poses where the runtime's two readings disagree, by where. */
+  historyByBone: Map<string, string[]>;
+  /** With no fresh reading (the step): bone-samples that differ on a bone a writer into an inactive bone reaches (`taint`) — HISTORY by the writer's taint, not by measurement. */
+  taintHistory: number;
+  /** Per writer label, the bones and poses `taintHistory` counts. */
+  taintByWriter: Map<string, { bones: Set<string>; poses: Set<string> }>;
+  /** Per unposed bone, its distinct rows on each side: `bone: A [...] ×n | B [...] ×n`. */
+  readings: string[];
+  findings: string[];
+}
+
+/**
+ * Two documents' unposed bones, compared by `Object.is` — see the section's
+ * header. With `fresh` (the runtime's own second reading of A's input, each
+ * sample on a fresh skeleton), a bone-sample where A and `fresh` disagree is
+ * HISTORY: the runtime's value there depends on the pass before, so it is
+ * compared with nothing and counted apart.
+ */
+export function compareUnposed(a: OracleDocument, b: OracleDocument, fresh: OracleDocument | null = null, taint: ReadonlyMap<string, string> | null = null): UnposedComparison {
+  const out: UnposedComparison = { poses: 0, boneSamples: 0, exact: 0, history: 0, historyByBone: new Map(), taintHistory: 0, taintByWriter: new Map(), readings: [], findings: [] };
+  const seen = new Map<string, { a: Map<string, number>; b: Map<string, number> }>();
+  const rowText = (row: BoneRow): string => `[${row.slice(1, 7).map((v) => signedText(v as Num)).join(', ')}]`;
+  const same = (x: BoneRow, y: BoneRow): boolean => [1, 2, 3, 4, 5, 6].every((i) => Object.is(x[i], y[i]));
+  const pose = (where: string, pa: BoneRow[] | null, pb: BoneRow[] | null, pf: BoneRow[] | null): void => {
+    if (pa === null || pb === null) throw new OracleInputError(`unposed: ${where}: the bones are absent from the ${pa === null ? 'first' : 'second'} document${pb === null ? ` — ${(b.absent ?? []).find((x) => x[0] === 'setup.bones' || x[0] === 'animations.bones')?.[1] ?? 'no reason given'}` : ''}`);
+    out.poses++;
+    const bRows = new Map(pb.map((r) => [r[0], r]));
+    const fRows = new Map((pf ?? []).map((r) => [r[0], r]));
+    const names = new Set([...unposedOf(pa), ...unposedOf(pb)]);
+    for (const ra of pa) {
+      if (!names.has(ra[0])) continue;
+      const rb = bRows.get(ra[0]);
+      if (rb === undefined) throw new OracleInputError(`unposed: ${where}: bone "${ra[0]}" is in the first document and not the second`);
+      const rf = fRows.get(ra[0]);
+      if (rf !== undefined && !same(ra, rf)) {
+        out.history++;
+        out.historyByBone.set(ra[0], [...(out.historyByBone.get(ra[0]) ?? []), where]);
+        continue;
+      }
+      out.boneSamples++;
+      const entry = seen.get(ra[0]) ?? { a: new Map<string, number>(), b: new Map<string, number>() };
+      seen.set(ra[0], entry);
+      const ta = rowText(ra);
+      const tb = rowText(rb);
+      entry.a.set(ta, (entry.a.get(ta) ?? 0) + 1);
+      entry.b.set(tb, (entry.b.get(tb) ?? 0) + 1);
+      if (same(ra, rb)) out.exact++;
+      else if (fresh === null && taint !== null && taint.has(ra[0])) {
+        // The step takes no fresh reading: a difference on a bone a writer into an inactive bone reaches is HISTORY by that writer's taint.
+        out.boneSamples--;
+        out.taintHistory++;
+        const writer = taint.get(ra[0]) as string;
+        const w = out.taintByWriter.get(writer) ?? { bones: new Set<string>(), poses: new Set<string>() };
+        w.bones.add(ra[0]);
+        w.poses.add(where);
+        out.taintByWriter.set(writer, w);
+      } else out.findings.push(`${where}: bone "${ra[0]}" (active ${ra[7]} / ${rb[7]}) A ${ta} B ${tb}`);
+    }
+  };
+  pose('(setup)', a.setup.bones, b.setup.bones, fresh?.setup.bones ?? null);
+  const bAnimations = new Map((b.animations ?? []).map((x) => [x.name, x]));
+  const fAnimations = new Map((fresh?.animations ?? []).map((x) => [x.name, x]));
+  for (const anim of a.animations ?? []) {
+    const other = bAnimations.get(anim.name);
+    if (other === undefined) throw new OracleInputError(`unposed: animation "${anim.name}" is in the first document and not the second`);
+    anim.samples.forEach((s, i) => pose(`"${anim.name}" t=${signedText(s.t)}`, s.bones, other.samples[i]?.bones ?? null, fAnimations.get(anim.name)?.samples[i]?.bones ?? null));
+  }
+  const spell = (m: Map<string, number>): string => [...m].map(([t, n]) => `${t} ×${n}`).join(' ');
+  for (const [name, e] of seen) out.readings.push(`bone "${name}": A ${spell(e.a)} | B ${spell(e.b)}`);
+  return out;
+}
+
+/**
+ * The HISTORY lines of a comparison: per constraint of `data` that writes
+ * into an inactive bone at or above a HISTORY bone, how many poses it reaches
+ * — `HISTORY <kind>/<name> on inactive <bone>: …`, one line each, in
+ * constraint order; a HISTORY bone no such constraint is above is named as
+ * such rather than attributed.
+ */
+export function historyLines(data: SkeletonData, c: UnposedComparison, activeAtSetup: ReadonlySet<string>): string[] {
+  const parent = new Map(data.bones.map((bd) => [bd.name, bd.parent?.name ?? null]));
+  const above = (bone: string, x: string): boolean => {
+    for (let at: string | null = bone; at !== null; at = parent.get(at) ?? null) if (at === x) return true;
+    return false;
+  };
+  const out: string[] = [];
+  const claimed = new Set<string>();
+  for (const cd of data.constraints) {
+    const type = constraintType(cd, cd.name);
+    const moved = cd instanceof IkConstraintData || cd instanceof TransformConstraintData || cd instanceof PathConstraintData ? cd.bones.map((x) => x.name) : cd instanceof PhysicsConstraintData ? [cd.bone.name] : [];
+    for (const inactive of moved.filter((m) => !activeAtSetup.has(m))) {
+      const reached = [...c.historyByBone].filter(([bone]) => above(bone, inactive));
+      if (reached.length === 0) continue;
+      const poses = new Set(reached.flatMap(([, w]) => w));
+      for (const [bone] of reached) claimed.add(bone);
+      out.push(`HISTORY ${type}/${cd.name} on inactive ${inactive}: the runtime's value depends on the previous pass — sequential vs fresh differ at ${poses.size} of ${c.poses} samples (bones ${reached.map(([bone]) => `"${bone}"`).join(', ')})`);
+    }
+  }
+  for (const [bone, w] of c.historyByBone) if (!claimed.has(bone)) out.push(`HISTORY bone "${bone}", below no constraint writing into an inactive bone: sequential vs fresh differ at ${w.length} of ${c.poses} samples`);
+  return out;
+}
+
+/** `unposed <build dir>`: spine-core twice (sequential and fresh) and the core, in memory, signed — the section's header. Returns the exit code. */
+function unposedCommand(rest: readonly string[], print: (line: string) => void): number {
+  const { positional, flags } = parseFlags(rest, ['--samples', '--phase', '--skin', '--physics', '--dt']);
+  if (positional.length !== 1) throw new OracleInputError(`unposed: expected <build dir>, got ${positional.length} path(s)`);
+  const input = resolveDumpInput(positional);
+  const modelPath = join(positional[0], 'skeleton.model.json');
+  if (!existsSync(modelPath)) throw new OracleInputError(`unposed: build directory ${positional[0]} has no skeleton.model.json — rigc build writes it beside skeleton.json`);
+  const options: OracleOptions = { ...dumpOptions(flags), signed: true };
+  const data = loadOracleData(readFileSync(input.skeleton, 'utf8'), readFileSync(input.atlas, 'utf8'), input.skeleton);
+  let model: CompiledDocument;
+  try {
+    model = readModel(readFileSync(modelPath, 'utf8'), modelPath);
+  } catch (err) {
+    if (err instanceof CoreInputError) throw new OracleInputError(err.message);
+    throw err;
+  }
+  const sequential = dumpSkeleton(data, options);
+  // The fresh reading is taken under --physics none: under the step a pass carries the one before it by design, and the core walks the same steps.
+  const fresh = options.physics === 'none' ? dumpSkeleton(data, { ...options, fresh: true }) : null;
+  // Under the step, a differing bone-sample is HISTORY only by the taint of a writer into an inactive bone (`historyTaint` in src/core/constraints.ts) — the core's own walk, not a measurement.
+  let taint: Map<string, string> | null = null;
+  if (fresh === null) {
+    let view: CompiledDocument;
+    try {
+      view = underSkin(model, options.skin);
+    } catch (err) {
+      if (err instanceof CoreInputError) throw new OracleInputError(`unposed: ${err.message}`);
+      throw err;
+    }
+    taint = new Map([...historyTaint(view).tainted].map(([bone, w]) => [bone, `${w.kind}/${w.name} on inactive ${w.inactive}`]));
+  }
+  const c = compareUnposed(sequential, coreDump(model, options), fresh, taint);
+  if (c.boneSamples + c.history + c.taintHistory === 0) throw new OracleInputError(`unposed: no bone of ${positional[0]} is unposed under --skin ${options.skin} in either pose — nothing to compare, which is not a pass`);
+  print(`pose_oracle unposed A=spine-core B=core ${positional[0]} (skin ${options.skin}, ${options.phase}, ${options.samples} sample(s), physics ${options.physics}${fresh === null ? '; no fresh reading under the step, so a bone-sample is classed HISTORY only by the taint of a writer into an inactive bone, never by measurement' : ''})`);
+  const activeAtSetup = new Set((sequential.setup.bones ?? []).filter((r) => r[7] === 1).map((r) => r[0]));
+  for (const line of historyLines(data, c, activeAtSetup)) print(`  ${line}`);
+  for (const [writer, w] of c.taintByWriter) print(`  HISTORY (by the writer's taint; no fresh reading under the step) ${writer}: ${w.poses.size} of ${c.poses} samples (bones ${[...w.bones].map((b) => `"${b}"`).join(', ')})`);
+  for (const line of c.readings) print(`  ${line}`);
+  for (const f of c.findings.slice(0, 20)) print(`  ${f}`);
+  if (c.findings.length > 20) print(`  … ${c.findings.length - 20} more`);
+  const history = `${c.history} HISTORY bone-sample(s) by measurement and ${c.taintHistory} by a writer's taint (the step), compared with nothing`;
+  print(
+    c.findings.length === 0
+      ? `IDENTICAL — ${c.boneSamples} unposed bone-sample(s) over ${c.poses} pose(s), every number equal by Object.is (signed zeros included); ${history}`
+      : `DIFF — ${c.boneSamples - c.exact} of ${c.boneSamples} unposed bone-sample(s) differ where the runtime's two readings agree; ${history}; first: ${c.findings[0]}`,
+  );
+  return c.findings.length === 0 ? 0 : 1;
+}
+// --- #979 unposed: end ---
+
 // ---------------------------------------------------------------------------
 // the command
 // ---------------------------------------------------------------------------
@@ -1769,6 +2005,7 @@ const USAGE = [
   '  bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]',
   '  bun tools/pose_oracle.ts dump --core <skeleton.model.json> [--atlas <atlas>] --out <json> [same flags]',
   '  bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]',
+  '  bun tools/pose_oracle.ts unposed <build dir> [--samples 9] [--phase grid|off|irr|dense] [--skin all|<name>] [--physics none|step] [--dt 1/60]',
 ].join('\n');
 
 function parseFlags(args: readonly string[], known: readonly string[], switches: readonly string[] = []): { positional: string[]; flags: Map<string, string> } {
@@ -1866,6 +2103,7 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
       );
       return 0;
     }
+    if (command === 'unposed') return unposedCommand(rest, print);
     if (command === 'compare') {
       const { positional, flags } = parseFlags(rest, ['--tol-xy', '--tol-m']);
       if (positional.length !== 2) throw new OracleInputError(`compare: expected <a.json> <b.json>, got ${positional.length} path(s)`);
