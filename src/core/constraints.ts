@@ -244,7 +244,8 @@
  *   from 865 to 900 of 900); a transform timeline's mixes through the setup
  *   blend (`CW05`); and the two-bone ik over a parent whose scale is 0, below;
  * - and a path timeline's position, spacing and mixes through the setup blend
- *   too (issue #984, `CY01`; *The timelines*, below).
+ *   too (issue #984, `CY01`; *The timelines*, below), and a slider
+ *   timeline's `time` and `mix` (issue #991, `CZ03`).
  *
  * The local values were read to the bit rather than through the re-posed
  * world: a reader bone's `x` driven by a local transform from the bone's
@@ -453,6 +454,9 @@
  * keyed read position 33, spacing 40 and mix 1 of 60 bit-exact (0 of 60 with
  * all three keyed), the blend 60 of 60 on each; each mix channel alone
  * planted back to the value as keyed turns the mix population red.
+ *
+ * A `slider` timeline's `time` and `mix` go through the same setup blend
+ * (issue #991, `CZ03`; `./constraints_slider.ts`, *Its timelines*).
  *
  * ## Purity
  *
