@@ -420,6 +420,7 @@ import {
   SHEET_GAP,
   spinePoser,
   candidatePosers,
+  PoserChoiceError,
   contactSheet,
   SHEET_TILE,
   throughPoser,
@@ -76033,7 +76034,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH07 and RC01–RC08 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH07, RC01–RC08 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -76868,6 +76869,251 @@ function runRenderHashesSuite(): number | null {
         'and page off it, so the probe is what puts that path under the gate',
     );
   }
+  // --- CH01–CH03: `check` poses its candidate through `render`'s poser choice (issue #968's follow-up) --
+  //
+  // `rigc check` chooses the candidate's poser exactly as `render` does
+  // (`candidatePosers` over the candidate's files, one choice per run) and names
+  // it on a `poser` line, in `check.json`'s `poser` and in the pictures'
+  // `frames.json`. CH01 holds a check through the core to the same check
+  // through spine-core on every gallery row — every report line but the poser
+  // line, the whole `check.json` but its `poser`, and every picture — and plants
+  // a copy of the core poser that drops one drawn piece, red on every row;
+  // CH02 holds the poser named, and an edited `skeleton.json` beside its
+  // unedited document falling back to spine-core naming both digests; CH03 a
+  // candidate with no model document, and one handed over as text, through
+  // spine-core by name.
+  {
+    const probes: string[] = [];
+    const reds: string[] = [];
+    let figures = '';
+    /** One in-process check of `out` against `frames`, its pictures written to `pics`: the report, its lines, its JSON, and every picture's digest. */
+    const checkOnce = (
+      out: string,
+      frames: string,
+      pics: string,
+      poser: 'core' | 'spine',
+      make?: (modelText: string, atlasText: string, where: string, skeleton: { path: string; bytes: Uint8Array }) => Poser,
+    ): { report: CheckReport; lines: string[]; json: string; pictures: Map<string, string>; sidecar: string } => {
+      const skeleton = join(out, 'skeleton.json');
+      const atlas = join(out, 'skeleton.atlas');
+      const plates = new CheckPlates({ allFrames: false });
+      const report = checkAgainstFrames({
+        skeletonText: readFileSync(skeleton, 'utf8'),
+        atlasText: readFileSync(atlas, 'utf8'),
+        atlasDir: out,
+        framesDir: frames,
+        labels: { skeleton, atlas },
+        candidatePaths: { skeleton, atlas },
+        poser,
+        plates,
+        ...(make === undefined ? {} : { makeCorePoser: make }),
+      });
+      writeCheckPictures(pics, report, plates, { allFrames: false });
+      const pictures = dirDigests(pics);
+      const sidecarPath = join(pics, FRAMES_SIDECAR);
+      const sidecar = existsSync(sidecarPath) ? readFileSync(sidecarPath, 'utf8') : '';
+      pictures.delete(FRAMES_SIDECAR);
+      return { report, lines: checkLines(report), json: `${JSON.stringify(report, null, 2)}\n`, pictures, sidecar };
+    };
+    /** Where two checks of one row differ, the poser they name set aside — `[]` when the two are the same check. */
+    const checkDifferences = (a: ReturnType<typeof checkOnce>, b: ReturnType<typeof checkOnce>): string[] => {
+      const out: string[] = [];
+      const unnamed = (lines: string[]): string[] => lines.filter((l) => !l.startsWith('  poser      '));
+      const la = unnamed(a.lines);
+      const lb = unnamed(b.lines);
+      const line = la.findIndex((l, i) => l !== lb[i]);
+      if (line >= 0 || la.length !== lb.length) out.push(`report line ${line < 0 ? Math.min(la.length, lb.length) : line}: ${JSON.stringify(la[line] ?? '(none)')} against ${JSON.stringify(lb[line] ?? '(none)')}`);
+      const withoutPoser = (json: string): string => {
+        const value = JSON.parse(json) as Record<string, unknown>;
+        delete value.poser;
+        return JSON.stringify(value);
+      };
+      if (withoutPoser(a.json) !== withoutPoser(b.json)) out.push('check.json');
+      const sidecarWithoutPoser = (text: string): string => {
+        if (text === '') return '';
+        const value = JSON.parse(text) as Record<string, Record<string, unknown>>;
+        delete value[COMPARISON_FIELD].poser;
+        return JSON.stringify(value);
+      };
+      if (sidecarWithoutPoser(a.sidecar) !== sidecarWithoutPoser(b.sidecar)) out.push(`the pictures' ${FRAMES_SIDECAR}`);
+      const pictures = digestDifferences(a.pictures, b.pictures);
+      if (pictures.length > 0) out.push(`picture(s) ${pictures.join(', ')}`);
+      return out;
+    };
+    /** A copy of the core poser whose every posed moment drops its first drawn piece. */
+    const droppedPiece = (modelText: string, atlasText: string, where: string, skeleton: { path: string; bytes: Uint8Array }): Poser => {
+      const core = corePoser(modelText, atlasText, where, skeleton);
+      const drop = (posed: Posed): Posed => ({ ...posed, pieces: (draw) => posed.pieces(draw).slice(1) });
+      return {
+        ...core,
+        setup: (skin) => drop(core.setup(skin)),
+        animation: (name, skin, fps, count, visit) => core.animation(name, skin, fps, count, (i, posed) => visit(i, drop(posed))),
+      };
+    };
+    let compared = 0;
+    let lines = 0;
+    let pictures = 0;
+    for (const { name, out } of galleryBuilds) {
+      const rendered = join(dirname(out), 'render');
+      if (!existsSync(join(rendered, FRAMES_SIDECAR))) {
+        probes.push(`${name}: no rendered frame set at ${rendered}`);
+        continue;
+      }
+      // Every set of the row's own render, kept to its first and middle frame and no contact sheet — a set may
+      // ship any subset of its frames — because a whole gallery render checked three ways costs minutes a row.
+      const frames = join(dirname(out), 'ch01-frames');
+      mkdirSync(frames, { recursive: true });
+      cpSync(join(rendered, FRAMES_SIDECAR), join(frames, FRAMES_SIDECAR));
+      for (const set of (JSON.parse(readFileSync(join(rendered, FRAMES_SIDECAR), 'utf8')) as FramesSidecar).sets) {
+        const pngs = readdirSync(join(rendered, set.dir)).filter((f) => /^f\d{4}\.png$/.test(f)).sort();
+        mkdirSync(join(frames, set.dir), { recursive: true });
+        for (const png of new Set([pngs[0], pngs[Math.floor(pngs.length / 2)]])) cpSync(join(rendered, set.dir, png), join(frames, set.dir, png));
+      }
+      const pics = (label: string): string => join(dirname(out), `ch01-${label}`);
+      const core = checkOnce(out, frames, pics('core'), 'core');
+      const spine = checkOnce(out, frames, pics('spine'), 'spine');
+      if (core.report.poser.name !== 'core') probes.push(`${name}: --poser core was posed through ${core.report.poser.name}: ${core.report.poser.note}`);
+      if (spine.report.poser.name !== 'spine') probes.push(`${name}: --poser spine was posed through ${spine.report.poser.name}`);
+      const differ = checkDifferences(core, spine);
+      if (differ.length > 0) probes.push(`${name}: the check through the core and through spine-core differ on ${differ.join('; ')}`);
+      if (core.pictures.size === 0) probes.push(`${name}: the check wrote no picture, so the pictures were compared on nothing`);
+      compared += core.report.animations.reduce((n, a) => n + a.compared, 0);
+      lines += core.lines.length;
+      pictures += core.pictures.size;
+      const planted = checkOnce(out, frames, pics('planted'), 'core', droppedPiece);
+      const moved = checkDifferences(planted, spine);
+      if (moved.length === 0) probes.push(`${name}: a core poser dropping one piece of every frame checked the same as spine-core`);
+      else reds.push(name);
+    }
+    if (galleryBuilds.length === 0) probes.push('RH05 built no gallery row, so no check was run both ways');
+    figures =
+      `${galleryBuilds.length} gallery row(s), each checked against the first and middle frame of every set of its own render, through the core and through spine-core: ${compared} compared frame(s), ` +
+      `${lines} report line(s) and ${pictures} picture(s) identical but the poser line, check.json identical but its poser; a core poser dropping the first ` +
+      `drawn piece of every frame is red on ${reds.length} of ${galleryBuilds.length} (${reds.join(', ')})`;
+    const held = probes.length === 0 && reds.length === galleryBuilds.length;
+    say(
+      'CH01_CHECK_THROUGH_THE_CORE_IS_THE_CHECK_THROUGH_SPINE_CORE_ON_EVERY_GALLERY_ROW',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #968: check scores a candidate by drawing it, so a poser that drew one pixel differently would move every figure it ' +
+        'reports; the plant is what shows the check goes through the core at all',
+    );
+  }
+
+  {
+    const probes: string[] = [];
+    let figures = '';
+    const first = galleryBuilds[0];
+    if (first === undefined) probes.push('no gallery build to check');
+    else {
+      // CH01's reduced copy of the row's render — the first and middle frame of every set.
+      const frames = join(dirname(first.out), 'ch01-frames');
+      const check = (candidate: string, label: string, extra: string[] = []): { run: ReturnType<typeof runCli>; json: string; pics: string } => {
+        const json = join(work, `ch02-${label}.json`);
+        const pics = join(work, `ch02-${label}-pictures`);
+        return { run: runCli(['check', '--candidate', candidate, '--frames', frames, '--json', json, '--out', pics, ...extra]), json, pics };
+      };
+      const named = (stdout: string): string => stdout.split('\n').find((l) => l.startsWith('  poser      '))?.slice('  poser      '.length) ?? '(no poser line)';
+      const recorded = (run: { json: string; pics: string }): string => {
+        const report = existsSync(run.json) ? (JSON.parse(readFileSync(run.json, 'utf8')) as { poser?: { name?: string } }) : {};
+        const sidecar = join(run.pics, FRAMES_SIDECAR);
+        const pictures = existsSync(sidecar) ? (JSON.parse(readFileSync(sidecar, 'utf8')) as Record<string, { poser?: { name?: string } }>) : {};
+        return `${report.poser?.name ?? '(none)'}/${pictures[COMPARISON_FIELD]?.poser?.name ?? '(none)'}`;
+      };
+      const auto = check(first.out, 'auto');
+      const autoLine = named(auto.run.stdout);
+      if (auto.run.status !== 0 || autoLine !== `rigc core — ${join(first.out, MODEL_DOCUMENT_FILE)}` || recorded(auto) !== 'core/core') {
+        probes.push(`a rigc build checked with exit ${auto.run.status}, poser line ${JSON.stringify(autoLine)} and ${recorded(auto)} in check.json/the pictures' ${FRAMES_SIDECAR}`);
+      }
+      // The build's skeleton.json edited after the build, its model document unedited (RC06's plant).
+      const edited = join(dirname(first.out), 'ch02-edited');
+      cpSync(first.out, edited, { recursive: true });
+      const skeletonPath = join(edited, 'skeleton.json');
+      const skeleton = JSON.parse(readFileSync(skeletonPath, 'utf8')) as { bones: Array<Record<string, unknown>> };
+      const bone = skeleton.bones.find((b) => b.parent !== undefined) ?? skeleton.bones[0];
+      bone.x = (typeof bone.x === 'number' ? bone.x : 0) + 7;
+      writeFileSync(skeletonPath, JSON.stringify(skeleton, null, 2));
+      const found = createHash('sha256').update(readFileSync(skeletonPath)).digest('hex');
+      const digest = (JSON.parse(readFileSync(join(edited, MODEL_DOCUMENT_FILE), 'utf8')) as { spine: { sha256: string } }).spine.sha256;
+      const fallback = check(edited, 'edited');
+      const line = named(fallback.run.stdout);
+      if (fallback.run.status !== 0 || !line.startsWith('spine-core — the core refused ') || !line.includes('is not the skeleton.json') || !line.includes(found) || !line.includes(digest) || recorded(fallback) !== 'spine/spine') {
+        probes.push(`an edited skeleton.json beside its build's document checked with exit ${fallback.run.status}, poser line ${JSON.stringify(line)} and ${recorded(fallback)}`);
+      }
+      const spine = check(edited, 'edited-spine', ['--poser', 'spine']);
+      const unnamed = (stdout: string): string => stdout.split('\n').filter((l) => !l.startsWith('  poser      ') && !l.startsWith('rigc: wrote ') && !l.includes(' -> ')).join('\n');
+      if (spine.run.status !== 0 || unnamed(spine.run.stdout) !== unnamed(fallback.run.stdout)) probes.push('the fallback check and --poser spine on the edited pair print different reports');
+      const scored = (json: string): string => (existsSync(json) ? JSON.stringify((JSON.parse(readFileSync(json, 'utf8')) as { animations: unknown }).animations) : '');
+      if (scored(fallback.json) === '' || scored(fallback.json) === scored(auto.json)) probes.push(`bone "${String(bone.name)}" moved 7 units and the report did not move, so the fallback was not shown to check the edited file`);
+      const forced = check(edited, 'edited-core', ['--poser', 'core']);
+      if (forced.run.status !== 2 || !forced.run.stderr.includes('rigc check: --poser core: the core refused ') || !forced.run.stderr.includes('is not the skeleton.json') || existsSync(forced.json) || existsSync(forced.pics)) {
+        probes.push(`--poser core on the edited pair exited ${forced.run.status}, wrote ${existsSync(forced.json) || existsSync(forced.pics) ? 'output' : 'nothing'} and said ${JSON.stringify(forced.run.stderr.trim().split('\n')[0])}`);
+      }
+      figures =
+        `${first.name} checks with the poser line "rigc core — …/${MODEL_DOCUMENT_FILE}" and poser "core" in check.json and the pictures' ${FRAMES_SIDECAR}; ` +
+        `bone "${String(bone.name)}" x +7 in a copy of its skeleton.json (hashing to ${found.slice(0, 12)}… where the document records ${digest.slice(0, 12)}…) checks through spine-core naming both digests, ` +
+        'its figures moved from the unedited build\'s and equal to --poser spine\'s, and --poser core exits 2 by name, nothing written';
+    }
+    const held = probes.length === 0;
+    say(
+      'CH02_THE_CHECK_NAMES_ITS_POSER_AND_AN_EDITED_SKELETON_FALLS_BACK_TO_SPINE_CORE_NAMING_THE_DIGESTS',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #968: two posers behind one seam are two opinions about one pose, so which one a check was scored through has to be ' +
+        'said where the report is read; and an edited Spine file is checked as the file, not as the build\'s document',
+    );
+  }
+
+  {
+    const probes: string[] = [];
+    let figures = '';
+    const first = galleryBuilds[0];
+    if (first === undefined) probes.push('no gallery build to check');
+    else {
+      // CH01's reduced copy of the row's render — the first and middle frame of every set.
+      const frames = join(dirname(first.out), 'ch01-frames');
+      const bare = join(dirname(first.out), 'ch03-no-model');
+      cpSync(first.out, bare, { recursive: true });
+      rmSync(join(bare, MODEL_DOCUMENT_FILE));
+      const named = (stdout: string): string => stdout.split('\n').find((l) => l.startsWith('  poser      '))?.slice('  poser      '.length) ?? '(no poser line)';
+      const plain = runCli(['check', '--candidate', bare, '--frames', frames]);
+      const line = named(plain.stdout);
+      if (plain.status !== 0 || !line.startsWith(`spine-core — no ${MODEL_DOCUMENT_FILE} beside `)) probes.push(`a candidate with no model document checked with exit ${plain.status} and poser line ${JSON.stringify(line)}`);
+      const forced = runCli(['check', '--candidate', bare, '--frames', frames, '--poser', 'core']);
+      if (forced.status !== 2 || !forced.stderr.includes(`rigc check: --poser core: no ${MODEL_DOCUMENT_FILE} beside `)) probes.push(`--poser core with no model document exited ${forced.status}: ${JSON.stringify(forced.stderr.trim().split('\n')[0])}`);
+      const bogus = runCli(['check', '--candidate', first.out, '--frames', frames, '--poser', 'bogus']);
+      if (bogus.status !== 2 || !bogus.stderr.includes('--poser "bogus": known posers are core, spine')) probes.push(`check --poser bogus exited ${bogus.status}: ${JSON.stringify(bogus.stderr.trim().split('\n')[0])}`);
+      // Handed over as text: no directory to look for a model document in.
+      const texts = {
+        skeletonText: readFileSync(join(first.out, 'skeleton.json'), 'utf8'),
+        atlasText: readFileSync(join(first.out, 'skeleton.atlas'), 'utf8'),
+        atlasDir: first.out,
+        framesDir: frames,
+      };
+      const inMemory = checkAgainstFrames(texts);
+      if (inMemory.poser.name !== 'spine' || !inMemory.poser.note.startsWith('spine-core — the candidate was handed to check as text')) probes.push(`a candidate handed over as text was posed through ${JSON.stringify(inMemory.poser)}`);
+      let refused = '';
+      try {
+        checkAgainstFrames({ ...texts, poser: 'core' });
+      } catch (err) {
+        if (err instanceof PoserChoiceError) refused = err.message;
+        else throw err;
+      }
+      if (!refused.startsWith('--poser core: the candidate was handed to check as text')) probes.push(`poser: 'core' on a candidate handed over as text was not refused by name (${JSON.stringify(refused)})`);
+      figures =
+        `a copy of ${first.name} without its ${MODEL_DOCUMENT_FILE} checks with ${JSON.stringify(line.split(' beside ')[0])} and --poser core there exits 2 by name; ` +
+        `--poser bogus exits 2 naming the posers; a candidate handed to checkAgainstFrames as text reads ${JSON.stringify(inMemory.poser.note.slice(0, 60))}…, and poser 'core' on it throws PoserChoiceError`;
+    }
+    const held = probes.length === 0;
+    say(
+      'CH03_A_CANDIDATE_WITH_NO_MODEL_DOCUMENT_CHECKS_THROUGH_SPINE_CORE_BY_NAME',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #968: a Spine export carries no document for the core to pose, so it is checked through spine-core — and said, ' +
+        'because a fallback nobody can see is the silent second opinion the seam exists to prevent',
+    );
+  }
+
   rmSync(work, { recursive: true, force: true });
   return bad;
 }
