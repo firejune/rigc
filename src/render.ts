@@ -108,7 +108,7 @@ import { Plate, readPlate, type RGBA } from '../tools/plate.ts';
 import { pageFootprint } from './atlas.ts';
 import { CoreInputError } from './core/index.ts';
 import { MODEL_DOCUMENT_FILE } from './model.ts';
-import { corePoser, SlotSubsetError, subsetOver } from './render_core.ts';
+import { corePoser, inactiveBoneSnapshot, SlotSubsetError, subsetOver, unposedBones } from './render_core.ts';
 
 /** Opaque, and light: both of rung 3's parts are dark slate, so is every ground. */
 export const BACKGROUND: RGBA = [232, 232, 232, 255];
@@ -534,9 +534,17 @@ export interface BoneSnapshot {
   scaleY: number;
 }
 
-/** Every bone's world transform in the skeleton's own declaration order. */
+/**
+ * Every bone's world transform in the skeleton's own declaration order — a bone
+ * the posed skin leaves unposed (inactive, or below an inactive bone) written as the zero transform
+ * (`inactiveBoneSnapshot` in `./render_core.ts`: it is not posed, and what a
+ * constraint left in its matrix is not a pose — issue #968).
+ */
 export function boneSnapshots(skeleton: Skeleton): BoneSnapshot[] {
+  const unposed = unposedBones(skeleton.bones.map((bone) => ({ name: bone.data.name, parent: bone.parent?.data.name ?? null, active: bone.active })));
   return skeleton.bones.map((bone) => {
+    // Not posed under this skin: the seam's zero snapshot (`inactiveBoneSnapshot`, issue #968).
+    if (unposed.has(bone.data.name)) return inactiveBoneSnapshot(bone.data.name);
     const pose = bone.appliedPose;
     return {
       name: bone.data.name,

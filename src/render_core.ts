@@ -166,6 +166,51 @@ export function subsetOver(
 }
 
 // ---------------------------------------------------------------------------
+// a bone the posed skin leaves inactive, spelled once for both posers
+// ---------------------------------------------------------------------------
+
+/**
+ * The snapshot of a bone the posed skin leaves UNPOSED — inactive itself (a
+ * skin-required bone the skin does not name) or below an inactive bone: the
+ * zero transform, every number `0` (issue #968).
+ *
+ * ⚠️ "Below an inactive bone" is the half the runtime's flag does not say. A
+ * bone that is not skin-required reads `active` true under an inactive parent
+ * (measured: `arm` skin-required and unnamed, its child `hand` not
+ * skin-required — spine-core reads `arm=false hand=true`), yet its matrix is
+ * never computed: it stays the zero matrix over every frame unless a
+ * constraint writes into it. So the predicate is the bone's own flag and every
+ * ancestor's (`unposedBones`).
+ *
+ * ⭐ Why the seam defines it rather than relaying either runtime. An inactive
+ * bone is not posed: neither poser computes its world transform, so its
+ * matrix holds whatever a constraint listing it happened to write into a zero
+ * matrix. Measured on hand-written rigs under no skin (a skin-required `arm`
+ * and its child `hand`, both inactive): a one-bone ik on `hand` left
+ * spine-core's matrix at zeros and the core's at NaN; a two-bone ik on `arm,
+ * hand` left spine-core's `b` and `d` at `-0` — so `getWorldRotationY` read
+ * −179.99999734 (`atan2(−0, …)` at the runtime's pi) — and the core's at `+0`,
+ * reading 0; a world transform constraint wrote `worldX` 19.99999979 and a
+ * `-0` into both alike. The private corpus met the second case on two rigs:
+ * 508 rotation readings of 179.99999734 against 0, every pixel identical. None
+ * of those numbers is a pose — a rotation of ±180 is the sign of a zero, and
+ * the core's NaN the same degenerate arithmetic taken another way — so the
+ * snapshot says what is true of the bone, that it is not posed, in both
+ * posers alike. The drawn pieces are untouched: they are posed vertices, not
+ * snapshots.
+ */
+export function inactiveBoneSnapshot(name: string): BoneSnapshot {
+  return { name, worldX: 0, worldY: 0, a: 0, b: 0, c: 0, d: 0, rotationX: 0, rotationY: 0, scaleX: 0, scaleY: 0 };
+}
+
+/** The bones the posed skin leaves unposed — inactive, or below an inactive bone — from each bone's parent and flag, parents first. */
+export function unposedBones(bones: ReadonlyArray<{ name: string; parent: string | null; active: boolean }>): Set<string> {
+  const out = new Set<string>();
+  for (const b of bones) if (!b.active || (b.parent !== null && out.has(b.parent))) out.add(b.name);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // the core poser
 // ---------------------------------------------------------------------------
 
@@ -286,8 +331,9 @@ function corePosed(input: CoreInput, pose: RawPose): Posed {
   };
   return {
     pieces: (draw: DrawOptions): Piece[] => pieces(input, pose, draw, regionsOf(), tintOf, darkOf),
-    bones: (): BoneSnapshot[] =>
-      pose.bones.map((b) => ({
+    bones: (): BoneSnapshot[] => {
+      const unposed = unposedBones(pose.bones);
+      return pose.bones.map((b) => !unposed.has(b.name) ? ({
         name: b.name,
         worldX: b.worldX,
         worldY: b.worldY,
@@ -299,7 +345,8 @@ function corePosed(input: CoreInput, pose: RawPose): Posed {
         rotationY: b.rotationY,
         scaleX: b.scaleX,
         scaleY: b.scaleY,
-      })),
+      }) : inactiveBoneSnapshot(b.name));
+    },
     attachments: (): AttachmentPose[] =>
       pose.drawn.map((d) => ({ slot: d.slot, attachment: d.attachment, vertices: [...d.vertices], color: tintOf(d) })),
   };

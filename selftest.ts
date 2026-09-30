@@ -428,6 +428,7 @@ import {
   viewportFor,
   viewportOfSize,
   type AttachmentPose,
+  type BoneSnapshot,
   type Footprint,
   type Frame,
   type FramesSidecar,
@@ -74903,7 +74904,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH07 and RC01–RC06 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH07 and RC01–RC07 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -75519,6 +75520,87 @@ function runRenderHashesSuite(): number | null {
       held,
       probeDetail(held, probes, figures),
       'issue #968: the pair and the document are one build output, and the render drew an edited Spine file from the document it was built with — the build\'s rig, exit 0, where RF89/RF91/RF93 expect the file\'s own refusal. The digest is the binding and the fallback is named',
+    );
+  }
+
+  {
+    // RC07 — a bone the posed skin leaves unposed: `arm` skin-required and named by no skin the render poses,
+    // `hand` below it (not skin-required, so the runtime's flag reads it active), and a two-bone ik over both
+    // that writes into their zero matrices. Measured: spine-core leaves `hand`'s b and d at -0 (rotationY
+    // -179.99999734), the core at +0 (rotationY 0); a one-bone ik on `hand` leaves spine-core's at zeros and
+    // the core's at NaN. The seam writes every unposed bone as the zero transform (`inactiveBoneSnapshot`).
+    const probes: string[] = [];
+    let figures = '';
+    const makeProbe = (label: string, ik: string[]): { dirs: ProbeDirs; status: number | null; stderr: string } => {
+      const dirs = writeProbeRig({
+        bones: [
+          { name: 'root' },
+          { name: 'mid', parent: 'root', x: 3, length: 5 },
+          { name: 'tgt', parent: 'root', x: 20, y: 9 },
+          { name: 'arm', parent: 'mid', x: 10, y: 4, rotation: 30, length: 8, skin: true },
+          { name: 'hand', parent: 'arm', x: 8, length: 4 },
+        ],
+        slots: [{ name: 'block', bone: 'root', attachment: 'block' }, { name: 'marker', bone: 'hand', attachment: 'marker' }],
+        skins: { default: { block: { block: { image: 'block.png' } } }, extra: { attachments: { marker: { marker: { image: 'marker.png' } } }, bones: ['arm'] } },
+        constraints: [{ type: 'ik', name: `ik-${label}`, bones: ik, target: 'tgt' }],
+      });
+      const motionPath = join(dirs.dir, 'probe.motion.json');
+      writeFileSync(motionPath, `${JSON.stringify({ spec: 'rigc-motion/1', archetype: 'static_probe', cut: 'static_probe', easings: {}, animations: { spin: { duration: 1, loop: false, tracks: [{ bone: 'tgt', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [170] }] }] } } }, null, 2)}\n`);
+      const build = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir, '--copy-images']);
+      return { dirs, status: build.status, stderr: build.stderr };
+    };
+    const zero = (b: BoneSnapshot | undefined): boolean => b !== undefined && [b.a, b.b, b.c, b.d, b.worldX, b.worldY, b.rotationX, b.rotationY, b.scaleX, b.scaleY].every((v) => Object.is(v, 0));
+    const read: string[] = [];
+    for (const [label, ik] of [['two-bone', ['arm', 'hand']], ['one-bone', ['hand']]] as const) {
+      const probe = makeProbe(label, [...ik]);
+      if (probe.status !== 0) {
+        probes.push(`the ${label} probe did not build: ${probe.stderr.trim().split('\n')[0]}`);
+        continue;
+      }
+      const out = probe.dirs.outDir;
+      const { data } = loadPosable(join(out, 'skeleton.json'), join(out, 'skeleton.atlas'), out);
+      const choice = candidatePosers(data, join(out, 'skeleton.json'), join(out, 'skeleton.atlas'), undefined);
+      if (choice.core === null) {
+        probes.push(`the ${label} probe did not choose the core: ${choice.why}`);
+        continue;
+      }
+      // What each runtime holds for `hand` under no skin, before the seam's rule: the reason it exists.
+      const sk = new Skeleton(data);
+      sk.setupPose();
+      sk.update(0);
+      sk.updateWorldTransform(Physics.reset);
+      const spineHand = sk.findBone('hand')?.appliedPose;
+      const coreHand = poseRawSetup(underSkin(readModel(readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8')), 'default')).bones.find((b) => b.name === 'hand');
+      const sign = (v: number | undefined): string => (v === undefined ? '?' : Object.is(v, -0) ? '-0' : String(v));
+      const held = `spine-core b ${sign(spineHand?.b)}, core b ${sign(coreHand?.b)}`;
+      if (spineHand !== undefined && coreHand !== undefined && Object.is(spineHand.b, coreHand.b) && Object.is(spineHand.d, coreHand.d)) {
+        probes.push(`the ${label} probe's runtimes agree on hand's matrix (${held}), so it does not exercise the rule`);
+      }
+      const bones = (poser: Poser): Array<BoneSnapshot[] | null> => sampleAnimation(poser, 'spin', PROTOCOL_FPS, { bones: true }).map((f) => f.bones ?? null);
+      const a = bones(choice.core);
+      const b = bones(choice.spine);
+      if (JSON.stringify(a.map((f) => f?.map((x) => [x.name, ...Object.values(x).slice(1).map((v) => (Object.is(v, -0) ? '-0' : v))]))) !== JSON.stringify(b.map((f) => f?.map((x) => [x.name, ...Object.values(x).slice(1).map((v) => (Object.is(v, -0) ? '-0' : v))])))) {
+        probes.push(`the ${label} probe's bone snapshots differ between the posers`);
+      }
+      if (!a.every((f) => zero(f?.find((x) => x.name === 'hand')) && zero(f?.find((x) => x.name === 'arm')))) probes.push(`the ${label} probe's unposed bones are not the zero snapshot in every frame`);
+      if (a.every((f) => zero(f?.find((x) => x.name === 'mid')))) probes.push(`the ${label} probe's posed bone "mid" was zeroed too`);
+      const auto = runCli(['render', '--candidate', out, '--geometry', '--out', join(work, `rc07-${label}`)]);
+      const spine = runCli(['render', '--candidate', out, '--geometry', '--out', join(work, `rc07-${label}-spine`), '--poser', 'spine']);
+      const line = poserLine(auto.stdout);
+      const differ = digestDifferences(dirDigests(join(work, `rc07-${label}`)), dirDigests(join(work, `rc07-${label}-spine`)));
+      if (auto.status !== 0 || spine.status !== 0 || !line.startsWith('rigc core — ') || differ.length > 0) probes.push(`the ${label} probe rendered with exits ${auto.status}/${spine.status}, poser line ${JSON.stringify(line)}, differing on ${differ.join(', ') || 'nothing'}`);
+      read.push(`${label} ik (${held})`);
+      rmSync(probe.dirs.dir, { recursive: true, force: true });
+    }
+    figures =
+      `a skin-required "arm" no posed skin names and its child "hand" (flagged active, never posed), under ${read.join('; ')}: both posers write the zero snapshot for ` +
+      'the two unposed bones in every frame and the posed ones as posed, and `render --geometry` through the core is byte-identical to --poser spine';
+    const held = probes.length === 0 && read.length === 2;
+    say(
+      'RC07_A_BONE_THE_POSED_SKIN_LEAVES_UNPOSED_IS_THE_ZERO_SNAPSHOT_IN_BOTH_POSERS',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #968, the private corpus: two rigs read 508 bone rotations of 179.99999734 through spine-core and 0 through the core, every pixel equal — the sign of a zero in an unposed bone\'s matrix, which a constraint over it wrote. A value neither runtime poses is defined by the seam, not relayed from one of them',
     );
   }
 
