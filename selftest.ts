@@ -66854,6 +66854,303 @@ function srcPopulation(root: string): Map<string, string> {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// the seeded generator every random population draws from (issue #952)
+// ---------------------------------------------------------------------------
+
+/**
+ * The selftest's seeded generator: Marsaglia's xorshift32 with the shift
+ * triple (13, 17, 5) — "Xorshift RNGs", Journal of Statistical Software 8(14),
+ * 2003, which lists that triple among the full-period ones. The step is a
+ * bijection on the 2^32 − 1 nonzero 32-bit states with all of them on one
+ * cycle, so the period is 2^32 − 1 = 4,294,967,295 from every seed — walked
+ * once from state 1 back to state 1 in 4,294,967,295 steps when this was
+ * written — and, the draw being the state, no two draws within a period are
+ * equal. The seed enters through murmur3's 32-bit finaliser (`fmix32`), itself
+ * a bijection with 0 its one fixed point, so neighbouring seeds (95621,
+ * 95622, …) do not start on neighbouring states, whose first draws the linear
+ * step would keep correlated. Every operation is a 32-bit integer operation
+ * (`^`, `<<`, `>>>`, `Math.imul`) and the draw is the state over 2^32, exact
+ * in a double: one seed is one sequence on every machine (`RG02`).
+ *
+ * ⚠️ What it replaced (issue #952): `s = (s * 1103515245 + 12345) % 2^31`
+ * carried in doubles, copied three times. The product reaches 2^61, past the
+ * 53 bits a double holds exactly, so the multiplication rounded and the map
+ * was not the LCG its constants name (period 2^31): from every seed the file
+ * used, the orbit fell within 927 to 8,888 draws into one cycle of 10,466
+ * states, so a population drawing more than that re-drew its own sequence —
+ * the constraint populations of 1,200, 400 and 900 rigs held 437, 102 and 176
+ * distinct rigs. `RG03` holds the old map to the probe this one passes.
+ *
+ * Each generator made here is recorded with the draws taken from it, so that
+ * `RG01` measures the populations that actually ran rather than a list kept
+ * beside them.
+ */
+const SEEDED_DRAWS: Array<{ seed: number; draws: number }> = [];
+const XORSHIFT32_PERIOD = 2 ** 32 - 1;
+
+/** murmur3's 32-bit finaliser: a bijection on 32-bit integers, 0 its fixed point. */
+function fmix32(h: number): number {
+  h >>>= 0;
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+/** One xorshift32 step (13, 17, 5) on a nonzero 32-bit state. */
+function xorshift32Step(x: number): number {
+  x ^= x << 13;
+  x ^= x >>> 17;
+  x ^= x << 5;
+  return x >>> 0;
+}
+
+/** The first state of a seed, or a refusal naming it: 0 is the step's fixed point, and a seed past 32 bits would be read as another. */
+function seededState(seed: number): number {
+  if (!Number.isInteger(seed) || seed < 1 || seed > XORSHIFT32_PERIOD) {
+    throw new Error(`seededRandom: seed ${seed} is not an integer from 1 to ${XORSHIFT32_PERIOD} — 0 is xorshift32's fixed point, where every draw is 0, and a seed past 32 bits would be read as another seed`);
+  }
+  return fmix32(seed);
+}
+
+/** The draws of one seed in (0, 1), not recorded — what the `RG` controls probe with. */
+function unrecordedRandom(seed: number): () => number {
+  let x = seededState(seed);
+  return () => {
+    x = xorshift32Step(x);
+    return x / 4294967296;
+  };
+}
+
+/** The draws of one seed in (0, 1), recorded in `SEEDED_DRAWS` — what every population in this file draws from. */
+function seededRandom(seed: number): () => number {
+  const draw = unrecordedRandom(seed);
+  const record = { seed, draws: 0 };
+  SEEDED_DRAWS.push(record);
+  return () => {
+    record.draws += 1;
+    return draw();
+  };
+}
+
+/** The generator this one replaced, kept as `RG03`'s plant: the float64 product rounds past 2^53. */
+function replacedLcg(seed: number): () => number {
+  let s = seed;
+  return () => {
+    s = (s * 1103515245 + 12345) % 2147483648;
+    return s / 2147483648;
+  };
+}
+
+/** The first draw (1-based) equal to an earlier one within `length` draws, or null — the probe `RG01` passes and `RG03` fails. */
+function firstRepeatedDraw(draw: () => number, length: number): number | null {
+  const seen = new Set<number>();
+  for (let i = 1; i <= length; i++) {
+    const v = draw();
+    if (seen.has(v)) return i;
+    seen.add(v);
+  }
+  return null;
+}
+
+/** The replaced map's first repeated draw from a seed (1-based), by Brent's cycle search on its states — no bound assumed. */
+function replacedFirstRepeat(seed: number): { tail: number; period: number } {
+  const step = (s: number): number => (s * 1103515245 + 12345) % 2147483648;
+  let power = 1;
+  let lambda = 1;
+  let tortoise = step(seed);
+  let hare = step(tortoise);
+  while (tortoise !== hare) {
+    if (power === lambda) {
+      tortoise = hare;
+      power *= 2;
+      lambda = 0;
+    }
+    hare = step(hare);
+    lambda += 1;
+  }
+  let t = step(seed);
+  let h = step(seed);
+  for (let i = 0; i < lambda; i++) h = step(h);
+  let tail = 0;
+  while (t !== h) {
+    t = step(t);
+    h = step(h);
+    tail += 1;
+  }
+  return { tail, period: lambda };
+}
+
+/** xorshift32 from its definition in BigInt arithmetic — a second implementation sharing no code with the one above. */
+function bigintXorshift(seed: number, shifts: readonly [bigint, bigint, bigint] = [13n, 17n, 5n]): () => number {
+  const M = 0xffffffffn;
+  let h = BigInt(seed) & M;
+  h ^= h >> 16n;
+  h = (h * 0x85ebca6bn) & M;
+  h ^= h >> 13n;
+  h = (h * 0xc2b2ae35n) & M;
+  h ^= h >> 16n;
+  let x = h;
+  return () => {
+    x = (x ^ (x << shifts[0])) & M;
+    x = x ^ (x >> shifts[1]);
+    x = (x ^ (x << shifts[2])) & M;
+    return Number(x) / 4294967296;
+  };
+}
+
+/** `n` draws as their float64 bytes. */
+function drawBytes(draw: () => number, n: number): Buffer {
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) out[i] = draw();
+  return Buffer.from(out.buffer);
+}
+
+/**
+ * The generator's own suite (issue #952). Registered after every suite that
+ * draws, so `RG01` reads the draws the run actually took; a partial run that
+ * ran none of them prints `RG01` as a SKIP and a HOLE.
+ */
+function runSeededRandomSuite(): number {
+  console.log('\n── seeded-random: every random population draws from xorshift32, whose period exceeds every population (issue #952) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const bySeed = new Map<number, { instances: number; draws: number; most: number }>();
+  for (const r of SEEDED_DRAWS) {
+    const was = bySeed.get(r.seed) ?? { instances: 0, draws: 0, most: 0 };
+    bySeed.set(r.seed, { instances: was.instances + 1, draws: was.draws + r.draws, most: Math.max(was.most, r.draws) });
+  }
+  const seeds = [...bySeed.keys()].sort((a, b) => a - b);
+  // Each seed in use is drawn past both what the run took from it and the replaced map's first repeat from it.
+  const reach = new Map(seeds.map((s) => {
+    const old = replacedFirstRepeat(s);
+    return [s, { length: Math.max(bySeed.get(s)?.most ?? 0, old.tail + old.period + 1), old }] as const;
+  }));
+
+  // --- RG01: every seed the run drew from, drawn past the old period and past its use, repeats nothing --
+  if (seeds.length === 0) {
+    console.log('  SKIP  RG01 did not run: no suite in this run drew from seededRandom (name core or deform-core beside seeded-random in --only).');
+    console.log('          ⚠️ This is a HOLE in this run, not a pass — that no population re-drew its own sequence was not measured here.');
+  } else {
+    const probes: string[] = [];
+    let longest = { seed: 0, draws: 0 };
+    let total = 0;
+    let probed = 0;
+    for (const s of seeds) {
+      const use = bySeed.get(s);
+      const r = reach.get(s);
+      if (use === undefined || r === undefined) continue;
+      total += use.draws;
+      if (use.most > longest.draws) longest = { seed: s, draws: use.most };
+      if (use.most >= XORSHIFT32_PERIOD) probes.push(`seed ${s}: one generator drew ${use.most} times, not below the period ${XORSHIFT32_PERIOD}`);
+      const at = firstRepeatedDraw(unrecordedRandom(s), r.length);
+      probed += r.length;
+      if (at !== null) probes.push(`seed ${s}: draw ${at} of ${r.length} repeats an earlier one`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'RG01_EVERY_SEED_THE_RUN_DREW_FROM_REPEATS_NOTHING_PAST_THE_OLD_PERIOD_AND_ITS_OWN_USE',
+      ok,
+      probeDetail(ok, probes, `${SEEDED_DRAWS.length} generator(s) over ${seeds.length} seed(s) took ${total} draws this run, the most from one generator ${longest.draws} (seed ${longest.seed}); each seed drawn afresh to the larger of its own use and the replaced map's first repeat from it — ${probed} draws in all — and not one draw equals an earlier one of its seed; the period is ${XORSHIFT32_PERIOD}`),
+      'issue #952: the replaced generator fell into one cycle of 10,466 states from every seed, so a population drawing more re-drew itself and counted the same rig more than once. Read off the generators the run made, not off a list of seeds kept beside them',
+    );
+  }
+
+  // --- RG02: one seed is one sequence — two generators, and a second implementation, byte for byte --
+  {
+    const probes: string[] = [];
+    const fixed = [1, XORSHIFT32_PERIOD];
+    const all = [...new Set([...fixed, ...seeds])].sort((a, b) => a - b);
+    const REFERENCE_DRAWS = 4096;
+    let compared = 0;
+    for (const s of all) {
+      const n = reach.get(s)?.length ?? REFERENCE_DRAWS;
+      const a = drawBytes(unrecordedRandom(s), n);
+      const b = drawBytes(unrecordedRandom(s), n);
+      if (!a.equals(b)) probes.push(`seed ${s}: two generators differ within ${n} draws`);
+      const ref = drawBytes(bigintXorshift(s), REFERENCE_DRAWS);
+      if (!a.subarray(0, ref.length).equals(ref)) probes.push(`seed ${s}: the BigInt implementation differs within its first ${REFERENCE_DRAWS} draws`);
+      compared += n;
+    }
+    // The plant: the reference with one shift changed must disagree, or the comparison measures nothing.
+    const plantedShift = drawBytes(bigintXorshift(1, [12n, 17n, 5n]), REFERENCE_DRAWS);
+    const planted = plantedShift.equals(drawBytes(unrecordedRandom(1), REFERENCE_DRAWS));
+    if (planted) probes.push('the BigInt reference with shift 13 made 12 still agrees with the generator');
+    const ok = probes.length === 0;
+    say(
+      'RG02_ONE_SEED_IS_ONE_SEQUENCE_BYTE_FOR_BYTE_AND_A_SECOND_IMPLEMENTATION_AGREES',
+      ok,
+      probeDetail(ok, probes, `${all.length} seed(s) — 1, ${XORSHIFT32_PERIOD} and every seed this run drew from — each drawn twice to the same float64 bytes over ${compared} draws, and the first ${REFERENCE_DRAWS} of each equal to a BigInt implementation written from the definition; that implementation with its first shift 12 instead of 13 disagrees`),
+      'determinism is a contract (A18\'s rule for the selftest\'s own inputs): the same seed has to be the same population on every machine, and a 32-bit integer step whose draw is exact in a double is what makes that true; the BigInt twin shares no operator with it',
+    );
+  }
+
+  // --- RG03: the plant — the replaced map, under RG01's probe, repeats on every seed --
+  {
+    const probes: string[] = [];
+    const checked = seeds.length > 0 ? seeds : [1, 7, 9381, 12345];
+    const cycles = new Set<number>();
+    let earliest = { seed: 0, at: Number.POSITIVE_INFINITY };
+    let latest = { seed: 0, at: 0 };
+    for (const s of checked) {
+      const old = reach.get(s)?.old ?? replacedFirstRepeat(s);
+      const length = reach.get(s)?.length ?? old.tail + old.period + 1;
+      const at = firstRepeatedDraw(replacedLcg(s), length);
+      cycles.add(old.period);
+      if (at === null) probes.push(`seed ${s}: the replaced map repeated nothing within ${length} draws`);
+      else {
+        if (at !== old.tail + old.period + 1) probes.push(`seed ${s}: the probe found the repeat at draw ${at}, the cycle search at ${old.tail + old.period + 1}`);
+        if (at < earliest.at) earliest = { seed: s, at };
+        if (at > latest.at) latest = { seed: s, at };
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'RG03_THE_REPLACED_GENERATOR_REPEATS_UNDER_THE_SAME_PROBE_ON_EVERY_SEED',
+      ok,
+      probeDetail(ok, probes, `the replaced \`(s * 1103515245 + 12345) % 2^31\` in doubles, over ${checked.length} seed(s): each repeats at the draw the cycle search predicts, from draw ${earliest.at} (seed ${earliest.seed}) to draw ${latest.at} (seed ${latest.seed}), onto cycle length(s) ${[...cycles].sort((a, b) => a - b).join(', ')} — the probe RG01 passes is red on it`),
+      'a gate nobody has seen fail is not a gate: RG01\'s probe is only worth its green if it goes red on the generator the card measured, at the draw a second method (Brent\'s cycle search) predicts',
+    );
+  }
+
+  // --- RG04: a seed that is not a 32-bit nonzero integer is refused by name --
+  {
+    const probes: string[] = [];
+    const refusals: string[] = [];
+    for (const s of [0, -1, 1.5, 2 ** 32, Number.NaN]) {
+      try {
+        unrecordedRandom(s);
+        probes.push(`seed ${s} was accepted`);
+      } catch (err) {
+        const message = (err as Error).message;
+        if (!message.startsWith(`seededRandom: seed ${s} is not an integer from 1 to ${XORSHIFT32_PERIOD}`)) probes.push(`seed ${s} refused as "${message}"`);
+        else refusals.push(String(s));
+      }
+    }
+    for (const s of [1, XORSHIFT32_PERIOD]) {
+      try {
+        const v = unrecordedRandom(s)();
+        if (!(v > 0 && v < 1)) probes.push(`seed ${s}'s first draw is ${v}, not in (0, 1)`);
+      } catch (err) {
+        probes.push(`seed ${s} was refused: ${(err as Error).message}`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'RG04_A_SEED_THAT_IS_NOT_A_NONZERO_32_BIT_INTEGER_IS_REFUSED_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `seeds ${refusals.join(', ')} each refused naming the seed and the range; 1 and ${XORSHIFT32_PERIOD}, the range's ends, accepted with a first draw inside (0, 1)`),
+      'never invent a value: seed 0 would be a generator drawing 0 for ever, and a seed past 32 bits would silently be another seed — both are refused by name rather than mapped to something nearby',
+    );
+  }
+  return bad;
+}
+
 /** The core suite: `src/core/`'s reader and setup pose, the second dumper in `tools/pose_oracle.ts`, compare's absences, the gate's instrument and the tree rule. */
 function runCoreSuite(): number {
   console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots, draw order and attachments\' world vertices, and every animation\'s bones, slots, draw order, attachments and events at its samples, every constraint kind applied in their order, and the triangles drawn under a clip, as pose-oracle/3 (issues #925, #928, #931, #936, #938, #955, #964) ──');
@@ -68190,11 +68487,7 @@ function runCoreSuite(): number {
     const probes: string[] = [];
     let figures = '';
     try {
-      let seed = 964;
-      const rnd = (): number => {
-        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-        return seed / 0x7fffffff;
-      };
+      const rnd = seededRandom(964);
       const areaOf = (v: readonly number[], t: readonly number[]): number => {
         let a = 0;
         for (let k = 0; k + 2 < t.length; k += 3) {
@@ -68231,6 +68524,7 @@ function runCoreSuite(): number {
       let worst = 0;
       let dropped = 0;
       let droppable = 0;
+      const belowResolution: string[] = [];
       const CASES = 600;
       for (let i = 0; i < CASES; i++) {
         const polygon = star(3 + Math.floor(rnd() * 10));
@@ -68273,10 +68567,15 @@ function runCoreSuite(): number {
           const planted = clipThrough(shape, v, t, uv, clipTriangles, { dropRegion: 0 });
           const short = planted === null ? runtime : runtime - areaOf(planted.vertices, planted.triangles);
           // Region 0 of the plan can lie outside every triangle; the plant has to be red wherever it covered anything.
-          if (areaOf(core.vertices, core.triangles) - areaOf(planted?.vertices ?? [], planted?.triangles ?? []) > 1e-9) {
+          // Issue #952: a region whose covered area is at or below the resolution the areas are held equal at
+          // (1e-5 of the runtime's area) cannot show when dropped — the comparison above would call that much
+          // area agreement — so it is its own class, counted and named, never a pass for the plant.
+          const covered = areaOf(core.vertices, core.triangles) - areaOf(planted?.vertices ?? [], planted?.triangles ?? []);
+          const resolution = 1e-5 * Math.max(runtime, 1);
+          if (covered > resolution) {
             droppable++;
-            if (short > 1e-5 * Math.max(runtime, 1)) dropped++;
-          }
+            if (short > resolution) dropped++;
+          } else if (covered > 1e-9) belowResolution.push(`case ${i} (${plan.kind}): region 0 covers ${covered.toExponential(2)}, the resolution ${resolution.toExponential(2)}`);
         }
       }
       if (droppable === 0) probes.push('the dropped-region plant never covered anything, so it held nothing');
@@ -68300,7 +68599,8 @@ function runCoreSuite(): number {
       figures =
         `${CASES} random star polygons of 3–12 vertices, both windings, over a quad: ${tally.pieces} cut into convex pieces (each strictly convex, over the polygon's own vertices, every one used, the areas summing to the polygon's), ` +
         `${tally.inverse} inverse, ${tally.hull} read as their hull under convex, ${tally.convex} strictly convex — the area the core draws, and the clipper's return value, equal to spine-core's on every one (worst relative area ${worst.toExponential(1)}); ` +
-        `one region dropped reads short on ${dropped} of ${droppable}; a bowtie, a self-overlapping fan and a repeated vertex of a concave or inverse clip refused by name; a repeated vertex of a convex clip draws nothing, as spine-core's does`;
+        `one region dropped reads short on ${dropped} of the ${droppable} cases where the region covers more than the resolution the areas are held equal at, ` +
+        `and ${belowResolution.length} case(s) whose region covers less are not measured by the plant${belowResolution.length > 0 ? ` (${belowResolution.join('; ')})` : ''}; a bowtie, a self-overlapping fan and a repeated vertex of a concave or inverse clip refused by name; a repeated vertex of a convex clip draws nothing, as spine-core's does`;
     } catch (err) {
       probes.push(`the probe did not run: ${(err as Error).message}`);
     }
@@ -68365,14 +68665,6 @@ function runCoreSuite(): number {
   const spineDump = (pair: { spine: string; atlas: string }, options: OracleOptions): OracleDump => dumpSkeleton(loadOracleData(pair.spine, pair.atlas, 'the timeline probe'), options);
   const exactly = (pair: { spine: string; model: string; atlas: string }, options: OracleOptions, plant: TimelinePlant = {}): ReturnType<typeof compareDumps> =>
     compareDumps(spineDump(pair, options), coreDump(readModel(pair.model, 'the timeline probe'), options, plant), { xy: 0, m: 0 });
-  /** A deterministic generator, so the probes are the same skeletons on every run. */
-  const lcg = (seed: number): (() => number) => {
-    let s = seed;
-    return () => {
-      s = (s * 1103515245 + 12345) % 2147483648;
-      return s / 2147483648;
-    };
-  };
   /**
    * The all-kinds probe: two bones per bone kind under parents turned, scaled
    * and reflected, a bone keyed by `translate` and `translatex` together and one
@@ -68384,7 +68676,7 @@ function runCoreSuite(): number {
    * five or six decimals, so off the float32 grid.
    */
   const allKindsProbe = (seed: number): { spine: string; model: string; atlas: string } => {
-    const rnd = lcg(seed);
+    const rnd = seededRandom(seed);
     const pick = <T,>(l: readonly T[]): T => l[Math.floor(rnd() * l.length)];
     const hex = (n: number): string => Array.from({ length: n }, () => Math.floor(rnd() * 256).toString(16).padStart(2, '0')).join('');
     const keysOf = (channels: number, make: () => Record<string, unknown>, count: number, reach: number, span: [number, number]): Array<Record<string, unknown>> => {
@@ -68537,7 +68829,7 @@ function runCoreSuite(): number {
     const tenths = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => cubic(k / 10, [0, curve[0], curve[2], 1]));
     if (pieces.length !== 10 || corners.some((t, i) => Math.abs(t - tenths[i]) > 1e-3)) probes.push(`${pieces.length} pieces with corners at [${corners.map((t) => t.toFixed(4)).join(', ')}], not ten at the cubic's tenths [${tenths.map((t) => t.toFixed(4)).join(', ')}]`);
     // The core, and each rejected reading as a plant, over the measurement and 24 random segments stated off the float32 grid.
-    const rnd = lcg(777);
+    const rnd = seededRandom(777);
     const segments = [one];
     for (let k = 0; k < 24; k++) {
       const t0 = Math.round(rnd() * 30) / 30;
@@ -69114,7 +69406,7 @@ function runCoreSuite(): number {
   /** A probe population: `n` pairs from `make`, each compared; the misses named (the first three) and every model kept for the census. */
   const probeModels: string[] = [];
   const population = (n: number, seed: number, make: (rnd: () => number) => { spine: string; model: string }, options: OracleOptions = ONE_SAMPLE): { exact: number; misses: string[]; samples: number } => {
-    const rnd = lcg(seed);
+    const rnd = seededRandom(seed);
     let exact = 0;
     let samples = 0;
     const misses: string[] = [];
@@ -69732,7 +70024,7 @@ function runCoreSuite(): number {
   // --- CQ02: under Physics.none a physics constraint applies nothing, and the core poses it so --
   {
     const probes: string[] = [];
-    const rnd = lcg(93802);
+    const rnd = seededRandom(93802);
     const R = within(rnd);
     const pick = pickOf(rnd);
     let withoutSame = 0;
@@ -69951,7 +70243,7 @@ function runCoreSuite(): number {
   // --- CQ06: a random population of sliders over sample animations, with ik, transform and physics among them, poses as spine-core does --
   {
     const probes: string[] = [];
-    const rnd = lcg(93806);
+    const rnd = seededRandom(93806);
     const R = within(rnd);
     const pick = pickOf(rnd);
     const BK = [...BONE_TIMELINE_KINDS];
@@ -70310,7 +70602,7 @@ function runCoreSuite(): number {
   const ckModels: string[] = [];
   /** A population of step probes: how many read exact (and with `plant`, how many a planted step leaves exact), the first misses named. */
   const stepPopulation = (n: number, seed: number, make: (rnd: () => number) => { pair: { spine: string; model: string }; options: OracleOptions }, plant?: TimelinePlant): { exact: number; planted: number; misses: string[]; samples: number } => {
-    const rnd = lcg(seed);
+    const rnd = seededRandom(seed);
     let exact = 0;
     let planted = 0;
     let samples = 0;
@@ -70523,7 +70815,7 @@ function runCoreSuite(): number {
       let planted = 0;
       let exact = 0;
       const misses: string[] = [];
-      const rnd = lcg(95621 + i);
+      const rnd = seededRandom(95621 + i);
       for (let k = 0; k < N; k++) {
         const global = rnd() < 0.3;
         const comps = someComponents(rnd);
@@ -70592,7 +70884,7 @@ function runCoreSuite(): number {
   // --- CK07: a random population of physics constraints among ik and transform, skins and two animations, steps as spine-core does --
   {
     const probes: string[] = [];
-    const rnd = lcg(95631);
+    const rnd = seededRandom(95631);
     const R = within(rnd);
     const pick = pickOf(rnd);
     const N = 150;
@@ -70851,9 +71143,12 @@ function runCoreSuite(): number {
   // one skeleton written twice — the Spine file for `dumpSkeleton` and the
   // model for `readModel` — and compared at tolerance 0 through `coreDump`,
   // most with amplifier bones ten thousand units out along a constrained
-  // bone's axes. The populations draw from `mix32`, not `lcg`: measured on
-  // this cut, `lcg` repeats after 11,154 to 16,905 draws (seeds 1, 7, 9381,
-  // 12345), and a path probe draws a hundred or more.
+  // bone's axes. The populations draw from `mix32` (mulberry32: a Weyl state
+  // with an odd increment, period 2^32), chosen on this cut because the file's
+  // shared generator of the time repeated after 11,154 to 16,905 draws (seeds
+  // 1, 7, 9381, 12345) and a path probe draws a hundred or more. Issue #952
+  // replaced that generator with `seededRandom` (xorshift32, period 2^32 − 1);
+  // these populations stay on `mix32`, the sequence they were measured on.
   // ===========================================================================
   type PathAttachmentSpec = { closed?: boolean; constantSpeed?: boolean; xy?: number[]; weighted?: Array<Array<{ bone: string; x: number; y: number; w: number }>>; lengths: number[] };
   interface PathSpec {
@@ -71672,7 +71967,7 @@ function runCoreSuite(): number {
       return { spine: JSON.stringify(file), model: JSON.stringify({ ...(JSON.parse(pair.model) as Obj), referenceScale: model }) };
     };
     const N = 50;
-    const rnd = lcg(95801);
+    const rnd = seededRandom(95801);
     let agreeing = 0;
     let moved = 0;
     let constant = 0;
@@ -72259,7 +72554,7 @@ function runCoreSuite(): number {
   // --- CD02: the deform Bézier runs its recurrence to 0.99999999, a bone channel's to its key — each on a population, each rejected reading missing --
   {
     const probes: string[] = [];
-    const rnd = lcg(9551);
+    const rnd = seededRandom(9551);
     const D = dec5(rnd);
     // One slot per curve, a 10⁵-unit run, so a percent a float32 step off is a vertex a grid step off.
     const curves = Array.from({ length: 60 }, () => {
@@ -72301,7 +72596,7 @@ function runCoreSuite(): number {
   // --- CD03: an unweighted deform population poses as spine-core does, and the double sum misses --
   {
     const probes: string[] = [];
-    const rnd = lcg(9553);
+    const rnd = seededRandom(9553);
     const D = dec5(rnd);
     let exact = 0;
     let doubleMissed = 0;
@@ -72335,7 +72630,7 @@ function runCoreSuite(): number {
   // --- CD04: a weighted deform population poses as spine-core does, and a key held as positions misses --
   {
     const probes: string[] = [];
-    const rnd = lcg(9554);
+    const rnd = seededRandom(9554);
     const D = dec5(rnd);
     let exact = 0;
     let positionsMissed = 0;
@@ -72371,7 +72666,7 @@ function runCoreSuite(): number {
   // --- CD05: a slider's deform blends from the current deform, additive and not, at setup and at a sample, as spine-core does --
   {
     const probes: string[] = [];
-    const rnd = lcg(9555);
+    const rnd = seededRandom(9555);
     const D = dec5(rnd);
     const pick = pickOf(rnd);
     let exact = 0;
@@ -72509,7 +72804,7 @@ function runCoreSuite(): number {
   // --- CD08: a sequence steps its frames by mode, index and delay as spine-core does, and the step without its epsilon misses --
   {
     const probes: string[] = [];
-    const rnd = lcg(9558);
+    const rnd = seededRandom(9558);
     const pick = pickOf(rnd);
     let exact = 0;
     let noEpsilon = 0;
@@ -72568,7 +72863,7 @@ function runCoreSuite(): number {
   // --- CD09: the draw order at a sample — a key's moves over the setup order, a restore, a slider's key — as spine-core does --
   {
     const probes: string[] = [];
-    const rnd = lcg(9559);
+    const rnd = seededRandom(9559);
     let exact = 0;
     const N = 40;
     let samples = 0;
@@ -73025,7 +73320,7 @@ function runCoreSuite(): number {
   // --- CU03: computeUvs is MeshAttachment.computeUVs — texture substitution's call — bit for bit, into a plain array and a Float32Array --
   {
     const probes: string[] = [];
-    const rnd = lcg(9671);
+    const rnd = seededRandom(9671);
     const spellings = ['0', '90', '180', '270', 'true', 'false', '45', '-90', '360', '450'];
     const N = 600;
     let plainExact = 0;
@@ -74016,7 +74311,7 @@ function runCoreSuite(): number {
   const RAW_ONE: OracleOptions = { ...ONE_SAMPLE, raw: true };
   /** A population compared raw: how many read bit-exact, and the misses `explained` does not account for, the first three named. */
   const rawPopulation = (n: number, seed: number, make: (rnd: () => number) => { spine: string; model: string }, explained: (model: string) => boolean = () => false, options: OracleOptions = RAW_ONE, plant: CorePlant = {}): { exact: number; explainedMisses: number; unexplained: string[] } => {
-    const rnd = lcg(seed);
+    const rnd = seededRandom(seed);
     let exact = 0;
     let explainedMisses = 0;
     const unexplained: string[] = [];
@@ -74408,7 +74703,7 @@ function runCoreSuite(): number {
   // --- CR07: the stepped physics population with every inherit mode reads bit-exact through --raw --
   {
     const probes: string[] = [];
-    const rnd = lcg(96631);
+    const rnd = seededRandom(96631);
     const R = within(rnd);
     const pick = pickOf(rnd);
     const N = 150;
@@ -74461,7 +74756,7 @@ function runCoreSuite(): number {
   // --- CR08: the bone channels' Bézier, the deform curve, the weighted sum and the region corners read bit-exact at a 1e9 amplifier --
   {
     const probes: string[] = [];
-    const rnd = lcg(96681);
+    const rnd = seededRandom(96681);
     const D = dec5(rnd);
     const RAW_DENSE: OracleOptions = { ...DENSE, raw: true };
     const RAW_FORTY: OracleOptions = { ...FORTY_IRR, raw: true };
@@ -74566,7 +74861,7 @@ function runCoreSuite(): number {
     const plants = { first: endPieceAsBetween('first'), last: endPieceAsBetween('last') };
     for (const bezier of [false, true]) {
       for (const f32 of [false, true]) {
-        const rnd = lcg(4242);
+        const rnd = seededRandom(4242);
         const dec = (lo: number, hi: number): number => {
           const v = Math.round((lo + rnd() * (hi - lo)) * 1e5) / 1e5;
           return f32 ? Math.fround(v) : v;
@@ -74645,7 +74940,7 @@ function runCoreSuite(): number {
   };
   /** A read-back population in `modes`, raw, and the same probes with `plant`: how many read exact each way, the first misses named. */
   const readBackRun = (modes: readonly string[], n: number, seed: number, plant: Partial<SolverRules>): { exact: number; plantedExact: number; misses: string[] } => {
-    const rnd = lcg(seed);
+    const rnd = seededRandom(seed);
     const pick = pickOf(rnd);
     let exact = 0;
     let plantedExact = 0;
@@ -74712,7 +75007,7 @@ function runCoreSuite(): number {
   {
     const probes: string[] = [];
     const N = 300;
-    const rnd = lcg(96624);
+    const rnd = seededRandom(96624);
     const R = within(rnd);
     const pick = pickOf(rnd);
     let exact = 0;
@@ -74747,7 +75042,7 @@ function runCoreSuite(): number {
     const probes: string[] = [];
     const N = 60;
     const MIXES = ['mixRotate', 'mixX', 'mixY', 'mixScaleX', 'mixScaleY', 'mixShearY'];
-    const rnd = lcg(96625);
+    const rnd = seededRandom(96625);
     const R = within(rnd);
     const pick = pickOf(rnd);
     const RAW_FORTY_IRR: OracleOptions = { phase: 'irr', samples: 40, skin: 'all', physics: 'none', dt: null, raw: true };
@@ -74805,7 +75100,7 @@ function runCoreSuite(): number {
   {
     const probes: string[] = [];
     const N = 300;
-    const rnd = lcg(96626);
+    const rnd = seededRandom(96626);
     const R = within(rnd);
     const pick = pickOf(rnd);
     const RAW_STRICT = signedOf('all', 'none', 1);
@@ -74875,24 +75170,40 @@ function runCoreSuite(): number {
   }
 
   // --- CW08: #959's transform-collapse population — a transform collapsing a bone's scale, with an ik below it — reads every bone as spine-core does --
+  //
+  // Two populations. The random one (N, seed 96628) is #959's shape as it was found. The drawn one (M, seed 96629) is the
+  // class the sign plant measures, drawn ON PURPOSE since issue #952: under the old generator the random population reached
+  // it on 2 of 400 rigs, under xorshift32 on none, so the plant's reach had been a property of one sequence. In the drawn
+  // population the transform (local target, offset 0, mix 1) sets b3's scaleY to exactly 0 BEFORE a two-bone ik whose
+  // parent is b3, and the class is stated by what the plant changes: the product of the parent's scale signs, which the
+  // solver multiplies into the child's offset angle. With scaleY 0 the scales are not uniform, so the solver reads the
+  // child's y as 0 and that angle is 0 for a child at positive x — where the plant cannot show — and π for one at
+  // negative x, so the drawn child sits at negative x. Both bones are in normal mode (the two-bone solver skips any
+  // other) and the ik's mix is above 0. Measured before this was stated: a drawn population of scaleX or scaleY 0 at
+  // any x and any mode put the plant red on 3 of 40.
   {
     const probes: string[] = [];
     const N = 400;
-    const rnd = lcg(96628);
-    const R = within(rnd);
-    const pick = pickOf(rnd);
+    const M = 40;
     const RAW_STRICT = signedOf('all', 'none', 1);
-    let exact = 0;
-    let red = 0;
-    for (let i = 0; i < N; i++) {
+    const collapseProbe = (rnd: () => number, onPurpose: boolean): { spine: string; model: string } => {
+      const R = within(rnd);
+      const pick = pickOf(rnd);
       const bones: Obj[] = [{ name: 'root' }];
       for (let j = 1; j <= 6; j++) {
-        let b: Obj = { name: `b${j}`, parent: j === 1 ? 'root' : `b${j - 1 - (j > 3 && rnd() < 0.3 ? 1 : 0)}`, x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+        const back = j > 3 && rnd() < 0.3 && !(onPurpose && j === 4) ? 1 : 0;
+        let b: Obj = { name: `b${j}`, parent: j === 1 ? 'root' : `b${j - 1 - back}`, x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
         if (rnd() < 0.4) b = skewed(rnd, b);
-        if (rnd() < 0.4) b.inherit = pick(MODES5.slice(1));
+        if (rnd() < 0.4 && !(onPurpose && (j === 3 || j === 4))) b.inherit = pick(MODES5.slice(1));
+        if (onPurpose && j === 4) b.x = -Math.abs(b.x as number) - 1;
         bones.push(b);
       }
       bones.push({ name: 't', parent: 'root', x: R(-60, 60), y: R(-60, 60) }, { name: 's', parent: 'root', x: R(-60, 60), y: R(-60, 60), rotation: R(-180, 180) }, ...amplify('b6'), ...amplify('b4'));
+      if (onPurpose) {
+        const tc: Obj = { type: 'transform', name: 'col', bones: ['b3'], source: 's', localTarget: true, properties: { scaleY: { to: { scaleY: { scale: 0, offset: 0 } } } }, mixScaleY: 1 };
+        const ik: Obj = { type: 'ik', name: 'k', bones: ['b3', 'b4'], target: 't', mix: pick([1, R(0.1, 1)]), bendPositive: rnd() < 0.5, softness: pick([0, R(0, 10)]) };
+        return constraintPair(bones, [tc, ik]);
+      }
       const prop = pick(['scaleX', 'scaleY']);
       const tc: Obj = { type: 'transform', name: 'col', bones: [pick(['b1', 'b2', 'b3'])], source: 's', properties: { [prop]: { to: { [prop]: { scale: 0, offset: pick([0, 0, 1e-5, 1e-6, 1e-4]) } } } }, [prop === 'scaleX' ? 'mixScaleX' : 'mixScaleY']: pick([1, 1, 0.99999]) };
       if (rnd() < 0.5) tc.localTarget = true;
@@ -74903,21 +75214,32 @@ function runCoreSuite(): number {
         constraints.push({ type: 'ik', name: 'k', bones: [(bones.find((b) => b.name === child) as Obj).parent as string, child], target: 't', mix: pick([1, R(0, 1)]), bendPositive: rnd() < 0.5, softness: pick([0, R(0, 10)]) });
       }
       if (rnd() < 0.3) constraints.reverse();
-      const pair = constraintPair(bones, constraints);
-      const spine = dumpSkeleton(loadOracleData(pair.spine, '', 'the cw08 probe'), RAW_STRICT);
-      const model = readModel(pair.model, 'the cw08 probe');
-      const first = strictBones(spine, coreDump(model, RAW_STRICT));
-      if (first === null) exact++;
-      else if (probes.length < 3) probes.push(`probe ${i}: ${first}`);
-      if (strictBones(spine, coreDump(model, RAW_STRICT, { solver: { ikZeroScaleSignPositive: false } })) !== null) red++;
-    }
-    if (red === 0) probes.push('a scale of 0 read as sign 0, planted back, read every probe exact — the population no longer reaches the class');
-    const ok = probes.length === 0 && exact === N;
+      return constraintPair(bones, constraints);
+    };
+    const run = (n: number, seed: number, onPurpose: boolean, label: string): { exact: number; red: number } => {
+      const rnd = seededRandom(seed);
+      let exact = 0;
+      let red = 0;
+      for (let i = 0; i < n; i++) {
+        const pair = collapseProbe(rnd, onPurpose);
+        const spine = dumpSkeleton(loadOracleData(pair.spine, '', 'the cw08 probe'), RAW_STRICT);
+        const model = readModel(pair.model, 'the cw08 probe');
+        const first = strictBones(spine, coreDump(model, RAW_STRICT));
+        if (first === null) exact++;
+        else if (probes.length < 3) probes.push(`${label} probe ${i}: ${first}`);
+        if (strictBones(spine, coreDump(model, RAW_STRICT, { solver: { ikZeroScaleSignPositive: false } })) !== null) red++;
+      }
+      return { exact, red };
+    };
+    const random = run(N, 96628, false, 'random');
+    const drawn = run(M, 96629, true, 'drawn');
+    if (drawn.red !== M) probes.push(`a scale of 0 read as sign 0, planted back, red on ${drawn.red} of the ${M} drawn rigs, not all — the drawn population no longer isolates the class`);
+    const ok = probes.length === 0 && random.exact === N && drawn.exact === M;
     say(
       'CW08_THE_TRANSFORM_COLLAPSE_POPULATION_READS_EVERY_BONE_AS_SPINE_CORE_DOES',
       ok,
-      probeDetail(ok, probes, `${exact} of ${N} six-bone rigs bit-exact by Object.is on every bone under Physics.none — a transform (world or local) setting a bone's scaleX or scaleY to 0 or near it, a one- or two-bone ik below it, in either order, bones in all five modes; a scale of 0 read as sign 0, planted back, red on ${red}`),
-      'issue #959: its third class ("wrong under --physics none as well") had not been reduced; this is the population it came from, compared on the bones compare\'s ill-conditioned rule leaves out as well — before this cut two of 500 of it were whole units off, both a two-bone ik over the collapsed parent (CW06)',
+      probeDetail(ok, probes, `${random.exact} of ${N} random six-bone rigs and ${drawn.exact} of ${M} drawn ones bit-exact by Object.is on every bone under Physics.none — random: a transform (world or local) setting a bone's scaleX or scaleY to 0 or near it, a one- or two-bone ik below it, in either order, bones in all five modes; drawn: b3's scaleY set to exactly 0 by a local transform before a two-bone ik over b3 and a child at negative x, both in normal mode, mix above 0 — the class where the product of scale signs reaches the pose; a scale of 0 read as sign 0, planted back, red on ${drawn.red} of the ${M} drawn rigs (and on ${random.red} of the random ${N})`),
+      'issue #959: its third class ("wrong under --physics none as well") had not been reduced; this is the population it came from, compared on the bones compare\'s ill-conditioned rule leaves out as well — before this cut two of 500 of it were whole units off, both a two-bone ik over the collapsed parent (CW06). Issue #952: the plant\'s class is drawn on purpose, because the random population reached it on 2 of 400 rigs under one generator and on none under the next',
     );
   }
 
@@ -75413,13 +75735,6 @@ function runDeformCoreSuite(): number | null {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const lcgOf = (seed: number): (() => number) => {
-    let s = seed;
-    return () => {
-      s = (s * 1103515245 + 12345) % 2147483648;
-      return s / 2147483648;
-    };
-  };
   const fmt = (t: { exact: number; calls: number }): string => `${t.exact}/${t.calls}`;
 
   // --- DM01: the jump, its world vertices and its draw reading, on a hand-written population --
@@ -75427,7 +75742,7 @@ function runDeformCoreSuite(): number | null {
   const population: Array<{ texts: DmTexts; census: HookCensus }> = [];
   {
     const probes: string[] = [];
-    const rnd = lcgOf(96901);
+    const rnd = seededRandom(96901);
     for (let i = 0; i < N; i++) {
       const texts = dmPair(dmRandomSpec(rnd, true));
       let census: HookCensus;
@@ -75852,9 +76167,13 @@ function runHashes(args: string[]): { status: number | null; stdout: string; std
  * `MA12`) keep meaning "the Spine bytes did not move" against a base older
  * than the document or than its rectangles. It excuses exactly those two
  * changes and nothing else: `MD07` holds that the difference from a base
- * without the document is EXACTLY that one file on every row, `MG07` that the
- * difference from a base with it is exactly the rectangles, and a document
- * that differs in any other byte keeps its own hash here and reads DIFF.
+ * without the document is EXACTLY that one file on every row, and a document
+ * that differs in any other byte than the rectangles keeps its own hash here
+ * and reads DIFF. (`MG07` held the transition itself — every row of a base
+ * with the document differing by exactly the rectangles — until issue #952
+ * retired it: the document has moved since #935 for other reasons, so no base
+ * producible from the tree reads green on it, and a hash document cannot say
+ * whether its base already carries the rectangles.)
  *
  * `gateWork` is the `--work` directory the `after` run was given: its
  * per-recipe directories are numbered in the order of the recipes file, which
@@ -75934,11 +76253,6 @@ function withoutAtlasRects(text: string): string | null {
  * says where); `withoutAddedModelDocument` then holds the four identity gates
  * to the Spine files, and `MD07` reads it in its original sense — every row
  * differs by exactly the added document.
- *
- * 🔸 `MG07` (issue #935) does not read it, deliberately: it measures the
- * TRANSITION to the rectangles — a base whose documents lack them — and
- * against a base taken after #935 it has no changed row to plant on and would
- * go red for being current. It stays on `RIGC_EMIT_HASHES_BASE` alone.
  */
 function gateBase(): { path: string; shown: string } | null {
   const named = process.env.RIGC_EMIT_HASHES_BASE;
@@ -80465,7 +80779,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
             else probes.push(`${r.name}: ${findings.length === 0 ? 'no difference — the document was not written' : findings.join('; ')}`);
           }
           // A base that carries the document is compared in full, the document included — through the one
-          // projection that excuses the rectangles issue #935 added to it (`MG07` holds that difference).
+          // projection that excuses the rectangles issue #935 added to it.
           const projected = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after, join(work, 'gate')));
           for (const d of projected.differ) if (carried.includes(d.name)) probes.push(`${d.name}, whose base carries the document: ${d.findings.join('; ')}`);
           if (c.onlyA.length + c.onlyB.length > 0) probes.push(`recipes on one side only: ${[...c.onlyA, ...c.onlyB].join(', ')}`);
@@ -80849,7 +81163,7 @@ function buildRectProbe(probe: { dirs: ProbeDirs; motionPath: string }, out: str
  * route's source (loose, `--atlas-in`, `--pack`, none), the base gate, and the
  * core's reader.
  */
-function runModelAtlasSuite(): { failures: number; gateHole: boolean } {
+function runModelAtlasSuite(): number {
   console.log('\n── model-atlas: every region record and sequence frame carries its atlas rectangle (issue #935) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
@@ -81111,92 +81425,6 @@ function runModelAtlasSuite(): { failures: number; gateHole: boolean } {
     );
   }
 
-  // --- MG07: every recipe of a named base differs by exactly the rectangles --
-  let gateHole = false;
-  {
-    const basePath = process.env.RIGC_EMIT_HASHES_BASE;
-    if (basePath === undefined || basePath === '') {
-      gateHole = true;
-      console.log('  SKIP  MG07 did not run: RIGC_EMIT_HASHES_BASE names no base hash document.');
-      console.log('          ⚠️ This is a HOLE in this run, not a pass — that the rectangles are the only change to the document and the Spine files did not move was not measured here.');
-    } else {
-      const probes: string[] = [];
-      let base: HashesDocument | null = null;
-      try {
-        base = readHashes(resolve(basePath));
-      } catch (err) {
-        probes.push(`the base document ${basePath} could not be read: ${(err as Error).message}`);
-      }
-      const present = (from: string): boolean => existsSync(isAbsolute(from) ? from : resolve(import.meta.dir, from));
-      const rows = (base?.recipes ?? []).filter((r) => r.stage.every((s) => present(s.from)));
-      const absent = (base?.recipes ?? []).length - rows.length;
-      if (base !== null && rows.length === 0) probes.push('no row of the base document has its inputs in this tree');
-      let verdict = '';
-      if (base !== null && rows.length > 0) {
-        const recipesPath = join(work, 'gate-recipes.json');
-        writeFileSync(recipesPath, recipesText(rows.map((r) => ({ name: r.name, stage: r.stage, commands: r.commands }))));
-        const out = join(work, 'gate.json');
-        const gateWork = join(work, 'gate');
-        const run = runHashes(['run', '--recipes', recipesPath, '--out', out, '--work', gateWork]);
-        if (run.status !== 0) probes.push(`the run exited ${run.status}: ${run.stderr.trim().slice(0, 200)}`);
-        let after: HashesDocument | null = null;
-        try {
-          after = readHashes(out);
-        } catch (err) {
-          probes.push(`the run wrote no readable document: ${(err as Error).message}`);
-        }
-        if (after !== null) {
-          const baseRows: HashesDocument = { ...base, recipes: rows };
-          const carried = rows.filter((r) => r.files.some((f) => f.path === MODEL_DOCUMENT_FILE)).map((r) => r.name);
-          if (carried.length === 0) probes.push('no row of the base carries the model document, so it predates the document and this gate has nothing to compare it with (MD07 is that gate)');
-          const raw = compareHashes(baseRows, after);
-          let changed = 0;
-          for (const d of raw.differ) {
-            if (!carried.includes(d.name)) continue;
-            if (d.findings.length === 1 && d.findings[0].startsWith(`${MODEL_DOCUMENT_FILE} differs:`)) changed += 1;
-            else probes.push(`${d.name}: ${d.findings.join('; ')}`);
-          }
-          const projected = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after, gateWork));
-          if (!projected.identical) probes.push(`with the rectangles removed: ${comparisonLines(projected).join(' | ')}`);
-          verdict = `${changed} of ${carried.length} row(s) carrying the document differ in ${MODEL_DOCUMENT_FILE} alone and ${carried.length - changed} not at all; every Spine file identical; with every region's rectangle removed, ${projected.identical ? `IDENTICAL over ${projected.files} file(s)` : 'DIFF'}`;
-          // The plants: a document changed anywhere but a rectangle, or spelled otherwise, must not be excused.
-          const target = raw.differ.find((d) => carried.includes(d.name))?.name;
-          const index = target === undefined ? -1 : after.recipes.findIndex((r) => r.name === target);
-          const dirs = existsSync(gateWork) ? readdirSync(gateWork).filter((d) => /^\d+$/.test(d)).sort() : [];
-          if (index < 0 || dirs[index] === undefined) probes.push('no row changed its document, so the plants have nothing to change');
-          else {
-            const file = join(gateWork, dirs[index], 'out', MODEL_DOCUMENT_FILE);
-            const text = readFileSync(file, 'utf8');
-            const widened = JSON.parse(text) as unknown;
-            const first = documentRegions(widened)[0];
-            if (first === undefined) probes.push(`${target} has no region record to plant on`);
-            else {
-              first.record.width = (first.record.width as number) + 1;
-              const plants: Array<[string, string]> = [
-                [`${first.at}'s record width one larger`, `${JSON.stringify(widened, null, 2)}\n`],
-                ['the document with a trailing space', `${text.slice(0, -1)} \n`],
-              ];
-              for (const [label, planted] of plants) {
-                writeFileSync(file, planted);
-                const p = compareHashes(baseRows, withoutAddedModelDocument(baseRows, after, gateWork));
-                if (p.identical || p.differ.length !== 1 || p.differ[0].name !== target) probes.push(`${label} read ${p.identical ? 'IDENTICAL' : comparisonLines(p).join(' | ')}`);
-              }
-              writeFileSync(file, text);
-            }
-          }
-        }
-      }
-      if (absent > 0) console.log(`          ⚠️ HOLE: ${absent} row(s) of the base document were not run, their inputs are not in this tree (run \`bun run fetch-examples\`).`);
-      const ok = probes.length === 0;
-      say(
-        'MG07_EVERY_RECIPE_OF_THE_BASE_DIFFERS_BY_THE_RECTANGLES_ALONE_AND_NO_SPINE_BYTE_MOVES',
-        ok,
-        probeDetail(ok, probes, `${rows.length} row(s) of ${basePath} built through \`tools/emit_hashes.ts\` on this tree (${absent} without their inputs here): ${verdict}; a document with one record's width changed, and one with a trailing space, are each not excused`),
-        'issue #935\'s gate: the Spine files\' bytes do not move on any recipe and the document changes by the added field alone — measured by removing exactly that field and matching the base\'s hash to the byte',
-      );
-    }
-  }
-
   // --- MG08: the core reads the rectangle, and refuses a malformed one by its path --
   {
     const probes: string[] = [];
@@ -81241,7 +81469,7 @@ function runModelAtlasSuite(): { failures: number; gateHole: boolean } {
 
   rmSync(probe.dirs.dir, { recursive: true, force: true });
   rmSync(work, { recursive: true, force: true });
-  return { failures: bad, gateHole };
+  return bad;
 }
 
 // ---------------------------------------------------------------------------
@@ -92289,12 +92517,13 @@ function main(): void {
   const emitHashesBad = tally.of('emit-hashes', runEmitHashesSuite, { ran: ranIt });
   const renderHashesBad = tally.of('render-hashes', runRenderHashesSuite, { ran: ranIt });
   tally.of('deform-core', runDeformCoreSuite, { ran: ranIt });
+  tally.of('seeded-random', runSeededRandomSuite);
   const modelBones = tally.of('model-bones', runModelBonesSuite, { failures: (value) => value.failures });
   const modelVertices = tally.of('model-vertices', runModelVerticesSuite, { failures: (value) => value.failures });
   const modelRecords = tally.of('model-records', runModelRecordsSuite, { failures: (value) => value.failures });
   const modelAnimations = tally.of('model-animations', runModelAnimationsSuite, { failures: (value) => value.failures });
   const modelDocumentRun = tally.of('model-document', runModelDocumentSuite, { failures: (value) => value.failures });
-  const modelAtlas = tally.of('model-atlas', runModelAtlasSuite, { failures: (value) => value.failures });
+  tally.of('model-atlas', runModelAtlasSuite);
   tally.of('chainfit', runChainFitSuite);
   tally.of('ballot', runBallotSuite);
   tally.of('copy-images', runCopyImagesSuite);
@@ -93181,7 +93410,6 @@ function main(): void {
       (modelRecords.gateHole ? '\n  ⚠️ Neither RIGC_EMIT_HASHES_BASE nor the tracked tools/emit_hashes.base.json gave a base hash document, so the structural records\' byte identity against a base commit (issue #919) was not measured in this run.' : '') +
       (modelAnimations.gateHole ? '\n  ⚠️ Neither RIGC_EMIT_HASHES_BASE nor the tracked tools/emit_hashes.base.json gave a base hash document, so the animations\' byte identity against a base commit (issue #921) was not measured in this run.' : '') +
       (modelDocumentRun.gateHole ? '\n  ⚠️ Neither RIGC_EMIT_HASHES_BASE nor the tracked tools/emit_hashes.base.json gave a base hash document, so that the model document is the only difference from a base commit (issue #922) was not measured in this run.' : '') +
-      (modelAtlas.gateHole ? '\n  ⚠️ RIGC_EMIT_HASHES_BASE named no base hash document, so that the atlas rectangles are the only change to the model document from a base commit (issue #935) was not measured in this run.' : '') +
       (launcher.startsWith(',') ? '' : launcher) +
       (gallery.examples > 0
         ? `\n  + every one of the ${gallery.examples} gallery example(s) compiled twice — once, and once more for the determinism check over every file build writes — and gated green under BOTH profiles`
