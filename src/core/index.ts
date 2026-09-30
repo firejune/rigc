@@ -179,7 +179,7 @@ import { readPathRecord } from './constraints_path.ts';
 import { readPhysicsRecord, type PhysicsStepContext, type PhysicsStepper } from './constraints_physics.ts';
 import { appliedSkins, CORE_ALL_SKINS, fillingSkins, listedByAppliedSkin, lookupSkins, slotTimelinesApply, type SlotTimelineGate } from './skins.ts';
 import { applySliderSlots, readSliderRecord, type SliderApplication, type SlotPoseState } from './constraints_slider.ts';
-import { attachmentStates, type DeformEvaluator, type SequenceEvaluator } from './deform.ts';
+import { attachmentStates, type DeformBlender, type DeformEvaluator, type SequenceEvaluator } from './deform.ts';
 import { drawOrderAt, type DrawOrderEvaluator } from './draw_order.ts';
 import type { EventsFired } from './events.ts';
 
@@ -828,6 +828,8 @@ export interface CorePlant {
   solver?: Partial<SolverRules>;
   /** A deform timeline's array at a time (`deformAt` in `./deform.ts`). */
   deform?: DeformEvaluator;
+  /** A slider's deform over the current one (`blendDeform` in `./deform.ts`). */
+  deformBlend?: DeformBlender;
   /** A sequence timeline's frame at a time (`sequenceFrameAt` in `./deform.ts`). */
   sequence?: SequenceEvaluator;
   /** A draw-order timeline's order at a time (`drawOrderAt` in `./draw_order.ts`). */

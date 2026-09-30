@@ -93,7 +93,20 @@
  * unweighted, zeros weighted). ⚠️ At mix exactly 1, not additive, it IS the
  * target: `current + (target − current)·1` read 1 ulp off spine-core on 27
  * of 2,790 posed rows of issue #969's hand-written population (`DM01`, the
- * survey's doubles), the target on none. Before the timeline's first key it
+ * survey's doubles), the target on none. ⚠️ **Additive at mix exactly 1
+ * over NO current deform** — at the setup pose, or at a sample whose own
+ * animation set none on that slot — **it is the target too**, not
+ * `setup + (target − setup)·1` (issue #993, read off `pose_oracle --raw` at
+ * tolerance 0; weighted, the setup is zeros and the two agree to the bit).
+ * On 1,000 rigs of `CD05`'s generator: that rule 1,000 exact; the stated
+ * blend everywhere 985 (15 misses, every one unweighted, additive, mix 1,
+ * with no current deform, 1–16 ulp on a vertex). Read at every additive
+ * mix 1, current deform or not: `current + target − setup` 917,
+ * `current − setup + target` and `target + (current − setup)` 951 each (with
+ * no current deform both are the target to the bit — they miss over one),
+ * the target itself 850. So over a current deform the stated blend stands:
+ * the 107 additive mix-1 rigs whose sample animation keys a deform of its
+ * own read exact at every sample with it. Before the timeline's first key it
  * writes nothing. Measured on 300 samples of 60 random rigs — weighted and not,
  * additive and not, mix 1, 0.5 and in [−1, 2], with and without a deform in
  * the sample's own animation: 0 misses; reading the non-additive blend from
@@ -423,12 +436,17 @@ export function deformAt(vertices: ModelVertices, keys: readonly CoreDeformKey[]
   return held.map((v, k) => v + (next[k] - v) * p);
 }
 
+/** What blends a slider's deform over the current one: `blendDeform` unless a plant passes another. */
+export type DeformBlender = (vertices: ModelVertices, current: readonly number[] | null, target: readonly number[], alpha: number, additive: boolean) => number[];
+
 /** A slider's deform over the current one — the header's *under a slider*. */
 export function blendDeform(vertices: ModelVertices, current: readonly number[] | null, target: readonly number[], alpha: number, additive: boolean): number[] {
   const setup = setupArray(vertices);
   const from = current ?? setup;
   // #969: non-additive at mix 1 the target itself, not `c + (target − c)·1`, which is last-bit off it (measured, `./hooks.ts`' DM01).
   if (!additive && alpha === 1) return [...target];
+  // #993: additive at mix 1 over no current deform the target too, not `setup + (target − setup)·1` (measured, the core suite's CR10).
+  if (additive && alpha === 1 && current === null) return [...target];
   return from.map((c, k) => (additive ? c + (target[k] - setup[k]) * alpha : c + (target[k] - c) * alpha));
 }
 
@@ -517,9 +535,10 @@ export function attachmentStates(
   placeholders: ReadonlyMap<string, string | null>,
   sample: { timelines: CoreAnimationTimelines; t: number } | null,
   sliders: readonly AttachmentApplication[],
-  plant: { deform?: DeformEvaluator; sequence?: SequenceEvaluator; slotTimelines?: SlotTimelineGate } = {},
+  plant: { deform?: DeformEvaluator; deformBlend?: DeformBlender; sequence?: SequenceEvaluator; slotTimelines?: SlotTimelineGate } = {},
 ): { shown: ShownGeometry[]; why: string[] } {
   const evalDeform = plant.deform ?? deformAt;
+  const blendOf = plant.deformBlend ?? blendDeform;
   const evalFrame = plant.sequence ?? sequenceFrameAt;
   const shown: ShownGeometry[] = [];
   const why: string[] = [];
@@ -551,7 +570,7 @@ export function attachmentStates(
         if (!seen.includes(now.identity)) seen.push(now.identity);
         if (a.deform !== null && now.vertices !== null) {
           const target = evalDeform(now.vertices, a.deform, t);
-          if (target !== null) deform = blend === null ? target : blendDeform(now.vertices, deform, target, blend.alpha, blend.additive);
+          if (target !== null) deform = blend === null ? target : blendOf(now.vertices, deform, target, blend.alpha, blend.additive);
         }
         if (a.sequence !== null && now.count !== undefined) {
           const f = evalFrame(a.sequence, now.count, t);
