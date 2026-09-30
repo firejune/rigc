@@ -49,11 +49,18 @@ jobs:
     # re-cutting anything.
     if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
-    # The confirmation waits up to 15 minutes for the registry (see the step
-    # below), on top of release-please, the gates `prepublishOnly` runs and the
-    # publish itself — measured at about 3 minutes over the v0.22.x cuts. A
-    # ceiling under the wait would report a late registry as a cancelled job.
-    timeout-minutes: 30
+    # The ceiling has to cover everything before the confirmation plus the
+    # confirmation's own wait. Measured, not estimated: ci.yml's `test` job,
+    # which is the same fetch and the same three commands over the same corpus,
+    # took 11m38s, 15m31s and 16m44s on three runs of 2026-09-30, and v1.6.0's
+    # gate without the corpus took 10m07s. So: ~17 min of gate + ~1 min of
+    # fetch + ~1 min of publish + up to 15 min of registry wait (see the step
+    # below) + the confirmation's install and build, with room = 50. The
+    # "about 3 minutes" this comment used to quote was the v0.22.x cuts, before
+    # the suite grew and before the corpus was fetched here (issue #1003). A
+    # ceiling under that sum cancels the confirmation on an ordinary cut and
+    # reports a late registry as a cancelled job.
+    timeout-minutes: 50
     permissions:
       contents: write # release commit, tag, GitHub release
       pull-requests: write # open and update the release PR
@@ -106,9 +113,25 @@ jobs:
       # bun runs them. What guards the publish instead is prepublishOnly, which
       # runs `typecheck && lint && selftest` against the tagged tree, so a type
       # error, a lint failure or a broken assertion fails the publish rather
-      # than shipping. The selftest needs no corpus: without examples/ it
-      # reports the example suites as HOLEs and still passes, which is why this
-      # job does not fetch the Spine examples the way ci.yml does.
+      # than shipping. Those are the same three commands ci.yml's `test` job
+      # runs, and they have to run over the same corpus, so this job fetches
+      # the Spine examples first exactly as that job does — same script, same
+      # token, for the rate-limit reason ci.yml's comment gives.
+      #
+      # 🚨 This used to say the selftest needs no corpus, and that stopped being
+      # true when the core suite landed: with no examples/ its corpus controls
+      # are red rather than HOLEs (a construct no row reaches is never a pass,
+      # and a plant that reaches nothing is a fault). v1.6.0 was tagged and
+      # released on GitHub and then failed this gate on four of them, because
+      # the publish was measuring a different environment from the gate that
+      # admitted every commit (issue #1003). `CUR112` in selftest.ts holds this
+      # step before the publish, under the publish's own condition.
+      - name: Fetch the Spine example corpus
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        run: bun run fetch-examples
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Publish to npm
         if: ${{ steps.release.outputs.release_created == 'true' }}
         run: npm publish --provenance --access public

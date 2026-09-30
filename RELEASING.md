@@ -139,9 +139,13 @@ workflow's.
 `prepublishOnly` runs `bun run typecheck && bun run lint && bun run selftest`
 before npm packs anything, so a tree that fails its own gates cannot be
 published — by the workflow or by hand. It is the same three commands CI runs on
-every push; the selftest needs no corpus and no arguments, and reports the
-example suites as HOLEs rather than passes when `examples/` is absent, which is
-why the publish job does not fetch the Spine examples the way `ci.yml` does.
+every push, and they run over the same corpus: the publish job runs
+`bun run fetch-examples` before `npm publish`, exactly as `ci.yml`'s `test` job
+runs it before the selftest. Without `examples/` the core suite's corpus
+controls are red rather than HOLEs — a construct no row reaches is never a pass
+— so a publish gate with no corpus measures a different environment from the
+one CI admitted every commit in, and v1.6.0 was tagged and then refused by it on exactly those
+controls (issue #1003). `CUR112` holds the two workflows to that order.
 There is no build step to guard: the package ships its TypeScript sources and
 bun runs them.
 
@@ -428,6 +432,7 @@ npm login                        # once per machine; `npm whoami` to check
 git fetch --tags
 git checkout vX.Y.Z              # the tagged tree
 bun install --frozen-lockfile
+bun run fetch-examples           # the corpus the selftest in prepublishOnly reads
 npm publish                      # runs prepublishOnly, then asks for the OTP
 ```
 
