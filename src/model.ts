@@ -870,13 +870,14 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  * one-ulp `Math.atan` perturbation either way moves no byte of that document.
  *
  * ⚠️ A grid absorbs a difference in a value, not in a choice. Perturbing
- * `Math.pow` by one ulp still moves `gallery/look`'s document: the depth tone
- * reaches every `z`, two triangles whose fold angles round to the same
- * six-decimal value trade places as the minimum, and the fold then names the
- * other triangle, with its own `depthStep` and `stepShare`. Measured on this
- * machine `pow(x, 1)` is `x` exactly (10^6 samples in 0..1), which is all
- * that rig's `gamma: 1` asks of it; a platform whose `pow` is not exact there
- * is not measured.
+ * `Math.pow` by one ulp moved `gallery/look`'s document until issue #949: the
+ * depth tone reaches every `z`, two triangles whose fold angles round to the
+ * same six-decimal value traded places as the minimum, and the fold named the
+ * other triangle, with its own `depthStep` and `stepShare`. The minimum is
+ * now chosen on the six-decimal grid with the lowest triangle ordinal taking
+ * a tie (`src/depth.ts`'s `foldPrecedes`), and a one-ulp perturbation of
+ * sixteen libm functions, either way, moves no leaf of any gallery document
+ * (`TB02`). What is left is a value within one ulp of a rounding boundary.
  *
  * **Left out, and why.** Each is something the model holds that is not a
  * statement about the rig:

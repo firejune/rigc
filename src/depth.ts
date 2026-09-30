@@ -387,18 +387,62 @@ const CEILING_AREA_FLOOR = 1e-6;
  * from any of its ceiling angles against a one-ulp step of about 3.6e-15°, so
  * a one-ulp difference no longer reaches a byte. What a grid cannot absorb is
  * stated rather than hidden: a value within one ulp of a rounding boundary
- * still moves, and two triangles within one ulp of each other can still swap
- * which one is the minimum.
+ * still moves. Which triangle is the minimum no longer rides on the last ulp
+ * (issue #949): the choice is made on this grid too, by `foldPrecedes`.
  *
- * 🔒 Applied after the minimum is chosen and the percentile ranked, so the
- * triangle a fold names is the one the full doubles select; `TC01` still
- * requires that triangle, at ±0.01°, to be the one `A39` fires on. A share or
+ * 🔒 Applied to the figures after the minimum is chosen and the percentile
+ * ranked; `TC01` still requires the named triangle, at ±0.01°, to be one `A39`
+ * fires on, and `TB03` that it is the FIRST one A39 names. A share or
  * a step is a positive number and r6 only returns 0 for one under 5e-7; `TC07`
  * reads every share it builds as `> 0`.
  */
 function r6(n: number): number {
   const v = Math.round(n * 1e6) / 1e6;
   return v === 0 ? 0 : v;
+}
+
+/**
+ * Whether fold `a` is the tighter of two on one axis and side: its angle is
+ * smaller ON THE SIX-DECIMAL GRID THE REPORT SPELLS IT ON, or equal there and
+ * `a` is the lower triangle ordinal. `degrees` are the full doubles; the grid
+ * is applied here, so a caller cannot compare the doubles by accident.
+ *
+ * ⭐ Why the grid and not the doubles (issue #949). A minimum chosen on full
+ * doubles is chosen by the platform's libm whenever two triangles fold within
+ * a few ulps of each other, and a fold names its triangle with that
+ * triangle's own `ids`, `depthStep` and `stepShare`, so the document moves by
+ * whole fields while the angle it prints does not. Measured on
+ * `gallery/look`, with every libm-backed `Math` result moved one ulp through a
+ * `--preload`: mesh 0's `pitch.negative` minimum is triangles 49 and 50, both
+ * at exactly `26.935130523311` unperturbed (the doubles are EQUAL, and the
+ * first-found rule named 49); `Math.pow` +1 ulp made 50 the smaller by one ulp
+ * (`26.935130523310995`) and −1 ulp made 49 the larger (`26.935130523311003`),
+ * and the document named 50, `ids` `[60,…,80]`, `depthStep` 90.533309 for
+ * 95.668608. `pow` −1 ulp also swapped `yaw.positive`'s triangles 174 and 215
+ * (`19.316350434748518`, both; 7.1e-15° apart once perturbed). 5 and 10 leaves
+ * moved; with this rule, 0 under `atan`, `pow` or all sixteen functions
+ * together, either direction, on all seven gallery rows.
+ *
+ * ⭐ Why the LOWEST ordinal, and not some other tie-break: it is the order
+ * `A39` names triangles in. The gate lists the triangles a key reverses by
+ * ascending ordinal (`deformmeasure.ts`, `reversed`), so turned just past a
+ * tied ceiling every tied triangle reverses and the first one the refusal
+ * names is the lowest — the one this reports. `TB03` holds the two to it on a
+ * planted tie; `TB01` holds the choice unmoved by which of two tied triangles
+ * carries the larger double.
+ *
+ * ⚠️ What a grid cannot absorb, stated rather than hidden: two angles one ulp
+ * apart that straddle a six-decimal rounding boundary are two different
+ * reported values, and a one-ulp change can still pick the other one. That is
+ * the value moving, not the choice, and it is the residual `r6` already names.
+ */
+export function foldPrecedes(
+  a: { readonly degrees: number; readonly triangle: number },
+  b: { readonly degrees: number; readonly triangle: number },
+): boolean {
+  const ra = r6(a.degrees);
+  const rb = r6(b.degrees);
+  return ra < rb || (ra === rb && a.triangle < b.triangle);
 }
 
 /**
@@ -426,8 +470,9 @@ function r6(n: number): number {
  * two numbers is stated in `docs/AUTHORING.md` §3.4, not decided here.
  *
  * 🔸 `degrees`, `depthStep`, `stepShare` and `p1` are reported on the
- * six-decimal grid (`r6` above, issue #942); the choice among triangles is
- * made on the full doubles before they are rounded.
+ * six-decimal grid (`r6` above, issue #942), and the choice among triangles is
+ * made on that grid with the lowest ordinal winning a tie (`foldPrecedes`,
+ * issue #949).
  */
 export interface FoldLimit {
   /** Degrees from setup, in (0, 90). */
@@ -607,6 +652,19 @@ export interface TurnCeiling {
  * key is not built from, and would part company with the gate that reads the
  * raw one.
  *
+ * ## Which triangle, when two fold at the same angle (issue #949)
+ *
+ * The minimum is chosen on the six-decimal grid the angle is reported on, and
+ * a tie there goes to the LOWEST triangle ordinal — the triangle `A39` names
+ * first when a key turns just past the ceiling (`foldPrecedes`). Chosen on the
+ * full doubles, it was the platform's libm that broke a tie: on
+ * `gallery/look`, triangles 49 and 50 fold at exactly `26.935130523311` and a
+ * one-ulp `Math.pow` perturbation (through the depth tone, into every `z`)
+ * named 50 instead of 49, moving 5 leaves of the model document in one
+ * direction and 10 in the other while no printed angle moved. With the rule,
+ * a ±1 ulp perturbation of `atan`, `pow`, or sixteen libm functions at once
+ * moves no leaf of any gallery row's document (`TB02` re-runs it in process).
+ *
  * @param points Vertices in the BIND space the deform offsets are authored in.
  *   Areas are translation-invariant, so the origin does not matter; the scale
  *   and the axis directions do. A y flip alone leaves a `yaw` answer alone and
@@ -696,7 +754,10 @@ export function turnCeiling(
       const held = out[axis][side];
       // `count` and `p1` are filled once the whole population is in; a minimum
       // cannot know its own percentile while it is still being found.
-      if (held === null || degrees < held.degrees) {
+      // On the reported grid, lowest ordinal first — `foldPrecedes` above. The
+      // walk is in ordinal order, so the ordinal clause never decides here; it is
+      // stated so the rule does not depend on the walk.
+      if (held === null || foldPrecedes({ degrees, triangle: n }, held)) {
         // `zSpan` cannot be zero here: `aAxis !== 0` needs two of this
         // triangle's vertices at different depths, and the span over the whole
         // mesh is at least that difference. A guard would be an unreachable
