@@ -66762,6 +66762,7 @@ import { COLLAPSED_X_AXIS_SQ, type InheritComputation } from './src/core/world.t
 import { CORE_INHERIT_MODES as CORE_INHERIT_MODES_ALL } from './src/core/index.ts';
 import { MixFrom, Skin } from '@esotericsoftware/spine-core';
 import type { RegionPoser } from './src/core/vertices.ts';
+import { blendDeform, setupArray, type DeformBlender } from './src/core/deform.ts';
 
 /** The constraint kinds no cut of construct 5 poses yet — what a skipped row names. */
 const LATER_KINDS: readonly string[] = CORE_CONSTRAINT_KINDS.filter((k) => !ADMITTED_CONSTRAINT_KINDS.includes(k));
@@ -74954,6 +74955,1062 @@ function runCoreSuite(): number {
     }
     return { exact, plantedExact, misses };
   };
+
+  // ===========================================================================
+  // The raw populations (issue #993): every population-style control of this
+  // suite compared on the r6 grid, read again through `dump --raw` on both
+  // dumpers at tolerance 0 — the reading #984, #989 and #991 each needed a
+  // population for, where a 1–2 ulp mix cannot show on the grid. A population
+  // whose generator is inline in its grid control is drawn again here from the
+  // same seed in the same order, and held to the models that control kept
+  // (`drewTheSame`), so a copy that no longer draws the same rigs is a named
+  // failure rather than a different population read in silence. Each reading
+  // carries a plant only the raw reading sees.
+  // ===========================================================================
+  /** A redrawn population's models against the models its grid control kept: the redrawn run must sit, in order, inside the kept one. */
+  const drewTheSame = (kept: readonly string[], mine: readonly string[], what: string): string | null => {
+    if (mine.length === 0) return `${what}: the copy drew nothing`;
+    const at = kept.indexOf(mine[0]);
+    if (at < 0) return `${what}: the copy's first rig is none its grid control drew — the copy has drifted from the generator`;
+    const k = mine.findIndex((m, j) => kept[at + j] !== m);
+    return k < 0 ? null : `${what}: the copy's rig ${k} is not its grid control's — the copy has drifted from the generator`;
+  };
+  /** One unit in the last place away from zero (0 to the smallest subnormal). */
+  const ulpOut = (v: number): number => {
+    if (v === 0) return Number.MIN_VALUE;
+    const f = new Float64Array([v]);
+    const i = new BigInt64Array(f.buffer);
+    i[0] += 1n;
+    return f[0];
+  };
+  /** Planted: every mix a record carries moved one ulp away from zero — ik, transform, path and slider. */
+  const MIX_ULP: CorePlant = {
+    constraints: (records) => records.map((r): CoreConstraintRecord => {
+      if (r.kind === 'ik' || r.kind === 'slider') return { ...r, mix: ulpOut(r.mix) };
+      if (r.kind === 'path') return { ...r, mixRotate: ulpOut(r.mixRotate), mixX: ulpOut(r.mixX), mixY: ulpOut(r.mixY) };
+      if (r.kind === 'transform') return { ...r, mixes: Object.fromEntries(Object.entries(r.mixes).map(([k, m]) => [k, ulpOut(m)])) as CoreTransformRecord['mixes'] };
+      return r;
+    }),
+  };
+  /** Issue #991's rule planted back over every slider of a rig: each keyed `time` and `mix` of animation "a" as keyed rather than through the setup blend — a record rewrite finding each sample by the blended value, as CZ03's plant does for one. */
+  const sliderAsKeyed = (pair: { spine: string; model: string }, options: OracleOptions): CorePlant => {
+    const model = readModel(pair.model, 'the raw slider population');
+    const back = new Map<string, number>();
+    const times = (sliderSpine(pair, options).animations.find((a) => a.name === 'a')?.samples ?? []).map((s) => s.t as number);
+    for (const tl of model.animations.find((a) => a.name === 'a')?.constraints.slider ?? []) {
+      const r = model.constraints.find((c) => c.name === tl.name)?.record;
+      if (r === undefined || r.kind !== 'slider') continue;
+      for (const channel of ['time', 'mix'] as const) {
+        const keys = tl[channel];
+        if (keys === null) continue;
+        for (const t of times) {
+          const n = keyIndexAt(keys, t);
+          if (n < 0) continue;
+          const v = channelAt(keys, n, 0, t);
+          const blended = r[channel] + (v - r[channel]) * 1;
+          if (!Object.is(blended, v)) back.set(`${tl.name}/${channel}/${blended}`, v);
+        }
+      }
+    }
+    return {
+      constraints: (records) => records.map((r): CoreConstraintRecord => {
+        if (r.kind !== 'slider') return r;
+        const time = back.get(`${r.name}/time/${r.time}`);
+        const mix = back.get(`${r.name}/mix/${r.mix}`);
+        return time === undefined && mix === undefined ? r : { ...r, time: time ?? r.time, mix: mix ?? r.mix };
+      }),
+    };
+  };
+  /** A slider or physics pair compared raw: exact only with no posed block skipped. */
+  const sliderExact = (pair: { spine: string; model: string }, options: OracleOptions, plant: CorePlant = {}): { exact: boolean; first: string } => {
+    const c = sliderCompare(pair, { ...options, raw: true }, plant);
+    return { exact: c.identical && posedSkips(c).length === 0, first: posedSkips(c).join('; ') || (c.first ?? '') };
+  };
+  /** A path pair compared raw — through the same two dumpers as `pathCompare`, without adding its model to CP11's census. */
+  const pathExact = (pair: { spine: string; model: string }, options: OracleOptions, plant: CorePlant = {}): { exact: boolean; first: string } => {
+    const c = compareDumps(dumpSkeleton(loadOracleData(pair.spine, '', 'the raw path probe'), { ...options, raw: true }), coreDump(readModel(pair.model, 'the raw path probe'), { ...options, raw: true }, plant), { xy: 0, m: 0 });
+    return { exact: c.identical, first: c.first ?? '' };
+  };
+  /** How many of the first `n` pairs a plant turns red. */
+  const PLANT_PREFIX = 40;
+
+  // --- CR10: CD05's slider-deform population reads bit-exact through --raw — additive at mix 1 over no current deform is the target, and each rejected form planted back is red --
+  {
+    const probes: string[] = [];
+    const rnd = seededRandom(9555);
+    const D = dec5(rnd);
+    const pick = pickOf(rnd);
+    const RAW5: OracleOptions = { phase: 'irr', samples: 5, skin: 'all', physics: 'none', dt: null, raw: true };
+    // CD05's generator from its seed, 300 rigs, the first 60 CD05's own: the class is about one rig in six of those unweighted, additive at mix 1.
+    const N = 300;
+    const pairs: Array<{ pair: { spine: string; model: string; atlas: string }; reach: boolean }> = [];
+    for (let i = 0; i < N; i++) {
+      const weighted = rnd() < 0.5;
+      const mesh = randomMesh(rnd, 4, weighted, ['b']);
+      const length = deformLengthOf(mesh);
+      const own = rnd() < 0.6;
+      const slider: Obj = { type: 'slider', name: 'sl', animation: 'sa', time: D(0, 1.5), mix: pick([1, 0.5, D(-1, 2)]), additive: rnd() < 0.5 };
+      const pair = remainderPair({
+        bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: D(-180, 180), scaleX: D(0.3, 2), x: D(-20, 20) }],
+        slots: [{ name: 's', bone: weighted ? 'root' : 'b', attachment: 'm' }],
+        skins: { default: { s: { m: mesh } } },
+        constraints: [slider],
+        anims: {
+          sa: { deform: [{ slot: 's', attachment: 'm', keys: [{ time: 0.2, vertices: Array.from({ length }, () => D(-30, 30)) }, { time: 1.2, vertices: Array.from({ length }, () => D(-30, 30)) }] }] },
+          a: own ? { deform: [{ slot: 's', attachment: 'm', keys: [{ time: 0, vertices: Array.from({ length }, () => D(-30, 30)) }, { time: 1, vertices: Array.from({ length }, () => D(-30, 30)) }] }] } : { bones: { root: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 0 }] } } },
+        },
+      });
+      pairs.push({ pair, reach: !weighted && slider.additive === true && slider.mix === 1 });
+    }
+    // CD05 keeps its first three models: the redraw must begin with them.
+    const drift = drewTheSame(cdModels, pairs.slice(0, 3).map((p) => p.pair.model), 'CD05');
+    if (drift !== null) probes.push(drift);
+    const read = (plant: TimelinePlant, only: (p: { reach: boolean }) => boolean = () => true): { exact: number; ownExact: number; misses: string[] } => {
+      let exact = 0;
+      let ownExact = 0;
+      const misses: string[] = [];
+      pairs.forEach((p, i) => {
+        if (!only(p)) return;
+        const c = remainderCompare(p.pair, RAW5, plant);
+        if (c.identical && blocksSkipped(c).length === 0) {
+          exact++;
+          if (i < 60) ownExact++;
+        } else if (misses.length < 3) misses.push(`probe ${i}: ${blocksSkipped(c).join('; ') || c.first}`);
+      });
+      return { exact, ownExact, misses };
+    };
+    const r = read({});
+    const reach = pairs.filter((p) => p.reach).length;
+    if (r.exact !== N) probes.push(`${r.exact} of ${N} bit-exact — ${r.misses.join(' | ')}`);
+    // The forms issue #993 rejected, each planted where the rule applies (additive, mix 1, no current deform); elsewhere the core's own blend.
+    const rejected: Array<[string, (v: readonly number[], c: readonly number[], t: readonly number[], s: readonly number[]) => number[]]> = [
+      ['setup + (target − setup)·1, the stated blend', (_v, c, t, s) => c.map((x, k) => x + (t[k] - s[k]) * 1)],
+      ['current + target − setup', (_v, c, t, s) => c.map((x, k) => x + t[k] - s[k])],
+    ];
+    const reds: string[] = [];
+    for (const [label, form] of rejected) {
+      const deformBlend: DeformBlender = (vertices, current, target, alpha, additive) => {
+        if (!(additive && alpha === 1 && current === null)) return blendDeform(vertices, current, target, alpha, additive);
+        const setup = setupArray(vertices);
+        return form(target, setup, target, setup);
+      };
+      // Planted on the rigs the rule reaches: unweighted, additive at mix 1 (weighted, the setup is zeros and every form is the target).
+      const planted = read({ deformBlend }, (p) => p.reach);
+      reds.push(`${label} ${reach - planted.exact} of ${reach} red`);
+      if (planted.exact === reach) probes.push(`${label}, planted: every rig it reaches still bit-exact`);
+    }
+    // Over a current deform the stated blend stands: the target there instead is red too.
+    const always = read({ deformBlend: (vertices, current, target, alpha, additive) => (additive && alpha === 1 ? [...target] : blendDeform(vertices, current, target, alpha, additive)) });
+    reds.push(`the target over a current deform too ${N - always.exact} of ${N} red`);
+    if (always.exact === N) probes.push('the target over a current deform too, planted: every rig still bit-exact');
+    const ok = probes.length === 0;
+    say(
+      'CR10_A_SLIDERS_ADDITIVE_DEFORM_AT_MIX_1_OVER_NO_CURRENT_DEFORM_IS_THE_TARGET_AND_CD05S_POPULATION_READS_BIT_EXACT_RAW',
+      ok,
+      probeDetail(ok, probes, `CD05's generator from its seed under --raw at tolerance 0, setup and five irrational samples: ${r.exact} of ${N} rigs bit-exact (${r.ownExact} of CD05's own 60), ${reach} of them unweighted, additive at mix 1; each rejected form planted — ${reds.join(', ')}`),
+      'issue #993: CD05 read 60 of 60 on the r6 grid and 57 of 60 through the raw dump — every miss unweighted, additive, mix 1, at a pose with no current deform, 1–16 ulp on a vertex; there the runtime writes the target, as it does non-additive at mix 1 (issue #969)',
+    );
+  }
+
+  // --- CR11: the slider populations read bit-exact through --raw — CQ06's and CQ02's rigs redrawn, and CQ03–CQ05's and CQ07's typed rigs --
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    // CQ06's generator, from its seed.
+    const cq06 = ((): (() => { pair: { spine: string; model: string }; options: OracleOptions }) => {
+      const rnd = seededRandom(93806);
+      const R = within(rnd);
+      const pick = pickOf(rnd);
+      const BK = [...BONE_TIMELINE_KINDS];
+      const SK = [...SLOT_TIMELINE_KINDS];
+      const boneKeys = (kind: string, n: number, t0: number): Obj[] => {
+        const keys: Obj[] = [];
+        let t = t0;
+        for (let i = 0; i < n; i++) {
+          const k: Obj = { time: Math.round(t * 1000) / 1000 };
+          if (kind === 'inherit') k.inherit = pick(MODES5);
+          else if (kind === 'translate' || kind === 'shear') Object.assign(k, { x: R(-40, 40), y: R(-40, 40) });
+          else if (kind === 'scale') Object.assign(k, { x: R(-2, 2.5), y: R(-2, 2.5) });
+          else if (kind === 'scalex' || kind === 'scaley') k.value = R(-2, 2.5);
+          else k.value = kind === 'rotate' ? R(-200, 200) : R(-40, 40);
+          const channels = kind === 'translate' || kind === 'shear' || kind === 'scale' ? 2 : 1;
+          if (i < n - 1 && kind !== 'inherit' && rnd() < 0.3) k.curve = rnd() < 0.3 ? 'stepped' : Array.from({ length: channels * 4 }, (_v, j) => (j % 2 === 0 ? Math.round((t + 0.1) * 1000) / 1000 : R(-50, 50)));
+          keys.push(k);
+          t += R(0.1, 0.6);
+        }
+        return keys;
+      };
+      const slotKeys = (kind: string, n: number): Obj[] => {
+        const keys: Obj[] = [];
+        let t = R(0, 0.5);
+        const channels = { rgba: 4, rgb: 3, alpha: 1, rgba2: 7, rgb2: 6 }[kind] ?? 0;
+        for (let i = 0; i < n; i++) {
+          const k: Obj = { time: Math.round(t * 1000) / 1000 };
+          if (kind === 'attachment') k.name = pick(['q', 'r', 'u', null]);
+          else if (kind === 'rgba') k.color = hexOf(rnd, 4);
+          else if (kind === 'rgb') k.color = hexOf(rnd, 3);
+          else if (kind === 'alpha') k.value = R(0, 1);
+          else Object.assign(k, { light: hexOf(rnd, kind === 'rgba2' ? 4 : 3), dark: hexOf(rnd, 3) });
+          if (i < n - 1 && channels > 0 && rnd() < 0.3) k.curve = Array.from({ length: channels * 4 }, (_v, j) => (j % 2 === 0 ? Math.round((t + 0.05) * 1000) / 1000 : R(-0.5, 1.5)));
+          keys.push(k);
+          t += R(0.1, 0.5);
+        }
+        return keys;
+      };
+      return () => {
+          const bones: Obj[] = [{ name: 'root' }, { name: 'g', parent: 'root', rotation: R(-180, 180), scaleX: R(0.5, 2) * pick([1, -1]), shearY: R(-20, 20) }];
+          for (let k = 1; k <= 5; k++) {
+            const b: Obj = { name: `b${k}`, parent: pick(['g', ...bones.slice(2).map((x) => x.name as string)]), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 50) };
+            if (rnd() < 0.2) b.inherit = pick(MODES5.slice(1));
+            bones.push(rnd() < 0.5 ? skewed(rnd, b) : b);
+          }
+          bones.push({ name: 'dial', parent: 'g', x: R(-20, 20), rotation: R(-100, 100), scaleX: R(0.2, 2), scaleY: R(0.2, 2), shearY: R(-20, 20) }, { name: 'dial2', parent: 'b1', rotation: R(-50, 50) });
+          bones.push(...amplify('b1'), ...amplify('b3'), ...amplify('b5'));
+          const slots: Obj[] = [0, 1, 2].map((k) => ({ name: `s${k}`, bone: `b${k + 1}`, ...(rnd() < 0.7 ? { attachment: pick(['q', 'r']) } : {}), ...(rnd() < 0.6 ? { color: hexOf(rnd, 4) } : {}), ...(rnd() < 0.5 ? { dark: hexOf(rnd, 3) } : {}) }));
+          const withDark = new Set(slots.filter((s) => s.dark !== undefined).map((s) => s.name as string));
+          const animBones = (n: number): Keyed => {
+            const out: Keyed = {};
+            for (let j = 0; j < n; j++) {
+              const b = pick(['b1', 'b2', 'b3', 'b4', 'b5']);
+              const kind = pick(BK);
+              out[b] = { ...(out[b] ?? {}), [kind]: boneKeys(kind, 1 + Math.floor(rnd() * 4), rnd() < 0.3 ? R(0.1, 0.8) : 0) };
+            }
+            return out;
+          };
+          const animSlots = (n: number): Keyed => {
+            const out: Keyed = {};
+            for (let j = 0; j < n; j++) {
+              const s = pick(['s0', 's1', 's2']);
+              let kind = pick(SK);
+              if ((kind === 'rgba2' || kind === 'rgb2') && !withDark.has(s)) kind = 'rgba';
+              out[s] = { ...(out[s] ?? {}), [kind]: slotKeys(kind, 1 + Math.floor(rnd() * 3)) };
+            }
+            return out;
+          };
+          const constraints: Obj[] = [];
+          const anims: Record<string, SliderAnim> = {};
+          for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
+            anims[`sa${k}`] = { bones: animBones(1 + Math.floor(rnd() * 3)), ...(rnd() < 0.6 ? { slots: animSlots(1 + Math.floor(rnd() * 2)) } : {}) };
+            const c: Obj = { type: 'slider', name: `sl${k}`, animation: `sa${k}` };
+            if (rnd() < 0.5) c.additive = true;
+            if (rnd() < 0.5) c.mix = pick([0, 1, R(0, 1), R(-1, 2)]);
+            if (rnd() < 0.3) c.loop = true;
+            if (rnd() < 0.65) {
+              Object.assign(c, { bone: pick(['dial', 'dial2', 'b2']), property: pick([...TRANSFORM_PROPERTIES]), scale: pick([R(0.001, 0.05), R(-0.05, -0.001), R(0.1, 1)]) });
+              if (rnd() < 0.5) c.local = true;
+              if (rnd() < 0.6) c.from = R(-50, 50);
+              if (rnd() < 0.6) c.to = R(0, 1);
+            } else if (rnd() < 0.8) c.time = R(-0.5, 3);
+            constraints.push(c);
+          }
+          if (rnd() < 0.5) constraints.splice(Math.floor(rnd() * (constraints.length + 1)), 0, { type: 'transform', name: 'tr', bones: [pick(['b2', 'b4', 'dial'])], source: 'b5', properties: { [pick([...TRANSFORM_PROPERTIES])]: { to: { [pick([...TRANSFORM_PROPERTIES])]: {} } } }, ...(rnd() < 0.5 ? { localTarget: true } : {}) });
+          if (rnd() < 0.3) constraints.splice(Math.floor(rnd() * (constraints.length + 1)), 0, { type: 'ik', name: 'ik', bones: ['b3'], target: 'dial2', mix: R(0, 1) });
+          if (rnd() < 0.3) constraints.splice(Math.floor(rnd() * (constraints.length + 1)), 0, { type: 'physics', name: 'ph', bone: pick(['b1', 'b2']), rotate: 1, x: 1 });
+          const sample: SliderAnim = { bones: { ...animBones(2), dial: { rotate: boneKeys('rotate', 3, 0), translate: boneKeys('translate', 2, 0) } }, slots: animSlots(2) };
+          const keyed: Keyed = {};
+          for (const c of constraints) {
+            if (c.type !== 'slider' || rnd() < 0.5) continue;
+            const tls: Keyed[string] = {};
+            if (rnd() < 0.7) tls.time = [{ time: 0, value: R(-0.2, 2) }, { time: 1, ...(rnd() < 0.7 ? { value: R(0, 2) } : {}) }];
+            if (rnd() < 0.7) tls.mix = [{ time: R(0, 0.5), value: R(0, 1) }, { time: 1.2, ...(rnd() < 0.7 ? { value: R(-0.5, 1.5) } : {}) }];
+            if (Object.keys(tls).length > 0) keyed[c.name as string] = tls;
+          }
+          if (Object.keys(keyed).length > 0) sample.slider = keyed;
+          anims.a = sample;
+          const pair = sliderPair(bones, slots, constraints, anims);
+        return { pair, options: { phase: pick(['grid', 'irr', 'off']), samples: 6, skin: 'all', physics: 'none', dt: null } };
+      };
+    })();
+    const cq06Pairs = Array.from({ length: 300 }, () => cq06());
+    const cq06Drift = drewTheSame(cqModels, cq06Pairs.map((p) => p.pair.model), 'CQ06');
+    if (cq06Drift !== null) probes.push(cq06Drift);
+    let cq06Exact = 0;
+    let keyedRed = 0;
+    let ulpRed = 0;
+    cq06Pairs.forEach(({ pair, options }, i) => {
+      const r = sliderExact(pair, options);
+      if (r.exact) cq06Exact++;
+      else if (probes.length < 3) probes.push(`CQ06 rig ${i}: ${r.first}`);
+      if (i < PLANT_PREFIX * 2) {
+        if (!sliderExact(pair, options, sliderAsKeyed(pair, { ...options, raw: true })).exact) keyedRed++;
+        if (i < PLANT_PREFIX && !sliderExact(pair, options, MIX_ULP).exact) ulpRed++;
+      }
+    });
+    read.push(`CQ06 ${cq06Exact} of 300 (issue #991's time and mix as keyed, planted, red on ${keyedRed} of the first ${PLANT_PREFIX * 2}; every mix one ulp out red on ${ulpRed} of the first ${PLANT_PREFIX})`);
+    if (cq06Exact !== 300) probes.push(`CQ06: ${cq06Exact} of 300 bit-exact`);
+    if (keyedRed === 0) probes.push('CQ06: issue #991\'s reading planted back turned no rig red');
+    if (ulpRed === 0) probes.push('CQ06: every mix moved one ulp turned no rig red');
+    // CQ02's generator, from its seed: physics under Physics.none among ik and transform.
+    {
+      const rnd = seededRandom(93802);
+      const R = within(rnd);
+      const pick = pickOf(rnd);
+      const models: string[] = [];
+      let exact = 0;
+      let red = 0;
+      for (let i = 0; i < 240; i++) {
+        const bones: Obj[] = [{ name: 'root' }];
+        for (let k = 1; k <= 7; k++) {
+          const b: Obj = { name: `b${k}`, parent: k === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+          if (rnd() < 0.25) b.inherit = pick(MODES5.slice(1));
+          bones.push(rnd() < 0.5 ? skewed(rnd, b) : b);
+        }
+        const parentOf = new Map(bones.map((b) => [b.name as string, b.parent as string | undefined]));
+        const below = (top: string, n: string): boolean => {
+          for (let at = parentOf.get(n); at !== undefined; at = parentOf.get(at)) if (at === top) return true;
+          return false;
+        };
+        const names = bones.slice(1).map((b) => b.name as string);
+        bones.push(...amplify('b1'), ...amplify(names[names.length - 1]));
+        const constraints: Obj[] = [];
+        const physics: Keyed = {};
+        for (let k = 0, n = 2 + Math.floor(rnd() * 4); k < n; k++) {
+          const kind = k === 0 ? 'physics' : pick(['physics', 'physics', 'ik', 'transform']);
+          if (kind === 'physics') {
+            const c: Obj = { type: 'physics', name: `k${k}`, bone: pick(names) };
+            for (const f of ['x', 'y', 'rotate', 'scaleX', 'shearX']) if (rnd() < 0.6) c[f] = pick([1, R(0, 2), R(-1, 1)]);
+            for (const f of ['limit', 'fps', 'inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix']) if (rnd() < 0.4) c[f] = f === 'fps' ? pick([30, 60, 120]) : f === 'mass' ? R(0.1, 3) : R(-2, 200);
+            for (const f of ['inertiaGlobal', 'windGlobal', 'mixGlobal']) if (rnd() < 0.3) c[f] = true;
+            constraints.push(c);
+            if (rnd() < 0.5) physics[c.name as string] = { mix: [{ time: 0, value: R(0, 1) }, { time: 0.8, value: 1 }], wind: [{ time: 0.3, value: R(-5, 5) }], reset: [{ time: 0.4 }] };
+          } else if (kind === 'ik') {
+            const b = pick(names);
+            const targets = names.filter((n) => n !== b && !below(b, n));
+            if (targets.length > 0) constraints.push({ type: 'ik', name: `k${k}`, bones: [b], target: pick(targets), mix: pick([1, R(0, 1)]) });
+          } else {
+            const b = pick(names);
+            const sources = names.filter((n) => n !== b && !below(b, n));
+            if (sources.length > 0) constraints.push({ type: 'transform', name: `k${k}`, bones: [b], source: pick(sources), properties: { [pick([...TRANSFORM_PROPERTIES])]: { to: { [pick([...TRANSFORM_PROPERTIES])]: {} } } }, ...(rnd() < 0.4 ? { localTarget: true } : {}) });
+          }
+        }
+        const swing: Keyed = { [pick(names)]: { rotate: [{ time: 0, value: R(-90, 90) }, { time: 1, value: R(-90, 90) }] }, [pick(names)]: { translate: [{ time: 0.2, x: R(-30, 30), y: R(-30, 30) }, { time: 0.9, x: 0, y: 0 }] } };
+        const pair = sliderPair(bones, [], constraints, { a: { bones: swing, ...(Object.keys(physics).length > 0 ? { physics } : {}) } });
+        models.push(pair.model);
+        const r = sliderExact(pair, SIX_IRR);
+        if (r.exact) exact++;
+        else if (probes.length < 3) probes.push(`CQ02 rig ${i}: ${r.first}`);
+        if (i < PLANT_PREFIX && !sliderExact(pair, SIX_IRR, MIX_ULP).exact) red++;
+      }
+      const drift = drewTheSame(cqModels, models, 'CQ02');
+      if (drift !== null) probes.push(drift);
+      read.push(`CQ02 ${exact} of 240 (every mix one ulp out red on ${red} of the first ${PLANT_PREFIX})`);
+      if (exact !== 240) probes.push(`CQ02: ${exact} of 240 bit-exact`);
+      if (red === 0) probes.push('CQ02: every mix moved one ulp turned no rig red');
+    }
+    // The typed rigs: CQ03's dials, CQ04's settings, CQ05's slot settings and CQ07's keyed timelines, each as its control writes it.
+    const typed: Array<[string, { spine: string; model: string }, OracleOptions]> = [];
+    const cq03 = (slider: Obj, dial: Obj): { spine: string; model: string } => sliderPair([{ name: 'root' }, { name: 'g', parent: 'root', rotation: 30, scaleX: 2 }, { name: 'd', parent: 'g', ...dial }, { name: 'p', parent: 'root' }], [], [{ type: 'slider', name: 'sl', animation: 's', bone: 'd', ...slider }], { s: { bones: { p: { translatex: [{ time: 0, value: 0 }, { time: 2, value: 200 }] } } } });
+    for (const [slider, dial] of [
+      [{ property: 'rotate', local: true, scale: 0.01 }, { rotation: 10 }], [{ property: 'rotate', local: true, from: 5, to: 0.2, scale: 0.01 }, { rotation: 10 }],
+      [{ property: 'rotate', local: true, scale: 0.01 }, { rotation: -50 }], [{ property: 'rotate', local: true, scale: 0.02, loop: true }, { rotation: 150 }],
+      [{ property: 'rotate', local: true, scale: 0.01, loop: true }, { rotation: -50 }], [{ property: 'rotate', scale: 0.01 }, { rotation: 10 }],
+      [{ property: 'rotate', scale: 0.001 }, { rotation: -50 }], [{ property: 'x', local: true, scale: 0.1 }, { x: 7 }], [{ property: 'x', scale: 0.01 }, { x: 7 }],
+      [{ property: 'y', scale: 0.01 }, { x: 7 }], [{ property: 'scaleX', local: true }, { scaleX: 1.5 }], [{ property: 'scaleY' }, { scaleY: 1.5 }],
+      [{ property: 'shearY', local: true, scale: 0.01 }, { shearY: 20 }], [{ property: 'x', local: true, scale: 0.1, time: 1.5 }, { x: 7 }],
+    ] as Array<[Obj, Obj]>) typed.push(['CQ03', cq03(slider, dial), ONE_SAMPLE]);
+    // CQ03's looping dials over a zero-length animation: the one set of rigs its control does not keep, so the only ones not held to a kept model.
+    for (const slider of [{ bone: 'd', property: 'x', local: true, loop: true }, { bone: 'd', property: 'x', local: true }, { time: 0.5, loop: true }]) typed.push(['CQ03 zero-length', sliderPair([{ name: 'root' }, { name: 'd', parent: 'root', x: 3 }, { name: 'p', parent: 'root', rotation: 20 }], [], [{ type: 'slider', name: 'sl', animation: 'z', ...slider }], { z: { bones: { p: { rotate: [{ time: 0, value: 45 }] } } } }), ONE_SAMPLE]);
+    const PROPS6 = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'] as const;
+    for (const slider of [{ time: 0.5 }, { time: 0.5, mix: 0.5 }, { time: 0.5, mix: -0.5 }, { time: 0.5, additive: true }, { time: 0.5, additive: true, mix: 0.5 }, { time: 0.9, mix: 0.3 }, { time: -0.2 }, { time: 0.5, mix: 0 }] as Obj[]) {
+      const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', rotation: 20, x: 3, y: 4, scaleX: 2, scaleY: 0.5, shearX: 5, shearY: 7 }, ...PROPS6.map((p) => ({ name: `r_${p}`, parent: 'root' }))];
+      const readers: Obj[] = PROPS6.map((p) => ({ type: 'transform', name: `r_${p}`, bones: [`r_${p}`], source: 'p', localSource: true, localTarget: true, properties: { [p]: { to: { x: {} } } } }));
+      typed.push(['CQ04', sliderPair(bones, [], [{ type: 'slider', name: 'sl', animation: 's', ...slider }, ...readers], {
+        s: { bones: { p: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 300 }], translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 100, y: 50 }], scale: [{ time: 0, x: 1, y: 1 }, { time: 1, x: 5, y: -3 }], shear: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 40, y: 80 }] } } },
+        a: { bones: { p: { rotate: [{ time: 0, value: 30 }], translate: [{ time: 0, x: 10, y: -10 }], scale: [{ time: 0, x: 3, y: -2 }], shear: [{ time: 0, x: 11, y: 13 }] } } },
+      }), ONE_SAMPLE]);
+    }
+    const cq05 = (slider: Obj, keys: Keyed[string]): { spine: string; model: string } => sliderPair([{ name: 'root' }], [{ name: 's', bone: 'root', attachment: 'r', color: '80406020', dark: '102030' }], [{ type: 'slider', name: 'sl', animation: 'x', ...slider }], {
+      x: { slots: { s: keys } },
+      a: { slots: { s: { rgba2: [{ time: 0, light: 'ff0000ff', dark: '00ff00' }], attachment: [{ time: 0, name: 'u' }] } } },
+    });
+    const twoColour = { rgba2: [{ time: 0, light: '00000000', dark: '000000' }, { time: 1, light: 'ffffffff', dark: 'ffffff' }], attachment: [{ time: 0.4, name: 'q' }] };
+    for (const slider of [{ time: 0.5 }, { time: 0.5, mix: 0.5 }, { time: 0.5, mix: 0.5, additive: true }, { time: 0.5, mix: -1 }, { time: 0.5, mix: 2 }, { time: 0.5, mix: 0.01 }, { time: 0.2, mix: 0.5 }, { time: 0.5, mix: 0 }] as Obj[]) typed.push(['CQ05', cq05(slider, twoColour), ONE_SAMPLE]);
+    for (const keys of [{ rgb: [{ time: 0.3, color: '00ff00' }], alpha: [{ time: 0.3, value: 0.9 }] }, { rgb2: [{ time: 0.3, light: '00ff00', dark: '0000ff' }], attachment: [{ time: 0.3, name: null }] }] as Keyed[string][]) {
+      for (const time of [0.1, 0.5]) typed.push(['CQ05', cq05({ time, mix: 0.5 }, keys), ONE_SAMPLE]);
+    }
+    {
+      const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', rotation: 20, x: 5 }, ...amplify('p')];
+      const slots: Obj[] = [{ name: 's', bone: 'p', attachment: 'r', color: '80808080' }];
+      const constraints: Obj[] = [{ type: 'slider', name: 'free', animation: 'x', time: 0.25, mix: 0.8 }, { type: 'slider', name: 'dial', animation: 'x', bone: 'p', property: 'x', local: true, scale: 0.1, additive: true }];
+      const x: SliderAnim = { bones: { p: { rotate: [{ time: 0, value: 0 }, { time: 2, value: 180, curve: 'stepped' }, { time: 2.5, value: 190 }], translatey: [{ time: 0.5, value: 10 }, { time: 1.5, value: -10 }] } }, slots: { s: { rgba: [{ time: 0, color: 'ff000000' }, { time: 2, color: '00ff00ff' }] } } };
+      const keys: Keyed = {
+        free: { time: [{ time: 0.3, value: 0.1, curve: [0.5, 1.9, 0.8, 0.4] }, { time: 1.1, value: 2.2, curve: 'stepped' }, { time: 1.6 }], mix: [{ time: 0.2, value: 0.3 }, { time: 1.4, curve: [1.5, -0.3, 1.7, 1.2] }, { time: 1.9, value: 0.55555 }] },
+        dial: { time: [{ time: 0, value: 2 }], mix: [{ time: 0.7, value: 0.25 }, { time: 1.3 }] },
+      };
+      typed.push(['CQ07', sliderPair(bones, slots, constraints, { x, a: { bones: { root: { rotate: [{ time: 0, value: 0 }, { time: 2.2, value: 0 }] } }, slider: keys } }), DENSE]);
+    }
+    const missing = typed.filter(([what, pair]) => what !== 'CQ03 zero-length' && !cqModels.includes(pair.model)).map(([what]) => what);
+    if (missing.length > 0) probes.push(`${missing.length} typed rig(s) are none their control wrote (${[...new Set(missing)].join(', ')}) — the copy has drifted`);
+    const byControl = new Map<string, [number, number]>();
+    let typedRed = 0;
+    for (const [what, pair, options] of typed) {
+      const r = sliderExact(pair, options);
+      const tally = byControl.get(what) ?? [0, 0];
+      tally[1]++;
+      if (r.exact) tally[0]++;
+      else if (probes.length < 3) probes.push(`${what}: ${r.first}`);
+      byControl.set(what, tally);
+      if (!sliderExact(pair, options, MIX_ULP).exact) typedRed++;
+    }
+    for (const [what, [exact, n]] of byControl) {
+      read.push(`${what} ${exact} of ${n}`);
+      if (exact !== n) probes.push(`${what}: ${exact} of ${n} bit-exact`);
+    }
+    if (typedRed === 0) probes.push('the typed rigs: every mix moved one ulp turned none red');
+    const ok = probes.length === 0;
+    say(
+      'CR11_THE_SLIDER_POPULATIONS_AND_THE_SLIDER_CONTROLS_TYPED_RIGS_READ_BIT_EXACT_THROUGH_THE_RAW_DUMP',
+      ok,
+      probeDetail(ok, probes, `each control's rigs, seed and samples, both dumpers under --raw at tolerance 0, bones, slots and region vertices: ${read.join(', ')}; every mix one ulp out red on ${typedRed} of the ${typed.length} typed rigs`),
+      'issue #993: CQ06 compares on the r6 grid, where issue #991\'s 1–2 ulp mix cannot show, and read 300 of 300 through it; the census read every slider population bit-exact under --raw on the tree #991 left, so each is held there now',
+    );
+  }
+
+  // --- CR12: a slider population keying mix on 85 % and time on 70 % of bone-less sliders reads bit-exact through --raw, and issue #991's reading planted back is red --
+  {
+    const probes: string[] = [];
+    // Issue #991's scratch generator, brought in: one or two sliders, each a looped dial, an unlooped dial, a bone-less slider or a looped
+    // bone-less one; every numeric bone timeline kind in their animations; the sample animation keying the dial and each slider's mix on
+    // 85 % of sliders, time on 70 % of the bone-less and 20 % of the dials. #991 drew one seed per rig (99101 on); here the 400 rigs
+    // are drawn in turn from the one generator of seed 99101, because nine of those per-rig seeds (99141 the first) are drawn fewer
+    // than RG02's 4,096 reference draws, and RG02 then compares a shorter run against the full reference and reads a false mismatch.
+    const KINDS = ['rotate', 'translate', 'translatex', 'translatey', 'scale', 'scalex', 'scaley', 'shear', 'shearx', 'sheary'];
+    const stream = seededRandom(99101);
+    const rig = (): { pair: { spine: string; model: string }; options: OracleOptions; tags: string[] } => {
+      const rnd = stream;
+      const R = within(rnd);
+      const pick = pickOf(rnd);
+      const bones: Obj[] = [{ name: 'root' }, { name: 'g', parent: 'root', rotation: R(-180, 180), scaleX: R(0.5, 2) * pick([1, -1]), shearY: R(-20, 20) }];
+      for (let k = 1; k <= 5; k++) {
+        const b: Obj = { name: `b${k}`, parent: pick(['g', ...bones.slice(2).map((x) => x.name as string)]), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 50) };
+        bones.push(rnd() < 0.5 ? skewed(rnd, b) : b);
+      }
+      bones.push({ name: 'dial', parent: 'g', x: R(-20, 20), rotation: R(-100, 100), scaleX: R(0.2, 2), scaleY: R(0.2, 2), shearY: R(-20, 20) });
+      bones.push(...amplify('b1'), ...amplify('b3'), ...amplify('b5'));
+      const keys = (kind: string): Obj[] => {
+        const out: Obj[] = [];
+        let t = rnd() < 0.3 ? R(0.05, 0.6) : 0;
+        const n = 1 + Math.floor(rnd() * 4);
+        const two = kind === 'translate' || kind === 'shear' || kind === 'scale';
+        for (let i = 0; i < n; i++) {
+          const k: Obj = { time: Math.round(t * 1000) / 1000 };
+          if (two) Object.assign(k, kind === 'scale' ? { x: R(-2, 2.5), y: R(-2, 2.5) } : { x: R(-40, 40), y: R(-40, 40) });
+          else k.value = kind.startsWith('scale') ? R(-2, 2.5) : kind === 'rotate' ? R(-200, 200) : R(-40, 40);
+          if (i < n - 1 && rnd() < 0.35) k.curve = rnd() < 0.3 ? 'stepped' : Array.from({ length: (two ? 2 : 1) * 4 }, (_v, j) => (j % 2 === 0 ? Math.round((t + 0.1) * 1000) / 1000 : R(-50, 50)));
+          out.push(k);
+          t += R(0.1, 0.6);
+        }
+        return out;
+      };
+      const tags: string[] = [];
+      const constraints: Obj[] = [];
+      const anims: Record<string, SliderAnim> = {};
+      for (let s = 0, nsl = 1 + Math.floor(rnd() * 2); s < nsl; s++) {
+        const ab: Keyed = {};
+        for (let j = 0, n = 1 + Math.floor(rnd() * 3); j < n; j++) {
+          const b = pick(['b1', 'b2', 'b3', 'b4', 'b5']);
+          ab[b] = { ...(ab[b] ?? {}), [pick(KINDS)]: keys('') };
+        }
+        // The generator drew each timeline's keys once before its kind was known and again after; both draws are kept, as #991's generator made them.
+        for (const b of Object.keys(ab)) for (const k of Object.keys(ab[b])) ab[b][k] = keys(k);
+        anims[`sa${s}`] = { bones: ab };
+        const c: Obj = { type: 'slider', name: `sl${s}`, animation: `sa${s}` };
+        const shape = pick(['loopdial', 'loopdial', 'dial', 'free', 'loopfree']);
+        tags.push(shape);
+        if (shape === 'loopdial' || shape === 'loopfree') c.loop = true;
+        if (rnd() < 0.3) c.additive = true;
+        if (rnd() < 0.6) c.mix = pick([1, 0, R(0, 1), R(-1, 2), R(0, 1)]);
+        if (shape.endsWith('dial')) {
+          Object.assign(c, { bone: 'dial', property: pick([...TRANSFORM_PROPERTIES]), scale: pick([R(0.001, 0.05), R(-0.05, -0.001), R(0.1, 1)]) });
+          if (rnd() < 0.4) c.local = true;
+          if (rnd() < 0.5) c.from = R(-50, 50);
+          if (rnd() < 0.6) c.to = R(0, 1);
+        } else if (rnd() < 0.8) c.time = R(-0.5, 3);
+        constraints.push(c);
+      }
+      const sample: SliderAnim = { bones: { dial: { rotate: keys('rotate'), ...(rnd() < 0.5 ? { scalex: keys('scalex') } : {}) } } };
+      const slider: Keyed = {};
+      for (const c of constraints) {
+        const tls: Keyed[string] = {};
+        const onDial = c.bone !== undefined;
+        const mixKeyed = rnd() < 0.85;
+        const timeKeyed = !onDial ? rnd() < 0.7 : rnd() < 0.2;
+        const k2 = (lo: number, hi: number): Obj[] => {
+          const t0 = R(0, 0.5);
+          const ks: Obj[] = [{ time: t0, value: R(lo, hi) }];
+          const cv = rnd();
+          if (cv < 0.3) ks[0].curve = [Math.round((t0 + 0.1) * 1000) / 1000, R(-1, 2), 0.9, R(-1, 2)];
+          else if (cv < 0.4) ks[0].curve = 'stepped';
+          ks.push({ time: 1.2, ...(rnd() < 0.8 ? { value: R(lo, hi) } : {}) });
+          if (rnd() < 0.3) ks.push({ time: 1.7, value: R(lo, hi) });
+          return ks;
+        };
+        if (mixKeyed) {
+          tls.mix = k2(-0.5, 1.5);
+          tags.push('mixkey');
+        }
+        if (timeKeyed) {
+          tls.time = k2(-0.2, 2.5);
+          tags.push(onDial ? 'timekey-ignored' : 'timekey');
+        }
+        if (Object.keys(tls).length > 0) slider[c.name as string] = tls;
+      }
+      if (Object.keys(slider).length > 0) sample.slider = slider;
+      anims.a = sample;
+      const pair = sliderPair(bones, [{ name: 's0', bone: 'b1', attachment: 'q' }], constraints, anims);
+      return { pair, options: { phase: pick(['irr', 'irr', 'off', 'grid']), samples: 8, skin: 'all', physics: 'none', dt: null, raw: true }, tags };
+    };
+    const N = 400;
+    let exact = 0;
+    let red = 0;
+    let keyedRigs = 0;
+    const byTag = new Map<string, [number, number]>();
+    for (let i = 0; i < N; i++) {
+      const { pair, options, tags } = rig();
+      const r = sliderExact(pair, options);
+      if (r.exact) exact++;
+      else if (probes.length < 3) probes.push(`rig ${i}: ${r.first}`);
+      for (const t of new Set(tags)) {
+        const tally = byTag.get(t) ?? [0, 0];
+        tally[1]++;
+        byTag.set(t, tally);
+      }
+      if (!tags.includes('mixkey') && !tags.includes('timekey')) continue;
+      keyedRigs++;
+      const planted = sliderExact(pair, options, sliderAsKeyed(pair, options));
+      if (!planted.exact) {
+        red++;
+        for (const t of new Set(tags)) (byTag.get(t) as [number, number])[0]++;
+      }
+    }
+    if (exact !== N) probes.push(`${exact} of ${N} bit-exact`);
+    if (red === 0) probes.push('issue #991\'s time and mix as keyed, planted, turned no rig red');
+    const tagLine = [...byTag.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([t, [r, n]]) => `${t} ${r} of ${n}`).join(', ');
+    const ok = probes.length === 0;
+    say(
+      'CR12_A_SLIDER_POPULATION_KEYING_MIX_AND_TIME_READS_BIT_EXACT_THROUGH_THE_RAW_DUMP_AND_ISSUE_991S_READING_IS_RED',
+      ok,
+      probeDetail(ok, probes, `${exact} of ${N} rigs drawn in turn from seed 99101, bit-exact under --raw at tolerance 0 at 8 irrational, offset or grid samples, on setup and sampled bones, slots and region vertices — one or two sliders each, looped and unlooped dials on every property and bone-less sliders, every numeric bone timeline kind, mix and time keyed; issue #991's time and mix as keyed, planted, red on ${red} of the ${keyedRigs} rigs keying either (red of rigs, by shape and key: ${tagLine})`),
+      'issue #993 ask 4: the population issue #991 was closed on, brought into the tree — richer than CQ06\'s (mix keyed on 85 % of sliders, time on 70 % of the bone-less), the rigs where #991\'s rule is about one in three',
+    );
+  }
+
+  // --- CR13: the path populations read bit-exact through --raw — CP02's walk, CP03's and CP06's probes, CP07's rigs, CP08's timelines and CP13's orders --
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    const tally = (what: string, n: number, each: (i: number) => { pair: { spine: string; model: string }; options: OracleOptions }): void => {
+      let exact = 0;
+      let red = 0;
+      for (let i = 0; i < n; i++) {
+        const { pair, options } = each(i);
+        const r = pathExact(pair, options);
+        if (r.exact) exact++;
+        else if (probes.length < 3) probes.push(`${what} ${i}: ${r.first}`);
+        if (i < PLANT_PREFIX && !pathExact(pair, options, MIX_ULP).exact) red++;
+      }
+      read.push(`${what} ${exact} of ${n} (every mix one ulp out red on ${red} of the first ${Math.min(n, PLANT_PREFIX)})`);
+      if (exact !== n) probes.push(`${what}: ${exact} of ${n} bit-exact`);
+      if (red === 0) probes.push(`${what}: every mix moved one ulp turned none red`);
+    };
+    // CP02's walk: one bone over a grid of positions.
+    const walk: Array<{ spine: string; model: string }> = [];
+    for (const knots of [3, 4]) for (const closed of [false, true]) for (const constantSpeed of [true, false]) for (const positionMode of ['percent', 'fixed']) {
+      const xy = closed ? WALK_POINTS[knots].slice(0, knots * 6) : WALK_POINTS[knots];
+      for (let i = 0; i <= 20; i++) walk.push(walkPair(xy, { closed, constantSpeed, lengths: pathLengthsOf(xy) }, { positionMode, position: positionMode === 'percent' ? Math.round((-0.25 + i * 0.075) * 1000) / 1000 : -80 + i * 30 }));
+    }
+    tally('CP02 position', walk.length, (i) => ({ pair: walk[i], options: ONE_SAMPLE }));
+    // CP03's generator function, from its seed.
+    const cp03 = mix32(93803);
+    tally('CP03 probe', 600, () => ({ pair: pathPair(pathProbe(cp03)), options: ONE_SAMPLE }));
+    // CP06's weighted population: CP03's generator, every path bound to w1.
+    const cp06 = mix32(60606);
+    tally('CP06 weighted probe', 300, () => {
+      const spec = pathProbe(cp06);
+      const att = spec.paths.s.p;
+      if (att.weighted === undefined) att.weighted = (att.xy ?? []).reduce<Array<Array<{ bone: string; x: number; y: number; w: number }>>>((acc, v, i, xy) => (i % 2 === 0 ? [...acc, [{ bone: 'w1', x: v, y: xy[i + 1], w: 1 }]] : acc), []);
+      delete att.xy;
+      return { pair: pathPair(spec), options: ONE_SAMPLE };
+    });
+    // CP07's generator, from its seed: path, ik and transform in random order.
+    const cp07Pairs: Array<{ spine: string; model: string }> = [];
+    {
+      const rnd = mix32(70707);
+      const R = within(rnd);
+      const pick = pickOf(rnd);
+      const draw = (): { spine: string; model: string } | null => {
+        const bones: Obj[] = [{ name: 'root' }];
+        for (let k = 1; k <= 9; k++) {
+          const b: Obj = { name: `b${k}`, parent: k === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+          if (rnd() < 0.2) b.inherit = pick(MODES5.slice(1));
+          bones.push(rnd() < 0.5 ? skewed(rnd, b) : b);
+        }
+        const parentOf = new Map(bones.map((b) => [b.name as string, b.parent as string | undefined]));
+        const below = (top: string, x: string): boolean => {
+          for (let at = parentOf.get(x); at !== undefined; at = parentOf.get(at)) if (at === top) return true;
+          return false;
+        };
+        const names = bones.slice(1).map((b) => b.name as string);
+        const closed = rnd() < 0.4;
+        const curves = 1 + Math.floor(rnd() * 3);
+        const points = closed ? 3 * curves : 3 * (curves + 1);
+        const local: number[] = [];
+        for (let i = 0; i < points; i++) local.push(R(-80, 80), R(-80, 80));
+        const att: PathAttachmentSpec = { lengths: pathLengthsOf(local), ...(closed ? { closed: true } : {}), ...(rnd() < 0.5 ? { constantSpeed: false } : {}) };
+        if (rnd() < 0.5) att.weighted = local.reduce<Array<Array<{ bone: string; x: number; y: number; w: number }>>>((acc, v, i) => (i % 2 === 0 ? [...acc, [{ bone: pick(names), x: v, y: local[i + 1], w: 0.5 }, { bone: pick(names), x: R(-80, 80), y: R(-80, 80), w: 0.5 }]] : acc), []);
+        else att.xy = local;
+        const constraints: Obj[] = [];
+        for (let k = 0, count = 2 + Math.floor(rnd() * 4); k < count; k++) {
+          const kind = pick(['path', 'path', 'ik1', 'ik2', 'transform']);
+          if (kind === 'path') {
+            const bs = [pick(names)];
+            for (let j = 0; j < 3 && rnd() < 0.6; j++) {
+              const kids = names.filter((x) => parentOf.get(x) === bs[bs.length - 1]);
+              if (kids.length === 0) break;
+              bs.push(pick(kids));
+            }
+            const c: Obj = { type: 'path', name: `k${k}`, bones: bs, slot: 's', rotateMode: pick(['tangent', 'chain', 'chainScale']), spacingMode: pick(['length', 'fixed', 'percent', 'proportional']), positionMode: pick(['percent', 'fixed']) };
+            c.position = c.positionMode === 'percent' ? R(-0.2, 1.2) : R(-30, 300);
+            c.spacing = c.spacingMode === 'percent' || c.spacingMode === 'proportional' ? R(-0.1, 0.4) : R(-10, 40);
+            if (rnd() < 0.3) c.rotation = R(-90, 90);
+            for (const m of ['mixRotate', 'mixX', 'mixY']) if (rnd() < 0.3) c[m] = pick([0, R(0, 1)]);
+            constraints.push(c);
+          } else if (kind === 'ik2') {
+            const child = pick(names.filter((x) => parentOf.get(x) !== 'root'));
+            if (child === undefined) continue;
+            const parent = parentOf.get(child) as string;
+            const targets = names.filter((x) => x !== parent && x !== child && !below(parent, x));
+            if (targets.length > 0) constraints.push({ type: 'ik', name: `k${k}`, bones: [parent, child], target: pick(targets), mix: pick([1, R(0, 1)]), bendPositive: rnd() < 0.5 });
+          } else if (kind === 'ik1') {
+            const b = pick(names);
+            const targets = names.filter((x) => x !== b && !below(b, x));
+            if (targets.length > 0) constraints.push({ type: 'ik', name: `k${k}`, bones: [b], target: pick(targets), mix: pick([1, R(0, 1)]) });
+          } else {
+            const b = pick(names);
+            const sources = names.filter((x) => x !== b && !below(b, x));
+            const props = [...TRANSFORM_PROPERTIES];
+            if (sources.length > 0) constraints.push({ type: 'transform', name: `k${k}`, bones: [b], source: pick(sources), properties: { [pick(props)]: { to: { [pick(props)]: {} } } }, ...(rnd() < 0.3 ? { localTarget: true } : {}) });
+          }
+        }
+        if (!constraints.some((c) => c.type === 'path')) return null;
+        return pathPair({ bones: [...bones, ...names.flatMap((x) => amplify(x))], slots: [{ name: 's', bone: pick(names), attachment: 'p' }], paths: { s: { p: att } }, constraints });
+      };
+      while (cp07Pairs.length < 200) {
+        const pair = draw();
+        if (pair !== null) cp07Pairs.push(pair);
+      }
+    }
+    const cp07Drift = drewTheSame(pathProbeModels, cp07Pairs.map((p) => p.model), 'CP07');
+    if (cp07Drift !== null) probes.push(cp07Drift);
+    tally('CP07 rig', cp07Pairs.length, (i) => ({ pair: cp07Pairs[i], options: ONE_SAMPLE }));
+    // CP08's timelines, at its 200 dense samples.
+    const cp08: Array<{ spine: string; model: string }> = [];
+    {
+      const xy = [-30, 0, 0, 0, 30, 40, 60, 40, 90, 40, 120, -20, 150, 0, 180, 0, 210, 0];
+      const timelines: Array<Record<string, Obj[]>> = [
+        { position: [{ time: 0, value: 0 }, { time: 1, value: 1 }] },
+        { position: [{ time: 0.2, value: 0.1, curve: [0.4, 0.9, 0.7, 0.2] }, { time: 1.3, value: 0.8 }] },
+        { position: [{ time: 0, value: 0.2, curve: 'stepped' }, { time: 0.5, value: 0.6 }, { time: 1, value: 0.9 }] },
+        { position: [{ time: 0.1 }, { time: 0.9, value: 0.7 }] },
+        { spacing: [{ time: 0, value: 0 }, { time: 1, value: 15, curve: [1.2, 3, 1.6, 12] }, { time: 2, value: -5 }] },
+        { mix: [{ time: 0, mixRotate: 0, mixX: 0, mixY: 0 }, { time: 1, mixRotate: 1, mixX: 0.5, mixY: 0.2, curve: [1.2, 1, 1.5, 0, 1.1, 0.5, 1.3, 1, 1.4, 0.2, 1.6, 0.9] }, { time: 2, mixRotate: 0.3, mixX: 1, mixY: 1 }] },
+        { mix: [{ time: 0.2, mixX: 0.4 }, { time: 1, mixRotate: 0.2 }, { time: 1.5 }] },
+        { position: [{ time: 0, value: 0.9 }, { time: 2, value: 0.05 }], spacing: [{ time: 0.5, value: 4 }, { time: 1.5, value: 30 }], mix: [{ time: 0, mixRotate: 1, mixX: 1, mixY: 1 }, { time: 2, mixRotate: 0.5, mixX: 0.7, mixY: 0.1 }] },
+      ];
+      for (const rotateMode of ['tangent', 'chain', 'chainScale']) for (const keys of timelines) {
+        cp08.push(pathPair({
+          bones: [{ name: 'root' }, { name: 'b', parent: 'root', length: 20 }, { name: 'c', parent: 'b', x: 20, length: 20 }, ...amplify('b'), ...amplify('c')],
+          slots: [{ name: 's', bone: 'root', attachment: 'p' }],
+          paths: { s: { p: { xy, lengths: pathLengthsOf(xy) } } },
+          constraints: [{ type: 'path', name: 'k', bones: ['b', 'c'], slot: 's', position: 0.3, spacing: 2, rotateMode, mixX: 0.8 }],
+          keys: { k: keys },
+        }));
+      }
+    }
+    const cp08Drift = drewTheSame(pathProbeModels, cp08.map((p) => p.model), 'CP08');
+    if (cp08Drift !== null) probes.push(cp08Drift);
+    tally('CP08 keyed skeleton', cp08.length, (i) => ({ pair: cp08[i], options: DENSE }));
+    // CP13's orders of physics, slider, ik and transform around a weighted path, as its control writes them.
+    {
+      const bones: Obj[] = [
+        { name: 'root' }, { name: 'sp', parent: 'root', x: 5, rotation: 10 }, { name: 'sb', parent: 'sp', x: 3, y: 4, rotation: 20 },
+        { name: 'sc', parent: 'sb', x: 7, rotation: 5 }, { name: 'w1', parent: 'root', x: 1, y: 2 }, { name: 'o', parent: 'root', x: -4 },
+        { name: 'b', parent: 'root', length: 10 }, ...amplify('b'),
+      ];
+      const points = [[-10, 0], [0, 0], [10, 20], [60, 30], [90, 0], [100, -5]];
+      const w1 = bones.findIndex((b) => b.name === 'w1');
+      const spineAtt = { type: 'path', vertexCount: 6, vertices: points.flatMap(([x, y]) => [1, w1, x, y, 1]), lengths: [100, 200] };
+      const modelAtt = { kind: 'path', vertexCount: 6, vertices: { weighted: true, bindings: points.map(([x, y]) => [{ bone: 'w1', x, y, weight: 1 }]) }, lengths: [100, 200] };
+      type Keys = Record<string, Record<string, Obj[]>>;
+      const orderPair = (before: Obj[], anims: Record<string, Keys>, after: Obj[] = []): { spine: string; model: string } => {
+        const constraints = [...before, { type: 'path', name: 'k', bones: ['b'], slot: 's', rotation: 30 }, ...after];
+        const all: Record<string, Keys> = { a: { o: { rotate: [{ time: 0, value: 1 }, { time: 1, value: 2 }] } }, ...anims };
+        const spine = { skeleton: { spine: '4.3.13' }, bones, slots: [{ name: 's', bone: 'sb', attachment: 'p' }], constraints, skins: [{ name: 'default', attachments: { s: { p: spineAtt } } }], animations: Object.fromEntries(Object.entries(all).map(([n, k]) => [n, { bones: k }])) };
+        const model = {
+          spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones, slots: [{ name: 's', bone: 'sb', setup: 'p' }],
+          skins: [{ name: 'default', bones: [], constraints: {}, attachments: { s: { p: modelAtt } } }],
+          constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })), events: [],
+          animations: Object.entries(all).map(([name, k]) => ({ name, duration: 0, bones: Object.entries(k).map(([n, tls]) => ({ name: n, timelines: Object.entries(tls).map(([t, keys]) => ({ name: t, keys })) })), slots: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: [] })),
+          images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
+        };
+        return { spine: JSON.stringify(spine), model: JSON.stringify(model) };
+      };
+      const phys = (bone: string): Obj => ({ type: 'physics', name: `ph_${bone}`, bone, rotate: 1, x: 1 });
+      const slide = (dial: string | null): Obj => (dial === null ? { type: 'slider', name: 'sl', animation: 'x', time: 0.5 } : { type: 'slider', name: 'sl', animation: 'x', bone: dial, property: 'rotate', scale: 0.01, local: true });
+      const keys = (bone: string, flip: boolean): Record<string, Keys> => ({ x: { [bone]: flip ? { scale: [{ time: 0, x: -1, y: 1 }] } : { rotate: [{ time: 0, value: 40 }] } } });
+      const readsSc = { type: 'transform', name: 't2', bones: ['o'], source: 'sc', mixRotate: 0.5 };
+      // Each case with the reading spine-core gave; the rejected rule each one separates is named beside it.
+      const cases: Array<[string, { spine: string; model: string }, 'turned' | 'negated']> = [
+        ['the path alone', orderPair([], {}), 'negated'],
+        ['a transform on sb', orderPair([{ type: 'transform', name: 't', bones: ['sb'], source: 'o', mixRotate: 0.5 }], {}), 'turned'],
+        ['physics on sb (physics ordering nothing misses)', orderPair([phys('sb')], {}), 'turned'],
+        ['physics on sb\'s parent', orderPair([phys('sp')], {}), 'negated'],
+        ['physics on sb\'s child (its parents ordered first)', orderPair([phys('sc')], {}), 'turned'],
+        ['physics on another bone', orderPair([phys('o')], {}), 'negated'],
+        ['physics on sb after the path', orderPair([], {}, [phys('sb')]), 'negated'],
+        ['a slider keying sb (a slider ordering its keyed bones misses)', orderPair([slide(null)], keys('sb', false)), 'negated'],
+        ['a slider keying sb\'s child', orderPair([slide(null)], keys('sc', false)), 'negated'],
+        ['a slider on dial sb (a slider ordering its dial misses)', orderPair([slide('sb')], keys('o', false)), 'negated'],
+        ['a slider on dial sc', orderPair([slide('sc')], keys('o', false)), 'negated'],
+        ['physics on sb, then a slider reflecting sp', orderPair([phys('sb'), slide(null)], keys('sp', true)), 'turned'],
+        ['physics on sb, a slider reflecting sp, a transform reading sc (a slider resetting nothing misses)', orderPair([phys('sb'), slide(null), readsSc], keys('sp', true)), 'negated'],
+        ['physics on sb, a slider reflecting sb, a transform reading sc (a slider resetting only below its bones misses)', orderPair([phys('sb'), slide(null), readsSc], keys('sb', true)), 'negated'],
+        ['physics on sb, a slider reflecting sb, physics on sc', orderPair([phys('sb'), slide(null), phys('sc')], keys('sb', true)), 'negated'],
+        ['physics on sb, a slider on dial sp, a transform reading sc (a dial is not reset)', orderPair([phys('sb'), slide('sp'), readsSc], keys('o', false)), 'turned'],
+        ['physics on sc, a slider keying sc, a transform reading sb', orderPair([phys('sc'), slide(null), { type: 'transform', name: 't2', bones: ['o'], source: 'sb', mixRotate: 0.5 }], keys('sc', false)), 'turned'],
+        ['an ik on sp, then physics on sc', orderPair([{ type: 'ik', name: 'i', bones: ['sp'], target: 'o', mix: 0.5 }, phys('sc')], {}), 'turned'],
+      ];
+      tally('CP13 order', cases.length, (i) => ({ pair: cases[i][1], options: { phase: 'grid', samples: 3, skin: 'all', physics: 'none', dt: null } }));
+    }
+    const ok = probes.length === 0;
+    say(
+      'CR13_THE_PATH_POPULATIONS_READ_BIT_EXACT_THROUGH_THE_RAW_DUMP',
+      ok,
+      probeDetail(ok, probes, `each control's rigs, seed and samples, both dumpers under --raw at tolerance 0, the paths and pathAttachments blocks included: ${read.join(', ')}`),
+      'issue #993: the path controls compare on the r6 grid, and #984\'s rule was one a population reached and the corpus did not; the census read every path population bit-exact under --raw, so each is held there now',
+    );
+  }
+
+  // --- CR14: the ik and transform timelines at a sample and CK07's stepped physics population read bit-exact through --raw --
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    // CC08's keyed skeleton, at its 200 dense samples and at the grid.
+    {
+      const bones: Obj[] = [
+        { name: 'root' }, { name: 'hip', parent: 'root', x: 10, y: 40, rotation: 5 },
+        { name: 'thigh', parent: 'hip', rotation: -80, length: 40.12345, scaleX: 1.01 }, { name: 'shin', parent: 'thigh', x: 40.12345, y: 2.5, length: 38.54321 }, { name: 'foot', parent: 'root', x: 30, y: -20 },
+        { name: 'arm', parent: 'hip', x: 5, y: 10, rotation: 30, length: 25.33333 }, { name: 'hand', parent: 'root', x: -30, y: 70 },
+        { name: 'aim', parent: 'root', x: 12.34567, y: 5.4321, rotation: 33.33333 }, { name: 'head', parent: 'hip', x: 3, y: 30, rotation: 90 },
+        ...amplify('thigh'), ...amplify('shin'), ...amplify('head'),
+      ];
+      const constraints: Obj[] = [
+        { type: 'ik', name: 'leg', bones: ['thigh', 'shin'], target: 'foot', bendPositive: false, softness: 4.444 },
+        { type: 'ik', name: 'reach', bones: ['arm'], target: 'hand', mix: 0.3, compress: true, scaleY: 'volume' },
+        { type: 'transform', name: 'look', bones: ['head'], source: 'aim', properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {}, y: { scale: 0.5 } } }, scaleX: { to: { scaleX: {} } } }, mixRotate: 0, mixX: 0, mixScaleX: 0 },
+      ];
+      const keys = {
+        ik: {
+          leg: [
+            { time: 0.4, mix: 0.2, softness: 1.23457, bendPositive: false, curve: [0.6, 0.93333, 0.8, 1.1, 0.5, 20.12345, 0.9, 3.3] },
+            { time: 1.2, mix: 1, softness: 12.34567, bendPositive: true, stretch: true, curve: 'stepped' },
+            { time: 1.6, softness: 0.5, bendPositive: false },
+            { time: 2.0, mix: 0.55555, softness: 30, compress: true },
+          ],
+          reach: [{ time: 0, mix: 0.1, compress: true, curve: [0.3, 0.9, 0.7, 0.2, 0.3, 0, 0.7, 0] }, { time: 1, mix: 0.95, stretch: true }, { time: 2.2, mix: 0.4 }],
+        },
+        transform: {
+          look: [
+            { time: 0.3 },
+            { time: 0.9, mixRotate: 0.5, mixX: 0.33333, curve: [1.0, 0.7, 1.2, 0.1, 1.0, 0.1, 1.2, 0.9, 1.0, 0.2, 1.2, 0.8, 1.0, 0.4, 1.2, 0.6, 1.0, 0.6, 1.2, 0.3, 1.0, 1.5, 1.2, -0.5] },
+            { time: 1.5, mixRotate: 1, mixX: 1, mixY: 0, mixScaleX: 2, mixScaleY: 0, mixShearY: 1 },
+            { time: 2.4, mixRotate: 0.25 },
+          ],
+        },
+      };
+      const pair = constraintPair(bones, constraints, { ...keys, bones: { root: { rotate: [{ time: 0, value: 0 }, { time: 2.4, value: 0 }] } } });
+      if (!probeModels.includes(pair.model)) probes.push('CC08: the typed skeleton is none its control wrote — the copy has drifted');
+      let exact = 0;
+      let red = 0;
+      for (const options of [{ ...DENSE, raw: true }, { ...GRID9, raw: true }]) {
+        const c = constraintCompare(pair, options);
+        if (c.identical) exact++;
+        else probes.push(`CC08 at ${options.phase} ${options.samples}: ${c.first}`);
+        if (!constraintCompare(pair, options, MIX_ULP).identical) red++;
+      }
+      read.push(`CC08 ${exact} of 2 samplings (200 dense and the grid; every mix one ulp out red on ${red})`);
+      if (red === 0) probes.push('CC08: every mix moved one ulp turned neither sampling red');
+    }
+    // CK07's generator, from its seed: physics stepped among ik and transform.
+    {
+      const rnd = seededRandom(95631);
+      const R = within(rnd);
+      const pick = pickOf(rnd);
+      const N = 150;
+      const models: string[] = [];
+      let exact = 0;
+      let red = 0;
+      for (let i = 0; i < N; i++) {
+        const bones: Obj[] = [{ name: 'root' }];
+        for (let j = 1; j <= 6; j++) {
+          const b: Obj = { name: `b${j}`, parent: j === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+          if (rnd() < 0.3) Object.assign(b, { scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2), shearX: R(-30, 30), shearY: R(-30, 30) });
+          if (rnd() < 0.2) b.inherit = 'onlyTranslation';
+          bones.push(b);
+        }
+        const names = bones.slice(1).map((b) => b.name as string);
+        bones.push(...amplify(names[names.length - 1]), ...amplify(names[2]));
+        const parentOf = new Map(bones.map((b) => [b.name as string, b.parent as string | undefined]));
+        const below = (top: string, n: string): boolean => {
+          for (let at = parentOf.get(n); at !== undefined; at = parentOf.get(at)) if (at === top) return true;
+          return false;
+        };
+        const constraints: Obj[] = [];
+        const physics: Keyed = {};
+        for (let k = 0, n = 1 + Math.floor(rnd() * 5); k < n; k++) {
+          const kind = k === 0 ? 'physics' : pick(['physics', 'physics', 'ik', 'transform']);
+          if (kind === 'physics') {
+            const c: Obj = { type: 'physics', name: `k${k}`, bone: pick(names), ...someComponents(rnd) };
+            for (const f of ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix', 'limit', 'fps']) if (rnd() < 0.4) c[f] = settingValue(rnd, f);
+            for (const f of ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix']) if (rnd() < 0.3) c[`${f}Global`] = true;
+            if (rnd() < 0.1) c.skin = true;
+            constraints.push(c);
+            if (rnd() < 0.6) {
+              const tl: Record<string, Obj[]> = {};
+              for (const f of ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix', 'reset']) if (rnd() < 0.3) tl[f] = f === 'reset' ? [{ time: R(0.05, 0.95) }] : [{ time: R(0, 0.4), value: settingValue(rnd, f), ...(rnd() < 0.3 ? { curve: 'stepped' } : {}) }, { time: R(0.5, 1), value: settingValue(rnd, f) }];
+              if (Object.keys(tl).length > 0) physics[c.name as string] = tl;
+            }
+          } else if (kind === 'ik') {
+            const b = pick(names);
+            const targets = names.filter((n) => n !== b && !below(b, n));
+            if (targets.length > 0) constraints.push({ type: 'ik', name: `k${k}`, bones: [b], target: pick(targets), mix: pick([1, R(0, 1)]) });
+          } else {
+            const b = pick(names);
+            const sources = names.filter((n) => n !== b && !below(b, n));
+            if (sources.length > 0) constraints.push({ type: 'transform', name: `k${k}`, bones: [b], source: pick(sources), properties: { rotate: { to: { rotate: {} } } }, ...(rnd() < 0.4 ? { localTarget: true } : {}) });
+          }
+        }
+        if (rnd() < 0.5) physics[''] = { [pick(['inertia', 'strength', 'damping', 'wind', 'gravity', 'mix'])]: [{ time: R(0, 0.4), value: R(0.1, 1) }, { time: R(0.5, 1), value: R(0.1, 1) }] };
+        const anims: Record<string, StepAnim> = {
+          a: { bones: { [pick(names)]: { rotate: [{ time: 0, value: R(-90, 90) }, { time: 1, value: R(-90, 90) }] }, [pick(names)]: { translate: [{ time: 0, x: R(-30, 30), y: R(-30, 30) }, { time: R(0.2, 0.8), x: R(-30, 30), y: R(-30, 30) }, { time: 1, x: 0, y: 0 }] } }, ...(Object.keys(physics).length > 0 ? { physics } : {}) },
+          b: { bones: { [pick(names)]: { translate: [{ time: 0, x: 0, y: 0 }, { time: 0.5, x: R(-50, 50), y: R(-50, 50) }] } } },
+        };
+        const pair = stepPair(bones, constraints, anims);
+        models.push(pair.model);
+        const options: OracleOptions = { ...stepOptions(pick([...STEP_DTS, R(0.005, 0.05)]), 9, pick(['grid', 'irr'])), raw: true };
+        const c = stepCompare(pair, options);
+        if (c.identical && posedSkips(c).length === 0) exact++;
+        else if (probes.length < 3) probes.push(`CK07 rig ${i}: ${posedSkips(c).join('; ') || c.first}`);
+        if (i < PLANT_PREFIX && !stepCompare(pair, options, MIX_ULP).identical) red++;
+      }
+      const drift = drewTheSame(ckModels, models, 'CK07');
+      if (drift !== null) probes.push(drift);
+      read.push(`CK07 ${exact} of ${N} stepped (every mix one ulp out red on ${red} of the first ${PLANT_PREFIX})`);
+      if (exact !== N) probes.push(`CK07: ${exact} of ${N} bit-exact`);
+      if (red === 0) probes.push('CK07: every mix moved one ulp turned no rig red');
+    }
+    const ok = probes.length === 0;
+    say(
+      'CR14_THE_IK_AND_TRANSFORM_TIMELINES_AT_A_SAMPLE_AND_THE_STEPPED_PHYSICS_POPULATION_READ_BIT_EXACT_THROUGH_THE_RAW_DUMP',
+      ok,
+      probeDetail(ok, probes, `each control's rigs, seed and samples, both dumpers under --raw at tolerance 0: ${read.join(', ')}`),
+      'issue #993: CC08 and CK07 compare on the r6 grid; CR07 reads a stepped physics population raw, but not CK07\'s (onlyTranslation bones, skin-required constraints, the timeline naming no constraint, a free dt), and the census read both bit-exact',
+    );
+  }
+
+  // --- CR15: the deform, sequence and draw-order populations and CP05's stated lengths read bit-exact through --raw --
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    /** A deform timeline's array one ulp out on every value — planted, a gap only the raw reading sees. */
+    const deformUlp: TimelinePlant = { deform: (vertices, keys, t) => deformAt(vertices, keys, t)?.map(ulpOut) ?? null };
+    const run = (what: string, pairs: Array<{ spine: string; model: string; atlas: string }>, options: OracleOptions, plant: TimelinePlant, plantName: string): void => {
+      const drift = drewTheSame(cdModels, pairs.slice(0, 3).map((p) => p.model), what);
+      if (drift !== null) probes.push(drift);
+      let exact = 0;
+      let red = 0;
+      pairs.forEach((pair, i) => {
+        const c = remainderCompare(pair, { ...options, raw: true });
+        if (c.identical && blocksSkipped(c).length === 0) exact++;
+        else if (probes.length < 3) probes.push(`${what} probe ${i}: ${blocksSkipped(c).join('; ') || c.first}`);
+        if (!remainderCompare(pair, { ...options, raw: true }, plant).identical) red++;
+      });
+      read.push(`${what} ${exact} of ${pairs.length} (${plantName}, planted, red on ${red})`);
+      if (exact !== pairs.length) probes.push(`${what}: ${exact} of ${pairs.length} bit-exact`);
+      if (red === 0) probes.push(`${what}: ${plantName}, planted, turned none red`);
+    };
+    // CD03's generator, from its seed: unweighted deforms.
+    {
+      const rnd = seededRandom(9553);
+      const D = dec5(rnd);
+      const pairs = Array.from({ length: 40 }, () => {
+        const mesh = randomMesh(rnd, 4 + Math.floor(rnd() * 3), false, []);
+        return remainderPair({
+          bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: D(-180, 180), scaleX: D(0.3, 2), scaleY: D(-2, 2), shearX: D(-30, 30), x: D(-20, 20), y: D(-20, 20) }],
+          slots: [{ name: 's', bone: 'b', attachment: 'm' }],
+          skins: { default: { s: { m: mesh } } },
+          anims: { a: { deform: [{ slot: 's', attachment: 'm', keys: randomDeformKeys(rnd, deformLengthOf(mesh)) }] } },
+        });
+      });
+      run('CD03', pairs, FORTY_IRR, deformUlp, 'every deformed value one ulp out');
+    }
+    // CD04's generator, from its seed: weighted deforms under an animated bone.
+    {
+      const rnd = seededRandom(9554);
+      const D = dec5(rnd);
+      const pairs = Array.from({ length: 40 }, () => {
+        const bones: Obj[] = [
+          { name: 'root' }, { name: 'b0', parent: 'root', rotation: D(-180, 180), scaleX: D(0.3, 2), x: D(-20, 20), y: D(-20, 20) },
+          { name: 'b1', parent: 'b0', rotation: D(-180, 180), scaleY: D(-2, 2), shearX: D(-30, 30), x: D(-20, 20) }, { name: 'b2', parent: 'root', rotation: D(-180, 180), x: D(-20, 20) },
+        ];
+        const mesh = randomMesh(rnd, 3 + Math.floor(rnd() * 3), true, ['b0', 'b1', 'b2']);
+        return remainderPair({
+          bones, slots: [{ name: 's', bone: 'root', attachment: 'm' }], skins: { default: { s: { m: mesh } } },
+          anims: { a: { deform: [{ slot: 's', attachment: 'm', keys: randomDeformKeys(rnd, deformLengthOf(mesh)) }], bones: { b1: { rotate: [{ time: 0, value: 0 }, { time: 2, value: D(-90, 90) }] } } } },
+        });
+      });
+      run('CD04', pairs, FORTY_IRR, deformUlp, 'every deformed value one ulp out');
+    }
+    // CD08's generator, from its seed: sequences. A frame is an integer, so the raw reading adds the region corners it draws.
+    {
+      const rnd = seededRandom(9558);
+      const pick = pickOf(rnd);
+      const pairs = Array.from({ length: 40 }, () => {
+        const count = 1 + Math.floor(rnd() * 6);
+        const delay = pick([0.1, 0.05, 0.02, 0.04]) * (1 + pick([0, 1e-6, -1e-6, 3e-6, -3e-6, 8e-6, -8e-6, 1.5e-5, -1.5e-5]));
+        const keys: Obj[] = [{ time: Math.round(rnd() * 30) / 100, mode: pick(CORE_SEQUENCE_MODES), index: Math.floor(rnd() * count), delay }];
+        if (rnd() < 0.5) keys.push({ time: 1 + Math.round(rnd() * 30) / 100, ...(rnd() < 0.5 ? { mode: pick(CORE_SEQUENCE_MODES) } : {}), ...(rnd() < 0.5 ? { index: Math.floor(rnd() * count) } : {}), ...(rnd() < 0.5 ? { delay: pick([0.1, 0.05]) } : {}) });
+        const setup = rnd() < 0.5 ? Math.floor(rnd() * count) : undefined;
+        return remainderPair({
+          bones: [{ name: 'root' }, { name: 'b', parent: 'root', rotation: 25 }],
+          slots: [{ name: 's', bone: 'b', attachment: 'r' }],
+          skins: { default: { s: { r: { kind: 'region', path: 'seq', frames: count, ...(setup === undefined ? {} : { setup }) } } } },
+          anims: { a: { sequence: [{ slot: 's', attachment: 'r', keys }], bones: { root: { rotate: [{ time: 0, value: 0 }, { time: 2, value: 0 }] } } } },
+        });
+      });
+      run('CD08', pairs, { phase: 'grid', samples: 201, skin: 'all', physics: 'none', dt: null }, { sequence: (k, n, t) => {
+        const f = sequenceFrameAt(k, n, t);
+        return f === null || n < 2 ? f : (f + 1) % n;
+      } }, 'the frame shifted one');
+    }
+    // CD09's generator, from its seed: draw-order keys over three to eight slots.
+    {
+      const rnd = seededRandom(9559);
+      const pairs = Array.from({ length: 40 }, () => {
+        const n = 3 + Math.floor(rnd() * 6);
+        const slots = Array.from({ length: n }, (_v, k) => ({ name: `s${k}`, bone: 'root', attachment: 'm' }));
+        const keys: Array<{ time: number; offsets?: Array<{ slot: string; offset: number }> }> = [];
+        let t = Math.round(rnd() * 30) / 100;
+        for (let k = 0; k < 1 + Math.floor(rnd() * 4); k++) {
+          if (rnd() < 0.2) keys.push({ time: t });
+          else {
+            const moved = Array.from({ length: n }, (_v, q) => q).sort(() => rnd() - 0.5).slice(0, 1 + Math.floor(rnd() * Math.min(3, n)));
+            const landing = Array.from({ length: n }, (_v, q) => q).sort(() => rnd() - 0.5).slice(0, moved.length);
+            keys.push({ time: t, offsets: moved.map((q, j) => ({ slot: `s${q}`, offset: landing[j] - q })) });
+          }
+          t += Math.round((0.1 + rnd() * 0.5) * 100) / 100;
+        }
+        return remainderPair({ bones: [{ name: 'root' }], slots, skins: { default: Object.fromEntries(slots.map((s) => [s.name, { m: { kind: 'mesh', xy: [0, 0, 1, 0, 0, 1] } as RAtt }])) }, anims: { a: { drawOrder: keys, bones: { root: { rotate: [{ time: 0, value: 0 }, { time: t, value: 0 }] } } } } });
+      });
+      run('CD09', pairs, { phase: 'irr', samples: 30, skin: 'all', physics: 'none', dt: null }, { drawOrder: (count, k, t) => {
+        const o = drawOrderAt(count, k, t);
+        return o === null ? null : [o[1], o[0], ...o.slice(2)];
+      } }, 'the first two slots swapped');
+    }
+    // CP05's generator, from its seed: a stated lengths table off the geometry, at constant speed and off it.
+    {
+      const rnd = mix32(80405);
+      const R = within(rnd);
+      let exact = 0;
+      let red = 0;
+      let n = 0;
+      for (let i = 0; i < 120; i++) {
+        const closed = rnd() < 0.4;
+        const curves = 2 + Math.floor(rnd() * 3);
+        const xy = pathPoints(rnd, closed ? 3 * curves : 3 * (curves + 1));
+        let total = 0;
+        const stated = pathLengthsOf(xy).map(() => Math.round((total += R(5, 120)) * 100000) / 100000);
+        const c: Obj = { position: R(0, 1), spacingMode: 'percent', spacing: R(0, 0.3), rotateMode: 'chain' };
+        for (const constantSpeed of [true, false]) {
+          const pair = walkPair(xy, { closed, constantSpeed, lengths: stated }, c);
+          n++;
+          const r = pathExact(pair, ONE_SAMPLE);
+          if (r.exact) exact++;
+          else if (probes.length < 3) probes.push(`CP05 probe ${i} constantSpeed ${constantSpeed}: ${r.first}`);
+          if (i < PLANT_PREFIX / 2 && !pathExact(pair, ONE_SAMPLE, MIX_ULP).exact) red++;
+        }
+      }
+      read.push(`CP05 ${exact} of ${n} (every mix one ulp out red on ${red} of the first ${PLANT_PREFIX})`);
+      if (exact !== n) probes.push(`CP05: ${exact} of ${n} bit-exact`);
+      if (red === 0) probes.push('CP05: every mix moved one ulp turned none red');
+    }
+    const ok = probes.length === 0;
+    say(
+      'CR15_THE_DEFORM_SEQUENCE_AND_DRAW_ORDER_POPULATIONS_AND_THE_STATED_LENGTHS_READ_BIT_EXACT_THROUGH_THE_RAW_DUMP',
+      ok,
+      probeDetail(ok, probes, `each control's rigs, seed and samples, both dumpers under --raw at tolerance 0: ${read.join(', ')}`),
+      'issue #993: CD03, CD04, CD08, CD09 and CP05 compare on the r6 grid (CR08 reads a deform population of its own raw, not theirs); the census read each bit-exact under --raw',
+    );
+  }
+
+  // --- CR16: the stepped per-component, per-setting and per-timeline probes read bit-exact through --raw --
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    const MIX_ULP_STEP = plantedRecord((r) => ({ ...r, mix: ulpOut(r.mix) }));
+    const models: string[] = [];
+    const run = (what: string, draws: Array<{ pair: { spine: string; model: string }; options: OracleOptions }>): void => {
+      let exact = 0;
+      let red = 0;
+      draws.forEach(({ pair, options }, i) => {
+        models.push(pair.model);
+        const c = stepCompare(pair, { ...options, raw: true });
+        if (c.identical && posedSkips(c).length === 0) exact++;
+        else if (probes.length < 3) probes.push(`${what} probe ${i}: ${posedSkips(c).join('; ') || c.first}`);
+        if (!stepCompare(pair, { ...options, raw: true }, MIX_ULP_STEP).identical) red++;
+      });
+      read.push(`${what} ${exact}/${draws.length} (${red} red)`);
+      if (exact !== draws.length) probes.push(`${what}: ${exact} of ${draws.length} bit-exact`);
+    };
+    // CK04's probes: a component or several, one seed each.
+    const shapes: Array<[string, Obj]> = [['x', { x: 1 }], ['y', { y: 1 }], ['rotate', { rotate: 1 }], ['scaleX', { scaleX: 1 }], ['shearX', { shearX: 1 }], ['rotate and shearX', { rotate: 0.7, shearX: 0.5 }], ['a negative shearX beside rotate', { rotate: 1, shearX: -0.4 }], ['scaleX under rotate', { scaleX: 1, rotate: 0.5 }], ['all five', { x: 1, y: 0.8, rotate: 1, scaleX: 0.6, shearX: 0.4 }]];
+    shapes.forEach(([label, comps], i) => {
+      const rnd = seededRandom(95601 + i);
+      run(`CK04 ${label}`, Array.from({ length: 30 }, () => oneStepProbe(rnd, comps)));
+    });
+    // CK05's probes: a setting varied alone over random components.
+    ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix', 'limit', 'fps'].forEach((f, i) => {
+      const rnd = seededRandom(95611 + i);
+      run(`CK05 ${f}`, Array.from({ length: 25 }, () => oneStepProbe(rnd, { ...someComponents(rnd), [f]: settingValue(rnd, f) })));
+    });
+    // CK06's probes: each timeline keyed on the constraint or, flagged global, on the timeline naming none; and its four typed rigs.
+    ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix'].forEach((f, i) => {
+      const keys = (rnd: () => number): Obj[] => [{ time: within(rnd)(0, 0.4), value: settingValue(rnd, f === 'mix' ? 'mix' : f) }, { time: within(rnd)(0.5, 1), value: settingValue(rnd, f) }];
+      const rnd = seededRandom(95621 + i);
+      run(`CK06 ${f}`, Array.from({ length: 20 }, () => {
+        const global = rnd() < 0.3;
+        const comps = someComponents(rnd);
+        return oneStepProbe(rnd, { ...comps, ...(global ? { [`${f}Global`]: true } : {}) }, global ? undefined : { [f]: keys(rnd) }, global ? { [f]: keys(rnd) } : undefined);
+      }));
+    });
+    const bones = [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'b', parent: 'p', length: 40 }];
+    run('CK06 typed', [
+      { pair: stepPair([{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'b', parent: 'p', length: 10 }], [{ type: 'physics', name: 'k', bone: 'b', x: 1, y: 1, limit: 1e15, mass: 0.3 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0, curve: 'stepped' }, { time: 0.1, x: 3e11, y: -2e11 }] } }, physics: { k: { mass: [{ time: 0, value: 0.7 }, { time: 1, value: 0.91 }] } } } }), options: stepOptions(1 / 60, 30, 'irr') },
+      { pair: stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', x: 1, rotate: 1 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 90, y: 40 }] } }, physics: { k: { reset: [{ time: 0.5 }] } } } }), options: stepOptions(1 / 60) },
+      { pair: stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', x: 1, rotate: 1 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 90, y: 40 }] } }, physics: { '': { reset: [{ time: 0.3 }] } } } }), options: stepOptions(1 / 30) },
+      { pair: stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', x: 1, y: 1, rotate: 1, mix: 0 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 90, y: 40 }] } }, physics: { k: { mix: [{ time: 0, value: 0, curve: 'stepped' }, { time: 0.3, value: 1 }] } } } }), options: stepOptions(1 / 60, 12, 'irr') },
+    ]);
+    const missing = models.filter((m) => !ckModels.includes(m)).length;
+    if (missing > 0) probes.push(`${missing} of ${models.length} rigs are none CK04–CK06 drew — the copy has drifted`);
+    if (!read.some((l) => !l.endsWith('(0 red)'))) probes.push('every mix one ulp out, planted, turned no probe red');
+    const ok = probes.length === 0;
+    say(
+      'CR16_THE_STEPPED_PER_COMPONENT_PER_SETTING_AND_PER_TIMELINE_PROBES_READ_BIT_EXACT_THROUGH_THE_RAW_DUMP',
+      ok,
+      probeDetail(ok, probes, `CK04's, CK05's and CK06's probes from their seeds, stepped, both dumpers under --raw at tolerance 0, with the physics mix one ulp out planted: ${read.join(', ')}`),
+      'issue #993: the stepped probes compare on the r6 grid, and a step amplifies a last-bit gap (issue #959); the census read each bit-exact under --raw',
+    );
+  }
 
   // --- CW01: localFromWorld reads a reflected bone's shear to the bit — the right angle taken off the other way, not the y angle turned by 180 --
   {
