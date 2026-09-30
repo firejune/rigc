@@ -259,6 +259,8 @@ function picturesSidecar(report: CheckReport, written: PicturesWritten[], allFra
     spec: FRAMES_SPEC,
     [COMPARISON_FIELD]: {
       candidate: report.candidate,
+      // Which poser drew the candidate pane (issue #968) — the report's own field.
+      poser: report.poser,
       frames: report.framesDir,
       skin: report.skin,
       referenceSkin: report.referenceSkin,

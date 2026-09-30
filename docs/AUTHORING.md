@@ -210,7 +210,7 @@ What the flags mean:
 | `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. `--atlas <path>` names the atlas when it does not sit beside the skeleton. **`vote` and `preview` take it more than once**: `vote` 2–4 times, one per pane, labelled A, B, C, D in the order given; `preview` any number of times, one pane per candidate in the order given, each headed by its path and its gate line, and the same skeleton twice (a directory and its `skeleton.json` are one) is refused by name. `--atlas` goes with one candidate only. Everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview` (each candidate's own first, with several), and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote` and a several-candidate `preview`, so is a name that only *some* candidates have, naming the one that lacks it |
 | `--geometry` | `render` only: also write a `geometry.json` into each frame directory — per frame, every bone's world transform and every slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry and topology, on the frames' own grid and viewport. Every other file is byte for byte what the render writes without it. Refused with `--slot`/`--hide`, because the geometry is the whole pose whatever is drawn — **§8.2** |
-| `--poser` | `render` only: `core` or `spine` — which implementation poses the frames. By default a **rigc build** (the `skeleton.model.json` `build` writes, with the atlas beside it) is posed by rigc's own core and a **Spine export** by spine-core; the render prints a `poser` line saying which and why. Where the core refuses an input by name — a `skeleton.json` whose SHA-256 is not the `spine.sha256` its model document records (edited or replaced after the build), a clip polygon that is not strictly convex or an inverse clip, a model document whose bones, slots or animations are not the skeleton's — the render poses it through spine-core and the `poser` line names the refusal. `--poser core` on an input that cannot carry it is refused by name (exit 2, nothing written); `--poser spine` forces the runtime. Both posers draw the same frames, geometry and framing box to the bit on every corpus (issue #968) |
+| `--poser` | `render` and `check`: `core` or `spine` — which implementation poses the frames (on `check`, the candidate's; the reference side is pixels either way). By default a **rigc build** (the `skeleton.model.json` `build` writes, with the atlas beside it) is posed by rigc's own core and a **Spine export** by spine-core; the render prints a `poser` line saying which and why, and so does the check report (`check.json`'s `poser`, and the pictures' `frames.json` under `--out`). Where the core refuses an input by name — a `skeleton.json` whose SHA-256 is not the `spine.sha256` its model document records (edited or replaced after the build), a clip polygon that is not strictly convex or an inverse clip, a model document whose bones, slots or animations are not the skeleton's — the render poses it through spine-core and the `poser` line names the refusal. `--poser core` on an input that cannot carry it is refused by name (exit 2, nothing written); `--poser spine` forces the runtime. Both posers draw the same frames, geometry and framing box to the bit on every corpus (issue #968), and `check` through either writes the same report, `check.json` and pictures but for the poser it names on every tree row |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
 | `--ballot` | `vote --record` only: the ballot the vote answers (default `ballot.html`). Its embedded manifest is what the vote is checked against, so the ballot file is the record of the question |
 | `--ledger` | `vote --record` only: the append-only JSONL the vote lands in (default `votes.jsonl`), one vote per line |
@@ -6574,6 +6574,21 @@ remember:
   `skin  candidate patch   frames patch`, or `candidate no skin set (the default
   skin alone)`. `check.json` carries the same two under `skin` and
   `referenceSkin`.
+
+🔎 **The report also names the poser that drew the candidate**, on a `poser` line
+under `skin`, in the words `render` prints (issue #968):
+`poser      rigc core — …/skeleton.model.json` for a rigc build whose
+`skeleton.json` is the one its model document records, and
+`poser      spine-core — <why>` otherwise — a Spine export (`no skeleton.model.json
+beside …`), a `skeleton.json` edited after the build (both digests named), an input
+the core refuses by name, or `--poser spine`. `check.json` carries it as
+`"poser": { "name": "core" | "spine", "note": "<the line>" }`, and `--out`'s
+`frames.json` under `comparison.poser`. One choice per run: every set, the setup
+pose and the non-finite sentence are posed through the same poser, and a core
+refusal partway re-poses all of it on spine-core. `--poser core|spine` forces the
+choice with `render`'s semantics (`core` on an input that cannot carry it exits 2,
+nothing written). The two posers are measured to write the same report, byte for
+byte but the poser line, on every tree row.
 
 A skin name the candidate does not declare is refused with the ones it does —
 `the candidate declares no skin "path"; it declares [default, patch, torn]`.

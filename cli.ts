@@ -162,6 +162,7 @@ import {
   type FrameSet,
   type Posable,
   type PoserChoice,
+  type PoserName,
   type SlotSubset,
 } from './src/render.ts';
 import {
@@ -1443,12 +1444,17 @@ function runCheck(
   plates?: CheckPlates,
 ): CheckReport {
   const { skeletonPath, atlasPath } = resolveArtifacts(candidate, atlasFlag);
+  // The poser is `render`'s choice, over the same two files (issue #968): the
+  // paths are what `candidatePosers` looks beside for `skeleton.model.json`.
+  const poser = readPoserFlag(flags);
   return checkAgainstFrames({
     skeletonText: readFileSync(skeletonPath, 'utf8'),
     atlasText: readFileSync(atlasPath, 'utf8'),
     atlasDir: dirname(atlasPath),
     framesDir,
     labels: { skeleton: skeletonPath, atlas: atlasPath },
+    candidatePaths: { skeleton: skeletonPath, atlas: atlasPath },
+    ...(poser === undefined ? {} : { poser }),
     ...readCheckFlags(flags),
     ...(plates === undefined ? {} : { plates }),
   });
@@ -1615,12 +1621,17 @@ function readSlotSubsetFlags(
  * choice stands — see `candidatePosers`.
  */
 function readPoserChoice(flags: Record<string, string>, data: Posable['data'], skeletonPath: string, atlasPath: string): PoserChoice {
+  return candidatePosers(data, skeletonPath, atlasPath, readPoserFlag(flags));
+}
+
+/** `--poser` as spelled, checked against the posers there are — shared by `render` and `check`. */
+function readPoserFlag(flags: Record<string, string>): PoserName | undefined {
   const raw = flags.poser;
   const forced = POSER_NAMES.find((name) => name === raw);
   if (raw !== undefined && forced === undefined) {
     throw new UsageError(`--poser ${JSON.stringify(raw)}: known posers are ${POSER_NAMES.join(', ')}`);
   }
-  return candidatePosers(data, skeletonPath, atlasPath, forced);
+  return forced;
 }
 
 /** A resolved subset as the one field it is spelled as, in `PoseOptions` and in `frames.json` alike. */
@@ -3541,10 +3552,10 @@ const FLAG_MEANINGS: Record<string, string> = {
     "slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry — on the " +
     'frames\' own grid and viewport. Not with --slot/--hide: the geometry is the whole pose whatever is drawn',
   poser:
-    "`render` only: which implementation poses the frames — `core` (rigc's own, reading the skeleton.model.json a " +
+    "`render` and `check`: which implementation poses the frames (on `check`, the candidate's) — `core` (rigc's own, reading the skeleton.model.json a " +
     'build writes beside the pair) or `spine` (spine-core). Default: `core` when that document and the atlas sit ' +
-    "beside the skeleton and the skeleton is the one the document records (spine.sha256), `spine` otherwise and wherever the core refuses the input by name; the render's `poser` " +
-    'line says which and why. `--poser core` on an input that cannot carry it is refused by name',
+    "beside the skeleton and the skeleton is the one the document records (spine.sha256), `spine` otherwise and wherever the core refuses the input by name; the `poser` " +
+    'line of the render or the check report says which and why. `--poser core` on an input that cannot carry it is refused by name',
   'texture-from':
     "also measure this run through this atlas's texels, keeping the candidate's own geometry, and report how much " +
     'of the MAE is texture resampling rather than the rig — pass the atlas the reference frames were rendered ' +
@@ -3826,7 +3837,7 @@ const COMMANDS: CommandDoc[] = [
   {
     name: 'check',
     usage: ['rigc check --candidate <dir | skeleton.json> --frames <dir> [flags]'],
-    flags: ['candidate', 'frames', 'atlas', 'texture-from', 'fps', 'viewport', 'framing', 'as', 'skin', 'all-frames', 'json', 'out'],
+    flags: ['candidate', 'frames', 'atlas', 'texture-from', 'fps', 'viewport', 'framing', 'as', 'skin', 'poser', 'all-frames', 'json', 'out'],
     overrides: {
       skin: {
         meaning:
@@ -4250,7 +4261,7 @@ try {
   // the usage under it would bury that. Without the flag the same refusal is a
   // fallback to spine-core, named on the render's `poser` line instead.
   if (err instanceof PoserChoiceError) {
-    console.error(`rigc render: ${err.message}`);
+    console.error(`rigc ${command}: ${err.message}`);
     process.exit(2);
   }
   if (err instanceof NotAPngError) {

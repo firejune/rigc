@@ -81,6 +81,10 @@ import {
   FRAMES_SIDECAR,
   FRAMES_SPEC,
   nonFinitePoseOf,
+  candidatePosers,
+  spinePoser,
+  throughPoser,
+  PoserChoiceError,
   SHEET_COLUMNS,
   SHEET_FILE,
   SHEET_GAP,
@@ -89,6 +93,9 @@ import {
   type FramesSidecar,
   type FrameSet,
   type PoseOptions,
+  type Poser,
+  type PoserChoice,
+  type PoserName,
   type TextureSubstitution,
   type Viewport,
 } from './render.ts';
@@ -883,6 +890,19 @@ export interface TextureFromReport {
 
 export interface CheckReport {
   candidate: { skeleton: string; atlas: string };
+  /**
+   * Which implementation of the posing seam posed the CANDIDATE, and why
+   * (issue #968): `core` — rigc's own, reading the `skeleton.model.json` a
+   * build writes beside the pair — or `spine` (spine-core), with the reason the
+   * core was not used. `note` is `render`'s `poser` line, word for word.
+   *
+   * In the report because a figure is only readable beside what produced it:
+   * the reference side is pixels either way, and a report that did not say
+   * which poser drew the candidate would be a number with two possible
+   * subjects. The two are measured to give the same report on every tree row;
+   * this field is what lets a reader see which one this is.
+   */
+  poser: { name: PoserName; note: string };
   framesDir: string;
   framesRoot: string;
   /**
@@ -1024,6 +1044,36 @@ export interface CheckOptions {
    * in beside the comparison, from the plates the comparison was computed on.
    */
   plates?: CheckPlates;
+  /**
+   * The files `skeletonText` and `atlasText` were read from — what chooses the
+   * candidate's poser, exactly as `render` chooses its own (`candidatePosers`,
+   * issue #968): rigc's core when the `skeleton.model.json` beside the skeleton
+   * records these skeleton bytes, spine-core otherwise. They must be the files
+   * the texts came from; `cli.ts` reads both from them. Absent, the candidate
+   * is posed through spine-core and the report says why.
+   */
+  candidatePaths?: { skeleton: string; atlas: string };
+  /** `--poser`: force one implementation — see `candidatePosers`. `core` on an input that cannot carry it throws `PoserChoiceError`. */
+  poser?: PoserName;
+  /**
+   * What builds the core poser — `candidatePosers`' own `make`. The suite's
+   * `CH01` passes a planted copy, and nothing else passes any.
+   */
+  makeCorePoser?: Parameters<typeof candidatePosers>[4];
+}
+
+/**
+ * Both posers for the candidate `check` is handed, and which one it asked for:
+ * `candidatePosers` over the candidate's files when the caller named them, and
+ * spine-core alone when it handed texts only — there is then no directory to
+ * find a model document in, and the reason says so.
+ */
+function checkPoserChoice(data: Parameters<typeof spinePoser>[0], options: CheckOptions): PoserChoice {
+  const paths = options.candidatePaths;
+  if (paths !== undefined) return candidatePosers(data, paths.skeleton, paths.atlas, options.poser, options.makeCorePoser);
+  const why = 'the candidate was handed to check as text, with no path to find a skeleton.model.json beside';
+  if (options.poser === 'core') throw new PoserChoiceError(`--poser core: ${why}`);
+  return { forced: options.poser, core: null, why: options.poser === 'spine' ? '--poser spine' : why, spine: spinePoser(data) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1121,6 +1171,11 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       }]`,
     );
   }
+  // Which implementation poses the candidate (issue #968), chosen once for the
+  // whole run — every set, the setup pose and the non-finite sentence — so no
+  // two figures in one report can come from two posers. `--poser core` on an
+  // input that cannot carry it is refused here, before anything is posed.
+  const choice = checkPoserChoice(posable.data, options);
   const poseOptions: PoseOptions | undefined =
     substitution || options.skin !== undefined
       ? { ...(substitution ? { texture: true } : {}), ...(options.skin === undefined ? {} : { skin: options.skin }) }
@@ -1225,28 +1280,42 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   // Pose every set once. Its frames are wanted twice — to frame the candidate and
   // to compare it — and posing twice is both slower and a chance for the framing
   // and the comparison to disagree about what they measured.
-  const prepared = sets.map((set) => prepareSet(located.root, set, posable, options.as, poseOptions));
-  // 🔒 A pose that is not finite is refused before anything measures it (issue
-  // #873), in the words `render` and the geometry export use for it. Measured
-  // on a planted bone at x=1e309 before this: an overflowing root read "posed no
-  // drawable attachment", one at -1e309 "drew no pixel", and one at +1e309 or a
-  // rotation at 1e309 exited 0 with MAE 1.00 — the part missing from every
-  // frame, and nothing said why.
-  const posed = prepared.filter((p) => p.missing === null);
-  const overflow = posed.some((p) =>
-    p.frames.some((frame) => frame.pieces.some((piece) => piece.world.some((value) => !Number.isFinite(value)))),
-  );
-  if (overflow) {
-    const found = nonFinitePoseOf(
-      posable.data,
-      options.skin,
-      posed.map((p) => ({ animation: p.candidateAnimation, fps: p.set.fps })),
+  //
+  // Posed through the chosen poser, and ALL of it inside one `throughPoser`
+  // call: a core refusal partway (`CoreInputError` — a concave clip, a
+  // non-finite vertex) re-poses every set on spine-core rather than leaving a
+  // report whose sets were posed by two implementations. The animation roster
+  // a set is checked against is the skeleton's, in its own order, whichever
+  // poser runs — the model document lists the spec's order, and a refusal that
+  // listed the names in another order would be a byte of the report that
+  // depends on the poser.
+  const have = posable.data.animations.map((a) => a.name);
+  const posing = throughPoser(choice, (poser) => {
+    const sampled = sets.map((set) => prepareSet(located.root, set, poser, have, options.as, poseOptions));
+    // 🔒 A pose that is not finite is refused before anything measures it (issue
+    // #873), in the words `render` and the geometry export use for it. Measured
+    // on a planted bone at x=1e309 before this: an overflowing root read "posed no
+    // drawable attachment", one at -1e309 "drew no pixel", and one at +1e309 or a
+    // rotation at 1e309 exited 0 with MAE 1.00 — the part missing from every
+    // frame, and nothing said why.
+    const posedSets = sampled.filter((p) => p.missing === null);
+    const overflow = posedSets.some((p) =>
+      p.frames.some((frame) => frame.pieces.some((piece) => piece.world.some((value) => !Number.isFinite(value)))),
     );
-    if (found === null) {
-      throw new Error('a drawn piece of the candidate is not finite and no bone or vertex of its pose is — the two were posed differently');
+    if (overflow) {
+      const found = nonFinitePoseOf(
+        poser,
+        options.skin,
+        posedSets.map((p) => ({ animation: p.candidateAnimation, fps: p.set.fps })),
+      );
+      if (found === null) {
+        throw new Error('a drawn piece of the candidate is not finite and no bone or vertex of its pose is — the two were posed differently');
+      }
+      throw new CheckError(`the candidate is posed to a number that is not finite, so no frame of it can be compared: ${found}`);
     }
-    throw new CheckError(`the candidate is posed to a number that is not finite, so no frame of it can be compared: ${found}`);
-  }
+    return sampled;
+  });
+  const prepared = posing.value;
   const pairs = prepared.flatMap((p) => p.pairs);
   if (pairs.length === 0) {
     notes.push('no reference frame has a candidate frame at the same index — nothing below was measured');
@@ -1548,6 +1617,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       skeleton: options.labels?.skeleton ?? '(in memory)',
       atlas: options.labels?.atlas ?? '(in memory)',
     },
+    poser: { name: posing.poser, note: posing.note },
     framesDir: resolve(options.framesDir),
     framesRoot: located.root,
     skin: options.skin ?? null,
@@ -2430,13 +2500,14 @@ interface PreparedSet {
 function prepareSet(
   root: string,
   set: FrameSet,
-  posable: ReturnType<typeof posableFromText>,
+  poser: Poser,
+  /** The skeleton's animation names in its own order — see the call. */
+  have: readonly string[],
   as: string | undefined,
   poseOptions: PoseOptions | undefined,
 ): PreparedSet {
   const notes: string[] = [];
   const wanted = as ?? set.animation;
-  const have = posable.data.animations.map((a) => a.name);
   const disk = framesOnDisk(root, set.dir);
 
   if (wanted !== null && !have.includes(wanted)) {
@@ -2464,10 +2535,10 @@ function prepareSet(
           `[${have.join(', ')}] — the setup pose is what was compared`,
       );
     }
-    candidateFrames = sampleSetupPose(posable.data, poseOptions);
+    candidateFrames = sampleSetupPose(poser, poseOptions);
     candidateAnimation = null;
   } else {
-    candidateFrames = sampleAnimation(posable.data, wanted, set.fps, poseOptions);
+    candidateFrames = sampleAnimation(poser, wanted, set.fps, poseOptions);
     candidateAnimation = wanted;
   }
 
@@ -3416,6 +3487,9 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
         report.referenceSkin === null ? `no skin recorded in ${FRAMES_SIDECAR}` : report.referenceSkin
       }`,
   );
+  // Always printed, like the skin line above it: which implementation posed the
+  // candidate, and why — `render`'s `poser` line, word for word (issue #968).
+  lines.push(`  poser      ${report.poser.note}`);
   lines.push(
     `  scope      ${
       report.framingScope === 'per-shot'
