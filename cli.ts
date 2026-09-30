@@ -153,10 +153,15 @@ import {
   sidecarViewport,
   SlotSubsetError,
   slotSubsetOf,
+  candidatePosers,
+  POSER_NAMES,
+  PoserChoiceError,
+  throughPoser,
   type Frame,
   type FramesSidecar,
   type FrameSet,
   type Posable,
+  type PoserChoice,
   type SlotSubset,
 } from './src/render.ts';
 import {
@@ -459,7 +464,7 @@ function runGate(
     atlasDir: opts.outDir,
     declaredDurations: result.declaredDurations,
     modelText,
-    reEmit: { skeletonText: again.skeletonText, atlasText: atlas ? atlas.again : again.atlasText, modelText: modelDocument(again.model) },
+    reEmit: { skeletonText: again.skeletonText, atlasText: atlas ? atlas.again : again.atlasText, modelText: modelDocument(again.model, again.skeletonText) },
     rig: result.rig,
     profile,
   });
@@ -856,7 +861,7 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
   // Through rigc's own core over the model document the build carries (issue #969), spine-core when the core
   // refuses it; the survey's record says which (`source`), and `tools/survey_hashes.ts` holds the two to one block.
   // The block itself is `deformReportBlock` (`src/deformreport.ts`), so a control renders it off either poser's survey.
-  const survey = surveyOfBuild({ skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model) }, new Set(), 'auto');
+  const survey = surveyOfBuild({ skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText) }, new Set(), 'auto');
   return deformReportBlock(survey, result.deformTransforms, exempt);
 }
 
@@ -1106,7 +1111,7 @@ function cmdBuild(flags: Record<string, string>): void {
   // The model's document is spelled before the gate, so the text A18 compares
   // is the text written, and a model the document cannot carry is refused
   // before anything is (issue #922).
-  const modelText = modelDocument(result.model);
+  const modelText = modelDocument(result.model, result.skeletonText);
   console.log(`  ..    validate (spine-core round trip + machine assertions, profile ${profile})`);
   const failures = runGate(result, modelText, opts, profile);
   if (failures > 0) {
@@ -1603,6 +1608,21 @@ function readSlotSubsetFlags(
   }
 }
 
+/**
+ * `--poser core|spine`, resolved against the candidate (issue #968): both
+ * posers for it, and which one this run asked for. `core` on an input that
+ * cannot carry it is refused as a usage error by name; absent, the input's own
+ * choice stands — see `candidatePosers`.
+ */
+function readPoserChoice(flags: Record<string, string>, data: Posable['data'], skeletonPath: string, atlasPath: string): PoserChoice {
+  const raw = flags.poser;
+  const forced = POSER_NAMES.find((name) => name === raw);
+  if (raw !== undefined && forced === undefined) {
+    throw new UsageError(`--poser ${JSON.stringify(raw)}: known posers are ${POSER_NAMES.join(', ')}`);
+  }
+  return candidatePosers(data, skeletonPath, atlasPath, forced);
+}
+
 /** A resolved subset as the one field it is spelled as, in `PoseOptions` and in `frames.json` alike. */
 function subsetFields(subset: SlotSubset | undefined): { slots?: string[]; hidden?: string[] } {
   if (subset === undefined) return {};
@@ -1709,39 +1729,53 @@ function cmdRender(flags: Record<string, string>): void {
   if (skin !== undefined) console.log(`  ..    skin     ${skin}`);
   if (subset !== undefined) console.log(`  ..    ${subset.mode.padEnd(8)} ${subset.names.join(', ')}`);
 
-  // `null` is a skeleton that posed no vertex at all. One that posed a vertex
-  // it cannot frame — Infinity or NaN — is thrown from the framing as a
-  // `GeometryError` naming the number (issue #873), and never reaches this.
-  const viewport = framingViewport(data, maxSide, pose);
-  if (!viewport) {
-    throw new UsageError(
-      `${skeletonPath} posed no drawable attachment in any animation or in its setup pose${
-        skin === undefined ? '' : ` under skin ${JSON.stringify(skin)}`
-      } — there is nothing to draw`,
-    );
-  }
+  // Which implementation of the posing seam draws this (issue #968): rigc's own
+  // core when the candidate is a rigc build — `skeleton.model.json` beside the
+  // pair — and spine-core otherwise, or where the core refuses the input by
+  // name. Never silently: the `poser` line below says which, and why.
+  const choice = readPoserChoice(flags, data, skeletonPath, atlasPath);
 
-  // `sampleAll` covers the skeleton with no animation at all, which files its one
-  // setup-pose frame under the reserved name. Narrowing to one animation reuses
-  // the same sampler rather than a second path through it.
-  //
-  // `--geometry` rides on the SAME call (issue #864): the bones and the whole
-  // attachments are read off the skeleton at the step that drew each frame, so
-  // the export's grid is this frame set's by construction.
-  const sampling = geometry ? { ...pose, bones: true, geometry: true } : pose;
-  const sampled: Map<string, Frame[]> =
-    only === undefined
-      ? sampleAll(data, fps, sampling)
-      : new Map([[only, sampleAnimation(data, only, fps, sampling)]]);
-  // Every file's text before the first write, so a refused number leaves the
-  // output directory as it was rather than half of a frame set behind it.
-  const geometryTexts = new Map<string, string>();
-  if (geometry) {
-    for (const [name, frames] of sampled) {
-      const animation = name === SETUP_POSE_DIR && data.animations.length === 0 ? null : name;
-      geometryTexts.set(name, geometryText(geometryFileOf(data, animation, fps, frames, viewport, skin)));
+  // Everything is posed before anything is written, so a core refusal partway
+  // re-poses the whole input on spine-core rather than leaving half of a frame
+  // set drawn by each.
+  const posed = throughPoser(choice, (poser) => {
+    // `null` is a skeleton that posed no vertex at all. One that posed a vertex
+    // it cannot frame — Infinity or NaN — is thrown from the framing as a
+    // `GeometryError` naming the number (issue #873), and never reaches this.
+    const viewport = framingViewport(poser, maxSide, pose);
+    if (!viewport) {
+      throw new UsageError(
+        `${skeletonPath} posed no drawable attachment in any animation or in its setup pose${
+          skin === undefined ? '' : ` under skin ${JSON.stringify(skin)}`
+        } — there is nothing to draw`,
+      );
     }
-  }
+
+    // `sampleAll` covers the skeleton with no animation at all, which files its one
+    // setup-pose frame under the reserved name. Narrowing to one animation reuses
+    // the same sampler rather than a second path through it.
+    //
+    // `--geometry` rides on the SAME call (issue #864): the bones and the whole
+    // attachments are read off the skeleton at the step that drew each frame, so
+    // the export's grid is this frame set's by construction.
+    const sampling = geometry ? { ...pose, bones: true, geometry: true } : pose;
+    const sampled: Map<string, Frame[]> =
+      only === undefined
+        ? sampleAll(poser, fps, sampling)
+        : new Map([[only, sampleAnimation(poser, only, fps, sampling)]]);
+    // Every file's text before the first write, so a refused number leaves the
+    // output directory as it was rather than half of a frame set behind it.
+    const geometryTexts = new Map<string, string>();
+    if (geometry) {
+      for (const [name, frames] of sampled) {
+        const animation = name === SETUP_POSE_DIR && data.animations.length === 0 ? null : name;
+        geometryTexts.set(name, geometryText(geometryFileOf(poser, animation, fps, frames, viewport, skin)));
+      }
+    }
+    return { viewport, sampled, geometryTexts };
+  });
+  const { viewport, sampled, geometryTexts } = posed.value;
+  console.log(`  ..    poser    ${posed.note}`);
   console.log(`  ..    ${viewport.width}x${viewport.height}px at ${fps} fps, ${sampled.size} set(s) -> ${outRoot}`);
   if (!declaresSetupStage(data)) console.log(`  ..    ${STAGELESS_FRAMING.render}`);
 
@@ -3506,6 +3540,11 @@ const FLAG_MEANINGS: Record<string, string> = {
     `also write ${GEOMETRY_FILE} into each frame directory: per frame, every bone's world transform and every ` +
     "slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry — on the " +
     'frames\' own grid and viewport. Not with --slot/--hide: the geometry is the whole pose whatever is drawn',
+  poser:
+    "`render` only: which implementation poses the frames — `core` (rigc's own, reading the skeleton.model.json a " +
+    'build writes beside the pair) or `spine` (spine-core). Default: `core` when that document and the atlas sit ' +
+    "beside the skeleton and the skeleton is the one the document records (spine.sha256), `spine` otherwise and wherever the core refuses the input by name; the render's `poser` " +
+    'line says which and why. `--poser core` on an input that cannot carry it is refused by name',
   'texture-from':
     "also measure this run through this atlas's texels, keeping the candidate's own geometry, and report how much " +
     'of the MAE is texture resampling rather than the rig — pass the atlas the reference frames were rendered ' +
@@ -3610,6 +3649,7 @@ const FLAG_VALUES: Record<string, string> = {
   padding: '<px>',
   'page-edges': 'pot|free',
   'texture-from': '<path>',
+  poser: 'core|spine',
   reference: '<dir|skeleton.json>',
   'reference-atlas': '<path>',
   bones: `<correspondence.json|${IDENTITY_CORRESPONDENCE}>`,
@@ -3846,10 +3886,10 @@ const COMMANDS: CommandDoc[] = [
   {
     name: 'render',
     usage: [
-      'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--skin <name>] [--fps 12] [--max 256] [--geometry] [--out render/]',
+      'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--skin <name>] [--fps 12] [--max 256] [--geometry] [--poser core|spine] [--out render/]',
       'rigc render … --slot <name[,name…]> | --hide <name[,name…]>   (a subset of the slots, on the whole rig\'s grid)',
     ],
-    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'geometry', 'out'],
+    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'geometry', 'poser', 'out'],
     overrides: {
       out: { value: '<dir>', meaning: 'directory to write the frame series into (default `render/`)' },
       fps: { meaning: `frames per second to sample the animation at (default ${PROTOCOL_FPS})` },
@@ -4204,6 +4244,14 @@ try {
   if (err instanceof GeometryError) {
     console.error(`rigc render: ${err.message}`);
     process.exit(1);
+  }
+  // `--poser core` on an input the core cannot carry (issue #968): a refusal of
+  // the invocation, nothing written, and the message names the input and why —
+  // the usage under it would bury that. Without the flag the same refusal is a
+  // fallback to spine-core, named on the render's `poser` line instead.
+  if (err instanceof PoserChoiceError) {
+    console.error(`rigc render: ${err.message}`);
+    process.exit(2);
   }
   if (err instanceof NotAPngError) {
     console.error(`rigc: ${err.message}`);

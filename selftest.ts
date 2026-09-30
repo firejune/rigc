@@ -248,6 +248,7 @@ import {
   MODEL_DOCUMENT_FILE,
   MODEL_DOCUMENT_SPEC,
   modelDocument,
+  spineFileSha256,
   type CompiledAnimation,
   type CompiledModel,
   type ModelKey,
@@ -417,12 +418,17 @@ import {
   SHEET_FILE,
   SHEET_GAP,
   spinePoser,
+  candidatePosers,
+  contactSheet,
+  SHEET_TILE,
+  throughPoser,
   substituteTexture,
   textureSubstitutionFromText,
   unionBounds,
   viewportFor,
   viewportOfSize,
   type AttachmentPose,
+  type BoneSnapshot,
   type Footprint,
   type Frame,
   type FramesSidecar,
@@ -8087,7 +8093,7 @@ function runRigSuite(): number {
           declaredDurations: first.declaredDurations,
           rig: first.rig,
           profile: 'spine-html',
-          modelText: modelDocument(first.model),
+          modelText: modelDocument(first.model, first.skeletonText),
           reEmit: gateTextsOf(second),
         });
       } catch (err) {
@@ -8303,7 +8309,7 @@ function runRigSuite(): number {
           declaredDurations: first.declaredDurations,
           rig: first.rig,
           profile: 'spine-html',
-          modelText: modelDocument(first.model),
+          modelText: modelDocument(first.model, first.skeletonText),
           reEmit: gateTextsOf(second),
         });
         if (report.failures.length > 0) probes.push(`the gate failed it: ${[...new Set(report.failures.map((f) => f.assertion))].join(', ')}`);
@@ -33413,7 +33419,7 @@ function runSegmentsMeshSuite(): number {
       declaredDurations: first.declaredDurations,
       rig: first.rig,
       profile,
-      modelText: modelDocument(first.model),
+      modelText: modelDocument(first.model, first.skeletonText),
       reEmit: gateTextsOf(second),
     });
   const plain = gateUnder('spine');
@@ -38853,7 +38859,7 @@ function runGroupMemberSuite(): number {
             atlasText: capitalResult.atlasText,
             atlasDir: chainDirs.outDir,
             declaredDurations: capitalResult.declaredDurations,
-            modelText: modelDocument(capitalResult.model),
+            modelText: modelDocument(capitalResult.model, capitalResult.skeletonText),
             reEmit: gateTextsOf(capitalResult),
             rig: capitalResult.rig,
             profile: 'spine',
@@ -40249,7 +40255,7 @@ function runSuite(suite: Suite): number {
     atlasDir: suite.opts.outDir,
     declaredDurations: pristine.declaredDurations,
     rig: pristine.rig,
-    modelText: modelDocument(pristine.model),
+    modelText: modelDocument(pristine.model, pristine.skeletonText),
     reEmit: gateTextsOf(compile(suite.opts)),
     profile: MUTANT_PROFILE,
   });
@@ -45351,7 +45357,7 @@ function runAtlasReaderSuite(): number | null {
           atlasDir: outDir,
           declaredDurations: built.declaredDurations,
           rig: built.rig,
-          modelText: modelDocument(built.model),
+          modelText: modelDocument(built.model, built.skeletonText),
           reEmit: gateTextsOf(importFrom(prefixedPath)),
           profile: 'spine',
         });
@@ -53051,7 +53057,7 @@ function currencyTruth(root: string): CurrencyTruth {
     atlasDir: fixture.outDir,
     declaredDurations: built.declaredDurations,
     rig: built.rig,
-    modelText: modelDocument(built.model),
+    modelText: modelDocument(built.model, built.skeletonText),
     reEmit: gateTextsOf(built),
     profile: 'spine',
   });
@@ -66490,6 +66496,7 @@ import { regionCorners, worldVertices, type VertexPoser } from './src/core/verti
 import { clipTriangles, type ClipReading, type TriangleClipper } from './src/core/clipping.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
+import { corePoser } from './src/render_core.ts';
 import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, CLIPPED_CENSUS_FIELDS, clippedReachLines, GATE_BLOCKS, REMAINDER_CENSUS_BLOCKS, timelineKindLines, type GateBlock, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, STEPPED_CENSUS_FIELDS, STEPPED_OPTIONS, steppedCensusOf, steppedReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField, type SteppedCensusField } from './tools/core_gate.ts';
 import { BEZIER_SIXTH, bezierPolyline, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
 import { deformAt, deformPercent, heldArray, SEQUENCE_MODES as CORE_SEQUENCE_MODES, sequenceFrameAt, type CoreDeformKey } from './src/core/deform.ts';
@@ -66882,7 +66889,7 @@ function runCoreSuite(): number {
       { name: 'c', parent: 'b', scaleY: 2, skinRequired: true, inheritMode: 'noRotationOrReflection' },
       { name: 'd', parent: 'root', inheritMode: 'normal' },
     ];
-    const text = JSON.stringify({ spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones, slots: [], skins: [{ name: 'default', bones: ['c'], constraints: {}, attachments: {} }], constraints: [], events: [], animations: [], images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {} });
+    const text = JSON.stringify({ spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones, slots: [], skins: [{ name: 'default', bones: ['c'], constraints: {}, attachments: {} }], constraints: [], events: [], animations: [], images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 } });
     const census = censusOf(text, new Set(['root']));
     const want = { bones: 5, modes: { normal: 2, onlyTranslation: 1, noRotationOrReflection: 1, noScale: 1, noScaleOrReflection: 0 }, fields: { length: 1, scaleX: 1, scaleY: 1, shearX: 1, shearY: 1, skinRequired: 1, negativeScale: 1, rotation360: 1, reflectingParent: 2 } };
     if (JSON.stringify(census) !== JSON.stringify(want)) probes.push(`the census of the hand-made document is ${JSON.stringify(census)}, not ${JSON.stringify(want)}`);
@@ -66978,7 +66985,7 @@ function runCoreSuite(): number {
       bones: bones.map(({ inherit, skin, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }), ...(skin === undefined ? {} : { skinRequired: skin }) })),
       slots: [],
       skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }, { name: 'extra', bones: skinBones, constraints: {}, attachments: {} }],
-      constraints: [], events: [], animations: [], images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+      constraints: [], events: [], animations: [], images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
     });
     const options: OracleOptions = { phase: 'grid', samples: 1, skin: 'all', physics: 'none', dt: null };
     const spine = dumpSkeleton(loadOracleData(skeletonText, '', 'the probe'), options);
@@ -67144,7 +67151,7 @@ function runCoreSuite(): number {
   const modelOf = (parts: { bones: unknown[]; slots: unknown[]; skins: unknown[]; constraints?: unknown[]; animations?: unknown[] }): string =>
     JSON.stringify({
       spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones: parts.bones, slots: parts.slots, skins: parts.skins, constraints: parts.constraints ?? [], events: [], animations: parts.animations ?? [],
-      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
     });
   /** The rectangle `atlasOf` gives every region, as the model states it (issue #935). */
   const UNTRIMMED4 = { width: 4, height: 4, offsetX: 0, offsetY: 0, originalWidth: 4, originalHeight: 4 };
@@ -67766,7 +67773,7 @@ function runCoreSuite(): number {
         constraints: { ik: [], transform: [], path: [], physics: [], slider: [] },
         attachments: [{ name: 'default', slots: deforms.map(([slot, keys]) => ({ name: slot, attachments: [{ name: 'a', deform: keys }] })) }], drawOrder: [], events: [],
       }],
-      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
     });
     return { spine, model };
   };
@@ -67975,7 +67982,7 @@ function runCoreSuite(): number {
         ...EMPTY_GROUPS,
         ...(parts.events ? { events: parts.events.map((e) => ({ ...e, name: 'hit' })) } : {}),
       }],
-      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
     });
     return { spine: JSON.stringify(spine), model, atlas: names.length === 0 ? '' : atlasOf(names) };
   };
@@ -68721,7 +68728,7 @@ function runCoreSuite(): number {
         ...EMPTY_GROUPS,
         constraints: { ik: Object.entries(keys.ik ?? {}).map(([name, ks]) => ({ name, keys: ks })), transform: Object.entries(keys.transform ?? {}).map(([name, ks]) => ({ name, keys: ks })), path: [], physics: [], slider: [] },
       }],
-      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
     });
     return { spine: JSON.stringify(spine), model };
   };
@@ -69270,7 +69277,7 @@ function runCoreSuite(): number {
         attachments: a.deform ? [{ name: 'default', slots: Object.entries(a.deform).map(([slot, keys]) => ({ name: slot, attachments: [{ name: 'q', deform: keys }] })) }] : [],
         drawOrder: [], events: [],
       })),
-      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
     });
     return { spine: JSON.stringify(spine), model };
   };
@@ -69917,7 +69924,7 @@ function runCoreSuite(): number {
       constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
       events: [],
       animations: Object.entries(anims).map(([name, a]) => ({ name, duration: 0, bones: named(a.bones), slots: [], constraints: { ik: [], transform: [], path: [], physics: physicsOf(a.physics), slider: [] }, attachments: [], drawOrder: [], events: [] })),
-      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
     });
     return { spine: JSON.stringify(spine), model };
   };
@@ -70427,7 +70434,7 @@ function runCoreSuite(): number {
         slots: [], skins: skins.map((k) => ({ name: k.name, bones: k.bones ?? [], constraints: Object.fromEntries(KINDS.map((x) => [x, x === 'physics' ? (k.physics ?? []) : []])), attachments: {} })),
         constraints: [{ kind: 'physics', name: 'k', declaredIn: 'rig', bone: 'b', x: 1, y: 1, rotate: 1, skin: true }], events: [],
         animations: [{ name: 'a', duration: 0, bones: [{ name: 'p', timelines: [{ name: 'translate', keys }] }], slots: [], ...EMPTY_GROUPS }],
-        images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+        images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
       });
       return { spine, model };
     };
@@ -70548,7 +70555,7 @@ function runCoreSuite(): number {
         attachments: spec.deform === undefined ? [] : [{ name: 'default', slots: [{ name: spec.deform.slot, attachments: [{ name: spec.deform.attachment, deform: spec.deform.keys }] }] }],
         drawOrder: [], events: [],
       }],
-      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
     });
     return { spine: JSON.stringify(spine), model };
   };
@@ -71183,7 +71190,7 @@ function runCoreSuite(): number {
         skins: [{ name: 'default', bones: [], constraints: {}, attachments: { s: { p: modelAtt } } }],
         constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })), events: [],
         animations: Object.entries(all).map(([name, k]) => ({ name, duration: 0, bones: Object.entries(k).map(([n, tls]) => ({ name: n, timelines: Object.entries(tls).map(([t, keys]) => ({ name: t, keys })) })), slots: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: [] })),
-        images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+        images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
       };
       return { spine: JSON.stringify(spine), model: JSON.stringify(model) };
     };
@@ -71461,7 +71468,7 @@ function runCoreSuite(): number {
         drawOrder: (a.drawOrder ?? []).map((k) => (k.offsets === undefined ? { time: k.time } : { time: k.time, offsets: [...k.offsets].reverse() })),
         events: a.events ?? [],
       })),
-      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
     });
     const lines = [...new Set(regions)].map((n) => `${n}\n\tbounds: 0, 0, 4, 4\n`);
     for (const [path, count] of series) for (let i = 0; i < count; i++) lines.push(`${path}${i}\n\tbounds: 0, 0, ${i + 1}, 8\n\toffsets: 0, 0, 8, 8\n`);
@@ -72272,7 +72279,7 @@ function runCoreSuite(): number {
         constraints: { ik: [], transform: [], path: [], physics: [], slider: [] },
         attachments: [{ name: 'default', slots: keyed.map(([slot, keys]) => ({ name: slot, attachments: [{ name: 'a', sequence: keys }] })) }], drawOrder: [], events: [],
       }],
-      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
     });
     return { spine, model, atlas: uvAtlasText() };
   };
@@ -73694,6 +73701,8 @@ function dmPair(spec: DmSpec): DmTexts {
       drawOrder: [], events: [],
     })),
     images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+    // #968: the pair is one output, so the document records the Spine text written beside it — its real digest, not a forged one.
+    spine: { sha256: spineFileSha256(JSON.stringify(spine)) },
   };
   const atlasText = `page.png\n\tsize: 64, 64\n${[...regions].map((n) => `${n}\n\tbounds: 0, 0, 4, 4\n`).join('')}`;
   return { skeletonText: JSON.stringify(spine), atlasText, modelText: JSON.stringify(model) };
@@ -74048,7 +74057,7 @@ function runDeformCoreSuite(): number | null {
   const gallery = galleryNames.flatMap((name) => {
     try {
       const result = compile({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir: join(work, name) });
-      return [{ name: `gallery/${name}`, dir: name, result, texts: { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model) } }];
+      return [{ name: `gallery/${name}`, dir: name, result, texts: { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText) } }];
     } catch {
       return [];
     }
@@ -74771,6 +74780,104 @@ function runEmitHashesSuite(): number | null {
 // ---------------------------------------------------------------------------
 
 /** The render-hashes command in a child process, as a caller runs it. */
+// --- RC: the core poser behind the render's seam (issue #968, step 3d of #380) ---
+
+/**
+ * Everything one poser draws and writes for one built skeleton, as digests by
+ * name: the framing box, every frame's pixels and every contact sheet at the
+ * protocol rate, each set's geometry file and bone snapshots, the setup pose
+ * drawn over the same box, and the texture-carrying pieces of the setup pose
+ * and of the first animation — the surface `rigc render` and `check` read.
+ */
+function posedDigests(poser: Poser, pages: Map<string, Plate>, skin: string | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  const sha = (bytes: Uint8Array | string): string => createHash('sha256').update(bytes).digest('hex');
+  const opts = skin === undefined ? undefined : { skin };
+  const viewport = framingViewport(poser, 256, opts);
+  out.set('framing', JSON.stringify(viewport));
+  if (viewport === null) return out;
+  const sets = sampleAll(poser, PROTOCOL_FPS, { ...opts, bones: true, geometry: true });
+  for (const [name, frames] of sets) {
+    frames.forEach((frame, i) => out.set(`${name}/f${i}`, sha(renderFrame(frame, pages, viewport, BACKGROUND).data)));
+    if (frames.length > 1) out.set(`${name}/sheet`, sha(contactSheet(frames, pages, viewport, SHEET_TILE).data));
+    const animation = poser.animations.length === 0 ? null : name;
+    out.set(`${name}/geometry`, sha(geometryText(geometryFileOf(poser, animation, PROTOCOL_FPS, frames, viewport, skin))));
+    out.set(`${name}/bones`, sha(JSON.stringify(frames.map((f) => f.bones ?? null))));
+  }
+  out.set('setup', sha(renderFrame(sampleSetupPose(poser, opts)[0], pages, viewport, BACKGROUND).data));
+  const plain = (frames: Frame[]): string =>
+    JSON.stringify(frames.map((f) => f.pieces.map((p) => ({ ...p, uvs: Array.from(p.uvs), ...(p.kind === 'mesh' ? { triangles: Array.from(p.triangles) } : {}) }))));
+  out.set('texture/setup', sha(plain(sampleSetupPose(poser, { ...opts, texture: true }))));
+  // By name, not by position: the core lists the model's animation order and spine-core the file's (the editor's), which differ on five gallery rows.
+  const first = poser.animations.map((a) => a.name).sort()[0];
+  if (first !== undefined) out.set(`texture/${first}`, sha(plain(sampleAnimation(poser, first, PROTOCOL_FPS, { ...opts, texture: true }))));
+  return out;
+}
+
+/** The names two digest maps disagree on, first `limit` of them. */
+function digestDifferences(a: Map<string, string>, b: Map<string, string>, limit = 6): string[] {
+  const keys = [...new Set([...a.keys(), ...b.keys()])];
+  return keys.filter((k) => a.get(k) !== b.get(k)).slice(0, limit);
+}
+
+/** A core poser whose every posed moment moves vertex 0 of its first piece `dx` world units right — `RC02`'s plant. */
+function shiftedCorePoser(dx: number): (modelText: string, atlasText: string, where: string, skeleton: { path: string; bytes: Uint8Array }) => Poser {
+  return (modelText, atlasText, where, skeleton) => {
+    const core = corePoser(modelText, atlasText, where, skeleton);
+    const shift = (posed: Posed): Posed => ({
+      ...posed,
+      pieces: (draw) => posed.pieces(draw).map((piece, i) => (i === 0 ? { ...piece, world: piece.world.map((v, k) => (k === 0 ? v + dx : v)) } : piece)),
+    });
+    return {
+      ...core,
+      setup: (skin) => shift(core.setup(skin)),
+      animation: (name, skin, fps, count, visit) => core.animation(name, skin, fps, count, (i, posed) => visit(i, shift(posed))),
+    };
+  };
+}
+
+/** The probe rig with a clipping slot over `block` whose polygon is `polygon` — `RC04`'s, built through the CLI. */
+function writePolygonClipProbe(polygon: number[]): { dirs: ProbeDirs; status: number | null; stderr: string } {
+  const dirs = writeProbeRig({
+    slots: [
+      { name: 'mask', bone: 'block', attachment: 'mask' },
+      { name: 'block', bone: 'block', attachment: 'block' },
+      { name: 'marker', bone: 'block', attachment: 'marker' },
+    ],
+    skins: {
+      default: {
+        block: { block: { image: 'block.png' } },
+        marker: { marker: { image: 'marker.png' } },
+        mask: { mask: { type: 'clipping', vertexCount: polygon.length / 2, vertices: polygon, end: 'block' } },
+      },
+    },
+  });
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+  const build = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir, '--copy-images']);
+  return { dirs, status: build.status, stderr: build.stderr };
+}
+
+/** A render's `poser` line, without its gutter — what `rigc render` said posed it. */
+function poserLine(stdout: string): string {
+  return stdout.split('\n').find((l) => l.startsWith('  ..    poser    '))?.slice('  ..    poser    '.length) ?? '(no poser line)';
+}
+
+/** Every file under `dir` and its bytes' digest, by relative path — two render directories compared file by file. */
+function dirDigests(dir: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const walk = (at: string): void => {
+    if (!existsSync(at)) return;
+    for (const entry of readdirSync(at, { withFileTypes: true }).sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0))) {
+      const full = join(at, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else out.set(full.slice(dir.length + 1), createHash('sha256').update(readFileSync(full)).digest('hex'));
+    }
+  };
+  walk(dir);
+  return out;
+}
+
 function runRenderHashes(args: string[]): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, ['tools/render_hashes.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
@@ -74797,7 +74904,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH07 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH07 and RC01–RC07 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -75136,6 +75243,396 @@ function runRenderHashesSuite(): number | null {
     );
   }
 
+
+  // --- RC01–RC05: the core poser behind the seam (issue #968, step 3d of #380) --
+  //
+  // `rigc render` poses a rigc build through rigc's own core (`src/render_core.ts`)
+  // and a Spine export through spine-core, choosing by what the input carries and
+  // saying which on its `poser` line. RC01 holds the core poser to spine-core's
+  // on every gallery row, every file a render writes and every piece `check`
+  // reads; RC02 plants one vertex in a copy of it and reads red on exactly the
+  // rows that pose through it; RC03 holds the `poser` line and `--poser`'s
+  // refusals; RC04 a concave clip, which the core refuses by name and the render
+  // falls back from, named, beside a convex one it cuts through the core; RC05
+  // a numbered series, a HOLE on the public corpus, drawn through the core.
+  const coreDigests = new Map<string, Map<string, string>>();
+  const spineDigests = new Map<string, Map<string, string>>();
+  const galleryBuilds: Array<{ name: string; out: string }> = [];
+  {
+    const probes: string[] = [];
+    const freshPath = join(work, 'fresh-base.json');
+    const rows = existsSync(freshPath) ? readRenderHashes(freshPath).recipes : [];
+    const width = String(rows.length).length;
+    let frames = 0;
+    let skinned = '';
+    rows.forEach((row, i) => {
+      const out = join(work, 'wf', String(i).padStart(width, '0'), 'out');
+      const skeleton = join(out, 'skeleton.json');
+      const atlas = join(out, 'skeleton.atlas');
+      if (!existsSync(skeleton)) {
+        probes.push(`${row.name}: no build at ${out}`);
+        return;
+      }
+      galleryBuilds.push({ name: row.name, out });
+      const { data, pages } = loadPosable(skeleton, atlas, out);
+      const choice = candidatePosers(data, skeleton, atlas, undefined);
+      if (choice.core === null) {
+        probes.push(`${row.name}: the core poser was not chosen — ${choice.why}`);
+        return;
+      }
+      const core = posedDigests(choice.core, pages, undefined);
+      const spine = posedDigests(choice.spine, pages, undefined);
+      coreDigests.set(row.name, core);
+      spineDigests.set(row.name, spine);
+      frames += [...core.keys()].filter((k) => /\/f\d+$/.test(k)).length;
+      const diff = digestDifferences(core, spine);
+      if (diff.length > 0 || core.size !== spine.size) probes.push(`${row.name}: the core and spine-core posers differ on ${diff.join(', ') || `the roster (${core.size} against ${spine.size})`}`);
+      // `--skin`, once: the named default skin through `underSkin` against `setSkin`.
+      const skin = data.defaultSkin?.name;
+      if (i === 0 && skin !== undefined) {
+        const named = digestDifferences(posedDigests(choice.core, pages, skin), posedDigests(choice.spine, pages, skin));
+        if (named.length > 0) probes.push(`${row.name} under skin "${skin}": the posers differ on ${named.join(', ')}`);
+        skinned = `${row.name} again under skin "${skin}"`;
+      }
+    });
+    if (rows.length === 0) probes.push('RH05 built no gallery row, so nothing was rendered both ways');
+    const held = probes.length === 0;
+    say(
+      'RC01_EVERY_GALLERY_ROW_POSES_THROUGH_THE_CORE_IDENTICAL_TO_SPINE_CORE_IN_EVERY_FILE_AND_PIECE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${coreDigests.size} gallery row(s), each built by RH05 and chosen for the core by its skeleton.model.json, drawn through the core poser and ` +
+          `through spine-core: the framing box, ${frames} frame(s)' pixels, every contact sheet, geometry file and bone snapshot set, the setup ` +
+          `pose, and the texture-carrying pieces of the setup and of the animation first by name identical on both — and ${skinned || 'no row under a named skin'}`,
+      ),
+      'issue #968: step 3 of #380 switches the render to the core, and the gate is the same renders, bit-identical — ' +
+        'a poser that drew one pixel differently would move every check score measured through it',
+    );
+  }
+
+  {
+    const probes: string[] = [];
+    const reds: string[] = [];
+    let blind = '';
+    for (const { name, out } of galleryBuilds) {
+      const skeleton = join(out, 'skeleton.json');
+      const atlas = join(out, 'skeleton.atlas');
+      const { data, pages } = loadPosable(skeleton, atlas, out);
+      const box = framingViewport(data, 256);
+      if (box === null) {
+        probes.push(`${name} framed to nothing`);
+        continue;
+      }
+      const planted = candidatePosers(data, skeleton, atlas, undefined, shiftedCorePoser(3 / box.scale));
+      const theirs = coreDigests.get(name);
+      const moved = planted.core === null || theirs === undefined ? [] : digestDifferences(posedDigests(planted.core, pages, undefined), theirs, 1000);
+      if (moved.length === 0) probes.push(`${name}: the planted core poser drew what the core poser draws`);
+      else reds.push(`${name} (${moved.length})`);
+    }
+    // A build with its model document taken away poses through spine-core, which the plant cannot reach.
+    const first = galleryBuilds[0];
+    if (first !== undefined) {
+      // A sibling of the build, so the atlas's relative page paths still resolve.
+      const copy = join(dirname(first.out), 'rc02-no-model');
+      cpSync(first.out, copy, { recursive: true });
+      rmSync(join(copy, MODEL_DOCUMENT_FILE));
+      const { data, pages } = loadPosable(join(copy, 'skeleton.json'), join(copy, 'skeleton.atlas'), copy);
+      const planted = candidatePosers(data, join(copy, 'skeleton.json'), join(copy, 'skeleton.atlas'), undefined, shiftedCorePoser(1000));
+      const spine = spineDigests.get(first.name);
+      if (planted.core !== null) probes.push(`${first.name} without its ${MODEL_DOCUMENT_FILE} still chose the core poser`);
+      else if (spine !== undefined) {
+        const drawn = throughPoser(planted, (poser) => posedDigests(poser, pages, undefined));
+        const differ = digestDifferences(drawn.value, spine);
+        if (drawn.poser !== 'spine' || differ.length > 0) probes.push(`${first.name} without its model document drew through ${drawn.poser} and differs on ${differ.join(', ') || 'nothing'}`);
+        else blind = `${first.name} with its ${MODEL_DOCUMENT_FILE} removed poses through spine-core and stays identical under the plant`;
+      }
+    }
+    const held = probes.length === 0 && reds.length === galleryBuilds.length && blind !== '';
+    say(
+      'RC02_ONE_VERTEX_PLANTED_IN_A_COPY_OF_THE_CORE_POSER_IS_RED_ON_EXACTLY_THE_ROWS_THAT_POSE_THROUGH_IT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `vertex 0 of the first piece of every posed moment moved three pixels right in a copy of the core poser: red on ${reds.length} of ` +
+          `${galleryBuilds.length} gallery row(s) — ${reds.join(', ')} digest(s) moved — and ${blind}`,
+      ),
+      'RC01 reads identical, which a poser that was never consulted would read too; the plant is what shows the renders ' +
+        'go through the core, and the row without a model document what shows the choice routes by the input',
+    );
+  }
+
+  {
+    const probes: string[] = [];
+    const seen: string[] = [];
+    const first = galleryBuilds[0];
+    if (first === undefined) probes.push('no gallery build to render');
+    else {
+      const render = (candidate: string, label: string, extra: string[] = []): { run: ReturnType<typeof runCli>; dir: string } => {
+        const dir = join(work, `rc03-${label}`);
+        return { run: runCli(['render', '--candidate', candidate, '--out', dir, ...extra]), dir };
+      };
+      const auto = render(first.out, 'auto');
+      const autoLine = poserLine(auto.run.stdout);
+      if (auto.run.status !== 0 || autoLine !== `rigc core — ${join(first.out, MODEL_DOCUMENT_FILE)}`) probes.push(`a rigc build rendered with exit ${auto.run.status} and poser line ${JSON.stringify(autoLine)}`);
+      const spine = render(first.out, 'spine', ['--poser', 'spine']);
+      const spineLine = poserLine(spine.run.stdout);
+      if (spine.run.status !== 0 || spineLine !== 'spine-core — --poser spine') probes.push(`--poser spine rendered with exit ${spine.run.status} and poser line ${JSON.stringify(spineLine)}`);
+      const differ = digestDifferences(dirDigests(auto.dir), dirDigests(spine.dir));
+      if (differ.length > 0 || dirDigests(auto.dir).size === 0) probes.push(`the core render and the --poser spine render differ on ${differ.join(', ') || 'nothing — and wrote nothing'}`);
+      seen.push(JSON.stringify(autoLine.split(' — ')[0]), JSON.stringify(spineLine));
+      const bare = join(dirname(first.out), 'rc03-no-model');
+      cpSync(first.out, bare, { recursive: true });
+      rmSync(join(bare, MODEL_DOCUMENT_FILE));
+      const fallback = render(bare, 'bare');
+      const bareLine = poserLine(fallback.run.stdout);
+      if (fallback.run.status !== 0 || !bareLine.startsWith(`spine-core — no ${MODEL_DOCUMENT_FILE} beside `)) probes.push(`a build without its model document rendered with exit ${fallback.run.status} and poser line ${JSON.stringify(bareLine)}`);
+      seen.push(JSON.stringify(bareLine.split(' beside ')[0]));
+      const forced = render(bare, 'forced', ['--poser', 'core']);
+      if (forced.run.status !== 2 || !forced.run.stderr.includes(`rigc render: --poser core: no ${MODEL_DOCUMENT_FILE} beside `) || existsSync(forced.dir)) {
+        probes.push(`--poser core on a build without its model document exited ${forced.run.status}, wrote ${existsSync(forced.dir) ? 'a directory' : 'nothing'} and said ${JSON.stringify(forced.run.stderr.trim().split('\n')[0])}`);
+      }
+      const bogus = render(first.out, 'bogus', ['--poser', 'bogus']);
+      if (bogus.run.status !== 2 || !bogus.run.stderr.includes('--poser "bogus": known posers are core, spine')) probes.push(`--poser bogus exited ${bogus.run.status}: ${JSON.stringify(bogus.run.stderr.trim().split('\n')[0])}`);
+      // A model document from another build: its rosters are not the skeleton's.
+      const stale = join(dirname(first.out), 'rc03-stale');
+      cpSync(first.out, stale, { recursive: true });
+      const modelPath = join(stale, MODEL_DOCUMENT_FILE);
+      const model = JSON.parse(readFileSync(modelPath, 'utf8')) as { animations: Array<{ name: string }> };
+      if (model.animations.length > 0) {
+        model.animations[0].name = `${model.animations[0].name}-renamed`;
+        writeFileSync(modelPath, `${JSON.stringify(model, null, 2)}\n`);
+        const staleRun = render(stale, 'stale');
+        const staleLine = poserLine(staleRun.run.stdout);
+        if (staleRun.run.status !== 0 || !staleLine.includes('does not describe') || !staleLine.includes('the animations (names or durations) differ')) probes.push(`a model document from another build rendered with poser line ${JSON.stringify(staleLine)}`);
+        else seen.push(JSON.stringify(`…${staleLine.slice(staleLine.indexOf(': the animations'))}`));
+      }
+      const forcedFirst = forced.run.stderr.trim().split('\n')[0];
+      seen.push(`--poser core there: exit 2 "${forcedFirst.slice(0, forcedFirst.indexOf(' beside ') < 0 ? 60 : forcedFirst.indexOf(' beside '))} …"`);
+    }
+    const held = probes.length === 0;
+    say(
+      'RC03_THE_RENDER_NAMES_ITS_POSER_AND_WHY_AND_POSER_CORE_ON_AN_INPUT_THAT_CANNOT_CARRY_IT_IS_REFUSED',
+      held,
+      probeDetail(held, probes, `poser lines read ${seen.join(', ')}; the core render and --poser spine write byte-identical directories; --poser bogus refused naming the posers`),
+      'issue #968: two posers behind one seam are two opinions about one pose, so which one drew a frame set has to be ' +
+        'said where the run is read — a fallback nobody can see is the silent second opinion the seam exists to prevent',
+    );
+  }
+
+  {
+    const probes: string[] = [];
+    let figures = '';
+    const concave = writePolygonClipProbe([-2, -2, 2, -2, 2, 2, 0, 0, -2, 2]);
+    const convex = writePolygonClipProbe(CLIP_PROBE_POLYGON);
+    for (const [label, probe] of [['concave', concave], ['convex', convex]] as const) {
+      if (probe.status !== 0) probes.push(`the ${label} clip probe did not build: ${probe.stderr.trim().split('\n')[0]}`);
+    }
+    if (probes.length === 0) {
+      const run = (outDir: string, label: string, extra: string[] = []): { run: ReturnType<typeof runCli>; dir: string } => {
+        const dir = join(work, `rc04-${label}`);
+        return { run: runCli(['render', '--candidate', outDir, '--geometry', '--out', dir, ...extra]), dir };
+      };
+      const auto = run(concave.dirs.outDir, 'concave');
+      const line = poserLine(auto.run.stdout);
+      if (auto.run.status !== 0 || !line.startsWith('spine-core — the core refused this input: ') || !line.includes('slot "mask" starts clip "mask"') || !line.includes('reflex vertex')) {
+        probes.push(`the concave clip rendered with exit ${auto.run.status} and poser line ${JSON.stringify(line)}`);
+      }
+      const spine = run(concave.dirs.outDir, 'concave-spine', ['--poser', 'spine']);
+      const differ = digestDifferences(dirDigests(auto.dir), dirDigests(spine.dir));
+      if (differ.length > 0) probes.push(`the fallback render and --poser spine differ on ${differ.join(', ')}`);
+      const forced = run(concave.dirs.outDir, 'concave-core', ['--poser', 'core']);
+      if (forced.run.status !== 2 || !forced.run.stderr.includes('--poser core: the core refused this input: ') || !forced.run.stderr.includes('slot "mask"') || existsSync(forced.dir)) {
+        probes.push(`--poser core on the concave clip exited ${forced.run.status} and said ${JSON.stringify(forced.run.stderr.trim().split('\n')[0])}`);
+      }
+      const cut = run(convex.dirs.outDir, 'convex');
+      const cutSpine = run(convex.dirs.outDir, 'convex-spine', ['--poser', 'spine']);
+      const cutLine = poserLine(cut.run.stdout);
+      const cutDiffer = digestDifferences(dirDigests(cut.dir), dirDigests(cutSpine.dir));
+      if (cut.run.status !== 0 || !cutLine.startsWith('rigc core — ') || cutDiffer.length > 0) probes.push(`the convex clip rendered through ${JSON.stringify(cutLine)} and differs from spine-core on ${cutDiffer.join(', ') || 'nothing'}`);
+      // The convex clip does cut: a render with the clip slot hidden still clips, so compare against a probe's `block` drawn whole.
+      const posable = loadPosable(join(convex.dirs.outDir, 'skeleton.json'), join(convex.dirs.outDir, 'skeleton.atlas'), convex.dirs.outDir);
+      const core = candidatePosers(posable.data, join(convex.dirs.outDir, 'skeleton.json'), join(convex.dirs.outDir, 'skeleton.atlas'), undefined).core;
+      const pieces = core === null ? [] : sampleSetupPose(core)[0].pieces;
+      const block = pieces.find((p) => p.slot === 'block');
+      if (block === undefined || block.kind !== 'mesh') probes.push(`the convex clip left "block" as ${block?.kind ?? 'nothing'} through the core, not the cut mesh the clipper returns`);
+      figures =
+        `a notched-square clip (vertex 3 reflex) renders through spine-core with the poser line ${JSON.stringify(line.slice(0, line.indexOf(', and ') < 0 ? 80 : line.indexOf(', and ')))}…, ` +
+        `byte-identical to --poser spine, and --poser core on it exits 2 naming slot "mask"; the square clip cuts "block" into ${block?.kind === 'mesh' ? block.triangles.length / 3 : 0} ` +
+        'triangle(s) through the core, every file identical to spine-core';
+    }
+    for (const probe of [concave, convex]) rmSync(probe.dirs.dir, { recursive: true, force: true });
+    const held = probes.length === 0;
+    say(
+      'RC04_A_CONCAVE_CLIP_IS_REFUSED_BY_THE_CORE_BY_NAME_AND_THE_RENDER_FALLS_BACK_SAYING_SO',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #964 left a clip that is not strictly convex, and an inverse one, unreproduced: the runtime decomposes it into ' +
+        'pieces of its own choosing. The core refuses it rather than guess a decomposition, and a render must neither ' +
+        'draw a guessed clip nor fall back without saying so',
+    );
+  }
+
+  {
+    const probes: string[] = [];
+    let figures = '';
+    const first = galleryBuilds[0];
+    if (first === undefined) probes.push('no gallery build to edit');
+    else {
+      // A sibling of the build, so the atlas's relative page paths still resolve; the model is copied unedited.
+      const edited = join(dirname(first.out), 'rc06-edited');
+      cpSync(first.out, edited, { recursive: true });
+      const skeletonPath = join(edited, 'skeleton.json');
+      const skeleton = JSON.parse(readFileSync(skeletonPath, 'utf8')) as { bones: Array<Record<string, unknown>> };
+      const bone = skeleton.bones.find((b) => b.parent !== undefined) ?? skeleton.bones[0];
+      bone.x = (typeof bone.x === 'number' ? bone.x : 0) + 7;
+      writeFileSync(skeletonPath, JSON.stringify(skeleton, null, 2));
+      const found = createHash('sha256').update(readFileSync(skeletonPath)).digest('hex');
+      const recorded = (JSON.parse(readFileSync(join(edited, MODEL_DOCUMENT_FILE), 'utf8')) as { spine: { sha256: string } }).spine.sha256;
+      const render = (label: string, extra: string[] = []): { run: ReturnType<typeof runCli>; dir: string } => {
+        const dir = join(work, `rc06-${label}`);
+        return { run: runCli(['render', '--candidate', edited, '--out', dir, ...extra]), dir };
+      };
+      const auto = render('auto');
+      const line = poserLine(auto.run.stdout);
+      if (auto.run.status !== 0 || !line.startsWith('spine-core — the core refused ') || !line.includes(`is not the skeleton.json`) || !line.includes(found) || !line.includes(recorded)) {
+        probes.push(`an edited skeleton.json beside its build's document rendered with exit ${auto.run.status} and poser line ${JSON.stringify(line)}`);
+      }
+      const spine = render('spine', ['--poser', 'spine']);
+      const differ = digestDifferences(dirDigests(auto.dir), dirDigests(spine.dir));
+      if (differ.length > 0) probes.push(`the fallback and --poser spine differ on ${differ.join(', ')}`);
+      const unedited = join(work, 'rc06-unedited');
+      runCli(['render', '--candidate', first.out, '--out', unedited]);
+      if (digestDifferences(dirDigests(auto.dir), dirDigests(unedited)).length === 0) probes.push(`bone "${String(bone.name)}" moved 7 units and the frames did not move, so the fallback was not shown to draw the edited file`);
+      const forced = render('core', ['--poser', 'core']);
+      if (forced.run.status !== 2 || !forced.run.stderr.includes('--poser core: the core refused ') || !forced.run.stderr.includes('is not the skeleton.json') || existsSync(forced.dir)) {
+        probes.push(`--poser core on the edited pair exited ${forced.run.status} and said ${JSON.stringify(forced.run.stderr.trim().split('\n')[0])}`);
+      }
+      figures =
+        `bone "${String(bone.name)}" x +7 in a copy of ${first.name}'s skeleton.json, its ${MODEL_DOCUMENT_FILE} unedited: the file hashes to ${found.slice(0, 12)}… where the document records ${recorded.slice(0, 12)}…, ` +
+        'the render poses it through spine-core naming both digests, byte-identical to --poser spine and moved from the unedited build\'s frames, and --poser core exits 2 by name';
+    }
+    const held = probes.length === 0;
+    say(
+      'RC06_A_SKELETON_JSON_EDITED_AFTER_THE_BUILD_IS_POSED_THROUGH_SPINE_CORE_NAMING_THE_DIGESTS',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #968: the pair and the document are one build output, and the render drew an edited Spine file from the document it was built with — the build\'s rig, exit 0, where RF89/RF91/RF93 expect the file\'s own refusal. The digest is the binding and the fallback is named',
+    );
+  }
+
+  {
+    // RC07 — a bone the posed skin leaves unposed: `arm` skin-required and named by no skin the render poses,
+    // `hand` below it (not skin-required, so the runtime's flag reads it active), and a two-bone ik over both
+    // that writes into their zero matrices. Measured: spine-core leaves `hand`'s b and d at -0 (rotationY
+    // -179.99999734), the core at +0 (rotationY 0); a one-bone ik on `hand` leaves spine-core's at zeros and
+    // the core's at NaN. The seam writes every unposed bone as the zero transform (`inactiveBoneSnapshot`).
+    const probes: string[] = [];
+    let figures = '';
+    const makeProbe = (label: string, ik: string[]): { dirs: ProbeDirs; status: number | null; stderr: string } => {
+      const dirs = writeProbeRig({
+        bones: [
+          { name: 'root' },
+          { name: 'mid', parent: 'root', x: 3, length: 5 },
+          { name: 'tgt', parent: 'root', x: 20, y: 9 },
+          { name: 'arm', parent: 'mid', x: 10, y: 4, rotation: 30, length: 8, skin: true },
+          { name: 'hand', parent: 'arm', x: 8, length: 4 },
+        ],
+        slots: [{ name: 'block', bone: 'root', attachment: 'block' }, { name: 'marker', bone: 'hand', attachment: 'marker' }],
+        skins: { default: { block: { block: { image: 'block.png' } } }, extra: { attachments: { marker: { marker: { image: 'marker.png' } } }, bones: ['arm'] } },
+        constraints: [{ type: 'ik', name: `ik-${label}`, bones: ik, target: 'tgt' }],
+      });
+      const motionPath = join(dirs.dir, 'probe.motion.json');
+      writeFileSync(motionPath, `${JSON.stringify({ spec: 'rigc-motion/1', archetype: 'static_probe', cut: 'static_probe', easings: {}, animations: { spin: { duration: 1, loop: false, tracks: [{ bone: 'tgt', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [170] }] }] } } }, null, 2)}\n`);
+      const build = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir, '--copy-images']);
+      return { dirs, status: build.status, stderr: build.stderr };
+    };
+    const zero = (b: BoneSnapshot | undefined): boolean => b !== undefined && [b.a, b.b, b.c, b.d, b.worldX, b.worldY, b.rotationX, b.rotationY, b.scaleX, b.scaleY].every((v) => Object.is(v, 0));
+    const read: string[] = [];
+    for (const [label, ik] of [['two-bone', ['arm', 'hand']], ['one-bone', ['hand']]] as const) {
+      const probe = makeProbe(label, [...ik]);
+      if (probe.status !== 0) {
+        probes.push(`the ${label} probe did not build: ${probe.stderr.trim().split('\n')[0]}`);
+        continue;
+      }
+      const out = probe.dirs.outDir;
+      const { data } = loadPosable(join(out, 'skeleton.json'), join(out, 'skeleton.atlas'), out);
+      const choice = candidatePosers(data, join(out, 'skeleton.json'), join(out, 'skeleton.atlas'), undefined);
+      if (choice.core === null) {
+        probes.push(`the ${label} probe did not choose the core: ${choice.why}`);
+        continue;
+      }
+      // What each runtime holds for `hand` under no skin, before the seam's rule: the reason it exists.
+      const sk = new Skeleton(data);
+      sk.setupPose();
+      sk.update(0);
+      sk.updateWorldTransform(Physics.reset);
+      const spineHand = sk.findBone('hand')?.appliedPose;
+      const coreHand = poseRawSetup(underSkin(readModel(readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8')), 'default')).bones.find((b) => b.name === 'hand');
+      const sign = (v: number | undefined): string => (v === undefined ? '?' : Object.is(v, -0) ? '-0' : String(v));
+      const held = `spine-core b ${sign(spineHand?.b)}, core b ${sign(coreHand?.b)}`;
+      if (spineHand !== undefined && coreHand !== undefined && Object.is(spineHand.b, coreHand.b) && Object.is(spineHand.d, coreHand.d)) {
+        probes.push(`the ${label} probe's runtimes agree on hand's matrix (${held}), so it does not exercise the rule`);
+      }
+      const bones = (poser: Poser): Array<BoneSnapshot[] | null> => sampleAnimation(poser, 'spin', PROTOCOL_FPS, { bones: true }).map((f) => f.bones ?? null);
+      const a = bones(choice.core);
+      const b = bones(choice.spine);
+      if (JSON.stringify(a.map((f) => f?.map((x) => [x.name, ...Object.values(x).slice(1).map((v) => (Object.is(v, -0) ? '-0' : v))]))) !== JSON.stringify(b.map((f) => f?.map((x) => [x.name, ...Object.values(x).slice(1).map((v) => (Object.is(v, -0) ? '-0' : v))])))) {
+        probes.push(`the ${label} probe's bone snapshots differ between the posers`);
+      }
+      if (!a.every((f) => zero(f?.find((x) => x.name === 'hand')) && zero(f?.find((x) => x.name === 'arm')))) probes.push(`the ${label} probe's unposed bones are not the zero snapshot in every frame`);
+      if (a.every((f) => zero(f?.find((x) => x.name === 'mid')))) probes.push(`the ${label} probe's posed bone "mid" was zeroed too`);
+      const auto = runCli(['render', '--candidate', out, '--geometry', '--out', join(work, `rc07-${label}`)]);
+      const spine = runCli(['render', '--candidate', out, '--geometry', '--out', join(work, `rc07-${label}-spine`), '--poser', 'spine']);
+      const line = poserLine(auto.stdout);
+      const differ = digestDifferences(dirDigests(join(work, `rc07-${label}`)), dirDigests(join(work, `rc07-${label}-spine`)));
+      if (auto.status !== 0 || spine.status !== 0 || !line.startsWith('rigc core — ') || differ.length > 0) probes.push(`the ${label} probe rendered with exits ${auto.status}/${spine.status}, poser line ${JSON.stringify(line)}, differing on ${differ.join(', ') || 'nothing'}`);
+      read.push(`${label} ik (${held})`);
+      rmSync(probe.dirs.dir, { recursive: true, force: true });
+    }
+    figures =
+      `a skin-required "arm" no posed skin names and its child "hand" (flagged active, never posed), under ${read.join('; ')}: both posers write the zero snapshot for ` +
+      'the two unposed bones in every frame and the posed ones as posed, and `render --geometry` through the core is byte-identical to --poser spine';
+    const held = probes.length === 0 && read.length === 2;
+    say(
+      'RC07_A_BONE_THE_POSED_SKIN_LEAVES_UNPOSED_IS_THE_ZERO_SNAPSHOT_IN_BOTH_POSERS',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #968, the private corpus: two rigs read 508 bone rotations of 179.99999734 through spine-core and 0 through the core, every pixel equal — the sign of a zero in an unposed bone\'s matrix, which a constraint over it wrote. A value neither runtime poses is defined by the seam, not relayed from one of them',
+    );
+  }
+
+  {
+    const probes: string[] = [];
+    let figures = '';
+    const series = writeSeriesProbe();
+    const build = runCli(['build', '--rig', series.dirs.rigPath, '--motion', series.motionPath, '--images', series.dirs.dir, '--out', series.dirs.outDir, '--copy-images']);
+    if (build.status !== 0) probes.push(`the series probe did not build: ${build.stderr.trim().split('\n')[0]}`);
+    else {
+      const core = runCli(['render', '--candidate', series.dirs.outDir, '--geometry', '--out', join(work, 'rc05-core')]);
+      const spine = runCli(['render', '--candidate', series.dirs.outDir, '--geometry', '--out', join(work, 'rc05-spine'), '--poser', 'spine']);
+      const line = poserLine(core.stdout);
+      const a = dirDigests(join(work, 'rc05-core'));
+      const differ = digestDifferences(a, dirDigests(join(work, 'rc05-spine')));
+      if (core.status !== 0 || !line.startsWith('rigc core — ')) probes.push(`the series probe rendered with exit ${core.status} and poser line ${JSON.stringify(line)}`);
+      if (differ.length > 0) probes.push(`the core and spine-core renders of the series differ on ${differ.join(', ')}`);
+      const frames = [...a.keys()].filter((k) => k.endsWith('.png') && !k.endsWith('contact.png'));
+      const distinct = new Set(frames.map((k) => a.get(k))).size;
+      if (distinct < SERIES_COUNT) probes.push(`the series drew ${distinct} distinct frame(s), fewer than its ${SERIES_COUNT} images — the frames did not step`);
+      figures = `a ${SERIES_COUNT}-frame series keyed to loop: ${frames.length} frame(s), ${distinct} distinct pictures, every file identical through the core and spine-core`;
+    }
+    rmSync(series.dirs.dir, { recursive: true, force: true });
+    const held = probes.length === 0;
+    say(
+      'RC05_A_NUMBERED_SERIES_DRAWS_THROUGH_THE_CORE_FRAME_FOR_FRAME_AS_SPINE_CORE_DRAWS_IT',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #967 left a sequence a HOLE on the public corpus (no row carries one); the render reads each frame\'s region ' +
+        'and page off it, so the probe is what puts that path under the gate',
+    );
+  }
   rmSync(work, { recursive: true, force: true });
   return bad;
 }
@@ -75187,7 +75684,7 @@ function bonesAsFileText(bones: SpineBone[]): string {
  * model document `build` writes beside it (issue #922).
  */
 function gateTextsOf(result: CompileResult): { skeletonText: string; atlasText: string; modelText: string } {
-  return { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model) };
+  return { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText) };
 }
 
 /** `src/compile.ts` with its comments blanked, so a scan reads code only. */
@@ -77718,10 +78215,18 @@ function withNumberAt(doc: unknown, path: string, x: number): unknown {
   return copy;
 }
 
+/**
+ * The \`spine.sha256\` a hand-written model document states (issue #968): a
+ * well-formed digest of no file — these documents are posed on their own, never
+ * beside a Spine file the render would check it against.
+ */
+const FORGED_SPINE_SHA256 = '0'.repeat(64);
+
 /** What `modelDocument` refuses `model` with, or '' when it writes it. */
 function modelDocumentRefusal(model: CompiledModel): string {
   try {
-    modelDocument(model);
+    // The Spine text only feeds the digest; what is refused is the model's.
+    modelDocument(model, '');
     return '';
   } catch (err) {
     return err instanceof CompileError ? err.message : `not a CompileError: ${(err as Error).message}`;
@@ -77750,13 +78255,13 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
   {
     const probes: string[] = [];
     // Hand-written, not imported: the writer's list and this one drifting apart is the failure.
-    const TOP = ['spec', 'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations', 'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig'];
+    const TOP = ['spec', 'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations', 'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig', 'spine'];
     const BONE = ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inheritMode', 'skinRequired', 'editor'];
     const SLOT = ['name', 'bone', 'setup', 'color', 'dark', 'blend'];
     let shape = '';
     if (model === null) probes.push(`the probe did not compile: ${probe.refusal}`);
     else {
-      const text = modelDocument(model);
+      const text = modelDocument(model, probe.result?.skeletonText ?? '');
       const doc = JSON.parse(text) as Record<string, unknown> & {
         spec: string;
         bones: Array<Record<string, unknown>>;
@@ -77769,7 +78274,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
       if (doc.spec !== MODEL_DOCUMENT_SPEC || MODEL_DOCUMENT_SPEC !== 'rigc-compiled/1') probes.push(`spec is ${JSON.stringify(doc.spec)}`);
       if (doc.referenceScale !== model.referenceScale) probes.push(`referenceScale is ${JSON.stringify(doc.referenceScale)}, the model's ${model.referenceScale}`);
       if (`${JSON.stringify(doc, null, 2)}\n` !== text) probes.push('the text is not what it parses to, spelled back — a value was written that JSON reads as another');
-      if (text !== modelDocument(model)) probes.push('two writes of one model differ');
+      if (text !== modelDocument(model, probe.result?.skeletonText ?? '')) probes.push('two writes of one model differ');
       if (JSON.stringify(doc.bones.map((b) => b.name)) !== JSON.stringify(model.bones.map((b) => b.name))) probes.push(`bones are [${doc.bones.map((b) => b.name).join(', ')}], the model's [${model.bones.map((b) => b.name).join(', ')}]`);
       if (canonicalText(doc.bones) !== canonicalText(model.bones)) probes.push('the bones carry other values than the model\'s');
       for (const b of doc.bones) if (!keysInOrder(Object.keys(b), BONE)) probes.push(`bone "${String(b.name)}" writes [${Object.keys(b).join(', ')}], not ModelBone's order`);
@@ -77790,7 +78295,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
     say(
       'MD01_THE_DOCUMENT_IS_RIGC_COMPILED_1_IN_ITS_DECLARED_KEY_ORDER_AND_HOLDS_THE_MODELS_RECORDS',
       ok,
-      probeDetail(ok, probes, `${shape}: keys \`spec\`, the seven model fields (\`referenceScale\` first), the ten carried; bones and slots equal the model's in order and in ModelBone's/ModelSlot's key order; the text is what it parses to; \`*\` kept for the unnamed physics target; no \`setupWorld\`, no \`absPath\``),
+      probeDetail(ok, probes, `${shape}: keys \`spec\`, the seven model fields (\`referenceScale\` first), the ten carried and \`spine\`; bones and slots equal the model's in order and in ModelBone's/ModelSlot's key order; the text is what it parses to; \`*\` kept for the unnamed physics target; no \`setupWorld\`, no \`absPath\``),
       'issue #922: the document is what the second dumper of the pose oracle reads (docs/SECOND_ORACLE.md §1, §4), so its order is the model\'s — the spec\'s for animations, which the file re-sorts — and its key order is declared rather than whatever construction left',
     );
   }
@@ -77869,14 +78374,14 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
       const gate = (modelText: string | undefined, reEmit: { skeletonText: string; atlasText: string; modelText: string }) =>
         validate({ skeletonText: first.skeletonText, atlasText: first.atlasText, atlasDir: probe.outDir, declaredDurations: first.declaredDurations, rig: first.rig, profile: 'spine', modelText, reEmit });
       const a18Failures = (report: ValidateReport): string[] => report.failures.filter((f) => f.assertion === a18).map((f) => f.detail);
-      const clean = gate(modelDocument(first.model), gateTextsOf(second));
+      const clean = gate(modelDocument(first.model, first.skeletonText), gateTextsOf(second));
       if (!clean.passed.includes(a18)) probes.push(`two compiles of the probe do not pass A18: ${a18Failures(clean).join(' | ')}`);
       // The plant: the second compile's animations inserted in reverse. The Spine emitter keys them in the
       // editor's order, so skeleton.json cannot see it; the document writes the map in the map's order.
       const reordered: CompiledModel = { ...second.model, animations: new Map([...second.model.animations].reverse()) };
-      const plantedText = modelDocument(reordered);
-      if (plantedText === modelDocument(second.model)) probes.push('reversing the animations map did not move the document');
-      const planted = gate(modelDocument(first.model), { ...gateTextsOf(second), modelText: plantedText });
+      const plantedText = modelDocument(reordered, second.skeletonText);
+      if (plantedText === modelDocument(second.model, second.skeletonText)) probes.push('reversing the animations map did not move the document');
+      const planted = gate(modelDocument(first.model, first.skeletonText), { ...gateTextsOf(second), modelText: plantedText });
       const said = a18Failures(planted);
       if (said.length !== 1 || !said[0].includes(MODEL_DOCUMENT_FILE) || !said[0].includes('first differing line')) probes.push(`the reordered map read ${JSON.stringify(said)}`);
       const missing = a18Failures(gate(undefined, gateTextsOf(second)));
@@ -77916,7 +78421,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
         const doc = JSON.parse(texts[0]) as { spec: string; bones: unknown[] };
         const compiled = compile({ rigPath, motionPath, outDir: outs[0] });
         if (doc.spec !== MODEL_DOCUMENT_SPEC) probes.push(`spec is ${JSON.stringify(doc.spec)}`);
-        if (texts[0] !== modelDocument(compiled.model)) probes.push('the written document is not modelDocument of an in-process compile of the same build');
+        if (texts[0] !== modelDocument(compiled.model, compiled.skeletonText)) probes.push('the written document is not modelDocument of an in-process compile of the same build');
         if (canonicalText(doc.bones) !== canonicalText(compiled.model.bones)) probes.push('the document\'s bones are not the model\'s, in order');
         detail = `gallery/${name}: ${texts[0].length} bytes, ${doc.bones.length} bone(s)`;
       }
@@ -78144,7 +78649,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
         const built = compile({ rigPath, motionPath, outDir: join(dirs.dir, `out-${i}`), imagesDir: dirs.dir });
         const header = (JSON.parse(built.skeletonText) as SpineSkeletonJson).skeleton as Record<string, unknown>;
         const read = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(built.atlasText))).readSkeletonData(built.skeletonText).referenceScale;
-        const doc = modelDocument(built.model);
+        const doc = modelDocument(built.model, built.skeletonText);
         const core = readModel(doc).referenceScale;
         const want = stated ?? UNSTATED_REFERENCE_SCALE;
         if (built.model.referenceScale !== want) probes.push(`a rig ${label}: the model holds ${built.model.referenceScale}, not ${want}`);
@@ -78180,6 +78685,88 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
       ok,
       probeDetail(ok, probes, `three rigs — ${lines.join('; ')}; plants refused by name: ${refusals.join(', ')}`),
       'issue #958: a physics constraint\'s wind and gravity act over the skeleton\'s referenceScale, so the model states the number the Spine file is read as — the stated one, or the parser\'s value where the header omits it — and a document without it would leave the core to guess',
+    );
+  }
+
+  // --- MD08–MD09: the document records the skeleton.json written beside it (issue #968) --
+  //
+  // `rigc render` poses a build through rigc's core from this document, so the
+  // document has to say which Spine file it was written with: `spine.sha256`.
+  // MD08 holds `build` writing the digest of the exact bytes it writes, the same
+  // on two builds; MD09 holds `readModel` refusing the section missing, not hex,
+  // or carrying a field it does not read, each by its path.
+  let spineBuild: { out: string; text: string } | null = null;
+  {
+    const probes: string[] = [];
+    let detail = '';
+    const galleryRoot = resolve(import.meta.dir, 'gallery');
+    const name = existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().find((n) => existsSync(join(galleryRoot, n, 'rig.json')) && existsSync(join(galleryRoot, n, 'motion.json'))) : undefined;
+    if (name === undefined) probes.push(`no gallery rig with a rig.json and motion.json under ${galleryRoot}`);
+    else {
+      const outs = ['s1', 's2'].map((label) => join(work, 'spine-digest', label));
+      const runs = outs.map((out) => runCli(['build', '--rig', join(galleryRoot, name, 'rig.json'), '--motion', join(galleryRoot, name, 'motion.json'), '--out', out]));
+      const digests = outs.map((out, i) => {
+        if (runs[i].status !== 0 || !existsSync(join(out, MODEL_DOCUMENT_FILE))) {
+          probes.push(`build ${i + 1} of gallery/${name} exited ${runs[i].status} or wrote no ${MODEL_DOCUMENT_FILE}`);
+          return null;
+        }
+        const text = readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8');
+        const recorded = (JSON.parse(text) as { spine?: { sha256?: unknown } }).spine?.sha256;
+        const actual = createHash('sha256').update(readFileSync(join(out, 'skeleton.json'))).digest('hex');
+        if (recorded !== actual) probes.push(`build ${i + 1}: the document records ${JSON.stringify(recorded)} and skeleton.json beside it hashes to ${actual}`);
+        if (Object.keys(JSON.parse(text) as object).at(-1) !== 'spine') probes.push(`build ${i + 1}: spine is not the document's last section`);
+        if (i === 0) spineBuild = { out, text };
+        return recorded;
+      });
+      if (digests[0] !== digests[1]) probes.push(`two builds recorded ${JSON.stringify(digests)}`);
+      if (readModel(readFileSync(join(outs[0], MODEL_DOCUMENT_FILE), 'utf8')).spine.sha256 !== digests[0]) probes.push('readModel does not carry the recorded digest');
+      detail = `gallery/${name}, built twice: both documents end in spine.sha256 ${String(digests[0]).slice(0, 12)}…, the SHA-256 of the skeleton.json each build wrote beside it, and readModel carries it`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'MD08_THE_DOCUMENT_RECORDS_THE_SHA256_OF_THE_SKELETON_JSON_BUILD_WROTE_BESIDE_IT',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #968: the render poses a build from its document, and a skeleton.json edited after the build and left beside it was drawn from the document — the build\'s rig, not the file named. The digest is what lets the render tell',
+    );
+  }
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    const built = spineBuild as { out: string; text: string } | null;
+    if (built === null) probes.push('MD08 built no document to plant');
+    else {
+      const doc = JSON.parse(built.text) as Record<string, unknown>;
+      const refusal = (label: string, edit: (d: Record<string, unknown>) => void, want: string): void => {
+        const copy = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
+        edit(copy);
+        try {
+          readModel(JSON.stringify(copy));
+          probes.push(`${label}: read without a refusal`);
+        } catch (err) {
+          const msg = (err as Error).message;
+          if (!(err instanceof CoreInputError) || !msg.includes(want)) probes.push(`${label}: refused as ${JSON.stringify(msg.slice(0, 200))}, not naming ${JSON.stringify(want)}`);
+          else read.push(label);
+        }
+      };
+      refusal('the section removed', (d) => delete d.spine, 'section "spine" is missing');
+      refusal('the digest in capitals', (d) => (d.spine = { sha256: (doc.spine as { sha256: string }).sha256.toUpperCase() }), 'spine.sha256 is');
+      refusal('the digest one digit short', (d) => (d.spine = { sha256: (doc.spine as { sha256: string }).sha256.slice(1) }), 'not 64 lowercase hex digits');
+      refusal('the digest absent', (d) => (d.spine = {}), 'spine.sha256 is absent');
+      refusal('a second field', (d) => (d.spine = { ...(doc.spine as object), file: 'skeleton.json' }), 'spine: field "file" is not one this reader knows');
+      refusal('a string for the section', (d) => (d.spine = 'x'), 'spine is "x"');
+      try {
+        readModel(built.text);
+      } catch (err) {
+        probes.push(`the unplanted document was refused: ${(err as Error).message.slice(0, 200)}`);
+      }
+    }
+    const ok = probes.length === 0 && read.length === 6;
+    say(
+      'MD09_READMODEL_REFUSES_A_SPINE_DIGEST_MISSING_MALFORMED_OR_WITH_A_FIELD_IT_DOES_NOT_READ_BY_PATH',
+      ok,
+      probeDetail(ok, probes, `the unplanted document read; refused by path: ${read.join(', ')}`),
+      'a digest the reader accepted in any spelling would be a binding the render could not trust, and a missing one would have to be read as "any file" — the silence the digest exists to remove',
     );
   }
 
@@ -78295,7 +78882,7 @@ function writeRectProbe(extra: Record<string, Record<string, unknown>> = {}): { 
 function buildRectProbe(probe: { dirs: ProbeDirs; motionPath: string }, out: string, atlasInPath?: string): { built: CompileResult | null; report: ValidateReport | null; refusal: string } {
   try {
     const built = compile({ rigPath: probe.dirs.rigPath, motionPath: probe.motionPath, outDir: out, imagesDir: probe.dirs.dir, ...(atlasInPath === undefined ? {} : { atlasInPath }) });
-    const report = validate({ skeletonText: built.skeletonText, atlasText: built.atlasText, atlasDir: out, declaredDurations: built.declaredDurations, rig: built.rig, profile: 'spine', modelText: modelDocument(built.model), reEmit: gateTextsOf(built) });
+    const report = validate({ skeletonText: built.skeletonText, atlasText: built.atlasText, atlasDir: out, declaredDurations: built.declaredDurations, rig: built.rig, profile: 'spine', modelText: modelDocument(built.model, built.skeletonText), reEmit: gateTextsOf(built) });
     return { built, report, refusal: '' };
   } catch (err) {
     return { built: null, report: null, refusal: (err as Error).message };
@@ -78337,13 +78924,13 @@ function runModelAtlasSuite(): { failures: number; gateHole: boolean } {
       const a = pair[0].built;
       const b = pair[1].built;
       if (a.skeletonText !== b.skeletonText) probes.push('skeleton.json differs between the two packs — the pair measures nothing about the document');
-      const docA = JSON.parse(modelDocument(a.model)) as unknown;
-      const docB = JSON.parse(modelDocument(b.model)) as unknown;
+      const docA = JSON.parse(modelDocument(a.model, a.skeletonText)) as unknown;
+      const docB = JSON.parse(modelDocument(b.model, b.skeletonText)) as unknown;
       const differ = leafDifferences(docA, docB);
       const expected = ['width', 'height', 'offsetX', 'offsetY'].map((k) => `.skins[0].attachments.badge.badge.atlas.${k}`);
       if (JSON.stringify(differ) !== JSON.stringify(expected)) probes.push(`the documents differ at [${differ.join(', ')}], not exactly [${expected.join(', ')}]`);
-      const stripA = withoutAtlasRects(modelDocument(a.model));
-      if (stripA === null || stripA !== withoutAtlasRects(modelDocument(b.model))) probes.push('with the rectangles removed the two documents still differ');
+      const stripA = withoutAtlasRects(modelDocument(a.model, a.skeletonText));
+      if (stripA === null || stripA !== withoutAtlasRects(modelDocument(b.model, b.skeletonText))) probes.push('with the rectangles removed the two documents still differ');
       const badgeOf = (doc: unknown): string => rectOfRecord(documentRegions(doc).find((r) => r.region === 'badge')?.record.atlas);
       detail = `a region naming no image, resolved through "badge" of two packs that differ in its trim alone: skeleton.json byte-identical (${a.skeletonText.length} bytes); the documents differ at exactly ${differ.length} leaves, badge's atlas ${badgeOf(docA)} against ${badgeOf(docB)} (${ATLAS_RECT_KEYS.join(', ')}); with the rectangles removed, byte-identical — which is what the two documents were before this change`;
     }
@@ -78413,7 +79000,7 @@ function runModelAtlasSuite(): { failures: number; gateHole: boolean } {
     const probes: string[] = [];
     let detail = '';
     if (greenOf('loose', loose, probes)) {
-      const doc = JSON.parse(modelDocument(loose.built.model)) as unknown;
+      const doc = JSON.parse(modelDocument(loose.built.model, loose.built.skeletonText)) as unknown;
       const emitted = new Map(parseAtlasText(loose.built.atlasText).pages.flatMap((p) => p.regions.map((r) => [r.name, r] as const)));
       const lines: string[] = [];
       for (const r of documentRegions(doc)) {
@@ -78452,7 +79039,7 @@ function runModelAtlasSuite(): { failures: number; gateHole: boolean } {
     const probes: string[] = [];
     let detail = '';
     if (greenOf('trimmed-pack', trimmed, probes)) {
-      const doc = JSON.parse(modelDocument(trimmed.built.model)) as unknown;
+      const doc = JSON.parse(modelDocument(trimmed.built.model, trimmed.built.skeletonText)) as unknown;
       const pack = new Map(parseAtlasText(readFileSync(probe.trimmed, 'utf8')).pages.flatMap((p) => p.regions.map((r) => [r.name.trim(), r] as const)));
       const lines: string[] = [];
       let turned = 0;
@@ -78540,7 +79127,7 @@ function runModelAtlasSuite(): { failures: number; gateHole: boolean } {
     else {
       const record = ghost.built.model.skins[0]?.attachments.ghost?.ghost;
       if (record?.kind !== 'region' || record.atlas !== null) probes.push(`the ghost record's atlas is ${record?.kind === 'region' ? JSON.stringify(record.atlas) : '(no region)'}, not null`);
-      const text = modelDocument(ghost.built.model);
+      const text = modelDocument(ghost.built.model, ghost.built.skeletonText);
       const written = documentRegions(JSON.parse(text) as unknown).find((r) => r.at === 'default/ghost/ghost');
       if (written === undefined || written.record.atlas !== null) probes.push(`the document writes ghost's atlas as ${JSON.stringify(written?.record.atlas)}`);
       const a08 = ghost.report.failures.filter((f) => f.assertion === 'A08_REGION_NAMES_MATCH_ATTACHMENTS');
@@ -78661,7 +79248,7 @@ function runModelAtlasSuite(): { failures: number; gateHole: boolean } {
     const probes: string[] = [];
     let detail = '';
     if (greenOf('trimmed-pack', trimmed, probes)) {
-      const text = modelDocument(trimmed.built.model);
+      const text = modelDocument(trimmed.built.model, trimmed.built.skeletonText);
       let read: CompiledDocument | null = null;
       try {
         read = readModel(text);
@@ -81197,7 +81784,7 @@ function runGallerySuite(): { failures: number; examples: number } {
           atlasDir: outDir,
           declaredDurations: result.declaredDurations,
           rig: result.rig,
-          modelText: modelDocument(result.model),
+          modelText: modelDocument(result.model, result.skeletonText),
           reEmit,
           profile,
         });
@@ -81256,7 +81843,7 @@ function runCutsSuite(): { failures: number; cuts: number } {
         // Compiling twice is what makes A18 mean anything here: on real art the
         // determinism claim is worth more than on a fixture, because the manifest
         // carries floats nobody chose.
-        modelText: modelDocument(result.model),
+        modelText: modelDocument(result.model, result.skeletonText),
         reEmit: gateTextsOf(compile(opts)),
         // `spine-html`, pinned: a registered cut is a rig this project ships, and
         // "can this project ship it" is the whole question the extra suite asks.
@@ -82811,7 +83398,7 @@ function runIngestSuite(): number {
             atlasDir: outDir,
             declaredDurations: built.declaredDurations,
             rig: built.rig,
-            modelText: modelDocument(built.model),
+            modelText: modelDocument(built.model, built.skeletonText),
             reEmit: gateTextsOf(compile({ rigPath, motionPath, outDir: join(root, `R${index}`), atlasInPath: candidate })),
             profile: 'spine',
           });

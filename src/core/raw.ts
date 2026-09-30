@@ -166,9 +166,27 @@ export interface RawPose {
   clips: RawClip[];
   clipped: RawClipped[];
   events: RawEvent[];
+  // --- #968 render: begin ---
+  /**
+   * What each slot shows, in draw order — the records `drawn` was posed from
+   * (skin, placeholder, series frame, deform). `src/render_core.ts` resolves
+   * each drawn attachment's atlas region and page UVs through it, with
+   * `./uvs.ts`'s `drawnRegions` (issue #967's gated rule), rather than walking
+   * which record a slot shows a second time.
+   */
+  shown: ShownGeometry[];
+  // --- #968 render: end ---
 }
 
 const RAW_PLANT: CorePlant = { round: rawNumber };
+
+// --- #968 render: begin ---
+/** The shown records in `order`, the pose's draw order (a pose's `shown`). */
+function drawOrderOf(shown: readonly ShownGeometry[], order: readonly string[]): ShownGeometry[] {
+  const rank = new Map(order.map((n, r) => [n, r]));
+  return [...shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
+}
+// --- #968 render: end ---
 
 /** A double the entry computed: never `null`, since a non-finite pose is refused rather than passed on. */
 function finite(v: number | null, what: string): number {
@@ -247,7 +265,7 @@ export function poseRawSetup(doc: CompiledDocument, plant: CorePlant = {}): RawP
   const { setup, world, shown } = posed;
   if (world === null || shown === null || setup.slots === null || setup.drawOrder === null) throw new CoreInputError('the raw setup pose was not posed');
   const drawn = rawDrawn(doc, shown, world, setup.drawOrder, plant);
-  return { trackTime: 0, animationTime: 0, bones: rawBones(doc, world), slots: setup.slots, drawOrder: setup.drawOrder, ...drawn, events: [] };
+  return { trackTime: 0, animationTime: 0, bones: rawBones(doc, world), slots: setup.slots, drawOrder: setup.drawOrder, ...drawn, events: [], shown: drawOrderOf(shown, setup.drawOrder) };
 }
 
 /**
@@ -280,7 +298,7 @@ export function poseRawAnimation(doc: CompiledDocument, animation: string, steps
     if (setup.absent.length > 0) throw new CoreInputError(`the raw walk's reset pose leaves ${setup.absent.map(([b, w]) => `${b} out (${w})`).join('; ')}`);
     if (setup.world === null || setup.shown === null || setup.setup.slots === null || setup.setup.drawOrder === null) throw new CoreInputError('the raw walk\'s reset pose was not posed');
     ctx.phase = 'update';
-    poses.push({ trackTime: 0, animationTime: 0, bones: rawBones(doc, setup.world), slots: setup.setup.slots, drawOrder: setup.setup.drawOrder, ...rawDrawn(doc, setup.shown, setup.world, setup.setup.drawOrder, plant), events: [] });
+    poses.push({ trackTime: 0, animationTime: 0, bones: rawBones(doc, setup.world), slots: setup.setup.slots, drawOrder: setup.setup.drawOrder, ...rawDrawn(doc, setup.shown, setup.world, setup.setup.drawOrder, plant), events: [], shown: drawOrderOf(setup.shown, setup.setup.drawOrder) });
   }
   for (let i = reset === 'setup' ? 1 : 0; i <= steps.length; i++) {
     const dt = i === 0 ? 0 : steps[i - 1];
@@ -305,7 +323,7 @@ export function poseRawAnimation(doc: CompiledDocument, animation: string, steps
     const drawn = rawDrawn(doc, shown, posed.world, drawOrder, plant);
     const events = (plant.events ?? eventsFired)(anim.timelines.events, last, t, rawNumber).map((e): RawEvent => [e[0], finite(e[1], 'event time'), e[2], finite(e[3], 'event float'), e[4]]);
     last = t;
-    poses.push({ trackTime, animationTime: t, bones: rawBones(doc, posed.world), slots: slots.rows, drawOrder, ...drawn, events });
+    poses.push({ trackTime, animationTime: t, bones: rawBones(doc, posed.world), slots: slots.rows, drawOrder, ...drawn, events, shown });
   }
   return poses;
 }

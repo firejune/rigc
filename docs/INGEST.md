@@ -189,6 +189,7 @@ rigc render --candidate examples/spineboy/export/spineboy-pro.json \
 rigc render
   ..    skeleton …/examples/spineboy/export/spineboy-pro.json
   ..    atlas    …/examples/spineboy/export/spineboy.atlas
+  ..    poser    spine-core — no skeleton.model.json beside …/examples/spineboy/export/spineboy-pro.json — a Spine export, not a rigc build
   ..    200x186px at 8 fps, 1 set(s) -> …/render/sb
   ..    walk             9 frame(s), 1.000s + contact.png -> …/render/sb/walk@8fps
 rigc: wrote …/render/sb/frames.json
