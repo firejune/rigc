@@ -114,6 +114,9 @@ import {
   TextureAtlas,
   type Timeline,
 } from '@esotericsoftware/spine-core';
+// #969: the core's side of the seam — the model document read, and the survey's hooks (`./core/hooks.ts`).
+import { CoreInputError, readModel, underSkin, type CompiledDocument } from './core/index.ts';
+import { float32Rows, meshWorld, poseDial as corePoseDial, poseJump, recordIdentity, sliderRecordOf, slotDraw, type CoreSurveyPose } from './core/hooks.ts';
 
 /**
  * How near zero a triangle's area has to be, as a fraction of the largest
@@ -707,6 +710,19 @@ export interface DeformSurvey {
    * could not have posed (issues #419, #427).
    */
   dialDisputes: DeformDialDispute[];
+  /**
+   * Which poser the survey posed through, and why when it is not the one
+   * asked for (issue #969): `model` — rigc's own core over the model document;
+   * `spine-core` — the runtime over the Spine skeleton. Every other field is
+   * the same survey whichever it was; `tools/survey_hashes.ts` holds that.
+   */
+  source: DeformSurveyRecord;
+}
+
+/** The survey's record of its poser (`DeformSurvey.source`). */
+export interface DeformSurveyRecord {
+  used: DeformSurveySource;
+  why: string | null;
 }
 
 /**
@@ -794,6 +810,16 @@ export function skeletonDataFromText(skeletonText: string, atlasText: string): S
  * printed; what it is not is gated.
  */
 export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string> = new Set()): DeformSurvey {
+  return { ...surveyWith(data, exempt, spinePoser(data)), source: { used: 'spine-core', why: null } };
+}
+
+/**
+ * The survey through one poser (issue #969): `surveyDeformKeys`' whole body,
+ * with every pose taken through `poser` — spine-core's or the core's. What it
+ * reads off `data` is the skeleton's structure (its timelines, keys, curves,
+ * sliders and skins), which is data and not a pose.
+ */
+function surveyWith(data: SkeletonData, exempt: ReadonlySet<string>, poser: SurveyPoser): Omit<DeformSurvey, 'source'> {
   const keys: DeformKeyMeasure[] = [];
   const spans: DeformSpan[] = [];
   const exempted = new Set<string>();
@@ -819,7 +845,7 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
   const reachesUnder = (skin: Skin | null): Map<string, Array<DialPlan | null>> => {
     const already = reachCache.get(skin);
     if (already !== undefined) return already;
-    const built = reachesOf(data, skin);
+    const built = reachesOf(data, skin, poser);
     reachCache.set(skin, built);
     return built;
   };
@@ -889,8 +915,8 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
       for (const dials of reachesUnder(skin).get(anim.name) ?? [null]) {
         const poseFrame = (time: number): PoseOfFrame =>
           dials === null
-            ? { posed: poseAt(data, skin, anim.name, time), dial: null }
-            : poseDial(data, skin, dials, time);
+            ? { posed: poser.track(skin, anim.name, time), dial: null }
+            : poseDial(poser, skin, dials, time);
         const reach = dials === null ? TRACK_REACH : dials.reach;
         /**
          * The key times this plan actually **reached**, for the reach comparison
@@ -1008,7 +1034,7 @@ export function surveyDeformKeys(data: SkeletonData, exempt: ReadonlySet<string>
             .filter((time) =>
               flat
                 ? only === null || Math.abs(time - only.lo) > DIAL_TIME_EPSILON
-                : poseDial(data, skin, shadow, time).dial?.unreachable === true,
+                : poseDial(poser, skin, shadow, time).dial?.unreachable === true,
             )
             .sort((a, b) => a - b);
           dials.dispute.outside.push(...outside);
@@ -1334,7 +1360,7 @@ function skeletonUnderSkin(data: SkeletonData, skin: Skin | null): Skeleton {
  * what the skeleton is wearing, and the answer that matters is the one under the
  * skin holding the mesh being measured.
  */
-function reachesOf(data: SkeletonData, skin: Skin | null): Map<string, Array<DialPlan | null>> {
+function reachesOf(data: SkeletonData, skin: Skin | null, poser: SurveyPoser): Map<string, Array<DialPlan | null>> {
   const out = new Map<string, Array<DialPlan | null>>();
   for (const anim of data.animations) out.set(anim.name, []);
   for (const constraint of data.constraints) {
@@ -1342,7 +1368,7 @@ function reachesOf(data: SkeletonData, skin: Skin | null): Map<string, Array<Dia
     if (constraint.setupPose.mix === 0) continue;
     const list = out.get(constraint.animation?.name ?? '');
     if (list === undefined) continue;
-    const plan = planDial(data, skin, constraint);
+    const plan = planDial(poser, skin, constraint);
     if (plan !== null) list.push(plan);
   }
   for (const list of out.values()) if (list.length === 0) list.push(null);
@@ -1390,7 +1416,7 @@ function sliderOn(skeleton: Skeleton, data: SliderData): Slider | null {
  * ⛔ Nothing here falls back to `rotation`, or to any field, when the search does
  * not settle. Two answers that disagree are two answers, printed.
  */
-function planDial(data: SkeletonData, skin: Skin | null, slider: SliderData): DialPlan | null {
+function planDial(poser: SurveyPoser, skin: Skin | null, slider: SliderData): DialPlan | null {
   const boneName = slider.bone?.name ?? '?';
   const where = slider.local ? ' (local)' : ' (world)';
   const reach = (discovery: DialDiscovery | null): DeformReach => {
@@ -1426,20 +1452,17 @@ function planDial(data: SkeletonData, skin: Skin | null, slider: SliderData): Di
   if (slider.bone === null) {
     return { slider, reach: reach(null), tie: null, dispute: null, field: null, u0: 0, v0: 0, u1: 1, v1: 1, statedMap: null };
   }
-  const skeleton = skeletonUnderSkin(data, skin);
-  const instance = sliderOn(skeleton, slider);
-  const bone = instance?.bone ?? null;
-  if (instance === null || bone === null) return null;
+  const session = poser.dial(skin, slider);
+  if (session === null || !session.hasBone) return null;
   // ⚠️ Every field is kept, the dead ones included, because the ARTIFACT may name
   // one of them: a reach comparison needs the map of the field the skeleton
   // declares even when that field moves the reading by nothing at all (#427).
   const all: DialProbe[] = [];
   for (const field of DIAL_FIELDS) {
     const step = dialStep(field);
-    skeleton.setupPose();
-    const base = bone.pose[field];
-    const v0 = dialValue(skeleton, slider, bone, field, base);
-    const v1 = dialValue(skeleton, slider, bone, field, base + step);
+    const base = session.base(field);
+    const v0 = session.at(field, base).read;
+    const v1 = session.at(field, base + step).read;
     all.push({ field, response: Math.abs(v1 - v0), u0: base, v0, u1: base + step, v1 });
   }
   const probes = all.filter((p) => Number.isFinite(p.response) && p.response !== 0);
@@ -1570,19 +1593,6 @@ function dialDiscoveryClause(discovery: DialDiscovery, bone: string): string {
 }
 
 /**
- * The property value spine-core reads off the driving bone with its local field
- * set to `u` — `Slider.update`'s own call, at its own point in the update.
- */
-function dialValue(skeleton: Skeleton, slider: SliderData, bone: Bone, field: DialField, u: number): number {
-  skeleton.setupPose();
-  skeleton.update(0);
-  bone.pose[field] = u;
-  skeleton.updateWorldTransform(Physics.reset);
-  if (slider.local) bone.appliedPose.validateLocalTransform(skeleton);
-  return slider.property.value(skeleton, bone.appliedPose, slider.local, DIAL_ZERO_OFFSETS);
-}
-
-/**
  * The `offsets` argument every `FromProperty.value` takes.
  *
  * `Slider.offsets` is a private all-zero array — a slider has no per-property
@@ -1593,7 +1603,7 @@ const DIAL_ZERO_OFFSETS = [0, 0, 0, 0, 0, 0];
 
 /** A posed frame and the dial that selected it, or `null` on a track frame. */
 interface PoseOfFrame {
-  posed: Skeleton;
+  posed: SurveyPose;
   dial: DeformDial | null;
 }
 
@@ -1633,28 +1643,15 @@ function sliderTimeFor(slider: SliderData, time: number): number {
  *     against `sliderTimeFor` — spine-core's answer, not this function's. A time
  *     no dial value selects is reported and never guessed at.
  */
-function poseDial(data: SkeletonData, skin: Skin | null, plan: DialPlan, time: number): PoseOfFrame {
+function poseDial(poser: SurveyPoser, skin: Skin | null, plan: DialPlan, time: number): PoseOfFrame {
   const slider = plan.slider;
   const wanted = sliderTimeFor(slider, time);
   const value = plan.field === null ? time : slider.property.offset + (time - slider.offset) / slider.scale;
-  const posed = skeletonUnderSkin(data, skin);
-  const instance = sliderOn(posed, slider);
-  const bone = instance?.bone ?? null;
-  if (instance === null) return { posed: poseAt(data, skin, slider.animation.name, time), dial: null };
+  const session = poser.dial(skin, slider);
+  if (session === null) return { posed: poser.track(skin, slider.animation.name, time), dial: null };
   /** Pose with the driving field at `candidate`, and read both sides back. */
-  const at = (candidate: number): { read: number; applied: number } => {
-    posed.setupPose();
-    posed.update(0);
-    if (plan.field !== null && bone !== null) bone.pose[plan.field] = candidate;
-    else instance.pose.time = candidate;
-    posed.updateWorldTransform(Physics.reset);
-    if (plan.field === null || bone === null) return { read: candidate, applied: instance.appliedPose.time };
-    if (slider.local) bone.appliedPose.validateLocalTransform(posed);
-    return {
-      read: slider.property.value(posed, bone.appliedPose, slider.local, DIAL_ZERO_OFFSETS),
-      applied: instance.appliedPose.time,
-    };
-  };
+  const field = session.hasBone ? plan.field : null;
+  const at = (candidate: number): { read: number; applied: number } => session.at(field, candidate);
   /** The affine first guess, and what it is judged against. */
   const asked = plan.u0 + ((value - plan.v0) * (plan.u1 - plan.u0)) / (plan.v1 - plan.v0);
   // 🚨 The bound, and it is on the drive the answer is READ off, not on the
@@ -1700,7 +1697,7 @@ function poseDial(data: SkeletonData, skin: Skin | null, plan: DialPlan, time: n
     got = at(u);
   }
   return {
-    posed,
+    posed: session.pose(),
     dial: {
       value,
       driven: u,
@@ -1739,7 +1736,7 @@ function poseAt(data: SkeletonData, skin: Skin | null, animation: string, time: 
 /** One posed time, measured — and the two world arrays it was measured from. */
 interface PosedFrame {
   time: number;
-  posed: Skeleton;
+  posed: SurveyPose;
   /** The mesh as the runtime deformed it there. */
   deformed: Float32Array;
   /** The same bones with the deform cleared. The denominator, by construction 1.000. */
@@ -1759,7 +1756,7 @@ interface PosedFrame {
  * the emptied slot to evaluate the two keys' geometry at one pose.
  */
 function measurePosed(
-  posed: Skeleton,
+  posed: SurveyPose,
   time: number,
   slotIndex: number,
   attachment: MeshAttachment,
@@ -1768,18 +1765,14 @@ function measurePosed(
   dial: DeformDial | null,
 ): PosedFrame {
   const count = attachment.worldVerticesLength;
-  const slot = posed.slots[slotIndex];
   // Read BEFORE the deform is cleared below, and off the same posed skeleton:
   // what the slot shows here and at what alpha is the other half of what this
   // frame does (issue #401).
   const draw = drawOfKey(posed, slotIndex, attachment);
-  const deformed = new Float32Array(count);
-  attachment.computeWorldVertices(posed, slot, 0, count, deformed, 0, 2);
+  const deformed = posed.deformed(slotIndex, attachment);
   // The same bones, with the deform taken away. `computeWorldVertices` reads the
   // array off the slot, so emptying it is the whole control.
-  slot.appliedPose.deform.length = 0;
-  const plain = new Float32Array(count);
-  attachment.computeWorldVertices(posed, slot, 0, count, plain, 0, 2);
+  const plain = posed.plain(slotIndex, attachment);
 
   const before = triangleAreas(plain, triangles);
   const after = triangleAreas(deformed, triangles);
@@ -2214,7 +2207,6 @@ function scanDeformSpan(
     notDrawn: 0,
     unconfirmed: false,
   };
-  const count = attachment.worldVerticesLength;
   const reach = reachedFractions(legs);
   const v1 = timeline.vertices[frame];
   const v2 = timeline.vertices[frame + 1];
@@ -2245,9 +2237,9 @@ function scanDeformSpan(
     // there for the runtime to have applied anything at all.
     const own = anchor.measure.draw.showsThisMesh;
     const a =
-      own && anchor === from ? from.deformed : worldWithDeform(anchor.posed, timeline.slotIndex, attachment, v1, count);
+      own && anchor === from ? from.deformed : anchor.posed.withDeform(timeline.slotIndex, attachment, v1);
     const b =
-      own && anchor === to ? to.deformed : worldWithDeform(anchor.posed, timeline.slotIndex, attachment, v2, count);
+      own && anchor === to ? to.deformed : anchor.posed.withDeform(timeline.slotIndex, attachment, v2);
     // The anchor's own plain areas, taken once when it was measured as a key —
     // the same numbers, so the span cannot disagree with the key about which
     // triangles have a winding to keep.
@@ -2339,8 +2331,8 @@ function worldWithDeform(
   slotIndex: number,
   attachment: MeshAttachment,
   deform: ArrayLike<number>,
-  count: number,
 ): Float32Array {
+  const count = attachment.worldVerticesLength;
   const slot = posed.slots[slotIndex];
   const array = slot.appliedPose.deform;
   array.length = deform.length;
@@ -2362,20 +2354,16 @@ function worldWithDeform(
  * not something the skeleton data can say, and `src/render.ts` does not read it
  * either.
  */
-function shownAt(
-  posed: Skeleton,
-  slotIndex: number,
-  attachment: MeshAttachment,
-): { shown: Attachment | null; showsThisMesh: boolean; slotAlpha: number; attachmentAlpha: number; alpha: number } {
+function shownAt(posed: Skeleton, slotIndex: number, attachment: MeshAttachment): ShownReading {
   const pose = posed.slots[slotIndex]?.appliedPose;
-  const shown = pose?.attachment ?? null;
+  const shown: Attachment | null = pose?.attachment ?? null;
   // The same comparison `DeformTimeline.applyToSlot` makes before it writes
   // anything, so "shown" here means exactly "the runtime deforms it here".
   const showsThisMesh = shown !== null && shown.timelineAttachment === attachment;
   const slotAlpha = pose?.color.a ?? 0;
   const attachmentAlpha = shown instanceof MeshAttachment ? shown.color.a : 1;
   return {
-    shown,
+    shown: shown?.name ?? null,
     showsThisMesh,
     slotAlpha,
     attachmentAlpha,
@@ -2422,10 +2410,10 @@ function shownAt(
  * green. What it must not do is leave the reader guessing which dress the
  * verdict was taken in, so the skin is in the sentence.
  */
-function drawOfKey(posed: Skeleton, slotIndex: number, attachment: MeshAttachment): DeformKeyDraw {
-  const own = shownAt(posed, slotIndex, attachment);
-  const under = posed.skin?.name ?? null;
-  const draw = { shown: own.shown?.name ?? null, showsThisMesh: own.showsThisMesh, alpha: own.alpha, under };
+function drawOfKey(posed: SurveyPose, slotIndex: number, attachment: MeshAttachment): DeformKeyDraw {
+  const own = posed.shownAt(slotIndex, attachment);
+  const under = posed.under();
+  const draw = { shown: own.shown, showsThisMesh: own.showsThisMesh, alpha: own.alpha, under };
   // 🔒 On the "shows something else" branch ONLY, because that is the one branch
   // the skin decides: what a slot shows is resolved through the worn skin and
   // then `defaultSkin`, while an alpha is read off the pose and has no skin in
@@ -2436,7 +2424,7 @@ function drawOfKey(posed: Skeleton, slotIndex: number, attachment: MeshAttachmen
   const dress = under === null ? ', with no skin worn' : `, with skin "${under}" worn`;
   for (const other of attachment.timelineSlots) {
     if (other === slotIndex) continue;
-    const there = shownAt(posed, other, attachment);
+    const there = posed.shownAt(other, attachment);
     if (there.alpha > 0) {
       // Drawn somewhere the deform reaches, so there is nothing to exempt — and
       // the geometry above was measured on a slot that is not the one drawing
@@ -2445,7 +2433,7 @@ function drawOfKey(posed: Skeleton, slotIndex: number, attachment: MeshAttachmen
     }
   }
   if (!own.showsThisMesh) {
-    const instead = own.shown === null ? 'no attachment at all' : `attachment "${own.shown.name}"`;
+    const instead = own.shown === null ? 'no attachment at all' : `attachment "${own.shown}"`;
     return {
       ...draw,
       blank:
@@ -2503,3 +2491,279 @@ function placementOf(
   }
   return { skin: 'default', holder: null, placeholder: attachment.name };
 }
+
+// --- #969 the seam: begin ---
+//
+// The survey poses a skeleton and reads four things off it; everything else it
+// does is arithmetic over those readings and over the skeleton's structure. So
+// the seam is those poses and readings, and there are two posers behind it:
+// spine-core over the Spine skeleton (the survey as it always was, and
+// `validate.ts`'s A39, which hands it the SkeletonData it round-tripped), and
+// rigc's own core over the model document (`./core/hooks.ts`, issue #969),
+// which a build carries and `explain` hands in. The survey's record names which
+// one it used (`DeformSurvey.source`), and `tools/survey_hashes.ts` holds the
+// two to one survey, byte for byte, on every corpus.
+
+/** Which poser a survey used (`DeformSurvey.source`). */
+export type DeformSurveySource = 'spine-core' | 'model';
+
+/** What one slot shows of a mesh at one pose, and at what alpha — `shownAt`'s reading. */
+export interface ShownReading {
+  /** The shown attachment's name, or `null` when the slot shows none. */
+  shown: string | null;
+  showsThisMesh: boolean;
+  slotAlpha: number;
+  attachmentAlpha: number;
+  alpha: number;
+}
+
+/**
+ * One posed skeleton as the survey reads it.
+ *
+ * ⚠️ spine-core's side is a live skeleton: `plain` empties the slot's deform
+ * array for good and `withDeform` writes one and empties it again, exactly as
+ * the survey always did — the survey reads `deformed` before `plain` on a pose
+ * and never after, so the core's side, which holds no state, reads the same.
+ */
+export interface SurveyPose {
+  /** The skin the skeleton wears, off the pose itself (`DeformKeyDraw.under`). */
+  under(): string | null;
+  shownAt(slotIndex: number, attachment: MeshAttachment): ShownReading;
+  /** The mesh's world vertices with the slot's deform as posed. */
+  deformed(slotIndex: number, attachment: MeshAttachment): Float32Array;
+  /** The same bones with the slot's deform cleared. */
+  plain(slotIndex: number, attachment: MeshAttachment): Float32Array;
+  /** The same bones with `deform` written into the slot. */
+  withDeform(slotIndex: number, attachment: MeshAttachment, deform: ArrayLike<number>): Float32Array;
+  /**
+   * The doubles those three are stored from — the slot's deform as posed,
+   * cleared, or replaced — leaving the pose as it found it. The survey reads
+   * the float32 rows; this is what measures the rows' source (`tools/survey_hashes.ts hooks`).
+   */
+  rows(slotIndex: number, attachment: MeshAttachment, deform: 'posed' | 'cleared' | ArrayLike<number>): number[];
+}
+
+/** One slider's dial, posed again and again (`planDial`'s probe, `poseDial`'s solve). */
+export interface DialSession {
+  /** Whether the slider has a driving bone — `false` on the bone-less form, whose dial is its time. */
+  hasBone: boolean;
+  /** The driving bone's setup value of `field`. */
+  base(field: DialField): number;
+  /** Posed with `field` at `candidate` (the slider's time when `field` is `null`): the property read, and `SliderPose.time`. */
+  at(field: DialField | null, candidate: number): { read: number; applied: number };
+  /** The pose the last `at` left. */
+  pose(): SurveyPose;
+}
+
+/** The two ways the survey poses: a jump on a track, and a slider's dial. */
+export interface SurveyPoser {
+  track(skin: Skin | null, animation: string, time: number): SurveyPose;
+  /** `null` when the skeleton carries no such slider. */
+  dial(skin: Skin | null, slider: SliderData): DialSession | null;
+}
+
+/** A live spine-core skeleton, read the way the survey always read it. */
+function spinePose(skeleton: Skeleton): SurveyPose {
+  return {
+    under: () => skeleton.skin?.name ?? null,
+    shownAt: (slotIndex, attachment) => shownAt(skeleton, slotIndex, attachment),
+    deformed: (slotIndex, attachment) => {
+      const count = attachment.worldVerticesLength;
+      const world = new Float32Array(count);
+      attachment.computeWorldVertices(skeleton, skeleton.slots[slotIndex], 0, count, world, 0, 2);
+      return world;
+    },
+    plain: (slotIndex, attachment) => {
+      const count = attachment.worldVerticesLength;
+      const slot = skeleton.slots[slotIndex];
+      slot.appliedPose.deform.length = 0;
+      const world = new Float32Array(count);
+      attachment.computeWorldVertices(skeleton, slot, 0, count, world, 0, 2);
+      return world;
+    },
+    withDeform: (slotIndex, attachment, deform) => worldWithDeform(skeleton, slotIndex, attachment, deform),
+    rows: (slotIndex, attachment, deform) => {
+      const slot = skeleton.slots[slotIndex];
+      const array = slot.appliedPose.deform;
+      const kept = [...array];
+      if (deform === 'cleared') array.length = 0;
+      else if (deform !== 'posed') {
+        array.length = deform.length;
+        for (let i = 0; i < deform.length; i++) array[i] = deform[i];
+      }
+      const out = new Array<number>(attachment.worldVerticesLength);
+      attachment.computeWorldVertices(skeleton, slot, 0, attachment.worldVerticesLength, out, 0, 2);
+      array.length = kept.length;
+      for (let i = 0; i < kept.length; i++) array[i] = kept[i];
+      return out;
+    },
+  };
+}
+
+/** The survey's poses through spine-core — the recipes the survey has always taken (`poseAt`; the dial below). */
+function spinePoser(data: SkeletonData): SurveyPoser {
+  return {
+    track: (skin, animation, time) => spinePose(poseAt(data, skin, animation, time)),
+    dial: (skin, slider) => {
+      const skeleton = skeletonUnderSkin(data, skin);
+      const instance = sliderOn(skeleton, slider);
+      if (instance === null) return null;
+      const bone = instance.bone;
+      return {
+        hasBone: bone !== null,
+        base: (field) => {
+          skeleton.setupPose();
+          return (bone as Bone).pose[field];
+        },
+        // `Slider.update`'s own reading, at its own point in the update: the
+        // setup pose, `update(0)`, the field (or the time) written, `Physics.reset`.
+        at: (field, candidate) => {
+          skeleton.setupPose();
+          skeleton.update(0);
+          if (field !== null && bone !== null) bone.pose[field] = candidate;
+          else instance.pose.time = candidate;
+          skeleton.updateWorldTransform(Physics.reset);
+          if (field === null || bone === null) return { read: candidate, applied: instance.appliedPose.time };
+          if (slider.local) bone.appliedPose.validateLocalTransform(skeleton);
+          return { read: slider.property.value(skeleton, bone.appliedPose, slider.local, DIAL_ZERO_OFFSETS), applied: instance.appliedPose.time };
+        },
+        pose: () => spinePose(skeleton),
+      };
+    },
+  };
+}
+
+/** Which model record each Spine attachment object is, in `placementOf`'s search order. */
+function recordsOf(data: SkeletonData): Map<Attachment, { skin: string; slot: string; placeholder: string }> {
+  const out = new Map<Attachment, { skin: string; slot: string; placeholder: string }>();
+  for (const skin of [data.defaultSkin, ...data.skins]) {
+    if (!skin) continue;
+    for (let slotIndex = 0; slotIndex < data.slots.length; slotIndex++) {
+      const entries: Array<{ placeholder: string; attachment: Attachment }> = [];
+      skin.getAttachmentsForSlot(slotIndex, entries as Parameters<typeof skin.getAttachmentsForSlot>[1]);
+      for (const entry of entries) {
+        if (!out.has(entry.attachment)) out.set(entry.attachment, { skin: skin.name, slot: data.slots[slotIndex].name, placeholder: entry.placeholder });
+      }
+    }
+  }
+  return out;
+}
+
+/** A pose of the core's, read through the Spine skeleton's names. */
+function corePose(pose: CoreSurveyPose, data: SkeletonData, records: ReadonlyMap<Attachment, { skin: string; slot: string; placeholder: string }>): SurveyPose {
+  const slotName = (slotIndex: number): string => {
+    const slot = data.slots[slotIndex];
+    if (slot === undefined) throw new CoreInputError(`slot #${slotIndex} is not a slot of the skeleton`);
+    return slot.name;
+  };
+  const recordOf = (attachment: MeshAttachment): { skin: string; slot: string; placeholder: string } => {
+    const r = records.get(attachment);
+    if (r === undefined) throw new CoreInputError(`mesh "${attachment.name}" is in no skin of the skeleton, so it names no model record`);
+    return r;
+  };
+  const world = (slotIndex: number, attachment: MeshAttachment, deform: 'posed' | 'cleared' | ArrayLike<number>): Float32Array =>
+    float32Rows(meshWorld(pose, slotName(slotIndex), recordOf(attachment), deform));
+  return {
+    under: () => pose.doc.skin,
+    shownAt: (slotIndex, attachment) => {
+      const d = slotDraw(pose, slotName(slotIndex));
+      const r = recordOf(attachment);
+      const showsThisMesh = d.identity !== null && d.identity === recordIdentity(r.skin, r.slot, r.placeholder);
+      return { shown: d.shown, showsThisMesh, slotAlpha: d.slotAlpha, attachmentAlpha: d.attachmentAlpha, alpha: showsThisMesh ? d.slotAlpha * d.attachmentAlpha : 0 };
+    },
+    deformed: (slotIndex, attachment) => world(slotIndex, attachment, 'posed'),
+    plain: (slotIndex, attachment) => world(slotIndex, attachment, 'cleared'),
+    withDeform: (slotIndex, attachment, deform) => world(slotIndex, attachment, deform),
+    rows: (slotIndex, attachment, deform) => meshWorld(pose, slotName(slotIndex), recordOf(attachment), deform),
+  };
+}
+
+/**
+ * The survey's poses through rigc's own core over the model document
+ * (`./core/hooks.ts`). A skin is worn by name — the core's view of one skin
+ * (`underSkin`) — so a skeleton declaring two skins of one name, and a pose
+ * wearing none, are refused by name: neither reaches the survey through
+ * `SkeletonJson` (`placementOf`'s note), and neither has a view to pose.
+ */
+function corePoser(data: SkeletonData, doc: CompiledDocument): SurveyPoser {
+  const records = recordsOf(data);
+  const views = new Map<string, CompiledDocument>();
+  const viewOf = (skin: Skin | null): CompiledDocument => {
+    if (skin === null) throw new CoreInputError('the survey asked for a pose wearing no skin, and the core poses one skin\'s view');
+    if (data.skins.filter((k) => k.name === skin.name).length > 1) throw new CoreInputError(`the skeleton declares two skins named "${skin.name}", and the model names a skin by its name`);
+    const cached = views.get(skin.name);
+    if (cached !== undefined) return cached;
+    const view = underSkin(doc, skin.name);
+    views.set(skin.name, view);
+    return view;
+  };
+  return {
+    track: (skin, animation, time) => corePose(poseJump(viewOf(skin), animation, time), data, records),
+    dial: (skin, slider) => {
+      const view = viewOf(skin);
+      const record = sliderRecordOf(view, slider.name);
+      const boneName = record.bone;
+      let last: CoreSurveyPose | null = null;
+      return {
+        hasBone: boneName !== null,
+        base: (field) => {
+          const bone = view.bones.find((b) => b.name === boneName);
+          if (bone === undefined) throw new CoreInputError(`slider "${slider.name}"'s bone is not a bone of the model document`);
+          const v = bone[field];
+          return v ?? (field === 'scaleX' || field === 'scaleY' ? 1 : 0);
+        },
+        at: (field, candidate) => {
+          const posed = corePoseDial(view, field === null || boneName === null ? { slider: slider.name, time: candidate } : { bone: boneName, field, value: candidate }, slider.name);
+          last = posed;
+          return { read: field === null || posed.read === null ? candidate : posed.read, applied: posed.applied };
+        },
+        pose: () => {
+          if (last === null) throw new CoreInputError(`slider "${slider.name}"'s dial was asked for its pose before it was posed`);
+          return corePose(last, data, records);
+        },
+      };
+    },
+  };
+}
+
+/**
+ * Both posers over one build — spine-core's and the core's, answering the same
+ * calls — for measurement: `tools/survey_hashes.ts hooks` and the selftest's
+ * `DM` controls hold every hook of the one to the other at tolerance 0.
+ */
+export function deformPosers(input: DeformSurveyInput & { modelText: string }): { data: SkeletonData; spine: SurveyPoser; core: SurveyPoser } {
+  const data = skeletonDataFromText(input.skeletonText, input.atlasText);
+  return { data, spine: spinePoser(data), core: corePoser(data, readModel(input.modelText)) };
+}
+
+/** A build's three texts, as `explain` and `tools/survey_hashes.ts` hold them. */
+export interface DeformSurveyInput {
+  skeletonText: string;
+  atlasText: string;
+  /** The model document (`skeleton.model.json`), or `null` when the input carries none (a Spine export). */
+  modelText: string | null;
+}
+
+/**
+ * The survey of a build, through the poser asked for (issue #969): `model` —
+ * the core over the model document, refused when there is none; `spine-core` —
+ * the runtime over the Spine skeleton; `auto` — the model document when the
+ * input carries one and the core poses it, spine-core otherwise, the reason
+ * named in `source.why`.
+ */
+export function surveyOfBuild(input: DeformSurveyInput, exempt: ReadonlySet<string>, asked: 'auto' | DeformSurveySource): DeformSurvey {
+  const data = skeletonDataFromText(input.skeletonText, input.atlasText);
+  const throughSpine = (why: string | null): DeformSurvey => ({ ...surveyWith(data, exempt, spinePoser(data)), source: { used: 'spine-core', why } });
+  if (asked === 'spine-core') return throughSpine(null);
+  if (input.modelText === null) {
+    if (asked === 'model') throw new CoreInputError('the survey was asked to pose the model document, and the input carries none');
+    return throughSpine('the input carries no model document (skeleton.model.json), so the survey posed the Spine skeleton through spine-core');
+  }
+  try {
+    return { ...surveyWith(data, exempt, corePoser(data, readModel(input.modelText))), source: { used: 'model', why: null } };
+  } catch (err) {
+    if (!(err instanceof CoreInputError) || asked === 'model') throw err;
+    return throughSpine(`the core refused to pose the model document — ${err.message}`);
+  }
+}
+// --- #969 the seam: end ---
