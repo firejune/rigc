@@ -124,11 +124,13 @@ import { join, relative, resolve, sep } from 'node:path';
 import { decodePng } from './plate.ts';
 import {
   BACKGROUND,
+  candidatePosers,
   loadPosable,
   PROTOCOL_FPS,
   renderFrame,
   sampleAll,
   sampleSetupPose,
+  throughPoser,
   viewportOfSize,
   type FramesSidecar,
 } from '../src/render.ts';
@@ -238,13 +240,19 @@ function hashed(dir: string, prefix: string): RenderFile[] {
  * What the CLI does not write, posed in this process through `src/render.ts`
  * over the viewport the CLI framed — see the header's second item.
  */
-function writeExtras(out: string, framing: Framing, extra: string): void {
+function writeExtras(out: string, framing: Framing, extra: string): string {
   const { data, pages } = loadPosable(join(out, 'skeleton.json'), join(out, 'skeleton.atlas'), out);
   const viewport = viewportOfSize(framing.x, framing.y, framing.width, framing.height, framing.scale, framing.pixelWidth, framing.pixelHeight);
+  // The poser `rigc render` chose for the same input (issue #968), by the same
+  // rule, so the extras measure what the CLI's frames were drawn through.
+  const posed = throughPoser(candidatePosers(data, join(out, 'skeleton.json'), join(out, 'skeleton.atlas'), undefined), (poser) => {
+    const setup = sampleSetupPose(poser, { bones: true });
+    return { setup, all: sampleAll(poser, PROTOCOL_FPS, { bones: true }) };
+  });
+  const { setup, all } = posed.value;
   mkdirSync(join(extra, 'bones'), { recursive: true });
-  const setup = sampleSetupPose(data, { bones: true });
   renderFrame(setup[0], pages, viewport, BACKGROUND).writePng(join(extra, 'setup.png'));
-  const sets = new Map<string, typeof setup>([['setup-pose', setup], ...sampleAll(data, PROTOCOL_FPS, { bones: true })]);
+  const sets = new Map<string, typeof setup>([['setup-pose', setup], ...all]);
   for (const [name, frames] of sets) {
     const lines = frames.map((f) => JSON.stringify({ index: f.index, time: f.time, bones: f.bones ?? null }));
     // A set name is an animation name, which may hold any character; the
@@ -252,6 +260,7 @@ function writeExtras(out: string, framing: Framing, extra: string): void {
     const file = name === 'setup-pose' ? 'setup-pose' : `animation-${Buffer.from(name, 'utf8').toString('hex')}`;
     writeFileSync(join(extra, 'bones', `${file}.jsonl`), `${lines.join('\n')}\n`);
   }
+  return posed.note;
 }
 
 function resolveArg(arg: string, work: string, out: string): string {
@@ -274,7 +283,8 @@ export function renderRow(recipe: Recipe, work: string, root: string): RenderRow
     const viewport = (JSON.parse(readFileSync(sidecar, 'utf8')) as FramesSidecar).viewport;
     row.framing = { x: viewport.x, y: viewport.y, width: viewport.width, height: viewport.height, scale: viewport.scale, pixelWidth: viewport.pixelWidth, pixelHeight: viewport.pixelHeight };
     try {
-      writeExtras(out, row.framing, join(work, 'extra'));
+      const note = writeExtras(out, row.framing, join(work, 'extra'));
+      writeFileSync(join(work, 'log-extra.txt'), `poser ${note}\n`);
     } catch (err) {
       throw new Error(`recipe ${JSON.stringify(recipe.name)}: \`rigc render\` exited 0 and posing it again in this process threw — ${(err as Error).message}`);
     }

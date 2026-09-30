@@ -198,7 +198,15 @@ sincere about it. rigc exists to convert that silence into a named failure.
   skeleton in order to draw it, and `src/deformmeasure.ts` poses one in order to
   measure what a deform key did to it. All three are the same justification —
   posing *is* running the runtime, and there is no honest way to read a posed
-  vertex without it. What the rule protects has not moved: `src/compile.ts` must
+  vertex without it. Since issue #968 that is `src/render.ts`'s reason for a
+  **Spine export** only: a rigc build, whose `skeleton.model.json` sits beside
+  the pair, is posed through rigc's own core by render_core.ts (under `src/`,
+  linking nothing from the runtime — every frame, geometry file and framing box
+  measured identical to the spine-core render on every corpus), and the render
+  says which poser drew it. `src/render.ts` still links spine-core for the
+  export's poser, for the atlas pages the draw samples and texture
+  substitution reads (`TextureAtlas`), and for the spine-core entries
+  `validate.ts`'s A10 steps a skeleton through. What the rule protects has not moved: `src/compile.ts` must
   stay independent of the runtime so the compiler and the gate are not checking
   each other's assumptions. Since issue #922 that independence is held by
   controls rather than by this sentence: `MD02` holds the compiler free of every

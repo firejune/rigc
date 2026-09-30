@@ -85,6 +85,7 @@
  * spells it as `rigc-compiled/1`, and `build` writes that text into `--out` as
  * `skeleton.model.json` beside the Spine files, after the gate, like them.
  */
+import { createHash } from 'node:crypto';
 import { CompileError } from './errors.ts';
 import type { BoneTransform } from './transform.ts';
 import type { RigSkinConstraintKey } from './rig.ts';
@@ -819,7 +820,9 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  * `constraints`, `events`, `animations` — then the fields carried from `CompileResult` in
  * `CarriedFromCompileResult`'s order: `images`, `pageGrids`, `droppedStates`,
  * `absentParts`, `meshBones`, `meshes`, `physics`, `deformTransforms`,
- * `trackDerivations`, `rig`. Inside a model record, its interface's field
+ * `trackDerivations`, `rig`; and last `spine`, the digest of the
+ * `skeleton.json` written beside it (`spineFileSha256`, issue #968), which is
+ * why the Spine text is the second argument. Inside a model record, its interface's field
  * order (`ModelBone`, `ModelSlot`, `ModelSkin`, each attachment kind,
  * `ModelBinding`, `ModelSequence`, `ModelAtlasRect`, `ModelEvent`, `CompiledAnimation`), each
  * field only when the record carries it, and a field the interface does not
@@ -890,7 +893,7 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  * What the Spine emitter adds (`emitSkeleton`'s header, its spellings, its
  * orders and omissions) is not in the model and so not here.
  */
-export function modelDocument(model: CompiledModel): string {
+export function modelDocument(model: CompiledModel, skeletonText: string): string {
   for (const key of Object.keys(model)) {
     if (!MODEL_DOCUMENT_FIELDS.includes(key) && !MODEL_DOCUMENT_LEFT_OUT.includes(key)) {
       throw new CompileError(`internal: the model document has no place for the model's field "${key}"; it writes [${MODEL_DOCUMENT_FIELDS.join(', ')}] and leaves out [${MODEL_DOCUMENT_LEFT_OUT.join(', ')}]`);
@@ -917,6 +920,38 @@ export function modelDocument(model: CompiledModel): string {
     deformTransforms: plain(model.deformTransforms, 'deformTransforms'),
     trackDerivations: plain(model.trackDerivations, 'trackDerivations'),
     rig: plain(model.rig, 'rig'),
+    spine: { sha256: spineFileSha256(skeletonText) },
   };
   return `${JSON.stringify(doc, null, 2)}\n`;
 }
+
+// --- #968 the Spine file the document was written beside: begin ---
+/**
+ * The document's last section, `spine`: `{ "sha256": "<64 lowercase hex>" }`,
+ * the SHA-256 of the exact bytes `build` writes to `skeleton.json` in the same
+ * run (the UTF-8 of `skeletonText`, as `writeFileSync` writes it).
+ *
+ * ⭐ Why it exists (issue #968). `build` writes the Spine pair and this document
+ * as one output, and `rigc render` poses the document through rigc's own core
+ * when it finds one beside the skeleton. Nothing else ties the two files: a
+ * `skeleton.json` edited by hand after the build, beside the document it was
+ * built with, was drawn from the document — the build's rig, not the file the
+ * render was pointed at (the `RF89`/`RF91`/`RF93` plants, exit 0 where the
+ * Spine file refuses). The render takes the core only when the file beside the
+ * document hashes to this value, and names the mismatch otherwise.
+ *
+ * Named `spine.sha256` rather than a top-level `skeletonSha256`: the section
+ * is the document's statement about the Spine output it was written with, a
+ * digest of it and nothing about the rig, so it sits apart from the model's
+ * fields and after them; and an object leaves the atlas's digest a field to
+ * add, not a second section. The file's NAME is not recorded — `build` always
+ * writes `skeleton.json` beside this document, and a copied pair keeps both.
+ *
+ * Deterministic because the Spine file is (`A18` compares a second compile's
+ * bytes), so two builds and two platforms write the same value wherever their
+ * Spine files agree.
+ */
+export function spineFileSha256(skeletonText: string | Uint8Array): string {
+  return createHash('sha256').update(skeletonText).digest('hex');
+}
+// --- #968 the Spine file the document was written beside: end ---

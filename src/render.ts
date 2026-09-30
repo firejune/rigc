@@ -78,7 +78,10 @@
  *
  * ⚠️ Two notes on where this sits. It imports `spine-core`, which `src/` is
  * otherwise careful about: posing a skeleton *is* running the runtime, and there
- * is no honest way to render one without it. The rule that matters is unchanged
+ * is no honest way to render one without it. (Since issue #968 that holds for a
+ * Spine export: a rigc build is posed by rigc's own core through
+ * `./render_core.ts`, and this file keeps the runtime for the export's poser,
+ * the atlas pages and texture substitution — see *which poser* below.) The rule that matters is unchanged
  * — `src/compile.ts` must stay independent of the runtime so the compiler and
  * the gate are not checking each other's assumptions — and this file is neither.
  * It also imports `tools/plate.ts` for the PNG codec, which is dependency-free.
@@ -99,10 +102,13 @@ import {
   SkeletonData,
   type Slot,
 } from '@esotericsoftware/spine-core';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { Plate, readPlate, type RGBA } from '../tools/plate.ts';
 import { pageFootprint } from './atlas.ts';
+import { CoreInputError } from './core/index.ts';
+import { MODEL_DOCUMENT_FILE } from './model.ts';
+import { corePoser, SlotSubsetError, subsetOver } from './render_core.ts';
 
 /** Opaque, and light: both of rung 3's parts are dark slate, so is every ground. */
 export const BACKGROUND: RGBA = [232, 232, 232, 255];
@@ -398,16 +404,10 @@ export interface PoseOptions {
 }
 
 /**
- * Why a slot subset cannot be drawn — a `--slot`/`--hide` naming no slot, a slot
- * whose art only another skin carries, or both flags at once (issue #835).
- *
- * A class of its own so `cli.ts` can turn it into a usage refusal (exit 2,
- * nothing written) without reading a message to decide what kind it is.
+ * Why a slot subset cannot be drawn — `./render_core.ts` declares it, so the
+ * spine-core poser and the core poser throw one class (issue #968).
  */
-export class SlotSubsetError extends Error {}
-
-/** The flag spelling each half of a subset is refused under — the UI's, since that is who reads it. */
-const SUBSET_FLAG = { slots: '--slot', hidden: '--hide' } as const;
+export { SlotSubsetError };
 
 /**
  * A slot subset resolved against a skeleton: which half was asked for, and the
@@ -449,45 +449,20 @@ export function slotSubsetOf(
   opts: Pick<PoseOptions, 'slots' | 'hidden'> | undefined,
   skin: string | undefined,
 ): SlotSubset | undefined {
-  if (opts?.slots !== undefined && opts.hidden !== undefined) {
-    throw new SlotSubsetError(
-      '--slot and --hide are one statement two ways; name the slots to draw or the slots to hide, not both',
-    );
-  }
-  const mode = opts?.slots !== undefined ? 'slots' : opts?.hidden !== undefined ? 'hidden' : undefined;
-  if (mode === undefined) return undefined;
-  const asked = (mode === 'slots' ? opts?.slots : opts?.hidden) ?? [];
-  const flag = SUBSET_FLAG[mode];
-  const declared = data.slots.map((slot) => slot.name);
-
-  const unknown = asked.filter((name) => data.findSlot(name) === null);
-  if (unknown.length > 0 || asked.length === 0) {
-    const named =
-      unknown.length === 0
-        ? 'was given no slot name'
-        : `${unknown.map((name) => JSON.stringify(name)).join(', ')} ${unknown.length === 1 ? 'names' : 'name'} no slot`;
-    throw new SlotSubsetError(
-      `${flag} ${named}; this skeleton declares, in draw order: ${declared.join(', ') || 'none'} (${declared.length})`,
-    );
-  }
-
-  const resolving = new Set([skin ?? null, data.defaultSkin?.name ?? null]);
-  const underThisPose =
-    skin === undefined ? 'under no skin (the default skin alone)' : `under skin ${JSON.stringify(skin)}`;
-  for (const name of asked) {
-    const index = data.findSlot(name)?.index ?? -1;
-    const carriers = data.skins.filter((s) => s.getAttachments().some((entry) => entry.slotIndex === index));
-    if (carriers.length === 0 || carriers.some((s) => resolving.has(s.name))) continue;
-    const skins = carriers.map((s) => JSON.stringify(s.name));
-    throw new SlotSubsetError(
-      `${flag} ${JSON.stringify(name)} draws nothing ${underThisPose}: its attachments are declared only under ` +
-        `${skins.length === 1 ? 'skin' : 'skins'} ${skins.join(', ')} — pass --skin ${
-          skins.length === 1 ? skins[0] : 'with one of them'
-        }`,
-    );
-  }
-  const chosen = new Set(asked);
-  return { mode, names: declared.filter((name) => chosen.has(name)) };
+  // The rule is `subsetOver`'s (`./render_core.ts`), shared with the core
+  // poser; this is the roster a parsed Spine skeleton gives it.
+  return subsetOver(
+    {
+      declared: data.slots.map((slot) => slot.name),
+      carriers: (name) => {
+        const index = data.findSlot(name)?.index ?? -1;
+        return data.skins.filter((s) => s.getAttachments().some((entry) => entry.slotIndex === index)).map((s) => s.name);
+      },
+      defaultSkin: data.defaultSkin?.name ?? null,
+    },
+    opts,
+    skin,
+  );
 }
 
 /**
@@ -956,6 +931,126 @@ export function sampleAll(source: PoseSource, fps: number, opts?: PoseOptions): 
   if (poser.animations.length === 0) out.set(SETUP_POSE_DIR, sampleSetupPose(poser, opts));
   else for (const animation of poser.animations) out.set(animation.name, sampleAnimation(poser, animation.name, fps, opts));
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// which poser a render poses through (issue #968, step 3d of #380)
+// ---------------------------------------------------------------------------
+//
+// ⭐ Two implementations of the seam, chosen by what the input carries and
+// never guessed: a rigc build writes `skeleton.model.json` beside the Spine
+// pair, and that document is what the core poses (`./render_core.ts`); a
+// Spine export (`bench/reference/*`, `examples/*/export/*`) has none and
+// poses through spine-core. The choice, and the reason for it, is returned
+// beside the result so the caller can say it (`render` prints it as its
+// `poser` line) — a render that fell back without saying so would be a
+// second opinion about the pose that nobody could see.
+
+/** Which implementation of the seam posed a render: rigc's own core, or spine-core. */
+export type PoserName = 'core' | 'spine';
+
+/** The `--poser` spellings, in the order the usage lists them. */
+export const POSER_NAMES: readonly PoserName[] = ['core', 'spine'];
+
+/**
+ * A `--poser` the input cannot carry — `--poser core` on a Spine export, or on
+ * a build whose document the core refuses. A class of its own so `cli.ts`
+ * refuses it as a usage error (exit 2, nothing written).
+ */
+export class PoserChoiceError extends Error {}
+
+/** Both posers for one input, and why the core one is or is not there. */
+export interface PoserChoice {
+  /** What `--poser` asked for, or `undefined` for the input's own choice. */
+  forced: PoserName | undefined;
+  /** The core poser, or `null` when the input cannot carry it (`why`). */
+  core: Poser | null;
+  /** For a core poser, the document it poses; otherwise why there is none. */
+  why: string;
+  spine: Poser;
+}
+
+/**
+ * The first way a model document's rosters differ from the Spine skeleton they
+ * sit beside, or `null` — a document from another build would pose another
+ * rig in the same files' name, so it is refused rather than drawn.
+ */
+function rosterDifference(core: Poser, data: SkeletonData): string | null {
+  const bones = (list: ReadonlyArray<{ name: string; parent: string | null }>): string => list.map((b) => `${b.name}<${b.parent ?? ''}`).join('|');
+  const slots = (list: ReadonlyArray<{ name: string; bone: string }>): string => list.map((x) => `${x.name}@${x.bone}`).join('|');
+  const spine = spinePoser(data);
+  if (bones(core.bones) !== bones(spine.bones)) return 'the bones (names, parents or order) differ';
+  if (slots(core.slots) !== slots(spine.slots)) return 'the slots (names, bones or draw order) differ';
+  const animations = (list: ReadonlyArray<{ name: string; duration: number }>): string =>
+    list.map((a) => `${a.name}=${a.duration}`).sort().join('|');
+  if (animations(core.animations) !== animations(spine.animations)) return 'the animations (names or durations) differ';
+  return null;
+}
+
+/**
+ * Both posers for the skeleton at `skeletonPath` drawn through the atlas at
+ * `atlasPath` — the core one when `skeleton.model.json` sits beside the
+ * skeleton, the skeleton's bytes hash to the digest the document records
+ * (`spine.sha256`: it is the file that build wrote, not one edited after it),
+ * the atlas is the one beside it too, the core reads both and the document's
+ * rosters are the skeleton's. `forced` is `--poser`; `core` on an
+ * input that cannot carry it is refused by name (`PoserChoiceError`).
+ */
+export function candidatePosers(
+  data: SkeletonData,
+  skeletonPath: string,
+  atlasPath: string,
+  forced: PoserName | undefined,
+  /** What builds the core poser: `corePoser` — the suite's `RC02` passes a planted copy, and nothing else passes any. */
+  make: (modelText: string, atlasText: string, where: string, skeleton: { path: string; bytes: Uint8Array }) => Poser = corePoser,
+): PoserChoice {
+  const spine = spinePoser(data);
+  const dir = dirname(resolve(skeletonPath));
+  const modelPath = join(dir, MODEL_DOCUMENT_FILE);
+  let core: Poser | null = null;
+  let why: string;
+  if (forced === 'spine') why = '--poser spine';
+  else if (!existsSync(modelPath)) why = `no ${MODEL_DOCUMENT_FILE} beside ${resolve(skeletonPath)} — a Spine export, not a rigc build`;
+  else if (dirname(resolve(atlasPath)) !== dir) {
+    why =
+      `the atlas ${resolve(atlasPath)} is not beside ${modelPath}: the document's region trims are its own build's ` +
+      "atlas's, and the core would pose them against another one's pages";
+  } else {
+    try {
+      const candidate = make(readFileSync(modelPath, 'utf8'), readFileSync(atlasPath, 'utf8'), modelPath, { path: resolve(skeletonPath), bytes: readFileSync(skeletonPath) });
+      const differs = rosterDifference(candidate, data);
+      if (differs === null) {
+        core = candidate;
+        why = modelPath;
+      } else why = `${modelPath} does not describe ${resolve(skeletonPath)}: ${differs}`;
+    } catch (err) {
+      if (!(err instanceof CoreInputError)) throw err;
+      why = `the core refused ${modelPath}: ${err.message}`;
+    }
+  }
+  if (forced === 'core' && core === null) throw new PoserChoiceError(`--poser core: ${why}`);
+  return { forced, core, why, spine };
+}
+
+/**
+ * `run` through the chosen poser: the core one when there is one, and
+ * spine-core otherwise — or when the core refuses the input partway
+ * (`CoreInputError`, e.g. a concave or inverse clip it does not reproduce), in
+ * which case `run` starts again from nothing on spine-core and `note` names the
+ * refusal. Under `--poser core` that refusal is a `PoserChoiceError` instead.
+ * `run` must write nothing: a fallback re-runs it whole.
+ */
+export function throughPoser<T>(choice: PoserChoice, run: (poser: Poser) => T): { value: T; poser: PoserName; note: string } {
+  if (choice.core !== null) {
+    try {
+      return { value: run(choice.core), poser: 'core', note: `rigc core — ${choice.why}` };
+    } catch (err) {
+      if (!(err instanceof CoreInputError)) throw err;
+      if (choice.forced === 'core') throw new PoserChoiceError(`--poser core: the core refused this input: ${err.message}`);
+      return { value: run(choice.spine), poser: 'spine', note: `spine-core — the core refused this input: ${err.message}` };
+    }
+  }
+  return { value: run(choice.spine), poser: 'spine', note: `spine-core — ${choice.why}` };
 }
 
 /**

@@ -196,6 +196,8 @@ export class CoreInputError extends Error {}
 export const CORE_SECTIONS = [
   'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations',
   'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig',
+  // Issue #968: the digest of the `skeleton.json` written beside the document (`spineFileSha256` in `src/model.ts`).
+  'spine',
 ] as const;
 
 /** The fields a bone record may carry, as the writer lists them. A field outside this list is refused. */
@@ -315,6 +317,24 @@ export interface CompiledDocument {
   skins: CoreSkin[];
   constraints: CoreConstraint[];
   animations: CoreAnimation[];
+  /** The digest of the `skeleton.json` `build` wrote beside the document (issue #968) — what a render holds the file beside it to before posing it here. */
+  spine: { sha256: string };
+}
+
+/** The `spine` section's value, checked: `{ "sha256": <64 lowercase hex> }` and nothing else, each fault named by path (issue #968). */
+function readSpineDigest(value: unknown, problems: string[]): string {
+  if (value === undefined) return '';
+  if (!isRecord(value)) {
+    problems.push(`spine is ${JSON.stringify(value)}, not { "sha256": "<64 lowercase hex digits>" }`);
+    return '';
+  }
+  for (const key of Object.keys(value)) if (key !== 'sha256') problems.push(`spine: field "${key}" is not one this reader knows; it reads [sha256]`);
+  const sha = value.sha256;
+  if (typeof sha !== 'string' || !/^[0-9a-f]{64}$/.test(sha)) {
+    problems.push(`spine.sha256 is ${JSON.stringify(sha) ?? 'absent'}, not 64 lowercase hex digits — the SHA-256 of the skeleton.json written beside the document`);
+    return '';
+  }
+  return sha;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -622,6 +642,7 @@ export function readModel(text: string, where = 'the model document'): CompiledD
   // The skeleton's reference scale (issue #958): wind and gravity act over it, so a missing one is the section refusal above, and a value the runtime could not read as a number is refused here by name.
   const referenceScale = typeof value.referenceScale === 'number' && Number.isFinite(value.referenceScale) ? value.referenceScale : NaN;
   if ('referenceScale' in value && Number.isNaN(referenceScale)) problems.push(`referenceScale is ${JSON.stringify(value.referenceScale)}, not a finite number — wind and gravity act over it`);
+  const spine = readSpineDigest(value.spine, problems);
   const bones = readBones(value.bones, problems);
   const names = new Set(bones.map((b) => b.name));
   const slots = readSlots(value.slots, names, problems);
@@ -645,7 +666,7 @@ export function readModel(text: string, where = 'the model document'): CompiledD
     });
   }
   if (problems.length > 0) throw new CoreInputError(`${where}: ${problems.length} problem(s): ${problems.join('; ')}`);
-  const doc: CompiledDocument = { spec: CORE_DOCUMENT_SPEC, skin: CORE_ALL_SKINS, referenceScale, bones, slots, skins, constraints, animations };
+  const doc: CompiledDocument = { spec: CORE_DOCUMENT_SPEC, skin: CORE_ALL_SKINS, referenceScale, bones, slots, skins, constraints, animations, spine: { sha256: spine } };
   resolveSkinView(doc);
   return doc;
 }
