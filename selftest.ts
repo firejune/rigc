@@ -76843,6 +76843,52 @@ function poserLine(stdout: string): string {
   return stdout.split('\n').find((l) => l.startsWith('  ..    poser    '))?.slice('  ..    poser    '.length) ?? '(no poser line)';
 }
 
+/** Where the guide's `--poser` row opens its list of fallback reasons, and where the list ends (issue #996). */
+const POSER_REASONS_OPEN = 'in one of these words: ';
+const POSER_REASONS_CLOSE = '. Any other refusal';
+
+/**
+ * The `--poser` row of the guide's flag table, read as `RC09` reads it: the
+ * list between `POSER_REASONS_OPEN` and `POSER_REASONS_CLOSE`, one item per
+ * ` · `, each item's reason its FIRST code span (the parenthesis after it may
+ * carry spans of its own); and the catch-all — the first code span after
+ * "Any other refusal". `problem` names what could not be read, so a row that
+ * stopped matching its own phrasing is a fault rather than an empty list.
+ */
+function poserRowReasons(guide: string): { row: string; items: string[]; reasons: string[]; other: string | null; problem: string | null } {
+  const row = guide.split('\n').find((l) => l.startsWith('| `--poser` |')) ?? '';
+  const open = row.indexOf(POSER_REASONS_OPEN);
+  const close = row.indexOf(POSER_REASONS_CLOSE, open);
+  if (row === '') return { row, items: [], reasons: [], other: null, problem: 'the guide has no `--poser` row' };
+  if (open < 0 || close < 0) return { row, items: [], reasons: [], other: null, problem: `the \`--poser\` row carries no ${JSON.stringify(POSER_REASONS_OPEN)} … ${JSON.stringify(POSER_REASONS_CLOSE)} list` };
+  const items = row.slice(open + POSER_REASONS_OPEN.length, close).split(' · ');
+  const reasons = items.map((item) => /`([^`]+)`/.exec(item)?.[1] ?? '');
+  const other = /Any other refusal[^`]*`([^`]+)`/.exec(row.slice(close))?.[1] ?? null;
+  const empty = items.filter((_, i) => reasons[i] === '');
+  return { row, items, reasons, other, problem: empty.length > 0 ? `list item(s) with no code span: ${empty.map((x) => JSON.stringify(x.slice(0, 40))).join(', ')}` : null };
+}
+
+/**
+ * `RC09`'s comparison: every probe's printed line carries at least one reason
+ * the row lists, every reason the row lists is carried by at least one probe's
+ * line, and the catch-all probe's line carries the catch-all and no listed
+ * reason (it is "any other" only if none of the list names it).
+ */
+function poserReasonFaults(reasons: readonly string[], other: string | null, printed: ReadonlyArray<{ label: string; line: string }>, catchAll: { label: string; line: string }): string[] {
+  const faults: string[] = [];
+  for (const p of printed) {
+    if (!reasons.some((r) => p.line.includes(r))) faults.push(`the ${p.label} probe printed ${JSON.stringify(p.line.slice(0, 160))}, and the row lists none of its words`);
+  }
+  for (const r of reasons) {
+    if (!printed.some((p) => p.line.includes(r))) faults.push(`the row lists ${JSON.stringify(r)}, and no probe printed it`);
+  }
+  if (other === null) faults.push('the row names no catch-all after "Any other refusal"');
+  else if (!catchAll.line.includes(other)) faults.push(`the ${catchAll.label} probe printed ${JSON.stringify(catchAll.line.slice(0, 160))}, which does not carry the catch-all ${JSON.stringify(other)}`);
+  const listed = reasons.filter((r) => catchAll.line.includes(r));
+  if (listed.length > 0) faults.push(`the ${catchAll.label} probe's line carries the listed reason(s) ${listed.map((r) => JSON.stringify(r)).join(', ')}, so it is not "any other"`);
+  return faults;
+}
+
 /** Every file under `dir` and its bytes' digest, by relative path — two render directories compared file by file. */
 function dirDigests(dir: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -76884,7 +76930,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH07, RC01–RC08 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH07, RC01–RC09 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -77717,6 +77763,165 @@ function runRenderHashesSuite(): number | null {
       probeDetail(held, probes, figures),
       'issue #967 left a sequence a HOLE on the public corpus (no row carries one); the render reads each frame\'s region ' +
         'and page off it, so the probe is what puts that path under the gate',
+    );
+  }
+  // --- RC09: the guide's `--poser` row lists the reasons the probes print, and no other (issue #996) --
+  //
+  // The reasons a render falls back to spine-core are composed from dozens of
+  // `CoreInputError` sites whose words are built deeper still, with no
+  // enumeration behind them — deriving the set from the code would be a table
+  // kept by hand in a parser's clothes. So the probes are the set: one input
+  // per reason, rendered through the CLI, the `poser` line read off it (off the
+  // `--poser core` refusal where the auto path cannot print it), and the row
+  // held to them both ways — a probe whose line the row names nothing of is
+  // red, and so is a reason the row lists that no probe printed.
+  {
+    const probes: string[] = [];
+    let figures = '';
+    const guide = readFileSync(join(import.meta.dir, 'docs', 'AUTHORING.md'), 'utf8');
+    const read = poserRowReasons(guide);
+    if (read.problem !== null) probes.push(read.problem);
+    const base = writeProbeRig();
+    const motionPath = join(base.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
+    const built = runCli(['build', '--rig', base.rigPath, '--motion', motionPath, '--images', base.dir, '--out', base.outDir, '--copy-images']);
+    const extra: ProbeDirs[] = [];
+    /** A rig over the base probe's art, built beside it, or null with the refusal recorded. */
+    const buildOver = (label: string, rig: Record<string, unknown>, motion: unknown = SLIDE_MOTION): string | null => {
+      const dirs = writeProbeRig(rig);
+      extra.push(dirs);
+      const m = join(dirs.dir, 'probe.motion.json');
+      writeFileSync(m, `${JSON.stringify(motion, null, 2)}\n`);
+      const b = runCli(['build', '--rig', dirs.rigPath, '--motion', m, '--images', dirs.dir, '--out', dirs.outDir, '--copy-images']);
+      if (b.status !== 0) {
+        probes.push(`the ${label} probe did not build: ${b.stderr.trim().split('\n')[0]}`);
+        return null;
+      }
+      return dirs.outDir;
+    };
+    /** A copy of the base build beside it, `edit` applied to the copy. */
+    const copyOf = (label: string, edit: (dir: string) => void): string => {
+      const dir = join(base.dir, `rc09-${label}`);
+      cpSync(base.outDir, dir, { recursive: true });
+      edit(dir);
+      return dir;
+    };
+    const printed: Array<{ label: string; line: string }> = [];
+    let catchAll = { label: 'unreadable-document', line: '(not rendered)' };
+    const renderLine = (label: string, candidate: string, args: string[] = []): string => {
+      const out = join(work, `rc09-${label}`);
+      const run = runCli(['render', '--candidate', candidate, '--out', out, ...args]);
+      const line = poserLine(run.stdout);
+      if (run.status !== 0 || !line.startsWith('spine-core — ')) probes.push(`the ${label} probe rendered with exit ${run.status} and poser line ${JSON.stringify(line)}${run.status === 0 ? '' : `: ${run.stderr.trim().split('\n')[0]}`}`);
+      return line;
+    };
+    if (built.status !== 0) probes.push(`the base probe did not build: ${built.stderr.trim().split('\n')[0]}`);
+    else {
+      const bare = copyOf('no-model', (dir) => rmSync(join(dir, MODEL_DOCUMENT_FILE)));
+      printed.push({ label: 'no-model-document', line: renderLine('no-model', bare) });
+      const away = join(base.dir, 'rc09-atlas-away');
+      mkdirSync(away, { recursive: true });
+      for (const f of readdirSync(base.outDir)) if (f === 'skeleton.atlas' || f.endsWith('.png')) cpSync(join(base.outDir, f), join(away, f));
+      printed.push({ label: 'atlas-elsewhere', line: renderLine('atlas-away', join(base.outDir, 'skeleton.json'), ['--atlas', join(away, 'skeleton.atlas')]) });
+      const stale = copyOf('stale', (dir) => {
+        const model = JSON.parse(readFileSync(join(dir, MODEL_DOCUMENT_FILE), 'utf8')) as { animations: Array<{ name: string }> };
+        model.animations[0].name = `${model.animations[0].name}-renamed`;
+        writeFileSync(join(dir, MODEL_DOCUMENT_FILE), `${JSON.stringify(model, null, 2)}\n`);
+      });
+      printed.push({ label: 'another-build', line: renderLine('stale', stale) });
+      const edited = copyOf('edited', (dir) => {
+        const skeleton = JSON.parse(readFileSync(join(dir, 'skeleton.json'), 'utf8')) as { bones: Array<Record<string, unknown>> };
+        skeleton.bones[skeleton.bones.length - 1].x = 7;
+        writeFileSync(join(dir, 'skeleton.json'), JSON.stringify(skeleton, null, 2));
+      });
+      printed.push({ label: 'edited-skeleton', line: renderLine('edited', edited) });
+      const crossing = writePolygonClipProbe([-2, -2, 2, 2, 2, -2, -2, 2]);
+      extra.push(crossing.dirs);
+      if (crossing.status !== 0) probes.push(`the self-crossing clip probe did not build: ${crossing.stderr.trim().split('\n')[0]}`);
+      else printed.push({ label: 'self-crossing-clip', line: renderLine('crossing', crossing.dirs.outDir) });
+      // The default skin names a skin-required bone that carries no slot, so the rig still draws with no skin set.
+      const named = buildOver('default-skin-names', {
+        bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }, { name: 'extra', parent: 'root', x: 3, length: 4, skin: true }],
+        skins: { default: { attachments: { block: { block: { image: 'block.png' } }, marker: { marker: { image: 'marker.png' } } }, bones: ['extra'] } },
+      });
+      if (named !== null) printed.push({ label: 'default-skin-names-a-bone', line: renderLine('default-names', named) });
+      // Skins and no default one: spine-core draws nothing with no skin set, so only `--poser core` can print the refusal.
+      const skinless = buildOver('no-default-skin', { skins: { patch: { block: { block: { image: 'block.png' } }, marker: { marker: { image: 'marker.png' } } } } });
+      if (skinless !== null) {
+        const out = join(work, 'rc09-no-default');
+        const auto = runCli(['render', '--candidate', skinless, '--out', out]);
+        if (auto.status !== 2 || !auto.stderr.includes('there is nothing to draw') || existsSync(out)) probes.push(`the no-default-skin probe rendered with exit ${auto.status}, not the refusal "there is nothing to draw": ${JSON.stringify(auto.stderr.trim().split('\n')[0])}`);
+        const forced = runCli(['render', '--candidate', skinless, '--out', out, '--poser', 'core']);
+        const first = forced.stderr.trim().split('\n')[0] ?? '';
+        if (forced.status !== 2 || !first.startsWith('rigc render: --poser core: ') || existsSync(out)) probes.push(`--poser core on the no-default-skin probe exited ${forced.status}: ${JSON.stringify(first)}`);
+        printed.push({ label: 'no-default-skin (--poser core)', line: first });
+      }
+      // CC15's shape through the CLI: transform "w" writes into the inactive "arm", transform "r" reads "hand" below it onto the posed "leaf".
+      const leak = buildOver(
+        'history-leak',
+        {
+          bones: [
+            { name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }, { name: 'mid', parent: 'root', x: 3, rotation: 10 },
+            { name: 't', parent: 'root', x: 30, y: 20, rotation: 15 }, { name: 'leaf', parent: 'root', x: -6, y: 5, rotation: 20, length: 6 },
+            { name: 'arm', parent: 'mid', x: 10, y: 4, rotation: 30, length: 8, skin: true }, { name: 'hand', parent: 'arm', x: 8, y: -1, rotation: -25, length: 4 },
+          ],
+          slots: [{ name: 'block', bone: 'leaf', attachment: 'block' }, { name: 'marker', bone: 'block', attachment: 'marker' }],
+          constraints: [
+            { type: 'transform', name: 'w', bones: ['arm'], source: 't', mixX: 0.5, mixY: 0.5, properties: { x: { to: { x: {} } }, y: { to: { y: {} } } } },
+            { type: 'transform', name: 'r', bones: ['leaf'], source: 'hand', mixX: 1, mixY: 1, mixRotate: 1, properties: { x: { to: { x: {} } }, y: { to: { y: {} } }, rotate: { to: { rotate: {} } } } },
+          ],
+          skins: { default: { block: { block: { image: 'block.png' } }, marker: { marker: { image: 'marker.png' } } }, extra: { bones: ['arm'], attachments: {} } },
+        },
+        {
+          ...SLIDE_MOTION,
+          animations: {
+            a: {
+              duration: 1, loop: false,
+              tracks: [
+                { bone: 't', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 1, v: [-40] }] },
+                { bone: 'mid', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [-150] }] },
+              ],
+            },
+          },
+        },
+      );
+      if (leak !== null) printed.push({ label: 'history-dependent-read', line: renderLine('leak', leak) });
+      printed.push({ label: '--poser spine', line: renderLine('forced-spine', base.outDir, ['--poser', 'spine']) });
+      const unreadable = copyOf('unreadable', (dir) => writeFileSync(join(dir, MODEL_DOCUMENT_FILE), '{ not json'));
+      catchAll = { label: 'unreadable-document', line: renderLine('unreadable', unreadable) };
+    }
+    const faults = poserReasonFaults(read.reasons, read.other, printed, catchAll);
+    probes.push(...faults);
+    // Planted, each way. Every listed item dropped from the row in turn must turn it red; and the row's retired
+    // clause — the core refusing a clip "that is not strictly convex" — added back as an item must turn it red too.
+    const withItems = (items: string[]): string => {
+      const open = read.row.indexOf(POSER_REASONS_OPEN) + POSER_REASONS_OPEN.length;
+      const close = read.row.indexOf(POSER_REASONS_CLOSE, open);
+      return guide.replace(read.row, `${read.row.slice(0, open)}${items.join(' · ')}${read.row.slice(close)}`);
+    };
+    const quiet: string[] = [];
+    read.items.forEach((_, i) => {
+      const planted = poserRowReasons(withItems(read.items.filter((__, j) => j !== i)));
+      if (poserReasonFaults(planted.reasons, planted.other, printed, catchAll).length === 0) quiet.push(JSON.stringify(read.reasons[i]));
+    });
+    if (quiet.length > 0) probes.push(`the row with ${quiet.join(', ')} dropped still held — a probe's line matches another listed reason, so the item is not held`);
+    const retired = poserRowReasons(withItems([...read.items, '`is not strictly convex` (a clip polygon the core used to refuse)']));
+    const retiredFaults = poserReasonFaults(retired.reasons, retired.other, printed, catchAll);
+    if (retiredFaults.length === 0) probes.push('the row with the retired "is not strictly convex" added back still held');
+    figures =
+      `${printed.length} probe(s) rendered through the CLI, each falling back to spine-core (the no-default-skin one read off --poser core, the auto path stopping at "there is nothing to draw"), ` +
+      `against the row's ${read.reasons.length} listed reason(s) [${read.reasons.join(' | ')}] and its catch-all ${JSON.stringify(read.other)}, which the unreadable document's line carries alone; ` +
+      `planted: each of the ${read.items.length} item(s) dropped in turn is red, and the retired "is not strictly convex" added back is red (${retiredFaults[0] ?? ''})`;
+    rmSync(base.dir, { recursive: true, force: true });
+    for (const dirs of extra) rmSync(dirs.dir, { recursive: true, force: true });
+    const held = probes.length === 0;
+    say(
+      'RC09_THE_GUIDES_POSER_ROW_LISTS_EVERY_FALLBACK_REASON_A_PROBE_PRINTS_AND_NO_OTHER',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #996: the row said the core refuses "a clip polygon that is not strictly convex or an inverse clip" for as long as ' +
+        'it took #982 to draw both, and left out three refusals the render prints — one stale sentence found by reading, where ' +
+        'the only list that cannot go stale is one read off the lines themselves',
     );
   }
   // --- CH01–CH03: `check` poses its candidate through `render`'s poser choice (issue #968's follow-up) --
