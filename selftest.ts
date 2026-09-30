@@ -74686,6 +74686,135 @@ function runCoreSuite(): number {
     );
   }
 
+  // ===========================================================================
+  // The path timelines' values and mixes (issue #984, #966, #380) — band CY.
+  // CW05 measured the transform timeline's mixes; the path constraint's
+  // `position`, `spacing` and `mix` timelines were read as keyed and no
+  // corpus row decided it, so this population does.
+  // ===========================================================================
+  // --- CY01: a path timeline's keyed position, spacing and mixes reach the pose through the setup blend --
+  {
+    const probes: string[] = [];
+    const N = 60;
+    const RAW_FORTY_IRR: OracleOptions = { phase: 'irr', samples: 40, skin: 'all', physics: 'none', dt: null, raw: true };
+    const FIELDS = { position: ['position'], spacing: ['spacing'], mix: ['mixRotate', 'mixX', 'mixY'] } as const;
+    type PathKind = keyof typeof FIELDS;
+    /** A path probe keying `kinds` by Bézier segments over setup values that include 0 and negatives: a skewed slot bone, a path of one to three curves (open or closed, constant speed or not), one to three bones in a chain or side by side, every position, spacing and rotate mode. */
+    const keyedPath = (rnd: () => number, kinds: readonly PathKind[]): PathSpec => {
+      const R = within(rnd);
+      const pick = pickOf(rnd);
+      const bones: Obj[] = [{ name: 'root' }, skewed(rnd, { name: 'sb', parent: 'root', x: R(-50, 50), y: R(-50, 50), rotation: R(-180, 180) })];
+      const q: Obj = { name: 'q', parent: 'root', x: R(-50, 50), y: R(-50, 50), rotation: R(-180, 180) };
+      bones.push(rnd() < 0.6 ? skewed(rnd, q) : q);
+      const count = 1 + Math.floor(rnd() * 3);
+      const chain = rnd() < 0.7;
+      const names: string[] = [];
+      for (let i = 0; i < count; i++) {
+        const b: Obj = { name: `b${i}`, parent: i === 0 || !chain ? 'q' : `b${i - 1}`, x: R(-20, 40), y: R(-5, 5), rotation: R(-180, 180), length: R(5, 60) };
+        if (rnd() < 0.15) b.inherit = pick(MODES5.slice(1));
+        bones.push(rnd() < 0.4 ? skewed(rnd, b) : b);
+        names.push(b.name as string);
+      }
+      for (const n of names) bones.push(...amplify(n));
+      const closed = rnd() < 0.4;
+      const curves = 1 + Math.floor(rnd() * 3);
+      const xy = pathPoints(rnd, closed ? 3 * curves : 3 * (curves + 1));
+      const att: PathAttachmentSpec = { xy, lengths: pathLengthsOf(xy) };
+      if (closed) att.closed = true;
+      if (rnd() < 0.3) att.constantSpeed = false;
+      const positionMode = pick(['percent', 'fixed']);
+      const spacingMode = pick(['length', 'fixed', 'percent', 'proportional']);
+      const c: Obj = { type: 'path', name: 'k', bones: names, slot: 's', positionMode, spacingMode, rotateMode: pick(['tangent', 'chain', 'chainScale']) };
+      if (rnd() < 0.4) c.rotation = R(-180, 180);
+      const range: Record<PathKind, [number, number]> = {
+        position: positionMode === 'percent' ? [-0.5, 1.5] : [-80, 300],
+        spacing: spacingMode === 'percent' || spacingMode === 'proportional' ? [-0.3, 0.6] : [-20, 60],
+        mix: [-1, 2],
+      };
+      const value = (kind: PathKind): number => pick([0, R(...range[kind]), R(...range[kind])]);
+      c.position = value('position');
+      c.spacing = value('spacing');
+      for (const m of FIELDS.mix) c[m] = value('mix');
+      const keys: Record<string, Obj[]> = {};
+      for (const kind of kinds) {
+        const ks: Obj[] = [];
+        let t = 0;
+        for (let k = 0; k < 3; k++) {
+          const key: Obj = { time: t };
+          if (kind === 'mix') for (const m of FIELDS.mix) key[m] = value('mix');
+          else key.value = value(kind);
+          ks.push(key);
+          t = Math.round((t + 0.7 + rnd()) * 1000) / 1000;
+        }
+        for (let k = 0; k < 2; k++) {
+          const t0 = ks[k].time as number;
+          const t1 = ks[k + 1].time as number;
+          ks[k].curve = FIELDS[kind].flatMap(() => [t0 + (t1 - t0) * 0.25, R(...range[kind]), t0 + (t1 - t0) * 0.75, R(...range[kind])]);
+        }
+        keys[kind] = ks;
+      }
+      return { bones, slots: [{ name: 's', bone: 'sb', attachment: 'p' }], paths: { s: { p: att } }, constraints: [c], keys: { k: keys } };
+    };
+    const read: string[] = [];
+    const populations: Array<[string, readonly PathKind[], number]> = [['position', ['position'], 98401], ['spacing', ['spacing'], 98402], ['mix', ['mix'], 98403], ['all three', ['position', 'spacing', 'mix'], 98404]];
+    for (const [label, kinds, seed] of populations) {
+      const rnd = mix32(seed);
+      let exact = 0;
+      const fields = kinds.flatMap((k) => [...FIELDS[k]]);
+      // Every timeline's fields planted as keyed together, and a mix's three channels each alone.
+      const plants: Array<[string, readonly string[]]> = [['as keyed', fields], ...(fields.length === 3 && kinds.length === 1 ? fields.map((f): [string, readonly string[]] => [`${f} alone as keyed`, [f]]) : [])];
+      const red = plants.map(() => 0);
+      for (let i = 0; i < N; i++) {
+        const pair = pathPair(keyedPath(rnd, kinds));
+        const cmp = pathCompare(pair, RAW_FORTY_IRR);
+        if (cmp.identical) exact++;
+        else if (probes.length < 3) probes.push(`${label}, probe ${i}: ${cmp.first}`);
+        // Planted: the values as keyed in place of the blend, at every sample — a record rewrite that finds the sample by the blended values it was posed with.
+        const model = readModel(pair.model, 'the cy01 probe');
+        const spine = dumpSkeleton(loadOracleData(pair.spine, '', 'the cy01 probe'), RAW_FORTY_IRR);
+        const tl = model.animations[0].constraints.path[0];
+        const setup = model.constraints[0].record;
+        if (setup === undefined || setup.kind !== 'path') throw new Error('the cy01 probe declares one path constraint');
+        const asKeyed = new Map<string, Record<string, number>>();
+        for (const s of spine.animations[0].samples) {
+          const at = s.t as number;
+          const blended: Record<string, number> = {};
+          const keyed: Record<string, number> = {};
+          for (const k of kinds) {
+            const ks = tl[k];
+            if (ks === undefined) throw new Error(`the cy01 probe keys ${k}`);
+            const n = keyIndexAt(ks, at);
+            FIELDS[k].forEach((f, ch) => {
+              keyed[f] = n < 0 ? setup[f] : channelAt(ks, n, ch, at);
+              blended[f] = setup[f] + (keyed[f] - setup[f]) * 1;
+            });
+          }
+          asKeyed.set(JSON.stringify(fields.map((f) => blended[f])), keyed);
+        }
+        plants.forEach(([, only], p) => {
+          const plant: ConstraintPlant = (records) => records.map((r) => {
+            if (r.kind !== 'path') return r;
+            const keyed = asKeyed.get(JSON.stringify(fields.map((f) => r[f])));
+            return keyed === undefined || fields.every((f) => r[f] === setup[f]) ? r : { ...r, ...Object.fromEntries(only.map((f) => [f, keyed[f]])) };
+          });
+          if (!compareDumps(spine, coreDump(model, RAW_FORTY_IRR, { constraints: plant }), { xy: 0, m: 0 }).identical) red[p]++;
+        });
+      }
+      read.push(`${label} ${exact} of ${N}, ${plants.map(([name], p) => `${name} red on ${red[p]}`).join(', ')}`);
+      if (exact !== N) probes.push(`${label}: ${exact} of ${N} bit-exact`);
+      plants.forEach(([name], p) => {
+        if (red[p] === 0) probes.push(`${label}: ${name}, planted in place of the setup blend, read every probe exact — the population does not separate the two readings`);
+      });
+    }
+    const ok = probes.length === 0;
+    say(
+      'CY01_A_PATH_TIMELINES_KEYED_POSITION_SPACING_AND_MIXES_REACH_THE_POSE_THROUGH_THE_SETUP_BLEND',
+      ok,
+      probeDetail(ok, probes, `path constraints keying position, spacing or mix (and all three) by Bézier segments over setup values that include 0 and negatives, every position, spacing and rotate mode, one to three bones, bit-exact under --raw at 40 irrational samples: ${read.join('; ')} — the value as keyed planted at every sample in place of setup + (value − setup)·1, for every field the population keys and for each mix channel alone`),
+      'issue #984: the path timelines were read as keyed, as the transform timeline\'s mixes were before CW05, and no corpus row separates the two readings; measured, each of the three timelines and each mix channel alone goes through the setup blend at alpha 1',
+    );
+  }
+
   rmSync(work, { recursive: true, force: true });
   return bad;
 }

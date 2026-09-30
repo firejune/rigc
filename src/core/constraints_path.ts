@@ -199,7 +199,11 @@
  * construct 4's `keyIndexAt` and `channelAt`, float32 key times and values,
  * before the first key the constraint's own; a key stating no value reads
  * 0, one stating no mix 1 and no `mixY` its own `mixX` (`CP08`, 24 keyed
- * skeletons at 200 dense samples).
+ * skeletons at 200 dense samples). The value a key gives reaches the pose
+ * through the setup blend at alpha 1, `setup + (value − setup)·1`, as the ik
+ * and transform timelines' do (`./constraints.ts`, *The timelines*; issue
+ * #984, `CY01`: the value as keyed read 0 of 60 probes keying all three
+ * timelines bit-exact under `--raw`, the blend 60).
  *
  * ## Purity
  *

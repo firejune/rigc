@@ -237,7 +237,9 @@
  *   population (`CR07`) from 140 to 150 of 150; an additive world-space
  *   `shearY` as `(v + 90)·RAD − 90·RAD` (`CW04`: the transform population
  *   from 865 to 900 of 900); a transform timeline's mixes through the setup
- *   blend (`CW05`); and the two-bone ik over a parent whose scale is 0, below.
+ *   blend (`CW05`); and the two-bone ik over a parent whose scale is 0, below;
+ * - and a path timeline's position, spacing and mixes through the setup blend
+ *   too (issue #984, `CY01`; *The timelines*, below).
  *
  * The local values were read to the bit rather than through the re-posed
  * world: a reader bone's `x` driven by a local transform from the bone's
@@ -433,6 +435,19 @@
  * setup)·1`, for both kinds (issue #966: the ik's mix on the corpus, the
  * transform's six mixes on `CW05`'s probe, where the value as keyed read 0
  * of 60 exact).
+ *
+ * A `path` timeline's values — `position`, `spacing` and the three mixes
+ * (`./constraints_path.ts`, *The record and its timelines*) — reach the pose
+ * through the same setup blend (issue #984). The reading before was the
+ * value as keyed; the corpus could not tell them apart, since its one row
+ * keying a path timeline keys `position` over a setup position of 0, where
+ * `0 + (value − 0)·1` is the value to the bit. Measured on `CY01`'s probes —
+ * 60 per timeline, keyed by Bézier segments over setup values that include 0
+ * and negatives, in every position, spacing and rotate mode, one to three
+ * bones, under `--raw` at 40 irrational samples, tolerance 0 — the value as
+ * keyed read position 33, spacing 40 and mix 1 of 60 bit-exact (0 of 60 with
+ * all three keyed), the blend 60 of 60 on each; each mix channel alone
+ * planted back to the value as keyed turns the mix population red.
  *
  * ## Purity
  *
@@ -808,7 +823,8 @@ export function posedRecords(records: readonly CoreConstraintRecord[], timelines
         if (keys === undefined) continue;
         const i = search(keys, t);
         if (i < 0) continue;
-        fields.forEach((f, c) => (out[f] = channel(keys, i, c, t)));
+        // Through the setup blend at alpha 1 as well (issue #984): the value as keyed read position 33, spacing 40 and mix 1 of 60 Bézier-keyed probes bit-exact at 40 irrational samples, the blend 60 of each (CY01).
+        fields.forEach((f, c) => (out[f] = r[f] + (channel(keys, i, c, t) - r[f]) * 1));
       }
       return out;
     }
