@@ -1534,6 +1534,23 @@ or a timeline key at the time given — and, for a rig spec you wrote, in `rigc 
 which prints every bone's local transform. A frame's time is the framing pass's own
 (every animation at 60 fps); the key that overflowed is at or just before it.
 
+🦴 **Nor is it said of a skeleton whose every drawn slot hangs from a bone the skin
+leaves unposed.** A `"skin": true` bone the posed skin does not activate — or any bone
+below one — has no world transform, and both posers draw its slots through the zero
+matrix: every vertex at the origin, a box with no extent, and a frame that would be
+0x0. That is refused by name before anything is written, exit 2 —
+``rigc render: under no skin, every drawn slot hangs from a bone that skin leaves
+unposed — 1 drawn slot: slot "block" on bone "block", which skin "extra" poses — so no
+drawn vertex has a world transform and the frame would be 0x0: pose it under a skin
+that poses those bones (`--skin`), or name the bones in the skin it is posed under``.
+The fix is the skin, not the art: render under one of the skins named, or list the
+bone in the skin you render (§3.4.1). The same sentence comes from `render
+--geometry`, from `rigc check` (as `rigc check: …`), and from `framingViewport` as an
+`UnframeablePoseError`, whichever poser runs; it names the first three drawn slots,
+then how many more. Its sibling, `… every drawn vertex sits at the one point (x, y) —
+…`, is a pose whose bones ARE posed and collapse every vertex onto one point — a bone
+scaled to 0 on a static rig does it — and there the fix is the bone.
+
 **Region attachment** ([Spine: region attachments](http://esotericsoftware.com/spine-regions)),
 the default `type`:
 

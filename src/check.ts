@@ -81,6 +81,9 @@ import {
   FRAMES_SIDECAR,
   FRAMES_SPEC,
   nonFinitePoseOf,
+  unframeableSentence,
+  UnframeablePoseError,
+  skinRosterOf,
   candidatePosers,
   spinePoser,
   throughPoser,
@@ -1313,6 +1316,18 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       }
       throw new CheckError(`the candidate is posed to a number that is not finite, so no frame of it can be compared: ${found}`);
     }
+    // 🔒 A candidate whose every drawn vertex sits at one point is refused in
+    // `render`'s own sentence (issue #997), not measured. Measured before this on
+    // a rig whose one drawn slot hangs from a bone only a non-default skin poses:
+    // "the candidate drew no pixel in any frame that was compared" — true, and
+    // silent on the reason, which is a skin the run did not pose.
+    const unframeable = unframeableSentence(
+      posedSets.map((p) => p.frames),
+      poser.slots,
+      options.skin,
+      skinRosterOf(posable.data),
+    );
+    if (unframeable !== null) throw new UnframeablePoseError(unframeable);
     return sampled;
   });
   const prepared = posing.value;
