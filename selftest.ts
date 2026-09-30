@@ -56386,7 +56386,7 @@ function runCurrencySuite(): number {
       { what: 'the re-run path waits three times as long as the cut did', yml: ['--version "$VERSION" --wait 15', '--version "$VERSION" --wait 45'], doc: null },
       { what: 'the cut stops passing a wait at all', yml: ['--version "$version" --wait 15 --case clean', '--version "$version" --case clean'], doc: null },
       { what: 'the re-run stops naming the case', yml: ['--version "$VERSION" --wait 15 --case clean', '--version "$VERSION" --wait 15'], doc: null },
-      { what: 'the publishing job is given a timeout under its own wait', yml: ['    timeout-minutes: 30\n', '    timeout-minutes: 10\n'], doc: null },
+      { what: 'the publishing job is given a timeout under its own wait', yml: ['    timeout-minutes: 50\n', '    timeout-minutes: 10\n'], doc: null },
       { what: 'the document states a wait the workflow does not pass', yml: null, doc: ['--wait 15', '--wait 5'] },
       { what: 'the document drops the row for the not-served exit code', yml: null, doc: ['| `3` |', '| `9` |'] },
       { what: 'the confirmation job is renamed', yml: ['\n  confirm:\n', '\n  reconfirm:\n'], doc: null, quiet: true },
@@ -56424,6 +56424,213 @@ function runCurrencySuite(): number {
       'a `run:` body cannot be red-firsted anywhere, so the wait moved into a script and what stayed in the ' +
         'workflow is a call. This is what keeps the call honest — and the quiet plant is what says the scan is ' +
         'structural rather than a search for the job that happens to be named `confirm`',
+    );
+  }
+
+  // --- CUR112: the publish gate runs over the corpus CI's gate runs over (#1003)
+  //
+  // 🚨 **v1.6.0 was tagged, released on GitHub and never served.** The release
+  // job's `prepublishOnly` ran the same three commands as `ci.yml`'s `test`
+  // job, but not over the same tree: `test` fetches the Spine examples before
+  // its selftest and the release job did not, on the premise — written in both
+  // the workflow and RELEASING.md — that the selftest needs no corpus. The core
+  // suite retired that premise: with no examples/ its corpus controls are red,
+  // correctly, and four of them failed the publish ten minutes in.
+  //
+  // ⭐ Read structurally, like CUR31: the job that runs `npm publish` and the
+  // job that runs `bun run selftest` are found by what their steps run, not by
+  // their names, and the fetch has to sit before the gated step in each, with
+  // the same body and environment, and — in the release job — under the same
+  // `if:` as the publish. A fetch that runs when nothing is being released is
+  // a different fault from a missing one, but it is still one: the two steps
+  // stop being a pair.
+  {
+    interface CorpusStep {
+      name?: string;
+      run?: string;
+      if?: string;
+      env?: Record<string, string>;
+    }
+    interface CorpusWorkflow {
+      jobs?: Record<string, { steps?: CorpusStep[] }>;
+    }
+    const FETCH = 'bun run fetch-examples';
+    const runsExactly = (step: CorpusStep, command: string): boolean =>
+      (step.run ?? '')
+        .split('\n')
+        .map((line) => line.trim())
+        .includes(command);
+    const corpusFaults = (releaseYml: string, ciYml: string, doc: string): string[] => {
+      const faults: string[] = [];
+      const parse = (file: string, text: string): CorpusWorkflow | null => {
+        try {
+          return Bun.YAML.parse(text) as CorpusWorkflow;
+        } catch (error) {
+          faults.push(`${file} does not parse as YAML: ${error instanceof Error ? error.message : String(error)}`);
+          return null;
+        }
+      };
+      const release = parse('release.yml', releaseYml);
+      const ci = parse('ci.yml', ciYml);
+      if (release === null || ci === null) return faults;
+
+      /** The one job whose steps run `gated`, the index of that step, and the index of the fetch in it. */
+      const pairIn = (
+        file: string,
+        wf: CorpusWorkflow,
+        gated: string,
+        matches: (step: CorpusStep) => boolean,
+      ): { job: string; steps: CorpusStep[]; gate: number; fetch: number } | null => {
+        const holders = Object.entries(wf.jobs ?? {}).filter(([, job]) => (job.steps ?? []).some(matches));
+        if (holders.length !== 1) {
+          faults.push(`${file}: ${holders.length} job(s) run \`${gated}\` where exactly one does today — this control is reading something other than the gate`);
+          return null;
+        }
+        const [job, body] = holders[0];
+        const steps = body.steps ?? [];
+        const gate = steps.findIndex(matches);
+        const fetches = steps.map((step, at) => (runsExactly(step, FETCH) ? at : -1)).filter((at) => at !== -1);
+        if (fetches.length !== 1) {
+          faults.push(
+            `${file}: job "${job}" runs \`${FETCH}\` in ${fetches.length} step(s) where exactly one is required, so its \`${gated}\` ` +
+              (fetches.length === 0 ? 'reads a tree with no example corpus — the #1003 fault' : 'has no single fetch to be ordered against'),
+          );
+          return null;
+        }
+        const fetch = fetches[0];
+        if (fetch > gate) {
+          faults.push(
+            `${file}: job "${job}" runs \`${FETCH}\` at step ${fetch + 1}, after \`${gated}\` at step ${gate + 1}, so the gate has already read a tree with no corpus when it arrives`,
+          );
+        }
+        return { job, steps, gate, fetch };
+      };
+      const publish = pairIn('release.yml', release, 'npm publish', (step) => /\bnpm publish\b/.test(step.run ?? ''));
+      const test = pairIn('ci.yml', ci, 'bun run selftest', (step) => runsExactly(step, 'bun run selftest'));
+      // The pairing is read only when both halves were found; the document
+      // below is read either way, so a tree carrying both faults names both.
+      if (publish !== null && test !== null) {
+        const releaseFetch = publish.steps[publish.fetch];
+        const ciFetch = test.steps[test.fetch];
+        const publishIf = publish.steps[publish.gate].if;
+        if (releaseFetch.if !== publishIf) {
+          faults.push(
+            `release.yml: the fetch in job "${publish.job}" runs under \`if: ${releaseFetch.if ?? '(none)'}\` and the publish under ` +
+              `\`if: ${publishIf ?? '(none)'}\`, so the corpus is fetched on runs that publish nothing, or missing on one that does`,
+          );
+        }
+        const envOf = (step: CorpusStep): string => JSON.stringify(Object.entries(step.env ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+        if (envOf(releaseFetch) !== envOf(ciFetch)) {
+          faults.push(
+            `release.yml: the fetch in job "${publish.job}" runs with env ${envOf(releaseFetch)} and ci.yml's in job "${test.job}" with ` +
+              `${envOf(ciFetch)}, so the two gates fetch under different rate limits and can read different corpora`,
+          );
+        }
+      }
+
+      // The document: the paragraph that states what `prepublishOnly` runs.
+      const paragraph = doc
+        .split(/\n\s*\n/)
+        .find((one) => one.startsWith('`prepublishOnly` runs'))
+        ?.replace(/\s+/g, ' ');
+      if (paragraph === undefined) {
+        faults.push('RELEASING.md has no paragraph beginning "`prepublishOnly` runs", so what the publish gate reads is stated nowhere this control can find');
+        return faults;
+      }
+      for (const sentence of paragraph.split(/(?<=[.;])\s+/)) {
+        if (/needs no corpus|does not fetch the Spine examples/.test(sentence)) {
+          faults.push(`RELEASING.md's \`prepublishOnly\` paragraph still states the retired premise: "${sentence.trim()}"`);
+        }
+      }
+      if (!paragraph.includes(`\`${FETCH}\``)) {
+        faults.push(`RELEASING.md's \`prepublishOnly\` paragraph does not name \`${FETCH}\`, so it does not say the publish gate reads the corpus`);
+      }
+      return faults;
+    };
+
+    const releaseText = readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
+    const ciText = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
+    const releasingText = readFileSync(join(root, 'RELEASING.md'), 'utf8');
+    const standing = corpusFaults(releaseText, ciText, releasingText);
+    const edit = (text: string, from: string, to: string): string | null => (text.includes(from) ? text.split(from).join(to) : null);
+    const fetchStep =
+      '      - name: Fetch the Spine example corpus\n' +
+      "        if: ${{ steps.release.outputs.release_created == 'true' }}\n" +
+      '        run: bun run fetch-examples\n' +
+      '        env:\n' +
+      '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n\n';
+    const publishRun = '        run: npm publish --provenance --access public\n';
+    const moved = ((): string | null => {
+      const dropped = edit(releaseText, fetchStep, '');
+      return dropped === null ? null : edit(dropped, publishRun, `${publishRun}\n${fetchStep.slice(0, -1)}`);
+    })();
+    const plants: Array<{ what: string; release: string | null; ci?: string | null; doc?: string | null; quiet?: boolean }> = [
+      { what: 'the fetch step is dropped from release.yml', release: edit(releaseText, fetchStep, '') },
+      { what: 'the fetch step is moved after the publish', release: moved },
+      {
+        what: 'the fetch step loses its `if:`',
+        release: edit(releaseText, "        if: ${{ steps.release.outputs.release_created == 'true' }}\n        run: bun run fetch-examples\n", '        run: bun run fetch-examples\n'),
+      },
+      {
+        what: 'the release fetch loses the token ci.yml passes',
+        release: edit(releaseText, 'run: bun run fetch-examples\n        env:\n          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n', 'run: bun run fetch-examples\n'),
+      },
+      {
+        what: "RELEASING.md's paragraph gets the retired sentence back",
+        release: releaseText,
+        doc: edit(
+          releasingText,
+          'every push, and they run over the same corpus:',
+          'every push; the selftest needs no corpus and no arguments, and reports the\nexample suites as HOLEs rather than passes when `examples/` is absent, which is\nwhy the publish job does not fetch the Spine examples the way `ci.yml` does. And',
+        ),
+      },
+      {
+        what: "ci.yml's own fetch is moved after its selftest",
+        release: releaseText,
+        ci: ((): string | null => {
+          const at = ciText.indexOf('      - name: Fetch the Spine example corpus\n');
+          const selftest = '      - run: bun run selftest\n';
+          if (at === -1 || !ciText.includes(selftest)) return null;
+          const end = ciText.indexOf('\n\n', at);
+          const step = ciText.slice(at, end + 2);
+          return edit(ciText.replace(step, ''), selftest, `${selftest}\n${step.slice(0, -1)}`);
+        })(),
+      },
+      { what: 'the release fetch step is renamed', release: edit(releaseText, 'name: Fetch the Spine example corpus\n        if:', 'name: Examples\n        if:'), quiet: true },
+    ];
+    const plantProbes: string[] = [];
+    const plantCases: string[] = [];
+    for (const plant of plants) {
+      const ciYml = plant.ci === undefined ? ciText : plant.ci;
+      const doc = plant.doc === undefined ? releasingText : plant.doc;
+      if (plant.release === null || ciYml === null || doc === null) {
+        plantProbes.push(`"${plant.what}": the edit found nothing to change, so this plant was never made`);
+        continue;
+      }
+      const raised = raisedBy(corpusFaults(plant.release, ciYml, doc), { was: standing });
+      if (plant.quiet === true) {
+        if (raised.length > 0) plantProbes.push(`"${plant.what}" changes nothing this gate is about and ${raised.length} fault(s) fired: ${raised[0].slice(0, 160)}`);
+        plantCases.push(`${plant.what} -> quiet`);
+        continue;
+      }
+      if (raised.length === 0) plantProbes.push(`"${plant.what}" was planted and this gate did not fire`);
+      plantCases.push(`${plant.what} -> ${raised.length}`);
+    }
+    const corpusHeld = standing.length === 0 && plantProbes.length === 0;
+    say(
+      'CUR112_THE_PUBLISH_GATE_FETCHES_THE_CORPUS_BEFORE_NPM_PUBLISH_AS_CI_DOES_BEFORE_THE_SELFTEST',
+      corpusHeld,
+      probeDetail(
+        corpusHeld,
+        [...standing, ...plantProbes],
+        `release.yml's publishing job runs \`${FETCH}\` before \`npm publish\`, under the publish's own \`if:\` and with ` +
+          "the environment ci.yml's selftest job fetches with, as that job does before `bun run selftest`, and " +
+          `RELEASING.md's \`prepublishOnly\` paragraph names the fetch and not the retired premise — over ${plants.length} ` +
+          `plant(s): ${plantCases.join('; ')}`,
+      ),
+      "v1.6.0's publish ran the selftest with no examples/ and four core-suite corpus controls went red after the " +
+        'tag and the GitHub release existed, because the workflow and RELEASING.md both said the selftest needs no ' +
+        'corpus. Red on the tree before #1003 — no fetch step in the publishing job',
     );
   }
 
