@@ -528,6 +528,7 @@ import {
   type OraclePhase,
   type OracleSample,
   parseDt,
+  uvSourceOf,
 } from './tools/pose_oracle.ts';
 import {
   BASE_COMMAND,
@@ -66212,7 +66213,7 @@ function runPoseOracleSuite(): number {
       ['--dt without stepping', ['dump', buildDir, '--out', out, '--dt', '1/60'], '--physics none steps nothing'],
       ['a skin the rig does not declare', ['dump', buildDir, '--out', out, '--skin', 'nosuch'], '--skin "nosuch": no such skin; this skeleton declares [default, alt]'],
       ['a directory rigc did not build', ['dump', emptyDir, '--out', out], 'has no skeleton.json and no skeleton.atlas'],
-      ['a document that is not an oracle dump', ['compare', notOracle, noneA], 'spec is "rigc-frames/1", not "pose-oracle/3"'],
+      ['a document that is not an oracle dump', ['compare', notOracle, noneA], 'spec is "rigc-frames/1", not "pose-oracle/4"'],
       ['two dumps posed under different options', ['compare', noneA, stepA], 'posed under different options'],
     ];
     for (const [label, args, expect] of cases) {
@@ -66289,6 +66290,10 @@ function runPoseOracleSuite(): number {
   } else {
     const PHASES: OraclePhase[] = ['grid', 'off', 'irr'];
     const reach = { events: 0, clips: 0, meshes: 0, stepped: 0, skins: 0, exports: 0 };
+    // A rebuild's atlas names each page by its path from the build directory (`rewritePageNames` in src/atlas.ts) — where the file sits, not
+    // which drawing it is — so the page UVs' page cell (issue #967) is compared by its file name here; every UV still at the tolerance below.
+    const pageFile = (rows: OracleSample['uvs']): OracleSample['uvs'] => rows.map((x) => [x[0], x[1], basename(x[2]), x[3]]);
+    const pagesByFile = (d: OracleDump): OracleDump => ({ ...d, setup: { ...d.setup, uvs: pageFile(d.setup.uvs) }, animations: d.animations.map((a) => ({ ...a, samples: a.samples.map((x) => ({ ...x, uvs: pageFile(x.uvs) })) })) });
     for (const entry of corpus) {
       const sourceText = readFileSync(entry.path, 'utf8');
       const decompiled = ingest(JSON.parse(sourceText) as Record<string, unknown>, {
@@ -66340,7 +66345,7 @@ function runPoseOracleSuite(): number {
         for (const [label, options] of graded) {
           const a = dumpSkeleton(ours, options);
           const b = dumpSkeleton(theirs, options);
-          const c = compareDumps(a, b, tol);
+          const c = compareDumps(pagesByFile(a), pagesByFile(b), tol);
           boneSamples += c.boneSamples;
           vertices += c.rows.reduce((s, r) => s + r.vertices, 0);
           if (!c.identical || c.boneSamples === 0) held = false;
@@ -66455,7 +66460,7 @@ function runPoseOracleSuite(): number {
       writeFileSync(current, dumpText(dump));
       writeFileSync(older, dumpText({ ...dump, spec: 'pose-oracle/2' }));
       const refused = runOracle(['compare', older, current]);
-      if (refused.status !== 2 || !refused.stderr.includes('spec is "pose-oracle/2", not "pose-oracle/3"')) probes.push(`a pose-oracle/2 document: exit ${refused.status}, stderr ${JSON.stringify(refused.stderr.trim().slice(0, 160))}`);
+      if (refused.status !== 2 || !refused.stderr.includes('spec is "pose-oracle/2", not "pose-oracle/4"')) probes.push(`a pose-oracle/2 document: exit ${refused.status}, stderr ${JSON.stringify(refused.stderr.trim().slice(0, 160))}`);
       detail = `${stated.length} slots stating none, the four modes, one with its first letter upper-cased and one all upper-case read [${stated.map((x) => String(x[2])).join(', ')}] in the setup row and in each of ${poses.length - 1} samples of an animation keying their colour; the pose's fields [${poseFields.join(', ')}] carry no mode; a blend planted in one sample is the one difference named; a document one spec older exits 2 by name`;
     } catch (err) {
       probes.push(`the blend probe did not load or pose: ${(err as Error).message}`);
@@ -66496,6 +66501,11 @@ import { ADMITTED_CONSTRAINT_KINDS, TRANSFORM_PROPERTIES, type ConstraintPlant, 
 import { CORE_ALL_SKINS, lookupSkins } from './src/core/skins.ts';
 import { underSkin } from './src/core/index.ts';
 import { skinReachLines } from './tools/core_gate.ts';
+// The page UVs (issue #967), its own statements so the CU controls land as one hunk.
+import { computeUvs, frameRegionName, meshPageUvs, readUvSequences, regionPageUvs, type UvReading } from './src/core/uvs.ts';
+import { atlasRegionLookup } from './src/atlas.ts';
+import { isTrimmed, UV_CENSUS_FIELDS, uvDrawnOf, uvReachLines } from './tools/core_gate.ts';
+import { NO_ATLAS_WHY } from './tools/pose_oracle.ts';
 
 /** The constraint kinds no cut of construct 5 poses yet — what a skipped row names. */
 const LATER_KINDS: readonly string[] = CORE_CONSTRAINT_KINDS.filter((k) => !ADMITTED_CONSTRAINT_KINDS.includes(k));
@@ -66678,7 +66688,8 @@ function runCoreSuite(): number {
       const modelPath = join(free.out, MODEL_DOCUMENT_FILE);
       const outs = ['a', 'b'].map((x) => join(work, `core-${x}.json`));
       for (const out of outs) {
-        const run = runOracle(['dump', '--core', modelPath, '--out', out]);
+        // With the build's atlas (issue #967): the page UVs read the layout the model does not carry.
+        const run = runOracle(['dump', '--core', modelPath, '--atlas', join(free.out, 'skeleton.atlas'), '--out', out]);
         if (run.status !== 0) probes.push(`dump --core exited ${run.status}: ${run.stderr.trim().slice(0, 200)}`);
       }
       const same = outs.every((o) => existsSync(o)) && readFileSync(outs[0]).equals(readFileSync(outs[1]));
@@ -67567,9 +67578,9 @@ function runCoreSuite(): number {
       if (skipped) {
         // By construct: posed off the hierarchy alone — the constraints dropped from a copy — the vertices move.
         const loose = poseSetup({ ...model, constraints: [] }).setup;
-        const absent: Array<[string, string]> = [...NOT_ADMITTED.map(([k, w]): [string, string] => [k, w]), ['setup.bones', 'left out'], ['setup.slots', 'left out'], ['setup.drawOrder', 'left out'], ['setup.clips', 'left out'], ['setup.clipped', 'left out']];
+        const absent: Array<[string, string]> = [...NOT_ADMITTED.map(([k, w]): [string, string] => [k, w]), ['setup.bones', 'left out'], ['setup.slots', 'left out'], ['setup.drawOrder', 'left out'], ['setup.clips', 'left out'], ['setup.clipped', 'left out'], ['setup.uvs', 'left out']];
         // The animations are left out too (issue #936's blocks): this judges the setup attachments alone.
-        const c = compareDumps(spine, { ...coreDump(model, ONE), absent, setup: { bones: null, slots: null, drawOrder: null, attachments: loose.attachments, clips: null, clipped: null }, animations: null }, { xy: 0, m: 0 });
+        const c = compareDumps(spine, { ...coreDump(model, ONE), absent, setup: { bones: null, slots: null, drawOrder: null, attachments: loose.attachments, clips: null, clipped: null, uvs: null }, animations: null }, { xy: 0, m: 0 });
         if (c.identical) probes.push(`${b.name}: posed off its hierarchy alone its attachments read IDENTICAL, so skipping it holds back nothing`);
         else offHierarchy.push(`${b.name.replace(/^examples\/[^/]+\//, '')} ${c.worstVertex.toFixed(6)}`);
         continue;
@@ -67767,7 +67778,7 @@ function runCoreSuite(): number {
       for (const [label, physics, options] of [['Physics.none', false, CLIP_NONE], ['the stepped phase', true, CLIP_STEP]] as const) {
         const pair = clipPair(physics);
         const spine = dumpSkeleton(loadOracleData(pair.spine, clipAtlas, 'the clipping probe'), options);
-        const core = coreDump(readModel(pair.model, 'the clipping probe'), options);
+        const core = coreDump(readModel(pair.model, 'the clipping probe'), options, {}, uvSourceOf(clipAtlas, pair.model));
         dumps[label] = { spine, core };
         const c = compareDumps(spine, core, { xy: 0, m: 0 });
         if (!c.identical || c.skipped.length > 0) probes.push(`${label}: ${c.identical ? `IDENTICAL skipping [${c.skipped.join('; ')}]` : `DIFF — ${c.first}`}`);
@@ -67841,7 +67852,7 @@ function runCoreSuite(): number {
         const slots = [clip, { slot: 'rIn', bone: 'root', ...clipRegion(10.5, 10.5, 6, 6) }];
         const pair = clipPair(false, slots);
         const spine = dumpSkeleton(loadOracleData(pair.spine, clipAtlas, 'the clipping probe'), CLIP_NONE);
-        const core = coreDump(readModel(pair.model, 'the clipping probe'), CLIP_NONE);
+        const core = coreDump(readModel(pair.model, 'the clipping probe'), CLIP_NONE, {}, uvSourceOf(clipAtlas, pair.model));
         for (const block of ['setup.clipped', 'animations.clipped']) {
           const reason = core.absent?.find((x) => x[0] === block)?.[1] ?? '';
           if (!reason.includes(why)) probes.push(`${label}: ${block} ${reason === '' ? 'posed' : `absent as "${reason}"`}, not naming "${why}"`);
@@ -68502,7 +68513,7 @@ function runCoreSuite(): number {
       events: [{ time: 2.5 }],
     });
     const spine = spineDump(pair, GRID9);
-    const core = coreDump(readModel(pair.model, 'the duration probe'), GRID9);
+    const core = coreDump(readModel(pair.model, 'the duration probe'), GRID9, {}, uvSourceOf(pair.atlas, pair.model));
     const c = compareDumps(spine, core, { xy: 0, m: 0 });
     const skipped = c.skipped.map((s) => s.slice(0, s.indexOf(':'))).filter((b) => b !== 'physics');
     // Since issue #955 the core poses every sample block, the event block included: nothing but the physics parameters is SKIPped.
@@ -71375,7 +71386,7 @@ function runCoreSuite(): number {
   };
   const remainderSpine = (pair: { spine: string; atlas: string }, options: OracleOptions): OracleDump => dumpSkeleton(loadOracleData(pair.spine, pair.atlas, 'the remainder probe'), options);
   const remainderCompare = (pair: { spine: string; model: string; atlas: string }, options: OracleOptions, plant: TimelinePlant = {}): ReturnType<typeof compareDumps> =>
-    compareDumps(remainderSpine(pair, options), coreDump(readModel(pair.model, 'the remainder probe'), options, plant), { xy: 0, m: 0 });
+    compareDumps(remainderSpine(pair, options), coreDump(readModel(pair.model, 'the remainder probe'), options, plant, uvSourceOf(pair.atlas, pair.model)), { xy: 0, m: 0 });
   /** Every block a comparison skipped but the physics parameters' — a probe is exact only when none is. */
   const blocksSkipped = (c: ReturnType<typeof compareDumps>): string[] => c.skipped.filter((x) => !x.startsWith('physics:'));
   const cdModels: string[] = [];
@@ -71701,7 +71712,8 @@ function runCoreSuite(): number {
       if (row === undefined || census === null || census === undefined || (census.deform + census.sequence + census.drawOrder + census.events) === 0) continue;
       carrying.push(b.name);
       const spine = dumpSkeleton(loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.out), DENSE);
-      const c = compareDumps(spine, coreDump(readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')), DENSE), { xy: 0, m: 0 });
+      const modelText = readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8');
+      const c = compareDumps(spine, coreDump(readModel(modelText), DENSE, {}, uvSourceOf(readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), modelText)), { xy: 0, m: 0 });
       if (!c.identical || blocksSkipped(c).length > 0) probes.push(`${b.name} at 200 dense samples: ${blocksSkipped(c).join('; ') || c.first}`);
       else dense++;
       vertexSamples += c.rows.reduce((n, r) => n + r.vertices, 0);
@@ -71907,7 +71919,7 @@ function runCoreSuite(): number {
       cdModels.push(pair.model);
       const spine = remainderSpine(pair, options);
       rowsFired += spine.animations[0].samples.reduce((n, x) => n + x.events.length, 0);
-      const c = compareDumps(spine, coreDump(readModel(pair.model), options), { xy: 0, m: 0 });
+      const c = compareDumps(spine, coreDump(readModel(pair.model), options, {}, uvSourceOf(pair.atlas, pair.model)), { xy: 0, m: 0 });
       if (!c.identical || blocksSkipped(c).length > 0) probes.push(`${label}: ${blocksSkipped(c).join('; ') || c.first}`);
     }
     // The measured facts the header states, read off spine-core directly.
@@ -72092,6 +72104,431 @@ function runCoreSuite(): number {
 
 
   // ===========================================================================
+  // The draw's page and page UVs (issue #967, step 3c): the `uvs` block, each
+  // drawn attachment's atlas page and the UV array the runtime holds for it,
+  // from rigc's own atlas reader (src/atlas.ts) and src/core/uvs.ts's rules.
+  // One hand-written skeleton and atlas, written as the Spine file and as the
+  // model, carries every case the public corpus does not reach; the corpus rows
+  // are judged with the rest of the gate.
+  // ===========================================================================
+  /** The probe's atlas regions: name, page, bounds, offsets (or none) and rotate spelling. */
+  const UV_REGIONS: Array<{ name: string; page: 0 | 1; b: [number, number, number, number]; o?: [number, number, number, number]; rotate: string }> = [
+    { name: 'r0', page: 0, b: [10, 12, 20, 30], o: [3, 4, 27, 41], rotate: '0' },
+    { name: 'r90', page: 0, b: [40, 5, 18, 26], o: [2, 5, 23, 33], rotate: '90' },
+    { name: 'r180', page: 0, b: [70, 40, 22, 16], o: [1, 6, 30, 25], rotate: '180' },
+    { name: 'r270', page: 0, b: [100, 60, 14, 28], o: [5, 2, 21, 37], rotate: '270' },
+    { name: 'rtrue', page: 0, b: [130, 7, 11, 19], rotate: 'true' },
+    { name: 'r45', page: 0, b: [150, 90, 17, 13], o: [4, 3, 26, 19], rotate: '45' },
+    { name: 'art', page: 0, b: [180, 20, 24, 24], rotate: '0' },
+    { name: 's03', page: 0, b: [200, 100, 9, 12], rotate: '0' },
+    { name: 's04', page: 0, b: [220, 100, 10, 12], o: [1, 0, 12, 12], rotate: '0' },
+    { name: 's05', page: 1, b: [3, 300, 11, 12], o: [0, 0, 11, 14], rotate: '90' },
+    { name: 'mseq1', page: 1, b: [20, 40, 30, 20], rotate: '270' },
+    { name: 'mseq2', page: 1, b: [60, 40, 30, 20], rotate: '0' },
+    { name: 'lk', page: 1, b: [90, 100, 16, 30], o: [3, 1, 21, 35], rotate: '180' },
+  ];
+  const UV_PAGES = [{ name: 'pa.png', w: 300, h: 200 }, { name: 'pb.png', w: 128, h: 512 }];
+  const uvAtlasText = (regions = UV_REGIONS): string =>
+    UV_PAGES.map((p, i) => `${p.name}\n\tsize: ${p.w}, ${p.h}\n${regions.filter((r) => r.page === i).map((r) => `${r.name}\n\trotate: ${r.rotate}\n\tbounds: ${r.b.join(', ')}\n${r.o === undefined ? '' : `\toffsets: ${r.o.join(', ')}\n`}`).join('')}`).join('\n');
+  /** A region's `ModelAtlasRect`, off the probe's table. */
+  const uvRect = (name: string): Obj => {
+    const r = UV_REGIONS.find((x) => x.name === name) as (typeof UV_REGIONS)[number];
+    const [ox, oy, ow, oh] = r.o ?? [0, 0, r.b[2], r.b[3]];
+    return { width: r.b[2], height: r.b[3], offsetX: ox, offsetY: oy, originalWidth: ow, originalHeight: oh };
+  };
+  /** Art-space UVs spelled with five non-float32 decimals, one pair per vertex. */
+  const uvArt = (n: number, seed: number): number[] => Array.from({ length: 2 * n }, (_v, i) => Math.round(((i * 0.618034 + seed * 0.3819) % 1) * 1e5) / 1e5);
+  type UvSlot = { slot: string; spine: Obj; model: Obj };
+  const uvRegionSlot = (slot: string, path: string, name?: string): UvSlot => ({
+    slot,
+    spine: { ...(name === undefined ? {} : { name }), path, width: 12, height: 9, x: 1.5, rotation: 7.5 },
+    model: { kind: 'region', ...(name === undefined ? {} : { name }), path, width: 12, height: 9, x: 1.5, rotation: 7.5, atlas: uvRect(path) },
+  });
+  const uvMeshSlot = (slot: string, path: string, seed: number, sequence?: Obj): UvSlot => {
+    const n = 5;
+    const xy = uvArt(n, seed + 7).map((v) => v * 20);
+    const uvs = uvArt(n, seed);
+    const triangles = [0, 1, 2, 0, 2, 3, 0, 3, 4];
+    return {
+      slot,
+      spine: { type: 'mesh', path, uvs, triangles, vertices: xy, hull: n, width: 20, height: 20, ...(sequence === undefined ? {} : { sequence }) },
+      model: { kind: 'mesh', path, uvs, triangles, vertices: { weighted: false, xy }, hull: n, edges: [], width: 20, height: 20, ...(sequence === undefined ? {} : { sequence }) },
+    };
+  };
+  /** Every case the corpus does not reach: each rotation, trimmed and not, an odd spelling, a path, a series over two pages, a mesh series, a linked mesh on a page of its own. */
+  const UV_SLOTS: UvSlot[] = [
+    uvRegionSlot('reg0', 'r0'), uvRegionSlot('reg90', 'r90'), uvRegionSlot('reg180', 'r180'), uvRegionSlot('reg270', 'r270'), uvRegionSlot('regtrue', 'rtrue'), uvRegionSlot('reg45', 'r45'),
+    uvRegionSlot('regpath', 'art', 'shown'),
+    {
+      slot: 'seq',
+      spine: { path: 's', width: 12, height: 9, sequence: { count: 3, start: 3, digits: 2, setup: 1 } },
+      model: { kind: 'region', path: 's', width: 12, height: 9, sequence: { count: 3, start: 3, digits: 2, setup: 1, atlas: ['s03', 's04', 's05'].map(uvRect) } },
+    },
+    uvMeshSlot('m0', 'r0', 1), uvMeshSlot('m90', 'r90', 2), uvMeshSlot('m180', 'r180', 3), uvMeshSlot('m270', 'r270', 4), uvMeshSlot('m45', 'r45', 5),
+    uvMeshSlot('mseq', 'mseq', 6, { count: 2 }),
+    { slot: 'lnk', spine: { type: 'linkedmesh', path: 'lk', source: 'a', slot: 'm90', width: 20, height: 20 }, model: { kind: 'linkedmesh', path: 'lk', source: 'a', skin: 'default', slot: 'm90', timelines: true, width: 20, height: 20 } },
+  ];
+  /** The sequence timelines: the region series stepping over its three frames (two pages), the mesh series over its two. */
+  const UV_SEQUENCE_KEYS: Array<[string, Obj[]]> = [['seq', [{ time: 0.2, mode: 'loop', delay: 0.25 }]], ['mseq', [{ time: 0, mode: 'loop', index: 1, delay: 0.3 }]]];
+  const uvPair = (slots: UvSlot[] = UV_SLOTS): { spine: string; model: string; atlas: string } => {
+    const table = (side: 'spine' | 'model'): Obj => Object.fromEntries(slots.map((s) => [s.slot, { a: s[side] }]));
+    const spin = [{ time: 0, value: 0 }, { time: 1, value: 40 }];
+    const keyed = UV_SEQUENCE_KEYS.filter(([slot]) => slots.some((s) => s.slot === slot));
+    const bones = [{ name: 'root', rotation: 12.5 }];
+    const spine = JSON.stringify({
+      skeleton: { spine: '4.3.13' }, bones, slots: slots.map((s) => ({ name: s.slot, bone: 'root', attachment: 'a' })),
+      skins: [{ name: 'default', attachments: table('spine') }],
+      animations: { a: { bones: { root: { rotate: spin } }, attachments: { default: Object.fromEntries(keyed.map(([slot, keys]) => [slot, { a: { sequence: keys } }])) } } },
+    });
+    const model = JSON.stringify({
+      spec: 'rigc-compiled/1', bones, slots: slots.map((s) => ({ name: s.slot, bone: 'root', setup: 'a' })),
+      skins: [{ name: 'default', bones: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: table('model') }],
+      constraints: [], events: [],
+      animations: [{
+        name: 'a', duration: 1, bones: [{ name: 'root', timelines: [{ name: 'rotate', keys: spin }] }], slots: [],
+        constraints: { ik: [], transform: [], path: [], physics: [], slider: [] },
+        attachments: [{ name: 'default', slots: keyed.map(([slot, keys]) => ({ name: slot, attachments: [{ name: 'a', sequence: keys }] })) }], drawOrder: [], events: [],
+      }],
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {},
+    });
+    return { spine, model, atlas: uvAtlasText() };
+  };
+  const UV_NONE: OracleOptions = { phase: 'grid', samples: 9, skin: 'all', physics: 'none', dt: null };
+  const UV_STEP: OracleOptions = { phase: 'grid', samples: 9, skin: 'all', physics: 'step', dt: 1 / 60 };
+  /** The slots a comparison names under `uvs "slot/…"`, sorted. */
+  const uvSlotsNamed = (c: ReturnType<typeof compareDumps>): string[] => [...new Set([...c.document, ...c.rows.flatMap((r) => r.findings)].map((f) => /uvs "([^/"]+)\//.exec(f)?.[1] ?? `(not a uvs finding) ${f}`))].sort();
+
+  // --- CU01: the hand-written probe draws every page-UV case as spine-core holds it, on the grid and bit for bit --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    try {
+      const pair = uvPair();
+      let uvRows = 0;
+      for (const [label, options] of [['Physics.none', UV_NONE], ['the stepped phase', UV_STEP]] as const) {
+        const spine = dumpSkeleton(loadOracleData(pair.spine, pair.atlas, 'the uvs probe'), options);
+        const core = coreDump(readModel(pair.model, 'the uvs probe'), options, {}, uvSourceOf(pair.atlas, pair.model));
+        const c = compareDumps(spine, core, { xy: 0, m: 0 });
+        const skipped = c.skipped.filter((x) => !x.startsWith('physics:'));
+        if (!c.identical || skipped.length > 0) probes.push(`${label}: ${c.identical ? `IDENTICAL skipping [${skipped.join('; ')}]` : `DIFF — ${c.first}`}`);
+        const poses = [spine.setup.uvs, ...spine.animations.flatMap((a) => a.samples.map((x) => x.uvs))];
+        uvRows += poses.reduce((n, p) => n + p.length, 0);
+        // The series reach both pages across the samples: what the probe exists to show.
+        for (const slot of ['seq', 'mseq']) {
+          const pages = [...new Set(poses.flatMap((p) => p.filter((r) => r[0] === slot).map((r) => r[2])))].sort();
+          const want = slot === 'seq' ? ['pa.png', 'pb.png'] : ['pb.png'];
+          if (JSON.stringify(pages) !== JSON.stringify(want)) probes.push(`${label}: slot "${slot}" drew from [${pages.join(', ')}], not the probe's [${want.join(', ')}]`);
+        }
+        const frames = new Set(poses.map((p) => JSON.stringify(p.find((r) => r[0] === 'seq')?.[3] ?? null)));
+        if (frames.size < 3) probes.push(`${label}: the series drew ${frames.size} distinct UV arrays over the samples, not its three frames`);
+      }
+      // Bit for bit, off the grid: every attachment and every frame of its series, the core's functions against the array the runtime holds.
+      const data = loadOracleData(pair.spine, pair.atlas, 'the uvs probe');
+      const lookup = atlasRegionLookup(parseAtlasText(pair.atlas));
+      const sequences = readUvSequences(JSON.parse(pair.model));
+      let exact = 0;
+      let arrays = 0;
+      let asFloat32 = 0;
+      for (const [i, s] of UV_SLOTS.entries()) {
+        const att = data.defaultSkin?.getAttachment(i, 'a');
+        if (!(att instanceof RegionAttachment) && !(att instanceof MeshAttachment)) {
+          probes.push(`slot "${s.slot}" loaded no region or mesh`);
+          continue;
+        }
+        const path = (s.model.path as string | undefined) ?? 'a';
+        const seq = sequences.get(`default/${s.slot}/a`);
+        const art = att instanceof MeshAttachment ? (s.model.kind === 'linkedmesh' ? (UV_SLOTS.find((x) => x.slot === 'm90')?.model.uvs as number[]) : (s.model.uvs as number[])) : null;
+        for (let f = 0; f < att.sequence.regions.length; f++) {
+          arrays++;
+          const found = lookup(seq === undefined ? path : frameRegionName(path, seq, f));
+          const held = Array.from(att.sequence.getUVs(f));
+          const page = (att.sequence.regions[f] as TextureAtlasRegion).page.name;
+          if (found === null) {
+            probes.push(`slot "${s.slot}" frame ${f}: the reader found no region`);
+            continue;
+          }
+          const mine = art === null ? regionPageUvs(found.region, found.page) : meshPageUvs(found.region, found.page, art);
+          if (found.page.name === page && mine.length === held.length && mine.every((v, k) => v === held[k])) exact++;
+          else probes.push(`slot "${s.slot}" frame ${f}: [${mine.join(', ')}] on ${found.page.name}, the runtime [${held.join(', ')}] on ${page}`);
+          if (art !== null && meshPageUvs(found.region, found.page, art, { artAsFloat32: true }).some((v, k) => v !== held[k])) asFloat32++;
+        }
+      }
+      if (asFloat32 === 0) probes.push('the mesh UVs read through Math.fround reproduced every held array, so the probe does not tell the two readings apart');
+      detail = `${UV_SLOTS.length} slots over two pages (300 by 200 and 128 by 512) — regions at rotate 0, 90, 180, 270, true and 45, trimmed and not, one drawing a region its name is not, a three-frame series (start 3, digits 2) over both pages stepped by a timeline, meshes at every rotation, a two-frame mesh series, a linked mesh on its own page — IDENTICAL at tolerance 0 under Physics.none and the stepped phase over ${uvRows} spine-core row(s); ${exact} of ${arrays} held arrays (every attachment, every frame) reproduced bit for bit with the page, and the art read through Math.fround missed ${asFloat32}`;
+    } catch (err) {
+      probes.push(`the probe did not load or pose: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CU01_A_HAND_WRITTEN_PROBE_DRAWS_EVERY_PAGE_UV_CASE_AS_SPINE_CORE_HOLDS_IT_ON_THE_GRID_AND_BIT_FOR_BIT',
+      held,
+      probeDetail(held, probes, detail),
+      'issue #967: the public corpus draws no trimmed region, no series, no region under a path of its own, nothing at 180 and one page per row outside the gallery, so each rule of src/core/uvs.ts is held on a skeleton written here and loaded by the runtime — the oracle\'s grid for the document, and the held Float32Array itself for the rule',
+    );
+  }
+
+  // --- CU02: each rejected reading, in a copy, is named at exactly the slots it reaches --
+  {
+    const probes: string[] = [];
+    const reached: string[] = [];
+    try {
+      const pair = uvPair();
+      const spine = dumpSkeleton(loadOracleData(pair.spine, pair.atlas, 'the uvs probe'), UV_NONE);
+      const model = readModel(pair.model, 'the uvs probe');
+      const byDegrees = (deg: number, kinds: string[]): string[] => UV_SLOTS.filter((s) => {
+        const path = s.model.path as string;
+        const names = s.slot === 'seq' ? ['s03', 's04', 's05'] : s.slot === 'mseq' ? ['mseq1', 'mseq2'] : [path];
+        return kinds.includes(s.model.kind as string) && names.some((n) => (UV_REGIONS.find((r) => r.name === n)?.rotate.replace('true', '90') ?? '') === String(deg));
+      }).map((s) => s.slot).sort();
+      const trimmedMeshes = UV_SLOTS.filter((s) => s.model.kind !== 'region' && UV_REGIONS.some((r) => r.o !== undefined && (r.name === s.model.path || (s.slot === 'mseq' && r.name.startsWith('mseq'))))).map((s) => s.slot).sort();
+      const readings: Array<[string, UvReading, string[]]> = [
+        ['a region at 90 in the other corner order', { rotationFlipped: true }, byDegrees(90, ['region'])],
+        ['270 turned as 90', { turned270: true }, byDegrees(270, ['region', 'mesh', 'linkedmesh'])],
+        ['a mesh\'s trim offsets dropped', { trimDropped: true }, trimmedMeshes],
+      ];
+      for (const [label, reading, expected] of readings) {
+        const c = compareDumps(spine, coreDump(model, UV_NONE, {}, uvSourceOf(pair.atlas, pair.model, reading)), { xy: 0, m: 0 });
+        const got = uvSlotsNamed(c);
+        if (expected.length === 0) probes.push(`${label}: the probe has no slot it reaches`);
+        if (JSON.stringify(got) !== JSON.stringify(expected)) probes.push(`${label}: named [${got.join(', ')}], not [${expected.join(', ')}]`);
+        else reached.push(`${label} at [${got.join(', ')}]`);
+      }
+    } catch (err) {
+      probes.push(`the probe did not load or pose: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CU02_EACH_REJECTED_PAGE_UV_READING_IN_A_COPY_IS_NAMED_AT_EXACTLY_THE_SLOTS_IT_REACHES',
+      held,
+      probeDetail(held, probes, `each reading passed as a copy (UvReading), never in src/: ${reached.join('; ')}`),
+      'issue #967\'s probe control: a probe that read IDENTICAL under a wrong reading would hold nothing. The art read through Math.fround moves a UV by one float32 step, under the oracle\'s six-decimal grid on this probe, so CU01 rejects it on the held array itself',
+    );
+  }
+
+  // --- CU03: computeUvs is MeshAttachment.computeUVs — texture substitution's call — bit for bit, into a plain array and a Float32Array --
+  {
+    const probes: string[] = [];
+    const rnd = lcg(9671);
+    const spellings = ['0', '90', '180', '270', 'true', 'false', '45', '-90', '360', '450'];
+    const N = 600;
+    let plainExact = 0;
+    let heldExact = 0;
+    let notFloat32 = 0;
+    const misses: Record<string, number> = { trimDropped: 0, turned270: 0, artAsFloat32: 0 };
+    try {
+      const W = 97 + Math.floor(rnd() * 3000);
+      const H = 64 + Math.floor(rnd() * 3000);
+      let text = `p.png\n\tsize: ${W}, ${H}\n`;
+      for (let i = 0; i < N; i++) {
+        const w = 1 + Math.floor(rnd() * 300);
+        const h = 1 + Math.floor(rnd() * 300);
+        const ox = Math.floor(rnd() * 30);
+        const oy = Math.floor(rnd() * 30);
+        text += `c${i}\n\trotate: ${spellings[i % spellings.length]}\n\tbounds: ${Math.floor(rnd() * 3000)}, ${Math.floor(rnd() * 3000)}, ${w}, ${h}\n\toffsets: ${ox}, ${oy}, ${w + ox + Math.floor(rnd() * 30)}, ${h + oy + Math.floor(rnd() * 30)}\n`;
+      }
+      const runtime = new TextureAtlas(text);
+      const lookup = atlasRegionLookup(parseAtlasText(text));
+      for (let i = 0; i < N; i++) {
+        const region = runtime.findRegion(`c${i}`);
+        const found = lookup(`c${i}`);
+        if (region === null || found === null) {
+          probes.push(`c${i}: ${region === null ? 'the runtime' : 'the reader'} found no region`);
+          continue;
+        }
+        // Art UVs as texture substitution hands them: five decimals, some outside [0, 1] (a region's corners over its kept rectangle, or a mesh's own).
+        const art = Array.from({ length: 2 * (1 + Math.floor(rnd() * 10)) }, () => Math.round((rnd() * 1.4 - 0.2) * 1e5) / 1e5);
+        const plain = new Array<number>(art.length).fill(0);
+        MeshAttachment.computeUVs(region, art, plain);
+        const typed = new Float32Array(art.length);
+        MeshAttachment.computeUVs(region, art, typed);
+        const mine = computeUvs(found.region, found.page, art);
+        if (mine.every((v, k) => v === plain[k])) plainExact++;
+        else probes.push(`c${i} (rotate ${spellings[i % spellings.length]}): [${mine.slice(0, 2).join(', ')}…] against the runtime's [${plain.slice(0, 2).join(', ')}…]`);
+        if (meshPageUvs(found.region, found.page, art).every((v, k) => v === typed[k])) heldExact++;
+        if (plain.some((v) => Math.fround(v) !== v)) notFloat32++;
+        for (const key of Object.keys(misses) as Array<keyof UvReading>) if (computeUvs(found.region, found.page, art, { [key]: true }).some((v, k) => v !== plain[k])) misses[key]++;
+      }
+      if (notFloat32 === 0) probes.push('no call wrote a value that is not a float32, so a plain array was not told from a Float32Array');
+      for (const [k, n] of Object.entries(misses)) if (n === 0) probes.push(`the rejected reading ${k} missed nothing`);
+    } catch (err) {
+      probes.push(`the population did not load: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CU03_COMPUTE_UVS_IS_THE_RUNTIMES_COMPUTEUVS_BIT_FOR_BIT_INTO_A_PLAIN_ARRAY_AND_A_FLOAT32_ARRAY',
+      held,
+      probeDetail(held, probes, `${N} trimmed regions on one page, every rotate spelling in turn (${spellings.join(', ')}), random art UVs: ${plainExact} of ${N} calls into a plain array equal to the double, ${heldExact} of ${N} into a Float32Array equal through Math.fround, ${notFloat32} writing a value that is not a float32; the rejected readings missed ${Object.entries(misses).map(([k, n]) => `${k} ${n}`).join(', ')}`),
+      'issue #967 ask (2): texture substitution (`substituteTexture` in src/render.ts) calls MeshAttachment.computeUVs into a plain array — doubles — while an attachment holds the same mapping through a Float32Array; computeUvs is the one mapping for both, so the core\'s draw can substitute a texture without the runtime',
+    );
+  }
+
+  // --- CU04: every corpus row reads IDENTICAL on both uvs blocks at tolerance 0, and each reading turns exactly the rows using it red --
+  {
+    const probes: string[] = [];
+    const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null));
+    for (const r of rows) for (const block of ['setup.uvs', 'animations.uvs'] as const) if (r.blocks !== null && r.blocks[block].verdict !== 'IDENTICAL') probes.push(`${r.name}: ${block} ${r.blocks[block].verdict} — ${r.blocks[block].why}`);
+    if (judged.length === 0) probes.push('no row was gated, so the corpus held nothing');
+    const drawnOf = new Map(judged.map((b) => {
+      const modelText = readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8');
+      return [b.name, uvDrawnOf(readModel(modelText), uvSourceOf(readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), modelText), GATE_OPTIONS)] as const;
+    }));
+    const using = (test: (d: ReturnType<typeof uvDrawnOf>[number]) => boolean): string[] => judged.filter((b) => (drawnOf.get(b.name) ?? []).some(test)).map((b) => b.name).sort();
+    const readings: Array<[string, UvReading, string[]]> = [
+      ['a region at 90 in the other corner order', { rotationFlipped: true }, using((d) => d.kind === 'region' && d.found.region.degrees === 90)],
+      ['270 turned as 90', { turned270: true }, using((d) => d.found.region.degrees === 270)],
+      ['a mesh\'s trim offsets dropped', { trimDropped: true }, using((d) => d.kind !== 'region' && isTrimmed(d.found.region))],
+    ];
+    const reached: string[] = [];
+    for (const [label, reading, expected] of readings) {
+      const red = gateBuilt(judged, {}, reading);
+      const turned = red.filter((r) => r.blocks?.['setup.uvs'].verdict === 'DIFF' || r.blocks?.['animations.uvs'].verdict === 'DIFF').map((r) => r.name).sort();
+      const others = red.filter((r) => r.blocks !== null && GATE_BLOCKS.some((b) => b !== 'setup.uvs' && b !== 'animations.uvs' && r.blocks?.[b].verdict === 'DIFF')).map((r) => r.name);
+      if (JSON.stringify(turned) !== JSON.stringify(expected)) probes.push(`${label} turned [${turned.join(', ')}] red on the uvs blocks; the rows using it are [${expected.join(', ')}]`);
+      if (others.length > 0) probes.push(`${label} turned another block red on [${others.join(', ')}]`);
+      reached.push(expected.length === 0 ? `${label}: no row uses it (a HOLE; CU02's probe reads it red)` : `${label} ${turned.length}/${judged.length} [${turned.join(', ')}]`);
+    }
+    const lines = uvReachLines(rows);
+    const holes = lines.filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  uvs '.length, l.indexOf(':')));
+    const reach = lines.filter((l) => l.startsWith('  REACH')).map((l) => l.slice('  REACH uvs '.length, l.indexOf(':')));
+    if (reach.length + holes.length !== UV_CENSUS_FIELDS.length) probes.push(`the census printed ${reach.length} REACH and ${holes.length} HOLE line(s) over ${UV_CENSUS_FIELDS.length} fields`);
+    const held = probes.length === 0;
+    say(
+      'CU04_EVERY_ROW_READS_IDENTICAL_ON_BOTH_UVS_BLOCKS_AND_EACH_READING_TURNS_EXACTLY_THE_ROWS_USING_IT_RED',
+      held,
+      probeDetail(held, probes, `${gateVerdict(rows).line.split(';').filter((x) => x.includes('.uvs')).join(';').trim()}; reached [${reach.join(', ')}], HOLEs [${holes.join(', ')}] — each a CU01 case; each plant passed as a copy, never in src/: ${reached.join('; ')}, and no other block`),
+      'issue #967, the gate at tolerance 0: every drawn attachment\'s page and page UVs on every corpus row, from the build\'s own atlas beside the model, against the arrays the runtime holds — the draw\'s last input the core lacked',
+    );
+    for (const line of lines) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
+  }
+
+  // --- CU05: without an atlas the blocks are absent by name; a missing region, a stale spec, a bad series and a slider under the step are refused or left out by name --
+  {
+    const probes: string[] = [];
+    try {
+      const pair = uvPair();
+      // No atlas: both blocks absent, saying why, and compare SKIPs exactly those two.
+      const bare = coreDump(readModel(pair.model), UV_NONE);
+      for (const block of ['setup.uvs', 'animations.uvs']) if (bare.absent?.find((x) => x[0] === block)?.[1] !== NO_ATLAS_WHY) probes.push(`no atlas: ${block} not absent with the reason`);
+      const spine = dumpSkeleton(loadOracleData(pair.spine, pair.atlas, 'the uvs probe'), UV_NONE);
+      const c = compareDumps(spine, bare, { xy: 0, m: 0 });
+      const skipped = c.skipped.map((x) => x.slice(0, x.indexOf(':'))).filter((b) => b !== 'physics');
+      if (!c.identical || JSON.stringify(skipped) !== JSON.stringify(['setup.uvs', 'animations.uvs'])) probes.push(`no atlas: ${c.identical ? `SKIPPED [${skipped.join(', ')}]` : c.first}`);
+      // A plant in one sample's spine-core row is the one difference named, and a renamed page is named as a page.
+      const moved = JSON.parse(JSON.stringify(spine)) as OracleDump;
+      const row = moved.animations[0].samples[3].uvs.find((x) => x[0] === 'm180');
+      if (row === undefined) probes.push('no m180 row to plant into');
+      else {
+        row[3][5] = (row[3][5] ?? 0) + 0.000001;
+        const one = compareDumps(spine, moved, { xy: 0, m: 0 });
+        const all = [...one.document, ...one.rows.flatMap((r) => r.findings)];
+        if (all.length !== 1 || !all[0].includes('uvs "m180/a" v of pair 2 Δ 0.000001')) probes.push(`a UV moved one grid step read ${one.identical ? 'IDENTICAL' : `${all.length} difference(s): ${all.slice(0, 2).join(' | ')}`}`);
+        row[3][5] = (row[3][5] ?? 0) - 0.000001;
+        row[2] = 'elsewhere.png';
+        const page = compareDumps(spine, moved, { xy: 0, m: 0 });
+        if (page.rows.reduce((n, r) => n + (r.mismatches.uvPage ?? 0), 0) !== 1) probes.push('a renamed page was not named once as a page');
+      }
+      // The command line.
+      const dir = join(work, 'uvs-cli');
+      mkdirSync(dir, { recursive: true });
+      for (const [f, t] of [['skeleton.json', pair.spine], ['skeleton.atlas', pair.atlas], ['model.json', pair.model], ['short.atlas', uvAtlasText(UV_REGIONS.filter((r) => r.name !== 's05'))]] as const) writeFileSync(join(dir, f), t);
+      const out = join(dir, 'out.json');
+      const cases: Array<[string, string[], string]> = [
+        ['--atlas on the spine-core dump', ['dump', join(dir, 'skeleton.json'), join(dir, 'skeleton.atlas'), '--atlas', join(dir, 'skeleton.atlas'), '--out', out], '--atlas is the core dump\'s'],
+        ['an --atlas that does not exist', ['dump', '--core', join(dir, 'model.json'), '--atlas', join(dir, 'none.atlas'), '--out', out], '--atlas'],
+        ['an atlas lacking a frame the pose draws', ['dump', '--core', join(dir, 'model.json'), '--atlas', join(dir, 'short.atlas'), '--out', out], 'draws atlas region "s05" (frame 2 of its series over "s"), and the atlas has no region of that name'],
+      ];
+      for (const [label, args, expected] of cases) {
+        const run = runOracle(args);
+        if (run.status !== 2 || !run.stderr.includes(expected) || existsSync(out)) probes.push(`${label}: exit ${run.status}, ${existsSync(out) ? 'a file written' : 'nothing written'}, stderr ${JSON.stringify(run.stderr.trim().slice(0, 200))}`);
+      }
+      const ok = runOracle(['dump', '--core', join(dir, 'model.json'), '--atlas', join(dir, 'skeleton.atlas'), '--out', out]);
+      if (ok.status !== 0 || !ok.stdout.includes(`setup.uvs ${UV_SLOTS.length} posed, animations.uvs posed`)) probes.push(`the core dump with its atlas: exit ${ok.status}, ${JSON.stringify(ok.stdout.trim().slice(0, 200))}`);
+      // A document one spec older is refused by name rather than compared on the cells it has.
+      const older = join(dir, 'older.json');
+      writeFileSync(older, dumpText({ ...spine, spec: 'pose-oracle/3' }));
+      const refused = runOracle(['compare', older, out]);
+      if (refused.status !== 2 || !refused.stderr.includes('spec is "pose-oracle/3", not "pose-oracle/4"')) probes.push(`a pose-oracle/3 document: exit ${refused.status}, stderr ${JSON.stringify(refused.stderr.trim().slice(0, 160))}`);
+      // The series' fields the reader refuses, each by its path.
+      const bad = (edit: (seq: Obj) => void): string => {
+        const doc = JSON.parse(pair.model) as { skins: Array<{ attachments: Record<string, { a: Obj }> }> };
+        edit(doc.skins[0].attachments.seq.a.sequence as Obj);
+        try {
+          readUvSequences(doc);
+          return '';
+        } catch (err) {
+          return (err as Error).message;
+        }
+      };
+      const at = 'skins[0] "default".attachments["seq"]["a"].sequence';
+      for (const [label, message, expected] of [
+        ['digits -1', bad((q) => (q.digits = -1)), `${at}: digits is -1, not a whole number of at least 0`],
+        ['start 1.5', bad((q) => (q.start = 1.5)), `${at}: start is 1.5, not a whole number of at least 0`],
+        ['setup at the count', bad((q) => (q.setup = 3)), `${at}: setup is 3, and a 3-frame series has frames 0 to 2`],
+      ] as const) if (!message.includes(expected)) probes.push(`${label}: ${message === '' ? 'read' : `refused as ${JSON.stringify(message)}`}, not naming ${JSON.stringify(expected)}`);
+      // Under the step, a slider keying a series leaves both blocks out naming it; unstepped the same rig reads IDENTICAL.
+      const slid = remainderPair({
+        bones: [{ name: 'root' }], slots: [{ name: 's', bone: 'root', attachment: 'r' }], skins: { default: { s: { r: { kind: 'region', path: 'a', frames: 4, setup: 1 } } } },
+        constraints: [{ type: 'slider', name: 'sl', animation: 'sa', time: 0.5 }], anims: { sa: { sequence: [{ slot: 's', attachment: 'r', keys: [{ time: 0, index: 3 }] }] }, a: { bones: { root: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 5 }] } } } },
+      });
+      const stepped = coreDump(readModel(slid.model), UV_STEP, {}, uvSourceOf(slid.atlas, slid.model));
+      for (const block of ['setup.uvs', 'animations.uvs']) if (!(stepped.absent?.find((x) => x[0] === block)?.[1] ?? '').includes('slider "sl" applies animation "sa", which keys a sequence')) probes.push(`a slider keying a series under the step: ${block} not left out naming it`);
+      const plain = compareDumps(remainderSpine(slid, UV_NONE), coreDump(readModel(slid.model), UV_NONE, {}, uvSourceOf(slid.atlas, slid.model)), { xy: 0, m: 0 });
+      if (!plain.identical || plain.skipped.some((x) => x.includes('uvs'))) probes.push(`the same slider unstepped: ${plain.identical ? 'uvs SKIPPED' : plain.first}`);
+    } catch (err) {
+      probes.push(`the probe did not load or pose: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CU05_WITHOUT_AN_ATLAS_THE_BLOCKS_ARE_ABSENT_AND_A_MISSING_REGION_A_STALE_SPEC_A_BAD_SERIES_AND_A_STEPPED_SLIDER_ARE_NAMED',
+      held,
+      probeDetail(held, probes, 'no --atlas: both blocks absent naming why and SKIPped by compare, nothing else; a UV moved one grid step in one sample is the one difference named, and a renamed page a page; --atlas on the spine-core dump, an --atlas that does not exist and an atlas lacking the series\' third frame exit 2 naming it with nothing written; the core dump with its atlas poses every slot; a pose-oracle/3 document refused by name; digits -1, start 1.5 and a setup at the count refused naming the path; a slider stepping a series leaves both blocks out under the step naming it, and reads IDENTICAL unstepped'),
+      'issue #967: the model carries no page layout, so without the atlas there is nothing to pose from — absent by name, never a value; an atlas that cannot draw what the pose shows is refused as spine-core refuses to load the pair, and what this construct does not pose is named, never guessed',
+    );
+  }
+
+  // --- CU06: rigc's atlas lookup finds the region and page spine-core's does, on every corpus atlas and the probe's edge cases --
+  {
+    const probes: string[] = [];
+    const texts: Array<[string, string]> = built.map((b) => [b.name, readFileSync(join(b.out, 'skeleton.atlas'), 'utf8')]);
+    const exportRoot = join(root, 'examples');
+    if (existsSync(exportRoot)) {
+      for (const ex of readdirSync(exportRoot).sort()) {
+        const dir = join(exportRoot, ex, 'export');
+        if (!existsSync(dir)) continue;
+        for (const f of readdirSync(dir).sort()) if (f.endsWith('.atlas')) texts.push([`examples/${ex}/export/${f}`, readFileSync(join(dir, f), 'utf8')]);
+      }
+    }
+    // The edge cases: two regions of one name (the first is drawn), and a region line with a trailing blank (found only under its raw name).
+    texts.push(['two regions named alike, and a raw name', 'p.png\n\tsize: 64, 64\nseq\n\tindex: 1\n\tbounds: 0, 0, 1, 1\nseq\n\tindex: 2\n\tbounds: 2, 0, 1, 1\nart \n\tbounds: 4, 0, 3, 3\n']);
+    let names = 0;
+    for (const [label, text] of texts) {
+      const runtime = new TextureAtlas(text);
+      const lookup = atlasRegionLookup(parseAtlasText(text));
+      const queried = [...new Set([...runtime.regions.map((r) => r.name), 'art', 'nosuch'])];
+      for (const name of queried) {
+        names++;
+        const theirs = runtime.findRegion(name);
+        const ours = lookup(name);
+        if ((theirs === null) !== (ours === null)) {
+          probes.push(`${label}: "${name}" found by ${theirs === null ? 'the reader alone' : 'the runtime alone'}`);
+          continue;
+        }
+        if (theirs === null || ours === null) continue;
+        const a = [theirs.page.name, theirs.page.width, theirs.page.height, theirs.x, theirs.y, theirs.width, theirs.height, theirs.offsetX, theirs.offsetY, theirs.originalWidth, theirs.originalHeight, theirs.degrees].join(',');
+        const b = [ours.page.name, ours.page.width, ours.page.height, ours.region.x, ours.region.y, ours.region.width, ours.region.height, ours.region.offsetX, ours.region.offsetY, ours.region.originalWidth, ours.region.originalHeight, ours.region.degrees].join(',');
+        if (a !== b) probes.push(`${label}: "${name}" is [${b}] to the reader and [${a}] to the runtime`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'CU06_THE_ATLAS_LOOKUP_FINDS_THE_REGION_AND_PAGE_SPINE_CORE_FINDS_ON_EVERY_CORPUS_ATLAS',
+      held,
+      probeDetail(held, probes, `${texts.length} atlas text(s) — every gated row's build atlas, every fetched editor pack, and two regions named alike beside a region line with a trailing blank — ${names} name(s) looked up, a name no region carries among them: the same region, page, size, rectangle, trim and rotation as TextureAtlas.findRegion, or none where it finds none`),
+      'issue #967: the core draws through rigc\'s own reader rather than the runtime\'s, so the lookup the page UVs start from — the first region of a name, the raw line compared as it is — is held against the runtime\'s on every atlas the tree has',
+    );
+  }
+
+  // ===========================================================================
   // Per skin (issue #932, and card #961's fix): the gate poses each declared
   // skin with `--skin <name>` on both dumpers. Each rule was measured by
   // dumping hand-written skeletons through spine-core under `--skin all`,
@@ -72114,7 +72551,7 @@ function runCoreSuite(): number {
   };
   const skinCompare = (pair: { spine: string; model: string; atlas: string }, options: OracleOptions, plant: TimelinePlant = {}): { spine: OracleDump; core: OracleDocument; c: ReturnType<typeof compareDumps> } => {
     const spine = remainderSpine(pair, options);
-    const core = coreDump(readModel(pair.model, 'the skin probe'), options, plant);
+    const core = coreDump(readModel(pair.model, 'the skin probe'), options, plant, uvSourceOf(pair.atlas, pair.model));
     return { spine, core, c: compareDumps(spine, core, { xy: 0, m: 0 }) };
   };
   /** The core's slot resolution, planted: under a named skin, that skin alone — the default skin not consulted. */
@@ -72291,7 +72728,7 @@ function runCoreSuite(): number {
       const a = join(dir, `spine-${skin}.json`);
       const b = join(dir, `core-${skin}.json`);
       const ra = runOracle(['dump', join(dir, 'skeleton.json'), join(dir, 'skeleton.atlas'), '--out', a, '--skin', skin]);
-      const rb = runOracle(['dump', '--core', join(dir, 'model.json'), '--out', b, '--skin', skin]);
+      const rb = runOracle(['dump', '--core', join(dir, 'model.json'), '--atlas', join(dir, 'skeleton.atlas'), '--out', b, '--skin', skin]);
       const cmp = ra.status === 0 && rb.status === 0 ? runOracle(['compare', a, b]) : null;
       const last = cmp?.stdout.trim().split('\n').pop() ?? '';
       if (cmp?.status !== 0 || !last.startsWith('IDENTICAL') || last.includes('SKIPPED')) probes.push(`--skin ${skin}: dump exits ${ra.status} and ${rb.status}, compare ${cmp?.status ?? 'not run'}: ${JSON.stringify(last || rb.stderr.trim())}`);

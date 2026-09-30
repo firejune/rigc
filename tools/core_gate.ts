@@ -26,7 +26,10 @@
  * `drawOrder`, `attachments`, `clips`, `clipped` and `events` (`GATE_BLOCKS`;
  * the sample's draw order, attachments, clips and events and the setup's draw
  * order since issue #955, both `clipped` blocks since issue #964, with a
- * clipping census — `CLIPPED_CENSUS_FIELDS` — off the spine-core dump) — is
+ * clipping census — `CLIPPED_CENSUS_FIELDS` — off the spine-core dump; both
+ * `uvs` blocks since issue #967, the core reading the build's
+ * `skeleton.atlas` beside the model, judged at tolerance 0 and with a census
+ * of what they reach — `UV_CENSUS_FIELDS`) — is
  * judged on its own, by a
  * `compare` of the spine-core dump against the core's with the other posed
  * blocks left out, and reads:
@@ -180,9 +183,10 @@ import { BONE_TIMELINE_KINDS, sampleTime, SLOT_TIMELINE_KINDS, type TimelinePlan
 import { ADMITTED_CONSTRAINT_KINDS, TRANSFORM_PROPERTIES, type CoreConstraintRecord } from '../src/core/constraints.ts';
 import { slotBonePlan, type CorePathRecord } from '../src/core/constraints_path.ts';
 import { EVERY_GLOBAL_PHYSICS, PHYSICS_DEFAULTS, stepSchedule, type CorePhysicsRecord } from '../src/core/constraints_physics.ts';
-import { CORE_CONSTRAINT_KINDS } from '../src/core/index.ts';
+import { CORE_CONSTRAINT_KINDS, type CompiledDocument } from '../src/core/index.ts';
 import { MODEL_DOCUMENT_FILE } from '../src/model.ts';
 import { HashesInputError, readRecipes, runRecipes, TREE_ROOT, treeRecipes, type Recipe } from './emit_hashes.ts';
+import { drawnRegions, shownAtSample, shownAtSetup, type DrawnRegion, type UvReading, type UvSource } from '../src/core/uvs.ts';
 import {
   compareDumps,
   coreDump,
@@ -194,6 +198,7 @@ import {
   ORACLE_DEFAULT_TOL,
   OracleInputError,
   parseDt,
+  uvSourceOf,
   type OracleBlock,
   type OracleComparison,
   type OracleDocument,
@@ -312,8 +317,8 @@ export type PathCensusRow = Record<PathCensusField, number>;
 
 /** The blocks the core poses, each judged on its own, in the document's order. */
 export const GATE_BLOCKS = [
-  'setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips', 'setup.clipped',
-  'animations.bones', 'animations.slots', 'animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.clipped', 'animations.events',
+  'setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips', 'setup.clipped', 'setup.uvs',
+  'animations.bones', 'animations.slots', 'animations.drawOrder', 'animations.attachments', 'animations.clips', 'animations.clipped', 'animations.uvs', 'animations.events',
 ] as const;
 export type GateBlock = (typeof GATE_BLOCKS)[number];
 
@@ -365,13 +370,14 @@ export interface AnimationVerdict {
   attachments: BlockVerdict;
   clips: BlockVerdict;
   clipped: BlockVerdict;
+  uvs: BlockVerdict;
   events: BlockVerdict;
   /** The first difference, on a DIFF. */
   why: string | null;
 }
 
 /** An animation's verdicts before any block is judged: every block SKIP. */
-const unjudged = (name: string): AnimationVerdict => ({ name, bones: 'SKIP', slots: 'SKIP', drawOrder: 'SKIP', attachments: 'SKIP', clips: 'SKIP', clipped: 'SKIP', events: 'SKIP', why: null });
+const unjudged = (name: string): AnimationVerdict => ({ name, bones: 'SKIP', slots: 'SKIP', drawOrder: 'SKIP', attachments: 'SKIP', clips: 'SKIP', clipped: 'SKIP', uvs: 'SKIP', events: 'SKIP', why: null });
 
 export type GateVerdict = 'IDENTICAL' | 'SKIP' | 'DIFF' | 'REFUSED';
 export type BlockVerdict = 'IDENTICAL' | 'SKIP' | 'DIFF';
@@ -404,6 +410,8 @@ export interface GateRow {
   stepped?: SteppedRow;
   /** What the spine-core dump draws under a clip (issue #964); absent on a REFUSED row. */
   clippedCensus?: ClippedCensusRow;
+  /** What the drawn attachments' page UVs reach (issue #967); absent on a REFUSED row. */
+  uvCensus?: UvCensusRow;
   /** One run per declared skin (issue #932) on a row declaring several; empty on a row declaring one or none, absent on a REFUSED row. */
   perSkin?: SkinRun[];
 }
@@ -464,6 +472,70 @@ export function clippedReachLines(rows: readonly GateRow[]): string[] {
   for (const f of CLIPPED_CENSUS_FIELDS) {
     const on = judged.filter((r) => (r.clippedCensus?.[f] ?? 0) > 0).map((r) => r.name);
     out.push(on.length > 0 ? `  REACH clipped ${f}: ${on.join(', ')}` : `  HOLE  clipped ${f}: no compared row reaches it — the core suite's CL probes are its only reading`);
+  }
+  return out;
+}
+
+/** The page UVs judge at tolerance 0 (issue #967). */
+export const UV_TOL = { xy: 0, m: 0 };
+
+/**
+ * The page UVs' census fields (issue #967), each a count of drawn rows — the
+ * setup pose's and every sample's, as the core resolves them
+ * (`drawnRegions` in `src/core/uvs.ts`): a region, a mesh, a linked mesh; a
+ * region on the page at `rotate` 90, 180, 270 or another value; a trimmed one
+ * (offsets other than 0 or an original size other than the kept one); one of
+ * a series; one whose region name is not the attachment's (a `path`) — and
+ * `pages`, the number of pages drawn from when it is two or more (0 on a row
+ * drawing from one).
+ */
+export const UV_CENSUS_FIELDS = ['region', 'mesh', 'linkedmesh', 'rotate90', 'rotate180', 'rotate270', 'rotateOther', 'trimmed', 'sequence', 'pathDiffers', 'pages'] as const;
+export type UvCensusRow = Record<(typeof UV_CENSUS_FIELDS)[number], number>;
+
+/** Every drawn row the core resolves to an atlas region — the setup pose's and every sample's under `options`, as `drawnRegions` in `src/core/uvs.ts` resolves them; a pose the core leaves out contributes none. */
+export function uvDrawnOf(doc: CompiledDocument, uv: UvSource, options: OracleOptions): DrawnRegion[] {
+  const order = doc.slots.map((s) => s.name);
+  const poses = [shownAtSetup(doc), ...doc.animations.flatMap((a) => Array.from({ length: options.samples }, (_v, i) => shownAtSample(doc, a, sampleTime(options.phase, a.timelines.duration, i, options.samples))))];
+  return poses.flatMap((pose) => (pose.why.length > 0 ? [] : (drawnRegions(doc, pose.shown, order, uv).drawn ?? [])));
+}
+
+/** The page-UV census of one model and its atlas, under `options`' samples. */
+export function uvCensusOf(doc: CompiledDocument, uv: UvSource, options: OracleOptions): UvCensusRow {
+  const out: UvCensusRow = { region: 0, mesh: 0, linkedmesh: 0, rotate90: 0, rotate180: 0, rotate270: 0, rotateOther: 0, trimmed: 0, sequence: 0, pathDiffers: 0, pages: 0 };
+  const pages = new Set<string>();
+  for (const d of uvDrawnOf(doc, uv, options)) {
+    out[d.kind]++;
+    const g = d.found.region;
+    if (g.degrees === 90) out.rotate90++;
+    else if (g.degrees === 180) out.rotate180++;
+    else if (g.degrees === 270) out.rotate270++;
+    else if (g.degrees !== 0) out.rotateOther++;
+    if (isTrimmed(g)) out.trimmed++;
+    if (d.frame !== null) out.sequence++;
+    if (d.region !== d.name) out.pathDiffers++;
+    pages.add(d.found.page.name);
+  }
+  out.pages = pages.size >= 2 ? pages.size : 0;
+  return out;
+}
+
+/** A region whose atlas kept less than the drawing: offsets other than 0, or an original size other than the kept one. */
+export function isTrimmed(g: { offsetX: number; offsetY: number; width: number; height: number; originalWidth: number; originalHeight: number }): boolean {
+  return g.offsetX !== 0 || g.offsetY !== 0 || g.originalWidth !== g.width || g.originalHeight !== g.height;
+}
+
+/** One line per row drawing a region or a mesh, then each field REACHed by a row whose both `uvs` blocks read IDENTICAL, or a HOLE. */
+export function uvReachLines(rows: readonly GateRow[]): string[] {
+  const out: string[] = [];
+  for (const r of rows) {
+    const c = r.uvCensus;
+    if (c === undefined) continue;
+    out.push(`  UVS   ${r.name}: ${UV_CENSUS_FIELDS.map((f) => `${f} ${c[f]}`).join(', ')} — setup.uvs ${r.blocks?.['setup.uvs'].verdict}, animations.uvs ${r.blocks?.['animations.uvs'].verdict}`);
+  }
+  const judged = rows.filter((r) => r.blocks !== null && r.blocks['setup.uvs'].verdict === 'IDENTICAL' && r.blocks['animations.uvs'].verdict === 'IDENTICAL');
+  for (const f of UV_CENSUS_FIELDS) {
+    const on = judged.filter((r) => (r.uvCensus?.[f] ?? 0) > 0).map((r) => r.name);
+    out.push(on.length > 0 ? `  REACH uvs ${f}: ${on.join(', ')}` : `  HOLE  uvs ${f}: no compared row reaches it — the core suite's CU probes are its only reading`);
   }
   return out;
 }
@@ -871,6 +943,7 @@ function only(core: OracleDocument, keep: GateBlock): OracleDocument {
     else if (block === 'setup.attachments') setup.attachments = null;
     else if (block === 'setup.clips') setup.clips = null;
     else if (block === 'setup.clipped') setup.clipped = null;
+    else if (block === 'setup.uvs') setup.uvs = null;
     else {
       const field = block.slice('animations.'.length);
       animations = (animations ?? []).map((a) => ({ ...a, samples: a.samples.map((x) => ({ ...x, [field]: null })) }));
@@ -888,11 +961,11 @@ function only(core: OracleDocument, keep: GateBlock): OracleDocument {
  * (every block the core writes, #955's among them), the `dt` both documents
  * state, and the steps the core's schedule takes between samples.
  */
-export function steppedRun(skeletonText: string, atlasText: string, skeletonPath: string, modelText: string, modelPath: string, plant: TimelinePlant, tol: { xy: number; m: number }, skin: string = STEPPED_OPTIONS.skin): SteppedRow {
+export function steppedRun(skeletonText: string, atlasText: string, skeletonPath: string, modelText: string, modelPath: string, plant: TimelinePlant, tol: { xy: number; m: number }, skin: string = STEPPED_OPTIONS.skin, uvReading?: UvReading): SteppedRow {
   const options: OracleOptions = { ...STEPPED_OPTIONS, skin };
   const spine = dumpSkeleton(loadOracleData(skeletonText, atlasText, skeletonPath), options);
   const doc = readModel(modelText, modelPath);
-  const core = coreDump(doc, options, plant);
+  const core = coreDump(doc, options, plant, uvSourceOf(atlasText, modelText, uvReading));
   const census = steppedCensusOf(modelText);
   const dt = spine.options.dt === core.options.dt ? core.options.dt : null;
   const steps = doc.animations.map((a) => ({ animation: a.name, counts: stepSchedule(STEPPED_OPTIONS.phase, a.timelines.duration, STEPPED_OPTIONS.samples, STEPPED_OPTIONS.dt as number).map((x) => x.length) }));
@@ -915,8 +988,8 @@ export function steppedRun(skeletonText: string, atlasText: string, skeletonPath
   return skipped.length === 0 ? { verdict: 'IDENTICAL', why: null, dt, boneSamples, steps, census } : { verdict: 'SKIP', why: skipped.join(' | '), dt, boneSamples, steps, census };
 }
 
-/** One built row: both dumps, the comparisons — whole and per block — and the census. `plant` replaces a part of the core (a control's plant). */
-export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {}): GateRow {
+/** One built row: both dumps, the comparisons — whole and per block — and the census. `plant` replaces a part of the core (a control's plant), `uvReading` a rejected page-UV reading (`src/core/uvs.ts`). */
+export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {}, uvReading?: UvReading): GateRow {
   const skeleton = join(outDir, 'skeleton.json');
   const atlas = join(outDir, 'skeleton.atlas');
   const model = join(outDir, MODEL_DOCUMENT_FILE);
@@ -936,6 +1009,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   let stepped: SteppedRow;
   let attachmentRows = 0;
   let clippedCensus: ClippedCensusRow;
+  let uvCensus: UvCensusRow;
   const perSkin: SkinRun[] = [];
   // What the per-skin runs compared, added to the merged run's figures.
   const extra = { boneSamples: 0, slotRows: 0, attachmentRows: 0, worstXy: 0, worstM: 0 };
@@ -943,10 +1017,14 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
     const spine = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), GATE_OPTIONS);
     const modelText = readFileSync(model, 'utf8');
     const modelDoc = readModel(modelText, model);
-    const core = coreDump(modelDoc, GATE_OPTIONS, plant);
+    // The core's page UVs read the build's own atlas beside the model (issue #967): the model carries no page layout.
+    const atlasText = readFileSync(atlas, 'utf8');
+    const uv = uvSourceOf(atlasText, modelText, uvReading);
+    const core = coreDump(modelDoc, GATE_OPTIONS, plant, uv);
     const tol = { xy: ORACLE_DEFAULT_TOL, m: ORACLE_DEFAULT_TOL };
     c = compareDumps(spine, core, tol);
     clippedCensus = clippedCensusOf(spine);
+    uvCensus = uvCensusOf(modelDoc, uvSourceOf(atlasText, modelText), GATE_OPTIONS);
     const judged = judgeBlocks(spine, core, tol);
     Object.assign(blocks, judged.blocks);
     for (const [k, v] of judged.animations) perAnimation.set(k, v);
@@ -955,7 +1033,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
       for (const k of modelDoc.skins) {
         const options: OracleOptions = { ...GATE_OPTIONS, skin: k.name };
         const spineK = dumpSkeleton(loadOracleData(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton), options);
-        const coreK = coreDump(modelDoc, options, plant);
+        const coreK = coreDump(modelDoc, options, plant, uv);
         const whole = compareDumps(spineK, coreK, tol);
         const j = judgeBlocks(spineK, coreK, tol);
         const skippedK = GATE_BLOCKS.filter((b) => j.blocks[b].verdict === 'SKIP');
@@ -965,7 +1043,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
         if (j.blocks['setup.slots'].verdict !== 'SKIP') extra.slotRows += coreK.setup.slots?.length ?? 0;
         if (j.blocks['setup.attachments'].verdict !== 'SKIP') extra.attachmentRows += coreK.setup.attachments?.length ?? 0;
         if (j.blocks['setup.clips'].verdict !== 'SKIP') extra.attachmentRows += coreK.setup.clips?.length ?? 0;
-        const steppedK = steppedRun(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton, modelText, model, plant, tol, k.name);
+        const steppedK = steppedRun(readFileSync(skeleton, 'utf8'), atlasText, skeleton, modelText, model, plant, tol, k.name, uvReading);
         perSkin.push({
           skin: k.name,
           verdict: !whole.identical ? 'DIFF' : skippedK.length > 0 ? 'SKIP' : 'IDENTICAL',
@@ -987,7 +1065,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
     attachmentCensus = attachmentCensusOf(modelText, reflecting, sheared);
     constraintCensus = constraintCensusOf(modelText);
     pathCensus = pathCensusOf(modelText);
-    stepped = steppedRun(readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), skeleton, modelText, model, plant, tol);
+    stepped = steppedRun(readFileSync(skeleton, 'utf8'), atlasText, skeleton, modelText, model, plant, tol, STEPPED_OPTIONS.skin, uvReading);
   } catch (err) {
     if (err instanceof OracleInputError || err instanceof CoreInputError) return refused(err.message);
     throw err;
@@ -996,7 +1074,7 @@ export function gateBuild(name: string, outDir: string, plant: TimelinePlant = {
   const setupRow = c.rows.find((x) => x.name === '(setup)');
   const base = {
     name, blocks, boneSamples: c.boneSamples + extra.boneSamples, slotRows: slotRows + extra.slotRows, worstXy: Math.max(c.worstXy, extra.worstXy), worstM: Math.max(c.worstM, extra.worstM), census, slotCensus,
-    attachmentRows: attachmentRows + extra.attachmentRows, vertices: setupRow?.vertices ?? 0, attachmentCensus, constraintCensus, pathCensus, animations, animationCensus, stepped: combineStepped(stepped, perSkin), clippedCensus, perSkin,
+    attachmentRows: attachmentRows + extra.attachmentRows, vertices: setupRow?.vertices ?? 0, attachmentCensus, constraintCensus, pathCensus, animations, animationCensus, stepped: combineStepped(stepped, perSkin), clippedCensus, uvCensus, perSkin,
   };
   if (!c.identical) return { ...base, verdict: 'DIFF', why: c.first };
   const redSkin = perSkin.find((k) => k.verdict === 'DIFF');
@@ -1016,7 +1094,8 @@ function judgeBlocks(spine: OracleDocument, core: OracleDocument, tol: { xy: num
       blocks[block] = { verdict: 'SKIP', why };
       continue;
     }
-    const alone = compareDumps(spine, only(core, block), tol);
+    // The page UVs are judged at tolerance 0 on the grid (issue #967): a UV off by one grid step is a different texel on a page of 10⁶ or more.
+    const alone = compareDumps(spine, only(core, block), block.endsWith('.uvs') ? UV_TOL : tol);
     blocks[block] = alone.identical ? { verdict: 'IDENTICAL', why: null } : { verdict: 'DIFF', why: alone.first };
     if (block.startsWith('animations.')) {
       const field = block.slice('animations.'.length) as SampleField;
@@ -1034,7 +1113,7 @@ function judgeBlocks(spine: OracleDocument, core: OracleDocument, tol: { xy: num
   return { blocks, animations: perAnimation };
 }
 
-type SampleField = 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'clipped' | 'events';
+type SampleField = 'bones' | 'slots' | 'drawOrder' | 'attachments' | 'clips' | 'clipped' | 'uvs' | 'events';
 
 /**
  * A block the merged run (`--skin all`) leaves out and EVERY per-skin run
@@ -1092,12 +1171,12 @@ export function buildRecipes(recipes: readonly Recipe[], work: string, root: str
   return built.recipes.map((r, i) => ({ name: r.name, out: join(work, String(i).padStart(width, '0'), 'out'), exits: r.exits }));
 }
 
-/** Built rows gated; `plant` replaces a part of the core on every row (a control's plant). */
-export function gateBuilt(built: readonly BuiltRow[], plant: TimelinePlant = {}): GateRow[] {
+/** Built rows gated; `plant` replaces a part of the core on every row (a control's plant), `uvReading` a rejected page-UV reading. */
+export function gateBuilt(built: readonly BuiltRow[], plant: TimelinePlant = {}, uvReading?: UvReading): GateRow[] {
   return built.map((r) =>
     r.exits.some((e) => e !== 0)
       ? { name: r.name, verdict: 'REFUSED' as const, why: `the build chain exited ${JSON.stringify(r.exits)}`, blocks: null, boneSamples: 0, slotRows: 0, worstXy: 0, worstM: 0, census: null, slotCensus: null, attachmentRows: 0, vertices: 0, attachmentCensus: null, constraintCensus: null, pathCensus: null, animations: [], animationCensus: null }
-      : gateBuild(r.name, r.out, plant),
+      : gateBuild(r.name, r.out, plant, uvReading),
   );
 }
 
@@ -1447,7 +1526,7 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
         `  ${row.verdict.padEnd(9)} ${row.name}${blocks}: ${row.boneSamples} bone-sample(s), ${row.slotRows} slot row(s) and ${row.attachmentRows} attachment row(s) of ${row.vertices} vertices compared, worst Δxy ${row.worstXy.toFixed(6)}, worst Δabcd ${row.worstM.toFixed(6)}` +
           (row.why === null ? '' : ` — ${row.why}`),
       );
-      for (const a of row.animations) print(`              animation ${JSON.stringify(a.name)}: bones ${a.bones}, slots ${a.slots}, drawOrder ${a.drawOrder}, attachments ${a.attachments}, clips ${a.clips}, clipped ${a.clipped}, events ${a.events}${a.why === null ? '' : ` — ${a.why}`}`);
+      for (const a of row.animations) print(`              animation ${JSON.stringify(a.name)}: bones ${a.bones}, slots ${a.slots}, drawOrder ${a.drawOrder}, attachments ${a.attachments}, clips ${a.clips}, clipped ${a.clipped}, uvs ${a.uvs}, events ${a.events}${a.why === null ? '' : ` — ${a.why}`}`);
       for (const k of row.perSkin ?? []) {
         print(`              skin ${JSON.stringify(k.skin)}: ${k.verdict} [${GATE_BLOCKS.map((b) => `${b} ${k.blocks[b].verdict}`).join(', ')}], stepped bones ${k.stepped.verdict}${k.why === null ? '' : ` — ${k.why}`}${k.stepped.why === null ? '' : ` — stepped: ${k.stepped.why}`}`);
       }
@@ -1480,6 +1559,7 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     for (const line of pathReachLines(rows)) print(line);
     for (const line of steppedReachLines(rows)) print(line);
     for (const line of clippedReachLines(rows)) print(line);
+    for (const line of uvReachLines(rows)) print(line);
     for (const line of skinReachLines(rows)) print(line);
     const kinds = new Map<string, string[]>();
     for (const row of rows) {

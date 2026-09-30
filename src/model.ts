@@ -209,6 +209,10 @@ export interface ModelSequence {
  * (#931: the atlas's `rotate` transposed into the corners was exact on 2018 of
  * 3000 probes, ignored on 3000 of 3000). The trim and the original size do not
  * move under either: rigc's packer never trims or rotates (`src/atlas.ts`).
+ * The draw, which does need the four — a region's page and page UVs — reads
+ * them off the atlas written beside this document, as a second input
+ * (`src/core/uvs.ts`, issue #967): measured at tolerance 0 against the
+ * runtime's own arrays on every corpus row with the model unchanged.
  */
 export interface ModelAtlasRect {
   width: number;
