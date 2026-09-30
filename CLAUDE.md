@@ -362,11 +362,14 @@ HOLE line naming the file and the command; they never pass on nothing.
 through `rigc render --geometry` at the protocol rate, and hashed file by file —
 frames, contact sheets, `geometry.json`, `frames.json` — with the framing box's
 numbers, the setup pose drawn over the same box and every bone snapshot beside
-them. Two `run` documents from one machine, before and after a cut, are the
-gate (`compare`). The tracked gallery base, `tools/render_hashes.base.json`,
-holds the PNGs only, because a one-ulp change of every libm result moved none
-of them and moved every file carrying a double; `bun tools/render_hashes.ts
-base` writes it and `base --check` holds it current (`RH05`), so a change that
+them; every PNG carries two hashes, its file bytes and its decoded pixels. Two
+`run` documents from one machine, before and after a cut, are the gate
+(`compare`, which names a PNG whose bytes differ and pixels agree as the
+encoder's, not a DIFF). The tracked gallery base,
+`tools/render_hashes.base.json`, holds the PNGs' pixel hashes only: a one-ulp
+change of every libm result moved no PNG and every file carrying a double, and
+the PNG encoder on Linux CI wrote different bytes for the same frames than the
+macOS base (PR #972). `bun tools/render_hashes.ts base` writes it and `base --check` holds it current (`RH05`), so a change that
 moves a gallery render on purpose regenerates it in the same PR. CI uploads a
 run over every recipe as the `render-hashes-linux` artifact, which is where a
 second machine's doubles are read.

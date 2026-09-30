@@ -546,8 +546,10 @@ import {
   readRenderHashes,
   RENDER_BASE_COMMAND,
   RENDER_BASE_FILE,
+  pixelHash,
   RENDER_HASHES_SPEC,
   renderHashesText,
+  type RenderFile,
   type RenderHashesDocument,
 } from './tools/render_hashes.ts';
 import {
@@ -73003,7 +73005,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH06 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH07 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -73214,6 +73216,8 @@ function runRenderHashesSuite(): number | null {
     const doc = existsSync(fresh) ? readRenderHashes(fresh) : null;
     const notPng = doc?.recipes.flatMap((r) => r.files.filter((f) => !f.path.endsWith('.png')).map((f) => `${r.name} ${f.path}`)) ?? [];
     if (notPng.length > 0) probes.push(`the base holds ${notPng.length} file(s) that are not PNGs, e.g. ${notPng[0]} — those carry full doubles off libm`);
+    const notPixels = doc?.recipes.flatMap((r) => r.files.filter((f) => f.pixels === undefined || f.sha256 !== undefined || f.size !== undefined).map((f) => `${r.name} ${f.path}`)) ?? [];
+    if (notPixels.length > 0) probes.push(`${notPixels.length} base entr(ies) carry file bytes or no pixel hash, e.g. ${notPixels[0]} — the PNG encoder's bytes differ between macOS and Linux (PR #972)`);
     if (doc?.recipes.some((r) => r.framing !== null)) probes.push('the base records a framing box, whose numbers carry full doubles off libm');
     const check = runRenderHashes(['base', '--check', '--work', join(work, 'wk')]);
     const verdict = check.stdout.trim().split('\n').pop() ?? '';
@@ -73226,18 +73230,20 @@ function runRenderHashesSuite(): number | null {
     }
     const held = probes.length === 0;
     say(
-      'RH05_THE_TRACKED_RENDER_BASE_IS_BYTE_IDENTICAL_TO_WHAT_BASE_WRITES_AND_HOLDS_PNGS_ONLY',
+      'RH05_THE_TRACKED_RENDER_BASE_IS_BYTE_IDENTICAL_TO_WHAT_BASE_WRITES_AND_HOLDS_PIXEL_HASHES_ONLY',
       held,
       probeDetail(
         held,
         probes,
         `${RENDER_BASE_FILE}, ${existsSync(trackedBase) ? statSync(trackedBase).size : 0} bytes over ${doc?.recipes.length ?? 0} gallery row(s) and ` +
-          `${doc?.recipes.reduce((n, r) => n + r.files.length, 0) ?? 0} PNG(s), no framing box, equals a fresh \`${RENDER_BASE_COMMAND}\` to the byte and ` +
+          `${doc?.recipes.reduce((n, r) => n + r.files.length, 0) ?? 0} PNG pixel hash(es) with no file bytes and no framing box, equals a fresh \`${RENDER_BASE_COMMAND}\` to the byte and ` +
           `\`--check\` reads ${verdict.split(' ')[0] || 'nothing'}; a copy re-indented by one space reads STALE with exit 1 naming its bytes and the command`,
       ),
-      'issue #965: the base CI checks on every run is the half of a render a second machine can be held to — the PNGs, ' +
-        'which a one-ulp change of every libm result moved by no byte, where every geometry file, sidecar, bone snapshot ' +
-        'and framing box moved (the tool\'s `## base`). Written by one command and never by hand, so bytes are the criterion',
+      'issue #965: the base CI checks on every run is the half of a render a second machine can be held to — the PNGs\' ' +
+        'pixels, which a one-ulp change of every libm result moved by no byte, where every geometry file, sidecar, bone ' +
+        'snapshot and framing box moved; and pixels rather than file bytes, because the first Linux run read every gallery ' +
+        'PNG\'s bytes differently from the macOS base (PR #972). Written by one command and never by hand, so the file\'s ' +
+        'own bytes are the criterion',
     );
   }
 
@@ -73274,6 +73280,67 @@ function runRenderHashesSuite(): number | null {
       probeDetail(held, probes, `${what} in a copy of the gallery, checked under --root: exit 1, DIFF naming gallery/${target} alone with the PNGs that moved, and a verdict naming ${RENDER_BASE_FILE} and \`${RENDER_BASE_COMMAND}\``),
       'a change that moves a gallery render on purpose is legitimate and must still go red until the base is regenerated ' +
         'in the same change, and the red has to carry the row, the file and the one command',
+    );
+  }
+
+  // --- RH07: a re-encoded PNG is the same render; a moved pixel is not --
+  {
+    const probes: string[] = [];
+    let figures = '';
+    const row = a.doc?.recipes.find((r) => r.files.some((f) => f.path.endsWith('.png')));
+    const file = row?.files.find((f) => f.path.endsWith('.png'));
+    const onDisk = row === undefined || file === undefined ? null : join(work, 'wa', String(a.doc?.recipes.indexOf(row) ?? 0), file.path);
+    if (a.doc === null || row === undefined || file === undefined || onDisk === null || !existsSync(onDisk)) probes.push('run A left no PNG on disk to re-encode');
+    else {
+      const bytes = readFileSync(onDisk);
+      const plate = decodePng(bytes);
+      const stride = plate.width * 4 + 1;
+      const raw = new Uint8Array(plate.height * stride);
+      for (let y = 0; y < plate.height; y++) raw.set(plate.data.subarray(y * plate.width * 4, (y + 1) * plate.width * 4), y * stride + 1);
+      const ihdr = new Uint8Array(13);
+      new DataView(ihdr.buffer).setUint32(0, plate.width);
+      new DataView(ihdr.buffer).setUint32(4, plate.height);
+      ihdr[8] = 8;
+      ihdr[9] = 6;
+      const levelOne = Buffer.concat([PNG_SIGNATURE, pngChunk('IHDR', ihdr), pngChunk('IDAT', new Uint8Array(deflateSync(raw, { level: 1 }))), pngChunk('IEND', new Uint8Array(0))].map((c) => Buffer.from(c)));
+      const moved = new Plate(plate.width, plate.height);
+      moved.data.set(plate.data);
+      moved.data[0] = (moved.data[0] + 1) & 255;
+      const reencoded = join(work, 'reencoded.png');
+      const movedPath = join(work, 'moved.png');
+      writeFileSync(reencoded, levelOne);
+      moved.writePng(movedPath);
+      const [p0, p1, p2] = [pixelHash(bytes), pixelHash(levelOne), pixelHash(readFileSync(movedPath))];
+      if (levelOne.equals(bytes)) probes.push('the level-1 re-encoding wrote the same bytes, so it measured nothing');
+      if (p1.sha256 !== p0.sha256) probes.push('re-encoding at deflate level 1 changed the pixel hash');
+      if (p2.sha256 === p0.sha256) probes.push('one red channel moved by one left the pixel hash unchanged');
+      // The same two plants through `compare`: a document whose PNG bytes differ and pixels agree, and one whose pixels differ.
+      const doc = a.doc;
+      const plant = (label: string, edit: (f: RenderFile) => RenderFile): { status: number | null; out: string } => {
+        const path = join(work, `${label}.json`);
+        writeFileSync(path, renderHashesText({ ...doc, recipes: doc.recipes.map((r) => (r.name !== row.name ? r : { ...r, files: r.files.map((f) => (f.path === file.path ? edit(f) : f)) })) }));
+        const run = runRenderHashes(['compare', a.out, path]);
+        return { status: run.status, out: run.stdout };
+      };
+      const encoded = plant('encoded', (f) => ({ ...f, size: levelOne.length, sha256: createHash('sha256').update(levelOne).digest('hex'), pixels: p1 }));
+      const pixelled = plant('pixelled', (f) => ({ ...f, pixels: p2 }));
+      const encodedLast = encoded.out.trim().split('\n').pop() ?? '';
+      if (encoded.status !== 0 || !encodedLast.startsWith('IDENTICAL IN PIXELS') || !encoded.out.includes(`  BYTES  ${row.name}`) || !encoded.out.includes(`${file.path}: bytes differ`)) {
+        probes.push(`the re-encoded document read exit ${String(encoded.status)} ${JSON.stringify(encodedLast)}, not IDENTICAL IN PIXELS naming ${file.path}`);
+      }
+      if (pixelled.status !== 1 || !pixelled.out.includes(`${file.path} differs: pixels`)) probes.push(`the moved-pixel document read exit ${String(pixelled.status)}, not a DIFF naming ${file.path}'s pixels`);
+      figures =
+        `${row.name} ${file.path}: ${bytes.length} bytes at deflate level 9 and ${levelOne.length} at level 1, pixel hash ${p0.sha256.slice(0, 12)} for both; ` +
+        `one red channel +1 hashes ${p2.sha256.slice(0, 12)}. Through compare: the re-encoded document reads IDENTICAL IN PIXELS with exit 0 naming the file under BYTES, the moved pixel a DIFF with exit 1`;
+    }
+    const held = probes.length === 0;
+    say(
+      'RH07_A_REENCODED_PNG_IS_THE_SAME_RENDER_AND_A_MOVED_PIXEL_IS_NOT',
+      held,
+      probeDetail(held, probes, figures),
+      'PR #972: the first Linux run read every gallery PNG\'s bytes differently from the macOS base on an unmoved renderer. ' +
+        'A render is its pixels, so the pixel hash has to be blind to the encoder and sighted for one channel of one ' +
+        'pixel, and an encoder-only difference is its own named verdict rather than a DIFF or a silent pass',
     );
   }
 
@@ -88591,7 +88658,8 @@ function main(): void {
           'equal to the byte over frames, sheets, geometry, the sidecar, the setup pose and the bone snapshots; one bone ' +
           'moved in a spec copy named as the one row; a refused build recorded unrendered and named against its green ' +
           'twin; bad inputs refused with exit 2 and nothing written; the tracked gallery base byte-identical to what ' +
-          '`base` writes and holding PNGs only; and a gallery render moved on purpose named by row and the one command)') +
+          '`base` writes and holding PNG pixel hashes only; a gallery render moved on purpose named by row and the one ' +
+          'command; and a PNG re-encoded at another deflate level read as the same render while one moved channel is not)') +
       ', + ' + n('model-bones') + ' model-bones controls (issue #915 — the compiled model\'s first record: `emitBones` ' +
       'restating a bone with every key in the constructor\'s order, which the key-order pass cannot restore for a key its ' +
       'row does not list; a name alone emitting the name alone; the mode and the skin flag under the Spine spellings; a ' +

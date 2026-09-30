@@ -52,7 +52,22 @@
  * - `recipes[]` — `name`, `stage`, `commands` as the recipes state them;
  *   `exits` — the build chain's exit codes; `renderExit` — the render's (`null`
  *   when the chain refused and nothing was rendered); `framing` —
- *   `frames.json`'s viewport, or `null`; `files` — `{ path, size, sha256 }`.
+ *   `frames.json`'s viewport, or `null`; `files` — `{ path, size, sha256 }`,
+ *   and on every PNG also `pixels` — `{ width, height, sha256 }` over the
+ *   image as `tools/plate.ts`'s `decodePng` reads it (see *Two hashes*).
+ *
+ * ### Two hashes per PNG, and which one is the render
+ *
+ * The file's bytes are the PNG encoder's output as much as the renderer's,
+ * and the encoder is not the same on every machine: the first Linux CI run
+ * of this tool (PR #972) read `gallery/flex`'s `gust/contact.png` as 24,444
+ * bytes in the macOS base and 24,541 on Linux, and every gallery row DIFF, on
+ * a tree whose renderer had not moved. A render is its pixels, so a PNG also
+ * carries `pixels.sha256`: SHA-256 over the width and the height (4 bytes
+ * each, big-endian) and then the RGBA rows top to bottom as `decodePng`
+ * returns them. Re-encoding one frame at deflate level 1 instead of 9, on the
+ * machine this was written on, changed its bytes and not that hash; moving one
+ * pixel's red by one changed it.
  *
  * The work directories are kept (numbered in name order, each with the build
  * logs, `log-render.txt`, `out/`, `render/` and `extra/`) and named on stderr.
@@ -60,8 +75,13 @@
  * ## `compare`
  *
  * IDENTICAL (exit 0) when every row has the same exits, framing numbers and
- * files. Otherwise DIFF (exit 1), naming per row the exits, each framing
- * number and each file that differs, and every row on one side only. Exit 2
+ * files. When the only files whose bytes differ are PNGs whose pixels agree,
+ * the verdict is **IDENTICAL IN PIXELS** (exit 0), naming each such file under
+ * a `BYTES` line — an encoder difference, not a render difference, and said
+ * rather than folded into either of the other two answers. Otherwise DIFF
+ * (exit 1), naming per row the exits, each framing number and each file that
+ * differs — a PNG by its pixel hashes whenever both sides carry them, anything
+ * else by its bytes — and every row on one side only. Exit 2
  * when the pair cannot be compared: not a `render-hashes/1` document, two
  * different render commands, or one recipe name standing for two builds.
  *
@@ -73,7 +93,8 @@
  * must be reproducible from a fresh checkout with no network; CI uploads a run
  * over all nineteen rows as the `render-hashes-linux` artifact instead.
  *
- * 🔸 **It holds the PNGs only, with `framing` null in every row**, because
+ * 🔸 **It holds the PNGs' PIXEL hashes only** — each file as `{ path, pixels }`
+ * with no `size` or `sha256` — **with `framing` null in every row**, because
  * those are the files measured to survive a change of libm and the rest are
  * measured not to. With every transcendental `Math` function's result moved by
  * one ulp (either direction, chosen per input), over the 19 recipes on the
@@ -83,9 +104,10 @@
  * macOS's and Linux's libm were measured apart once already (`Math.atan`,
  * `tools/emit_hashes.ts` `## base`). So the tracked base is the half a second
  * machine can be held to, and a `run` document — every file and number — is
- * the gate between two commits on ONE machine. What the perturbation does not
- * reach is the PNG encoder: `deflateSync` on a second platform is not measured
- * here, and CI's first `base --check` is that measurement. It is
+ * the gate between two commits on ONE machine. What the perturbation did not
+ * reach was the PNG encoder, and CI measured it: the file bytes differ between
+ * macOS and Linux (*Two hashes*), so the base holds pixels and `base --check`
+ * compares pixels. It is
  * written by one command (`base`) and never by hand; `base --check` renders the
  * rows afresh and compares the file BYTE for byte: CURRENT exits 0, STALE exits
  * 1 naming each differing row and file and the command that rewrites it. A
@@ -99,6 +121,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
+import { decodePng } from './plate.ts';
 import {
   BACKGROUND,
   loadPosable,
@@ -109,7 +132,7 @@ import {
   viewportOfSize,
   type FramesSidecar,
 } from '../src/render.ts';
-import { galleryRecipes, HashesInputError, readRecipes, recipesOfValue, runRecipe, TREE_ROOT, type HashedFile, type Recipe, type StageEntry } from './emit_hashes.ts';
+import { galleryRecipes, HashesInputError, readRecipes, recipesOfValue, runRecipe, TREE_ROOT, type Recipe, type StageEntry } from './emit_hashes.ts';
 
 export const RENDER_HASHES_SPEC = 'render-hashes/1';
 const CLI = join(TREE_ROOT, 'cli.ts');
@@ -123,11 +146,40 @@ export const RENDER_BASE_COMMAND = 'bun tools/render_hashes.ts base';
 
 export type Framing = FramesSidecar['viewport'];
 
+/** A PNG's decoded image, hashed — see *Two hashes per PNG*. */
+export interface PixelHash {
+  width: number;
+  height: number;
+  sha256: string;
+}
+
+/**
+ * One hashed file. `size`/`sha256` are the bytes and `pixels` the decoded
+ * image; a run carries both on a PNG and the bytes alone on anything else, and
+ * the tracked base carries `pixels` alone.
+ */
+export interface RenderFile {
+  path: string;
+  size?: number;
+  sha256?: string;
+  pixels?: PixelHash;
+}
+
+/** SHA-256 over width, height (u32 big-endian each) and the RGBA rows `decodePng` returns. */
+export function pixelHash(png: Uint8Array): PixelHash {
+  const plate = decodePng(png);
+  const head = new Uint8Array(8);
+  const view = new DataView(head.buffer);
+  view.setUint32(0, plate.width);
+  view.setUint32(4, plate.height);
+  return { width: plate.width, height: plate.height, sha256: createHash('sha256').update(head).update(plate.data).digest('hex') };
+}
+
 export interface RenderRow extends Recipe {
   exits: Array<number | null>;
   renderExit: number | null;
   framing: Framing | null;
-  files: HashedFile[];
+  files: RenderFile[];
 }
 
 export interface RenderHashesDocument {
@@ -136,9 +188,16 @@ export interface RenderHashesDocument {
   recipes: RenderRow[];
 }
 
-/** A run as the tracked base records it: the PNGs only, the framing numbers left out (see `## base`). */
+/** A run as the tracked base records it: every PNG's pixel hash alone, the framing numbers left out (see `## base`). */
 export function pixelsOnly(doc: RenderHashesDocument): RenderHashesDocument {
-  return { ...doc, recipes: doc.recipes.map((r) => ({ ...r, framing: null, files: r.files.filter((f) => f.path.endsWith('.png')) })) };
+  return {
+    ...doc,
+    recipes: doc.recipes.map((r) => ({
+      ...r,
+      framing: null,
+      files: r.files.flatMap((f): RenderFile[] => (f.pixels === undefined ? [] : [{ path: f.path, pixels: f.pixels }])),
+    })),
+  };
 }
 
 /** UTF-16 code-unit order, never the locale's. */
@@ -167,10 +226,11 @@ function filesUnder(dir: string): string[] {
   return out.sort(byCodeUnit);
 }
 
-function hashed(dir: string, prefix: string): HashedFile[] {
-  return filesUnder(dir).map((path): HashedFile => {
+function hashed(dir: string, prefix: string): RenderFile[] {
+  return filesUnder(dir).map((path): RenderFile => {
     const bytes = readFileSync(join(dir, path));
-    return { path: `${prefix}/${path}`, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+    const file: RenderFile = { path: `${prefix}/${path}`, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+    return path.endsWith('.png') ? { ...file, pixels: pixelHash(bytes) } : file;
   });
 }
 
@@ -223,6 +283,16 @@ export function renderRow(recipe: Recipe, work: string, root: string): RenderRow
   return row;
 }
 
+/** One file with its keys in the fixed order, and only the ones it carries. */
+function fileText(f: RenderFile): RenderFile {
+  return {
+    path: f.path,
+    ...(f.size === undefined ? {} : { size: f.size }),
+    ...(f.sha256 === undefined ? {} : { sha256: f.sha256 }),
+    ...(f.pixels === undefined ? {} : { pixels: { width: f.pixels.width, height: f.pixels.height, sha256: f.pixels.sha256 } }),
+  };
+}
+
 export function renderHashesText(doc: RenderHashesDocument): string {
   const ordered: RenderHashesDocument = {
     spec: doc.spec,
@@ -234,7 +304,7 @@ export function renderHashesText(doc: RenderHashesDocument): string {
       exits: r.exits,
       renderExit: r.renderExit,
       framing: r.framing === null ? null : { x: r.framing.x, y: r.framing.y, width: r.framing.width, height: r.framing.height, scale: r.framing.scale, pixelWidth: r.framing.pixelWidth, pixelHeight: r.framing.pixelHeight },
-      files: r.files.map((f) => ({ path: f.path, size: f.size, sha256: f.sha256 })),
+      files: r.files.map(fileText),
     })),
   };
   return `${JSON.stringify(ordered, null, 2)}\n`;
@@ -293,16 +363,24 @@ export function readRenderHashes(path: string): RenderHashesDocument {
     const f = e.framing as Record<string, unknown> | null | undefined;
     const framingOk = f === null || (typeof f === 'object' && f !== undefined && FRAMING_KEYS.every((k) => typeof f[k] === 'number'));
     if (!framingOk) problems.push(`recipes[${i}].framing is not null or { ${FRAMING_KEYS.join(', ')} }`);
-    const files: HashedFile[] = [];
+    const files: RenderFile[] = [];
+    const isHash = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
     if (!Array.isArray(e.files)) problems.push(`recipes[${i}].files is not an array`);
     else {
       e.files.forEach((x, j) => {
         const file = (typeof x === 'object' && x !== null ? x : {}) as Record<string, unknown>;
-        if (typeof file.path !== 'string' || !Number.isInteger(file.size) || typeof file.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(file.sha256)) {
-          problems.push(`recipes[${i}].files[${j}] is not { path, size, sha256 }`);
+        const px = (typeof file.pixels === 'object' && file.pixels !== null ? file.pixels : null) as Record<string, unknown> | null;
+        const bytesOk = file.size === undefined && file.sha256 === undefined ? null : Number.isInteger(file.size) && isHash(file.sha256);
+        const pixelsOk = file.pixels === undefined ? null : px !== null && Number.isInteger(px.width) && Number.isInteger(px.height) && isHash(px.sha256);
+        if (typeof file.path !== 'string' || bytesOk === false || pixelsOk === false || (bytesOk === null && pixelsOk === null)) {
+          problems.push(`recipes[${i}].files[${j}] is not { path, size, sha256 } and/or { path, pixels: { width, height, sha256 } }`);
           return;
         }
-        files.push({ path: file.path, size: file.size as number, sha256: file.sha256 });
+        files.push({
+          path: file.path,
+          ...(bytesOk === true ? { size: file.size as number, sha256: file.sha256 as string } : {}),
+          ...(pixelsOk === true && px !== null ? { pixels: { width: px.width as number, height: px.height as number, sha256: px.sha256 as string } } : {}),
+        });
       });
     }
     if (recipe !== undefined && exitsOk && framingOk) {
@@ -329,6 +407,8 @@ export function recipesFrom(path: string): Recipe[] {
 
 export interface RenderComparison {
   identical: boolean;
+  /** Per row, the PNGs whose bytes differ while their pixels agree — the encoder, not the render. */
+  encodingOnly: Array<{ name: string; files: string[] }>;
   recipes: number;
   files: number;
   onlyA: string[];
@@ -355,12 +435,14 @@ export function compareRenderHashes(a: RenderHashesDocument, b: RenderHashesDocu
   const onlyA = a.recipes.filter((r) => !inB.has(r.name)).map((r) => r.name);
   const onlyB = b.recipes.filter((r) => !inA.has(r.name)).map((r) => r.name);
   const differ: RenderComparison['differ'] = [];
+  const encodingOnly: RenderComparison['encodingOnly'] = [];
   let files = 0;
   for (const ra of a.recipes) {
     const rb = inB.get(ra.name);
     if (rb === undefined) continue;
     files += ra.files.length;
     const findings: string[] = [];
+    const encoded: string[] = [];
     if (JSON.stringify(ra.exits) !== JSON.stringify(rb.exits)) findings.push(`build exit codes ${JSON.stringify(ra.exits)} in A, ${JSON.stringify(rb.exits)} in B`);
     if (ra.renderExit !== rb.renderExit) findings.push(`render exit ${String(ra.renderExit)} in A, ${String(rb.renderExit)} in B`);
     if ((ra.framing === null) !== (rb.framing === null)) findings.push(`framing ${JSON.stringify(ra.framing)} in A, ${JSON.stringify(rb.framing)} in B`);
@@ -373,14 +455,43 @@ export function compareRenderHashes(a: RenderHashesDocument, b: RenderHashesDocu
     const fb = new Map(rb.files.map((f) => [f.path, f]));
     for (const f of ra.files) {
       const g = fb.get(f.path);
-      if (g === undefined) findings.push(`${f.path} only in A (${f.size} bytes)`);
-      else if (f.sha256 !== g.sha256 || f.size !== g.size) findings.push(`${f.path} differs: ${f.size} bytes ${f.sha256.slice(0, 12)} in A, ${g.size} bytes ${g.sha256.slice(0, 12)} in B`);
+      if (g === undefined) findings.push(`${f.path} only in A${f.size === undefined ? '' : ` (${f.size} bytes)`}`);
+      else {
+        const verdict = fileVerdict(f, g);
+        if (verdict === 'encoding') encoded.push(`${f.path}: bytes differ (${f.size} bytes ${short(f.sha256)} in A, ${g.size} bytes ${short(g.sha256)} in B), pixels identical`);
+        else if (verdict !== null) findings.push(verdict);
+      }
     }
-    for (const g of rb.files) if (!fa.has(g.path)) findings.push(`${g.path} only in B (${g.size} bytes)`);
+    for (const g of rb.files) if (!fa.has(g.path)) findings.push(`${g.path} only in B${g.size === undefined ? '' : ` (${g.size} bytes)`}`);
     if (findings.length > 0) differ.push({ name: ra.name, findings });
+    if (encoded.length > 0) encodingOnly.push({ name: ra.name, files: encoded });
   }
   const identical = onlyA.length === 0 && onlyB.length === 0 && differ.length === 0;
-  return { identical, recipes: a.recipes.length - onlyA.length, files, onlyA, onlyB, differ };
+  return { identical, encodingOnly, recipes: a.recipes.length - onlyA.length, files, onlyA, onlyB, differ };
+}
+
+function short(hash: string | undefined): string {
+  return hash === undefined ? '(none)' : hash.slice(0, 12);
+}
+
+/**
+ * One file present on both sides: `null` when they agree on every hash they
+ * both carry, `'encoding'` when the bytes differ and the pixels agree, else
+ * the finding. Pixels decide a PNG whenever both sides carry them.
+ */
+function fileVerdict(f: RenderFile, g: RenderFile): string | 'encoding' | null {
+  const bytesBoth = f.sha256 !== undefined && g.sha256 !== undefined;
+  const bytesDiffer = bytesBoth && (f.sha256 !== g.sha256 || f.size !== g.size);
+  if (f.pixels !== undefined && g.pixels !== undefined) {
+    const p = f.pixels;
+    const q = g.pixels;
+    if (p.width !== q.width || p.height !== q.height || p.sha256 !== q.sha256) {
+      return `${f.path} differs: pixels ${p.width}x${p.height} ${short(p.sha256)} in A, ${q.width}x${q.height} ${short(q.sha256)} in B`;
+    }
+    return bytesDiffer ? 'encoding' : null;
+  }
+  if (!bytesBoth) return `${f.path} carries no hash both sides hold (bytes on one, pixels on the other) — nothing to compare`;
+  return bytesDiffer ? `${f.path} differs: ${f.size} bytes ${short(f.sha256)} in A, ${g.size} bytes ${short(g.sha256)} in B` : null;
 }
 
 /** A DIFF row names at most this many files, then says how many more; the framing and exit lines are never cut. */
@@ -396,9 +507,21 @@ export function renderComparisonLines(c: RenderComparison): string[] {
     for (const f of fileLines.slice(0, FILES_SHOWN)) lines.push(`          ${f}`);
     if (fileLines.length > FILES_SHOWN) lines.push(`          … and ${fileLines.length - FILES_SHOWN} more file(s) that differ`);
   }
+  for (const e of c.encodingOnly) {
+    lines.push(`  BYTES  ${e.name}`);
+    for (const f of e.files.slice(0, FILES_SHOWN)) lines.push(`          ${f}`);
+    if (e.files.length > FILES_SHOWN) lines.push(`          … and ${e.files.length - FILES_SHOWN} more PNG(s) whose bytes differ and pixels agree`);
+  }
   for (const name of c.onlyA) lines.push(`  ONLY-A  ${name}`);
   for (const name of c.onlyB) lines.push(`  ONLY-B  ${name}`);
-  if (c.identical) lines.push(`IDENTICAL — ${c.recipes} recipe(s), ${c.files} file(s), every exit code, framing number, size and hash equal`);
+  const encoded = c.encodingOnly.reduce((n, e) => n + e.files.length, 0);
+  if (c.identical && encoded === 0) lines.push(`IDENTICAL — ${c.recipes} recipe(s), ${c.files} file(s), every exit code, framing number, size and hash equal`);
+  else if (c.identical) {
+    lines.push(
+      `IDENTICAL IN PIXELS — ${c.recipes} recipe(s), ${c.files} file(s): every exit code, framing number and pixel equal; ` +
+        `${encoded} PNG(s) in ${c.encodingOnly.length} recipe(s) differ in their bytes only — the encoder, not the render`,
+    );
+  }
   else {
     const parts = [
       `${c.differ.length} of ${c.recipes} shared recipe(s) differ${c.differ.length > 0 ? ` (${c.differ.map((d) => d.name).join(', ')})` : ''}`,
@@ -410,18 +533,18 @@ export function renderComparisonLines(c: RenderComparison): string[] {
   return lines;
 }
 
-/** The file at `file` against `fresh`: CURRENT only when byte-identical to what `base` writes. */
+/** The file at `file` against `fresh` (a `pixelsOnly` run): CURRENT only when byte-identical to what `base` writes, which holds pixel hashes alone. */
 export function renderBaseVerdict(file: string, shown: string, fresh: RenderHashesDocument, command: string = RENDER_BASE_COMMAND): { current: boolean; lines: string[] } {
   const files = fresh.recipes.reduce((n, r) => n + r.files.length, 0);
   const refresh = `regenerate it with \`${command}\` in the same change, and say in the pull request which rows moved and why`;
   if (!existsSync(file)) return { current: false, lines: [`STALE — there is no base at ${shown}; ${refresh}`] };
   if (readFileSync(file, 'utf8') === renderHashesText(fresh)) {
-    return { current: true, lines: [`CURRENT — ${shown} is byte-identical to a fresh render of the gallery's ${fresh.recipes.length} recipe(s), ${files} file(s)`] };
+    return { current: true, lines: [`CURRENT — ${shown} is byte-identical to a fresh render of the gallery's ${fresh.recipes.length} recipe(s): ${files} PNG(s), every pixel hash equal`] };
   }
   const lines: string[] = [];
   try {
     const c = compareRenderHashes(readRenderHashes(file), fresh);
-    if (c.identical) lines.push(`  ${shown} agrees with this tree on every exit code, framing number, size and hash, but not in its bytes: it was not written by \`${command}\``);
+    if (c.identical) lines.push(`  ${shown} agrees with this tree on every exit code and pixel hash, but not in its bytes: it was not written by \`${command}\``);
     else lines.push(...renderComparisonLines(c).filter((l) => l.startsWith('  ')));
   } catch (err) {
     if (!(err instanceof HashesInputError)) throw err;

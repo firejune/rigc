@@ -89,8 +89,10 @@ jobs:
 
       # Every render of every recipe as THIS machine draws it (issue #965, step
       # 3a of #380). The tracked render base (`tools/render_hashes.base.json`)
-      # holds the gallery's PNGs only, and `RH05` in the selftest above checks it
-      # on every run; the geometry files, the frames sidecar, the bone snapshots
+      # holds the gallery PNGs' PIXEL hashes only — this runner's PNG encoder
+      # wrote different bytes for the same pixels than the macOS base's (PR
+      # #972) — and `RH05` in the selftest above checks it on every run. The
+      # run uploaded here carries both hashes per PNG; the geometry files, the frames sidecar, the bone snapshots
       # and the framing numbers carry full doubles off libm and were measured to
       # move under a one-ulp change of it (tools/render_hashes.ts, `## base`), so
       # a second machine's reading of them — and of the fetched exports' rows,
