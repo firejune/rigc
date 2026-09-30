@@ -67561,28 +67561,67 @@ function runSeededRandomSuite(): number {
   // --- RG02: one seed is one sequence — two generators, and a second implementation, byte for byte --
   {
     const probes: string[] = [];
-    const fixed = [1, XORSHIFT32_PERIOD];
-    const all = [...new Set([...fixed, ...seeds])].sort((a, b) => a - b);
     const REFERENCE_DRAWS = 4096;
+    // A seed's reach by the rule `reach` applies: the run's own use of it, else the replaced map's first repeat from it.
+    const reachOf = (s: number): number => {
+      const known = reach.get(s)?.length;
+      if (known !== undefined) return known;
+      const old = replacedFirstRepeat(s);
+      return old.tail + old.period + 1;
+    };
+    // Issue #998: a seed whose reach is below the reference length was drawn over fewer draws than the reference
+    // and read as a disagreement that did not exist. The first such seed from 1 is found here rather than typed,
+    // and compared like every other seed — it has to read green.
+    let short = 1;
+    while (reachOf(short) >= REFERENCE_DRAWS) short += 1;
+    const fixed = [1, short, XORSHIFT32_PERIOD];
+    const all = [...new Set([...fixed, ...seeds])].sort((a, b) => a - b);
+    // Every seed is drawn over the larger of its reach and the reference length, and its BigInt twin over the same
+    // count: the first REFERENCE_DRAWS of every seed are compared however short its reach, and so is every draw
+    // its reach carries past them.
+    const drawn = (s: number): number => Math.max(reachOf(s), REFERENCE_DRAWS);
+    const differs = (bytes: Buffer, twin: () => number): boolean => !bytes.equals(drawBytes(twin, bytes.length / 8));
     let compared = 0;
+    let longest = { seed: 0, n: 0 };
     for (const s of all) {
-      const n = reach.get(s)?.length ?? REFERENCE_DRAWS;
+      const n = drawn(s);
       const a = drawBytes(unrecordedRandom(s), n);
       const b = drawBytes(unrecordedRandom(s), n);
       if (!a.equals(b)) probes.push(`seed ${s}: two generators differ within ${n} draws`);
-      const ref = drawBytes(bigintXorshift(s), REFERENCE_DRAWS);
-      if (!a.subarray(0, ref.length).equals(ref)) probes.push(`seed ${s}: the BigInt implementation differs within its first ${REFERENCE_DRAWS} draws`);
+      if (differs(a, bigintXorshift(s))) probes.push(`seed ${s}: the BigInt implementation differs within ${n} draws`);
       compared += n;
+      if (n > longest.n) longest = { seed: s, n };
     }
-    // The plant: the reference with one shift changed must disagree, or the comparison measures nothing.
+    // The plants: each must disagree, or the comparison measures nothing where it claims to.
+    // The reference with one shift changed.
     const plantedShift = drawBytes(bigintXorshift(1, [12n, 17n, 5n]), REFERENCE_DRAWS);
     const planted = plantedShift.equals(drawBytes(unrecordedRandom(1), REFERENCE_DRAWS));
     if (planted) probes.push('the BigInt reference with shift 13 made 12 still agrees with the generator');
+    // The twin wrong at one draw alone, halved there.
+    const wrongAt = (twin: () => number, at: number): (() => number) => {
+      let i = 0;
+      return () => {
+        i += 1;
+        const v = twin();
+        return i === at ? v / 2 : v;
+      };
+    };
+    // Past the short seed's own reach, at the last reference draw — what comparing over the reach alone would miss.
+    const shortReach = reachOf(short);
+    if (!differs(drawBytes(unrecordedRandom(short), drawn(short)), wrongAt(bigintXorshift(short), REFERENCE_DRAWS))) {
+      probes.push(`seed ${short} (reach ${shortReach}): the BigInt twin wrong at draw ${REFERENCE_DRAWS} alone still agrees`);
+    }
+    // Past the reference length, at the last draw of the longest reach — what comparing over the reference alone would miss.
+    if (longest.n <= REFERENCE_DRAWS) {
+      probes.push(`no seed reaches past ${REFERENCE_DRAWS} draws, so a disagreement beyond them could not be planted`);
+    } else if (!differs(drawBytes(unrecordedRandom(longest.seed), longest.n), wrongAt(bigintXorshift(longest.seed), longest.n))) {
+      probes.push(`seed ${longest.seed}: the BigInt twin wrong at draw ${longest.n} alone, its last, still agrees`);
+    }
     const ok = probes.length === 0;
     say(
       'RG02_ONE_SEED_IS_ONE_SEQUENCE_BYTE_FOR_BYTE_AND_A_SECOND_IMPLEMENTATION_AGREES',
       ok,
-      probeDetail(ok, probes, `${all.length} seed(s) — 1, ${XORSHIFT32_PERIOD} and every seed this run drew from — each drawn twice to the same float64 bytes over ${compared} draws, and the first ${REFERENCE_DRAWS} of each equal to a BigInt implementation written from the definition; that implementation with its first shift 12 instead of 13 disagrees`),
+      probeDetail(ok, probes, `${all.length} seed(s) — 1, ${short} (the first whose reach, ${shortReach} draws, is below ${REFERENCE_DRAWS}), ${XORSHIFT32_PERIOD} and every seed this run drew from — each drawn twice to the same float64 bytes over the larger of its reach and ${REFERENCE_DRAWS}, ${compared} draws in all, and every one of them equal to a BigInt implementation written from the definition; that implementation disagrees with its first shift 12 instead of 13, wrong at draw ${REFERENCE_DRAWS} of seed ${short} alone, and wrong at draw ${longest.n} of seed ${longest.seed} alone`),
       'determinism is a contract (A18\'s rule for the selftest\'s own inputs): the same seed has to be the same population on every machine, and a 32-bit integer step whose draw is exact in a double is what makes that true; the BigInt twin shares no operator with it',
     );
   }
@@ -75885,8 +75924,9 @@ function runCoreSuite(): number {
     // Issue #991's scratch generator, brought in: one or two sliders, each a looped dial, an unlooped dial, a bone-less slider or a looped
     // bone-less one; every numeric bone timeline kind in their animations; the sample animation keying the dial and each slider's mix on
     // 85 % of sliders, time on 70 % of the bone-less and 20 % of the dials. #991 drew one seed per rig (99101 on); here the 400 rigs
-    // are drawn in turn from the one generator of seed 99101, because nine of those per-rig seeds (99141 the first) are drawn fewer
-    // than RG02's 4,096 reference draws, and RG02 then compares a shorter run against the full reference and reads a false mismatch.
+    // are drawn in turn from the one generator of seed 99101. That is how it landed: nine of those per-rig seeds (99141 the first) were
+    // drawn fewer than RG02's 4,096 reference draws and RG02 read them as a false mismatch; since issue #998 RG02 draws every seed and its
+    // twin over the larger of its reach and 4,096, so per-rig seeds would no longer trip it, and the single stream is kept as landed.
     const KINDS = ['rotate', 'translate', 'translatex', 'translatey', 'scale', 'scalex', 'scaley', 'shear', 'shearx', 'sheary'];
     const stream = seededRandom(99101);
     const rig = (): { pair: { spine: string; model: string }; options: OracleOptions; tags: string[] } => {
