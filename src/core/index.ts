@@ -173,7 +173,7 @@ import { worldTransforms, type CoreWorld } from './world.ts';
 import { readAnimationTimelines, type CoreAnimationTimelines } from './animation.ts';
 import { readEventDefs, type CoreEventDef } from './events.ts';
 import { poseGeometry, readGeometry, type CoreAttachmentRow, type CoreClipRow, type CoreGeometry, type DrawWalk, type RegionPoser, type ShownGeometry, type VertexPoser } from './vertices.ts';
-import type { CoreClippedRow, TriangleClipper } from './clipping.ts';
+import type { CoreClippedRow, ShapeClipper, TriangleClipper } from './clipping.ts';
 import { applyConstraints, constraintsAbsentWhy, readConstraintRecord, readConstraintTimelines, type ConstraintPlant, type CoreConstraintRecord, type CoreConstraintTimelines } from './constraints.ts';
 import { readPathRecord } from './constraints_path.ts';
 import { readPhysicsRecord, type PhysicsStepContext, type PhysicsStepper } from './constraints_physics.ts';
@@ -836,6 +836,8 @@ export interface CorePlant {
   physicsStep?: PhysicsStepper;
   /** One attachment's triangles against a clip polygon (`clipTriangles` in `./clipping.ts`). */
   clip?: TriangleClipper;
+  /** One attachment's triangles against any clip the core draws (`clipThrough` in `./clipping.ts`) — the drawn rows the raw entry hands the render. */
+  through?: ShapeClipper;
   /** Whether a slot's timelines apply (`slotTimelinesApply` in `./skins.ts`). */
   slotTimelines?: SlotTimelineGate;
   /**
@@ -1064,6 +1066,7 @@ export function drawWalkOf(doc: CompiledDocument, order: readonly string[], plan
       return g?.kind === 'mesh' ? { uvs: g.uvs, triangles: g.triangles } : undefined;
     },
     ...(plant.clip === undefined ? {} : { clip: plant.clip }),
+    ...(plant.through === undefined ? {} : { through: plant.through }),
   };
 }
 

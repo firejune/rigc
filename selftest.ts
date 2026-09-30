@@ -142,6 +142,7 @@ import {
   SequenceModeValues,
   SequenceMode,
   Skeleton,
+  SkeletonClipping,
   SkeletonJson,
   Slider,
   TextureAtlas,
@@ -66493,7 +66494,7 @@ function runPoseOracleSuite(): number {
 // slider-reader suite states at its imports).
 import { activeBones, CORE_CONSTRAINT_KINDS, CORE_DUMPER, CoreInputError, foldBlend, foldInheritMode, gridRound, NOT_ADMITTED, poseSetup, readBlend, readColour, readModel, shownAttachment, type CompiledDocument, type CoreBlendMode, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
 import { regionCorners, worldVertices, type VertexPoser } from './src/core/vertices.ts';
-import { clipTriangles, type ClipReading, type TriangleClipper } from './src/core/clipping.ts';
+import { clipShapeOf, clipThrough, clipTriangles, convexPieces, signedArea2, type ClipReading, type ClipShape, type TriangleClipper } from './src/core/clipping.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
 import { corePoser } from './src/render_core.ts';
@@ -67935,6 +67936,140 @@ function runCoreSuite(): number {
       'issue #964, construct 6 of #380 §5 admitted: the triangles every region and mesh draws under a strictly convex clip, as spine-core\'s clipper returns them, on the corpus rows that draw under one — the step src/render.ts needs before it can clip through the core (step 3)',
     );
     for (const line of clippedReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
+  }
+
+  // --- CL05: the core's own decomposition of a concave or inverse clip covers what spine-core's clipper covers (issue #964's STOP) --
+  //
+  // The runtime's triangle list under such a clip is its own decomposition and is not reproduced (CL03); what the core DRAWS there is a
+  // decomposition of its own (`clipThrough`), and the claim it makes is the area: every piece strictly convex, over the polygon's own
+  // vertices, none added and every one used, and the triangles it returns covering what spine-core's clipper returns for the same
+  // triangles, polygon and flags. Random simple polygons, both windings, `inverse` and `convex` drawn at random; a plant dropping one
+  // region of the plan turns the area short.
+  {
+    const probes: string[] = [];
+    let figures = '';
+    try {
+      let seed = 964;
+      const rnd = (): number => {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        return seed / 0x7fffffff;
+      };
+      const areaOf = (v: readonly number[], t: readonly number[]): number => {
+        let a = 0;
+        for (let k = 0; k + 2 < t.length; k += 3) {
+          const [i, j, l] = [t[k], t[k + 1], t[k + 2]];
+          a += Math.abs((v[2 * j] - v[2 * i]) * (v[2 * l + 1] - v[2 * i + 1]) - (v[2 * j + 1] - v[2 * i + 1]) * (v[2 * l] - v[2 * i])) / 2;
+        }
+        return a;
+      };
+      // spine-core's clipper over a one-slot skeleton whose clip is `shape` at the root — the calls src/render.ts makes.
+      const runtimeClip = (shape: ClipShape, v: number[], t: number[], uv: number[]): { area: number; clipped: boolean } => {
+        const clip = { type: 'clipping', vertexCount: shape.polygon.length / 2, vertices: [...shape.polygon], ...(shape.inverse ? { inverse: true } : {}), ...(shape.convex ? { convex: true } : {}) };
+        const data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(''))).readSkeletonData({ skeleton: { spine: '4.3.13' }, bones: [{ name: 'root' }], slots: [{ name: 'c', bone: 'root', attachment: 'c' }], skins: [{ name: 'default', attachments: { c: { c: clip } } }] });
+        const skeleton = new Skeleton(data);
+        skeleton.setupPose();
+        skeleton.updateWorldTransform(Physics.none);
+        const slot = skeleton.slots[0];
+        const attachment = slot.appliedPose.attachment;
+        if (!(attachment instanceof ClippingAttachment)) throw new Error('the probe skeleton carries no clipping attachment');
+        const clipper = new SkeletonClipping();
+        clipper.clipStart(skeleton, slot, attachment);
+        const clipped = clipper.clipTrianglesUnpacked(v, 0, t, t.length, Float32Array.from(uv), 2);
+        return { area: areaOf(Array.from(clipper.clippedVerticesTyped), Array.from(clipper.clippedTrianglesTyped)), clipped };
+      };
+      const star = (n: number): number[] => {
+        const p: number[] = [];
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2 + rnd() * 0.3;
+          const r = 1 + rnd() * 4;
+          p.push(Math.fround(r * Math.cos(a)), Math.fround(r * Math.sin(a)));
+        }
+        return rnd() < 0.5 ? p : p.flatMap((_, i) => (i % 2 === 0 ? [p[p.length - 2 - i], p[p.length - 1 - i]] : []));
+      };
+      const tally = { pieces: 0, inverse: 0, convex: 0, hull: 0 };
+      let worst = 0;
+      let dropped = 0;
+      let droppable = 0;
+      const CASES = 600;
+      for (let i = 0; i < CASES; i++) {
+        const polygon = star(3 + Math.floor(rnd() * 10));
+        const shape: ClipShape = { polygon, inverse: rnd() < 0.3, convex: rnd() < 0.2 };
+        const v = [-6 + rnd() * 4, -6 + rnd() * 4, 6 - rnd() * 4, -6 + rnd() * 4, 6 - rnd() * 4, 6 - rnd() * 4, -6 + rnd() * 4, 6 - rnd() * 4];
+        const t = [0, 1, 2, 2, 3, 0];
+        const uv = [0, 1, 1, 1, 1, 0, 0, 0];
+        const plan = clipShapeOf(shape);
+        if (plan.kind === 'refused') {
+          probes.push(`case ${i}: a star polygon refused — ${plan.why}`);
+          continue;
+        }
+        if (plan.kind === 'pieces') {
+          tally.pieces++;
+          const pieces = convexPieces(polygon);
+          const own = new Set<string>();
+          for (let k = 0; k < polygon.length; k += 2) own.add(`${polygon[k]},${polygon[k + 1]}`);
+          const used = new Set(pieces.flatMap((piece) => piece.flatMap((_, k) => (k % 2 === 0 ? [`${piece[k]},${piece[k + 1]}`] : []))));
+          const notConvex = pieces.findIndex((piece) => clipShapeOf({ polygon: piece, inverse: false, convex: false }).kind !== 'convex' || signedArea2(piece) <= 0);
+          const areaSum = pieces.reduce((a, piece) => a + signedArea2(piece) / 2, 0);
+          if (notConvex >= 0) probes.push(`case ${i}: piece ${notConvex} of ${pieces.length} is not strictly convex`);
+          if ([...used].some((key) => !own.has(key))) probes.push(`case ${i}: a piece carries a vertex the polygon does not`);
+          if ([...own].some((key) => !used.has(key))) probes.push(`case ${i}: a vertex of the polygon is in no piece`);
+          if (Math.abs(areaSum - Math.abs(signedArea2(polygon)) / 2) > 1e-9 * Math.abs(signedArea2(polygon))) probes.push(`case ${i}: the pieces' area ${areaSum} is not the polygon's ${Math.abs(signedArea2(polygon)) / 2}`);
+        } else if (plan.kind === 'inverse') tally.inverse++;
+        else if (shape.convex) tally.hull++;
+        else tally.convex++;
+        const core = clipThrough(shape, v, t, uv);
+        const read = runtimeClip(shape, v, t, uv);
+        const runtime = read.area;
+        if (core === null) {
+          probes.push(`case ${i}: clipThrough refused a plan it made`);
+          continue;
+        }
+        const delta = Math.abs(areaOf(core.vertices, core.triangles) - runtime);
+        worst = Math.max(worst, delta / Math.max(runtime, 1));
+        if (delta > 1e-5 * Math.max(runtime, 1)) probes.push(`case ${i} (${plan.kind}): the core covers ${areaOf(core.vertices, core.triangles)}, spine-core ${runtime}`);
+        if (core.clipped !== read.clipped) probes.push(`case ${i} (${plan.kind}): the core's clipper returned ${core.clipped}, spine-core's ${read.clipped}`);
+        if (plan.kind !== 'convex') {
+          const planted = clipThrough(shape, v, t, uv, clipTriangles, { dropRegion: 0 });
+          const short = planted === null ? runtime : runtime - areaOf(planted.vertices, planted.triangles);
+          // Region 0 of the plan can lie outside every triangle; the plant has to be red wherever it covered anything.
+          if (areaOf(core.vertices, core.triangles) - areaOf(planted?.vertices ?? [], planted?.triangles ?? []) > 1e-9) {
+            droppable++;
+            if (short > 1e-5 * Math.max(runtime, 1)) dropped++;
+          }
+        }
+      }
+      if (droppable === 0) probes.push('the dropped-region plant never covered anything, so it held nothing');
+      else if (dropped !== droppable) probes.push(`the dropped-region plant read short on ${dropped} of the ${droppable} cases where the region covered something`);
+      // What the core does not draw, each refused by name; and a repeated vertex of an otherwise convex polygon drawn as the measured rule draws it: nothing.
+      const named: Array<[string, ClipShape, string]> = [
+        ['a bowtie', { polygon: [-2, -2, 2, 2, 2, -2, -2, 2], inverse: false, convex: false }, 'cross or touch'],
+        ['a self-overlapping fan', { polygon: [0, 0, 4, 0, 0, 4, -4, 0, 0, -4, 4, 4], inverse: true, convex: false }, 'cross or touch'],
+        ['a repeated vertex of a concave polygon', { polygon: [-2, -2, 2, -2, 2, -2, 2, 2, 0, 0, -2, 2], inverse: false, convex: false }, 'vertices 1 and 2 are the same point'],
+        ['a repeated vertex under inverse', { polygon: [-2, -2, 2, -2, 2, -2, 2, 2, -2, 2], inverse: true, convex: false }, 'vertices 1 and 2 are the same point'],
+      ];
+      for (const [label, shape, why] of named) {
+        const plan = clipShapeOf(shape);
+        if (plan.kind !== 'refused' || !plan.why.includes(why)) probes.push(`${label}: ${plan.kind === 'refused' ? `refused as "${plan.why}"` : `drawn as ${plan.kind}`}, not refused naming "${why}"`);
+      }
+      const repeated: ClipShape = { polygon: [-2, -2, 2, -2, 2, -2, 2, 2, -2, 2], inverse: false, convex: false };
+      const square = [-10, -10, 10, -10, 10, 10, -10, 10];
+      const drawnRepeat = clipThrough(repeated, square, [0, 1, 2, 2, 3, 0], [0, 1, 1, 1, 1, 0, 0, 0]);
+      const runtimeRepeat = runtimeClip(repeated, square, [0, 1, 2, 2, 3, 0], [0, 1, 1, 1, 1, 0, 0, 0]);
+      if (drawnRepeat === null || drawnRepeat.triangles.length !== 0 || runtimeRepeat.area !== 0) probes.push(`a repeated vertex of a convex polygon: the core drew ${drawnRepeat === null ? 'nothing (refused)' : `${drawnRepeat.triangles.length / 3} triangle(s)`}, spine-core an area of ${runtimeRepeat.area}`);
+      figures =
+        `${CASES} random star polygons of 3–12 vertices, both windings, over a quad: ${tally.pieces} cut into convex pieces (each strictly convex, over the polygon's own vertices, every one used, the areas summing to the polygon's), ` +
+        `${tally.inverse} inverse, ${tally.hull} read as their hull under convex, ${tally.convex} strictly convex — the area the core draws, and the clipper's return value, equal to spine-core's on every one (worst relative area ${worst.toExponential(1)}); ` +
+        `one region dropped reads short on ${dropped} of ${droppable}; a bowtie, a self-overlapping fan and a repeated vertex of a concave or inverse clip refused by name; a repeated vertex of a convex clip draws nothing, as spine-core's does`;
+    } catch (err) {
+      probes.push(`the probe did not run: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CL05_THE_CORES_OWN_DECOMPOSITION_OF_A_CONCAVE_OR_INVERSE_CLIP_COVERS_WHAT_SPINE_CORES_CLIPPER_COVERS_AND_A_DROPPED_PIECE_IS_RED',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #964: the runtime\'s triangle list under a concave or inverse clip is its own decomposition and is not reproduced; the area is the claim a decomposition of the core\'s own can make, and it is held here against the runtime\'s clipper on every case — the pixels are the render\'s (RC08)',
+    );
   }
 
   // ===========================================================================
@@ -74815,11 +74950,11 @@ function runEmitHashesSuite(): number | null {
  * drawn over the same box, and the texture-carrying pieces of the setup pose
  * and of the first animation — the surface `rigc render` and `check` read.
  */
-function posedDigests(poser: Poser, pages: Map<string, Plate>, skin: string | undefined): Map<string, string> {
+function posedDigests(poser: Poser, pages: Map<string, Plate>, skin: string | undefined, maxSide = 256): Map<string, string> {
   const out = new Map<string, string>();
   const sha = (bytes: Uint8Array | string): string => createHash('sha256').update(bytes).digest('hex');
   const opts = skin === undefined ? undefined : { skin };
-  const viewport = framingViewport(poser, 256, opts);
+  const viewport = framingViewport(poser, maxSide, opts);
   out.set('framing', JSON.stringify(viewport));
   if (viewport === null) return out;
   const sets = sampleAll(poser, PROTOCOL_FPS, { ...opts, bones: true, geometry: true });
@@ -74860,6 +74995,53 @@ function shiftedCorePoser(dx: number): (modelText: string, atlasText: string, wh
       animation: (name, skin, fps, count, visit) => core.animation(name, skin, fps, count, (i, posed) => visit(i, shift(posed))),
     };
   };
+}
+
+/**
+ * `RC08`'s probe (issue #964): a textured 96×72 region and two markers under a
+ * clip on its own bone, ending at `marker`, the block sliding and turning and the
+ * mask turning across one second. The art varies in every channel from texel to
+ * texel, with a periodic alpha, so a UV a few float32 steps off moves a pixel.
+ */
+function writeClipPixelProbe(polygon: number[], flags: { inverse?: boolean; convex?: boolean; rotation?: number; scale?: number } = {}): { dir: string; outDir: string; status: number | null; stderr: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-clip-pixels-'));
+  const art = (name: string, w: number, h: number, seed: number): void => {
+    const plate = new Plate(w, h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        plate.set(x, y, [
+          Math.round(127 + 120 * Math.sin(x * 0.37 + y * 0.11 + seed)),
+          Math.round(127 + 120 * Math.sin(x * 0.13 - y * 0.29 + 2 * seed)),
+          (x * 7 + y * 13 + seed * 50) % 256,
+          (x + y) % 17 === 0 ? 120 : 255,
+        ]);
+      }
+    }
+    plate.set(0, 0, [0, 0, 0, 0]);
+    plate.writePng(join(dir, name));
+  };
+  art('block.png', 96, 72, 1);
+  art('marker.png', 40, 40, 2);
+  const clip: Record<string, unknown> = { type: 'clipping', vertexCount: polygon.length / 2, vertices: polygon, end: 'marker', ...(flags.inverse === true ? { inverse: true } : {}), ...(flags.convex === true ? { convex: true } : {}) };
+  const rigPath = join(dir, 'probe.rig.json');
+  const motionPath = join(dir, 'probe.motion.json');
+  writeFileSync(rigPath, `${JSON.stringify({
+    spec: 'rigc-rig/1', name: 'clip_probe', skeleton: { width: 160, height: 160 },
+    bones: [{ name: 'root' }, { name: 'mask', parent: 'root', x: 0, y: 0, length: 10, rotation: flags.rotation ?? 0, scaleX: flags.scale ?? 1, scaleY: flags.scale ?? 1 }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }],
+    slots: [{ name: 'mask', bone: 'mask', attachment: 'mask' }, { name: 'block', bone: 'block', attachment: 'block' }, { name: 'marker', bone: 'block', attachment: 'marker' }, { name: 'after', bone: 'root', attachment: 'after' }],
+    skins: { default: { block: { block: { image: 'block.png' } }, marker: { marker: { image: 'marker.png', x: 20, y: 10 } }, after: { after: { image: 'marker.png', x: -50, y: -50 } }, mask: { mask: clip } } },
+  }, null, 2)}\n`);
+  writeFileSync(motionPath, `${JSON.stringify({
+    spec: 'rigc-motion/1', archetype: 'clip_probe', cut: 'clip_probe', easings: {},
+    animations: { slide: { duration: 1, loop: false, tracks: [
+      { bone: 'block', property: 'translatex', keys: [{ t: 0, v: [-30] }, { t: 1, v: [30] }] },
+      { bone: 'block', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [75] }] },
+      { bone: 'mask', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [-40] }] },
+    ] } },
+  }, null, 2)}\n`);
+  const outDir = join(dir, 'spine');
+  const build = runCli(['build', '--rig', rigPath, '--motion', motionPath, '--images', dir, '--out', outDir, '--copy-images']);
+  return { dir, outDir, status: build.status, stderr: build.stderr };
 }
 
 /** The probe rig with a clipping slot over `block` whose polygon is `polygon` — `RC04`'s, built through the CLI. */
@@ -74930,7 +75112,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH07 and RC01–RC07 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH07 and RC01–RC08 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -75278,8 +75460,9 @@ function runRenderHashesSuite(): number | null {
   // on every gallery row, every file a render writes and every piece `check`
   // reads; RC02 plants one vertex in a copy of it and reads red on exactly the
   // rows that pose through it; RC03 holds the `poser` line and `--poser`'s
-  // refusals; RC04 a concave clip, which the core refuses by name and the render
-  // falls back from, named, beside a convex one it cuts through the core; RC05
+  // refusals; RC04 a self-crossing clip, which the core refuses by name and the render
+  // falls back from, named, beside a convex one it cuts through the core; RC08 the
+  // concave and inverse clips the core draws, pixel for pixel (issue #964); RC05
   // a numbered series, a HOLE on the public corpus, drawn through the core.
   const coreDigests = new Map<string, Map<string, string>>();
   const spineDigests = new Map<string, Map<string, string>>();
@@ -75451,9 +75634,10 @@ function runRenderHashesSuite(): number | null {
   {
     const probes: string[] = [];
     let figures = '';
-    const concave = writePolygonClipProbe([-2, -2, 2, -2, 2, 2, 0, 0, -2, 2]);
+    // A bowtie: edges 0 and 2 cross. The core draws a concave or inverse clip since issue #964 (RC08), and refuses one that is not simple.
+    const concave = writePolygonClipProbe([-2, -2, 2, 2, 2, -2, -2, 2]);
     const convex = writePolygonClipProbe(CLIP_PROBE_POLYGON);
-    for (const [label, probe] of [['concave', concave], ['convex', convex]] as const) {
+    for (const [label, probe] of [['self-crossing', concave], ['convex', convex]] as const) {
       if (probe.status !== 0) probes.push(`the ${label} clip probe did not build: ${probe.stderr.trim().split('\n')[0]}`);
     }
     if (probes.length === 0) {
@@ -75463,15 +75647,15 @@ function runRenderHashesSuite(): number | null {
       };
       const auto = run(concave.dirs.outDir, 'concave');
       const line = poserLine(auto.run.stdout);
-      if (auto.run.status !== 0 || !line.startsWith('spine-core — the core refused this input: ') || !line.includes('slot "mask" starts clip "mask"') || !line.includes('reflex vertex')) {
-        probes.push(`the concave clip rendered with exit ${auto.run.status} and poser line ${JSON.stringify(line)}`);
+      if (auto.run.status !== 0 || !line.startsWith('spine-core — the core refused this input: ') || !line.includes('slot "mask" starts clip "mask"') || !line.includes('cross or touch')) {
+        probes.push(`the self-crossing clip rendered with exit ${auto.run.status} and poser line ${JSON.stringify(line)}`);
       }
       const spine = run(concave.dirs.outDir, 'concave-spine', ['--poser', 'spine']);
       const differ = digestDifferences(dirDigests(auto.dir), dirDigests(spine.dir));
       if (differ.length > 0) probes.push(`the fallback render and --poser spine differ on ${differ.join(', ')}`);
       const forced = run(concave.dirs.outDir, 'concave-core', ['--poser', 'core']);
       if (forced.run.status !== 2 || !forced.run.stderr.includes('--poser core: the core refused this input: ') || !forced.run.stderr.includes('slot "mask"') || existsSync(forced.dir)) {
-        probes.push(`--poser core on the concave clip exited ${forced.run.status} and said ${JSON.stringify(forced.run.stderr.trim().split('\n')[0])}`);
+        probes.push(`--poser core on the self-crossing clip exited ${forced.run.status} and said ${JSON.stringify(forced.run.stderr.trim().split('\n')[0])}`);
       }
       const cut = run(convex.dirs.outDir, 'convex');
       const cutSpine = run(convex.dirs.outDir, 'convex-spine', ['--poser', 'spine']);
@@ -75485,19 +75669,20 @@ function runRenderHashesSuite(): number | null {
       const block = pieces.find((p) => p.slot === 'block');
       if (block === undefined || block.kind !== 'mesh') probes.push(`the convex clip left "block" as ${block?.kind ?? 'nothing'} through the core, not the cut mesh the clipper returns`);
       figures =
-        `a notched-square clip (vertex 3 reflex) renders through spine-core with the poser line ${JSON.stringify(line.slice(0, line.indexOf(', and ') < 0 ? 80 : line.indexOf(', and ')))}…, ` +
+        `a bowtie clip (edges 0 and 2 cross) renders through spine-core with the poser line ${JSON.stringify(line.slice(0, line.indexOf(', and ') < 0 ? 80 : line.indexOf(', and ')))}…, ` +
         `byte-identical to --poser spine, and --poser core on it exits 2 naming slot "mask"; the square clip cuts "block" into ${block?.kind === 'mesh' ? block.triangles.length / 3 : 0} ` +
         'triangle(s) through the core, every file identical to spine-core';
     }
     for (const probe of [concave, convex]) rmSync(probe.dirs.dir, { recursive: true, force: true });
     const held = probes.length === 0;
     say(
-      'RC04_A_CONCAVE_CLIP_IS_REFUSED_BY_THE_CORE_BY_NAME_AND_THE_RENDER_FALLS_BACK_SAYING_SO',
+      'RC04_A_SELF_CROSSING_CLIP_IS_REFUSED_BY_THE_CORE_BY_NAME_AND_THE_RENDER_FALLS_BACK_SAYING_SO',
       held,
       probeDetail(held, probes, figures),
-      'issue #964 left a clip that is not strictly convex, and an inverse one, unreproduced: the runtime decomposes it into ' +
-        'pieces of its own choosing. The core refuses it rather than guess a decomposition, and a render must neither ' +
-        'draw a guessed clip nor fall back without saying so',
+      'issue #964: the core draws a concave or inverse clip through a decomposition of its own (RC08), but the runtime\'s ' +
+        'coverage of a polygon that is not simple is its own triangulation\'s — a self-overlapping fan read an area that is ' +
+        'neither its even-odd nor its non-zero fill. The core refuses it rather than guess, and a render must neither draw a ' +
+        'guessed clip nor fall back without saying so',
     );
   }
 
@@ -75627,6 +75812,106 @@ function runRenderHashesSuite(): number | null {
       held,
       probeDetail(held, probes, figures),
       'issue #968, the private corpus: two rigs read 508 bone rotations of 179.99999734 through spine-core and 0 through the core, every pixel equal — the sign of a zero in an unposed bone\'s matrix, which a constraint over it wrote. A value neither runtime poses is defined by the seam, not relayed from one of them',
+    );
+  }
+
+  {
+    // RC08 — issue #964: the concave and inverse clips the core draws, pixel for pixel. Each probe is posed through the core and through
+    // spine-core and drawn at two sizes: every frame, sheet, geometry file and bone set identical. The rasteriser samples a clipped
+    // triangle at its SOURCE triangle's affine UV (`Mesh.source`), so the core's decomposition and the runtime's draw the same pixels.
+    // The plant: the core poser with region 0 of each clip's plan dropped, red on every probe the core decomposes.
+    const probes: string[] = [];
+    let figures = '';
+    const notch = [-30, -30, 30, -30, 30, 30, 0, 0, -30, 30];
+    const star = [0, 40, 9, 12, 38, 12, 15, -5, 24, -38, 0, -16, -24, -38, -15, -5, -38, 12, -9, 12];
+    const cases: Array<[string, number[], { inverse?: boolean; convex?: boolean; rotation?: number; scale?: number }, boolean]> = [
+      ['a notched square', notch, {}, true],
+      ['the notch turned 33° and scaled 1.37', notch, { rotation: 33, scale: 1.37 }, true],
+      ['an L turned −71° and scaled 0.63', [-30, -30, 30, -30, 30, 0, 0, 0, 0, 30, -30, 30], { rotation: -71, scale: 0.63 }, true],
+      ['a ten-point star turned 17.5° and scaled 1.9', star, { rotation: 17.5, scale: 1.9 }, true],
+      ['a concave polygon with a collinear vertex', [-30, -30, 0, -30, 30, -30, 30, 30, 0, 0, -30, 30], {}, true],
+      ['an inverse notch turned 29° and scaled 0.8', notch, { inverse: true, rotation: 29, scale: 0.8 }, true],
+      ['a notch under convex: true', notch, { convex: true }, false],
+      ['a convex square with a repeated vertex', [-30, -30, 30, -30, 30, -30, 30, 30, -30, 30], {}, false],
+    ];
+    const dropped = (modelText: string, atlasText: string, where: string, skeleton: { path: string; bytes: Uint8Array }): Poser =>
+      corePoser(modelText, atlasText, where, skeleton, (shape, v, t, uv) => clipThrough(shape, v, t, uv, clipTriangles, { dropRegion: 0 }));
+    let frames = 0;
+    let red = 0;
+    let decomposed = 0;
+    let unmapped = 0;
+    for (const [label, polygon, flags, cutsIntoPieces] of cases) {
+      const probe = writeClipPixelProbe(polygon, flags);
+      try {
+        if (probe.status !== 0) {
+          probes.push(`${label}: the probe did not build: ${probe.stderr.trim().split('\n')[0]}`);
+          continue;
+        }
+        const skeleton = join(probe.outDir, 'skeleton.json');
+        const atlas = join(probe.outDir, 'skeleton.atlas');
+        const { data, pages } = loadPosable(skeleton, atlas, probe.outDir);
+        const choice = candidatePosers(data, skeleton, atlas, undefined);
+        if (choice.core === null) {
+          probes.push(`${label}: the core poser was not chosen — ${choice.why}`);
+          continue;
+        }
+        // The texture-carrying piece LISTS differ by construction (each side's own decomposition); what they draw is compared as pixels,
+        // re-seated on the probe's own atlas through the drawing's coordinates (`substituteTexture`, the source map's art UVs included).
+        const substitution = textureSubstitutionFromText(readFileSync(atlas, 'utf8'), probe.outDir);
+        const withSubstitute = new Map([...pages, ...substitution.pages]);
+        const substituted = (poser: Poser, side: number): string[] => {
+          const viewport = framingViewport(poser, side);
+          if (viewport === null) return ['no viewport'];
+          return sampleAnimation(poser, 'slide', PROTOCOL_FPS, { texture: true }).map((f) =>
+            createHash('sha256').update(renderFrame(substituteTexture(f, substitution).frame, withSubstitute, viewport, BACKGROUND).data).digest('hex'),
+          );
+        };
+        for (const side of [128, 700]) {
+          const core = posedDigests(choice.core, pages, undefined, side);
+          const spine = posedDigests(choice.spine, pages, undefined, side);
+          frames += [...core.keys()].filter((k) => /\/f\d+$/.test(k)).length;
+          const diff = digestDifferences(core, spine).filter((k) => !k.startsWith('texture/'));
+          if (diff.length > 0 || core.size !== spine.size) probes.push(`${label} at ${side} px: the core and spine-core renders differ on ${diff.join(', ') || 'the roster'}`);
+          const a = substituted(choice.core, side);
+          const b = substituted(choice.spine, side);
+          const moved = a.filter((h, i) => h !== b[i]).length;
+          if (moved > 0 || a.length !== b.length) probes.push(`${label} at ${side} px: ${moved} of ${a.length} texture-substituted frame(s) differ between the posers`);
+        }
+        if (label === 'a notched square') {
+          // The second plant: the source map stripped from both posers' pieces — each clipped triangle sampled at its own float32 corners, the
+          // rasteriser before issue #964's decision. The two decompositions must then show, or the probe could not see what the source map fixes.
+          const stripped = (poser: Poser): Poser => {
+            const strip = (posed: Posed): Posed => ({ ...posed, pieces: (draw) => posed.pieces(draw).map((p) => (p.kind === 'mesh' ? { ...p, source: undefined } : p)) });
+            return { ...poser, setup: (skin) => strip(poser.setup(skin)), animation: (name, skin, fps, count, visit) => poser.animation(name, skin, fps, count, (i, posed) => visit(i, strip(posed))) };
+          };
+          const without = digestDifferences(posedDigests(stripped(choice.core), pages, undefined, 700), posedDigests(stripped(choice.spine), pages, undefined, 700), 99).filter((k) => /\/f\d+$/.test(k));
+          if (without.length === 0) probes.push(`${label}: with the source map stripped from both posers the renders still read identical, so the probe cannot see the decomposition`);
+          else unmapped = without.length;
+        }
+        if (cutsIntoPieces) {
+          decomposed++;
+          const planted = candidatePosers(data, skeleton, atlas, undefined, dropped).core;
+          if (planted === null) probes.push(`${label}: the planted core poser was not chosen`);
+          else if (digestDifferences(posedDigests(planted, pages, undefined, 128), posedDigests(choice.spine, pages, undefined, 128)).length > 0) red++;
+          else probes.push(`${label}: region 0 of the plan dropped and the render read identical, so the probe held nothing`);
+        }
+      } catch (err) {
+        probes.push(`${label}: ${(err as Error).message}`);
+      } finally {
+        rmSync(probe.dir, { recursive: true, force: true });
+      }
+    }
+    figures =
+      `${cases.length} clip probes (${cases.map((c) => c[0]).join('; ')}), each posed through the core and through spine-core at 128 and 700 px: ` +
+      `${frames} frames and every sheet, geometry file, bone set and setup pose identical, and every frame re-seated through the texture substitution identical; region 0 of the plan dropped red on ${red} of the ${decomposed} the core decomposes; the source map stripped from both posers' pieces red on ${unmapped} frame(s) of the notched square at 700 px`;
+    const held = probes.length === 0;
+    say(
+      'RC08_A_CONCAVE_OR_INVERSE_CLIP_DRAWS_THROUGH_THE_CORE_PIXEL_IDENTICAL_TO_SPINE_CORE_AND_A_DROPPED_PIECE_IS_RED',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #964: the runtime\'s triangle list under a concave or inverse clip is its own decomposition and is not reproduced. The render samples a ' +
+        'clipped triangle at its source triangle\'s affine UV, so any decomposition that covers the same area draws the same pixels — ' +
+        'measured before that change at up to 50 pixels one level off per frame set, and the reference itself moved as much when the same polygon was spelled from another vertex',
     );
   }
 
