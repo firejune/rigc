@@ -67239,6 +67239,42 @@ function coreRefusal(text: string): string {
   }
 }
 
+/**
+ * What a core-suite control holding a corpus floor prints (issue #1004).
+ *
+ * Two states used to print the same FAIL: a corpus that is on the machine and
+ * reaches nothing — a fault of the tree, since a construct no row uses is never
+ * a pass — and a corpus that is not on the machine at all, which is the run's
+ * state and which every other corpus suite reports as a HOLE by name. So the
+ * verdict reads WHO is absent: a HOLE only when the corpus is (`hole` is the
+ * note `treeRecipes` wrote) and every unmet probe is a floor only a corpus row
+ * can clear. A floor unmet with the corpus present is a FAIL, and so is any
+ * other probe whatever the corpus — a gallery row that reads DIFF is a fault on
+ * every machine.
+ */
+type CorpusCaseVerdict = 'PASS' | 'FAIL' | 'HOLE';
+function corpusCaseVerdict(probes: readonly string[], floors: ReadonlySet<string>, hole: string | null): CorpusCaseVerdict {
+  if (probes.length === 0) return 'PASS';
+  return hole !== null && probes.every((probe) => floors.has(probe)) ? 'HOLE' : 'FAIL';
+}
+
+/** The lines a core control prints for a HOLE: a `SKIP` gutter, never PASS or FAIL, then each floor and the sentence every corpus suite prints. */
+function corpusHoleLines(name: string, probes: readonly string[]): string[] {
+  return [
+    `  SKIP  ${name}: not measured — every probe it left unmet needs a corpus row, and the example corpus is not on this machine`,
+    ...probes.map((probe) => `          ${probe}`),
+    '          run `bun run fetch-examples` and re-run this suite.',
+    '          ⚠️ This is a HOLE in this run, not a pass — the gallery rows alone cannot reach what this control holds a corpus row to.',
+  ];
+}
+
+/**
+ * Every core control that went through `sayCorpus` in this run, with its verdict and whether the core suite found
+ * the corpus absent — what `TY22` reads of the run it is part of. Recorded rather than re-read off the disk, so
+ * `TY22` builds no path under `examples/` and does not enrol its own suite as a corpus reader in `TY20`.
+ */
+const CORE_CORPUS_CASES: Array<{ name: string; verdict: CorpusCaseVerdict; absent: boolean }> = [];
+
 /** Module specifiers the core may not import, as a value or as a type: the runtime, and every impure door. */
 const CORE_FORBIDDEN_MODULES: readonly RegExp[] = [
   /^@esotericsoftware\/spine-core(\/|$)/,
@@ -67913,7 +67949,29 @@ function runCoreSuite(): number {
   const built = buildRecipes(recipes, join(work, 'gate'), root);
   const rows = gateBuilt(built);
   const examplesHole = notes.find((l) => l.startsWith('HOLE')) ?? null;
-  const compared = rows.filter((r) => r.blocks !== null && r.blocks['setup.bones'].verdict !== 'SKIP');
+  // Issue #1004: a floor only a corpus row can clear is written through
+  // `corpusFloor` and its control reports through `sayCorpus`, so an absent
+  // corpus prints a HOLE by name, as every other corpus suite does, while the
+  // same floor unmet with the corpus present stays a FAIL. `TY22` holds both
+  // halves and scans this suite for a floor written any other way.
+  const corpusFloors = new Set<string>();
+  /** A probe only a corpus row can clear, carrying the hole note when the corpus is absent. */
+  const corpusFloor = (text: string): string => {
+    const line = `${text}${examplesHole === null ? '' : ` (${examplesHole})`}`;
+    corpusFloors.add(line);
+    return line;
+  };
+  /** `say` for a control holding a corpus floor: it takes the probes rather than a boolean, so the verdict can read who is absent. */
+  const sayCorpus = (name: string, probes: readonly string[], clean: string, why: string): void => {
+    const verdict = corpusCaseVerdict(probes, corpusFloors, examplesHole);
+    CORE_CORPUS_CASES.push({ name, verdict, absent: examplesHole !== null });
+    if (verdict === 'HOLE') {
+      for (const line of corpusHoleLines(name, probes)) console.log(line);
+      return;
+    }
+    say(name, verdict === 'PASS', probeDetail(verdict === 'PASS', probes, clean), why);
+  };
+  const compared =rows.filter((r) => r.blocks !== null && r.blocks['setup.bones'].verdict !== 'SKIP');
   /** A non-root bone of `mode` in a built row's model — the rows a plant in that mode must turn red. */
   const usesMode = (r: BuiltRow, mode: CoreInheritMode): boolean => {
     const path = join(r.out, MODEL_DOCUMENT_FILE);
@@ -68911,7 +68969,7 @@ function runCoreSuite(): number {
     const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null));
     const drawing = rows.filter((r) => (r.clippedCensus?.drawn ?? 0) > 0);
     for (const r of drawing) for (const block of ['setup.clipped', 'animations.clipped'] as const) if (r.blocks?.[block].verdict !== 'IDENTICAL') probes.push(`${r.name}: ${block} ${r.blocks?.[block].verdict} — ${r.blocks?.[block].why}`);
-    if (drawing.length === 0) probes.push(`no compared row draws under a clip, so the gate held nothing${examplesHole === null ? '' : ` (${examplesHole})`}`);
+    if (drawing.length === 0) probes.push(corpusFloor('no compared row draws under a clip, so the gate held nothing'));
     const using = drawing.map((r) => r.name).sort();
     const moved: TriangleClipper = (p, v, t, u) => {
       const r = clipTriangles(p, v, t, u);
@@ -68927,11 +68985,10 @@ function runCoreSuite(): number {
       reached.push(`${label} ${turned.length}/${judged.length}`);
     }
     const census = drawing.map((r) => `${r.name} (${CLIPPED_CENSUS_FIELDS.map((f) => `${f} ${r.clippedCensus?.[f]}`).join(', ')})`).join('; ');
-    const held = probes.length === 0;
-    say(
+    sayCorpus(
       'CL04_EVERY_ROW_DRAWING_UNDER_A_CLIP_READS_IDENTICAL_AND_A_MOVED_VERTEX_AND_A_FLIPPED_WINDING_TURN_EXACTLY_THOSE_ROWS_RED',
-      held,
-      probeDetail(held, probes, `${gateVerdict(rows).line}: the rows drawing under a clip — ${census} — IDENTICAL on setup.clipped and animations.clipped; each plant passed as a copy, never in src/: ${reached.join(', ')} red, exactly those rows, and no other block`),
+      probes,
+      `${gateVerdict(rows).line}: the rows drawing under a clip — ${census} — IDENTICAL on setup.clipped and animations.clipped; each plant passed as a copy, never in src/: ${reached.join(', ')} red, exactly those rows, and no other block`,
       'issue #964, construct 6 of #380 §5 admitted: the triangles every region and mesh draws under a strictly convex clip, as spine-core\'s clipper returns them, on the corpus rows that draw under one — the step src/render.ts needs before it can clip through the core (step 3)',
     );
     for (const line of clippedReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
@@ -69803,7 +69860,7 @@ function runCoreSuite(): number {
       }).map((b) => b.name);
       const turned = red.filter((r) => r.blocks?.[block].verdict === 'DIFF').map((r) => r.name);
       if (JSON.stringify(turned) !== JSON.stringify(using)) probes.push(`the plant turned [${turned.join(', ')}] red on ${block}; the rows stating an additive slot are [${using.join(', ')}]`);
-      if (using.length === 0) probes.push(`no compared row states an additive slot on ${block}, so the plant had no corpus row to turn red`);
+      if (using.length === 0) probes.push(corpusFloor(`no compared row states an additive slot on ${block}, so the plant had no corpus row to turn red`));
       reached.push(`${block} ${turned.length}/${judged.length}`);
     }
     const elsewhere = red.filter((r) => (['setup.bones', 'setup.attachments', 'setup.clips', 'animations.bones'] as const).some((b) => r.blocks?.[b].verdict === 'DIFF')).map((r) => r.name);
@@ -69816,11 +69873,10 @@ function runCoreSuite(): number {
     if (uncovered.length > 0) probes.push(`no compared row and not the probe states ${uncovered.join(', ')}`);
     if (slotReachLines(rows).some((l) => l.includes('no blend field'))) probes.push('the slots\' reach still says the row has no blend field');
     detail = `${MODES.length} slots stating none, the four modes and one upper-cased first letter, under an animation keying their colour, exact at tolerance 0 against spine-core on setup.slots and animations.slots; ADDITIVE, an empty blend and a number refused by name; Additive read as Screen, planted, named at "additive" and red on exactly the compared rows stating an additive slot — ${reached.join(', ')} — no other block moved; the corpus states ${total('blendAdditive')} additive, ${total('blendMultiply')} multiply, ${total('blendScreen')} screen and ${total('blendNormal')} normal slot(s), the HOLE(s) [${holes.join(', ')}] each stated by the probe`;
-    const ok = probes.length === 0;
-    say(
+    sayCorpus(
       'CO19_THE_BLEND_MODE_IS_POSED_AS_SPINE_CORE_DOES_AND_A_PLANT_TURNS_EXACTLY_THE_ROWS_STATING_IT_RED',
-      ok,
-      probeDetail(ok, probes, detail),
+      probes,
+      detail,
       'issue #933: the slot row gained the blend mode, so the 36 corpus slots stating one are judged; the reader takes the eight spellings the runtime was measured to read as a mode and refuses the rest, and a plant that reddened every row would not show the gate reads the mode at all',
     );
   }
@@ -70255,12 +70311,11 @@ function runCoreSuite(): number {
       const why = r.blocks['setup.bones'].why ?? '';
       if (!new RegExp(`(${LATER_KINDS.join('|')})[^;]*constraints are not admitted`).test(why)) probes.push(`${r.name}: skipped without naming a later kind — ${why}`);
     }
-    if (judged === 0 || !kinds.has('ik') || !kinds.has('transform')) probes.push(`${judged} row(s) declare only ik and transform (kinds ${[...kinds].join(', ')}), so the corpus held ${judged === 0 ? 'nothing' : 'one kind only'}`);
-    const ok = probes.length === 0;
-    say(
+    if (judged === 0 || !kinds.has('ik') || !kinds.has('transform')) probes.push(corpusFloor(`${judged} row(s) declare only ik and transform (kinds ${[...kinds].join(', ')}), so the corpus held ${judged === 0 ? 'nothing' : 'one kind only'}`));
+    sayCorpus(
       'CC09_EVERY_ROW_DECLARING_ONLY_IK_AND_TRANSFORM_POSES_ITS_BONES_VERTICES_AND_SAMPLES_AS_SPINE_CORE_DOES',
-      ok,
-      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${judged} row(s) declaring only ik and transform IDENTICAL on setup.bones, setup.attachments, setup.clips and animations.bones, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); ${LATER_KINDS.length === 0 ? 'no row skipped, since no kind is left to a later cut' : `every row still skipped names ${LATER_KINDS.join(', ')}`}`),
+      probes,
+      `${gateVerdict(rows).line}: ${judged} row(s) declaring only ik and transform IDENTICAL on setup.bones, setup.attachments, setup.clips and animations.bones, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); ${LATER_KINDS.length === 0 ? 'no row skipped, since no kind is left to a later cut' : `every row still skipped names ${LATER_KINDS.join(', ')}`}`,
       'issue #938, construct 5\'s first cut admitted: the rows whose constraints are all ik and transform are judged on every block the core poses, and a row carrying a later kind stays SKIP naming it (#380 §4 — a construct not admitted is SKIP by name, never a pass)',
     );
   }
@@ -70298,16 +70353,16 @@ function runCoreSuite(): number {
       const planted = gateBuilt(targets, { constraints: plant });
       const red = planted.filter((r) => r.blocks !== null && (r.blocks['setup.bones'].verdict === 'DIFF' || r.blocks['animations.bones'].verdict === 'DIFF')).map((r) => r.name);
       const using = targets.filter((b) => declares(b, uses)).map((b) => b.name);
-      if (red.length === 0) probes.push(`${label}: no row went red`);
+      // A plant no row uses is a floor; a plant a row uses that turns nothing red is a fault on any machine.
+      if (red.length === 0) probes.push(using.length === 0 ? corpusFloor(`${label}: no row went red`) : `${label}: no row went red`);
       if (red.some((n) => !using.includes(n))) probes.push(`${label}: red on ${red.filter((n) => !using.includes(n)).join(', ')}, which do not use it`);
       if (planted.some((r) => r.blocks !== null && r.blocks['setup.slots'].verdict === 'DIFF')) probes.push(`${label}: turned a slot row red`);
       lines.push(`${label} ${red.length} of ${targets.length} red (${using.length} using it)`);
     }
-    const ok = probes.length === 0;
-    say(
+    sayCorpus(
       'CC10_A_MIX_SCALED_A_BEND_FLIPPED_AND_TWO_CONSTRAINTS_SWAPPED_IN_A_COPY_EACH_TURN_ONLY_ROWS_USING_THEM_RED',
-      ok,
-      probeDetail(ok, probes, `over the ${targets.length} rows declaring only ik and transform: ${lines.join('; ')}; no slot row moved`),
+      probes,
+      `over the ${targets.length} rows declaring only ik and transform: ${lines.join('; ')}; no slot row moved`,
       'issue #380 §5: a construct is admitted when its planted difference turns the gate red on the rows using it — a gate nobody has seen fail is not a gate. The plant is a copy passed through the core\'s `constraints` hook, never a change in src/',
     );
   }
@@ -70925,14 +70980,13 @@ function runCoreSuite(): number {
       if (!c.identical) probes.push(`${b.name} at 200 dense samples: ${c.first}`);
       denseSamples += c.boneSamples;
     }
-    if (!kinds.has('physics') || !kinds.has('slider')) probes.push(`the rows judged declare ${[...kinds].join(', ') || 'nothing'}, so the corpus held ${kinds.has('physics') ? 'no slider' : 'no physics constraint'}${examplesHole === null ? '' : ` (${examplesHole})`}`);
+    if (!kinds.has('physics') || !kinds.has('slider')) probes.push(corpusFloor(`the rows judged declare ${[...kinds].join(', ') || 'nothing'}, so the corpus held ${kinds.has('physics') ? 'no slider' : 'no physics constraint'}`));
     const kindLines = constraintKindLines(rows, new Map(built.map((b) => [b.name, existsSync(join(b.out, MODEL_DOCUMENT_FILE)) ? readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.map((x) => x.kind) : []])));
     for (const line of kindLines.filter((l) => /KIND {2}(physics|slider):/.test(l))) if (!/ 0 SKIP$/.test(line)) probes.push(`a kind line still names a SKIP: ${line.trim()}`);
-    const ok = probes.length === 0;
-    say(
+    sayCorpus(
       'CQ09_EVERY_ROW_DECLARING_A_PHYSICS_OR_SLIDER_CONSTRAINT_POSES_EVERY_BLOCK_AS_SPINE_CORE_DOES',
-      ok,
-      probeDetail(ok, probes, `${gateVerdict(rows).line}: ${judged} row(s) declaring a physics or slider constraint IDENTICAL on every block the gate judges, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); the physics and slider kind lines name no SKIP`),
+      probes,
+      `${gateVerdict(rows).line}: ${judged} row(s) declaring a physics or slider constraint IDENTICAL on every block the gate judges, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); the physics and slider kind lines name no SKIP`,
       'issue #938, construct 5\'s third cut admitted: the physics constraint under Physics.none and the slider, on the rows that declare them. A slider\'s deform at setup stayed absent by name until issue #955 posed deform timelines (src/core/deform.ts); gallery/look\'s setup.attachments, the one block it held back, is judged now',
     );
   }
@@ -71437,12 +71491,11 @@ function runCoreSuite(): number {
       if (!c.identical) probes.push(`${b.name} at dt 0.013, sixty irr samples: ${c.first}`);
       dense += c.boneSamples;
     }
-    if (declaring.length === 0) probes.push(`no row declares a physics constraint${examplesHole === null ? '' : ` (${examplesHole})`}`);
-    const ok = probes.length === 0;
-    say(
+    if (declaring.length === 0) probes.push(corpusFloor(`no row declares a physics constraint`));
+    sayCorpus(
       'CK08_EVERY_ROW_STEPPED_POSES_ITS_BONES_AS_SPINE_CORE_DOES_AND_THE_PHYSICS_ROWS_AGAIN_AT_ANOTHER_DT',
-      ok,
-      probeDetail(ok, probes, `${gateVerdict(rows).line}: every row IDENTICAL on setup.bones and animations.bones under --physics step --dt 1/60, both documents stating that dt; the ${declaring.length} row(s) declaring a physics constraint (${declaring.join(', ')}) again at dt 0.013 over sixty irr samples, exact (${dense} bone-samples)`),
+      probes,
+      `${gateVerdict(rows).line}: every row IDENTICAL on setup.bones and animations.bones under --physics step --dt 1/60, both documents stating that dt; the ${declaring.length} row(s) declaring a physics constraint (${declaring.join(', ')}) again at dt 0.013 over sixty irr samples, exact (${dense} bone-samples)`,
       'issue #956\'s admission: the rows declaring physics identical with the step on — and every other row too, since a stepped walk re-poses every animated bone at every step',
     );
   }
@@ -72671,12 +72724,11 @@ function runCoreSuite(): number {
         if (off.length > 0) probes.push(`${b.name} animation ${ai}: the oracle's stepped dump off the old schedule at samples ${scList(off)}`);
       });
     }
-    if (physicsRows.length === 0) probes.push(`no tree row declares a physics constraint without a reset key${examplesHole === null ? '' : ` (${examplesHole})`}`);
-    const ok = probes.length === 0;
-    say(
+    if (physicsRows.length === 0) probes.push(corpusFloor(`no tree row declares a physics constraint without a reset key`));
+    sayCorpus(
       'SC02_WITHOUT_A_RESET_KEY_THE_SCHEDULE_CHANGE_MOVES_NOTHING_ON_THE_PROBE_OR_A_TREE_ROW',
-      ok,
-      probeDetail(ok, probes, `the probe without its key: spine-core and the core read the same bytes under both readings; ${keyed.length} of ${built.length} tree rows key a physics reset${keyed.length === 0 ? ' (the stepped census\'s timeline.reset HOLE: SC01\'s probe is the only reading of a crossed key)' : ` (${keyed.join(', ')})`}; the ${physicsRows.length} row(s) declaring physics without one (${physicsRows.join(', ')}): the core's stepped dump the same bytes under the old schedule, grid and --raw, and the oracle's --raw bones equal to the old schedule's to the bit over ${animations} animation(s)`),
+      probes,
+      `the probe without its key: spine-core and the core read the same bytes under both readings; ${keyed.length} of ${built.length} tree rows key a physics reset${keyed.length === 0 ? ' (the stepped census\'s timeline.reset HOLE: SC01\'s probe is the only reading of a crossed key)' : ` (${keyed.join(', ')})`}; the ${physicsRows.length} row(s) declaring physics without one (${physicsRows.join(', ')}): the core's stepped dump the same bytes under the old schedule, grid and --raw, and the oracle's --raw bones equal to the old schedule's to the bit over ${animations} animation(s)`,
       'issue #960: the schedule change decides only when a reset key fires, so a row keying none must read the same bytes before and after it — the stepped gate\'s rows moved by it are exactly the rows keying a reset',
     );
   }
@@ -73195,12 +73247,11 @@ function runCoreSuite(): number {
     const look = rows.find((r) => r.name === 'gallery/look');
     if (look === undefined) probes.push('gallery/look was not gated, so the block #938 left out was not judged');
     else if (look.blocks?.['setup.attachments'].verdict !== 'IDENTICAL') probes.push(`gallery/look setup.attachments ${look.blocks?.['setup.attachments'].verdict ?? look.verdict} — ${look.blocks?.['setup.attachments'].why ?? look.why}`);
-    if (carrying.length === 0) probes.push(`no row carries a timeline of construct 4's remainder${examplesHole === null ? '' : ` (${examplesHole})`}`);
-    const ok = probes.length === 0;
-    say(
+    if (carrying.length === 0) probes.push(corpusFloor(`no row carries a timeline of construct 4's remainder`));
+    sayCorpus(
       'CD06_EVERY_ROW_CARRYING_A_DEFORM_SEQUENCE_DRAW_ORDER_OR_EVENT_TIMELINE_READS_IDENTICAL_ON_THE_BLOCK_IT_CHANGES',
-      ok,
-      probeDetail(ok, probes, `${gateVerdict(rows).line}; ${kindLines.map((l) => l.trim().replace(/ \(.*?\)/g, '')).join(' | ')}; ${dense} of ${carrying.length} row(s) carrying one exact on every block at 200 dense samples, tolerance 0 (${vertexSamples} vertex-samples); gallery/look's setup.attachments IDENTICAL`),
+      probes,
+      `${gateVerdict(rows).line}; ${kindLines.map((l) => l.trim().replace(/ \(.*?\)/g, '')).join(' | ')}; ${dense} of ${carrying.length} row(s) carrying one exact on every block at 200 dense samples, tolerance 0 (${vertexSamples} vertex-samples); gallery/look's setup.attachments IDENTICAL`,
       'issue #955, the remainder of construct 4 admitted per kind: the block each kind changes IDENTICAL on every corpus row carrying it — a deform the attachments (and gallery/look\'s setup, where a slider applies one), a draw-order key the draw order, an event key the events. No public row keys a sequence: CD08\'s probe is its only reading',
     );
     for (const line of kindLines) console.log(`          ${line.trim()}`);
@@ -73999,6 +74050,9 @@ function runCoreSuite(): number {
       probeDetail(held, probes, `${texts.length} atlas text(s) — every gated row's build atlas, every fetched editor pack, and two regions named alike beside a region line with a trailing blank — ${names} name(s) looked up, a name no region carries among them: the same region, page, size, rectangle, trim and rotation as TextureAtlas.findRegion, or none where it finds none`),
       'issue #967: the core draws through rigc\'s own reader rather than the runtime\'s, so the lookup the page UVs start from — the first region of a name, the raw line compared as it is — is held against the runtime\'s on every atlas the tree has',
     );
+    // Issue #1004: with no corpus this case still passes, over the gallery's atlases and the probe's alone —
+    // it measured less rather than nothing (PS127's shape), so the run says which.
+    if (!existsSync(exportRoot)) console.log(`          ⚠️ This is a HOLE in this run, not a pass — no editor pack was looked up: ${examplesHole ?? `no ${exportRoot}`}`);
   }
 
   // ===========================================================================
@@ -74283,15 +74337,14 @@ function runCoreSuite(): number {
       const row = rows.find((r) => r.name === b.name);
       if (row !== undefined && (row.perSkin ?? []).length !== 0) probes.push(`${b.name}: the gate ran ${(row.perSkin ?? []).length} per-skin run(s) on a one-skin row`);
     }
-    if (one === 0) probes.push(`no built row declares exactly one skin${examplesHole === null ? '' : ` (${examplesHole})`}`);
+    if (one === 0) probes.push(corpusFloor(`no built row declares exactly one skin`));
     const several = rows.filter((r) => (r.perSkin ?? []).length > 0).length;
     const hole = skinReachLines(rows);
     if (several === 0 && !hole[0].startsWith('  HOLE  per skin: no row declares several skins')) probes.push(`no row declares several skins and the reach line reads ${JSON.stringify(hole[0])}`);
-    const ok = probes.length === 0;
-    say(
+    sayCorpus(
       'CN05_ON_A_ONE_SKIN_ROW_THAT_SKINS_DUMP_IS_THE_MERGED_DUMP_SO_THE_GATE_RUNS_IT_ONCE',
-      ok,
-      probeDetail(ok, probes, `${one} one-skin row(s), ${dumps} spine-core dumps: under --physics none and step, --skin <its skin> equals --skin all in every block; the gate ran no per-skin run on any of them, and with ${several} row(s) declaring several skins the reach line ${several === 0 ? 'names the HOLE' : 'names them'}`),
+      probes,
+      `${one} one-skin row(s), ${dumps} spine-core dumps: under --physics none and step, --skin <its skin> equals --skin all in every block; the gate ran no per-skin run on any of them, and with ${several} row(s) declaring several skins the reach line ${several === 0 ? 'names the HOLE' : 'names them'}`,
       'issue #932: on a one-skin row the per-skin run would repeat the merged one, so the gate does not pay for it — the measurement that licenses that is re-taken on every run rather than asserted',
     );
     if (several === 0) console.log(`          ⚠️ HOLE: no tree row declares several skins, so the per-skin runs judge nothing here; CN01–CN04's probes are the reading of the rule`);
@@ -94229,6 +94282,145 @@ function runRunTallySuite(live: RunTally): number {
       'real tree needs: most of the corpus suites hold the path in a constant declared nowhere near the body ' +
       'that reads it, so a walk stopping at the body would see almost none of them',
   );
+
+  // --- TY22: the core suite names an absent corpus as a HOLE, and a present corpus that reaches nothing stays a FAIL --
+  //
+  // Issue #1004. `TY20` held that every corpus suite CARRIES the HOLE sentence,
+  // and the core suite did — while four of its controls printed FAIL with the
+  // corpus absent, one of them with "HOLE" inside its own FAIL line, and the run
+  // exited 1 where every other corpus suite leaves it green with its holes
+  // listed. A sentence in the suite is not a verdict of the case.
+  //
+  // ⚠️ Not a child run with the corpus hidden. The core suite alone is about a
+  // minute on CI and longer here, and a child run would pay it again on every
+  // run while hiding the corpus through a hook this file does not have. So the
+  // rule is held in three pieces that a run can afford, each planted:
+  //   1. the verdict, on miniatures of the six states — the two a corpus decides
+  //      apart (a floor unmet with it present is FAIL, absent is HOLE) and the
+  //      one it must not rescue (a real fault beside a floor, absent, is FAIL);
+  //   2. what a HOLE prints, observed by a tally: a SKIP and the HOLE sentence,
+  //      no PASS or FAIL line — so a HOLE is never counted as a pass anywhere;
+  //   3. the suite's source: every floor goes through `corpusFloor` and every
+  //      control holding one reports through `sayCorpus`, so a floor written
+  //      the old way — which is how the four arrived — is named here on every
+  //      machine, corpus or not, rather than on the next run without one.
+  // And the live half reads this run: with `examples/` on disk no core control
+  // may print a HOLE, and without it the ones that did are named below.
+  {
+    const FLOOR = 'no compared row draws under a clip, so the gate held nothing';
+    const DIFF = 'gallery/planted: setup.clipped DIFF — a vertex moved';
+    const NOTE = 'HOLE: no /planted/examples — run `bun run fetch-examples`; the editor exports are not in these recipes';
+    const floors: ReadonlySet<string> = new Set([FLOOR]);
+    const states: Array<[string, string[], string | null, CorpusCaseVerdict]> = [
+      ['green, corpus present', [], null, 'PASS'],
+      ['green, corpus absent', [], NOTE, 'PASS'],
+      ['a floor unmet, corpus present', [FLOOR], null, 'FAIL'],
+      ['a floor unmet, corpus absent', [FLOOR], NOTE, 'HOLE'],
+      ['a floor and a DIFF, corpus absent', [FLOOR, DIFF], NOTE, 'FAIL'],
+      ['a DIFF alone, corpus absent', [DIFF], NOTE, 'FAIL'],
+    ];
+    const verdictProbes = states.flatMap(([label, probes, hole, want]) => {
+      const got = corpusCaseVerdict(probes, floors, hole);
+      return got === want ? [] : [`${label}: ${got}, where ${want} belongs`];
+    });
+
+    const holeTally = new RunTally();
+    const holeLines = corpusHoleLines('ZZ01_A_PLANTED_CONTROL', [FLOOR]);
+    for (const line of holeLines) holeTally.observe(line);
+    const lineProbes = [
+      ...(holeTally.total === 0 ? [] : [`a HOLE printed ${holeTally.total} PASS or FAIL line(s), so it would be counted as a case`]),
+      ...((holeTally.gutter.get('SKIP') ?? 0) === 1 ? [] : [`a HOLE printed ${holeTally.gutter.get('SKIP') ?? 0} SKIP line(s), not one`]),
+      ...(holeLines.some((line) => line.includes(`This is a ${HOLE_WORD} in this run, not a pass`)) ? [] : ['a HOLE does not print the sentence every corpus suite prints']),
+      ...(holeLines.some((line) => line.includes(FLOOR)) ? [] : ['a HOLE does not name the floor it left unmet']),
+    ];
+
+    /** Every floor in `suite` written other than through `corpusFloor`, and every control holding one that does not report through `sayCorpus`. */
+    const floorScan = (text: string, suite: string): { floors: number; problems: string[] } => {
+      const tree = ts.createSourceFile('selftest.ts', text, ts.ScriptTarget.Latest, true);
+      const fn = tree.statements.find((s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === suite);
+      const problems: string[] = [];
+      let count = 0;
+      if (fn?.body === undefined) return { floors: 0, problems: [`no function ${suite} was found`] };
+      const callsTo = (node: ts.Node, name: string): ts.CallExpression[] => {
+        const out: ts.CallExpression[] = [];
+        const visit = (n: ts.Node): void => {
+          if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name) out.push(n);
+          ts.forEachChild(n, visit);
+        };
+        visit(node);
+        return out;
+      };
+      const mentions = (node: ts.Node, name: string): boolean => (ts.isIdentifier(node) && node.text === name) || (ts.forEachChild(node, (n) => mentions(n, name) || undefined) ?? false);
+      for (const statement of fn.body.statements) {
+        if (!ts.isBlock(statement)) continue;
+        const floorsHere = callsTo(statement, 'corpusFloor');
+        count += floorsHere.length;
+        const line = tree.getLineAndCharacterOfPosition(statement.getStart()).line + 1;
+        if (floorsHere.length > 0 && callsTo(statement, 'sayCorpus').length === 0) problems.push(`the control at line ${line} writes a corpus floor and reports through something other than sayCorpus`);
+        const pushes: ts.CallExpression[] = [];
+        const visit = (n: ts.Node): void => {
+          if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'push') pushes.push(n);
+          ts.forEachChild(n, visit);
+        };
+        visit(statement);
+        for (const push of pushes) {
+          for (const arg of push.arguments) {
+            if (mentions(arg, 'examplesHole') && callsTo(arg, 'corpusFloor').length === 0) problems.push(`the control at line ${line} pushes a probe naming the corpus hole without corpusFloor`);
+          }
+        }
+      }
+      return { floors: count, problems };
+    };
+    const miniature = (body: string): string => `function aSuite(): number {\n  {\n    const probes: string[] = [];\n${body}\n  }\n  return 0;\n}\n`;
+    const routed = floorScan(miniature("    probes.push(corpusFloor('x'));\n    sayCorpus('ZZ01_A', probes, 'c', 'w');"), 'aSuite');
+    const oldPush = floorScan(miniature("    probes.push(`x${examplesHole === null ? '' : examplesHole}`);\n    say('ZZ01_A', probes.length === 0, 'd', 'w');"), 'aSuite');
+    const plainSay = floorScan(miniature("    probes.push(corpusFloor('x'));\n    say('ZZ01_A', probes.length === 0, 'd', 'w');"), 'aSuite');
+    const real = floorScan(source, 'runCoreSuite');
+    const scanProbes = [
+      ...(routed.problems.length === 0 && routed.floors === 1 ? [] : [`a floor routed through both helpers read as ${routed.floors} floor(s) and [${routed.problems.join('; ')}]`]),
+      ...(oldPush.problems.length === 1 ? [] : [`a floor pushed with the hole note by hand read as [${oldPush.problems.join('; ')}]`]),
+      ...(plainSay.problems.length === 1 ? [] : [`a floor reported through plain say read as [${plainSay.problems.join('; ')}]`]),
+      ...real.problems.map((p) => `runCoreSuite: ${p}`),
+      ...floorProbes([[real.floors, 1, `${real.floors} corpus floor(s) were found in runCoreSuite`]], 'a scan that stopped matching would report the suite clean over nothing'),
+    ];
+
+    const coreRan = live.blocks.some((b) => b.key === 'core' && b.ran);
+    const corpusAbsent = CORE_CORPUS_CASES.some((c) => c.absent);
+    const holes = CORE_CORPUS_CASES.filter((c) => c.verdict === 'HOLE').map((c) => c.name.split('_')[0]);
+    const onDiskHoles = CORE_CORPUS_CASES.filter((c) => !c.absent && c.verdict === 'HOLE').map((c) => c.name.split('_')[0]);
+    const liveProbes = [
+      ...(coreRan && CORE_CORPUS_CASES.length === 0 ? ['the core suite ran and no control reported through sayCorpus'] : []),
+      ...(onDiskHoles.length > 0 ? [`with examples/ on disk, [${onDiskHoles.join(', ')}] printed a HOLE, where an unmet floor is a FAIL`] : []),
+      ...(CORE_CORPUS_CASES.some((c) => c.absent !== corpusAbsent) ? ['the core controls disagree on whether the corpus is absent'] : []),
+      ...(corpus.readers.has('runCoreSuite') && !corpus.silent.includes('runCoreSuite') ? [] : ['TY20 does not list runCoreSuite as a corpus suite that reports its absence']),
+    ];
+    const liveWords = !coreRan
+      ? 'the core suite did not run in this run, so the live half read nothing'
+      : `this run, with examples/ ${corpusAbsent ? 'absent' : 'on disk'}: ${CORE_CORPUS_CASES.length} core control(s) hold a corpus floor, ` +
+        `${CORE_CORPUS_CASES.filter((c) => c.verdict === 'PASS').length} PASS, ${CORE_CORPUS_CASES.filter((c) => c.verdict === 'FAIL').length} FAIL, ` +
+        `${holes.length} HOLE${holes.length > 0 ? ` [${holes.join(', ')}]` : ''}`;
+
+    const ty22Probes = [...verdictProbes, ...lineProbes, ...scanProbes, ...liveProbes];
+    const ty22Held = ty22Probes.length === 0;
+    say(
+      'TY22_THE_CORE_SUITE_NAMES_AN_ABSENT_CORPUS_AS_A_HOLE_AND_KEEPS_A_PRESENT_CORPUS_THAT_REACHES_NOTHING_A_FAIL',
+      ty22Held,
+      probeDetail(
+        ty22Held,
+        ty22Probes,
+        `the verdict on ${states.length} miniature states — a floor unmet is FAIL with the corpus present and HOLE ` +
+          'without it, and a DIFF beside it is FAIL either way; a HOLE prints one SKIP line and the HOLE sentence and no ' +
+          `case line; runCoreSuite writes ${real.floors} corpus floor(s), every one through corpusFloor inside a control ` +
+          'reporting through sayCorpus, while a floor pushed with the hole note by hand and one reported through plain ' +
+          `say are each named; TY20 lists runCoreSuite; ${liveWords}`,
+      ),
+      'issue #1004: two states printed the same FAIL — a corpus on the machine that reaches nothing, which is the ' +
+        "tree's fault, and a corpus not on the machine, which is the run's state and a HOLE in every other corpus " +
+        "suite. The plants are two-sided on purpose: a helper that turned every absent-corpus FAIL into a HOLE would " +
+        'hide a gallery row reading DIFF on a fresh clone, and one that ignored the corpus would put the fresh ' +
+        "clone's run back at exit 1",
+    );
+  }
 
   return bad;
 }

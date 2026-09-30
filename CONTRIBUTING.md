@@ -37,7 +37,10 @@ bun run selftest     # the validator's own negative controls
 fixtures. If you have not run `bun run fetch-examples`, the suites that read the
 corpus will report a hole rather than a result — `TY20` prints them by name, so
 the run says which — and a run where nothing substantive executed exits 2 rather
-than printing green. Fetch the corpus before trusting a green. While iterating
+than printing green. That includes the core suite's corpus half: a control there
+whose only unmet probe needs a corpus row prints a hole when the corpus is
+absent and a FAIL when it is on disk and reaches nothing, and `TY22` holds the
+two apart. Fetch the corpus before trusting a green. While iterating
 on one suite, `bun selftest.ts --only <suite>[,<suite>…]` runs just those and
 exits 2 naming every suite it skipped — it is never a verdict, so run the whole
 `bun run selftest` before you open a pull request.
