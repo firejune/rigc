@@ -2111,6 +2111,133 @@ export function trimmedUnionBounds(
 }
 
 /**
+ * A pose that drew vertices and cannot be framed, because every one of them sits
+ * at one point (issue #997) — refused by the slots that drew, the bone each hangs
+ * from and, where those bones are unposed, the skins that would pose them.
+ *
+ * A `GeometryError`, because it is the same family as the non-finite pose of
+ * #873: a picture that has no size is as unwritable as a vertex at Infinity. It
+ * is a class of its own because the reader's next step is different — there the
+ * rig posed a number no picture can hold, here the invocation posed the rig under
+ * a skin that leaves every drawn bone without a world transform, and `--skin` is
+ * usually the whole fix — so `cli.ts` exits 2 on it, as it does on the other
+ * framing refusal, *nothing to draw*.
+ *
+ * Before it the framing answered a viewport over the one point: `maxSide / 0` is
+ * Infinity, `0 · Infinity` is NaN, and `render` wrote a 0×0 frame set with exit
+ * 0, its summary saying `NaNxNaNpx` and `frames.json` a viewport of width 0 and
+ * scale `null`.
+ */
+export class UnframeablePoseError extends GeometryError {}
+
+/**
+ * Which bones a skin leaves unposed, and which skins there are — the rig
+ * structure the unframeable sentence names a skin from (issue #997). Not a
+ * poser's: the `Poser` seam carries no skin roster, and both posers pose the one
+ * Spine file this is read from (the core's document is bound to it by hash).
+ */
+export interface SkinRoster {
+  /** Every skin, in declaration order. */
+  readonly skins: readonly string[];
+  /** The bones left unposed under `skin` (absent: no skin set) — inactive, or below an inactive bone. */
+  unposedUnder(skin: string | undefined): Set<string>;
+}
+
+/**
+ * The skin roster of a parsed Spine file, as the runtime flags it —
+ * `unposedBones` over a fresh skeleton's `active` under each skin, so Spine's
+ * activation rule is the runtime's and is not restated here. Nothing is posed
+ * until a question is asked, and only the refusal asks one.
+ */
+export function skinRosterOf(data: SkeletonData): SkinRoster {
+  return {
+    skins: data.skins.map((k) => k.name),
+    unposedUnder: (skin) => {
+      const skeleton = skeletonUnderSkin(data, skin);
+      return unposedBones(skeleton.bones.map((bone) => ({ name: bone.data.name, parent: bone.parent?.data.name ?? null, active: bone.active })));
+    },
+  };
+}
+
+/** The roster behind a pose source: its own when it is Spine data, else the one the caller passed. */
+function rosterBehind(source: PoseSource, roster: SkinRoster | undefined): SkinRoster | undefined {
+  return source instanceof SkeletonData ? skinRosterOf(source) : roster;
+}
+
+/** How many drawn slots a refusal names before it says how many more there are. */
+const UNFRAMEABLE_NAMED = 3;
+
+/**
+ * ⭐ **The one derivation of the unframeable sentence** (issue #997): `null`
+ * when the vertices of `frameSets` span a box with extent, and otherwise the
+ * sentence `UnframeablePoseError` carries. `framingViewport` and `check` both
+ * reach it, so `render`, `render --geometry`, `check` and a library caller
+ * refuse one rig in the same words.
+ *
+ * Two sentences, told apart by what the reader must change:
+ *
+ * - **every drawn slot hangs from a bone the skin leaves unposed** — inactive
+ *   itself or below an inactive bone (`unposedBones`). Both posers draw such a
+ *   slot through the zero matrix, so every vertex lands on the origin. Each
+ *   bone is named with the skins that pose it, read off the runtime's own
+ *   `active` flag under each skin rather than restating Spine's rule here.
+ * - otherwise **every drawn vertex sits at one point** — the bones posed, and
+ *   collapsed their attachments (a world scale of 0 does).
+ *
+ * `roster` is the skin structure of the Spine file the poser poses
+ * (`skinRosterOf`), which is what says whether a bone is unposed and which skins
+ * pose it — read only on this refusal's path. Without it the first sentence
+ * cannot be told from the second, and the second is what is said.
+ *
+ * Distinct from *nothing to draw*: that is a skeleton that posed no vertex at
+ * all, and its fix is art; this one posed vertices, and they have no place.
+ */
+export function unframeableSentence(
+  frameSets: ReadonlyArray<readonly Frame[]>,
+  slots: ReadonlyArray<{ name: string; bone: string }>,
+  skin: string | undefined,
+  roster: SkinRoster | undefined,
+): string | null {
+  const box = unionBounds(frameSets.map((frames) => [...frames]));
+  if (![box.minX, box.minY, box.maxX, box.maxY].every(Number.isFinite)) return null;
+  if (box.maxX - box.minX !== 0 || box.maxY - box.minY !== 0) return null;
+  const drew = new Set<string>();
+  for (const frames of frameSets) {
+    for (const frame of frames) for (const piece of frame.pieces) if (piece.world.length > 0) drew.add(piece.slot);
+  }
+  // Declaration order, so the sentence does not depend on which frame drew first.
+  const drawn = slots.filter((slot) => drew.has(slot.name));
+  const under = skin === undefined ? 'under no skin' : `under skin ${JSON.stringify(skin)}`;
+  const counted = `${drawn.length} drawn slot${drawn.length === 1 ? '' : 's'}`;
+  const more = drawn.length > UNFRAMEABLE_NAMED ? `; and ${drawn.length - UNFRAMEABLE_NAMED} more` : '';
+  const named = (describe: (slot: { name: string; bone: string }) => string): string =>
+    drawn.slice(0, UNFRAMEABLE_NAMED).map(describe).join('; ') + more;
+  if (roster !== undefined) {
+    const unposed = roster.unposedUnder(skin);
+    if (drawn.length > 0 && drawn.every((slot) => unposed.has(slot.bone))) {
+      const bySkin = roster.skins.map((name) => ({ name, unposed: roster.unposedUnder(name) }));
+      const posers = (bone: string): string => {
+        const names = bySkin.filter((k) => !k.unposed.has(bone)).map((k) => JSON.stringify(k.name));
+        if (names.length === 0) return 'which no skin poses';
+        return `which skin${names.length === 1 ? '' : 's'} ${names.join(', ')} pose${names.length === 1 ? 's' : ''}`;
+      };
+      return (
+        `${under}, every drawn slot hangs from a bone that skin leaves unposed — ${counted}: ` +
+        named((slot) => `slot ${JSON.stringify(slot.name)} on bone ${JSON.stringify(slot.bone)}, ${posers(slot.bone)}`) +
+        ' — so no drawn vertex has a world transform and the frame would be 0x0: pose it under a skin that poses ' +
+        'those bones (`--skin`), or name the bones in the skin it is posed under'
+      );
+    }
+  }
+  return (
+    `${under}, every drawn vertex sits at the one point (${box.minX}, ${box.minY}) — ${counted}: ` +
+    named((slot) => `slot ${JSON.stringify(slot.name)} on bone ${JSON.stringify(slot.bone)}`) +
+    ' — so the posed box has no extent and the frame would be 0x0: the bones those slots hang from collapse ' +
+    'every vertex onto it (a world scale of 0 does)'
+  );
+}
+
+/**
  * The viewport a skeleton is framed to: its union box at `FRAMING_FPS`, padded,
  * scaled so the long side is `maxSide` pixels.
  *
@@ -2119,9 +2246,15 @@ export function trimmedUnionBounds(
  *
  * `null` means the skeleton posed no vertex at all — nothing to draw. A pose
  * holding a vertex at Infinity or NaN is refused by a `GeometryError` naming the
- * bone or vertex and its value (issue #873), never answered `null`.
+ * bone or vertex and its value (issue #873), never answered `null`. A pose whose
+ * every vertex sits at one point is refused by an `UnframeablePoseError`
+ * (`unframeableSentence`, issue #997), never framed at a scale of Infinity.
+ *
+ * `roster` is the skin roster behind a `Poser` source (`skinRosterOf`) — what
+ * lets that refusal name the skins that pose an unposed bone. Spine data as the
+ * source is its own.
  */
-export function framingViewport(source: PoseSource, maxSide: number, opts?: PoseOptions): Viewport | null {
+export function framingViewport(source: PoseSource, maxSide: number, opts?: PoseOptions, roster?: SkinRoster): Viewport | null {
   const poser = poserOf(source);
   // The skin belongs here as much as in the frames: the union box is over the
   // attachments that POSE, and two skins fill a slot with art of different sizes
@@ -2173,6 +2306,11 @@ export function framingViewport(source: PoseSource, maxSide: number, opts?: Pose
     }
     throw new GeometryError(found);
   }
+  // A finite box over one point (issue #997): every drawn slot on a bone the
+  // skin leaves unposed, or every vertex collapsed. Framed, it is a scale of
+  // Infinity and a frame of NaN by NaN pixels, written as 0x0 with exit 0.
+  const unframeable = unframeableSentence(sets, poser.slots, framed.skin, rosterBehind(source, roster));
+  if (unframeable !== null) throw new UnframeablePoseError(unframeable);
   const pad = Math.max(box.maxX - box.minX, box.maxY - box.minY) * PAD;
   return viewportFor(box.minX - pad, box.minY - pad, box.maxX + pad, box.maxY + pad, maxSide);
 }

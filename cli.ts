@@ -140,6 +140,8 @@ import {
   framingViewport,
   GEOMETRY_FILE,
   GeometryError,
+  UnframeablePoseError,
+  skinRosterOf,
   geometryFileOf,
   geometryText,
   loadPosable,
@@ -1752,8 +1754,11 @@ function cmdRender(flags: Record<string, string>): void {
   const posed = throughPoser(choice, (poser) => {
     // `null` is a skeleton that posed no vertex at all. One that posed a vertex
     // it cannot frame — Infinity or NaN — is thrown from the framing as a
-    // `GeometryError` naming the number (issue #873), and never reaches this.
-    const viewport = framingViewport(poser, maxSide, pose);
+    // `GeometryError` naming the number (issue #873), and one whose every vertex
+    // sits at one point — every drawn bone unposed by the skin, or collapsed — as
+    // an `UnframeablePoseError` (issue #997); neither reaches this. The roster is what
+    // lets the second name the skins that pose a bone, whichever poser draws.
+    const viewport = framingViewport(poser, maxSide, pose, skinRosterOf(data));
     if (!viewport) {
       throw new UsageError(
         `${skeletonPath} posed no drawable attachment in any animation or in its setup pose${
@@ -4252,6 +4257,14 @@ try {
   // the skeleton posed a NaN or an infinity, so exit 1 like a file that is not
   // a PNG. Raised by the geometry export and by the framing — the one sentence
   // naming the bone or vertex and its value — before the first file is written.
+  // A pose whose every drawn vertex sits at one point (issue #997), from
+  // `render` or `check`: exit 2 like *nothing to draw*, the other framing
+  // refusal, because the usual fix is the invocation's — `--skin` — and nothing
+  // was written. A `GeometryError` in kind, so it is caught before that.
+  if (err instanceof UnframeablePoseError) {
+    console.error(`rigc ${command}: ${err.message}`);
+    process.exit(2);
+  }
   if (err instanceof GeometryError) {
     console.error(`rigc render: ${err.message}`);
     process.exit(1);

@@ -403,6 +403,9 @@ import {
   GEOMETRY_SPEC,
   GeometryError,
   geometryFileOf,
+  UnframeablePoseError,
+  skinRosterOf,
+  PAD,
   geometryText,
   loadPosable,
   pageFor,
@@ -466,7 +469,7 @@ import {
   SEQUENCE_MODES,
   SLOT_COLOR_CHANNELS,
 } from './src/timelines.ts';
-import { readPngInfo } from './src/png.ts';
+import { readPngHeader, readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineAnimation, SpineBone, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
 import { skeletonDataFromText, stretchSingularValues, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
 import {
@@ -64201,6 +64204,256 @@ function runGeometryExportSuite(): number {
       );
     }
     rmSync(work, { recursive: true, force: true });
+  }
+
+  // --- GY14–GY19: a pose whose every drawn vertex sits at one point (issue #997) ---
+  // Measured on main before the change, through both posers: a rig whose one
+  // drawn slot hangs from a `skin: true` bone that only a non-default skin names,
+  // rendered with no --skin, drew that slot through the zero matrix — all eight
+  // corner numbers 0 — so the framing box was the one point (0, 0), finite, and
+  // not null. `maxSide / 0` gave a scale of Infinity, `0 · Infinity` a width of
+  // NaN, and render printed "NaNxNaNpx", wrote 0x0 PNGs and a frames.json
+  // viewport of width 0 and scale null, and exited 0. A static rig whose one bone
+  // is scaled to 0 reached the same file by the other road: every vertex at the
+  // bone's origin. The rigs are built through the rig spec, so both posers run.
+  {
+    const work = mkdtempSync(join(tmpdir(), 'rigc-unframeable-'));
+    const oneSlot = [{ name: 'block', bone: 'block', attachment: 'block' }];
+    const defaultSkin = { block: { block: { image: 'block.png' } } };
+    const unposedRig = writeProbeRig({
+      bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12, skin: true }],
+      slots: oneSlot,
+      skins: { default: defaultSkin, extra: { bones: ['block'], attachments: {} } },
+    });
+    // The same picture with the bone posed under every skin — check's reference frames.
+    const posedRig = writeProbeRig({
+      bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }],
+      slots: oneSlot,
+      skins: { default: defaultSkin },
+    });
+    const collapsedRig = writeProbeRig({
+      bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 10, y: 5, length: 12, scaleX: 0, scaleY: 0 }],
+      slots: oneSlot,
+      skins: { default: defaultSkin },
+    });
+    const slide = {
+      slide: { duration: 1, loop: false, tracks: [{ bone: 'root', property: 'translatex', keys: [{ t: 0, v: [0] }, { t: 1, v: [40] }] }] },
+    };
+    const buildOf = (dirs: ProbeDirs, animations: Record<string, unknown>): string[] => {
+      const motionPath = join(dirs.dir, 'probe.motion.json');
+      writeFileSync(
+        motionPath,
+        `${JSON.stringify({ spec: 'rigc-motion/1', archetype: 'static_probe', cut: 'static_probe', easings: {}, animations }, null, 2)}\n`,
+      );
+      const built = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir]);
+      return built.status === 0 ? [] : [`${basename(dirs.dir)} did not build: exit ${String(built.status)} ${built.stderr.trim().split('\n').pop() ?? ''}`];
+    };
+    const buildProbe = [...buildOf(unposedRig, slide), ...buildOf(posedRig, slide), ...buildOf(collapsedRig, {})];
+    const filesUnder = (dir: string): string[] =>
+      existsSync(dir) ? readdirSync(dir, { recursive: true }).map(String).filter((f) => statSync(join(dir, f)).isFile()).sort() : [];
+    const refusalOf = (run: ReturnType<typeof runCli>, command: string): string =>
+      run.stderr.split('\n').find((line) => line.startsWith(`rigc ${command}: `))?.slice(`rigc ${command}: `.length) ?? '';
+    const renderOf = (dir: string, out: string, extra: string[] = []): ReturnType<typeof runCli> =>
+      runCli(['render', '--candidate', dir, ...extra, '--out', join(work, out)]);
+    // The library's own refusal: `framingViewport` over the Spine data, or over the core poser with the data beside it.
+    const libraryOf = (dir: string, through: 'data' | 'core' | 'core without the rig'): string => {
+      try {
+        const posable = loadPosable(join(dir, 'skeleton.json'), join(dir, 'skeleton.atlas'), dir);
+        if (through === 'data') {
+          framingViewport(posable.data, 256);
+        } else {
+          const choice = candidatePosers(posable.data, join(dir, 'skeleton.json'), join(dir, 'skeleton.atlas'), 'core');
+          if (choice.core === null) return `no core poser: ${choice.why}`;
+          framingViewport(choice.core, 256, undefined, through === 'core' ? skinRosterOf(posable.data) : undefined);
+        }
+        return '';
+      } catch (err) {
+        if (!(err instanceof GeometryError)) return `not a GeometryError: ${(err as Error).message}`;
+        return err instanceof UnframeablePoseError ? err.message : `a GeometryError but not an UnframeablePoseError: ${err.message}`;
+      }
+    };
+    const NAMED = 'slot "block" on bone "block", which skin "extra" poses';
+
+    // GY14 — the probe through render, both posers: refused by the slot, its bone and the skin that poses it; nothing written.
+    {
+      const probes = [...buildProbe];
+      const seen: string[] = [];
+      for (const [label, extra] of [['core', []], ['spine', ['--poser', 'spine']]] as const) {
+        const out = `gy14-${label}`;
+        const run = renderOf(unposedRig.outDir, out, [...extra]);
+        const said = refusalOf(run, 'render');
+        seen.push(`${label}: exit ${String(run.status)}`);
+        if (run.status !== 2) probes.push(`${label}: render exited ${String(run.status)}, not 2`);
+        if (!said.startsWith('under no skin, ') || !said.includes(NAMED)) {
+          probes.push(`${label}: render said ${JSON.stringify(said || run.stderr.trim().slice(0, 200))}`);
+        }
+        if (run.stderr.includes('posed no drawable attachment')) probes.push(`${label}: render said "posed no drawable attachment" over a slot that drew`);
+        if (run.stdout.includes('NaN')) probes.push(`${label}: render printed NaN: ${JSON.stringify(run.stdout.split('\n').find((l) => l.includes('NaN')))}`);
+        const written = filesUnder(join(work, out));
+        if (written.length > 0) probes.push(`${label}: render wrote ${written.length} file(s): ${written.slice(0, 3).join(', ')}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'RF133_A_POSE_WHOSE_EVERY_DRAWN_BONE_IS_UNPOSED_IS_REFUSED_BY_SLOT_BONE_AND_SKIN_AND_WRITES_NOTHING',
+        held,
+        probeDetail(held, probes, `${seen.join(', ')}; "${NAMED}"; nothing written`),
+        'issue #997: the framing box over a slot drawn through the zero matrix was the one point (0, 0), and render ' +
+          'wrote 0x0 frames with exit 0 on both posers — a wrong file on disk, and a console line nobody reads saying NaNxNaNpx',
+      );
+    }
+
+    // GY15 — one sentence: render twice, both posers, render --geometry, check and the library agree to the byte.
+    {
+      const probes = [...buildProbe];
+      const reference = join(work, 'gy15-reference');
+      const referenced = runCli(['render', '--candidate', posedRig.outDir, '--out', reference]);
+      if (referenced.status !== 0) probes.push(`the reference render exited ${String(referenced.status)}`);
+      const plain = refusalOf(renderOf(unposedRig.outDir, 'gy15-plain'), 'render');
+      const checked = runCli(['check', '--candidate', unposedRig.outDir, '--frames', reference]);
+      const said: Array<[string, string]> = [
+        ['a second render', refusalOf(renderOf(unposedRig.outDir, 'gy15-again'), 'render')],
+        ['render --poser spine', refusalOf(renderOf(unposedRig.outDir, 'gy15-spine', ['--poser', 'spine']), 'render')],
+        ['render --geometry', refusalOf(renderOf(unposedRig.outDir, 'gy15-geometry', ['--geometry']), 'render')],
+        ['check', refusalOf(checked, 'check')],
+        ['framingViewport over the data', libraryOf(unposedRig.outDir, 'data')],
+        ['framingViewport over the core poser', libraryOf(unposedRig.outDir, 'core')],
+      ];
+      if (plain === '') probes.push('render refused nothing');
+      if (checked.status !== 2) probes.push(`check exited ${String(checked.status)}, not 2`);
+      for (const [label, sentence] of said) {
+        if (sentence !== plain) probes.push(`${label} said ${JSON.stringify(sentence)}, render ${JSON.stringify(plain)}`);
+      }
+      for (const out of ['gy15-plain', 'gy15-again', 'gy15-spine', 'gy15-geometry']) {
+        const written = filesUnder(join(work, out));
+        if (written.length > 0) probes.push(`${out} holds ${written.length} file(s)`);
+      }
+      const held = probes.length === 0;
+      say(
+        'RF134_RENDER_BOTH_POSERS_GEOMETRY_CHECK_AND_THE_LIBRARY_REFUSE_AN_UNPOSED_POSE_IN_ONE_SENTENCE',
+        held,
+        probeDetail(held, probes, `${said.length + 1} callers, one sentence: ${JSON.stringify(plain)}`),
+        'issue #997: the sentence has one derivation (`unframeableSentence`), and holding every caller equal to it is ' +
+          'what stops a second from forking off — as #873 held the non-finite one',
+      );
+    }
+
+    // GY16 — check names the skin rather than measuring an empty picture.
+    {
+      const probes = [...buildProbe];
+      const reference = join(work, 'gy16-reference');
+      const referenced = runCli(['render', '--candidate', posedRig.outDir, '--out', reference]);
+      if (referenced.status !== 0) probes.push(`the reference render exited ${String(referenced.status)}`);
+      const run = runCli(['check', '--candidate', unposedRig.outDir, '--frames', reference]);
+      const said = refusalOf(run, 'check');
+      if (run.status !== 2) probes.push(`check exited ${String(run.status)}, not 2`);
+      if (!said.includes(NAMED)) probes.push(`check said ${JSON.stringify(said || run.stderr.trim().slice(0, 200))}`);
+      if (run.stderr.includes('drew no pixel')) probes.push('check still said "drew no pixel", which is true and silent on the skin');
+      const held = probes.length === 0;
+      say(
+        'RF135_CHECK_REFUSES_A_CANDIDATE_WHOSE_EVERY_DRAWN_BONE_IS_UNPOSED_BY_THE_SKIN_THAT_POSES_IT',
+        held,
+        probeDetail(held, probes, `check against the posed rig's frames: exit ${String(run.status)}, names "${NAMED}"`),
+        'issue #997, measured before the change: check read "the candidate drew no pixel in any frame that was ' +
+          'compared", exit 1 — true, and the reason, a skin the run did not pose, went unsaid',
+      );
+    }
+
+    // GY17 — the plant: the framing as it was before #997 writes a frame with no size, and the probe reads it.
+    {
+      const probes = [...buildProbe];
+      let detail = '';
+      try {
+        const posable = loadPosable(join(unposedRig.outDir, 'skeleton.json'), join(unposedRig.outDir, 'skeleton.atlas'), unposedRig.outDir);
+        // A copy of the pre-#997 tail of `framingViewport`: the union box, padded, scaled — no question asked of its extent.
+        const sets = posable.data.animations.map((a) => sampleAnimation(posable.data, a.name, FRAMING_FPS, { unclipped: true }));
+        const box = unionBounds(sets);
+        const pad = Math.max(box.maxX - box.minX, box.maxY - box.minY) * PAD;
+        const old = viewportFor(box.minX - pad, box.minY - pad, box.maxX + pad, box.maxY + pad, 256);
+        const frame = sampleAnimation(posable.data, 'slide', PROTOCOL_FPS)[0];
+        const planted = join(work, 'gy17-planted.png');
+        renderFrame(frame, posable.pages, old, BACKGROUND).writePng(planted);
+        const header = readPngHeader(planted);
+        const size = header.info === null ? `unreadable: ${header.problem}` : `${header.info.width}x${header.info.height}`;
+        // The probe every control above leans on: a frame has a size of at least one pixel each way.
+        const hasSize = header.info !== null && header.info.width >= 1 && header.info.height >= 1;
+        if (hasSize) probes.push(`the planted framing wrote a ${size} frame, so the size probe cannot tell it from a good one`);
+        const refused = libraryOf(unposedRig.outDir, 'data');
+        if (refused === '') probes.push('the framing as it stands framed the probe rather than refusing it');
+        detail = `the old framing: scale ${String(old.scale)}, ${String(old.width)}x${String(old.height)} px, a ${size} PNG read red; the framing now refuses it`;
+      } catch (err) {
+        probes.push(`the plant did not run: ${(err as Error).message}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'RF136_THE_PRE_997_FRAMING_PLANTED_BACK_WRITES_A_FRAME_WITH_NO_SIZE_AND_THE_SIZE_PROBE_READS_IT',
+        held,
+        probeDetail(held, probes, detail),
+        'issue #997: a gate nobody has seen fail is not a gate — the plant is the framing with the refusal taken ' +
+          'out, and the probe that reads frame sizes has to see its 0x0 file as the fault',
+      );
+    }
+
+    // GY18 — the positive control: the same rig under the skin that poses the bone renders frames of a real size.
+    {
+      const probes = [...buildProbe];
+      const out = join(work, 'gy18-extra');
+      const run = renderOf(unposedRig.outDir, 'gy18-extra', ['--skin', 'extra']);
+      if (run.status !== 0) probes.push(`render --skin extra exited ${String(run.status)}: ${run.stderr.trim().slice(0, 200)}`);
+      const sidecarPath = join(out, FRAMES_SIDECAR);
+      const sidecar = existsSync(sidecarPath) ? (JSON.parse(readFileSync(sidecarPath, 'utf8')) as FramesSidecar) : null;
+      if (sidecar === null) probes.push(`no ${FRAMES_SIDECAR} was written`);
+      const wide = sidecar?.viewport.pixelWidth ?? 0;
+      const high = sidecar?.viewport.pixelHeight ?? 0;
+      if (!(Number.isInteger(wide) && Number.isInteger(high) && wide >= 1 && high >= 1)) probes.push(`${FRAMES_SIDECAR} says ${String(wide)}x${String(high)} px`);
+      const pngs = filesUnder(out).filter((f) => /f\d{4}\.png$/.test(f));
+      if (pngs.length === 0) probes.push('no frame was written');
+      for (const png of pngs) {
+        const header = readPngHeader(join(out, png));
+        if (header.info === null || header.info.width !== wide || header.info.height !== high) {
+          probes.push(`${png} is ${header.info === null ? header.problem : `${header.info.width}x${header.info.height}`}, the sidecar ${wide}x${high}`);
+          break;
+        }
+      }
+      const held = probes.length === 0;
+      say(
+        'RF137_THE_SAME_RIG_UNDER_THE_SKIN_THAT_POSES_ITS_BONE_RENDERS_FRAMES_OF_A_REAL_SIZE',
+        held,
+        probeDetail(held, probes, `--skin extra: exit 0, ${pngs.length} frame(s) of ${wide}x${high} px, the size ${FRAMES_SIDECAR} records`),
+        'issue #997: the refusal is about the skin posed, not the rig — the skin the sentence names is the one that draws it',
+      );
+    }
+
+    // GY19 — the other road to one point: a bone scaled to 0 is refused in the second sentence, not the first.
+    {
+      const probes = [...buildProbe];
+      const seen: string[] = [];
+      const POINT = 'every drawn vertex sits at the one point';
+      for (const [label, extra] of [['core', []], ['spine', ['--poser', 'spine']]] as const) {
+        const out = `gy19-${label}`;
+        const run = renderOf(collapsedRig.outDir, out, [...extra]);
+        const said = refusalOf(run, 'render');
+        seen.push(`${label}: exit ${String(run.status)}`);
+        if (run.status !== 2) probes.push(`${label}: render exited ${String(run.status)}, not 2`);
+        if (!said.includes(POINT) || !said.includes('slot "block" on bone "block"') || said.includes('unposed')) {
+          probes.push(`${label}: render said ${JSON.stringify(said || run.stderr.trim().slice(0, 200))}`);
+        }
+        const written = filesUnder(join(work, out));
+        if (written.length > 0) probes.push(`${label}: render wrote ${written.length} file(s)`);
+      }
+      // Without the Spine data a poser cannot say a bone is unposed, and says the point instead.
+      const bare = libraryOf(unposedRig.outDir, 'core without the rig');
+      if (!bare.startsWith(`under no skin, ${POINT} (0, 0)`)) probes.push(`the core poser without the rig said ${JSON.stringify(bare)}`);
+      const held = probes.length === 0;
+      say(
+        'RF138_A_POSE_COLLAPSED_TO_ONE_POINT_BY_ITS_BONES_IS_REFUSED_BY_THE_POINT_NOT_BY_A_SKIN',
+        held,
+        probeDetail(held, probes, `${seen.join(', ')}: "${POINT}", nothing written; a bare core poser says the point too`),
+        'issue #997, measured before the change: a static rig whose one bone has scale 0 wrote a 0x0 frame with exit 0 ' +
+          'as well — the two sentences are what tells a reader to change a skin from what tells them to change a bone',
+      );
+    }
+    rmSync(work, { recursive: true, force: true });
+    for (const dirs of [unposedRig, posedRig, collapsedRig]) rmSync(dirs.dir, { recursive: true, force: true });
   }
 
   rmSync(turn.dir, { recursive: true, force: true });
