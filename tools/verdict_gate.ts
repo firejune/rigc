@@ -37,6 +37,9 @@
  * (`factSpellings`) — the meshes, the bones an animation keys, the skin
  * members, the region joins, the atlas's pages and regions, the stage and the
  * region paths — so a value no line printed on this row is still compared.
+ * Cut 4c-4 added its three (the skeleton's bones and slots, every
+ * animation's bone timelines, every event key) and the slot timelines A12
+ * reads beside A45 to the same set.
  *
  * ## What the model side is given
  *
@@ -179,6 +182,11 @@ export interface FactSet {
   regionJoins: ReturnType<ModelSupplyOf<'regionJoins'>>;
   atlasRegions: ReturnType<ModelSupplyOf<'atlasRegions'>>;
   stage: ReturnType<ModelSupplyOf<'stage'>>;
+  /** Cut 4c-4's families, and the slot timelines A12 reads beside A45 — added to this set so `VF09` and every row compare them too. */
+  slotColour: ReturnType<ModelSupplyOf<'slotColour'>>;
+  skeletonRoster: ReturnType<ModelSupplyOf<'skeletonRoster'>>;
+  boneTimelines: ReturnType<ModelSupplyOf<'boneTimelines'>>;
+  eventKeys: ReturnType<ModelSupplyOf<'eventKeys'>>;
 }
 type ModelSupplyOf<K extends keyof typeof MODEL_SUPPLY> = (typeof MODEL_SUPPLY)[K];
 
@@ -194,6 +202,10 @@ export function modelFactSet(modelText: string, given: ModelGiven | undefined, s
     regionJoins: supply.regionJoins(read),
     atlasRegions: supply.atlasRegions(read, input),
     stage: supply.stage(read, input),
+    slotColour: supply.slotColour(read),
+    skeletonRoster: supply.skeletonRoster(read),
+    boneTimelines: supply.boneTimelines(read),
+    eventKeys: supply.eventKeys(read),
   };
 }
 
@@ -229,6 +241,11 @@ export function factSpellings(f: FactSet, animations: readonly string[]): Record
             }),
           ]),
     stage: JSON.stringify([f.stage.width ?? null, f.stage.height ?? null]),
+    // Cut 4c-4's: every value A12, A24–A26, A29, A30 and A32 read, in the order they read it.
+    'slot timelines': JSON.stringify(f.slotColour.slotTimelines.map((s) => [s.animation, s.slot, s.timelines])),
+    roster: JSON.stringify([f.skeletonRoster.bones.map((b) => [b.name, b.parent]), f.skeletonRoster.slots.map((s) => [s.name, s.dark])]),
+    'bone timelines': JSON.stringify(f.boneTimelines.boneTimelines.map((b) => [b.animation, b.bone, b.timelines])),
+    'event keys': JSON.stringify([f.eventKeys.parsed, f.eventKeys.animations, f.eventKeys.timelines, f.eventKeys.keys.map((k) => [k.animation, k.index, k.kept, k.stopped, k.name, k.sets.volume, k.sets.balance, k.audio])]),
   };
 }
 

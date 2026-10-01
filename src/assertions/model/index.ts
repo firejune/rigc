@@ -9,7 +9,8 @@
  * the body inside its own `check`; this entry supplies them from the document
  * (`./parse.ts`, `./skin_entries.ts`, `./atlas_pages.ts`, `./slot_colour.ts`;
  * cut 4c-2's `./mesh_attachments.ts`, `./vertex_polygons.ts`,
- * `./linked_meshes.ts`, `./constraints.ts`)
+ * `./linked_meshes.ts`, `./constraints.ts`; cut 4c-4's
+ * `./skeleton_roster.ts`, `./bone_timelines.ts`, `./event_keys.ts`)
  * and calls the same body inside the same harness (`../harness.ts`). The
  * selftest holds the two to the same lines on every call it makes with a
  * model in hand, and `tools/verdict_gate.ts` on every recipe.
@@ -88,6 +89,19 @@ import type { MeshFacts } from '../facts/mesh_attachments.ts';
 import type { PolygonFacts } from '../facts/vertex_polygons.ts';
 import type { LinkFacts } from '../facts/linked_meshes.ts';
 import type { ConstraintFacts } from '../facts/constraints.ts';
+import { a12NoDarkColor } from '../bodies/a12.ts';
+import { a24AxisSpaceStroke } from '../bodies/a24.ts';
+import { a25DetachedBoneParentage } from '../bodies/a25.ts';
+import { a26SlotDrawOrder } from '../bodies/a26.ts';
+import { a29StrokeWithinContactDepth } from '../bodies/a29.ts';
+import { a30StrokeWithinCapContainment } from '../bodies/a30.ts';
+import { a32EventKeysResolve } from '../bodies/a32.ts';
+import { modelSkeletonRoster } from './skeleton_roster.ts';
+import { modelBoneTimelines } from './bone_timelines.ts';
+import { modelEventKeys } from './event_keys.ts';
+import type { SkeletonRosterFacts } from '../facts/skeleton_roster.ts';
+import type { BoneTimelineFacts } from '../facts/bone_timelines.ts';
+import type { EventKeyFacts } from '../facts/event_keys.ts';
 
 /** What the model side is given. */
 export interface ModelValidateInput {
@@ -96,7 +110,7 @@ export interface ModelValidateInput {
   /** The directory the document's page names resolve against — the build's `--out`. */
   atlasDir: string;
   profile: AssertionProfile;
-  /** The rig info the build carries, as `validate()` is handed it — A13, A15, A19 (cut 4c-1) and A20, A21, A28, A41, A47, A48 (cut 4c-2) read it; optional because `ValidateInput.rig` is: absent for a bare directory, on both sides. */
+  /** The rig info the build carries, as `validate()` is handed it — A13, A15, A19 (cut 4c-1) and A20, A21, A28, A41, A47, A48 (cut 4c-2) and A24, A25, A26, A29, A30 (cut 4c-4) read it; optional because `ValidateInput.rig` is: absent for a bare directory, on both sides. */
   rig?: RigInfo;
   /**
    * The stage and the pages' `pma`, for a `rigc-compiled/2` or `/1` document,
@@ -134,6 +148,9 @@ export interface ModelSupply {
   polygons: (read: ReadDocument) => PolygonFacts;
   links: (read: ReadDocument) => LinkFacts;
   constraints: (read: ReadDocument) => ConstraintFacts;
+  skeletonRoster: (read: ReadDocument) => SkeletonRosterFacts;
+  boneTimelines: (read: ReadDocument) => BoneTimelineFacts;
+  eventKeys: (read: ReadDocument) => EventKeyFacts;
 }
 
 /** The suppliers the model side runs on. */
@@ -151,6 +168,9 @@ export const MODEL_SUPPLY: ModelSupply = {
   polygons: modelPolygonFacts,
   links: modelLinkFacts,
   constraints: modelConstraintFacts,
+  skeletonRoster: modelSkeletonRoster,
+  boneTimelines: modelBoneTimelines,
+  eventKeys: modelEventKeys,
 };
 
 /**
@@ -169,6 +189,13 @@ export interface MovedAssertion {
    * model side's place for a rule `validate()` runs BEFORE its round trip
    * (A08, issue #589), so that a region miss is named by the rule's own
    * sentence on both sides while the parse beside it refuses the file.
+   *
+   * Since cut 4c-4 also every rule `validate()` runs over the skeleton JSON
+   * whatever its round trip did (A12, A24, A25, A26, A29, A30, and A32, which
+   * runs before it): on the runtime's side their verdict does not wait on the
+   * load, so on this side it does not wait on the region rule, and where both
+   * parses refuse a build the two sides' lines of these rules are still
+   * compared.
    */
   beforeTheParse?: boolean;
 }
@@ -207,6 +234,13 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A19_OVERLAY_PNGS_HAVE_ALPHA', run: (v, read, input, supply) => a19OverlayPngsHaveAlpha(v, supply.atlasRegions(read, input), supply.stage(read, input), supply.skinEntries(read), input), unread: SKIP_NO_ATLAS },
   { code: 'A27_REGION_NAME_MATCHES_PAGE_FILENAME', run: (v, read, input, supply) => a27RegionNameMatchesPageFilename(v, supply.atlasRegions(read, input)), unread: SKIP_NO_ATLAS },
   { code: 'A28_RIBBON_ROWS_SHARE_WEIGHTS', run: (v, read, input, supply) => a28RibbonRowsShareWeights(v, supply.meshes(read), input.rig), unread: SKIP_NO_MODEL },
+  { code: 'A32_EVENT_KEYS_RESOLVE', run: (v, read, _input, supply) => a32EventKeysResolve(v, supply.eventKeys(read)), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A12_NO_DARK_COLOR', run: (v, read, _input, supply) => a12NoDarkColor(v, supply.skeletonRoster(read), supply.slotColour(read).slotTimelines), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A24_AXIS_SPACE_STROKE', run: (v, read, input, supply) => a24AxisSpaceStroke(v, supply.boneTimelines(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A25_DETACHED_BONE_PARENTAGE', run: (v, read, input, supply) => a25DetachedBoneParentage(v, supply.skeletonRoster(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A26_SLOT_DRAW_ORDER', run: (v, read, input, supply) => a26SlotDrawOrder(v, supply.skeletonRoster(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A29_STROKE_WITHIN_CONTACT_DEPTH', run: (v, read, input, supply) => a29StrokeWithinContactDepth(v, supply.boneTimelines(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A30_STROKE_WITHIN_CAP_CONTAINMENT', run: (v, read, input, supply) => a30StrokeWithinCapContainment(v, supply.boneTimelines(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
 ];
 
 /** The codes the model side prints: its two parse rules, then the moved assertions. */

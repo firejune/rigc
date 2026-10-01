@@ -129,6 +129,16 @@ import { a42DrivenConstraintsUpdateAfterTheirDriver } from './assertions/bodies/
 import { a44LinkedMeshStatesNoGeometryOfItsOwn } from './assertions/bodies/a44.ts';
 import { a47IkConstraintNotMutedThroughout } from './assertions/bodies/a47.ts';
 import { a48TransformConstraintNotMutedThroughout } from './assertions/bodies/a48.ts';
+import type { RosterBone, RosterSlot, SkeletonRosterFacts } from './assertions/facts/skeleton_roster.ts';
+import type { BoneTimelineFacts, BoneTimelines } from './assertions/facts/bone_timelines.ts';
+import type { EventKeyEntry, EventKeyFacts } from './assertions/facts/event_keys.ts';
+import { a12NoDarkColor } from './assertions/bodies/a12.ts';
+import { a24AxisSpaceStroke } from './assertions/bodies/a24.ts';
+import { a25DetachedBoneParentage } from './assertions/bodies/a25.ts';
+import { a26SlotDrawOrder } from './assertions/bodies/a26.ts';
+import { a29StrokeWithinContactDepth } from './assertions/bodies/a29.ts';
+import { a30StrokeWithinCapContainment } from './assertions/bodies/a30.ts';
+import { a32EventKeysResolve, eventKeyAt } from './assertions/bodies/a32.ts';
 import {
   SKIP_NO_ANIMATION,
   SKIP_NO_ATLAS,
@@ -898,6 +908,9 @@ export function runtimeFacts(skeletonText: string, atlasText: string): {
   regionJoins: RegionJoinFacts;
   atlasRegions: AtlasRegionFacts;
   stage: StageFacts;
+  skeletonRoster: SkeletonRosterFacts;
+  boneTimelines: BoneTimelineFacts;
+  eventKeys: EventKeyFacts;
 } | null {
   let atlas: TextureAtlas;
   let data: ReturnType<SkeletonJson['readSkeletonData']>;
@@ -918,7 +931,138 @@ export function runtimeFacts(skeletonText: string, atlasText: string): {
     regionJoins: spineRegionJoins(atlasText, raw),
     atlasRegions: { atlas },
     stage: spineStage(data),
+    skeletonRoster: rawSkeletonRoster(raw),
+    boneTimelines: rawBoneTimelines(raw),
+    eventKeys: rawEventKeys(raw),
   };
+}
+
+/**
+ * The runtime's supply of `SkeletonRosterFacts` (issue #1025, cut 4c-4): the
+ * skeleton JSON's `bones` and `slots`, read as A12, A25 and A26 always read
+ * them — a slot is any object in the array, named `String(name)`, dark where
+ * the key is present; a bone is an object with a string name, its parent the
+ * string the file states or `null`. Off the raw JSON because those three run
+ * whatever the round trip did. The model side's supply is
+ * `./assertions/model/skeleton_roster.ts`.
+ */
+export function rawSkeletonRoster(raw: Json | null): SkeletonRosterFacts {
+  const bones: RosterBone[] = [];
+  for (const bone of Array.isArray(raw?.bones) ? (raw.bones as unknown[]) : []) {
+    if (isObj(bone) && typeof bone.name === 'string') bones.push({ name: bone.name, parent: typeof bone.parent === 'string' ? bone.parent : null });
+  }
+  const slots: RosterSlot[] = (Array.isArray(raw?.slots) ? (raw.slots as unknown[]) : []).filter(isObj).map((s) => ({ name: String(s.name), dark: 'dark' in s }));
+  return { bones, slots };
+}
+
+/**
+ * The slot timelines of the skeleton JSON in the file's order — every
+ * animation that is an object, every slot entry that is an object — the walk
+ * `walkTimelines` made for A12 (issue #1025, cut 4c-4), and the same walk
+ * A45's supply makes (`spineSlotColourFacts`), here without the loaded
+ * skeleton because A12 runs whatever the round trip did. The model side
+ * supplies the same list (`fileSlotTimelines`).
+ */
+export function rawSlotTimelines(raw: Json | null): SlotTimelines[] {
+  const out: SlotTimelines[] = [];
+  const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
+  for (const [animation, anim] of Object.entries(rawAnimations)) {
+    if (!isObj(anim) || !isObj(anim.slots)) continue;
+    for (const [slot, timelines] of Object.entries(anim.slots)) {
+      if (!isObj(timelines)) continue;
+      out.push({ animation, slot, timelines });
+    }
+  }
+  return out;
+}
+
+/**
+ * The runtime's supply of `BoneTimelineFacts` (issue #1025, cut 4c-4): every
+ * (animation, bone) pair of the skeleton JSON, in the file's order — every
+ * animation that is an object with a `bones` object, every bone entry,
+ * whatever it holds — the walk A24, A29 and A30 made over the raw JSON. The
+ * model side's supply is `./assertions/model/bone_timelines.ts`.
+ */
+export function rawBoneTimelines(raw: Json | null): BoneTimelineFacts {
+  const boneTimelines: BoneTimelines[] = [];
+  const anims = isObj(raw?.animations) ? (raw.animations as Json) : {};
+  for (const [animation, anim] of Object.entries(anims)) {
+    if (!isObj(anim) || !isObj(anim.bones)) continue;
+    for (const [bone, timelines] of Object.entries(anim.bones as Json)) boneTimelines.push({ animation, bone, timelines });
+  }
+  return { boneTimelines };
+}
+
+/**
+ * The runtime's supply of `EventKeyFacts` (issue #1025, cut 4c-4) — and the
+ * four clauses of A32 that stay with the round trip.
+ *
+ * Every event key of the skeleton JSON, in the file's order, with what the
+ * body's one moved clause reads (the fields the key states, whether its event
+ * declares an audio path). The four clauses below run here, over the raw JSON,
+ * exactly as they ran in A32's body, and hand their findings in as `kept`, in
+ * the order they printed, with `stopped` where the clause ended the key's
+ * reading (the body prints them at the same place). They stay because each is
+ * a state the model document's reader refuses by name (`readEventKeys` in
+ * `src/core/events.ts`): a key with no string name, an event the skeleton
+ * does not declare, a time that is not a finite number, a time before the key
+ * before it — measured on forged documents, each refused at the key's
+ * address, so no readable document reaches them and the model side has no
+ * input to print them from.
+ */
+export function rawEventKeys(raw: Json | null): EventKeyFacts {
+  if (!raw) return { parsed: false, animations: false, timelines: 0, keys: [] };
+  if (!isObj(raw.animations)) return { parsed: true, animations: false, timelines: 0, keys: [] };
+  const declared = isObj(raw.events) ? (raw.events as Json) : {};
+  const known = Object.keys(declared);
+  const keys: EventKeyEntry[] = [];
+  let timelines = 0;
+  for (const [animName, anim] of Object.entries(raw.animations as Json)) {
+    if (!isObj(anim) || !Array.isArray(anim.events)) continue;
+    timelines++;
+    let previous = -Infinity;
+    (anim.events as unknown[]).forEach((key, k) => {
+      const at = eventKeyAt(animName, k);
+      const kept: string[] = [];
+      const stop = (name: string): void => void keys.push({ animation: animName, index: k, kept, stopped: true, name, sets: { volume: false, balance: false }, audio: false });
+      if (!isObj(key) || typeof key.name !== 'string') {
+        kept.push(`${at}: an event key needs a string "name"`);
+        return stop('');
+      }
+      const definition = declared[key.name];
+      if (definition === undefined) {
+        kept.push(
+          `${at}: fires "${key.name}", which the skeleton's events block does not declare` +
+            (known.length ? ` (declared: ${known.join(', ')})` : ' (that block is empty or absent)'),
+        );
+        return stop(key.name);
+      }
+      // `time` defaults to 0 when absent (`:1247`), which is what the editor
+      // writes for a firing on frame 0.
+      const time = key.time === undefined ? 0 : key.time;
+      if (typeof time !== 'number' || !Number.isFinite(time)) {
+        kept.push(`${at}: time is ${JSON.stringify(key.time)}, not a finite number`);
+        return stop(key.name);
+      }
+      if (time < previous) {
+        kept.push(
+          `${at}: "${key.name}" is at t=${time}, after a key at t=${previous} — the parser fills frames in ` +
+            'array order and never sorts them, so the earlier firing is unreachable',
+        );
+      }
+      previous = Math.max(previous, time);
+      keys.push({
+        animation: animName,
+        index: k,
+        kept,
+        stopped: false,
+        name: key.name,
+        sets: { volume: key.volume !== undefined, balance: key.balance !== undefined },
+        audio: isObj(definition) && typeof definition.audio === 'string',
+      });
+    });
+  }
+  return { parsed: true, animations: true, timelines, keys };
 }
 
 /**
@@ -1686,60 +1830,14 @@ export function validate(input: ValidateInput): ValidateReport {
   // It runs on the raw JSON rather than on the loaded data because the loaded
   // `Event` no longer remembers which fields the file wrote: an override that was
   // dropped and an override that matched the default are the same object.
-  check('A32_EVENT_KEYS_RESOLVE', () => {
-    if (!raw) return skip('A32_EVENT_KEYS_RESOLVE', 'the skeleton JSON did not parse (A00 owns that failure)');
-    if (!isObj(raw.animations)) return skip('A32_EVENT_KEYS_RESOLVE', 'the skeleton declares no animations');
-    const declared = isObj(raw.events) ? (raw.events as Json) : {};
-    const known = Object.keys(declared);
-    let sawATimeline = false;
-    for (const [animName, anim] of Object.entries(raw.animations as Json)) {
-      if (!isObj(anim) || !Array.isArray(anim.events)) continue;
-      sawATimeline = true;
-      let previous = -Infinity;
-      (anim.events as unknown[]).forEach((key, k) => {
-        const at = `animation "${animName}" event key ${k}`;
-        if (!isObj(key) || typeof key.name !== 'string') {
-          fail('A32_EVENT_KEYS_RESOLVE', `${at}: an event key needs a string "name"`);
-          return;
-        }
-        const definition = declared[key.name];
-        if (definition === undefined) {
-          fail(
-            'A32_EVENT_KEYS_RESOLVE',
-            `${at}: fires "${key.name}", which the skeleton's events block does not declare` +
-              (known.length ? ` (declared: ${known.join(', ')})` : ' (that block is empty or absent)'),
-          );
-          return;
-        }
-        // `time` defaults to 0 when absent (`:1247`), which is what the editor
-        // writes for a firing on frame 0.
-        const time = key.time === undefined ? 0 : key.time;
-        if (typeof time !== 'number' || !Number.isFinite(time)) {
-          fail('A32_EVENT_KEYS_RESOLVE', `${at}: time is ${JSON.stringify(key.time)}, not a finite number`);
-          return;
-        }
-        if (time < previous) {
-          fail(
-            'A32_EVENT_KEYS_RESOLVE',
-            `${at}: "${key.name}" is at t=${time}, after a key at t=${previous} — the parser fills frames in ` +
-              'array order and never sorts them, so the earlier firing is unreachable',
-          );
-        }
-        previous = Math.max(previous, time);
-        const hasAudio = isObj(definition) && typeof definition.audio === 'string';
-        for (const field of ['volume', 'balance'] as const) {
-          if (key[field] !== undefined && !hasAudio) {
-            fail(
-              'A32_EVENT_KEYS_RESOLVE',
-              `${at}: "${key.name}" sets ${field}, but the event declares no audio path — the parser reads ` +
-                `${field} only for an event that has one, so it is dropped in silence`,
-            );
-          }
-        }
-      });
-    }
-    if (!sawATimeline) return skip('A32_EVENT_KEYS_RESOLVE', 'no animation carries an event timeline');
-  });
+  //
+  // ✂️ Split per clause since issue #1025 (cut 4c-4): the third mode is the
+  // rig's — a readable model document states a key's `volume` and the event's
+  // `audio` — and its clause is the body's (`./assertions/bodies/a32.ts`); the
+  // first two, with "no string name" and "a time that is not a finite number",
+  // are states the document's reader refuses by name, so they stay here, in
+  // `rawEventKeys`, and the body prints what they found at their place.
+  check('A32_EVENT_KEYS_RESOLVE', () => a32EventKeysResolve(verdicts, rawEventKeys(raw)));
 
   // --- A34: a constraint timeline aims at a constraint of that type ---------
   //
@@ -2141,19 +2239,7 @@ export function validate(input: ValidateInput): ValidateReport {
 
   // --- A12: no dark / two-colour tint --------------------------------------
   // Parsed, then silently ignored by spine-html.
-  check('A12_NO_DARK_COLOR', () => {
-    const slots = Array.isArray(raw?.slots) ? (raw.slots as unknown[]) : [];
-    for (const slot of slots) {
-      if (isObj(slot) && 'dark' in slot) {
-        fail('A12_NO_DARK_COLOR', `slot "${String(slot.name)}" declares a dark colour; the renderer ignores it`);
-      }
-    }
-    walkTimelines(raw, (path, kind, name) => {
-      if (kind === 'slot' && (name === 'rgba2' || name === 'rgb2')) {
-        fail('A12_NO_DARK_COLOR', `${path}: two-colour timeline "${name}" is silently ignored by the renderer`);
-      }
-    });
-  });
+  check('A12_NO_DARK_COLOR', () => a12NoDarkColor(verdicts, rawSkeletonRoster(raw), rawSlotTimelines(raw)));
 
   // --- A05: curve arrays are 4 numbers per value channel --------------------
   check('A05_CURVE_ARRAY_LENGTH', () => {
@@ -3853,63 +3939,7 @@ export function validate(input: ValidateInput): ValidateReport {
   //
   // The axis bone itself must carry no keys at all: `invariants.axisBone` names
   // a per-cut SETUP value, and animating it swings the whole formation.
-  check('A24_AXIS_SPACE_STROKE', () => {
-    const rig = input.rig;
-    if (!rig) return skip('A24_AXIS_SPACE_STROKE', 'no rig info (validating a bare directory)');
-    if (!rig.axisBone) {
-      return skip(
-        'A24_AXIS_SPACE_STROKE',
-        `the rig "${rig.archetype}" declares no axis bone, so there is no axis space for a stroke to leave`,
-      );
-    }
-    const subtree = new Set(rig.axisSubtree);
-    const anims = isObj(raw?.animations) ? (raw.animations as Json) : {};
-    // The stroke is the subject and its keys are where it lives (#580). A rig
-    // that names an axis bone and then keys neither it nor anything under it has
-    // no stroke for this rule to find out of axis space, and a loop over nothing
-    // used to report that as held.
-    let keyed = 0;
-    for (const [animName, anim] of Object.entries(anims)) {
-      if (!isObj(anim) || !isObj(anim.bones)) continue;
-      for (const [boneName, timelines] of Object.entries(anim.bones as Json)) {
-        if (boneName === rig.axisBone) {
-          keyed++;
-          fail(
-            'A24_AXIS_SPACE_STROKE',
-            `"${animName}" keys the axis bone "${boneName}"; the axis angle is a per-cut SETUP value, not animation`,
-          );
-          continue;
-        }
-        if (subtree.has(boneName)) keyed++;
-        if (!subtree.has(boneName) || !isObj(timelines)) continue;
-        if ('translatey' in timelines) {
-          fail(
-            'A24_AXIS_SPACE_STROKE',
-            `"${animName}" gives "${boneName}" a translatey timeline; a bone under "${rig.axisBone}" moves along the axis only`,
-          );
-        }
-        const keys = (timelines as Json).translate;
-        if (!Array.isArray(keys)) continue;
-        for (const key of keys) {
-          if (!isObj(key)) continue;
-          const y = Number(key.y ?? 0);
-          if (Number.isFinite(y) && Math.abs(y) > 1e-6) {
-            fail(
-              'A24_AXIS_SPACE_STROKE',
-              `"${animName}" keys "${boneName}" translate y=${y} at t=${String(key.time ?? 0)}; the axis bone carries the direction, so keys are translateX only`,
-            );
-          }
-        }
-      }
-    }
-    if (keyed === 0) {
-      return skip(
-        'A24_AXIS_SPACE_STROKE',
-        `no animation keys the axis bone "${rig.axisBone}" or any of the ${rig.axisSubtree.length} bone(s) under ` +
-          'it, so this rig has no stroke to hold in axis space',
-      );
-    }
-  });
+  check('A24_AXIS_SPACE_STROKE', () => a24AxisSpaceStroke(verdicts, rawBoneTimelines(raw), input));
 
   // --- A25: parentage that must never happen -------------------------------
   //
@@ -3920,36 +3950,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // the reason it is tempting, because the wrong parentage still loads and still
   // animates — it just lies. That is exactly the class of invariant that belongs
   // in a machine guard rather than in prose.
-  check('A25_DETACHED_BONE_PARENTAGE', () => {
-    const rig = input.rig;
-    if (!rig) return skip('A25_DETACHED_BONE_PARENTAGE', 'no rig info (validating a bare directory)');
-    if (!rig.detached.length) {
-      return skip('A25_DETACHED_BONE_PARENTAGE', `the rig "${rig.archetype}" declares no forbidden parentage`);
-    }
-    const parentOf = new Map<string, string | null>();
-    for (const bone of Array.isArray(raw?.bones) ? (raw.bones as unknown[]) : []) {
-      if (isObj(bone) && typeof bone.name === 'string') {
-        parentOf.set(bone.name, typeof bone.parent === 'string' ? bone.parent : null);
-      }
-    }
-    for (const [child, forbidden] of rig.detached) {
-      if (!parentOf.has(child)) {
-        fail('A25_DETACHED_BONE_PARENTAGE', `the rig declares "${child}" detached from "${forbidden}" but has no such bone`);
-        continue;
-      }
-      const seen = new Set<string>();
-      for (let cursor = parentOf.get(child) ?? null; cursor; cursor = parentOf.get(cursor) ?? null) {
-        if (seen.has(cursor)) break; // a cycle; the loader would have thrown first
-        seen.add(cursor);
-        if (cursor !== forbidden) continue;
-        fail(
-          'A25_DETACHED_BONE_PARENTAGE',
-          `"${child}" is a descendant of "${forbidden}"; it must not be dragged by that bone's motion`,
-        );
-        break;
-      }
-    }
-  });
+  check('A25_DETACHED_BONE_PARENTAGE', () => a25DetachedBoneParentage(verdicts, rawSkeletonRoster(raw), input));
 
   // --- A26: the slots array IS the rig's slot table ------------------------
   //
@@ -3969,56 +3970,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // fills it, so a shorter array is a loss and is named as one here. A slot
   // missing from the array moves every slot below it up one index, which is
   // what a `drawOrder` key's offsets are counted against.
-  check('A26_SLOT_DRAW_ORDER', () => {
-    if (!input.rig) return skip('A26_SLOT_DRAW_ORDER', 'no rig info (validating a bare directory)');
-    const order = input.rig.slotOrder;
-    if (!order) {
-      return skip(
-        'A26_SLOT_DRAW_ORDER',
-        `the rig "${input.rig.archetype}" declares no canonical slot order, so the emitted order has nothing to disagree with`,
-      );
-    }
-    const names = (Array.isArray(raw?.slots) ? (raw.slots as unknown[]) : [])
-      .filter(isObj)
-      .map((s) => String(s.name));
-    // ⛔ **No empty-subject SKIP here, and #575 is the whole reason** (#580). The
-    // empty sequence is a subsequence of every table, so before #575 a skeleton
-    // with no slot reported its draw order held and this rule wanted the same
-    // guard its neighbours got. It no longer does: the completeness clause below
-    // reads zero emitted slots against a declared table as EVERY slot lost,
-    // which is the maximal case of exactly the defect #575 filed — so the honest
-    // verdict is a FAIL naming them, and a SKIP here would suppress it. Measured:
-    // with the guard in place a rig declaring one slot beside an artifact
-    // carrying none reported SKIP; with it gone, `"block" is declared and not
-    // emitted`. A26 therefore has no vacuous pass left to convert, the way
-    // `A07_ATLAS_TEXT_SHAPE` has none.
-    let at = 0;
-    for (const name of names) {
-      const found = order.indexOf(name, at);
-      if (found < 0) {
-        const known = order.indexOf(name);
-        fail(
-          'A26_SLOT_DRAW_ORDER',
-          known < 0
-            ? `slot "${name}" is not in the archetype's slot table`
-            : `slot "${name}" is drawn out of order (table position ${known}, after a slot at ${at})`,
-        );
-        return;
-      }
-      at = found + 1;
-    }
-    const emitted = new Set(names);
-    const missing = order.filter((name) => !emitted.has(name));
-    if (missing.length > 0) {
-      fail(
-        'A26_SLOT_DRAW_ORDER',
-        `the rig "${input.rig.archetype}" declares ${order.length} slot(s) and the skeleton has ${names.length}: ` +
-          `${missing.map((name) => `"${name}"`).join(', ')} ${missing.length === 1 ? 'is' : 'are'} declared and ` +
-          'not emitted. A slot nothing fills is emitted with no setup attachment, not dropped — dropping one ' +
-          'moves every slot below it up one index',
-      );
-    }
-  });
+  check('A26_SLOT_DRAW_ORDER', () => a26SlotDrawOrder(verdicts, rawSkeletonRoster(raw), input));
 
   // --- A27: region name == the PNG's basename ------------------------------
   //
@@ -4059,25 +4011,7 @@ export function validate(input: ValidateInput): ValidateReport {
   //     get projected onto the axis rather than read as axis coordinates.
   //     Ignoring them would let a rig pass while a recoil key closed the last few
   //     pixels of the gap.
-  check('A29_STROKE_WITHIN_CONTACT_DEPTH', () => {
-    const rig = input.rig;
-    if (!rig) return skip('A29_STROKE_WITHIN_CONTACT_DEPTH', 'no rig info (validating a bare directory)');
-    if (!rig.contactDepth) {
-      return skip(
-        'A29_STROKE_WITHIN_CONTACT_DEPTH',
-        'the manifest declares no `stroke.contact_depth`, so this cut has no measured contact ceiling to hold the stroke to',
-      );
-    }
-    const deep = deepestInwardAdvance(raw, rig);
-    stats.contactDepth = rig.contactDepth;
-    stats.deepestAdvance = Math.round(deep.total * 1000) / 1000;
-    if (deep.total > rig.contactDepth + 1e-6) {
-      fail(
-        'A29_STROKE_WITHIN_CONTACT_DEPTH',
-        `${deep.describe()} but the masses meet at ${rig.contactDepth}px — the two plates would interpenetrate`,
-      );
-    }
-  });
+  check('A29_STROKE_WITHIN_CONTACT_DEPTH', () => a29StrokeWithinContactDepth(verdicts, rawBoneTimelines(raw), input));
 
   // --- A30: inward travel stops where the drawn cover runs out -------------
   //
@@ -4100,42 +4034,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // validates. Rather than assert a number that no longer means anything, refuse
   // the deformation. A cut that wants squash under a declared ceiling has to
   // re-measure containment for the scaled contour and say so.
-  check('A30_STROKE_WITHIN_CAP_CONTAINMENT', () => {
-    const rig = input.rig;
-    if (!rig) return skip('A30_STROKE_WITHIN_CAP_CONTAINMENT', 'no rig info (validating a bare directory)');
-    if (!rig.capContainmentCeiling) {
-      return skip(
-        'A30_STROKE_WITHIN_CAP_CONTAINMENT',
-        'the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling',
-      );
-    }
-    const deep = deepestInwardAdvance(raw, rig);
-    stats.capCeiling = rig.capContainmentCeiling;
-    stats.deepestAdvance = Math.round(deep.total * 1000) / 1000;
-    if (deep.total > rig.capContainmentCeiling + 1e-6) {
-      fail(
-        'A30_STROKE_WITHIN_CAP_CONTAINMENT',
-        `${deep.describe()} but the leading contour leaves the occluder's opaque footprint at ` +
-          `${rig.capContainmentCeiling}px — the part would be drawn where it should be covered`,
-      );
-    }
-    const subtree = new Set(rig.axisSubtree);
-    const anims = isObj(raw?.animations) ? (raw.animations as Json) : {};
-    for (const [animName, anim] of Object.entries(anims)) {
-      if (!isObj(anim) || !isObj(anim.bones)) continue;
-      for (const [boneName, timelines] of Object.entries(anim.bones as Json)) {
-        if (!subtree.has(boneName) || !isObj(timelines)) continue;
-        for (const name of Object.keys(timelines)) {
-          if (name !== 'scale' && name !== 'scalex' && name !== 'scaley') continue;
-          fail(
-            'A30_STROKE_WITHIN_CAP_CONTAINMENT',
-            `"${animName}" gives "${boneName}" a ${name} timeline while a cap-containment ceiling is declared; ` +
-              'the ceiling was measured on the undeformed contour, so a scaled plate is outside its evidence',
-          );
-        }
-      }
-    }
-  });
+  check('A30_STROKE_WITHIN_CAP_CONTAINMENT', () => a30StrokeWithinCapContainment(verdicts, rawBoneTimelines(raw), input));
 
   // --- A18: determinism ----------------------------------------------------
   check('A18_DETERMINISTIC_EMIT', () => {
@@ -4209,63 +4108,6 @@ export function validate(input: ValidateInput): ValidateReport {
   }
 
   return { failures, passed, skipped, profileSkipped, profile, stats };
-}
-
-/**
- * Deepest inward advance the animation data asks for, in axis pixels.
- *
- * Shared by A29 and A30 because they bound the SAME quantity against two
- * different measured facts. Two things spend the same clearance and so are added:
- *
- *   * the stroke — a translateX on a bone in the axis subtree. A24 guarantees
- *     there is no hidden screen-space component to miss.
- *   * the mass bone's own inward keys. It typically hangs outside the axis
- *     subtree, so its keys are screen-space by design and get PROJECTED onto the
- *     axis rather than read as axis coordinates. Ignoring them would let a rig
- *     pass while a recoil key closed the last few pixels.
- */
-function deepestInwardAdvance(
-  raw: Json | null,
-  rig: NonNullable<ValidateInput['rig']>,
-): { total: number; describe: () => string } {
-  const anims = isObj(raw?.animations) ? (raw.animations as Json) : {};
-  const subtree = new Set(rig.axisSubtree);
-  let strokeMax = 0;
-  let strokeWhere = '';
-  let massMax = 0;
-  let massWhere = '';
-  for (const [animName, anim] of Object.entries(anims)) {
-    if (!isObj(anim) || !isObj(anim.bones)) continue;
-    for (const [boneName, timelines] of Object.entries(anim.bones as Json)) {
-      if (!isObj(timelines)) continue;
-      const keys = (timelines as Json).translate;
-      if (!Array.isArray(keys)) continue;
-      for (const key of keys) {
-        if (!isObj(key)) continue;
-        if (subtree.has(boneName)) {
-          // +x is inward along the axis; a retracted key is negative and spends
-          // no clearance, so only the inward extreme matters.
-          const x = Number(key.x ?? 0);
-          if (Number.isFinite(x) && x > strokeMax) {
-            strokeMax = x;
-            strokeWhere = `${animName}.${boneName} t=${String(key.time ?? 0)}`;
-          }
-        } else if (boneName === rig.massBone && rig.inwardUnit) {
-          const inward = Number(key.x ?? 0) * rig.inwardUnit[0] + Number(key.y ?? 0) * rig.inwardUnit[1];
-          if (Number.isFinite(inward) && inward > massMax) {
-            massMax = inward;
-            massWhere = `${animName}.${boneName} t=${String(key.time ?? 0)}`;
-          }
-        }
-      }
-    }
-  }
-  return {
-    total: strokeMax + massMax,
-    describe: () =>
-      `deepest inward advance is ${(strokeMax + massMax).toFixed(3)}px (stroke ${strokeMax.toFixed(3)} at ${strokeWhere}` +
-      `${massMax > 0 ? ` + mass ${massMax.toFixed(3)} at ${massWhere}` : ''})`,
-  };
 }
 
 /**

@@ -520,6 +520,9 @@ import type { ConstraintFacts } from './src/assertions/facts/constraints.ts';
 import { verdictLines, verdictMain, walkSpelling, type VerdictRow } from './tools/verdict_gate.ts';
 import { compareFacts, modelGivenOf } from './tools/verdict_gate.ts';
 import { modelRegionJoinsWith, type SlotKeyWalk } from './src/assertions/model/region_joins.ts';
+import { modelSkeletonRoster } from './src/assertions/model/skeleton_roster.ts';
+import { modelBoneTimelines } from './src/assertions/model/bone_timelines.ts';
+import { modelEventKeys } from './src/assertions/model/event_keys.ts';
 import { compareRigFacts, modelRigFacts, RIG_FACT_FAMILIES, rigFactsDerivations, rigFactsSpelling, sumTallies, type DerivationTally, type RigFactFamily, type RigFacts } from './tools/rig_facts.ts';
 import {
   articulatedFixture,
@@ -1335,6 +1338,82 @@ function docPhysicsKeys(doc: Record<string, unknown>, animation: string, constra
   return found.keys;
 }
 
+/**
+ * A twin's way into a document's bone timelines (issue #1025, cut 4c-4): one
+ * animation's timelines on one bone, as the document lists them (`[{ name,
+ * keys }]`, in order). `add` puts an entry for the bone at the end of the
+ * animation's list where it keys none, which is where a Spine break that
+ * assigns `animations.<a>.bones.<bone>` puts the key in the file's object.
+ */
+function docBoneTimelineList(doc: Record<string, unknown>, animation: string, bone: string, add = false): DocTimeline[] {
+  const found = (doc.animations as Array<{ name: string; bones: Array<{ name: string; timelines: DocTimeline[] }> }>).find((a) => a.name === animation);
+  if (found === undefined) throw new Error(`the document has no animation "${animation}"`);
+  let entry = found.bones.find((b) => b.name === bone);
+  if (entry === undefined) {
+    if (!add) throw new Error(`the document's animation "${animation}" keys no bone "${bone}"`);
+    entry = { name: bone, timelines: [] };
+    found.bones.push(entry);
+  }
+  return entry.timelines;
+}
+
+/** One timeline of `docBoneTimelineList` replaced by `keys`, or added after the others where the bone keys no such timeline — what a Spine break assigning `…bones.<bone>.<timeline>` does to the file's object. */
+function docSetTimeline(timelines: DocTimeline[], name: string, keys: Array<Record<string, unknown>>): void {
+  const found = timelines.find((t) => t.name === name);
+  if (found !== undefined) found.keys = keys;
+  else timelines.push({ name, keys });
+}
+
+/**
+ * A slot renamed everywhere the document names it as a slot (issue #1025, cut
+ * 4c-4): the slot record, each skin's table key, the editor order's slot
+ * lists, and each animation's slot entries — the twin of a Spine break that
+ * renames the slot and its skin table (`M35`). The rig section is the build's
+ * declaration and is left alone, as the break leaves the rig info alone.
+ */
+function docRenameSlot(doc: Record<string, unknown>, from: string, to: string): void {
+  const slot = (doc.slots as Array<{ name: string }>).find((s) => s.name === from);
+  if (slot === undefined) throw new Error(`the document has no slot "${from}"`);
+  slot.name = to;
+  for (const skin of doc.skins as Array<{ attachments: Record<string, unknown> }>) {
+    if (!(from in skin.attachments)) continue;
+    skin.attachments = Object.fromEntries(Object.entries(skin.attachments).map(([k, v]) => [k === from ? to : k, v]));
+  }
+  const order = doc.editorOrder as { skins: Array<{ slots: string[] }> } | undefined;
+  for (const skin of order?.skins ?? []) skin.slots = skin.slots.map((s) => (s === from ? to : s));
+  for (const animation of doc.animations as Array<{ slots: Array<{ name: string }> }>) for (const entry of animation.slots) if (entry.name === from) entry.name = to;
+}
+
+/** A slot taken out of the document — its record and the editor order's slot lists — the twin of a Spine break that deletes it from the `slots` array (`O26`); a slot a skin fills cannot be dropped this way. */
+function docDropSlot(doc: Record<string, unknown>, name: string): void {
+  for (const skin of doc.skins as Array<{ attachments: Record<string, unknown> }>) {
+    if (name in skin.attachments) throw new Error(`the document's skins fill slot "${name}", so dropping only its record is not the break`);
+  }
+  doc.slots = (doc.slots as Array<{ name: string }>).filter((s) => s.name !== name);
+  const order = doc.editorOrder as { skins: Array<{ slots: string[] }> } | undefined;
+  for (const skin of order?.skins ?? []) skin.slots = skin.slots.filter((s) => s !== name);
+}
+
+/**
+ * The twin of a Spine break that declares `events` as `{ <name>: {} }` and
+ * keys the file's FIRST animation with `keys` (`M45b`–`M45d`, issue #1025,
+ * cut 4c-4): the document's `events` section declaring the same names, and
+ * the same keys on the animation the file lists first — read off the broken
+ * skeleton, since the file's order is the emitter's (`editorAnimationOrder`)
+ * and not the document's.
+ */
+function docEventsTwin(declared: string[], keys: Array<Record<string, unknown>>): ModelTwin {
+  return {
+    forge: (doc, call) => {
+      const first = Object.keys((JSON.parse(call.skeletonText) as { animations: Record<string, unknown> }).animations)[0];
+      const animation = (doc.animations as Array<{ name: string; events: unknown[] }>).find((a) => a.name === first);
+      if (animation === undefined) throw new Error(`the document has no animation "${first}"`);
+      doc.events = declared.map((name) => ({ name }));
+      animation.events = keys.map((key) => ({ ...key }));
+    },
+  };
+}
+
 /** The run's supplier check. `validate` below feeds it; `main` attributes its findings to case lines; `runVerdictSuppliersSuite` reads it. */
 const SUPPLIERS = new SupplierCheck();
 
@@ -1670,6 +1749,8 @@ const MUTANTS: Mutant[] = [
     name: 'M09_dark_two_colour_tint',
     origin: 'parsed, then silently ignored by the renderer',
     expect: 'A12_NO_DARK_COLOR',
+    // The document states a slot's dark colour where the file does (`emitSlots`), slot for slot (issue #1025, cut 4c-4).
+    twin: { forge: (doc) => void ((doc.slots as Array<Record<string, unknown>>)[1].dark = '404040') },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -1812,6 +1893,8 @@ const MUTANTS: Mutant[] = [
     name: 'M45b_event_key_fires_an_undeclared_event',
     origin: 'SkeletonJson.ts:1244 — findEvent returns null and readAnimation throws, in the CONSUMER’s process',
     expect: 'A32_EVENT_KEYS_RESOLVE',
+    // A kept clause (issue #1025, cut 4c-4): the reader refuses an undeclared event by the animation's name.
+    twin: docEventsTwin(['probe_step'], [{ time: 0, name: 'probe_stpe' }]),
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -1827,6 +1910,8 @@ const MUTANTS: Mutant[] = [
       'SkeletonJson.ts:1241 — frames are filled in ARRAY order and never sorted, so a decreasing time builds ' +
       'an EventTimeline whose earlier firing is unreachable, with a perfectly clean load',
     expect: 'A32_EVENT_KEYS_RESOLVE',
+    // A kept clause (issue #1025, cut 4c-4): the reader refuses event times that go backwards, by the animation's name.
+    twin: docEventsTwin(['probe_step'], [{ time: 0.5, name: 'probe_step' }, { time: 0.25, name: 'probe_step' }]),
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -1845,6 +1930,8 @@ const MUTANTS: Mutant[] = [
       'SkeletonJson.ts:1254-1257 — volume and balance are read only inside `if (event.data.audioPath)`, ' +
       'so on an event with no audio path they are two numbers nothing will ever read',
     expect: 'A32_EVENT_KEYS_RESOLVE',
+    // The moved clause (issue #1025, cut 4c-4): the document holds a key's volume and the event's audio.
+    twin: docEventsTwin(['probe_step'], [{ time: 0, name: 'probe_step', volume: 0.5 }]),
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -3260,6 +3347,7 @@ const ARTICULATED_MUTANTS: Mutant[] = [
     name: 'M25_travel_key_carries_a_screen_space_y',
     origin: "a generator's `x: 30, y: 8` pairs, which is why its animation could not move to another cut",
     expect: 'A24_AXIS_SPACE_STROKE',
+    twin: { forge: (doc) => void (docKeys(docBoneTimelineList(doc, 'advance_slow', 'plunger'), 'translate')[1].y = 8) },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -3274,6 +3362,10 @@ const ARTICULATED_MUTANTS: Mutant[] = [
     name: 'M26_axis_bone_is_animated',
     origin: 'the axis angle is the one per-cut SETUP value; animating it swings the whole formation',
     expect: 'A24_AXIS_SPACE_STROKE',
+    twin: { forge: (doc) => {
+      const timelines = docBoneTimelineList(doc, 'idle', 'axis', true);
+      timelines.splice(0, timelines.length, { name: 'rotate', keys: [{ time: 0, value: 3 }] });
+    } },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -3285,6 +3377,7 @@ const ARTICULATED_MUTANTS: Mutant[] = [
     name: 'M27_emitter_reparented_under_the_moving_part',
     origin: 'what the emitter released gets dragged left and right with every stroke',
     expect: 'A25_DETACHED_BONE_PARENTAGE',
+    twin: { forge: (doc) => void ((doc.bones as Array<Record<string, unknown>>).find((b) => b.name === 'emitter')!.parent = 'plunger') },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -3296,6 +3389,13 @@ const ARTICULATED_MUTANTS: Mutant[] = [
     name: 'M28_occluder_drawn_before_the_moving_part',
     origin: 'the entry point only reads as covered while the occluder is drawn in front of it',
     expect: 'A26_SLOT_DRAW_ORDER',
+    // The document's slots are the file's draw order, slot for slot (`emitSlots` never re-sorts them).
+    twin: { forge: (doc) => {
+      const slots = doc.slots as Array<{ name: string }>;
+      const collar = slots.findIndex((s) => s.name === 'collar');
+      const plunger = slots.findIndex((s) => s.name === 'plunger');
+      slots.splice(plunger, 0, slots.splice(collar, 1)[0]);
+    } },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -3413,6 +3513,7 @@ const ARTICULATED_MUTANTS: Mutant[] = [
     name: 'M32_travel_drives_past_the_contact_point',
     origin: 'inward travel goes at most until the moving mass touches the part that occludes it',
     expect: 'A29_STROKE_WITHIN_CONTACT_DEPTH',
+    twin: { forge: (doc) => void ((docKeys(docBoneTimelineList(doc, 'advance_fast', 'plunger'), 'translate')[1].x as number) += 10) },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -3466,6 +3567,7 @@ const CONTAINED_MUTANTS: Mutant[] = [
     name: 'M33_travel_drives_past_the_containment_ceiling',
     origin: 'past the containment window the leading contour is drawn where the art says it is covered',
     expect: 'A30_STROKE_WITHIN_CAP_CONTAINMENT',
+    twin: { forge: (doc) => void ((docKeys(docBoneTimelineList(doc, 'advance_fast', 'plunger'), 'translate')[1].x as number) += 43) },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -3482,6 +3584,7 @@ const CONTAINED_MUTANTS: Mutant[] = [
     origin:
       'the ceiling was measured by TRANSLATING the plate; a scaled plate changes the contour the measurement was about',
     expect: 'A30_STROKE_WITHIN_CAP_CONTAINMENT',
+    twin: { forge: (doc) => docSetTimeline(docBoneTimelineList(doc, 'advance_slow', 'plunger'), 'scale', [{ time: 0, x: 1, y: 1 }, { time: 0.2, x: 1.04, y: 0.97 }, { time: 0.8, x: 1, y: 1 }]) },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -3502,6 +3605,7 @@ const CONTAINED_MUTANTS: Mutant[] = [
     origin:
       'the manifest calls it `shroud` and the rig calls it `collar`; the emitted name is the join key and a mismatch makes the slot vanish with no error',
     expect: 'A26_SLOT_DRAW_ORDER',
+    twin: { forge: (doc) => docRenameSlot(doc, 'collar', 'shroud') },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -13840,6 +13944,11 @@ function runStaticRigSuite(): number {
       skeleton.bones = [];
     },
     'spine-html',
+    // A26 fires on it (issue #1025, cut 4c-4): the document with no slot and no bone — every one the rig fills is none.
+    { forge: (doc) => {
+      for (const slot of doc.slots as Array<{ name: string }>) docDropSlot(doc, slot.name);
+      doc.bones = [];
+    } },
   );
   const borne = gateProbe(dirs, SUBJECT_BEARING, 'spine-html');
   const quantified = subjectQuantifiedAssertions(validateSourceWithBodies(import.meta.dir));
@@ -17605,6 +17714,7 @@ function runDrawOrderSuite(): number {
       );
     },
     'spine-html',
+    { forge: (doc) => docDropSlot(doc, 'ghost') },
   );
   const droppedDetail = dropped.failures.find((f) => f.assertion === 'A26_SLOT_DRAW_ORDER')?.detail ?? null;
   say(
@@ -17628,6 +17738,11 @@ function runDrawOrderSuite(): number {
       slots.splice(slots.findIndex((s) => s.name === 'ghost'), 0, slots.splice(from, 1)[0]);
     },
     'spine-html',
+    { forge: (doc) => {
+      const slots = doc.slots as Array<{ name: string }>;
+      const from = slots.findIndex((s) => s.name === 'marker');
+      slots.splice(slots.findIndex((s) => s.name === 'ghost'), 0, slots.splice(from, 1)[0]);
+    } },
   );
   const reorderedDetail = reordered.failures.find((f) => f.assertion === 'A26_SLOT_DRAW_ORDER')?.detail ?? null;
   const frames = stepProbe(wide, LEGAL_SWAP, 'swap', PROTOCOL_FPS);
@@ -98471,6 +98586,42 @@ function runVerdictSuppliersSuite(): number {
       if (fault === undefined) probes.push(`${label}: the check named [${check.faults.map((f) => f.fault).join('; ') || 'nothing'}], not ${code} on the planted case`);
       else named.push(`${label} → ${fault.fault.slice(0, 160)}`);
     }
+    // Cut 4c-4's three families (issue #1025), one neighbouring value each — over the articulated probe with its rig
+    // info, because the rules over the bone timelines and the slot table are archetype rules and read nothing without it.
+    const articulated = fixtures[1];
+    const rigInput: ValidateInput = {
+      skeletonText: articulated.result.skeletonText,
+      atlasText: articulated.result.atlasText,
+      atlasDir: articulated.opts.outDir,
+      modelText: threadedModel(articulated.result, articulated.result.atlasText),
+      rig: articulated.result.rig,
+      profile: 'spine-html',
+    };
+    const rigSpine = validateOverSpine(rigInput);
+    const axisBone = articulated.result.rig.axisBone ?? '(the articulated probe declares no axis bone)';
+    const rigPlants: Array<[string, Partial<ModelSupply>, string]> = [
+      ['the first slot declaring a dark colour', { skeletonRoster: (read) => {
+        const facts = modelSkeletonRoster(read);
+        return { ...facts, slots: facts.slots.map((s, i) => (i === 0 ? { ...s, dark: true } : s)) };
+      } }, 'A12_NO_DARK_COLOR'],
+      ['an animation keying the axis bone', { boneTimelines: (read) => ({ boneTimelines: [...modelBoneTimelines(read).boneTimelines, { animation: 'vf04', bone: axisBone, timelines: {} }] }) }, 'A24_AXIS_SPACE_STROKE'],
+      ['an event key setting volume on an event with no audio', { eventKeys: (read) => {
+        const facts = modelEventKeys(read);
+        return { ...facts, timelines: facts.timelines + 1, keys: [...facts.keys, { animation: 'vf04', index: 0, kept: [], stopped: false, name: 'vf04', sets: { volume: true, balance: false }, audio: false }] };
+      } }, 'A32_EVENT_KEYS_RESOLVE'],
+    ];
+    for (const [label, supply, code] of rigPlants) {
+      const check = new SupplierCheck(supply);
+      check.observe(rigInput, rigSpine, undefined);
+      check.caseLine('VF04_PLANTED_CASE');
+      const fault = check.faults.find((f) => f.case === 'VF04_PLANTED_CASE' && f.fault.startsWith(`${code} differs`));
+      if (fault === undefined) probes.push(`${label}: the check named [${check.faults.map((f) => f.fault).join('; ') || 'nothing'}], not ${code} on the planted case`);
+      else named.push(`${label} → ${fault.fault.slice(0, 160)}`);
+    }
+    const rigClean = new SupplierCheck();
+    rigClean.observe(rigInput, rigSpine, undefined);
+    rigClean.caseLine('VF04_UNPLANTED_CASE');
+    if (rigClean.faults.length > 0 || rigClean.compared !== 1) probes.push(`the articulated probe's call unplanted read ${rigClean.compared} comparison(s) and [${rigClean.faults.map((f) => f.fault).join('; ')}]`);
     const clean = new SupplierCheck();
     clean.observe(input, spine, undefined);
     clean.caseLine('VF04_UNPLANTED_CASE');
@@ -98523,7 +98674,7 @@ function runVerdictSuppliersSuite(): number {
   // --- VF09: cut 4c-1's fact families, fact by fact, order and identity included ---
   {
     const families = [...SUPPLIERS.facts.entries()];
-    const expected = ['region paths', 'meshes', 'animated bones', 'skin members', 'region joins', 'atlas', 'stage'];
+    const expected = ['region paths', 'meshes', 'animated bones', 'skin members', 'region joins', 'atlas', 'stage', 'slot timelines', 'roster', 'bone timelines', 'event keys'];
     const probes = [
       ...SUPPLIERS.faults.filter((f) => f.fault.startsWith('the facts "')).map((f) => `${f.case}: ${f.fault}`),
       ...expected.filter((family) => (SUPPLIERS.facts.get(family)?.compared ?? 0) === 0).map((family) => `the family "${family}" was compared on 0 builds`),
