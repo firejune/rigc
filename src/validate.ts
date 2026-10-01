@@ -15,6 +15,7 @@
  */
 import { dirname, resolve } from 'node:path';
 import {
+  type Animation,
   AnimationState,
   AnimationStateData,
   AtlasAttachmentLoader,
@@ -40,6 +41,7 @@ import {
   PhysicsConstraintTimeline,
   Property,
   RegionAttachment,
+  SequenceTimeline as RuntimeSequenceTimeline,
   Skeleton,
   SkeletonJson,
   SliderData,
@@ -145,6 +147,10 @@ import { a39DeformKeepsTriangleWinding } from './assertions/bodies/a39.ts';
 import { a09AnimationDurationMatchesSpec } from './assertions/bodies/a09.ts';
 import { a43TwoColorTintLoadsAndPosesAsWritten } from './assertions/bodies/a43.ts';
 import { a46SequenceAttachmentsShowTheFrameTheFileStates } from './assertions/bodies/a46.ts';
+import type { SliderCompositionFacts, SliderFact, SliderTimelineFact } from './assertions/facts/slider_composition.ts';
+import type { ConstraintTargetFacts, TargetAnimation, TargetKeyArray } from './assertions/facts/constraint_targets.ts';
+import { a34ConstraintTimelineTargets } from './assertions/bodies/a34.ts';
+import { a40SlidersComposeOnASharedTarget } from './assertions/bodies/a40.ts';
 
 export type { Failure } from './assertions/harness.ts';
 
@@ -649,18 +655,18 @@ export type TimelineAddBehaviour = 'accumulates' | 'overwrites' | 'inert';
  */
 const PROBE_DISPLACEMENT = 0.375;
 
-/** Every own value of a pose object a timeline could have written, as text. */
-function poseReading(pose: object): string {
-  const parts: string[] = [];
+/** Every own value of a pose object a timeline could have written, each as its key and its text. */
+function poseParts(pose: object): Array<[string, string]> {
+  const parts: Array<[string, string]> = [];
   for (const key of Object.keys(pose).sort()) {
     const value = (pose as Record<string, unknown>)[key];
     if (value === null || value === undefined || typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') {
-      parts.push(`${key}=${String(value)}`);
+      parts.push([key, String(value)]);
       continue;
     }
     if (Array.isArray(value)) {
       const entries: unknown[] = value;
-      if (entries.every((one) => typeof one === 'number')) parts.push(`${key}=[${entries.join(',')}]`);
+      if (entries.every((one) => typeof one === 'number')) parts.push([key, `[${entries.join(',')}]`]);
       continue;
     }
     if (typeof value !== 'object') continue;
@@ -670,12 +676,17 @@ function poseReading(pose: object): string {
     // structure — a bone back-reference, a slot's data — is either an identity
     // (read by name below) or something no timeline writes.
     if (keys.length > 0 && keys.every((one) => typeof record[one] === 'number')) {
-      parts.push(`${key}={${keys.map((one) => `${one}:${String(record[one])}`).join(',')}}`);
+      parts.push([key, `{${keys.map((one) => `${one}:${String(record[one])}`).join(',')}}`]);
     } else if (typeof record.name === 'string') {
-      parts.push(`${key}=@${record.name}`);
+      parts.push([key, `@${record.name}`]);
     }
   }
-  return parts.join(',');
+  return parts;
+}
+
+/** Every own value of a pose object a timeline could have written, as text. */
+function poseReading(pose: object): string {
+  return poseParts(pose).map(([key, text]) => `${key}=${text}`).join(',');
 }
 
 /** The whole of what a timeline could have changed, in one comparable string. */
@@ -799,6 +810,73 @@ export function timelineAddBehaviour(data: ReturnType<SkeletonJson['readSkeleton
     }
   }
   return wrote ? 'overwrites' : 'inert';
+}
+
+/** One skin under one start state of `timelineAddBehaviour`'s probe: what the cell reads, and every pose field the applications moved. */
+export interface TimelineAddCell {
+  /** The skin worn, `(none)` for no skin set. */
+  view: string;
+  state: 'setup' | 'displaced';
+  /** `A` a second application moved the pose at some time, `W` only the first did, `-` neither ever did. */
+  letter: 'A' | 'W' | '-';
+  /** Each field the first or the second application moved, at each time: `bone:<name>.<key>`, `slot:<name>.<key>` or `constraint:<name>.<key>`, with its three readings. */
+  changed: Array<{ field: string; t: number; before: string; once: string; twice: string }>;
+}
+
+/**
+ * `timelineAddBehaviour`'s probe, every cell kept: the same skins, start states,
+ * times and arguments, read per field rather than as one string — what the
+ * core suite's `CO27` holds the core's additive probe (`src/core/additive.ts`)
+ * to, cell by cell and value by value (issue #1025, cut 4c-5). The class the
+ * cells read is held to `timelineAddBehaviour`'s own answer on every timeline
+ * there, so the two cannot drift.
+ */
+export function timelineAddCells(data: ReturnType<SkeletonJson['readSkeletonData']>, timeline: Timeline): TimelineAddCell[] {
+  const fields = (skeleton: Skeleton): Map<string, string> => {
+    const out = new Map<string, string>();
+    const take = (kind: string, name: string, pose: object): void => {
+      for (const [key, text] of poseParts(pose)) out.set(`${kind}:${name}.${key}`, text);
+    };
+    for (const bone of skeleton.bones) take('bone', bone.data.name, bone.appliedPose);
+    for (const slot of skeleton.slots) take('slot', slot.data.name, slot.appliedPose);
+    for (const constraint of skeleton.constraints) take('constraint', constraint.data.name, constraint.appliedPose as object);
+    out.set('drawOrder', skeleton.drawOrder.appliedPose.map((slot) => slot.data.name).join('>'));
+    return out;
+  };
+  const cells: TimelineAddCell[] = [];
+  for (const skin of [null, ...data.skins]) {
+    const skeleton = new Skeleton(data);
+    if (skin !== null) skeleton.setSkin(skin);
+    probeStartStates(skeleton).forEach((displace, at) => {
+      const cell: TimelineAddCell = { view: skin?.name ?? '(none)', state: at === 0 ? 'setup' : 'displaced', letter: '-', changed: [] };
+      for (const time of probeTimes(timeline)) {
+        skeleton.setupPose();
+        for (const bone of skeleton.bones) bone.resetConstrained();
+        for (const slot of skeleton.slots) slot.resetConstrained();
+        for (const constraint of skeleton.constraints) constraint.resetConstrained();
+        skeleton.drawOrder.resetConstrained();
+        displace();
+        const before = fields(skeleton);
+        timeline.apply(skeleton, time, time, null, 1, MixFrom.current, true, false, true);
+        const once = fields(skeleton);
+        timeline.apply(skeleton, time, time, null, 1, MixFrom.current, true, false, true);
+        const twice = fields(skeleton);
+        let wrote = false;
+        let again = false;
+        for (const [field, b] of before) {
+          const o = once.get(field) ?? '';
+          const w = twice.get(field) ?? '';
+          if (o !== b) wrote = true;
+          if (w !== o) again = true;
+          if (o !== b || w !== o) cell.changed.push({ field, t: time, before: b, once: o, twice: w });
+        }
+        if (again) cell.letter = 'A';
+        else if (wrote && cell.letter === '-') cell.letter = 'W';
+      }
+      cells.push(cell);
+    });
+  }
+  return cells;
 }
 
 /**
@@ -1636,6 +1714,129 @@ export function spineConstraintFacts(data: ReturnType<SkeletonJson['readSkeleton
 }
 
 /**
+ * The runtime's supply of `ConstraintTargetFacts` (issue #1025, cut 4c-5):
+ * A34's walk of the raw JSON, as A34 always walked it — the `constraints`
+ * array's objects, then each animation (`Object.entries`, the file's order)
+ * that is an object, its `ik` and `transform` groups (each entry ONE key
+ * array) and its `path`, `physics` and `slider` groups (each entry an object
+ * of named key arrays, or a bare value), each where the group is an object.
+ * `reach` builds the timeline the parser builds for a physics timeline NAME
+ * (`unnamedPhysicsTimeline`) and asks it of the file's physics constraint
+ * objects (`unnamedPhysicsReach`). The model side's supply is
+ * `./assertions/model/constraint_targets.ts`.
+ */
+export function rawConstraintTargets(raw: Json): ConstraintTargetFacts {
+  const objects = (Array.isArray(raw.constraints) ? (raw.constraints as unknown[]) : []).filter((entry): entry is Json => isObj(entry));
+  const constraints = objects.map((entry) => ({ name: typeof entry.name === 'string' ? entry.name : null, type: String(entry.type), spelled: String(entry.name) }));
+  const rawPhysics = objects.filter((entry) => entry.type === 'physics');
+  const keyArray = (timeline: string, keys: unknown): TargetKeyArray => ({ timeline, keys: Array.isArray(keys) ? { count: keys.length } : { spelled: `${JSON.stringify(keys)}` } });
+  let animations: TargetAnimation[] | null = null;
+  if (isObj(raw.animations)) {
+    animations = [];
+    for (const [name, anim] of Object.entries(raw.animations)) {
+      if (!isObj(anim)) continue;
+      const groups: TargetAnimation['groups'][number][] = [];
+      for (const group of ['ik', 'transform'] as const) {
+        if (!isObj(anim[group])) continue;
+        groups.push({ group, entries: Object.entries(anim[group] as Json).map(([target, keys]) => ({ name: target, bare: null, keyArrays: [keyArray('', keys)] })) });
+      }
+      for (const group of NAMED_TIMELINE_GROUPS) {
+        if (!isObj(anim[group])) continue;
+        groups.push({
+          group,
+          entries: Object.entries(anim[group] as Json).map(([target, timelines]) =>
+            isObj(timelines) ? { name: target, bare: null, keyArrays: Object.entries(timelines).map(([timeline, keys]) => keyArray(timeline, keys)) } : { name: target, bare: JSON.stringify(timelines), keyArrays: [] },
+          ),
+        });
+      }
+      animations.push({ name, groups });
+    }
+  }
+  return {
+    constraints,
+    groupsByAnimation: animations,
+    reach: (name) => {
+      const timeline = unnamedPhysicsTimeline(name);
+      if (timeline === null) return null;
+      return { resets: timeline instanceof PhysicsConstraintResetTimeline, reached: unnamedPhysicsReach(timeline, rawPhysics).map((one) => String(one.name)) };
+    },
+  };
+}
+
+/**
+ * The runtime's supply of `SliderCompositionFacts` (issue #1025, cut 4c-5):
+ * the loaded sliders in the `constraints` array's order, and each animation's
+ * loaded timelines in the order the runtime built them, each with its class
+ * name and its `propertyIds` — spelled as the facts spell an id (the property's
+ * name off `Property`, the index after it as loaded, and a deform or sequence
+ * timeline's attachment OBJECT replaced by the address a skin files it under,
+ * first filing kept, as `spineSequenceFacts` maps it) — and the sentence's
+ * words for each, `describe` as A40 always wrote it. `behaviour` is today's
+ * probe, `timelineAddBehaviour`. The model side's supply is
+ * `./assertions/model/slider_composition.ts`.
+ */
+export function spineSliderComposition(data: ReturnType<SkeletonJson['readSkeletonData']>): SliderCompositionFacts {
+  let addressOf: Map<object, string> | null = null;
+  const address = (attachment: object): string => {
+    if (addressOf === null) {
+      addressOf = new Map();
+      for (const skin of data.skins) {
+        for (const entry of skin.getAttachments()) {
+          if (!addressOf.has(entry.attachment)) addressOf.set(entry.attachment, entryAddress(skin.name, data.slots[entry.slotIndex].name, entry.placeholder));
+        }
+      }
+    }
+    return addressOf.get(attachment) ?? '';
+  };
+  /** What a property id points at, in the words the rig spec uses — A40's `describe`. */
+  const describe = (timeline: Timeline, id: string): string => {
+    const property = Property[Number(id.split('|')[0])] ?? id;
+    if (isBoneTimeline(timeline)) return `bone "${data.bones[timeline.boneIndex]?.name ?? timeline.boneIndex}" ${property}`;
+    if (timeline instanceof DeformTimeline) {
+      return `slot "${data.slots[timeline.slotIndex]?.name ?? timeline.slotIndex}" deform of "${timeline.attachment.name}"`;
+    }
+    if (isSlotTimeline(timeline)) return `slot "${data.slots[timeline.slotIndex]?.name ?? timeline.slotIndex}" ${property}`;
+    if (isConstraintTimeline(timeline) && timeline.constraintIndex >= 0) {
+      return `constraint "${data.constraints[timeline.constraintIndex]?.name ?? timeline.constraintIndex}" ${property}`;
+    }
+    return `the skeleton's ${property}`;
+  };
+  /** An id as the facts spell it: the property's name in place of its number, an attachment's address in place of its serial. */
+  const idOf = (timeline: Timeline, id: string): string => {
+    const [head, ...rest] = id.split('|');
+    const named = [Property[Number(head)] ?? head, ...rest];
+    if (timeline instanceof DeformTimeline || timeline instanceof RuntimeSequenceTimeline) named[2] = address(timeline.attachment);
+    return named.join('|');
+  };
+  const timelinesOf = (animation: Animation): SliderTimelineFact[] =>
+    animation.timelines.map((timeline) => ({
+      runtimeClass: timeline.constructor.name,
+      properties: timeline.propertyIds.map((id) => ({ id: idOf(timeline, id), property: Property[Number(id.split('|')[0])] ?? id, names: describe(timeline, id) })),
+    }));
+  const sliders: SliderFact[] = [];
+  data.constraints.forEach((c, index) => {
+    if (!(c instanceof SliderData)) return;
+    sliders.push({
+      name: c.name,
+      index,
+      mix: c.setupPose.mix,
+      additive: c.additive,
+      skinRequired: c.skinRequired,
+      skins: data.skins.filter((skin) => skin.constraints.includes(c)).map((skin) => skin.name),
+      animation: c.animation === null ? null : { name: c.animation.name, timelines: timelinesOf(c.animation) },
+    });
+  });
+  return {
+    sliders,
+    behaviour: (animationName, at) => {
+      const timeline = data.findAnimation(animationName)?.timelines[at];
+      if (timeline === undefined) throw new Error(`internal: animation "${animationName}" has no timeline ${at}`);
+      return timelineAddBehaviour(data, timeline);
+    },
+  };
+}
+
+/**
  * The facts cut 4c-2's bodies read, as `validate()` supplies them from a pair
  * spine-core loads — or `null` when the load throws (A00's failure). For the
  * selftest and `tools/verdict_gate.ts`, which compare them with the model
@@ -1670,6 +1871,25 @@ export function runtimePosedFacts(skeletonText: string, atlasText: string): { de
     return null;
   }
   return { deformSurvey: spineDeformSurvey(data), animationDurations: spineAnimationDurations(data), twoColour: spineTwoColourFacts(raw, data), sequences: spineSequenceFacts(raw, data) };
+}
+
+/**
+ * Cut 4c-5's facts (issue #1025) as `validate()` supplies them from a pair
+ * spine-core loads — A40's sliders and A34's constraint groups, with the
+ * constraint facts A40 reads beside them — or `null` when the load throws.
+ * For the selftest's `VF14` and `tools/verdict_gate.ts`, which hand them to
+ * the bodies and ask the model side's suppliers the same questions.
+ */
+export function runtimeCut4c5Facts(skeletonText: string, atlasText: string): { sliderComposition: SliderCompositionFacts; constraintTargets: ConstraintTargetFacts; constraints: ConstraintFacts } | null {
+  let data: ReturnType<SkeletonJson['readSkeletonData']>;
+  let raw: Json;
+  try {
+    raw = JSON.parse(skeletonText) as Json;
+    data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(JSON.parse(skeletonText));
+  } catch {
+    return null;
+  }
+  return { sliderComposition: spineSliderComposition(data), constraintTargets: rawConstraintTargets(raw), constraints: spineConstraintFacts(data) };
 }
 
 /** A fact supply computed on first use and kept: a supplier that throws throws inside the `check` that asked, as the body it feeds always did. */
@@ -1982,129 +2202,15 @@ export function validate(input: ValidateInput): ValidateReport {
   // constant now, and the message that names the timelines a group takes reads
   // them off `CHANNELS_BY_KIND` — it used to be a ternary over two groups,
   // which is a sentence that cannot be extended without being rewritten.
-  check('A34_CONSTRAINT_TIMELINE_TARGETS', () => {
-    if (!raw) return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'the skeleton JSON did not parse (A00 owns that failure)');
-    if (!isObj(raw.animations)) return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'the skeleton declares no animations');
-    // name -> the KINDS declared under it, because that is the namespace the
-    // lookup this assertion is about resolves in: `findConstraint(name, type)`
-    // tests the type first, so a skeleton may carry `leg` as an ik constraint
-    // AND as a transform one and each group finds its own (issue #692). A map
-    // keyed by the name alone let the second of a pair overwrite the first, and
-    // this assertion then reported a correct file as a type mismatch.
-    const kindsOf = new Map<string, string[]>();
-    for (const entry of Array.isArray(raw.constraints) ? (raw.constraints as unknown[]) : []) {
-      if (isObj(entry) && typeof entry.name === 'string') {
-        kindsOf.set(entry.name, [...(kindsOf.get(entry.name) ?? []), String(entry.type)]);
-      }
-    }
-    /** The file's physics constraints, which the unnamed physics group is read against. */
-    const rawPhysics = (Array.isArray(raw.constraints) ? (raw.constraints as unknown[]) : []).filter(
-      (entry): entry is Json => isObj(entry) && entry.type === 'physics',
-    );
-    let sawATimeline = false;
-    /** One target of one group: the name resolves, the type matches, keys exist. */
-    const checkTarget = (at: string, group: string, name: string, keyArrays: Array<[string, unknown]>): void => {
-      sawATimeline = true;
-      const declared = kindsOf.get(name) ?? [];
-      if (declared.length === 0) {
-        const known = [...kindsOf.entries()].filter(([, kinds]) => kinds.includes(group)).map(([n]) => n);
-        fail(
-          'A34_CONSTRAINT_TIMELINE_TARGETS',
-          `${at}: the skeleton's constraints array has no "${name}"` +
-            (known.length ? ` (${group} constraints: ${known.join(', ')})` : `, and no ${group} constraint at all`),
-        );
-        return;
-      }
-      if (!declared.includes(group)) {
-        fail(
-          'A34_CONSTRAINT_TIMELINE_TARGETS',
-          `${at}: "${name}" is declared as a "${declared.join('"/"')}" constraint, so the ${group} lookup misses it and the loader throws`,
-        );
-        return;
-      }
-      checkKeys(at, keyArrays);
-    };
-    /** The key arrays of one group entry that resolved: each one is walked, so each has to hold a key. */
-    const checkKeys = (at: string, keyArrays: Array<[string, unknown]>): void => {
-      if (keyArrays.length === 0) {
-        fail(
-          'A34_CONSTRAINT_TIMELINE_TARGETS',
-          `${at}: the constraint is named and carries no timeline at all; the group is walked and nothing happens`,
-        );
-        return;
-      }
-      for (const [timeline, keys] of keyArrays) {
-        if (Array.isArray(keys) && keys.length > 0) continue;
-        fail(
-          'A34_CONSTRAINT_TIMELINE_TARGETS',
-          `${at}${timeline ? ` timeline "${timeline}"` : ''}: the key array is ` +
-            `${Array.isArray(keys) ? 'empty' : JSON.stringify(keys)}; the parser reads key 0, finds nothing and ` +
-            'skips the whole timeline without a word',
-        );
-      }
-    };
-    for (const [animName, anim] of Object.entries(raw.animations as Json)) {
-      if (!isObj(anim)) continue;
-      // group.<constraint> = keys[]
-      for (const group of ['ik', 'transform'] as const) {
-        if (!isObj(anim[group])) continue;
-        for (const [name, keys] of Object.entries(anim[group] as Json)) {
-          checkTarget(`animation "${animName}" ${group} timeline "${name}"`, group, name, [['', keys]]);
-        }
-      }
-      // group.<constraint>.<timeline> = keys[]
-      for (const group of NAMED_TIMELINE_GROUPS) {
-        if (!isObj(anim[group])) continue;
-        for (const [name, timelines] of Object.entries(anim[group] as Json)) {
-          const at = `animation "${animName}" ${group} constraint "${name}"`;
-          if (!isObj(timelines)) {
-            sawATimeline = true;
-            fail(
-              'A34_CONSTRAINT_TIMELINE_TARGETS',
-              `${at}: this group maps a constraint to NAMED timelines ` +
-                `(${Object.keys(CHANNELS_BY_KIND[group]).join('/')}), and this one holds ${JSON.stringify(timelines)} — ` +
-                'a bare key array here is the ik/transform shape and is walked as an object',
-            );
-            continue;
-          }
-          // The empty name is not a miss: it is the physics group's global form,
-          // which `SkeletonJson` loads as `constraintIndex -1` rather than looking
-          // anything up (`:1048-1054`), and which writes every physics constraint
-          // that declares the timeline's property global (issue #726). Refusing
-          // it as "no constraint called ''" was a sentence that is false about
-          // the file. What CAN be wrong with it is that it reaches nobody: the
-          // parser accepts it, the runtime walks every constraint, and none of
-          // them takes the key.
-          if (group === 'physics' && name === '') {
-            sawATimeline = true;
-            for (const [timelineName] of Object.entries(timelines)) {
-              const timeline = unnamedPhysicsTimeline(timelineName);
-              // A name the parser skips is skipped here too: no timeline exists
-              // to reach anybody, and whether the NAME is right is not a target
-              // question.
-              if (timeline === null || unnamedPhysicsReach(timeline, rawPhysics).length > 0) continue;
-              const resets = timeline instanceof PhysicsConstraintResetTimeline;
-              fail(
-                'A34_CONSTRAINT_TIMELINE_TARGETS',
-                `${at} timeline "${timelineName}": a physics group that names no constraint writes every physics ` +
-                  `constraint ${resets ? 'the skeleton has' : `declaring "${timelineName}Global": true`}, and ` +
-                  (rawPhysics.length === 0
-                    ? 'the skeleton has no physics constraint'
-                    : `none of ${rawPhysics.map((one) => `"${String(one.name)}"`).join(', ')} does`) +
-                  ' — the parser loads it, the runtime walks every constraint, and no constraint takes the key',
-              );
-            }
-            checkKeys(at, Object.entries(timelines));
-            continue;
-          }
-          checkTarget(at, group, name, Object.entries(timelines));
-        }
-      }
-    }
-    if (!sawATimeline) {
-      return skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'no animation carries a constraint timeline');
-    }
-  });
+  //
+  // ✂️ Moved whole since issue #1025 (cut 4c-5): the body is
+  // `./assertions/bodies/a34.ts`, over this file's constraint groups as the
+  // raw JSON states them (`rawConstraintTargets`), and whom a physics timeline
+  // naming no constraint reaches is still the parser's timeline asked of the
+  // file's constraint objects, through the facts.
+  check('A34_CONSTRAINT_TIMELINE_TARGETS', () =>
+    raw ? a34ConstraintTimelineTargets(verdicts, rawConstraintTargets(raw)) : skip('A34_CONSTRAINT_TIMELINE_TARGETS', 'the skeleton JSON did not parse (A00 owns that failure)'),
+  );
 
   // --- A35: a deform key's run lands inside the attachment it edits ---------
   //
@@ -2757,127 +2863,13 @@ export function validate(input: ValidateInput): ValidateReport {
     // measurement instead of two exceptions. A list of unobservable spellings
     // written into this file would have been the hand-kept table that produced
     // the defect above.
-    check('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET', () => {
-      const sliders = data.constraints.filter((c) => c instanceof SliderData);
-      if (sliders.length < 2) {
-        return skip(
-          'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET',
-          `the skeleton declares ${sliders.length} slider constraint${sliders.length === 1 ? '' : 's'}, and one slider has nothing to compose with`,
-        );
-      }
-      // Clause 1 of the "could this be correct?" list above.
-      // "Keyed at all" rather than "keyed live", and on purpose: this clause asks
-      // whether the mix can MOVE from its setup value, so any mix timeline
-      // disqualifies it — the question `keyedBy` answered here, through the one
-      // reading `switchedOn` gives (`./assertions/constraint_words.ts`, over
-      // the same facts the moved constraint bodies read — issue #1025), and
-      // unchanged by issue #752.
-      const mixKeyed = switchedOn(constraintFacts(), (timeline) => timeline.kind === 'slider' && timeline.word === 'mix', 1, () => true);
-      const authoritative = sliders.filter((s) => s.setupPose.mix >= 1 && !mixKeyed.has(data.constraints.indexOf(s)));
-      if (authoritative.length < 2) {
-        return skip(
-          'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET',
-          `${authoritative.length} of the ${sliders.length} slider constraints apply at full authority; below mix 1 an ` +
-            'apply is a lerp from the current pose rather than an overwrite, so what the others do to a shared property is a weighting',
-        );
-      }
-      /** Which skins switch a slider on, or null when it is active under every skin. */
-      const skinsOf = new Map<SliderData, Set<string> | null>();
-      for (const slider of authoritative) {
-        if (!slider.skinRequired) {
-          skinsOf.set(slider, null);
-          continue;
-        }
-        const names = new Set<string>();
-        for (const skin of data.skins) {
-          if (skin.constraints.includes(slider)) names.add(skin.name);
-        }
-        skinsOf.set(slider, names);
-      }
-      /** Clause 2: can these two ever run in the same frame? */
-      const canOverlap = (a: SliderData, b: SliderData): boolean => {
-        const skinsA = skinsOf.get(a) ?? null;
-        const skinsB = skinsOf.get(b) ?? null;
-        if (!skinsA || !skinsB) return true;
-        for (const name of skinsA) {
-          if (skinsB.has(name)) return true;
-        }
-        return false;
-      };
-      /** What a property id points at, in the words the rig spec uses. */
-      const describe = (timeline: Timeline, id: string): string => {
-        const property = Property[Number(id.split('|')[0])] ?? id;
-        if (isBoneTimeline(timeline)) return `bone "${data.bones[timeline.boneIndex]?.name ?? timeline.boneIndex}" ${property}`;
-        if (timeline instanceof DeformTimeline) {
-          return `slot "${data.slots[timeline.slotIndex]?.name ?? timeline.slotIndex}" deform of "${timeline.attachment.name}"`;
-        }
-        if (isSlotTimeline(timeline)) return `slot "${data.slots[timeline.slotIndex]?.name ?? timeline.slotIndex}" ${property}`;
-        if (isConstraintTimeline(timeline) && timeline.constraintIndex >= 0) {
-          return `constraint "${data.constraints[timeline.constraintIndex]?.name ?? timeline.constraintIndex}" ${property}`;
-        }
-        return `the skeleton's ${property}`;
-      };
-      /** property id -> the sliders whose animation keys it, in constraints-array order. */
-      const byProperty = new Map<string, Array<{ slider: SliderData; timeline: Timeline }>>();
-      for (const slider of authoritative) {
-        const seen = new Set<string>();
-        for (const timeline of slider.animation?.timelines ?? []) {
-          for (const id of timeline.propertyIds) {
-            if (seen.has(id)) continue;
-            seen.add(id);
-            byProperty.set(id, [...(byProperty.get(id) ?? []), { slider, timeline }]);
-          }
-        }
-      }
-      /** Posed once per timeline, because the answer is the class's and the rigs that reach here share timelines. */
-      const behaviour = new Map<Timeline, TimelineAddBehaviour>();
-      const addBehaviourOf = (timeline: Timeline): TimelineAddBehaviour => {
-        const known = behaviour.get(timeline);
-        if (known !== undefined) return known;
-        const measured = timelineAddBehaviour(data, timeline);
-        behaviour.set(timeline, measured);
-        return measured;
-      };
-      let shared = 0;
-      for (const [id, users] of byProperty) {
-        if (users.length < 2) continue;
-        shared++;
-        const at = (slider: SliderData): string =>
-          `"${slider.name}" (constraints[${data.constraints.indexOf(slider)}], additive: ${String(slider.additive)})`;
-        const chain = users.map((u) => at(u.slider)).join(', ');
-        for (let j = 1; j < users.length; j++) {
-          const later = users[j];
-          const composes = addBehaviourOf(later.timeline);
-          if (composes === 'accumulates' && later.slider.additive) continue;
-          // Nothing a second slider could take away: applied with the arguments
-          // a slider passes — `firedEvents` null among them — this timeline
-          // moves no pose at all.
-          if (composes === 'inert') continue;
-          const erased = users.slice(0, j).filter((e) => canOverlap(e.slider, later.slider));
-          if (!erased.length) continue;
-          const erasedNames = `${erased.map((e) => `"${e.slider.name}"`).join(', ')} contribute${erased.length === 1 ? 's' : ''}`;
-          const why =
-            composes === 'accumulates'
-              ? `slider "${later.slider.name}" applies animation "${later.slider.animation?.name}" with additive false, and at ` +
-                'mix 1 a non-additive apply writes the value outright (`getRelativeValue` returns `setup + value`, ' +
-                '`getAbsoluteValue` returns `value`) rather than adding to the pose it found. Set `"additive": true` on ' +
-                `slider "${later.slider.name}" in the rig spec — rigc will not choose that flag for you — or key this ` +
-                `property from one slider only. [measured] \`${later.timeline.constructor.name}.apply\` posed twice with ` +
-                '`add` set accumulates, so that flag is the repair here'
-              : `the ${Property[Number(id.split('|')[0])] ?? id} timeline they share writes its value outright whatever the ` +
-                `flags say — [measured] \`${later.timeline.constructor.name}.apply\` posed twice with \`add\` set left the ` +
-                'same value there rather than adding to it — so `"additive": true` would NOT compose these. Key this ' +
-                'property from one slider only, or move both edits into the one animation a single slider applies';
-          fail(
-            'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET',
-            `${describe(later.timeline, id)} is keyed by the animations of ${users.length} sliders — ${chain} — and every ` +
-              `one of them applies at mix 1. Today ${at(later.slider)} wins that property and ${erasedNames} ` +
-              `nothing to it: ${why}.`,
-          );
-        }
-      }
-      stats.sliderSharedTargets = shared;
-    });
+    //
+    // ✂️ Moved whole since issue #1025 (cut 4c-5): the body is
+    // `./assertions/bodies/a40.ts`, over the sliders and their animations'
+    // timelines (`spineSliderComposition`) and the constraint facts, and what a
+    // timeline does with `add` is still this probe, `timelineAddBehaviour`,
+    // asked by the body through the facts.
+    check('A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET', () => a40SlidersComposeOnASharedTarget(verdicts, spineSliderComposition(data), constraintFacts()));
 
     // --- A42: a dial that drives a constraint the array already ran ---------
     //

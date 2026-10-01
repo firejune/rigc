@@ -523,7 +523,7 @@ import { modelRegionJoinsWith, type SlotKeyWalk } from './src/assertions/model/r
 import { modelSkeletonRoster } from './src/assertions/model/skeleton_roster.ts';
 import { modelBoneTimelines } from './src/assertions/model/bone_timelines.ts';
 import { modelEventKeys } from './src/assertions/model/event_keys.ts';
-import { comparePosedFacts, sumPosedTallies, POSED_FACT_FAMILIES, type PosedFactFamily, type PosedFactTally } from './tools/verdict_gate.ts';
+import { compareCut4c5Facts, comparePosedFacts, sumPosedTallies, CUT_4C5_FAMILIES, POSED_FACT_FAMILIES, type Cut4c5Family, type PosedFactFamily, type PosedFactTally } from './tools/verdict_gate.ts';
 import { compareRigFacts, modelRigFacts, RIG_FACT_FAMILIES, rigFactsDerivations, rigFactsSpelling, sumTallies, type DerivationTally, type RigFactFamily, type RigFacts } from './tools/rig_facts.ts';
 import {
   articulatedFixture,
@@ -851,7 +851,16 @@ const UNNAMED_CASE = '(no case line followed the call)';
  * has to size something by the stage reads the stage the call's pair states —
  * the value the model side is given, not one the document holds.
  */
-type ModelTwin = { forge: (doc: Record<string, unknown>, call: { skeletonText: string; atlasText: string }) => void } | { encodingOnly: string };
+type SingleTwin = { forge: (doc: Record<string, unknown>, call: { skeletonText: string; atlasText: string }) => void } | { encodingOnly: string };
+/**
+ * A twin, or — where one break fails two moved assertions whose wrongness no
+ * single document can carry at once — a twin per code (issue #1025, cut 4c-5:
+ * `T16`'s empty ik key array is A34's, which the reader refuses by the
+ * animation's name, and the timeline the runtime then never builds is A47's,
+ * which a document carries by leaving the timeline out). A code the map does
+ * not name has no twin.
+ */
+type ModelTwin = SingleTwin | { byCode: Readonly<Record<string, SingleTwin>> };
 
 /**
  * The twin of every break that writes geometry onto a linked mesh (issue #1025,
@@ -1041,6 +1050,10 @@ class SupplierCheck {
   posedFacts = { builds: 0, calls: 0 };
   posedTallies = new Map<PosedFactFamily, PosedFactTally>();
   private posedBuilt = new Set<string>();
+  /** Cut 4c-5's two families compared the same way (`compareCut4c5Facts`), once per distinct build over the own calls (`VF14`). */
+  cut4c5Facts = { builds: 0, calls: 0 };
+  cut4c5Tallies = new Map<Cut4c5Family, PosedFactTally>();
+  private cut4c5Built = new Set<string>();
   /** Faults, each attributed to the case it was found in. */
   faults: Array<{ case: string; fault: string }> = [];
   twinOutcomes: TwinOutcome[] = [];
@@ -1106,6 +1119,7 @@ class SupplierCheck {
         this.compareWalks(input, modelText);
         this.compareRigFactsOf(input, modelText);
         this.comparePosedFactsOf(input, modelText);
+        this.compareCut4c5FactsOf(input, modelText);
       }
       return;
     }
@@ -1203,10 +1217,26 @@ class SupplierCheck {
     }
   }
 
-  private settleTwin(input: ValidateInput, spine: ValidateReport, modelText: string, firing: string[], twin: ModelTwin | undefined): Array<Omit<TwinOutcome, 'case'>> {
+  /** Cut 4c-5's facts over one build, asked question by question: once per distinct build, every call counted. */
+  private compareCut4c5FactsOf(input: ValidateInput, modelText: string): void {
+    this.cut4c5Facts.calls++;
+    const build = `${spineFileSha256(input.skeletonText)} ${spineFileSha256(input.atlasText)} ${spineFileSha256(modelText)}`;
+    if (this.cut4c5Built.has(build)) return;
+    this.cut4c5Built.add(build);
+    const compared = compareCut4c5Facts(input.skeletonText, input.atlasText, modelText, this.plant);
+    if (compared === null) return;
+    this.cut4c5Facts.builds++;
+    sumPosedTallies(this.cut4c5Tallies, compared);
+    for (const t of compared) {
+      for (const d of t.differing) this.keep(this.faults, { fault: `the cut 4c-5 facts "${t.family}" differ at ${d.question.slice(0, 160)} — spine-core ${d.spine.slice(0, 240)}; model ${d.model.slice(0, 240)}` });
+    }
+  }
+
+  private settleTwin(input: ValidateInput, spine: ValidateReport, modelText: string, firing: string[], whole: ModelTwin | undefined): Array<Omit<TwinOutcome, 'case'>> {
     const out: Array<Omit<TwinOutcome, 'case'>> = [];
     for (const code of firing) {
       const spineLines = linesOfCode(spine, code);
+      const twin = whole === undefined || !('byCode' in whole) ? whole : whole.byCode[code];
       if (twin === undefined) {
         out.push({ code, outcome: 'no twin', detail: spineLines[spineLines.length - 1] ?? '' });
         continue;
@@ -19060,11 +19090,17 @@ function runConstraintAndDeformSuite(): number {
       (animations.move.ik as Record<string, unknown[]>)['leg-ik'] = [];
     },
     'spine',
-    // A47's half of the break (issue #1025): the runtime builds no timeline for an
-    // empty key array, so nothing keys the constraint's mix — the document with the
-    // timeline gone. The empty array itself is A34's, which has not moved, and the
-    // reader refuses one by the animation's index rather than a name.
-    { forge: (doc) => void (docAnimationConstraints(doc, 'move').ik = docAnimationConstraints(doc, 'move').ik.filter((t) => (t as { name: string }).name !== 'leg-ik')) },
+    // Two moved assertions fire on this break and no one document carries both
+    // wrongnesses (issue #1025, cut 4c-5). A47's half: the runtime builds no
+    // timeline for an empty key array, so nothing keys the constraint's mix —
+    // the document with the timeline gone. A34's half is the empty array
+    // itself, which the reader refuses by the animation's name.
+    {
+      byCode: {
+        A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT: { forge: (doc) => void (docAnimationConstraints(doc, 'move').ik = docAnimationConstraints(doc, 'move').ik.filter((t) => (t as { name: string }).name !== 'leg-ik')) },
+        A34_CONSTRAINT_TIMELINE_TARGETS: { forge: (doc) => void ((docAnimationConstraints(doc, 'move').ik as Array<{ name: string; keys: unknown[] }>).find((t) => t.name === 'leg-ik')!.keys = []) },
+      },
+    },
   );
   say(
     'T16_A34_fires_on_an_ik_timeline_with_no_keys',
@@ -19073,12 +19109,19 @@ function runConstraintAndDeformSuite(): number {
     '`let keyMap = constraintMap[0]; if (!keyMap) continue;` — the timeline is skipped and nothing is said',
   );
 
-  const renamed = gateProbeArtifacts(dirs, everything, (skeleton) => {
-    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
-    const ik = animations.move.ik as Record<string, unknown>;
-    ik['aim-shin'] = ik['leg-ik'];
-    delete ik['leg-ik'];
-  });
+  const renamed = gateProbeArtifacts(
+    dirs,
+    everything,
+    (skeleton) => {
+      const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+      const ik = animations.move.ik as Record<string, unknown>;
+      ik['aim-shin'] = ik['leg-ik'];
+      delete ik['leg-ik'];
+    },
+    'spine',
+    // The same entry renamed in the document (issue #1025, cut 4c-5): the reader refuses an ik timeline naming a transform constraint, by the animation's name.
+    { forge: (doc) => void ((docAnimationConstraints(doc, 'move').ik as Array<{ name: string }>).find((t) => t.name === 'leg-ik')!.name = 'aim-shin') },
+  );
   say(
     'T17_A34_fires_when_a_timeline_names_a_constraint_of_the_wrong_type',
     renamed.failures.some((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS'),
@@ -19313,11 +19356,18 @@ function runConstraintAndDeformSuite(): number {
   // walked enumerated `path` and `slider` only, so it saw no timeline at all.
   const ghosted =
     physicsGate.refused === null
-      ? gateProbeArtifacts(physicsDirs, physicsTimelineMotion(), (skeleton) => {
-          const physics = ((skeleton.animations as Record<string, Record<string, unknown>>).jig.physics ?? {}) as Record<string, unknown>;
-          physics.ghost = physics.jiggle;
-          delete physics.jiggle;
-        })
+      ? gateProbeArtifacts(
+          physicsDirs,
+          physicsTimelineMotion(),
+          (skeleton) => {
+            const physics = ((skeleton.animations as Record<string, Record<string, unknown>>).jig.physics ?? {}) as Record<string, unknown>;
+            physics.ghost = physics.jiggle;
+            delete physics.jiggle;
+          },
+          'spine',
+          // The same entry renamed in the document (issue #1025, cut 4c-5): the reader refuses a physics timeline naming no physics constraint, by the animation's name.
+          { forge: (doc) => void ((docAnimationConstraints(doc, 'jig').physics as Array<{ name: string }>).find((t) => t.name === 'jiggle')!.name = 'ghost') },
+        )
       : null;
   const ghostFailures = (ghosted?.failures ?? []).filter((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS');
   const ghostSkipped = (ghosted?.skipped ?? []).some((s) => s.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS');
@@ -20294,9 +20344,16 @@ function runConstraintAndDeformSuite(): number {
   // the shape a file rigc did not write can carry and `compile` cannot write.
   const flagsStripped =
     everyGlobalGate.refused === null
-      ? gateProbeArtifacts(everyGlobalDirs, threeTipsMotion('*'), (skeleton) => {
-          for (const constraint of skeleton.constraints as Array<Record<string, unknown>>) delete constraint.strengthGlobal;
-        })
+      ? gateProbeArtifacts(
+          everyGlobalDirs,
+          threeTipsMotion('*'),
+          (skeleton) => {
+            for (const constraint of skeleton.constraints as Array<Record<string, unknown>>) delete constraint.strengthGlobal;
+          },
+          'spine',
+          // The same flags taken off the document's constraints (issue #1025, cut 4c-5): a document with a physics timeline naming no constraint that reaches none reads.
+          { forge: (doc) => void (doc.constraints as DocRecord[]).forEach((constraint) => delete constraint.strengthGlobal) },
+        )
       : null;
   const strippedA34 = (flagsStripped?.failures ?? []).filter((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS');
   const a34Probes = [
@@ -22950,10 +23007,24 @@ function runPathAndSliderSuite(): number {
     'the pairing is what is wrong, so nothing else can see it: the bone loads, the list loads, and the skin changes nothing',
   );
 
-  const emptyKeys = gateProbeArtifacts(dirs, motion, (skeleton) => {
-    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
-    (animations.move.path as Record<string, Record<string, unknown[]>>).ride.position = [];
-  });
+  const emptyKeys = gateProbeArtifacts(
+    dirs,
+    motion,
+    (skeleton) => {
+      const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+      (animations.move.path as Record<string, Record<string, unknown[]>>).ride.position = [];
+    },
+    'spine',
+    // The same key array emptied in the document (issue #1025, cut 4c-5): the reader refuses it, by the animation's name.
+    {
+      forge: (doc) => {
+        const ride = (docAnimationConstraints(doc, 'move').path as Array<{ name: string; timelines: DocTimeline[] }>).find((t) => t.name === 'ride');
+        const position = ride?.timelines.find((t) => t.name === 'position');
+        if (position === undefined) throw new Error('the document\'s animation "move" keys no position on path "ride"');
+        position.keys = [];
+      },
+    },
+  );
   say(
     'PS24_A34_fires_on_a_path_timeline_with_no_keys',
     emptyKeys.failures.some((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS'),
@@ -30158,9 +30229,11 @@ function runPathAndSliderSuite(): number {
         profile: 'spine',
       },
       // The same re-keying in the document (issue #1025), whose name for the timeline naming no
-      // constraint is `*`; declared only beside the one break that fires, as a twin beside a call
-      // that fails nothing is a fault of its own (`VF03`).
-      windGlobal && constraintFirst
+      // constraint is `*`; declared only beside the breaks that fire, as a twin beside a call
+      // that fails nothing is a fault of its own (`VF03`) — the first one A42 refuses, and since
+      // cut 4c-5 the unflagged one, which A34 refuses: its timeline reaches no constraint, and a
+      // document can state that.
+      (windGlobal && constraintFirst) || !windGlobal
         ? {
             forge: (doc) => {
               for (const entry of docAnimationConstraints(doc, `${DRIVEN_DIAL.name}-pose`).physics as Array<{ name: string }>) if (entry.name === String(JIGGLE.name)) entry.name = '*';
@@ -69353,6 +69426,224 @@ function runSeededRandomSuite(): number {
 }
 
 /** The core suite: `src/core/`'s reader and setup pose, the second dumper in `tools/pose_oracle.ts`, compare's absences, the gate's instrument and the tree rule. */
+// ---------------------------------------------------------------------------
+// the additive probe's seeded population (issue #1025, cut 4c-5) — CO27, CO28
+// ---------------------------------------------------------------------------
+
+// Its own statements, so the section lands as one hunk.
+import { rawConstraintTargets, timelineAddCells, unnamedPhysicsReach, unnamedPhysicsTimeline } from './src/validate.ts';
+import { ADDITIVE_APPLY, additiveBehaviour, additiveCells, additiveSpelling, type AdditiveCell, type AdditiveRow } from './src/core/additive.ts';
+import { additiveViews, modelAnimationTimelines } from './src/assertions/model/slider_composition.ts';
+import { modelConstraintTargets } from './src/assertions/model/constraint_targets.ts';
+import { unnamedReach } from './src/assertions/model/constraints.ts';
+import { PHYSICS_PARAMETERS, PHYSICS_TIMELINE_KINDS } from './src/core/constraints_physics.ts';
+import { encodePng } from './tools/plate.ts';
+
+/** The seeded skeleton's one atlas page: a region per attachment, a frame per step of the series. */
+const ADDITIVE_SEED_ATLAS = ['seed.png', 'size: 256, 256', 'filter: Linear, Linear', ...['ra', 'rb', 'mm', 'mw', 'rn', 'rc', 'sq_0', 'sq_1', 'sq_2', 'mm2', 'mk'].flatMap((name, i) => [name, `bounds: ${20 * i}, 0, 20, 20`]), ''].join('\n');
+
+/**
+ * A Spine skeleton reaching every timeline spelling a document's animation
+ * can hold (`ADDITIVE_APPLY`, `src/core/additive.ts`), one animation per
+ * timeline, in three value variants: `live` keys away from the setup, `setup`
+ * keys stating the setup values, `zero` keys stating the identity (0, scale 1,
+ * white, nothing shown, no draw-order move). What the class depends on beside
+ * the kind is built in: a skin-required bone `c` and the constraints gated on
+ * it (an ik onto it and one over it, a transform sourced by it, a path whose
+ * slot it carries, a slider dialled by it, a physics constraint on it with
+ * every `…Global` flag on), a skin `alt` that activates it and a constraint
+ * listed by it alone, a mesh shown only under `alt`, a mesh no skin shows at
+ * setup, a weighted mesh, two linked meshes of one source (one playing its
+ * timelines), a series, a Bézier segment on an adding kind, and a bone whose
+ * setup `x` absorbs a key of 1.
+ */
+function additiveSeedSkeleton(variant: 'live' | 'zero' | 'setup'): Record<string, unknown> {
+  const region = { width: 20, height: 20 };
+  const quad = { uvs: [0, 0, 1, 0, 1, 1, 0, 1], triangles: [0, 1, 2, 0, 2, 3], hull: 4, width: 20, height: 20 };
+  const unit = [0, 0, 20, 0, 20, 20, 0, 20];
+  const path = { type: 'path', lengths: [60, 100], vertexCount: 6, vertices: [0, 0, 10, 0, 40, 10, 60, 10, 90, 0, 100, 0] };
+  const z = variant === 'zero';
+  const s = variant === 'setup';
+  const k = (x0: Record<string, unknown>, x1: Record<string, unknown>): Array<Record<string, unknown>> => [{ time: 0, ...x0 }, { time: 1, ...x1 }];
+  const num = (live0: number, live1: number, setup: number, zero = 0): [number, number] => (z ? [zero, zero] : s ? [setup, setup] : [live0, live1]);
+  const n1 = (live0: number, live1: number, setup: number, zero = 0): Array<Record<string, unknown>> => {
+    const [a, b] = num(live0, live1, setup, zero);
+    return k({ value: a }, { value: b });
+  };
+  const xy = (setupX: number, setupY: number, zero = 0): Array<Record<string, unknown>> => {
+    const [x0, x1] = num(3, 7, setupX, zero);
+    const [y0, y1] = num(-2, 5, setupY, zero);
+    return k({ x: x0, y: y0 }, { x: x1, y: y1 });
+  };
+  const col = (live: string, setup: string, zero: string): string => (z ? zero : s ? setup : live);
+  const animations: Record<string, Record<string, unknown>> = { nothing: {} };
+  for (const bone of ['a', 'c']) {
+    animations[`bone.rotate.${bone}`] = { bones: { [bone]: { rotate: n1(10, 30, 0) } } };
+    animations[`bone.translate.${bone}`] = { bones: { [bone]: { translate: xy(0, 0) } } };
+    animations[`bone.translatex.${bone}`] = { bones: { [bone]: { translatex: n1(4, 9, 0) } } };
+    animations[`bone.translatey.${bone}`] = { bones: { [bone]: { translatey: n1(4, 9, 0) } } };
+    animations[`bone.scale.${bone}`] = { bones: { [bone]: { scale: xy(1, 1, 1) } } };
+    animations[`bone.scalex.${bone}`] = { bones: { [bone]: { scalex: n1(2, 3, 1, 1) } } };
+    animations[`bone.scaley.${bone}`] = { bones: { [bone]: { scaley: n1(2, 3, 1, 1) } } };
+    animations[`bone.shear.${bone}`] = { bones: { [bone]: { shear: xy(0, 0) } } };
+    animations[`bone.shearx.${bone}`] = { bones: { [bone]: { shearx: n1(4, 9, 0) } } };
+    animations[`bone.sheary.${bone}`] = { bones: { [bone]: { sheary: n1(4, 9, 0) } } };
+    animations[`bone.inherit.${bone}`] = { bones: { [bone]: { inherit: [{ time: 0, inherit: s || z ? 'normal' : 'noScale' }, { time: 1, inherit: s || z ? 'normal' : 'onlyTranslation' }] } } };
+  }
+  const setupAttachment: Record<string, string> = { sa: 'ra', sd: 'rb', sc: 'rc' };
+  for (const slot of ['sa', 'sd', 'sc']) {
+    animations[`slot.attachment.${slot}`] = { slots: { [slot]: { attachment: [{ time: 0, name: z ? null : s ? setupAttachment[slot] : slot === 'sa' ? 'rb' : null }, { time: 1, name: z ? null : setupAttachment[slot] }] } } };
+    animations[`slot.rgba.${slot}`] = { slots: { [slot]: { rgba: k({ color: col('20406080', 'ff8040c0', 'ffffffff') }, { color: col('a0b0c0d0', 'ff8040c0', 'ffffffff') }) } } };
+    animations[`slot.rgb.${slot}`] = { slots: { [slot]: { rgb: k({ color: col('204060', 'ff8040', 'ffffff') }, { color: col('a0b0c0', 'ff8040', 'ffffff') }) } } };
+    animations[`slot.alpha.${slot}`] = { slots: { [slot]: { alpha: n1(0.25, 0.5, 0.75, 1) } } };
+  }
+  animations['slot.attachment.sk'] = { slots: { sk: { attachment: [{ time: 0, name: z ? null : 'mk' }] } } };
+  animations['slot.rgba2.sd'] = { slots: { sd: { rgba2: k({ light: col('20406080', 'ffffffff', 'ffffffff'), dark: col('405060', '102030', '000000') }, { light: col('a0b0c0d0', 'ffffffff', 'ffffffff'), dark: col('708090', '102030', '000000') }) } } };
+  animations['slot.rgb2.sd'] = { slots: { sd: { rgb2: k({ light: col('204060', 'ffffff', 'ffffff'), dark: col('405060', '102030', '000000') }, { light: col('a0b0c0', 'ffffff', 'ffffff'), dark: col('708090', '102030', '000000') }) } } };
+  const ikKey = (mix: number): Record<string, unknown> => ({ mix: z ? 0 : s ? 0.5 : mix, softness: z || s ? 0 : 3, bendPositive: z || s, compress: false, stretch: false });
+  for (const ik of ['ik1', 'ikc', 'ikonc', 'iktoc']) animations[`ik.${ik}`] = { ik: { [ik]: k(ikKey(0.2), ikKey(0.9)) } };
+  const tfKey = (m: number): Record<string, unknown> =>
+    s ? { mixRotate: 0.5, mixX: 0.25, mixY: 0.75, mixScaleX: 0.5, mixScaleY: 0.5, mixShearY: 0.5 } : Object.fromEntries(['mixRotate', 'mixX', 'mixY', 'mixScaleX', 'mixScaleY', 'mixShearY'].map((f) => [f, z ? 0 : m]));
+  for (const tf of ['tf', 'tfc']) animations[`transform.${tf}`] = { transform: { [tf]: k(tfKey(0.1), tfKey(0.6)) } };
+  for (const pc of ['pc', 'pcc']) {
+    animations[`path.position.${pc}`] = { path: { [pc]: { position: n1(0.1, 0.6, 0.25) } } };
+    animations[`path.spacing.${pc}`] = { path: { [pc]: { spacing: n1(1, 5, 2) } } };
+  }
+  const pathMix = (m: number): Record<string, unknown> => (z ? { mixRotate: 0, mixX: 0, mixY: 0 } : s ? { mixRotate: 0.5, mixX: 0.5, mixY: 0.5 } : { mixRotate: m, mixX: m, mixY: m });
+  animations['path.mix.pc'] = { path: { pc: { mix: k(pathMix(0.1), pathMix(0.9)) } } };
+  const physicsSetup: Record<string, number> = { inertia: 0.5, strength: 50, damping: 0.5, mass: 2, wind: 3, gravity: 4, mix: 0.5 };
+  for (const [property, a, b] of [['inertia', 0.1, 0.9], ['strength', 10, 90], ['damping', 0.1, 0.9], ['mass', 1, 5], ['wind', 1, 9], ['gravity', 1, 9], ['mix', 0.1, 0.9]] as Array<[string, number, number]>) {
+    animations[`physics.${property}.phy`] = { physics: { phy: { [property]: n1(a, b, physicsSetup[property], property === 'mass' ? 1 : 0) } } };
+    animations[`physics.${property}.*`] = { physics: { '': { [property]: n1(a, b, physicsSetup[property], property === 'mass' ? 1 : 0) } } };
+  }
+  animations['physics.reset.phy'] = { physics: { phy: { reset: [{ time: 0 }, { time: 0.5 }] } } };
+  animations['physics.reset.*'] = { physics: { '': { reset: [{ time: 0 }, { time: 0.5 }] } } };
+  animations['slider.time.sl'] = { slider: { sl: { time: n1(0.1, 0.9, 0) } } };
+  animations['slider.mix.sl'] = { slider: { sl: { mix: n1(0.1, 0.9, 1) } } };
+  animations['slider.time.slc'] = { slider: { slc: { time: n1(0.1, 0.9, 0.25) } } };
+  animations['slider.mix.slb'] = { slider: { slb: { mix: n1(0.1, 0.9, 1) } } };
+  const offsets = (n: number, a: number): number[] => Array.from({ length: n }, (_v, i) => (z ? 0 : (i + 1) * a));
+  animations['attachment.deform.sm.mm'] = { attachments: { default: { sm: { mm: { deform: [{ time: 0, offset: 0, vertices: offsets(8, 1) }, { time: 1, offset: 2, vertices: offsets(4, 2) }] } } } } };
+  animations['attachment.deform.sm.mm2'] = { attachments: { default: { sm: { mm2: { deform: [{ time: 0, offset: 0, vertices: offsets(8, 1) }, { time: 1 }] } } } } };
+  animations['attachment.deform.sw.mw'] = { attachments: { default: { sw: { mw: { deform: [{ time: 0, offset: 0, vertices: offsets(10, 1) }, { time: 1, vertices: offsets(10, 2) }] } } } } };
+  animations['attachment.deform.alt.sk.mk'] = { attachments: { alt: { sk: { mk: { deform: [{ time: 0, offset: 0, vertices: offsets(8, 1) }, { time: 1 }] } } } } };
+  animations['attachment.sequence.sq'] = { attachments: { default: { sq: { sq_: { sequence: [{ time: 0, mode: z || s ? 'hold' : 'loop', index: z || s ? 0 : 1, delay: 0.1 }, { time: 1, mode: 'hold', index: z || s ? 0 : 2 }] } } } } };
+  animations.drawOrder = { drawOrder: [{ time: 0, offsets: z || s ? [] : [{ slot: 'sa', offset: 2 }] }, { time: 1 }] };
+  animations.events = { events: [{ time: 0, name: 'ev' }, { time: 0.5, name: 'ev', int: 3 }] };
+  animations['bone.rotate.a.curve'] = { bones: { a: { rotate: [{ time: 0, value: z || s ? 0 : 10, curve: [0.25, z || s ? 0 : 40, 0.75, z || s ? 0 : -5] }, { time: 1, value: z || s ? 0 : 30 }] } } };
+  animations['bone.translatex.huge'] = { bones: { huge: { translatex: n1(1, 2, 0) } } };
+  animations['bone.rotate.huge'] = { bones: { huge: { rotate: n1(1e-15, 2e-15, 0) } } };
+  const allGlobal = Object.fromEntries(PHYSICS_PARAMETERS.map((p) => [`${p}Global`, true]));
+  return {
+    skeleton: { spine: '4.3.75', width: 100, height: 100 },
+    bones: [
+      { name: 'root' },
+      { name: 'a', parent: 'root', x: 10, y: 5, rotation: 15, scaleX: 1.5, scaleY: 0.5, shearX: 3, shearY: 4, length: 30 },
+      { name: 'b', parent: 'a', x: 30, rotation: -20, length: 50 },
+      { name: 'c', parent: 'root', x: -10, skin: true },
+      { name: 't', parent: 'root', x: 60, y: 40 },
+      { name: 'p', parent: 'root', x: 5 },
+      { name: 'ph', parent: 'root', x: 20, y: 20 },
+      { name: 'dial', parent: 'root' },
+      { name: 'huge', parent: 'root', x: 1e17, rotation: 3 },
+    ],
+    slots: [
+      { name: 'sa', bone: 'a', attachment: 'ra', color: 'ff8040c0' },
+      { name: 'sm', bone: 'b', attachment: 'mm' },
+      { name: 'sw', bone: 'b', attachment: 'mw' },
+      { name: 'sd', bone: 'a', attachment: 'rb', dark: '102030' },
+      { name: 'sc', bone: 'c', attachment: 'rc' },
+      { name: 'sp', bone: 'root', attachment: 'pp' },
+      { name: 'sq', bone: 'a', attachment: 'sq_' },
+      { name: 'sn', bone: 'a' },
+      { name: 'sk', bone: 'a', attachment: 'mk' },
+      { name: 'sl2', bone: 'b', attachment: 'lk' },
+      { name: 'sl3', bone: 'b', attachment: 'lf' },
+      { name: 'spc', bone: 'c', attachment: 'ppc' },
+    ],
+    skins: [
+      {
+        name: 'default',
+        attachments: {
+          sa: { ra: region, rb: region },
+          sm: { mm: { type: 'mesh', ...quad, vertices: unit }, mm2: { type: 'mesh', ...quad, vertices: unit } },
+          sw: { mw: { type: 'mesh', ...quad, vertices: [1, 1, 0, 0, 1, 1, 1, 20, 0, 1, 2, 1, 20, 20, 0.5, 2, 20, 20, 0.5, 1, 2, 0, 20, 1] } },
+          sd: { rb: region },
+          sc: { rc: region },
+          sp: { pp: path },
+          sq: { sq_: { ...region, sequence: { count: 3, start: 0, digits: 1 } } },
+          sn: { rn: region },
+          sl2: { lk: { type: 'linkedmesh', path: 'mm', source: 'mm', skin: 'default', slot: 'sm', timelines: true, width: 20, height: 20 } },
+          sl3: { lf: { type: 'linkedmesh', path: 'mm', source: 'mm', skin: 'default', slot: 'sm', timelines: false, width: 20, height: 20 } },
+          spc: { ppc: path },
+        },
+      },
+      { name: 'alt', bones: ['c'], ik: ['ikc'], slider: ['slc'], attachments: { sk: { mk: { type: 'mesh', ...quad, vertices: [1, 1, 21, 1, 21, 21, 1, 21] } } } },
+    ],
+    constraints: [
+      { type: 'ik', name: 'ik1', target: 't', bones: ['a', 'b'], mix: 0.5 },
+      { type: 'ik', name: 'ikc', target: 't', bones: ['c'], skin: true },
+      { type: 'ik', name: 'ikonc', target: 't', bones: ['c'] },
+      { type: 'ik', name: 'iktoc', target: 'c', bones: ['b'] },
+      {
+        type: 'transform',
+        name: 'tf',
+        source: 't',
+        bones: ['b'],
+        properties: { rotate: { to: { rotate: { max: 100 } } }, x: { to: { x: { max: 100 } } }, y: { to: { y: { max: 100 } } }, scaleX: { to: { scaleX: {} } }, scaleY: { to: { scaleY: {} } }, shearY: { to: { shearY: { max: 100 } } } },
+        mixRotate: 0.5,
+        mixX: 0.25,
+        mixY: 0.75,
+        mixScaleX: 0.5,
+        mixScaleY: 0.5,
+        mixShearY: 0.5,
+      },
+      { type: 'path', name: 'pc', bones: ['p'], slot: 'sp', position: 0.25, spacing: 2, mixRotate: 0.5, mixX: 0.5, mixY: 0.5 },
+      { type: 'physics', name: 'phy', bone: 'ph', x: 1, y: 1, rotate: 1, inertia: 0.5, strength: 50, damping: 0.5, mass: 2, wind: 3, gravity: 4, mix: 0.5 },
+      { type: 'physics', name: 'phy2', bone: 'b', rotate: 1, inertia: 0.25, strength: 40, damping: 0.25, mass: 4, wind: 1, gravity: 2, mix: 0.75 },
+      { type: 'physics', name: 'phyc', bone: 'c', rotate: 1, inertia: 0.25, strength: 40, damping: 0.25, mass: 4, wind: 1, gravity: 2, mix: 0.75, ...allGlobal },
+      { type: 'slider', name: 'sl', animation: 'nothing', bone: 'dial', property: 'rotate', from: 0, scale: 0.1, max: 10, local: true },
+      { type: 'slider', name: 'slc', animation: 'nothing', skin: true, time: 0.25 },
+      { type: 'slider', name: 'slb', animation: 'nothing', bone: 'c', property: 'rotate', from: 0, scale: 0.1, max: 10, local: true },
+      { type: 'transform', name: 'tfc', source: 'c', bones: ['p'], properties: { rotate: { to: { rotate: { max: 100 } } } }, mixRotate: 0.5 },
+      { type: 'path', name: 'pcc', bones: ['t'], slot: 'spc', position: 0.25, spacing: 2, mixRotate: 0.5, mixX: 0.5, mixY: 0.5 },
+    ],
+    events: { ev: {} },
+    animations,
+  };
+}
+
+/**
+ * The seeded skeleton in each variant, built the way a foreign file is: read
+ * by `ingest`, rebuilt by `compile` against the seed's own pack — so the
+ * Spine pair and the model document are one build's two outputs. Each with the
+ * pair loaded by spine-core and the document read.
+ */
+function additiveSeedBuilds(work: string): Array<{ variant: string; data: ReturnType<SkeletonJson['readSkeletonData']>; read: { doc: CompiledDocument; json: Record<string, unknown> } }> {
+  const pack = join(work, 'pack');
+  mkdirSync(pack, { recursive: true });
+  writeFileSync(join(pack, 'seed.atlas'), ADDITIVE_SEED_ATLAS);
+  writeFileSync(join(pack, 'seed.png'), encodePng(256, 256, new Uint8Array(256 * 256 * 4).fill(128)));
+  return (['live', 'zero', 'setup'] as const).map((variant) => {
+    const dir = join(work, variant);
+    mkdirSync(dir, { recursive: true });
+    try {
+      const specs = ingest(additiveSeedSkeleton(variant), { name: 'additive_seed', art: 'none', source: 'seed.json', version: '0' });
+      writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(specs.rig, null, 2)}\n`);
+      writeFileSync(join(dir, 'motion.json'), `${JSON.stringify(specs.motion, null, 2)}\n`);
+      const built = compile({ rigPath: join(dir, 'rig.json'), motionPath: join(dir, 'motion.json'), outDir: join(dir, 'out'), atlasInPath: join(pack, 'seed.atlas') });
+      const modelText = threadedModel(built, built.atlasText) ?? '';
+      return {
+        variant,
+        data: new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(built.atlasText))).readSkeletonData(JSON.parse(built.skeletonText)),
+        read: { doc: readModel(modelText), json: JSON.parse(modelText) as Record<string, unknown> },
+      };
+    } catch (err) {
+      throw new Error(`the seeded ${variant} skeleton did not rebuild: ${(err as Error).message}`);
+    }
+  });
+}
+
 function runCoreSuite(): number {
   console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots, draw order and attachments\' world vertices, and every animation\'s bones, slots, draw order, attachments and events at its samples, every constraint kind applied in their order, and the triangles drawn under a clip, as pose-oracle/3 (issues #925, #928, #931, #936, #938, #955, #964) ──');
   let bad = 0;
@@ -79176,6 +79467,192 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `${rigs.length} typed-in rigs bit-exact under --raw at tolerance 0 at 6 irrational samples, and the looped dial exact with its mix unkeyed; the keyed value planted in place of own + (value − own)·1: ${read.join('; ')}`),
       'issue #991: a looped dial slider with its mix keyed read 1–7 ulp off at two samples; the slider\'s time and mix timelines were read as keyed where the ik, transform and path timelines go through the setup blend, and the loop, the dial and the translate key the issue was reduced with were incidental',
+    );
+  }
+
+
+  // --- CO27: the core's additive probe is the runtime's, cell by cell, on a seeded population --
+  //
+  // Issue #1025, cut 4c-5: A40 asks what a timeline does when applied twice with
+  // `add`, and the runtime answers by posing (`timelineAddBehaviour`). The
+  // class turned out to be a computation, not a table (`src/core/additive.ts`'
+  // header): the kind decides what an application can do, and the target's
+  // activity under each skin, whether a deform's record is shown and whether
+  // the added value is 0 decide what it does. So the core poses the same probe
+  // over the document, and this holds it to the runtime's: every timeline of a
+  // seeded skeleton reaching every spelling, in three value variants, rebuilt
+  // through `ingest` and `compile` so both sides read one build — every cell's
+  // letter (each skin, each start state), every field an adding kind moved at
+  // every time at tolerance 0, and the class, which is also held to
+  // `timelineAddBehaviour`'s own early-exit answer. Plants: one row of the table
+  // flipped per class, each turning red only timelines of that row.
+  {
+    const probes: string[] = [];
+    let builds: ReturnType<typeof additiveSeedBuilds> = [];
+    try {
+      builds = additiveSeedBuilds(join(work, 'co27'));
+    } catch (err) {
+      probes.push((err as Error).message);
+    }
+    type Timed = { label: string; spelling: string; runtime: string; cells: Map<string, string>; values: Set<string>; mine: (rows?: Readonly<Record<string, AdditiveRow>>) => AdditiveCell[] };
+    const timed: Timed[] = [];
+    const bySpelling = new Map<string, Map<string, number>>();
+    let valuesCompared = 0;
+    let views = 0;
+    for (const b of builds) {
+      const additive = additiveViews(b.read.doc);
+      views = Math.max(views, additive.length);
+      for (const anim of b.data.animations) {
+        if (anim.name === 'nothing') continue;
+        const model = modelAnimationTimelines(b.read, anim.name);
+        if (model.length !== anim.timelines.length) {
+          probes.push(`${b.variant} "${anim.name}": spine-core loads ${anim.timelines.length} timeline(s), the model side walks ${model.length}`);
+          continue;
+        }
+        anim.timelines.forEach((timeline, i) => {
+          const label = `${b.variant} "${anim.name}"[${i}] ${timeline.constructor.name}`;
+          const core = model[i].core;
+          const spelling = additiveSpelling(core);
+          if (model[i].fact.runtimeClass !== timeline.constructor.name) probes.push(`${label}: the table calls "${spelling}" a ${model[i].fact.runtimeClass}`);
+          const runtimeCells = timelineAddCells(b.data, timeline);
+          const fromCells = runtimeCells.some((c) => c.letter === 'A') ? 'accumulates' : runtimeCells.some((c) => c.letter === 'W') ? 'overwrites' : 'inert';
+          const official = timelineAddBehaviour(b.data, timeline);
+          if (official !== fromCells) probes.push(`${label}: timelineAddBehaviour reads ${official} and its cells read ${fromCells}`);
+          const mine = (rows?: Readonly<Record<string, AdditiveRow>>): AdditiveCell[] => additiveCells(additive, core, rows === undefined ? {} : { rows });
+          const cells = mine();
+          const runtimeLetters = new Map(runtimeCells.map((c) => [`${c.view}/${c.state}`, c.letter] as const));
+          const coreLetters = new Map(cells.map((c) => [`${c.view}/${c.state}`, c.letter] as const));
+          const spelled = (m: Map<string, string>): string => [...m].map(([cell, letter]) => `${cell}:${letter}`).sort().join(' ');
+          if (spelled(runtimeLetters) !== spelled(coreLetters)) probes.push(`${label}: spine-core's cells [${spelled(runtimeLetters)}], the core's [${spelled(coreLetters)}]`);
+          if (additiveBehaviour(cells) !== official) probes.push(`${label}: spine-core reads ${official}, the core ${additiveBehaviour(cells)}`);
+          const runtimeValues = new Set<string>();
+          if (ADDITIVE_APPLY[spelling]?.mode === 'adds') {
+            for (const c of runtimeCells) for (const x of c.changed) runtimeValues.add(`${c.view}/${c.state} ${x.field} t=${x.t}: ${x.before} > ${x.once} > ${x.twice}`);
+            const coreValues = new Set(cells.flatMap((c) => c.values.filter((x) => x.before !== x.once || x.once !== x.twice).map((x) => `${c.view}/${c.state} ${x.field} t=${x.t}: ${x.before} > ${x.once} > ${x.twice}`)));
+            valuesCompared += runtimeValues.size;
+            const missing = [...runtimeValues].filter((x) => !coreValues.has(x));
+            const extra = [...coreValues].filter((x) => !runtimeValues.has(x));
+            if (missing.length > 0 || extra.length > 0) probes.push(`${label}: ${missing.length} value(s) spine-core moved the core did not (${missing.slice(0, 2).join('; ')}), ${extra.length} the core moved spine-core did not (${extra.slice(0, 2).join('; ')})`);
+          }
+          const seen = bySpelling.get(spelling) ?? new Map<string, number>();
+          seen.set(official, (seen.get(official) ?? 0) + 1);
+          bySpelling.set(spelling, seen);
+          timed.push({ label, spelling, runtime: spelled(runtimeLetters), cells: runtimeLetters, values: runtimeValues, mine });
+        });
+      }
+    }
+    // The floors: every row reached, every class reached, every view, and a value compared.
+    const unreached = Object.keys(ADDITIVE_APPLY).filter((spelling) => !bySpelling.has(spelling));
+    if (unreached.length > 0) probes.push(`no seeded timeline is a "${unreached.join('", "')}" — the table's row(s) are held by nothing`);
+    const classes = new Set([...bySpelling.values()].flatMap((m) => [...m.keys()]));
+    for (const cls of ['accumulates', 'overwrites', 'inert']) if (!classes.has(cls)) probes.push(`no seeded timeline reads ${cls}`);
+    probes.push(...floorProbes([[views, 3, `${views} view(s) posed`], [valuesCompared, 1, `${valuesCompared} value(s) compared`]], 'a population that posed less than it states measured less than it claims'));
+    // The plants: one row per class read as another class, each turning red only timelines of that row.
+    const flipped = (spelling: string, mode: AdditiveRow['mode']): Readonly<Record<string, AdditiveRow>> => ({ ...ADDITIVE_APPLY, [spelling]: { ...ADDITIVE_APPLY[spelling], mode } });
+    const plants: Array<[string, string, AdditiveRow['mode']]> = [
+      ['a rotate read as writing outright', 'bone rotate', 'writes'],
+      ['an ik read as writing nothing', 'ik', 'writes nothing'],
+      ['an event timeline read as writing outright', 'events', 'writes'],
+    ];
+    const planted: string[] = [];
+    for (const [label, spelling, mode] of plants) {
+      const red = timed.filter((t) => {
+        const cells = t.mine(flipped(spelling, mode));
+        return [...t.cells].some(([cell, letter]) => cells.find((c) => `${c.view}/${c.state}` === cell)?.letter !== letter);
+      });
+      const strays = red.filter((t) => t.spelling !== spelling);
+      if (red.length === 0) probes.push(`${label}: no timeline turned red, so the comparison cannot see the row`);
+      else if (strays.length > 0) probes.push(`${label}: ${strays.length} timeline(s) of other rows turned red too, the first ${strays[0].label}`);
+      else planted.push(`${label} → ${red.length} "${spelling}" timeline(s)`);
+    }
+    const oneClass = [...bySpelling].filter(([, m]) => m.size === 1).length;
+    const several = [...bySpelling].filter(([, m]) => m.size > 1).map(([spelling, m]) => `${spelling} (${[...m].map(([cls, n]) => `${cls} ${n}`).join(', ')})`);
+    const ok = probes.length === 0;
+    say(
+      'CO27_THE_CORES_ADDITIVE_PROBE_READS_EVERY_CELL_AND_EVERY_ADDED_VALUE_AS_SPINE_CORE_DOES_ON_A_SEEDED_POPULATION',
+      ok,
+      probeDetail(
+        ok,
+        probes,
+        `${timed.length} timeline(s) of ${builds.length} seeded build(s) (every one of the table's ${Object.keys(ADDITIVE_APPLY).length} spellings, under ${views} view(s) × 2 start states): every cell's letter and class as spine-core's probe reads it, ${valuesCompared} added value(s) equal at tolerance 0; ` +
+          `${oneClass} spelling(s) read one class on every timeline and ${several.length} more than one — ${several.join('; ')}; each plant turns red only its own row's timelines: ${planted.join('; ')}`,
+      ),
+      'issue #1025, cut 4c-5: A40 needs what each timeline does when applied additively, which only the runtime\'s probe answered; measured, it is not a function of the kind alone, so the core computes it from the document and is held cell by cell to the runtime it replaces',
+    );
+  }
+
+  // --- CO28: whom a physics timeline naming no constraint reaches, the core's reading against the runtime's --
+  //
+  // Issue #1025, cut 4c-5: A34's physics branch asks it of the parser's own
+  // timeline for the name (`unnamedPhysicsTimeline`, `unnamedPhysicsReach`);
+  // the model side asks the core (`unnamedReach`, through `posedPhysics`).
+  // #1036 measured the two alike on 3 of 3 timelines its population reached.
+  // This asks every name the parser's physics branch reads — each of the seven
+  // values `physicsRuleFor` judges and `reset` — and one it skips, over three
+  // physics constraints flagged four ways: none global, every value global on
+  // the first, the values spread across the three, and every value global on
+  // every one. Plants: a value read off its neighbour's flag, and `reset`
+  // reading a flag.
+  {
+    const probes: string[] = [];
+    const flagSets: Array<[string, Array<Record<string, boolean>>]> = [
+      ['none global', [{}, {}, {}]],
+      ['every value global on the first', [Object.fromEntries(PHYSICS_PARAMETERS.map((p) => [`${p}Global`, true])), {}, {}]],
+      ['the values spread across the three', [0, 1, 2].map((i) => Object.fromEntries(PHYSICS_PARAMETERS.filter((_p, k) => k % 3 === i).map((p) => [`${p}Global`, true])))],
+      ['every value global on every one', [0, 1, 2].map(() => Object.fromEntries(PHYSICS_PARAMETERS.map((p) => [`${p}Global`, true])))],
+    ];
+    const names = [...PHYSICS_TIMELINE_KINDS, 'velocity'];
+    let asked = 0;
+    let reachedSome = 0;
+    let reachedNone = 0;
+    const plantOff = { neighbour: 0, resetFlag: 0 };
+    for (const [label, flags] of flagSets) {
+      const rig = threeTipsRig([]);
+      const dirs = writeProbeRig({ ...rig, constraints: (rig.constraints as Array<Record<string, unknown>>).map((c, i) => ({ ...c, ...flags[i] })) });
+      let built: ReturnType<typeof compile>;
+      try {
+        built = compileProbe(dirs);
+      } catch (err) {
+        probes.push(`${label}: the rig did not compile — ${(err as Error).message}`);
+        continue;
+      }
+      const raw = JSON.parse(built.skeletonText) as Record<string, unknown>;
+      const rawPhysics = (raw.constraints as Array<Record<string, unknown>>).filter((c) => c.type === 'physics');
+      const modelText = threadedModel(built, built.atlasText) ?? '';
+      const read = { doc: readModel(modelText), json: JSON.parse(modelText) as Record<string, unknown> };
+      const model = modelConstraintTargets(read);
+      const runtimeFacts = rawConstraintTargets(raw);
+      const records = read.doc.constraints.flatMap((c): CorePhysicsRecord[] => (c.record?.kind === 'physics' ? [c.record] : []));
+      for (const name of names) {
+        asked++;
+        const timeline = unnamedPhysicsTimeline(name);
+        const spine = timeline === null ? null : unnamedPhysicsReach(timeline, rawPhysics).map((c) => String(c.name));
+        const core = model.reach(name);
+        const viaFacts = runtimeFacts.reach(name);
+        const spelled = (r: { reached: readonly string[] } | readonly string[] | null): string => (r === null ? 'no timeline' : JSON.stringify('reached' in r ? r.reached : r));
+        if (spelled(spine) !== spelled(core)) probes.push(`${label}, "${name}": spine-core reaches ${spelled(spine)}, the core ${spelled(core)}`);
+        if (spelled(viaFacts) !== spelled(spine)) probes.push(`${label}, "${name}": the runtime's facts answer ${spelled(viaFacts)}, its probe ${spelled(spine)}`);
+        if (spine !== null && spine.length > 0) reachedSome++;
+        if (spine !== null && spine.length === 0) reachedNone++;
+        const kind = PHYSICS_TIMELINE_KINDS.find((k) => k === name);
+        if (kind === undefined || spine === null) continue;
+        // The plants: the flag of the next value along, and a reset reading the `mix` flag.
+        const neighbour = kind === 'reset' ? kind : PHYSICS_PARAMETERS[(PHYSICS_PARAMETERS.indexOf(kind) + 1) % PHYSICS_PARAMETERS.length];
+        const asNeighbour = records.filter((r) => unnamedReach(records, neighbour).has(r.name)).map((r) => r.name);
+        if (kind !== 'reset' && JSON.stringify(asNeighbour) !== JSON.stringify(spine)) plantOff.neighbour++;
+        const resetAsMix = records.filter((r) => unnamedReach(records, 'mix').has(r.name)).map((r) => r.name);
+        if (kind === 'reset' && JSON.stringify(resetAsMix) !== JSON.stringify(spine)) plantOff.resetFlag++;
+      }
+    }
+    if (plantOff.neighbour === 0) probes.push('a value read off its neighbour\'s flag reached what spine-core reaches on every row, so the comparison cannot see which flag is read');
+    if (plantOff.resetFlag === 0) probes.push('a reset reading the mix flag reached what spine-core reaches on every row, so the comparison cannot see that a reset reads none');
+    probes.push(...floorProbes([[asked, flagSets.length * names.length, `${asked} name(s) asked`], [reachedSome, 1, `${reachedSome} reaching some constraint`], [reachedNone, 1, `${reachedNone} reaching none`]], 'a population that asked fewer than it states measured less than it claims'));
+    const ok = probes.length === 0;
+    say(
+      'CO28_A_PHYSICS_TIMELINE_NAMING_NO_CONSTRAINT_REACHES_IN_THE_CORE_WHAT_IT_REACHES_IN_SPINE_CORE_FOR_EVERY_NAME',
+      ok,
+      probeDetail(ok, probes, `${asked} question(s) — ${names.length} name(s) (the ${PHYSICS_TIMELINE_KINDS.length} the parser's physics branch reads and one it skips) × ${flagSets.length} flag set(s) over three constraints: the core's reach is spine-core's on every one, ${reachedSome} reaching some constraint and ${reachedNone} none, and the runtime's facts answer as its probe; a value read off its neighbour's flag read ${plantOff.neighbour} off, a reset reading the mix flag ${plantOff.resetFlag}`),
+      'issue #1025, cut 4c-5: A34 moves whole once its physics branch has the core\'s answer, and #1036 had held that answer on the three timelines its population reached; every row of physicsRuleFor, both the reaching and the empty case, is asked here',
     );
   }
 
@@ -98772,6 +99249,26 @@ function verdictSideProblems(population: ReadonlyMap<string, string>, root: stri
   return { problems, reached: [...seen].filter((p) => !p.startsWith('src/assertions/')).sort() };
 }
 
+/**
+ * Cut 4c-5's two builds (issue #1025): `gallery/look` — two sliders at full
+ * authority keying one property, the later one's timeline posed by A40 — and
+ * three physics constraints, two declaring `strengthGlobal`, under a
+ * `strength` timeline naming none, whose reach A34 asks (`threeTipsRig`).
+ */
+function cut4c5Builds(root: string): Array<{ label: string; result: ReturnType<typeof compile>; outDir: string }> {
+  const look = join(root, 'gallery', 'look');
+  const lookOut = mkdtempSync(join(tmpdir(), 'rigc-vf14-look-'));
+  const lookResult = compile({ rigPath: join(look, 'rig.json'), motionPath: join(look, 'motion.json'), outDir: lookOut, imagesDir: join(look, 'parts') });
+  const tips = writeProbeRig(threeTipsRig(['jiggle', 'jiggle_b']));
+  const tipsMotion = join(tips.dir, 'probe.motion.json');
+  writeFileSync(tipsMotion, `${JSON.stringify(threeTipsMotion('*'), null, 2)}\n`);
+  const tipsResult = compile({ rigPath: tips.rigPath, motionPath: tipsMotion, outDir: tips.outDir, imagesDir: tips.dir });
+  return [
+    { label: 'gallery/look', result: lookResult, outDir: lookOut },
+    { label: 'the three-tips probe under a strength timeline naming no constraint', result: tipsResult, outDir: tips.outDir },
+  ];
+}
+
 function runVerdictSuppliersSuite(): number {
   console.log("\n── verdict suppliers: each moved assertion's lines over spine-core and over the model with the core (issue #1025) ──");
   let bad = 0;
@@ -98795,6 +99292,9 @@ function runVerdictSuppliersSuite(): number {
   // Issue #1034's probe: three builds whose names a JSON object lists out of the editor's order, gated in VF02's case so every
   // population after it — the lines (VF02), the skins' walk (VF05), the fact families (VF09, VF10) — reads them; VF11 reads them alone.
   const integerNamed = integerNamedBuilds();
+  // Cut 4c-5's two subjects (issue #1025), compiled here so VF04 and VF14 read them under `--only` too: two sliders sharing a
+  // property (gallery/look, whose later slider's timeline A40 poses), and a physics timeline naming no constraint (A34's reach).
+  const cut4c5 = cut4c5Builds(root);
 
   // --- VF01: the model side reaches nothing from spine-core -----------------
   {
@@ -98845,7 +99345,7 @@ function runVerdictSuppliersSuite(): number {
     }
     const c = SUPPLIERS;
     const probes = [
-      ...c.faults.filter((f) => !f.fault.startsWith('the skins walk') && !f.fault.startsWith('the facts "') && !f.fault.startsWith('the rig facts') && !f.fault.startsWith('the posed facts')).map((f) => `${f.case}: ${f.fault}`),
+      ...c.faults.filter((f) => !f.fault.startsWith('the skins walk') && !f.fault.startsWith('the facts "') && !f.fault.startsWith('the rig facts') && !f.fault.startsWith('the posed facts') && !f.fault.startsWith('the cut 4c-5 facts')).map((f) => `${f.case}: ${f.fault}`),
       ...c.unwritable.map((why) => `a compile whose model document the writer refused, so its call carried no model: ${why}`),
       ...floorProbes(
         [
@@ -99048,6 +99548,29 @@ function runVerdictSuppliersSuite(): number {
       check.caseLine('VF04_PLANTED_CASE');
       const fault = check.faults.find((f) => f.case === 'VF04_PLANTED_CASE' && f.fault.startsWith(`${code} differs`));
       if (fault === undefined) probes.push(`${label}: the check named [${check.faults.map((f) => f.fault).join('; ') || 'nothing'}], not ${code} on the planted case`);
+      else named.push(`${label} → ${fault.fault.slice(0, 160)}`);
+    }
+    // Cut 4c-5's two families (issue #1025), one neighbouring answer each, over the two builds that ask them.
+    const cut4c5Plants: Array<[string, Partial<ModelSupply>, string, (typeof cut4c5)[number]]> = [
+      ['every additive behaviour answered as the other of accumulates and overwrites', { sliderComposition: (read) => {
+        const facts = MODEL_SUPPLY.sliderComposition(read);
+        return { ...facts, behaviour: (animation, at) => (facts.behaviour(animation, at) === 'accumulates' ? 'overwrites' : 'accumulates') };
+      } }, 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET', cut4c5[0]],
+      ['a physics timeline naming no constraint reaching none', { constraintTargets: (read) => {
+        const facts = MODEL_SUPPLY.constraintTargets(read);
+        return { ...facts, reach: (timeline) => {
+          const reach = facts.reach(timeline);
+          return reach === null ? reach : { ...reach, reached: [] };
+        } };
+      } }, 'A34_CONSTRAINT_TIMELINE_TARGETS', cut4c5[1]],
+    ];
+    for (const [label, supply, code, b] of cut4c5Plants) {
+      const plantedInput: ValidateInput = { skeletonText: b.result.skeletonText, atlasText: b.result.atlasText, atlasDir: b.outDir, modelText: threadedModel(b.result, b.result.atlasText), rig: b.result.rig, declaredDurations: b.result.declaredDurations, profile: 'spine-html' };
+      const check = new SupplierCheck(supply);
+      check.observe(plantedInput, validateOverSpine(plantedInput), undefined);
+      check.caseLine('VF04_PLANTED_CASE');
+      const fault = check.faults.find((f) => f.case === 'VF04_PLANTED_CASE' && f.fault.startsWith(`${code} differs`));
+      if (fault === undefined) probes.push(`${label} on ${b.label}: the check named [${check.faults.map((f) => f.fault).join('; ') || 'nothing'}], not ${code} on the planted case`);
       else named.push(`${label} → ${fault.fault.slice(0, 160)}`);
     }
     const rigClean = new SupplierCheck();
@@ -99579,6 +100102,63 @@ function runVerdictSuppliersSuite(): number {
       'issue #1025, cut 4c-3: A43 and A46 pose at times no gate samples — a key\'s own stored time, half a delay into a frame — and A39 reads ' +
         'a survey whose every number a line folds into a count, so each body runs over spine-core\'s facts and every question it asks is put ' +
         'to the model side\'s supplier too, the answers compared exactly',
+    );
+  }
+
+  // --- VF14: cut 4c-5's facts, question by question -------------------------
+  {
+    const probes: string[] = [];
+    // This suite's own two builds, gated so the supplier check asks their questions under `--only` too.
+    for (const b of cut4c5) {
+      validate({ skeletonText: b.result.skeletonText, atlasText: b.result.atlasText, atlasDir: b.outDir, declaredDurations: b.result.declaredDurations, rig: b.result.rig, modelText: threadedModel(b.result, b.result.atlasText), profile: 'spine-html' });
+    }
+    const c = SUPPLIERS;
+    probes.push(...c.faults.filter((f) => f.fault.startsWith('the cut 4c-5 facts')).map((f) => `${f.case}: ${f.fault}`));
+    // Every family asked the body's own questions of both sides — a family whose every question is a whole value posed nothing.
+    for (const family of CUT_4C5_FAMILIES) {
+      const t = c.cut4c5Tallies.get(family);
+      probes.push(...floorProbes([[t?.calls ?? 0, 1, `${t?.calls ?? 0} posed question(s) in the "${family}" family`]], 'and a family whose posed half nothing asked about is held by nothing'));
+    }
+    // The plants: one answer off in each family, on the build that asks it, moves that family's tally alone.
+    const plants: Array<[Cut4c5Family, string, (typeof cut4c5)[number], Partial<ModelSupply>]> = [
+      ['slider composition', 'a timeline\'s additive behaviour answered as the other of accumulates and overwrites', cut4c5[0], { sliderComposition: (read) => {
+        const facts = MODEL_SUPPLY.sliderComposition(read);
+        return { ...facts, behaviour: (animation, at) => (facts.behaviour(animation, at) === 'accumulates' ? 'overwrites' : 'accumulates') };
+      } }],
+      ['constraint targets', 'a physics timeline naming no constraint reaching none', cut4c5[1], { constraintTargets: (read) => {
+        const facts = MODEL_SUPPLY.constraintTargets(read);
+        return { ...facts, reach: (timeline) => {
+          const reach = facts.reach(timeline);
+          return reach === null ? reach : { ...reach, reached: [] };
+        } };
+      } }],
+    ];
+    const named: string[] = [];
+    for (const [family, label, b, supply] of plants) {
+      const planted = compareCut4c5Facts(b.result.skeletonText, b.result.atlasText, threadedModel(b.result, b.result.atlasText) ?? '', supply);
+      const moved = (planted ?? []).filter((t) => t.differing.length > 0).map((t) => t.family);
+      if (moved.length !== 1 || moved[0] !== family) probes.push(`${label} on ${b.label}: the comparison moved [${moved.join(', ')}], not "${family}" alone`);
+      else named.push(`${label} → "${family}" (${(planted ?? []).find((t) => t.family === family)?.differing.length} question(s))`);
+    }
+    const tallies = CUT_4C5_FAMILIES.map((family) => {
+      const t = c.cut4c5Tallies.get(family);
+      return `${family} ${t?.equal ?? 0} of ${t?.questions ?? 0} question(s) alike, ${t?.calls ?? 0} of them posed, over ${t?.values ?? 0} number(s), ${t?.refused.length ?? 0} refused by the core by name`;
+    });
+    const refusals = [...c.cut4c5Tallies.values()].flatMap((t) => t.refused.map((r) => `${t.family} ${r.question.slice(0, 80)}: ${r.why.slice(0, 160)}`));
+    const held = probes.length === 0;
+    say(
+      'VF14_CUT_4C5S_FACTS_ARE_THE_SAME_ON_BOTH_SIDES_AT_EVERY_QUESTION_THE_BODIES_ASK',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${c.cut4c5Facts.builds} distinct build(s) over ${c.cut4c5Facts.calls} own call(s): ${tallies.join('; ')}` +
+          `${refusals.length > 0 ? ` — the refusals: ${refusals.slice(0, 6).join(' | ')}` : ''}; one answer off in each family moves that family alone: ${named.join('; ')}`,
+        (count) => `${count} difference(s) between the suppliers' answers:`,
+      ),
+      'issue #1025, cut 4c-5: what a timeline does when two sliders apply it additively, and whom a physics timeline naming no constraint ' +
+        'reaches, are behaviour only the runtime had — A40 poses the first, A34 asks the second — so each body runs over spine-core\'s facts and ' +
+        'every question it asks is put to the core\'s answer too, beside the sliders, the constraints and the groups compared whole',
     );
   }
 
