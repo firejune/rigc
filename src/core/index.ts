@@ -391,7 +391,7 @@ export interface CoreStated {
 /**
  * The `pages` section, checked: a list of pages, each holding exactly
  * `CORE_PAGE_FIELDS` — a non-empty name, a size of two positive finite
- * numbers, a list of regions — and each region exactly
+ * numbers, a list of at least one region (issue #1054) — and each region exactly
  * `CORE_PAGE_REGION_FIELDS`, a non-empty name and nine finite numbers. Every
  * fault is named by its path. Nothing is defaulted: a field the writer always
  * writes is required here.
@@ -423,6 +423,10 @@ function readPages(value: unknown, problems: string[], flags: boolean): ModelPag
     }
     const regions: ModelPageRegion[] = [];
     if (!Array.isArray(raw.regions)) problems.push(`${label}: regions is not a list`);
+    // Issue #1054: a page holding no region is one no build writes — the atlas text's block for it would end before any region line, which
+    // the round trip refuses (A07_ATLAS_TEXT_SHAPE: "the last page block declares no region") — so a document stating one is refused here by
+    // the page's name rather than read, where nothing on the model side would name it.
+    else if (raw.regions.length === 0) problems.push(`${label}: regions is an empty list — a page holds at least one region; the atlas text cannot state a page with none (its block would end before a region line, which A07_ATLAS_TEXT_SHAPE refuses), so no build writes one`);
     else {
       raw.regions.forEach((region, j) => {
         const at = `${label}.regions[${j}]`;

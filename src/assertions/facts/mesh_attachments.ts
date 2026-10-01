@@ -1,8 +1,16 @@
 /**
- * The mesh attachments, as the bodies that read their geometry and their
- * weights see them (issue #1025, step 4c of #380) — the census's F07 (vertex
- * data), F08 (mesh geometry) and F10 (the linked-mesh join), for A04, A20,
- * A21, A28 and the mesh half of A23.
+ * The mesh attachments, as every body that reads a mesh sees them (issue
+ * #1025, step 4c of #380) — the census's F03, F05, F07 (vertex data), F08
+ * (mesh geometry) and F10 (the linked-mesh join), for A04, A13, A14, A15, A20,
+ * A21, A22, A28 and the mesh half of A23.
+ *
+ * ⭐ **One family** (issue #1054). Cut 4c-1 stated the meshes for A13, A14,
+ * A15 and A22 as a family of their own (`SkinMeshFacts`) and cut 4c-2 stated
+ * them again here; the two walked the same entries in the same order and
+ * agreed on every field they shared, and two families of one fact are two
+ * places for a supplier to disagree with itself. The size the budget and
+ * canvas rules read joined this one, and the bones a mesh's weights name are
+ * derived from `weights` (`weightBonesOf`) rather than stated beside them.
  *
  * ⭐ **The order is the file's**, as `./skin_entries.ts` states it: every
  * skin in the file's order, and within a skin the entries slot by slot in the
@@ -56,6 +64,9 @@ export interface MeshEntry {
   readonly regionUVs: readonly number[];
   /** `hullLength`: two numbers per hull vertex. */
   readonly hullLength: number;
+  /** Its `width` and `height` — a link's are its source's, which the runtime's `setSourceMesh` writes over the link's own. */
+  readonly width: number;
+  readonly height: number;
   /** Per vertex its influences, in order — or `null` for an unweighted mesh. */
   readonly weights: ReadonlyArray<readonly MeshBinding[]> | null;
   /** The kept clauses' findings about this mesh's vertex run (`A04`'s encoding rules), in order; never on the model side. */
@@ -68,4 +79,22 @@ export interface MeshFacts {
   readonly bones: readonly string[];
   /** Every mesh attachment of every skin, in the file's walk order. */
   readonly meshes: readonly MeshEntry[];
+}
+
+/**
+ * Every bone a mesh's weights name, in the weight run's order (repeats kept),
+ * by name — empty for an unweighted mesh. A binding whose index the roster
+ * does not hold names nothing here: that index is the encoding's fault, which
+ * `A20`'s kept clause names (`MeshBinding.encoding`), and no bone drives the
+ * mesh through it.
+ */
+export function weightBonesOf(facts: Pick<MeshFacts, 'bones'>, mesh: Pick<MeshEntry, 'weights'>): string[] {
+  const names: string[] = [];
+  for (const vertex of mesh.weights ?? []) {
+    for (const binding of vertex) {
+      const name = facts.bones[binding.bone];
+      if (name !== undefined) names.push(name);
+    }
+  }
+  return names;
 }

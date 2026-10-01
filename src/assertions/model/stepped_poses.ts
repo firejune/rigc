@@ -21,8 +21,9 @@
  *   name, so on this side every bone of every pose holds one and the answer is
  *   `null` — derived from the pose rather than assumed, so a reader that
  *   started admitting such a spelling would show up here as a bone with none.
- * - **Under no skin set**, as `validate()` poses (`noSkinView`), which refuses
- *   by name a document whose default skin it cannot read that way.
+ * - **Under no skin set**, as `validate()` poses (`noSkinView`, the view
+ *   measured in issue #1051: no skin's bones or constraints applied, a slot
+ *   looked up in the default skin alone).
  *
  * Links nothing from the runtime.
  */
