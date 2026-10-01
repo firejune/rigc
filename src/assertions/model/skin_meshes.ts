@@ -4,7 +4,7 @@
  * file's walk order.
  *
  * - **The order** is `fileOrderedEntries`'s (`./skin_entries.ts`): the skins by
- *   the emitter's `editorSkinOrder`, the slots in the document's slot order, a
+ *   the file's order (`fileSkinOrder`, issue #1034), the slots in the document's slot order, a
  *   slot's records in its table's order — the walk the selftest measures equal
  *   to spine-core's `getAttachments()`.
  * - **A linked mesh's geometry is its source's**, read through the core's own

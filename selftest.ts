@@ -185,6 +185,8 @@ import {
   EDITOR_NAME_FOLD,
   editorAnimationOrder,
   editorNamesInOrder,
+  fileAnimationOrder,
+  fileSkinOrder,
   editorSkinOrder,
   editorSlotKeyOrder,
   f32,
@@ -513,10 +515,11 @@ import { fileOrderedEntries, modelSkinEntries } from './src/assertions/model/ski
 import { modelMeshFacts } from './src/assertions/model/mesh_attachments.ts';
 import { modelPolygonFacts } from './src/assertions/model/vertex_polygons.ts';
 import { modelLinkFacts } from './src/assertions/model/linked_meshes.ts';
-import { modelConstraintFacts } from './src/assertions/model/constraints.ts';
+import { modelConstraintFacts, type AnimationFileOrder } from './src/assertions/model/constraints.ts';
+import type { ConstraintFacts } from './src/assertions/facts/constraints.ts';
 import { verdictLines, verdictMain, walkSpelling, type VerdictRow } from './tools/verdict_gate.ts';
 import { compareFacts, modelGivenOf } from './tools/verdict_gate.ts';
-import { modelRegionJoinsWith } from './src/assertions/model/region_joins.ts';
+import { modelRegionJoinsWith, type SlotKeyWalk } from './src/assertions/model/region_joins.ts';
 import { compareRigFacts, modelRigFacts, RIG_FACT_FAMILIES, rigFactsDerivations, rigFactsSpelling, sumTallies, type DerivationTally, type RigFactFamily, type RigFacts } from './tools/rig_facts.ts';
 import {
   articulatedFixture,
@@ -965,6 +968,9 @@ function modelInputOf(input: ValidateInput, modelText: string): Parameters<typeo
   return { modelText, atlasDir: input.atlasDir, profile: input.profile, rig: input.rig, given };
 }
 
+/** The document's skins and each skin's slot keys as the document itself lists them — what a walk restating no order would read (`VF09`, `VF11`). */
+const documentsOwnSlotKeyWalk: SlotKeyWalk = (skins) => skins.map((skin) => ({ skin, slots: typeof skin.attachments === 'object' && skin.attachments !== null ? Object.keys(skin.attachments) : [] }));
+
 /** The first double-quoted name in a sentence — the object a FAIL line is about (`region "x"`, `animation "x"`, `page "x"`). */
 const firstQuoted = (sentence: string): string | null => /"([^"]*)"/.exec(sentence)?.[1] ?? null;
 
@@ -1148,7 +1154,7 @@ class SupplierCheck {
     if (Array.isArray(doc.skins) && doc.skins.length > 1) {
       this.joinsMultiSkin++;
       const read = { doc: readModel(modelText), json: doc as Record<string, unknown> };
-      const own = JSON.stringify(modelRegionJoinsWith(read, (skins) => [...skins], (table) => table));
+      const own = JSON.stringify(modelRegionJoinsWith(read, documentsOwnSlotKeyWalk));
       if (own !== JSON.stringify(modelRegionJoinsWith(read))) this.joinsDocumentOrderDiffers++;
     }
   }
@@ -79554,6 +79560,7 @@ function runDeformCoreSuite(): number | null {
 
   // --- DM12: the survey's structure read off the model document is the runtime's, read for read, and the survey is one (issue #1019) --
   const structureRows: Array<{ name: string; texts: DmTexts; spine: DeformSurvey }> = [];
+  const integerNamed = integerNamedBuilds();
   {
     const probes: string[] = [];
     // A second population: DM01's generator, with a linked mesh of each of two meshes filed under a slot of its own — one playing its
@@ -79567,10 +79574,18 @@ function runDeformCoreSuite(): number | null {
       spec.skins.default.s5 = { x1: { kind: 'linkedmesh', source: 'm1', from: 's1', timelines: rnd() < 0.5 } };
       linked.push(dmPair(spec));
     }
+    // Issue #1034's probe, its /3 document and the same taken back to /2: names a JSON object lists first, in the animations and
+    // in the slots an animation's deform timelines are filed under, so a reader restating either order reads another survey.
+    if (integerNamed === null) probes.push('gallery/nod or gallery/walk is not in the tree, so issue #1034\'s probe was not built');
+    else probes.push(...integerNamed.refused.map((why) => `issue #1034's probe: ${why}`));
     const rows = [
       ...population.map((p, i) => ({ name: `population rig ${i}`, texts: p.texts })),
       ...linked.map((texts, i) => ({ name: `linked rig ${i}`, texts })),
       ...gallery.map((g) => ({ name: g.name, texts: g.texts })),
+      ...(integerNamed?.builds ?? []).flatMap((b) => [
+        { name: `${b.name} /3`, texts: { skeletonText: b.result.skeletonText, atlasText: b.result.atlasText, modelText: b.v3 } },
+        { name: `${b.name} /2`, texts: { skeletonText: b.result.skeletonText, atlasText: b.result.atlasText, modelText: b.v2 } },
+      ]),
     ];
     const verdict = structureLines(rows.map((r) => ({ name: r.name, census: structureCensus(r.texts) })));
     if (!verdict.exact) probes.push(...verdict.lines.filter((l) => l.startsWith('  OFF') || l.startsWith('  REFUSED')).slice(0, 4).map((l) => l.trim()));
@@ -79612,7 +79627,7 @@ function runDeformCoreSuite(): number | null {
       probeDetail(
         held,
         probes,
-        `${rows.length} rows — DM01's ${population.length} random rigs, ${linked.length} with linked meshes filed under slots of their own (${reaching} row(s) whose deform reaches another slot), the gallery's ${gallery.length}; ${sliding} carry a slider, ${dressed} a second skin: ` +
+        `${rows.length} rows — DM01's ${population.length} random rigs, ${linked.length} with linked meshes filed under slots of their own (${reaching} row(s) whose deform reaches another slot), the gallery's ${gallery.length}, issue #1034's ${2 * (integerNamed?.builds.length ?? 0)} (its probe's builds at /3 and at /2); ${sliding} carry a slider, ${dressed} a second skin: ` +
           `${verdict.lines[verdict.lines.length - 1].replace(/^STRUCTURE \(tolerance 0\) /, '')}; the model's stated value already the runtime's — ${stated.join(', ')} — and the rest derived; ` +
           `the DeformSurvey's canonical JSON identical read and posed through the model document and through spine-core on ${same} of ${rows.length} (${keys} keys)`,
       ),
@@ -79628,8 +79643,13 @@ function runDeformCoreSuite(): number | null {
       ...s,
       animations: s.animations.map((a) => ({ ...a, deforms: a.deforms.map((d, i) => f(d, a, i)) })),
     });
-    const statedKeys = (doc: CompiledDocument, animation: string, i: number): Array<{ stated: number }> =>
-      (doc.animations.find((a) => a.name === animation)?.timelines.attachments.filter((t) => t.deform !== null)[i]?.deform ?? []);
+    // A deform timeline's identity in the document — its skin, slot and placeholder — which the reader walks in the file's order (issue #1034).
+    const identityOf = (doc: CompiledDocument, d: SurveyDeformTimeline): string => `${d.placement().skin}/${doc.slots[d.slotIndex]?.name}/${d.placement().placeholder}`;
+    const statedKeys = (doc: CompiledDocument, animation: string, d: SurveyDeformTimeline): Array<{ stated: number }> =>
+      (doc.animations.find((a) => a.name === animation)?.timelines.attachments.find((t) => t.deform !== null && `${t.skin}/${t.slot}/${t.attachment}` === identityOf(doc, d))?.deform ?? []);
+    /** Each animation's deform timelines as the document lists them: skin, slot, placeholder. */
+    const documentDeformOrder = (doc: CompiledDocument, animation: string): string[] =>
+      (doc.animations.find((a) => a.name === animation)?.timelines.attachments ?? []).filter((t) => t.deform !== null).map((t) => `${t.skin}/${t.slot}/${t.attachment}`);
     /** The rows a plant must turn red: `exact` — the plant changes a figure on every row reading it; otherwise only where a fold window was predicted, so red must be some of them and no other. */
     const plants: Array<{ label: string; read: Read; exact: boolean; reads: (r: (typeof structureRows)[number]) => boolean }> = [
       {
@@ -79647,8 +79667,50 @@ function runDeformCoreSuite(): number | null {
         },
       },
       {
+        label: 'the animations in the editor\'s comparator\'s order rather than the order the file keys them (issue #1034)',
+        read: (doc) => {
+          const s = modelStructure(doc);
+          const order = editorNamesInOrder(doc.animations.map((a) => a.name), 'animations');
+          return { ...s, animations: [...s.animations].sort((x, y) => order.indexOf(x.name) - order.indexOf(y.name)) };
+        },
+        exact: true,
+        reads: (r) => {
+          const seen = [...new Set(r.spine.keys.map((k) => k.animation))];
+          const order = editorNamesInOrder(readModel(r.texts.modelText).animations.map((a) => a.name), 'animations');
+          return seen.join('\u0000') !== [...seen].sort((x, y) => order.indexOf(x) - order.indexOf(y)).join('\u0000');
+        },
+      },
+      {
+        label: 'an animation\'s deform timelines in the model document\'s order rather than the order the file keys them (issue #1034)',
+        read: (doc) => {
+          const s = modelStructure(doc);
+          return {
+            ...s,
+            animations: s.animations.map((a) => {
+              const order = documentDeformOrder(doc, a.name);
+              return { ...a, deforms: [...a.deforms].sort((x, y) => order.indexOf(identityOf(doc, x)) - order.indexOf(identityOf(doc, y))) };
+            }),
+          };
+        },
+        exact: true,
+        reads: (r) => {
+          const doc = readModel(r.texts.modelText);
+          const seen = new Map<string, string[]>();
+          for (const k of r.spine.keys) {
+            const list = seen.get(k.animation) ?? [];
+            const id = `${k.skin}/${k.slot}/${k.placeholder}`;
+            if (!list.includes(id)) list.push(id);
+            seen.set(k.animation, list);
+          }
+          return [...seen].some(([animation, ids]) => {
+            const order = documentDeformOrder(doc, animation);
+            return ids.join('\u0000') !== [...ids].sort((x, y) => order.indexOf(x) - order.indexOf(y)).join('\u0000');
+          });
+        },
+      },
+      {
         label: 'a key\'s time as the document states it rather than its float32',
-        read: (doc) => deforms(modelStructure(doc), (d, a, i) => ({ ...d, frames: statedKeys(doc, a.name, i).map((k) => k.stated) })),
+        read: (doc) => deforms(modelStructure(doc), (d, a) => ({ ...d, frames: statedKeys(doc, a.name, d).map((k) => k.stated) })),
         exact: true,
         reads: (r) => {
           const doc = readModel(r.texts.modelText);
@@ -79740,6 +79802,7 @@ function runDeformCoreSuite(): number | null {
     );
   }
 
+  for (const d of integerNamed?.dirs ?? []) rmSync(d, { recursive: true, force: true });
   rmSync(work, { recursive: true, force: true });
   return bad;
 }
@@ -86704,7 +86767,7 @@ function runModelAtlasSuite(): number {
     let keyedLine = '';
     if (greenOf('integer-keyed', keyed, probes)) {
       const doc = readModel(modelDocument(keyed.built.model, keyed.built.skeletonText, keyed.built.atlasText));
-      const sorted = editorAnimationOrder(['-a', '5']);
+      const sorted = editorNamesInOrder(['-a', '5'], 'animations');
       const stated = doc.stated?.editorOrder.animations ?? [];
       const differs = statedDifferences(doc, keyed.built.skeletonText, keyed.built.atlasText);
       if (differs.length > 0) probes.push(`the integer-keyed probe: ${differs.join('; ')}`);
@@ -98042,6 +98105,114 @@ function runRunTallySuite(live: RunTally): number {
 // ---------------------------------------------------------------------------
 
 /**
+ * The names issue #1034 measured: two that a JSON object lists first because
+ * they are array indices (`5`, `10`) and three it does not (`-a`, `2b`, `01`),
+ * in an order neither the editor's comparator nor an object returns.
+ */
+const INTEGER_LIKE_NAMES = ['5', '-a', '10', '2b', '01'] as const;
+
+/** One build of the integer-named probe (`integerNamedBuilds`): what it carries, how it was built, and its texts at `/3` and taken back to `/2`. */
+interface IntegerNamedBuild {
+  name: string;
+  /** Which of the file's orders the build puts integer-like names into. */
+  carries: string;
+  outDir: string;
+  result: CompileResult;
+  v3: string;
+  v2: string;
+}
+
+/**
+ * The probe of issue #1034: three builds whose names put the Spine file's
+ * object-key order and the editor's comparator apart, so a reader that
+ * restates an order rather than reading the file's reads another one.
+ *
+ * - **`gallery/nod` renamed**: the slots `ear_l`, `ear_r`, `head`, `eye_l`,
+ *   `eye_r` as `INTEGER_LIKE_NAMES` — a skin's slot keys, and an animation's
+ *   deform timelines filed under them — and its animations `idle`, `bow`,
+ *   `idle`, `idle`, `idle` under the same five names.
+ * - **`gallery/walk` renamed**: its walk under the five names, and its ik
+ *   constraint `leg_b_ik` as `5`, so each animation's `ik` group keys a name
+ *   the file lists first.
+ * - **a static probe whose skins are `default` and the five names**, each
+ *   filling the marker with one of two sizes of art in turn: the skins, an
+ *   array, whose order the measurement says is the comparator's.
+ *
+ * Built from the gallery's specs, renamed in memory and written to a temp
+ * directory; `null` when `gallery/` is absent, which the callers name as a
+ * HOLE. A build that throws is returned as its refusal, for the caller to name;
+ * `dirs` are the caller's to remove once it is done reading the builds.
+ */
+function integerNamedBuilds(): { builds: IntegerNamedBuild[]; refused: string[]; dirs: string[] } | null {
+  const galleryRoot = resolve(import.meta.dir, 'gallery');
+  if (!['nod', 'walk'].every((name) => existsSync(join(galleryRoot, name, 'rig.json')))) return null;
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-integer-named-'));
+  const builds: IntegerNamedBuild[] = [];
+  const refused: string[] = [];
+  type Spec = Record<string, unknown>;
+  const read = (name: string, file: string): Spec => JSON.parse(readFileSync(join(galleryRoot, name, file), 'utf8')) as Spec;
+  const build = (name: string, carries: string, rig: Spec, motion: Spec, imagesDir?: string): void => {
+    const at = join(dir, name.replace(/\W+/g, '_'));
+    mkdirSync(at, { recursive: true });
+    writeFileSync(join(at, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+    writeFileSync(join(at, 'motion.json'), `${JSON.stringify(motion, null, 2)}\n`);
+    const outDir = join(at, 'out');
+    try {
+      const result = compile({ rigPath: join(at, 'rig.json'), motionPath: join(at, 'motion.json'), outDir, ...(imagesDir === undefined ? {} : { imagesDir }) });
+      const v3 = modelDocument(result.model, result.skeletonText, result.atlasText);
+      const v2 = withoutStated(v3);
+      if (v2 === null) refused.push(`${name}: its document could not be taken back to rigc-compiled/2`);
+      else builds.push({ name, carries, outDir, result, v3, v2 });
+    } catch (err) {
+      refused.push(`${name}: ${(err as Error).message.slice(0, 200)}`);
+    }
+  };
+  const [n5, nA, n10, n2b, n01] = INTEGER_LIKE_NAMES;
+  // gallery/nod: five slots and the animations renamed.
+  {
+    const rename: Record<string, string> = { ear_l: n5, ear_r: nA, head: n10, eye_l: n2b, eye_r: n01 };
+    const rig = read('nod', 'rig.json');
+    const motion = read('nod', 'motion.json');
+    rig.images = join(galleryRoot, 'nod', String(rig.images));
+    for (const slot of rig.slots as Array<{ name: string }>) slot.name = rename[slot.name] ?? slot.name;
+    const skins = rig.skins as Record<string, Spec>;
+    skins.default = Object.fromEntries(Object.entries(skins.default).map(([slot, table]) => [rename[slot] ?? slot, table]));
+    const visit = (v: unknown): void => {
+      if (Array.isArray(v)) v.forEach(visit);
+      else if (typeof v === 'object' && v !== null) {
+        const o = v as Spec;
+        if (typeof o.slot === 'string') o.slot = rename[o.slot] ?? o.slot;
+        Object.values(o).forEach(visit);
+      }
+    };
+    const animations = motion.animations as Spec;
+    visit(animations);
+    motion.animations = { [n5]: animations.idle, [nA]: animations.bow, [n10]: animations.idle, [n2b]: animations.idle, [n01]: animations.idle };
+    build('gallery/nod renamed', "a skin's slot keys, an animation's deform timelines, the animations", rig, motion);
+  }
+  // gallery/walk: the animations, and one ik constraint, renamed.
+  {
+    const rig = read('walk', 'rig.json');
+    const motion = read('walk', 'motion.json');
+    rig.images = join(galleryRoot, 'walk', String(rig.images));
+    for (const c of rig.constraints as Array<{ name: string }>) if (c.name === 'leg_b_ik') c.name = n5;
+    const walk = (motion.animations as Spec).walk as { ik?: Array<{ constraint: string }> };
+    for (const track of walk.ik ?? []) if (track.constraint === 'leg_b_ik') track.constraint = n5;
+    motion.animations = Object.fromEntries(INTEGER_LIKE_NAMES.map((n) => [n, walk]));
+    build('gallery/walk renamed', 'the animations, an animation\'s ik group', rig, motion);
+  }
+  // A static probe whose skins carry the five names.
+  {
+    // Two sizes of art, alternating over the names, so a walk in another skin order spells other sizes (VF05's probe does the same).
+    const art = (i: number): string => (i % 2 === 0 ? 'block.png' : 'marker.png');
+    const probe = writeProbeRig({ skins: { default: { ...PROBE_BLOCK_ONLY_SKIN }, ...Object.fromEntries(INTEGER_LIKE_NAMES.map((n, i) => [n, { marker: { marker: { image: art(i) } } }])) } });
+    const rig = JSON.parse(readFileSync(probe.rigPath, 'utf8')) as Spec;
+    build('the skins probe', 'the skins', rig, STATIC_MOTION, probe.dir);
+    return { builds, refused, dirs: [dir, probe.dir] };
+  }
+}
+
+/**
  * The tree rule for the model side: every file under `src/assertions/` — the
  * bodies, the fact interfaces, the harness and the model's suppliers — and
  * every module those reach by a value import, the two outside `src/` that
@@ -98096,6 +98267,9 @@ function runVerdictSuppliersSuite(): number {
   });
   const overlay = fixtures[0];
   const pageRenamed = firstPageLine(overlay.result.atlasText);
+  // Issue #1034's probe: three builds whose names a JSON object lists out of the editor's order, gated in VF02's case so every
+  // population after it — the lines (VF02), the skins' walk (VF05), the fact families (VF09, VF10) — reads them; VF11 reads them alone.
+  const integerNamed = integerNamedBuilds();
 
   // --- VF01: the model side reaches nothing from spine-core -----------------
   {
@@ -98137,6 +98311,11 @@ function runVerdictSuppliersSuite(): number {
     for (const { opts, result } of fixtures) {
       for (const profile of VALIDATE_PROFILES) {
         validate({ skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: opts.outDir, declaredDurations: result.declaredDurations, rig: result.rig, modelText: threadedModel(result, result.atlasText), profile });
+      }
+    }
+    for (const { outDir, result } of integerNamed?.builds ?? []) {
+      for (const profile of VALIDATE_PROFILES) {
+        validate({ skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir, declaredDurations: result.declaredDurations, rig: result.rig, modelText: threadedModel(result, result.atlasText), profile });
       }
     }
     const c = SUPPLIERS;
@@ -98334,7 +98513,7 @@ function runVerdictSuppliersSuite(): number {
         held,
         probes,
         `${w.equal} of ${w.compared} build(s) with more than one skin walk their regions and clippings in spine-core's order on the model side, name and size, ` +
-          `with the skins put in order by \`editorSkinOrder\`; walked in the document's own order instead, ${w.documentOrderDiffers} of them would print in another order`,
+          `with the skins put in the file's order by \`fileSkinOrder\` (the stated order on /3, \`editorSkinOrder\` on /2); walked in the document's own order instead, ${w.documentOrderDiffers} of them would print in another order`,
       ),
       'an order no line has failed on yet is still a fact: two FAIL lines of A03 on a rig whose skins the comparator moves would come out ' +
         'in another order from a supplier that walked the document as it is written',
@@ -98563,6 +98742,150 @@ function runVerdictSuppliersSuite(): number {
       'issue #1025, cut 4c-2: a line hides most of what a supplier could get wrong — a weight one float32 step off still sums to 1 at four ' +
         'decimals — so the facts the bodies read are compared whole, and each derivation the model side makes is counted against the ' +
         'runtime\'s value and against what the document\'s own number would have given',
+    );
+  }
+
+  // --- VF11: issue #1034 — the file's orders on names an object lists first, read off /3 and derived on /2, and each restated order red ---
+  {
+    const probes: string[] = [];
+    const table: string[] = [];
+    const plants: string[] = [];
+    let animationsApart = 0;
+    let slotKeysApart = 0;
+    let skinsOwnApart = 0;
+    const list = (names: readonly string[]): string => `[${names.join(', ')}]`;
+    const comparatorOrder: AnimationFileOrder = (doc) => editorNamesInOrder(doc.animations.map((a) => a.name), 'animations');
+    const comparatorSlotKeys: SlotKeyWalk = (skins) =>
+      editorSkinOrder(skins).map((skin) => ({ skin, slots: editorNamesInOrder(typeof skin.attachments === 'object' && skin.attachments !== null ? Object.keys(skin.attachments) : [], 'animations') }));
+    if (integerNamed === null) probes.push('gallery/nod or gallery/walk is not in the tree, so the probe was not built');
+    else {
+      probes.push(...integerNamed.refused.map((why) => `a probe build was refused: ${why}`));
+      if (integerNamed.builds.length !== 3) probes.push(`${integerNamed.builds.length} of the probe's 3 builds were built`);
+      for (const b of integerNamed.builds) {
+        const { skeletonText, atlasText } = b.result;
+        const raw = JSON.parse(skeletonText) as { animations?: Record<string, unknown>; skins?: Array<{ name: string; attachments?: Record<string, unknown> }> };
+        const data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(skeletonText);
+        // The file's orders as spine-core reads them, which is the order the facts' runtime side walks.
+        const file = {
+          animations: data.animations.map((a) => a.name),
+          skins: data.skins.map((k) => k.name),
+          slotKeys: (raw.skins ?? []).map((k) => Object.keys(k.attachments ?? {})),
+        };
+        if (Object.keys(raw.animations ?? {}).join('\u0000') !== file.animations.join('\u0000')) probes.push(`${b.name}: skeleton.json keys the animations ${list(Object.keys(raw.animations ?? {}))} and spine-core reads ${list(file.animations)}`);
+        const own = readModel(b.v3);
+        const comparator = editorNamesInOrder(own.animations.map((a) => a.name), 'animations');
+        if (comparator.join('\u0000') !== file.animations.join('\u0000')) animationsApart++;
+        if (raw.skins?.some((k, i) => editorNamesInOrder(Object.keys(k.attachments ?? {}), 'animations').join('\u0000') !== file.slotKeys[i].join('\u0000'))) slotKeysApart++;
+        if (own.skins.map((k) => k.name).join('\u0000') !== file.skins.join('\u0000')) skinsOwnApart++;
+        table.push(
+          `${b.name} (${b.carries}): animations file ${list(file.animations)}, comparator ${list(comparator)}, document ${list(own.animations.map((a) => a.name))}; ` +
+            `skins file ${list(file.skins)}, document ${list(own.skins.map((k) => k.name))}; first skin's slot keys file ${list(file.slotKeys[0] ?? [])}`,
+        );
+        for (const [spec, text] of [['/3', b.v3], ['/2', b.v2]] as const) {
+          const read = { doc: readModel(text), json: JSON.parse(text) as Record<string, unknown> };
+          if ((read.doc.stated === null) !== (spec === '/2')) probes.push(`${b.name} ${spec}: the document read with stated ${read.doc.stated === null ? 'null' : 'present'}`);
+          const animations = fileAnimationOrder(read.doc);
+          const skins = fileSkinOrder(read.doc);
+          if (animations.join('\u0000') !== file.animations.join('\u0000')) probes.push(`${b.name} ${spec}: fileAnimationOrder reads ${list(animations)}, the file ${list(file.animations)}`);
+          if (skins.map((k) => k.name).join('\u0000') !== file.skins.join('\u0000')) probes.push(`${b.name} ${spec}: fileSkinOrder reads ${list(skins.map((k) => k.name))}, the file ${list(file.skins)}`);
+          skins.forEach((k, i) => {
+            if (k.slots.join('\u0000') !== (file.slotKeys[i] ?? []).join('\u0000')) probes.push(`${b.name} ${spec}: skin "${k.name}" reads its slot keys ${list(k.slots)}, the file ${list(file.slotKeys[i] ?? [])}`);
+          });
+          // The suppliers over this document, fact by fact, against spine-core — /2 included, which no call of the run hands them.
+          for (const f of compareFacts(skeletonText, atlasText, text) ?? []) if (!f.identical) probes.push(`${b.name} ${spec}: the facts "${f.family}" differ — spine-core ${f.spine.slice(0, 160)}; model ${f.model.slice(0, 160)}`);
+          for (const d of compareRigFacts(skeletonText, atlasText, text)?.differing ?? []) probes.push(`${b.name} ${spec}: the rig facts "${d.family}" differ — spine-core ${d.spine.slice(0, 160)}; model ${d.model.slice(0, 160)}`);
+          const runtime = runtimeFacts(skeletonText, atlasText);
+          if (runtime === null) probes.push(`${b.name}: spine-core refused the pair`);
+          else if (walkSpelling(modelSkinEntries(read)) !== walkSpelling(runtime.skinEntries)) probes.push(`${b.name} ${spec}: the skins walk in another order than spine-core's`);
+        }
+        // The stated order is the one source on /3: the same document with its editorOrder reversed — still a permutation, so read —
+        // moves the facts the readers walk in that order, where a reader deriving the order beside the document would move nothing.
+        // The two halves are planted apart, so a reader deriving one of them beside the document cannot hide behind the other.
+        {
+          type Stated = { editorOrder: { skins: Array<{ name: string; slots: string[] }>; animations: string[] } };
+          const movedBy = (edit: (doc: Stated) => void): string[] => {
+            const planted = JSON.parse(b.v3) as Stated;
+            edit(planted);
+            const text = `${JSON.stringify(planted, null, 2)}\n`;
+            return [
+              ...(compareFacts(skeletonText, atlasText, text) ?? []).filter((f) => !f.identical).map((f) => f.family),
+              ...(compareRigFacts(skeletonText, atlasText, text)?.differing ?? []).map((d) => d.family),
+            ];
+          };
+          const hasTimelines = (runtimeRigFacts(skeletonText, atlasText)?.constraints.timelines.length ?? 0) > 0;
+          if (hasTimelines) {
+            const moved = movedBy((doc) => void doc.editorOrder.animations.reverse());
+            if (!moved.includes('timelines')) probes.push(`${b.name}: its /3 document with the stated animation order reversed moved [${moved.join(', ')}], not the constraint timelines, so no reader was seen reading the stated animation order`);
+            else plants.push(`${b.name}: the stated animation order reversed moves [${moved.join(', ')}]`);
+          }
+          const moved = movedBy((doc) => {
+            doc.editorOrder.skins.reverse();
+            for (const skin of doc.editorOrder.skins) skin.slots.reverse();
+          });
+          if (moved.length === 0) probes.push(`${b.name}: its /3 document with the stated skin and slot-key order reversed moved no fact, so no reader was seen reading the stated skin order`);
+          else plants.push(`${b.name}: the stated skin and slot-key order reversed moves [${moved.join(', ')}]`);
+        }
+        // Plants: a reader restating an order, on this build's /3 document — each must read another order than spine-core's.
+        const read3 = { doc: own, json: JSON.parse(b.v3) as Record<string, unknown> };
+        const runtimeRig = runtimeRigFacts(skeletonText, atlasText);
+        const modelRig = modelConstraintFacts(read3);
+        if (runtimeRig !== null && runtimeRig.constraints.timelines.length > 0) {
+          const spelled = (constraints: ConstraintFacts): string => rigFactsSpelling({ ...runtimeRig, constraints }).timelines;
+          const base = spelled(runtimeRig.constraints);
+          const red = (label: string, constraints: ConstraintFacts): void => {
+            if (spelled(constraints) === base) probes.push(`${b.name}: ${label} spelled the timelines as spine-core does, so the probe cannot see it`);
+            else plants.push(`${b.name}: ${label}`);
+          };
+          red('the constraint timelines walked in the comparator\'s order on /3', modelConstraintFacts(read3, comparatorOrder));
+          red('the constraint timelines walked in the comparator\'s order on /2 (the derivation before #1034)', modelConstraintFacts({ doc: readModel(b.v2), json: JSON.parse(b.v2) as Record<string, unknown> }, comparatorOrder));
+          // Each animation's ik group in the document's order rather than keyed: the file lists an integer-like constraint name first.
+          const ikOf = (animation: string): string[] => own.animations.find((a) => a.name === animation)?.constraints.ik.map((t) => t.name) ?? [];
+          const timelines = [...modelRig.timelines];
+          for (const animation of new Set(timelines.map((t) => t.animation))) {
+            const at = timelines.flatMap((t, i) => (t.animation === animation && t.kind === 'ik' ? [i] : []));
+            const docOrder = ikOf(animation);
+            const sorted = at.map((i) => timelines[i]).sort((x, y) => docOrder.indexOf(modelRig.constraints[x.constraint]?.name ?? '') - docOrder.indexOf(modelRig.constraints[y.constraint]?.name ?? ''));
+            at.forEach((i, k) => (timelines[i] = sorted[k]));
+          }
+          red('each animation\'s ik group in the document\'s order rather than the order the file keys it', { ...modelRig, timelines });
+        }
+        if ((raw.skins ?? []).some((k, i) => editorNamesInOrder(Object.keys(k.attachments ?? {}), 'animations').join('\u0000') !== (file.slotKeys[i] ?? []).join('\u0000'))) {
+          const unplanted = JSON.stringify(modelRegionJoinsWith(read3));
+          if (JSON.stringify(modelRegionJoinsWith(read3, comparatorSlotKeys)) === unplanted) probes.push(`${b.name}: the region joins with each skin's slot keys in the comparator's order joined as the file's do`);
+          else plants.push(`${b.name}: the region joins with each skin's slot keys in the comparator's order`);
+        }
+        if (file.skins.length > 1 && runtimeFacts(skeletonText, atlasText) !== null) {
+          const runtimeWalk = walkSpelling((runtimeFacts(skeletonText, atlasText) as NonNullable<ReturnType<typeof runtimeFacts>>).skinEntries);
+          if (walkSpelling(modelSkinEntries(read3, (skins) => [...skins])) === runtimeWalk) probes.push(`${b.name}: the skins walked in the document's own order walked as spine-core does`);
+          else plants.push(`${b.name}: the skins walked in the document's own order`);
+          if (walkSpelling(modelSkinEntries(read3, editorSkinOrder)) !== runtimeWalk) probes.push(`${b.name}: the skins walked by the comparator alone (editorSkinOrder) walked in another order than spine-core's — the measurement said an array keeps the comparator's order`);
+        }
+      }
+      probes.push(
+        ...floorProbes(
+          [
+            [animationsApart, 1, `${animationsApart} build(s) whose file lists the animations out of the comparator's order`],
+            [slotKeysApart, 1, `${slotKeysApart} build(s) keying a skin's slots out of the comparator's order`],
+            [skinsOwnApart, 1, `${skinsOwnApart} build(s) whose file lists the skins out of the document's own order`],
+            [plants.length, 9, `${plants.length} plant(s) red`],
+          ],
+          'so the probe cannot tell the file\'s order from the one a reader would restate',
+        ),
+      );
+      for (const d of integerNamed.dirs) rmSync(d, { recursive: true, force: true });
+    }
+    const held = probes.length === 0;
+    say(
+      'VF11_THE_FILES_ORDER_OF_NAMES_AN_OBJECT_LISTS_FIRST_IS_READ_OFF_A_V3_DOCUMENT_AND_DERIVED_FOR_A_V2_ONE_AND_A_RESTATED_ORDER_IS_RED',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `issue #1034's ${integerNamed?.builds.length ?? 0} probe build(s) — ${table.join('; ')} — each read on /3 (the stated order) and on /2 (derived) with the animations, skins and slot keys in spine-core's order and every fact family and rig fact equal to spine-core's; ` +
+          `${plants.length} plant(s) of a reader restating an order each read another: ${plants.join('; ')}; the skins, an array, walk alike by the comparator alone`,
+      ),
+      'issue #1034: a JSON object lists an integer-like key first whatever order it was filled in, so the file keys animations "5, 10, -a, 01, 2b" where the editor\'s comparator says "-a, 01, 2b, 5, 10" — ' +
+        'a reader of a /2 document that called the comparator, and a supplier that called it even on /3, walked another order than the file\'s, and no corpus row has such a name',
     );
   }
 

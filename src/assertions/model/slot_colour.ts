@@ -5,8 +5,9 @@
  *   holds each animation's slot timelines in the order they are applied, with
  *   every key as the compiler built it; the Spine file keys the animations in
  *   the editor's order and passes every key through two passes. So the
- *   animations are put in order by `editorAnimationOrder` (`src/compile.ts`,
- *   the function the emitter is handed), and the timelines are laid out as the
+ *   animations are put in the file's order by `fileAnimationOrder`
+ *   (`src/compile.ts`: a `rigc-compiled/3` document's `editorOrder`, else the
+ *   emitter's own rule over its names, issue #1034), and the timelines are laid out as the
  *   file lays them and handed to the emitter's own `withoutParserDefaults` and
  *   `inEditorKeyOrder` (`src/keyorder.ts`) — so a key field the emitter would
  *   leave out at the parser's default is left out here too, and a body
@@ -26,7 +27,7 @@
  *
  * Links nothing from the runtime.
  */
-import { editorAnimationOrder } from '../../compile.ts';
+import { fileAnimationOrder } from '../../compile.ts';
 import type { CompiledDocument } from '../../core/index.ts';
 import { poseRawAnimation } from '../../core/raw.ts';
 import { inEditorKeyOrder, withoutParserDefaults } from '../../keyorder.ts';
@@ -42,7 +43,7 @@ export function fileSlotTimelines(read: ReadDocument): SlotTimelines[] {
   const byName = new Map<string, Json>();
   for (const anim of list(read.json.animations)) if (typeof anim.name === 'string') byName.set(anim.name, anim);
   const animations: Json = {};
-  for (const name of editorAnimationOrder([...byName.keys()])) {
+  for (const name of fileAnimationOrder(read.doc)) {
     const slots: Json = {};
     for (const slot of list((byName.get(name) as Json).slots)) {
       if (typeof slot.name !== 'string') continue;

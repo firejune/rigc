@@ -52,9 +52,21 @@
  *   was the file's on 14 of 19 rows. Since issue #1026 a `rigc-compiled/3`
  *   document states that order (`editorOrder.animations`, computed by the
  *   same function at compile time) and the survey reads it; a `/2` or `/1`
- *   document is ordered by the comparator as before. Every other order the survey reads — a
- *   skin's, an animation's deform timelines, the sliders — the file keeps from
- *   the model.
+ *   document's is derived by that function (`fileAnimationOrder`), which
+ *   since issue #1034 returns the file's order — integer-like names first, as
+ *   an object keys them, where the comparator alone put `-a` before `5`.
+ * - **An animation's deform timelines** are in the order the file keys them:
+ *   the model's, with each of the three levels (skin, slot, attachment) put
+ *   through `keyedOrder` (`attachmentTimelinesInFileOrder`, issue #1034) —
+ *   the model's own order on every name that is not integer-like. The sliders
+ *   the file keeps from the model.
+ * - **The skins** are in the file's order (`fileSkinOrder`, issue #1034): the
+ *   order a `/3` document states, else the emitter's `editorSkinOrder`. This
+ *   said, until #1034, that the file keeps a skin's order from the model; the
+ *   emitter sorts the skins (`default` first, the rest by the editor's
+ *   comparator), and a probe declaring `default, 5, 10, -a, 2b, 01` read
+ *   `default, -a, 01, 2b, 5, 10` off spine-core and the declared order off the
+ *   model — no row had carried a set the comparator moves.
  * - **A slider's duration** is the runtime's (`CoreAnimationTimelines.duration`:
  *   the last key time of every timeline, float32), not the document's declared
  *   one, which was the runtime's on 1 of 2.
@@ -77,7 +89,7 @@
  * reader, in `src/deformmeasure.ts`.
  */
 import { CompileError } from './errors.ts';
-import { editorAnimationOrder } from './compile.ts';
+import { fileAnimationOrder, fileSkinOrder, keyedOrder, skinsInFileOrder } from './compile.ts';
 import { bezierPolyline } from './core/animation.ts';
 import { DEFORM_CURVE_END, heldArray, type CoreAttachmentTimeline, type CoreDeformKey } from './core/deform.ts';
 import type { DialBoneField } from './core/hooks.ts';
@@ -274,7 +286,7 @@ export function modelStructure(doc: CompiledDocument): SurveyStructure {
   };
   const animationOf = (a: CoreAnimation): SurveyAnimation => {
     const deforms: SurveyDeformTimeline[] = [];
-    for (const t of a.timelines.attachments) if (t.deform !== null) deforms.push(deformOf(t, t.deform));
+    for (const t of attachmentTimelinesInFileOrder(a.timelines.attachments)) if (t.deform !== null) deforms.push(deformOf(t, t.deform));
     return {
       name: a.name,
       deforms,
@@ -294,18 +306,16 @@ export function modelStructure(doc: CompiledDocument): SurveyStructure {
       },
     };
   };
-  // The order the Spine file lists the animations in: stated by a
-  // `rigc-compiled/3` document (`editorOrder`, issue #1026), and derived for a
-  // `/2` or `/1` one, which does not state it, by the emitter's own comparator.
+  // The order the Spine file lists the animations in (`fileAnimationOrder`,
+  // issue #1034): stated by a `rigc-compiled/3` document (`editorOrder`, issue
+  // #1026), and derived for a `/2` or `/1` one, which does not state it, by the
+  // emitter's own rule — integer-like names first, as the file keys them.
   let order: readonly string[];
-  if (doc.stated !== null) order = doc.stated.editorOrder.animations;
-  else {
-    try {
-      order = editorAnimationOrder(doc.animations.map((a) => a.name));
-    } catch (err) {
-      if (!(err instanceof CompileError)) throw err;
-      throw new CoreInputError(`the animations' order in the Spine file is not settled by the model's names — ${err.message}`);
-    }
+  try {
+    order = fileAnimationOrder(doc);
+  } catch (err) {
+    if (!(err instanceof CompileError)) throw err;
+    throw new CoreInputError(`the animations' order in the Spine file is not settled by the model's names — ${err.message}`);
   }
   const animations = order.map((name) => {
     const a = doc.animations.find((x) => x.name === name);
@@ -331,14 +341,46 @@ export function modelStructure(doc: CompiledDocument): SurveyStructure {
       loop: r.loop,
     });
   }
+  // The skins in the order the Spine file lists them (`fileSkinOrder`, issue #1034), as the runtime's structure lists its skins:
+  // stated by a `/3` document, derived for a `/2` or `/1` one by the emitter's rule, which a comparator-moved name set shows.
+  let skins: CompiledDocument['skins'];
+  try {
+    skins = skinsInFileOrder(doc.skins, fileSkinOrder(doc)).map((walk) => walk.skin);
+  } catch (err) {
+    if (!(err instanceof CompileError)) throw err;
+    throw new CoreInputError(`the skins' order in the Spine file is not settled by the model's names — ${err.message}`);
+  }
   return {
-    skins: doc.skins.flatMap((k) => {
+    skins: skins.flatMap((k) => {
       const handle = skinOf(k.name);
-      return handle === null || doc.skins.find((x) => x.name === k.name) !== k ? [] : [handle];
+      return handle === null || skins.find((x) => x.name === k.name) !== k ? [] : [handle];
     }),
     animations,
     sliders,
     slotName: (index) => doc.slots[index]?.name ?? `#${index}`,
     skinsNamed: (name) => doc.skins.filter((k) => k.name === name).length,
   };
+}
+
+/**
+ * An animation's attachment timelines in the order the Spine file keys them
+ * (issue #1034): the emitter writes `attachments` as three nested objects —
+ * skin, slot, attachment — each filled in the model's order, and an object
+ * lists an integer-like key first (`keyedOrder`). So the model's list is
+ * grouped skin by skin and slot by slot in the order each first appears, and
+ * each level put through `keyedOrder`. Measured on a build whose deform
+ * timelines are filed under slots `10`, `5`, `-a` in the model: the file and
+ * spine-core list `5, 10, -a`.
+ */
+function attachmentTimelinesInFileOrder(timelines: readonly CoreAttachmentTimeline[]): CoreAttachmentTimeline[] {
+  const firsts = (names: readonly string[]): string[] => keyedOrder(names.filter((name, i) => names.indexOf(name) === i));
+  const out: CoreAttachmentTimeline[] = [];
+  for (const skin of firsts(timelines.map((t) => t.skin))) {
+    const inSkin = timelines.filter((t) => t.skin === skin);
+    for (const slot of firsts(inSkin.map((t) => t.slot))) {
+      const inSlot = inSkin.filter((t) => t.slot === slot);
+      for (const attachment of firsts(inSlot.map((t) => t.attachment))) out.push(...inSlot.filter((t) => t.attachment === attachment));
+    }
+  }
+  return out;
 }
