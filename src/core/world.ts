@@ -3,9 +3,23 @@
  * the compiled model's bones (issue #925). Written from what a bone's fields
  * mean and from measurement against the runtime's pose dump
  * (`tools/pose_oracle.ts dump`, spine-core 4.3.13), and held to it by the core
- * suite's equivalence controls; it shares no code with `src/transform.ts`,
- * which is the compiler's arithmetic and stays frozen so that no emitted byte
- * moves.
+ * suite's equivalence controls.
+ *
+ * ⭐ **The compiler's setup transforms are this evaluator too** (issue #1015).
+ * `src/transform.ts` held a second evaluator of its own until then, and the
+ * two differed in exactly three places, none of them a different matrix: the
+ * degree factor (`Math.PI / 180` there, the runtime's 3.1415927 here), the
+ * frame of a bone with scale 1 and no shear (`[cos, −sin, sin, cos]` of the
+ * rotation there, the y column at `rotation + 90` here), and how a radian
+ * angle is turned into degrees (divided by the degree factor there,
+ * multiplied by `180 / pi` here). Every byte rigc emits was computed with the
+ * compiler's three, so they are a parameter of this evaluator
+ * (`WorldArithmetic`) rather than a rewrite of the emitter's numbers: the
+ * compiler passes its own and the posing core passes none, which is
+ * `RUNTIME_ARITHMETIC`, the measured choices below. Measured with the
+ * compiler's degree factor and frame taken from here instead: 2 of 19
+ * recipes moved, by at most 4e-5 (issue #1015's report) — whether the
+ * compiler should bind with the runtime's constant is its own question.
  *
  * ## What each measured choice is
  *
@@ -99,6 +113,28 @@ export const RUNTIME_DEG = 180 / RUNTIME_PI;
 /** A parent x axis whose squared length is at most this is collapsed for `noRotationOrReflection` (issue #979): `1e-5` squared, as measured — see the header. */
 export const COLLAPSED_X_AXIS_SQ = 0.00001 * 0.00001;
 
+/**
+ * The three places an evaluator's arithmetic may differ in the last bit while
+ * computing the same matrix (issue #1015) — see the header. The core poses with
+ * `RUNTIME_ARITHMETIC`; `src/transform.ts` passes the compiler's, so that what
+ * rigc has always emitted is what it still emits.
+ */
+export interface WorldArithmetic {
+  /** Degrees to radians: every angle is multiplied by it. */
+  radiansPerDegree: number;
+  /** Radians to degrees — the angle `noRotationOrReflection` takes off a parent's axis. */
+  degreesOf: (radians: number) => number;
+  /** A bone with scale 1 and no shear takes `[cos r, −sin r, sin r, cos r]` instead of the y column at `r + 90`; the general frame everywhere else. */
+  rotationOnlyFrame: boolean;
+}
+
+/** The runtime's arithmetic, as measured (the header's three choices): what the core poses with. */
+export const RUNTIME_ARITHMETIC: WorldArithmetic = {
+  radiansPerDegree: RAD,
+  degreesOf: (radians) => radians * RUNTIME_DEG,
+  rotationOnlyFrame: false,
+};
+
 /** One bone's world transform: the matrix `[a b; c d]` and the origin, y up. */
 export interface CoreWorld {
   a: number;
@@ -114,14 +150,25 @@ export type CoreInheritMode = 'normal' | 'onlyTranslation' | 'noRotationOrReflec
 
 export type M2 = [number, number, number, number];
 
-/** What computes a child's world matrix from its mode, its parent's world and its own fields. */
-export type InheritComputation = (mode: CoreInheritMode, parent: CoreWorld, bone: ModelBone) => M2;
+/** What computes a child's world matrix from its mode, its parent's world, its own fields and the arithmetic in force. */
+export type InheritComputation = (mode: CoreInheritMode, parent: CoreWorld, bone: ModelBone, arithmetic: WorldArithmetic) => M2;
 
 /** The matrix of a rotation, shears and scales, in the column form the header states. */
-function frame(rotation: number, shearX: number, shearY: number, scaleX: number, scaleY: number): M2 {
-  const xAngle = (rotation + shearX) * RAD;
-  const yAngle = (rotation + 90 + shearY) * RAD;
+function frame(rotation: number, shearX: number, shearY: number, scaleX: number, scaleY: number, rad: number = RAD): M2 {
+  const xAngle = (rotation + shearX) * rad;
+  const yAngle = (rotation + 90 + shearY) * rad;
   return [Math.cos(xAngle) * scaleX, Math.cos(yAngle) * scaleY, Math.sin(xAngle) * scaleX, Math.sin(yAngle) * scaleY];
+}
+
+/** A bone's own frame — a root's matrix, and the local factor of `normal` and `onlyTranslation` — under `arithmetic`. */
+function localFrame(arithmetic: WorldArithmetic, rotation: number, shearX: number, shearY: number, scaleX: number, scaleY: number): M2 {
+  const rad = arithmetic.radiansPerDegree;
+  if (arithmetic.rotationOnlyFrame && scaleX === 1 && scaleY === 1 && shearX === 0 && shearY === 0) {
+    const cos = Math.cos(rotation * rad);
+    const sin = Math.sin(rotation * rad);
+    return [cos, -sin, sin, cos];
+  }
+  return frame(rotation, shearX, shearY, scaleX, scaleY, rad);
 }
 
 function times(p: M2, q: M2): M2 {
@@ -135,8 +182,8 @@ function times(p: M2, q: M2): M2 {
  * which builds the frame to read the bone's columns in from the rotation it
  * has just read, through this same arithmetic (issue #966).
  */
-export function noScaleDirection(p: M2, rotation: number): [number, number] {
-  const r = rotation * RAD;
+export function noScaleDirection(p: M2, rotation: number, rad: number = RAD): [number, number] {
+  const r = rotation * rad;
   const cos = Math.cos(r);
   const sin = Math.sin(r);
   const ux = p[0] * cos + p[1] * sin;
@@ -146,19 +193,20 @@ export function noScaleDirection(p: M2, rotation: number): [number, number] {
   return [ux * inverse, uy * inverse];
 }
 
-/** The world matrix of a child under `parent` in `mode`. */
-function modeMatrix(mode: CoreInheritMode, parent: CoreWorld, bone: ModelBone): M2 {
+/** The world matrix of a child under `parent` in `mode`, under `arithmetic` (the runtime's unless a caller passes its own). */
+function modeMatrix(mode: CoreInheritMode, parent: CoreWorld, bone: ModelBone, arithmetic: WorldArithmetic = RUNTIME_ARITHMETIC): M2 {
   const rotation = bone.rotation ?? 0;
   const shearX = bone.shearX ?? 0;
   const shearY = bone.shearY ?? 0;
   const scaleX = bone.scaleX ?? 1;
   const scaleY = bone.scaleY ?? 1;
+  const rad = arithmetic.radiansPerDegree;
   const p: M2 = [parent.a, parent.b, parent.c, parent.d];
   switch (mode) {
     case 'normal':
-      return times(p, frame(rotation, shearX, shearY, scaleX, scaleY));
+      return times(p, localFrame(arithmetic, rotation, shearX, shearY, scaleX, scaleY));
     case 'onlyTranslation':
-      return frame(rotation, shearX, shearY, scaleX, scaleY);
+      return localFrame(arithmetic, rotation, shearX, shearY, scaleX, scaleY);
     case 'noRotationOrReflection': {
       const xLengthSq = p[0] * p[0] + p[2] * p[2];
       let conformal: M2;
@@ -166,23 +214,23 @@ function modeMatrix(mode: CoreInheritMode, parent: CoreWorld, bone: ModelBone): 
       if (xLengthSq > COLLAPSED_X_AXIS_SQ) {
         const k = Math.abs(p[0] * p[3] - p[1] * p[2]) / xLengthSq;
         conformal = [p[0], -p[2] * k, p[2], p[0] * k];
-        r = rotation - Math.atan2(p[2], p[0]) * RUNTIME_DEG;
+        r = rotation - arithmetic.degreesOf(Math.atan2(p[2], p[0]));
       } else {
         // A collapsed x axis (issue #979): the parent's y column with its x component negated, and the rotation less 90 plus the y column's angle — see the header.
         conformal = [0, -p[1], 0, p[3]];
-        r = rotation - 90 + Math.atan2(p[3], p[1]) * RUNTIME_DEG;
+        r = rotation - 90 + arithmetic.degreesOf(Math.atan2(p[3], p[1]));
       }
       // The y angle adds the shear before the right angle here, unlike `frame` (issue #966): `(r + 90 + shearY)` reads last-bit off on 81 of 205 sheared or scaled bones at a 1e9 amplifier, `(r + shearY + 90)` on none; `r = rotation − parentAngle` taken first (adding the shear before the parent's angle is taken off reads 102 of 205 off).
-      const xAngle = (r + shearX) * RAD;
-      const yAngle = (r + shearY + 90) * RAD;
+      const xAngle = (r + shearX) * rad;
+      const yAngle = (r + shearY + 90) * rad;
       return times(conformal, [Math.cos(xAngle) * scaleX, Math.cos(yAngle) * scaleY, Math.sin(xAngle) * scaleX, Math.sin(yAngle) * scaleY]);
     }
     case 'noScale':
     case 'noScaleOrReflection': {
-      const [ux, uy] = noScaleDirection(p, rotation);
+      const [ux, uy] = noScaleDirection(p, rotation, rad);
       const flip = mode === 'noScale' && p[0] * p[3] - p[1] * p[2] < 0 ? -1 : 1;
       const turned: M2 = [ux, -uy * flip, uy, ux * flip];
-      return times(turned, frame(0, shearX, shearY, scaleX, scaleY));
+      return times(turned, frame(0, shearX, shearY, scaleX, scaleY, rad));
     }
   }
 }
@@ -205,9 +253,16 @@ function modeOf(bone: ModelBone): CoreInheritMode {
  * world as a skeleton is created — and a bone under it, active or not, is
  * posed from those zeros like any child. `inherit` replaces the mode
  * computation — the core suite's plant passes a copy with one mode's sign
- * flipped, and nothing else does.
+ * flipped, and nothing else does. `arithmetic` is the runtime's unless a
+ * caller states its own: `src/transform.ts` passes the compiler's (issue
+ * #1015), and no posing path does.
  */
-export function worldTransforms(bones: readonly ModelBone[], active: ReadonlySet<string> | null = null, inherit: InheritComputation = modeMatrix): Map<string, CoreWorld> {
+export function worldTransforms(
+  bones: readonly ModelBone[],
+  active: ReadonlySet<string> | null = null,
+  inherit: InheritComputation = modeMatrix,
+  arithmetic: WorldArithmetic = RUNTIME_ARITHMETIC,
+): Map<string, CoreWorld> {
   const out = new Map<string, CoreWorld>();
   for (const bone of bones) {
     if (active !== null && !active.has(bone.name)) {
@@ -217,13 +272,13 @@ export function worldTransforms(bones: readonly ModelBone[], active: ReadonlySet
     const x = bone.x ?? 0;
     const y = bone.y ?? 0;
     if (bone.parent === undefined) {
-      const [a, b, c, d] = frame(bone.rotation ?? 0, bone.shearX ?? 0, bone.shearY ?? 0, bone.scaleX ?? 1, bone.scaleY ?? 1);
+      const [a, b, c, d] = localFrame(arithmetic, bone.rotation ?? 0, bone.shearX ?? 0, bone.shearY ?? 0, bone.scaleX ?? 1, bone.scaleY ?? 1);
       out.set(bone.name, { a, b, c, d, worldX: x, worldY: y });
       continue;
     }
     const parent = out.get(bone.parent);
     if (parent === undefined) throw new Error(`bone "${bone.name}": parent "${bone.parent}" is not posed before it`);
-    const [a, b, c, d] = inherit(modeOf(bone), parent, bone);
+    const [a, b, c, d] = inherit(modeOf(bone), parent, bone, arithmetic);
     out.set(bone.name, { a, b, c, d, worldX: parent.a * x + parent.b * y + parent.worldX, worldY: parent.c * x + parent.d * y + parent.worldY });
   }
   return out;

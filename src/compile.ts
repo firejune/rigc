@@ -128,6 +128,8 @@ import {
   type BoneTransform,
 } from './transform.ts';
 import { emitSkeleton, PHYSICS_PARAMS, UNSTATED_REFERENCE_SCALE, type SkeletonHeader } from './emit_spine.ts';
+import { curveLengthTable } from './core/constraints_path.ts';
+import { frameRegionName } from './core/uvs.ts';
 import {
   isModelVertexAttachment,
   type CarriedFromCompileResult,
@@ -1979,8 +1981,9 @@ function resolveFromAtlas(
  * ⭐ *Either way* was not true for a pack that turns a region until issue #570:
  * `extractRegion` refused a `rotate: 90`, so how the art was delivered decided
  * whether a measurement could be taken at all — on a foreign pack, where turning
- * is the norm rather than the exception. It now transcribes the runtime's own
- * mapping for all four rotations, which is what makes the sentence above a
+ * is the norm rather than the exception. It now lifts every rotation, measured
+ * as `extractRegion` states (`PKR02` against the runtime's own sampling, `PK29`
+ * against the packer's fixture), which is what makes the sentence above a
  * description rather than an aspiration.
  */
 function partPlate(img: CompiledImage): Plate {
@@ -3802,10 +3805,12 @@ interface AttachmentContext {
    * Linked meshes whose `source` is still unresolved — `resolveLinkedMeshes`
    * empties it once every skin has been built.
    *
-   * ⭐ Deferred for the reason spine-core defers its own (`this.linkedMeshes`,
-   * `SkeletonJson.js:56` filled at `:581` and drained at `:427-449`): a link may
-   * name a source in a skin or a slot this loop has not reached yet, so resolving
-   * it in place would refuse a correct rig on nothing but declaration order.
+   * ⭐ Deferred because the format resolves a link only once every skin is
+   * read — the reader queues each one (`this.linkedMeshes`, `SkeletonJson.js:56`
+   * filled at `:581`) and resolves the queue after the skins (`:427-449`) — so
+   * a link may name a source in a skin or a slot this loop has not reached yet,
+   * and resolving it in place would refuse a correct rig on nothing but
+   * declaration order.
    */
   links: PendingLink[];
 }
@@ -4195,8 +4200,11 @@ export function pathChain(points: Array<[number, number]>, closed: boolean): Arr
 }
 
 /**
- * Cumulative arc length at the end of each curve of the chain, in world units —
- * **the runtime's own measurement, restated line for line**.
+ * Cumulative length at the end of each curve of the chain, in world units —
+ * **the core's curve table** (`curveLengthTable` in
+ * [`src/core/constraints_path.ts`](core/constraints_path.ts), issue #1015), the
+ * one the core's path constraint walks at constant speed. This function only
+ * flattens the chain and counts its curves.
  *
  * One entry per curve, which is what `lengths[curve]` indexes: the parser walks
  * curves with `if (p > lengths[curve]) continue`, and reads `lengths[curveCount]`
@@ -4206,12 +4214,16 @@ export function pathChain(points: Array<[number, number]>, closed: boolean): Arr
  * fact about the Bezier, it is the number the consumer of the field computes for
  * itself when it is not given one. `PathConstraint.computeWorldPositions`
  * (`PathConstraint.js:289-324` in `@esotericsoftware/spine-core` 4.3.13) measures
- * a `constantSpeed` path with a cubic **forward difference** taken at `t = 1/4`
- * — `0.1875 = 3t²`, `0.09375 = 6t³`, `0.75 = 3t`, `0.16666667` standing in for
- * 1/6 — accumulating four `Math.sqrt` terms per curve into a running
- * `pathLength`, and writing the running value into `curves[i]` at each curve's
- * end. The Spine editor's exported `lengths` are that same computation, and the
- * loop below is a transcription of it, not a sampler that happens to agree.
+ * a `constantSpeed` path for itself, and the Spine editor's exported `lengths`
+ * are the same number. What that number is was measured, not read: the core's
+ * table — four forward-difference steps per curve at `t = 1/4` (`0.1875`,
+ * `0.09375`, `0.75`, `0.16666667`), four `Math.sqrt` terms accumulated into a
+ * running total carried across curves — is the rule its header states with the
+ * readings that missed beside it, and `PS67`, `PS68` and `PS186` in
+ * `selftest.ts` hold this function to `PathConstraint`'s own `curves` array read
+ * off a posed skeleton, **bit for bit**. Since issue #1015 the core suite also
+ * holds the swap: 100,000 seeded chains through this function and through the
+ * arithmetic it replaced, 0 differing.
  *
  * 🚨 **What that computation is fed decides the number, and this comment once
  * claimed more than was measured** (issue #804). It said the loop matched the
@@ -4223,8 +4235,8 @@ export function pathChain(points: Array<[number, number]>, closed: boolean): Arr
  *     vertices. rigc blends weighted vertices through its own setup transforms,
  *     which until #804 ignored bone scale, shear and `inherit` — 2.35× the
  *     runtime's own `curves` on a production rig's weighted path, 0.752× on a
- *     50/50 probe over a bone at scale 2. `computeWorldTransforms` is now the
- *     runtime's, and the gap is gone on both.
+ *     50/50 probe over a bone at scale 2. `computeWorldTransforms` honours all
+ *     three now, and the gap is gone on both.
  *   - **Constraints.** The runtime measures the pose its update order hands the
  *     path constraint at the first `updateWorldTransform`: a transform
  *     constraint on the path's slot bone ordered BEFORE the path constraint
@@ -4232,11 +4244,11 @@ export function pathChain(points: Array<[number, number]>, closed: boolean): Arr
  *     not. A production 4.2 export's four numbers are the constrained pose's to
  *     the digit, and its unconstrained setup measures 76.08 against 76.65 on the
  *     first curve. Reproducing that means solving every constraint type in
- *     update order, which is posing — and `src/compile.ts` does not link the
- *     runtime. ⇒ **An omitted `lengths` is measured on the unconstrained setup
- *     pose**, and a path whose bones a constraint moves at rest gets that
- *     figure. What closes the gap for an editor export is not measuring at all:
- *     a stated `lengths` is carried (`buildRigPath`).
+ *     update order, which is posing — and `src/compile.ts` does not pose. ⇒
+ *     **An omitted `lengths` is measured on the unconstrained setup pose**, and
+ *     a path whose bones a constraint moves at rest gets that figure. What
+ *     closes the gap for an editor export is not measuring at all: a stated
+ *     `lengths` is carried (`buildRigPath`).
  *
  * ⚠️ rigc measured this with a 64-chord sum until issue #560, and the comment
  * that stood here argued the difference was inside anything's tolerance. It was
@@ -4247,46 +4259,17 @@ export function pathChain(points: Array<[number, number]>, closed: boolean): Arr
  * two apart and since issue #716 rigc's own file can only where the two land on
  * either side of a float's boundary. Under the six-decimal rounding that stood
  * until then it could: on both measured rigs the two spellings differed on the
- * LAST curve, where the accumulated difference is largest. `PS67`, `PS68` and `PS186` in `selftest.ts` compare
- * this against `PathConstraint`'s own `curves` array read off a posed skeleton,
- * which is the only oracle that can see that gap.
+ * LAST curve, where the accumulated difference is largest.
  *
- * 🔒 The transcription is deliberate down to the spelling: `Math.sqrt(dx * dx +
- * dy * dy)` rather than `Math.hypot`, `0.16666667` rather than `1 / 6`, and the
- * running total carried across curves rather than restarted. Each of those is a
- * place where a more accurate line would emit a different file.
+ * 🔒 The spelling is load-bearing: `Math.sqrt(dx * dx + dy * dy)` rather than
+ * `Math.hypot`, `0.16666667` rather than `1 / 6`, and the running total carried
+ * across curves rather than restarted. Each of those is a place where a more
+ * accurate line would emit a different file.
  */
 export function pathCurveLengths(chain: Array<[number, number]>): number[] {
-  const out: number[] = [];
-  let total = 0;
-  for (let c = 0; c + 3 < chain.length; c += 3) {
-    const [x1, y1] = chain[c];
-    const [cx1, cy1] = chain[c + 1];
-    const [cx2, cy2] = chain[c + 2];
-    const [x2, y2] = chain[c + 3];
-    const tmpx = (x1 - cx1 * 2 + cx2) * 0.1875;
-    const tmpy = (y1 - cy1 * 2 + cy2) * 0.1875;
-    const dddfx = ((cx1 - cx2) * 3 - x1 + x2) * 0.09375;
-    const dddfy = ((cy1 - cy2) * 3 - y1 + y2) * 0.09375;
-    let ddfx = tmpx * 2 + dddfx;
-    let ddfy = tmpy * 2 + dddfy;
-    let dfx = (cx1 - x1) * 0.75 + tmpx + dddfx * 0.16666667;
-    let dfy = (cy1 - y1) * 0.75 + tmpy + dddfy * 0.16666667;
-    total += Math.sqrt(dfx * dfx + dfy * dfy);
-    dfx += ddfx;
-    dfy += ddfy;
-    ddfx += dddfx;
-    ddfy += dddfy;
-    total += Math.sqrt(dfx * dfx + dfy * dfy);
-    dfx += ddfx;
-    dfy += ddfy;
-    total += Math.sqrt(dfx * dfx + dfy * dfy);
-    dfx += ddfx + dddfx;
-    dfy += ddfy + dddfy;
-    total += Math.sqrt(dfx * dfx + dfy * dfy);
-    out.push(total);
-  }
-  return out;
+  const flat: number[] = [];
+  for (const [x, y] of chain) flat.push(x, y);
+  return curveLengthTable(flat, Math.max(0, Math.floor((chain.length - 1) / 3)));
 }
 
 /**
@@ -4516,20 +4499,22 @@ function meshTextureKeys(att: { name?: string; path?: string; image?: string; co
 }
 
 /**
- * The atlas region frame `i` of a sequence resolves to — `Sequence.getPath`
- * (`Sequence.js:124-132`) transcribed: the stem, then `start + i` left-padded
- * with zeros to `digits`. `start` and `digits` take the parser's own defaults
- * (`readSequence`: 1 and 0), which are the format's, not a guess.
+ * The atlas region frame `i` of a sequence resolves to — the core's
+ * `frameRegionName` (`src/core/uvs.ts`, issue #1015): the stem, then `start + i`
+ * left-padded with zeros to `digits`. `start` and `digits` take the parser's
+ * defaults when the spec leaves them out (`readSequence`: 1 and 0).
  *
- * ⚠️ A second transcription of the rule exists in `validate.ts`
- * (`attachmentRegionLookups`, the walk `A08` joins the atlas with), and that is
- * deliberate: this module links no runtime, and the two are held to the loader
- * independently — the one by `A08`, both by `A00`'s round trip, which asks the
- * runtime's own `getPath` for every frame.
+ * ⚠️ The same name is derived in `validate.ts` (`attachmentRegionLookups`, the
+ * walk `A08` joins the atlas with) through the same function. What holds it to
+ * the loader is a measurement, not this sentence: the core suite reads
+ * `Sequence.getPath` and the parser's defaults off spine-core over 7,680 cases
+ * and compares this function, the core's and A08's walk with them, and `A00`'s
+ * round trip asks the runtime's own `getPath` for every frame a build emits.
+ *
+ * Exported for the selftest alone.
  */
-function sequenceFrameRegion(stem: string, seq: RigSequence, i: number): string {
-  const frame = String((seq.start ?? 1) + i);
-  return `${stem}${'0'.repeat(Math.max(0, (seq.digits ?? 0) - frame.length))}${frame}`;
+export function sequenceFrameRegion(stem: string, seq: RigSequence, i: number): string {
+  return frameRegionName(stem, { count: seq.count, start: seq.start ?? 1, digits: seq.digits ?? 0, setup: seq.setup ?? 0 }, i);
 }
 
 /** The model's `sequence` record: the four fields exactly as the spec stated them. */
@@ -4796,8 +4781,8 @@ function bindNamedWeights(weights: RigMeshBinding[][], where: string, ctx: Attac
  * an `image` under `--atlas-in` ENDED the build, by a refusal raised inside a
  * measurement, on 36 of 42 atlases of the pack the card was filed from. The
  * repair was to make the refusal unnecessary rather than to catch it: reading a
- * turned region is a transcription of `MeshAttachment.computeUVs` and is now
- * what `extractRegion` does, so there is no unmeasurable case left for this
+ * turned region is now what `extractRegion` does, measured against
+ * `MeshAttachment.computeUVs` (`PKR02`), so there is no unmeasurable case left for this
  * function to report and no catch here to keep reachable.
  */
 function measureAuthoredFit(

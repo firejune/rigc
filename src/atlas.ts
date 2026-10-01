@@ -80,18 +80,20 @@
  *
  * `src/compile.ts` must stay independent of the runtime — that is what keeps the
  * compiler and the gate from checking each other's assumptions — so the importer
- * cannot reach for `TextureAtlas`. The reader below is therefore written straight
- * off `TextureAtlas`'s own field table (`dist/TextureAtlas.js`, the
- * `pageFields` / `regionFields` maps and the loop under them), including the
- * parts that look like mistakes and are not: the page name is trimmed and a
- * region name is the RAW line, a blank line closes a page block, `readEntry`
- * stops at four values, and `originalWidth/Height` fall back to `width/height`
- * only when BOTH are zero.
+ * cannot reach for `TextureAtlas`. The reader below therefore states, for every
+ * field the format has, what the runtime reads it as — the page and region
+ * fields of `dist/TextureAtlas.js` — including the readings that look like
+ * mistakes and are not: the page name is trimmed and a region name is the RAW
+ * line, a blank line closes a page block, an entry holds at most four values,
+ * and `originalWidth/Height` fall back to `width/height` only when BOTH are
+ * zero.
  *
  * A second opinion about a format is a liability, so it is measured rather than
- * asserted: the selftest parses every `.atlas` in the example corpus with both
- * this reader and `spine-core`'s and compares every field of every region. If
- * they ever disagree, that control goes red and this file is wrong.
+ * asserted: `PKR01` parses every `.atlas` in the example corpus with both this
+ * reader and `spine-core`'s `TextureAtlas` and compares every page's name, size
+ * and `pma` and every region's eleven fields — 10 atlas files, 132 regions, 3
+ * of them rotated, 0 fields apart when this was written (issue #1015). If they
+ * ever disagree, that control goes red and this file is wrong.
  */
 import { CompileError } from './errors.ts';
 import { Plate, readPlate } from '../tools/plate.ts';
@@ -272,8 +274,9 @@ function int(text: string | undefined): number {
 /**
  * Read an atlas file's text into pages and regions.
  *
- * A transcription of `TextureAtlas`'s constructor, and deliberately a dull one —
- * every branch below is there because the runtime has it. Two additions, both of
+ * The format as the runtime reads it, field for field, and deliberately a dull
+ * reader — every branch below states a reading `PKR01` holds against
+ * `TextureAtlas`'s parse of the corpus (see the header). Two additions, both of
  * them fields a PLAYER has no use for and an IMPORTER does: `nameLine`, which
  * `rewritePageNames` needs, and the page's `scale:`, which is what turns a
  * region's texels back into the drawing's own size (`AtlasPage.scale`).
@@ -1337,7 +1340,7 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
  * a plate's rows run downwards, so the kept rectangle's top row is
  * `originalHeight - offsetY - height`.
  *
- * ## A rotated region is TRANSCRIBED, not guessed at (issue #570)
+ * ## A rotated region is MEASURED, not guessed at (issue #570)
  *
  * This refused a rotated region until 2026-09-17, on the argument that the
  * runtime holds "three opinions" about the mapping. Measurement refutes the
@@ -1348,7 +1351,13 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
  *     `dist/attachments/MeshAttachment.js:126-162`) is the one routine that
  *     states where a region's texels are for **all four** `degrees`, and it is
  *     the routine `substituteTexture` in [`src/render.ts`](render.ts) already
- *     goes through. The loop below is its inverse, term for term;
+ *     goes through. The loop below inverts what it samples: `PKR02` asks it,
+ *     for every texel of every region of the corpus atlases, which page texel
+ *     the runtime samples and compares the lift — 132 regions, 2,848,402
+ *     texels, 0 apart, three of them turned (90 twice, 270 once) and each of
+ *     those lifting differently with the turn ignored; `PK29` lifts the
+ *     packer's fixture at each of 0, 90, 180 and 270 back to its PNG byte for
+ *     byte;
  *   * `TextureAtlas`'s `u2`/`v2` (`dist/TextureAtlas.js:164-171`) transpose the
  *     rectangle at 90 and not at 270, so at 270 they describe a rectangle the
  *     page does not have — but `MeshAttachment.computeUVs` never reads them for
@@ -1358,8 +1367,9 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
  *     region-attachment rendering defect (issue #199) and not a statement about
  *     where the drawing sits.
  *
- * Inverting the runtime's own expression on texel centres puts kept-rectangle
- * pixel `(x, y)` — `x` from the drawing's left, `y` down from `top` — at page
+ * On texel centres — at 90 and 270 measured against the runtime's sampling
+ * (`PKR02`), at 180 against the packer fixture's turn (`PK29`) — the mapping
+ * puts kept-rectangle pixel `(x, y)` — `x` from the drawing's left, `y` down from `top` — at page
  * pixel `(X + x, Y + y)` unturned, `(X + y, Y + width - 1 - x)` at 90,
  * `(X + width - 1 - x, Y + height - 1 - y)` at 180 and
  * `(X + height - 1 - y, Y + x)` at 270, writing `X`/`Y` for the region's own

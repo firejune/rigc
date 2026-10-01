@@ -561,6 +561,27 @@ export function physicsState(ctx: PhysicsStepContext, name: string): PhysicsStat
 const PI2 = RUNTIME_PI * 2;
 const INV_PI2 = 1 / PI2;
 
+/** What a physics constraint's step moves, by its five component fields. */
+export interface PhysicsDrives {
+  x: boolean;
+  y: boolean;
+  /** `rotate` or `shearX` above 0: the two share the angular part of the step. */
+  rotateOrShearX: boolean;
+  scaleX: boolean;
+}
+
+/**
+ * Which parts of the step a constraint drives: a component above 0 drives its
+ * part and nothing else does — the test `stepPhysics` takes before each part
+ * of *The step* above, posed against the runtime with the rest of it. Exported
+ * because `src/ingest.ts` asks the same question of a raw file (a
+ * constraint that drives none of the four moves no bone, issue #731) and
+ * answers it through this function (issue #1015).
+ */
+export function physicsDrives(r: { x: number; y: number; rotate: number; shearX: number; scaleX: number }): PhysicsDrives {
+  return { x: r.x > 0, y: r.y > 0, rotateOrShearX: r.rotate > 0 || r.shearX > 0, scaleX: r.scaleX > 0 };
+}
+
 /**
  * One physics constraint updated on its bone's world transform `w`
  * (mutated), `length` the bone's length — the header's *The step*, every
@@ -572,10 +593,7 @@ export function stepPhysics(r: CorePhysicsRecord, w: CoreWorld, length: number, 
   const mix = r.mix;
   if (mix === 0) return false;
   const s = physicsState(ctx, r.name);
-  const x = r.x > 0;
-  const y = r.y > 0;
-  const rotateOrShearX = r.rotate > 0 || r.shearX > 0;
-  const scaleX = r.scaleX > 0;
+  const { x, y, rotateOrShearX, scaleX } = physicsDrives(r);
   const l = length;
   if (ctx.phase === 'reset') resetPhysicsState(s, ctx.time);
   const delta = Math.max(ctx.time - s.lastTime, 0);

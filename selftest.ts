@@ -23531,7 +23531,7 @@ function runPathAndSliderSuite(): number {
     'transcription is asserted against the runtime\'s own chain at double precision, and the emitted lengths at the ' +
     'float the file carries (issue #716: under the six decimals rigc emitted until then, the file could resolve it)';
   const ARC_LENGTH_CLEAN =
-    'the transcription of PathConstraint.js:301-320 reproduces PathConstraint.curves bit for bit on the runtime\'s ' +
+    'the selftest\'s forward difference (runtimeCurveLengths) reproduces PathConstraint.curves bit for bit on the runtime\'s ' +
     'own posed chain, and every emitted length is that same computation on the compiler\'s chain, on the same ' +
     'float32 — with at least one curve where the 64-chord sum #560 replaced lands on a different float';
   const openArc = arcLengthProbes('open path', false);
@@ -67371,6 +67371,11 @@ import { COLLAPSED_X_AXIS_SQ, type InheritComputation } from './src/core/world.t
 import { CORE_INHERIT_MODES as CORE_INHERIT_MODES_ALL } from './src/core/index.ts';
 import { MixFrom, Skin } from '@esotericsoftware/spine-core';
 import type { RegionPoser } from './src/core/vertices.ts';
+// The routines that said they transcribed a runtime routine (issue #1015), its own statements so the CO21, CO22 and CO23 controls land as one hunk.
+import { curveLengthTable } from './src/core/constraints_path.ts';
+import { sequenceFrameRegion } from './src/compile.ts';
+import { attachmentRegionLookups } from './src/validate.ts';
+import * as SPINE_CORE_EXPORTS from '@esotericsoftware/spine-core';
 import { blendDeform, setupArray, type DeformBlender } from './src/core/deform.ts';
 
 /** The constraint kinds no cut of construct 5 poses yet — what a skipped row names. */
@@ -67473,7 +67478,7 @@ function coreTreeProblems(population: ReadonlyMap<string, string>): string[] {
       if (CORE_FORBIDDEN_MODULES.some((re) => re.test(spec)) && (inCore || !typeOnly)) problems.push(`${rel} imports "${spec}"${inCore ? '' : ', and the core reaches it'}`);
       if (!spec.startsWith('.')) continue;
       const target = join(dirname(rel), spec).split('\\').join('/');
-      if (inCore && target === 'src/transform.ts') problems.push(`${rel} imports "${spec}" — the compiler's evaluator, frozen for the emitter's bytes; the core poses with its own (src/core/world.ts)`);
+      if (inCore && target === 'src/transform.ts') problems.push(`${rel} imports "${spec}" — the compiler's adapter, which itself calls the core's evaluator with the compiler's arithmetic (issue #1015), so the core reaching it would be a cycle`);
       if (!target.startsWith('src/')) {
         if (inCore) problems.push(`${rel} imports "${spec}", outside src/`);
         continue;
@@ -67498,6 +67503,77 @@ function srcPopulation(root: string): Map<string, string> {
   };
   walk('src');
   return out;
+}
+
+/**
+ * The comment blocks of a TypeScript source (issue #1015): runs of lines that
+ * start a comment (`/*`, `*`, `//`), each with its first line (1-based) and its
+ * text with the markers taken off and the lines joined — so a phrase wrapped
+ * across two lines is still one phrase.
+ */
+function commentBlocks(text: string): Array<{ line: number; text: string }> {
+  const lines = text.split('\n');
+  const out: Array<{ line: number; text: string }> = [];
+  let start = -1;
+  const flush = (end: number): void => {
+    if (start < 0) return;
+    const joined = lines.slice(start, end).map((l) => l.trim().replace(/^(\/\*\*?|\*\/|\*|\/\/)\s?/, '')).join(' ');
+    out.push({ line: start + 1, text: joined.replace(/\s+/g, ' ') });
+    start = -1;
+  };
+  lines.forEach((l, i) => {
+    const t = l.trim();
+    if (t.startsWith('*') || t.startsWith('/*') || t.startsWith('//')) {
+      if (start < 0) start = i;
+    } else flush(i);
+  });
+  flush(lines.length);
+  return out;
+}
+
+/** A runtime source file named in a text: a CamelCase stem that is one of spine-core's exports, then `.js` or `.ts`. */
+function runtimeFileCitations(text: string, runtimeNames: ReadonlySet<string>): string[] {
+  return [...text.matchAll(/\b([A-Z][A-Za-z0-9]*)\.(?:js|ts)\b/g)].filter((m) => runtimeNames.has(m[1])).map((m) => m[0]);
+}
+
+/**
+ * The phrasings issue #1015's sixteen used to say a routine here copies a
+ * runtime routine. A participle after an article ("a transcribed name") is an
+ * adjective on a noun, not a claim about code, and is left out.
+ */
+const TRANSCRIPTION_CLAIMS: ReadonlyArray<RegExp> = [
+  /(?<!\b(?:[Aa]n?|[Tt]he) )\b(?:[Tt]ranscrib(?:e|es|ed|ing)|TRANSCRIB(?:E|ES|ED|ING))\b/,
+  /\b[Aa] transcription of\b/,
+  /\bwritten (?:straight )?off\b/i,
+  /\bline for line\b/i,
+  /\bterm for term\b/i,
+  /\bmirrors\b[^.]*\bexactly\b/i,
+  /\bthe runtime's own predicate\b/i,
+];
+
+/**
+ * Every comment block under `src/` that cites a runtime source file and claims a
+ * routine copies a runtime routine — one of `TRANSCRIPTION_CLAIMS`, or "is
+ * `Name.member`" with `Name` a spine-core export — and every file under
+ * `src/core/` that cites a runtime source file at all (issue #1015).
+ */
+function transcriptionClaims(population: ReadonlyMap<string, string>, runtimeNames: ReadonlySet<string>): string[] {
+  const problems: string[] = [];
+  for (const [rel, text] of [...population].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (rel.startsWith('src/core/')) {
+      const cited = runtimeFileCitations(text, runtimeNames);
+      if (cited.length > 0) problems.push(`${rel} cites the runtime's source file(s) ${[...new Set(cited)].join(', ')}, and the core was written from measurement`);
+    }
+    for (const block of commentBlocks(text)) {
+      const cited = runtimeFileCitations(block.text, runtimeNames);
+      if (cited.length === 0) continue;
+      const phrase =
+        TRANSCRIPTION_CLAIMS.map((re) => block.text.match(re)?.[0]).find((m) => m !== undefined) ??
+        [...block.text.matchAll(/\bis `([A-Z][A-Za-z0-9]*)\.[A-Za-z_]\w*`/g)].find((m) => runtimeNames.has(m[1]))?.[0];
+      if (phrase !== undefined) problems.push(`${rel}:${block.line}: "${phrase}", in a comment citing ${[...new Set(cited)].join(', ')}`);
+    }
+  }
+  return problems;
 }
 
 // ---------------------------------------------------------------------------
@@ -68091,6 +68167,240 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `${coreFiles.length} file(s) under src/core/, read off the disk, and the src/ module(s) they reach by value [${reached.join(', ')}]: no import of the runtime package as a value or a type, nor of src/transform.ts, no child process, network, file system or clock module, no clock, randomness or process call, nothing outside src/; ${plants.length - 1} plants each raise a problem and the runtime named in a comment raises none`),
       'issue #925 and the design\'s §3: the core is the second dumper only while it does not link the first, and `src/` is pure. CUR07 reads the files directly in src/ through git and so sees neither this directory nor an uncommitted file; this reads the directory off the disk, follows the core\'s value imports into src/, and holds the three link points CUR07 names apart from it',
+    );
+  }
+
+  // --- CO21: the compiler's path lengths are the core's table, and it is the runtime's -----
+  //
+  // Issue #1015: `pathCurveLengths` in `src/compile.ts` used to be a second copy of the
+  // core's curve table, and now calls it (`curveLengthTable`). What holds the one
+  // computation is the runtime's own `PathConstraint.curves`: one loaded skeleton
+  // whose path attachment is given each chain of a seeded population in turn, open
+  // and closed, one to six curves, and posed. Both the core's table on the
+  // constraint's own world chain and the compiler's entry on the same points must
+  // read every entry exactly (`Object.is`). The plants are the two readings the
+  // spelling guards against: a running total restarted per curve, and one entry a
+  // single ulp away, which only a comparison at tolerance 0 can see.
+  {
+    const probes: string[] = [];
+    const json = {
+      skeleton: {},
+      bones: [{ name: 'root' }, { name: 'rider', parent: 'root' }],
+      slots: [{ name: 'track', bone: 'root', attachment: 'track' }],
+      skins: [{ name: 'default', attachments: { track: { track: { type: 'path', vertexCount: 6, vertices: [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5], lengths: [1, 2] } } } }],
+      constraints: [{ name: 'ride', type: 'path', bones: ['rider'], slot: 'track' }],
+    };
+    const posed = new Skeleton(new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(''))).readSkeletonData(json));
+    posed.setupPose();
+    const constraint = posed.findConstraint('ride', PathConstraint);
+    const attachment = constraint?.slot.appliedPose.attachment;
+    type Table = (chain: readonly number[], curveCount: number) => number[];
+    const restarted: Table = (chain, count) => curveLengthTable(chain, count).map((v, i, all) => (i === 0 ? v : v - all[i - 1]));
+    const ulpOff: Table = (chain, count) => curveLengthTable(chain, count).map((v, i) => (i === count - 1 ? v + Math.abs(v) * Number.EPSILON : v));
+    const CHAINS = 100000;
+    const PLANT_CHAINS = 1000;
+    let chains = 0;
+    let curves = 0;
+    let open = 0;
+    const off = { core: 0, compiler: 0, restarted: 0, ulpOff: 0 };
+    const firstOff: string[] = [];
+    if (constraint === null || !(attachment instanceof PathAttachment)) probes.push('the hand-written path skeleton did not load a path constraint over a path attachment');
+    else {
+      attachment.constantSpeed = true;
+      const rnd = seededRandom(1015);
+      for (let n = 0; n < CHAINS; n++) {
+        const closed = rnd() < 0.5;
+        const count = 1 + Math.floor(rnd() * 6);
+        const vertexCount = closed ? 3 * count : 3 * (count + 1);
+        const vertices = new Float32Array(2 * vertexCount);
+        for (let i = 0; i < vertices.length; i++) vertices[i] = rnd() * 1000 - 500;
+        attachment.closed = closed;
+        attachment.vertices = vertices;
+        attachment.worldVerticesLength = 2 * vertexCount;
+        attachment.lengths = new Array<number>(vertexCount / 3).fill(0);
+        posed.updateWorldTransform(Physics.none);
+        // The chain the constraint measured: knot, handle, handle, knot …, `3 · count + 1` points.
+        const world = Array.from(constraint.world.slice(0, 6 * count + 2));
+        const runtime = Array.from(constraint.curves.slice(0, count));
+        const pairs: Array<[number, number]> = [];
+        for (let i = 0; i + 1 < world.length; i += 2) pairs.push([world[i], world[i + 1]]);
+        const readings: Array<[keyof typeof off, number[]]> = [
+          ['core', curveLengthTable(world, count)],
+          ['compiler', pathCurveLengths(pairs)],
+          ...(n < PLANT_CHAINS ? ([['restarted', restarted(world, count)], ['ulpOff', ulpOff(world, count)]] as Array<[keyof typeof off, number[]]>) : []),
+        ];
+        for (const [which, got] of readings) {
+          if (got.length === count && got.every((v, i) => Object.is(v, runtime[i]))) continue;
+          off[which]++;
+          if ((which === 'core' || which === 'compiler') && firstOff.length < 3) {
+            firstOff.push(`${which}, chain ${n} (${closed ? 'closed' : 'open'}, ${count} curve(s)): [${got.join(', ')}] where PathConstraint.curves holds [${runtime.join(', ')}]`);
+          }
+        }
+        chains++;
+        curves += count;
+        if (!closed) open++;
+      }
+    }
+    probes.push(...firstOff);
+    if (off.core > 0) probes.push(`the core's table read ${off.core} of ${chains} chain(s) differently from the runtime's`);
+    if (off.compiler > 0) probes.push(`the compiler's pathCurveLengths read ${off.compiler} of ${chains} chain(s) differently from the runtime's`);
+    if (off.restarted === 0) probes.push(`a running total restarted per curve read every one of ${PLANT_CHAINS} chain(s) as the runtime does, so the comparison cannot see it`);
+    if (off.ulpOff === 0) probes.push(`a last entry one ulp off read every one of ${PLANT_CHAINS} chain(s) as the runtime does, so the comparison is not at tolerance 0`);
+    probes.push(...floorProbes([[chains, CHAINS, `${chains} chain(s) were posed`], [open, 1, `${open} of them open`], [chains - open, 1, `${chains - open} of them closed`]], 'a population that posed fewer chains than it states measured less than it claims'));
+    const ok = probes.length === 0;
+    say(
+      'CO21_THE_COMPILERS_PATH_LENGTHS_ARE_THE_CORES_TABLE_AND_READ_AS_PATHCONSTRAINT_CURVES_ON_A_SEEDED_POPULATION',
+      ok,
+      probeDetail(ok, probes, `${chains} seeded chain(s) (${open} open, ${chains - open} closed, ${curves} curve(s)) posed through spine-core's PathConstraint at constant speed: the core's curveLengthTable on the constraint's own world chain and the compiler's pathCurveLengths on the same points read every entry of PathConstraint.curves exactly; on the first ${PLANT_CHAINS}, a total restarted per curve read ${off.restarted} chain(s) off and a last entry one ulp away ${off.ulpOff}`),
+      'issue #1015: the compiler measured an omitted `lengths` with its own copy of the table the core walks. It now calls the core\'s, and the runtime is what both are held to — over a population rather than the two fixtures PS67/PS68 read, at tolerance 0, the compiler\'s entry included',
+    );
+  }
+
+  // --- CO22: a sequence's frame names, against the loader's own Sequence ----------------
+  //
+  // Issue #1015: `sequenceFrameRegion` in `src/compile.ts` and A08's walk
+  // (`attachmentRegionLookups` in `src/validate.ts`) each spelled the frame name
+  // out, and both now call the core's `frameRegionName`. None of the recipes calls
+  // the compiler's (no gallery rig or corpus export declares a sequence), so the
+  // cases are direct: per `start` × `digits` (each also left unstated), a skeleton
+  // whose region declares a 64-frame series is LOADED by spine-core — its atlas
+  // holding every frame the loader asks for — and the series the loader built
+  // answers `getPath` for every frame. The defaults are read off that series, not
+  // stated here. Plants: the padding one digit wide, and an unstated `start` read
+  // as 0.
+  {
+    const probes: string[] = [];
+    const STARTS: ReadonlyArray<number | undefined> = [undefined, -10, -3, -1, 0, 1, 2, 5, 9, 10, 99, 100, 999, 1000, 12345];
+    const DIGITS: ReadonlyArray<number | undefined> = [undefined, 0, 1, 2, 3, 4, 6, 10];
+    const FRAMES = 64;
+    const stem = 'art';
+    let cases = 0;
+    let loads = 0;
+    const off = { compiler: 0, core: 0, a08: 0, widePadding: 0, startZero: 0 };
+    const firstOff: string[] = [];
+    const defaults = new Set<string>();
+    for (const start of STARTS) {
+      for (const digits of DIGITS) {
+        const sequence: { count: number; start?: number; digits?: number } = { count: FRAMES };
+        if (start !== undefined) sequence.start = start;
+        if (digits !== undefined) sequence.digits = digits;
+        const named: string[] = [];
+        for (let i = 0; i < FRAMES; i++) {
+          const frame = String((start ?? 1) + i);
+          named.push(`${stem}${frame.padStart(digits ?? 0, '0')}`);
+        }
+        const atlasText = `page.png\nsize: 1024,1024\n${named.map((name, i) => `${name}\nbounds: ${(i % 32) * 8},${Math.floor(i / 32) * 8},8,8\n`).join('')}`;
+        const json = {
+          skeleton: {},
+          bones: [{ name: 'root' }],
+          slots: [{ name: 's', bone: 'root', attachment: stem }],
+          skins: [{ name: 'default', attachments: { s: { [stem]: { width: 8, height: 8, sequence } } } }],
+        };
+        let series: Sequence | null = null;
+        try {
+          const loaded = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(json).defaultSkin?.getAttachment(0, stem);
+          series = loaded instanceof RegionAttachment ? loaded.sequence : null;
+        } catch (err) {
+          probes.push(`start ${String(start)}, digits ${String(digits)}: spine-core refused the skeleton — ${(err as Error).message}`);
+          continue;
+        }
+        if (series === null) {
+          probes.push(`start ${String(start)}, digits ${String(digits)}: the loaded region carries no sequence`);
+          continue;
+        }
+        loads++;
+        if (start === undefined && digits === undefined) defaults.add(`start ${series.start}, digits ${series.digits}`);
+        const rigSeq = { count: FRAMES, ...(start !== undefined ? { start } : {}), ...(digits !== undefined ? { digits } : {}) };
+        const coreSeries = { count: FRAMES, start: series.start, digits: series.digits, setup: 0 };
+        const a08 = attachmentRegionLookups(sequence, stem);
+        for (let i = 0; i < FRAMES; i++) {
+          const want = series.getPath(stem, i);
+          cases++;
+          const readings: Array<[keyof typeof off, string | undefined]> = [
+            ['compiler', sequenceFrameRegion(stem, rigSeq, i)],
+            ['core', frameRegionName(stem, coreSeries, i)],
+            ['a08', a08?.[i]],
+            ['widePadding', frameRegionName(stem, { ...coreSeries, digits: coreSeries.digits + 1 }, i)],
+            ['startZero', sequenceFrameRegion(stem, { ...rigSeq, start: rigSeq.start ?? 0 }, i)],
+          ];
+          for (const [which, got] of readings) {
+            if (got === want) continue;
+            off[which]++;
+            if ((which === 'compiler' || which === 'core' || which === 'a08') && firstOff.length < 3) firstOff.push(`${which}, start ${String(start)}, digits ${String(digits)}, frame ${i}: ${JSON.stringify(got)} where Sequence.getPath gives ${JSON.stringify(want)}`);
+          }
+        }
+        if (a08 === null || a08.length !== FRAMES) probes.push(`start ${String(start)}, digits ${String(digits)}: A08's walk predicts ${a08 === null ? 'nothing' : `${a08.length} lookup(s)`} for a ${FRAMES}-frame series`);
+      }
+    }
+    probes.push(...firstOff);
+    for (const which of ['compiler', 'core', 'a08'] as const) if (off[which] > 0) probes.push(`${which} named ${off[which]} of ${cases} frame(s) otherwise than Sequence.getPath`);
+    if (off.widePadding === 0) probes.push('a padding one digit wider named every frame as the loader does, so the comparison cannot see the padding');
+    if (off.startZero === 0) probes.push('an unstated start read as 0 named every frame as the loader does, so the comparison cannot see the default');
+    probes.push(...floorProbes([[cases, STARTS.length * DIGITS.length * FRAMES, `${cases} frame(s) were compared`]], 'a run that compared fewer cases than the grid states measured less than it claims'));
+    const ok = probes.length === 0;
+    say(
+      'CO22_A_SEQUENCES_FRAME_NAMES_ARE_THE_LOADERS_IN_THE_COMPILER_THE_CORE_AND_A08',
+      ok,
+      probeDetail(ok, probes, `${loads} skeleton(s) loaded by spine-core, ${STARTS.length} start(s) × ${DIGITS.length} digit count(s) × ${FRAMES} frame(s) = ${cases} case(s) (the loader's defaults read off its own series: ${[...defaults].join('; ')}): the compiler's sequenceFrameRegion, the core's frameRegionName and A08's walk name every frame as Sequence.getPath does; padding one digit wider read ${off.widePadding} off and an unstated start read as 0 ${off.startZero}`),
+      'issue #1015: three spellings of one name — the compiler\'s, A08\'s and the core\'s — became one function, and no recipe reaches the compiler\'s, so the loader is asked directly; the defaults are measured off the series it builds rather than stated beside it',
+    );
+  }
+
+  // --- CO23: no comment claims a routine copies a named runtime routine -----------------
+  //
+  // Issue #1015 replaced, measured or reclassified the sixteen comments that said
+  // a routine here IS, TRANSCRIBES or WAS WRITTEN OFF a routine of spine-core's,
+  // citing its source file. This holds the class: a comment block under `src/`
+  // that cites a runtime source file (`Name.js` / `Name.ts`, `Name` one of
+  // spine-core's exports) and claims copying in one of the phrasings the sixteen
+  // used. It does NOT count or forbid the citations that say how the format's
+  // reader reads the format, which is the vocabulary a reader of this code needs.
+  // ⚠️ "is the parser's own" is not in the class although two of the sixteen used
+  // it: the same words state a format fact elsewhere ("The join is the parser's
+  // own", validate.ts), so a scan for them cannot tell the two apart. Nor is a
+  // claim that names a runtime routine (a backticked export, `Name` or
+  // `Name.member`) without a file: measured once every such claim had been
+  // restated, those verbs plus "is the runtime's own" beside such a name still
+  // matched 11 blocks under src/, none of them a copying claim — nine "is the
+  // runtime's own" stating what the runtime does, "the file they were
+  // transcribed from" (a spec file) and "never to transcribe" — and "Transcribed
+  // from the loader" was one of the sixteen, so no rule separates them without
+  // an exception table. And no file under `src/core/` cites a runtime source
+  // file at all — the core was written from measurement, and a file name there
+  // would say otherwise.
+  {
+    const probes: string[] = [];
+    const runtimeNames = new Set(Object.keys(SPINE_CORE_EXPORTS));
+    const population = srcPopulation(root);
+    const live = transcriptionClaims(population, runtimeNames);
+    probes.push(...live);
+    const blocks = [...population.values()].reduce((n, text) => n + commentBlocks(text).length, 0);
+    const citing = [...population].reduce((n, [, text]) => n + commentBlocks(text).filter((b) => runtimeFileCitations(b.text, runtimeNames).length > 0).length, 0);
+    const transformText = population.get('src/transform.ts') ?? '';
+    const pathText = population.get('src/core/constraints_path.ts') ?? '';
+    const plants: Array<[string, string, string, boolean]> = [
+      ['the old header of src/transform.ts', 'src/transform.ts', `${transformText}\n/**\n * \`computeWorldTransforms\` below is \`BonePose.updateWorldTransform\`\n * (spine-core 4.3.13, \`BonePose.js:110-216\`) at setup.\n */\nexport const planted = 0;\n`, true],
+      ['a routine transcribed, with its file', 'src/transform.ts', `${transformText}\n// \`Sequence.getPath\` (\`Sequence.js:124-132\`) transcribed: the stem, then the frame.\nexport const planted = 0;\n`, true],
+      ['a reader written off a field table', 'src/transform.ts', `${transformText}\n/** The reader below is written straight\n * off \`TextureAtlas\`'s own field table (\`dist/TextureAtlas.js\`). */\nexport const planted = 0;\n`, true],
+      ['a runtime source file cited under src/core/', 'src/core/constraints_path.ts', `${pathText}\n// as measured — compare PathConstraint.js:301-320\n`, true],
+      ['how the format\'s reader reads a field, with its file', 'src/transform.ts', `${transformText}\n// The reader defaults \`name\` to the placeholder (\`SkeletonJson.js:526\`).\nexport const planted = 0;\n`, false],
+      ['a transcribed name, with a file', 'src/transform.ts', `${transformText}\n// a transcribed name had no field to live in (\`SkeletonJson.js:526\`)\nexport const planted = 0;\n`, false],
+      ['a transcription with no runtime file', 'src/transform.ts', `${transformText}\n// rung 3's mechanical transcription, measured against \`PathConstraint.curves\`\nexport const planted = 0;\n`, false],
+      ['the runtime named in src/core/ without a file', 'src/core/constraints_path.ts', `${pathText}\n// what PathConstraint.curves holds\n`, false],
+    ];
+    for (const [label, file, text, fires] of plants) {
+      const planted = new Map(population);
+      planted.set(file, text);
+      const raised = transcriptionClaims(planted, runtimeNames).length - live.length;
+      if (fires ? raised < 1 : raised !== 0) probes.push(`the plant "${label}" raised ${raised} problem(s)${fires ? ', and it is the class' : ', and it is not the class'}`);
+    }
+    if (citing === 0) probes.push('no comment block under src/ cites a runtime source file, so the citation half of this scan is untested');
+    const ok = probes.length === 0;
+    say(
+      'CO23_NO_COMMENT_UNDER_SRC_CLAIMS_A_ROUTINE_COPIES_A_RUNTIME_ROUTINE_AND_THE_CORE_CITES_NO_RUNTIME_FILE',
+      ok,
+      probeDetail(ok, probes, `${population.size} file(s) under src/, read off the disk, ${blocks} comment block(s), ${citing} of them citing a runtime source file by name (of ${runtimeNames.size} spine-core exports): none claims a routine here is, transcribes or was written off a runtime routine, and no file under src/core/ names a runtime source file; ${plants.filter((p) => p[3]).length} plants raise a problem each and the ${plants.filter((p) => !p[3]).length} format-reading or file-less ones raise none`),
+      'issue #1015, and #1011 for the core\'s clause: the format\'s reader is the model this compiler was written against and citations of how it reads the format stay, but a routine that says it copies one is a claim nothing measured — the sixteen that said so were replaced by the core\'s measured forms, measured beside them, or restated, and this keeps the class from coming back',
     );
   }
 

@@ -1098,11 +1098,12 @@ export interface SpineClippingAttachment {
  * is re-parameterised by the trip rather than corrupted by it.
  *
  * ⇒ **rigc emits that computation, not a sampler aimed at it** (issue #560).
- * `pathCurveLengths` in [`compile.ts`](compile.ts) is `PathConstraint.js:301-320`
- * transcribed, down to `Math.sqrt(dx * dx + dy * dy)` rather than `Math.hypot`
- * and `0.16666667` rather than `1 / 6`; `PS67`, `PS68` and `PS187` in `selftest.ts` hold it
- * there by requiring it to reproduce a real `PathConstraint.curves` array **bit
- * for bit** on the runtime's own posed chain. Measured after the change, all
+ * `pathCurveLengths` in [`compile.ts`](compile.ts) measures with the core's
+ * curve table (`curveLengthTable` in `src/core/constraints_path.ts`, issue
+ * #1015), down to `Math.sqrt(dx * dx + dy * dy)` rather than `Math.hypot` and
+ * `0.16666667` rather than `1 / 6`; `PS67`, `PS68` and `PS186` in `selftest.ts`
+ * hold it there by requiring it to reproduce a real `PathConstraint.curves`
+ * array **bit for bit** on the runtime's own posed chain. Measured after the change, all
  * seven entries of both editor exports above come back at the precision the
  * editor prints them.
  *
