@@ -504,10 +504,12 @@ import {
   type ValidateProfile,
   type ValidateReport,
 } from './src/validate.ts';
-import { MOVED_ASSERTIONS, validateModel, type ModelReport, type ModelSupply } from './src/assertions/model/index.ts';
+import { MODEL_SUPPLY, MOVED_ASSERTIONS, validateModel, type ModelReport, type ModelSupply } from './src/assertions/model/index.ts';
 import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES } from './src/assertions/model/parse.ts';
 import { modelSkinEntries } from './src/assertions/model/skin_entries.ts';
 import { verdictLines, verdictMain, walkSpelling, type VerdictRow } from './tools/verdict_gate.ts';
+import { compareFacts, modelGivenOfBuild } from './tools/verdict_gate.ts';
+import { modelRegionJoinsWith } from './src/assertions/model/region_joins.ts';
 import {
   articulatedFixture,
   containedFixture,
@@ -826,8 +828,15 @@ function firstRegionName(atlasText: string): string {
 /** What a record's case reads until the case line that follows the call is printed. */
 const UNNAMED_CASE = '(no case line followed the call)';
 
-/** What a twin is: the forge, applied to the call's model document in place, or why no model can carry the wrongness. */
-type ModelTwin = { forge: (doc: Record<string, unknown>) => void } | { encodingOnly: string };
+/**
+ * What a twin is: the forge, applied to the call's model document in place, or
+ * why no model can carry the wrongness. The forge is handed the call's two
+ * texts as well (cut 4c-1): an edit to the ATLAS reaches the model through the
+ * one derivation its `pages` section has (`ATLAS_EDIT_TWIN`), and a forge that
+ * has to size something by the stage reads the stage the call's pair states —
+ * the value the model side is given, not one the document holds.
+ */
+type ModelTwin = { forge: (doc: Record<string, unknown>, call: { skeletonText: string; atlasText: string }) => void } | { encodingOnly: string };
 
 /** One recorded twin outcome. */
 interface TwinOutcome {
@@ -881,12 +890,26 @@ function compareSuppliers(input: ValidateInput, spine: ValidateReport, modelText
   refused: { spine: boolean; model: boolean };
   differing: Array<{ code: string; spine: string[]; model: string[] }>;
   lines: number;
+  /** Lines of the rules that run before the parse (`beforeTheParse`), compared where both parses refused and the reader read the document. */
+  beforeParseLines: number;
 } {
-  const model = validateModel({ modelText, atlasDir: input.atlasDir, profile: input.profile }, supply);
+  const model = validateModel(modelInputOf(input, modelText), supply);
   const refused = { spine: spineRefused(spine), model: modelRefused(model) };
   const differing: Array<{ code: string; spine: string[]; model: string[] }> = [];
   let lines = 0;
-  if (refused.spine || refused.model) return { model, refused, differing, lines };
+  let beforeParseLines = 0;
+  if (refused.spine || refused.model) {
+    // A rule both sides run before their parse (A08, issue #589) printed its lines on both, so they are compared even here (cut 4c-1).
+    if (refused.spine && refused.model && model.passed.includes(A00_MODEL_READ)) {
+      for (const { code } of MOVED_ASSERTIONS.filter((m) => m.beforeTheParse === true)) {
+        const a = linesOfCode(spine, code);
+        const b = linesOfCode(model, code);
+        beforeParseLines += a.length;
+        if (a.join('\n') !== b.join('\n')) differing.push({ code, spine: a, model: b });
+      }
+    }
+    return { model, refused, differing, lines, beforeParseLines };
+  }
   for (const code of MOVED_CODES) {
     const a = linesOfCode(spine, code);
     const b = linesOfCode(model, code);
@@ -897,7 +920,26 @@ function compareSuppliers(input: ValidateInput, spine: ValidateReport, modelText
     lines++;
     if (spine.stats[key] !== value) differing.push({ code: `stats.${key}`, spine: [String(spine.stats[key])], model: [String(value)] });
   }
-  return { model, refused, differing, lines };
+  return { model, refused, differing, lines, beforeParseLines };
+}
+
+/**
+ * What the model side is handed for a call (issue #1025, cut 4c-1): the
+ * document, the call's directory and profile, the rig info the call carries —
+ * `validate()` is handed it too, and A13, A15 and A19 read it — and what the
+ * document does not hold, given off the call's own pair by the instrument's
+ * function (`modelGivenOfBuild`): the stage its skeleton header states and each
+ * atlas page's `pma`. A pair whose skeleton is not JSON gives nothing, and the
+ * rules that need it refuse by name.
+ */
+function modelInputOf(input: ValidateInput, modelText: string): Parameters<typeof validateModel>[0] {
+  let given: ReturnType<typeof modelGivenOfBuild> | undefined;
+  try {
+    given = modelGivenOfBuild(input.skeletonText, input.atlasText);
+  } catch {
+    given = undefined;
+  }
+  return { modelText, atlasDir: input.atlasDir, profile: input.profile, rig: input.rig, given };
 }
 
 /** The first double-quoted name in a sentence — the object a FAIL line is about (`region "x"`, `animation "x"`, `page "x"`). */
@@ -919,6 +961,23 @@ class SupplierCheck {
   lines = 0;
   /** Own calls on which both sides refused their input (A00 and a model-side parse rule). */
   bothRefused = 0;
+  /** Of those, calls on which a rule that runs before the parse printed lines on both sides and they were compared, and how many lines. */
+  beforeParse = 0;
+  beforeParseLines = 0;
+  /** Lines compared per moved assertion over the own calls, so an assertion compared on none is named (`VF02`'s floor). */
+  linesByCode = new Map<string, number>();
+  /** Calls on which a moved assertion measured something — a PASS or FAIL line rather than SKIP or PROF — per assertion. */
+  measuredByCode = new Map<string, number>();
+  /**
+   * The fact families cut 4c-1 added, compared fact by fact on every distinct
+   * own build (`compareFacts`): per family, builds compared and builds equal —
+   * and, on multi-skin builds, how many would join their regions in another
+   * order had the document been walked in its own skin and slot-key order.
+   */
+  facts = new Map<string, { compared: number; equal: number }>();
+  joinsDocumentOrderDiffers = 0;
+  joinsMultiSkin = 0;
+  private factsRead = new Set<string>();
   /** Calls whose pair was edited after the model was written. */
   afterEmit = 0;
   /** Of those, calls that FAIL a moved assertion — population 3. */
@@ -970,7 +1029,12 @@ class SupplierCheck {
       this.own++;
       if (twin !== undefined) this.keep(this.faults, { fault: 'a twin was declared beside a call whose pair is its model\'s own build, so there is no break for it to be the twin of' });
       const compared = compareSuppliers(input, spine, modelText, this.plant);
-      if (compared.refused.spine && compared.refused.model) this.bothRefused++;
+      if (compared.refused.spine && compared.refused.model) {
+        this.bothRefused++;
+        if (compared.beforeParseLines > 0) this.beforeParse++;
+        this.beforeParseLines += compared.beforeParseLines;
+        for (const d of compared.differing) this.keep(this.faults, { fault: `${d.code} differs where both parses refused — spine-core: ${JSON.stringify(d.spine)}; model: ${JSON.stringify(d.model)}` });
+      }
       else if (compared.refused.spine !== compared.refused.model) {
         const said = compared.refused.spine
           ? `A00_ROUNDTRIP_PARSE refused the pair and the model side read the document: ${spine.failures.find((f) => f.assertion === 'A00_ROUNDTRIP_PARSE')?.detail}`
@@ -979,6 +1043,12 @@ class SupplierCheck {
       } else {
         this.compared++;
         this.lines += compared.lines;
+        for (const code of MOVED_CODES) {
+          const own = linesOfCode(spine, code);
+          this.linesByCode.set(code, (this.linesByCode.get(code) ?? 0) + own.length);
+          if (own.some((line) => /^ {2}(PASS|FAIL) /.test(line))) this.measuredByCode.set(code, (this.measuredByCode.get(code) ?? 0) + 1);
+        }
+        this.compareFactFamilies(input, modelText);
         for (const d of compared.differing) {
           this.keep(this.faults, { fault: `${d.code} differs — spine-core: ${JSON.stringify(d.spine)}; model: ${JSON.stringify(d.model)}` });
         }
@@ -1027,6 +1097,30 @@ class SupplierCheck {
     else this.keep(this.faults, { fault: `the skins walk in another order on the two sides — spine-core ${spell(runtime.skinEntries).slice(0, 240)}; model ${spell(model).slice(0, 240)}` });
   }
 
+  /** Cut 4c-1's families, fact by fact, on each distinct own build: one reading per build, as `compareWalks` takes it. */
+  private compareFactFamilies(input: ValidateInput, modelText: string): void {
+    const build = `${spineFileSha256(input.skeletonText)} ${spineFileSha256(input.atlasText)}`;
+    if (this.factsRead.has(build)) return;
+    this.factsRead.add(build);
+    const families = compareFacts(input.skeletonText, input.atlasText, modelText);
+    if (families === null) return;
+    for (const f of families) {
+      const tally = this.facts.get(f.family) ?? { compared: 0, equal: 0 };
+      tally.compared++;
+      if (f.identical) tally.equal++;
+      else this.keep(this.faults, { fault: `the facts "${f.family}" differ between the suppliers — spine-core ${f.spine.slice(0, 240)}; model ${f.model.slice(0, 240)}` });
+      this.facts.set(f.family, tally);
+    }
+    // What the document's own skin and slot-key order would have joined — the measurement that says the emitter's order is the one that matters.
+    const doc = JSON.parse(modelText) as { skins?: unknown[] };
+    if (Array.isArray(doc.skins) && doc.skins.length > 1) {
+      this.joinsMultiSkin++;
+      const read = { doc: readModel(modelText), json: doc as Record<string, unknown> };
+      const own = JSON.stringify(modelRegionJoinsWith(read, (skins) => [...skins], (table) => table));
+      if (own !== JSON.stringify(modelRegionJoinsWith(read))) this.joinsDocumentOrderDiffers++;
+    }
+  }
+
   private settleTwin(input: ValidateInput, spine: ValidateReport, modelText: string, firing: string[], twin: ModelTwin | undefined): Array<Omit<TwinOutcome, 'case'>> {
     const out: Array<Omit<TwinOutcome, 'case'>> = [];
     for (const code of firing) {
@@ -1041,12 +1135,12 @@ class SupplierCheck {
       }
       const doc = JSON.parse(modelText) as Record<string, unknown>;
       try {
-        twin.forge(doc);
+        twin.forge(doc, { skeletonText: input.skeletonText, atlasText: input.atlasText });
       } catch (err) {
         out.push({ code, outcome: 'not reproduced', detail: `the twin's forge threw on the call's document: ${(err as Error).message}` });
         continue;
       }
-      const model = validateModel({ modelText: `${JSON.stringify(doc, null, 2)}\n`, atlasDir: input.atlasDir, profile: input.profile });
+      const model = validateModel(modelInputOf(input, `${JSON.stringify(doc, null, 2)}\n`));
       const modelLines = linesOfCode(model, code);
       if (modelLines.join('\n') === spineLines.join('\n')) {
         out.push({ code, outcome: 'identical', detail: spineLines.find((l) => l.startsWith('  FAIL')) ?? '' });
@@ -1066,6 +1160,71 @@ class SupplierCheck {
     }
     return out;
   }
+}
+
+/**
+ * The twin of an edit to the ATLAS text (issue #1025, cut 4c-1): the document's
+ * `pages` as the writer spells them from the atlas the call was handed —
+ * `pagesOfAtlas`, the one function `build` writes that section with — so the
+ * wrongness reaches the model through the section's own derivation rather than
+ * a hand-written copy of each edit. `pma` is not in the section; the model side
+ * is given it off the same atlas (`modelGivenOfBuild`).
+ */
+const ATLAS_EDIT_TWIN: ModelTwin = {
+  forge: (doc, call) => {
+    doc.pages = pagesOfAtlas(call.atlasText);
+  },
+};
+
+/**
+ * Why a blank line inside a page block has no model-side twin (issue #1025, cut
+ * 4c-1): it is the atlas TEXT's line layout, A07's subject. A08 fires on it only
+ * as a consequence — the runtime reads the region line after the blank as a
+ * page declaring no size, so the region it named is gone — and the document's
+ * `pages` section cannot state that reading: forged through the section's own
+ * writer (`ATLAS_EDIT_TWIN`), `readModel` refuses the document for that page's
+ * size of 0 (`pages[1] …: width is 0, not a positive finite number`, measured on
+ * M08 and S107), a refusal that names the page and not the attachment A08 names.
+ */
+const BLANK_LINE_LAYOUT_ONLY: ModelTwin = {
+  encodingOnly:
+    "a blank line inside a page block is the atlas text's layout (A07's subject); the page the runtime reads after it declares no size, which the document's pages cannot state — the reader refuses that page's size of 0 by the page's name, not the attachment's",
+};
+
+/** A forge's handle on one skin of a document, by name. */
+type DocSkin = { name: string; bones: string[]; attachments: Record<string, Record<string, Record<string, unknown>>> };
+function docSkin(doc: Record<string, unknown>, name: string): DocSkin {
+  const found = (doc.skins as DocSkin[]).find((skin) => skin.name === name);
+  if (found === undefined) throw new Error(`the document has no skin "${name}"`);
+  return found;
+}
+
+/** A twin that sets one record's `path`, addressed as the Spine file addresses it: skin, slot, placeholder. */
+function docRepathTwin(skin: string, slot: string, placeholder: string, path: string, alsoAtlas = false): ModelTwin {
+  return {
+    forge: (doc, call) => {
+      const record = docSkin(doc, skin).attachments[slot]?.[placeholder];
+      if (record === undefined) throw new Error(`the document's skin "${skin}" has no record "${placeholder}" in slot "${slot}"`);
+      record.path = path;
+      if (alsoAtlas) doc.pages = pagesOfAtlas(call.atlasText);
+    },
+  };
+}
+
+/** A Spine animation's `bones` group as the document lists it: `{ bone: { timeline: keys } }` → `[{ name, timelines: [{ name, keys }] }]`, in the group's order. */
+function docBoneTimelines(group: Record<string, Record<string, unknown[]>>): Array<{ name: string; timelines: Array<{ name: string; keys: unknown[] }> }> {
+  return Object.entries(group).map(([name, timelines]) => ({ name, timelines: Object.entries(timelines).map(([timeline, keys]) => ({ name: timeline, keys })) }));
+}
+
+/** A twin that replaces what `idle` keys on bones with `group`, a Spine `bones` group — the document's spelling of the same keys. */
+function idleBonesTwin(group: Record<string, Record<string, unknown[]>>): ModelTwin {
+  return {
+    forge: (doc) => {
+      const idle = (doc.animations as Array<{ name: string; bones: unknown[] }>).find((a) => a.name === 'idle');
+      if (idle === undefined) throw new Error('the document has no "idle" animation');
+      idle.bones = docBoneTimelines(group);
+    },
+  };
 }
 
 /** A twin's way into a document: one animation's timelines on one slot, as the document lists them (`[{ name, keys }]`, in order). */
@@ -1225,14 +1384,16 @@ function idleMeshCost(skeletonText: string, keyed: string[]): { bones: string[];
 const IDLE_DRIVES_WHY = 'a painting rig: the idle sways every layer on purpose';
 
 /** The overlay probe's idle keying its iris mesh's slot bone AND its control bone — two bones that drive a mesh. */
+/** The `bones` group `keyIrisInIdle` gives `idle` — one value, so M91's twin keys what its break keys (issue #1025, cut 4c-1). */
+const IRIS_IDLE_BONES: Record<string, Record<string, unknown[]>> = {
+  iris: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 4 }] },
+  iris_aperture: { scale: [{ time: 0, x: 1, y: 1 }] },
+};
 const keyIrisInIdle = (a: Artifacts): Artifacts => ({
   ...a,
   skeletonText: editJson(a.skeletonText, (j) => {
     const idle = (j.animations as Record<string, Record<string, unknown>>).idle;
-    idle.bones = {
-      iris: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 4 }] },
-      iris_aperture: { scale: [{ time: 0, x: 1, y: 1 }] },
-    };
+    idle.bones = structuredClone(IRIS_IDLE_BONES);
   }),
 });
 
@@ -1392,6 +1553,8 @@ const MUTANTS: Mutant[] = [
     origin: 'the UVs collapse; rigid attachments look fine and meshes do not',
     expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
     mutate: (a) => ({ ...a, atlasText: a.atlasText.replace(/^size: .*$/m, 'size: 2048, 2048') }),
+    // The atlas edit, as the document's `pages` spell it (issue #1025, cut 4c-1).
+    twin: ATLAS_EDIT_TWIN,
   },
   {
     name: 'M07_atlas_region_name_indented',
@@ -1401,12 +1564,15 @@ const MUTANTS: Mutant[] = [
       const region = firstRegionName(a.atlasText);
       return { ...a, atlasText: a.atlasText.replace(`\n${region}\n`, `\n  ${region}\n`) };
     },
+    // The atlas edit, as the document's `pages` spell it (issue #1025, cut 4c-1).
+    twin: ATLAS_EDIT_TWIN,
   },
   {
     name: 'M08_atlas_blank_line_inside_page_block',
     origin: 'a blank line closes the page block, so every region after it becomes a page',
     expect: 'A07_ATLAS_TEXT_SHAPE',
     mutate: (a) => ({ ...a, atlasText: a.atlasText.replace(/^(pma: .*)$/m, '$1\n') }),
+    twin: BLANK_LINE_LAYOUT_ONLY,
   },
   {
     name: 'M09_dark_two_colour_tint',
@@ -1440,6 +1606,8 @@ const MUTANTS: Mutant[] = [
         (j as any).skins[0].attachments.iris.iris_wide.path = '99_typo';
       }),
     }),
+    // The same record's `path`, in the document (issue #1025, cut 4c-1).
+    twin: docRepathTwin('default', 'iris', 'iris_wide', '99_typo'),
   },
   {
     name: 'M12_page_png_not_on_disk',
@@ -1680,6 +1848,8 @@ const MUTANTS: Mutant[] = [
       ...a,
       atlasText: a.atlasText.replace(/^bounds: \d+, \d+, (\d+), (\d+)$/m, (_line, w, h) => `bounds: 4, 4, ${w}, ${h}`),
     }),
+    // The atlas edit, as the document's `pages` spell it (issue #1025, cut 4c-1).
+    twin: ATLAS_EDIT_TWIN,
   },
   {
     name: 'M16_rim_vertex_pinned_to_the_control_bone',
@@ -1722,6 +1892,12 @@ const MUTANTS: Mutant[] = [
         (j as any).skins[0].attachments.iris.iris_wide.uvs[0] = 1.4;
       }),
     }),
+    // The same UV, in the document's record (issue #1025, cut 4c-1).
+    twin: {
+      forge: (doc) => {
+        (docSkin(doc, 'default').attachments.iris.iris_wide.uvs as number[])[0] = 1.4;
+      },
+    },
   },
   {
     name: 'M19_idle_keys_the_mesh_control_bone',
@@ -1737,6 +1913,8 @@ const MUTANTS: Mutant[] = [
         };
       }),
     }),
+    // The same keys, in the document's spelling (issue #1025, cut 4c-1).
+    twin: idleBonesTwin({ iris_aperture: { scale: [{ time: 0, x: 1, y: 1 }] } }),
   },
   {
     // 🔑 The positive control for issue #855: the same kind of break as M19,
@@ -1793,6 +1971,8 @@ const MUTANTS: Mutant[] = [
           (hinted.length ? `, first: ${hinted[0].detail}` : ''),
       };
     },
+    // The same keys, in the document's spelling (issue #1025, cut 4c-1).
+    twin: idleBonesTwin(IRIS_IDLE_BONES),
   },
   {
     // A declaration nothing exercises is refused, not skipped: the pristine
@@ -1830,6 +2010,8 @@ const MUTANTS: Mutant[] = [
         read: said || 'A15 did not fail',
       };
     },
+    // The same keys, in the document's spelling (issue #1025, cut 4c-1).
+    twin: idleBonesTwin({ root: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 2 }] } }),
   },
   {
     name: 'M20_mesh_falls_back_to_unweighted',
@@ -1918,6 +2100,9 @@ const MUTANTS: Mutant[] = [
     origin: 'the renderer does not un-premultiply, so every part gains a black rim',
     expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
     mutate: (a) => ({ ...a, atlasText: a.atlasText.replace('pma: false', 'pma: true') }),
+    // No twin (issue #1025, cut 4c-1): `pma` is not in the document until #1026, so this pair's pages are the
+    // document's own and the supplier check compares it as population 2 — the model side given `pma` off the
+    // pair, as every caller gives it — rather than as an after-emit break.
   },
 
   // ─── the timeline groups the walker used to skip ─────────────────────────
@@ -2103,6 +2288,8 @@ const MUTANTS: Mutant[] = [
         }),
       };
     },
+    // The atlas edit, as the document's `pages` spell it (issue #1025, cut 4c-1).
+    twin: ATLAS_EDIT_TWIN,
   },
   {
     // 🔗 The one shape the parser reads in silence (issue #710): a link declaring
@@ -2190,6 +2377,8 @@ const MUTANTS: Mutant[] = [
     origin: 'the picture still draws, and every reader that cuts the page by texel coordinates cuts the wrong rectangle',
     expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
     mutate: (a) => ({ ...a, atlasText: doubleFirstAtlasPageSize(a.atlasText) }),
+    // The atlas edit, as the document's `pages` spell it (issue #1025, cut 4c-1).
+    twin: ATLAS_EDIT_TWIN,
   },
   {
     // The converter defect behind issue #730, on the probe's own fade: a slot
@@ -2350,6 +2539,8 @@ const MUTANTS: Mutant[] = [
         .filter((_, i) => i !== other);
       return { ...a, atlasText: `${rewritten.join('\n\n')}\n` };
     },
+    // The atlas edit, as the document's `pages` spell it (issue #1025, cut 4c-1).
+    twin: ATLAS_EDIT_TWIN,
   },
   // The two ends of `damping`'s bound are inside it since issue #794 — 1 never
   // decays and 0 zeroes the velocity, both finite at every rate — so the two
@@ -2455,6 +2646,8 @@ const MUTANTS: Mutant[] = [
       '`path` the parser asks the atlas for the placeholder — a region nobody packed',
     expect: 'A08_REGION_NAMES_MATCH_ATTACHMENTS',
     mutate: (a) => ({ ...a, skeletonText: editJson(a.skeletonText, (j) => rekeyFirstRegion(j, false)) }),
+    // The same re-filing, in the document — its records and its slots' setup (issue #1025, cut 4c-1).
+    twin: { forge: docRekeyFiledRegion },
   },
   // ─── a skeleton with no default skin, and the same with an empty one (issue #801) ───
   //
@@ -2732,6 +2925,36 @@ function rekeyFirstRegion(j: Record<string, unknown>, keepName: boolean): void {
 }
 
 /**
+ * `rekeyFirstRegion(j, false)`'s re-filing, carried into the model document
+ * (issue #1025, cut 4c-1): the record the break re-filed — read off the broken
+ * skeleton, where it now stands under `<key>_filed` — moved to the same key in
+ * the document's skin, and every slot whose setup showed it pointed at the new
+ * key. Read off the break rather than re-chosen, because the choice walks the
+ * Spine file's animation text, which names placeholders the document spells
+ * elsewhere (measured: the two walks pick different records on the overlay
+ * probe).
+ */
+function docRekeyFiledRegion(doc: Record<string, unknown>, call: { skeletonText: string }): void {
+  const broken = JSON.parse(call.skeletonText) as { skins: Array<{ name: string; attachments: Record<string, Record<string, unknown>> }> };
+  const slots = doc.slots as Array<{ name: string; setup: string | null }>;
+  for (const skin of broken.skins) {
+    for (const [slotName, table] of Object.entries(skin.attachments)) {
+      for (const filed of Object.keys(table)) {
+        if (!filed.endsWith('_filed')) continue;
+        const key = filed.slice(0, -'_filed'.length);
+        const own = docSkin(doc, skin.name).attachments[slotName];
+        if (own?.[key] === undefined) continue;
+        own[filed] = own[key];
+        delete own[key];
+        for (const slot of slots) if (slot.name === slotName && slot.setup === key) slot.setup = filed;
+        return;
+      }
+    }
+  }
+  throw new Error('the broken skeleton holds no re-filed record the document has under its old key');
+}
+
+/**
  * Forge an open path onto the skeleton — a second attachment `forged_track`
  * under the first skin's first slot, `PATH_TRACK`'s geometry, so no slot table
  * or setup pose changes — whose `lengths` is the transcription's own
@@ -2786,6 +3009,26 @@ const ARTICULATED_MUTANTS: Mutant[] = [
         };
       }),
     }),
+    // The same mesh, in the document's spelling: bound by bone NAME, sized by the stage the pair states — the
+    // value the model side is given (issue #1025, cut 4c-1).
+    twin: {
+      forge: (doc, call) => {
+        const stage = (JSON.parse(call.skeletonText) as any).skeleton;
+        const halfW = stage.width / 2;
+        const halfH = stage.height / 2;
+        const corner = (x: number, y: number): unknown[] => [{ bone: 'stage', x, y, weight: 1 }];
+        docSkin(doc, 'default').attachments.stage['00_stage'] = {
+          kind: 'mesh',
+          uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+          triangles: [0, 1, 2, 0, 2, 3],
+          vertices: { weighted: true, bindings: [corner(-halfW, halfH), corner(halfW, halfH), corner(halfW, -halfH), corner(-halfW, -halfH)] },
+          hull: 4,
+          edges: [],
+          width: stage.width,
+          height: stage.height,
+        };
+      },
+    },
   },
   {
     name: 'M25_travel_key_carries_a_screen_space_y',
@@ -2852,6 +3095,15 @@ const ARTICULATED_MUTANTS: Mutant[] = [
         delete atts['05_pool'];
       }),
     }),
+    // Both renames: the atlas through its pages, and the skin's key (issue #1025, cut 4c-1).
+    twin: {
+      forge: (doc, call) => {
+        doc.pages = pagesOfAtlas(call.atlasText);
+        const atts = docSkin(doc, 'default').attachments.pool;
+        atts['05_pool_typo'] = atts['05_pool'];
+        delete atts['05_pool'];
+      },
+    },
   },
   {
     name: 'M30_ribbon_row_weights_diverge',
@@ -2905,6 +3157,22 @@ const ARTICULATED_MUTANTS: Mutant[] = [
         };
       }),
     }),
+    // The same fourth mesh slot, in the document's spelling (issue #1025, cut 4c-1).
+    twin: {
+      forge: (doc) => {
+        const corner = (x: number, y: number): unknown[] => [{ bone: 'rim', x, y, weight: 1 }];
+        docSkin(doc, 'default').attachments.pool['05_pool'] = {
+          kind: 'mesh',
+          uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+          triangles: [0, 1, 2, 0, 2, 3],
+          vertices: { weighted: true, bindings: [corner(-20, 10), corner(20, 10), corner(20, -10), corner(-20, -10)] },
+          hull: 4,
+          edges: [],
+          width: 40,
+          height: 20,
+        };
+      },
+    },
   },
   {
     name: 'M32_travel_drives_past_the_contact_point',
@@ -13037,7 +13305,7 @@ function runStaticRigSuite(): number {
   // rules are excluded before their bodies run, so a vacuous pass among them is
   // invisible — which is how two of the four atlas guards went unnoticed.
   const behind = assertionsBehindTheRoundTrip(validateSourceWithBodies(import.meta.dir));
-  const torn = gateProbeAtlas(dirs, STATIC_MOTION, dropFirstAtlasPage, 'spine-html');
+  const torn = gateProbeAtlas(dirs, STATIC_MOTION, dropFirstAtlasPage, 'spine-html', ATLAS_EDIT_TWIN);
   const rowOf = (report: ReturnType<typeof validate>, name: string): string[] => {
     const where: string[] = [];
     if (report.passed.includes(name)) where.push('PASS');
@@ -13077,12 +13345,13 @@ function runStaticRigSuite(): number {
   // The half that says the missing row was hiding something, rather than merely
   // being missing. Same `size:` defect in both runs; the only difference is
   // whether the loader got far enough to have an opinion.
-  const sized = gateProbeAtlas(dirs, STATIC_MOTION, doubleFirstAtlasPageSize, 'spine-html');
+  const sized = gateProbeAtlas(dirs, STATIC_MOTION, doubleFirstAtlasPageSize, 'spine-html', ATLAS_EDIT_TWIN);
   const sizedAndTorn = gateProbeAtlas(
     dirs,
     STATIC_MOTION,
     (text) => dropFirstAtlasPage(doubleFirstAtlasPageSize(text)),
     'spine-html',
+    ATLAS_EDIT_TWIN,
   );
   const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
   const refusedWhenRead = sized.failures.find((f) => f.assertion === A06);
@@ -14086,6 +14355,7 @@ function runStaticRigSuite(): number {
       return doubleFirstAtlasPageSize(text);
     },
     'spine',
+    ATLAS_EDIT_TWIN,
   );
   const probePage = parseAtlasText(probeAtlasText).pages[0];
   const uniformPage = parseAtlasText(doubleFirstAtlasPageSize(probeAtlasText)).pages[0];
@@ -14122,7 +14392,7 @@ function runStaticRigSuite(): number {
       'profiles — and that the refusal can name a repair the FORMAT provides, which is what a convention cannot do',
   );
 
-  const stretched = gateProbeAtlas(dirs, STATIC_MOTION, stretchFirstAtlasPageSize, 'spine');
+  const stretched = gateProbeAtlas(dirs, STATIC_MOTION, stretchFirstAtlasPageSize, 'spine', ATLAS_EDIT_TWIN);
   const stretchedPage = parseAtlasText(stretchFirstAtlasPageSize(probeAtlasText)).pages[0];
   const stretchedX = (probePage.width / stretchedPage.width).toFixed(4);
   const stretchedY = (probePage.height / stretchedPage.height).toFixed(4);
@@ -15590,7 +15860,7 @@ function runStaticRigSuite(): number {
   {
     const A07 = 'A07_ATLAS_TEXT_SHAPE';
     const pack = packWithFirstPageReplaced((png) => png);
-    const a07Of = (atlasText: string): string[] =>
+    const a07Of = (atlasText: string, twin?: ModelTwin): string[] =>
       validate({
         skeletonText: pack.result.skeletonText,
         atlasText,
@@ -15599,7 +15869,7 @@ function runStaticRigSuite(): number {
         modelText: threadedModel(pack.result, pack.atlasText),
         rig: pack.result.rig,
         profile: 'spine',
-      })
+      }, twin)
         .failures.filter((f) => f.assertion === A07)
         .map((f) => f.detail);
     const honestSaid = a07Of(pack.atlasText);
@@ -15618,7 +15888,7 @@ function runStaticRigSuite(): number {
       // The first blank closes the page block after a region, which is legal; the
       // second one, at 1-based line `secondRegion + 2`, is the adjacent one.
       wanted = `line ${secondRegion + 2}: consecutive blank lines`;
-      doubledSaid = a07Of(doubled);
+      doubledSaid = a07Of(doubled, BLANK_LINE_LAYOUT_ONLY);
       if (!doubledSaid.includes(wanted)) doubledProbes.push(`A07 said [${doubledSaid.join('; ')}], where "${wanted}" is required`);
       if (doubledSaid.some((detail) => detail.includes('begins with'))) doubledProbes.push('A07 called a blank in the middle of the file a leading one');
     }
@@ -22068,10 +22338,22 @@ function runPathAndSliderSuite(): number {
     'the array is cumulative, so a value below its predecessor is either a zero-length curve or an array shorter than the geometry',
   );
 
-  const unflaggedArtifact = gateProbeArtifacts(dirs, motion, (skeleton) => {
-    const bones = skeleton.bones as Array<Record<string, unknown>>;
-    delete bones.find((b) => b.name === 'pauldron')!.skin;
-  });
+  const unflaggedArtifact = gateProbeArtifacts(
+    dirs,
+    motion,
+    (skeleton) => {
+      const bones = skeleton.bones as Array<Record<string, unknown>>;
+      delete bones.find((b) => b.name === 'pauldron')!.skin;
+    },
+    'spine',
+    // The same flag, off the document's bone (issue #1025, cut 4c-1).
+    {
+      forge: (doc) => {
+        const bones = doc.bones as Array<Record<string, unknown>>;
+        delete bones.find((b) => b.name === 'pauldron')!.skinRequired;
+      },
+    },
+  );
   say(
     'PS23_A38_fires_on_a_listed_bone_that_is_not_skinRequired',
     unflaggedArtifact.failures.some((f) => f.assertion === 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED'),
@@ -24245,6 +24527,7 @@ function runPathAndSliderSuite(): number {
     probe: ProbeDirs,
     built: ReturnType<typeof compile>,
     texts: { skeletonText?: string; atlasText?: string } = {},
+    twin?: ModelTwin,
   ): Array<[ValidateProfile, string]> =>
     VALIDATE_PROFILES.map((profile): [ValidateProfile, string] => [
       profile,
@@ -24257,7 +24540,7 @@ function runPathAndSliderSuite(): number {
           modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
           rig: built.rig,
           profile,
-        }),
+        }, twin),
       ),
     ]);
 
@@ -24328,7 +24611,7 @@ function runPathAndSliderSuite(): number {
           .map((line, i) => (i === a08NameAt ? ` ${line}_unreferenced ` : line))
           .join('\n')}\n`;
   const a08StrayVerdicts =
-    a08StrayText === null ? [] : a08PerProfile(a08SharedProbe, a08SharedBuilt, { atlasText: a08StrayText });
+    a08StrayText === null ? [] : a08PerProfile(a08SharedProbe, a08SharedBuilt, { atlasText: a08StrayText }, ATLAS_EDIT_TWIN);
   const a08StrayProbes = [
     ...(a08NameAt < 0 ? ['no region-name line was found in the last atlas page block, so nothing was mutated'] : []),
     ...a08StrayVerdicts.flatMap(([profile, verdict]) =>
@@ -24446,6 +24729,7 @@ function runPathAndSliderSuite(): number {
   /** The same four texts judged by every profile, as whole reports. */
   const a08ReportsFor = (
     texts: { skeletonText?: string; atlasText?: string },
+    twin?: ModelTwin,
   ): Array<[ValidateProfile, ReturnType<typeof validate>]> =>
     VALIDATE_PROFILES.map((profile): [ValidateProfile, ReturnType<typeof validate>] => [
       profile,
@@ -24457,7 +24741,7 @@ function runPathAndSliderSuite(): number {
         modelText: threadedModel(a08NamedBuilt, a08NamedBuilt.atlasText),
         rig: a08NamedBuilt.rig,
         profile,
-      }),
+      }, twin),
     ]);
   /** Which of the four lists an assertion appears in — #568's row, read back. */
   const a08RowsOf = (report: ReturnType<typeof validate>, name: string): string[] => {
@@ -24509,7 +24793,8 @@ function runPathAndSliderSuite(): number {
       .join('\n')}\n`;
 
   const a08MissPath = a08Target === null ? '' : `${a08Target.path}_no_such_region`;
-  const a08MissReports = a08Target === null ? [] : a08ReportsFor({ skeletonText: a08Repath(a08MissPath) });
+  const a08MissReports =
+    a08Target === null ? [] : a08ReportsFor({ skeletonText: a08Repath(a08MissPath) }, docRepathTwin(a08Target.skin, a08Target.slot, a08Target.placeholder, a08MissPath));
   const a08MissProbes = [
     ...(a08Target === null
       ? ['no emitted attachment has a placeholder, a name and a path that are three different strings']
@@ -24567,11 +24852,15 @@ function runPathAndSliderSuite(): number {
   // path against a padded region resolves, so nothing throws, and A08 is then
   // the only thing in the gate with an opinion about it.
   const a08PadPath = a08Target === null ? '' : ` ${a08Target.path} `;
-  const a08StrayPathReports = a08Target === null ? [] : a08ReportsFor({ skeletonText: a08Repath(a08PadPath) });
+  const a08StrayPathReports =
+    a08Target === null ? [] : a08ReportsFor({ skeletonText: a08Repath(a08PadPath) }, docRepathTwin(a08Target.skin, a08Target.slot, a08Target.placeholder, a08PadPath));
   const a08BothPaddedReports =
     a08Target === null
       ? []
-      : a08ReportsFor({ skeletonText: a08Repath(a08PadPath), atlasText: a08PadRegion(a08Target.path) });
+      : a08ReportsFor(
+          { skeletonText: a08Repath(a08PadPath), atlasText: a08PadRegion(a08Target.path) },
+          docRepathTwin(a08Target.skin, a08Target.slot, a08Target.placeholder, a08PadPath, true),
+        );
   const a08StrayPathProbes = [
     ...(a08Target === null ? ['there is no attachment to pad'] : []),
     ...a08StrayPathReports.flatMap(([profile, report]) => {
@@ -42774,6 +43063,8 @@ function runPackerSuite(): number {
     // default; PK58 onwards name a profile because the clause they measure is
     // validity and has to hold under both (#694).
     profile: ValidateProfile = 'spine-html',
+    // The atlas edit's model-side twin (issue #1025, cut 4c-1), declared by each call that breaks a moved assertion.
+    twin?: ModelTwin,
   ): ReturnType<typeof validate> =>
     validate({
       skeletonText: result.skeletonText,
@@ -42783,7 +43074,7 @@ function runPackerSuite(): number {
       modelText: threadedModel(result, result.atlasText),
       rig: result.rig,
       profile,
-    });
+    }, twin);
   /** Rewrite one region's `bounds:` line, structurally — no measured literal. */
   const withBounds = (atlasText: string, region: string, x: number, y: number, w: number, h: number): string => {
     const lines = atlasText.split('\n');
@@ -42812,7 +43103,7 @@ function runPackerSuite(): number {
     packedRegions[1].width,
     packedRegions[1].height,
   );
-  const overlapReport = gatePacked(htmlPack.dir, overlapped, htmlPack.result);
+  const overlapReport = gatePacked(htmlPack.dir, overlapped, htmlPack.result, 'spine-html', ATLAS_EDIT_TWIN);
   say(
     'PK20_TWO_REGIONS_OVER_THE_SAME_TEXELS_ARE_REFUSED_BY_NAME',
     overlapReport.failures.some(
@@ -42837,7 +43128,7 @@ function runPackerSuite(): number {
     packedRegions[0].width,
     packedRegions[0].height,
   );
-  const offReport = gatePacked(htmlPack.dir, runsOff, htmlPack.result);
+  const offReport = gatePacked(htmlPack.dir, runsOff, htmlPack.result, 'spine-html', ATLAS_EDIT_TWIN);
   say(
     'PK21_A_REGION_THAT_RUNS_OFF_ITS_SHARED_PAGE_IS_REFUSED_BY_NAME',
     offReport.failures.some(
@@ -42872,7 +43163,7 @@ function runPackerSuite(): number {
   const opaqueDir = join(opaqueDirs.dir, 'packed');
   mkdirSync(opaqueDir, { recursive: true });
   for (const page of opaquePack.pages) page.plate.writePng(join(opaqueDir, page.name));
-  const opaqueReport = gatePacked(opaqueDir, opaquePack.atlasText, opaqueResult);
+  const opaqueReport = gatePacked(opaqueDir, opaquePack.atlasText, opaqueResult, 'spine-html', ATLAS_EDIT_TWIN);
   const pageDeclaresAlpha = readPngInfo(join(opaqueDir, opaquePack.pages[0].name)).hasTransparency;
   const named = opaqueResult.images.map((img) => img.region);
   const alphaFailures = opaqueReport.failures.filter((f) => f.assertion === 'A19_OVERLAY_PNGS_HAVE_ALPHA');
@@ -43152,7 +43443,7 @@ function runPackerSuite(): number {
       regions[1].width,
       regions[1].height,
     );
-    const report = gatePacked(pack.dir, overlapped, overlayCompile);
+    const report = gatePacked(pack.dir, overlapped, overlayCompile, 'spine-html', ATLAS_EDIT_TWIN);
     const printed = new Map<string, string>();
     for (const f of report.failures) {
       if (f.assertion !== 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG' || !f.detail.includes('overlap on page')) continue;
@@ -43235,7 +43526,7 @@ function runPackerSuite(): number {
   for (const degrees of TURNS) {
     const pack = turnedPack(packInputsOf(turnedOpaqueResult.images), degrees);
     const text = readFileSync(pack.atlasPath, 'utf8');
-    const report = gatePacked(pack.dir, text, turnedOpaqueResult);
+    const report = gatePacked(pack.dir, text, turnedOpaqueResult, 'spine-html', ATLAS_EDIT_TWIN);
     const named = new Map<string, string>();
     for (const f of report.failures) {
       if (f.assertion !== 'A19_OVERLAY_PNGS_HAVE_ALPHA') continue;
@@ -43352,7 +43643,7 @@ function runPackerSuite(): number {
   const edgeProbes: string[] = [];
   let edgeNamed = 0;
   for (const profile of VALIDATE_PROFILES) {
-    const report = gatePacked(htmlPack.dir, pastBothEdges, htmlPack.result, profile);
+    const report = gatePacked(htmlPack.dir, pastBothEdges, htmlPack.result, profile, ATLAS_EDIT_TWIN);
     for (const [region, at] of plantedRects) {
       const detail = offPageDetail(report, region);
       if (detail === null) {
@@ -43415,7 +43706,7 @@ function runPackerSuite(): number {
     const edge = quarterPage.width - oblong.height;
     const atEdge = withBounds(quarterText, name, edge, 0, oblong.width, oblong.height);
     const turnedReport = gatePacked(quarterTurn.dir, atEdge, overlayCompile, 'spine');
-    const flatReport = gatePacked(quarterTurn.dir, withTurn(atEdge, name, 0), overlayCompile, 'spine');
+    const flatReport = gatePacked(quarterTurn.dir, withTurn(atEdge, name, 0), overlayCompile, 'spine', ATLAS_EDIT_TWIN);
     const flatDetail = offPageDetail(flatReport, name);
     if (!turnedReport.passed.includes(ATLAS_RULE)) {
       turnProbes.push(
@@ -43501,7 +43792,8 @@ function runPackerSuite(): number {
   // leaves it.
   const splitProbes: string[] = [];
   for (const profile of VALIDATE_PROFILES) {
-    const report = gatePacked(htmlPack.dir, overlapped, htmlPack.result, profile);
+    // Overlap is the renderer's policy, so only `spine-html` fails a moved assertion over it — and only there does the twin run.
+    const report = gatePacked(htmlPack.dir, overlapped, htmlPack.result, profile, profile === 'spine-html' ? ATLAS_EDIT_TWIN : undefined);
     const named = report.failures.some((f) => f.assertion === ATLAS_RULE && f.detail.includes('overlap on page'));
     if (profile === 'spine' && named) {
       splitProbes.push(`profile ${profile} refuses two regions over the same texels: ${verdictOf(report, ATLAS_RULE)}`);
@@ -43544,7 +43836,7 @@ function runPackerSuite(): number {
       atlasInPath: offPagePath,
     }),
   );
-  const gateReport = gatePacked(htmlPack.dir, pastBothEdges, htmlPack.result, 'spine');
+  const gateReport = gatePacked(htmlPack.dir, pastBothEdges, htmlPack.result, 'spine', ATLAS_EDIT_TWIN);
   const agreeProbes: string[] = [];
   const refusedRegion =
     compileRefusal === null ? undefined : plantedRects.find(([region]) => compileRefusal.includes(`"${region}"`));
@@ -43665,7 +43957,7 @@ function runPackerSuite(): number {
     const unreadPlate = readPlate(join(htmlPack.dir, packPage.name));
     const unreadDeclared = unreadRect.width * unreadRect.height;
     const unreadOnPage = texelsOnPage(unreadRect, unreadPlate);
-    const unreadDetails = alphaDetails(gatePacked(htmlPack.dir, unreadText, htmlPack.result), unreadName);
+    const unreadDetails = alphaDetails(gatePacked(htmlPack.dir, unreadText, htmlPack.result, 'spine-html', ATLAS_EDIT_TWIN), unreadName);
     if (unreadDetails.length !== 1) {
       unreadProbes.push(
         `A19 printed ${unreadDetails.length} line(s) about "${unreadName}" and one rectangle is one subject: ` +
@@ -43750,7 +44042,7 @@ function runPackerSuite(): number {
       partlyRect.width,
       partlyRect.height,
     );
-    const partlyDetails = alphaDetails(gatePacked(flushDir, partlyText, turnedOpaqueResult), partlyName);
+    const partlyDetails = alphaDetails(gatePacked(flushDir, partlyText, turnedOpaqueResult, 'spine-html', ATLAS_EDIT_TWIN), partlyName);
     if (partlyDetails.length !== 1) {
       partlyProbes.push(
         `A19 printed ${partlyDetails.length} line(s) about "${partlyName}", which is opaque over the ` +
@@ -43802,7 +44094,7 @@ function runPackerSuite(): number {
   // PK65: and the sentence a part wholly on its page gets does not move. The
   // same flush pack, untouched: every region on it is opaque and on the page,
   // so every one is named, in the words the branch point used, to the byte.
-  const intactReport = gatePacked(flushDir, flushPack.atlasText, turnedOpaqueResult);
+  const intactReport = gatePacked(flushDir, flushPack.atlasText, turnedOpaqueResult, 'spine-html', ATLAS_EDIT_TWIN);
   const intactProbes: string[] = [];
   let intactNamed = 0;
   for (const region of flushPage.regions) {
@@ -43853,17 +44145,19 @@ function runPackerSuite(): number {
   // PK66: the positive control. The clause has to be SILENT on every pack this
   // suite builds, and the population has to be one where it could have spoken:
   // every region of it is measured over every texel it declares.
+  // The twin (issue #1025, cut 4c-1) rides the one entry whose atlas is not the one its compile wrote and whose
+  // opaque part A19 names; the others are their model's own pair, or fail nothing the model side runs.
   const alphaPopulation = [
-    ['articulated pack', htmlPack.dir, htmlPack.atlasText, htmlPack.result],
-    ['flush probe pack', flushDir, flushPack.atlasText, turnedOpaqueResult],
-    ['overlay loose emit', optsForFixture(OVERLAY).outDir, overlayCompile.atlasText, overlayCompile],
-    ['articulated loose emit', optsForFixture(ARTICULATED).outDir, htmlPack.result.atlasText, htmlPack.result],
+    ['articulated pack', htmlPack.dir, htmlPack.atlasText, htmlPack.result, undefined],
+    ['flush probe pack', flushDir, flushPack.atlasText, turnedOpaqueResult, ATLAS_EDIT_TWIN],
+    ['overlay loose emit', optsForFixture(OVERLAY).outDir, overlayCompile.atlasText, overlayCompile, undefined],
+    ['articulated loose emit', optsForFixture(ARTICULATED).outDir, htmlPack.result.atlasText, htmlPack.result, undefined],
   ] as const;
   const silentProbes: string[] = [];
   let regionsSeen = 0;
   let fullyRead = 0;
-  for (const [label, dir, text, result] of alphaPopulation) {
-    const report = gatePacked(dir, text, result);
+  for (const [label, dir, text, result, twin] of alphaPopulation) {
+    const report = gatePacked(dir, text, result, 'spine-html', twin);
     for (const f of report.failures) {
       if (f.assertion === ALPHA_RULE && f.detail.includes('is not measured')) {
         silentProbes.push(`${label}: ${f.detail.slice(0, 150)}`);
@@ -45245,7 +45539,8 @@ function runAtlasReaderSuite(): number | null {
     const ratio = 0.5;
     const honestText = atlasOnItsFilesOwnGrid(packed.atlasText, ratio);
     writeFileSync(join(dir, 'honest.atlas'), honestText);
-    const gate = (atlasText: string, atlasDir: string, profile: ValidateProfile): ReturnType<typeof validate> =>
+    // `twin` (issue #1025, cut 4c-1): the pack's atlas, as the document's pages spell it, beside a call that breaks a moved assertion.
+    const gate = (atlasText: string, atlasDir: string, profile: ValidateProfile, twin?: ModelTwin): ReturnType<typeof validate> =>
       validate({
         skeletonText: packed.result.skeletonText,
         atlasText,
@@ -45254,7 +45549,7 @@ function runAtlasReaderSuite(): number | null {
         modelText: threadedModel(packed.result, packed.result.atlasText),
         rig: packed.result.rig,
         profile,
-      });
+      }, twin);
     return { packed, pages, dir, ratio, honestText, gate };
   })();
   if (halved === null) {
@@ -45318,7 +45613,7 @@ function runAtlasReaderSuite(): number | null {
     );
 
     // PKR46 — the refusal, and whether the repair it prints actually works.
-    const coarse = halved.gate(halved.packed.atlasText, halved.dir, 'spine');
+    const coarse = halved.gate(halved.packed.atlasText, halved.dir, 'spine', ATLAS_EDIT_TWIN);
     const coarseSaid = coarse.failures.find((f) => f.assertion === A06)?.detail ?? null;
     const honest = halved.gate(halved.honestText, halved.dir, 'spine');
     const honestPack = join(halved.dir, 'honest.atlas');
@@ -45369,7 +45664,7 @@ function runAtlasReaderSuite(): number | null {
     );
 
     // PKR47 — the instrument the card named, on the page it cannot locate.
-    const coarsePolicy = halved.gate(halved.packed.atlasText, halved.dir, 'spine-html');
+    const coarsePolicy = halved.gate(halved.packed.atlasText, halved.dir, 'spine-html', ATLAS_EDIT_TWIN);
     const declaredPolicy = halved.gate(halved.packed.atlasText, halved.packed.dir, 'spine-html');
     const alphaSaid = coarsePolicy.failures.filter((f) => f.assertion === A19).map((f) => f.detail);
     const declaredAlpha = declaredPolicy.failures.filter((f) => f.assertion === A19).map((f) => f.detail);
@@ -45730,7 +46025,7 @@ function runAtlasReaderSuite(): number | null {
               modelText: threadedModel(full, full.atlasText),
               rig: full.rig,
               profile: 'spine',
-            }).failures.find((f) => f.assertion === A06)?.detail ?? null);
+            }, ATLAS_EDIT_TWIN).failures.find((f) => f.assertion === A06)?.detail ?? null);
 
       // PKR55 — the contour is refused, with the gate's sentence, and the repair builds it.
       const traced = compiled(packs.rigs.traced, packs.half);
@@ -58896,7 +59191,7 @@ function runCurrencySuite(): number {
     const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
     const dirs = writeProbeRig();
     const refusalUnder = (profile: ValidateProfile, mutate: (text: string) => string): string | null =>
-      gateProbeAtlas(dirs, STATIC_MOTION, mutate, profile).failures.find((f) => f.assertion === A06)?.detail ?? null;
+      gateProbeAtlas(dirs, STATIC_MOTION, mutate, profile, ATLAS_EDIT_TWIN).failures.find((f) => f.assertion === A06)?.detail ?? null;
     const uniformSaid = refusalUnder('spine', doubleFirstAtlasPageSize);
     const stretchedSaid = refusalUnder('spine', stretchFirstAtlasPageSize);
 
@@ -96818,7 +97113,10 @@ function runVerdictSuppliersSuite(): number {
         ],
         'and a check that compared nothing is no check',
       ),
+      // Per moved assertion (cut 4c-1): an assertion whose lines were compared on no call is named, not folded into the total.
+      ...codes.filter((code) => (c.linesByCode.get(code) ?? 0) === 0).map((code) => `${code}: compared on 0 calls`),
     ];
+    const perCode = codes.map((code) => `${code.slice(0, 3)} ${c.linesByCode.get(code) ?? 0}/${c.measuredByCode.get(code) ?? 0} measured`).join(', ');
     const held = probes.length === 0;
     say(
       'VF02_EVERY_CALL_ON_ITS_MODELS_OWN_BUILD_PRINTS_THE_SAME_LINES_ON_BOTH_SIDES',
@@ -96827,8 +97125,9 @@ function runVerdictSuppliersSuite(): number {
         held,
         probes,
         `this run: ${c.calls} validate call(s), ${c.withModel} with a model in hand, ${c.own} of them on the model's own pair — ` +
-          `${c.compared} compared over ${c.lines} line(s) of [${codes.join(', ')}] and the stats they set, every one identical; ` +
-          `${c.bothRefused} refused by both parses alike; ${c.afterEmit} after an edit (VF03's); ${c.withoutModel} with no model in hand`,
+          `${c.compared} compared over ${c.lines} line(s) of [${codes.join(', ')}] and the stats they set, every one identical — lines per assertion [${perCode}]; ` +
+          `${c.bothRefused} refused by both parses alike, on ${c.beforeParse} of which the rules that run before the parse were compared over ${c.beforeParseLines} line(s); ` +
+          `${c.afterEmit} after an edit (VF03's); ${c.withoutModel} with no model in hand`,
         (count) => `${count} difference(s) between the suppliers, by case:`,
       ),
       'the card\'s second population: each existing mutant and control that has a compile behind it is a test of both ' +
@@ -96911,6 +97210,22 @@ function runVerdictSuppliersSuite(): number {
         return { ...facts, regionAttachments: facts.regionAttachments.map((r, i) => (i === 0 ? { ...r, width: -r.width } : r)) };
       } }, 'A03_REGION_WIDTH_HEIGHT_FINITE'],
       ['a page under a neighbouring name', { atlasPages: (read) => ({ atlas: { pages: (read.doc.pages ?? []).map((p, i) => ({ name: i === 0 ? `${p.name}x` : p.name })) } }) }, 'A17_ATLAS_PAGE_FILES_EXIST'],
+      // Cut 4c-1's families, one neighbouring value each.
+      ['the first mesh\'s first uv half past the unit square', { skinMeshes: (read) => ({ meshes: MODEL_SUPPLY.skinMeshes(read).meshes.map((m, i) => (i === 0 ? { ...m, regionUVs: [1.5, ...Array.from(m.regionUVs).slice(1)] } : m)) }) }, 'A22_MESH_UVS_IN_UNIT_RANGE'],
+      ['no animation of any name', { animatedBones: () => ({ bonesKeyedBy: () => undefined }) }, 'A15_IDLE_NO_MESH_BONE_KEYS'],
+      ['the first bone skin-required', { skinMembers: (read) => {
+        const facts = MODEL_SUPPLY.skinMembers(read);
+        return { ...facts, bones: facts.bones.map((b, i) => (i === 0 ? { ...b, skinRequired: true } : b)) };
+      } }, 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED'],
+      ['the atlas\'s first region under a neighbouring name', { regionJoins: (read) => {
+        const facts = MODEL_SUPPLY.regionJoins(read);
+        return { ...facts, regionNames: (facts.regionNames ?? []).map((name, i) => (i === 0 ? `${name}x` : name)) };
+      } }, 'A08_REGION_NAMES_MATCH_ATTACHMENTS'],
+      ['the first page claiming premultiplied alpha', { atlasRegions: (read, given) => {
+        const facts = MODEL_SUPPLY.atlasRegions(read, given);
+        return facts.atlas === null ? facts : { atlas: { ...facts.atlas, pages: facts.atlas.pages.map((p, i) => (i === 0 ? { ...p, pma: true } : p)) } };
+      } }, 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG'],
+      ['a one-pixel stage', { stage: () => ({ width: 1, height: 1 }) }, 'A14_NO_FULL_FRAME_MESH'],
     ];
     const named: string[] = [];
     for (const [label, supply, code] of plants) {
@@ -96970,6 +97285,35 @@ function runVerdictSuppliersSuite(): number {
     );
   }
 
+  // --- VF09: cut 4c-1's fact families, fact by fact, order and identity included ---
+  {
+    const families = [...SUPPLIERS.facts.entries()];
+    const expected = ['region paths', 'meshes', 'animated bones', 'skin members', 'region joins', 'atlas', 'stage'];
+    const probes = [
+      ...SUPPLIERS.faults.filter((f) => f.fault.startsWith('the facts "')).map((f) => `${f.case}: ${f.fault}`),
+      ...expected.filter((family) => (SUPPLIERS.facts.get(family)?.compared ?? 0) === 0).map((family) => `the family "${family}" was compared on 0 builds`),
+      ...floorProbes(
+        [[SUPPLIERS.joinsDocumentOrderDiffers, 1, `${SUPPLIERS.joinsDocumentOrderDiffers} of ${SUPPLIERS.joinsMultiSkin} multi-skin build(s) join their regions in another order when the document is walked in its own skin and slot-key order`]],
+        "so nothing here shows the emitter's order is the one A08 has to walk",
+      ),
+    ];
+    const held = probes.length === 0;
+    say(
+      'VF09_THE_MODEL_SIDE_STATES_EACH_NEW_FACT_FAMILY_AS_SPINE_CORE_LOADS_IT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `over every distinct build a call made on its model's own pair: ${families.map(([family, f]) => `${family} ${f.equal} of ${f.compared}`).join(', ')} equal fact by fact, ` +
+          `order included and, where a body asks by identity (a skin's constraint, a region's page, \`findRegion\`'s answer), the entry's position; ` +
+          `walked in the document's own skin and slot-key order instead, ${SUPPLIERS.joinsDocumentOrderDiffers} of ${SUPPLIERS.joinsMultiSkin} multi-skin build(s) would join their regions in another order`,
+      ),
+      'issue #1025, cut 4c-1: a line is a summary of the facts it read, and a PASS hides every value it did not have to print — ' +
+        'the meshes A13, A14, A15 and A22 read, the bones idle keys, the skin members, the region joins, the atlas, the stage and the region paths ' +
+        "are compared whole on both suppliers, as VF05 compares the skins' walk",
+    );
+  }
+
   // --- VF06: the model side's parse — the reader's refusal and the region rule ---
   {
     const probes: string[] = [];
@@ -96987,10 +97331,10 @@ function runVerdictSuppliersSuite(): number {
     const run = (edit: (doc: Record<string, unknown>) => void): ModelReport => {
       const doc = JSON.parse(modelText) as Record<string, unknown>;
       edit(doc);
-      return validateModel({ modelText: `${JSON.stringify(doc, null, 2)}\n`, atlasDir: overlay.opts.outDir, profile: 'spine-html' });
+      return validateModel({ modelText: `${JSON.stringify(doc, null, 2)}\n`, atlasDir: overlay.opts.outDir, profile: 'spine-html', rig: overlay.result.rig, given: modelGivenOfBuild(overlay.result.skeletonText, overlay.result.atlasText) });
     };
     const { placeholder } = firstRegion(base);
-    const clean = validateModel({ modelText, atlasDir: overlay.opts.outDir, profile: 'spine-html' });
+    const clean = validateModel({ modelText, atlasDir: overlay.opts.outDir, profile: 'spine-html', rig: overlay.result.rig, given: modelGivenOfBuild(overlay.result.skeletonText, overlay.result.atlasText) });
     if (!clean.passed.includes(A00_MODEL_READ) || !clean.passed.includes(A00_MODEL_REGIONS_ON_PAGES)) probes.push(`the probe's own document did not pass both rules: [${clean.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`);
     const unreadable = run((doc) => void delete firstRegion(doc).record.width);
     const readFail = unreadable.failures.find((f) => f.assertion === A00_MODEL_READ);
@@ -97008,8 +97352,14 @@ function runVerdictSuppliersSuite(): number {
       delete doc.pages;
     });
     if (!pageless.failures.some((f) => f.assertion === A00_MODEL_REGIONS_ON_PAGES && f.detail.includes('states no pages'))) probes.push('a rigc-compiled/1 document, which states no pages, was not refused by the region rule');
-    const notSkipped = codes.filter((code) => !missing.skipped.some((s) => s.assertion === code));
+    const beforeTheParse = MOVED_ASSERTIONS.filter((m) => m.beforeTheParse === true).map((m) => m.code);
+    const notSkipped = codes.filter((code) => !beforeTheParse.includes(code) && !missing.skipped.some((s) => s.assertion === code));
     if (notSkipped.length > 0) probes.push(`with the region rule refusing, [${notSkipped.join(', ')}] did not skip`);
+    // A rule that runs before the parse (A08, cut 4c-1) runs behind the reader alone, and names the very miss the region rule refuses.
+    const a08Named = missing.failures.find((f) => f.assertion === 'A08_REGION_NAMES_MATCH_ATTACHMENTS' && f.detail.includes('"vf_no_such_region"'));
+    if (beforeTheParse.length === 0 || a08Named === undefined) probes.push(`with the region rule refusing, A08 did not run and name "vf_no_such_region": [${missing.failures.map((f) => `${f.assertion}: ${f.detail.slice(0, 120)}`).join('; ')}]`);
+    const skippedBeforeParse = beforeTheParse.filter((code) => !unreadable.skipped.some((s) => s.assertion === code));
+    if (skippedBeforeParse.length > 0) probes.push(`with the reader refusing, [${skippedBeforeParse.join(', ')}] — which run behind the reader — did not skip`);
     const held = probes.length === 0;
     say(
       'VF06_THE_MODEL_SIDES_PARSE_IS_THE_READER_AND_THE_REGION_RULE_EACH_NAMED',
@@ -97019,7 +97369,7 @@ function runVerdictSuppliersSuite(): number {
         probes,
         `the overlay probe's document passes both; with a region's width deleted ${A00_MODEL_READ} reads "${readFail?.detail.slice(0, 120)}…"; ` +
           `${A00_MODEL_REGIONS_ON_PAGES} names a path to no region ("${missingFail?.detail.slice(0, 120)}"), a null atlas rectangle and a document with no pages; ` +
-          `every moved assertion skips behind either refusal`,
+          `every moved assertion skips behind either refusal but [${MOVED_ASSERTIONS.filter((m) => m.beforeTheParse === true).map((m) => m.code).join(', ')}], which run before the parse as on the runtime's side: behind the reader alone, naming the miss the region rule refuses`,
       ),
       'the census: 14 of the 23 cases that fail A00 are documents the reader accepts and spine-core refuses at load. The region rule is ' +
         'what makes the model side refuse them where the parse does, rather than when the core poses',
@@ -97065,8 +97415,10 @@ function runVerdictSuppliersSuite(): number {
     const behindView = assertionsBehindTheRoundTrip(view);
     const behindFile = assertionsBehindTheRoundTrip(file);
     const recovered = codes.filter((code) => (inView.includes(code) && !inFile.includes(code)) || (behindView.includes(code) && !behindFile.includes(code)));
-    if (!behindView.includes('A17_ATLAS_PAGE_FILES_EXIST')) probes.push('A17, whose body opens on `if (!atlas)`, is not behind the round trip in the view');
-    for (const code of ['A03_REGION_WIDTH_HEIGHT_FINITE', 'A17_ATLAS_PAGE_FILES_EXIST', 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN']) {
+    for (const code of ['A17_ATLAS_PAGE_FILES_EXIST', 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', 'A19_OVERLAY_PNGS_HAVE_ALPHA', 'A27_REGION_NAME_MATCHES_PAGE_FILENAME']) {
+      if (!behindView.includes(code)) probes.push(`${code}, whose body opens on \`if (!atlas)\`, is not behind the round trip in the view`);
+    }
+    for (const code of ['A03_REGION_WIDTH_HEIGHT_FINITE', 'A17_ATLAS_PAGE_FILES_EXIST', 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN', 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', 'A08_REGION_NAMES_MATCH_ATTACHMENTS', 'A13_MESH_BUDGET', 'A22_MESH_UVS_IN_UNIT_RANGE', 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED']) {
       if (!inView.includes(code)) probes.push(`${code} iterates over its subject and is not in the view's quantified roster`);
     }
     const plantRoot = mkdtempSync(join(tmpdir(), 'rigc-vf08-'));

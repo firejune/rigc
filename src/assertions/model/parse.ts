@@ -55,6 +55,8 @@ export const MODEL_PARSE_KIND: Readonly<Record<string, AssertionKind>> = {
 
 /** What the region rule SKIPs with when the reader refused the document. */
 export const SKIP_NO_MODEL_DOCUMENT = `the reader refused the document, so there is no record to resolve (${A00_MODEL_READ} owns that failure)`;
+/** What A08 SKIPs with on the model side over a `rigc-compiled/1` document, which states no pages to read region names off (issue #1025, cut 4c-1). */
+export const SKIP_NO_MODEL_PAGES = 'the document is a rigc-compiled/1 document, which states no pages, so there are no region names to join against';
 /** What the region rule SKIPs with when no record resolves through a region. */
 export const SKIP_NO_REGION_RECORD = 'no record of the document resolves through an atlas region';
 

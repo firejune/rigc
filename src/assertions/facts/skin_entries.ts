@@ -19,14 +19,16 @@
  * the entry shape structurally, which is how `validate()` supplies it.
  */
 
-/** One region attachment: the name it loaded under (its `name`, else its placeholder) and its size. */
+/** One region attachment: the name it loaded under (its `name`, else its placeholder), the region path it resolves through (its `path`, else that name) and its size. */
 export interface RegionEntry {
   readonly name: string;
   readonly width: number;
   readonly height: number;
+  /** Read by A19 (issue #1025, cut 4c-1), which exempts a base plate by the region it draws; the runtime types it as possibly unset, and reads it with the name as fallback. */
+  readonly path?: string;
 }
 
-/** What the skins hold, for A03 and A11. */
+/** What the skins hold, for A03, A11 and A19. */
 export interface SkinEntryFacts {
   /** Every region attachment of every skin, in the file's walk order (the header's ⭐). */
   readonly regionAttachments: readonly RegionEntry[];

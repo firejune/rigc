@@ -13,13 +13,11 @@
  *
  * A failure is a named assertion, and a named assertion is a nonzero exit.
  */
-import { existsSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import {
   AnimationState,
   AnimationStateData,
   AtlasAttachmentLoader,
-  type BoneData,
   BoundingBoxAttachment,
   ClippingAttachment,
   type ConstraintTimeline,
@@ -63,9 +61,6 @@ import {
 // them, so it is already on `package.json`'s `files` allowlist — see CLAUDE.md.
 // A19 needs the DECODED page, not its header, to measure one region's own
 // rectangle on a shared page.
-import { readPlate } from '../tools/plate.ts';
-import { pageFootprint, pageGridSentence } from './atlas.ts';
-import { frameRegionName } from './core/uvs.ts';
 import {
   BEZIER_POINTS,
   curveStorage,
@@ -82,7 +77,6 @@ import {
   TOPLEVEL_CONSTRAINT_ARRAYS,
   type SpineGeneration,
 } from './generation.ts';
-import { colourTypeName, readPngHeader } from './png.ts';
 import { nonFiniteOfPosed } from './render.ts';
 import { BONE_INHERIT_KNOWN } from './rig.ts';
 import {
@@ -110,12 +104,26 @@ import { a03RegionWidthHeightFinite } from './assertions/bodies/a03.ts';
 import { a11NoClippingAttachments } from './assertions/bodies/a11.ts';
 import { a17AtlasPageFilesExist } from './assertions/bodies/a17.ts';
 import { a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten } from './assertions/bodies/a45.ts';
+import { attachmentRegionLookups, type AttachmentRegionJoin } from './assertions/region_lookups.ts';
+import type { MeshEntry, SkinMeshFacts } from './assertions/facts/skin_meshes.ts';
+import type { AnimatedBoneFacts } from './assertions/facts/animated_bones.ts';
+import type { RegionJoinFacts } from './assertions/facts/region_joins.ts';
+import type { StageFacts } from './assertions/facts/stage.ts';
+import type { AtlasRegionFacts } from './assertions/facts/atlas_regions.ts';
+import type { SkinMemberFacts } from './assertions/facts/skin_members.ts';
+import { a08RegionNamesMatchAttachments } from './assertions/bodies/a08.ts';
+import { a13MeshBudget } from './assertions/bodies/a13.ts';
+import { a14NoFullFrameMesh } from './assertions/bodies/a14.ts';
+import { a15IdleNoMeshBoneKeys } from './assertions/bodies/a15.ts';
+import { a22MeshUvsInUnitRange } from './assertions/bodies/a22.ts';
+import { a38SkinMembersAreSkinRequired } from './assertions/bodies/a38.ts';
+import { a06AtlasPageSizeMatchesPng } from './assertions/bodies/a06.ts';
+import { a19OverlayPngsHaveAlpha } from './assertions/bodies/a19.ts';
+import { a27RegionNameMatchesPageFilename } from './assertions/bodies/a27.ts';
 import {
   SKIP_NO_ANIMATION,
   SKIP_NO_ATLAS,
   SKIP_NO_ATLAS_PAGE,
-  SKIP_NO_ATLAS_REGION,
-  SKIP_NO_ATTACHMENT_REGION_JOIN,
   SKIP_NO_DECLARED_DURATION,
   SKIP_NO_LINKED_MESH,
   SKIP_NO_MESH_ATTACHMENT,
@@ -576,57 +584,10 @@ const SPINE_4_3: SpineGeneration = '4.3';
 // `Json`, `isObj` and `atStoredKey` are `./assertions/values.ts`'s since issue
 // #1025: the bodies that moved out of this file read values the same way.
 
-/**
- * The atlas region names one raw skin entry will make the loader look up — or
- * `null` when the file states a sequence this walk cannot predict.
- *
- * ⚠️ Measured against the loader rather than reasoned out, because a join that
- * merely looks right is the thing A08 exists to refuse. `readSequence`
- * (`dist/SkeletonJson.js:641-649`) turns an absent or null `sequence` into
- * `new Sequence(1, false)` — one lookup, at the bare path — and a present one
- * into `new Sequence(count ?? 0, true)`, so a sequence map with no `count`
- * looks up nothing at all. Each frame's name is the core's `frameRegionName`
- * (`src/core/uvs.ts`): `start + i`, left-padded with zeros to `digits`, after
- * the path (issue #1015). `PS127` records what the loader asks for and compares,
- * and the core suite holds the frame names to `Sequence.getPath` over 7,680
- * cases.
- *
- * Nothing in `examples/` carries a `sequence` (measured: 0 occurrences across
- * all twelve editor exports), so without this the assertion would have read a
- * sequence's base path as a region name and refused correct foreign data —
- * `A21_MESH_RIM_PINNED`'s old `|| 'ring'` default, one file over.
- */
-export function attachmentRegionLookups(sequence: unknown, path: string): string[] | null {
-  if (sequence === undefined || sequence === null) return [path];
-  if (!isObj(sequence)) return null;
-  const whole = (value: unknown, fallback: number): number | null => {
-    if (value === undefined) return fallback;
-    return typeof value === 'number' && Number.isInteger(value) ? value : null;
-  };
-  const count = whole(sequence.count, 0);
-  const start = whole(sequence.start, 1);
-  const digits = whole(sequence.digits, 0);
-  if (count === null || start === null || digits === null || count < 0) return null;
-  const series = { count, start, digits, setup: 0 };
-  const lookups: string[] = [];
-  for (let i = 0; i < count; i++) lookups.push(frameRegionName(path, series, i));
-  return lookups;
-}
-
-/** One skin entry's join onto the atlas, as the loader will perform it. */
-export interface AttachmentRegionJoin {
-  skin: string;
-  slot: string;
-  placeholder: string;
-  /** The attachment's own name — the entry's `name` when it states one, else the placeholder. */
-  name: string;
-  /**
-   * Every atlas region name the loader will ask this atlas for, in the order it
-   * asks. Empty for a `sequence` with no `count`, and `null` for a sequence map
-   * this walk will not guess at.
-   */
-  lookups: string[] | null;
-}
+// `attachmentRegionLookups` and `AttachmentRegionJoin` are
+// `./assertions/region_lookups.ts`'s since issue #1025: A08's body runs on both
+// sides, and the model side links nothing from the runtime. Re-exported here.
+export { attachmentRegionLookups, type AttachmentRegionJoin };
 
 /**
  * Every atlas-region lookup `AtlasAttachmentLoader` will perform, read off the
@@ -1017,7 +978,17 @@ export function spineSkinEntries(data: ReturnType<SkeletonJson['readSkeletonData
  * line would hide a difference (an order nothing failed on, a name no line
  * printed); `validate()` itself builds them from its own round trip.
  */
-export function runtimeFacts(skeletonText: string, atlasText: string): { skinEntries: SkinEntryFacts; atlasPages: AtlasPageFacts; slotColour: SlotColourFacts } | null {
+export function runtimeFacts(skeletonText: string, atlasText: string): {
+  skinEntries: SkinEntryFacts;
+  atlasPages: AtlasPageFacts;
+  slotColour: SlotColourFacts;
+  skinMeshes: SkinMeshFacts;
+  animatedBones: AnimatedBoneFacts;
+  skinMembers: SkinMemberFacts;
+  regionJoins: RegionJoinFacts;
+  atlasRegions: AtlasRegionFacts;
+  stage: StageFacts;
+} | null {
   let atlas: TextureAtlas;
   let data: ReturnType<SkeletonJson['readSkeletonData']>;
   try {
@@ -1026,7 +997,18 @@ export function runtimeFacts(skeletonText: string, atlasText: string): { skinEnt
   } catch {
     return null;
   }
-  return { skinEntries: spineSkinEntries(data), atlasPages: { atlas }, slotColour: spineSlotColourFacts(JSON.parse(skeletonText) as Json, data) };
+  const raw = JSON.parse(skeletonText) as Json;
+  return {
+    skinEntries: spineSkinEntries(data),
+    atlasPages: { atlas },
+    slotColour: spineSlotColourFacts(raw, data),
+    skinMeshes: spineSkinMeshes(data),
+    animatedBones: spineAnimatedBones(raw),
+    skinMembers: data,
+    regionJoins: spineRegionJoins(atlasText, raw),
+    atlasRegions: { atlas },
+    stage: spineStage(data),
+  };
 }
 
 /**
@@ -1065,6 +1047,88 @@ function spineSlotColourFacts(raw: Json | null, data: ReturnType<SkeletonJson['r
       return skeleton.slots.find((s) => s.data.name === slotName)?.appliedPose;
     },
   };
+}
+
+/**
+ * The runtime's supply of `SkinMeshFacts` (issue #1025, cut 4c-1): every
+ * loaded `MeshAttachment` of every skin, linked meshes included, in the loaded
+ * skins' order — the walk this file's prelude makes for `meshAttachments` —
+ * with its slot and that slot's bone, and the bones its weights name decoded
+ * off the loaded index run, a bone index the skeleton lacks left out as A15
+ * always left it out. The model side's supply is
+ * `./assertions/model/skin_meshes.ts`.
+ */
+export function spineSkinMeshes(data: ReturnType<SkeletonJson['readSkeletonData']>): SkinMeshFacts {
+  const meshes: MeshEntry[] = [];
+  for (const skin of data.skins) {
+    for (const entry of skin.getAttachments()) {
+      const mesh = entry.attachment;
+      if (!(mesh instanceof MeshAttachment)) continue;
+      const weightBones: string[] = [];
+      if (mesh.bones) {
+        for (let i = 0; i < mesh.bones.length; ) {
+          const boneCount = mesh.bones[i++];
+          for (let n = 0; n < boneCount; n++, i++) {
+            const bone = data.bones[mesh.bones[i]];
+            if (bone) weightBones.push(bone.name);
+          }
+        }
+      }
+      const slot = data.slots[entry.slotIndex];
+      meshes.push({
+        name: mesh.name,
+        slot: slot.name,
+        slotBone: slot.boneData.name,
+        triangles: mesh.triangles,
+        width: mesh.width,
+        height: mesh.height,
+        regionUVs: mesh.regionUVs,
+        worldVerticesLength: mesh.worldVerticesLength,
+        weightBones,
+      });
+    }
+  }
+  return { meshes };
+}
+
+/**
+ * The runtime's supply of `AnimatedBoneFacts` (issue #1025, cut 4c-1): read
+ * off the skeleton JSON, as A15 always read the bones `idle` keys — an
+ * animation that is not an object is no animation, a `bones` group that is not
+ * an object is no bone timeline. The model side's supply is
+ * `./assertions/model/animated_bones.ts`.
+ */
+export function spineAnimatedBones(raw: Json | null): AnimatedBoneFacts {
+  return {
+    bonesKeyedBy: (name) => {
+      const animation = isObj(raw?.animations) ? (raw.animations as Json)[name] : undefined;
+      if (!isObj(animation)) return undefined;
+      if (!isObj(animation.bones)) return null;
+      return Object.keys(animation.bones as Json);
+    },
+  };
+}
+
+/** The runtime's supply of `StageFacts` (issue #1025, cut 4c-1): the loaded skeleton's `width` and `height`, as spine-core holds them — `undefined` where the header states none — or both absent with no skeleton. */
+export function spineStage(data: ReturnType<SkeletonJson['readSkeletonData']> | null): StageFacts {
+  return { width: data?.width, height: data?.height };
+}
+
+/**
+ * The runtime's supply of `RegionJoinFacts` (issue #1025, cut 4c-1), read
+ * before the round trip as A08 always read it: the region names of a
+ * `TextureAtlas` built from the atlas text for this alone (`null` when that
+ * throws), and `attachmentRegionJoins` over the raw JSON (`null` when it did
+ * not parse). The model side's supply is `./assertions/model/region_joins.ts`.
+ */
+export function spineRegionJoins(atlasText: string, raw: Json | null): RegionJoinFacts {
+  let regionNames: string[] | null;
+  try {
+    regionNames = new TextureAtlas(atlasText).regions.map((r) => r.name);
+  } catch {
+    regionNames = null;
+  }
+  return { regionNames, joins: raw ? attachmentRegionJoins(raw) : null };
 }
 
 export function validate(input: ValidateInput): ValidateReport {
@@ -1232,65 +1296,7 @@ export function validate(input: ValidateInput): ValidateReport {
    * the miss in the loader's poorer words.
    */
   const pathsWithNoRegion = new Set<string>();
-  check('A08_REGION_NAMES_MATCH_ATTACHMENTS', () => {
-    let regionNames: Set<string>;
-    try {
-      regionNames = new Set(new TextureAtlas(input.atlasText).regions.map((r) => r.name));
-    } catch {
-      return skip(
-        'A08_REGION_NAMES_MATCH_ATTACHMENTS',
-        'the atlas text does not parse, so there are no region names to join against (A00 owns that failure)',
-      );
-    }
-    if (!raw) {
-      return skip('A08_REGION_NAMES_MATCH_ATTACHMENTS', 'the skeleton JSON did not parse (A00 owns that failure)');
-    }
-    let joined = 0;
-    for (const join of attachmentRegionJoins(raw)) {
-      // A `sequence` the walk will not guess at: say nothing rather than invent
-      // a region name. A00 still has the last word on it.
-      if (join.lookups === null) continue;
-      for (const lookup of join.lookups) {
-        joined++;
-        const at = `skin "${join.skin}" slot "${join.slot}" placeholder "${join.placeholder}"`;
-        const present = regionNames.has(lookup);
-        if (!present) pathsWithNoRegion.add(lookup);
-        if (lookup !== lookup.trim()) {
-          fail(
-            'A08_REGION_NAMES_MATCH_ATTACHMENTS',
-            `${at}: attachment "${join.name}" resolves through path ${JSON.stringify(lookup)}, which has stray ` +
-              `whitespace — the atlas is matched on the exact string, and ${
-                present
-                  ? 'the region it finds carries the same padding'
-                  : regionNames.has(lookup.trim())
-                    ? `the region this atlas has is ${JSON.stringify(lookup.trim())}, without it`
-                    : 'no region of this atlas carries it'
-              }`,
-          );
-        } else if (!present) {
-          // Not a guess and not a repair — a region the atlas DOES hold that
-          // differs from the wanted name only by case or padding. It is
-          // reported because it was measured, and where there is none the
-          // sentence says nothing at all.
-          const near = [...regionNames].find((r) => r.trim().toLowerCase() === lookup.toLowerCase());
-          fail(
-            'A08_REGION_NAMES_MATCH_ATTACHMENTS',
-            `${at}: attachment "${join.name}" wants region "${lookup}", which this atlas does not have${
-              near === undefined ? '' : ` — it does have ${JSON.stringify(near)}`
-            }. Either the skeleton's "path" or the atlas region name is the one that moved`,
-          );
-        }
-      }
-    }
-    for (const region of regionNames) {
-      if (region !== region.trim()) {
-        fail('A08_REGION_NAMES_MATCH_ATTACHMENTS', `atlas region ${JSON.stringify(region)} has stray whitespace`);
-      }
-    }
-    if (joined === 0 && regionNames.size === 0) {
-      return skip('A08_REGION_NAMES_MATCH_ATTACHMENTS', SKIP_NO_ATTACHMENT_REGION_JOIN);
-    }
-  });
+  check('A08_REGION_NAMES_MATCH_ATTACHMENTS', () => a08RegionNamesMatchAttachments(verdicts, spineRegionJoins(input.atlasText, raw), pathsWithNoRegion));
 
   // --- A31: every draw-order offset lands on a real place -------------------
   //
@@ -1960,6 +1966,8 @@ export function validate(input: ValidateInput): ValidateReport {
     // the runtime's supply of `SkinEntryFacts`, in the loaded skins' own order
     // (issue #1025).
     const skinEntries = spineSkinEntries(data);
+    // What the mesh rules that moved read of the skins (issue #1025, cut 4c-1).
+    const skinMeshes = spineSkinMeshes(data);
 
     // --- A03: every region has finite width/height (case 6c) ---------------
     check('A03_REGION_WIDTH_HEIGHT_FINITE', () => a03RegionWidthHeightFinite(verdicts, skinEntries));
@@ -2164,61 +2172,8 @@ export function validate(input: ValidateInput): ValidateReport {
     // constant in the validator would fail correct foreign data in the name of
     // somebody else's canvas. A rig that declares no budget has nothing to be
     // measured against, and the assertion says so instead of inventing a wall.
-    check('A13_MESH_BUDGET', () => {
-      const slotBudget = input.rig?.meshSlotBudget ?? null;
-      const triangleBudget = input.rig?.meshTriangleBudget ?? null;
-      if (slotBudget === null && triangleBudget === null) {
-        return skip(
-          'A13_MESH_BUDGET',
-          input.rig
-            ? `the rig "${input.rig.archetype}" declares no \`invariants.meshSlots\` or \`invariants.meshTriangles\` budget`
-            : 'no rig info (validating a bare directory), so no budget is declared',
-        );
-      }
-      // Two clauses and only one of them has a subject that can vanish (#580).
-      // A slot budget is a ceiling on a COUNT, and zero is a count — "this rig
-      // uses 0 of its 3 mesh slots" is a measurement — so that half holds on a
-      // skeleton with no mesh. A triangle budget is a ceiling on each mesh, so a
-      // rig that declares only that one and carries no mesh has measured
-      // nothing at all.
-      if (slotBudget === null && meshAttachments.length === 0) {
-        return skip(
-          'A13_MESH_BUDGET',
-          `the rig "${input.rig?.archetype}" budgets mesh triangles and nothing else, and ${SKIP_NO_MESH_ATTACHMENT}`,
-        );
-      }
-      if (slotBudget !== null && meshSlots.size > slotBudget) {
-        fail('A13_MESH_BUDGET', `${meshSlots.size} mesh slots, the rig budgets ${slotBudget}`);
-      }
-      if (triangleBudget === null) return;
-      for (const mesh of meshAttachments) {
-        const tris = (mesh.triangles?.length ?? 0) / 3;
-        if (tris > triangleBudget) {
-          fail('A13_MESH_BUDGET', `mesh "${mesh.name}" has ${tris} triangles, the rig budgets ${triangleBudget}`);
-        }
-      }
-    });
-    check('A14_NO_FULL_FRAME_MESH', () => {
-      const stageW = data.width || 0;
-      const stageH = data.height || 0;
-      // ⚠️ A stage-less skeleton has nothing for a mesh to span, and this rule
-      // used to report that as a PASS — the `stageW && stageH` guard below reads
-      // as a measurement of a 0x0 stage that no mesh can reach. It was only ever
-      // reachable from a foreign file until a rig spec could *declare* no stage
-      // (issue #578), and a pass certifying an unmeasured rig is the exact
-      // failure mode `A21_MESH_RIM_PINNED`'s `|| 'ring'` default was (#44).
-      if (!stageW || !stageH) {
-        return skip(
-          'A14_NO_FULL_FRAME_MESH',
-          'the skeleton declares no stage size, so there is no full frame for a mesh to span',
-        );
-      }
-      for (const mesh of meshAttachments) {
-        if (mesh.width >= stageW && mesh.height >= stageH) {
-          fail('A14_NO_FULL_FRAME_MESH', `mesh "${mesh.name}" spans the whole ${stageW}x${stageH} stage`);
-        }
-      }
-    });
+    check('A13_MESH_BUDGET', () => a13MeshBudget(verdicts, skinMeshes, input));
+    check('A14_NO_FULL_FRAME_MESH', () => a14NoFullFrameMesh(verdicts, skinMeshes, spineStage(data)));
 
     // --- A15: idle must not key a mesh-driving bone (dirty-skip lever) -----
     //
@@ -2229,98 +2184,7 @@ export function validate(input: ValidateInput): ValidateReport {
     // of them weighted meshes, and an `idle` whose job is to move them — so the
     // rig can say so in `invariants.idleDrivesMeshes`, and the rule then reports
     // what the declaration costs instead of refusing each bone.
-    check('A15_IDLE_NO_MESH_BONE_KEYS', () => {
-      const A15 = 'A15_IDLE_NO_MESH_BONE_KEYS';
-      /**
-       * Every mesh attachment, loaded, with the bones that drive it — its slot's
-       * bone, and, once weights exist, every bone its weights name. A ring mesh
-       * is driven by its CONTROL bone, a different bone from the slot's, and
-       * checking only the slot bone would let `idle` key the one bone that
-       * actually dirties the canvas every frame.
-       */
-      const meshDrivers: Array<{ mesh: MeshAttachment; bones: Set<string> }> = [];
-      for (const skin of data.skins) {
-        for (const entry of skin.getAttachments()) {
-          const mesh = entry.attachment;
-          if (!(mesh instanceof MeshAttachment)) continue;
-          const bones = new Set<string>([data.slots[entry.slotIndex].boneData.name]);
-          if (mesh.bones) {
-            for (let i = 0; i < mesh.bones.length; ) {
-              const boneCount = mesh.bones[i++];
-              for (let n = 0; n < boneCount; n++, i++) {
-                const bone = data.bones[mesh.bones[i]];
-                if (bone) bones.add(bone.name);
-              }
-            }
-          }
-          meshDrivers.push({ mesh, bones });
-        }
-      }
-      const meshBoneNames = new Set<string>();
-      for (const { bones } of meshDrivers) for (const name of bones) meshBoneNames.add(name);
-      const declared = input.rig?.idleDrivesMeshes ?? null;
-      /**
-       * A declaration that switches off nothing is refused rather than skipped,
-       * the standard `consumerDrivenMix` is held to: an opt-out that exempts
-       * nothing reads exactly like one that worked, and the next reader cannot
-       * tell the rig that needs it from the rig it was copied onto.
-       */
-      const stale = (why: string): void => {
-        fail(
-          A15,
-          `the rig "${input.rig?.archetype}" declares invariants.idleDrivesMeshes ("${declared}"), but ${why}, so the ` +
-            'declaration switches off nothing — remove it',
-        );
-      };
-      // The same shape as A06's and A17's guards, found by auditing for it
-      // (#568): a rig with no `idle` at all has nothing here to be wrong, and a
-      // rule that reports "held" over a subject that does not exist is the
-      // vacuous pass this file's own doctrine refuses. The two states get their
-      // own sentences because they are different absences — no such animation,
-      // versus one that keys no bone.
-      const idle = isObj(raw?.animations) ? (raw.animations as Json).idle : undefined;
-      if (!isObj(idle)) {
-        if (declared !== null) return stale('the skeleton declares no "idle" animation');
-        return skip(A15, 'the skeleton declares no "idle" animation, so nothing here can key a mesh-driving bone');
-      }
-      if (!isObj(idle.bones)) {
-        if (declared !== null) return stale('"idle" carries no bone timeline at all');
-        return skip(A15, '"idle" carries no bone timeline at all, so there is no key to hold against the mesh-driving bones');
-      }
-      const keyed = Object.keys(idle.bones as Json).filter((name) => meshBoneNames.has(name));
-      if (declared !== null) {
-        if (keyed.length === 0) return stale('"idle" keys no bone that drives a mesh');
-        const keyedSet = new Set(keyed);
-        const moved = meshDrivers.filter(({ bones }) => [...bones].some((name) => keyedSet.has(name)));
-        // `worldVerticesLength` is two numbers per vertex whatever the encoding,
-        // which is the count the runtime recomputes; reading `vertices.length`
-        // would count a weighted mesh's bone entries instead.
-        const vertices = moved.reduce((sum, { mesh }) => sum + mesh.worldVerticesLength / 2, 0);
-        const SHOWN = 8;
-        const names =
-          keyed.slice(0, SHOWN).map((name) => `"${name}"`).join(', ') + (keyed.length > SHOWN ? ` +${keyed.length - SHOWN}` : '');
-        return skip(
-          A15,
-          `declared by the rig ("${declared}"): idle keys ${keyed.length} bone(s) that drive ${moved.length} mesh ` +
-            `attachment(s) totalling ${vertices} vertices — ${names} — and each of those meshes is recomputed on every ` +
-            'frame it is shown',
-        );
-      }
-      for (const [i, boneName] of keyed.entries()) {
-        // The case is named once, on the first line an agent reads, rather than
-        // after every bone: the first painting rig this met printed 42 of these,
-        // and 42 identical sentences read as 42 separate mistakes. It rides the
-        // first finding rather than being a finding of its own, so the count of
-        // FAIL lines is still the count of bones.
-        const hint =
-          i > 0
-            ? ''
-            : `. ${keyed.length} bone(s) keyed by idle drive meshes; if this idle is meant to deform them (a painting ` +
-              'rig), declare invariants.idleDrivesMeshes: { "why": … } in the rig spec — or, where the motion belongs to ' +
-              'a pivot above the mesh, key that pivot one link up (FACE.md §3)';
-        fail(A15, `idle keys bone "${boneName}", which drives a mesh — meshes never idle-skip${hint}`);
-      }
-    });
+    check('A15_IDLE_NO_MESH_BONE_KEYS', () => a15IdleNoMeshBoneKeys(verdicts, skinMeshes, spineAnimatedBones(raw), input));
 
     // --- A20/A21/A22: the mesh checks the parser will never make ------------
     //
@@ -2676,32 +2540,7 @@ export function validate(input: ValidateInput): ValidateReport {
       }
     });
 
-    check('A22_MESH_UVS_IN_UNIT_RANGE', () => {
-      if (meshAttachments.length === 0) return skip('A22_MESH_UVS_IN_UNIT_RANGE', SKIP_NO_MESH_ATTACHMENT);
-      for (const mesh of meshAttachments) {
-        // `regionUVs` is what the JSON authored; `uvs` is the page-space result
-        // and stays EMPTY until a renderer calls computeUVs, so asserting on it
-        // here would be asserting on the wrong array (measured: length 0 after
-        // a clean load). With one part per page the two are equal anyway —
-        // computeUVs reduces to `u + regionUV * width` with u=0, width=1
-        // (MeshAttachment.js:173-174), which is the claim this assertion rests
-        // on and this is where it is checked.
-        const uvs = mesh.regionUVs;
-        if (!uvs || uvs.length !== mesh.worldVerticesLength) {
-          fail(
-            'A22_MESH_UVS_IN_UNIT_RANGE',
-            `mesh "${mesh.name}" has ${uvs?.length ?? 0} authored uv values for ${mesh.worldVerticesLength}`,
-          );
-          continue;
-        }
-        for (let i = 0; i < uvs.length; i++) {
-          if (!Number.isFinite(uvs[i]) || uvs[i] < -1e-6 || uvs[i] > 1 + 1e-6) {
-            fail('A22_MESH_UVS_IN_UNIT_RANGE', `mesh "${mesh.name}" uv[${i}] is ${uvs[i]}`);
-            break;
-          }
-        }
-      }
-    });
+    check('A22_MESH_UVS_IN_UNIT_RANGE', () => a22MeshUvsInUnitRange(verdicts, skinMeshes));
 
     // --- A39: a deform key that turns a triangle inside out ------------------
     //
@@ -4111,66 +3950,7 @@ export function validate(input: ValidateInput): ValidateReport {
     // Both load. Both animate. Neither is what the author wrote, and no other
     // check in this file can see either one, because the artifact is internally
     // consistent — it is the PAIRING that is wrong.
-    check('A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED', () => {
-      /** Every bone a skin can switch on, including the ancestors it drags in. */
-      const activatable = new Set<string>();
-      // The constraint OBJECTS a skin lists, never their names: a name is not a
-      // constraint in this format, and two constraints of one name under two
-      // kinds are two objects a skin may list separately (issue #692). Keyed by
-      // name, a `transform` `leg` that no skin lists read as listed because an
-      // `ik` `leg` was — a skinRequired constraint that never runs, reported
-      // green by the one assertion that looks for exactly that.
-      const listedConstraints = new Set(data.skins.flatMap((skin) => skin.constraints));
-      let listed = 0;
-      for (const skin of data.skins) {
-        for (const bone of skin.bones) {
-          listed++;
-          for (let cursor: BoneData | null = bone; cursor; cursor = cursor.parent) activatable.add(cursor.name);
-          if (!bone.skinRequired) {
-            fail(
-              'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
-              `skin "${skin.name}" activates bone "${bone.name}", which is not skinRequired — updateCache starts it ` +
-                'active anyway, so it poses under every skin and this list changes nothing',
-            );
-          }
-        }
-        for (const constraint of skin.constraints) {
-          listed++;
-          if (!constraint.skinRequired) {
-            fail(
-              'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
-              `skin "${skin.name}" activates constraint "${constraint.name}", which is not skinRequired — it runs ` +
-                'under every skin, so this list changes nothing',
-            );
-          }
-        }
-      }
-      const required = data.bones.filter((b) => b.skinRequired).length + data.constraints.filter((c) => c.skinRequired).length;
-      if (listed === 0 && required === 0) {
-        return skip(
-          'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
-          'no skin activates a bone or a constraint, and nothing declares itself skinRequired',
-        );
-      }
-      for (const bone of data.bones) {
-        if (bone.skinRequired && !activatable.has(bone.name)) {
-          fail(
-            'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
-            `bone "${bone.name}" is skinRequired and no skin's bones list reaches it, so it is never active — ` +
-              'it and its subtree hold the setup pose under every skin',
-          );
-        }
-      }
-      for (const constraint of data.constraints) {
-        if (constraint.skinRequired && !listedConstraints.has(constraint)) {
-          fail(
-            'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED',
-            `constraint "${constraint.name}" is skinRequired and no skin lists it, so it never runs`,
-          );
-        }
-      }
-      stats.skinMembers = listed;
-    });
+    check('A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED', () => a38SkinMembersAreSkinRequired(verdicts, data));
 
     // --- A09: compiled duration == declared duration (rule 4) --------------
     check('A09_ANIMATION_DURATION_MATCHES_SPEC', () => {
@@ -5016,181 +4796,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // #608 does, so the same state has to stop printing four passes about nothing.
   // `SKIP_NO_ATLAS_PAGE` is one string for all four because it is one condition.
   check('A17_ATLAS_PAGE_FILES_EXIST', () => a17AtlasPageFilesExist(verdicts, { atlas }, input));
-  check('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', () => {
-    if (!atlas) return skip('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', SKIP_NO_ATLAS);
-    if (atlas.pages.length === 0) return skip('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', SKIP_NO_ATLAS_PAGE);
-    for (const page of atlas.pages) {
-      const abs = resolve(input.atlasDir, page.name);
-      if (!existsSync(abs)) continue; // A17 owns this
-      // 🔒 **A page that is not a PNG is a named failure, not a throw** (issue
-      // #732). The reader's throw used to reach this rule's catch and print as
-      // `threw: not a PNG (bad signature)`: the verdict right, the sentence a
-      // stack message that named neither what the file was nor what rigc reads.
-      // `pngProblem` ([`src/png.ts`](png.ts)) is the one sentence every reader
-      // of a page states; this rule prefixes the size the atlas declares, the
-      // value the file would have had to carry.
-      //
-      // ⚠️ No size is read off a file rigc cannot decode, deliberately. A WebP
-      // header carries its dimensions in a fixed field, and reading them would
-      // print a number no oracle in this tree has checked (rigc links no WebP
-      // reader to compare a parse against), about a page that is refused here
-      // either way — and measured, the variant that PASSED a WebP page whose
-      // size agreed built green under the default profile and wrote a
-      // directory that `render` then refused.
-      const header = readPngHeader(abs);
-      if (header.problem !== null) {
-        fail(
-          'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
-          `page "${page.name}" declares ${page.width}x${page.height} and its file cannot be read as PNG, so the ` +
-            `size was not measured: ${header.problem}`,
-        );
-      }
-      const info = header.info;
-      const onPage = atlas.regions.filter((region) => region.page.name === page.name);
-      const gridSaid = info === null ? null : pageGridSentence(page, info, onPage);
-      if (gridSaid !== null) {
-        // 🔒 **Still validity, and now for a measured reason rather than an
-        // inherited one** (issue #715). The card that opened this expected the
-        // clause to move behind the profile switch once the runtime's mapping
-        // was measured — it is declared-size-relative, so a rescaled page
-        // draws. What settles it the other way is that the sentence below can
-        // name a repair the FORMAT already provides (`scale:`), and that two of
-        // the three readers a wrong grid breaks are rigc's own and run under
-        // both profiles. The sentence, and the one derivation of the ratio under
-        // it, is `pageGridSentence` in [`src/atlas.ts`](atlas.ts): the compiler's
-        // region lift states the same one when it is asked for texels on such a
-        // page (issue #750), so the two cannot come to describe one page two ways.
-        fail('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', gridSaid);
-      }
-      // 📐 PROFILE, from here down. `pma: false` and no rotation are rigc's atlas
-      // CONVENTION, not the atlas format's rules — a packed page with
-      // `rotate: 90` is what the Spine packer produces and every official example
-      // ships one. Under `spine` an atlas is judged only on whether its declared
-      // size matches the file it names.
-      if (policy && page.pma) {
-        fail('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', `page "${page.name}" claims premultiplied alpha; parts are straight alpha`);
-      }
-    }
-    // 🔒 **A region's rectangle lies inside the page it names, and that is
-    // VALIDITY** (issue #694). The clause is not new — it has read the same four
-    // numbers since issue #266 — but it stood inside the policy half below, and
-    // behind a guard that skipped any page carrying one region that covered it.
-    // Both fences were wrong for it. A rectangle that leaves its page is not a
-    // convention somebody else may hold differently: `u2 > 1` samples whatever
-    // the wrap mode returns, which is never the drawing the pack was made of, so
-    // the part draws garbage or nothing at all. Measured on a pack shaped like
-    // the two production atlases that found this — a page declaring 2048x256
-    // with regions at `2274,0 980x200` and `0,252 100x258` — every atlas
-    // assertion passed under the default profile and the first of the two parts
-    // drew 0 of the 10,517 pixels it draws when the same rig is built loose.
-    //
-    // ⭐ The tool's other half already said so, which is what settles where the
-    // clause belongs. `resolveFromAtlas` ([`src/compile.ts`](compile.ts)) refuses
-    // exactly this rectangle as a `CompileError` under every profile when a pack
-    // arrives through `--atlas-in`, so while it was policy here the compiler and
-    // the gate disagreed about the same four numbers — and the gate is the only
-    // half that a skeleton and a pack somebody else made ever reach.
-    //
-    // ⚠️ It is stated over `atlas.regions` rather than per page group, because
-    // the question is about one region and its own page and needs no neighbour:
-    // a page carrying a single full-page region is measured too, and answers
-    // trivially. The rectangle is `pageFootprint`'s and nobody else's here
-    // (issue #579): what `TextureAtlas` transposes at 90 and not at 270 is
-    // `u2`/`v2`, a UV pair `MeshAttachment.computeUVs` never reads for an atlas
-    // region, and the page rectangle is a different quantity — transposed at
-    // BOTH quarter turns. A region that fits only *because* it is turned is
-    // inside its page, and this clause says so.
-    for (const region of atlas.regions) {
-      const foot = pageFootprint(region);
-      if (
-        region.x < 0 ||
-        region.y < 0 ||
-        region.x + foot.width > region.page.width ||
-        region.y + foot.height > region.page.height
-      ) {
-        fail(
-          'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
-          `region "${region.name}" occupies ${region.x},${region.y} ${foot.width}x${foot.height} of page ` +
-            `"${region.page.name}", which is ${region.page.width}x${region.page.height} — a region that runs off ` +
-            'its page samples texels that are not there',
-        );
-      }
-    }
-    if (!policy) return;
-    // ⭐ **One part per page OR a tiling page** (issue #266, follow-up 2). This
-    // clause used to be the first alternative alone — every region's UVs
-    // `(0,0)-(1,1)` — which is rigc's *unpacked* convention and exactly what
-    // `build --pack` stops being true, so `--pack --profile spine-html` had to be
-    // a named CLI refusal. A pack is not a defect, and refusing it under this
-    // profile meant the one shape that exercises the renderer's shared-page
-    // sampling could never be gated by the renderer's own rulebook.
-    //
-    // What the first alternative bought was the attachment -> region -> file
-    // chain being checkable exactly, and `A27` already owns that half and already
-    // stands down on a multi-region page. What is left to check on a *tiling*
-    // page is what makes shared-page sampling well defined at all: no two regions
-    // on one page overlapping. A foreign pack can fail that while loading clean,
-    // and two overlapping rectangles put one drawing inside another's.
-    //
-    // ⚠️ Its sibling — every region inside the page it names — moved above and
-    // out of this profile in issue #694, and the two are not symmetrical. That
-    // one is broken for every consumer; this one is a statement about what a
-    // pack MEANS, and the corpus is the evidence rather than the taste:
-    // measured over the ten atlases in `examples/`, 0 of 132 regions are off
-    // their page and 49 pairs on four of those pages overlap, editor-exported
-    // and correct. A rule that called those files broken would be one
-    // consumer's convention refusing everybody else's data, which is the thing
-    // the profile split exists to prevent.
-    //
-    // ⚠️ Rotation stays refused either way, and that is not the same clause: it
-    // is about rigc's own packer never turning a region, which is a statement
-    // about what rigc WRITES. It stopped being a statement about what rigc can
-    // read in issue #570 — `extractRegion` now lifts a rotated region back off
-    // its page, measured against `MeshAttachment.computeUVs` (`PKR02`) — and the two
-    // must not be re-merged: an artifact under the renderer's own rulebook that
-    // rigc did not pack is still a foreign artifact, whatever rigc can measure.
-    const regionsPerPage = new Map<string, TextureAtlasRegion[]>();
-    for (const region of atlas.regions) {
-      const on = regionsPerPage.get(region.page.name);
-      if (on) on.push(region);
-      else regionsPerPage.set(region.page.name, [region]);
-    }
-    for (const [pageName, on] of regionsPerPage) {
-      // The `onePartPerPage` guard that stood here went with the clause it was
-      // written for: with only the pair check left, a page carrying one region
-      // has no pair and the loop below does nothing on it anyway. Nothing reads
-      // `u`/`v`/`u2`/`v2` in this assertion any more, which is the point of
-      // #579 kept rather than restated.
-      const rects = on.map((region) => {
-        const foot = pageFootprint(region);
-        return { name: region.name, x: region.x, y: region.y, width: foot.width, height: foot.height };
-      });
-      for (let i = 0; i < rects.length; i++) {
-        for (let j = i + 1; j < rects.length; j++) {
-          const a = rects[i];
-          const b = rects[j];
-          if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
-            fail(
-              'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
-              `regions "${a.name}" (${a.x},${a.y} ${a.width}x${a.height}) and "${b.name}" (${b.x},${b.y} ` +
-                `${b.width}x${b.height}) overlap on page "${pageName}"; a page is one part covering it exactly or ` +
-                'a tiling of regions that do not, and two rectangles over the same texels put one drawing inside ' +
-                "the other's",
-            );
-          }
-        }
-      }
-    }
-    for (const region of atlas.regions) {
-      if (region.degrees !== 0) {
-        fail(
-          'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
-          `region "${region.name}" is rotated; rigc's own packer never turns a region (see PACK_NO_ROTATE in ` +
-            'src/atlas.ts), so this atlas came from somewhere else',
-        );
-      }
-    }
-  });
+  check('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', () => a06AtlasPageSizeMatchesPng(verdicts, { atlas }, input, policy));
   // An overlay part must be able to draw a transparent pixel or it cannot be an
   // overlay: it would paint a solid rectangle over the untouched base, and an
   // overlay formation's whole claim is that the still frame has no seam. The base
@@ -5211,278 +4817,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // fires, and it now has to name the profile it belongs to as well as the one
   // that does not ask — the reader opted in, and the message is where they find
   // out what they opted into.
-  check('A19_OVERLAY_PNGS_HAVE_ALPHA', () => {
-    // A SKIP for the same reason A06's is (#568). This one is invisible under
-    // `spine`, where the profile excludes the rule before its body runs — and
-    // that is exactly why it was worth finding: `--profile spine-html` reported
-    // it, and A27 below, green on an atlas nothing had read.
-    if (!atlas) return skip('A19_OVERLAY_PNGS_HAVE_ALPHA', SKIP_NO_ATLAS);
-    if (atlas.pages.length === 0) return skip('A19_OVERLAY_PNGS_HAVE_ALPHA', SKIP_NO_ATLAS_PAGE);
-    const stageW = skeletonData?.width ?? 0;
-    const stageH = skeletonData?.height ?? 0;
-    // 🔒 **Which image is the base plate is decided ONCE, and the rig's own
-    // statement decides it** (issue #770). A cut manifest names its base plate
-    // — the part whose window IS the crop — and that needs no stage box; the
-    // size of an attachment against the stage is read only when the build
-    // names none, because it is then the only statement there is (every build
-    // from a rig spec, and `validate <dir>`, which has no rig at all). Both
-    // routes below read the same two sets, so they cannot disagree about it.
-    //
-    // ⚠️ Before this, "at least the stage's size" was the only reading, and a
-    // stageless manifest rig came out with no base plate: the packed build was
-    // refused for its plate's opaque texels while the loose build of the same
-    // rig passed on the file's colour type. The order is a rule rather than a
-    // coincidence of the fixtures, where the two readings agree: a stage stated
-    // small enough for an overlay to "cover" is exactly where they part.
-    const named = input.rig?.basePlates ?? [];
-    const basePages = new Set<string>();
-    const baseRegions = new Set<string>();
-    const exempt = (name: string): void => {
-      const region = atlas.findRegion(name);
-      if (region) {
-        basePages.add(region.page.name);
-        baseRegions.add(region.name);
-      }
-    };
-    if (named.length > 0) {
-      for (const name of named) exempt(name);
-    } else {
-      for (const att of regionAttachments) {
-        if (stageW && stageH && att.width >= stageW && att.height >= stageH) exempt(att.path || att.name);
-      }
-    }
-    // The escape hatch is named the way it is reachable. With a base plate the
-    // rig names, that plate; with none but a stage, the size reading; and with
-    // neither, nothing here decides which image is the plate — so the sentence
-    // says what would, rather than pointing at a door that is not there.
-    const undecided =
-      'Only a base plate may be opaque, and nothing here decides which image that is: this skeleton declares no ' +
-      'stage size to measure one against, and ';
-    const exemption =
-      named.length > 0
-        ? `Only the base plate the rig names (${named.map((name) => JSON.stringify(name)).join(', ')}, the part ` +
-          "whose window is the cut manifest's crop) may be opaque."
-        : stageW && stageH
-          ? `Only the one image big enough to cover the whole stage (${stageW}x${stageH}) may be opaque.`
-          : input.rig
-            ? `${undecided}the build names no base plate. Either would decide it: give the rig spec a "skeleton" ` +
-              'stage the plate covers, or build from a cut manifest, whose base plate is the part whose window is ' +
-              'the crop.'
-            : `${undecided}no rig was given to name one. Either would decide it: state a "skeleton" stage the plate ` +
-              'covers, or validate with the specs it was built from (--rig, --motion and the --manifest, whose base ' +
-              'plate is the part whose window is the crop).';
-    // 🚨 Counted per page for the unpacked convention and per REGION on a shared
-    // page, and the split is not a convenience (issue #266, follow-up 2). A
-    // packed page's own file all but always declares transparency — the gutter
-    // and whatever is left over of the page are transparent — so the file-level
-    // question is answered "yes" by the packing itself, whatever the parts on it
-    // look like. Asking it that way once packs became gateable under this profile
-    // would have turned this assertion into a pass that measures nothing, which
-    // is the failure mode this file exists to prevent. So a shared page is opened
-    // and each region's own rectangle is measured instead.
-    const sharedPages = new Map<string, TextureAtlasRegion[]>();
-    for (const region of atlas.regions) {
-      const on = sharedPages.get(region.page.name);
-      if (on) on.push(region);
-      else sharedPages.set(region.page.name, [region]);
-    }
-    for (const page of atlas.pages) {
-      const abs = resolve(input.atlasDir, page.name);
-      if (!existsSync(abs)) continue;
-      const on = sharedPages.get(page.name) ?? [];
-      // 🔒 **A page that is not a PNG is a non-measurement for every part on
-      // it** (issue #732), stated the way #705's and #715's are: a FAIL naming
-      // what was not read, because `skip()` is per assertion and would delete
-      // the verdicts on every other page of the same report. The file's
-      // identity is `A06`'s to judge, and this sentence points there. A page
-      // holding nothing but the full-stage base plate has no part to judge and
-      // says nothing, exactly as a readable one would.
-      const header = readPngHeader(abs);
-      if (header.problem !== null) {
-        const shared = on.length > 1;
-        const parts = shared ? on.filter((region) => !baseRegions.has(region.name)).map((region) => region.name) : [];
-        if (shared ? parts.length === 0 : basePages.has(page.name)) continue;
-        const subject = shared
-          ? `the ${parts.length} part(s) on shared page "${page.name}" (${parts.map((name) => JSON.stringify(name)).join(', ')}) are`
-          : `part image "${page.name}" is`;
-        fail(
-          'A19_OVERLAY_PNGS_HAVE_ALPHA',
-          `${subject} not measured: this rule reads a page's alpha out of its PNG, and the file cannot be read as ` +
-            'one, so it states nothing about whether any of them can draw a transparent pixel. What the file is ' +
-            "belongs to A06_ATLAS_PAGE_SIZE_MATCHES_PNG, which names it. This is renderer policy, and it belongs to " +
-            '--profile spine-html: the default --profile spine does not run this check.',
-        );
-        continue;
-      }
-      if (on.length > 1) {
-        // 🚨 A rotated region is refused by A06 under this profile, so this
-        // reading was assumed to be cosmetic — a rectangle printed beside a
-        // failure already standing. It is not: the loop below OPENS the
-        // rectangle and stops at the first transparent texel, so a rectangle
-        // wider than the drawing runs into the transparent gutter, finds its
-        // texel there and names nothing. With the transpose applied at 90 only,
-        // two fully opaque parts on one page were measured green at
-        // `rotate: 270` and red at 0, 90 and 180 — this assertion's own verdict,
-        // flipped by the rotation it does not judge (issue #579). The footprint
-        // is `pageFootprint`'s, which every other reader of it now calls.
-        // 🚨 **The scan counts what it READ, and zero texels read is not a
-        // verdict** (issue #705). The `continue` above walks past every
-        // coordinate that is not on the page, so a rectangle none of whose
-        // texels are on it came out of this loop with `transparent` still
-        // false — indistinguishable from a solid drawing — and the sentence
-        // below then stated opacity over texels nobody had opened. Measured on
-        // a pack shaped like #707's: `part "block" is opaque in every one of
-        // its 12x8 texels`, over **0 of 96**, on art carrying 36 clear texels
-        // where it was packed. That is the message-as-UI defect in one line —
-        // the reader is sent to re-export a part whose alpha was never the
-        // problem, and the rectangle that is the problem belongs to A06.
-        //
-        // ⚠️ It is a FAIL rather than a SKIP, and the report's own shape
-        // decides that rather than taste. `skip()` is per ASSERTION, so
-        // skipping here would delete the verdicts on every other part of the
-        // page — on that same pack the second part is genuinely opaque and is
-        // named — and adding a skip BESIDE those failures puts A19 in two of
-        // the four buckets `reportLines` adds up, which prints `45 assertions`
-        // where the registry holds 44. What is left is a failure that says
-        // what was not measured, which is also what "green means measured"
-        // requires: a part this rule could not read must not be certified by
-        // it.
-        const plate = readPlate(abs);
-        // 🚨 **The scan's coordinates are the atlas's, so a file that is not the
-        // declared grid is a non-measurement for every region on it** (issue
-        // #715), and #705's clause above does not cover it. That one fires when
-        // a rectangle has NO texel on the page; a page whose image is a rescale
-        // of the declared size leaves most rectangles partly on it, at
-        // coordinates that address a different part of the picture. Measured on
-        // a two-region pack at a uniform 0.5: the opaque part's failure
-        // DISAPPEARED — the scan found a transparent texel 32 texels away from
-        // it and returned — while the other printed #705's sentence over 0 of
-        // 256 texels. A verdict and a silence, both about texels nobody located.
-        //
-        // A FAIL for #705's reason, word for word: `skip()` is per assertion and
-        // would delete the verdicts on every other page in the same report.
-        if (plate.width !== page.width || plate.height !== page.height) {
-          for (const region of on) {
-            if (baseRegions.has(region.name)) continue;
-            const { width, height } = pageFootprint(region);
-            fail(
-              'A19_OVERLAY_PNGS_HAVE_ALPHA',
-              `part "${region.name}" is not measured: this rule opens the page at the coordinates the atlas ` +
-                `states, and page "${page.name}" declares ${page.width}x${page.height} over a ` +
-                `${plate.width}x${plate.height} image, so the ${width}x${height} rectangle at ${region.x},` +
-                `${region.y} is not where "${region.name}"'s texels are on this file and this rule states ` +
-                'nothing about whether it can draw a transparent pixel. The page grid is ' +
-                "A06_ATLAS_PAGE_SIZE_MATCHES_PNG's to judge, and it names the ratio and how to declare the page " +
-                'honestly. This is renderer policy, and it belongs to --profile spine-html: the default ' +
-                '--profile spine does not run this check.',
-            );
-          }
-          continue;
-        }
-        for (const region of on) {
-          if (baseRegions.has(region.name)) continue;
-          const { width, height } = pageFootprint(region);
-          const declared = width * height;
-          let read = 0;
-          let transparent = false;
-          for (let y = region.y; y < region.y + height && !transparent; y++) {
-            for (let x = region.x; x < region.x + width; x++) {
-              if (x < 0 || y < 0 || x >= plate.width || y >= plate.height) continue;
-              read++;
-              if (plate.get(x, y)[3] < 255) {
-                transparent = true;
-                break;
-              }
-            }
-          }
-          if (transparent) continue;
-          // The page's size here is the DECODED image's and not the `size:`
-          // line's, because it is the bound this scan actually clipped
-          // against; where the two disagree A06 says so in its own sentence.
-          if (read === 0) {
-            fail(
-              'A19_OVERLAY_PNGS_HAVE_ALPHA',
-              `part "${region.name}" is not measured: this rule read 0 of the ${declared} texels of its ` +
-                `${width}x${height} rectangle at ${region.x},${region.y} on page "${page.name}", whose image is ` +
-                `${plate.width}x${plate.height}, so it states nothing about whether "${region.name}" can draw a ` +
-                "transparent pixel. A region's rectangle is A06_ATLAS_PAGE_SIZE_MATCHES_PNG's to judge, and one " +
-                'that runs off its page is refused there by name. This is renderer policy, and it belongs to ' +
-                '--profile spine-html: the default --profile spine does not run this check.',
-            );
-            continue;
-          }
-          // A rectangle partly on the page states the verdict over the texels
-          // it read and says how many of the declared ones that was. A whole
-          // rectangle prints the sentence it has always printed, to the byte.
-          const over =
-            read === declared
-              ? `every one of its ${width}x${height} texels on shared page "${page.name}"`
-              : `every one of the ${read} texels of its ${width}x${height} rectangle at ${region.x},${region.y} ` +
-                `that are on shared page "${page.name}", whose image is ${plate.width}x${plate.height} — the ` +
-                `other ${declared - read} of the ${declared} it declares are not on the page and are not ` +
-                'measured here';
-          fail(
-            'A19_OVERLAY_PNGS_HAVE_ALPHA',
-            `part "${region.name}" is opaque in ${over}, so it would paint a solid rectangle over whatever is ` +
-              `drawn behind it. Re-export the part with transparency and pack again. ${exemption} This is ` +
-              'renderer policy, and it belongs to --profile spine-html: the default --profile spine does not run ' +
-              'this check.',
-          );
-        }
-        continue;
-      }
-      const info = header.info;
-      if (basePages.has(page.name)) continue; // the base plate: opaque is correct
-      // The header is the FAST NEGATIVE and only that (#215's rule, unchanged):
-      // a colour type 0, 2 or 3 file with no tRNS chunk has nowhere to keep a
-      // transparent texel, so it is refused without opening it.
-      if (!info.hasTransparency) {
-        fail(
-          'A19_OVERLAY_PNGS_HAVE_ALPHA',
-          `part image "${page.name}" cannot be transparent anywhere: it is colour type ${info.colourType} ` +
-            `(${colourTypeName(info.colourType)}) with no tRNS chunk, so it would paint a solid rectangle over ` +
-            'whatever is drawn behind it. Re-export it with transparency — as RGBA, or as an indexed or greyscale ' +
-            `PNG that keeps its tRNS chunk. ${exemption} This is renderer policy, and it belongs to --profile ` +
-            'spine-html: the default --profile spine does not run this check.',
-        );
-        continue;
-      }
-      // 🚨 **A header that says "could be transparent" is not an answer, and
-      // the texels decide it exactly as they do on a shared page** (issue
-      // #777). Until this the loose route stopped here, so a part saved as
-      // RGBA passed whether or not any texel used the channel: on the
-      // articulated fixture, stageless, an overlay rewritten as colour type 6
-      // with 0 of its 16,000 texels below full alpha PASSED loose and was
-      // refused by `--pack` of the same rig, over the same texels. The runtime
-      // draws those texels, not the file's declaration, so the loose verdict
-      // was the false green. The rectangle is the whole decoded image — on a
-      // loose page the file IS the part, so no atlas coordinate is read and
-      // #705's and #715's non-measurements cannot arise here — and the scan
-      // stops at the first clear texel, as the shared page's does.
-      const plate = readPlate(abs);
-      let transparent = false;
-      for (let y = 0; y < plate.height && !transparent; y++) {
-        for (let x = 0; x < plate.width; x++) {
-          if (plate.get(x, y)[3] < 255) {
-            transparent = true;
-            break;
-          }
-        }
-      }
-      if (transparent) continue;
-      const holds = info.hasAlpha
-        ? `colour type ${info.colourType} (${colourTypeName(info.colourType)}) carries an alpha channel`
-        : `colour type ${info.colourType} (${colourTypeName(info.colourType)}) carries a tRNS chunk`;
-      fail(
-        'A19_OVERLAY_PNGS_HAVE_ALPHA',
-        `part image "${page.name}" is opaque in every one of its ${plate.width}x${plate.height} texels, so it ` +
-          `would paint a solid rectangle over whatever is drawn behind it: its file can hold transparency — ${holds} ` +
-          '— and no texel uses it. Re-export the part with the transparency it is meant to have. ' +
-          `${exemption} This is renderer policy, and it belongs to --profile spine-html: the default --profile ` +
-          'spine does not run this check.',
-      );
-    }
-  });
+  check('A19_OVERLAY_PNGS_HAVE_ALPHA', () => a19OverlayPngsHaveAlpha(verdicts, { atlas }, spineStage(skeletonData), { regionAttachments }, input));
 
   // -------------------------------------------------------------------------
   // Archetype assertions — the invariants the RIG declares about itself.
@@ -5685,25 +5020,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // called anything at all, every attachment could agree with it, and the rig
   // would load with the wrong pixels under the right name. One part per page (A06
   // forces it) makes the check exact.
-  check('A27_REGION_NAME_MATCHES_PAGE_FILENAME', () => {
-    if (!atlas) return skip('A27_REGION_NAME_MATCHES_PAGE_FILENAME', SKIP_NO_ATLAS);
-    if (atlas.regions.length === 0) return skip('A27_REGION_NAME_MATCHES_PAGE_FILENAME', SKIP_NO_ATLAS_REGION);
-    const perPage = new Map<string, number>();
-    for (const region of atlas.regions) perPage.set(region.page.name, (perPage.get(region.page.name) ?? 0) + 1);
-    for (const region of atlas.regions) {
-      // A real packer puts many regions on one page and the names stop matching
-      // filenames by design. Then this check has nothing to say, so it says
-      // nothing rather than something wrong.
-      if ((perPage.get(region.page.name) ?? 0) !== 1) continue;
-      const expected = basename(region.page.name).replace(/\.png$/i, '');
-      if (region.name !== expected) {
-        fail(
-          'A27_REGION_NAME_MATCHES_PAGE_FILENAME',
-          `region "${region.name}" is the only region on page "${region.page.name}", whose basename is "${expected}"`,
-        );
-      }
-    }
-  });
+  check('A27_REGION_NAME_MATCHES_PAGE_FILENAME', () => a27RegionNameMatchesPageFilename(verdicts, { atlas }));
 
   // --- A28: a ribbon's rows share their weights ----------------------------
   //

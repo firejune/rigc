@@ -52,7 +52,8 @@ export function modelSkinEntries(read: ReadDocument, order: SkinOrder = editorSk
     const geometry = entry.record.geometry;
     // `readModel` reads every region record's geometry or refuses the document, so a record without one is this module's defect.
     if (geometry?.kind !== 'region') throw new Error(`internal: skin "${entry.skin}" slot "${entry.slot}" placeholder "${entry.placeholder}" is a region record the reader returned without its geometry`);
-    regionAttachments.push({ name: shownRow(entry).name, width: geometry.region.width, height: geometry.region.height });
+    const shown = shownRow(entry);
+    regionAttachments.push({ name: shown.name, width: geometry.region.width, height: geometry.region.height, path: shown.path as string });
   }
   return { regionAttachments, clippingCount };
 }
