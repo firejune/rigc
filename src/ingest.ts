@@ -52,6 +52,7 @@ import {
   SPINE_VERSION,
 } from './compile.ts';
 import { CompileError } from './errors.ts';
+import { physicsDrives } from './core/constraints_physics.ts';
 import { CHANNELS_BY_KIND } from './timelines.ts';
 import {
   LEGACY_BONE_INHERIT_KEY,
@@ -303,13 +304,14 @@ const CONSTRAINT_FIELDS: Record<string, string[]> = {
  * The physics constraints that drive nothing, by name, each with the component
  * fields it DOES state — every one of them at most 0 (issue #731).
  *
- * 🔑 The runtime's own predicate, not a reading of it: `PhysicsConstraint.update`
- * decides what it applies with `this.data.x > 0` and its four siblings
- * (`PhysicsConstraint.js:112`) and nothing else, so a constraint with none of
- * `PHYSICS_COMPONENTS` above 0 moves no bone. `build` refuses exactly that shape
- * by name — `A23_PHYSICS_CONSTRAINT_EFFECTIVE` at the gate — so carrying one
- * through made the decompiled spec of a file an editor exports unbuildable as a
- * whole, over a constraint that did nothing in it.
+ * 🔑 The question is the core's `physicsDrives` (`src/core/constraints_physics.ts`,
+ * issue #1015): a component above 0 drives its part of the step and nothing
+ * else does, so a constraint with none of `PHYSICS_COMPONENTS` above 0 moves no
+ * bone — `PhysicsConstraint.update` applies a part only on that test
+ * (`PhysicsConstraint.js:112`). An unstated component is the parser's 0. `build`
+ * refuses exactly that shape by name — `A23_PHYSICS_CONSTRAINT_EFFECTIVE` at the
+ * gate — so carrying one through made the decompiled spec of a file an editor
+ * exports unbuildable as a whole, over a constraint that did nothing in it.
  *
  * ⚠️ A component that is present and NOT a number is not inert: the parser takes
  * it as written and `"0.5" > 0` is true in the runtime's comparison, so such a
@@ -321,7 +323,10 @@ function inertPhysics(root: JsonObject): Map<string, string[]> {
     const constraint = obj(raw);
     if (constraint.type !== 'physics' || typeof constraint.name !== 'string') continue;
     const stated = PHYSICS_COMPONENTS.filter((field) => constraint[field] !== undefined);
-    if (!stated.every((field) => typeof constraint[field] === 'number' && !((constraint[field] as number) > 0))) continue;
+    if (!stated.every((field) => typeof constraint[field] === 'number')) continue;
+    const value = (field: (typeof PHYSICS_COMPONENTS)[number]): number => (constraint[field] === undefined ? 0 : (constraint[field] as number));
+    const drives = physicsDrives({ x: value('x'), y: value('y'), rotate: value('rotate'), shearX: value('shearX'), scaleX: value('scaleX') });
+    if (drives.x || drives.y || drives.rotateOrShearX || drives.scaleX) continue;
     out.set(
       constraint.name,
       stated.map((field) => `${field} ${String(constraint[field])}`),
@@ -1305,9 +1310,9 @@ function ingestAttachment(
   const type = att.type === undefined ? 'region' : String(att.type);
   const out: JsonObject = {};
 
-  // A LINKED mesh, in either of the format's two spellings. The test is the
-  // parser's own — one branch for `mesh` and `linkedmesh`, and a truthy `source`
-  // decides (`SkeletonJson.js:568-569`, `:582`) — so `type: "mesh"` carrying
+  // A LINKED mesh, in either of the format's two spellings. The format decides
+  // it — one branch of the reader for `mesh` and `linkedmesh`, and a truthy
+  // `source` decides (`SkeletonJson.js:568-569`, `:582`) — so `type: "mesh"` carrying
   // `source` inverts to a link, and a `linkedmesh` with none does NOT: that map
   // is read as an ordinary mesh, whose `uvs` it does not have, and the parser
   // throws on it. Reading the second as a link would be this module inventing a
@@ -1327,8 +1332,8 @@ function ingestAttachment(
     // `buildRigRegion` writes `path` when the image basename differs from the
     // name the attachment carries — its stated `name`, else the placeholder —
     // so naming the image after the region this attachment RESOLVES
-    // (`path ?? name ?? placeholder`, the parser's own defaults at
-    // `SkeletonJson.js:526`, `:529`, `:560`) reproduces the same `path`
+    // (`path ?? name ?? placeholder`, the defaults the format's reader applies
+    // at `SkeletonJson.js:526`, `:529`, `:560`) reproduces the same `path`
     // decision AND the same atlas region name.
     if (opts.art === 'loose') {
       const region = att.path ?? (typeof att.name === 'string' ? att.name : placeholder);

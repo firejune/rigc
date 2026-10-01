@@ -1610,9 +1610,12 @@ interface PoseOfFrame {
 /**
  * What `Slider.update` stores in `SliderPose.time` for a wanted animation time.
  *
- * The two clamps at the end of its bone branch, transcribed, because the
- * verification below compares against what the runtime STORED and not against
- * what was asked for. ⚠️ `loop` on a zero-length animation gives NaN here exactly
+ * On a slider driven by a bone: the time wrapped into the animation under
+ * `loop`, else held at 0 or above. Not assumed — `poseDial`'s step 3 reads
+ * `SliderPose.time` off the skeleton each time it poses a dial and compares
+ * it with this, and a disagreement is reported, never absorbed. It is stated at all because that
+ * verification compares against what the runtime STORED and not against what
+ * was asked for. ⚠️ `loop` on a zero-length animation gives NaN here exactly
  * as it does there, which is `A37_SLIDER_CONSTRAINT_EFFECTIVE`'s refusal.
  */
 function sliderTimeFor(slider: SliderData, time: number): number {

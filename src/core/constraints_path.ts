@@ -44,8 +44,9 @@
  *
  * 1. **A table of the curves' lengths**, each curve four forward-difference
  *    steps (`0.1875`, `0.09375`, `0.75` and `0.16666667`, the running total
- *    carried across curves) — `pathCurveLengths` in `src/compile.ts`, the
- *    same arithmetic. A ten-step table missed 460 of the grid's 976. The
+ *    carried across curves) — `curveLengthTable`, which `src/compile.ts`'s
+ *    `pathCurveLengths` also calls (issue #1015). A ten-step table missed
+ *    460 of the grid's 976. The
  *    last entry is the path's length; `percent` multiplies the position by
  *    it. The stated `lengths` are not read: the stated total in their place
  *    missed 680 of 1,000.
@@ -217,6 +218,60 @@ import type { CoreCurve, CoreKey } from './animation.ts';
 import type { CoreConstraintRecord } from './constraints.ts';
 
 const RAD = RUNTIME_PI / 180;
+
+/**
+ * The constant-speed walk's table of the curves' lengths — the header's *The
+ * walk*, step 1: each curve four forward-difference steps (`0.1875`,
+ * `0.09375`, `0.75`, `0.16666667`), the running total carried across curves,
+ * one cumulative entry per curve. `chain` is flat, `x, y` per point, knot
+ * handle handle knot …; `curveCount` curves are read off it.
+ *
+ * Exported because it has a second caller: an omitted `lengths` on a path
+ * attachment is measured by `src/compile.ts` through this function (issue
+ * #1015), so the number rigc writes into a file and the number the core walks
+ * are one computation. Measured as the header states it on the grid (a
+ * ten-step table missed 460 of 976) and held there by the core suite's `CP`
+ * controls.
+ */
+export function curveLengthTable(chain: readonly number[], curveCount: number): number[] {
+  const curveEnds: number[] = [];
+  let total = 0;
+  let x1 = chain[0];
+  let y1 = chain[1];
+  for (let i = 0, w = 2; i < curveCount; i++, w += 6) {
+    const cx1 = chain[w];
+    const cy1 = chain[w + 1];
+    const cx2 = chain[w + 2];
+    const cy2 = chain[w + 3];
+    const x2 = chain[w + 4];
+    const y2 = chain[w + 5];
+    const h2x = (x1 - cx1 * 2 + cx2) * 0.1875;
+    const h2y = (y1 - cy1 * 2 + cy2) * 0.1875;
+    const d3x = ((cx1 - cx2) * 3 - x1 + x2) * 0.09375;
+    const d3y = ((cy1 - cy2) * 3 - y1 + y2) * 0.09375;
+    let d2x = h2x * 2 + d3x;
+    let d2y = h2y * 2 + d3y;
+    let d1x = (cx1 - x1) * 0.75 + h2x + d3x * 0.16666667;
+    let d1y = (cy1 - y1) * 0.75 + h2y + d3y * 0.16666667;
+    total += Math.sqrt(d1x * d1x + d1y * d1y);
+    d1x += d2x;
+    d1y += d2y;
+    d2x += d3x;
+    d2y += d3y;
+    total += Math.sqrt(d1x * d1x + d1y * d1y);
+    d1x += d2x;
+    d1y += d2y;
+    total += Math.sqrt(d1x * d1x + d1y * d1y);
+    d1x += d2x + d3x;
+    d1y += d2y + d3y;
+    total += Math.sqrt(d1x * d1x + d1y * d1y);
+    curveEnds.push(total);
+    x1 = x2;
+    y1 = y2;
+  }
+  return curveEnds;
+}
+
 const EPSILON = 0.00001;
 
 /** The three modes a path constraint names, each as the model spells it once its first letter is lower-cased. */
@@ -556,47 +611,14 @@ function positionsOf(state: PathSolverState, c: CorePathRecord, g: CorePathGeome
     chain.push(...P(0), ...P(1));
   } else for (let k = 1; k < n - 1; k++) chain.push(...P(k));
   const curveCount = closed ? n / 3 : n / 3 - 1;
-  const curveEnds: number[] = [];
-  let total = 0;
-  let x1 = chain[0];
-  let y1 = chain[1];
-  for (let i = 0, w = 2; i < curveCount; i++, w += 6) {
-    const cx1 = chain[w];
-    const cy1 = chain[w + 1];
-    const cx2 = chain[w + 2];
-    const cy2 = chain[w + 3];
-    const x2 = chain[w + 4];
-    const y2 = chain[w + 5];
-    const h2x = (x1 - cx1 * 2 + cx2) * 0.1875;
-    const h2y = (y1 - cy1 * 2 + cy2) * 0.1875;
-    const d3x = ((cx1 - cx2) * 3 - x1 + x2) * 0.09375;
-    const d3y = ((cy1 - cy2) * 3 - y1 + y2) * 0.09375;
-    let d2x = h2x * 2 + d3x;
-    let d2y = h2y * 2 + d3y;
-    let d1x = (cx1 - x1) * 0.75 + h2x + d3x * 0.16666667;
-    let d1y = (cy1 - y1) * 0.75 + h2y + d3y * 0.16666667;
-    total += Math.sqrt(d1x * d1x + d1y * d1y);
-    d1x += d2x;
-    d1y += d2y;
-    d2x += d3x;
-    d2y += d3y;
-    total += Math.sqrt(d1x * d1x + d1y * d1y);
-    d1x += d2x;
-    d1y += d2y;
-    total += Math.sqrt(d1x * d1x + d1y * d1y);
-    d1x += d2x + d3x;
-    d1y += d2y + d3y;
-    total += Math.sqrt(d1x * d1x + d1y * d1y);
-    curveEnds.push(total);
-    x1 = x2;
-    y1 = y2;
-  }
+  const curveEnds = curveLengthTable(chain, curveCount);
+  const total = curveEnds.length > 0 ? curveEnds[curveEnds.length - 1] : 0;
   if (c.positionMode === 'percent') position *= total;
   const spaceScale = c.spacingMode === 'percent' ? total : c.spacingMode === 'proportional' ? total / spaceCount : 1;
   const segmentEnds: number[] = new Array(10).fill(0);
   let curveTotal = 0;
   let lastCurve = -1;
-  let cx1 = 0, cy1 = 0, cx2 = 0, cy2 = 0, x2 = 0, y2 = 0;
+  let x1 = 0, y1 = 0, cx1 = 0, cy1 = 0, cx2 = 0, cy2 = 0, x2 = 0, y2 = 0;
   for (let i = 0, o = 0, curve = 0, segment = 0; i < spaceCount; i++, o += 3) {
     const space = spaces[i] * spaceScale;
     position += space;

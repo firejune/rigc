@@ -288,8 +288,8 @@ export function inEditorKeyOrder<T extends object>(skeleton: T, table: KeyOrderT
 // ## Why this is a table and not a parse
 //
 // The parser is the only authority on what a default is, and this table is
-// not a second one: it is a transcription the selftest holds to the parser row
-// by row (`S103` on the in-tree builds, `IG82` on the corpus) by loading an
+// not a second one: it is a table of the parser's readings that the selftest
+// holds to the parser row by row (`S103` on the in-tree builds, `IG82` on the corpus) by loading an
 // object of each kind with the key at the row's value and without it, and
 // comparing everything `SkeletonData` holds — and then one float32 step off,
 // which must differ. It cannot BE a parse: `compile.ts` must not link the

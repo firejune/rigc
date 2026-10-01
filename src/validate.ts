@@ -65,6 +65,7 @@ import {
 // rectangle on a shared page.
 import { readPlate } from '../tools/plate.ts';
 import { pageFootprint, pageGridSentence } from './atlas.ts';
+import { frameRegionName } from './core/uvs.ts';
 import {
   BEZIER_POINTS,
   curveStorage,
@@ -733,20 +734,23 @@ function atStoredKey(time: number): number {
  * The atlas region names one raw skin entry will make the loader look up — or
  * `null` when the file states a sequence this walk cannot predict.
  *
- * ⚠️ Transcribed from the loader rather than reasoned out, because a join that
+ * ⚠️ Measured against the loader rather than reasoned out, because a join that
  * merely looks right is the thing A08 exists to refuse. `readSequence`
  * (`dist/SkeletonJson.js:641-649`) turns an absent or null `sequence` into
  * `new Sequence(1, false)` — one lookup, at the bare path — and a present one
  * into `new Sequence(count ?? 0, true)`, so a sequence map with no `count`
- * looks up nothing at all. `Sequence.getPath` (`dist/Sequence.js:124-132`)
- * appends `start + i`, left-padded with zeros to `digits`.
+ * looks up nothing at all. Each frame's name is the core's `frameRegionName`
+ * (`src/core/uvs.ts`): `start + i`, left-padded with zeros to `digits`, after
+ * the path (issue #1015). `PS127` records what the loader asks for and compares,
+ * and the core suite holds the frame names to `Sequence.getPath` over 7,680
+ * cases.
  *
  * Nothing in `examples/` carries a `sequence` (measured: 0 occurrences across
  * all twelve editor exports), so without this the assertion would have read a
  * sequence's base path as a region name and refused correct foreign data —
  * `A21_MESH_RIM_PINNED`'s old `|| 'ring'` default, one file over.
  */
-function attachmentRegionLookups(sequence: unknown, path: string): string[] | null {
+export function attachmentRegionLookups(sequence: unknown, path: string): string[] | null {
   if (sequence === undefined || sequence === null) return [path];
   if (!isObj(sequence)) return null;
   const whole = (value: unknown, fallback: number): number | null => {
@@ -757,11 +761,9 @@ function attachmentRegionLookups(sequence: unknown, path: string): string[] | nu
   const start = whole(sequence.start, 1);
   const digits = whole(sequence.digits, 0);
   if (count === null || start === null || digits === null || count < 0) return null;
+  const series = { count, start, digits, setup: 0 };
   const lookups: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const frame = String(start + i);
-    lookups.push(`${path}${'0'.repeat(Math.max(0, digits - frame.length))}${frame}`);
-  }
+  for (let i = 0; i < count; i++) lookups.push(frameRegionName(path, series, i));
   return lookups;
 }
 
@@ -870,11 +872,11 @@ interface RawLinkedMesh {
  * `"<skin>\0<slot>\0<placeholder>" -> source` for every linked mesh the raw
  * skeleton declares, with what the file says about each one (issues #691, #710).
  *
- * 🔑 The test is the parser's own and it is not `type`: `type: "mesh"` and
- * `type: "linkedmesh"` share one branch and a truthy `source` is what decides
- * between them (`SkeletonJson.js:568-569`, `:582`). An empty `source` is falsy
- * there, so it is not a link here either — that map is read as an ordinary mesh,
- * which is exactly what the runtime does with it.
+ * 🔑 The format decides it, and not by `type`: `type: "mesh"` and
+ * `type: "linkedmesh"` share one branch of the reader and a truthy `source` is
+ * what decides between them (`SkeletonJson.js:568-569`, `:582`). An empty
+ * `source` is falsy there, so it is not a link here either — that map is read
+ * as an ordinary mesh, which is exactly what the runtime does with it.
  */
 function rawLinkedMeshes(raw: unknown): Map<string, RawLinkedMesh> {
   const links = new Map<string, RawLinkedMesh>();
@@ -5029,9 +5031,9 @@ export function validate(input: ValidateInput): ValidateReport {
     // reads each of those off the FILE and names the value. The second POSES
     // every key at sampled times — mid-frame, so a float32 key time cannot land
     // a sample on a frame boundary — and compares the region the slot shows
-    // against the one the file's own statement gives: the frame arithmetic of
-    // `SequenceTimeline.applyToSlot` transcribed here, and the frame names of
-    // `Sequence.getPath` transcribed in `attachmentRegionLookups`. Neither is
+    // against the one the file's own statement gives: the frame the key's mode,
+    // index and delay give (`frameOf` below), and the frame names
+    // `attachmentRegionLookups` derives (the core's `frameRegionName`). Neither is
     // read off the loaded timeline, so the check is not the runtime agreeing
     // with itself.
     //
@@ -5099,7 +5101,15 @@ export function validate(input: ValidateInput): ValidateReport {
         }
       }
 
-      /** The frame `SequenceTimeline.applyToSlot` shows — transcribed, not called. */
+      /**
+       * The frame the file's statement gives for one key at one elapsed time —
+       * A46's prediction, not a call into the runtime. What holds it is the
+       * comparison it feeds: every sample sets it against the frame the posed
+       * slot shows, so a reading that disagreed with the runtime would fail A46
+       * on a correct file. A46 passing with samples posed on the selftest's
+       * series probes is that measurement for the modes they key; `M73` is its
+       * red half.
+       */
       const frameOf = (mode: string, index: number, elapsed: number, delay: number, count: number): number => {
         if (mode === 'hold') return index;
         let i = index + Math.trunc(elapsed / delay + 0.00001);
@@ -5436,7 +5446,7 @@ export function validate(input: ValidateInput): ValidateReport {
     // is about rigc's own packer never turning a region, which is a statement
     // about what rigc WRITES. It stopped being a statement about what rigc can
     // read in issue #570 — `extractRegion` now lifts a rotated region back off
-    // its page as a transcription of `MeshAttachment.computeUVs` — and the two
+    // its page, measured against `MeshAttachment.computeUVs` (`PKR02`) — and the two
     // must not be re-merged: an artifact under the renderer's own rulebook that
     // rigc did not pack is still a foreign artifact, whatever rigc can measure.
     const regionsPerPage = new Map<string, TextureAtlasRegion[]>();
