@@ -5,21 +5,22 @@
  * (`tools/pose_oracle.ts dump`, spine-core 4.3.13), and held to it by the core
  * suite's equivalence controls.
  *
- * ⭐ **The compiler's setup transforms are this evaluator too** (issue #1015).
- * `src/transform.ts` held a second evaluator of its own until then, and the
- * two differed in exactly three places, none of them a different matrix: the
- * degree factor (`Math.PI / 180` there, the runtime's 3.1415927 here), the
- * frame of a bone with scale 1 and no shear (`[cos, −sin, sin, cos]` of the
- * rotation there, the y column at `rotation + 90` here), and how a radian
- * angle is turned into degrees (divided by the degree factor there,
- * multiplied by `180 / pi` here). Every byte rigc emits was computed with the
- * compiler's three, so they are a parameter of this evaluator
- * (`WorldArithmetic`) rather than a rewrite of the emitter's numbers: the
- * compiler passes its own and the posing core passes none, which is
- * `RUNTIME_ARITHMETIC`, the measured choices below. Measured with the
- * compiler's degree factor and frame taken from here instead: 2 of 19
- * recipes moved, by at most 4e-5 (issue #1015's report) — whether the
- * compiler should bind with the runtime's constant is its own question.
+ * ⭐ **The compiler's setup transforms are this evaluator too** (issue #1015),
+ * under the same arithmetic (issue #1021). `src/transform.ts` held a second
+ * evaluator of its own until #1015, and the two differed in exactly three
+ * places, none of them a different matrix: the degree factor (`Math.PI / 180`
+ * there, the runtime's 3.1415927 here), the frame of a bone with scale 1 and
+ * no shear (`[cos, −sin, sin, cos]` of the rotation there, the y column at
+ * `rotation + 90` here), and how a radian angle is turned into degrees
+ * (divided by the degree factor there, multiplied by `180 / pi` here). #1015
+ * made them a parameter (`WorldArithmetic`) so that no byte moved; #1021
+ * measured which binds closer — every point the compiler binds from a world
+ * position, posed by spine-core from the emitted build, against that position
+ * — and the runtime's three put every one at the float32 floor where the
+ * compiler's left `gallery/look`'s up to 8.6e-5 off. So the compiler passes
+ * none now, and `RUNTIME_ARITHMETIC`, the measured choices below, is the only
+ * arithmetic anything here runs under; the parameter stays for the plants
+ * that swap one choice back in to show a control fire.
  *
  * ## What each measured choice is
  *
@@ -115,9 +116,9 @@ export const COLLAPSED_X_AXIS_SQ = 0.00001 * 0.00001;
 
 /**
  * The three places an evaluator's arithmetic may differ in the last bit while
- * computing the same matrix (issue #1015) — see the header. The core poses with
- * `RUNTIME_ARITHMETIC`; `src/transform.ts` passes the compiler's, so that what
- * rigc has always emitted is what it still emits.
+ * computing the same matrix (issue #1015) — see the header. The core poses and
+ * the compiler binds with `RUNTIME_ARITHMETIC` (issue #1021); another value is
+ * a plant's.
  */
 export interface WorldArithmetic {
   /** Degrees to radians: every angle is multiplied by it. */
@@ -254,8 +255,8 @@ function modeOf(bone: ModelBone): CoreInheritMode {
  * posed from those zeros like any child. `inherit` replaces the mode
  * computation — the core suite's plant passes a copy with one mode's sign
  * flipped, and nothing else does. `arithmetic` is the runtime's unless a
- * caller states its own: `src/transform.ts` passes the compiler's (issue
- * #1015), and no posing path does.
+ * caller states its own, and only a plant does: `src/transform.ts` takes the
+ * default since issue #1021, as every posing path does.
  */
 export function worldTransforms(
   bones: readonly ModelBone[],

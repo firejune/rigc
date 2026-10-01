@@ -193,8 +193,8 @@ the extreme key:
   DEFORM  turn  default/head/head  key 6  t=1.900000  transform yaw  depth=true degrees=19
           frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 19.000000 -> t=1.900000
           moved      187 of 189 vertices, worst 63.1602px at v141
-          area       min x0.016691 tri 215   max x1.874341 tri 225   (320 triangles, 0 with no area at the cleared pose, band 0.149321px²)
-          stretch    max x1.879574 tri 225   min x0.016410 tri 215
+          area       min x0.016691 tri 215   max x1.874351 tri 225   (320 triangles, 0 with no area at the cleared pose, band 0.149321px²)
+          stretch    max x1.879584 tri 225   min x0.016410 tri 215
           winding    320 of 320 kept, 0 collapsed
 ```
 
@@ -366,15 +366,15 @@ the run above it is at alpha exactly 0 the whole way:
           frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 13.000000 -> t=1.600000
           skipped    A39 reads no winding off this key: the slot's alpha is exactly 0 at this time (slot 0.0000 x attachment 1.0000), so this key draws no pixels — a triangle that draws no pixels cannot draw them backwards
           moved      39 of 39 vertices, worst 13.8048px at v23
-          area       min x0.240413 tri 2   max x1.193150 tri 12   (48 triangles, 0 with no area at the cleared pose, band 0.115973px²)
-          stretch    max x1.193150 tri 37   min x0.240413 tri 27
+          area       min x0.240410 tri 3   max x1.193150 tri 12   (48 triangles, 0 with no area at the cleared pose, band 0.115973px²)
+          stretch    max x1.193150 tri 37   min x0.240410 tri 3
           winding    48 of 48 kept, 0 collapsed
   DEFORM  turn  default/hair_lock_l/hair_lock_l  key 6  t=1.900000  transform yaw  depth=true degrees=19
           frame      applied by slider "yaw" off yaw_dial.rotate (local), dial 19.000000 -> t=1.900000
           skipped    A39 reads no winding off this key: the slot's alpha is exactly 0 at this time (slot 0.0000 x attachment 1.0000), so this key draws no pixels — a triangle that draws no pixels cannot draw them backwards
-          moved      39 of 39 vertices, worst 19.5969px at v23
-          area       min x-0.116728 tri 27   max x1.262154 tri 38   (48 triangles, 0 with no area at the cleared pose, band 0.115567px²)
-          stretch    max x1.262154 tri 38   min x0.073931 tri 24
+          moved      39 of 39 vertices, worst 19.5969px at v30
+          area       min x-0.116728 tri 27   max x1.262153 tri 13   (48 triangles, 0 with no area at the cleared pose, band 0.115567px²)
+          stretch    max x1.262153 tri 13   min x0.073931 tri 25
           winding    44 of 48 kept, 0 collapsed  <- a fold, and nothing gates it: this key draws no pixels (see above)
 ```
 

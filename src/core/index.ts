@@ -154,11 +154,13 @@
  * World transforms come from the core's own evaluator, `worldTransforms` in
  * `./world.ts`, written from what a bone's fields mean and from measurement
  * against the runtime's dump; its header states each measured choice. It is
- * not `src/transform.ts`'s `computeWorldTransforms`, and cannot be: that is
- * the compiler's arithmetic, frozen so that no emitted byte moves, and called
- * as it is it read IDENTICAL on 1 of the 12 recipes the core poses (DIFF on
- * 11, worst 61 millionths against a tolerance of one — issue #925's report).
- * The owner's decision is recorded on issue #380. `poseSetup` takes a
+ * not reached through `src/transform.ts`'s `computeWorldTransforms`: that is
+ * the compiler's adapter over this same evaluator (issues #1015 and #1021 —
+ * the same arithmetic since #1021), and the core importing the compiler would
+ * be a cycle. The compiler's evaluator before #1015, called as it was, read
+ * IDENTICAL on 1 of the 12 recipes the core poses (DIFF on 11, worst 61
+ * millionths against a tolerance of one — issue #925's report). The owner's
+ * decision is recorded on issue #380. `poseSetup` takes a
  * `CorePlant` — the evaluator, the skin resolution, the colour and blend readings — so
  * the suite's plants can pass a copy of one of them; nothing else passes one.
  *

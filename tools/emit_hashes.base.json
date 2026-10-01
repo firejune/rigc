@@ -31,8 +31,8 @@
         },
         {
           "path": "skeleton.json",
-          "size": 103923,
-          "sha256": "c9cda94f1666085224705ff528b5c95d777098423bd56b165e2fe8c414bcdddf"
+          "size": 104474,
+          "sha256": "92650516da20a78b5f0dcfda49de4915e8047754cb3822148361bbf3f82fa093"
         }
       ]
     },
@@ -66,8 +66,8 @@
         },
         {
           "path": "skeleton.json",
-          "size": 211653,
-          "sha256": "b3a7ee298052dd8aaefbaa9079b70319a43d714a7f5901963893bb48c79238b0"
+          "size": 212544,
+          "sha256": "c39c17ac6a156e818d9793a32b0e47f1b6c88798703ba73f16b5726af48927e3"
         }
       ]
     },

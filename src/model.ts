@@ -896,8 +896,11 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  *
  *   - `setupWorld` — computed from `bones` by `computeWorldTransforms`
  *     (`src/transform.ts`), so it states nothing `bones` does not, and a core
- *     is to compute it rather than read it; and it is the one field holding a
- *     `-0` (a root bone's `b` is `-sin 0`), which JSON cannot spell.
+ *     is to compute it rather than read it; and it is the one field that can
+ *     hold a `-0` (a bone's `c` is `sin 0 · scaleX`, which is `-0` at a
+ *     `scaleX` of −1), which JSON cannot spell. (A root's `b` was `-sin 0`
+ *     until issue #1021; under the runtime's arithmetic it is `cos 90°` at
+ *     pi = 3.1415927, −2.3e-8.)
  *   - `images[].absPath` — where the part was on this machine's disk, for the
  *     size assertions.
  *   - `droppedStates[].why` — the sentence names the `--atlas-in` file by its
