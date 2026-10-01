@@ -231,7 +231,9 @@ What the flags mean:
 `render` also takes `--fps <n>` (the rate it samples at, default 12 — the same
 protocol rate the reference frames use) and `--max <px>` (the long side of a
 frame, default 256). A clipping attachment is applied as the runtime applies it —
-spine-core's own `SkeletonClipping`, in spine-webgl's call order — so a slot from
+spine-core's own `SkeletonClipping`, in spine-webgl's call order, on a Spine export,
+and the core's clipper, drawing the same pixels, on a rigc build (the `--poser`
+row) — so a slot from
 the clip's through its `end` slot draws only what falls inside the polygon, in
 `render`, `check` and every other picture rigc's own rasteriser draws (`preview`
 plays in Spine's player, which always clipped); the framing box still counts
@@ -6481,8 +6483,9 @@ Inside `setup` and each frame:
   scale and shear all live in `a b c d`.
 - `attachments` — every slot showing a region or a mesh, in the frame's **draw
   order**: `{ slot, attachment, vertices, color }`. `vertices` are `x, y` per vertex
-  in world units after skinning and deform — the runtime's own
-  `computeWorldVertices` over the **whole** attachment. A region's four are its
+  in world units after skinning and deform, over the **whole** attachment — on a
+  Spine export spine-core's own `computeWorldVertices`, and on a rigc build the
+  core's, the same numbers to the bit (the `--poser` row). A region's four are its
   corners in the order bottom-left, top-left, top-right, bottom-right; a mesh's are
   in the attachment's own order, so vertex `i` is the same vertex in every frame and
   in `rest`. `color` is the slot colour times the attachment colour, straight RGBA
@@ -6501,7 +6504,7 @@ are not numbered like them — so `vertices` are the attachment's own, and the f
 show what the clip left of them. Bounding boxes, points, paths and clipping polygons
 draw nothing and are not listed. Numbers are printed the way every JSON file this
 tool writes prints them — the shortest decimal that reads back as the same double —
-so a vertex in the file *is* the runtime's vertex, not a rounding of it; a pose that
+so a vertex in the file *is* the poser's vertex, not a rounding of it; a pose that
 is not finite is refused rather than written as `null`, naming where — the setup pose,
 `animation "a" frame i at F fps (t=…s)`, or the rest table — and then the bone and
 its world-transform field, or the slot, the attachment and the vertex, with the
