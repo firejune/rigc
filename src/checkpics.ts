@@ -48,7 +48,7 @@ import {
   type Framing,
   type FrameCheck,
 } from './check.ts';
-import { FRAMES_SIDECAR, FRAMES_SPEC } from './render.ts';
+import { FRAMES_SIDECAR, FRAMES_SPEC } from './render_shared.ts';
 import { isContent } from './framing.ts';
 import { isAttributable } from './slots.ts';
 import { encodePng, Plate, type RGBA } from '../tools/plate.ts';

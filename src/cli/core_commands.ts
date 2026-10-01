@@ -1,0 +1,1532 @@
+/**
+ * The bodies of the commands that reach nothing of spine-core — `explain`,
+ * `ingest`, `diff`, `check`, `render`, `pose`, `chainfit` and `skills` —
+ * moved here unchanged from `cli.ts` (issue #1052, step 4e of #380), with the
+ * helpers only they call. Both entries register them (`CORE_COMMAND_RUNS`):
+ * `cli.ts` beside the runtime's, `cli_core.ts` alone.
+ *
+ * Which commands these are is not a list kept here: it is `COMMANDS`'s
+ * `runtime` field (`./shared.ts`), which `RC26` in `selftest.ts` holds to the
+ * import graph of this module. A body here that reaches the runtime turns it
+ * red naming the chain, and `cli_core.ts` would stop linking with the package
+ * absent, which `RC24` runs.
+ */
+import { parseAtlasText } from '../atlas.ts';
+import { chainFitLines, type ChainFitOptions, estimateChainFit } from '../chainfit.ts';
+import { checkLines, CheckPlates } from '../check.ts';
+import { writeCheckPictures } from '../checkpics.ts';
+import { compile, type CompileOptions, droppedStateReason, relativeImagesPath } from '../compile.ts';
+import { CoreInputError } from '../core/index.ts';
+import { surveyOfBuild } from '../deformbuild.ts';
+import type { DeformSurvey } from '../deformsurvey.ts';
+import { deformReportBlock } from '../deformreport.ts';
+import { type DiffAnimationPair, diffLines, diffSkeletons } from '../diff.ts';
+import { ingest, INGEST_GUTTERS, type IngestFinding, IngestSpecRefused, type IngestStage } from '../ingest.ts';
+import { PARSER_DEFAULTS, parserReading } from '../keyorder.ts';
+import { modelDocument } from '../model.ts';
+import { parseMotionSpec } from '../motion.ts';
+import { estimatePose, poseLines, type PoseOptions } from '../pose.ts';
+import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, type FrameSet, type FramesSidecar, framingViewport, GEOMETRY_FILE, geometryFileOf, geometryText, loadCandidate, POSER_NAMES, type PoserName, PROTOCOL_FPS, refuseUnchosen, renderFrame, sampleAll, sampleAnimation, SETUP_POSE_DIR, SHEET_FILE, SHEET_TILE, sidecarViewport, type SkeletonFacts, type SlotSubset, SlotSubsetError, throughPoser } from '../render_shared.ts';
+import { type CompileResult } from '../types.ts';
+import { attachmentRegionJoins } from '../region_joins.ts';
+import { ATLAS_ABSENT, COMMANDS, type CommandRun, PACKAGE_ROOT, DEFAULT_CHAINFIT_OUT, DEFAULT_POSE_OUT, DEFAULT_SKILLS_DIR, ExplainError, meshBudget, meshDepthNote, meshFit, meshInfluenceNote, PAGE_GRID_UNLOCATED, readAnimationFlag, readJsonFile, readPoserFlag, readSkeletonText, readVersion, resolveCut, resolveDrawable, runCheck, SkillsInstallError, STAGELESS_FRAMING, UsageError, writeJson } from './shared.ts';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+
+
+const MESH_KIND_NOTES: Record<CompileResult['meshes'][number]['kind'], string> = {
+  ring: 'ring      rim ring pinned on the window edge, seam ring pinned on the mask contour, aperture moves',
+  ribbon: 'ribbon    entry row pinned, rows share their weights so the strip lengthens without widening',
+  contour: 'contour   the art\'s own silhouette, every vertex pinned to the slot bone (geometry, not a deformation)',
+  grid: 'grid      a lattice over the part window at stated column and row positions, every vertex pinned to the slot bone',
+  segments: 'segments  a lattice over the part\'s alpha, every vertex weighted by distance to the bone segments it names',
+  authored: 'authored  geometry rigc did not build; it assumes nothing about the topology',
+};
+
+/**
+ * The `MEMBER` report block — a group track's per-member values, side by side
+ * (issue #295).
+ *
+ * ## Why side by side is the whole point
+ *
+ * The complaint that filed #295 was not the line count. `gallery/portrait`'s
+ * held yaw put six sibling bones' `translatex` in six separate tracks, and the
+ * reason that is bad is that **nobody can see a wrong sign in a column that is
+ * eighty lines from its neighbours.** FACE §3 makes the same argument from the
+ * other side: a residual is 1–6 units where a total is 30–40, and the split is
+ * *an auditing decision before it is a rigging one*. So the report's job is to
+ * put the numbers in the arrangement the audit needs — one row per member, one
+ * block per key — which is exactly the arrangement the emitted format cannot
+ * have, because Spine keys one bone per timeline.
+ *
+ * ## It quotes; it does not re-derive
+ *
+ * The same rule as the `DEFORM` block. Every value here is the one the compiler
+ * **emitted**, carried on `result.trackDerivations`, so the block and the
+ * artifact cannot disagree. `derived` and `formula` are the model's own strings
+ * from `src/trackgen.ts`, so the block names the closed form the spec stated
+ * rather than a second reading of it.
+ *
+ * ## What it deliberately does not print
+ *
+ * **Tracks whose members all share one value** — the ordinary `groups` entry.
+ * There is one number there and the timelines above already show it on every
+ * member; a table of six identical rows would be a tautology, and the block
+ * exists to make a *difference* visible. `look_l`/`look_r` in the worked example
+ * are exactly that case and they are right to be absent from here.
+ *
+ * **`stagger`.** A per-member time offset is printed as it always was — on each
+ * member's own timeline, where the shifted key times are. Repeating it here
+ * would put one lag in two places.
+ */
+function memberReportLines(result: CompileResult): string[] {
+  if (result.trackDerivations.length === 0) return [];
+  const out: string[] = [
+    '',
+    'group members  (the per-member values of one track, side by side — issue #295)',
+    '  ..    a row per member and a block per key, because a wrong sign is visible in a column of six and',
+    '  ..    invisible in six tracks. Values are the EMITTED ones, so this and the artifact cannot disagree',
+    '  ..    a group whose members all share one value is not here: there is one number and the timelines',
+    '  ..    above already carry it. `stagger` is not here either — the shifted key times are on those timelines',
+  ];
+  for (const entry of result.trackDerivations) {
+    const states =
+      entry.model === null
+        ? 'stated per member'
+        : `derive ${entry.model.kind}  ${entry.model.stated}  -> ${entry.model.projection === 'shift' ? 'the displacement' : 'the narrowing'}`;
+    out.push(
+      `  MEMBER  ${entry.animation}  ${entry.targetKind} "${entry.target}".${entry.property}  ` +
+        `t=${entry.time.toFixed(6)}  ${entry.members.length} member(s)  ${states}`,
+    );
+    if (entry.model !== null) {
+      out.push(`          ${entry.model.formula}`);
+      for (const line of entry.model.derived) out.push(`            ${line}`);
+    }
+    const width = Math.max(6, ...entry.members.map((m) => m.member.length));
+    for (let i = 0; i < entry.members.length; i++) {
+      const m = entry.members[i];
+      const value = Array.isArray(m.value) ? m.value.join(', ') : JSON.stringify(m.value);
+      // The model's own row carries the two inputs that produced the value — the
+      // coordinate it read off the rig and the depth the spec stated — because
+      // "5.513" alone is a number a reader can only take on trust, and `−62` and
+      // `150` beside it are a claim they can check.
+      const from = entry.model === null ? '' : `  <- ${entry.model.members[i].at >= 0 ? ' ' : ''}${entry.model.members[i].at} at depth ${entry.model.members[i].depth}`;
+      out.push(`            ${m.member.padEnd(width)}  ${value.padStart(12)}${from}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * The `DEFORM` report block — what each deform key does to the geometry, per key
+ * and then per animation (issue #316).
+ *
+ * ## Why this is a report and not an assertion
+ *
+ * Because a 3× stretch is a real thing to author, for the same reason issue #277
+ * settled mesh coverage as a printed figure on authored geometry rather than a
+ * bar. The one deformed-geometry fault that has no legitimate counter-example is
+ * the fold, and that one already IS an assertion —
+ * `A39_DEFORM_KEEPS_TRIANGLE_WINDING`. What this block adds is **the approach to
+ * that wall**: FACE §4.2's table of ratios down to the fold at 31.37° was
+ * measured by rendering seven variants of `gallery/portrait` and looking at them,
+ * and `0.637` was a number an author derived from the closed form rather than one
+ * the tool printed.
+ *
+ * ## It quotes; it does not re-derive
+ *
+ * - the reversal and collapse counts are the **survey's**, which is A39's own
+ *   survey ([`src/deformmeasure.ts`](src/deformmeasure.ts)) — one measurement,
+ *   two readers, so the block and the gate cannot disagree about a fold;
+ * - 🔒 and so is **the frame each key was posed in** (issue #407), which every
+ *   `DEFORM` line now names: `on a track`, or the slider that applies the
+ *   animation and the dial value its own mapping had to be inverted to. The
+ *   derivation moved and the report had to move with it — a block that went on
+ *   printing the same figures under a changed meaning would be worse than the
+ *   red it replaced;
+ * - a key's model is the **compiler's** `transform` report (§4.11.1), so the
+ *   block names the same `kind` and parameters the spec stated;
+ * - the fold ANGLE is nowhere here. It is A39's, derived at run time from the
+ *   grid, and a second copy of it printed beside a ratio would be a number that
+ *   goes stale when somebody moves a column;
+ * - and a key the gate read **no winding** off — because the slot draws no pixels
+ *   of the mesh at that key's own time (issue #401) — says so on a `skipped` line
+ *   with the survey's own sentence, and is kept out of the rollup's counts,
+ *   because that line ends by claiming A39 reads the same two;
+ * - the **spans** between the keys are the survey's too (issue #403). A `BETWEEN`
+ *   line appears wherever the closed form found a fold at a time no key lands
+ *   on, whether the gate refuses it or passes it over because nothing is drawn
+ *   there — and a `spans` line says how many were scanned even when nothing was
+ *   found, because a scan that ran and found nothing has to be distinguishable
+ *   from a scan that never ran.
+ *
+ * ## And what it deliberately does not print
+ *
+ * **Deformed coverage**, which #296 asked for. The coverage figure is rasterised
+ * from the attachment's **uvs** against the part's alpha, and a deform moves
+ * positions and never uvs — so it is identical at every key by construction, and
+ * a `coverage 100.00% (setup 100.00%)` line would be a tautology wearing a
+ * measurement's clothes. The header line says so and points at `meshes`, because
+ * an author who came here asking whether their deform broke the coverage
+ * deserves the answer rather than a silence. What does move is the stretch.
+ */
+function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>, poser: PoserName | undefined, label: string): string[] {
+  // Read and posed through rigc's own core over the model document the build carries (issues #969, #1019) —
+  // spine-core is not touched — and through spine-core under `--poser spine` or when the core refuses the
+  // document, which the block then names; `tools/survey_hashes.ts` holds the two to one block. The block
+  // itself is `deformReportBlock` (`src/deformreport.ts`), so a control renders it off either reader's survey.
+  const input = { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText, result.atlasText), label: `the deform survey of ${label}` };
+  let survey: DeformSurvey;
+  try {
+    survey = surveyOfBuild(input, new Set(), poser === undefined ? 'auto' : poser === 'core' ? 'model' : 'spine-core');
+  } catch (err) {
+    // `--poser core` on a build the core refuses: a refusal of the invocation, as `render` and `check` give it.
+    if (poser === 'core' && err instanceof CoreInputError) throw new ExplainError(`--poser core: the core refused to pose the deform survey's model document — ${err.message}`);
+    throw err;
+  }
+  return deformReportBlock(survey, result.deformTransforms, exempt);
+}
+
+/**
+ * The header the `scale` rows carry, because the figure beside them lies without
+ * it.
+ *
+ * ⛔ Three things it has to say, and each one is a way the number is wrong if
+ * taken at face value:
+ *   - it is the key's OWN factor. A nonuniform parent shears its children, so
+ *     the drawn area is not this product;
+ *   - a key that moved only one axis has no product to state, and gets none
+ *     rather than an invented 1 on the other;
+ *   - a uniform scale has a product too, and it is a zoom rather than a squash.
+ */
+const SCALE_PRODUCT_NOTE =
+  '..  x·y is the key\'s own local area factor: ~1.00 is the volume kept, and it is a READING, never a rule — ' +
+  'a nonuniform parent shears this, and a uniform scale has a product without being a squash';
+
+/**
+ * `x·y` for a `scale` key that states both, and nothing otherwise.
+ *
+ * ⭐ Why it is here at all: `explain` ALREADY prints this reading for the other
+ * spelling of squash and stretch. A `transform: affine` deform key reports
+ * `area x1.020800`, which is exactly its own `0.88 × 1.16` — so the author who
+ * reaches for the advanced spelling is told whether the volume held and the
+ * author who reaches for the cheap one is not, while `docs/MOTION.md` §7 points
+ * a first candidate at the cheap one on purpose. That asymmetry is the defect;
+ * this is not a new kind of number (issue #377).
+ *
+ * 🔒 A reading and never an assertion. `deformReportLines` states the test a
+ * geometric figure has to pass to become a gate — no legitimate counter-example
+ * — and this fails it in quantity: a shadow, a zoom, a cartoon squash that
+ * gains mass on purpose. Volume preservation is a style commitment no spec can
+ * declare, so a bar here would be one consumer's house style failing correct
+ * foreign data. There is no honest SKIP either: an absent declaration is not
+ * "nothing to measure", it is "no way to know what was meant".
+ */
+/**
+ * An emitted key as the 4.3 parser reads it: every field its kind's
+ * `PARSER_DEFAULTS` row lists and the key leaves out, at the row's value, then
+ * the key's own fields. The emitter leaves a field at its parser default out
+ * (issue #716), so a report that reads the file needs the row to say what the
+ * runtime reads there — and reads it from the one table the emitter used.
+ */
+function asParsed(kind: string, key: Record<string, unknown>): Record<string, unknown> {
+  const row = PARSER_DEFAULTS[kind];
+  if (row === undefined) return key;
+  const site = { object: key, previous: () => null };
+  const filled: Record<string, unknown> = {};
+  for (const field of Object.keys(row)) {
+    const value = parserReading(row, site, field);
+    if (value !== undefined) filled[field] = value;
+  }
+  return { ...filled, ...key };
+}
+
+/** An emitted key's time as the parser reads it — `0` where the key leaves it out. */
+function keyTimeOf(kind: string, key: Record<string, unknown>): unknown {
+  return asParsed(kind, key).time;
+}
+
+function scaleProduct(timelineName: string, key: Record<string, unknown>): string {
+  if (timelineName !== 'scale') return '';
+  const x = key.x;
+  const y = key.y;
+  // Both axes, or nothing: a key that moved one axis has no area factor, and
+  // defaulting the other to 1 would invent the very number being reported.
+  if (typeof x !== 'number' || typeof y !== 'number') return '';
+  return `  x·y=${(x * y).toFixed(4)}`;
+}
+
+/**
+ * `--as <candidate>=<reference>`, one pair per occurrence.
+ *
+ * ⚠️ Spelled with a pair where `check --as <name>` takes one name, and the
+ * difference is in what the two commands have on the other side. `check`
+ * measures against a rendered frame SET, which already carries the reference
+ * animation's name in its own directory, so one name closes the gap. `diff` has
+ * two skeletons and either may have its own vocabulary, so one name says which
+ * shot on which side and leaves the other unanswered. The direction — candidate
+ * first — is the one `bonedist`'s correspondence file already writes its
+ * `animations` map in.
+ *
+ * Every refusal here is a UsageError because every one of them is about the
+ * flag's own value, and each names what it read: a value with no `=`, an empty
+ * side, a name repeated on either side, and a name no animation on that side
+ * answers to. ⛔ The last of those is a refusal rather than a dropped pair for
+ * the reason a miss is refused by name everywhere else in this tool — a typo
+ * that quietly measured less would be a report about a pairing the caller did
+ * not ask for.
+ */
+function readAnimationPairs(values: string[], candidate: unknown, reference: unknown): DiffAnimationPair[] {
+  const animationsOf = (root: unknown): string[] => {
+    const anims = (root as { animations?: unknown } | null)?.animations;
+    return typeof anims === 'object' && anims !== null && !Array.isArray(anims) ? Object.keys(anims) : [];
+  };
+  const have = { candidate: animationsOf(candidate), reference: animationsOf(reference) };
+  const pairs: DiffAnimationPair[] = [];
+  for (const value of values) {
+    const at = value.indexOf('=');
+    if (at < 0) {
+      throw new UsageError(
+        `--as ${JSON.stringify(value)} is not a pair. It takes <candidate>=<reference> — two animation names joined ` +
+          'by `=`, because diff compares two skeletons and either may have its own name for the shot. The candidate ' +
+          `has [${have.candidate.join(', ') || 'none'}] and the reference has [${have.reference.join(', ') || 'none'}].`,
+      );
+    }
+    const pair = { candidate: value.slice(0, at), reference: value.slice(at + 1) };
+    if (pair.candidate === '' || pair.reference === '') {
+      throw new UsageError(
+        `--as ${JSON.stringify(value)} leaves the ${pair.candidate === '' ? 'candidate' : 'reference'} side empty; ` +
+          'it takes <candidate>=<reference>, a name on each side',
+      );
+    }
+    for (const side of ['candidate', 'reference'] as const) {
+      if (!have[side].includes(pair[side])) {
+        throw new UsageError(
+          `--as ${JSON.stringify(value)} names no ${side} animation: the ${side} has ` +
+            `[${have[side].join(', ') || 'none'}] and not ${JSON.stringify(pair[side])}`,
+        );
+      }
+      if (pairs.some((p) => p[side] === pair[side])) {
+        throw new UsageError(
+          `--as pairs the ${side} animation ${JSON.stringify(pair[side])} twice; each animation may be in one pair, ` +
+            'or the block would compare one shot against two',
+        );
+      }
+    }
+    pairs.push(pair);
+  }
+  return pairs;
+}
+
+export function cmdDiff(flags: Record<string, string>, lists: Record<string, string[]>, positional: string[]): void {
+  const [candidate, reference] = positional;
+  if (!candidate || !reference) throw new UsageError('diff takes two paths: <candidate.json> <reference.json>');
+  const candidatePath = resolve(candidate);
+  const referencePath = resolve(reference);
+  for (const path of [candidatePath, referencePath]) {
+    if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
+  }
+  const candidateJson = readJsonFile(candidatePath);
+  const referenceJson = readJsonFile(referencePath);
+  const animationPairs = readAnimationPairs(lists.as ?? [], candidateJson, referenceJson);
+  const report = diffSkeletons(candidateJson, referenceJson, { animationPairs });
+  console.log('rigc diff');
+  for (const line of diffLines(report, { candidate: candidatePath, reference: referencePath })) console.log(line);
+  if (flags.json !== undefined) {
+    // ⚠️ `...report` carries its OWN `candidate` and `reference` — the raw
+    // per-side counts. Spelling the paths under those two names put them on
+    // the losing side of the spread, so the written report named neither file
+    // it compared. The paths get their own keys.
+    writeJson(flags.json, { candidatePath, referencePath, ...report });
+  }
+}
+
+/**
+ * `check --out <dir>`, refused before anything is compared when it cannot be
+ * written — see `src/checkpics.ts` for what goes there.
+ *
+ * Two refusals and no others. A **file** at the path is not a directory of
+ * pictures, and saying so beats the `ENOTDIR` a write would throw after the
+ * whole comparison had run. And a directory that **is `--frames` or holds it**
+ * is refused because `<out>/<set>/` is cleared and `<out>/frames.json` written,
+ * as `render` does to its own: there, that is the reference set being deleted by
+ * the command that reads it — `check --frames render --out render` would clear
+ * `render/heavy` and put a picture sidecar where the frames' own was. A fresh
+ * path, and an existing directory anywhere else, are written to.
+ */
+function readCheckOut(outFlag: string, framesFlag: string): string {
+  const out = resolve(outFlag);
+  if (existsSync(out) && !statSync(out).isDirectory()) {
+    throw new UsageError(`check: --out ${out} is a file; it names a directory`);
+  }
+  const frames = resolve(framesFlag);
+  const within = relative(out, frames);
+  if (within === '' || (!within.startsWith('..') && !isAbsolute(within))) {
+    throw new UsageError(
+      `check: --out ${out} ${within === '' ? 'is' : 'holds'} --frames ${frames}; the pictures would be written ` +
+        'over the frames they are pictures of (each set directory under --out is cleared first) — name a directory ' +
+        'outside it',
+    );
+  }
+  return out;
+}
+
+export function cmdCheck(flags: Record<string, string>): void {
+  if (flags.candidate === undefined) throw new UsageError('check needs --candidate <dir | skeleton.json>');
+  if (flags.frames === undefined) throw new UsageError('check needs --frames <dir> — a rendered reference frame set');
+  const out = flags.out === undefined ? null : readCheckOut(flags.out, flags.frames);
+  const allFrames = flags['all-frames'] !== undefined;
+  // Only asked for when there is somewhere to put the pictures: without --out
+  // nothing is kept, and the run is the run it was before --out existed.
+  const plates = out === null ? undefined : new CheckPlates({ allFrames });
+  const report = runCheck(flags.candidate, flags.atlas, flags.frames, flags, plates);
+  console.log('rigc check');
+  for (const line of checkLines(report, { allFrames })) console.log(line);
+  if (flags.json !== undefined) writeJson(flags.json, report);
+  if (out !== null && plates !== undefined) {
+    for (const set of writeCheckPictures(out, report, plates, { allFrames })) {
+      const which = set.frames.length === 0 ? 'nothing compared' : set.every ? 'every compared frame' : 'the frames worth reading';
+      console.log(`  ..    ${set.dir.padEnd(16)} ${set.frames.length} picture(s), ${which} -> ${set.path}`);
+    }
+    console.log(`rigc: wrote ${join(out, FRAMES_SIDECAR)}`);
+  }
+}
+
+/**
+ * `--skin`, checked against what the skeleton actually declares.
+ *
+ * ⭐ Absent is not `default`: it is "set no skin at all", which is what every
+ * render did before issue #571 and what `spine-core` starts a skeleton in. The
+ * distinction is the whole of the default path's byte-identity — see
+ * `FramesSidecar.skin`.
+ *
+ * The miss is refused by name with the declared names beside it, the way
+ * `--animation` is: a skin name is the one place a typo draws a whole rig's
+ * worth of the wrong art and reports a number about it.
+ */
+function readSkinFlag(flags: Record<string, string>, declared: string[]): string | undefined {
+  const name = flags.skin;
+  if (name === undefined) return undefined;
+  if (!declared.includes(name)) {
+    throw new UsageError(
+      `no skin ${JSON.stringify(name)} in this skeleton; it declares [${declared.join(', ') || 'none'}]`,
+    );
+  }
+  return name;
+}
+
+/**
+ * `--slot` / `--hide`, resolved against the skeleton under the skin this run
+ * poses it in — or refused as a usage error, nothing written (issue #835).
+ *
+ * The rule itself is `slotSubsetOf`'s in `src/render.ts`, which `piecesOf`
+ * applies too: it is read here only so a miss exits 2 with the usage beside
+ * it before a directory is created, rather than surfacing from the sampler.
+ */
+function readSlotSubsetFlags(
+  flags: Record<string, string>,
+  facts: SkeletonFacts,
+  skin: string | undefined,
+): SlotSubset | undefined {
+  const list = (raw: string | undefined): string[] | undefined =>
+    raw === undefined ? undefined : raw.split(',').map((name) => name.trim()).filter((name) => name !== '');
+  try {
+    return facts.subset({ slots: list(flags.slot), hidden: list(flags.hide) }, skin);
+  } catch (err) {
+    if (err instanceof SlotSubsetError) throw new UsageError(err.message);
+    throw err;
+  }
+}
+
+/** `--poser` as the candidate is loaded with: a known spelling, or the input's own choice — the spelling is refused later, by `readPoserFlag`. */
+function posersAsked(flags: Record<string, string>): PoserName | undefined {
+  return POSER_NAMES.find((name) => name === flags.poser);
+}
+
+/** A resolved subset as the one field it is spelled as, in `PoseOptions` and in `frames.json` alike. */
+function subsetFields(subset: SlotSubset | undefined): { slots?: string[]; hidden?: string[] } {
+  if (subset === undefined) return {};
+  return subset.mode === 'slots' ? { slots: subset.names } : { hidden: subset.names };
+}
+
+function readPositiveNumber(flags: Record<string, string>, key: string, fallback: number, least: number): number {
+  const raw = flags[key];
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < least) throw new UsageError(`--${key} must be a number of at least ${least}`);
+  return value;
+}
+
+/**
+ * render — the frame series, drawn by the same rasteriser `check` measures with.
+ *
+ * The framing is measured across EVERY animation at `FRAMING_FPS` and not across
+ * the one being written, which is `src/render.ts`'s own invariant: the viewport is
+ * a property of the shot, so two animations of one rig — and the same animation at
+ * two rates — land on one pixel grid and stay comparable.
+ */
+export function cmdRender(flags: Record<string, string>): void {
+  if (flags.candidate === undefined) {
+    throw new UsageError('needs --candidate <dir | skeleton.json> — the directory `build --out` wrote');
+  }
+  const { skeletonPath, atlasPath, atlasText } = resolveDrawable(flags.candidate, flags.atlas);
+  const atlasDir = dirname(atlasPath);
+  const fps = readPositiveNumber(flags, 'fps', PROTOCOL_FPS, 1);
+  const maxSide = readPositiveNumber(flags, 'max', 256, 16);
+  const outRoot = resolve(flags.out ?? 'render');
+  const geometry = flags.geometry !== undefined;
+  // Refused together rather than one of them ignored (issue #864). The export
+  // records every slot's whole geometry, because a subset is a statement about
+  // which pixels are DRAWN and the pose is the same whatever a picture leaves
+  // out — so a geometry.json beside a subset's frames would describe slots
+  // those frames do not draw, and one that dropped them would stop being the
+  // pose. The whole-rig run writes the same file either way.
+  if (geometry) {
+    for (const flag of ['slot', 'hide'] as const) {
+      if (flags[flag] !== undefined) {
+        throw new UsageError(
+          `--geometry takes no --${flag}: it records every slot's whole geometry, which a subset of the drawn slots ` +
+            `does not change. Run \`rigc render --geometry\` on the whole rig for the file, and --${flag} ` +
+            `${flags[flag]} without --geometry for the pictures — both land on the same grid`,
+        );
+      }
+    }
+  }
+
+  console.log('rigc render');
+  console.log(`  ..    skeleton ${skeletonPath}`);
+  console.log(`  ..    atlas    ${atlasPath}${atlasText === null ? ` — not there (${ATLAS_ABSENT})` : ''}`);
+  // Which implementation of the posing seam draws this (issue #968), chosen
+  // before anything is read off the candidate (issue #1014): a rigc build the
+  // core poses — `skeleton.model.json` beside the pair — reads its names, its
+  // subset roster and its pages without loading spine-core at all, and with a
+  // rigc-compiled/2 document without its atlas either (issue #1020).
+  const { choice, facts, pages } = loadCandidate(
+    { skeletonText: readSkeletonText(skeletonPath), atlasText, atlasDir, label: skeletonPath },
+    { skeleton: skeletonPath, atlas: atlasPath },
+    posersAsked(flags),
+  );
+  const only = readAnimationFlag(flags, [...facts.animations]);
+  const skin = readSkinFlag(flags, [...facts.skins]);
+  const subset = readSlotSubsetFlags(flags, facts, skin);
+  // One object, so the framing and the frames cannot be posed under two
+  // different skins — which would frame one shot with another shot's box.
+  // Not annotated `PoseOptions`: that name is `src/pose.ts`'s in this file, and
+  // `src/render.ts` has one of its own. The inferred shape is the render one.
+  // The subset rides on the same object and `framingViewport` takes it off, so
+  // the frames draw the subset and the box is still the whole rig's.
+  const pose =
+    skin === undefined && subset === undefined
+      ? undefined
+      : { ...(skin === undefined ? {} : { skin }), ...subsetFields(subset) };
+  if (skin !== undefined) console.log(`  ..    skin     ${skin}`);
+  if (subset !== undefined) console.log(`  ..    ${subset.mode.padEnd(8)} ${subset.names.join(', ')}`);
+
+  // Rigc's own core when the candidate is a rigc build, and spine-core
+  // otherwise, or where the core refuses the input by name. Never silently:
+  // the `poser` line below says which, and why. `--poser` is refused here, where
+  // it always was: a spelling there is no poser for, then `core` on an input
+  // that cannot carry it.
+  readPoserFlag(flags);
+  refuseUnchosen(choice);
+
+  // Everything is posed before anything is written, so a core refusal partway
+  // re-poses the whole input on spine-core rather than leaving half of a frame
+  // set drawn by each.
+  const posed = throughPoser(choice, (poser, roster) => {
+    // `null` is a skeleton that posed no vertex at all. One that posed a vertex
+    // it cannot frame — Infinity or NaN — is thrown from the framing as a
+    // `GeometryError` naming the number (issue #873), and one whose every vertex
+    // sits at one point — every drawn bone unposed by the skin, or collapsed — as
+    // an `UnframeablePoseError` (issue #997); neither reaches this. The roster is what
+    // lets the second name the skins that pose a bone, whichever poser draws.
+    const viewport = framingViewport(poser, maxSide, pose, roster);
+    if (!viewport) {
+      throw new UsageError(
+        `${skeletonPath} posed no drawable attachment in any animation or in its setup pose${
+          skin === undefined ? '' : ` under skin ${JSON.stringify(skin)}`
+        } — there is nothing to draw`,
+      );
+    }
+
+    // `sampleAll` covers the skeleton with no animation at all, which files its one
+    // setup-pose frame under the reserved name. Narrowing to one animation reuses
+    // the same sampler rather than a second path through it.
+    //
+    // `--geometry` rides on the SAME call (issue #864): the bones and the whole
+    // attachments are read off the skeleton at the step that drew each frame, so
+    // the export's grid is this frame set's by construction.
+    const sampling = geometry ? { ...pose, bones: true, geometry: true } : pose;
+    const sampled: Map<string, Frame[]> =
+      only === undefined
+        ? sampleAll(poser, fps, sampling)
+        : new Map([[only, sampleAnimation(poser, only, fps, sampling)]]);
+    // Every file's text before the first write, so a refused number leaves the
+    // output directory as it was rather than half of a frame set behind it.
+    const geometryTexts = new Map<string, string>();
+    if (geometry) {
+      for (const [name, frames] of sampled) {
+        const animation = name === SETUP_POSE_DIR && facts.animations.length === 0 ? null : name;
+        geometryTexts.set(name, geometryText(geometryFileOf(poser, animation, fps, frames, viewport, skin)));
+      }
+    }
+    return { viewport, sampled, geometryTexts };
+  });
+  const { viewport, sampled, geometryTexts } = posed.value;
+  console.log(`  ..    poser    ${posed.note}`);
+  console.log(`  ..    ${viewport.width}x${viewport.height}px at ${fps} fps, ${sampled.size} set(s) -> ${outRoot}`);
+  if (!facts.declaresStage) console.log(`  ..    ${STAGELESS_FRAMING.render}`);
+
+  mkdirSync(outRoot, { recursive: true });
+  const sets: FrameSet[] = [];
+  for (const [name, frames] of sampled) {
+    // Same naming as a reference render: the protocol rate says nothing, any
+    // other rate says itself, so two rates of one animation sit side by side.
+    const dirName = fps === PROTOCOL_FPS ? name : `${name}@${fps}fps`;
+    const dir = join(outRoot, dirName);
+    // Cleared rather than written over: a shorter animation would otherwise leave
+    // the tail of a longer previous run on disk, and stale frames in a frame set
+    // are indistinguishable from real ones.
+    if (existsSync(dir)) rmSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < frames.length; i++) {
+      renderFrame(frames[i], pages, viewport, BACKGROUND).writePng(join(dir, `f${String(i).padStart(4, '0')}.png`));
+    }
+    // One frame has nothing to compare itself against, so it gets no sheet — it
+    // would be the same picture with a border and a "0" on it.
+    const sheet = frames.length > 1;
+    if (sheet) contactSheet(frames, pages, viewport, SHEET_TILE).writePng(join(dir, SHEET_FILE));
+    const geometryOut = geometryTexts.get(name);
+    if (geometryOut !== undefined) writeFileSync(join(dir, GEOMETRY_FILE), geometryOut);
+    const duration = frames[frames.length - 1].time;
+    sets.push({
+      dir: dirName,
+      animation: name === SETUP_POSE_DIR && facts.animations.length === 0 ? null : name,
+      fps,
+      sampled: frames.length,
+      written: frames.length,
+      stride: 1,
+      duration,
+    });
+    const how = frames.length === 1 ? 'a single pose' : `${duration.toFixed(3)}s`;
+    const extras = `${sheet ? ` + ${SHEET_FILE}` : ''}${geometryOut === undefined ? '' : ` + ${GEOMETRY_FILE}`}`;
+    console.log(`  ..    ${name.padEnd(16)} ${frames.length} frame(s), ${how}${extras} -> ${dir}`);
+  }
+
+  // The sidecar is what makes this a frame SET rather than a pile of pictures:
+  // the world box every frame is a picture of, so a distance measured in pixels
+  // converts back to the units the rig is authored in — and so `rigc check` can
+  // render something else into the same grid later.
+  const sidecar: FramesSidecar = {
+    spec: FRAMES_SPEC,
+    // Written only when a skin was asked for: absent says "no skin was set",
+    // which is both what this run did and what every frame set written before
+    // #571 did. See `FramesSidecar.skin`.
+    ...(skin === undefined ? {} : { skin }),
+    // Written only when a subset was asked for, for the same reason: a render of
+    // every slot says nothing and stays the bytes it always was (issue #835).
+    ...subsetFields(subset),
+    background: BACKGROUND,
+    // The one spelling `geometry.json` repeats, so the two files cannot state
+    // two boxes for one grid.
+    viewport: sidecarViewport(viewport),
+    sets: [...sets].sort((a, b) => a.dir.localeCompare(b.dir)),
+  };
+  writeFileSync(join(outRoot, FRAMES_SIDECAR), `${JSON.stringify(sidecar, null, 2)}\n`);
+  console.log(`rigc: wrote ${join(outRoot, FRAMES_SIDECAR)}`);
+}
+
+/** `--scale 0.5,2` / `--rotation -30,30` — a pair of numbers, low first. */
+function readRange(flags: Record<string, string>, key: string): { low: number; high: number } | undefined {
+  const raw = flags[key];
+  if (raw === undefined) return undefined;
+  const parts = raw.split(',').map((s) => Number(s.trim()));
+  if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n))) {
+    throw new UsageError(`--${key} takes two numbers: <min>,<max>`);
+  }
+  if (parts[1] < parts[0]) throw new UsageError(`--${key} ${JSON.stringify(raw)}: the minimum must not exceed the maximum`);
+  return { low: parts[0], high: parts[1] };
+}
+
+export function cmdPose(flags: Record<string, string>): void {
+  if (flags.images === undefined) throw new UsageError('pose needs --images <dir> — the directory the loose part PNGs are in');
+  if (flags.frame === undefined) throw new UsageError('pose needs --frame <path> — one pose frame to read the placements out of');
+  const options: PoseOptions = { imagesDir: flags.images, framePath: flags.frame };
+  const scale = readRange(flags, 'scale');
+  if (scale) {
+    if (scale.low <= 0) throw new UsageError('--scale minimum must be greater than zero');
+    options.scale = { min: scale.low, max: scale.high };
+  }
+  const rotation = readRange(flags, 'rotation');
+  if (rotation) {
+    if (rotation.high - rotation.low > 360) throw new UsageError('--rotation cannot span more than a full turn');
+    options.rotation = { minDeg: rotation.low, maxDeg: rotation.high };
+  }
+  if (flags['max-residual'] !== undefined) {
+    const value = Number(flags['max-residual']);
+    if (!Number.isFinite(value) || value <= 0 || value > 1) throw new UsageError('--max-residual must be a number in (0, 1]');
+    options.maxResidual = value;
+  }
+
+  console.log('rigc pose');
+  const report = estimatePose(options);
+  for (const line of poseLines(report)) console.log(line);
+
+  // Same `--out` shape as `preview` and `vote`: one file, and a directory means
+  // "the default name in here" rather than a report written over a directory.
+  const target = resolve(flags.out ?? DEFAULT_POSE_OUT);
+  const out = existsSync(target) && statSync(target).isDirectory() ? join(target, DEFAULT_POSE_OUT) : target;
+  writeJson(out, report);
+}
+
+export function cmdChainFit(flags: Record<string, string>): void {
+  if (flags.candidate === undefined) {
+    throw new UsageError('chainfit needs --candidate <dir | skeleton.json> — the compiled rig to read the frame through');
+  }
+  if (flags.images === undefined) {
+    throw new UsageError("chainfit needs --images <dir> — where the candidate's attachment image names resolve to PNGs");
+  }
+  if (flags.frame === undefined) throw new UsageError('chainfit needs --frame <path> — one pose frame to read the placements out of');
+  // Refused rather than ignored. Every other --candidate command takes --atlas, so
+  // passing it here is a reasonable thing to try — and a flag that silently does
+  // nothing is worse than one that says why it cannot.
+  if (flags.atlas !== undefined) {
+    throw new UsageError(
+      'chainfit reads no atlas: the part art comes from --images, one PNG per attachment image name, and the ' +
+        'skeleton is all it needs of the candidate. Drop --atlas',
+    );
+  }
+  const options: ChainFitOptions = {
+    candidatePath: flags.candidate,
+    imagesDir: flags.images,
+    framePath: flags.frame,
+  };
+  if (flags.anchor !== undefined) options.anchorPath = flags.anchor;
+  const hinge = readRange(flags, 'hinge');
+  if (hinge) {
+    if (hinge.high - hinge.low > 360) throw new UsageError('--hinge cannot span more than a full turn');
+    options.hinge = { minDeg: hinge.low, maxDeg: hinge.high };
+  }
+  if (flags.stretch !== undefined) {
+    const value = Number(flags.stretch);
+    if (!Number.isFinite(value) || value < 1) throw new UsageError('--stretch must be a ratio of 1 or more, e.g. 1.25');
+    options.stretch = value;
+  }
+  if (flags['min-visible'] !== undefined) {
+    const value = Number(flags['min-visible']);
+    if (!Number.isFinite(value) || value < 0 || value > 1) throw new UsageError('--min-visible must be a number in [0, 1]');
+    options.minVisible = value;
+  }
+  if (flags['max-residual'] !== undefined) {
+    const value = Number(flags['max-residual']);
+    if (!Number.isFinite(value) || value <= 0 || value > 1) throw new UsageError('--max-residual must be a number in (0, 1]');
+    options.maxResidual = value;
+  }
+  if (flags.passes !== undefined) {
+    const value = Number(flags.passes);
+    if (!Number.isInteger(value) || value < 1 || value > 8) throw new UsageError('--passes must be a whole number in 1..8');
+    options.passes = value;
+  }
+  if (flags['inward-lever'] !== undefined) {
+    const value = Number(flags['inward-lever']);
+    if (!Number.isFinite(value) || value < 0) throw new UsageError('--inward-lever must be a number of frame pixels, 0 or more');
+    options.minLeverPx = value;
+  }
+  if (flags['anchor-residual'] !== undefined) {
+    const value = Number(flags['anchor-residual']);
+    if (!Number.isFinite(value) || value <= 0 || value > 1) throw new UsageError('--anchor-residual must be a number in (0, 1]');
+    options.anchorMaxResidual = value;
+  }
+  const scale = readRange(flags, 'scale');
+  if (scale) {
+    if (scale.low <= 0) throw new UsageError('--scale minimum must be greater than zero');
+    options.scale = { min: scale.low, max: scale.high };
+  }
+  const rotation = readRange(flags, 'rotation');
+  if (rotation) {
+    if (rotation.high - rotation.low > 360) throw new UsageError('--rotation cannot span more than a full turn');
+    options.rotation = { minDeg: rotation.low, maxDeg: rotation.high };
+  }
+
+  console.log('rigc chainfit');
+  const report = estimateChainFit(options);
+  for (const line of chainFitLines(report)) console.log(line);
+
+  const target = resolve(flags.out ?? DEFAULT_CHAINFIT_OUT);
+  const out = existsSync(target) && statSync(target).isDirectory() ? join(target, DEFAULT_CHAINFIT_OUT) : target;
+  writeJson(out, report);
+}
+
+/**
+ * Refuse a compiled pair whose art `explain` cannot pose through, by name.
+ *
+ * 🚨 `explain` poses the rig — `deformReportLines` measures what each deform key
+ * did — and spine-core's reading of the pair resolves EVERY attachment against
+ * the atlas, whether or not anything deforms it. (Since issue #1019 a build's
+ * survey is read off its model document and posed by the core, which resolves
+ * nothing against the atlas; spine-core reads it under `--poser spine` and on a
+ * fallback, and this refusal is unchanged and comes before either.) On the specs
+ * `ingest --art none` writes there is nothing to resolve against: the entries
+ * state a size and name no `image`, so the compile atlases nothing, and the load
+ * threw the runtime's own `Region not found in atlas: rear-upper-arm (attachment:
+ * rear-upper-arm)` with a spine-core stack trace under it and exit 1 (measured on
+ * `examples/spineboy/export/spineboy-ess.json`, issue #697). That is the tool
+ * telling an agent about its own internals instead of about the rig, on the one
+ * input `docs/INGEST.md` §2.0 documents as the route through a foreign skeleton.
+ *
+ * ⭐ Both halves of the join are rigc's own readers rather than a second opinion
+ * on somebody else's format: the walk is `attachmentRegionJoins`, which `PS127`
+ * measures against the loader's own `findRegion` calls, and the region names come
+ * from `parseAtlasText`, which is what `--atlas-in` already resolves against.
+ * Names are compared EXACTLY — as `A08` compares them and as `findRegion`
+ * matches them — so a padded region name is a miss on both sides.
+ *
+ * ⚠️ What it deliberately does not do is catch the pose. A blanket `try` around
+ * `skeletonDataFromText` would convert any exception the runtime raises into a
+ * sentence claiming the cause is missing art, and a rigc defect reported under
+ * somebody else's name is the doctrine's second bullet inverted. This refuses
+ * the case it can NAME, before a line of the report is printed, and leaves
+ * anything else to arrive as itself.
+ */
+function refuseUnposableArt(result: CompileResult, opts: CompileOptions): void {
+  const regionNames = parseAtlasText(result.atlasText).pages.flatMap((page) => page.regions.map((region) => region.name));
+  const have = new Set(regionNames);
+  const misses: Array<{ at: string; attachment: string; lookup: string }> = [];
+  let lookups = 0;
+  for (const join of attachmentRegionJoins(JSON.parse(result.skeletonText))) {
+    // A `sequence` this walk will not guess at names no region it can check, and
+    // `A08` passes over it for the same reason.
+    if (join.lookups === null) continue;
+    for (const lookup of join.lookups) {
+      lookups++;
+      if (!have.has(lookup)) {
+        misses.push({
+          at: `skin "${join.skin}" slot "${join.slot}" placeholder "${join.placeholder}"`,
+          attachment: join.name,
+          lookup,
+        });
+      }
+    }
+  }
+  if (misses.length === 0) return;
+  const first = misses[0];
+  // Reported because it was measured, and absent where there is none — `A08`'s
+  // own near-miss clause, in `A08`'s own words.
+  const near = regionNames.find((region) => region.trim().toLowerCase() === first.lookup.toLowerCase());
+  const has =
+    regionNames.length === 0
+      ? 'it declares no region at all'
+      : `it declares ${regionNames.length} region(s) and none of them is that${
+          near === undefined ? '' : `, though it does have ${JSON.stringify(near)}`
+        }`;
+  const remedy =
+    opts.atlasInPath === undefined
+      ? 'Art reaches a compile two ways and this run took neither: `--atlas-in <pack.atlas>` resolves the parts ' +
+        'against a pack somebody already made, and an "image" per attachment resolves them as loose PNGs under ' +
+        '`--images <dir>` — a spec that states a size and names no image is what `ingest --art none` writes, and ' +
+        '`--atlas-in` is what reads it'
+      : `Either the spec's region name or ${opts.atlasInPath} is the one that moved: fix the name, or point ` +
+        '`--atlas-in` at the pack that has it';
+  throw new ExplainError(
+    `${first.at}: attachment ${JSON.stringify(first.attachment)} wants region ${JSON.stringify(first.lookup)}, ` +
+      `which this build's atlas does not have (${has}). \`explain\` poses the rig to measure its deform keys and a ` +
+      `pose resolves every attachment against the atlas, so there is nothing to pose it against. ${remedy}. ` +
+      `${misses.length} of ${lookups} attachment lookup(s) here resolve to no region.`,
+  );
+}
+
+export function cmdExplain(flags: Record<string, string>): void {
+  // `--poser` is refused by its spelling before anything compiles (issue #1019): it chooses the deform survey's reader and poser.
+  const poser = readPoserFlag(flags);
+  const { label, opts } = resolveCut(flags);
+  console.log(`rigc explain ${label}`);
+  // See the identical pair of lines in `cmdBuild` for why both paths are named
+  // here rather than only the one the header's `label` happens to carry.
+  console.log(`  ..    rig    ${opts.rigPath}`);
+  console.log(`  ..    motion ${opts.motionPath}`);
+  const result = compile(opts);
+  // Before a line of the report, rather than at the pose two hundred lines in:
+  // the blocks that need the art — DEFORM, meshes, dropped states — all sit
+  // BELOW the pose, so a run that printed the bone and timeline dump and then
+  // refused would be a report missing everything the missing art decides, with
+  // the sentence saying so scrolled off the top. It is the invocation that has
+  // to change, so it is refused before the report it cannot finish (issue #697).
+  refuseUnposableArt(result, opts);
+  // 📐 **A page whose file is not its declared size is said where the report
+  // starts, and nothing is refused for it** (issue #750). `explain` never
+  // gates, so on such a pack nothing stood between the region lift and the
+  // figures it fed: the mesh block printed a fit taken off another part of the
+  // page. The pack still compiles — a runtime draws it, and most of this report
+  // (bones, slots, timelines) reads no texel at all — so the page is named
+  // here, once, with the ratio `A06` refuses it by, and every figure that WOULD
+  // have been taken off its texels is withheld on its own line and says so.
+  // `build` prints no such line: `A06` is its statement of the same fact.
+  for (const grid of result.pageGrids) {
+    console.log(
+      `  ..    ${grid.said}: every figure below taken off this page's texels is withheld, and says so where it ` +
+        `would have stood. ${PAGE_GRID_UNLOCATED}`,
+    );
+  }
+  // `compile` has already parsed this file, so the read below cannot fail — but
+  // it goes through the same parser rather than a cast, because the cast was the
+  // last one in the repository and issue #307 was about exactly that.
+  const motion = parseMotionSpec(readJsonFile(opts.motionPath), opts.motionPath);
+
+  // A rig may state that it has no stage at all (issue #578), and the two must
+  // not print alike: `undefined x undefined` is what a template does with an
+  // absence, and it reads like a defect in the tool rather than a claim in the
+  // spec.
+  const stage =
+    result.skeleton.skeleton.width === undefined || result.skeleton.skeleton.height === undefined
+      ? 'none declared'
+      : `${result.skeleton.skeleton.width} x ${result.skeleton.skeleton.height}`;
+  console.log(`\nstage  ${stage}  (spine ${result.skeleton.skeleton.spine})`);
+
+  // The crop note describes where the numbers CAME from, and without a manifest
+  // they came from the rig spec's own literals — there is no crop to be relative
+  // to. Printing it anyway told a rung-3 author their bone positions were in a
+  // coordinate system that did not exist in their rig.
+  const frame = opts.manifestPath ? '  (crop y-down -> spine y-up, origin at the bottom-left of the crop)' : '  (spine world: y up)';
+  console.log(`\nbones${frame}`);
+  for (const b of result.skeleton.bones) {
+    // `rotation` is the axis keystone and the grips' radial facing, so it earns
+    // a column even though it is absent on most bones.
+    const rot = b.rotation === undefined ? '' : `  rotation=${b.rotation}`;
+    console.log(`  ${b.name.padEnd(12)} parent=${(b.parent ?? '-').padEnd(10)} x=${b.x ?? 0} y=${b.y ?? 0}${rot}`);
+  }
+
+  console.log('\nslots  (array order IS the draw order)');
+  // The DEFAULT skin's placeholders, resolved by name. It was `skins[0]` until
+  // issue #541, which is the same thing only because rigc pins `default` at
+  // index 0 — a property of the emitter that this report should not be quietly
+  // relying on. Reading it by name means a change to the skins ORDER cannot turn
+  // this line into a report about some other skin.
+  const defaultSkin = result.skeleton.skins.find((skin) => skin.name === 'default');
+  // ...and a skeleton may declare none (issue #801), in which case every
+  // `attachments=[]` below is true and says nothing — so the line above the
+  // column says where the placeholders are instead of letting it read as
+  // "this rig has no art".
+  if (defaultSkin === undefined) {
+    const names = result.skeleton.skins.map((skin) => JSON.stringify(skin.name));
+    console.log(
+      `  (this skeleton declares no default skin, so the attachments column lists none; its placeholders are in ` +
+        `${names.length === 0 ? 'no skin at all' : `the named skin(s) ${names.join(', ')}`})`,
+    );
+  }
+  for (const s of result.skeleton.slots) {
+    const atts = Object.keys(defaultSkin?.attachments[s.name] ?? {});
+    console.log(
+      `  ${s.name.padEnd(12)} bone=${s.bone.padEnd(12)} setup=${(s.attachment ?? 'null').padEnd(22)} color=${s.color ?? 'ffffffff'}  attachments=[${atts.join(', ')}]`,
+    );
+  }
+
+  console.log('\nanimations');
+  for (const [animName, anim] of Object.entries(result.skeleton.animations)) {
+    const spec = motion.animations[animName];
+    console.log(`  ${animName}  declared=${spec.duration}s loop=${spec.loop}`);
+    for (const [boneName, timelines] of Object.entries(anim.bones ?? {})) {
+      // "(mesh tier)" is a claim about what the bone DRIVES, and it was printed
+      // on every bone track regardless — which reads, on a rig with no mesh in
+      // it at all, as though the track were deforming one.
+      const drives = result.meshBones.includes(boneName) ? '  <- drives a mesh' : '';
+      for (const [timelineName, keys] of Object.entries(timelines)) {
+        console.log(`    ${boneName}.${timelineName}  ${keys.length} key(s)${drives}`);
+        if (timelineName === 'scale') console.log(`      ${SCALE_PRODUCT_NOTE}`);
+        for (const emitted of keys) {
+          // Every channel, as the parser reads it: a channel at its parser
+          // default is not in the file (issue #716), and this list shows the
+          // value a reader has to reason about rather than the bytes.
+          const key = asParsed(`bone ${timelineName} key`, emitted);
+          const fields = Object.entries(key)
+            .filter(([k]) => k !== 'time' && k !== 'curve')
+            .map(([k, v]) => `${k}=${String(v)}`)
+            .join(' ');
+          const curve = Array.isArray(key.curve)
+            ? `bezier[${key.curve.length}]`
+            : key.curve === 'stepped'
+              ? 'stepped'
+              : 'linear';
+          console.log(`      t=${String(key.time).padEnd(7)} ${fields.padEnd(30)} ${curve}${scaleProduct(timelineName, key)}`);
+        }
+      }
+    }
+    for (const [slotName, timelines] of Object.entries(anim.slots ?? {})) {
+      for (const [timelineName, keys] of Object.entries(timelines)) {
+        console.log(`    ${slotName}.${timelineName}  ${keys.length} key(s)`);
+        for (const emitted of keys) {
+          const key = asParsed(`slot ${timelineName} key`, emitted);
+          const curve = key.curve;
+          const shape = Array.isArray(curve)
+            ? `bezier[${curve.length}] ${curve.slice(12).join(', ')}  <- alpha channel, absolute (t,v)`
+            : curve === 'stepped'
+              ? 'stepped'
+              : timelineName === 'attachment'
+                ? 'stepped (attachment timelines always are)'
+                : 'linear';
+          const value = 'color' in key ? `#${String(key.color)}` : `attachment=${String(key.name)}`;
+          console.log(`      t=${String(key.time).padEnd(7)} ${value.padEnd(30)} ${shape}`);
+        }
+      }
+    }
+    // The two constraint groups: one unnamed timeline per constraint, so the
+    // name printed is the constraint's and there is no timeline name to print
+    // beside it. Every field a key carries is shown, because each one is
+    // optional in the file and the ABSENT ones are what a reader has to see —
+    // an omitted `softness` is 0, not "unchanged".
+    for (const group of ['ik', 'transform'] as const) {
+      for (const [name, keys] of Object.entries(anim[group] ?? {})) {
+        console.log(`    ${group}.${name}  ${keys.length} key(s)  <- one timeline per constraint`);
+        for (const key of keys) {
+          const fields = Object.entries(key)
+            .filter(([k]) => k !== 'time' && k !== 'curve')
+            .map(([k, v]) => `${k}=${String(v)}`)
+            .join(' ');
+          const curve = Array.isArray(key.curve) ? `bezier[${key.curve.length}]` : key.curve === 'stepped' ? 'stepped' : 'linear';
+          console.log(`      t=${String(keyTimeOf(`${group} key`, key)).padEnd(7)} ${(fields || '(all defaults)').padEnd(46)} ${curve}`);
+        }
+      }
+    }
+    // The other two constraint groups. These DO carry a timeline name under the
+    // constraint (`path.<name>.position`), which is the physics shape rather
+    // than the ik/transform one, so the name printed is both.
+    for (const group of ['path', 'slider'] as const) {
+      for (const [name, timelines] of Object.entries(anim[group] ?? {})) {
+        for (const [timelineName, keys] of Object.entries(timelines)) {
+          console.log(`    ${group}.${name}.${timelineName}  ${keys.length} key(s)`);
+          for (const key of keys) {
+            const fields = Object.entries(key)
+              .filter(([k]) => k !== 'time' && k !== 'curve')
+              .map(([k, v]) => `${k}=${String(v)}`)
+              .join(' ');
+            const curve = Array.isArray(key.curve) ? `bezier[${key.curve.length}]` : key.curve === 'stepped' ? 'stepped' : 'linear';
+            console.log(`      t=${String(keyTimeOf(`${group} ${timelineName} key`, key)).padEnd(7)} ${(fields || '(all defaults)').padEnd(46)} ${curve}`);
+          }
+        }
+      }
+    }
+    // Deform timelines are keyed on a skin/slot/attachment triple, and the run
+    // is printed as its span rather than its numbers: `offset` plus a length is
+    // what tells a reader whether the key lands where they meant, and a hundred
+    // vertex offsets on one line tells them nothing.
+    for (const [skinName, slotMap] of Object.entries(anim.attachments ?? {})) {
+      for (const [slotName, attMap] of Object.entries(slotMap)) {
+        for (const [attName, timelines] of Object.entries(attMap)) {
+          for (const [timelineName, keys] of Object.entries(timelines)) {
+            console.log(`    ${skinName}/${slotName}/${attName}.${timelineName}  ${keys.length} key(s)`);
+            for (const emitted of keys) {
+              const key = asParsed(`attachment ${timelineName} key`, emitted);
+              const run = Array.isArray(key.vertices) ? (key.vertices as number[]) : null;
+              const offset = typeof key.offset === 'number' ? key.offset : 0;
+              const span = run
+                ? `deform[${offset}..${offset + run.length}]  ${run.length / 2} pair(s)`
+                : 'back to the setup pose';
+              const curve = Array.isArray(key.curve) ? `bezier[${key.curve.length}]` : key.curve === 'stepped' ? 'stepped' : 'linear';
+              console.log(`      t=${String(key.time).padEnd(7)} ${span.padEnd(46)} ${curve}`);
+              // A generated key prints its MODEL and then every offset the model
+              // produced (issue #294). Both halves are the point: the model is
+              // what a reviewer checks a claim against, and the offsets are what
+              // reaches the file — printing only the first would ask a reader to
+              // trust an evaluation they cannot see, which is the gap FACE §9.3
+              // records. The numbers are the emitted ones, not a second
+              // evaluation, so this block and the artifact cannot disagree.
+              const gen = result.deformTransforms.find(
+                (g) => g.animation === animName && g.skin === skinName && g.slot === slotName && g.attachment === attName && g.time === key.time,
+              );
+              if (gen === undefined) continue;
+              console.log(`               transform ${gen.kind}  ${gen.stated}`);
+              console.log(`               ${gen.formula}`);
+              for (const line of gen.derived) console.log(`                 ${line}`);
+              console.log(
+                `               ${gen.vertexCount} vertices, largest offset ${gen.maxOffset}px at vertex ${gen.maxOffsetVertex}`,
+              );
+              for (let v = 0; v < gen.vertexCount; v += 4) {
+                const pairs: string[] = [];
+                for (let k = v; k < Math.min(v + 4, gen.vertexCount); k++) {
+                  pairs.push(`v${String(k).padStart(3)} (${gen.offsets[2 * k]}, ${gen.offsets[2 * k + 1]})`);
+                }
+                console.log(`                 ${pairs.join('  ')}`);
+              }
+              // On a multi-influence attachment those pairs are the model's
+              // WORLD displacements, and the file holds one `Mᵢ⁻¹·D` pair per
+              // influence instead (issue #389). Printing the first without the
+              // second would put numbers on the screen that are nowhere in the
+              // artifact — the exact gap this block exists to close.
+              if (gen.expanded !== undefined) {
+                console.log(
+                  `               written as ${gen.expanded.length / 2} per-influence pair(s), each vertex's D through ` +
+                    'its own bone inverse',
+                );
+                for (let i = 0; i < gen.expanded.length / 2; i += 4) {
+                  const pairs: string[] = [];
+                  for (let k = i; k < Math.min(i + 4, gen.expanded.length / 2); k++) {
+                    pairs.push(`i${String(k).padStart(3)} (${gen.expanded[2 * k]}, ${gen.expanded[2 * k + 1]})`);
+                  }
+                  console.log(`                 ${pairs.join('  ')}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    // The draw-order timeline names no target, so it hangs off the animation
+    // rather than off a slot — and a timeline `explain` did not print would be a
+    // timeline nobody could check without reading the emitted JSON.
+    if (anim.drawOrder) {
+      console.log(`    drawOrder  ${anim.drawOrder.length} key(s)  <- whole animation, offsets against the SETUP order`);
+      for (const key of anim.drawOrder) {
+        const offsets = Array.isArray(key.offsets)
+          ? (key.offsets as Array<{ slot: string; offset: number }>)
+              .map((o) => `${o.slot}${o.offset >= 0 ? '+' : ''}${o.offset}`)
+              .join(' ')
+          : 'back to the setup order';
+        console.log(`      t=${String(keyTimeOf('drawOrder key', key)).padEnd(7)} ${offsets}`);
+      }
+    }
+  }
+
+  // The `MEMBER` block sits beside the `DEFORM` one and for the same reason:
+  // both re-print timelines the reader has just read, in the arrangement the
+  // question needs rather than the one the format has.
+  for (const line of memberReportLines(result)) console.log(line);
+
+  // The `DEFORM` block goes after the timelines and before the constraints,
+  // because it is a measurement OF the deform timelines printed above — the keys
+  // it names are the keys the reader has just read, by the same index.
+  for (const line of deformReportLines(result, new Set(result.rig.deformMayFold), poser, label)) console.log(line);
+
+  if (result.physics.length) {
+    console.log('\nphysics constraints (4.3 top-level `constraints` array, type per entry)');
+    for (const ph of result.physics) {
+      console.log(`  ${ph.name.padEnd(12)} bone=${ph.bone.padEnd(14)} components=[${ph.components.join(', ')}] mix=${ph.mix} drivesMesh=${ph.drivesMesh}`);
+    }
+  }
+
+  // Path constraints, with the curve each one follows MEASURED — its length and
+  // its curve count are the two numbers an author cannot get from the spec, and
+  // `position` means nothing without the first of them under `positionMode:
+  // "percent"`. Read off the emitted attachment rather than recomputed here.
+  const constraintsOf = (type: string) => (result.skeleton.constraints ?? []).filter((c) => c.type === type);
+  const pathConstraints = constraintsOf('path');
+  if (pathConstraints.length) {
+    console.log('\npath constraints  (position is a fraction of the measured length under positionMode "percent")');
+    for (const c of pathConstraints) {
+      const slot = String(c.slot);
+      const attachments = result.skeleton.skins.flatMap((skin) => Object.values(skin.attachments[slot] ?? {}));
+      const curve = attachments.find((att) => (att as { type?: string }).type === 'path') as
+        | { lengths?: number[]; closed?: boolean; constantSpeed?: boolean }
+        | undefined;
+      // `vertexCount / 3` entries on both shapes since issue #804, so an open
+      // path's curves are one fewer than its entries and its length is the last
+      // CURVE's entry — the trailing one is the wrap-around curve nothing reads.
+      const lengths = (curve?.lengths ?? []).slice(0, curve?.closed ? undefined : -1);
+      console.log(
+        `  ${c.name.padEnd(12)} slot=${slot.padEnd(12)} bones=[${(c.bones as string[]).join(', ')}] ` +
+          `position=${c.position ?? 0} ${String(c.positionMode ?? 'percent')}/${String(c.spacingMode ?? 'length')}/${String(c.rotateMode ?? 'tangent')}`,
+      );
+      console.log(
+        `  ${''.padEnd(12)} curve: ${lengths.length} curve(s), ${lengths[lengths.length - 1] ?? 0} long, ` +
+          `${curve?.closed ? 'closed' : 'open'}, constantSpeed=${curve?.constantSpeed ?? true}`,
+      );
+    }
+  }
+
+  const sliders = constraintsOf('slider');
+  if (sliders.length) {
+    console.log('\nsliders  (each applies one animation at a time it chooses)');
+    for (const c of sliders) {
+      const driver = c.bone === undefined ? `time=${c.time ?? 0} (keyed by slider.${c.name}.time)` : `bone=${String(c.bone)}.${String(c.property)}`;
+      console.log(
+        `  ${c.name.padEnd(12)} applies=${String(c.animation).padEnd(14)} ${driver}  ` +
+          `mix=${c.mix ?? 1} loop=${c.loop ?? false} additive=${c.additive ?? false}`,
+      );
+    }
+  }
+
+  // Which bones and constraints a skin switches on. Printed because the pairing
+  // with `skin: true` is invisible in the emitted file: a member list and a
+  // skinRequired flag are two keys in two places, and only together do they mean
+  // "this bone belongs to this skin".
+  const skinMembers = result.skeleton.skins.filter((skin) => skin.bones?.length || skin.ik?.length || skin.transform?.length || skin.path?.length || skin.physics?.length || skin.slider?.length);
+  if (skinMembers.length) {
+    console.log('\nskin members  (skinRequired bones and constraints, active only under their own skin)');
+    for (const skin of skinMembers) {
+      const lists = (['bones', 'ik', 'transform', 'path', 'physics', 'slider'] as const)
+        .filter((key) => skin[key]?.length)
+        .map((key) => `${key}=[${skin[key]!.join(', ')}]`)
+        .join(' ');
+      console.log(`  ${skin.name.padEnd(12)} ${lists}`);
+    }
+  }
+
+  if (result.meshes.length) {
+    console.log('\nmeshes');
+    for (const kind of new Set(result.meshes.map((m) => m.kind))) console.log(`  ${MESH_KIND_NOTES[kind]}`);
+    for (const m of result.meshes) {
+      // The depth block belongs here more than it belongs in `build`: `explain`
+      // is the command that says what a spec MEANS, and the turn ceiling is the
+      // number an author needs before writing a key rather than after a refusal.
+      // It was absent, while `docs/AUTHORING.md` said both commands printed it.
+      console.log(
+        `  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
+          `${meshBudget(result.rig)}  bones=[${m.bones.join(', ')}]${meshFit(m)}` +
+          meshDepthNote(m) +
+          meshInfluenceNote(m),
+      );
+    }
+  }
+
+  if (result.droppedStates.length) {
+    // The heading said "no PNG on disk" and the line printed the path, on a
+    // command that takes `--atlas-in` like `build` does — so an explain of a
+    // pack build named a file it never opened. Same renderer as the other two
+    // printers now, for the same reason they share one (issue #671).
+    console.log('\ndropped states (listed in the manifest, no art behind them)');
+    for (const d of result.droppedStates) console.log(`  ${d.slot}/${d.state}  ${droppedStateReason(d)}`);
+  }
+
+  console.log('\nmix table (player config, not skeleton JSON)');
+  console.log(`  default=${motion.mix?.default ?? 0} pairs=${JSON.stringify(motion.mix?.pairs ?? [])}`);
+}
+
+/**
+ * ingest — a skeleton back into the two specs that rebuild it.
+ *
+ * The only command that runs against `build`'s direction, and the contract is an
+ * equality rather than a rulebook: `build(ingest(A))` is `A`. Everything it
+ * cannot carry is a **finding** printed here with its code, because those lines
+ * are what tells an author what the rebuilt rig will not have — they are this
+ * command's whole UI, exactly as the validator's messages are `build`'s.
+ *
+ * ⚠️ It writes both specs even when a blocker was found, and then exits
+ * non-zero: a blocker means the rebuild will not be the file that was read, and
+ * the useful thing at that point is the spec plus the list of what is missing
+ * from it. `build`'s "nothing written" rule is not this rule — that one is about
+ * a **gated artifact** on disk, and these two files are inputs to the gate
+ * rather than output of it.
+ */
+export function cmdIngest(flags: Record<string, string>, positional: string[]): void {
+  const [source] = positional;
+  if (!source) throw new UsageError('ingest takes one path: <skeleton.json>');
+  const skeletonPath = resolve(source);
+  if (!existsSync(skeletonPath)) throw new UsageError(`nothing at ${skeletonPath}`);
+  // The same sentence `resolveArtifacts` refuses a `.spine` with, for the same
+  // reason (docs/INGEST.md §5): this reads Spine 4.3 skeleton JSON and nothing
+  // else — not a project file, not a binary `.skel`, not the atlas.
+  if (!skeletonPath.endsWith('.json')) {
+    throw new UsageError(
+      `${skeletonPath} is not a .json skeleton — ingest reads Spine 4.3 skeleton JSON and nothing else: not a ` +
+        '.spine project, not a binary .skel, not an atlas. Re-export as JSON',
+    );
+  }
+  if (flags.out === undefined) throw new UsageError('ingest needs --out <dir> — the directory to write rig.json and motion.json into');
+  const art = flags.art ?? 'loose';
+  if (art !== 'loose' && art !== 'none') {
+    throw new UsageError(
+      `--art is ${JSON.stringify(art)}; it is "loose" (name an image per attachment, for \`build --images <dir>\`) ` +
+        'or "none" (state width/height only, for `build --atlas-in <pack>`). A skeleton encodes neither, which is ' +
+        'why this is a flag',
+    );
+  }
+  let stage: IngestStage | undefined;
+  if (flags.stage !== undefined) {
+    const parts = flags.stage.split(',').map(Number);
+    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
+      throw new UsageError(`--stage is ${JSON.stringify(flags.stage)}; give four numbers, x,y,width,height`);
+    }
+    stage = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+  }
+  const outDir = resolve(flags.out);
+  /**
+   * The rig spec's own `images`, spelled from `--out` the way `build` spells
+   * `skeleton.images` from its own output directory — the SAME function, so the
+   * two conventions cannot drift (issue #595). Without it the field is left out,
+   * an `image` name resolves against the spec's own directory, and every rebuild
+   * of the spec has to carry `build --images <dir>`.
+   */
+  let specImages: string | undefined;
+  if (flags.images !== undefined) {
+    // Refused rather than ignored, for the reason `chainfit` refuses `--atlas`:
+    // a flag that silently does nothing is worse than one that says why it
+    // cannot. Measured — an `--art none` spec rebuilt with `--images` naming a
+    // directory that does not exist is byte-identical to one rebuilt without
+    // it, because no attachment carries an `image` for that directory to be the
+    // base of.
+    if (art === 'none') {
+      throw new UsageError(
+        '--images <dir> and --art none contradict: `none` writes width/height and no `image` at all, so the rig ' +
+          "spec's `images` directory would be the base of nothing and no rebuild would read it. Use --art loose to " +
+          'name an image per attachment, or drop --images — an `--art none` spec rebuilds with `build --atlas-in ' +
+          '<pack.atlas>`',
+      );
+    }
+    // Not checked for existence, deliberately: `ingest` reads the skeleton and
+    // nothing else, so the parts may well be extracted AFTER the specs are
+    // written, and refusing a directory this command never opens would refuse a
+    // legitimate order of work. `build` is where a missing PNG is named.
+    specImages = relativeImagesPath(outDir, resolve(flags.images));
+  }
+  console.log(`rigc ingest ${skeletonPath}`);
+  console.log(`  ..    out  ${outDir}`);
+  console.log(`  ..    art  ${art}`);
+  if (specImages !== undefined) console.log(`  ..    images ${specImages}  (the rig spec's own, from ${outDir})`);
+
+  /**
+   * What the run has to report, however the parse went.
+   *
+   * 🔒 A spec the tree's own parser refuses is a **finding**, not an escape
+   * (issue #692): the three files are written, the coded `BLOCK` line is
+   * printed, and the exit code comes off the findings like every other run's.
+   * The two specs are read as `unknown` because that is all this function does
+   * with them — `JSON.stringify` — and a cast to `RigSpec` here would be this
+   * file claiming a parse that did not happen.
+   */
+  let result: { rig: unknown; motion: unknown; findings: IngestFinding[] };
+  try {
+    result = ingest(readJsonFile(skeletonPath), {
+      name: flags.name ?? basename(skeletonPath, '.json'),
+      art,
+      images: specImages,
+      stage,
+      source: basename(skeletonPath),
+      version: readVersion(),
+    });
+  } catch (err) {
+    if (!(err instanceof IngestSpecRefused)) throw err;
+    result = { rig: err.rig, motion: err.motion, findings: err.findings };
+  }
+
+  mkdirSync(outDir, { recursive: true });
+  // Indent 2, which is what `compile` writes the skeleton with. One emitter
+  // convention, so a spec and the skeleton it came from read the same way.
+  writeFileSync(join(outDir, 'rig.json'), `${JSON.stringify(result.rig, null, 2)}\n`);
+  writeFileSync(join(outDir, 'motion.json'), `${JSON.stringify(result.motion, null, 2)}\n`);
+  writeFileSync(join(outDir, 'findings.json'), `${JSON.stringify(result.findings, null, 2)}\n`);
+
+  // Grouped by kind rather than printed in discovery order: a blocker is what
+  // decides the exit code, and a reader scanning for one should not have to
+  // read past a hundred DURATION lines to find it.
+  // The gutter words are `INGEST_GUTTERS`, which is also the column
+  // `docs/INGEST.md` §2.0's finding-code table is keyed on (issue #675); the
+  // pad to one width is this printer's, so the codes line up.
+  const width = Math.max(...Object.values(INGEST_GUTTERS).map((gutter) => gutter.length));
+  for (const kind of ['blocker', 'judgement', 'lossy'] as const) {
+    for (const finding of result.findings.filter((f) => f.kind === kind)) {
+      console.log(`  ${INGEST_GUTTERS[kind].padEnd(width)} ${finding.code}: ${finding.where} — ${finding.detail}`);
+    }
+  }
+  console.log(`rigc: wrote ${join(outDir, 'rig.json')}`);
+  console.log(`rigc: wrote ${join(outDir, 'motion.json')}`);
+  console.log(`rigc: wrote ${join(outDir, 'findings.json')}`);
+  // The hint is the command the caller will actually run, so it drops `--images`
+  // exactly when the spec now carries the directory itself — a hint that asks for
+  // a flag the spec made unnecessary is the defect issue #595 is about, printed.
+  const artFlag = art === 'none' ? ' --atlas-in <pack.atlas>' : specImages === undefined ? ' --images <dir>' : '';
+  console.log(
+    `rigc: build it with  rigc build --rig ${join(outDir, 'rig.json')} --motion ${join(outDir, 'motion.json')}` +
+      `${artFlag} --out <dir>`,
+  );
+
+  const blockers = result.findings.filter((f) => f.kind === 'blocker');
+  if (blockers.length > 0) {
+    console.error(
+      `rigc: ${blockers.length} blocker(s) — both specs were written, and a build from them will NOT be the ` +
+        `skeleton that was read (${[...new Set(blockers.map((f) => f.code))].join(', ')})`,
+    );
+    process.exit(1);
+  }
+}
+
+/** What `rigc skills` offers. One today; the list is what the refusal of any other word prints. */
+const SKILLS_SUBCOMMANDS = ['install'];
+
+type SkillsInstallAction = 'linked' | 'copied' | 'already linked' | 'already copied';
+
+interface SkillsInstallEntry {
+  /** `<dir>/<name>`. */
+  target: string;
+  /** `<package>/skills/<name>`. */
+  source: string;
+  action: SkillsInstallAction;
+  /** The link text, relative to the directory it sits in, when the entry is a link. */
+  link: string;
+}
+
+/** Every `<name>/` under `source` that holds a `SKILL.md`, in name order, so two runs print the same lines. */
+function shippedSkills(source: string): string[] {
+  if (!existsSync(source) || !statSync(source).isDirectory()) return [];
+  return readdirSync(source)
+    .filter((name) => statSync(join(source, name)).isDirectory() && existsSync(join(source, name, 'SKILL.md')))
+    .sort();
+}
+
+/**
+ * The real path of `path` whether or not it exists yet: the real path of its
+ * nearest existing ancestor with the rest appended. A relative link has to be
+ * computed between two paths spelled the same way, and on macOS the temp
+ * directory alone is reached as `/var/…` and is really `/private/var/…`.
+ */
+function realpathAhead(path: string): string {
+  const rest: string[] = [];
+  let at = resolve(path);
+  while (!existsSync(at)) {
+    const up = dirname(at);
+    if (up === at) break;
+    rest.unshift(basename(at));
+    at = up;
+  }
+  return join(realpathSync(at), ...rest);
+}
+
+/** Every file under `root`, relative and sorted, so two trees compare in one order. */
+function filesUnder(root: string, prefix = ''): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(join(root, prefix)).sort()) {
+    const rel = prefix === '' ? name : `${prefix}/${name}`;
+    if (lstatSync(join(root, rel)).isDirectory()) out.push(...filesUnder(root, rel));
+    else out.push(rel);
+  }
+  return out;
+}
+
+/** The first way `copy` differs from `original`, or null when every file is the same bytes. */
+function firstDifference(copy: string, original: string): string | null {
+  const theirs = filesUnder(copy);
+  const ours = filesUnder(original);
+  for (const rel of ours) {
+    if (!theirs.includes(rel)) return `${rel} is missing from it`;
+    if (!readFileSync(join(copy, rel)).equals(readFileSync(join(original, rel)))) return `${rel} differs`;
+  }
+  for (const rel of theirs) if (!ours.includes(rel)) return `${rel} is in it and not in the package`;
+  return null;
+}
+
+/**
+ * Install every shipped skill into `dir`, or refuse and write nothing.
+ *
+ * The plan is made in full before the first write: every entry is classified as
+ * absent, already this command's, or in the way, and one entry in the way
+ * refuses the whole call with every such entry named.
+ */
+function installSkills(source: string, dir: string, copy: boolean): SkillsInstallEntry[] {
+  const names = shippedSkills(source);
+  if (names.length === 0) {
+    throw new SkillsInstallError(
+      `no skill to install: ${source} ${existsSync(source) ? 'holds no <name>/SKILL.md' : 'is not there'}, and it is ` +
+        'the skills/ directory of the package this command ran from; nothing was written',
+    );
+  }
+  if (existsSync(dir) && !statSync(dir).isDirectory()) {
+    throw new SkillsInstallError(`${dir} exists and is not a directory, so no skill can be installed into it; nothing was written`);
+  }
+  const realDir = realpathAhead(dir);
+  const planned: SkillsInstallEntry[] = [];
+  const refused: string[] = [];
+  for (const name of names) {
+    const target = join(dir, name);
+    const from = join(source, name);
+    const realFrom = realpathSync(from);
+    const link = relative(realDir, realFrom);
+    let action: SkillsInstallAction = copy ? 'copied' : 'linked';
+    let found: string | null = null;
+    const stat = existsSync(target) || isLink(target) ? lstatSync(target) : null;
+    if (stat === null) {
+      // absent: this command writes it
+    } else if (stat.isSymbolicLink()) {
+      const text = readlinkSync(target);
+      const pointsAt = resolve(realDir, text);
+      const lands = existsSync(pointsAt) ? realpathSync(pointsAt) : null;
+      if (lands === realFrom && !copy) action = 'already linked';
+      else if (lands === realFrom) found = `a symlink to ${text}, the package's own folder, and --copy asks for a directory in its place`;
+      else found = `a symlink to ${text}, ${lands === null ? 'which resolves to nothing' : `which resolves to ${lands}`}`;
+    } else if (stat.isDirectory()) {
+      const difference = copy ? firstDifference(target, from) : null;
+      if (!copy) found = 'a directory';
+      else if (difference === null) action = 'already copied';
+      else found = `a directory that is not the package's copy (${difference})`;
+    } else {
+      found = 'a plain file';
+    }
+    if (found !== null) refused.push(`${target} is ${found}; ${copy ? `a copy of ${from}` : `a symlink to ${link}`} was required`);
+    else planned.push({ target, source: from, action, link });
+  }
+  if (refused.length > 0) {
+    throw new SkillsInstallError(
+      `${refused.length} of the ${names.length} skill(s) cannot be installed into ${dir}, and nothing was written:\n` +
+        refused.map((line) => `  ${line}`).join('\n') +
+        '\nRemove the entries named above, or pass --dir to install somewhere else.',
+    );
+  }
+  mkdirSync(dir, { recursive: true });
+  for (const entry of planned) {
+    if (entry.action === 'linked') symlinkSync(entry.link, entry.target, 'dir');
+    else if (entry.action === 'copied') cpSync(entry.source, entry.target, { recursive: true, errorOnExist: true, force: false });
+  }
+  return planned;
+}
+
+/** A dangling link is not `existsSync`, and is still an entry in the way. */
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+export function cmdSkills(flags: Record<string, string>, positional: string[]): void {
+  const [sub, ...extra] = positional;
+  if (sub === undefined) {
+    throw new UsageError(
+      `skills takes a subcommand: ${SKILLS_SUBCOMMANDS.join(', ')} — \`rigc skills install\` links every skill this ` +
+        `package ships into ${DEFAULT_SKILLS_DIR}`,
+    );
+  }
+  if (!SKILLS_SUBCOMMANDS.includes(sub)) {
+    throw new UsageError(`unknown skills subcommand: ${sub} (rigc skills offers ${SKILLS_SUBCOMMANDS.join(', ')})`);
+  }
+  if (extra.length > 0) {
+    throw new UsageError(
+      `skills install takes no positional argument, and ${JSON.stringify(extra[0])} was given — the directory is --dir <path>`,
+    );
+  }
+  const takes = COMMANDS.find((c) => c.name === 'skills')?.flags ?? [];
+  const foreign = Object.keys(flags).filter((flag) => !takes.includes(flag));
+  if (foreign.length > 0) {
+    throw new UsageError(
+      `skills install takes ${takes.map((flag) => `--${flag}`).join(' and ')}; ` +
+        `${foreign.map((flag) => `--${flag}`).join(', ')} is not one of them`,
+    );
+  }
+  const copy = flags.copy !== undefined;
+  const dir = resolve(process.cwd(), flags.dir ?? DEFAULT_SKILLS_DIR);
+  const entries = installSkills(join(PACKAGE_ROOT, 'skills'), dir, copy);
+  for (const entry of entries) {
+    const ends = entry.action.endsWith('linked') ? `${entry.target} -> ${entry.link}  (${entry.source})` : `${entry.target} <- ${entry.source}`;
+    console.log(`  ${entry.action.padEnd(14)}  ${ends}`);
+  }
+  const wrote = entries.filter((entry) => entry.action === 'linked' || entry.action === 'copied').length;
+  const verb = copy ? 'copied' : 'linked';
+  console.log(
+    wrote === 0
+      ? `rigc skills install: nothing to do — all ${entries.length} skill(s) are already ${verb} into ${dir}`
+      : `rigc skills install: ${wrote} of ${entries.length} skill(s) ${verb} into ${dir}` +
+          (wrote < entries.length ? `, ${entries.length - wrote} already there` : ''),
+  );
+}
+
+/**
+ * The bodies of every command whose `runtime` is `false` (`COMMANDS`), by
+ * name — what both entries register. Nothing this module imports links
+ * spine-core; `RC25` in `selftest.ts` follows its imports off the disk.
+ */
+export const CORE_COMMAND_RUNS: Readonly<Record<string, CommandRun>> = {
+  explain: ({ flags }) => cmdExplain(flags),
+  ingest: ({ flags, positional }) => cmdIngest(flags, positional),
+  diff: ({ flags, lists, positional }) => cmdDiff(flags, lists, positional),
+  check: ({ flags }) => cmdCheck(flags),
+  render: ({ flags }) => cmdRender(flags),
+  pose: ({ flags }) => cmdPose(flags),
+  chainfit: ({ flags }) => cmdChainFit(flags),
+  skills: ({ flags, positional }) => cmdSkills(flags, positional),
+};

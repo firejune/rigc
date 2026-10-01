@@ -49235,7 +49235,8 @@ function runCliSuite(): number {
   // the strings in the source, so a wording that stops reaching the page fails
   // here even while the table still carries it.
   {
-    const source = readFileSync(join(import.meta.dir, 'cli.ts'), 'utf8');
+    // The command table and its interface are `src/cli/shared.ts`'s since issue #1052, where every entry reads them.
+    const source = readFileSync(join(import.meta.dir, 'src', 'cli', 'shared.ts'), 'utf8');
 
     /** The text between one bracket and the one that closes it, brackets excluded. */
     const balanced = (text: string, from: number, open: string, close: string): string => {
@@ -64562,11 +64563,13 @@ const SEAM_GENERIC = ['sampleAnimation', 'sampleSetupPose', 'sampleAll', 'framin
 
 /**
  * Which of `SEAM_GENERIC` names an identifier render.ts imports from
- * spine-core, read off `text`; a function the text no longer declares is a
- * fault too, so a rename cannot empty the scan.
+ * spine-core (read off `importing`, `src/render.ts`), read off `text` — since
+ * issue #1052 `src/render_shared.ts`, where the samplers moved and which links
+ * nothing of the runtime; a function the text no longer declares is a fault
+ * too, so a rename cannot empty the scan.
  */
-function seamLeaks(text: string): { names: string[]; faults: string[] } {
-  const block = /import\s*\{([^}]*)\}\s*from\s*'@esotericsoftware\/spine-core'/.exec(text)?.[1] ?? '';
+function seamLeaks(importing: string, text: string): { names: string[]; faults: string[] } {
+  const block = /import\s*\{([^}]*)\}\s*from\s*'@esotericsoftware\/spine-core'/.exec(importing)?.[1] ?? '';
   const names = block
     .split(',')
     .map((entry) => entry.trim().replace(/^type\s+/, ''))
@@ -64575,7 +64578,7 @@ function seamLeaks(text: string): { names: string[]; faults: string[] } {
   for (const fn of SEAM_GENERIC) {
     const at = text.search(new RegExp(`\\nfunction ${fn}\\(|\\nexport function ${fn}\\(`));
     if (at < 0) {
-      faults.push(`render.ts declares no function ${fn}`);
+      faults.push(`render_shared.ts declares no function ${fn}`);
       continue;
     }
     const end = text.indexOf('\n}\n', at);
@@ -65318,9 +65321,11 @@ function runSeeItSuite(): number {
   );
 
   const renderText = readFileSync(join(import.meta.dir, 'src', 'render.ts'), 'utf8');
-  const cleanScan = seamLeaks(renderText);
+  const sharedText = readFileSync(join(import.meta.dir, 'src', 'render_shared.ts'), 'utf8');
+  const cleanScan = seamLeaks(renderText, sharedText);
   const plantedScan = seamLeaks(
-    renderText.replace(/(export function sampleAnimation\([^)]*\)[^{]*\{\n)/, '$1  new Skeleton(poserOf(source) as unknown as SkeletonData);\n'),
+    renderText,
+    sharedText.replace(/(export function sampleAnimation\([^)]*\)[^{]*\{\n)/, '$1  new Skeleton(poserOf(source) as unknown as SkeletonData);\n'),
   );
   const leakProbes = [
     ...cleanScan.faults,
@@ -80360,6 +80365,10 @@ function runCoreSuite(): number {
 
 // Its own statements, so the suite lands as one hunk.
 import { deformPosers, surveyOfBuild, surveyOfModel, type DeformSurvey } from './src/deformmeasure.ts';
+import { COMMANDS, entryCommands } from './src/cli/shared.ts';
+import { CORE_COMMAND_RUNS } from './src/cli/core_commands.ts';
+import { SPINE_COMMAND_RUNS } from './src/cli/spine_commands.ts';
+import { SPINE_SIDE_ABSENT } from './src/spine_side.ts';
 import { modelStructure, type SurveyAnimation, type SurveyDeformTimeline, type SurveyStructure } from './src/deformstructure.ts';
 import { deformReportBlock } from './src/deformreport.ts';
 import { DIAL_BONE_FIELDS, float32Rows, meshWorld, poseJump } from './src/core/hooks.ts';
@@ -83659,7 +83668,7 @@ function runRenderHashesSuite(): number | null {
       },
       {
         label: 'core-read',
-        file: join('src', 'render.ts'),
+        file: join('src', 'render_shared.ts'),
         // Since issue #1020 the core path's facts are `coreFacts`' (the document's, and the skeleton's own JSON for what it does not state); #1026 gave both readers the atlas text, for its scale lines.
         from: 'return { choice, facts: coreFacts(input.skeletonText, input.atlasText, choice.core, chosen.document),',
         to: 'return { choice, facts: spineFacts(spineData(), input.atlasText),',
@@ -83693,7 +83702,7 @@ function runRenderHashesSuite(): number | null {
       probeDetail(
         plantsHeld,
         plantProbes,
-        `in copies of the tree: one Property read added to src/validate.ts at module load, the core path's facts read through spine-core in src/render.ts, ` +
+        `in copies of the tree: one Property read added to src/validate.ts at module load, the core path's facts read through spine-core in src/render_shared.ts, ` +
           `and the runtime probe that names the export's need removed — RC11's probes red on each: ${reds.join('; ')}`,
       ),
       'RC11 reads green on a tree that never touches the runtime and on a stub that touches nothing alike; the plants are what show the stub ' +
@@ -83922,7 +83931,7 @@ function runRenderHashesSuite(): number | null {
       const plants14: Array<{ label: string; file: string; from: string; to: string; steps: AtlaslessStep[]; expect: string }> = [
         {
           label: 'reopen',
-          file: 'cli.ts',
+          file: join('src', 'cli', 'shared.ts'),
           from: '      return { skeletonPath, atlasPath, atlasText: null };',
           to: "      return { skeletonPath, atlasPath, atlasText: readFileSync(atlasPath, 'utf8') };",
           steps: ['render'],
@@ -83930,7 +83939,7 @@ function runRenderHashesSuite(): number | null {
         },
         {
           label: 'no-v1-clause',
-          file: join('src', 'render.ts'),
+          file: join('src', 'render_shared.ts'),
           from: '          document.pageNames === null\n',
           to: "          document.pageNames === 'planted'\n",
           steps: ['v1'],
@@ -83963,7 +83972,7 @@ function runRenderHashesSuite(): number | null {
         probeDetail(
           held14,
           plantProbes14,
-          'in copies of the tree: cli.ts reading the build\'s atlas file again where it is not there, the poser line\'s rigc-compiled/1 clause dropped in src/render.ts, ' +
+          'in copies of the tree: src/cli/shared.ts reading the build\'s atlas file again where it is not there, the poser line\'s rigc-compiled/1 clause dropped in src/render_shared.ts, ' +
             `and src/check.ts handing --texture-from to spine-core's reader on a build the core poses — RC13's probes red on each: ${reds14.join('; ')}`,
         ),
         'RC13 reads green on a command that never looks for the atlas and on one that quietly reads it alike when the file is there; the plants are what show ' +
@@ -83978,7 +83987,7 @@ function runRenderHashesSuite(): number | null {
       const plants17: Array<{ label: string; file: string; from: string; to: string; steps: AtlaslessStep[]; expect: string }> = [
         {
           label: 'stated-ignored',
-          file: join('src', 'render.ts'),
+          file: join('src', 'render_shared.ts'),
           from: '  const read = document.stated === null ? unstated() :',
           to: '  const read = true ? unstated() :',
           steps: ['check'],
@@ -83986,7 +83995,7 @@ function runRenderHashesSuite(): number | null {
         },
         {
           label: 'no-v2-clause',
-          file: join('src', 'render.ts'),
+          file: join('src', 'render_shared.ts'),
           from: '            : document.stated === null\n',
           to: "            : document.stated === 'planted'\n",
           steps: ['v2'],
@@ -84011,7 +84020,7 @@ function runRenderHashesSuite(): number | null {
         probeDetail(
           held17,
           plantProbes17,
-          'in copies of the tree: src/render.ts reading the orders, the stage and the scale lines off skeleton.json and the atlas although the rigc-compiled/3 document states them, ' +
+          'in copies of the tree: src/render_shared.ts reading the orders, the stage and the scale lines off skeleton.json and the atlas although the rigc-compiled/3 document states them, ' +
             `and the poser line's rigc-compiled/2 clause dropped — RC13's probes red on each: ${reds17.join('; ')}`,
         ),
         'issue #1026: a reader that kept reading the Spine files would print the same bytes wherever they are there, so only the atlas gone shows the document is what is read; ' +
@@ -84232,7 +84241,7 @@ function runRenderHashesSuite(): number | null {
           },
           {
             label: 'no-exit',
-            file: 'cli.ts',
+            file: join('src', 'cli', 'shared.ts'),
             from: '  if (err instanceof CandidatePairError) {\n',
             to: '  if (err instanceof CandidatePairError && command === "planted") {\n',
             steps: ['skeleton'],
@@ -84240,7 +84249,7 @@ function runRenderHashesSuite(): number | null {
           },
           {
             label: 'no-page-check',
-            file: join('src', 'render.ts'),
+            file: join('src', 'render_shared.ts'),
             from: '    if (!existsSync(path)) throw absent(resolve(path));\n',
             to: '    if (path === "planted") throw absent(resolve(path));\n',
             steps: ['page'],
@@ -84248,7 +84257,7 @@ function runRenderHashesSuite(): number | null {
           },
           {
             label: 'no-core-clause',
-            file: join('src', 'render.ts'),
+            file: join('src', 'render_shared.ts'),
             from: "    forced === 'core' && choice !== null && choice.core === null ? new PoserChoiceError(",
             to: "    forced === 'planted' && choice !== null && choice.core === null ? new PoserChoiceError(",
             steps: ['core'],
@@ -84273,7 +84282,7 @@ function runRenderHashesSuite(): number | null {
           probeDetail(
             held19,
             plantProbes19,
-            "in copies of the tree: src/render.ts rethrowing the runtime's error where the pair does not load, cli.ts no longer mapping the refusal to exit 2, src/render.ts no longer looking for a page before reading it, " +
+            "in copies of the tree: src/render.ts rethrowing the runtime's error where the pair does not load, src/cli/shared.ts no longer mapping the refusal to exit 2, src/render_shared.ts no longer looking for a page before reading it, " +
               `and --poser core's clause dropped so the pair refusal speaks for the flag — RC18's probes red on each: ${reds19.join('; ')}`,
           ),
           'RC18 reads a refusal off the command; the plants are what show it is the catch that makes it one, the mapping that makes it exit 2 with no stack, the page check that names the page, ' +
@@ -84473,7 +84482,7 @@ function runRenderHashesSuite(): number | null {
             },
             {
               label: 'page-check',
-              file: join('src', 'render.ts'),
+              file: join('src', 'render_shared.ts'),
               from: '    if (!existsSync(path)) throw absent(resolve(path));\n',
               to: '    if (path === "planted") throw absent(resolve(path));\n',
               steps: ['moved'],
@@ -84481,7 +84490,7 @@ function runRenderHashesSuite(): number | null {
             },
             {
               label: 'one-build-guess',
-              file: join('src', 'render.ts'),
+              file: join('src', 'render_shared.ts'),
               from: "refusedBuild: forced !== 'spine' }",
               to: 'refusedBuild: true }',
               steps: ['moved'],
@@ -84489,7 +84498,7 @@ function runRenderHashesSuite(): number | null {
             },
             {
               label: 'json',
-              file: 'cli.ts',
+              file: join('src', 'cli', 'shared.ts'),
               from: '  parseJsonNamed(text, path);\n  return text;\n',
               to: '  return text;\n',
               steps: ['json'],
@@ -84624,15 +84633,16 @@ function runRenderHashesSuite(): number | null {
     const plants: Array<{ label: string; file: string; from: string; to: string; steps: Step[]; expect: string }> = [
       {
         label: 'slider-read',
-        file: join('src', 'deformmeasure.ts'),
+        // Since issue #1052 the model path is `src/deformbuild.ts`'s and reaches spine-core's reader only through the seam, so the read is routed there.
+        file: join('src', 'deformbuild.ts'),
         from: '    return surveyOfModel(doc, exempt);\n',
-        to: '    return surveyOfModel(doc, exempt, (d) => ({ ...modelStructure(d), sliders: runtimeSide(skeletonDataFromText(input.skeletonText, input.atlasText)).structure.sliders }));\n',
+        to: "    spineSurveyFor(label, 'a planted structure read').throughSpine(label, 'a planted structure read', input, exempt);\n    return surveyOfModel(doc, exempt);\n",
         steps: ['rows'],
         expect: 'SPINE_CORE_LOADED',
       },
       {
         label: 'default-spine',
-        file: 'cli.ts',
+        file: join('src', 'cli', 'core_commands.ts'),
         from: "poser === undefined ? 'auto' :",
         to: "poser === undefined ? 'spine-core' :",
         steps: ['rows'],
@@ -84665,7 +84675,7 @@ function runRenderHashesSuite(): number | null {
       probeDetail(
         plantsHeld,
         plantProbes,
-        `in copies of the tree: the survey's slider read routed back through spine-core's parse in src/deformmeasure.ts, explain's survey defaulted to spine-core in cli.ts, ` +
+        `in copies of the tree: the survey's model path routed back through spine-core's reader in src/deformbuild.ts, explain's survey defaulted to spine-core in src/cli/core_commands.ts, ` +
           `and the runtime probe that names what --poser spine needs removed — RC15's probes red on each: ${reds.join('; ')}`,
       ),
       'RC15 reads green on a tree whose explain never touches the runtime and on a stub that touches nothing alike; the plants are what show the stub ' +
@@ -84673,8 +84683,311 @@ function runRenderHashesSuite(): number | null {
     );
   }
 
+  // --- RC24–RC26: an entry that links nothing of spine-core (issue #1052) --
+  //
+  // RC11 makes the runtime unusable and shows what a command REACHES; it cannot
+  // show what an entry LINKS, because the stub is a module the loader finds. So
+  // RC24 builds the state the package is in when it is not installed — a copy
+  // of what a checkout runs, with an `node_modules` of its own that holds
+  // nothing (`absentTree`), never a write into a real one — and runs the second
+  // entry there on the cheapest gallery build RC11 drew: `--help`, `--version`,
+  // and `render`, `render --geometry`, `check`, `explain`, `pose` and `chainfit`,
+  // each held to `cli.ts` in this tree (exit 0, the same lines, every file the
+  // same bytes); an export, `--poser spine`, a fallback and a runtime command
+  // refused by name. Its positive control is the full entry in the same copy,
+  // which must fail to link naming the package — the proof the copy is the
+  // absent state at all. RC25 reads the same fact off the disk without running
+  // anything: the second entry's static closure, and the chain into a module
+  // that imports the runtime where there is one. RC26 holds each command's
+  // `runtime` mark to the closure of the module that registers its body.
+  //
+  // 💰 Cost: `pose` and `chainfit` are held on a narrowed search (two parts, a
+  // scale and rotation window, `--anchor`, one pass) — the default search over
+  // every part runs 13–40 s per entry on a gallery frame, and the PR of #1052
+  // carries those runs in full. Everything else runs as a user types it.
+  {
+    const row = [...galleryBuilds].sort((x, y) => statSync(join(x.out, 'skeleton.json')).size - statSync(join(y.out, 'skeleton.json')).size || (x.name < y.name ? -1 : 1))[0];
+    const spec = row === undefined ? '' : join(import.meta.dir, row.name);
+    const probes24: string[] = [];
+    let figures24 = '';
+    let held25 = false;
+    let detail25 = '';
+    const probes25: string[] = [];
+    if (row === undefined || !existsSync(join(spec, 'rig.json')) || !existsSync(join(spec, 'parts'))) {
+      probes24.push(`no gallery build with its spec beside it to run (${row?.name ?? 'none'})`);
+    } else {
+      const tree = absentTree(join(work, 'rc24-tree'));
+      const full = runCli(['--version']);
+      // The positive control: the absent state is real only if the full entry cannot link in it.
+      const control = runEntryIn(tree, 'cli.ts', ['--version'], work);
+      if (control.status !== 1 || !control.stderr.includes("Cannot find module '@esotericsoftware/spine-core'")) {
+        probes24.push(`the copy is not the absent state: cli.ts --version there exited ${control.status} — ${JSON.stringify(control.stderr.trim().split('\n')[0] ?? '')}`);
+      }
+      const version = runEntryIn(tree, 'cli_core.ts', ['--version'], work);
+      if (version.status !== 0 || version.stdout !== full.stdout) probes24.push(`cli_core.ts --version exited ${version.status} printing ${JSON.stringify(version.stdout.trim())}, not ${JSON.stringify(full.stdout.trim())} — ${JSON.stringify(version.stderr.trim().split('\n')[0] ?? '')}`);
+      // --help: the commands whose `runtime` is false, every usage line of each, and none of any other.
+      const help = runEntryIn(tree, 'cli_core.ts', ['--help'], work);
+      const runs = entryCommands(false);
+      const others = COMMANDS.filter((doc) => doc.runtime !== false);
+      if (help.status !== 0) probes24.push(`cli_core.ts --help exited ${help.status}`);
+      for (const doc of runs) for (const line of doc.usage) if (!help.stdout.includes(`  ${line}\n`)) probes24.push(`cli_core.ts --help leaves out ${doc.name}'s usage line ${JSON.stringify(line.slice(0, 60))}`);
+      for (const doc of others) for (const line of doc.usage) if (help.stdout.includes(`  ${line}\n`)) probes24.push(`cli_core.ts --help prints ${doc.name}'s usage line, a command it does not run`);
+      if (help.stdout.includes('--profile spine|spine-html:')) probes24.push('cli_core.ts --help prints the --profile paragraph, about commands it does not run');
+      // The commands, each in both entries; `dir` stands for where the run writes.
+      const parts = join(spec, 'parts');
+      const two = join(work, 'rc24-two-parts');
+      mkdirSync(two, { recursive: true });
+      // The two smallest part images by their bytes — chosen by measurement, so no part is named here.
+      for (const name of readdirSync(parts).filter((f) => f.endsWith('.png')).sort((x, y) => statSync(join(parts, x)).size - statSync(join(parts, y)).size || (x < y ? -1 : 1)).slice(0, 2)) cpSync(join(parts, name), join(two, name));
+      const ref = join(work, 'rc24-reference');
+      const refRun = runCli(['render', '--candidate', row.out, '--out', ref]);
+      const firstSet = existsSync(ref) ? readdirSync(ref).filter((f) => statSync(join(ref, f)).isDirectory()).sort()[0] : undefined;
+      const frame = firstSet === undefined ? '' : join(ref, firstSet, 'f0000.png');
+      if (refRun.status !== 0 || !existsSync(frame)) probes24.push(`the reference render cli.ts drew for check, pose and chainfit exited ${refRun.status} with no ${frame || 'frame set'}`);
+      const anchor = join(work, 'rc24-anchor.json');
+      const cases: Array<{ name: string; args: (dir: string) => string[] }> = [
+        { name: 'render', args: (dir) => ['render', '--candidate', row.out, '--max', '96', '--out', dir] },
+        { name: 'render --geometry', args: (dir) => ['render', '--candidate', row.out, '--geometry', '--max', '96', '--out', dir] },
+        { name: 'check', args: (dir) => ['check', '--candidate', row.out, '--frames', ref, '--json', join(dir, 'check.json')] },
+        { name: 'explain', args: (dir) => ['explain', '--rig', join(spec, 'rig.json'), '--motion', join(spec, 'motion.json'), '--images', parts, '--out', dir] },
+        { name: 'pose', args: (dir) => ['pose', '--images', two, '--frame', frame, '--scale', '0.45,0.6', '--rotation', '-20,20', '--out', join(dir, 'pose.json')] },
+        { name: 'chainfit', args: (dir) => ['chainfit', '--candidate', row.out, '--images', parts, '--frame', frame, '--anchor', anchor, '--hinge', '-10,10', '--passes', '1', '--out', join(dir, 'chainfit.json')] },
+      ];
+      let files = 0;
+      for (const [i, c] of cases.entries()) {
+        const a = join(work, `rc24-full-${i}`);
+        const b = join(work, `rc24-core-${i}`);
+        mkdirSync(a, { recursive: true });
+        mkdirSync(b, { recursive: true });
+        const twin = runCli(c.args(a));
+        const run = runEntryIn(tree, 'cli_core.ts', c.args(b), work);
+        if (c.name === 'pose' && existsSync(join(a, 'pose.json'))) cpSync(join(a, 'pose.json'), anchor);
+        const fa = dirDigests(a);
+        const fb = dirDigests(b);
+        const differ = digestDifferences(fb, fa);
+        files += fb.size;
+        if (twin.status !== 0) probes24.push(`${c.name}: cli.ts exited ${twin.status} — ${JSON.stringify(twin.stderr.trim().split('\n')[0] ?? '')}`);
+        else if (run.status !== 0) probes24.push(`${c.name}: cli_core.ts with the package absent exited ${run.status} — ${JSON.stringify(run.stderr.trim().split('\n')[0] ?? '')}`);
+        else if (run.stdout.split(b).join('<out>') !== twin.stdout.split(a).join('<out>')) probes24.push(`${c.name}: cli_core.ts printed other lines than cli.ts`);
+        else if (differ.length > 0 || fa.size !== fb.size) probes24.push(`${c.name}: cli_core.ts wrote other files than cli.ts: ${differ.join(', ') || `${fb.size} against ${fa.size}`}`);
+      }
+      // The refusals: an export (the build with its model document taken away), --poser spine, a fallback (the skeleton edited after the
+      // build, so the core refuses the pair and the poser line would name spine-core), and a command whose body is the runtime's.
+      const exportDir = join(work, 'rc24-export');
+      cpSync(row.out, exportDir, { recursive: true });
+      rmSync(join(exportDir, MODEL_DOCUMENT_FILE));
+      const editedDir = join(work, 'rc24-edited');
+      cpSync(row.out, editedDir, { recursive: true });
+      writeFileSync(join(editedDir, 'skeleton.json'), `${readFileSync(join(editedDir, 'skeleton.json'), 'utf8')}\n`);
+      const absentReason = `and the runtime could not be used: ${SPINE_SIDE_ABSENT}.`;
+      const exportSkeleton = join(exportDir, 'skeleton.json');
+      const refusals: Array<{ name: string; args: string[]; starts: string; wrote: string }> = [
+        { name: 'render of a Spine export', args: ['render', '--candidate', exportDir, '--out', join(work, 'rc24-r-export')], starts: `rigc render: ${exportSkeleton} is posed through spine-core (no ${MODEL_DOCUMENT_FILE} beside ${exportSkeleton} — a Spine export, not a rigc build), ${absentReason}`, wrote: join(work, 'rc24-r-export') },
+        { name: 'render --poser spine', args: ['render', '--candidate', row.out, '--poser', 'spine', '--out', join(work, 'rc24-r-spine')], starts: `rigc render: ${join(row.out, 'skeleton.json')} is posed through spine-core (--poser spine), ${absentReason}`, wrote: join(work, 'rc24-r-spine') },
+        { name: 'render of an edited skeleton (a fallback)', args: ['render', '--candidate', editedDir, '--out', join(work, 'rc24-r-edited')], starts: `rigc render: ${join(editedDir, 'skeleton.json')} is posed through spine-core (the core refused `, wrote: join(work, 'rc24-r-edited') },
+        { name: 'build', args: ['build', '--rig', join(spec, 'rig.json'), '--motion', join(spec, 'motion.json'), '--images', parts, '--out', join(work, 'rc24-r-build')], starts: 'rigc build: `build` runs through spine-core (', wrote: join(work, 'rc24-r-build') },
+      ];
+      for (const r of refusals) {
+        const run = runEntryIn(tree, 'cli_core.ts', r.args, work);
+        const said = run.stderr.trim().split('\n')[0] ?? '';
+        if (run.status !== 1 || !said.startsWith(r.starts)) probes24.push(`${r.name}: cli_core.ts exited ${run.status} saying ${JSON.stringify(said.slice(0, 240))}, not the refusal naming the runtime as absent`);
+        if (!said.includes(SPINE_SIDE_ABSENT)) probes24.push(`${r.name}: the refusal does not name the runtime as absent: ${JSON.stringify(said.slice(0, 240))}`);
+        if (existsSync(r.wrote)) probes24.push(`${r.name}: the refused run wrote ${r.wrote}`);
+      }
+      figures24 =
+        `${row.name}, the smallest gallery build by its skeleton's bytes, in a copy of src/, cli.ts, cli_core.ts, package.json and the two tools src/ imports ` +
+        `beside an empty node_modules — where cli.ts --version fails naming '@esotericsoftware/spine-core': cli_core.ts --version and --help (${runs.length} command(s), every usage line of each and none of the other ${others.length}) exit 0, ` +
+        `and ${cases.map((c) => c.name).join(', ')} exit 0 with cli.ts's lines and ${files} file(s) to the byte; ` +
+        `${refusals.map((r) => r.name).join(', ')} exit 1 naming the runtime as not installed in this entry`;
+      // The plant: a static import of the module that links the runtime, added to the module whose bodies the entry registers.
+      const planted = absentTree(join(work, 'rc24-planted'), { file: join('src', 'cli', 'core_commands.ts'), line: "import '../render.ts';\n" });
+      const plantRun = runEntryIn(planted, 'cli_core.ts', ['--version'], work);
+      if (plantRun.status === 0) probes24.push('a static import of src/render.ts planted in src/cli/core_commands.ts left cli_core.ts --version exiting 0 with the package absent');
+      else if (!plantRun.stderr.includes("Cannot find module '@esotericsoftware/spine-core'")) probes24.push(`the planted import read red for another reason: ${JSON.stringify(plantRun.stderr.trim().split('\n')[0] ?? '')}`);
+      // RC25 — the second entry's static closure, off the disk.
+      const population = entryPopulation(import.meta.dir);
+      const live = entryClosure(population, 'cli_core.ts');
+      const fullClosure = entryClosure(population, 'cli.ts');
+      probes25.push(...live.linkers.map((l) => `cli_core.ts reaches ${l.module}, which imports spine-core: ${l.chain.join(' > ')}`));
+      const linkersSeen = fullClosure.linkers.map((l) => l.module).sort();
+      if (linkersSeen.length < 3) probes25.push(`the walk found ${linkersSeen.length} module(s) importing spine-core from cli.ts [${linkersSeen.join(', ')}], so it cannot be trusted to find one from cli_core.ts`);
+      const plants25: Array<{ label: string; file: string; line: string; fires: boolean }> = [
+        { label: 'a static import of src/render.ts in the command module', file: 'src/cli/core_commands.ts', line: "import '../render.ts';\n", fires: true },
+        { label: 'a value import of src/render.ts in the renderer the core path draws with', file: 'src/render_shared.ts', line: "import { atlasPageNames as planted } from './render.ts';\n", fires: true },
+        { label: 'a type-only import of src/render.ts', file: 'src/render_shared.ts', line: "import type { Posable as Planted } from './render.ts';\n", fires: false },
+        { label: 'the runtime named in a comment', file: 'src/cli/shared.ts', line: "// not '@esotericsoftware/spine-core'\n", fires: false },
+      ];
+      const chains: string[] = [];
+      for (const p of plants25) {
+        const doctored = new Map(population);
+        doctored.set(p.file, `${p.line}${population.get(p.file) ?? ''}`);
+        const found = entryClosure(doctored, 'cli_core.ts').linkers;
+        if (p.fires && found.length === 0) probes25.push(`${p.label} (${p.file}) was not found in cli_core.ts's closure`);
+        else if (!p.fires && found.length > 0) probes25.push(`${p.label} (${p.file}) was read as linking the runtime: ${found[0].chain.join(' > ')}`);
+        else if (p.fires) chains.push(found[0].chain.join(' > '));
+      }
+      held25 = probes25.length === 0;
+      detail25 =
+        `cli_core.ts's static closure, read off the disk: ${live.modules.length} module(s), none importing spine-core as a value; cli.ts's reaches the ${linkersSeen.length} that do [${linkersSeen.join(', ')}]; ` +
+        `a planted import is named by its chain (${chains.join('; ')}), and a type-only import and a comment are not`;
+    }
+    const held24 = probes24.length === 0;
+    say(
+      'RC24_THE_SECOND_ENTRY_RUNS_THE_CORE_COMMANDS_WITH_THE_PACKAGE_ABSENT_AS_CLI_TS_RUNS_THEM_AND_REFUSES_THE_REST_BY_NAME',
+      held24,
+      probeDetail(held24, probes24, figures24),
+      'issue #1052: every command, --help included, exited 1 with Cannot find module when the package was absent, although render, check, explain, pose and chainfit on a ' +
+        'rigc build execute nothing of it (#1024, #1027) — what stopped them was linking. Only a run where the package is not there shows what an entry links, and the ' +
+        'planted import of src/render.ts is what shows the run would see one',
+    );
+    say(
+      'RC25_THE_SECOND_ENTRYS_STATIC_CLOSURE_HOLDS_NO_MODULE_THAT_IMPORTS_SPINE_CORE',
+      held25,
+      probeDetail(held25, probes25, detail25),
+      'issue #1052: RC24 says that the entry links; this says what it links, without running it, and names the chain where a module that imports the runtime is reached — ' +
+        'the reading a refactor needs, since the run only says "Cannot find module" from wherever the loader first met it',
+    );
+    // RC26 — each command's `runtime` mark against the closure of the module that registers its body.
+    {
+      const population = entryPopulation(import.meta.dir);
+      const live = runtimeMarkFaults(COMMANDS, population);
+      const probes26 = [...live.faults];
+      const flip = (name: string, to: false | { for: string }): typeof COMMANDS => COMMANDS.map((doc) => (doc.name === name ? { ...doc, runtime: to } : doc));
+      const spineSide = COMMANDS.find((doc) => doc.runtime !== false)?.name;
+      const coreSide = COMMANDS.find((doc) => doc.runtime === false)?.name;
+      const doctored = new Map(population);
+      doctored.set('src/cli/core_commands.ts', `import { validate as planted } from '../validate.ts';\n${population.get('src/cli/core_commands.ts') ?? ''}`);
+      const plants26: Array<[string, string[]]> = [
+        [`${spineSide} marked runtime: false`, spineSide === undefined ? [] : runtimeMarkFaults(flip(spineSide, false), population).faults],
+        [`${coreSide} marked as needing the runtime`, coreSide === undefined ? [] : runtimeMarkFaults(flip(coreSide, { for: 'a planted need' }), population).faults],
+        ['the module of the unmarked bodies importing the round trip', runtimeMarkFaults(COMMANDS, doctored).faults],
+      ];
+      for (const [label, faults] of plants26) if (faults.length === 0) probes26.push(`${label}: no fault`);
+      const spineFormat = COMMANDS.filter((doc) => doc.spineFormat && doc.runtime === false).map((doc) => doc.name);
+      const held26 = probes26.length === 0;
+      say(
+        'RC26_EVERY_COMMANDS_RUNTIME_MARK_IS_WHAT_THE_MODULE_REGISTERING_ITS_BODY_LINKS',
+        held26,
+        probeDetail(
+          held26,
+          probes26,
+          `${COMMANDS.length} command(s): ${live.core.length} marked runtime: false and registered by a module whose closure imports no spine-core [${live.core.join(', ')}], ` +
+            `${live.spine.length} marked with what they need it for and registered by one whose closure does [${live.spine.join(', ')}]; Spine's without being the runtime's: [${spineFormat.join(', ')}]; ` +
+            `${plants26.map(([label, faults]) => `${label} is ${faults.length} fault(s)`).join(', ')}`,
+        ),
+        'issue #1052: the second entry runs the commands marked runtime: false, and its --help prints them — a mark nobody derives would be the list typed beside the code ' +
+          'that the card refuses, so the mark is held to the import graph both ways: a command marked free whose body links the runtime, and one marked bound whose body links none',
+      );
+    }
+  }
+
   rmSync(work, { recursive: true, force: true });
   return bad;
+}
+
+// ---------------------------------------------------------------------------
+// an entry with the package absent (issue #1052) — RC24–RC26's instruments
+// ---------------------------------------------------------------------------
+
+/**
+ * What a checkout runs, copied to `root` beside an `node_modules` that holds
+ * nothing — the state the package is in when spine-core is not installed, made
+ * on a copy and never by writing into a real `node_modules`. The empty
+ * directory is what keeps Bun from installing on demand; resolution climbs no
+ * further than a directory holding none. `plant` adds one line to the top of
+ * one copied file.
+ */
+function absentTree(root: string, plant?: { file: string; line: string }): string {
+  mkdirSync(join(root, 'tools'), { recursive: true });
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+  cpSync(join(import.meta.dir, 'src'), join(root, 'src'), { recursive: true });
+  for (const f of ['cli.ts', 'cli_core.ts', 'package.json', join('tools', 'plate.ts'), join('tools', 'font5x7.ts')]) cpSync(join(import.meta.dir, f), join(root, f));
+  if (plant !== undefined) writeFileSync(join(root, plant.file), `${plant.line}${readFileSync(join(root, plant.file), 'utf8')}`);
+  return root;
+}
+
+/** `bun <root>/<entry> <args>` run from `cwd`. */
+function runEntryIn(root: string, entry: string, args: string[], cwd: string): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, [join(root, entry), ...args], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/** The two entries and every module under `src/`, plus the two `tools/` modules `src/` imports — read off the disk, so a file not yet committed is read. */
+function entryPopulation(root: string): Map<string, string> {
+  const out = srcPopulation(root);
+  for (const f of ['cli.ts', 'cli_core.ts', 'tools/plate.ts', 'tools/font5x7.ts']) if (existsSync(join(root, f))) out.set(f, readFileSync(join(root, f), 'utf8'));
+  return out;
+}
+
+/**
+ * The static closure of `entry` over `population`: every module it reaches by
+ * a value import, re-export or side-effect import (comments are not code; an
+ * `import type` links nothing and is not followed), and each reached module
+ * that imports `@esotericsoftware/spine-core` as a value, with the shortest
+ * chain of modules that reaches it.
+ */
+function entryClosure(population: ReadonlyMap<string, string>, entry: string): { modules: string[]; linkers: Array<{ module: string; chain: string[] }> } {
+  const via = new Map<string, string | null>([[entry, null]]);
+  const queue = [entry];
+  const linkers: Array<{ module: string; chain: string[] }> = [];
+  const chainOf = (module: string): string[] => {
+    const chain: string[] = [];
+    for (let at: string | null = module; at !== null; at = via.get(at) ?? null) chain.unshift(at);
+    return chain;
+  };
+  while (queue.length > 0) {
+    const rel = queue.shift() as string;
+    const text = population.get(rel);
+    if (text === undefined) continue;
+    for (const { spec, typeOnly } of specifiersOf(codeOnly(text))) {
+      if (typeOnly) continue;
+      if (/^@esotericsoftware\/spine-core(\/|$)/.test(spec)) {
+        if (!linkers.some((l) => l.module === rel)) linkers.push({ module: rel, chain: [...chainOf(rel), spec] });
+        continue;
+      }
+      if (!spec.startsWith('.')) continue;
+      const target = join(dirname(rel), spec).split('\\').join('/');
+      if (!via.has(target)) {
+        via.set(target, rel);
+        queue.push(target);
+      }
+    }
+  }
+  return { modules: [...via.keys()].filter((m) => population.has(m)).sort(), linkers };
+}
+
+/**
+ * Each command's `runtime` mark held to the import graph: the module that
+ * registers its body (`CORE_COMMAND_RUNS` in `src/cli/core_commands.ts`,
+ * `SPINE_COMMAND_RUNS` in `src/cli/spine_commands.ts`) and whether that
+ * module's closure reaches spine-core. A command marked `false` whose module
+ * reaches it, one marked with a need whose module reaches none, and one no
+ * module (or both) registers are faults, each named.
+ */
+function runtimeMarkFaults(
+  docs: ReadonlyArray<{ name: string; runtime: false | { for: string } }>,
+  population: ReadonlyMap<string, string>,
+): { faults: string[]; core: string[]; spine: string[] } {
+  const registrars: Array<[string, Readonly<Record<string, unknown>>]> = [
+    ['src/cli/core_commands.ts', CORE_COMMAND_RUNS],
+    ['src/cli/spine_commands.ts', SPINE_COMMAND_RUNS],
+  ];
+  const reach = new Map(registrars.map(([module]) => [module, entryClosure(population, module).linkers] as const));
+  const faults: string[] = [];
+  const core: string[] = [];
+  const spine: string[] = [];
+  for (const doc of docs) {
+    const by = registrars.filter(([, runs]) => Object.prototype.hasOwnProperty.call(runs, doc.name)).map(([module]) => module);
+    if (by.length !== 1) {
+      faults.push(`${doc.name} is registered by ${by.length} module(s) [${by.join(', ')}], not one`);
+      continue;
+    }
+    const linkers = reach.get(by[0]) ?? [];
+    if (doc.runtime === false && linkers.length > 0) faults.push(`${doc.name} is marked runtime: false and ${by[0]} reaches spine-core: ${linkers[0].chain.join(' > ')}`);
+    else if (doc.runtime !== false && linkers.length === 0) faults.push(`${doc.name} is marked as needing spine-core (${doc.runtime.for}) and ${by[0]} links none of it, so an entry without the runtime refuses it for nothing`);
+    else (doc.runtime === false ? core : spine).push(doc.name);
+  }
+  return { faults, core, spine };
 }
 
 // ---------------------------------------------------------------------------

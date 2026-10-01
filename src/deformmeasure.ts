@@ -124,7 +124,7 @@ import {
   type Timeline,
 } from '@esotericsoftware/spine-core';
 // #969: the core's side of the seam — the model document read.
-import { CoreInputError, readModel } from './core/index.ts';
+import { readModel } from './core/index.ts';
 // #1019: what the survey reads of the skeleton's structure, and the model document's reading of it.
 import {
   modelStructure,
@@ -137,11 +137,15 @@ import {
   type SurveyStructure,
 } from './deformstructure.ts';
 // Issue #1025 (cut 4c-3): the half of the survey that names no runtime class.
-import { BEZIER_POINTS, corePoser, surveyOfModel, surveyWith, type DeformSurvey, type DeformSurveySource, type DialField, type ShownReading, type SurveyPose, type SurveyPoser } from './deformsurvey.ts';
-import { spineFileSha256 } from './model.ts';
-import { SpineRuntimeError } from './render.ts';
+import { BEZIER_POINTS, corePoser, surveyWith, type DeformSurvey, type DialField, type ShownReading, type SurveyPose, type SurveyPoser } from './deformsurvey.ts';
+// Issue #1052: the choice of reader and poser over a build is `./deformbuild.ts`'s, where an entry that links nothing of
+// the runtime can load it; this file's half of it — the survey through spine-core — is registered into the seam below.
+import type { DeformSurveyInput } from './deformbuild.ts';
+import { registerSpineSurvey, SpineRuntimeError, spineRuntimeSentence, SURVEY_RUNTIME_TAIL } from './spine_side.ts';
 
 export { BEZIER_POINTS, DEFORM_AREA_EPSILON, float32AreaNoise, stretchSingularValues, surveyOfModel, triangleAreas, unreachableWhy } from './deformsurvey.ts';
+export { surveyOfBuild } from './deformbuild.ts';
+export type { DeformSurveyInput } from './deformbuild.ts';
 export type {
   DeformDial,
   DeformDialDispute,
@@ -694,16 +698,6 @@ export function deformPosers(input: DeformSurveyInput & { modelText: string }): 
   return { data, structure: side.structure, model: modelStructure(doc), spine: side.poser, core: corePoser(side.structure, doc) };
 }
 
-/** A build's three texts, as `explain` and `tools/survey_hashes.ts` hold them. */
-export interface DeformSurveyInput {
-  skeletonText: string;
-  atlasText: string;
-  /** The model document (`skeleton.model.json`), or `null` when the input carries none (a Spine export). */
-  modelText: string | null;
-  /** What a refusal names the survey's input as; `the deform survey` unstated. */
-  label?: string;
-}
-
 /**
  * Touch the runtime once, before the skeleton is parsed through it, and refuse
  * by name when it cannot be used (issue #1019) — the sentence `render` and
@@ -716,45 +710,23 @@ function requireSpineRuntime(label: string, why: string): void {
     // A property read on the class the parse starts from: no runtime code runs, and a runtime that cannot be used throws here.
     void TextureAtlas.prototype;
   } catch (err) {
-    throw new SpineRuntimeError(
-      `${label} is posed through spine-core (${why}), and the runtime could not be used: ${(err as Error).message}. ` +
-        'spine-core is what reads and poses a Spine export, --poser spine and a fallback the survey names; ' +
-        'a rigc build the core poses reads nothing through it',
-    );
+    // The sentence an entry that registered no Spine side is refused in too (`./spine_side.ts`), with the runtime's own words as the reason.
+    throw new SpineRuntimeError(spineRuntimeSentence(label, why, (err as Error).message, SURVEY_RUNTIME_TAIL));
   }
 }
 
 /**
- * The survey of a build, through the reader and poser asked for (issues #969,
- * #1019): `model` — the model document's structure posed by the core,
- * refused when there is none or when the Spine file beside it is not the one
- * it records; `spine-core` — the Spine skeleton read and posed by the runtime;
- * `auto` — the model document when the input carries one and the core poses
- * it, spine-core otherwise, the reason named in `source.why`. On the model
- * path spine-core is not touched: the Spine text is hashed, never parsed.
+ * The survey through spine-core — the half of `surveyOfBuild`
+ * (`./deformbuild.ts`, moved there unchanged in issue #1052) that names the
+ * runtime, registered into the seam when this file is loaded: it touches the
+ * runtime once (`requireSpineRuntime`), then reads and poses the Spine
+ * skeleton and names `why` as the survey's source. Every program that imports
+ * this file surveys as before; one that does not refuses this half by name.
  */
-export function surveyOfBuild(input: DeformSurveyInput, exempt: ReadonlySet<string>, asked: 'auto' | DeformSurveySource): DeformSurvey {
-  const label = input.label ?? 'the deform survey';
-  const throughSpine = (why: string | null): DeformSurvey => {
+registerSpineSurvey({
+  throughSpine: (label, why, input, exempt) => {
     requireSpineRuntime(label, why ?? '--poser spine');
     const side = runtimeSide(skeletonDataFromText(input.skeletonText, input.atlasText));
     return { ...surveyWith(side.structure, exempt, side.poser), source: { used: 'spine-core', why } };
-  };
-  if (asked === 'spine-core') return throughSpine(null);
-  if (input.modelText === null) {
-    if (asked === 'model') throw new CoreInputError('the survey was asked to pose the model document, and the input carries none');
-    return throughSpine('the input carries no model document (skeleton.model.json), so the survey posed the Spine skeleton through spine-core');
-  }
-  try {
-    const doc = readModel(input.modelText);
-    // The document reads the rig it was built with; the Spine file beside it must be that build's (issue #968's rule).
-    const found = spineFileSha256(input.skeletonText);
-    if (found !== doc.spine.sha256) {
-      throw new CoreInputError(`the skeleton is not the one the model document was written beside: its sha256 is ${found}, the document records ${doc.spine.sha256 || 'none'}`);
-    }
-    return surveyOfModel(doc, exempt);
-  } catch (err) {
-    if (!(err instanceof CoreInputError) || asked === 'model') throw err;
-    return throughSpine(`the core refused to pose the model document — ${err.message}`);
-  }
-}
+  },
+});

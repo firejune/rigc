@@ -1,0 +1,1935 @@
+/**
+ * What every rigc entry shares (issue #1052, step 4e of #380): the argument
+ * parser, the readers of the files a command line names, the helpers more
+ * than one command calls, every command's documentation and the dispatch —
+ * moved here unchanged from `cli.ts`, which is now one entry over it.
+ *
+ * ⭐ A command is documented once (`COMMANDS`), and the documentation says,
+ * as data, what the command's body needs (`runtime`, `spineFormat`). An entry
+ * is the documentation plus the bodies it registers (`runCli`): `cli.ts`
+ * registers every command, and `cli_core.ts` registers only those whose
+ * `runtime` is `false` — its set is read off this table, its `--help` prints
+ * that set, and a command outside it is refused naming what it needs the
+ * runtime for. Nothing in this file links spine-core, and neither does
+ * anything it imports: the bodies that reach the runtime are
+ * `./spine_commands.ts`'s, which only `cli.ts` imports.
+ */
+import { DEFAULT_PADDING, DEFAULT_PAGE_EDGES, DEFAULT_PAGE_SIZE } from '../atlas.ts';
+import { MAX_CANDIDATES, MIN_CANDIDATES } from '../ballot.ts';
+import { BONEDIST_SPEC, IDENTITY_CORRESPONDENCE } from '../correspondence.ts';
+import { ANCHOR_MAX_RESIDUAL, ANCHOR_MAX_UNEXPLAINED, DEFAULT_HINGE_MAX, DEFAULT_HINGE_MIN, DEFAULT_MIN_LEVER_PX, DEFAULT_MIN_VISIBLE, DEFAULT_PASSES } from '../chainfit.ts';
+import { checkAgainstFrames, type CheckOptions, CheckPlates, type CheckReport } from '../check.ts';
+import { CompileError, droppedStateReason, type CompileOptions } from '../compile.ts';
+import { depthStepLevels, type FoldLimit, type TurnCeiling } from '../depth.ts';
+import { parseJsonWithPosition } from '../json-position.ts';
+import { RUNG_IDS } from '../ladder.ts';
+import { MODEL_DOCUMENT_FILE } from '../model.ts';
+import { DEFAULT_MAX_RESIDUAL, DEFAULT_SCALE_MAX, DEFAULT_SCALE_MIN } from '../pose.ts';
+import {
+  CandidateAtlasError,
+  CandidatePairError,
+  GEOMETRY_FILE,
+  GeometryError,
+  POSER_NAMES,
+  PoserChoiceError,
+  type PoserName,
+  PROTOCOL_FPS,
+  UnframeablePoseError,
+} from '../render_shared.ts';
+import { BallotError } from '../ballot.ts';
+import { ChainFitError } from '../chainfit.ts';
+import { CheckError } from '../check.ts';
+import { IngestError } from '../ingest.ts';
+import { NotAPngError } from '../png.ts';
+import { PoseError } from '../pose.ts';
+import { SpineRuntimeError, SPINE_SIDE_ABSENT } from '../spine_side.ts';
+import type { CompileResult, DroppedState } from '../types.ts';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+
+
+/**
+ * One entry of a cuts.json, every path relative to the cuts.json file.
+ *
+ * `rig` is required — it is the skeleton's structure, and until it was a file
+ * that structure was three hard-coded tables in the compiler. `manifest` is
+ * optional: a skeleton with no measured art behind it has none, and then the rig
+ * spec carries its own attachments and stage size.
+ */
+export interface CutEntry {
+  rig: string;
+  motion: string;
+  out: string;
+  manifest?: string;
+  /** Base directory for the rig spec's `image` references, if not the rig's own. */
+  images?: string;
+}
+
+export type CutTable = Record<string, CutEntry>;
+
+export class UsageError extends Error {}
+
+/**
+ * `explain` refusing a pair it cannot pose — a usage error in kind, printed
+ * without the usage block for `PoseError`'s and `IngestError`'s reason: the
+ * message names an attachment, a region and two flags, and reprinting every
+ * command's usage under it buries the one line that says what to change.
+ */
+export class ExplainError extends Error {}
+
+// ---------------------------------------------------------------------------
+// package metadata — the installed version and repository, for `--version`
+// and for naming a remedy `bench` can only give from a repo checkout.
+// ---------------------------------------------------------------------------
+
+interface PackageMeta {
+  version?: string;
+  repository?: string | { url?: string };
+}
+
+let packageMeta: PackageMeta | null | undefined;
+
+/**
+ * The directory `cli.ts` sits in: `package.json`, `skills/` and, in a
+ * checkout, `examples/` and `scripts/` are beside it, in the repository and
+ * once installed. Two levels above this file (`src/cli/`), which is where the
+ * commands that read those live since issue #1052 — every path they built off
+ * `cli.ts`'s own directory is built off this one, and comes out the same.
+ */
+export const PACKAGE_ROOT = join(import.meta.dir, '..', '..');
+
+/** `package.json` sits next to `cli.ts` both in the repo and once installed (`PACKAGE_ROOT`). */
+export function readPackageMeta(): PackageMeta | null {
+  if (packageMeta === undefined) {
+    try {
+      packageMeta = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8')) as PackageMeta;
+    } catch {
+      packageMeta = null;
+    }
+  }
+  return packageMeta;
+}
+
+export function readVersion(): string {
+  return readPackageMeta()?.version ?? 'unknown';
+}
+
+// ---------------------------------------------------------------------------
+// argument parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * The flags that are switches rather than `--flag value` pairs.
+ *
+ * Listed by name rather than inferred from "the next argument looks like a
+ * flag": inferring it would turn `--out --json report.json` — a real typo, a
+ * missing value — into a silently accepted switch plus a stray positional.
+ *
+ * ⚠️ This set and `FLAG_VALUES` are two halves of one statement, and they are
+ * the halves a reader and the parser read separately: a flag absent from
+ * `FLAG_VALUES` is printed bare in every usage line and flag table, and a flag
+ * present here is the only kind the parser will accept bare. `all-bones` was in
+ * one half and not the other for two releases — documented bare in `bonedist`'s
+ * usage line, in the shared flag table, and in the hint `src/bonedist.ts` prints
+ * under a truncated bone table, while the parser fell through to the value
+ * branch and answered the caller who followed that hint with `rigc: --all-bones
+ * needs a value` (issue #328). `CLI10`/`CLI11` in `selftest.ts` now hold the two
+ * halves together by reading `--help` rather than by naming a flag.
+ */
+const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry']);
+
+/**
+ * The flags a command is allowed to spell more than once.
+ *
+ * `vote --candidate` is, because a ballot is *by definition* several
+ * candidates; `preview --candidate` is, because a pane per candidate on one
+ * page is what an agent otherwise builds by hand (issue #837); and `diff --as`
+ * is, because a skeleton has as many shots as it has and one pairing per flag is the only spelling that keeps each pair a pair
+ * (issue #720). Everywhere else a repeat is a mistake and is refused: `check
+ * --candidate a --candidate b` used to take `b` silently, which is a report
+ * about a rig the caller did not think they were asking about.
+ */
+export const REPEATABLE_FLAGS: Record<string, ReadonlySet<string>> = {
+  vote: new Set(['candidate']),
+  diff: new Set(['as']),
+  preview: new Set(['candidate']),
+};
+
+/**
+ * `--flag value` pairs plus the leftover positionals, in order.
+ *
+ * `lists` carries every occurrence of every flag and `flags` carries the last
+ * one, so a command that wants a repeated flag reads `lists` and the ones that
+ * do not are untouched by the addition.
+ */
+export function parseArgs(
+  argv: string[],
+  repeatable: ReadonlySet<string> = new Set(),
+): { flags: Record<string, string>; lists: Record<string, string[]>; positional: string[] } {
+  const flags: Record<string, string> = {};
+  const lists: Record<string, string[]> = {};
+  const positional: string[] = [];
+  const take = (name: string, value: string): void => {
+    if (flags[name] !== undefined && !repeatable.has(name)) {
+      throw new UsageError(
+        `--${name} was given more than once (${JSON.stringify(flags[name])} then ${JSON.stringify(value)}); ` +
+          'this command takes it once',
+      );
+    }
+    flags[name] = value;
+    (lists[name] ??= []).push(value);
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.startsWith('--')) {
+      const eq = arg.indexOf('=');
+      if (eq !== -1) {
+        take(arg.slice(2, eq), arg.slice(eq + 1));
+      } else if (BOOLEAN_FLAGS.has(arg.slice(2))) {
+        take(arg.slice(2), 'true');
+      } else {
+        const next = argv[i + 1];
+        if (next === undefined || next.startsWith('--')) throw new UsageError(`${arg} needs a value`);
+        take(arg.slice(2), next);
+        i++;
+      }
+    } else {
+      positional.push(arg);
+    }
+  }
+  return { flags, lists, positional };
+}
+
+/**
+ * Read and parse a JSON file the caller named on the command line — a cuts
+ * table, a candidate or reference skeleton to `diff`. A parse failure names the
+ * file and, best-effort, where inside it the syntax broke (see
+ * `parseJsonWithPosition`); left as a raw `JSON.parse`, it would surface as an
+ * unhandled `SyntaxError` with a stack trace instead of a usage error.
+ */
+export function readJsonFile(path: string): unknown {
+  return parseJsonNamed(readFileSync(path, 'utf8'), path);
+}
+
+/** `text`, read from `path`, parsed — and refused naming the file and where it broke when it is not JSON. */
+export function parseJsonNamed(text: string, path: string): unknown {
+  try {
+    return parseJsonWithPosition(text);
+  } catch (err) {
+    throw new UsageError(`cannot read ${path}: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * A skeleton a command was pointed at, as text — refused like every other JSON
+ * file on the command line (`parseJsonNamed`) when it is not JSON (issue
+ * #1042). `render`, `check`, `bench` and `bonedist` hand the text to a loader
+ * that parses it again, and on a file that is not JSON that parse surfaced as
+ * the runtime's `SyntaxError` and a stack, where `diff`, `preview`, `vote` and
+ * `ingest` already said `cannot read <path>`.
+ */
+export function readSkeletonText(path: string): string {
+  const text = readFileSync(path, 'utf8');
+  parseJsonNamed(text, path);
+  return text;
+}
+
+/**
+ * Read a cuts.json and resolve its three paths against the file's own
+ * directory. Anchoring on the table rather than on the process cwd is what lets
+ * the same command work from anywhere in the owning project.
+ */
+function readCutTable(cutsPath: string): { dir: string; table: CutTable } {
+  const abs = resolve(cutsPath);
+  if (!existsSync(abs)) throw new UsageError(`no cuts file at ${abs}`);
+  const parsed = readJsonFile(abs);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new UsageError(`${abs}: expected an object of cut name -> { manifest, motion, out }`);
+  }
+  return { dir: dirname(abs), table: parsed as CutTable };
+}
+
+function entryToOptions(dir: string, name: string, entry: CutEntry): CompileOptions {
+  for (const key of ['rig', 'motion', 'out'] as const) {
+    if (typeof entry?.[key] !== 'string') throw new UsageError(`cut ${JSON.stringify(name)} has no "${key}" path`);
+  }
+  const opts: CompileOptions = {
+    rigPath: resolve(dir, entry.rig),
+    motionPath: resolve(dir, entry.motion),
+    outDir: resolve(dir, entry.out),
+  };
+  if (entry.manifest !== undefined) opts.manifestPath = resolve(dir, entry.manifest);
+  if (entry.images !== undefined) opts.imagesDir = resolve(dir, entry.images);
+  return opts;
+}
+
+/**
+ * Resolve the cut a command was pointed at, either spelled out on the command
+ * line or looked up by name in a cuts.json.
+ */
+export function resolveCut(flags: Record<string, string>): { label: string; opts: CompileOptions } {
+  const explicit =
+    flags.rig !== undefined || flags.manifest !== undefined || flags.motion !== undefined || flags.out !== undefined;
+  if (explicit) {
+    if (flags.cut !== undefined || flags.cuts !== undefined) {
+      throw new UsageError('--rig/--motion/--out and --cut/--cuts are two ways to say the same thing; pick one');
+    }
+    for (const key of ['rig', 'motion', 'out'] as const) {
+      if (flags[key] === undefined) throw new UsageError(`--${key} is required when the cut is spelled out`);
+    }
+    const opts: CompileOptions = {
+      rigPath: resolve(flags.rig),
+      motionPath: resolve(flags.motion),
+      outDir: resolve(flags.out),
+    };
+    if (flags.manifest !== undefined) opts.manifestPath = resolve(flags.manifest);
+    if (flags.images !== undefined) opts.imagesDir = resolve(flags.images);
+    if (flags['atlas-in'] !== undefined) opts.atlasInPath = resolve(flags['atlas-in']);
+    return { label: flags.rig, opts };
+  }
+  if (flags.cut === undefined) throw new UsageError('give either --cut <name> --cuts <cuts.json>, or --rig/--motion/--out');
+  if (flags.cuts === undefined) throw new UsageError('--cut needs --cuts <cuts.json> to look the name up in');
+  const { dir, table } = readCutTable(flags.cuts);
+  const entry = table[flags.cut];
+  if (!entry) {
+    throw new UsageError(
+      `unknown cut ${JSON.stringify(flags.cut)} in ${resolve(flags.cuts)}. known: ${Object.keys(table).join(', ') || '(none)'}`,
+    );
+  }
+  const opts = entryToOptions(dir, flags.cut, entry);
+  // `--atlas-in` is not part of the cuts table: a cut names its rig, motion and
+  // manifest, and where the pixels are delivered from is a property of the BUILD.
+  // Resolved against the working directory, like every other path on the command
+  // line, rather than against the table's directory.
+  if (flags['atlas-in'] !== undefined) opts.atlasInPath = resolve(flags['atlas-in']);
+  return { label: flags.cut, opts };
+}
+
+/**
+ * One line per mesh kind on this cut, printed above the table.
+ *
+ * A legend rather than a heading: the heading used to describe the ring tier
+ * unconditionally, so a build whose only mesh was a ribbon or a contour got a
+ * sentence about a rim ring and a seam it does not have.
+ */
+/**
+ * What a depth map and a soft region put on a mesh, when it named either.
+ *
+ * The digests are the reason this prints at all: a claim about a rig can name
+ * WHICH sheet produced it, and two runs a reader believes differ can be shown to
+ * have read the same pixels. The ranges and counts are what say the input
+ * reached the geometry rather than merely being resolved — a `carried 0` never
+ * gets here (it is refused) and a `ramped 0` is a hard-edged mask, which is
+ * legal and usually not what somebody meant.
+ */
+/**
+ * One axis's two ceilings, as `+31.41 / -18.03`, or what is unbounded on it.
+ *
+ * ⚠️ `none` and a number are different claims and are printed differently. A
+ * sheet with no gradient along an axis cannot fold anything on it AT ANY ANGLE,
+ * which is a fact about the sheet worth reading; printing `90` for it would be
+ * a limit nothing measured.
+ */
+function ceilingPair(axis: { positive: FoldLimit | null; negative: FoldLimit | null }): string {
+  const one = (l: FoldLimit | null, sign: string) => (l === null ? `${sign}none` : `${sign}${l.degrees.toFixed(2)}°`);
+  return `${one(axis.positive, '+')} / ${one(axis.negative, '-')}`;
+}
+
+/**
+ * The same axis's two 1st percentiles, each with its ratio to the ceiling above
+ * it and the population it came out of — `+64.80° x1.003 of 5988`.
+ *
+ * ⭐ The ratio is the whole point and it is printed rather than judged. A
+ * ceiling set by the FORM is the floor of a band: the steepest region of a
+ * smooth sheet has area, so the 1st percentile sits a fraction of a percent
+ * above the minimum. A ceiling set by one bad texel has 99 % of the mesh
+ * surviving to the form's angle while the reported number collapses — 64.58°
+ * against 6.08° for one texel of 160,000, with the percentile unmoved at 64.80°
+ * in both ([#412](https://github.com/firejune/rigc/issues/412),
+ * `bench/studies/2026-09-05-noise` §6).
+ *
+ * Three spellings, three different claims, for the reason `ceilingPair` prints
+ * `none` rather than 90: `+none` is a side nothing folds on at all, `+unranked
+ * of 36` is a side whose population is too small for a first percentile to be
+ * anything but the minimum itself, and a number is a measurement.
+ *
+ * ⛔ No threshold lives here. What ratio means what is in `docs/AUTHORING.md`
+ * §3.4, because a number rigc printed an adjective beside would be a policy the
+ * compiler invented out of a measurement — and `A39` would go on refusing at the
+ * raw angle either way.
+ */
+function spreadPair(axis: { positive: FoldLimit | null; negative: FoldLimit | null }): string {
+  const one = (l: FoldLimit | null, sign: string) =>
+    l === null
+      ? `${sign}none`
+      : l.p1 === null
+        ? `${sign}unranked of ${l.count}`
+        : `${sign}${l.p1.toFixed(2)}° x${(l.p1 / l.degrees).toFixed(3)} of ${l.count}`;
+  return `${one(axis.positive, '+')} / ${one(axis.negative, '-')}`;
+}
+
+/** The tightest of the four, so the line that names a triangle names the right one. */
+function tightestFold(c: TurnCeiling): { kind: string; sign: string; limit: FoldLimit } | null {
+  const all = [
+    { kind: 'yaw', sign: '+', limit: c.yaw.positive },
+    { kind: 'yaw', sign: '-', limit: c.yaw.negative },
+    { kind: 'pitch', sign: '+', limit: c.pitch.positive },
+    { kind: 'pitch', sign: '-', limit: c.pitch.negative },
+  ].filter((e): e is { kind: string; sign: string; limit: FoldLimit } => e.limit !== null);
+  if (all.length === 0) return null;
+  return all.reduce((best, e) => (e.limit.degrees < best.limit.degrees ? e : best));
+}
+
+export function meshDepthNote(m: CompileResult['meshes'][number]): string {
+  const parts: string[] = [];
+  if (m.depth) {
+    parts.push(
+      `depth "${m.depth.image}" ${m.depth.digest} near=${m.depth.near} zScale=${m.depth.zScale} ` +
+        `z=[${m.depth.range[0]}, ${m.depth.range[1]}]`,
+    );
+    // Directly under the sheet's own line, because it is the other half of
+    // "what did this mesh read": `z=[…]` says how much of the map's range
+    // reached the vertices, and this says how many of them read a texel that
+    // draws nothing (issue #449). Reported only when there is something to
+    // report, so a mesh whose every vertex sits on drawn art gains no line.
+    //
+    // ⭐ A `contour` gets the OTHER half of the sentence, because rigc built
+    // that outline and knows what it is: `buildContourMesh` returns
+    // `hullVertices: points.length` over `offsetPolygon(simplified, margin)`,
+    // so every vertex of a contour mesh is the traced silhouette pushed out by
+    // the margin — there are no interior vertices for the count to be about.
+    // Nothing is derived, inferred or thresholded to say so; it is what the
+    // generator returns, and `generatedHullAndEdges` already cross-checks that
+    // hull against the triangulation's own outline. Without it the line reads
+    // as a fault on every correct contour rig, which is a diagnostic authors
+    // learn to ignore.
+    // Withheld, and said where the count would have stood (issue #750): the
+    // part's texels could not be located on its page, so there is no count
+    // that is about this part.
+    if (m.depth.unlocated !== undefined) {
+      parts.push(`the count of vertices on undrawn texels is not measured: ${m.depth.unlocated}. ${PAGE_GRID_UNLOCATED}`);
+    } else if (m.depth.undrawn !== null && m.depth.undrawn > 0) {
+      parts.push(
+        `${m.depth.undrawn} of ${m.vertices} vertices sample a texel the part image does not draw — ` +
+          (m.kind === 'contour'
+            ? 'a contour\'s vertices are all traced outline, pushed out by the margin, so this is the topology and not the sheet'
+            : 'their z is the sheet\'s reading of somewhere the part is not'),
+      );
+    }
+    const c = m.depth.ceiling;
+    parts.push(`turn ceiling  yaw ${ceilingPair(c.yaw)}   pitch ${ceilingPair(c.pitch)}`);
+    const worst = tightestFold(c);
+    if (worst !== null) {
+      parts.push(`  1st pct     yaw ${spreadPair(c.yaw)}   pitch ${spreadPair(c.pitch)}`);
+    }
+    parts.push(
+      worst === null
+        ? `              nothing in this sheet folds: ${c.measured} triangle(s) measured, none with a depth gradient across it`
+        : `              first to fold: ${worst.kind} ${worst.sign} at ${worst.limit.degrees.toFixed(2)}°, ` +
+          `triangle ${worst.limit.triangle} [${worst.limit.ids.join(',')}], the sheet steps ` +
+          `${depthStepLevels(worst.limit.depthStep, m.depth.zScale).toFixed(2)} level(s) across it, ` +
+          // The same step over the range the mesh sampled (issue #448). A
+          // suffix and not a line of its own: it is an apposition on the step
+          // beside it, and the reading that matters is the two together — a
+          // discontinuity says "plenty of levels" and "nearly all of them" at
+          // once, and they have to be read in one breath to say the opposite.
+          `which is ${worst.limit.stepShare.toFixed(3)} of the range this mesh sampled` +
+          `${c.degenerate ? `; ${c.degenerate} triangle(s) too flat in setup to measure` : ''}`,
+    );
+  }
+  if (m.soft) {
+    parts.push(
+      `soft "${m.soft.mask}" ${m.soft.digest} -> ${m.soft.bone}, ${m.soft.carried} carried / ${m.soft.ramped} in the falloff`,
+    );
+  }
+  return parts.length === 0 ? '' : `\n        ${parts.join('\n        ')}`;
+}
+
+/**
+ * The line under a `segments` mesh: how its bones share the vertices.
+ *
+ * ⭐ The weights are this generator's whole output, and the per-vertex numbers
+ * are nowhere a reader can see them — so the three figures that say whether the
+ * falloff did what was meant are printed where the mesh is: the most bones any
+ * vertex binds (against `maxBones`), the mean, and how many vertices a single
+ * bone owns outright. A named bone no vertex binds is said by name, because it
+ * is in no weight and so in no other figure either.
+ */
+export function meshInfluenceNote(m: CompileResult['meshes'][number]): string {
+  const inf = m.influence;
+  if (inf === undefined) return '';
+  const unbound = m.bones.filter((b) => !inf.bound.includes(b));
+  const single = m.vertices === 0 ? 0 : (inf.singleBone / m.vertices) * 100;
+  const joined = inf.keptCells - inf.artCells;
+  return (
+    `\n        influence  max ${inf.maxBones} bone(s) per vertex, mean ${inf.meanBones.toFixed(2)}, ` +
+    `${inf.singleBone} of ${m.vertices} vertices (${single.toFixed(2)}%) on a single bone` +
+    (unbound.length ? `; named and bound by no vertex: ${unbound.join(', ')}` : '') +
+    `\n        lattice    cell ${inf.cell}px, ${inf.cols}x${inf.rows} cells, ${inf.artCells} with art, ${inf.keptCells} kept` +
+    (inf.islands > 1 || joined > 0
+      ? ` (${inf.islands} island(s) joined into one outline, ${joined} cell(s) added that hold no art)`
+      : '')
+  );
+}
+
+/**
+ * Why a figure taken off a part's texels is withheld on a page whose file is
+ * not the size its atlas declares — the tail of every line that withholds one
+ * (issue #750). The page and its ratios come first, from `pageGridSaid`; this
+ * says what that does to the reading and where the repair is named.
+ */
+export const PAGE_GRID_UNLOCATED =
+  'rigc lifts a part off its page at the coordinates the atlas states, and on this file those are not where the ' +
+  "part's texels are, so a figure taken there would describe another part of the page. " +
+  '`A06_ATLAS_PAGE_SIZE_MATCHES_PNG` refuses the page by the same ratio and names the `scale:` header that states it';
+
+/**
+ * What a mesh measured about its own fit against the art it names, or nothing
+ * for a mesh with no art to measure against.
+ *
+ * Printed for authored geometry as well as for a `contour` (issue #277): the
+ * figure is a measurement between the emitted triangles and the PNG, so it means
+ * the same thing whoever drew the vertices, and the silence was the defect —
+ * an octagon rim placed on a round part's silhouette clips its own ink outline
+ * at 94.31% and used to print nothing at all.
+ *
+ * The hole is appended only when there is one, so the common line is unchanged.
+ * It is the one figure in the report that a hole moves: `coverage` and
+ * `overshoot` are both measured against the FILLED silhouette, so spanning an
+ * interior hole is neither missing coverage nor reaching past anything, and an
+ * unintentional hole — a gap in the art, a stroke that failed to join — bought
+ * fill over transparent pixels with nothing anywhere saying so (issue #275).
+ */
+export function meshFit(m: CompileResult['meshes'][number]): string {
+  // The fit is a measurement against the part's texels, and on a page whose
+  // file is not its declared size the region lift does not have them (issue
+  // #750). It printed 68.49% / 76.24px there for a mesh that measures 100.00% /
+  // 16.00px on the page it was packed from — two plausible numbers about
+  // another part of the picture. So the line says what was not measured and
+  // why, in the place the figures stood, and prints no figure.
+  if (m.fitWithheld !== undefined) return `  fit not measured: ${m.fitWithheld}. ${PAGE_GRID_UNLOCATED}`;
+  if (m.coverage === undefined) return '';
+  // A count of the plate's own cells, so on a `scale:` page it is texels and
+  // says so rather than borrowing the overshoot's unit beside it (issue #762).
+  const hole = m.holePixels ? `, enclosing ${m.holePixels}${m.pageScale === undefined ? 'px' : ' texel(s)'} of hole` : '';
+  return `  covers ${(m.coverage * 100).toFixed(2)}% of the art, reaching ${m.overshoot?.toFixed(2) ?? '?'}px past it${meshFitGrid(m)}${hole}`;
+}
+
+/**
+ * The grid a fit was taken on, when it is not the drawing's own (issue #762).
+ *
+ * The overshoot is stated in the drawing's pixels on every route — the unit an
+ * attachment's size is in — and on a page that declares a `scale:` other than
+ * 1 it was measured on the page's texels and divided by that scale. So it
+ * carries the coarser grid's step: on `scale: 0.5` a figure moves in steps of
+ * 2.00px of the drawing, and it need not equal the figure the page it was
+ * packed from reads except where the distance falls on whole texels. Said
+ * beside the figure, and nothing at all on a loose part or a page at scale 1,
+ * where the line is the one it always was.
+ */
+function meshFitGrid(m: CompileResult['meshes'][number]): string {
+  if (m.pageScale === undefined) return '';
+  return (
+    ` (the drawing's pixels, measured on the page's texels at scale: ${m.pageScale} — a texel is ` +
+    `${(1 / m.pageScale).toFixed(2)}px of the drawing)`
+  );
+}
+
+/**
+ * The triangle budget a `MESH` line is read against: the rig's, or nothing.
+ *
+ * 📐 It used to be the literal `80`, which was nobody's budget — the rig quoted
+ * in issue #275 declared 64, `A13_MESH_BUDGET` measured against that 64
+ * correctly, and the line an author actually reads printed 80. Under the default
+ * `--profile spine` `A13` is `PROF`, so the printed number is the only budget
+ * figure in the output and it has to be the declared one. A rig that declares
+ * none says so in the same words `A13` SKIPs in, rather than being given a wall.
+ */
+export function meshBudget(rig: CompileResult['rig']): string {
+  return rig.meshTriangleBudget === null ? '(no budget declared)' : `(budget ${rig.meshTriangleBudget})`;
+}
+
+/**
+ * Where a pair of artifacts lives, given what the caller pointed at.
+ *
+ * Two shapes, because rigc's own output and a foreign export are named
+ * differently and both have to be gateable. rigc writes `skeleton.json` +
+ * `skeleton.atlas` into a directory. Everybody else writes whatever the editor
+ * called the project, and the official examples are not even consistent with
+ * themselves — `7-anticipation/export/` holds `sack-pro.json`, `spineboy/export/`
+ * holds two skeletons and two atlases.
+ *
+ * ⚠️ When more than one atlas sits beside the skeleton, this refuses to choose.
+ * Guessing by name would be wrong on the corpus that motivated it: `spineboy-ess`
+ * shares a longer prefix with `spineboy-run.atlas` than with the `spineboy.atlas`
+ * it actually uses, so the plausible heuristic picks the wrong file and every
+ * attachment then resolves against the wrong pixels — silently, which is the
+ * exact failure mode this tool exists to remove.
+ */
+export function resolveArtifacts(target: string, atlasFlag: string | undefined): { skeletonPath: string; atlasPath: string } {
+  const abs = resolve(target);
+  if (!existsSync(abs)) throw new UsageError(`nothing at ${abs}`);
+  if (statSync(abs).isDirectory()) {
+    return {
+      skeletonPath: join(abs, 'skeleton.json'),
+      atlasPath: atlasFlag ? resolve(atlasFlag) : join(abs, 'skeleton.atlas'),
+    };
+  }
+  if (!abs.endsWith('.json')) throw new UsageError(`${abs} is neither a directory nor a .json skeleton`);
+  if (atlasFlag) return { skeletonPath: abs, atlasPath: resolve(atlasFlag) };
+  const dir = dirname(abs);
+  const atlases = readdirSync(dir)
+    .filter((f) => f.endsWith('.atlas'))
+    .sort();
+  if (atlases.length === 1) return { skeletonPath: abs, atlasPath: join(dir, atlases[0]) };
+  if (atlases.length === 0) throw new UsageError(`no .atlas beside ${abs}; name one with --atlas <path>`);
+  throw new UsageError(
+    `${atlases.length} atlases beside ${abs} (${atlases.join(', ')}); name the right one with --atlas <path> ` +
+      '— guessing by filename is how an attachment quietly resolves against the wrong page',
+  );
+}
+
+/**
+ * check — how close does the candidate LOOK to the reference frames?
+ *
+ * ⭐ The gate cannot see a wrong animation. It parses, it steps, it refuses the
+ * degenerate — and a rig whose easings are all reversed passes it green, which is
+ * not a hypothetical: ladder rung 1's first honest run shipped exactly that build
+ * and the validator was structurally incapable of noticing. `diff` cannot see it
+ * either, because it compares structure and a reversed curve is the same curve
+ * count. The only thing that can is a picture, so this renders the candidate into
+ * the reference's own frame and compares pixels.
+ *
+ * 🔒 It never reads the reference skeleton — see `src/check.ts`. That is what
+ * keeps it usable **inside** an authoring loop rather than at the finish line the
+ * way `bench` is: an author may run it as often as they like without their run
+ * stopping being an authoring run.
+ *
+ * There is no pass mark, for the same reason `diff` has none.
+ */
+function readCheckFlags(
+  flags: Record<string, string>,
+): Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing' | 'textureFrom' | 'skin'> {
+  const out: Pick<CheckOptions, 'fps' | 'viewport' | 'as' | 'framing' | 'textureFrom' | 'skin'> = {};
+  if (flags.framing !== undefined) {
+    if (flags.framing !== 'per-shot' && flags.framing !== 'shared') {
+      throw new UsageError('--framing takes per-shot (the default) or shared');
+    }
+    out.framing = flags.framing;
+  }
+  if (flags.fps !== undefined) {
+    const fps = Number(flags.fps);
+    if (!Number.isFinite(fps) || fps <= 0) throw new UsageError('--fps must be a positive number');
+    out.fps = fps;
+  }
+  if (flags.viewport !== undefined) {
+    const parts = flags.viewport.split(',').map((s) => Number(s.trim()));
+    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
+      throw new UsageError('--viewport takes four numbers: <x>,<y>,<width>,<height> — the world box, y up');
+    }
+    if (parts[2] <= 0 || parts[3] <= 0) throw new UsageError('--viewport width and height must be positive');
+    out.viewport = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+  }
+  if (flags.as !== undefined) out.as = flags.as;
+  // The name is not checked against the candidate here: `check` owns that
+  // refusal, because it is the side that has the skeleton open and can list the
+  // skins it declares. `render` checks its own for the same reason.
+  if (flags.skin !== undefined) out.skin = flags.skin;
+  if (flags['texture-from'] !== undefined) {
+    const path = resolve(flags['texture-from']);
+    if (!existsSync(path)) {
+      throw new UsageError(
+        `--texture-from ${path} is not a file. It takes the ATLAS the reference frames were rendered through — the ` +
+          "example's own .atlas — so check can measure how much of the MAE is texture resampling.",
+      );
+    }
+    out.textureFrom = { atlasText: readFileSync(path, 'utf8'), atlasDir: dirname(path), label: flags['texture-from'] };
+  }
+  return out;
+}
+
+export function runCheck(
+  candidate: string,
+  atlasFlag: string | undefined,
+  framesDir: string,
+  flags: Record<string, string>,
+  plates?: CheckPlates,
+): CheckReport {
+  const { skeletonPath, atlasPath, atlasText } = resolveDrawable(candidate, atlasFlag);
+  // The poser is `render`'s choice, over the same two files (issue #968): the
+  // paths are what `candidatePosers` looks beside for `skeleton.model.json`.
+  const poser = readPoserFlag(flags);
+  return checkAgainstFrames({
+    skeletonText: readSkeletonText(skeletonPath),
+    atlasText,
+    atlasDir: dirname(atlasPath),
+    framesDir,
+    labels: { skeleton: skeletonPath, atlas: atlasText === null ? `${atlasPath} — not there (${ATLAS_ABSENT})` : atlasPath },
+    candidatePaths: { skeleton: skeletonPath, atlas: atlasPath },
+    ...(poser === undefined ? {} : { poser }),
+    ...readCheckFlags(flags),
+    ...(plates === undefined ? {} : { plates }),
+  });
+}
+
+export function writeJson(target: string, body: unknown): void {
+  const out = resolve(target);
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, `${JSON.stringify(body, null, 2)}\n`);
+  console.log(`rigc: wrote ${out}`);
+}
+
+// ---------------------------------------------------------------------------
+// seeing the result — render and preview
+// ---------------------------------------------------------------------------
+//
+// ⭐ Why two commands exist for one question. `validate` says the artifact is
+// valid, `check` says how close it is to reference frames — and a first user has
+// neither a reference nor any way to look at what they built. A rig whose head
+// sits visibly off its torso passes the gate, loads in `spine-core` and steps
+// cleanly, because the offsets are the ones the spec asked for. The only remedy
+// is looking (issue #216).
+//
+// `render` looks with OUR rasteriser: PNGs on disk, no browser, no network, and
+// the same frame geometry `check` compares against — so its output is a frame set
+// like any other, sidecar included. `preview` looks with ESOTERIC'S, in one HTML
+// file, which is the stronger statement of the two: a rig that plays there has
+// been played by the reference implementation rather than by ours (issue #151).
+//
+// Both take a COMPILED artifact rather than a rig and motion spec. That is what
+// `check`, `bench` and `validate` all take, it is what `build --out` leaves
+// behind, and it keeps `--out` meaning one thing per command instead of naming
+// the build directory on the way in and the pictures on the way out.
+
+/** Both commands' shared front door: which artifact, and what is in it. */
+export function resolveViewable(flags: Record<string, string>): {
+  skeletonPath: string;
+  atlasPath: string;
+  atlasDir: string;
+} {
+  if (flags.candidate === undefined) {
+    throw new UsageError('needs --candidate <dir | skeleton.json> — the directory `build --out` wrote');
+  }
+  const { skeletonPath, atlasPath } = resolveArtifacts(flags.candidate, flags.atlas);
+  for (const path of [skeletonPath, atlasPath]) {
+    if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
+  }
+  return { skeletonPath, atlasPath, atlasDir: dirname(atlasPath) };
+}
+
+/** What `render` and `check` say where a rigc build's atlas is not there (issue #1020). */
+export const ATLAS_ABSENT = 'a build the core poses from a rigc-compiled/2 or /3 document needs none';
+
+/**
+ * The candidate `render` and `check` draw, with its atlas text — or `null`
+ * where the atlas file is not there and need not be (issue #1020).
+ *
+ * ⭐ A rigc build is drawn by the core from its `skeleton.model.json`, and a
+ * `rigc-compiled/2` document states where each region sits on its page, so
+ * the build's `skeleton.atlas` is not needed to draw it. Its absence is let
+ * through here only where it can be that case — no `--atlas` named, a model
+ * document beside the skeleton, and no atlas beside it at all — and the poser
+ * choice decides the rest: anything that is read through an atlas after all
+ * (a `rigc-compiled/1` document, a build the core refuses) is refused there
+ * naming the file and why (`CandidateAtlasError`). An atlas that IS there is
+ * read, as it always was: the core holds it to the document's `pages` and
+ * draws through spine-core, saying why, when it is not the one the build
+ * wrote (#1016), and `check` reads its `scale:` lines for the texture note.
+ * Everywhere else this is `resolveViewable`'s refusal, word for word.
+ */
+export function resolveDrawable(target: string, atlasFlag: string | undefined): { skeletonPath: string; atlasPath: string; atlasText: string | null } {
+  const abs = resolve(target);
+  if (atlasFlag === undefined && existsSync(abs)) {
+    const directory = statSync(abs).isDirectory();
+    const skeletonPath = directory ? join(abs, 'skeleton.json') : abs;
+    const dir = dirname(skeletonPath);
+    const atlasPath = join(dir, 'skeleton.atlas');
+    const noAtlas = directory ? !existsSync(atlasPath) : abs.endsWith('.json') && !readdirSync(dir).some((f) => f.endsWith('.atlas'));
+    if (noAtlas && existsSync(join(dir, MODEL_DOCUMENT_FILE))) {
+      if (!existsSync(skeletonPath)) throw new UsageError(`nothing at ${skeletonPath}`);
+      return { skeletonPath, atlasPath, atlasText: null };
+    }
+  }
+  const { skeletonPath, atlasPath } = resolveViewable({ candidate: target, ...(atlasFlag === undefined ? {} : { atlas: atlasFlag }) });
+  return { skeletonPath, atlasPath, atlasText: readFileSync(atlasPath, 'utf8') };
+}
+
+/** `--animation`, checked against what the skeleton actually carries. */
+export function readAnimationFlag(flags: Record<string, string>, available: string[]): string | undefined {
+  const name = flags.animation;
+  if (name === undefined) return undefined;
+  if (!available.includes(name)) {
+    throw new UsageError(
+      `no animation ${JSON.stringify(name)} in this skeleton; it has [${available.join(', ') || 'none'}]`,
+    );
+  }
+  return name;
+}
+
+/**
+ * `--poser` as spelled, checked against the posers there are — shared by
+ * `render` and `check`. On `render` it is read where its refusal has always
+ * stood, after the candidate's own flags; the candidate is loaded before that
+ * with the spelling as given (`posersAsked`), so a rigc build the core poses
+ * is chosen without loading spine-core (issue #1014).
+ */
+export function readPoserFlag(flags: Record<string, string>): PoserName | undefined {
+  const raw = flags.poser;
+  const forced = POSER_NAMES.find((name) => name === raw);
+  if (raw !== undefined && forced === undefined) {
+    throw new UsageError(`--poser ${JSON.stringify(raw)}: known posers are ${POSER_NAMES.join(', ')}`);
+  }
+  return forced;
+}
+
+/**
+ * What `render` and `preview` say of their framing on a skeleton that declares
+ * no stage (issue #714).
+ *
+ * ⚠️ **Neither frames to a stage on ANY skeleton**, so this is not a fallback
+ * being announced: `framingViewport` is the union of every animation's posed
+ * bounds, and the Spine Web Player's `calculateAnimationViewport` samples the
+ * playing animation's bounds whenever its config states no viewport box, which
+ * `buildPreview` never does. The line is printed only where a stage is absent
+ * because that is the one case where a reader can ask *what box stood in for
+ * it* — and the answer has to be "none", said, rather than a rectangle that looks
+ * like a default. On a staged skeleton the output is the bytes it always was.
+ */
+export const STAGELESS_FRAMING = {
+  render:
+    'framing  the posed extent of every animation, padded — this skeleton declares no stage, and nothing stands ' +
+    'in for one: render frames to the posed extent whether or not a stage is declared',
+  preview:
+    "framing  the Spine Web Player's own: the posed extent of the animation it plays — this skeleton declares no " +
+    'stage, and nothing stands in for one: the player frames that way whether or not a stage is declared',
+} as const;
+
+// ---------------------------------------------------------------------------
+// reading a given condition — pose
+// ---------------------------------------------------------------------------
+//
+// ⭐ Every other command here takes a spec and looks at what came out. This one
+// runs the other way: it takes a PICTURE the user already has — a key pose — and
+// reads spec coordinates out of it, so an agent can state those poses in a rig and
+// a motion by construction and spend its loops on the part nobody can measure, the
+// movement between them.
+//
+// 🚫 It grades nothing, and the distinction is load-bearing rather than modest.
+// `check` and `bench` compare a build against a reference and their numbers mean
+// "how close"; a pose frame is not a reference, it is an INPUT, and once the spec
+// states it there is nothing left to be close to. So the residual here is a trust
+// signal — how much of the frame this placement actually explains — and the only
+// threshold in `src/pose.ts` is the one that decides whether to print an answer at
+// all, which the caller can move.
+//
+//   rigc pose --images parts/ --frame poseA.png [--out pose.json]
+
+export const DEFAULT_POSE_OUT = 'pose.json';
+
+// ---------------------------------------------------------------------------
+// reading the half a picture hides — chainfit
+// ---------------------------------------------------------------------------
+//
+// ⭐ `pose` above reads a picture with nothing but the loose parts, and refuses
+// the parts another part is drawn over — a residual measured through an occluder
+// rises AT the correct placement, so the honest answer is a refusal. This reads
+// those, and the whole difference is that it is also given the CANDIDATE: with a
+// draw order the covered pixels can be excluded from a part's objective instead
+// of charged to it, and with a hierarchy a child of a placed bone has one degree
+// of freedom — the hinge about its own pivot — where `pose` has four.
+//
+// 🚫 Same phase and the same framing as `pose`: it reads a given condition into
+// spec coordinates and grades nothing. Every residual is a trust signal, every
+// threshold is reported, and `visibleShare` is how much of the part the number
+// was even computed on.
+//
+//   rigc chainfit --candidate <dir> --images <dir> --frame poseA.png [--anchor pose.json]
+
+export const DEFAULT_CHAINFIT_OUT = 'chainfit.json';
+
+// ---------------------------------------------------------------------------
+// choosing between results — vote
+// ---------------------------------------------------------------------------
+//
+// ⭐ `preview` shows candidates and asks nothing; this shows two to four of them
+// side by side, hides where each came from, and takes an answer back. The rest of this toolchain is instruments, and it
+// should be — the vote opens only where the instruments have already run out.
+// See `src/ballot.ts` for why the ballot is ordered compile-first-vote-last,
+// why the labels are A and B, and why the record is hashes.
+//
+// Two modes on one command, because they share exactly one thing and it is the
+// contract between them: the ballot manifest. Splitting them would document
+// that format twice and let the halves drift.
+//
+//   rigc vote --candidate <a> --candidate <b> [--animation <n>] [--out ballot.html]
+//   rigc vote --record <result.json> [--ballot ballot.html] [--ledger votes.jsonl] [--again]
+
+export const DEFAULT_BALLOT = 'ballot.html';
+export const DEFAULT_LEDGER = 'votes.jsonl';
+
+// ---------------------------------------------------------------------------
+// skills install — put the shipped skills where an agent host looks (issue #831)
+// ---------------------------------------------------------------------------
+//
+// After `bun add -d spine-rigc` the skills sit at `node_modules/spine-rigc/skills/`,
+// which no host reads. Codex, Gemini CLI and Antigravity all read
+// `<workspace>/.agents/skills/<name>/`, so this links every `skills/<name>/` the
+// package ships into one directory — `.agents/skills` under the working
+// directory unless `--dir` says otherwise.
+//
+// ⭐ The skills are found from THIS FILE's location, never from the working
+// directory: the command installs the package it is, and a cwd that happens to
+// hold some other `skills/` is not a source. That is also why it lives here and
+// not in `src/`: its one input is where the CLI was installed, nothing else
+// calls it, and `src/` is about rigs.
+//
+// A RELATIVE symlink by default, so the directory survives the project being
+// moved or cloned elsewhere and an upgrade of the package is seen with no second
+// run. `--copy` writes the folder instead, for a host that does not follow a
+// linked skill folder.
+//
+// 🔒 **An entry that is already there and is not what this command would write is
+// refused by name, and then nothing at all is written.** The check runs over
+// every skill before the first write, so a refusal never leaves half an install
+// behind. The one entry that is NOT refused is the one this command would have
+// made — a link that already resolves to the same skill folder, however it is
+// spelled, or with `--copy` a folder whose files are byte for byte the package's
+// — and a run over only those says it had nothing to do. No lifecycle script
+// does this on install: a postinstall writing into a consumer's project root is
+// refused as design, and Bun does not run a dependency's lifecycle scripts
+// outside `trustedDependencies`, so half the installs would silently skip it.
+// ---------------------------------------------------------------------------
+
+/** The default `--dir`, resolved against the caller's working directory. */
+export const DEFAULT_SKILLS_DIR = '.agents/skills';
+
+/** An install refused before its first write — nothing to install, or an entry in the way. Exit 1. */
+export class SkillsInstallError extends Error {}
+
+// ---------------------------------------------------------------------------
+// usage / per-command help
+// ---------------------------------------------------------------------------
+
+/**
+ * One meaning per flag name, shared by every command that takes it — the
+ * single place this project states what a flag means. AUTHORING.md §0 quotes
+ * this table for `build`'s `--rig`/`--motion`/`--out`/`--images`/`--manifest`/
+ * `--profile`; if the two ever disagree, this is the one the code runs.
+ */
+const FLAG_MEANINGS: Record<string, string> = {
+  rig: 'the rig spec — skeleton structure',
+  motion: 'the motion spec — time',
+  out: 'directory for skeleton.json + skeleton.atlas (and, from build, skeleton.model.json); atlas page paths and skeleton.images are written relative to it',
+  images: "override the rig spec's own images directory (relative to your working directory)",
+  manifest: 'a cut manifest, for a rig with measured art behind it; a foreign skeleton has none',
+  'copy-images':
+    'also copy every referenced page PNG into --out and rewrite the atlas to the copies, so the directory is ' +
+    'self-contained enough to zip or commit on its own, and point skeleton.images at --out itself so the editor finds ' +
+    'the parts beside the skeleton on import (default: page paths still point at the source art)',
+  pack: 'arrange every part PNG onto shared atlas page(s) written into --out as real PNGs, instead of one page ' +
+    'per part. Lossless: every region is a byte-for-byte copy and nothing is resampled, trimmed or rotated ' +
+    '(default: one part, one page, pointing at the source art)',
+  'page-size': `largest page edge, --pack only (default ${DEFAULT_PAGE_SIZE}); pages are powers of two and the ` +
+    'one written is the smallest that holds the pack, spilling to more pages only when the set will not fit',
+  padding: `gutter each region reserves on every side, --pack only (default ${DEFAULT_PADDING}); it is filled by ` +
+    "extending the region's own edge pixels outwards, which is what stops a neighbour bleeding in",
+  'page-edges': `what a page's edges may be, --pack only (default ${DEFAULT_PAGE_EDGES}): pot is a power of two on ` +
+    'both; free tries every width from the widest part up, takes the height the placement needs and keeps ' +
+    'the least area — a smaller page, at the cost of region attachments sampling within 1 LSB of the loose ' +
+    'build rather than exactly',
+  'atlas-in':
+    'resolve every part against the regions of this pre-packed .atlas instead of against loose PNGs — region ' +
+    'geometry (bounds/offsets/rotate) is read from the file and the atlas is re-emitted into --out, re-anchored',
+  cut: 'look up a named cut in --cuts <cuts.json>, instead of --rig/--motion/--out',
+  cuts: 'the cuts.json --cut names',
+  profile:
+    'which rulebook to check against (default: spine) — spine = valid Spine 4.3 that any runtime plays ' +
+    "correctly; spine-html = also this project's renderer/archetype policy",
+  atlas: "the candidate's atlas, when it is not beside the skeleton",
+  reference: 'the reference skeleton to pose beside the candidate — a directory or a skeleton.json path',
+  'reference-atlas': "the reference's atlas, when it is not beside the reference skeleton",
+  bones: `a bone correspondence — { "spec": "${BONEDIST_SPEC}", "bones": { "<candidate bone>": "<reference bone>" }, ` +
+    '"animations"?: { … } } — or `identity` to state that the two skeletons use the same names. An INPUT, never ' +
+    'derived: a candidate is entitled to its own vocabulary, so a mapping worked out here would be a guess reported ' +
+    'as a measurement',
+  'all-bones': 'print every bone pair, not just the worst by position',
+  geometry:
+    `also write ${GEOMETRY_FILE} into each frame directory: per frame, every bone's world transform and every ` +
+    "slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry — on the " +
+    'frames\' own grid and viewport. Not with --slot/--hide: the geometry is the whole pose whatever is drawn',
+  poser:
+    "`render` and `check`: which implementation poses the frames (on `check`, the candidate's) — `core` (rigc's own, reading the skeleton.model.json a " +
+    'build writes beside the pair) or `spine` (spine-core). Default: `core` when that document and the atlas sit ' +
+    "beside the skeleton and the skeleton is the one the document records (spine.sha256), `spine` otherwise and wherever the core refuses the input by name; the `poser` " +
+    'line of the render or the check report says which and why. `--poser core` on an input that cannot carry it is refused by name. ' +
+    "`explain`: which reads and poses the DEFORM block's survey — `core` (the model document the compile writes, spine-core untouched) or " +
+    '`spine` (the Spine skeleton parsed and posed by spine-core); default `core`, and `spine` where the core refuses the document, which the block names',
+  'texture-from':
+    "also measure this run through this atlas's texels, keeping the candidate's own geometry, and report how much " +
+    'of the MAE is texture resampling rather than the rig — pass the atlas the reference frames were rendered ' +
+    'through. ⚠️ NOT --atlas: that one names the candidate\'s own atlas and loading a foreign one there re-seats ' +
+    'every region attachment on its packing, so a rotated or trimmed pack moves the geometry too',
+  candidate: 'a compiled skeleton: a directory holding skeleton.json + skeleton.atlas, or a skeleton.json path',
+  frames: 'a rendered reference frame set (a skeleton root, or one animation directory)',
+  fps: 'frame rate, only for a frame set with no frames.json sidecar',
+  viewport: "pin the candidate's world box, y up, instead of fitting it",
+  framing: 'fit each frame set on its own (default) or once across all of them',
+  as: 'the candidate animation to play, when it is named differently from the frame set',
+  'all-frames': 'print every frame, not just the worst by MAE',
+  json: 'also write the whole report to this path',
+  frame: 'one pose frame — a picture of the pose to read the part placements out of',
+  scale: `the scale window to search, as frame pixels per part pixel (default \`${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX}\`)`,
+  rotation: 'the rotation window to search, in screen degrees (default `-180,180`, a full turn)',
+  'max-residual':
+    `above this residual a placement is refused by name instead of reported flat (default ${DEFAULT_MAX_RESIDUAL}); ` +
+    'it is a reporting threshold, not a pass bar',
+  anchor:
+    'a `rigc pose` report for THIS frame, whose confident placements become the anchors the chains hang off ' +
+    '(default: run that pass internally over exactly the parts the candidate draws)',
+  hinge:
+    `the window each child bone's local rotation is searched over, in Spine degrees about its setup value ` +
+    `(default \`${DEFAULT_HINGE_MIN},${DEFAULT_HINGE_MAX}\`, a full turn — one degree of freedom is cheap enough not ` +
+    'to risk a window that does not contain the truth)',
+  stretch:
+    'also search a uniform scale on every bone, over this ratio either way (e.g. 1.25). Without it the stretch ' +
+    "degree of freedom is searched only where the candidate's own animations key a `scale` timeline, because a rig " +
+    'that never scales a bone is a rig saying that bone does not stretch',
+  'min-visible':
+    `below this share of a part surviving the parts drawn over it, the placement is refused by name instead of ` +
+    `reported flat (default ${DEFAULT_MIN_VISIBLE}); the best one found is still printed, and it is a reporting ` +
+    'threshold, not a pass bar',
+  passes:
+    `how many times the occluder masks are rebuilt from the answers and the fit rerun (default ${DEFAULT_PASSES}); ` +
+    "pass 1 freezes each part's visible set where the RIG predicts it, later passes where the last one landed",
+  'anchor-residual':
+    `the residual a \`pose\` placement must be within to anchor a chain (default ${ANCHOR_MAX_RESIDUAL}, with ` +
+    `unexplained ≤ ${ANCHOR_MAX_UNEXPLAINED} and unambiguous — the 2026-09-03 measurement run's own clean-frame criterion)`,
+  'inward-lever':
+    `how far apart, in frame pixels, two anchored descendants have to sit before the rotation they determine is ` +
+    `printed (default ${DEFAULT_MIN_LEVER_PX}); below it the bone is refused \`no-bracket\` naming the measured ` +
+    'lever, because an angle read across a short lever turns a half-pixel anchor error into several degrees',
+  animation: 'which animation to show; the default is every one for `render` and the first for `preview`',
+  skin:
+    'pose under this skin, by the name the skeleton declares. Without it NO skin is set — every slot resolves ' +
+    'through the default skin alone, so a slot whose art lives only in a named skin draws nothing. A name the ' +
+    'skeleton does not declare is refused with the ones it does. `render` records the skin in frames.json and ' +
+    '`check` reads it back, so a skin-A candidate is not scored against skin-B frames in silence',
+  slot:
+    'draw only these slots, comma-separated, in the skeleton\'s draw order, on the SAME grid as the whole rig: the ' +
+    'viewport is still fitted to every slot, so this frame overlays the full one pixel for pixel. A name the ' +
+    'skeleton does not declare is refused with every one it does; a slot whose art lives only under another skin ' +
+    'is refused naming that skin. frames.json records the subset, and `check` refuses such a set as a reference',
+  hide:
+    'draw every slot but these, comma-separated — `--slot` the other way round, on the same grid, recorded and ' +
+    'refused the same way. Not with `--slot`: the two are one statement',
+  max: 'longest side of a rendered frame, in pixels (default 256)',
+  record: 'a saved vote to check against its ballot and append to the ledger, instead of writing a ballot',
+  ballot: `the ballot the --record'd vote answers (default \`${DEFAULT_BALLOT}\`); its embedded manifest is what the vote is checked against`,
+  ledger: `the append-only JSONL the vote lands in (default \`${DEFAULT_LEDGER}\`)`,
+  again: 'record a second vote on a ballot the ledger already has; without it, a repeat is refused rather than doubled',
+  dir:
+    `the directory to install into, resolved against your working directory (default \`${DEFAULT_SKILLS_DIR}\`, the ` +
+    'workspace directory Codex, Gemini CLI and Antigravity read skills from)',
+  copy:
+    'copy each skill folder instead of linking it, for a host that does not follow a linked skill folder. A copy ' +
+    'is not reached by an upgrade of the package, and one that is no longer the package\'s bytes is refused by name ' +
+    'on the next run — remove it and run again (default: a relative symlink, which an upgrade reaches with no ' +
+    'second run)',
+  name: "the rig spec's own name, which the motion spec's archetype must match (default: the skeleton file's basename)",
+  art: 'how the written spec reaches the art, which a skeleton does not encode: `loose` names an image per ' +
+    "attachment, measured out of the rig spec's own images directory (--images writes it; without it, `build " +
+    '--images <dir>` on every rebuild), `none` states width/height only for `build --atlas-in <pack>` to ' +
+    'resolve (default: loose)',
+  stage:
+    'the setup bounding box — `skeleton.x,y,width,height` — to ADD to a skeleton that declares none. It cannot be ' +
+    'derived: posing the rig gives the ANIMATED extent, which is a different number from the setup box, so this ' +
+    "is the caller's value, and without it the absence is carried: the spec states `\"width\": null, \"height\": " +
+    'null` and the rebuild declares no stage either. ⚠️ An editor export MAY ' +
+    'carry none; every editor export measured for this project carries one and ingest reads it straight through, ' +
+    'so the flag is for a file that really has none rather than for editor exports as a class. ⛔ Beside a ' +
+    'skeleton that already declares a box it is REFUSED rather than ignored: two sources for one value, and the ' +
+    'file is the record of what was measured',
+  help: "show this command's flags and exit",
+};
+
+/** The `<value>` a flag takes, for its column in a command's flag table. Absent for a boolean switch. */
+const FLAG_VALUES: Record<string, string> = {
+  rig: '<path>',
+  motion: '<path>',
+  out: '<dir>',
+  images: '<dir>',
+  manifest: '<path>',
+  cut: '<name>',
+  cuts: '<path>',
+  profile: 'spine|spine-html',
+  atlas: '<path>',
+  'atlas-in': '<file.atlas>',
+  'page-size': '<px>',
+  padding: '<px>',
+  'page-edges': 'pot|free',
+  'texture-from': '<path>',
+  poser: 'core|spine',
+  reference: '<dir|skeleton.json>',
+  'reference-atlas': '<path>',
+  bones: `<correspondence.json|${IDENTITY_CORRESPONDENCE}>`,
+  candidate: '<dir|skeleton.json>',
+  frames: '<dir>',
+  fps: '<n>',
+  viewport: '<x,y,w,h>',
+  framing: 'per-shot|shared',
+  as: '<name>',
+  json: '<out>',
+  frame: '<path>',
+  scale: '<min,max>',
+  rotation: '<min,max>',
+  'max-residual': '<0..1>',
+  anchor: '<pose.json>',
+  hinge: '<min,max>',
+  stretch: '<ratio>',
+  'min-visible': '<0..1>',
+  passes: '<n>',
+  'anchor-residual': '<0..1>',
+  'inward-lever': '<px>',
+  animation: '<name>',
+  skin: '<name>',
+  slot: '<name[,name…]>',
+  hide: '<name[,name…]>',
+  max: '<px>',
+  record: '<result.json>',
+  ballot: '<ballot.html>',
+  ledger: '<votes.jsonl>',
+  name: '<n>',
+  art: 'loose|none',
+  stage: '<x,y,w,h>',
+  dir: '<path>',
+};
+
+interface CommandDoc {
+  name: string;
+  /** One or more invocation forms, each already spelling the command name. */
+  usage: string[];
+  /** Flag names (into FLAG_MEANINGS/FLAG_VALUES), in display order. `--help` is appended automatically. */
+  flags: string[];
+  /**
+   * Per-command wording for a flag whose value or meaning genuinely differs here.
+   *
+   * ⚠️ The default above it — one meaning per flag name, everywhere — is the rule
+   * and this is the named exception to it, not a second table. What earns an entry
+   * is the criterion rather than a headcount: the flag is **shared with another
+   * command**, and it means something different in this one. Examples, and not an
+   * inventory: `--out` is a directory of artifacts to `build`, a directory of specs
+   * to `ingest`, a directory of pictures to
+   * `render` and one file to `preview` and `vote`; `--fps` is the rate a frame set
+   * was RECORDED at to `check`, which reads it off a sidecar, and the rate to
+   * SAMPLE at to `render`, which is choosing it; `--candidate` is one artifact
+   * everywhere except `vote`, which is the one command that takes several and is
+   * the reason there is a ballot at all. Writing any of them as one sentence
+   * covering every command would leave every command's own help less true.
+   *
+   * ⛔ The other side of the criterion, which is the one that keeps this from
+   * becoming the second table it says it is not: a flag no other command takes has
+   * nothing to differ FROM, so its wording belongs in `FLAG_MEANINGS` /
+   * `FLAG_VALUES` above and an entry here for it buys only a second place to look.
+   * Both halves are read off `--help` by `CLI71` in `selftest.ts`, which is why
+   * this sentence no longer counts anything: it said *"three"* where #605 counted
+   * nine, and nothing had ever compared the two.
+   */
+  overrides?: Record<string, { value?: string; meaning?: string }>;
+  /**
+   * Lines printed under the flag table: what this command's own figures mean.
+   *
+   * ⚠️ Not a second place to describe a flag. It exists for what is true of the
+   * **command** and of no flag it takes — and the case that earned it is issue
+   * #678: `pose` and `chainfit` each say *"it is a reporting threshold, not a
+   * pass bar"* on the flag that carries their threshold, and `check` has no such
+   * flag, so its page said nothing at all about whether any of its figures is a
+   * bar to beat. An agent reading `slot drift worst 3.7 px` off a correct rig had
+   * no page to consult and no exit code to read it in.
+   */
+  notes?: string[];
+  /**
+   * What the command's body reaches of spine-core, as data (issue #1052):
+   * `false` when nothing — it runs in an entry that links none of the runtime
+   * (`cli_core.ts`) — and otherwise what it runs through the runtime for,
+   * which is what that entry says when it refuses the command. ⚠️ Not a
+   * claim anybody keeps by hand: `RC26` in `selftest.ts` derives it from the
+   * import graph of the module whose bodies register the command, and a
+   * mark that disagrees with the graph is red by name.
+   */
+  runtime: false | { for: string };
+  /**
+   * Whether the command exists for the Spine format — reads, writes, compares
+   * or embeds Spine skeleton data as the whole of what it does with it — so
+   * the commands that are Spine's without being the runtime's (`ingest`,
+   * `diff`) can be moved to another side in one place.
+   */
+  spineFormat: boolean;
+}
+
+export const COMMANDS: CommandDoc[] = [
+  {
+    name: 'build',
+    runtime: { for: 'the gate round-trips every build through it before anything is written' },
+    spineFormat: true,
+    usage: [
+      'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images]',
+      `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free]   (parts onto shared pages, written into --out)`,
+      'rigc build … --atlas-in <skeleton.atlas>                    (resolve the parts against a pack somebody already made)',
+      'rigc build --cut <name> --cuts <cuts.json>',
+    ],
+    flags: [
+      'rig',
+      'motion',
+      'out',
+      'manifest',
+      'images',
+      'copy-images',
+      'pack',
+      'page-size',
+      'padding',
+      'page-edges',
+      'atlas-in',
+      'cut',
+      'cuts',
+      'profile',
+    ],
+  },
+  {
+    name: 'explain',
+    runtime: false,
+    spineFormat: false,
+    usage: [
+      'rigc explain --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--poser core|spine]   (it never gates, and writes nothing)',
+      'rigc explain … --atlas-in <skeleton.atlas>                  (resolve the parts against a pack somebody already made, as build does)',
+      'rigc explain --cut <name> --cuts <cuts.json>',
+    ],
+    flags: ['rig', 'motion', 'out', 'manifest', 'images', 'atlas-in', 'cut', 'cuts', 'poser'],
+    notes: [
+      'this line said "the same arguments as build, minus --profile" and was false in both',
+      'directions (issue #697): --atlas-in was not listed here, so the one flag that lets this',
+      'command read what `ingest --art none` writes was reachable and undocumented, while',
+      '--pack, --page-size, --padding, --page-edges and --copy-images are build\'s and do nothing here —',
+      'they decide what is WRITTEN, and this command writes nothing. What it takes is listed',
+      'above, and that is now the whole of it.',
+    ],
+  },
+  {
+    name: 'validate',
+    runtime: { for: 'the gate it re-runs is the round trip through it' },
+    spineFormat: true,
+    usage: [
+      'rigc validate <dir | skeleton.json> [--atlas <path>] [--profile spine|spine-html]',
+      'rigc validate --cut <name> --cuts <cuts.json>   (also re-derives declared durations)',
+    ],
+    flags: ['atlas', 'profile', 'cut', 'cuts', 'rig', 'motion', 'out', 'manifest', 'images'],
+  },
+  {
+    name: 'ingest',
+    runtime: false,
+    spineFormat: true,
+    usage: ['rigc ingest <skeleton.json> --out <dir> [--name <n>] [--art loose|none] [--images <dir>] [--stage x,y,w,h]'],
+    flags: ['out', 'name', 'art', 'images', 'stage'],
+    overrides: {
+      out: {
+        value: '<dir>',
+        meaning: 'directory to write rig.json, motion.json and findings.json into — the two specs that rebuild this skeleton',
+      },
+      images: {
+        value: '<dir>',
+        meaning:
+          "WRITE the rig spec's own images directory, spelled relative to --out, so the rebuild is a plain `build " +
+          '--rig … --motion … --out …` with no flag. ⚠️ The opposite direction from `build --images`, which ' +
+          'OVERRIDES that field: this one fills it in. Without it the field is left out and every `image` resolves ' +
+          'against --out itself. Refused together with --art none, which writes no `image` for it to be the base of',
+      },
+    },
+  },
+  {
+    name: 'diff',
+    runtime: false,
+    spineFormat: true,
+    usage: ['rigc diff <candidate.json> <reference.json> [--as <candidate>=<reference>]… [--json <out>]'],
+    flags: ['as', 'json'],
+    overrides: {
+      as: {
+        value: '<candidate>=<reference>',
+        meaning:
+          'pair a candidate animation with a reference one, so the name-agnostic `animations` block can be ' +
+          'measured over shots the two files call different things. Repeatable, one pair each. An INPUT and never ' +
+          'derived: two skeletons cannot say which of their shots are the same shot. Without it the block appears ' +
+          'only when each side has exactly one animation, which pairs by position, and is otherwise absent rather ' +
+          'than guessed',
+      },
+    },
+    notes: [
+      'the `animations` block reads two figures once something has paired the shots, exactly as',
+      '`bones` and `slots` do: name-matched, where `names` lives, and name-agnostic over the pair.',
+      'A candidate that followed a brief withholding the animation name reads `count` 1/1 and 0.000',
+      'on every other name-matched measure — including `duration` and `key_counts` it may have got',
+      'exactly right — so read the pair and not the section mean.',
+    ],
+  },
+  {
+    name: 'check',
+    runtime: false,
+    spineFormat: false,
+    usage: ['rigc check --candidate <dir | skeleton.json> --frames <dir> [flags]'],
+    flags: ['candidate', 'frames', 'atlas', 'texture-from', 'fps', 'viewport', 'framing', 'as', 'skin', 'poser', 'all-frames', 'json', 'out'],
+    overrides: {
+      skin: {
+        meaning:
+          'pose the CANDIDATE under this skin, by the name it declares. Without it no skin is set and the ' +
+          'default skin alone is compared, which for a multi-skin rig is a comparison that can see none of the ' +
+          'contested art. The frames are checked back: a set whose frames.json records a different skin is ' +
+          'REFUSED by name, and one that records none says so in the report rather than pretending to agree',
+      },
+      out: {
+        value: '<dir>',
+        meaning:
+          'also write the PICTURE each listed frame\'s figures came from, as <dir>/<set>/f####.png: reference, ' +
+          'candidate, difference and overlay side by side at the comparison grid\'s native size, with the table\'s ' +
+          'figures burned in and one row per slot under them, beside a frames.json that says what they are pictures ' +
+          'of. The frames are the ones the table lists, so --all-frames writes every compared one. Each <dir>/<set>/ ' +
+          'is cleared first; a file at <dir>, or a directory that is or holds --frames, is refused. See ' +
+          'docs/AUTHORING.md §9.2.1',
+      },
+    },
+    notes: [
+      'every figure here is a reporting threshold, not a pass bar. Nothing in this report',
+      'grades, no number has to beat anything, and the exit code says only whether the',
+      'comparison could be MADE: 0 when it ran — including the build with every easing',
+      'reversed, which is the defect this command exists for — 1 when it could not (frames',
+      'that are not there, a skin the frames do not record, a candidate that will not load),',
+      '2 on the flags.',
+      '',
+      'So read a figure against a floor you measured yourself: render the first green build',
+      'and keep its frames, then check every later build against them. The identity run of',
+      'that pair is the floor, and it is not zero — docs/AUTHORING.md §9.2 states it, what',
+      'it comes from, and which column separates a wrong curve from a moved key.',
+    ],
+  },
+  {
+    name: 'bench',
+    runtime: { for: 'the gate runs before anything is measured, and --bones poses the rung\'s reference skeletons through it' },
+    spineFormat: false,
+    usage: [`rigc bench <${RUNG_IDS.join(' | ')}> --candidate <dir | skeleton.json> [--frames <dir>] [flags]`],
+    flags: ['candidate', 'atlas', 'frames', 'profile', 'bones', 'all-frames', 'all-bones', 'json'],
+    overrides: {
+      bones: {
+        meaning:
+          'also run the stage-3 per-frame bone world-transform distance against each of the rung\'s reference ' +
+          `skeletons, with this correspondence (or \`identity\`), at ${PROTOCOL_FPS} fps. Reports; gates nothing — ` +
+          'for another sampling rate call `rigc bonedist` directly, where --fps means only that',
+      },
+    },
+  },
+  {
+    name: 'bonedist',
+    runtime: { for: 'it poses both skeletons through it, by design' },
+    spineFormat: false,
+    usage: [
+      `rigc bonedist --candidate <dir | skeleton.json> --reference <dir | skeleton.json> --bones <path | ${IDENTITY_CORRESPONDENCE}> [--fps ${PROTOCOL_FPS}] [--all-bones] [--json <out>]`,
+    ],
+    flags: ['candidate', 'atlas', 'reference', 'reference-atlas', 'bones', 'fps', 'all-bones', 'json'],
+    overrides: {
+      fps: { meaning: `the rate both skeletons are sampled at, from t=0 over their own durations (default ${PROTOCOL_FPS})` },
+    },
+  },
+  {
+    name: 'render',
+    runtime: false,
+    spineFormat: false,
+    usage: [
+      'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--skin <name>] [--fps 12] [--max 256] [--geometry] [--poser core|spine] [--out render/]',
+      'rigc render … --slot <name[,name…]> | --hide <name[,name…]>   (a subset of the slots, on the whole rig\'s grid)',
+    ],
+    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'geometry', 'poser', 'out'],
+    overrides: {
+      out: { value: '<dir>', meaning: 'directory to write the frame series into (default `render/`)' },
+      fps: { meaning: `frames per second to sample the animation at (default ${PROTOCOL_FPS})` },
+    },
+  },
+  {
+    name: 'preview',
+    runtime: { for: "its gate line is the round trip's, and it names the pages it embeds through spine-core's atlas reader" },
+    spineFormat: true,
+    usage: ['rigc preview --candidate <dir | skeleton.json> [--candidate <another> …] [--animation <name>] [--out preview.html]'],
+    flags: ['candidate', 'atlas', 'animation', 'out'],
+    overrides: {
+      candidate: {
+        value: '<dir|skeleton.json>',
+        meaning:
+          'a compiled skeleton: a directory holding skeleton.json + skeleton.atlas, or a skeleton.json path. Repeat it ' +
+          'for one page with a pane per candidate, in the order given; the same skeleton twice is refused. Each ' +
+          'header carries the line `rigc validate <dir>` prints for that candidate, measured when the page is written',
+      },
+      atlas: { meaning: "the candidate's atlas, when it is not beside the skeleton — one candidate only" },
+      animation: {
+        meaning:
+          "the animation to start on (default: each candidate's own first). With several candidates every one of " +
+          'them must have it, or the run is refused naming the one that does not',
+      },
+      out: {
+        value: '<file>',
+        meaning: 'the .html file to write (default `preview.html`); a directory means "the default name in here"',
+      },
+    },
+  },
+  {
+    name: 'pose',
+    runtime: false,
+    spineFormat: false,
+    usage: [
+      `rigc pose --images <dir> --frame <path> [--scale ${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX}] [--rotation -180,180] [--out ${DEFAULT_POSE_OUT}]`,
+    ],
+    flags: ['images', 'frame', 'scale', 'rotation', 'max-residual', 'out'],
+    overrides: {
+      images: { value: '<dir>', meaning: 'the loose part PNGs to place; every `.png` in it is a part, in name order' },
+      out: {
+        value: '<file>',
+        meaning: `the .json report to write (default \`${DEFAULT_POSE_OUT}\`); a directory means "the default name in here"`,
+      },
+    },
+  },
+  {
+    name: 'chainfit',
+    runtime: false,
+    spineFormat: false,
+    usage: [
+      `rigc chainfit --candidate <dir | skeleton.json> --images <dir> --frame <path> [--anchor pose.json] [--out ${DEFAULT_CHAINFIT_OUT}]`,
+    ],
+    flags: [
+      'candidate',
+      'images',
+      'frame',
+      'anchor',
+      'hinge',
+      'stretch',
+      'min-visible',
+      'max-residual',
+      'passes',
+      'anchor-residual',
+      'inward-lever',
+      'scale',
+      'rotation',
+      'out',
+    ],
+    overrides: {
+      images: {
+        value: '<dir>',
+        meaning:
+          "where each attachment's image name resolves to a loose PNG. ⚠️ NOT a part list the way `pose --images` " +
+          'is one — the candidate decides what the parts are, so extra PNGs in here are simply unused and a name ' +
+          'the directory lacks is refused by name',
+      },
+      scale: {
+        meaning:
+          'the scale window the INTERNAL anchor pass searches, as frame pixels per part pixel (default ' +
+          `\`${DEFAULT_SCALE_MIN},${DEFAULT_SCALE_MAX}\`). Refused together with --anchor, which means there is no internal pass`,
+      },
+      rotation: {
+        meaning:
+          'the rotation window the INTERNAL anchor pass searches, in screen degrees (default `-180,180`). Refused ' +
+          'together with --anchor — the chains\' own window is --hinge',
+      },
+      out: {
+        value: '<file>',
+        meaning: `the .json report to write (default \`${DEFAULT_CHAINFIT_OUT}\`); a directory means "the default name in here"`,
+      },
+    },
+  },
+  {
+    name: 'vote',
+    runtime: { for: "it names each candidate's pages through spine-core's atlas reader, as preview does" },
+    spineFormat: true,
+    usage: [
+      `rigc vote --candidate <dir | skeleton.json> --candidate <…> [--candidate …] [--animation <name>] [--out ${DEFAULT_BALLOT}]`,
+      `rigc vote --record <result.json> [--ballot ${DEFAULT_BALLOT}] [--ledger ${DEFAULT_LEDGER}] [--again]`,
+    ],
+    flags: ['candidate', 'animation', 'out', 'record', 'ballot', 'ledger', 'again'],
+    overrides: {
+      candidate: {
+        value: '<dir|skeleton.json>',
+        meaning: `repeat it ${MIN_CANDIDATES}–${MAX_CANDIDATES} times — one compiled artifact per pane, labelled A, B, C, D in the order given`,
+      },
+      animation: {
+        meaning:
+          'the one animation every pane plays (default: the first of candidate A). A candidate that does not have ' +
+          'it is refused — two panes playing two animations is not a comparison',
+      },
+      out: {
+        value: '<file>',
+        meaning: `the .html ballot to write (default \`${DEFAULT_BALLOT}\`); a directory means "the default name in here"`,
+      },
+    },
+  },
+  {
+    name: 'skills',
+    runtime: false,
+    spineFormat: false,
+    usage: [`rigc skills install [--dir ${DEFAULT_SKILLS_DIR}] [--copy]   (every skill this package ships, where an agent host looks)`],
+    flags: ['dir', 'copy'],
+    notes: [
+      'the skills installed are the skills/ directory of the package this command runs from,',
+      'never whatever the working directory holds. Each becomes <dir>/<name>: a relative',
+      'symlink into that folder, or with --copy a copy of it. An entry already there that',
+      'is not a link to the same folder — or, with --copy, not the same bytes — is refused',
+      'by name, exit 1, and nothing is written; a run over only what this command made has',
+      'nothing to do and exits 0. Codex, Gemini CLI and Antigravity read',
+      `<workspace>/${DEFAULT_SKILLS_DIR}; Claude Code installs the plugin instead (README,`,
+      '"Install it into your agent").',
+    ],
+  },
+];
+
+/** Every command's name, in the order the usage lists them — what the full entry dispatches over. */
+export const KNOWN_COMMANDS = COMMANDS.map((c) => c.name);
+
+/** `rigc <command> --help`: that command's own usage line(s) and flag table. */
+export function commandHelp(name: string): string {
+  const doc = COMMANDS.find((c) => c.name === name);
+  if (!doc) throw new Error(`internal: no help text for command "${name}"`);
+  const keys = [...doc.flags, 'help'];
+  const value = (key: string): string | undefined => doc.overrides?.[key]?.value ?? FLAG_VALUES[key];
+  const meaning = (key: string): string => doc.overrides?.[key]?.meaning ?? FLAG_MEANINGS[key];
+  const labels = keys.map((key) => `--${key}${value(key) ? ` ${value(key)}` : ''}`);
+  const width = Math.max(...labels.map((l) => l.length)) + 2;
+  return [
+    'usage:',
+    ...doc.usage.map((u) => `  ${u}`),
+    '',
+    'flags:',
+    ...keys.map((key, i) => `  ${labels[i].padEnd(width)}${meaning(key)}`),
+    ...(doc.notes === undefined ? [] : ['', ...doc.notes]),
+  ].join('\n');
+}
+
+/**
+ * The usage's paragraphs under the invocation lines, each with the commands it
+ * is about (issue #1052): an entry prints a paragraph only when every command
+ * it names is one the entry runs, so `cli_core.ts`'s page says nothing about a
+ * command it does not have, and `cli.ts`'s — which runs every one — is the
+ * page it always was, byte for byte. The `--cuts` paragraph is about a flag
+ * rather than a command, and is printed wherever a command takes it. The
+ * `--profile` paragraph states each profile's rule count, which only the
+ * validator knows (`CliEntry.profileRules`).
+ */
+const USAGE_PARAGRAPHS: ReadonlyArray<{ about: readonly string[] | { flag: string }; lines: (rules: (profile: 'spine' | 'spine-html') => number) => string[] }> = [
+  {
+    about: ['build', 'validate', 'bench'],
+    lines: (rules) => [
+      'build, validate and bench take --profile spine|spine-html:',
+      '  spine       is this valid Spine 4.3 that any runtime plays correctly?',
+      `              THE DEFAULT — ${rules('spine')} rules, and the question the output answers when`,
+      '              you import it into the Spine editor.',
+      '  spine-html  the above, plus this project\'s renderer and archetype policy:',
+      `              all ${rules('spine-html')} rules, opt-in. Those extra ` +
+        `${rules('spine-html') - rules('spine')} fire on real, correct,`,
+      '              editor-produced Spine data, so they are somebody\'s policy rather',
+      '              than anybody\'s validity.',
+      '',
+      'Every report names the profile that judged it and lists, on PROF lines, the',
+      'rules that profile left out.',
+    ],
+  },
+  {
+    about: ['check'],
+    lines: () => [
+      'check renders the candidate onto the reference frames\' own pixel grid, fitting it',
+      'there by its own drawn pixels, and compares. It reads the frames and never the',
+      'reference skeleton, so it belongs INSIDE an authoring loop — the validator cannot',
+      'see a wrong animation and this can. See `rigc check --help` for its flags.',
+    ],
+  },
+  {
+    about: ['render', 'preview'],
+    lines: () => [
+      'render and preview are how you LOOK at a build, and they need no reference at all:',
+      '  rigc render  --candidate <the dir build --out wrote>    PNG frames + a contact sheet',
+      '  rigc preview --candidate <the same dir>                 one .html file that plays it',
+      'A rig with its head off its torso passes the gate and steps cleanly — the offsets',
+      'are the ones you asked for — so looking is the only thing that catches it. render',
+      'draws with rigc\'s own rasteriser; preview embeds the artifact in a page that plays',
+      'it in the official Spine Web Player, which is also the interop proof.',
+    ],
+  },
+  {
+    about: ['ingest'],
+    lines: () => [
+      'ingest runs build backwards: it reads a Spine 4.3 skeleton.json and writes the rig',
+      'spec and motion spec that rebuild it, so an existing skeleton becomes a starting',
+      'point instead of something to retype:',
+      '  rigc ingest hero.json --out specs/ --images parts/         rig.json + motion.json',
+      'The contract is an equality, not a rulebook: build(ingest(x)) is x, byte for byte.',
+      'It reads the skeleton and nothing else — no .spine project, no binary .skel, no',
+      'atlas — so how the spec reaches the art is the caller\'s (--art) and is not guessed.',
+      'A setup stage the skeleton states is read; one it does not state is carried as',
+      'absent, and --stage is how a caller adds a box to such a file — beside a box the',
+      'file states, the flag is refused rather than ignored. --images <dir> WRITES the rig',
+      'spec\'s own images directory, relative to --out, so the rebuild needs no flag.',
+      'Everything the spec format cannot hold is printed as a named finding and',
+      'exits non-zero, with both files still written, because a spec plus a list of what',
+      'is missing from it beats no spec at all.',
+    ],
+  },
+  {
+    about: ['pose'],
+    lines: () => [
+      'pose runs the other way round from everything above: it reads a picture you already',
+      'have — one key pose — and reports where each loose part PNG sits in it (x, y, rotation,',
+      'scale) so an agent can state those poses in a spec by construction:',
+      '  rigc pose --images parts/ --frame poseA.png       pose.json, one entry per part',
+      'It grades nothing and no pass bar attaches to its numbers. The residual is a trust',
+      'signal, and where two placements are equally good it reports BOTH rather than picking —',
+      'two identical limbs look exactly like that. A part that matches nowhere, a part the',
+      'canvas cannot contain and a part whose rotation is a free degree of freedom are each',
+      'named as such. See `rigc pose --help`.',
+    ],
+  },
+  {
+    about: ['pose', 'chainfit'],
+    lines: () => [
+      'chainfit reads the half of that picture pose refuses. It is the same question with',
+      'one more input — the candidate rig — and that input buys two things: draw order, so',
+      'the pixels another part covers are EXCLUDED from a part\'s residual instead of',
+      'charged to it, and hierarchy, so a child of a placed bone is searched over one hinge',
+      'instead of four degrees of freedom:',
+      '  rigc chainfit --candidate build/ --images parts/ --frame poseA.png',
+      'Every residual is over the part\'s VISIBLE pixels and comes with the `visibleShare` it',
+      'was computed on, so a mostly-hidden answer carries its own uncertainty. It grades',
+      'nothing either: a part too far behind the others is refused by the visibility floor,',
+      'a limb with no trusted part on it or above it is refused `no-anchor`, and two hinge',
+      'answers that explain the picture equally well are both reported. See',
+      '`rigc chainfit --help`.',
+    ],
+  },
+  {
+    about: ['preview', 'vote'],
+    lines: () => [
+      'vote is the same page with two to four builds in it and an answer coming back:',
+      '  rigc vote --candidate <build A> --candidate <build B>   ballot.html, panes labelled A and B',
+      '  rigc vote --record vote-<id>.json --ballot ballot.html  check it, append it to votes.jsonl',
+      'Reach for it where the instruments have run out — a choice with no reference behind',
+      'it, two fits that measure the same. The panes carry no paths, a tie is a recorded',
+      'answer rather than a missing one, and a result whose hashes are not the ballot\'s is',
+      'refused by name instead of appended.',
+    ],
+  },
+  {
+    about: ['skills'],
+    lines: () => [
+      'skills install puts the agent skills this package ships where an agent host looks',
+      'for them, since none of them reads node_modules:',
+      `  rigc skills install               relative links in ${DEFAULT_SKILLS_DIR}, which Codex, Gemini CLI`,
+      '                                    and Antigravity read; --copy writes the folders instead',
+      'An entry already there that this command did not make is refused by name and',
+      'nothing is written; a second run has nothing to do. See `rigc skills --help`.',
+    ],
+  },
+  {
+    about: { flag: 'cuts' },
+    lines: () => [
+      'a cuts.json is { "<name>": { "rig": "...", "motion": "...", "out": "...",',
+      '                             "manifest": "..." (optional) } }, with every path',
+      'resolved relative to the cuts.json file itself.',
+    
+    ],
+  },
+];
+
+/**
+ * The usage page of an entry that runs `docs` — the commands' invocation
+ * lines, then every paragraph about only those commands (`USAGE_PARAGRAPHS`).
+ * `checkout` is the file a source checkout runs this entry as.
+ */
+export function usageText(docs: readonly CommandDoc[], checkout: string, rules: ((profile: 'spine' | 'spine-html') => number) | undefined): string {
+  const names = new Set(docs.map((doc) => doc.name));
+  const takes = (flag: string): boolean => docs.some((doc) => doc.flags.includes(flag));
+  const lines = [
+    'rigc — the rig compiler',
+    '',
+    checkout === 'cli.ts'
+      ? '(from a source checkout: `bun cli.ts <command>` is the same as `rigc <command>`)'
+      : `(from a source checkout: \`bun ${checkout} <command>\` runs the commands below, which link nothing of spine-core; \`bun cli.ts <command>\` runs every command)`,
+    '',
+    'usage:',
+    ...docs.flatMap((c) => c.usage.map((u) => `  ${u}`)),
+    '',
+    '  rigc <command> --help    that command\'s own flag table',
+    '  rigc --version           print the installed version (-v works too)',
+  ];
+  // Read only by the --profile paragraph, which only an entry running a command that takes --profile prints.
+  const counts =
+    rules ??
+    ((): number => {
+      throw new Error('internal: the --profile paragraph is printed and this entry states no rule counts');
+    });
+  for (const paragraph of USAGE_PARAGRAPHS) {
+    const about = paragraph.about;
+    const shown = 'flag' in about ? takes(about.flag) : about.every((name) => names.has(name));
+    if (shown) lines.push('', ...paragraph.lines(counts));
+  }
+  return lines.join('\n');
+}
+
+/**
+ * One `DROP` line, written once because two outcomes print it.
+ *
+ * A build that succeeds prints it in its report; a build that REFUSES prints it
+ * under the refusal (issue #671), and the two have to be the same line or the
+ * failing run would be quoting a different fact from the one the green run
+ * shows. What it names — a file or a region — is `droppedStateReason`'s, in the
+ * compiler, beside the code that decided which of the two was consulted.
+ */
+export function dropLine(dropped: DroppedState): string {
+  return `  DROP  ${dropped.slot}/${dropped.state}: ${droppedStateReason(dropped)} (state not emitted)`;
+}
+
+// ---------------------------------------------------------------------------
+// the dispatch — one for every entry (issue #1052)
+// ---------------------------------------------------------------------------
+
+/** What `rigc <command> …` hands a command's body: the flags, every occurrence of a repeatable one, and the positionals. */
+export interface CommandArgs {
+  flags: Record<string, string>;
+  lists: Record<string, string[]>;
+  positional: string[];
+}
+
+/** One command's body, as an entry registers it. */
+export type CommandRun = (args: CommandArgs) => void;
+
+/**
+ * A refusal a body throws that the shared chain below does not know, because
+ * the class lives in a module only one entry links — `bonedist`'s, whose
+ * module poses through spine-core. Printed as `prefix` + the message, then
+ * exit `status`.
+ */
+export interface CliRefusal {
+  is(err: unknown): boolean;
+  prefix: string;
+  status: number;
+}
+
+/** An entry: the bodies it registers, and what only its side of the seam knows. */
+export interface CliEntry {
+  /** The file a source checkout runs this entry as — what the usage's first line names. */
+  checkout: string;
+  /**
+   * Whether this entry links spine-core: `true` runs every command `COMMANDS`
+   * documents, `false` only those whose `runtime` is `false` — the set is read
+   * off the table, never listed beside it.
+   */
+  linksRuntime: boolean;
+  /** Every command this entry runs, by name — exactly its set, or the run refuses to start. */
+  runs: Readonly<Record<string, CommandRun>>;
+  /** Each profile's rule count, for the `--profile` paragraph; the validator's, so only an entry that links it states it. */
+  profileRules?: (profile: 'spine' | 'spine-html') => number;
+  /** The refusals of bodies only this entry registers (`CliRefusal`). */
+  refusals?: readonly CliRefusal[];
+}
+
+/** The commands an entry runs: every documented one, or — linking nothing of the runtime — those whose `runtime` is `false`. */
+export function entryCommands(linksRuntime: boolean): CommandDoc[] {
+  return COMMANDS.filter((doc) => linksRuntime || doc.runtime === false);
+}
+
+/**
+ * A command `COMMANDS` documents and this entry does not run, because its body
+ * reaches spine-core and the entry links none of it — refused naming what the
+ * command runs through the runtime for, and the commands the entry does run.
+ * A `SpineRuntimeError`, so it is printed and exits as the export an entry
+ * cannot pose is.
+ */
+function commandNeedsRuntime(doc: CommandDoc, runs: readonly string[]): SpineRuntimeError {
+  const needs = doc.runtime === false ? 'nothing' : doc.runtime.for;
+  return new SpineRuntimeError(
+    `\`${doc.name}\` runs through spine-core (${needs}), and the runtime could not be used: ${SPINE_SIDE_ABSENT}. ` +
+      `The commands this entry runs are ${runs.join(', ')}; \`bun cli.ts ${doc.name}\` runs it`,
+  );
+}
+
+/**
+ * Run `argv` (`process.argv` without the runtime and the script) through
+ * `entry`: the usage, `--version`, a command's `--help`, the command, and
+ * every refusal printed and mapped to its exit code — the dispatch `cli.ts`
+ * always had, written once for both entries.
+ */
+export function runCli(entry: CliEntry, argv: readonly string[]): void {
+  const docs = entryCommands(entry.linksRuntime);
+  const known = docs.map((doc) => doc.name);
+  const registered = Object.keys(entry.runs).sort();
+  if (JSON.stringify([...known].sort()) !== JSON.stringify(registered)) {
+    throw new Error(`internal: this entry runs [${known.join(', ')}] by the command table and registers [${registered.join(', ')}]`);
+  }
+  const USAGE = usageText(docs, entry.checkout, entry.profileRules);
+  const [command, ...rest] = argv;
+  try {
+    if (command === undefined) {
+      console.error(USAGE);
+      process.exit(2);
+    }
+    if (command === '--version' || command === '-v') {
+      console.log(readVersion());
+      process.exit(0);
+    }
+    if (command === '--help' || command === '-h') {
+      console.log(USAGE);
+      process.exit(0);
+    }
+    if (!known.includes(command)) {
+      const elsewhere = COMMANDS.find((doc) => doc.name === command);
+      if (elsewhere !== undefined) throw commandNeedsRuntime(elsewhere, known);
+      throw new UsageError(`unknown command: ${command}`);
+    }
+
+    const { flags, lists, positional } = parseArgs([...rest], REPEATABLE_FLAGS[command]);
+    if (flags.help !== undefined) {
+      console.log(commandHelp(command));
+      process.exit(0);
+    }
+    entry.runs[command]({ flags, lists, positional });
+  } catch (err) {
+    refuse(err, command, USAGE, entry);
+  }
+}
+
+/**
+ * Every refusal a command can end on, printed and mapped to its exit code —
+ * the chain `cli.ts`'s dispatch always ended on, moved here unchanged (issue
+ * #1052) but for `bonedist`'s refusal, which its entry hands over
+ * (`CliEntry.refusals`). Anything else is not a refusal and is thrown on.
+ */
+function refuse(err: unknown, command: string | undefined, USAGE: string, entry: CliEntry): never {
+  if (err instanceof UsageError) {
+    console.error(`rigc: ${err.message}\n\n${USAGE}`);
+    process.exit(2);
+  }
+  // A ballot refuses on its arguments, like a usage error, but its messages are
+  // long enough that reprinting the whole usage under them buries the reason.
+  if (err instanceof BallotError) {
+    console.error(`rigc vote: ${err.message}`);
+    process.exit(2);
+  }
+  if (err instanceof CompileError) {
+    console.error(`rigc compile error: ${err.message}`);
+    // The drops the compile recorded before it stopped, in the same line the
+    // green build prints (issue #671). They were reported from the compile
+    // RESULT alone, so the run that failed BECAUSE a file was missing was the
+    // one run that never named the file. On stderr with the refusal rather than
+    // on stdout, so redirecting one stream does not separate a fact from the
+    // sentence it explains.
+    for (const dropped of err.droppedStates ?? []) console.error(dropLine(dropped));
+    process.exit(1);
+  }
+  if (err instanceof CheckError) {
+    console.error(`rigc check error: ${err.message}`);
+    process.exit(1);
+  }
+  // The refusals of bodies only this entry registers — `bonedist`'s, whose module poses through spine-core — checked
+  // where the chain always checked them. Every class in it is unrelated to every other, so the place is not load-bearing.
+  for (const refusal of entry.refusals ?? []) {
+    if (refusal.is(err)) {
+      console.error(`${refusal.prefix}${(err as Error).message}`);
+      process.exit(refusal.status);
+    }
+  }
+  // Like a usage error in kind — a missing directory, an unreadable frame — but
+  // its messages name a path and a reason, and reprinting the whole usage under
+  // them buries that.
+  if (err instanceof PoseError) {
+    console.error(`rigc pose: ${err.message}`);
+    process.exit(2);
+  }
+  // A refusal of the invocation, like the two below it, and exit 2 for the same
+  // reason: nothing was posed and nothing was written, so it is the command line
+  // that has to change (issue #697).
+  if (err instanceof ExplainError) {
+    console.error(`rigc explain: ${err.message}`);
+    process.exit(2);
+  }
+  // Same kind as a PoseError, and printed the same way for the same reason: the
+  // messages name a path, a bone or an attachment, and reprinting the whole
+  // usage under them buries the one line that says what to change.
+  if (err instanceof ChainFitError) {
+    console.error(`rigc chainfit: ${err.message}`);
+    process.exit(2);
+  }
+  // A usage error in kind — an option that contradicts the file it was given —
+  // and exit 2 for that reason rather than 1: nothing was compiled and nothing
+  // was written, so it is the invocation that has to change (issue #626). It is
+  // raised in `src/ingest.ts` rather than here because the library caller who
+  // passes the same contradiction deserves the same refusal, and one rule in one
+  // place is what stops the two from drifting apart.
+  if (err instanceof IngestError) {
+    console.error(`rigc ingest: ${err.message}`);
+    process.exit(2);
+  }
+  // A page or frame that is not a PNG rigc can read, from any command that
+  // opens one (`render`, `check`, `preview`, …) — issue #732. The sentence is
+  // the one reader's and already names the file, what it is and what rigc
+  // reads; a stack under it is the tool describing its own internals instead.
+  // Exit 1, like a compile error: the invocation was fine, a file was not.
+  // A pose that is not finite (issues #864, #873): the invocation was fine and
+  // the skeleton posed a NaN or an infinity, so exit 1 like a file that is not
+  // a PNG. Raised by the geometry export and by the framing — the one sentence
+  // naming the bone or vertex and its value — before the first file is written.
+  // A pose whose every drawn vertex sits at one point (issue #997), from
+  // `render` or `check`: exit 2 like *nothing to draw*, the other framing
+  // refusal, because the usual fix is the invocation's — `--skin` — and nothing
+  // was written. A `GeometryError` in kind, so it is caught before that.
+  if (err instanceof UnframeablePoseError) {
+    console.error(`rigc ${command}: ${err.message}`);
+    process.exit(2);
+  }
+  if (err instanceof GeometryError) {
+    console.error(`rigc render: ${err.message}`);
+    process.exit(1);
+  }
+  // `--poser core` on an input the core cannot carry (issue #968): a refusal of
+  // the invocation, nothing written, and the message names the input and why —
+  // the usage under it would bury that. Without the flag the same refusal is a
+  // fallback to spine-core, named on the render's `poser` line instead.
+  if (err instanceof PoserChoiceError) {
+    console.error(`rigc ${command}: ${err.message}`);
+    process.exit(2);
+  }
+  if (err instanceof NotAPngError) {
+    console.error(`rigc: ${err.message}`);
+    process.exit(1);
+  }
+  // An input posed through spine-core — a Spine export, `--poser spine`, a
+  // fallback — on a run where the runtime cannot be used (issue #1014). The
+  // sentence names the input and why it needs the runtime; exit 1, like a file
+  // that is not a PNG: the invocation was fine and the run could not pose it.
+  // A candidate with no atlas beside it that has to be read through one (issue
+  // #1020): a refusal of the invocation like a missing atlas on an export, exit
+  // 2 and nothing written, and the message names the file and why it is needed.
+  if (err instanceof CandidateAtlasError) {
+    console.error(`rigc ${command}: ${err.message}`);
+    process.exit(2);
+  }
+  // A skeleton spine-core could not load against the atlas beside it (issue #1033) — on a rigc build, a
+  // skeleton.json or an atlas from another build beside this one's model document. The same class as the
+  // missing atlas above: nothing was posed or written, and it is the directory the command was pointed at that
+  // has to change. The message names both files, the reason the runtime drew them and the runtime's own words.
+  // Since issue #1042 also `bonedist` and `bench --bones` on either side, and a page a candidate is drawn from that
+  // is not there, whichever poser draws it.
+  if (err instanceof CandidatePairError) {
+    console.error(`rigc ${command}: ${err.message}`);
+    process.exit(2);
+  }
+  if (err instanceof SpineRuntimeError) {
+    console.error(`rigc ${command}: ${err.message}`);
+    process.exit(1);
+  }
+  // An install refused before its first write (issue #831): the invocation was
+  // fine and an entry on disk was not what this command would write, so exit 1
+  // like a file that is not a PNG. The message names every such entry, what is
+  // there and what was required; the usage under it would bury that.
+  if (err instanceof SkillsInstallError) {
+    console.error(`rigc skills install: ${err.message}`);
+    process.exit(1);
+  }
+  throw err;
+}

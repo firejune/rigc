@@ -84,14 +84,13 @@ import {
   type BoneSnapshot,
   type Posable,
 } from './render.ts';
+import { BONEDIST_SPEC, IDENTITY_CORRESPONDENCE } from './correspondence.ts';
 
 export class BoneDistError extends Error {}
 
-/** The sidecar spec a correspondence file declares, and the report's own. */
-export const BONEDIST_SPEC = 'rigc-bonedist/1';
-
-/** What `--bones identity` is spelled as, where a file path would go. */
-export const IDENTITY_CORRESPONDENCE = 'identity';
+// `BONEDIST_SPEC` and `IDENTITY_CORRESPONDENCE` are `./correspondence.ts`'s since issue #1052: the CLI's help names
+// both, and an entry that links nothing of the runtime prints that help. Re-exported here.
+export { BONEDIST_SPEC, IDENTITY_CORRESPONDENCE };
 
 /** How many bones the report's per-bone table shows before it says "and N more". */
 export const BONE_TABLE_ROWS = 8;

@@ -92,13 +92,14 @@ import {
   type FramesSidecar,
   type FrameSet,
   type MakeCorePoser,
-  type Posable,
   type PoseOptions,
   type Poser,
   type PoserName,
   type TextureSubstitution,
   type Viewport,
-} from './render.ts';
+} from './render_shared.ts';
+// The one name here that is the runtime's: a candidate's pages, read off the shape spine-core's loader returns.
+import type { Posable } from './render.ts';
 import {
   applyFit,
   boxHeight,

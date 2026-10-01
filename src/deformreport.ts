@@ -7,8 +7,8 @@
  * block is a report and not an assertion, and what it deliberately leaves out.
  */
 import type { CompileResult } from './types.ts';
-import type { DeformExtreme, DeformKeyMeasure, DeformSpan, DeformSurvey } from './deformmeasure.ts';
-import { unreachableWhy } from './deformmeasure.ts';
+import type { DeformExtreme, DeformKeyMeasure, DeformSpan, DeformSurvey } from './deformsurvey.ts';
+import { unreachableWhy } from './deformsurvey.ts';
 import { float32Step } from './timelines.ts';
 
 /**

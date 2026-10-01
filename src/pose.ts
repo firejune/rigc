@@ -80,7 +80,7 @@ import { Plate, readPlate } from '../tools/plate.ts';
 // straddles an edge. #301 deliberately left this call on the old arithmetic to
 // hold the fitting numbers still while the from-zero run 2 was in flight; #306
 // moved it, with the re-baseline of every figure that quoted a residual.
-import { bilinear } from './render.ts';
+import { bilinear } from './render_shared.ts';
 
 export class PoseError extends Error {}
 
