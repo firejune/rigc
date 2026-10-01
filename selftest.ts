@@ -79291,10 +79291,12 @@ function runRenderHashes(args: string[]): { status: number | null; stdout: strin
  *
  * 💰 Cost: five runs over two gallery rigs (each a build, a `render
  * --geometry` and the in-process extras), and three `base` runs over the
- * gallery's seven for RH04 and RH05, and RC11–RC12's CLI runs on the
- * smallest gallery build (eleven over the tree, six more over three planted
- * copies of it). The corpus's nineteen rows are never run here; that is PR and
- * CI-artifact material.
+ * gallery's seven for RH04 and RH05, and RC11–RC14's CLI runs on the
+ * smallest gallery build (eleven over the tree and six over three planted
+ * copies for RC11–RC12; nine over the tree and five over three planted copies
+ * for RC13–RC14, with the in-process substitution of every gallery row's first
+ * and middle frames through both atlas readers). The corpus's nineteen rows are
+ * never run here; that is PR and CI-artifact material.
  */
 function runRenderHashesSuite(): number | null {
   console.log('\n── render-hashes: every render of every build hashed, and two runs compared (issue #965) ──');
@@ -79306,7 +79308,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH07, RC01–RC12 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH07, RC01–RC14 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -80785,8 +80787,9 @@ function runRenderHashesSuite(): number | null {
       {
         label: 'core-read',
         file: join('src', 'render.ts'),
-        from: 'if (choice.core !== null) return { choice, facts: skeletonFacts(input.skeletonText),',
-        to: 'if (choice.core !== null) return { choice, facts: spineFacts(spineData()),',
+        // Since issue #1020 the core path's facts are `coreFacts`' (the document's, and the skeleton's own JSON for what it does not state).
+        from: 'return { choice, facts: coreFacts(input.skeletonText, choice.core, chosen.document),',
+        to: 'return { choice, facts: spineFacts(spineData()),',
         steps: ['render'],
         expect: 'SPINE_CORE_LOADED',
       },
@@ -80823,6 +80826,237 @@ function runRenderHashesSuite(): number | null {
       'RC11 reads green on a tree that never touches the runtime and on a stub that touches nothing alike; the plants are what show the stub ' +
         'sees an access at load, a read on the core path and an export refused without its sentence',
     );
+
+    // --- RC13–RC14: a rigc build renders and checks with its skeleton.atlas gone (issue #1020) --
+    //
+    // RC10 drew a build without its atlas through a driver; the commands still
+    // refused one before any posing. RC13 runs them, under RC11's stub, on
+    // RC11's row with `skeleton.atlas` moved away: `render`, `render
+    // --geometry` and `check` exit 0, every file the unstubbed run with the
+    // atlas wrote is written to the byte, the stdout the same but the atlas line
+    // (which says the file is not there), and `check`'s figures the same.
+    // `check --texture-from` reads the foreign atlas through rigc's reader with
+    // the atlas present and absent, its figures the unstubbed run's; and in
+    // process, on every gallery row, the frames substituted through rigc's
+    // reader and through spine-core's are drawn pixel for pixel alike. A
+    // `rigc-compiled/1` document — the row's own with `pages` dropped — names on
+    // the poser line that its placement is read from the atlas, and without one
+    // is refused naming the file, exit 2, nothing written. RC14 plants the core
+    // path opening the atlas again, the `/1` clause dropped, and the
+    // substitution routed back through the runtime, and reads RC13 red on each.
+    type AtlaslessStep = 'render' | 'geometry' | 'check' | 'texture' | 'v1';
+    const ATLASLESS: ReadonlySet<AtlaslessStep> = new Set<AtlaslessStep>(['render', 'geometry', 'check', 'texture', 'v1']);
+    const figuresOf = (path: string): string => (existsSync(path) ? JSON.stringify((JSON.parse(readFileSync(path, 'utf8')) as { animations: unknown }).animations) : '(no check.json)');
+    // The lines an atlas-less run may print otherwise: the atlas line (render's and check's spelling), and check's texture
+    // note, whose clause about the candidate's own `scale:` line says it was not read rather than that none was declared.
+    const ATLAS_LINES = ['  ..    atlas    ', '  atlas      '];
+    const TEXTURE_NOTE = '  ⚠️ part of every MAE below is TEXTURE';
+    const atlasLine = (stdout: string): string => stdout.split('\n').find((l) => ATLAS_LINES.some((p) => l.startsWith(p))) ?? '(no atlas line)';
+    const withoutAtlasLine = (stdout: string): string => stdout.split('\n').filter((l) => !ATLAS_LINES.some((p) => l.startsWith(p)) && !l.startsWith(TEXTURE_NOTE)).join('\n');
+    let textureTwin: { status: number | null; json: string } | null = null;
+    /** RC13's probes over the tree at `root`, for the steps asked: empty is the tree green. */
+    const readAtlasless = (root: string, label: string, steps: ReadonlySet<AtlaslessStep>): string[] => {
+      const out: string[] = [];
+      if (row === undefined) return ['no gallery build to run'];
+      const frames = existsSync(join(dirname(row.out), 'ch01-frames', FRAMES_SIDECAR)) ? join(dirname(row.out), 'ch01-frames') : join(dirname(row.out), 'render');
+      const atlasPath = join(row.out, 'skeleton.atlas');
+      const modelPath = join(row.out, MODEL_DOCUMENT_FILE);
+      // The foreign atlas `--texture-from` reads: a copy of the row's own, beside it so its page paths resolve.
+      const foreign = join(row.out, 'rc13-texture-from.atlas');
+      if (!existsSync(foreign)) copyFileSync(atlasPath, foreign);
+      const textureArgs = (dir: string): string[] => ['check', '--candidate', row.out, '--frames', frames, '--texture-from', foreign, '--json', join(dir, 'check.json')];
+      if (steps.has('texture') && textureTwin === null) {
+        const dir = join(work, 'rc13-plain-texture');
+        const run = runCli(textureArgs(dir));
+        textureTwin = { status: run.status, json: join(dir, 'check.json') };
+      }
+      const cmds = commands(row.out, frames);
+      const unpaged = (text: string): string => {
+        const doc = JSON.parse(text) as Record<string, unknown>;
+        return `${JSON.stringify(Object.fromEntries(Object.entries(doc).filter(([k]) => k !== 'pages').map(([k, v]) => [k, k === 'spec' ? 'rigc-compiled/1' : v])), null, 2)}\n`;
+      };
+      const modelText = readFileSync(modelPath, 'utf8');
+      // With the atlas there: the substitution under the stub, and a /1 document posed through the atlas, saying so.
+      if (steps.has('texture')) {
+        const dir = join(work, `rc13-${label}-texture-present`);
+        const run = runCliStubbed(stub, root, textureArgs(dir));
+        if (textureTwin === null || textureTwin.status !== 0) out.push(`${label}: the unstubbed check --texture-from exited ${textureTwin?.status}`);
+        else if (run.status !== 0) out.push(`${label}: check --texture-from under the stub, the atlas present, exited ${run.status} — ${touched(run.stderr)}`);
+        else if (readFileSync(join(dir, 'check.json'), 'utf8') !== readFileSync(textureTwin.json, 'utf8')) out.push(`${label}: check --texture-from under the stub wrote another check.json than the unstubbed run`);
+      }
+      if (steps.has('v1')) {
+        writeFileSync(modelPath, unpaged(modelText));
+        try {
+          const dir = join(work, `rc13-${label}-v1-present`);
+          const run = runCliStubbed(stub, root, cmds.render(dir));
+          const line = run.stdout.split('\n').find((l) => l.startsWith('  ..    poser    ')) ?? '(no poser line)';
+          const want = `  ..    poser    rigc core — ${modelPath} — a rigc-compiled/1 document, which does not state where each region sits on its page: that is read from ${atlasPath}`;
+          const twin = plain.get('render');
+          if (run.status !== 0) out.push(`${label}: a rigc-compiled/1 document beside its atlas rendered under the stub with exit ${run.status} — ${touched(run.stderr)}`);
+          else if (line !== want) out.push(`${label}: a rigc-compiled/1 document beside its atlas printed the poser line ${JSON.stringify(line)}, not one naming the atlas its placement is read from`);
+          else if (twin !== undefined && digestDifferences(dirDigests(dir), twin.files).length > 0) out.push(`${label}: a rigc-compiled/1 document drawn through its atlas wrote other files than the /2 document: ${digestDifferences(dirDigests(dir), twin.files).join(', ')}`);
+        } finally {
+          writeFileSync(modelPath, modelText);
+        }
+      }
+      // Without it.
+      const away = join(row.out, 'skeleton.atlas.rc13');
+      copyFileSync(atlasPath, away);
+      rmSync(atlasPath);
+      try {
+        for (const step of ['render', 'geometry', 'check'] as const) {
+          if (!steps.has(step)) continue;
+          const twin = plain.get(step);
+          const dir = join(work, `rc13-${label}-${step}`);
+          const run = runCliStubbed(stub, root, cmds[step](dir));
+          if (twin === undefined || twin.status !== 0) {
+            out.push(`${label}: RC11 left no green unstubbed ${step} to hold the atlas-less run to`);
+            continue;
+          }
+          if (run.status !== 0) {
+            out.push(`${label}: ${step} under the stub, the atlas removed, exited ${run.status} — ${touched(run.stderr)}`);
+            continue;
+          }
+          const stdout = run.stdout.split(dir).join('<out>');
+          if (withoutAtlasLine(stdout) !== withoutAtlasLine(twin.stdout)) out.push(`${label}: ${step} with the atlas removed printed other lines than with it, besides the atlas line`);
+          else if (!atlasLine(stdout).includes(`${atlasPath} — not there`)) out.push(`${label}: ${step} with the atlas removed printed the atlas line ${JSON.stringify(atlasLine(stdout))}, which does not say the file is not there`);
+          if (step === 'check') {
+            const note = stdout.split('\n').find((l) => l.startsWith(TEXTURE_NOTE)) ?? '';
+            if (!note.includes('its atlas is not beside it, so whether that declares a scale: line is not read')) out.push(`${label}: check with the atlas removed printed the texture note ${JSON.stringify(note.slice(0, 200))}, which does not say the candidate's scale: line was not read`);
+            if (figuresOf(join(dir, 'check.json')) !== figuresOf(join(twin.dir, 'check.json'))) out.push(`${label}: check with the atlas removed scored other figures than with it`);
+          } else {
+            const files = dirDigests(dir);
+            const differ = digestDifferences(files, twin.files);
+            if (differ.length > 0 || files.size !== twin.files.size) out.push(`${label}: ${step} with the atlas removed wrote other files than with it: ${differ.join(', ') || `${files.size} against ${twin.files.size}`}`);
+          }
+        }
+        if (steps.has('texture')) {
+          const dir = join(work, `rc13-${label}-texture-absent`);
+          const run = runCliStubbed(stub, root, textureArgs(dir));
+          if (run.status !== 0) out.push(`${label}: check --texture-from under the stub, the atlas removed, exited ${run.status} — ${touched(run.stderr)}`);
+          else if (textureTwin !== null && figuresOf(join(dir, 'check.json')) !== figuresOf(textureTwin.json)) out.push(`${label}: check --texture-from with the atlas removed scored other figures than with it`);
+        }
+        if (steps.has('v1')) {
+          writeFileSync(modelPath, unpaged(modelText));
+          try {
+            const dir = join(work, `rc13-${label}-v1-absent`);
+            const run = runCliStubbed(stub, root, cmds.render(dir));
+            const said = run.stderr.trim().split('\n')[0] ?? '';
+            if (run.status !== 2 || !said.startsWith(`rigc render: nothing at ${atlasPath}: `) || !said.includes('is a rigc-compiled/1 document')) out.push(`${label}: a rigc-compiled/1 document with no atlas rendered with exit ${run.status} saying ${JSON.stringify(said.slice(0, 200))}, not refused naming the file`);
+            if (existsSync(dir)) out.push(`${label}: the refused rigc-compiled/1 render wrote ${dir}`);
+          } finally {
+            writeFileSync(modelPath, modelText);
+          }
+        }
+      } finally {
+        copyFileSync(away, atlasPath);
+        rmSync(away);
+      }
+      return out;
+    };
+    {
+      const probes = readAtlasless(import.meta.dir, 'tree', ATLASLESS);
+      // In process, every gallery row: the frames substituted through rigc's reader are spine-core's, pixel for pixel — the
+      // first and middle frame of every animation, the row's own atlas standing in, every piece substituted.
+      let substituted = 0;
+      let pieces = 0;
+      for (const { name, out } of galleryBuilds) {
+        const modelText = readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8');
+        const atlasText = readFileSync(join(out, 'skeleton.atlas'), 'utf8');
+        const poser = corePoser(modelText, '', join(out, MODEL_DOCUMENT_FILE));
+        const own = new Map((readModel(modelText).pages ?? []).map((page) => [page.name, readPlate(join(out, page.name))] as const));
+        const viewport = framingViewport(poser, 96);
+        if (viewport === null) {
+          probes.push(`${name}: framed nothing`);
+          continue;
+        }
+        const readers = { rigc: textureSubstitutionFromText(atlasText, out, 'rigc'), spine: textureSubstitutionFromText(atlasText, out, 'spine') };
+        for (const animation of poser.animations) {
+          const frames = sampleAnimation(poser, animation.name, PROTOCOL_FPS, { texture: true });
+          for (const frame of new Set([frames[0], frames[Math.floor(frames.length / 2)]])) {
+            const drawn = (['rigc', 'spine'] as const).map((reader) => {
+              const swapped = substituteTexture(frame, readers[reader]);
+              if (swapped.unmatched.length > 0) probes.push(`${name} ${animation.name} f${frame.index}: ${reader} left ${swapped.unmatched.join(', ')} unsubstituted`);
+              return createHash('sha256').update(renderFrame(swapped.frame, new Map([...own, ...readers[reader].pages]), viewport, BACKGROUND).data).digest('hex');
+            });
+            if (drawn[0] !== drawn[1]) probes.push(`${name} ${animation.name} f${frame.index}: substituted through rigc's reader and spine-core's, the pixels differ`);
+            substituted += 1;
+            pieces += frame.pieces.length;
+          }
+        }
+      }
+      if (substituted === 0) probes.push('no frame was substituted, so the two readers were compared on nothing');
+      const held = probes.length === 0;
+      say(
+        'RC13_A_BUILD_RENDERS_AND_CHECKS_WITH_ITS_ATLAS_REMOVED_UNDER_THE_STUB_AND_TEXTURE_FROM_READS_NO_RUNTIME',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${row?.name ?? '(none)'} with skeleton.atlas moved away, under RC11's stub: render, render --geometry and check exit 0, every file the unstubbed run with the atlas wrote to the byte, ` +
+            "the same lines but the atlas line (which says the file is not there) and check's figures the same; check --texture-from exits 0 under the stub with the atlas present (check.json byte for byte) and removed (the same figures); " +
+            'its model document turned rigc-compiled/1 renders beside the atlas naming it on the poser line, the same files, and without it is refused naming the file, exit 2, nothing written; ' +
+            `in process, ${substituted} frame(s) (${pieces} piece(s)) over ${galleryBuilds.length} gallery row(s) substituted through rigc's atlas reader and spine-core's draw pixel for pixel alike`,
+        ),
+        "issue #1020: #1016 put each region's place on its page into the document and the core drew from it, and the commands still refused a build " +
+          'without its atlas before any posing — the independence was the driver\'s, not the tool\'s. Only a run with the file gone and the runtime unusable shows what a command reaches',
+      );
+    }
+    // RC14 — each plant in its own copy of the tree, read through RC13's probes.
+    {
+      const plantProbes14: string[] = [];
+      const reds14: string[] = [];
+      const plants14: Array<{ label: string; file: string; from: string; to: string; steps: AtlaslessStep[]; expect: string }> = [
+        {
+          label: 'reopen',
+          file: 'cli.ts',
+          from: '      return { skeletonPath, atlasPath, atlasText: null };',
+          to: "      return { skeletonPath, atlasPath, atlasText: readFileSync(atlasPath, 'utf8') };",
+          steps: ['render'],
+          expect: 'the atlas removed, exited',
+        },
+        {
+          label: 'no-v1-clause',
+          file: join('src', 'render.ts'),
+          from: '          document.pageNames === null\n',
+          to: "          document.pageNames === 'planted'\n",
+          steps: ['v1'],
+          expect: 'not one naming the atlas its placement is read from',
+        },
+        {
+          label: 'texture-through-runtime',
+          file: join('src', 'check.ts'),
+          from: "choice.core === null ? 'spine' : 'rigc'",
+          to: "'spine'",
+          steps: ['texture'],
+          expect: 'SPINE_CORE_LOADED',
+        },
+      ];
+      for (const plant of plants14) {
+        const { root, occurrences } = plantTree(`rc14-${plant.label}`, plant.file, plant.from, plant.to);
+        if (occurrences !== 1) {
+          plantProbes14.push(`the ${plant.label} plant found ${occurrences} occurrence(s) of its line in ${plant.file}, not 1`);
+          continue;
+        }
+        const read = readAtlasless(root, plant.label, new Set(plant.steps));
+        if (read.length === 0) plantProbes14.push(`the ${plant.label} plant (${plant.file}) left RC13's ${plant.steps.join(', ')} green`);
+        else if (!read.some((p) => p.includes(plant.expect))) plantProbes14.push(`the ${plant.label} plant read red for another reason: ${read[0].slice(0, 200)}`);
+        else reds14.push(`${plant.label} (${plant.steps.join(', ')}: ${read.length} probe(s))`);
+      }
+      const held14 = plantProbes14.length === 0 && reds14.length === plants14.length;
+      say(
+        'RC14_THE_ATLAS_REOPENED_THE_V1_CLAUSE_DROPPED_OR_TEXTURE_FROM_THROUGH_THE_RUNTIME_TURNS_RC13_RED',
+        held14,
+        probeDetail(
+          held14,
+          plantProbes14,
+          'in copies of the tree: cli.ts reading the build\'s atlas file again where it is not there, the poser line\'s rigc-compiled/1 clause dropped in src/render.ts, ' +
+            `and src/check.ts handing --texture-from to spine-core's reader on a build the core poses — RC13's probes red on each: ${reds14.join('; ')}`,
+        ),
+        'RC13 reads green on a command that never looks for the atlas and on one that quietly reads it alike when the file is there; the plants are what show ' +
+          'its absence is what the probe measures, the /1 clause is read, and the substitution is held to the runtime\'s absence',
+      );
+    }
   }
 
   // --- RC15–RC16: `explain` on a rigc build reads and poses its deform survey without spine-core (issue #1019) --

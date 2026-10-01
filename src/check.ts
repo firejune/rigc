@@ -878,8 +878,12 @@ export interface TextureFromReport {
   atlas: string;
   /** Every `scale:` its text declares — the line that says a pack is coarser. */
   scales: number[];
-  /** The same for the CANDIDATE's own atlas, so the two are read side by side. */
-  candidateScales: number[];
+  /**
+   * The same for the CANDIDATE's own atlas, so the two are read side by side —
+   * `null` when the candidate has no atlas beside it to read them off (issue
+   * #1020), which is not the same claim as declaring none.
+   */
+  candidateScales: number[] | null;
   /**
    * Regions the substituting atlas does not have, or the candidate packs rotated
    * so its own corner order cannot be inverted — see `artUvsOf`. Those pieces kept
@@ -987,7 +991,13 @@ export interface CheckReport {
 
 export interface CheckOptions {
   skeletonText: string;
-  atlasText: string;
+  /**
+   * The candidate's atlas, or `null` when there is no file (issue #1020): a
+   * rigc build the core poses from a `rigc-compiled/2` document is drawn
+   * without one, and anything else is refused naming the file
+   * (`CandidateAtlasError`).
+   */
+  atlasText: string | null;
   /** Where the atlas's page paths resolve from. */
   atlasDir: string;
   framesDir: string;
@@ -1161,8 +1171,13 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   // The substitution is loaded before anything is posed, because posing has to
   // record each piece's original-art UVs for it and that is the one thing about
   // this measure that cannot be added afterwards — see `PieceTexture`.
+  //
+  // Read by rigc's own atlas reader when the core poses the candidate, and by
+  // spine-core's when the runtime does (issue #1020, `SubstitutionReader`): a
+  // rigc build's `--texture-from` reads nothing through the runtime, and an
+  // export's reading is the one it always had.
   const substitution = options.textureFrom
-    ? textureSubstitutionFromText(options.textureFrom.atlasText, options.textureFrom.atlasDir)
+    ? textureSubstitutionFromText(options.textureFrom.atlasText, options.textureFrom.atlasDir, choice.core === null ? 'spine' : 'rigc')
     : null;
   // The skin is refused here rather than deeper in the sampler, for the reason
   // every miss in this project is refused where the names are: the skeleton is
@@ -1600,7 +1615,11 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     );
   }
 
-  const candidateScales = atlasScales(options.atlasText);
+  // `null` when the candidate has no atlas to read them off (issue #1020): the
+  // model document a build is drawn from without one states where each region
+  // sits, not the `scale:` line, so the report says it was not read rather than
+  // that none was declared.
+  const candidateScales = options.atlasText === null ? null : atlasScales(options.atlasText);
   if (substitution === null) {
     // ⭐ Named at the top of every report rather than only when it is measured.
     // Issue #171's finding was not that the floor was mis-measured; it was that
@@ -1610,7 +1629,13 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     notes.push(
       'part of every MAE below is TEXTURE, not animation, and it is not attributed here. The frames were rendered ' +
         "through the reference's own atlas; this candidate samples its own" +
-        `${candidateScales.length > 0 ? ` (declared at scale: ${[...new Set(candidateScales)].join(', ')})` : ''}` +
+        `${
+          candidateScales === null
+            ? ' (its atlas is not beside it, so whether that declares a scale: line is not read — the model document does not state one)'
+            : candidateScales.length > 0
+              ? ` (declared at scale: ${[...new Set(candidateScales)].join(', ')})`
+              : ''
+        }` +
         ', and if the two were packed at different scales every edge of every part is filtered from a different ' +
         'source in every frame. That difference is a constant no key can move and is invisible to the content box, ' +
         'the fit residual and the whole-pixel refinement. Pass --texture-from <the atlas the frames were rendered ' +
@@ -3540,8 +3565,8 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   }
   if (report.textureFrom) {
     const t = report.textureFrom;
-    const scale = (values: number[]): string =>
-      values.length === 0 ? 'no scale: line' : `scale: ${[...new Set(values)].join(', ')}`;
+    const scale = (values: number[] | null): string =>
+      values === null ? 'no atlas beside it to read a scale: line from' : values.length === 0 ? 'no scale: line' : `scale: ${[...new Set(values)].join(', ')}`;
     lines.push(
       `  texture    from ${t.atlas} (${scale(t.scales)}) against the candidate's own (${scale(t.candidateScales)})` +
         `${t.unmatched.length === 0 ? '' : `   ⚠️ ${t.unmatched.length} region(s) not substituted`}`,
