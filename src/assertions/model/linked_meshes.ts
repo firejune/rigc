@@ -1,8 +1,8 @@
 /**
  * The model side's supply of `LinkFacts` (issue #1025, step 4c of #380): the
  * document's `linkedmesh` records, in the order the Spine file spells them —
- * the skins by the emitter's `editorSkinOrder`, each skin's slot keys by its
- * `editorSlotKeyOrder`, each slot's records in table order
+ * the skins and each skin's slot keys in the file's order (`fileSkinOrder`,
+ * issue #1034), each slot's records in table order
  * (`fileSpelledEntries`, `./vertex_polygons.ts`).
  *
  * `encoding` is empty on every link: a link record has no geometry field, so

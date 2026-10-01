@@ -8,7 +8,9 @@
  * - **Constraints**: the document's `constraints` in order — update order, the
  *   order the emitter writes them in — each skin-required exactly when it
  *   states `skin: true`, the field the emitter writes through unchanged.
- * - **Skins**: in the emitter's order (`editorSkinOrder`, `src/compile.ts`); a
+ * - **Skins**: in the file's order (`fileSkinOrder`, `src/compile.ts`: a
+ *   `rigc-compiled/3` document's `editorOrder`, else the emitter's
+ *   `editorSkinOrder`, issue #1034); a
  *   skin's bones as it lists them, each the FIRST bone of that name; its
  *   constraints kind by kind in the emitter's key order
  *   (`RIG_SKIN_CONSTRAINT_KEYS`, which `emitSkins` walks), each the first
@@ -20,7 +22,7 @@
  *
  * Links nothing from the runtime.
  */
-import { editorSkinOrder } from '../../compile.ts';
+import { fileSkinOrder, skinsInFileOrder } from '../../compile.ts';
 import { RIG_SKIN_CONSTRAINT_KEYS } from '../../rig.ts';
 import type { MemberBone, MemberConstraint, MemberSkin, SkinMemberFacts } from '../facts/skin_members.ts';
 import { isObj } from '../values.ts';
@@ -42,7 +44,7 @@ export function modelSkinMembers(read: ReadDocument): SkinMemberFacts {
   for (const constraint of stated) {
     constraints.push({ name: String(constraint.name), kind: String(constraint.kind), skinRequired: constraint.skin === true });
   }
-  const skins: MemberSkin[] = editorSkinOrder(doc.skins).map((skin) => {
+  const skins: MemberSkin[] = skinsInFileOrder(doc.skins, fileSkinOrder(doc)).map(({ skin }) => {
     const listedBones = skin.bones.map((name) => {
       const found = boneByName.get(name);
       if (found === undefined) throw new Error(`skin "${skin.name}" lists bone "${name}", which is not a bone of the document`);

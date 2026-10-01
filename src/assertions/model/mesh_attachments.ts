@@ -6,7 +6,7 @@
  * Every value is the document's, through a function rigc already runs:
  *
  * - **The order** is `fileOrderedEntries` (`./skin_entries.ts`), the skins
- *   put in the file's order by the emitter's `editorSkinOrder`.
+ *   put in the file's order (`fileSkinOrder`, issue #1034).
  * - **A binding's bone** is the index the emitter writes for its name,
  *   `boneIndexOf` over the document's bones (`src/emit_spine.ts`), and its
  *   weight the float32 the runtime stores a vertex array in (`Math.fround`,

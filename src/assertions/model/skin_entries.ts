@@ -8,8 +8,9 @@
  * document in its own order lists the same entries in another order on a rig
  * whose skins the comparator moves — the census measured that on 3 of 52
  * multi-skin compiles. The skins are therefore put in the file's order by
- * calling `editorSkinOrder` from `src/compile.ts`, the function the emitter is
- * handed (`emitSkins`), not by a copy of its rule. Within a skin the entries go
+ * `fileSkinOrder` from `src/compile.ts` (issue #1034): the order a
+ * `rigc-compiled/3` document states, else `editorSkinOrder`, the function the
+ * emitter is handed (`emitSkins`) — never a copy of its rule. Within a skin the entries go
  * slot by slot in the skeleton's slot order — the document's `slots`, which is
  * the emitted array's order — and a slot's entries in its table's order, which
  * the emitter writes unchanged; the selftest measures this walk equal to
@@ -22,18 +23,27 @@
  *
  * Links nothing from the runtime.
  */
-import { editorSkinOrder } from '../../compile.ts';
+import { fileSkinOrder, skinsInFileOrder } from '../../compile.ts';
 import { shownRow } from '../../core/index.ts';
 import type { RegionEntry, SkinEntryFacts } from '../facts/skin_entries.ts';
 import type { ReadDocument } from './parse.ts';
 
-/** How the skins are put in the file's order: the emitter's rule. A parameter only so the selftest can show what the document's own order would print (`VF05`). */
+/** How the skins are put in an order other than the file's. A parameter only so the selftest can show what the document's own order would print (`VF05`). */
 export type SkinOrder = <T extends { name: string }>(skins: readonly T[]) => T[];
 
-/** The skins' entries in the file's walk order, each with its skin, slot and placeholder. */
-export function fileOrderedEntries(read: ReadDocument, order: SkinOrder = editorSkinOrder): Array<{ skin: string; slot: string; placeholder: string; record: ReadDocument['doc']['skins'][number]['attachments'][string][string] }> {
+/**
+ * The document's skins in the file's order (issue #1034): `fileSkinOrder` —
+ * a `rigc-compiled/3` document's `editorOrder`, the one source on `/3`, else
+ * the emitter's own rule (`editorSkinOrder`) over the document's skins.
+ */
+export function skinsInTheFilesOrder<T extends { name: string }>(read: ReadDocument, skins: readonly T[]): T[] {
+  return skinsInFileOrder(skins, fileSkinOrder(read.doc)).map((walk) => walk.skin);
+}
+
+/** The skins' entries in the file's walk order, each with its skin, slot and placeholder; `order`, when given, replaces the file's skin order (`VF05`). */
+export function fileOrderedEntries(read: ReadDocument, order?: SkinOrder): Array<{ skin: string; slot: string; placeholder: string; record: ReadDocument['doc']['skins'][number]['attachments'][string][string] }> {
   const out: ReturnType<typeof fileOrderedEntries> = [];
-  for (const skin of order(read.doc.skins)) {
+  for (const skin of order === undefined ? skinsInTheFilesOrder(read, read.doc.skins) : order(read.doc.skins)) {
     for (const { name: slot } of read.doc.slots) {
       const table = skin.attachments[slot];
       if (table === undefined) continue;
@@ -43,7 +53,7 @@ export function fileOrderedEntries(read: ReadDocument, order: SkinOrder = editor
   return out;
 }
 
-export function modelSkinEntries(read: ReadDocument, order: SkinOrder = editorSkinOrder): SkinEntryFacts {
+export function modelSkinEntries(read: ReadDocument, order?: SkinOrder): SkinEntryFacts {
   const regionAttachments: RegionEntry[] = [];
   let clippingCount = 0;
   for (const entry of fileOrderedEntries(read, order)) {

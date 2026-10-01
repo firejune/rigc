@@ -318,9 +318,24 @@ const FRAME = 1 / 60;
  * returns, so the refusal below is raised there, inside `compile`, in these
  * words. Exported so the selftest hands it to the emitter the way the assembly
  * does (`MA03`, `MA08`).
+ *
+ * 🔢 **It returns the order the FILE keys, which is the comparator's order
+ * with every integer-like name first** (issue #1034). `animations` is a JSON
+ * object, and an object lists a key that is an array index (`5`, `10` — not
+ * `01`, `-a` or `2b`) before every other key, in ascending order, whatever
+ * order it was filled in. Measured on a probe keying `5, -a, 10, 2b, 01`: the
+ * comparator orders `-a, 01, 2b, 5, 10`, and `skeleton.json`, spine-core's
+ * `animations` and the `/3` document's `editorOrder` all list
+ * `5, 10, -a, 01, 2b`. The emitter keys the object either way, so no byte
+ * moves; what moves is every READER of a `rigc-compiled/2` or `/1` document,
+ * which derives the file's order by calling this function and was handed the
+ * comparator's list (`fileAnimationOrder` below). The comparator's own list is
+ * `editorNamesInOrder(names, 'animations')`. Skins are an array and keep the
+ * comparator's order (`editorSkinOrder`), and a skin's slot keys come back as
+ * an object's keys (`editorSlotKeyOrder`), which are the file's already.
  */
 export function editorAnimationOrder(names: readonly string[]): string[] {
-  return editorNamesInOrder(names, 'animations');
+  return keyedOrder(editorNamesInOrder(names, 'animations'));
 }
 
 /**
@@ -3514,17 +3529,12 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // applies them, so a name pair the editor could key two ways is refused here
   // in the order it was refused at emission before this entry existed.
   //
-  // ⚠️ A name list the file KEYS is stated as the keys of an object filled in
-  // that order, not as the sorted list: the file's `animations` and a skin's
-  // `attachments` are JSON objects, and an object lists an integer-like key
-  // ("2", "10") before every other key, in ascending order, whatever order it
-  // was filled in. That is the order `skeleton.json` spells and its parser
-  // reads, so it is the order stated here; the skins are an array and keep the
-  // sort's.
-  const editorOrder: ModelEditorOrder = {
-    skins: EDITOR_ORDERS.skins(skins).map((skin) => ({ name: skin.name, slots: Object.keys(EDITOR_ORDERS.slotKeys(skin.attachments)) })),
-    animations: keyedOrder(EDITOR_ORDERS.animations([...animations.keys()])),
-  };
+  // ⚠️ A name list the file KEYS is the keys of an object filled in that
+  // order: an object lists an integer-like key ("2", "10") before every other
+  // key. Since issue #1034 that is `editorAnimationOrder`'s own result rather
+  // than a step applied here, so a reader deriving the order of a `/2` document
+  // (`fileAnimationOrder`) is handed the same list this states.
+  const editorOrder: ModelEditorOrder = editorOrderOver(skins, [...animations.keys()]);
 
   for (const slot of slots) {
     if (!boneNames.has(slot.bone)) throw new CompileError(`slot "${slot.name}" has no bone`);
@@ -3559,11 +3569,101 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
  */
 const EDITOR_ORDERS = { skins: editorSkinOrder, slotKeys: editorSlotKeyOrder, animations: editorAnimationOrder } as const;
 
-/** The order an object filled with `names`, in that order, lists its keys in — the order a JSON object keyed by them is spelled in. */
-function keyedOrder(names: readonly string[]): string[] {
+/**
+ * The order an object filled with `names`, in that order, lists its keys in —
+ * the order a JSON object keyed by them is spelled in, and the order
+ * spine-core reads it in: every array-index name (`5`, `10`; not `01`, `-a`,
+ * `2b`) first, ascending, then the rest as filled (issue #1034).
+ *
+ * ⭐ It is the rule for EVERY object the Spine file keys by a name, not only
+ * `animations`: the emitter fills each such object in the model's order — an
+ * animation's `slots`, `bones`, `ik`, `transform`, `path`, `physics` and
+ * `slider` groups and its `attachments` at all three levels (skin, slot,
+ * attachment) — so a reader walking one of them in the file's order walks
+ * this over the model's order (`src/deformstructure.ts`'s deform timelines,
+ * `src/assertions/model/constraints.ts`'s constraint timelines). Measured on a
+ * build whose `ik` group keys `leg_f_ik` then `5`: the file and spine-core list
+ * `5, leg_f_ik`.
+ */
+export function keyedOrder(names: readonly string[]): string[] {
   const keyed: Record<string, true> = {};
   for (const name of names) keyed[name] = true;
   return Object.keys(keyed);
+}
+
+/** A skin as far as its order reads it: its name and its table, keyed by slot. */
+interface OrderedSkin {
+  name: string;
+  attachments: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * The orders the Spine file lists `skins`, each skin's slot keys and
+ * `animations` in, over a model's skins and animation names: `EDITOR_ORDERS`,
+ * the functions `compile` hands the emitter, so this is the emitted order by
+ * construction rather than a second statement of it (issue #1034). `compileModel`
+ * states it in the model (`editorOrder`); `fileAnimationOrder` and `fileSkinOrder` derive it for a
+ * document that does not state it. A name set the editor could key two ways is
+ * refused here by name, as at emission.
+ */
+export function editorOrderOver(skins: readonly OrderedSkin[], animations: readonly string[]): ModelEditorOrder {
+  return { skins: editorSkinsOver(skins), animations: EDITOR_ORDERS.animations(animations) };
+}
+
+/** `editorOrderOver`'s skins alone: each skin's name and slot keys, in the file's order. */
+function editorSkinsOver(skins: readonly OrderedSkin[]): ModelEditorOrder['skins'] {
+  return EDITOR_ORDERS.skins(skins).map((skin) => ({ name: skin.name, slots: Object.keys(EDITOR_ORDERS.slotKeys(skin.attachments)) }));
+}
+
+/** What a reader of a model document holds that the file's orders are read or derived from: `CompiledDocument`'s fields. */
+export interface OrderedDocument {
+  skins: readonly OrderedSkin[];
+  animations: readonly { name: string }[];
+  stated: { editorOrder: ModelEditorOrder } | null;
+}
+
+/**
+ * The order the Spine file lists a model document's animations in — the one
+ * place a reader of the document gets it (issue #1034), with
+ * `fileSkinOrder` its sibling for the skins and their slot keys.
+ *
+ * - A `rigc-compiled/3` document STATES it (`editorOrder`, issue #1026), and
+ *   that statement is the one source: nothing derives it beside the document.
+ * - A `/2` or `/1` document does not, and it is derived by the emitter's own
+ *   rule over the document's names (`EDITOR_ORDERS`, as `editorOrderOver`
+ *   runs it) — the file's order for every name, integer-like ones included
+ *   (`editorAnimationOrder`'s 🔢). A name set the editor could key two ways is
+ *   refused by name (`CompileError`), as at emission.
+ */
+export function fileAnimationOrder(doc: OrderedDocument): readonly string[] {
+  return doc.stated !== null ? doc.stated.editorOrder.animations : EDITOR_ORDERS.animations(doc.animations.map((a) => a.name));
+}
+
+/** `fileAnimationOrder`'s sibling: the skins, each with its slot keys, in the order the Spine file lists them — stated by a `/3` document, derived for a `/2` or `/1` one. */
+export function fileSkinOrder(doc: OrderedDocument): ModelEditorOrder['skins'] {
+  return doc.stated !== null ? doc.stated.editorOrder.skins : editorSkinsOver(doc.skins);
+}
+
+/**
+ * `skins` in the order `order` lists them (`fileSkinOrder`), each
+ * with its slot keys in that order. The k-th entry of a name is the k-th skin
+ * of that name, so two skins answering to one name — a defect another check
+ * names — are neither merged nor dropped. A skin `order` does not list, or an
+ * entry naming no skin left, is this caller's defect (`readModel` refuses an
+ * `editorOrder` that is not a permutation of the document's skins), so it
+ * throws rather than walking a guess.
+ */
+export function skinsInFileOrder<T extends { name: string }>(skins: readonly T[], order: ModelEditorOrder['skins']): Array<{ skin: T; slots: readonly string[] }> {
+  const left = [...skins];
+  const out: Array<{ skin: T; slots: readonly string[] }> = [];
+  for (const entry of order) {
+    const at = left.findIndex((skin) => skin.name === entry.name);
+    if (at < 0) throw new Error(`internal: the file's skin order names skin "${entry.name}", which no skin left in the walk answers to`);
+    out.push({ skin: left[at], slots: entry.slots });
+    left.splice(at, 1);
+  }
+  if (left.length > 0) throw new Error(`internal: the file's skin order leaves out skin(s) ${left.map((skin) => `"${skin.name}"`).join(', ')}`);
+  return out;
 }
 
 /**

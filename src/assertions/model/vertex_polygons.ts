@@ -10,10 +10,11 @@
  *   (`readVertices`); the selftest compares it with spine-core's on every
  *   call. A path's `closed` and `lengths` are the core's reading of the record
  *   (`readGeometry`: `closed` absent reads the parser's `false`).
- * - **The clip ends** in the order the file spells them: the skins by the
- *   emitter's `editorSkinOrder`, each skin's slot keys by its
- *   `editorSlotKeyOrder` (both `src/compile.ts`, the functions `emitSkins` is
- *   handed), each slot's records in table order — every clipping record that
+ * - **The clip ends** in the order the file spells them: the skins and each
+ *   skin's slot keys in the order `fileSkinOrder` gives (`src/compile.ts`,
+ *   issue #1034: a `rigc-compiled/3` document's `editorOrder`, else the
+ *   emitter's `editorSkinOrder` and `editorSlotKeyOrder`, the functions
+ *   `emitSkins` is handed), each slot's records in table order — every clipping record that
  *   states an `end`, with the `end` as it states it.
  *
  * `encoding` is empty on every polygon: the document states the weighted
@@ -21,7 +22,7 @@
  *
  * Links nothing from the runtime.
  */
-import { editorSkinOrder, editorSlotKeyOrder } from '../../compile.ts';
+import { fileSkinOrder, skinsInFileOrder } from '../../compile.ts';
 import { shownRow } from '../../core/index.ts';
 import type { ClipEnd, PolygonEntry, PolygonFacts } from '../facts/vertex_polygons.ts';
 import { isObj, type Json } from '../values.ts';
@@ -40,9 +41,9 @@ export function documentRecord(read: ReadDocument, skin: string, slot: string, p
 /** Every record of the document in the order the Spine file spells it: skins, then each skin's slot keys, then the slot's table. */
 export function fileSpelledEntries(read: ReadDocument): Array<{ skin: string; slot: string; placeholder: string; record: Json }> {
   const out: Array<{ skin: string; slot: string; placeholder: string; record: Json }> = [];
-  for (const skin of editorSkinOrder(read.doc.skins)) {
-    for (const [slot, table] of Object.entries(editorSlotKeyOrder(skin.attachments))) {
-      for (const placeholder of Object.keys(table)) out.push({ skin: skin.name, slot, placeholder, record: documentRecord(read, skin.name, slot, placeholder) });
+  for (const { skin, slots } of skinsInFileOrder(read.doc.skins, fileSkinOrder(read.doc))) {
+    for (const slot of slots) {
+      for (const placeholder of Object.keys(skin.attachments[slot] ?? {})) out.push({ skin: skin.name, slot, placeholder, record: documentRecord(read, skin.name, slot, placeholder) });
     }
   }
   return out;
