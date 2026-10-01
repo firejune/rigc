@@ -58,16 +58,7 @@ import {
 // them, so it is already on `package.json`'s `files` allowlist — see CLAUDE.md.
 // A19 needs the DECODED page, not its header, to measure one region's own
 // rectangle on a shared page.
-import {
-  BEZIER_POINTS,
-  curveStorage,
-  surveyDeformKeys,
-  unreachableWhy,
-  type DeformDialDispute,
-  type DeformDialTie,
-  type DeformReach,
-  type DialSpan,
-} from './deformmeasure.ts';
+import { BEZIER_POINTS, curveStorage, surveyDeformKeys } from './deformmeasure.ts';
 import {
   LEGACY_BONE_INHERIT_KEY,
   spineGeneration,
@@ -78,16 +69,14 @@ import { nonFiniteOfPosed } from './render.ts';
 import { BONE_INHERIT_KNOWN } from './rig.ts';
 import {
   CHANNELS_BY_KIND,
-  float32Step,
   physicsRuleFor,
-  SEQUENCE_MODES,
   SLOT_COLOR_CHANNELS,
   walkTimelines,
 } from './timelines.ts';
 import type { RigInfo } from './types.ts';
 import { ASSERTION_KIND, kindRunsUnder, type AssertionProfile } from './assertions/kinds.ts';
 import { verdictHarness, type Failure } from './assertions/harness.ts';
-import { atStoredKey, isObj, type Json } from './assertions/values.ts';
+import { isObj, type Json } from './assertions/values.ts';
 import type { SkinEntryFacts } from './assertions/facts/skin_entries.ts';
 import type { AtlasPageFacts } from './assertions/facts/atlas_pages.ts';
 import type { SlotColourFacts, SlotTimelines } from './assertions/facts/slot_colour.ts';
@@ -143,14 +132,19 @@ import {
   SKIP_NO_ANIMATION,
   SKIP_NO_ATLAS,
   SKIP_NO_ATLAS_PAGE,
-  SKIP_NO_DECLARED_DURATION,
   SKIP_NO_MESH_ATTACHMENT,
   SKIP_NO_POSE,
-  SKIP_NO_SEQUENCE,
   SKIP_NO_SKELETON,
   SKIP_NO_TIMELINE,
-  SKIP_NO_TWO_COLOR_TINT,
 } from './assertions/reasons.ts';
+import type { DeformSurveyFacts } from './assertions/facts/deform_survey.ts';
+import type { AnimationDurationFacts } from './assertions/facts/animation_durations.ts';
+import type { TwoColourFacts } from './assertions/facts/two_colour.ts';
+import { entryAddress, type EntryAddress, type SequenceFacts, type SequenceSkinEntry, type SequenceTimeline } from './assertions/facts/sequences.ts';
+import { a39DeformKeepsTriangleWinding } from './assertions/bodies/a39.ts';
+import { a09AnimationDurationMatchesSpec } from './assertions/bodies/a09.ts';
+import { a43TwoColorTintLoadsAndPosesAsWritten } from './assertions/bodies/a43.ts';
+import { a46SequenceAttachmentsShowTheFrameTheFileStates } from './assertions/bodies/a46.ts';
 
 export type { Failure } from './assertions/harness.ts';
 
@@ -294,61 +288,10 @@ export interface ValidateReport {
   stats: Record<string, number | string>;
 }
 
-/**
- * The clause A39 puts after an animation's name when the frame it measured is
- * not the track (issue #407).
- *
- * Empty on the track, which is what every animation no slider applies gets — so
- * a message about a rig with no sliders in it reads exactly as it always has.
- */
-function frameClause(reach: DeformReach): string {
-  return reach.kind === 'slider' ? ` (applied by slider "${reach.slider}", not played on a track)` : '';
-}
+// The four sentences A39 prints a frame, a dial's reach, a dispute and a tie
+// with, and A09's one-frame slack, are `./assertions/bodies/a39.ts`'s and
+// `./assertions/bodies/a09.ts`'s since issue #1025 (cut 4c-3).
 
-/**
- * A dial's reach as A39's stats line spells it, or `none` when it can select no
- * part of its animation at all.
- *
- * Six decimals because a key time has six: a reach whose end is printed coarser
- * than the times it is compared against cannot be read against them.
- */
-function dialSpanText(span: DialSpan | null): string {
-  return span === null ? 'none' : `${span.lo.toFixed(6)}..${span.hi.toFixed(6)}s`;
-}
-
-/**
- * One disputed dial on A39's stats line — both answers, both reaches, and the
- * frames the artifact's answer could not have posed (issue #427).
- *
- * ⭐ **`outside:` is always there, `none` included.** The comparison it reports is
- * what decides whether a disagreement changed anything the survey measured, and a
- * comparison that came out equal must not look like one nobody made. It is the
- * difference between "both answers pose the same frames, so the disagreement is a
- * fact about rigc and not about this rig" and "these key times were surveyed
- * through a field the skeleton does not name and no settable value of the one it
- * does reaches them".
- *
- * ⚠️ No spaces anywhere in it: the stats line is `k=v` pairs joined by spaces, and
- * a value with a space in it turns one reading into two.
- */
-function dialDisputeText(dispute: DeformDialDispute): string {
-  const stated = dispute.statedResponse === null ? 'unmeasured' : dispute.statedResponse.toExponential(3);
-  return (
-    `${dispute.slider}|artifact:${dispute.bone}.${dispute.stated}@${stated}` +
-    `|reaches:${dialSpanText(dispute.statedReach)}` +
-    `|probe:${dispute.bone}.${dispute.drive}@${dispute.driveResponse.toExponential(3)}` +
-    `|reaches:${dialSpanText(dispute.driveReach)}` +
-    `|outside:${dispute.outside.length === 0 ? 'none' : dispute.outside.map((t) => `${t.toFixed(6)}s`).join('+')}`
-  );
-}
-
-/** One tied dial on the same line, in the shape that cannot be read as a dispute. */
-function dialTieText(tie: DeformDialTie): string {
-  const rivals = tie.rivals.map((r) => `${tie.bone}.${r.field}@${r.response.toExponential(3)}`).join('+');
-  return `${tie.slider}|artifact:${tie.bone}.${tie.drive}@${tie.driveResponse.toExponential(3)}|tied:${rivals}`;
-}
-
-const FRAME = 1 / 60;
 const STEP_FRAMES = 120;
 
 /**
@@ -1104,6 +1047,156 @@ function spineSlotColourFacts(raw: Json | null, data: ReturnType<SkeletonJson['r
 }
 
 /**
+ * The runtime's supply of A39's fact (issue #1025, cut 4c-3): the survey of
+ * the loaded skeleton, read and posed by spine-core (`surveyDeformKeys`) — the
+ * call A39 always made. The model side's supply is
+ * `./assertions/model/deform_survey.ts`.
+ */
+export function spineDeformSurvey(data: ReturnType<SkeletonJson['readSkeletonData']>): DeformSurveyFacts {
+  return { survey: (exempt) => surveyDeformKeys(data, exempt) };
+}
+
+/**
+ * The runtime's supply of A09's facts (issue #1025, cut 4c-3): the loaded
+ * animations in the loaded order — the file's — each with its duration and
+ * every loaded timeline's `getDuration()`, as A09 always read them. The model
+ * side's supply is `./assertions/model/animation_durations.ts`.
+ */
+export function spineAnimationDurations(data: ReturnType<SkeletonJson['readSkeletonData']>): AnimationDurationFacts {
+  return { animations: data.animations.map((anim) => ({ name: anim.name, duration: anim.duration, timelineDurations: anim.timelines.map((t) => t.getDuration()) })) };
+}
+
+/**
+ * The runtime's supply of A43's facts (issue #1025, cut 4c-3): the stated dark
+ * colours read off the skeleton JSON in the file's slot order, each slot named
+ * as A43's walk always named it; the setup dark colour the loaded slot holds;
+ * A45's walk of the file's slot timelines; whether an animation loaded; and a
+ * slot's two colours posed on a fresh, non-looping track by spine-core — setup
+ * pose, `update(0)`, `updateWorldTransform(Physics.reset)`, the track stepped
+ * to the time and applied, then `update` and `updateWorldTransform
+ * (Physics.update)` by the same time, A43's recipe unchanged. The model side's
+ * supply is `./assertions/model/two_colour.ts`.
+ */
+export function spineTwoColourFacts(raw: Json | null, data: ReturnType<SkeletonJson['readSkeletonData']>): TwoColourFacts {
+  const slotDarks: Array<{ slot: string; dark: string }> = [];
+  for (const slot of Array.isArray(raw?.slots) ? (raw.slots as unknown[]) : []) {
+    if (isObj(slot) && typeof slot.dark === 'string') slotDarks.push({ slot: String(slot.name), dark: slot.dark });
+  }
+  return {
+    slotDarks,
+    loadedDark: (name) => data.findSlot(name)?.setupPose.darkColor ?? null,
+    slotTimelines: spineSlotColourFacts(raw, data).slotTimelines,
+    hasAnimation: (name) => Boolean(data.findAnimation(name)),
+    posedTint: (animName, slotName, time) => {
+      const skeleton = new Skeleton(data);
+      const state = new AnimationState(new AnimationStateData(data));
+      state.setAnimation(0, animName, false);
+      skeleton.setupPose();
+      skeleton.update(0);
+      skeleton.updateWorldTransform(Physics.reset);
+      state.update(time);
+      state.apply(skeleton);
+      skeleton.update(time);
+      skeleton.updateWorldTransform(Physics.update);
+      const posed = skeleton.slots.find((s) => s.data.name === slotName)?.appliedPose;
+      if (posed === undefined) return undefined;
+      return { light: posed.color, dark: posed.darkColor ?? null };
+    },
+  };
+}
+
+/**
+ * The runtime's supply of A46's facts (issue #1025, cut 4c-3): the skin
+ * entries and sequence timelines read off the skeleton JSON as A46's walks
+ * always read them — the skins, a skin's slot keys and a slot's placeholders in
+ * the file's order, an entry with no `type` a region, an entry of another kind
+ * left out, a timeline whose `sequence` is not a list left out — each entry
+ * marked loaded where the slot exists and the loaded skin of that name holds an
+ * attachment at it; and what a slot shows on a fresh, non-looping track posed
+ * by spine-core — setup pose, `update(0)`, `updateWorldTransform
+ * (Physics.reset)`, the track stepped to the time and applied, A46's recipe
+ * unchanged. The loaded attachment is answered by its address: every loaded
+ * skin's `getAttachments()` gives each attachment object the skin, slot and
+ * placeholder it is filed under, and the object a linked mesh plays its
+ * timelines as (`timelineAttachment`) is answered the same way. The model
+ * side's supply is `./assertions/model/sequences.ts`.
+ */
+export function spineSequenceFacts(raw: Json | null, data: ReturnType<SkeletonJson['readSkeletonData']>): SequenceFacts {
+  const entries: SequenceSkinEntry[] = [];
+  for (const skin of isObj(raw) && Array.isArray(raw.skins) ? (raw.skins as unknown[]) : []) {
+    if (!isObj(skin) || !isObj(skin.attachments)) continue;
+    const skinName = typeof skin.name === 'string' ? skin.name : '(unnamed)';
+    const loadedSkin = data.findSkin(skinName);
+    for (const [slotName, perSlot] of Object.entries(skin.attachments)) {
+      if (!isObj(perSlot)) continue;
+      const slotIndex = data.findSlot(slotName)?.index;
+      for (const [placeholder, entry] of Object.entries(perSlot)) {
+        if (!isObj(entry)) continue;
+        const type = entry.type === undefined ? 'region' : entry.type;
+        if (type !== 'region' && type !== 'mesh' && type !== 'linkedmesh') continue;
+        const loaded = slotIndex === undefined ? null : loadedSkin?.getAttachment(slotIndex, placeholder) ?? null;
+        entries.push({ skin: skinName, slot: slotName, placeholder, name: entry.name, path: entry.path, sequence: entry.sequence, loaded: loaded !== null });
+      }
+    }
+  }
+  const timelines: SequenceTimeline[] = [];
+  const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
+  for (const [animation, anim] of Object.entries(rawAnimations)) {
+    if (!isObj(anim) || !isObj(anim.attachments)) continue;
+    for (const [skin, perSkin] of Object.entries(anim.attachments)) {
+      if (!isObj(perSkin)) continue;
+      for (const [slot, perSlot] of Object.entries(perSkin)) {
+        if (!isObj(perSlot)) continue;
+        for (const [placeholder, perAttachment] of Object.entries(perSlot)) {
+          if (!isObj(perAttachment) || !Array.isArray(perAttachment.sequence)) continue;
+          timelines.push({ animation, skin, slot, placeholder, keys: perAttachment.sequence as unknown[] });
+        }
+      }
+    }
+  }
+  /** Every loaded attachment object -> the address it is filed under, first filing kept. */
+  let addressOf: Map<object, EntryAddress> | null = null;
+  const address = (attachment: object): EntryAddress => {
+    if (addressOf === null) {
+      addressOf = new Map();
+      for (const skin of data.skins) {
+        for (const entry of skin.getAttachments()) {
+          if (!addressOf.has(entry.attachment)) addressOf.set(entry.attachment, entryAddress(skin.name, data.slots[entry.slotIndex].name, entry.placeholder));
+        }
+      }
+    }
+    // An attachment no skin files has no address: it can match no timeline's.
+    return addressOf.get(attachment) ?? '';
+  };
+  return {
+    entries,
+    timelines,
+    hasSlot: (slot) => data.findSlot(slot) !== null,
+    duration: (animation) => data.findAnimation(animation)?.duration ?? null,
+    posedFrame: (animName, slotName, time) => {
+      const slotIndex = data.findSlot(slotName)?.index;
+      if (slotIndex === undefined) return null;
+      const skeleton = new Skeleton(data);
+      const state = new AnimationState(new AnimationStateData(data));
+      state.setAnimation(0, animName, false);
+      skeleton.setupPose();
+      skeleton.update(0);
+      skeleton.updateWorldTransform(Physics.reset);
+      state.update(time);
+      state.apply(skeleton);
+      const pose = skeleton.slots[slotIndex].appliedPose;
+      const shown = pose.attachment;
+      if (shown === null) return null;
+      // The object it plays timelines as — `applyToSlot`'s second test — where the attachment carries one.
+      const playsAs = shown.timelineAttachment ?? shown;
+      const sequence = shown instanceof RegionAttachment || shown instanceof MeshAttachment ? shown.sequence : null;
+      const region = sequence === null ? null : ((sequence.regions[sequence.resolveIndex(pose)] as TextureAtlasRegion | null | undefined)?.name ?? null);
+      return { shown: address(shown), playsAs: address(playsAs), region };
+    },
+  };
+}
+
+/**
  * The runtime's supply of `SkinMeshFacts` (issue #1025, cut 4c-1): every
  * loaded `MeshAttachment` of every skin, linked meshes included, in the loaded
  * skins' order — the walk this file's prelude makes for `meshAttachments` —
@@ -1558,6 +1651,25 @@ export function runtimeRigFacts(skeletonText: string, atlasText: string): { mesh
     return null;
   }
   return { meshes: spineMeshFacts(data, raw), polygons: spinePolygonFacts(data, raw), links: spineLinkFacts(data, raw), constraints: spineConstraintFacts(data) };
+}
+
+/**
+ * Cut 4c-3's facts (issue #1025) as `validate()` supplies them from a pair
+ * spine-core loads — A39's survey, A09's durations, A43's tint and A46's series
+ * — or `null` when the load throws. For the selftest's `VF12` and
+ * `tools/verdict_gate.ts`, which hand them to the bodies and ask the model
+ * side's suppliers the same questions, value by value.
+ */
+export function runtimePosedFacts(skeletonText: string, atlasText: string): { deformSurvey: DeformSurveyFacts; animationDurations: AnimationDurationFacts; twoColour: TwoColourFacts; sequences: SequenceFacts } | null {
+  let data: ReturnType<SkeletonJson['readSkeletonData']>;
+  let raw: Json;
+  try {
+    raw = JSON.parse(skeletonText) as Json;
+    data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(JSON.parse(skeletonText));
+  } catch {
+    return null;
+  }
+  return { deformSurvey: spineDeformSurvey(data), animationDurations: spineAnimationDurations(data), twoColour: spineTwoColourFacts(raw, data), sequences: spineSequenceFacts(raw, data) };
 }
 
 /** A fact supply computed on first use and kept: a supplier that throws throws inside the `check` that asked, as the body it feeds always did. */
@@ -2493,238 +2605,12 @@ export function validate(input: ValidateInput): ValidateReport {
     // reversals out of it and the report prints the rest. What stays here is the
     // SEVERITY and the exemption: the survey has no opinion about either, which
     // is what lets a report run it with no exemption at all.
-    check('A39_DEFORM_KEEPS_TRIANGLE_WINDING', () => {
-      if (!input.rig) {
-        return skip(
-          'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
-          'no rig info (validating a bare directory), so the rig cannot say which slots fold on purpose',
-        );
-      }
-      const survey = surveyDeformKeys(data, new Set(input.rig.deformMayFold));
-      // 🚨 Which dial was turned, when rigc's two halves did not simply agree
-      // about that — and BEFORE any of the returns below, because every one of
-      // them is a run that posed frames through this dial (issue #427).
-      //
-      // The verdict used to live in `DeformReach.label`, which `explain` prints
-      // and nothing else does, so a `build`-only run — the normal loop, and the
-      // one an agent that cannot see the rig actually runs — never learned that
-      // the artifact and the probe named different fields.
-      //
-      // ⛔ Not a refusal, and the measurement rather than taste is why (#427).
-      // The frames this survey posed were each checked against `SliderPose.time`
-      // by the runtime itself, so a disagreement cannot make it pose one that
-      // does not happen; and the field it drives is the largest response the
-      // probe found, so it cannot make it miss one that does. What a
-      // disagreement CAN do is leave the rig naming a property no settable value
-      // of turns far enough — which is what `outside` measures and what an
-      // author can act on. A refusal would refuse a rig spine-core poses
-      // correctly at every key, with no edit that would make it green.
-      //
-      // 🔒 A tie is not a disagreement and gets a line that cannot be read as
-      // one: there the probe named no field, the artifact broke the tie, and the
-      // parent-45° geometry that reaches it is legitimate.
-      if (survey.dialTies.length) {
-        stats.deformDialsTied = survey.dialTies.length;
-        stats.deformDialTied = survey.dialTies.map(dialTieText).join(',');
-      }
-      if (survey.dialDisputes.length) {
-        stats.deformDialsDisagreed = survey.dialDisputes.length;
-        stats.deformDialDisagreed = survey.dialDisputes.map(dialDisputeText).join(',');
-      }
-      /** A key this rule is refusing, by the triple that identifies it. */
-      const refusedKey = new Set<string>();
-      for (const key of survey.keys) {
-        // ⭐ The one thing this rule cannot say about a key that draws nothing.
-        // Its own message below states the harm as "draws its texture
-        // backwards", and that sentence is false when no pixel of the mesh
-        // lands at this time — the slot has faded to alpha 0, or shows another
-        // attachment. So the key is measured, reported and not gated (issue
-        // #401). Per key and per time: the SAME slot folding at full alpha in
-        // another animation, or at another key, is refused as before, which is
-        // what makes this a measurement rather than a second `deformMayFold`.
-        if (key.draw.blank !== null) continue;
-        // And the one thing it cannot say about a key at a time no dial selects
-        // (issue #407): the frame posed is not this key's, so its geometry
-        // belongs to some other time and a winding read off it would be a
-        // measurement of the wrong thing. Named below, on the stats line.
-        if (key.dial?.unreachable === true) continue;
-        if (key.reversed.length === 0) continue;
-        refusedKey.add(`${key.animation} ${key.slot} ${key.attachment} ${key.key}`);
-        const shown = key.reversed
-          .slice(0, 4)
-          .map((r) => `${r.triangle} [${r.ids.join(',')}] ${r.before.toFixed(3)} -> ${r.after.toFixed(3)}px²`);
-        const more = key.reversed.length > shown.length ? `, and ${key.reversed.length - shown.length} more` : '';
-        fail(
-          'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
-          // ⚠️ The frame is in the message whenever it is not the track, because
-          // the same key can be refused in one frame and passed over in another
-          // — two sliders applying one animation are two frames — and a message
-          // that named only the key would be ambiguous about which (issue #407).
-          `animation "${key.animation}"${frameClause(key.reach)} deform ${key.slot}/${key.attachment} ` +
-            `key ${key.key} (t=${key.time}s): ` +
-            `${key.reversed.length} of ${key.triangles} triangle(s) reverse winding — triangle ${shown.join('; triangle ')}` +
-            `${more}. The mesh has turned inside out there and draws its texture backwards` +
-            // The alpha is in the message whenever it is not full, because the
-            // one thing that would make this key exempt is alpha exactly 0 and
-            // an author who has already faded the part half out needs to be
-            // told that half is not none (issue #401).
-            (key.draw.alpha === 1
-              ? ''
-              : ` at alpha ${key.draw.alpha.toFixed(4)} — visible at that strength, and only alpha exactly 0 draws ` +
-                'no pixels at all') +
-            '. Fix the key\'s ' +
-            'offsets in the motion spec\'s deform timeline (a projection past its fold angle is the usual ' +
-            'cause — docs/FACE.md §4.2 has the closed form), or, if this slot folds on purpose, declare it ' +
-            `in the rig spec as invariants.deformMayFold: [{ "slot": "${key.slot}", "why": … }]`,
-        );
-      }
-      // --- and the folds no key lands on (issue #403) ------------------------
-      let spanFolds = 0;
-      for (const span of survey.spans) {
-        if (span.fold === null) continue;
-        // Suppressed when a bounding key already says it: one defect, one
-        // message. The span check is here for what the keys cannot see.
-        const bounded = `${span.animation} ${span.slot} ${span.attachment} `;
-        if (refusedKey.has(bounded + span.fromKey) || refusedKey.has(bounded + span.toKey)) continue;
-        spanFolds++;
-        const at = span.fold;
-        const shown = at.measure.reversed
-          .slice(0, 4)
-          .map((r) => `${r.triangle} [${r.ids.join(',')}] ${r.before.toFixed(3)} -> ${r.after.toFixed(3)}px²`);
-        const more =
-          at.measure.reversed.length > shown.length ? `, and ${at.measure.reversed.length - shown.length} more` : '';
-        // A stepped segment interpolates NOTHING — it holds the earlier key's
-        // geometry across the whole span — so saying "the runtime interpolates"
-        // there would be telling the author to look for a defect in the wrong
-        // place. What changed across a stepped span is what the slot DRAWS.
-        const held = span.curve === 'stepped';
-        fail(
-          'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
-          `animation "${span.animation}"${frameClause(span.reach)} deform ${span.slot}/${span.attachment} ` +
-            `BETWEEN key ${span.fromKey} ` +
-            `(t=${span.fromTime}s) and key ${span.toKey} (t=${span.toTime}s), at t=${at.time.toFixed(6)}s` +
-            (held ? ' (a stepped segment)' : ` — ${(at.percent * 100).toFixed(1)}% of the way from one to the other`) +
-            `: ${at.measure.reversed.length} of ${at.measure.triangles} triangle(s) reverse winding — ` +
-            `triangle ${shown.join('; triangle ')}${more}. NO KEY LANDS THERE: ` +
-            (held
-              ? `a stepped segment interpolates nothing, it HOLDS key ${span.fromKey}'s geometry across the whole ` +
-                'span — so the fold is that key\'s and what changes here is what the slot draws'
-              : 'the runtime interpolates between the two keys, and the mesh is inside out for part of the way') +
-            ', drawing its texture backwards' +
-            (at.measure.draw.alpha === 1
-              ? ''
-              : ` at alpha ${at.measure.draw.alpha.toFixed(4)} — visible at that strength, and only alpha exactly 0 ` +
-                'draws no pixels at all') +
-            '. ' +
-            (held
-              ? `Fix key ${span.fromKey}'s offsets, or keep the slot drawing nothing for as long as it holds them`
-              : 'Add a key inside the span so the geometry the runtime passes through is geometry you wrote, or ' +
-                "move the two keys' offsets closer together (a projection past its fold angle is the usual cause " +
-                '— docs/FACE.md §4.2 has the closed form)') +
-            (at.measure.draw.alpha === 1
-              ? ''
-              : '; if the part is being faded out over this turn, land the alpha-0 key BEFORE the folding key ' +
-                'rather than on it, so every frame that folds is a frame that draws nothing (docs/FACE.md §9.2)') +
-            `, or, if this slot folds on purpose, declare it in the rig spec as invariants.deformMayFold: ` +
-            `[{ "slot": "${span.slot}", "why": … }]`,
-        );
-      }
-      if (survey.timelines === 0) {
-        return skip('A39_DEFORM_KEEPS_TRIANGLE_WINDING', 'no animation carries a deform timeline');
-      }
-      if (survey.keys.length === 0) {
-        const why = [
-          survey.exempted.length ? `the rig declares ${survey.exempted.join(', ')} as deformMayFold` : '',
-          survey.notAMesh.length ? `${survey.notAMesh.join(', ')} deform an attachment with no triangles` : '',
-        ].filter(Boolean);
-        return skip(
-          'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
-          `no deform timeline here has a winding to keep: ${why.join('; ') || 'every mesh keyed has no triangles'}`,
-        );
-      }
-      // ⚠️ Silence is not a pass. A key passed over because nothing of it is
-      // drawn has to be visible on a green run too — this is the only surface
-      // `validate` has, and `explain`'s DEFORM block prints the whole sentence
-      // beside the key's own figures.
-      // ⚠️ Unreachable first and `blank` second, in the survey's own order, so
-      // the two counts partition the ungated keys instead of double-counting a
-      // key that is both.
-      const unreachable = survey.keys.filter((k) => k.dial?.unreachable === true);
-      const blank = survey.keys.filter((k) => k.dial?.unreachable !== true && k.draw.blank !== null);
-      const ungated = blank.length + unreachable.length;
-      const name = (k: (typeof survey.keys)[number]): string =>
-        `${k.animation}/${k.slot}/${k.attachment}#${k.key}:${k.draw.showsThisMesh ? 'alpha0' : 'notShown'}`;
-      // ⚠️ `&& spanFolds === 0` because a rig whose every key draws nothing can
-      // still fold at a time between two of them that DOES draw — that is issue
-      // #403's own case, and a SKIP printed over a refusal would be this rule
-      // reporting "nothing to measure" about the thing it just measured.
-      if (ungated === survey.keys.length && spanFolds === 0) {
-        const first = blank[0] ?? unreachable[0];
-        return skip(
-          'A39_DEFORM_KEEPS_TRIANGLE_WINDING',
-          `no deform key here is measurable in the frame its animation is reached in — ` +
-            `${first.animation} ${first.slot}/${first.attachment} key ${first.key}: ` +
-            `${first.draw.blank ?? unreachableWhy(first)}` +
-            (survey.keys.length > 1 ? `, and ${survey.keys.length - 1} more key(s) like it` : '') +
-            (unreachable.length
-              ? `. ${unreachable.length} of them at a time no dial selects, which is a rig defect this rule does ` +
-                'not refuse and does not pass over in silence either'
-              : '') +
-            (survey.spans.length
-              ? `. The ${survey.spans.length} span(s) between them were scanned too and none folds where anything ` +
-                'is drawn'
-              : ''),
-        );
-      }
-      stats.deformKeysMeasured = survey.keys.length - ungated;
-      stats.deformTrianglesMeasured = survey.trianglesMeasured;
-      stats.deformTrianglesCollapsed = survey.collapsed;
-      // Which frame each animation was posed in (issue #407) — printed only when
-      // a slider chose one, because on every other rig it says "a track" about
-      // every animation and a stats line that never varies is not a reading.
-      const frames = [...new Map(survey.keys.map((k) => [`${k.animation}/${k.reach.slider ?? 'track'}`, k])).values()];
-      if (frames.some((k) => k.reach.kind === 'slider')) {
-        stats.deformFrames = frames
-          .map((k) => `${k.animation}:${k.reach.kind === 'slider' ? `slider/${k.reach.slider}` : 'track'}`)
-          .join(',');
-      }
-      if (blank.length) {
-        stats.deformKeysNotDrawn = blank.length;
-        stats.deformNotDrawn = blank.map(name).join(',');
-        if (survey.notDrawnReversed) stats.deformNotDrawnReversed = survey.notDrawnReversed;
-      }
-      // 🚨 A key at a time no dial can select is NOT a pass and NOT a refusal —
-      // it is a rig whose slider cannot reach its own animation's key, named
-      // here so a green run cannot be read as having measured it (issue #407).
-      if (unreachable.length) {
-        stats.deformKeysUnreachable = unreachable.length;
-        stats.deformUnreachable = unreachable
-          .map((k) => `${k.animation}/${k.slot}/${k.attachment}#${k.key}@${k.dial?.applied.toFixed(6) ?? '?'}`)
-          .join(',');
-        if (survey.notReachableReversed) stats.deformUnreachableReversed = survey.notReachableReversed;
-      }
-      if (survey.exempted.length) stats.deformFoldExempt = survey.exempted.join(',');
-      // ⚠️ The between-keys scan on the stats line, on a GREEN run too (issue
-      // #403). `deformSpansScanned` is the positive control an agent can read —
-      // a scan that ran and found nothing has to be distinguishable from a scan
-      // that never ran — and `deformSpanProbes` is what it cost: 0 on a rig the
-      // closed form flags nothing in, one posed measurement per flagged window
-      // otherwise.
-      stats.deformSpansScanned = survey.spans.length;
-      // ⚠️ And the ones it could NOT scan, for the same reason the line above
-      // exists: a span bounded by a key at a time no dial selects would be
-      // solved over two poses of some other time, so it is skipped — and a skip
-      // nobody can see is the silence this whole surface is against (#407).
-      if (survey.spansNotScanned) stats.deformSpansNotScanned = survey.spansNotScanned;
-      if (survey.spanProbes) stats.deformSpanProbes = survey.spanProbes;
-      if (survey.spansNotDrawn) stats.deformSpansNotDrawn = survey.spansNotDrawn;
-      // A prediction nothing reproduced. Never a refusal — that would be the
-      // false red issues #44 and #262 already cost this file — and never a
-      // silence either: the one case that reaches it is a weighted mesh whose
-      // bones move across the span, where the closed form's fixed-pose
-      // assumption is the thing that did not hold.
-      if (survey.spansUnconfirmed) stats.deformSpansUnconfirmed = survey.spansUnconfirmed;
-    });
+    //
+    // Since issue #1025 (cut 4c-3) "here" is `./assertions/bodies/a39.ts`, which
+    // takes the survey as a fact: `spineDeformSurvey` hands it spine-core's, and
+    // the model side the core's over the model document — the same body, and the
+    // survey the two hand it held to one by `tools/survey_hashes.ts`.
+    check('A39_DEFORM_KEEPS_TRIANGLE_WINDING', () => a39DeformKeepsTriangleWinding(verdicts, spineDeformSurvey(data), input.rig));
 
     // --- A23, A41, A36, A37, A47, A48: a constraint that does nothing, quietly -
     //
@@ -3075,69 +2961,10 @@ export function validate(input: ValidateInput): ValidateReport {
     check('A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED', () => a38SkinMembersAreSkinRequired(verdicts, data));
 
     // --- A09: compiled duration == declared duration (rule 4) --------------
-    check('A09_ANIMATION_DURATION_MATCHES_SPEC', () => {
-      // Without the spec there is no declared duration to compare the compiled
-      // one against, and returning here used to count as a PASS — a gate saying
-      // it checked something it never looked at.
-      if (!input.declaredDurations) {
-        return skip('A09_ANIMATION_DURATION_MATCHES_SPEC', 'no motion spec supplied, so no declared duration to compare against');
-      }
-      // Same trap one level down. A **static rig** — a skeleton that exists to
-      // be posed and carries no animation at all, which is what
-      // `1-weight-and-mass`'s second export is — declares nothing and loads
-      // nothing, so both loops below iterate zero times and the assertion
-      // reported PASS. That is the vacuous green this report is built to refuse:
-      // there is no duration here, and saying so is the honest answer.
-      if (Object.keys(input.declaredDurations).length === 0 && data.animations.length === 0) {
-        return skip('A09_ANIMATION_DURATION_MATCHES_SPEC', SKIP_NO_DECLARED_DURATION);
-      }
-      for (const [name, declared] of Object.entries(input.declaredDurations)) {
-        const anim = data.findAnimation(name);
-        if (!anim) {
-          fail('A09_ANIMATION_DURATION_MATCHES_SPEC', `spec declares animation "${name}" but the skeleton has none`);
-          continue;
-        }
-        // Two arms, and the asymmetry is the point.
-        //
-        // UNDERSHOOT is R7's question — is the declared duration wrong? An
-        // animation may hold its final pose, so a last key a little before the
-        // end is ordinary and a frame of that is slack.
-        //
-        // OVERSHOOT is a different question with a different tolerance.
-        // `anim.duration` IS the largest key time (`SkeletonJson.ts:1261` takes
-        // the max over every timeline's own duration), so a loaded duration past
-        // the declared one means a KEY is past it — and nothing that plays the
-        // animation for the duration it declares will ever reach that key. Rung
-        // 6 lost a one-frame attachment reveal to a key 3.4e-5 s past the end,
-        // 1/500 of FRAME, which this comparison read as agreement (issue #54).
-        // `compile.ts` refuses that per timeline now; this is the same rule held
-        // against a skeleton the compiler never saw.
-        // The slack is one float32 step at the declared duration, and it is the
-        // same function the compiler's Rule 4 refuses on (`float32Step`, in
-        // `timelines.ts`, which says why it is a step of the float and no longer
-        // a fixed 1e-6 plus one).
-        const slack = float32Step(declared);
-        const past = anim.duration - declared;
-        if (past > slack) {
-          const late = anim.timelines.filter((t) => t.getDuration() - declared > slack).length;
-          fail(
-            'A09_ANIMATION_DURATION_MATCHES_SPEC',
-            `animation "${name}" has ${late} timeline(s) keyed past the declared duration ${declared}s — ` +
-              `the last key is at ${anim.duration}s, ${past.toFixed(6)}s late, so nothing ever samples it`,
-          );
-        } else if (declared - anim.duration > FRAME) {
-          fail(
-            'A09_ANIMATION_DURATION_MATCHES_SPEC',
-            `animation "${name}" loaded duration ${anim.duration}s, spec declares ${declared}s`,
-          );
-        }
-      }
-      for (const anim of data.animations) {
-        if (!(anim.name in input.declaredDurations)) {
-          fail('A09_ANIMATION_DURATION_MATCHES_SPEC', `skeleton has animation "${anim.name}" with no spec entry`);
-        }
-      }
-    });
+    //
+    // The body is `./assertions/bodies/a09.ts` since issue #1025 (cut 4c-3);
+    // what it reads off the loaded skeleton is `spineAnimationDurations`.
+    check('A09_ANIMATION_DURATION_MATCHES_SPEC', () => a09AnimationDurationMatchesSpec(verdicts, spineAnimationDurations(data), input.declaredDurations));
 
     // --- A10: step every animation and look for NaN ------------------------
     check('A10_NO_NAN_AFTER_STEPPING', () => {
@@ -3375,188 +3202,11 @@ export function validate(input: ValidateInput): ValidateReport {
     // ⚠️ The hex is parsed HERE rather than through `Color.fromString`, and that
     // is the point of the clause: a check that read the required value out of the
     // same parser it is checking would agree with it whatever it did.
-    check('A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', () => {
-      /** `rrggbb`, or `rrggbbaa` whose last pair the format drops. Null for anything else. */
-      const readDarkHex = (hex: string): [number, number, number] | null => {
-        const body = hex.startsWith('#') ? hex.slice(1) : hex;
-        if (!/^[\da-fA-F]{6}([\da-fA-F]{2})?$/.test(body)) return null;
-        return [0, 2, 4].map((i) => Number.parseInt(body.slice(i, i + 2), 16) / 255) as [number, number, number];
-      };
-      /** `rrggbbaa`, or `rrggbb` the runtime opens at alpha 1. Null for anything else. */
-      const readLightHex = (hex: string): [number, number, number, number] | null => {
-        const body = hex.startsWith('#') ? hex.slice(1) : hex;
-        if (!/^[\da-fA-F]{6}([\da-fA-F]{2})?$/.test(body)) return null;
-        const rgb = [0, 2, 4].map((i) => Number.parseInt(body.slice(i, i + 2), 16) / 255);
-        return [rgb[0], rgb[1], rgb[2], body.length === 8 ? Number.parseInt(body.slice(6, 8), 16) / 255 : 1];
-      };
-      /**
-       * Half a quantisation step. A channel is one byte in the file and a
-       * `Float32Array` entry in a timeline, so the widest honest gap between the
-       * number written and the number posed is well under `1/510`.
-       */
-      const STEP = 1 / 510;
-      const off = (found: number, want: number): boolean => !Number.isFinite(found) || Math.abs(found - want) > STEP;
-      const show = (c: readonly number[]): string => c.map((n) => (Number.isFinite(n) ? n.toFixed(4) : 'NaN')).join(', ');
-
-      // -- the subjects, read off the FILE ---------------------------------
-      const declared = new Map<string, string>();
-      for (const slot of Array.isArray(raw?.slots) ? (raw.slots as unknown[]) : []) {
-        if (isObj(slot) && typeof slot.dark === 'string') declared.set(String(slot.name), slot.dark);
-      }
-      // `rgb2` joined in issue #730, and it is this rule's subject rather than a
-      // new one's because it is the same tint with the light alpha left out:
-      // `RGB2Timeline` writes the light rgb and the dark colour, and on a slot
-      // with no dark colour it throws in `apply1` exactly as `RGBA2Timeline`
-      // does (measured on a forged file: `TypeError: null is not an object
-      // (evaluating 'dark.r = …')`). The one thing it does differently is the
-      // alpha it does NOT pose, which is `A45`'s question, not this one's.
-      const keyed: Array<{ anim: string; slot: string; timeline: 'rgba2' | 'rgb2'; keys: unknown[] }> = [];
-      const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
-      for (const [animName, anim] of Object.entries(rawAnimations)) {
-        if (!isObj(anim) || !isObj(anim.slots)) continue;
-        for (const [slotName, timelines] of Object.entries(anim.slots)) {
-          if (!isObj(timelines)) continue;
-          for (const timeline of ['rgba2', 'rgb2'] as const) {
-            const keys = timelines[timeline];
-            if (Array.isArray(keys)) keyed.push({ anim: animName, slot: slotName, timeline, keys });
-          }
-        }
-      }
-      if (declared.size === 0 && keyed.length === 0) {
-        return skip('A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', SKIP_NO_TWO_COLOR_TINT);
-      }
-      stats.darkSlots = declared.size;
-      stats.rgba2Timelines = keyed.filter((t) => t.timeline === 'rgba2').length;
-      stats.rgb2Timelines = keyed.filter((t) => t.timeline === 'rgb2').length;
-
-      // -- clause 1: the setup pose ----------------------------------------
-      for (const [name, hex] of declared) {
-        const want = readDarkHex(hex);
-        const loaded = data.findSlot(name)?.setupPose.darkColor ?? null;
-        // ⚠️ "The parser kept nothing" is asked FIRST, and the order is the
-        // finding rather than a style: an empty string is both unreadable as a
-        // colour and dropped outright, and only the second sentence is about
-        // what the loaded skeleton holds. Asked the other way round, `""` was
-        // reported as "not six hex digits" — true, and about the file, on the
-        // one input where the file is not what went wrong.
-        if (loaded === null) {
-          fail(
-            'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
-            `slot "${name}" states dark ${JSON.stringify(hex)} and the loaded skeleton holds no dark colour for ` +
-              'it at all — the slot reader takes `dark` through a truthiness test, so a falsy value is dropped ' +
-              'in silence and the slot is tinted with one colour',
-          );
-          continue;
-        }
-        if (want === null) {
-          fail(
-            'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
-            `slot "${name}" states dark ${JSON.stringify(hex)}, which is not six hex digits — the parser reads ` +
-              'fixed two-character slices and stores whatever `parseInt` returns, so the loaded colour is ' +
-              `(${show([loaded.r, loaded.g, loaded.b])}) rather than a failure`,
-          );
-          continue;
-        }
-        const found: [number, number, number] = [loaded.r, loaded.g, loaded.b];
-        if (found.some((n, i) => off(n, want[i]))) {
-          fail(
-            'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
-            `slot "${name}" states dark ${JSON.stringify(hex)} and the runtime loaded (${show(found)}), wanted ` +
-              `(${show(want)})`,
-          );
-        }
-      }
-
-      // -- clauses 2 and 3: every rgba2 and rgb2 timeline --------------------
-      //
-      // ⚠️ Clause 2 poisons its whole ANIMATION, not only its own timeline: the
-      // throw happens inside `state.apply`, which applies every timeline of the
-      // animation at once, so posing a second — correct — `rgba2` timeline in the
-      // same animation would take this assertion down with a `threw:` line
-      // instead of the two named failures it has already worked out.
-      const cannotPose = new Set(keyed.filter((t) => !declared.has(t.slot)).map((t) => t.anim));
-      for (const { anim: animName, slot: slotName, timeline, keys } of keyed) {
-        const where = `animation "${animName}" slot "${slotName}" ${timeline}`;
-        if (!declared.has(slotName)) {
-          fail(
-            'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
-            `${where}: slot "${slotName}" declares no setup "dark", so the runtime allocates no dark colour for ` +
-              `it and applying this animation throws instead of tinting — give the slot a \`dark\`, or key ` +
-              `"${timeline === 'rgba2' ? 'rgba' : 'rgb'}"`,
-          );
-          continue;
-        }
-        if (cannotPose.has(animName)) continue;
-        const animation = data.findAnimation(animName);
-        if (!animation) {
-          fail('A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', `${where}: the loaded skeleton has no animation "${animName}"`);
-          continue;
-        }
-        for (const rawKey of keys) {
-          if (!isObj(rawKey)) continue;
-          const time = typeof rawKey.time === 'number' ? rawKey.time : 0;
-          const wantLight = typeof rawKey.light === 'string' ? readLightHex(rawKey.light) : null;
-          const wantDark = typeof rawKey.dark === 'string' ? readDarkHex(rawKey.dark) : null;
-          // ⚠️ Posed BEFORE the key's own spelling is judged, so that a key whose
-          // hex cannot be read is still reported with the colour the runtime
-          // actually holds. `Color.setFromString` slices fixed offsets and stores
-          // whatever `parseInt` gives back, so the value found is the product
-          // here — "not six hex digits" alone would be the value REQUIRED twice
-          // over and the found value nowhere.
-          const skeleton = new Skeleton(data);
-          const state = new AnimationState(new AnimationStateData(data));
-          state.setAnimation(0, animName, false);
-          skeleton.setupPose();
-          skeleton.update(0);
-          skeleton.updateWorldTransform(Physics.reset);
-          // At the key as the runtime stores it — see `atStoredKey` (#771).
-          state.update(atStoredKey(time));
-          state.apply(skeleton);
-          skeleton.update(atStoredKey(time));
-          skeleton.updateWorldTransform(Physics.update);
-          const posed = skeleton.slots.find((s) => s.data.name === slotName)?.appliedPose;
-          const light = posed?.color;
-          const dark = posed?.darkColor ?? null;
-          if (!light || dark === null) {
-            fail(
-              'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
-              `${where} (t=${time}): the posed skeleton has no ${light ? 'dark colour' : 'slot'} to read`,
-            );
-            continue;
-          }
-          const foundLight: [number, number, number, number] = [light.r, light.g, light.b, light.a];
-          const foundDark: [number, number, number] = [dark.r, dark.g, dark.b];
-          if (wantLight === null || wantDark === null) {
-            fail(
-              'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
-              `${where} (t=${time}): the key states light ${JSON.stringify(rawKey.light)} and dark ` +
-                `${JSON.stringify(rawKey.dark)} — an ${timeline} key needs both, each six or eight hex digits — and the ` +
-                `runtime poses light (${show(foundLight)}), dark (${show(foundDark)})`,
-            );
-            continue;
-          }
-          // An `rgb2` key's light colour is three channels, and the posed alpha
-          // is not its to state — `RGB2Timeline` leaves it where it was — so the
-          // comparison is over the channels the timeline writes. For `rgba2`
-          // that is all four, and the line reads as it always did.
-          const lightChannels = timeline === 'rgba2' ? 4 : 3;
-          if (foundLight.slice(0, lightChannels).some((n, i) => off(n, wantLight[i]))) {
-            fail(
-              'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
-              `${where} (t=${time}): light posed (${show(foundLight.slice(0, lightChannels))}), the key states ` +
-                `${JSON.stringify(rawKey.light)} = (${show(wantLight.slice(0, lightChannels))})`,
-            );
-          }
-          if (foundDark.some((n, i) => off(n, wantDark[i]))) {
-            fail(
-              'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN',
-              `${where} (t=${time}): dark posed (${show(foundDark)}), the key states ${JSON.stringify(rawKey.dark)} ` +
-                `= (${show(wantDark)})`,
-            );
-          }
-        }
-      }
-    });
+    //
+    // The body is `./assertions/bodies/a43.ts` since issue #1025 (cut 4c-3);
+    // what it reads off the skeleton JSON and the loaded skeleton is
+    // `spineTwoColourFacts`.
+    check('A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', () => a43TwoColorTintLoadsAndPosesAsWritten(verdicts, spineTwoColourFacts(raw, data)));
 
     // --- A45: the separable colour timelines own their channels ------------
     //
@@ -3616,7 +3266,7 @@ export function validate(input: ValidateInput): ValidateReport {
     // every key at sampled times — mid-frame, so a float32 key time cannot land
     // a sample on a frame boundary — and compares the region the slot shows
     // against the one the file's own statement gives: the frame the key's mode,
-    // index and delay give (`frameOf` below), and the frame names
+    // index and delay give (`frameOf` in the body), and the frame names
     // `attachmentRegionLookups` derives (the core's `frameRegionName`). Neither is
     // read off the loaded timeline, so the check is not the runtime agreeing
     // with itself.
@@ -3625,245 +3275,11 @@ export function validate(input: ValidateInput): ValidateReport {
     // `applyToSlot` returns there, and a series that is hidden is not a series
     // showing the wrong frame. A timeline with no comparable sample at all is
     // counted in `stats.sequenceSamplesUnshown` rather than failed.
-    check('A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES', () => {
-      const NAME = 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES';
-      type Series = { where: string; lookups: string[] | null; count: number; setup: number };
-      /** The loaded attachment -> what the FILE says its series is. */
-      const series = new Map<object, Series>();
-      /** `skin\0slot\0placeholder` -> the loaded attachment, for the timelines to find. */
-      const byJoin = new Map<string, object>();
-      /** Attachments whose block was already refused above — their timelines say nothing more. */
-      const refused = new Set<object>();
-      const whole = (v: unknown, fallback: number): number | null =>
-        v === undefined ? fallback : typeof v === 'number' && Number.isInteger(v) ? v : null;
-      let blocks = 0;
-      for (const skin of isObj(raw) && Array.isArray(raw.skins) ? (raw.skins as unknown[]) : []) {
-        if (!isObj(skin) || !isObj(skin.attachments)) continue;
-        const skinName = typeof skin.name === 'string' ? skin.name : '(unnamed)';
-        const loadedSkin = data.findSkin(skinName);
-        for (const [slotName, entries] of Object.entries(skin.attachments)) {
-          if (!isObj(entries)) continue;
-          const slotIndex = data.findSlot(slotName)?.index;
-          for (const [placeholder, entry] of Object.entries(entries)) {
-            if (!isObj(entry)) continue;
-            const type = entry.type === undefined ? 'region' : entry.type;
-            if (type !== 'region' && type !== 'mesh' && type !== 'linkedmesh') continue;
-            const loaded = slotIndex === undefined ? null : loadedSkin?.getAttachment(slotIndex, placeholder) ?? null;
-            const where = `skin ${JSON.stringify(skinName)} slot ${JSON.stringify(slotName)} attachment ${JSON.stringify(placeholder)}`;
-            if (loaded !== null) byJoin.set(`${skinName}\u0000${slotName}\u0000${placeholder}`, loaded);
-            if (entry.sequence === undefined || entry.sequence === null) continue;
-            blocks++;
-            const seq = entry.sequence;
-            const name = typeof entry.name === 'string' ? entry.name : placeholder;
-            const path = typeof entry.path === 'string' ? entry.path : name;
-            const count = isObj(seq) ? whole(seq.count, 0) : null;
-            const setup = isObj(seq) ? whole(seq.setup, 0) : null;
-            if ((count === null || setup === null || count < 1) && loaded !== null) refused.add(loaded);
-            if (count === null || setup === null || count < 1) {
-              fail(
-                NAME,
-                `${where}: the sequence states ${JSON.stringify(seq)}` +
-                  (isObj(seq) && seq.count === undefined
-                    ? ' and no "count" — `readSequence` reads 0 (`SkeletonJson.js:644`), so the attachment loads holding no region and draws nothing'
-                    : ' — "count" is a whole number of at least 1 and "setup" a whole number, or the series the parser builds is not the one written'),
-              );
-              continue;
-            }
-            if ((setup < 0 || setup >= count) && loaded !== null) refused.add(loaded);
-            if (setup < 0 || setup >= count) {
-              fail(
-                NAME,
-                `${where}: the sequence's setup frame is ${setup} of a ${count}-frame series (frames 0 to ${count - 1}); ` +
-                  '`Sequence.resolveIndex` clamps it, so the setup pose shows ' +
-                  `${setup < 0 ? 'no frame at all' : `frame ${count - 1}, which the file does not name`}`,
-              );
-              continue;
-            }
-            if (loaded === null) continue; // A00/A08 own an attachment that did not load
-            series.set(loaded, { where, lookups: attachmentRegionLookups(seq, path), count, setup });
-          }
-        }
-      }
-
-      /**
-       * The frame the file's statement gives for one key at one elapsed time —
-       * A46's prediction, not a call into the runtime. What holds it is the
-       * comparison it feeds: every sample sets it against the frame the posed
-       * slot shows, so a reading that disagreed with the runtime would fail A46
-       * on a correct file. A46 passing with samples posed on the selftest's
-       * series probes is that measurement for the modes they key; `M73` is its
-       * red half.
-       */
-      const frameOf = (mode: string, index: number, elapsed: number, delay: number, count: number): number => {
-        if (mode === 'hold') return index;
-        let i = index + Math.trunc(elapsed / delay + 0.00001);
-        const n = count * 2 - 2;
-        switch (mode) {
-          case 'once':
-            return Math.min(count - 1, i);
-          case 'loop':
-            return i % count;
-          case 'pingpong':
-            i = n === 0 ? 0 : i % n;
-            return i >= count ? n - i : i;
-          case 'onceReverse':
-            return Math.max(count - 1 - i, 0);
-          case 'loopReverse':
-            return count - 1 - (i % count);
-          default: // pingpongReverse
-            i = n === 0 ? 0 : (i + count - 1) % n;
-            return i >= count ? n - i : i;
-        }
-      };
-
-      let timelines = 0;
-      let compared = 0;
-      let unshown = 0;
-      const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
-      for (const [animName, anim] of Object.entries(rawAnimations)) {
-        if (!isObj(anim) || !isObj(anim.attachments)) continue;
-        for (const [skinName, perSkin] of Object.entries(anim.attachments)) {
-          if (!isObj(perSkin)) continue;
-          for (const [slotName, perSlot] of Object.entries(perSkin)) {
-            if (!isObj(perSlot)) continue;
-            for (const [placeholder, perAttachment] of Object.entries(perSlot)) {
-              if (!isObj(perAttachment) || !Array.isArray(perAttachment.sequence)) continue;
-              const keys = perAttachment.sequence as unknown[];
-              if (keys.length === 0) continue; // `readAnimation` skips it; A34 owns an empty timeline
-              timelines++;
-              const where = `animation ${JSON.stringify(animName)} ${skinName}/${slotName}/${placeholder} sequence`;
-              const keyed = byJoin.get(`${skinName}\u0000${slotName}\u0000${placeholder}`);
-              if (keyed === undefined) continue; // the parser throws on a missing target: A00's
-              if (refused.has(keyed)) continue; // its block is already named above
-              const own = series.get(keyed);
-              if (own === undefined) {
-                fail(
-                  NAME,
-                  `${where}: the timeline steps an attachment that carries no "sequence" block. The parser gives it a ` +
-                    'series of ONE region (`readSequence(null)` is `new Sequence(1, false)`), so every mode shows that ' +
-                    'region at every time — measured: a "loop" key on a plain region showed it throughout',
-                );
-                continue;
-              }
-              // -- the keys, as the file states them --------------------------
-              type Key = { time: number; mode: string; index: number; delay: number };
-              const read: Key[] = [];
-              let carried = 0;
-              let malformed = false;
-              keys.forEach((rawKey, k) => {
-                const key = isObj(rawKey) ? rawKey : {};
-                const at = `${where} key ${k}`;
-                const time = typeof key.time === 'number' ? key.time : 0;
-                const mode = key.mode === undefined ? 'hold' : key.mode;
-                const index = key.index === undefined ? 0 : key.index;
-                if (key.delay !== undefined) carried = typeof key.delay === 'number' ? key.delay : Number.NaN;
-                if (typeof mode !== 'string' || !(SEQUENCE_MODES as readonly string[]).includes(mode)) {
-                  malformed = true;
-                  fail(
-                    NAME,
-                    `${at} (t=${time}): mode ${JSON.stringify(key.mode)} is not one of the ${SEQUENCE_MODES.length} the ` +
-                      `format has (${SEQUENCE_MODES.join(', ')}); the parser reads \`SequenceMode[mode]\`, which is ` +
-                      'undefined, stores mode bits 0, and the key plays as "hold"',
-                  );
-                  return;
-                }
-                if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= own.count) {
-                  malformed = true;
-                  fail(
-                    NAME,
-                    `${at} (t=${time}): index ${JSON.stringify(key.index)} is not a frame of the ${own.count}-frame series ` +
-                      `(0 to ${own.count - 1}); the runtime stores \`index << 4\`, truncating a fraction, and ` +
-                      '`Sequence.resolveIndex` clamps a frame past the end to the last one',
-                  );
-                  return;
-                }
-                if (mode !== 'hold' && !(carried > 0)) {
-                  malformed = true;
-                  fail(
-                    NAME,
-                    `${at} (t=${time}): "${mode}" at a delay of ${String(carried)}${key.delay === undefined ? ' (carried from the key before, 0 on the first)' : ''} — ` +
-                      'the frame advances by `(time - keyTime) / delay`, and at 0 that is Infinity, `Infinity | 0` is 0, ' +
-                      'and the key shows its first frame throughout: "hold" spelt as another mode',
-                  );
-                  return;
-                }
-                read.push({ time, mode, index, delay: carried });
-              });
-              if (malformed) continue;
-
-              // -- the pose, sampled ------------------------------------------
-              const animation = data.findAnimation(animName);
-              const slotIndex = data.findSlot(slotName)?.index;
-              if (animation === null || slotIndex === undefined) continue; // A00's
-              /** `key` is the index into `read`, or -1 before the first key (the setup frame). */
-              const samples: Array<{ time: number; key: number; steps: number }> = [];
-              const end = animation.duration;
-              if (read[0].time > 0) samples.push({ time: read[0].time / 2, key: -1, steps: 0 });
-              read.forEach((key, k) => {
-                const until = k + 1 < read.length ? read[k + 1].time : end;
-                if (key.mode === 'hold') {
-                  samples.push({ time: key.time, key: k, steps: 0 });
-                  return;
-                }
-                // Mid-frame, and enough steps to wrap every mode at least once.
-                for (let step = 0; step < own.count * 2 + 2; step++) {
-                  const time = key.time + (step + 0.5) * key.delay;
-                  if (time >= until || time > end) break;
-                  samples.push({ time, key: k, steps: step + 0.5 });
-                }
-              });
-              let shownHere = 0;
-              for (const sample of samples) {
-                const skeleton = new Skeleton(data);
-                const state = new AnimationState(new AnimationStateData(data));
-                state.setAnimation(0, animName, false);
-                skeleton.setupPose();
-                skeleton.update(0);
-                skeleton.updateWorldTransform(Physics.reset);
-                // A `hold` sample is AT its key, so it is posed at the key as
-                // the runtime stores it (`atStoredKey`); a mid-frame sample is
-                // half a delay from any key and is posed where it is.
-                state.update(sample.key >= 0 && sample.steps === 0 ? atStoredKey(sample.time) : sample.time);
-                state.apply(skeleton);
-                const pose = skeleton.slots[slotIndex].appliedPose;
-                const shown = pose.attachment;
-                // The slot must show the keyed attachment or one playing its
-                // timelines — the only case `applyToSlot` writes.
-                if (shown === null || (shown !== keyed && shown.timelineAttachment !== keyed)) continue;
-                const drawn = series.get(shown);
-                if (drawn === undefined || drawn.lookups === null) continue;
-                shownHere++;
-                compared++;
-                // The frame count the runtime folds by is the SHOWN attachment's:
-                // a link with a series of its own steps it by its source's keys.
-                const key = sample.key < 0 ? null : read[sample.key];
-                const want = key === null ? drawn.setup : frameOf(key.mode, key.index, sample.time - key.time, key.delay, drawn.count);
-                const sequence = (shown as RegionAttachment | MeshAttachment).sequence;
-                const region = (sequence.regions[sequence.resolveIndex(pose)] as TextureAtlasRegion | null | undefined)?.name ?? null;
-                if (region !== drawn.lookups[want]) {
-                  fail(
-                    NAME,
-                    `${where} (t=${Number(sample.time.toFixed(4))}): the slot shows region ${JSON.stringify(region)}, and ` +
-                      `the file states frame ${want} of ${drawn.count} — ${JSON.stringify(drawn.lookups[want])} — ` +
-                      (key === null
-                        ? 'the setup frame, before the first key'
-                        : `key ${sample.key} plays "${key.mode}" from frame ${key.index} every ${key.delay}s, ` +
-                          `${sample.steps} delay(s) in`),
-                  );
-                  break;
-                }
-              }
-              if (shownHere === 0) unshown++;
-            }
-          }
-        }
-      }
-      if (blocks === 0 && timelines === 0) return skip(NAME, SKIP_NO_SEQUENCE);
-      stats.sequenceBlocks = blocks;
-      stats.sequenceTimelines = timelines;
-      stats.sequenceSamples = compared;
-      if (unshown > 0) stats.sequenceSamplesUnshown = unshown;
-    });
+    //
+    // The body is `./assertions/bodies/a46.ts` since issue #1025 (cut 4c-3);
+    // what it reads off the skeleton JSON and the loaded skeleton is
+    // `spineSequenceFacts`, which answers an attachment by its address.
+    check('A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES', () => a46SequenceAttachmentsShowTheFrameTheFileStates(verdicts, spineSequenceFacts(raw, data)));
   }
 
   // --- A06 / A17 / A19: the atlas against the PNGs on disk ------------------

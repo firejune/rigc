@@ -523,6 +523,7 @@ import { modelRegionJoinsWith, type SlotKeyWalk } from './src/assertions/model/r
 import { modelSkeletonRoster } from './src/assertions/model/skeleton_roster.ts';
 import { modelBoneTimelines } from './src/assertions/model/bone_timelines.ts';
 import { modelEventKeys } from './src/assertions/model/event_keys.ts';
+import { comparePosedFacts, sumPosedTallies, POSED_FACT_FAMILIES, type PosedFactFamily, type PosedFactTally } from './tools/verdict_gate.ts';
 import { compareRigFacts, modelRigFacts, RIG_FACT_FAMILIES, rigFactsDerivations, rigFactsSpelling, sumTallies, type DerivationTally, type RigFactFamily, type RigFacts } from './tools/rig_facts.ts';
 import {
   articulatedFixture,
@@ -968,7 +969,8 @@ function modelInputOf(input: ValidateInput, modelText: string): Parameters<typeo
   } catch {
     given = undefined;
   }
-  return { modelText, atlasDir: input.atlasDir, profile: input.profile, rig: input.rig, given };
+  // The declared durations too, as `validate()` is handed them (cut 4c-3: A09 reads them).
+  return { modelText, atlasDir: input.atlasDir, profile: input.profile, rig: input.rig, given, declaredDurations: input.declaredDurations };
 }
 
 /** The document's skins and each skin's slot keys as the document itself lists them — what a walk restating no order would read (`VF09`, `VF11`). */
@@ -1030,6 +1032,15 @@ class SupplierCheck {
   rigFacts = { builds: 0, calls: 0, identical: 0 };
   derivations = new Map<string, DerivationTally>();
   private rigBuilt = new Set<string>();
+  /**
+   * Cut 4c-3's families compared question by question (`comparePosedFacts`
+   * in `tools/verdict_gate.ts`), once per distinct build and the inputs the
+   * bodies read beside it — the rig info and the declared durations — over the
+   * own calls: how many builds, and each family's tally summed (`VF12`).
+   */
+  posedFacts = { builds: 0, calls: 0 };
+  posedTallies = new Map<PosedFactFamily, PosedFactTally>();
+  private posedBuilt = new Set<string>();
   /** Faults, each attributed to the case it was found in. */
   faults: Array<{ case: string; fault: string }> = [];
   twinOutcomes: TwinOutcome[] = [];
@@ -1094,6 +1105,7 @@ class SupplierCheck {
         }
         this.compareWalks(input, modelText);
         this.compareRigFactsOf(input, modelText);
+        this.comparePosedFactsOf(input, modelText);
       }
       return;
     }
@@ -1174,6 +1186,21 @@ class SupplierCheck {
     if (compared.differing.length === 0) this.rigFacts.identical++;
     for (const d of compared.differing) this.keep(this.faults, { fault: `the rig facts differ — ${d.family}: spine-core ${d.spine.slice(0, 240)}; model ${d.model.slice(0, 240)}` });
     sumTallies(this.derivations, compared.derivations);
+  }
+
+  /** Cut 4c-3's facts over one build and its inputs, asked question by question: once per distinct build, every call counted. */
+  private comparePosedFactsOf(input: ValidateInput, modelText: string): void {
+    this.posedFacts.calls++;
+    const build = `${spineFileSha256(input.skeletonText)} ${spineFileSha256(input.atlasText)} ${spineFileSha256(modelText)} ${spineFileSha256(JSON.stringify(input.rig ?? null))} ${spineFileSha256(JSON.stringify(input.declaredDurations ?? null))}`;
+    if (this.posedBuilt.has(build)) return;
+    this.posedBuilt.add(build);
+    const compared = comparePosedFacts(input.skeletonText, input.atlasText, modelText, input.rig, input.declaredDurations, this.plant);
+    if (compared === null) return;
+    this.posedFacts.builds++;
+    sumPosedTallies(this.posedTallies, compared);
+    for (const t of compared) {
+      for (const d of t.differing) this.keep(this.faults, { fault: `the posed facts "${t.family}" differ at ${d.question.slice(0, 160)} — spine-core ${d.spine.slice(0, 240)}; model ${d.model.slice(0, 240)}` });
+    }
   }
 
   private settleTwin(input: ValidateInput, spine: ValidateReport, modelText: string, firing: string[], twin: ModelTwin | undefined): Array<Omit<TwinOutcome, 'case'>> {
@@ -1413,6 +1440,52 @@ function docEventsTwin(declared: string[], keys: Array<Record<string, unknown>>)
     },
   };
 }
+
+/**
+ * A twin that edits the keys of one slot timeline of one animation, as the
+ * document lists them (issue #1025, cut 4c-3) — the same keys the break edits
+ * in the Spine file, in the document's spelling, which for a slot timeline is
+ * the file's (`light`, `dark`, `color`, `value`, `time`).
+ */
+function docSlotKeysTwin(animation: string, slot: string, timeline: string, edit: (keys: Array<Record<string, unknown>>) => void): ModelTwin {
+  return { forge: (doc) => edit(docKeys(docSlotTimelines(doc, animation, slot), timeline)) };
+}
+
+/** One attachment timeline's keys in one animation, as the document lists them (`attachments: [{ name: skin, slots: [{ name, attachments: [{ name, deform?, sequence? }] }] }]`). */
+function docAttachmentKeys(doc: Record<string, unknown>, animation: string, skin: string, slot: string, attachment: string, timeline: 'deform' | 'sequence'): Array<Record<string, unknown>> {
+  type DocAttachment = { name: string } & Record<string, unknown>;
+  const anim = (doc.animations as Array<{ name: string; attachments: Array<{ name: string; slots: Array<{ name: string; attachments: DocAttachment[] }> }> }>).find((a) => a.name === animation);
+  const found = anim?.attachments.find((k) => k.name === skin)?.slots.find((x) => x.name === slot)?.attachments.find((a) => a.name === attachment)?.[timeline];
+  if (!Array.isArray(found)) throw new Error(`the document's animation "${animation}" keys no ${timeline} on ${skin}/${slot}/${attachment}`);
+  return found as Array<Record<string, unknown>>;
+}
+
+/**
+ * The document with `animations` as the break leaves the Spine file's (issue
+ * #1025, cut 4c-3): the records replaced, and a `rigc-compiled/3` document's
+ * editor order of them with it — the reader refuses an order naming an
+ * animation the document does not hold, so the two are one edit.
+ */
+function setDocAnimations(doc: Record<string, unknown>, animations: Array<Record<string, unknown>>): void {
+  doc.animations = animations;
+  const order = doc.editorOrder as { animations?: unknown } | undefined;
+  if (order !== undefined) order.animations = animations.map((a) => a.name);
+}
+
+/** An animation record keying nothing, as the writer writes one: every group present and empty — the Spine file's `{}`. */
+function docEmptyAnimation(name: string): Record<string, unknown> {
+  return { name, duration: 0, bones: [], slots: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: [] };
+}
+
+/**
+ * The twin of a break that takes the Spine file's `animations` out (`M97`,
+ * `M97b`, `M97c`): the document's animations taken out too. Those rows break
+ * the setup pose as well — A10's subject, which has not moved — and the twin
+ * forges the moved assertion's half alone, as cut 4c-2's twins of `M39` and
+ * `T16` do: A09, which fires on these rows because the spec still declares its
+ * animations, reads the roster and nothing of the pose.
+ */
+const NO_ANIMATIONS_TWIN: ModelTwin = { forge: (doc) => setDocAnimations(doc, []) };
 
 /** The run's supplier check. `validate` below feeds it; `main` attributes its findings to case lines; `runVerdictSuppliersSuite` reads it. */
 const SUPPLIERS = new SupplierCheck();
@@ -1768,6 +1841,12 @@ const MUTANTS: Mutant[] = [
         for (const slot of ['lens_l', 'lens_r']) (j as any).animations.shut_auto.slots[slot].rgba.pop();
       }),
     }),
+    // The same last keys, off the document's two timelines (issue #1025, cut 4c-3).
+    twin: {
+      forge: (doc) => {
+        for (const slot of ['lens_l', 'lens_r']) docKeys(docSlotTimelines(doc, 'shut_auto', slot), 'rgba').pop();
+      },
+    },
   },
   {
     name: 'M11_attachment_points_at_a_missing_region',
@@ -2766,6 +2845,24 @@ const MUTANTS: Mutant[] = [
         throw new Error('the fixture keys no advancing sequence for the mutant to misspell');
       }),
     }),
+    // The same key's mode, misspelt in the document (issue #1025, cut 4c-3): its first advancing sequence key.
+    twin: {
+      forge: (doc) => {
+        for (const anim of doc.animations as Array<{ attachments: Array<{ slots: Array<{ attachments: Array<{ sequence?: Array<Record<string, unknown>> }> }> }> }>) {
+          for (const skin of anim.attachments) {
+            for (const slot of skin.slots) {
+              for (const attachment of slot.attachments) {
+                const key = (attachment.sequence ?? []).find((k) => typeof k.mode === 'string' && k.mode !== 'hold');
+                if (key === undefined) continue;
+                key.mode = String(key.mode).toUpperCase();
+                return;
+              }
+            }
+          }
+        }
+        throw new Error('the document keys no advancing sequence for the twin to misspell');
+      },
+    },
   },
   // ─── the stage box taken off: the shape of a production export (issue #714) ─
   //
@@ -3145,6 +3242,7 @@ const MUTANTS: Mutant[] = [
         leaf.rotation = OVERFLOW_TOKEN;
       }),
     }),
+    twin: NO_ANIMATIONS_TWIN,
     holds: (report, broken) =>
       a10SaysOnAStaticRig(report, `the setup pose: bone "${leafOf(broken)}" has a NaN; a world transform is finite`),
   },
@@ -3163,6 +3261,7 @@ const MUTANTS: Mutant[] = [
         leaf.inherit = 'NOSCALE';
       }),
     }),
+    twin: NO_ANIMATIONS_TWIN,
     holds: (report, broken) =>
       a10SaysOnAStaticRig(
         report,
@@ -3183,6 +3282,7 @@ const MUTANTS: Mutant[] = [
         (j.slots as Array<Record<string, unknown>>)[0].color = 'zzzzzzzz';
       }),
     }),
+    twin: NO_ANIMATIONS_TWIN,
     holds: (report, broken) =>
       a10SaysOnAStaticRig(
         report,
@@ -13500,9 +13600,16 @@ function runStaticRigSuite(): number {
   // declares nothing and the skeleton carries one anyway. A skip keyed on the
   // spec side alone would swallow this, and "the artifact grew an animation
   // nobody declared" is exactly what A09's second loop is for.
-  const stray = gateProbeArtifacts(dirs, STATIC_MOTION, (skeleton) => {
-    skeleton.animations = { stray: {} };
-  });
+  const stray = gateProbeArtifacts(
+    dirs,
+    STATIC_MOTION,
+    (skeleton) => {
+      skeleton.animations = { stray: {} };
+    },
+    'spine',
+    // The same stray animation, keying nothing, in the document (issue #1025, cut 4c-3).
+    { forge: (doc) => setDocAnimations(doc, [docEmptyAnimation('stray')]) },
+  );
   say(
     'S03_A09_STILL_FAILS_ON_AN_ANIMATION_NOBODY_DECLARED',
     stray.failures.some((f) => f.assertion === 'A09_ANIMATION_DURATION_MATCHES_SPEC'),
@@ -14343,11 +14450,24 @@ function runStaticRigSuite(): number {
         'an `rgba2` timeline reaches the gate without any other rule objecting to it',
     );
 
-    const wrongSetup = gateProbeArtifacts(twoColour, tintMotion, (skeleton) => {
-      const slots = slotsOf(skeleton);
-      slots[0].dark = '4020';
-      slots[1].dark = '';
-    });
+    const wrongSetup = gateProbeArtifacts(
+      twoColour,
+      tintMotion,
+      (skeleton) => {
+        const slots = slotsOf(skeleton);
+        slots[0].dark = '4020';
+        slots[1].dark = '';
+      },
+      'spine',
+      // The same two slots' `dark`, in the document (issue #1025, cut 4c-3).
+      {
+        forge: (doc) => {
+          const slots = doc.slots as Array<Record<string, unknown>>;
+          slots[0].dark = '4020';
+          slots[1].dark = '';
+        },
+      },
+    );
     const setupDetails = detailsOf(wrongSetup, DARK);
     const setupProbes = [
       ...(setupDetails.some((d) => d.includes('slot "block" states dark "4020"') && d.includes('not six hex digits'))
@@ -14375,9 +14495,16 @@ function runStaticRigSuite(): number {
         'JSON and the runtime and compares the two',
     );
 
-    const nanKey = gateProbeArtifacts(twoColour, tintMotion, (skeleton) => {
-      rgba2KeysOf(skeleton)[1].dark = 'zz6633';
-    });
+    const nanKey = gateProbeArtifacts(
+      twoColour,
+      tintMotion,
+      (skeleton) => {
+        rgba2KeysOf(skeleton)[1].dark = 'zz6633';
+      },
+      'spine',
+      // The same key's dark colour, in the document (issue #1025, cut 4c-3).
+      docSlotKeysTwin('flash', 'block', 'rgba2', (keys) => void (keys[1].dark = 'zz6633')),
+    );
     const nanDetails = detailsOf(nanKey, DARK);
     const nanProbes = [
       ...(nanDetails.some((d) => d.includes('rgba2 (t=0.5)') && d.includes('"zz6633"') && d.includes('NaN'))
@@ -14403,9 +14530,16 @@ function runStaticRigSuite(): number {
         'A43 says which key, what it spells, and what the runtime made of it',
     );
 
-    const orphanTimeline = gateProbeArtifacts(twoColour, tintMotion, (skeleton) => {
-      delete slotsOf(skeleton)[0].dark;
-    });
+    const orphanTimeline = gateProbeArtifacts(
+      twoColour,
+      tintMotion,
+      (skeleton) => {
+        delete slotsOf(skeleton)[0].dark;
+      },
+      'spine',
+      // The same slot's `dark` taken out of the document (issue #1025, cut 4c-3).
+      { forge: (doc) => void delete (doc.slots as Array<Record<string, unknown>>)[0].dark },
+    );
     const orphanDetails = detailsOf(orphanTimeline, DARK);
     const orphanProbes = [
       ...(orphanDetails.some((d) => d.includes('slot "block" declares no setup "dark"') && d.includes('throws instead of tinting'))
@@ -14995,9 +15129,16 @@ function runStaticRigSuite(): number {
 
     const darkless = writeProbeRig(separableSlots(false));
     const darklessRefusal = refusal(darkless, separableMotion([rgb2Track]));
-    const orphan = gateProbeArtifacts(separableRig, separableMotion([rgb2Track]), (skeleton) => {
-      for (const slot of (skeleton.slots ?? []) as Array<Record<string, unknown>>) delete slot.dark;
-    });
+    const orphan = gateProbeArtifacts(
+      separableRig,
+      separableMotion([rgb2Track]),
+      (skeleton) => {
+        for (const slot of (skeleton.slots ?? []) as Array<Record<string, unknown>>) delete slot.dark;
+      },
+      'spine',
+      // Every slot's `dark` taken out of the document too (issue #1025, cut 4c-3).
+      { forge: (doc) => { for (const slot of doc.slots as Array<Record<string, unknown>>) delete slot.dark; } },
+    );
     const orphanDetails = detailsOf(orphan, TINT);
     const orphanProbes = [
       ...(darklessRefusal !== null &&
@@ -15394,11 +15535,18 @@ function runStaticRigSuite(): number {
       },
     );
     let tintNext: unknown = null;
-    const tintGate = gateProbeArtifacts(storedRig, storedMotion, (skeleton) => {
-      const keys = (skeleton.animations as Record<string, { slots: SlotTimelines }>).stored.slots.marker.rgba2;
-      tintNext = keys[1].light;
-      repeatFirst(keys);
-    });
+    const tintGate = gateProbeArtifacts(
+      storedRig,
+      storedMotion,
+      (skeleton) => {
+        const keys = (skeleton.animations as Record<string, { slots: SlotTimelines }>).stored.slots.marker.rgba2;
+        tintNext = keys[1].light;
+        repeatFirst(keys);
+      },
+      'spine',
+      // The same repeat, in the document (issue #1025, cut 4c-3).
+      docSlotKeysTwin('stored', 'marker', 'rgba2', (keys) => repeatFirst(keys)),
+    );
     const seriesPlanted = (() => {
       if (storedSeries.built === null) return null;
       const skeleton = JSON.parse(storedSeries.built.skeletonText) as {
@@ -15419,6 +15567,12 @@ function runStaticRigSuite(): number {
           modelText: threadedModel(storedSeries.built, storedSeries.built.atlasText),
           rig: storedSeries.built.rig,
           profile: 'spine',
+        }, {
+          // The same key pushed onto the document's timeline (issue #1025, cut 4c-3).
+          forge: (doc) => {
+            const docKeysOf = docAttachmentKeys(doc, 'spark', 'default', 'glint', 'glint', 'sequence');
+            docKeysOf.push({ ...docKeysOf[0], index });
+          },
         }),
       };
     })();
@@ -17935,15 +18089,22 @@ function runKeyTimeSuite(): number {
     'rung 6: 4 dp rounding put an attachment reveal 0.000034s past the end, 1/1000 of the tolerance Rule 4 compares with',
   );
 
-  const artifact = gateProbeArtifacts(dirs, onGrid, (skeleton) => {
-    const animations = skeleton.animations as Record<
-      string,
-      { slots?: Record<string, Record<string, Array<Record<string, unknown>>>> }
-    >;
-    const attachment = animations.reveal.slots?.marker.attachment;
-    if (!attachment) throw new Error('the probe emitted no attachment timeline');
-    attachment[attachment.length - 1].time = ROUNDED_TO_4DP;
-  });
+  const artifact = gateProbeArtifacts(
+    dirs,
+    onGrid,
+    (skeleton) => {
+      const animations = skeleton.animations as Record<
+        string,
+        { slots?: Record<string, Record<string, Array<Record<string, unknown>>>> }
+      >;
+      const attachment = animations.reveal.slots?.marker.attachment;
+      if (!attachment) throw new Error('the probe emitted no attachment timeline');
+      attachment[attachment.length - 1].time = ROUNDED_TO_4DP;
+    },
+    'spine',
+    // The same last key's time, in the document (issue #1025, cut 4c-3).
+    docSlotKeysTwin('reveal', 'marker', 'attachment', (keys) => void (keys[keys.length - 1].time = ROUNDED_TO_4DP)),
+  );
   say(
     'K02_A09_catches_the_same_overshoot_in_an_artifact_the_compiler_never_saw',
     artifact.failures.some((f) => f.assertion === 'A09_ANIMATION_DURATION_MATCHES_SPEC'),
@@ -35606,7 +35767,7 @@ function buildTurnRig(
  * that matters here (issue #405 refuses it at compile, and #407's unreachable
  * report is what the artifact side then has to say about it).
  */
-function gateTurn(build: TurnBuild, skeletonText?: string): ReturnType<typeof validate> {
+function gateTurn(build: TurnBuild, skeletonText?: string, twin?: ModelTwin): ReturnType<typeof validate> {
   return validate({
     skeletonText: skeletonText ?? build.result.skeletonText,
     atlasText: build.result.atlasText,
@@ -35615,7 +35776,7 @@ function gateTurn(build: TurnBuild, skeletonText?: string): ReturnType<typeof va
     modelText: threadedModel(build.result, build.result.atlasText),
     rig: build.result.rig,
     profile: 'spine-html',
-  });
+  }, twin);
 }
 
 const A39 = 'A39_DEFORM_KEEPS_TRIANGLE_WINDING';
@@ -36809,7 +36970,14 @@ function runDeformWindingSuite(): number {
   const twoWrapped = JSON.parse(twoDials.result.skeletonText) as { constraints: Array<Record<string, unknown>> };
   for (const constraint of twoWrapped.constraints) if (constraint.name === 'dial2') constraint.local = false;
   const twoText = JSON.stringify(twoWrapped);
-  const twoGate = gateTurn(twoDials, twoText);
+  const twoGate = gateTurn(twoDials, twoText, {
+    // The same slider read in world space, in the document (issue #1025, cut 4c-3).
+    forge: (doc) => {
+      const dial2 = (doc.constraints as Array<Record<string, unknown>>).find((c) => c.name === 'dial2');
+      if (dial2 === undefined) throw new Error('the document declares no constraint "dial2"');
+      dial2.local = false;
+    },
+  });
   const twoSurvey = surveyDeformKeys(skeletonDataFromText(twoText, twoDials.result.atlasText));
   const perSlider = (slider: string): typeof twoSurvey.keys =>
     twoSurvey.keys.filter((k) => k.reach.slider === slider);
@@ -98435,7 +98603,7 @@ function runVerdictSuppliersSuite(): number {
     }
     const c = SUPPLIERS;
     const probes = [
-      ...c.faults.filter((f) => !f.fault.startsWith('the skins walk') && !f.fault.startsWith('the facts "') && !f.fault.startsWith('the rig facts')).map((f) => `${f.case}: ${f.fault}`),
+      ...c.faults.filter((f) => !f.fault.startsWith('the skins walk') && !f.fault.startsWith('the facts "') && !f.fault.startsWith('the rig facts') && !f.fault.startsWith('the posed facts')).map((f) => `${f.case}: ${f.fault}`),
       ...c.unwritable.map((why) => `a compile whose model document the writer refused, so its call carried no model: ${why}`),
       ...floorProbes(
         [
@@ -98529,11 +98697,14 @@ function runVerdictSuppliersSuite(): number {
   // --- VF04: a model supplier one value off turns a named case red ----------
   {
     const probes: string[] = [];
+    // The rig info and the declared durations ride along since cut 4c-3: A39 and A09 skip without them, on both sides alike.
     const input: ValidateInput = {
       skeletonText: overlay.result.skeletonText,
       atlasText: overlay.result.atlasText,
       atlasDir: overlay.opts.outDir,
       modelText: threadedModel(overlay.result, overlay.result.atlasText),
+      rig: overlay.result.rig,
+      declaredDurations: overlay.result.declaredDurations,
       profile: 'spine-html',
     };
     const spine = validateOverSpine(input);
@@ -98576,6 +98747,25 @@ function runVerdictSuppliersSuite(): number {
         const facts = modelConstraintFacts(read);
         return { ...facts, constraints: facts.constraints.map((c) => (c.physics === undefined ? c : { ...c, physics: { ...c.physics, setup: { ...c.physics.setup, damping: 2 } } })) };
       } }, 'A23_PHYSICS_CONSTRAINT_EFFECTIVE'],
+      // Cut 4c-3's four families (issue #1025), one neighbouring value each.
+      ['a survey counting one deform timeline the animations do not carry', { deformSurvey: (read) => {
+        const facts = MODEL_SUPPLY.deformSurvey(read);
+        return { survey: (exempt) => ({ ...facts.survey(exempt), timelines: facts.survey(exempt).timelines + 1 }) };
+      } }, 'A39_DEFORM_KEEPS_TRIANGLE_WINDING'],
+      ['the first animation a second longer than its keys', { animationDurations: (read) => ({
+        animations: MODEL_SUPPLY.animationDurations(read).animations.map((a, i) => (i === 0 ? { ...a, duration: a.duration + 1 } : a)),
+      }) }, 'A09_ANIMATION_DURATION_MATCHES_SPEC'],
+      ['a dark colour stated on the first slot that holds none', { twoColour: (read) => ({
+        ...MODEL_SUPPLY.twoColour(read),
+        slotDarks: [{ slot: read.doc.slots[0].name, dark: '000000' }],
+      }) }, 'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN'],
+      ['every posed frame resolving to a neighbouring region name', { sequences: (read) => {
+        const facts = MODEL_SUPPLY.sequences(read);
+        return { ...facts, posedFrame: (animation, slot, time) => {
+          const posed = facts.posedFrame(animation, slot, time);
+          return posed === null || posed.region === null ? posed : { ...posed, region: `${posed.region}x` };
+        } };
+      } }, 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES'],
     ];
     const named: string[] = [];
     for (const [label, supply, code] of plants) {
@@ -99037,6 +99227,116 @@ function runVerdictSuppliersSuite(): number {
       ),
       'issue #1034: a JSON object lists an integer-like key first whatever order it was filled in, so the file keys animations "5, 10, -a, 01, 2b" where the editor\'s comparator says "-a, 01, 2b, 5, 10" — ' +
         'a reader of a /2 document that called the comparator, and a supplier that called it even on /3, walked another order than the file\'s, and no corpus row has such a name',
+    );
+  }
+
+  // --- VF12: cut 4c-3's posed facts, question by question, at tolerance 0 ---
+  {
+    const probes: string[] = [];
+    // This suite's own builds, one per family's subject, each gated so the supplier check asks its questions under `--only`
+    // too: the overlay probe (durations, a numbered series), a tint probe (a dark slot and an rgba2 key off the key grid)
+    // and the turn probe past its fold angle (a deform survey with refusals in it).
+    const tintDirs = writeProbeRig({
+      slots: [
+        { name: 'block', bone: 'block', attachment: 'block', dark: '204060' },
+        { name: 'marker', bone: 'block', attachment: 'marker' },
+      ],
+    });
+    const tintMotionPath = join(tintDirs.dir, 'probe.motion.json');
+    writeFileSync(
+      tintMotionPath,
+      `${JSON.stringify({ ...STATIC_MOTION, animations: { flash: { duration: 0.7, loop: false, tracks: [{ slot: 'block', property: 'rgba2', keys: [{ t: 0.1, v: [1, 1, 1, 1, 0, 0, 0] }, { t: 0.7, v: [1, 0.8, 0.6, 1, 1, 0.4, 0.2] }] }] } } }, null, 2)}\n`,
+    );
+    const tintOpts: Options = { rigPath: tintDirs.rigPath, motionPath: tintMotionPath, outDir: tintDirs.outDir, imagesDir: tintDirs.dir };
+    const tint = compile(tintOpts);
+    const turn = buildTurnRig(turnRow(40));
+    const builds = [
+      { label: 'the overlay probe', result: overlay.result, outDir: overlay.opts.outDir },
+      { label: 'the tint probe', result: tint, outDir: tintOpts.outDir },
+      { label: 'the turn probe at 40°', result: turn.result, outDir: turn.opts.outDir },
+    ];
+    for (const b of builds) {
+      validate({ skeletonText: b.result.skeletonText, atlasText: b.result.atlasText, atlasDir: b.outDir, declaredDurations: b.result.declaredDurations, rig: b.result.rig, modelText: threadedModel(b.result, b.result.atlasText), profile: 'spine-html' });
+    }
+    const c = SUPPLIERS;
+    probes.push(...c.faults.filter((f) => f.fault.startsWith('the posed facts')).map((f) => `${f.case}: ${f.fault}`));
+    // Issue #1034's probe — names a JSON object lists first (`integerNamedBuilds`) — asked the same questions on each build's /3
+    // document (the stated order) and its /2 one (the derived order), which no call of the run hands the model side.
+    const probeRows: string[] = [];
+    if (integerNamed === null) probes.push('gallery/nod or gallery/walk is not in the tree, so issue #1034\'s probe was not asked');
+    else {
+      for (const b of integerNamed.builds) {
+        for (const [spec, text] of [['/3', b.v3], ['/2', b.v2]] as const) {
+          const asked = comparePosedFacts(b.result.skeletonText, b.result.atlasText, text, b.result.rig, b.result.declaredDurations);
+          if (asked === null) {
+            probes.push(`${b.name} ${spec}: a side refused the build`);
+            continue;
+          }
+          for (const t of asked) {
+            for (const d of t.differing) probes.push(`${b.name} ${spec}: the posed facts "${t.family}" differ at ${d.question.slice(0, 120)} — spine-core ${d.spine.slice(0, 160)}; model ${d.model.slice(0, 160)}`);
+            for (const r of t.refused) probes.push(`${b.name} ${spec}: the core refused "${t.family}" ${r.question.slice(0, 80)}: ${r.why.slice(0, 160)}`);
+          }
+          probeRows.push(`${b.name} ${spec} ${asked.map((t) => `${t.family} ${t.equal}/${t.questions} over ${t.values}`).join(', ')}`);
+        }
+      }
+      probes.push(...floorProbes([[probeRows.length, 6, `${probeRows.length} probe document(s) asked`]], "so the file's order on integer-like names was not put to these families"));
+    }
+    // Every family asked something with a number in its answer — a family no build reached is held by nothing here.
+    for (const family of POSED_FACT_FAMILIES) {
+      const t = c.posedTallies.get(family);
+      probes.push(...floorProbes([[t?.values ?? 0, 1, `${t?.values ?? 0} number(s) in the "${family}" answers`]], 'and a family nothing asked about is held by nothing'));
+    }
+    // The plants: one value off in each family, on the build that reaches it, moves that family's tally alone.
+    const ulp = (v: number): number => (v === 0 ? Number.MIN_VALUE : v + Math.abs(v) * 2 ** -52);
+    const plants: Array<[PosedFactFamily, string, (typeof builds)[number], Partial<ModelSupply>]> = [
+      ['deform survey', 'a survey one triangle more measured', builds[2], { deformSurvey: (read) => {
+        const facts = MODEL_SUPPLY.deformSurvey(read);
+        return { survey: (exempt) => ({ ...facts.survey(exempt), trianglesMeasured: facts.survey(exempt).trianglesMeasured + 1 }) };
+      } }],
+      ['animation durations', 'a timeline\'s duration one ulp later', builds[0], { animationDurations: (read) => ({
+        animations: MODEL_SUPPLY.animationDurations(read).animations.map((a, i) => (i === 0 ? { ...a, timelineDurations: a.timelineDurations.map((d, k) => (k === 0 ? ulp(d) : d)) } : a)),
+      }) }],
+      ['two-colour tint', 'a posed light red one ulp up', builds[1], { twoColour: (read) => {
+        const facts = MODEL_SUPPLY.twoColour(read);
+        return { ...facts, posedTint: (animation, slot, time) => {
+          const posed = facts.posedTint(animation, slot, time);
+          return posed === undefined ? posed : { ...posed, light: { ...posed.light, r: ulp(posed.light.r) } };
+        } };
+      } }],
+      ['sequences', 'a posed frame playing as another entry than the one it plays as', builds[0], { sequences: (read) => {
+        const facts = MODEL_SUPPLY.sequences(read);
+        return { ...facts, posedFrame: (animation, slot, time) => {
+          const posed = facts.posedFrame(animation, slot, time);
+          return posed === null ? posed : { ...posed, playsAs: `${posed.playsAs}\u0000vf12` };
+        } };
+      } }],
+    ];
+    const named: string[] = [];
+    for (const [family, label, b, supply] of plants) {
+      const planted = comparePosedFacts(b.result.skeletonText, b.result.atlasText, threadedModel(b.result, b.result.atlasText) ?? '', b.result.rig, b.result.declaredDurations, supply);
+      const moved = (planted ?? []).filter((t) => t.differing.length > 0).map((t) => t.family);
+      if (moved.length !== 1 || moved[0] !== family) probes.push(`${label} on ${b.label}: the comparison moved [${moved.join(', ')}], not "${family}" alone`);
+      else named.push(`${label} → "${family}" (${(planted ?? []).find((t) => t.family === family)?.differing.length} question(s))`);
+    }
+    const tallies = POSED_FACT_FAMILIES.map((family) => {
+      const t = c.posedTallies.get(family);
+      return `${family} ${t?.equal ?? 0} of ${t?.questions ?? 0} question(s) alike over ${t?.values ?? 0} number(s), ${t?.refused.length ?? 0} refused by the core by name`;
+    });
+    const refusals = [...c.posedTallies.values()].flatMap((t) => t.refused.map((r) => `${t.family} ${r.question.slice(0, 80)}: ${r.why.slice(0, 160)}`));
+    const held = probes.length === 0;
+    say(
+      'VF12_CUT_4C3S_POSED_FACTS_ARE_THE_SAME_ON_BOTH_SIDES_AT_EVERY_QUESTION_THE_BODIES_ASK',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${c.posedFacts.builds} distinct build(s) over ${c.posedFacts.calls} own call(s): ${tallies.join('; ')}; issue #1034's probe at /3 and /2, every answer alike: ${probeRows.join('; ')}` +
+          `${refusals.length > 0 ? ` — the refusals: ${refusals.slice(0, 6).join(' | ')}` : ''}; one value off in each family moves that family alone: ${named.join('; ')}`,
+        (count) => `${count} difference(s) between the suppliers' answers:`,
+      ),
+      'issue #1025, cut 4c-3: A43 and A46 pose at times no gate samples — a key\'s own stored time, half a delay into a frame — and A39 reads ' +
+        'a survey whose every number a line folds into a count, so each body runs over spine-core\'s facts and every question it asks is put ' +
+        'to the model side\'s supplier too, the answers compared exactly',
     );
   }
 
