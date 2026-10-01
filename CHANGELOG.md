@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.9.0](https://github.com/firejune/rigc/compare/v1.8.0...v1.9.0) (2026-10-01)
+
+
+### Features
+
+* **model:** the model document states the stage, the file's orders and each page's pma and scale (rigc-compiled/3), and compileModel yields the model without calling the Spine emitter ([#1037](https://github.com/firejune/rigc/issues/1037)) ([03b6d2a](https://github.com/firejune/rigc/commit/03b6d2ac31457b9d7dd1ca568c90b4797f5e4927)), closes [#1026](https://github.com/firejune/rigc/issues/1026)
+
+
+### Instrument
+
+* **gate:** A04, A20, A21, A23, A28, A33, A36, A37, A41, A42, A44, A47 and A48 written once against facts, supplied by spine-core and by the model with the core — the encoding's clauses stay with the round trip ([#1036](https://github.com/firejune/rigc/issues/1036)) ([fc524d4](https://github.com/firejune/rigc/commit/fc524d4181620b23cb7d219efd7cf755b43ea5bf))
+* **gate:** A06, A08, A13, A14, A15, A19, A22, A27 and A38 written once against facts, supplied by spine-core and by the model with what its caller gives, held to the same lines ([#1032](https://github.com/firejune/rigc/issues/1032)) ([58ddb8a](https://github.com/firejune/rigc/commit/58ddb8ad21e07643e53b7eec4015cc75ec47c981))
+
 ## [1.8.0](https://github.com/firejune/rigc/compare/v1.7.0...v1.8.0) (2026-10-01)
 
 
