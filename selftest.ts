@@ -477,7 +477,7 @@ import {
   ASSERTION_NAMES,
   assertionCountForProfile,
   attachmentRegionJoins,
-  PHYSICS_TIMELINE_NAMES,
+  physicsTimelineNames,
   reportLines,
   SKIP_NO_ANIMATION,
   SKIP_NO_ATLAS,
@@ -18299,7 +18299,7 @@ function runConstraintAndDeformSuite(): number {
     if (!(timeline instanceof PhysicsConstraintTimeline)) continue;
     // Named through the validator's OWN map rather than off the emitted order,
     // which would pass on a tree where both had been renumbered together.
-    const name = PHYSICS_TIMELINE_NAMES[Number(timeline.getPropertyIds()[0].split('|')[0])];
+    const name = physicsTimelineNames()[Number(timeline.getPropertyIds()[0].split('|')[0])];
     if (name !== undefined) ruleTimelines.set(name, timeline);
   }
   const transformDisagrees = PHYSICS_POSE_RULES.flatMap((rule) => {
@@ -79013,6 +79013,81 @@ function dirDigests(dir: string): Map<string, string> {
   return out;
 }
 
+/**
+ * Every name a module under `root` imports from spine-core by value — `src/`,
+ * `tools/` and `cli.ts` — which is every export the stub of `RC11` has to stand
+ * in for: a module importing a name the stub does not export fails to link,
+ * and would read as a runtime access it is not.
+ */
+function spineCoreImportNames(root: string): string[] {
+  const names = new Set<string>();
+  const read = (path: string): void => {
+    for (const m of readFileSync(path, 'utf8').matchAll(/import\s*\{([^}]*)\}\s*from\s*'@esotericsoftware\/spine-core'/g)) {
+      for (const part of m[1].split(',')) {
+        const name = part.trim().split(/\s+as\s+/)[0].trim();
+        if (name !== '' && !name.startsWith('type ')) names.add(name);
+      }
+    }
+  };
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(join(dir, entry.name));
+      else if (entry.name.endsWith('.ts')) read(join(dir, entry.name));
+    }
+  };
+  for (const dir of ['src', 'tools']) walk(join(root, dir));
+  read(join(root, 'cli.ts'));
+  return [...names].sort();
+}
+
+/**
+ * The spine-core stub of `RC11` (issue #1014): a module-resolution hook — a Bun
+ * preload whose plugin registers `@esotericsoftware/spine-core` as a module of
+ * its own — whose every export is a stub that throws `SPINE_CORE_LOADED:
+ * <name><access>` on ANY access: a property read, a call, a construction, an
+ * `instanceof` against it. Importing it costs nothing; touching it is fatal and
+ * named. Nothing is written into a `node_modules`: the hook stands in front of
+ * the real package for the one process it is preloaded into.
+ */
+function writeSpineCoreStub(dir: string, names: readonly string[]): string {
+  const path = join(dir, 'spine-core-stub.ts');
+  writeFileSync(
+    path,
+    [
+      "import { plugin } from 'bun';",
+      `const NAMES: string[] = ${JSON.stringify(names)};`,
+      'const stub = (name: string): unknown => {',
+      '  const touched = (how: string): never => {',
+      '    throw new Error(`SPINE_CORE_LOADED: ${name}${how}`);',
+      '  };',
+      '  return new Proxy(function () {}, {',
+      '    get: (_t, p) => touched(`.${String(p)}`),',
+      "    apply: () => touched('()'),",
+      "    construct: () => touched(' (new)'),",
+      '    has: (_t, p) => touched(` has ${String(p)}`),',
+      '    set: (_t, p) => touched(` set ${String(p)}`),',
+      "    ownKeys: () => touched(' ownKeys'),",
+      "    getPrototypeOf: () => touched(' getPrototypeOf'),",
+      '  });',
+      '};',
+      'plugin({',
+      "  name: 'rigc-selftest-spine-core-stub',",
+      '  setup(build) {',
+      "    build.module('@esotericsoftware/spine-core', () => ({ exports: Object.fromEntries(NAMES.map((n) => [n, stub(n)])), loader: 'object' }));",
+      '  },',
+      '});',
+      '',
+    ].join('\n'),
+  );
+  return path;
+}
+
+/** `bun --preload <stub> cli.ts <args>` from `root` — the CLI with spine-core stubbed (`writeSpineCoreStub`). */
+function runCliStubbed(stub: string, root: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, ['--preload', stub, 'cli.ts', ...args], { cwd: root, encoding: 'utf8' });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
 function runRenderHashes(args: string[]): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, ['tools/render_hashes.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
@@ -79026,8 +79101,10 @@ function runRenderHashes(args: string[]): { status: number | null; stdout: strin
  *
  * 💰 Cost: five runs over two gallery rigs (each a build, a `render
  * --geometry` and the in-process extras), and three `base` runs over the
- * gallery's seven for RH04 and RH05. The corpus's nineteen rows are never run
- * here; that is PR and CI-artifact material.
+ * gallery's seven for RH04 and RH05, and RC11–RC12's CLI runs on the
+ * smallest gallery build (eleven over the tree, six more over three planted
+ * copies of it). The corpus's nineteen rows are never run here; that is PR and
+ * CI-artifact material.
  */
 function runRenderHashesSuite(): number | null {
   console.log('\n── render-hashes: every render of every build hashed, and two runs compared (issue #965) ──');
@@ -79039,7 +79116,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH07, RC01–RC09 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH07, RC01–RC12 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -80384,6 +80461,177 @@ function runRenderHashesSuite(): number | null {
       probeDetail(held, probes, figures),
       'issue #968: a Spine export carries no document for the core to pose, so it is checked through spine-core — and said, ' +
         'because a fallback nobody can see is the silent second opinion the seam exists to prevent',
+    );
+  }
+
+  // --- RC11–RC12: a rigc build the core poses reads nothing through spine-core (issue #1014) --
+  //
+  // `render`, `render --geometry` and `check` on a rigc build pose it through
+  // the core, and since #1014 they also read everything else — the names their
+  // flags are checked against, the subset and skin rosters, the stage, the
+  // bone tree, the pages — without spine-core. RC11 runs them under a
+  // module-resolution hook that makes every access to the runtime throw by
+  // name (`writeSpineCoreStub`), on the cheapest gallery build RC01 drew, and
+  // holds each to the unstubbed run: exit 0, the same stdout, every file the
+  // same bytes; `--version` with no access at load; and the same commands on a
+  // Spine export (that build with its model document taken away) and `--poser
+  // spine` refused by name, the runtime named as what they need. RC12 plants
+  // three faults in a copy of the tree — an access at load, a core-path read
+  // through spine-core, and the export's sentence taken away — and reads
+  // RC11's own probes red on each.
+  {
+    const probes: string[] = [];
+    let figures = '';
+    type Step = 'load' | 'render' | 'geometry' | 'check' | 'export' | 'spine';
+    const ALL: ReadonlySet<Step> = new Set<Step>(['load', 'render', 'geometry', 'check', 'export', 'spine']);
+    const names = spineCoreImportNames(import.meta.dir);
+    const stub = writeSpineCoreStub(work, names);
+    // The cheapest row by its skeleton's bytes — chosen by measurement, so no gallery name is written here.
+    const row = [...galleryBuilds].sort((x, y) => statSync(join(x.out, 'skeleton.json')).size - statSync(join(y.out, 'skeleton.json')).size || (x.name < y.name ? -1 : 1))[0];
+    const exportDir = row === undefined ? '' : join(dirname(row.out), 'rc10-export');
+    const sentence = (skeleton: string, why: string): string => `${skeleton} is posed through spine-core (${why}), and the runtime could not be used: SPINE_CORE_LOADED`;
+    const NEEDS = 'spine-core is what poses a Spine export, --poser spine and a fallback the poser line names';
+    /** The commands RC11 holds, by step; `dir` is where the run writes. */
+    const commands = (out: string, frames: string): Record<'render' | 'geometry' | 'check', (dir: string) => string[]> => ({
+      render: (dir) => ['render', '--candidate', out, '--max', '96', '--out', dir],
+      geometry: (dir) => ['render', '--candidate', out, '--geometry', '--max', '96', '--out', dir],
+      check: (dir) => ['check', '--candidate', out, '--frames', frames, '--json', join(dir, 'check.json')],
+    });
+    /** One unstubbed run of each command, the twin each stubbed run is held to. */
+    const plain = new Map<string, { status: number | null; stdout: string; dir: string; files: Map<string, string> }>();
+    /** What a stubbed run that failed says: the stub's own `SPINE_CORE_LOADED: <name>…` token where it reached one, else its first line. */
+    const touched = (stderr: string): string =>
+      /SPINE_CORE_LOADED: [A-Za-z]\w*(?:\.\w+)*(?: \(new\)|\(\))?/.exec(stderr)?.[0] ?? JSON.stringify(stderr.trim().split('\n')[0]?.slice(0, 200) ?? '');
+    /** RC11's probes over the tree at `root`, for the steps asked: empty is the tree green. */
+    const readStubbed = (root: string, label: string, steps: ReadonlySet<Step>): string[] => {
+      const out: string[] = [];
+      if (row === undefined) return ['no gallery build to run'];
+      const frames = existsSync(join(dirname(row.out), 'ch01-frames', FRAMES_SIDECAR)) ? join(dirname(row.out), 'ch01-frames') : join(dirname(row.out), 'render');
+      if (steps.has('load')) {
+        const version = runCliStubbed(stub, root, ['--version']);
+        const twin = runCli(['--version']);
+        if (version.status !== 0 || version.stdout !== twin.stdout) out.push(`${label}: --version exited ${version.status} — ${touched(version.stderr)}`);
+      }
+      const cmds = commands(row.out, frames);
+      for (const step of ['render', 'geometry', 'check'] as const) {
+        if (!steps.has(step)) continue;
+        let twin = plain.get(step);
+        if (twin === undefined) {
+          const dir = join(work, `rc10-plain-${step}`);
+          const run = runCli(cmds[step](dir));
+          twin = { status: run.status, stdout: run.stdout.split(dir).join('<out>'), dir, files: dirDigests(dir) };
+          plain.set(step, twin);
+        }
+        const dir = join(work, `rc10-${label}-${step}`);
+        const run = runCliStubbed(stub, root, cmds[step](dir));
+        const files = dirDigests(dir);
+        const differ = digestDifferences(files, twin.files);
+        if (twin.status !== 0 || twin.files.size === 0) out.push(`${label}: the unstubbed ${step} exited ${twin.status} and wrote ${twin.files.size} file(s)`);
+        else if (run.status !== 0) out.push(`${label}: ${step} under the stub exited ${run.status} — ${touched(run.stderr)}`);
+        else if (run.stdout.split(dir).join('<out>') !== twin.stdout) out.push(`${label}: ${step} under the stub printed other lines than the unstubbed run`);
+        else if (differ.length > 0 || files.size !== twin.files.size) out.push(`${label}: ${step} under the stub wrote other files than the unstubbed run: ${differ.join(', ') || `${files.size} against ${twin.files.size}`}`);
+      }
+      if (steps.has('export')) {
+        if (!existsSync(exportDir)) {
+          cpSync(row.out, exportDir, { recursive: true });
+          rmSync(join(exportDir, MODEL_DOCUMENT_FILE));
+        }
+        const skeleton = join(exportDir, 'skeleton.json');
+        const want = sentence(skeleton, `no ${MODEL_DOCUMENT_FILE} beside ${skeleton} — a Spine export, not a rigc build`);
+        for (const [cmd, args] of [['render', ['render', '--candidate', exportDir, '--out', join(work, `rc10-${label}-export`)]], ['check', ['check', '--candidate', exportDir, '--frames', frames]]] as const) {
+          const run = runCliStubbed(stub, root, [...args]);
+          const said = run.stderr.trim().split('\n')[0] ?? '';
+          if (run.status !== 1 || !said.startsWith(`rigc ${cmd}: ${want}`) || !said.includes(NEEDS)) out.push(`${label}: ${cmd} of a Spine export under the stub exited ${run.status} saying ${JSON.stringify(said.slice(0, 200))}, not the runtime named as what an export needs`);
+        }
+        if (existsSync(join(work, `rc10-${label}-export`))) out.push(`${label}: the refused export render wrote ${join(work, `rc10-${label}-export`)}`);
+      }
+      if (steps.has('spine')) {
+        const run = runCliStubbed(stub, root, ['render', '--candidate', row.out, '--poser', 'spine', '--out', join(work, `rc10-${label}-spine`)]);
+        const said = run.stderr.trim().split('\n')[0] ?? '';
+        if (run.status !== 1 || !said.startsWith(`rigc render: ${sentence(join(row.out, 'skeleton.json'), '--poser spine')}`)) out.push(`${label}: --poser spine under the stub exited ${run.status} saying ${JSON.stringify(said.slice(0, 200))}`);
+      }
+      return out;
+    };
+    probes.push(...readStubbed(import.meta.dir, 'tree', ALL));
+    if (row !== undefined) {
+      figures =
+        `${row.name}, the smallest gallery build by its skeleton's bytes, under a preload hook stubbing all ${names.length} spine-core name(s) the tree imports: ` +
+        `--version, render, render --geometry and check exit 0 with the unstubbed run's lines and ${[...plain.values()].reduce((n, t) => n + t.files.size, 0)} file(s) to the byte; ` +
+        'render and check of that build with its model document taken away, and render --poser spine, exit 1 naming the input and the runtime as what it needs';
+    }
+    const held = probes.length === 0;
+    say(
+      'RC11_A_RIGC_BUILD_RENDERS_AND_CHECKS_WITH_SPINE_CORE_STUBBED_AND_AN_EXPORT_IS_REFUSED_NAMING_THE_RUNTIME',
+      held,
+      probeDetail(held, probes, figures),
+      'issue #1014: the core poser was independent of the runtime in its module (CO04) and not in the commands — every render ' +
+        'and check of a rigc build loaded the pair through spine-core before choosing the poser, and seven reads of it at module ' +
+        'load reached the runtime on every command. Only a run with the runtime made unusable can show what a command reaches',
+    );
+
+    // RC12 — each plant in its own copy of the tree (src/, cli.ts, package.json, the two tools src/ imports; node_modules linked, never written).
+    const plantTree = (label: string, file: string, from: string, to: string): { root: string; occurrences: number } => {
+      const root = join(work, `rc11-${label}`);
+      mkdirSync(join(root, 'tools'), { recursive: true });
+      cpSync(join(import.meta.dir, 'src'), join(root, 'src'), { recursive: true });
+      for (const f of ['cli.ts', 'package.json', join('tools', 'plate.ts'), join('tools', 'font5x7.ts')]) cpSync(join(import.meta.dir, f), join(root, f));
+      symlinkSync(join(import.meta.dir, 'node_modules'), join(root, 'node_modules'), 'dir');
+      const text = readFileSync(join(root, file), 'utf8');
+      const occurrences = text.split(from).length - 1;
+      writeFileSync(join(root, file), text.split(from).join(to));
+      return { root, occurrences };
+    };
+    const plantProbes: string[] = [];
+    const reds: string[] = [];
+    const plants: Array<{ label: string; file: string; from: string; to: string; steps: Step[]; expect: string }> = [
+      {
+        label: 'eager',
+        file: join('src', 'validate.ts'),
+        from: 'export function physicsTimelineNames(): Record<number, string> {',
+        to: 'export const PLANTED_EAGER_ACCESS = Property.physicsConstraintMass;\nexport function physicsTimelineNames(): Record<number, string> {',
+        steps: ['load', 'render'],
+        expect: 'SPINE_CORE_LOADED: Property.physicsConstraintMass',
+      },
+      {
+        label: 'core-read',
+        file: join('src', 'render.ts'),
+        from: 'if (choice.core !== null) return { choice, facts: skeletonFacts(input.skeletonText),',
+        to: 'if (choice.core !== null) return { choice, facts: spineFacts(spineData()),',
+        steps: ['render'],
+        expect: 'SPINE_CORE_LOADED',
+      },
+      {
+        label: 'no-sentence',
+        file: join('src', 'render.ts'),
+        from: '    void TextureAtlas.prototype;\n',
+        to: '',
+        steps: ['export'],
+        expect: 'not the runtime named as what an export needs',
+      },
+    ];
+    for (const plant of plants) {
+      const { root, occurrences } = plantTree(plant.label, plant.file, plant.from, plant.to);
+      if (occurrences !== 1) {
+        plantProbes.push(`the ${plant.label} plant found ${occurrences} occurrence(s) of its line in ${plant.file}, not 1`);
+        continue;
+      }
+      const read = readStubbed(root, plant.label, new Set(plant.steps));
+      if (read.length === 0) plantProbes.push(`the ${plant.label} plant (${plant.file}) left RC11's ${plant.steps.join(', ')} green`);
+      else if (!read.some((p) => p.includes(plant.expect))) plantProbes.push(`the ${plant.label} plant read red for another reason: ${read[0].slice(0, 200)}`);
+      else reds.push(`${plant.label} (${plant.steps.join(', ')}: ${read.length} probe(s))`);
+    }
+    const plantsHeld = plantProbes.length === 0 && reds.length === plants.length;
+    say(
+      'RC12_AN_ACCESS_AT_LOAD_A_CORE_PATH_READ_THROUGH_SPINE_CORE_OR_A_MISSING_EXPORT_SENTENCE_TURNS_RC11_RED',
+      plantsHeld,
+      probeDetail(
+        plantsHeld,
+        plantProbes,
+        `in copies of the tree: one Property read added to src/validate.ts at module load, the core path's facts read through spine-core in src/render.ts, ` +
+          `and the runtime probe that names the export's need removed — RC11's probes red on each: ${reds.join('; ')}`,
+      ),
+      'RC11 reads green on a tree that never touches the runtime and on a stub that touches nothing alike; the plants are what show the stub ' +
+        'sees an access at load, a read on the core path and an export refused without its sentence',
     );
   }
 

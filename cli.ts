@@ -141,10 +141,9 @@ import {
   GEOMETRY_FILE,
   GeometryError,
   UnframeablePoseError,
-  skinRosterOf,
   geometryFileOf,
   geometryText,
-  loadPosable,
+  loadCandidate,
   PROTOCOL_FPS,
   renderFrame,
   sampleAll,
@@ -154,17 +153,16 @@ import {
   SHEET_TILE,
   sidecarViewport,
   SlotSubsetError,
-  slotSubsetOf,
-  candidatePosers,
   POSER_NAMES,
   PoserChoiceError,
+  refuseUnchosen,
+  SpineRuntimeError,
   throughPoser,
   type Frame,
   type FramesSidecar,
   type FrameSet,
-  type Posable,
-  type PoserChoice,
   type PoserName,
+  type SkeletonFacts,
   type SlotSubset,
 } from './src/render.ts';
 import {
@@ -1623,13 +1621,13 @@ function readSkinFlag(flags: Record<string, string>, declared: string[]): string
  */
 function readSlotSubsetFlags(
   flags: Record<string, string>,
-  data: Posable['data'],
+  facts: SkeletonFacts,
   skin: string | undefined,
 ): SlotSubset | undefined {
   const list = (raw: string | undefined): string[] | undefined =>
     raw === undefined ? undefined : raw.split(',').map((name) => name.trim()).filter((name) => name !== '');
   try {
-    return slotSubsetOf(data, { slots: list(flags.slot), hidden: list(flags.hide) }, skin);
+    return facts.subset({ slots: list(flags.slot), hidden: list(flags.hide) }, skin);
   } catch (err) {
     if (err instanceof SlotSubsetError) throw new UsageError(err.message);
     throw err;
@@ -1637,16 +1635,12 @@ function readSlotSubsetFlags(
 }
 
 /**
- * `--poser core|spine`, resolved against the candidate (issue #968): both
- * posers for it, and which one this run asked for. `core` on an input that
- * cannot carry it is refused as a usage error by name; absent, the input's own
- * choice stands — see `candidatePosers`.
+ * `--poser` as spelled, checked against the posers there are — shared by
+ * `render` and `check`. On `render` it is read where its refusal has always
+ * stood, after the candidate's own flags; the candidate is loaded before that
+ * with the spelling as given (`posersAsked`), so a rigc build the core poses
+ * is chosen without loading spine-core (issue #1014).
  */
-function readPoserChoice(flags: Record<string, string>, data: Posable['data'], skeletonPath: string, atlasPath: string): PoserChoice {
-  return candidatePosers(data, skeletonPath, atlasPath, readPoserFlag(flags));
-}
-
-/** `--poser` as spelled, checked against the posers there are — shared by `render` and `check`. */
 function readPoserFlag(flags: Record<string, string>): PoserName | undefined {
   const raw = flags.poser;
   const forced = POSER_NAMES.find((name) => name === raw);
@@ -1654,6 +1648,11 @@ function readPoserFlag(flags: Record<string, string>): PoserName | undefined {
     throw new UsageError(`--poser ${JSON.stringify(raw)}: known posers are ${POSER_NAMES.join(', ')}`);
   }
   return forced;
+}
+
+/** `--poser` as the candidate is loaded with: a known spelling, or the input's own choice — the spelling is refused later, by `readPoserFlag`. */
+function posersAsked(flags: Record<string, string>): PoserName | undefined {
+  return POSER_NAMES.find((name) => name === flags.poser);
 }
 
 /** A resolved subset as the one field it is spelled as, in `PoseOptions` and in `frames.json` alike. */
@@ -1673,8 +1672,10 @@ function readPositiveNumber(flags: Record<string, string>, key: string, fallback
 /**
  * Does this skeleton declare a setup stage — a numeric width AND height?
  *
- * Read off the loaded `SkeletonData` for `render` and off the file's header for
- * `preview`, which never loads one; both are the same two fields, because
+ * Read off the file's header for `preview`, which never loads one; `render`
+ * reads the same statement off its candidate (`SkeletonFacts.declaresStage`:
+ * the header again on a rigc build the core poses, the loaded `SkeletonData`
+ * on an export). Both are the same two fields, because
  * `SkeletonJson` copies them across unconditionally (`SkeletonJson.js:70-73`),
  * so a header that omits them leaves `undefined` on a field typed `number`.
  */
@@ -1745,10 +1746,18 @@ function cmdRender(flags: Record<string, string>): void {
   console.log('rigc render');
   console.log(`  ..    skeleton ${skeletonPath}`);
   console.log(`  ..    atlas    ${atlasPath}`);
-  const { data, pages } = loadPosable(skeletonPath, atlasPath, atlasDir);
-  const only = readAnimationFlag(flags, data.animations.map((a) => a.name));
-  const skin = readSkinFlag(flags, data.skins.map((s) => s.name));
-  const subset = readSlotSubsetFlags(flags, data, skin);
+  // Which implementation of the posing seam draws this (issue #968), chosen
+  // before anything is read off the candidate (issue #1014): a rigc build the
+  // core poses — `skeleton.model.json` beside the pair — reads its names, its
+  // subset roster and its pages without loading spine-core at all.
+  const { choice, facts, pages } = loadCandidate(
+    { skeletonText: readFileSync(skeletonPath, 'utf8'), atlasText: readFileSync(atlasPath, 'utf8'), atlasDir, label: skeletonPath },
+    { skeleton: skeletonPath, atlas: atlasPath },
+    posersAsked(flags),
+  );
+  const only = readAnimationFlag(flags, [...facts.animations]);
+  const skin = readSkinFlag(flags, [...facts.skins]);
+  const subset = readSlotSubsetFlags(flags, facts, skin);
   // One object, so the framing and the frames cannot be posed under two
   // different skins — which would frame one shot with another shot's box.
   // Not annotated `PoseOptions`: that name is `src/pose.ts`'s in this file, and
@@ -1762,23 +1771,25 @@ function cmdRender(flags: Record<string, string>): void {
   if (skin !== undefined) console.log(`  ..    skin     ${skin}`);
   if (subset !== undefined) console.log(`  ..    ${subset.mode.padEnd(8)} ${subset.names.join(', ')}`);
 
-  // Which implementation of the posing seam draws this (issue #968): rigc's own
-  // core when the candidate is a rigc build — `skeleton.model.json` beside the
-  // pair — and spine-core otherwise, or where the core refuses the input by
-  // name. Never silently: the `poser` line below says which, and why.
-  const choice = readPoserChoice(flags, data, skeletonPath, atlasPath);
+  // Rigc's own core when the candidate is a rigc build, and spine-core
+  // otherwise, or where the core refuses the input by name. Never silently:
+  // the `poser` line below says which, and why. `--poser` is refused here, where
+  // it always was: a spelling there is no poser for, then `core` on an input
+  // that cannot carry it.
+  readPoserFlag(flags);
+  refuseUnchosen(choice);
 
   // Everything is posed before anything is written, so a core refusal partway
   // re-poses the whole input on spine-core rather than leaving half of a frame
   // set drawn by each.
-  const posed = throughPoser(choice, (poser) => {
+  const posed = throughPoser(choice, (poser, roster) => {
     // `null` is a skeleton that posed no vertex at all. One that posed a vertex
     // it cannot frame — Infinity or NaN — is thrown from the framing as a
     // `GeometryError` naming the number (issue #873), and one whose every vertex
     // sits at one point — every drawn bone unposed by the skin, or collapsed — as
     // an `UnframeablePoseError` (issue #997); neither reaches this. The roster is what
     // lets the second name the skins that pose a bone, whichever poser draws.
-    const viewport = framingViewport(poser, maxSide, pose, skinRosterOf(data));
+    const viewport = framingViewport(poser, maxSide, pose, roster);
     if (!viewport) {
       throw new UsageError(
         `${skeletonPath} posed no drawable attachment in any animation or in its setup pose${
@@ -1804,7 +1815,7 @@ function cmdRender(flags: Record<string, string>): void {
     const geometryTexts = new Map<string, string>();
     if (geometry) {
       for (const [name, frames] of sampled) {
-        const animation = name === SETUP_POSE_DIR && data.animations.length === 0 ? null : name;
+        const animation = name === SETUP_POSE_DIR && facts.animations.length === 0 ? null : name;
         geometryTexts.set(name, geometryText(geometryFileOf(poser, animation, fps, frames, viewport, skin)));
       }
     }
@@ -1813,7 +1824,7 @@ function cmdRender(flags: Record<string, string>): void {
   const { viewport, sampled, geometryTexts } = posed.value;
   console.log(`  ..    poser    ${posed.note}`);
   console.log(`  ..    ${viewport.width}x${viewport.height}px at ${fps} fps, ${sampled.size} set(s) -> ${outRoot}`);
-  if (!declaresSetupStage(data)) console.log(`  ..    ${STAGELESS_FRAMING.render}`);
+  if (!facts.declaresStage) console.log(`  ..    ${STAGELESS_FRAMING.render}`);
 
   mkdirSync(outRoot, { recursive: true });
   const sets: FrameSet[] = [];
@@ -1839,7 +1850,7 @@ function cmdRender(flags: Record<string, string>): void {
     const duration = frames[frames.length - 1].time;
     sets.push({
       dir: dirName,
-      animation: name === SETUP_POSE_DIR && data.animations.length === 0 ? null : name,
+      animation: name === SETUP_POSE_DIR && facts.animations.length === 0 ? null : name,
       fps,
       sampled: frames.length,
       written: frames.length,
@@ -4299,6 +4310,14 @@ try {
   }
   if (err instanceof NotAPngError) {
     console.error(`rigc: ${err.message}`);
+    process.exit(1);
+  }
+  // An input posed through spine-core — a Spine export, `--poser spine`, a
+  // fallback — on a run where the runtime cannot be used (issue #1014). The
+  // sentence names the input and why it needs the runtime; exit 1, like a file
+  // that is not a PNG: the invocation was fine and the run could not pose it.
+  if (err instanceof SpineRuntimeError) {
+    console.error(`rigc ${command}: ${err.message}`);
     process.exit(1);
   }
   // An install refused before its first write (issue #831): the invocation was

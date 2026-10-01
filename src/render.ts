@@ -81,7 +81,11 @@
  * is no honest way to render one without it. (Since issue #968 that holds for a
  * Spine export: a rigc build is posed by rigc's own core through
  * `./render_core.ts`, and this file keeps the runtime for the export's poser,
- * the atlas pages and texture substitution — see *which poser* below.) The rule that matters is unchanged
+ * the export's atlas pages and texture substitution — see *which poser* below.
+ * Since issue #1014 a rigc build the core poses touches none of it: what a
+ * render reads off the candidate besides the pose comes from the skeleton's
+ * own JSON and rigc's atlas reader (`loadCandidate`), and spine-core is reached
+ * only where it poses or substitutes.) The rule that matters is unchanged
  * — `src/compile.ts` must stay independent of the runtime so the compiler and
  * the gate are not checking each other's assumptions — and this file is neither.
  * It also imports `tools/plate.ts` for the PNG codec, which is dependency-free.
@@ -105,10 +109,11 @@ import {
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { Plate, readPlate, type RGBA } from '../tools/plate.ts';
-import { pageFootprint } from './atlas.ts';
+import { pageFootprint, parseAtlasText } from './atlas.ts';
 import { CoreInputError } from './core/index.ts';
 import { MODEL_DOCUMENT_FILE } from './model.ts';
-import { clipSourceOf, corePoser, inactiveBoneSnapshot, SlotSubsetError, subsetOver, unposedBones } from './render_core.ts';
+import { clipSourceOf, corePoser, coreSkinRoster, inactiveBoneSnapshot, SlotSubsetError, subsetOver, unposedBones, type SubsetRoster } from './render_core.ts';
+import { walkTimelines } from './timelines.ts';
 
 /** Opaque, and light: both of rung 3's parts are dark slate, so is every ground. */
 export const BACKGROUND: RGBA = [232, 232, 232, 255];
@@ -735,6 +740,205 @@ export function posableFromText(skeletonText: string, atlasText: string, atlasDi
 }
 
 // ---------------------------------------------------------------------------
+// what a render and a check read off a candidate besides its pose (issue #1014)
+// ---------------------------------------------------------------------------
+//
+// ⭐ `render` and `check` read a handful of facts off the candidate before and
+// beside the pose: the animation and skin names their flags are checked
+// against, the slot subset's roster, whether a stage is declared, the bone
+// tree `check` draws its chains from, the skin roster the framing reads, and
+// the atlas pages the rasteriser samples. Until issue #1014 every one of them
+// came off the skeleton spine-core had parsed, so a rigc build the core poses
+// still loaded and ran the runtime before its poser was chosen. Now the choice
+// comes first (`loadCandidate`), and a build the core poses reads each fact
+// where it is written: the names, the tree, the subset's roster and the stage
+// off the skeleton's own JSON (`skeletonFacts`), the pages off rigc's atlas
+// reader, and the skin roster off the model document (`coreSkinRoster` in
+// `./render_core.ts`). Every one of those readings was measured equal to the
+// spine-core reading it replaces on every input the tree carries — the
+// nineteen built corpus rows and the twelve editor exports (the PR of #1014
+// carries the counts). A Spine export, `--poser spine` and a fallback the
+// poser line names load spine-core as before and read every fact off it.
+
+/** What `render` and `check` read off a candidate's skeleton besides its pose. */
+export interface SkeletonFacts {
+  /** Every animation name, in the skeleton's own order. */
+  readonly animations: readonly string[];
+  /** Every skin name, in the skeleton's own order. */
+  readonly skins: readonly string[];
+  /** Whether the header states a numeric `width` and `height` — a setup stage (issue #714). */
+  readonly declaresStage: boolean;
+  /** Every bone in declaration order, and its parent's name. */
+  readonly bones: ReadonlyArray<{ name: string; parent: string | null }>;
+  /** Every slot in declaration order, and the bone it hangs from. */
+  readonly slots: ReadonlyArray<{ name: string; bone: string }>;
+  /** `slotSubsetOf` over this skeleton — refused by `SlotSubsetError`. */
+  subset(opts: Pick<PoseOptions, 'slots' | 'hidden'> | undefined, skin: string | undefined): SlotSubset | undefined;
+}
+
+/** The facts as spine-core loaded them — an export's reading, and every candidate's before issue #1014. */
+export function spineFacts(data: SkeletonData): SkeletonFacts {
+  return {
+    animations: data.animations.map((a) => a.name),
+    skins: data.skins.map((s) => s.name),
+    // `SkeletonJson` copies both header fields across unconditionally, so an omitted extent is `undefined` here, not 0.
+    declaresStage: typeof data.width === 'number' && typeof data.height === 'number',
+    bones: data.bones.map((bone) => ({ name: bone.name, parent: bone.parent === null ? null : bone.parent.name })),
+    slots: data.slots.map((slot) => ({ name: slot.name, bone: slot.boneData.name })),
+    subset: (opts, skin) => slotSubsetOf(data, opts, skin),
+  };
+}
+
+type JsonObject = Record<string, unknown>;
+
+/** A JSON value as an object, or an empty one where it is not one. */
+function objectOf(value: unknown): JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as JsonObject) : {};
+}
+
+/** A JSON value as a list of objects, or an empty list where it is not one. */
+function objectsOf(value: unknown): JsonObject[] {
+  return Array.isArray(value) ? value.map(objectOf) : [];
+}
+
+/**
+ * The same facts off the skeleton's own JSON — a candidate the core poses
+ * (issue #1014), whose skeleton spine-core never loads.
+ *
+ * Each is the file's own statement, read in the file's order: the animation
+ * names are the keys of `animations` (the order the parser iterates them), the
+ * skins `skins[].name` (the default skin the one named `default`), a slot's
+ * carriers the skins whose `attachments` give it at least one entry, the tree
+ * `bones[]` and `slots[]`, and the stage `skeleton.width`/`height`. The core
+ * poses only a rigc build whose `skeleton.json` hashes to the digest its model
+ * document records, so the file read here is the one `build` wrote and the
+ * gate round-tripped.
+ */
+export function skeletonFacts(skeletonText: string): SkeletonFacts {
+  const root = objectOf(JSON.parse(skeletonText));
+  const skins = objectsOf(root.skins);
+  const slots = objectsOf(root.slots).map((slot) => ({ name: String(slot.name), bone: String(slot.bone) }));
+  const header = objectOf(root.skeleton);
+  const roster: SubsetRoster = {
+    declared: slots.map((slot) => slot.name),
+    carriers: (slot) => skins.filter((skin) => Object.keys(objectOf(objectOf(skin.attachments)[slot])).length > 0).map((skin) => String(skin.name)),
+    defaultSkin: skins.some((skin) => skin.name === 'default') ? 'default' : null,
+  };
+  return {
+    animations: Object.keys(objectOf(root.animations)),
+    skins: skins.map((skin) => String(skin.name)),
+    declaresStage: typeof header.width === 'number' && typeof header.height === 'number',
+    bones: objectsOf(root.bones).map((bone) => ({ name: String(bone.name), parent: typeof bone.parent === 'string' ? bone.parent : null })),
+    slots,
+    subset: (opts, skin) => subsetOver(roster, opts, skin),
+  };
+}
+
+/**
+ * Each animation's duration off the skeleton's own JSON, in the file's order —
+ * what `rosterDifference` holds a model document's durations to without
+ * loading the skeleton through spine-core (issue #1014).
+ *
+ * ⚠️ Skeleton JSON carries no duration, so this is the parser's derivation of
+ * one, and it is stated as measured rather than as read: the LAST key time of
+ * each timeline, the largest of them, held as a float32 — equal to
+ * spine-core's `Animation.duration` on every animation of every input the tree
+ * carries (the PR of #1014). The timelines are the ones `walkTimelines` walks,
+ * the walk `A05` and `A12` stand on, so a group it did not descend would be
+ * missing from both.
+ */
+function skeletonDurations(root: JsonObject): Array<{ name: string; duration: number }> {
+  return Object.entries(objectOf(root.animations)).map(([name, animation]) => {
+    let duration = 0;
+    walkTimelines({ animations: { [name]: animation } }, (_path, _kind, _timeline, keys) => {
+      if (keys.length === 0) return;
+      const last = objectOf(keys[keys.length - 1]);
+      duration = Math.max(duration, Math.fround(typeof last.time === 'number' ? last.time : 0));
+    });
+    return { name, duration };
+  });
+}
+
+/** Every page an atlas declares, read by rigc's own atlas reader — the pages a candidate the core poses is drawn from. */
+function atlasPagesOf(atlasText: string, atlasDir: string): Map<string, Plate> {
+  const pages = new Map<string, Plate>();
+  for (const page of parseAtlasText(atlasText).pages) pages.set(page.name, readPlate(join(atlasDir, page.name)));
+  return pages;
+}
+
+/**
+ * Posing an input through spine-core when the runtime cannot be reached —
+ * refused naming the input and why it needs the runtime (issue #1014).
+ *
+ * A Spine export, `--poser spine` and a fallback the poser line names are what
+ * spine-core is loaded for; a rigc build the core poses reads nothing through
+ * it. So the one run that can meet a runtime it cannot use is one of those
+ * three, and it says so rather than surfacing whatever the first access threw.
+ */
+export class SpineRuntimeError extends Error {}
+
+/** Touch the runtime once, before anything is parsed through it, and refuse by name when it cannot be used. */
+function requireSpineRuntime(label: string, why: string): void {
+  try {
+    // A property read on the class the load starts from: no runtime code runs, and a runtime that cannot be used throws here.
+    void TextureAtlas.prototype;
+  } catch (err) {
+    throw new SpineRuntimeError(
+      `${label} is posed through spine-core (${why}), and the runtime could not be used: ${(err as Error).message}. ` +
+        'spine-core is what poses a Spine export, --poser spine and a fallback the poser line names; ' +
+        'a rigc build the core poses reads nothing through it',
+    );
+  }
+}
+
+/** A candidate as `render` and `check` read it: the posers, the facts and the pages (issue #1014). */
+export interface Candidate {
+  choice: PoserChoice;
+  facts: SkeletonFacts;
+  pages: Map<string, Plate>;
+}
+
+/**
+ * Load a candidate for `render` or `check`, choosing its poser FIRST (issue
+ * #1014): a rigc build the core poses reads its facts off its own JSON, its
+ * pages off rigc's atlas reader and its skin roster off the model document,
+ * and spine-core is never loaded for it; anything else — a Spine export,
+ * `--poser spine`, a candidate handed over as text (`paths` null, `unplaced`
+ * the reason) — is loaded through spine-core as `posableFromText` always
+ * loaded it. The choice's spine-core poser stays unloaded until something
+ * reads it, which on a rigc build is a fallback the poser line names.
+ *
+ * `--poser core` on an input that cannot carry it is NOT refused here: the
+ * caller says it where it always has (`refuseUnchosen`), after the flags that
+ * refuse before it.
+ */
+export function loadCandidate(
+  input: { skeletonText: string; atlasText: string; atlasDir: string; label: string },
+  paths: { skeleton: string; atlas: string } | null,
+  forced: PoserName | undefined,
+  options: { make?: MakeCorePoser; unplaced?: string } = {},
+): Candidate {
+  let data: SkeletonData | null = null;
+  let choice: PoserChoice | null = null;
+  const spineData = (): SkeletonData => {
+    if (data === null) {
+      requireSpineRuntime(input.label, choice === null || choice.core !== null ? 'a fallback from the core poser' : choice.why);
+      data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(input.atlasText))).readSkeletonData(JSON.parse(input.skeletonText));
+    }
+    return data;
+  };
+  choice =
+    paths === null
+      ? posersOver(forced, null, forced === 'spine' ? '--poser spine' : (options.unplaced ?? 'no path to find a model document beside'), spineData)
+      : choosePosers(paths.skeleton, paths.atlas, forced, spineData, options.make ?? corePoser);
+  if (choice.core !== null) return { choice, facts: skeletonFacts(input.skeletonText), pages: atlasPagesOf(input.atlasText, input.atlasDir) };
+  requireSpineRuntime(input.label, choice.why);
+  const posable = posableFromText(input.skeletonText, input.atlasText, input.atlasDir);
+  data = posable.data;
+  return { choice, facts: spineFacts(posable.data), pages: posable.pages };
+}
+
+// ---------------------------------------------------------------------------
 // the posing seam (issue #965, step 3a of #380)
 // ---------------------------------------------------------------------------
 //
@@ -819,8 +1023,19 @@ export interface Poser {
 /** What every sampler takes: a poser, or spine-core's parsed skeleton, which is posed through `spinePoser`. */
 export type PoseSource = Poser | SkeletonData;
 
+/**
+ * Whether a pose source is a `Poser` — told by the seam's own entries rather
+ * than by `instanceof SkeletonData`, which reads the runtime's class and so
+ * reached spine-core on every sample a rigc build took through the core
+ * (issue #1014). A parsed skeleton carries none of the three.
+ */
+function isPoser(source: PoseSource): source is Poser {
+  const seam = source as Partial<Poser>;
+  return typeof seam.setup === 'function' && typeof seam.animation === 'function' && typeof seam.rest === 'function';
+}
+
 function poserOf(source: PoseSource): Poser {
-  return source instanceof SkeletonData ? spinePoser(source) : source;
+  return isPoser(source) ? source : spinePoser(source);
 }
 
 /** A sampler's `PoseOptions` as a draw walk reads them, the subset resolved once, on the first frame posed. */
@@ -998,7 +1213,43 @@ export interface PoserChoice {
   core: Poser | null;
   /** For a core poser, the document it poses; otherwise why there is none. */
   why: string;
-  spine: Poser;
+  /**
+   * spine-core's poser over the same skeleton — loaded the first time it is
+   * read (issue #1014), which on a rigc build the core poses is a fallback the
+   * poser line names, or never.
+   */
+  readonly spine: Poser;
+  /**
+   * The skin roster behind `poser` (`SkinRoster`): the model document's for
+   * the core poser (`coreSkinRoster`), the parsed skeleton's for spine-core's
+   * (`skinRosterOf`) — so a render the core poses reads its framing's roster
+   * without loading the runtime (issue #1014).
+   */
+  rosterOf(poser: Poser): SkinRoster;
+}
+
+/** What builds the core poser — `corePoser`, or a planted copy the suite passes (`RC02`, `CH01`). */
+export type MakeCorePoser = (modelText: string, atlasText: string, where: string, skeleton: { path: string; bytes: Uint8Array }) => Poser;
+
+/** A skeleton's three rosters, as `rosterDifference` compares them. */
+interface SkeletonRosters {
+  bones: ReadonlyArray<{ name: string; parent: string | null }>;
+  slots: ReadonlyArray<{ name: string; bone: string }>;
+  animations: ReadonlyArray<{ name: string; duration: number }>;
+  /** Every skin name, in the skeleton's order — the roster `coreSkinRoster` names skins in. */
+  skins: readonly string[];
+}
+
+/**
+ * The rosters off the skeleton's own JSON (issue #1014): its bones, slots and
+ * skins as `skeletonFacts` reads them, and its animations' durations as
+ * `skeletonDurations` derives them. Before #1014 these were spine-core's parse
+ * of the same file; the two were measured equal on every input the tree
+ * carries.
+ */
+function skeletonRosters(skeletonText: string): SkeletonRosters {
+  const facts = skeletonFacts(skeletonText);
+  return { bones: facts.bones, slots: facts.slots, animations: skeletonDurations(objectOf(JSON.parse(skeletonText))), skins: facts.skins };
 }
 
 /**
@@ -1006,39 +1257,64 @@ export interface PoserChoice {
  * sit beside, or `null` — a document from another build would pose another
  * rig in the same files' name, so it is refused rather than drawn.
  */
-function rosterDifference(core: Poser, data: SkeletonData): string | null {
+function rosterDifference(core: Poser, skeleton: SkeletonRosters): string | null {
   const bones = (list: ReadonlyArray<{ name: string; parent: string | null }>): string => list.map((b) => `${b.name}<${b.parent ?? ''}`).join('|');
   const slots = (list: ReadonlyArray<{ name: string; bone: string }>): string => list.map((x) => `${x.name}@${x.bone}`).join('|');
-  const spine = spinePoser(data);
-  if (bones(core.bones) !== bones(spine.bones)) return 'the bones (names, parents or order) differ';
-  if (slots(core.slots) !== slots(spine.slots)) return 'the slots (names, bones or draw order) differ';
+  if (bones(core.bones) !== bones(skeleton.bones)) return 'the bones (names, parents or order) differ';
+  if (slots(core.slots) !== slots(skeleton.slots)) return 'the slots (names, bones or draw order) differ';
   const animations = (list: ReadonlyArray<{ name: string; duration: number }>): string =>
     list.map((a) => `${a.name}=${a.duration}`).sort().join('|');
-  if (animations(core.animations) !== animations(spine.animations)) return 'the animations (names or durations) differ';
+  if (animations(core.animations) !== animations(skeleton.animations)) return 'the animations (names or durations) differ';
   return null;
 }
 
 /**
- * Both posers for the skeleton at `skeletonPath` drawn through the atlas at
- * `atlasPath` — the core one when `skeleton.model.json` sits beside the
- * skeleton, the skeleton's bytes hash to the digest the document records
- * (`spine.sha256`: it is the file that build wrote, not one edited after it),
- * the atlas is the one beside it too, the core reads both and the document's
- * rosters are the skeleton's. `forced` is `--poser`; `core` on an
- * input that cannot carry it is refused by name (`PoserChoiceError`).
+ * A `PoserChoice` over a core poser (or none) and a skeleton spine-core loads
+ * only when something reads its side — `spine`, or the roster behind it.
  */
-export function candidatePosers(
-  data: SkeletonData,
+function posersOver(
+  forced: PoserName | undefined,
+  core: { poser: Poser; roster: SkinRoster } | null,
+  why: string,
+  spineData: () => SkeletonData,
+): PoserChoice {
+  let spine: Poser | null = null;
+  let spineRoster: SkinRoster | null = null;
+  return {
+    forced,
+    core: core === null ? null : core.poser,
+    why,
+    get spine(): Poser {
+      spine ??= spinePoser(spineData());
+      return spine;
+    },
+    rosterOf: (poser) => {
+      if (core !== null && poser === core.poser) return core.roster;
+      spineRoster ??= skinRosterOf(spineData());
+      return spineRoster;
+    },
+  };
+}
+
+/**
+ * The choice `candidatePosers` and `loadCandidate` share, refusing nothing:
+ * the core poser when `skeleton.model.json` sits beside the skeleton, the
+ * skeleton's bytes hash to the digest the document records (`spine.sha256`:
+ * it is the file that build wrote, not one edited after it), the atlas is the
+ * one beside it too, the core reads both and the document's rosters are the
+ * skeleton's — read off the skeleton's own JSON (`skeletonRosters`), so
+ * choosing loads nothing through spine-core (issue #1014).
+ */
+function choosePosers(
   skeletonPath: string,
   atlasPath: string,
   forced: PoserName | undefined,
-  /** What builds the core poser: `corePoser` — the suite's `RC02` passes a planted copy, and nothing else passes any. */
-  make: (modelText: string, atlasText: string, where: string, skeleton: { path: string; bytes: Uint8Array }) => Poser = corePoser,
+  spineData: () => SkeletonData,
+  make: MakeCorePoser,
 ): PoserChoice {
-  const spine = spinePoser(data);
   const dir = dirname(resolve(skeletonPath));
   const modelPath = join(dir, MODEL_DOCUMENT_FILE);
-  let core: Poser | null = null;
+  let core: { poser: Poser; roster: SkinRoster } | null = null;
   let why: string;
   if (forced === 'spine') why = '--poser spine';
   else if (!existsSync(modelPath)) why = `no ${MODEL_DOCUMENT_FILE} beside ${resolve(skeletonPath)} — a Spine export, not a rigc build`;
@@ -1048,10 +1324,13 @@ export function candidatePosers(
       "atlas's, and the core would pose them against another one's pages";
   } else {
     try {
-      const candidate = make(readFileSync(modelPath, 'utf8'), readFileSync(atlasPath, 'utf8'), modelPath, { path: resolve(skeletonPath), bytes: readFileSync(skeletonPath) });
-      const differs = rosterDifference(candidate, data);
+      const modelText = readFileSync(modelPath, 'utf8');
+      const bytes = readFileSync(skeletonPath);
+      const candidate = make(modelText, readFileSync(atlasPath, 'utf8'), modelPath, { path: resolve(skeletonPath), bytes });
+      const rosters = skeletonRosters(bytes.toString('utf8'));
+      const differs = rosterDifference(candidate, rosters);
       if (differs === null) {
-        core = candidate;
+        core = { poser: candidate, roster: coreSkinRoster(modelText, modelPath, rosters.skins) };
         why = modelPath;
       } else why = `${modelPath} does not describe ${resolve(skeletonPath)}: ${differs}`;
     } catch (err) {
@@ -1060,8 +1339,35 @@ export function candidatePosers(
       why = `the core refused ${err.message.startsWith(`${modelPath}: `) ? err.message : `${modelPath}: ${err.message}`}`;
     }
   }
-  if (forced === 'core' && core === null) throw new PoserChoiceError(`--poser core: ${why}`);
-  return { forced, core, why, spine };
+  return posersOver(forced, core, why, spineData);
+}
+
+/**
+ * `--poser core` on an input that cannot carry it, refused by name
+ * (`PoserChoiceError`) — said by the caller where its refusals have always
+ * stood, after the flags that refuse before it. Returns the choice otherwise.
+ */
+export function refuseUnchosen(choice: PoserChoice): PoserChoice {
+  if (choice.forced === 'core' && choice.core === null) throw new PoserChoiceError(`--poser core: ${choice.why}`);
+  return choice;
+}
+
+/**
+ * Both posers for the skeleton at `skeletonPath` drawn through the atlas at
+ * `atlasPath`, with spine-core's parse of it already in hand (`data`) — the
+ * choice `loadCandidate` makes, for a caller that loaded the pair itself.
+ * `forced` is `--poser`; `core` on an input that cannot carry it is refused by
+ * name (`PoserChoiceError`).
+ */
+export function candidatePosers(
+  data: SkeletonData,
+  skeletonPath: string,
+  atlasPath: string,
+  forced: PoserName | undefined,
+  /** What builds the core poser: `corePoser` — the suite's `RC02` passes a planted copy, and nothing else passes any. */
+  make: MakeCorePoser = corePoser,
+): PoserChoice {
+  return refuseUnchosen(choosePosers(skeletonPath, atlasPath, forced, () => data, make));
 }
 
 /**
@@ -1070,19 +1376,22 @@ export function candidatePosers(
  * (`CoreInputError`, e.g. a clip polygon that is not simple), in
  * which case `run` starts again from nothing on spine-core and `note` names the
  * refusal. Under `--poser core` that refusal is a `PoserChoiceError` instead.
- * `run` must write nothing: a fallback re-runs it whole.
+ * `run` must write nothing: a fallback re-runs it whole. It is handed the
+ * skin roster behind the poser it runs (`PoserChoice.rosterOf`), so a run
+ * through the core reads nothing through spine-core (issue #1014).
  */
-export function throughPoser<T>(choice: PoserChoice, run: (poser: Poser) => T): { value: T; poser: PoserName; note: string } {
+export function throughPoser<T>(choice: PoserChoice, run: (poser: Poser, roster: SkinRoster) => T): { value: T; poser: PoserName; note: string } {
+  const through = (poser: Poser): T => run(poser, choice.rosterOf(poser));
   if (choice.core !== null) {
     try {
-      return { value: run(choice.core), poser: 'core', note: `rigc core — ${choice.why}` };
+      return { value: through(choice.core), poser: 'core', note: `rigc core — ${choice.why}` };
     } catch (err) {
       if (!(err instanceof CoreInputError)) throw err;
       if (choice.forced === 'core') throw new PoserChoiceError(`--poser core: the core refused this input: ${err.message}`);
-      return { value: run(choice.spine), poser: 'spine', note: `spine-core — the core refused this input: ${err.message}` };
+      return { value: through(choice.spine), poser: 'spine', note: `spine-core — the core refused this input: ${err.message}` };
     }
   }
-  return { value: run(choice.spine), poser: 'spine', note: `spine-core — ${choice.why}` };
+  return { value: through(choice.spine), poser: 'spine', note: `spine-core — ${choice.why}` };
 }
 
 /**
@@ -2135,6 +2444,10 @@ export class UnframeablePoseError extends GeometryError {}
  * structure the unframeable sentence names a skin from (issue #997). Not a
  * poser's: the `Poser` seam carries no skin roster, and both posers pose the one
  * Spine file this is read from (the core's document is bound to it by hash).
+ * Two readings stand behind it — the runtime's (`skinRosterOf`) and the model
+ * document's (`coreSkinRoster` in `./render_core.ts`, issue #1014), measured
+ * to name the same bones under every skin — and `PoserChoice.rosterOf` hands
+ * each poser its own.
  */
 export interface SkinRoster {
   /** Every skin, in declaration order. */
@@ -2162,7 +2475,7 @@ export function skinRosterOf(data: SkeletonData): SkinRoster {
 
 /** The roster behind a pose source: its own when it is Spine data, else the one the caller passed. */
 function rosterBehind(source: PoseSource, roster: SkinRoster | undefined): SkinRoster | undefined {
-  return source instanceof SkeletonData ? skinRosterOf(source) : roster;
+  return isPoser(source) ? roster : skinRosterOf(source);
 }
 
 /**
