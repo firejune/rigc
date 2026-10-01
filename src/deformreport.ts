@@ -49,6 +49,9 @@ function sameKeyTime(specTime: number, loaded: number): boolean {
 export function deformReportBlock(survey: DeformSurvey, deformTransforms: CompileResult['deformTransforms'], exempt: ReadonlySet<string>): string[] {
   if (survey.timelines === 0) return [];
   const out: string[] = ['', 'deform  (what each key does to the geometry — figures with names, never a bar; issue #316)'];
+  // A survey that fell back from the reader it was meant to use says so where it is read (issue #1019): the
+  // figures are the same survey either way, and a fallback nobody can see is a second opinion nobody asked for.
+  if (survey.source.why !== null) out.push(`  ..    read and posed through ${survey.source.used}: ${survey.source.why}`);
   // The legend costs six lines and is worth them exactly once — on a report that
   // has figures in it. A bounding box or a clipping polygon deformed and nothing
   // else gets the reason it has no figures and no essay about them.

@@ -24,7 +24,10 @@
  * `emit_hashes.ts`'s `runRecipe` into `{{work}}`, and then, when it exited 0:
  *
  * 1. **the survey**, in this process, through the seam `explain` reads
- *    (`surveyOfBuild` in `src/deformmeasure.ts`) over `out/skeleton.json`,
+ *    (`surveyOfBuild` in `src/deformmeasure.ts`: `--source model` reads the
+ *    skeleton's structure off the model document and poses it through the core,
+ *    `spine-core` reads and poses the Spine skeleton through the runtime —
+ *    issue #1019) over `out/skeleton.json`,
  *    `out/skeleton.atlas` and — when the build wrote one — `out/skeleton.model.json`,
  *    with no exemption (the report's reading; A39's only removes slots). The
  *    `DeformSurvey` is written as canonical JSON (below) to `<work>/survey.json`
@@ -32,7 +35,9 @@
  *    beside the hash and is NOT part of it, because the gate is exactly that
  *    two sources give one survey.
  * 2. **`explain`'s `DEFORM` block**: the build's own last command re-run as
- *    `explain` (same flags), its block — from the `deform  (` header to the
+ *    `explain` (same flags, plus `--poser core` under `--source model` and
+ *    `--poser spine` under `--source spine-core`, so the block is read and posed
+ *    through the same reader the survey was — issue #1019), its block — from the `deform  (` header to the
  *    first empty line after it — written to `<work>/deform-block.txt` and hashed.
  * 3. **A39's lines** off the build's own log (every line naming
  *    `A39_DEFORM_KEEPS_TRIANGLE_WINDING`), hashed. `validate.ts` poses through
@@ -98,17 +103,36 @@
  * `HOOKS … EXACT|OFF` verdict (exit 0 exact, 1 off). A row the core refuses is
  * named with the refusal and counts as off.
  *
- * Exit codes throughout: 0 done (or IDENTICAL, or every hook exact), 1 DIFF (or
- * a hook off), 2 a bad input by name.
+ * ## `structure` — every structure read of the model document held to spine-core's (issue #1019)
+ *
+ *   bun tools/survey_hashes.ts structure --recipes <recipes.json> [--work <dir>] [--root <dir>]
+ *
+ * Each recipe built as above; then, on its three texts, the survey's two
+ * readers of the skeleton's structure (`deformPosers`' `structure` — spine-core's
+ * parse — and `model` — `modelStructure` over the model document) are compared
+ * read for read (`structureCensus`, `STRUCTURE_READS`): the animations' order,
+ * each deform timeline's slot, placement, key times, held vertex arrays and
+ * curves, each mesh's name, triangles, size, weighting, the other slots it
+ * reaches (as a set, by name) and model record, the slot timelines' key times
+ * the visibility split reads, the sliders' order and every field the survey
+ * reads of them (a bone-less slider's mapping is not read, and is not
+ * compared), and the skins. Then, for each read the model holds as the value
+ * the runtime computed FROM, how often its stated value would already have
+ * been the runtime's (`STRUCTURE_RAW`) — the count that says the read is a
+ * derivation rather than a copy. It prints `READ … N equal of M` and `STATED …`
+ * lines and a `STRUCTURE … EXACT|OFF` verdict (exit 0 exact, 1 off).
+ *
+ * Exit codes throughout: 0 done (or IDENTICAL, or every hook or read exact), 1
+ * DIFF (or a hook or read off), 2 a bad input by name.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { DeformTimeline, MeshAttachment, SliderData, type Skin } from '@esotericsoftware/spine-core';
 import { deformPosers, surveyOfBuild, type DeformSurveyInput, type DeformSurveySource, type ShownReading, type SurveyPose } from '../src/deformmeasure.ts';
-import { CoreInputError } from '../src/core/index.ts';
+import type { SurveyAnimation, SurveyDeformTimeline, SurveyMesh, SurveyStructure } from '../src/deformstructure.ts';
+import { CoreInputError, readModel } from '../src/core/index.ts';
 import { DIAL_BONE_FIELDS } from '../src/core/hooks.ts';
 import { MODEL_DOCUMENT_FILE } from '../src/model.ts';
 import { HashesInputError, readRecipes, recipesOfValue, runRecipe, TREE_ROOT, type Recipe, type StageEntry } from './emit_hashes.ts';
@@ -212,7 +236,9 @@ export function surveyRow(recipe: Recipe, work: string, root: string, source: Su
   row.survey = { sha256: sha(text), keys: survey.keys.length, spans: survey.spans.length, timelines: survey.timelines };
   // The build's own flags, re-run as `explain`.
   const last = recipe.commands[recipe.commands.length - 1];
-  const args = ['explain', ...last.slice(1)].map((arg) => resolveArg(arg, work, join(work, 'explain-out')));
+  // ...with the reader asked for (issue #1019): `--poser core` reads and poses the survey off the model document, `--poser spine` off spine-core; `auto` passes neither.
+  const poser = source === 'auto' ? [] : ['--poser', source === 'model' ? 'core' : 'spine'];
+  const args = ['explain', ...last.slice(1), ...poser].map((arg) => resolveArg(arg, work, join(work, 'explain-out')));
   const result = spawnSync(process.execPath, [CLI, ...args], { cwd: work, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   writeFileSync(join(work, 'log-explain.txt'), `$ rigc ${args.join(' ')}\n${result.stdout}\n--- stderr ---\n${result.stderr}`);
   row.explainExit = result.status;
@@ -465,16 +491,9 @@ export function hookCensus(input: DeformSurveyInput & { modelText: string }): Ho
     else t.first ??= `${where}: spine-core ${partWays(a, b)} from the core`;
   };
   try {
-    const { data, spine, core } = deformPosers(input);
-    const skins = [data.defaultSkin, ...data.skins].filter((k, i, all): k is Skin => k !== null && all.indexOf(k) === i);
-    const holder = (slotIndex: number, attachment: MeshAttachment): Skin | null =>
-      skins.find((k) => {
-        const entries: Array<{ attachment: unknown }> = [];
-        k.getAttachmentsForSlot(slotIndex, entries as Parameters<typeof k.getAttachmentsForSlot>[1]);
-        return entries.some((e) => e.attachment === attachment);
-      }) ?? null;
+    const { data, structure, spine, core } = deformPosers(input);
     /** The two poses read alike: the skin, and each (slot, mesh)'s shown reading and world vertices — as the survey reads them, then replaced. */
-    const poses = (kind: 'jump' | 'dial', where: string, a: SurveyPose, b: SurveyPose, meshes: ReadonlyArray<{ slotIndex: number; attachment: MeshAttachment; keys: ReadonlyArray<ArrayLike<number>> }>): void => {
+    const poses = (kind: 'jump' | 'dial', where: string, a: SurveyPose, b: SurveyPose, meshes: ReadonlyArray<{ slotIndex: number; attachment: SurveyMesh; keys: ReadonlyArray<ArrayLike<number>> }>): void => {
       tally(kind === 'jump' ? 'jump.under' : 'dial.under', where, a.under(), b.under());
       for (const { slotIndex, attachment, keys } of meshes) {
         const at = `${where} slot #${slotIndex} mesh "${attachment.name}"`;
@@ -494,27 +513,28 @@ export function hookCensus(input: DeformSurveyInput & { modelText: string }): Ho
         });
       }
     };
-    const deformed = (animation: string): Array<{ slotIndex: number; attachment: MeshAttachment; keys: ReadonlyArray<ArrayLike<number>>; timeline: DeformTimeline }> =>
-      (data.findAnimation(animation)?.timelines ?? []).flatMap((tl) =>
-        tl instanceof DeformTimeline && tl.attachment instanceof MeshAttachment && (tl.attachment.triangles?.length ?? 0) >= 3
-          ? [{ slotIndex: tl.slotIndex, attachment: tl.attachment, keys: tl.vertices, timeline: tl }]
-          : [],
-      );
-    for (const anim of data.animations) {
+    const deformed = (animation: string): Array<{ slotIndex: number; attachment: SurveyMesh; keys: ReadonlyArray<ArrayLike<number>>; timeline: SurveyDeformTimeline }> =>
+      (structure.animations.find((a) => a.name === animation)?.deforms ?? []).flatMap((tl) => {
+        const mesh = tl.mesh;
+        if (mesh === null || mesh.triangles.length < 3) return [];
+        const keys = Array.from({ length: tl.frames.length }, (_v, k) => tl.vertices(k) ?? []);
+        return [{ slotIndex: tl.slotIndex, attachment: mesh, keys, timeline: tl }];
+      });
+    for (const anim of structure.animations) {
       for (const m of deformed(anim.name)) {
-        const skin = holder(m.slotIndex, m.attachment);
-        const frames = [...m.timeline.frames];
-        const times = [...frames, ...frames.slice(1).map((t, i) => (frames[i] + t) / 2), anim.duration + 0.25];
+        const skin = m.timeline.placement().holder;
+        const frames = Array.from(m.timeline.frames);
+        const duration = data.findAnimation(anim.name)?.duration ?? 0;
+        const times = [...frames, ...frames.slice(1).map((t, i) => (frames[i] + t) / 2), duration + 0.25];
         for (const t of times) {
           const where = `"${anim.name}" at ${t}`;
           poses('jump', where, spine.track(skin, anim.name, t), core.track(skin, anim.name, t), [m]);
         }
       }
     }
-    for (const c of data.constraints) {
-      if (!(c instanceof SliderData)) continue;
-      const meshes = deformed(c.animation.name);
-      for (const skin of skins) {
+    for (const c of structure.sliders) {
+      const meshes = deformed(c.animation);
+      for (const skin of structure.skins) {
         const where = `slider "${c.name}" under skin "${skin.name}"`;
         const a = spine.dial(skin, c);
         const b = core.dial(skin, c);
@@ -538,7 +558,7 @@ export function hookCensus(input: DeformSurveyInput & { modelText: string }): Ho
             poses('dial', `${where} ${field}`, a.pose(), b.pose(), meshes);
           }
         } else {
-          const d = c.animation.duration;
+          const d = c.duration;
           for (const t of [-0.5, 0, 0.3, d / 2, d, d + 1]) probe(null, t);
           poses('dial', `${where} time`, a.pose(), b.pose(), meshes);
         }
@@ -580,6 +600,177 @@ export function hookLines(rows: ReadonlyArray<{ name: string; census: HookCensus
 }
 
 // ---------------------------------------------------------------------------
+// structure — the model document's reading of the survey's structure held to the runtime's (issue #1019)
+// ---------------------------------------------------------------------------
+
+/**
+ * The reads a structure census counts, in the order its lines print them —
+ * one per read the survey makes of the skeleton's structure
+ * (`SurveyStructure` in `src/deformstructure.ts`).
+ */
+export const STRUCTURE_READS = [
+  'animations.order', 'deforms.timeline', 'deforms.slot', 'deforms.placement', 'deforms.frames', 'deforms.vertices', 'deforms.curve',
+  'mesh.name', 'mesh.triangles', 'mesh.worldVerticesLength', 'mesh.weighted', 'mesh.timelineSlots', 'mesh.record',
+  'slotKeyTimes', 'sliders.order', 'sliders.fields', 'skins',
+] as const;
+export type StructureRead = (typeof STRUCTURE_READS)[number];
+
+/**
+ * What the model document STATES for the reads that are derivations, compared
+ * to the runtime's value as it is — so the census can say which reads the
+ * model holds verbatim and which the reader derives (the header of
+ * `src/deformstructure.ts`). One count per rule.
+ */
+export const STRUCTURE_RAW = ['animations.order', 'deforms.frames', 'deforms.vertices', 'deforms.curve.bezier', 'sliders.duration'] as const;
+export type StructureRaw = (typeof STRUCTURE_RAW)[number];
+
+export interface StructureCensus {
+  reads: Record<StructureRead, HookTally>;
+  /** For each derivation: how many of its values the model's STATED value already equals. */
+  raw: Record<StructureRaw, { equal: number; of: number }>;
+  /** What the model reader or the runtime refused, when either did. */
+  refused: string | null;
+}
+
+/** The census of one build's three texts: every read off the runtime's parse and off the model document, held at tolerance 0. */
+export function structureCensus(input: DeformSurveyInput & { modelText: string }): StructureCensus {
+  const reads = Object.fromEntries(STRUCTURE_READS.map((r) => [r, { exact: 0, calls: 0, first: null }])) as Record<StructureRead, HookTally>;
+  const raw = Object.fromEntries(STRUCTURE_RAW.map((r) => [r, { equal: 0, of: 0 }])) as Record<StructureRaw, { equal: number; of: number }>;
+  const tally = (read: StructureRead, where: string, a: unknown, b: unknown): void => {
+    const t = reads[read];
+    t.calls++;
+    if (sameValue(a, b)) t.exact++;
+    else t.first ??= `${where}: spine-core ${partWays(a, b)} from the model`;
+  };
+  const rawTally = (rule: StructureRaw, same: boolean): void => {
+    raw[rule].of++;
+    if (same) raw[rule].equal++;
+  };
+  try {
+    const { structure: rt, model } = deformPosers(input);
+    const doc = readModel(input.modelText);
+    const names = (s: SurveyStructure): string[] => s.animations.map((a) => a.name);
+    tally('animations.order', 'the animations', names(rt).join('\n'), names(model).join('\n'));
+    rawTally('animations.order', doc.animations.map((a) => a.name).join('\n') === names(rt).join('\n'));
+    tally('skins', 'the skins', rt.skins.map((k) => `${k.name}×${rt.skinsNamed(k.name)}`).join('\n'), model.skins.map((k) => `${k.name}×${model.skinsNamed(k.name)}`).join('\n'));
+    const slotIndexIn = (s: SurveyStructure, name: string): number => {
+      for (let i = 0; ; i++) {
+        const n = s.slotName(i);
+        if (n === name) return i;
+        if (n === `#${i}`) return -1;
+      }
+    };
+    const meshesSeen = new Set<SurveyMesh>();
+    for (const ra of rt.animations) {
+      const ma = model.animations.find((a) => a.name === ra.name);
+      if (ma === undefined) continue;
+      tally('deforms.timeline', `"${ra.name}"'s deform timelines`, ra.deforms.length, ma.deforms.length);
+      ra.deforms.forEach((rd, i) => {
+        const md = ma.deforms[i];
+        if (md === undefined) return;
+        const where = `"${ra.name}" deform ${i}`;
+        tally('deforms.slot', where, rt.slotName(rd.slotIndex), model.slotName(md.slotIndex));
+        const rp = rd.placement();
+        const mp = md.placement();
+        tally('deforms.placement', where, `${rp.skin}/${rp.placeholder}/${rp.holder?.name ?? '(none)'}`, `${mp.skin}/${mp.placeholder}/${mp.holder?.name ?? '(none)'}`);
+        tally('deforms.frames', where, Array.from(rd.frames), Array.from(md.frames));
+        const stated = doc.animations.find((a) => a.name === ra.name)?.timelines.attachments.find((t) => t.skin === mp.skin && t.slot === model.slotName(md.slotIndex) && t.attachment === mp.placeholder)?.deform ?? [];
+        Array.from(rd.frames).forEach((f, k) => rawTally('deforms.frames', stated[k] !== undefined && Object.is(stated[k].stated, f)));
+        for (let k = 0; k < rd.frames.length; k++) {
+          const rv = rd.vertices(k);
+          const mv = md.vertices(k);
+          tally('deforms.vertices', `${where} key ${k}`, rv === undefined ? null : Array.from(rv), mv === undefined ? null : Array.from(mv));
+          const key = stated[k];
+          rawTally('deforms.vertices', key !== undefined && rv !== undefined && key.offset === 0 && key.vertices.length === rv.length && key.vertices.every((v, j) => Object.is(v, rv[j])));
+        }
+        for (let k = 0; k + 1 < rd.frames.length; k++) {
+          const rc = rd.curve(k);
+          const mc = md.curve(k);
+          tally('deforms.curve', `${where} span ${k}`, rc.kind === 'bezier' ? Array.from(rc.points) : rc.kind, mc.kind === 'bezier' ? Array.from(mc.points) : mc.kind);
+          if (rc.kind === 'bezier') {
+            const c = stated[k]?.curve;
+            rawTally('deforms.curve.bezier', Array.isArray(c) && c.length === rc.points.length && c.every((v, j) => Object.is(v, rc.points[j])));
+          }
+        }
+        const rm = rd.mesh;
+        const mm = md.mesh;
+        if ((rm === null) !== (mm === null)) {
+          tally('mesh.name', where, rm === null ? 'not a mesh' : 'a mesh', mm === null ? 'not a mesh' : 'a mesh');
+          return;
+        }
+        if (rm === null || mm === null || meshesSeen.has(rm)) return;
+        meshesSeen.add(rm);
+        tally('mesh.name', where, rm.name, mm.name);
+        tally('mesh.triangles', where, Array.from(rm.triangles), Array.from(mm.triangles));
+        tally('mesh.worldVerticesLength', where, rm.worldVerticesLength, mm.worldVerticesLength);
+        tally('mesh.weighted', where, rm.weighted, mm.weighted);
+        // A set — the survey asks only whether one of them draws the mesh, and their key times — named, so two orders of slots compare.
+        const slotSet = (s: SurveyStructure, list: readonly number[]): string => [...new Set(list.map((i) => s.slotName(i)))].sort(byCodeUnit).join('\n');
+        tally('mesh.timelineSlots', where, slotSet(rt, rm.timelineSlots.filter((i) => i !== rd.slotIndex)), slotSet(model, mm.timelineSlots.filter((i) => i !== md.slotIndex)));
+        tally('mesh.record', where, JSON.stringify(rm.record), JSON.stringify(mm.record));
+        // The times the slots it reaches can change visibility at — read as a set, as the survey's split reads them.
+        const reached = [rd.slotIndex, ...rm.timelineSlots].map((i) => rt.slotName(i));
+        const times = (s: SurveyStructure, a: SurveyAnimation): string =>
+          [...new Set(a.slotKeyTimes(new Set(reached.map((n) => slotIndexIn(s, n)))))].sort((x, y) => x - y).join(',');
+        tally('slotKeyTimes', where, times(rt, ra), times(model, ma));
+      });
+    }
+    tally('sliders.order', 'the sliders', rt.sliders.map((s) => s.name).join('\n'), model.sliders.map((s) => s.name).join('\n'));
+    for (const rs of rt.sliders) {
+      const ms = model.sliders.find((s) => s.name === rs.name);
+      if (ms === undefined) continue;
+      // A bone-less slider's dial is its time, so the survey reads none of its mapping — and the two readings part there: the
+      // runtime sets no property and leaves `scale` at 0 where the document states the parser's 1 (measured, issue #1019).
+      const fields = rs.bone === null ? (['mix', 'animation', 'bone', 'local', 'loop'] as const) : (['mix', 'animation', 'bone', 'local', 'stated', 'from', 'to', 'scale', 'loop'] as const);
+      for (const f of fields) tally('sliders.fields', `slider "${rs.name}" ${f}`, rs[f], ms[f]);
+      if (rs.animation !== '') {
+        tally('sliders.fields', `slider "${rs.name}" duration`, rs.duration, ms.duration);
+        const declared = doc.animations.find((a) => a.name === rs.animation)?.timelines.declared;
+        rawTally('sliders.duration', declared !== undefined && Object.is(declared, rs.duration));
+      }
+    }
+    return { reads, raw, refused: null };
+  } catch (err) {
+    if (!(err instanceof CoreInputError)) throw err;
+    return { reads, raw, refused: err.message };
+  }
+}
+
+/** The census's lines: one per read with values, one per derivation, and the verdict. */
+export function structureLines(rows: ReadonlyArray<{ name: string; census: StructureCensus | null }>): { lines: string[]; exact: boolean } {
+  const lines: string[] = [];
+  const total = Object.fromEntries(STRUCTURE_READS.map((r) => [r, { exact: 0, calls: 0, first: null }])) as Record<StructureRead, HookTally>;
+  const raw = Object.fromEntries(STRUCTURE_RAW.map((r) => [r, { equal: 0, of: 0 }])) as Record<StructureRaw, { equal: number; of: number }>;
+  let refused = 0;
+  for (const r of rows) {
+    if (r.census === null) continue;
+    if (r.census.refused !== null) {
+      refused++;
+      lines.push(`  REFUSED  ${r.name}: ${r.census.refused}`);
+    }
+    for (const k of STRUCTURE_READS) {
+      const t = r.census.reads[k];
+      total[k].exact += t.exact;
+      total[k].calls += t.calls;
+      if (t.first !== null) {
+        total[k].first ??= `${r.name}: ${t.first}`;
+        lines.push(`  OFF  ${r.name}  ${k}: ${t.exact} equal of ${t.calls} — first ${t.first}`);
+      }
+    }
+    for (const k of STRUCTURE_RAW) {
+      raw[k].equal += r.census.raw[k].equal;
+      raw[k].of += r.census.raw[k].of;
+    }
+  }
+  for (const k of STRUCTURE_READS) lines.push(`  READ  ${k}: ${total[k].exact} equal of ${total[k].calls}`);
+  for (const k of STRUCTURE_RAW) lines.push(`  STATED  ${k}: the model's stated value is the runtime's on ${raw[k].equal} of ${raw[k].of}`);
+  const exact = refused === 0 && STRUCTURE_READS.every((k) => total[k].exact === total[k].calls);
+  const counted = rows.filter((r) => r.census !== null).length;
+  lines.push(`STRUCTURE (tolerance 0) ${exact ? 'EXACT' : 'OFF'} — ${counted} row(s) built, ${refused} refused; ${STRUCTURE_READS.map((k) => `${k} ${total[k].exact}/${total[k].calls}`).join(', ')}`);
+  return { lines, exact };
+}
+
+// ---------------------------------------------------------------------------
 // the command
 // ---------------------------------------------------------------------------
 
@@ -588,6 +779,7 @@ export const SURVEY_HASHES_USAGE = [
   '  bun tools/survey_hashes.ts run --recipes <recipes.json> --out <hashes.json> [--source auto|spine-core|model] [--work <dir>] [--root <dir>]',
   '  bun tools/survey_hashes.ts compare <a.json> <b.json>',
   '  bun tools/survey_hashes.ts hooks --recipes <recipes.json> [--work <dir>] [--root <dir>]',
+  '  bun tools/survey_hashes.ts structure --recipes <recipes.json> [--work <dir>] [--root <dir>]',
   '  (the tree\'s 19 recipes: bun tools/emit_hashes.ts recipes --out <recipes.json>)',
 ].join('\n');
 
@@ -646,6 +838,32 @@ export function surveyHashesMain(argv: readonly string[], print: (line: string) 
       print(`survey_hashes: ${doc.recipes.length} recipe(s), ${surveyed} surveyed, ${doc.recipes.length - surveyed} refused → ${out}`);
       warn(`survey_hashes: wall time ${((performance.now() - started) / 1000).toFixed(1)} s`);
       return 0;
+    }
+    if (command === 'structure') {
+      const { positional, flags } = parseFlags(rest, ['--recipes', '--work', '--root']);
+      if (positional.length > 0) throw new HashesInputError(`structure takes no path, got ${positional.join(' ')}`);
+      const recipesPath = flags.get('--recipes');
+      if (recipesPath === undefined) throw new HashesInputError('structure: --recipes <recipes.json> is required');
+      const root = resolve(flags.get('--root') ?? TREE_ROOT);
+      if (!existsSync(root) || !statSync(root).isDirectory()) throw new HashesInputError(`--root ${root} is not a directory`);
+      const recipes = [...recipesFrom(recipesPath)].sort((a, b) => byCodeUnit(a.name, b.name));
+      const work = freshWork(flags.get('--work'));
+      warn(`survey_hashes structure: ${recipes.length} recipe(s), work directory ${work}`);
+      const width = String(recipes.length).length;
+      const rows = recipes.map((recipe, i) => {
+        const dir = join(work, String(i).padStart(width, '0'));
+        const built = runRecipe(recipe, dir, root);
+        const out = join(dir, 'out');
+        const modelPath = join(out, MODEL_DOCUMENT_FILE);
+        const green = built.exits.length === recipe.commands.length && built.exits.every((e) => e === 0) && existsSync(modelPath);
+        const census = green ? structureCensus({ skeletonText: readFileSync(join(out, 'skeleton.json'), 'utf8'), atlasText: readFileSync(join(out, 'skeleton.atlas'), 'utf8'), modelText: readFileSync(modelPath, 'utf8') }) : null;
+        const reads = census === null ? 0 : STRUCTURE_READS.reduce((n, k) => n + census.reads[k].calls, 0);
+        print(`  ${census === null ? 'not built' : `${reads} read(s)`}  ${recipe.name}`);
+        return { name: recipe.name, census };
+      });
+      const verdict = structureLines(rows);
+      for (const line of verdict.lines) print(line);
+      return verdict.exact ? 0 : 1;
     }
     if (command === 'hooks') {
       const { positional, flags } = parseFlags(rest, ['--recipes', '--work', '--root']);
