@@ -352,9 +352,10 @@ export interface CompiledDocument {
   /**
    * The skin the document is posed under (issue #932, `./skins.ts`): `all` —
    * every skin merged, the oracle's `--skin all` and `readModel`'s reading —
-   * or one skin's name, `underSkin`'s.
+   * one skin's name, `underSkin`'s, or `null` — no skin set, the runtime's
+   * `Skeleton.skin` before `setSkin` is called (`underNoSkin`, issue #1051).
    */
-  skin: string;
+  skin: string | null;
   /** The skeleton's reference scale (issue #958), which every physics record carries too (`CorePhysicsRecord.referenceScale`). */
   referenceScale: number;
   bones: ModelBone[];
@@ -900,6 +901,20 @@ export function underSkin(doc: CompiledDocument, name: string): CompiledDocument
     throw new CoreInputError(`--skin ${JSON.stringify(name)}: no such skin; this document declares [${doc.skins.map((k) => k.name).join(', ') || 'none'}] (or pass ${CORE_ALL_SKINS})`);
   }
   const view: CompiledDocument = { ...doc, skin: name, constraints: doc.constraints.map((c) => (c.record === undefined ? c : { ...c, record: { ...c.record } as CoreConstraintRecord })) };
+  resolveSkinView(view);
+  return view;
+}
+
+/**
+ * The document posed with no skin set (issue #1051): no skin's `bones` or
+ * constraint lists applied — the default skin's included — and every slot
+ * resolved through the default skin alone, or through nothing where the
+ * document declares none (`./skins.ts`, *No skin set*, for the measurement).
+ * The view a fresh skeleton is in: `render` without `--skin`, A10's walk and
+ * `validate()`'s poses (`noSkinView` in `src/render_core.ts`).
+ */
+export function underNoSkin(doc: CompiledDocument): CompiledDocument {
+  const view: CompiledDocument = { ...doc, skin: null, constraints: doc.constraints.map((c) => (c.record === undefined ? c : { ...c, record: { ...c.record } as CoreConstraintRecord })) };
   resolveSkinView(view);
   return view;
 }

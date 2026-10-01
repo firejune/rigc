@@ -154,7 +154,6 @@ export const DOCUMENTED_CORE_REFUSALS: ReadonlyArray<readonly [RegExp, string]> 
   [/^the raw setup pose leaves setup\.bones out \(/, 'a block the oracle\'s core dump names absent at setup (`poseRawSetup` in src/core/raw.ts, `constraintsAbsentWhy`)'],
   [/^the raw walk leaves the bones out: /, 'a block the core leaves out of a walk (`walkIn` in src/core/raw.ts)'],
   [/^the looping walk leaves the bones out: slider "[^"]*" applies animation "[^"]*", which keys physics timelines/, 'a slider keying a physics timeline under the stepped walk (`sliderPhysicsWhy` in src/core/walk.ts, issue #1049)'],
-  [/^no skin was set, and this document declares skins \[/, 'a document whose skins name no default one, posed with no skin set (`noSkinView` in src/render_core.ts, issue #1051)'],
 ];
 
 /** The documented class a core refusal's sentence belongs to, or `null` for one no class documents. */

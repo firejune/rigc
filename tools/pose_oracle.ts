@@ -4,7 +4,7 @@
  *
  *   bun tools/pose_oracle.ts dump <build dir> --out <json>
  *                                 [--samples 9] [--phase grid|off|irr|dense]
- *                                 [--skin all|<name>] [--physics none|step] [--dt 1/60] [--raw]
+ *                                 [--skin all|none|<name>] [--physics none|step] [--dt 1/60] [--raw]
  *   bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]
  *   bun tools/pose_oracle.ts dump --core <skeleton.model.json> [--atlas <atlas>] --out <json> [same flags]
  *   bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]
@@ -195,7 +195,10 @@
  * posed: under `--skin all` a new skin named `__all` to which every skin is
  * added in file order (`Skin.addSkin`, later skins overriding earlier ones at
  * the same slot and placeholder); under `--skin <name>` that skin, where the
- * default skin still fills what it does not name (`Skeleton.getAttachment`).
+ * default skin still fills what it does not name (`Skeleton.getAttachment`);
+ * under `--skin none` (issue #1051) no skin at all — `setSkin` is never
+ * called, the state `render` without `--skin`, A10's walk and `validate()`
+ * pose in.
  *
  * Sample times, for an animation of duration `d` and `N` samples, sample `i`
  * from 0: `grid` — `d·i/(N-1)` (and `0` when `N` is 1); `off` —
@@ -277,7 +280,9 @@
  * named skin a slot shows the named skin's record, else the default skin's,
  * else nothing, and only the named skin's `bones` and constraint lists are
  * applied — the default skin's are not — each measured against the dump
- * above; a skin the model does not declare is refused (exit 2) by name. Under `--physics step --dt <s>` the core walks the
+ * above; under `--skin none` the document with no skin set (`noSkinView`,
+ * issue #1051: no skin's lists applied, a slot resolved through the default
+ * skin alone); a skin the model does not declare is refused (exit 2) by name. Under `--physics step --dt <s>` the core walks the
  * schedule above itself (issue #956, `poseSteppedAnimations` and
  * `stepSchedule` in `src/core/constraints_physics.ts`): the setup pose is the
  * reset pose, every animation a fresh state reset at 0 and stepped through
@@ -802,11 +807,30 @@ function firedBetween(skeleton: Skeleton, anim: Animation, last: number, t: numb
   return fired.map((e) => [e.data.name, r(e.time), e.intValue, r(e.floatValue), e.stringValue ?? null]);
 }
 
+/**
+ * `--skin none` (issue #1051): no skin set — spine-core's `new Skeleton(data)`
+ * with `setSkin` never called, and the core's `noSkinView`, the state
+ * `render` without `--skin`, A10's walk and `validate()` pose in. A skin
+ * literally named `none` is reached as `all`'s namesake is: not at all.
+ */
+export const ORACLE_NO_SKIN = 'none';
+
+/** How the core dumper turns the `--skin` option into the document it poses — `viewOf`, unless a control plants a misreading (issue #1051's `CO30`). */
+export type SkinViewOf = (model: CompiledDocument, skin: string) => CompiledDocument;
+
+/** The core's view of `model` under the `--skin` option: no skin set, every skin merged, or one by name (`underSkin`). */
+export function viewOf(model: CompiledDocument, skin: string): CompiledDocument {
+  return skin === ORACLE_NO_SKIN ? noSkinView(model) : underSkin(model, skin);
+}
+
 /** Pose one skeleton into a `pose-oracle/3` document — see the header for every field. */
 export function dumpSkeleton(data: SkeletonData, options: OracleOptions): OracleDump {
   const r = roundOf(options);
-  let skin: Skin;
-  if (options.skin === 'all') {
+  let skin: Skin | null;
+  if (options.skin === ORACLE_NO_SKIN) {
+    // Issue #1051: no skin set — `new Skeleton(data)` posed as it comes.
+    skin = null;
+  } else if (options.skin === 'all') {
     skin = new Skin('__all');
     for (const s of data.skins) skin.addSkin(s);
   } else {
@@ -823,7 +847,7 @@ export function dumpSkeleton(data: SkeletonData, options: OracleOptions): Oracle
   }
   const fresh = (): Skeleton => {
     const s = new Skeleton(data);
-    s.setSkin(skin);
+    if (skin !== null) s.setSkin(skin);
     return s;
   };
 
@@ -988,10 +1012,10 @@ export function dumpText(dump: OracleDocument): string {
  * #932); a skin it does not declare is refused by name, as the spine-core
  * dump refuses it.
  */
-export function coreDump(model: CompiledDocument, options: OracleOptions, plant: TimelinePlant = {}, uv: UvSource | null = null): OracleDocument {
+export function coreDump(model: CompiledDocument, options: OracleOptions, plant: TimelinePlant = {}, uv: UvSource | null = null, view: SkinViewOf = viewOf): OracleDocument {
   let doc: CompiledDocument;
   try {
-    doc = underSkin(model, options.skin);
+    doc = view(model, options.skin);
   } catch (err) {
     if (err instanceof CoreInputError) throw new OracleInputError(`dump --core: ${err.message}`);
     throw err;
@@ -1811,7 +1835,7 @@ function linesOf(c: OracleComparison, listed: number): string[] {
  * their signs of zero (issue #979).
  *
  *   bun tools/pose_oracle.ts unposed <build dir> [--samples 9] [--phase grid|off|irr|dense]
- *                                    [--skin all|<name>] [--physics none|step] [--dt 1/60]
+ *                                    [--skin all|none|<name>] [--physics none|step] [--dt 1/60]
  *
  * `compare` never reads these rows: an unposed bone — inactive, or below an
  * inactive bone — holds a zero matrix, so the ill-conditioned rule excludes
@@ -2007,7 +2031,7 @@ function unposedCommand(rest: readonly string[], print: (line: string) => void):
   if (fresh === null) {
     let view: CompiledDocument;
     try {
-      view = underSkin(model, options.skin);
+      view = viewOf(model, options.skin);
     } catch (err) {
       if (err instanceof CoreInputError) throw new OracleInputError(`unposed: ${err.message}`);
       throw err;
@@ -2039,11 +2063,11 @@ function unposedCommand(rest: readonly string[], print: (line: string) => void):
 
 const USAGE = [
   'usage:',
-  '  bun tools/pose_oracle.ts dump <build dir> --out <json> [--samples 9] [--phase grid|off|irr|dense] [--skin all|<name>] [--physics none|step] [--dt 1/60] [--raw]',
+  '  bun tools/pose_oracle.ts dump <build dir> --out <json> [--samples 9] [--phase grid|off|irr|dense] [--skin all|none|<name>] [--physics none|step] [--dt 1/60] [--raw]',
   '  bun tools/pose_oracle.ts dump <skeleton.json> <atlas> --out <json> [same flags]',
   '  bun tools/pose_oracle.ts dump --core <skeleton.model.json> [--atlas <atlas>] --out <json> [same flags]',
   '  bun tools/pose_oracle.ts compare <a.json> <b.json> [--tol-xy 1e-6] [--tol-m 1e-6]',
-  '  bun tools/pose_oracle.ts unposed <build dir> [--samples 9] [--phase grid|off|irr|dense] [--skin all|<name>] [--physics none|step] [--dt 1/60]',
+  '  bun tools/pose_oracle.ts unposed <build dir> [--samples 9] [--phase grid|off|irr|dense] [--skin all|none|<name>] [--physics none|step] [--dt 1/60]',
 ].join('\n');
 
 function parseFlags(args: readonly string[], known: readonly string[], switches: readonly string[] = []): { positional: string[]; flags: Map<string, string> } {
@@ -2284,12 +2308,12 @@ function coreWalkPose(p: WalkPose): WalkDocumentPose {
 
 /**
  * A10's walk as rigc's core takes it (`src/core/walk.ts`), the animations in
- * the file's order, over the document with no skin set (`noSkinView`, which refuses by name a document whose
- * default skin it cannot read that way). A construct the core leaves out
+ * the file's order, over the document with no skin set (`noSkinView`, issue
+ * #1051 — or `view`, a control's plant). A construct the core leaves out
  * refuses by name (`CoreInputError`); a non-finite value does not.
  */
-export function coreWalkDocument(model: CompiledDocument, frames: number = STEP_FRAMES, plant: TimelinePlant = {}, walkPlant: WalkPlant = {}): WalkDocument {
-  const doc = noSkinView(model);
+export function coreWalkDocument(model: CompiledDocument, frames: number = STEP_FRAMES, plant: TimelinePlant = {}, walkPlant: WalkPlant = {}, view: (model: CompiledDocument) => CompiledDocument = noSkinView): WalkDocument {
+  const doc = view(model);
   // The file's order (`fileAnimationOrder`), which is spine-core's: the document's own is the model's.
   const animations: WalkDocument['animations'] = fileAnimationOrder(model).flatMap((name) => doc.animations.filter((a) => a.name === name)).map((anim) => {
     const step = Math.max(anim.timelines.duration, 1) / frames;

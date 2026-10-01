@@ -179,6 +179,23 @@
  * corpus, since the oracle's dump writes no vertices for either, and a trim
  * is reached only from a pack that trims, which the public examples do not.
  *
+ * ## No skin set (issue #1051)
+ *
+ * After the census, the rows posed with no skin set — both dumpers under
+ * `--skin none` (`NOSKIN_OPTIONS`; `--raw` with the run), the state `render`
+ * without `--skin`, A10's walk and `validate()` pose in: each corpus row
+ * whose document declares skins and no `default` one, or a `default` skin
+ * naming a skin-required bone or constraint (`noSkinClass`), and three
+ * hand-written probes built through `ingest` and `compile`
+ * (`noSkinProbeSkeleton`: no default skin, a default skin naming members, a
+ * plain default for contrast). Each prints a `NOSKIN` line — every posed
+ * block judged alone, the stepped run under the same option, and every bone
+ * unposed in either pose compared to the bit (`compareUnposed`, the
+ * runtime's fresh reading classing HISTORY) — then a `NO SKIN` verdict line;
+ * a corpus with no row in the class prints a HOLE naming the probes as the
+ * only reading. A DIFF or REFUSED there turns the run RED. `--walk` walks the
+ * same three probes beside the inactive-bone ones.
+ *
  * ## `--walk` — A10's walk (issue #1025, cut 4c-5a)
  *
  * `bun tools/core_gate.ts --walk [--recipes …] [--root …] [--work …]` builds
@@ -191,7 +208,8 @@
  * `IDENTICAL`, `DIFF` with the first difference, `SKIP` where the core refuses
  * the document by name, `REFUSED` where the build chain failed — then a
  * `WALK` verdict line counting rows (the corpus's, then the inactive-bone
- * probes `walkProbes` builds in memory), poses, numbers, the steps past the
+ * probes `walkProbes` builds in memory and the no-skin probes
+ * `noSkinWalkProbes` builds under the work directory), poses, numbers, the steps past the
  * duration (the wrap) and the poses holding a non-finite value — and, where
  * any, the numbers on bones the view leaves inactive that a constraint writes
  * into (HISTORY, issue #979: the runtime keeps such a bone's previous step,
@@ -202,10 +220,11 @@
  * default and `--raw` runs print what they printed before it.
  *
  * Exit codes: 0 when every row is IDENTICAL or SKIP; 1 when any row is DIFF or
- * REFUSED, or its stepped run or any skin's run is DIFF; 2 on a bad input, by name. `tools/` is not `src/`: this file runs
+ * REFUSED, or its stepped run or any skin's run is DIFF, or a no-skin row is
+ * DIFF or REFUSED; 2 on a bad input, by name. `tools/` is not `src/`: this file runs
  * child processes (through `runRecipes`) and reads the disk.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { activeBones, CORE_INHERIT_MODES, CoreInputError, foldInheritMode, readBlend, readModel, shownAttachment, shownRow } from '../src/core/index.ts';
@@ -214,7 +233,11 @@ import { ADMITTED_CONSTRAINT_KINDS, TRANSFORM_PROPERTIES, type CoreConstraintRec
 import { slotBonePlan, type CorePathRecord } from '../src/core/constraints_path.ts';
 import { EVERY_GLOBAL_PHYSICS, PHYSICS_DEFAULTS, stepSchedule, type CorePhysicsRecord } from '../src/core/constraints_physics.ts';
 import { CORE_CONSTRAINT_KINDS, type CompiledDocument } from '../src/core/index.ts';
-import { MODEL_DOCUMENT_FILE } from '../src/model.ts';
+import { MODEL_DOCUMENT_FILE, modelDocument } from '../src/model.ts';
+import { compile } from '../src/compile.ts';
+import { ingest } from '../src/ingest.ts';
+import { CORE_DEFAULT_SKIN } from '../src/core/skins.ts';
+import { encodePng } from './plate.ts';
 import { HashesInputError, readRecipes, runRecipes, TREE_ROOT, treeRecipes, type Recipe } from './emit_hashes.ts';
 import { drawnRegions, shownAtSample, shownAtSetup, type DrawnRegion, type UvReading, type UvSource } from '../src/core/uvs.ts';
 import {
@@ -237,6 +260,9 @@ import {
   coreWalkDocument,
   spineWalkDocument,
   type WalkComparison,
+  compareUnposed,
+  ORACLE_NO_SKIN,
+  type SkinViewOf,
 } from './pose_oracle.ts';
 import type { WalkPlant } from '../src/core/walk.ts';
 
@@ -996,11 +1022,11 @@ function only(core: OracleDocument, keep: GateBlock): OracleDocument {
  * (every block the core writes, #955's among them), the `dt` both documents
  * state, and the steps the core's schedule takes between samples.
  */
-export function steppedRun(skeletonText: string, atlasText: string, skeletonPath: string, modelText: string, modelPath: string, plant: TimelinePlant, tol: { xy: number; m: number }, skin: string = STEPPED_OPTIONS.skin, uvReading?: UvReading, raw = false): SteppedRow {
+export function steppedRun(skeletonText: string, atlasText: string, skeletonPath: string, modelText: string, modelPath: string, plant: TimelinePlant, tol: { xy: number; m: number }, skin: string = STEPPED_OPTIONS.skin, uvReading?: UvReading, raw = false, view?: SkinViewOf): SteppedRow {
   const options: OracleOptions = rawOptions({ ...STEPPED_OPTIONS, skin }, raw);
   const spine = dumpSkeleton(loadOracleData(skeletonText, atlasText, skeletonPath), options);
   const doc = readModel(modelText, modelPath);
-  const core = coreDump(doc, options, plant, uvSourceOf(atlasText, modelText, uvReading));
+  const core = coreDump(doc, options, plant, uvSourceOf(atlasText, modelText, uvReading), view);
   const census = steppedCensusOf(modelText);
   const dt = spine.options.dt === core.options.dt ? core.options.dt : null;
   const steps = doc.animations.map((a) => ({ animation: a.name, counts: stepSchedule(STEPPED_OPTIONS.phase, a.timelines.duration, STEPPED_OPTIONS.samples, STEPPED_OPTIONS.dt as number).map((x) => x.length) }));
@@ -1695,6 +1721,241 @@ export function walkLines(rows: readonly WalkRow[]): { lines: string[]; ok: bool
   return { lines, ok };
 }
 
+// ---------------------------------------------------------------------------
+// No skin set (issue #1051)
+// ---------------------------------------------------------------------------
+
+/** The options the no-skin run takes both dumps under: the gate's, with no skin set (`--skin none`). */
+export const NOSKIN_OPTIONS: OracleOptions = { ...GATE_OPTIONS, skin: ORACLE_NO_SKIN };
+
+/** What sets a document apart with no skin set: skins and none named `default`, or a `default` skin naming a skin-required bone or constraint — `null` for a document the default skin's view already poses. */
+export function noSkinClass(doc: CompiledDocument): string | null {
+  if (doc.skins.length === 0) return null;
+  const fallback = doc.skins.find((k) => k.name === CORE_DEFAULT_SKIN);
+  if (fallback === undefined) return 'no default skin';
+  const members = fallback.bones.length + Object.values(fallback.constraints).reduce((n, names) => n + names.length, 0);
+  return members > 0 ? 'a default skin naming skin-required members' : null;
+}
+
+/** The no-skin probes' one atlas page: a 20-pixel region per name. */
+export const NOSKIN_PROBE_ATLAS = ['noskin.png', 'size: 128, 32', 'filter: Linear, Linear', ...['ra', 'rb', 'rc', 'rd', 're'].flatMap((n, i) => [n, `bounds: ${20 * i}, 0, 20, 20`]), ''].join('\n');
+
+/** The three hand-written skeletons the no-skin run and walk read beside the corpus (`noSkinProbeSkeleton`). */
+export const NOSKIN_PROBE_VARIANTS = ['no default skin', 'a default skin naming skin-required members', 'a plain default skin'] as const;
+export type NoSkinVariant = (typeof NOSKIN_PROBE_VARIANTS)[number];
+
+/**
+ * A Spine skeleton for the no-skin rule (issue #1051), in three variants
+ * that share every bone, constraint, slot and animation and differ in their
+ * skins: no `default` skin at all; a `default` skin naming two skin-required
+ * bones and two skin-required constraints; a `default` skin naming none.
+ * It separates every question the rule answers: a skin-required bone no
+ * constraint writes (`sf`), one a constraint that is not skin-required writes
+ * (`sw`, written by ik `ikw` — issue #979's class), a skin-required parent of
+ * a bone that is not (`sp` over `ch`) with a slot on each, a skin-required
+ * bone below that one (`sd`), a skin-required ik (`iks`) and transform
+ * (`tcs`) over bones that are not, and a second skin naming a different
+ * subset; slots the default skin fills, slots only a named skin fills, and
+ * one two named skins fill differently; an animation keying the bones, two
+ * slot colours, an attachment and the draw order. The compiler refuses a
+ * placeholder the default skin and a named one both fill, so in the two
+ * variants with a default skin the default fills what the variant without
+ * one leaves to the named skins.
+ */
+export function noSkinProbeSkeleton(variant: NoSkinVariant): Record<string, unknown> {
+  const region = (path: string): Record<string, unknown> => ({ path, width: 20, height: 20 });
+  const noDefault = variant === 'no default skin';
+  const s1 = { name: 's1', bones: ['sf', 'sp'], ik: ['iks'], attachments: { s_s1: { rb: region('rb') }, s_both: { x: region('rb') }, ...(noDefault ? { s_sp: { rc: region('rc') }, s_ch: { rd: region('rd') }, s_sf: { re: region('re') } } : {}) } };
+  const s2 = { name: 's2', bones: ['sd', 'sw'], transform: ['tcs'], attachments: { s_both: { x: region('re') }, ...(noDefault ? { s_def: { ra: region('ra'), rb: region('rb') } } : {}) } };
+  const fills = { s_def: { ra: region('ra'), rb: region('rb') }, s_sp: { rc: region('rc') }, s_ch: { rd: region('rd') }, s_sf: { re: region('re') } };
+  const skins = noDefault
+    ? [s1, s2]
+    : variant === 'a default skin naming skin-required members'
+      ? [{ name: 'default', bones: ['sf', 'sp'], ik: ['iks'], transform: ['tcs'], attachments: fills }, s1, s2]
+      : [{ name: 'default', attachments: fills }, s1, s2];
+  const keys = (a: number, b: number): Array<Record<string, number>> => [{ time: 0, value: a }, { time: 1, value: b }];
+  return {
+    skeleton: { spine: '4.3.13' },
+    bones: [
+      { name: 'root' },
+      { name: 'p', parent: 'root', x: 5, rotation: 10, length: 20 },
+      { name: 'sf', parent: 'root', x: 20, rotation: 30, length: 10, skin: true },
+      { name: 'sw', parent: 'p', x: 8, rotation: -40, length: 12, skin: true },
+      { name: 'sp', parent: 'root', x: -15, rotation: 45, length: 15, skin: true },
+      { name: 'ch', parent: 'sp', x: 7, rotation: 20, length: 9 },
+      { name: 'sd', parent: 'ch', x: 3, rotation: 5, length: 4, skin: true },
+      { name: 't', parent: 'root', x: 40, y: -20 },
+      { name: 'q', parent: 'root', x: 12, y: 9, rotation: 70, length: 10 },
+      { name: 'r', parent: 'root', x: -12, y: 4, rotation: -30, length: 10 },
+    ],
+    slots: [
+      { name: 's_def', bone: 'p', attachment: 'ra' },
+      { name: 's_s1', bone: 'p', attachment: 'rb' },
+      { name: 's_both', bone: 'p', attachment: 'x' },
+      { name: 's_sp', bone: 'sp', attachment: 'rc' },
+      { name: 's_ch', bone: 'ch', attachment: 'rd' },
+      { name: 's_sf', bone: 'sf', attachment: 're' },
+    ],
+    skins,
+    constraints: [
+      { type: 'ik', name: 'ikw', target: 't', bones: ['sw'] },
+      { type: 'ik', name: 'iks', target: 't', bones: ['q'], skin: true },
+      { type: 'transform', name: 'tcs', source: 't', bones: ['r'], skin: true, properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } } }, mixRotate: 1, mixX: 0.5 },
+    ],
+    animations: {
+      a: {
+        bones: { p: { rotate: keys(0, 40) }, sf: { rotate: keys(0, 30) }, ch: { rotate: keys(0, -50) }, sp: { rotate: keys(0, 25) }, t: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 10, y: 15 }] } },
+        slots: { s_sp: { rgba: [{ time: 0, color: 'ffffffff' }, { time: 1, color: '80402010' }] }, s_def: { attachment: [{ time: 0.5, name: 'rb' }] }, s_ch: { rgba: [{ time: 0, color: 'ffffffff' }, { time: 1, color: '20408060' }] } },
+        drawOrder: [{ time: 0.5, offsets: [{ slot: 's_sp', offset: -3 }] }],
+      },
+    },
+  };
+}
+
+/**
+ * A hand-written Spine skeleton built the way a foreign file is — read by
+ * `ingest`, rebuilt by `compile` against `atlas` (one page of mid-grey) — so
+ * the Spine pair and the model document are one build's two outputs, written
+ * into `<dir>/out` as `build` writes them. A refusal on the way is the row's
+ * REFUSED, by name.
+ */
+export function buildSpineSkeleton(name: string, skeleton: unknown, atlas: string, dir: string): BuiltRow {
+  const pack = join(dir, 'pack');
+  const out = join(dir, 'out');
+  mkdirSync(pack, { recursive: true });
+  mkdirSync(out, { recursive: true });
+  const page = atlas.split('\n')[0];
+  const size = /^size: (\d+), (\d+)$/m.exec(atlas);
+  const [w, h] = size === null ? [1, 1] : [Number(size[1]), Number(size[2])];
+  const grey = encodePng(w, h, new Uint8Array(w * h * 4).fill(128));
+  writeFileSync(join(pack, 'probe.atlas'), atlas);
+  writeFileSync(join(pack, page), grey);
+  try {
+    const specs = ingest(skeleton, { name: 'noskin_probe', art: 'none', source: `${name}.json`, version: '0' });
+    writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(specs.rig, null, 2)}\n`);
+    writeFileSync(join(dir, 'motion.json'), `${JSON.stringify(specs.motion, null, 2)}\n`);
+    const built = compile({ rigPath: join(dir, 'rig.json'), motionPath: join(dir, 'motion.json'), outDir: out, atlasInPath: join(pack, 'probe.atlas') });
+    writeFileSync(join(out, 'skeleton.json'), built.skeletonText);
+    writeFileSync(join(out, 'skeleton.atlas'), built.atlasText);
+    writeFileSync(join(out, MODEL_DOCUMENT_FILE), modelDocument(built.model, built.skeletonText, built.atlasText));
+    for (const line of built.atlasText.split('\n')) if (line.endsWith('.png')) writeFileSync(join(out, line), grey);
+    return { name, out, exits: [0] };
+  } catch (err) {
+    writeFileSync(join(dir, 'refused.txt'), `${(err as Error).message}\n`);
+    return { name, out, exits: [1] };
+  }
+}
+
+/** The three no-skin probes built under `dir`, each a row named `probe/no skin, …`. */
+export function noSkinProbeBuilds(dir: string): BuiltRow[] {
+  return NOSKIN_PROBE_VARIANTS.map((variant, i) => buildSpineSkeleton(`probe/no skin, ${variant}`, noSkinProbeSkeleton(variant), NOSKIN_PROBE_ATLAS, join(dir, `noskin-${i}`)));
+}
+
+/** One build posed with no skin set by both dumpers (issue #1051). */
+export interface NoSkinRow {
+  name: string;
+  /** `noSkinClass` of the document, or `null` for a probe whose view the default skin's already poses (the contrast). */
+  class: string | null;
+  verdict: GateVerdict;
+  why: string | null;
+  blocks: Record<GateBlock, { verdict: BlockVerdict; why: string | null; worst?: number }> | null;
+  boneSamples: number;
+  slotRows: number;
+  /** The setup's drawn attachments compared, and the skin-required bones inactive at setup on the spine-core side. */
+  attachmentRows: number;
+  inactive: number;
+  stepped: SteppedRow | null;
+  /** `pose_oracle unposed`'s comparison: every bone unposed in either pose, to the bit and the sign of zero; HISTORY by the runtime's own second reading. */
+  unposed: { boneSamples: number; exact: number; history: number; first: string | null } | null;
+}
+
+/**
+ * Both dumpers with no skin set (`NOSKIN_OPTIONS`, `--raw` when `raw`) on one
+ * build: each posed block judged alone, the stepped run under the same
+ * option, and the unposed bones compared to the bit (`compareUnposed`, the
+ * runtime's fresh reading classing HISTORY). A refusal is REFUSED, by name.
+ */
+export function noSkinRun(name: string, outDir: string, raw = false, view?: SkinViewOf): NoSkinRow {
+  const skeleton = join(outDir, 'skeleton.json');
+  const atlas = join(outDir, 'skeleton.atlas');
+  const model = join(outDir, MODEL_DOCUMENT_FILE);
+  const refused = (why: string, klass: string | null = null): NoSkinRow => ({ name, class: klass, verdict: 'REFUSED', why, blocks: null, boneSamples: 0, slotRows: 0, attachmentRows: 0, inactive: 0, stepped: null, unposed: null });
+  const missing = [skeleton, atlas, model].filter((p) => !existsSync(p));
+  if (missing.length > 0) return refused(`the build wrote no ${missing.map((p) => p.slice(outDir.length + 1)).join(', ')}`);
+  let klass: string | null = null;
+  try {
+    const skeletonText = readFileSync(skeleton, 'utf8');
+    const atlasText = readFileSync(atlas, 'utf8');
+    const modelText = readFileSync(model, 'utf8');
+    const doc = readModel(modelText, model);
+    klass = noSkinClass(doc);
+    const data = loadOracleData(skeletonText, atlasText, skeleton);
+    const options = rawOptions(NOSKIN_OPTIONS, raw);
+    const tol = raw ? RAW_TOLERANCE : { xy: ORACLE_DEFAULT_TOL, m: ORACLE_DEFAULT_TOL };
+    const spine = dumpSkeleton(data, options);
+    const core = coreDump(doc, options, {}, uvSourceOf(atlasText, modelText), view);
+    const whole = compareDumps(spine, core, tol);
+    const { blocks } = judgeBlocks(spine, core, tol);
+    const stepped = steppedRun(skeletonText, atlasText, skeleton, modelText, model, {}, tol, ORACLE_NO_SKIN, undefined, raw, view);
+    const signed: OracleOptions = { ...NOSKIN_OPTIONS, signed: true };
+    const u = compareUnposed(dumpSkeleton(data, signed), coreDump(doc, signed, {}, null, view), dumpSkeleton(data, { ...signed, fresh: true }));
+    const unposed = { boneSamples: u.boneSamples, exact: u.exact, history: u.history, first: u.findings[0] ?? null };
+    const inactive = (spine.setup.bones ?? []).filter((r) => r[7] === 0).length;
+    const skipped = GATE_BLOCKS.filter((b) => blocks[b].verdict === 'SKIP');
+    const counts = { boneSamples: whole.boneSamples, slotRows: core.setup.slots?.length ?? 0, attachmentRows: core.setup.attachments?.length ?? 0, inactive, stepped, unposed };
+    if (!whole.identical) return { name, class: klass, verdict: 'DIFF', why: whole.first, blocks, ...counts };
+    if (stepped.verdict === 'DIFF') return { name, class: klass, verdict: 'DIFF', why: `stepped: ${stepped.why}`, blocks, ...counts };
+    if (unposed.first !== null) return { name, class: klass, verdict: 'DIFF', why: `unposed: ${unposed.first}`, blocks, ...counts };
+    if (skipped.length > 0) return { name, class: klass, verdict: 'SKIP', why: skipped.map((b) => `${b}: ${blocks[b].why}`).join(' | '), blocks, ...counts };
+    return { name, class: klass, verdict: 'IDENTICAL', why: null, blocks, ...counts };
+  } catch (err) {
+    if (err instanceof OracleInputError || err instanceof CoreInputError) return refused(err.message, klass);
+    throw err;
+  }
+}
+
+/**
+ * The no-skin run's rows: each built corpus row whose document is in the
+ * class (`noSkinClass`), and the probes. A corpus none of whose rows is in
+ * the class prints a HOLE naming the probes as the run's only reading.
+ */
+export function noSkinBuilt(built: readonly BuiltRow[], probes: readonly BuiltRow[], raw = false): NoSkinRow[] {
+  const corpus = built.filter((r) => r.exits.every((e) => e === 0) && existsSync(join(r.out, MODEL_DOCUMENT_FILE))).filter((r) => {
+    try {
+      return noSkinClass(readModel(readFileSync(join(r.out, MODEL_DOCUMENT_FILE), 'utf8'))) !== null;
+    } catch (err) {
+      if (err instanceof CoreInputError) return false;
+      throw err;
+    }
+  });
+  return [...corpus, ...probes].map((r) => (r.exits.some((e) => e !== 0) ? { name: r.name, class: null, verdict: 'REFUSED' as const, why: `the build chain exited ${JSON.stringify(r.exits)}`, blocks: null, boneSamples: 0, slotRows: 0, attachmentRows: 0, inactive: 0, stepped: null, unposed: null } : noSkinRun(r.name, r.out, raw)));
+}
+
+/** The no-skin run's lines and its verdict. */
+export function noSkinLines(rows: readonly NoSkinRow[]): { lines: string[]; ok: boolean } {
+  const lines: string[] = [];
+  for (const r of rows) {
+    lines.push(
+      `  NOSKIN ${r.verdict.padEnd(9)} ${r.name} (${r.class ?? 'the default skin\'s view'})` +
+        (r.blocks === null ? '' : ` [${GATE_BLOCKS.map((b) => `${b} ${r.blocks?.[b].verdict}`).join(', ')}]`) +
+        `: ${r.boneSamples} bone-sample(s), ${r.slotRows} slot row(s), ${r.attachmentRows} attachment row(s) at setup, ${r.inactive} bone(s) inactive at setup` +
+        (r.stepped === null ? '' : `; stepped ${r.stepped.verdict}`) +
+        (r.unposed === null ? '' : `; ${r.unposed.exact} of ${r.unposed.boneSamples} unposed bone-sample(s) equal to the bit, ${r.unposed.history} HISTORY`) +
+        (r.why === null ? '' : ` — ${r.why}`),
+    );
+  }
+  if (!rows.some((r) => !r.name.startsWith('probe/'))) lines.push('  HOLE  no skin: no corpus row declares skins and no default one, or a default skin naming a skin-required member — the probes are the run\'s only reading');
+  const count = (v: GateVerdict): number => rows.filter((r) => r.verdict === v).length;
+  const ok = count('DIFF') === 0 && count('REFUSED') === 0 && rows.length > 0;
+  lines.push(`NO SKIN ${ok ? 'GREEN' : 'RED'} — ${rows.length} row(s) posed with no skin set (--skin none): ${count('IDENTICAL')} IDENTICAL, ${count('SKIP')} SKIP, ${count('DIFF')} DIFF, ${count('REFUSED')} REFUSED; ${rows.reduce((n, r) => n + r.boneSamples, 0)} bone-sample(s), ${rows.reduce((n, r) => n + (r.unposed?.boneSamples ?? 0), 0)} unposed bone-sample(s) to the bit`);
+  return { lines, ok };
+}
+
+/** The no-skin probes walked (`--walk`): A10's walk is posed with no skin set, so each probe is a row as it stands. */
+export function noSkinWalkProbes(dir: string, walkPlant: WalkPlant = {}): WalkRow[] {
+  return walkBuilt(noSkinProbeBuilds(dir), walkPlant);
+}
+
 /** The command; returns the exit code. */
 export function gateMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error): number {
   try {
@@ -1717,11 +1978,12 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     }
     warn(`core_gate: ${recipes.length} recipe(s), work directory ${work}`);
     if (walk) {
-      const walked = walkLines([...walkBuilt(buildRecipes(recipes, work, root, warn)), ...walkProbes()]);
+      const walked = walkLines([...walkBuilt(buildRecipes(recipes, work, root, warn)), ...walkProbes(), ...noSkinWalkProbes(join(work, 'noskin-probes'))]);
       for (const line of walked.lines) print(line);
       return walked.ok ? 0 : 1;
     }
-    const rows = gateRecipes(recipes, work, root, warn, {}, raw);
+    const built = buildRecipes(recipes, work, root, warn);
+    const rows = gateBuilt(built, {}, undefined, raw);
     for (const row of rows) {
       const blocks = row.blocks === null ? '' : ` [${GATE_BLOCKS.map((b) => `${b} ${row.blocks?.[b].verdict}`).join(', ')}]`;
       print(
@@ -1773,9 +2035,12 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     // --- #966 raw: begin ---
     if (raw) for (const line of rawCensusLines(rows)) print(line);
     // --- #966 raw: end ---
+    // Issue #1051: the rows posed with no skin set — the corpus's in the class, and the probes.
+    const noSkin = noSkinLines(noSkinBuilt(built, noSkinProbeBuilds(join(work, 'noskin-probes')), raw));
+    for (const line of noSkin.lines) print(line);
     const verdict = gateVerdict(rows);
     print(raw ? `RAW (full doubles, tolerance 0, worst in ulps) ${verdict.line}` : verdict.line);
-    return verdict.ok ? 0 : 1;
+    return verdict.ok && noSkin.ok ? 0 : 1;
   } catch (err) {
     if (err instanceof GateInputError || err instanceof HashesInputError) {
       warn(`core_gate: ${err.message}`);
