@@ -1265,7 +1265,7 @@ src/
                 and the one emitter both shapes are written through
   emit.ts       `--copy-images` — the pages copied into `--out` and the atlas rewritten
   rig.ts        the rig spec — `spec: "rigc-rig/1"`, the skeleton as data
-  validate.ts   spine-core round trip + the 40 assertions
+  validate.ts   spine-core round trip + the named assertions
   diff.ts       structural comparison of two skeletons, one ratio per measure
   render.ts     the rasteriser (regions + meshes), shared by the reference renderer,
                 `rigc render` and check
