@@ -15,9 +15,10 @@
  * 🔸 **What the entry is given.** The document's text, the directory its
  * pages resolve against, and the profile — and nothing read off a Spine file:
  * a model-side verdict that read `skeleton.json` would be a second reading of
- * the encoding, which is the round trip's subject and not the rig's. The stage
- * and the atlas's `pma`, which the document does not hold, are the caller's to
- * give once an assertion that reads them moves (a later cut, the census's §2).
+ * the encoding, which is the round trip's subject and not the rig's. Since cut
+ * 4c-1 it is also given the rig info (as `validate()` is) and, in `given`, the
+ * two values the document does not hold yet — the stage and each page's `pma`
+ * (`./given.ts`, until issue #1026 moves them into the document).
  *
  * ⛔ **Not wired into any command.** `build` keeps the round trip and its
  * forty-nine lines; this entry is what the selftest and the instrument call
@@ -33,13 +34,36 @@ import { a03RegionWidthHeightFinite } from '../bodies/a03.ts';
 import { a11NoClippingAttachments } from '../bodies/a11.ts';
 import { a17AtlasPageFilesExist } from '../bodies/a17.ts';
 import { a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten } from '../bodies/a45.ts';
-import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES, MODEL_PARSE_KIND, modelRead, modelRegionsOnPages, SKIP_NO_MODEL_DOCUMENT, type ReadDocument } from './parse.ts';
+import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES, MODEL_PARSE_KIND, modelRead, modelRegionsOnPages, SKIP_NO_MODEL_DOCUMENT, SKIP_NO_MODEL_PAGES, type ReadDocument } from './parse.ts';
 import { modelSkinEntries } from './skin_entries.ts';
 import { modelAtlasPages } from './atlas_pages.ts';
 import { modelSlotColour } from './slot_colour.ts';
 import type { SkinEntryFacts } from '../facts/skin_entries.ts';
 import type { AtlasPageFacts } from '../facts/atlas_pages.ts';
 import type { SlotColourFacts } from '../facts/slot_colour.ts';
+import type { RigInfo } from '../../types.ts';
+import type { ModelGiven } from './given.ts';
+import { a08RegionNamesMatchAttachments } from '../bodies/a08.ts';
+import { a13MeshBudget } from '../bodies/a13.ts';
+import { a14NoFullFrameMesh } from '../bodies/a14.ts';
+import { a15IdleNoMeshBoneKeys } from '../bodies/a15.ts';
+import { a22MeshUvsInUnitRange } from '../bodies/a22.ts';
+import { a38SkinMembersAreSkinRequired } from '../bodies/a38.ts';
+import { a06AtlasPageSizeMatchesPng } from '../bodies/a06.ts';
+import { a19OverlayPngsHaveAlpha } from '../bodies/a19.ts';
+import { a27RegionNameMatchesPageFilename } from '../bodies/a27.ts';
+import { modelSkinMeshes } from './skin_meshes.ts';
+import { modelAnimatedBones } from './animated_bones.ts';
+import { modelSkinMembers } from './skin_members.ts';
+import { modelRegionJoins } from './region_joins.ts';
+import { modelAtlasRegions } from './atlas_regions.ts';
+import { modelStage } from './stage.ts';
+import type { SkinMeshFacts } from '../facts/skin_meshes.ts';
+import type { AnimatedBoneFacts } from '../facts/animated_bones.ts';
+import type { SkinMemberFacts } from '../facts/skin_members.ts';
+import type { RegionJoinFacts } from '../facts/region_joins.ts';
+import type { AtlasRegionFacts } from '../facts/atlas_regions.ts';
+import type { StageFacts } from '../facts/stage.ts';
 
 /** What the model side is given. */
 export interface ModelValidateInput {
@@ -48,6 +72,14 @@ export interface ModelValidateInput {
   /** The directory the document's page names resolve against — the build's `--out`. */
   atlasDir: string;
   profile: AssertionProfile;
+  /** The rig info the build carries, as `validate()` is handed it — A13, A15 and A19 read it; absent for a bare directory, on both sides. */
+  rig?: RigInfo;
+  /**
+   * The stage and the pages' `pma`, which the document does not hold until
+   * issue #1026 (`./given.ts`). A06, A14 and A19 read them; a caller that gives
+   * none has those three refuse by name rather than read a value nobody stated.
+   */
+  given?: ModelGiven;
 }
 
 /** The model side's report: `validate()`'s shape, over the moved assertions and the two parse rules. */
@@ -66,10 +98,26 @@ export interface ModelSupply {
   skinEntries: (read: ReadDocument) => SkinEntryFacts;
   atlasPages: (read: ReadDocument) => AtlasPageFacts;
   slotColour: (read: ReadDocument) => SlotColourFacts;
+  skinMeshes: (read: ReadDocument) => SkinMeshFacts;
+  animatedBones: (read: ReadDocument) => AnimatedBoneFacts;
+  skinMembers: (read: ReadDocument) => SkinMemberFacts;
+  regionJoins: (read: ReadDocument) => RegionJoinFacts;
+  atlasRegions: (read: ReadDocument, input: ModelValidateInput) => AtlasRegionFacts;
+  stage: (read: ReadDocument, input: ModelValidateInput) => StageFacts;
 }
 
 /** The suppliers the model side runs on. */
-export const MODEL_SUPPLY: ModelSupply = { skinEntries: modelSkinEntries, atlasPages: modelAtlasPages, slotColour: modelSlotColour };
+export const MODEL_SUPPLY: ModelSupply = {
+  skinEntries: modelSkinEntries,
+  atlasPages: modelAtlasPages,
+  slotColour: modelSlotColour,
+  skinMeshes: modelSkinMeshes,
+  animatedBones: modelAnimatedBones,
+  skinMembers: modelSkinMembers,
+  regionJoins: modelRegionJoins,
+  atlasRegions: (read, input) => modelAtlasRegions(read, input.given),
+  stage: (_read, input) => modelStage(input.given),
+};
 
 /**
  * One moved assertion: its code, and how the model side runs its body once the
@@ -82,6 +130,13 @@ export interface MovedAssertion {
   run: (verdicts: Verdicts, read: ReadDocument, input: ModelValidateInput, supply: ModelSupply) => void;
   /** What the body SKIPs with when there is no document — the model side's counterpart of the reason `validate()` gives when the round trip produced nothing. */
   unread: string;
+  /**
+   * The body runs behind the reader alone, not behind the region rule — the
+   * model side's place for a rule `validate()` runs BEFORE its round trip
+   * (A08, issue #589), so that a region miss is named by the rule's own
+   * sentence on both sides while the parse beside it refuses the file.
+   */
+  beforeTheParse?: boolean;
 }
 
 /**
@@ -95,19 +150,32 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A11_NO_CLIPPING_ATTACHMENTS', run: (v, read, _input, supply) => a11NoClippingAttachments(v, supply.skinEntries(read)), unread: SKIP_NO_MODEL },
   { code: 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN', run: (v, read, _input, supply) => a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten(v, supply.slotColour(read)), unread: SKIP_NO_MODEL },
   { code: 'A17_ATLAS_PAGE_FILES_EXIST', run: (v, read, input, supply) => a17AtlasPageFilesExist(v, supply.atlasPages(read), input), unread: SKIP_NO_ATLAS },
+  { code: 'A08_REGION_NAMES_MATCH_ATTACHMENTS', run: (v, read, _input, supply) => (read.doc.pages === null ? v.skip('A08_REGION_NAMES_MATCH_ATTACHMENTS', SKIP_NO_MODEL_PAGES) : a08RegionNamesMatchAttachments(v, supply.regionJoins(read), new Set<string>())), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A13_MESH_BUDGET', run: (v, read, input, supply) => a13MeshBudget(v, supply.skinMeshes(read), input), unread: SKIP_NO_MODEL },
+  { code: 'A14_NO_FULL_FRAME_MESH', run: (v, read, input, supply) => a14NoFullFrameMesh(v, supply.skinMeshes(read), supply.stage(read, input)), unread: SKIP_NO_MODEL },
+  { code: 'A15_IDLE_NO_MESH_BONE_KEYS', run: (v, read, input, supply) => a15IdleNoMeshBoneKeys(v, supply.skinMeshes(read), supply.animatedBones(read), input), unread: SKIP_NO_MODEL },
+  { code: 'A22_MESH_UVS_IN_UNIT_RANGE', run: (v, read, _input, supply) => a22MeshUvsInUnitRange(v, supply.skinMeshes(read)), unread: SKIP_NO_MODEL },
+  { code: 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED', run: (v, read, _input, supply) => a38SkinMembersAreSkinRequired(v, supply.skinMembers(read)), unread: SKIP_NO_MODEL },
+  { code: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', run: (v, read, input, supply) => a06AtlasPageSizeMatchesPng(v, supply.atlasRegions(read, input), input, input.profile === 'spine-html'), unread: SKIP_NO_ATLAS },
+  { code: 'A19_OVERLAY_PNGS_HAVE_ALPHA', run: (v, read, input, supply) => a19OverlayPngsHaveAlpha(v, supply.atlasRegions(read, input), supply.stage(read, input), supply.skinEntries(read), input), unread: SKIP_NO_ATLAS },
+  { code: 'A27_REGION_NAME_MATCHES_PAGE_FILENAME', run: (v, read, input, supply) => a27RegionNameMatchesPageFilename(v, supply.atlasRegions(read, input)), unread: SKIP_NO_ATLAS },
 ];
 
 /** The codes the model side prints: its two parse rules, then the moved assertions. */
 export const MODEL_SIDE_CODES: readonly string[] = [A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES, ...MOVED_ASSERTIONS.map((m) => m.code)];
 
-/** The parse: the reader, then the region rule. Returns the document when both held. */
-function parse(h: VerdictHarness, modelText: string): ReadDocument | null {
+/**
+ * The parse: the reader, then the region rule. Returns what the reader read
+ * (`null` when it refused) and whether the region rule held too — a
+ * `beforeTheParse` body needs only the first.
+ */
+function parse(h: VerdictHarness, modelText: string): { read: ReadDocument | null; held: boolean } {
   const read = h.check(A00_MODEL_READ, () => modelRead(h.verdicts, modelText)) ?? null;
   if (read === null) {
     h.check(A00_MODEL_REGIONS_ON_PAGES, () => h.skip(A00_MODEL_REGIONS_ON_PAGES, SKIP_NO_MODEL_DOCUMENT));
-    return null;
+    return { read: null, held: false };
   }
-  return h.check(A00_MODEL_REGIONS_ON_PAGES, () => modelRegionsOnPages(h.verdicts, read)) === true ? read : null;
+  return { read, held: h.check(A00_MODEL_REGIONS_ON_PAGES, () => modelRegionsOnPages(h.verdicts, read)) === true };
 }
 
 /**
@@ -120,9 +188,10 @@ function parse(h: VerdictHarness, modelText: string): ReadDocument | null {
 export function validateModel(input: ModelValidateInput, plant: Partial<ModelSupply> = {}): ModelReport {
   const supply: ModelSupply = { ...MODEL_SUPPLY, ...plant };
   const h = verdictHarness(input.profile, { ...ASSERTION_KIND, ...MODEL_PARSE_KIND }, 'the model side');
-  const read = parse(h, input.modelText);
+  const { read, held } = parse(h, input.modelText);
   for (const moved of MOVED_ASSERTIONS) {
-    h.check(moved.code, () => (read === null ? h.skip(moved.code, moved.unread) : moved.run(h.verdicts, read, input, supply)));
+    const doc = read !== null && (held || moved.beforeTheParse === true) ? read : null;
+    h.check(moved.code, () => (doc === null ? h.skip(moved.code, moved.unread) : moved.run(h.verdicts, doc, input, supply)));
   }
   const { failures, passed, skipped, profileSkipped, stats } = h;
   return { failures, passed, skipped, profileSkipped, stats, profile: input.profile };
