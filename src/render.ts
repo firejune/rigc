@@ -83,9 +83,10 @@
  * `./render_core.ts`, and this file keeps the runtime for the export's poser,
  * the export's atlas pages and texture substitution — see *which poser* below.
  * Since issue #1014 a rigc build the core poses touches none of it: what a
- * render reads off the candidate besides the pose comes from the skeleton's
- * own JSON and rigc's atlas reader (`loadCandidate`), and spine-core is reached
- * only where it poses or substitutes.) The rule that matters is unchanged
+ * render reads off the candidate besides the pose comes from its model
+ * document and the skeleton's own JSON (`loadCandidate`), and since issue
+ * #1020 its pages and a `--texture-from` atlas through rigc's own reader, so
+ * spine-core is reached only where it poses an export or a fallback.) The rule that matters is unchanged
  * — `src/compile.ts` must stay independent of the runtime so the compiler and
  * the gate are not checking each other's assumptions — and this file is neither.
  * It also imports `tools/plate.ts` for the PNG codec, which is dependency-free.
@@ -111,8 +112,19 @@ import { dirname, join, resolve } from 'node:path';
 import { Plate, readPlate, type RGBA } from '../tools/plate.ts';
 import { pageFootprint, parseAtlasText } from './atlas.ts';
 import { CoreInputError } from './core/index.ts';
+import { computeUvs } from './core/uvs.ts';
 import { MODEL_DOCUMENT_FILE } from './model.ts';
-import { clipSourceOf, corePoser, coreSkinRoster, inactiveBoneSnapshot, SlotSubsetError, subsetOver, unposedBones, type SubsetRoster } from './render_core.ts';
+import {
+  clipSourceOf,
+  coreDocumentFacts,
+  corePoser,
+  inactiveBoneSnapshot,
+  SlotSubsetError,
+  subsetOver,
+  unposedBones,
+  type CoreDocumentFacts,
+  type SubsetRoster,
+} from './render_core.ts';
 import { walkTimelines } from './timelines.ts';
 
 /** Opaque, and light: both of rung 3's parts are dark slate, so is every ground. */
@@ -759,6 +771,14 @@ export function posableFromText(skeletonText: string, atlasText: string, atlasDi
 // nineteen built corpus rows and the twelve editor exports (the PR of #1014
 // carries the counts). A Spine export, `--poser spine` and a fallback the
 // poser line names load spine-core as before and read every fact off it.
+//
+// Since issue #1020 a build the core poses reads what its model document
+// states off the document (`coreFacts`): the bone tree, the slot list and the
+// subset's roster, and the page images by the names its `pages` section gives
+// — so with a `rigc-compiled/2` document the atlas file is not needed at all.
+// What only `skeleton.json` holds is still read there: the order the
+// animations and skins are listed in (the emitter's, not the model's) and the
+// stage.
 
 /** What `render` and `check` read off a candidate's skeleton besides its pose. */
 export interface SkeletonFacts {
@@ -859,11 +879,33 @@ function skeletonDurations(root: JsonObject): Array<{ name: string; duration: nu
   });
 }
 
-/** Every page an atlas declares, read by rigc's own atlas reader — the pages a candidate the core poses is drawn from. */
-function atlasPagesOf(atlasText: string, atlasDir: string): Map<string, Plate> {
+/** Every page named, read from `atlasDir` by that name — the images a candidate the core poses is drawn from. */
+function pagesNamed(names: readonly string[], atlasDir: string): Map<string, Plate> {
   const pages = new Map<string, Plate>();
-  for (const page of parseAtlasText(atlasText).pages) pages.set(page.name, readPlate(join(atlasDir, page.name)));
+  for (const name of names) pages.set(name, readPlate(join(atlasDir, name)));
   return pages;
+}
+
+/**
+ * A candidate with no atlas beside it that has to be read through one —
+ * refused naming the file and why (issue #1020).
+ *
+ * A rigc build whose model document states where each region sits on its page
+ * (`rigc-compiled/2`, the `pages` section) is drawn by the core without its
+ * atlas. Everything else reads one: a Spine export, `--poser spine`, a
+ * `rigc-compiled/1` document, and a build the core refuses and spine-core
+ * draws instead. A class of its own so `cli.ts` refuses it as an invocation
+ * (exit 2, nothing written), as it refuses a missing atlas on an export.
+ */
+export class CandidateAtlasError extends Error {}
+
+/** The refusal for a candidate that has to be read through an atlas it does not have. */
+function atlasAbsent(atlasPath: string, label: string, why: string): CandidateAtlasError {
+  return new CandidateAtlasError(
+    `nothing at ${atlasPath}: ${label} is drawn through its atlas (${why}). ` +
+      'Only a rigc build whose skeleton.model.json is a rigc-compiled/2 document, posed by the core, is drawn ' +
+      'without one — it states where each region sits on its page',
+  );
 }
 
 /**
@@ -900,9 +942,13 @@ export interface Candidate {
 
 /**
  * Load a candidate for `render` or `check`, choosing its poser FIRST (issue
- * #1014): a rigc build the core poses reads its facts off its own JSON, its
- * pages off rigc's atlas reader and its skin roster off the model document,
- * and spine-core is never loaded for it; anything else — a Spine export,
+ * #1014): a rigc build the core poses reads its facts off its model document
+ * and its own JSON (`coreFacts`), its page images by the names the
+ * document's `pages` gives (a `rigc-compiled/1` document's, by its atlas's)
+ * and its skin roster off the document, and spine-core is never loaded for
+ * it; `input.atlasText` is `null` where the atlas file is not there, which only
+ * a `rigc-compiled/2` document the core poses is drawn without (issue #1020 —
+ * anything else is refused, `CandidateAtlasError`); anything else — a Spine export,
  * `--poser spine`, a candidate handed over as text (`paths` null, `unplaced`
  * the reason) — is loaded through spine-core as `posableFromText` always
  * loaded it. The choice's spine-core poser stays unloaded until something
@@ -913,29 +959,64 @@ export interface Candidate {
  * refuse before it.
  */
 export function loadCandidate(
-  input: { skeletonText: string; atlasText: string; atlasDir: string; label: string },
+  input: { skeletonText: string; atlasText: string | null; atlasDir: string; label: string },
   paths: { skeleton: string; atlas: string } | null,
   forced: PoserName | undefined,
   options: { make?: MakeCorePoser; unplaced?: string } = {},
 ): Candidate {
   let data: SkeletonData | null = null;
   let choice: PoserChoice | null = null;
+  // `null` is an atlas file that is not there (issue #1020): a candidate the core draws from its document needs none, and anything read through one is refused naming the file before the runtime is touched.
+  const atlasText = (why: string): string => {
+    if (input.atlasText === null) throw atlasAbsent(paths?.atlas ?? '(no atlas)', input.label, why);
+    return input.atlasText;
+  };
   const spineData = (): SkeletonData => {
     if (data === null) {
-      requireSpineRuntime(input.label, choice === null || choice.core !== null ? 'a fallback from the core poser' : choice.why);
-      data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(input.atlasText))).readSkeletonData(JSON.parse(input.skeletonText));
+      const why = choice === null || choice.core !== null ? 'a fallback from the core poser' : choice.why;
+      const text = atlasText(why);
+      requireSpineRuntime(input.label, why);
+      data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(text))).readSkeletonData(JSON.parse(input.skeletonText));
     }
     return data;
   };
-  choice =
+  const chosen =
     paths === null
-      ? posersOver(forced, null, forced === 'spine' ? '--poser spine' : (options.unplaced ?? 'no path to find a model document beside'), spineData)
-      : choosePosers(paths.skeleton, paths.atlas, forced, spineData, options.make ?? corePoser);
-  if (choice.core !== null) return { choice, facts: skeletonFacts(input.skeletonText), pages: atlasPagesOf(input.atlasText, input.atlasDir) };
+      ? { choice: posersOver(forced, null, forced === 'spine' ? '--poser spine' : (options.unplaced ?? 'no path to find a model document beside'), spineData), document: null }
+      : choosePosers(paths.skeleton, paths.atlas, input.atlasText, forced, spineData, options.make ?? corePoser);
+  choice = chosen.choice;
+  if (choice.core !== null && chosen.document !== null) {
+    // A rigc-compiled/2 document names its pages; a /1 document is posed only with its atlas beside it, which names them (`choosePosers`).
+    const names = chosen.document.pageNames ?? parseAtlasText(atlasText(choice.why)).pages.map((page) => page.name);
+    return { choice, facts: coreFacts(input.skeletonText, choice.core, chosen.document), pages: pagesNamed(names, input.atlasDir) };
+  }
+  const text = atlasText(choice.why);
   requireSpineRuntime(input.label, choice.why);
-  const posable = posableFromText(input.skeletonText, input.atlasText, input.atlasDir);
+  const posable = posableFromText(input.skeletonText, text, input.atlasDir);
   data = posable.data;
   return { choice, facts: spineFacts(posable.data), pages: posable.pages };
+}
+
+/**
+ * A candidate's facts when the core poses it (issue #1020): what the model
+ * document states, read from it — the bone tree and the slot list (the core
+ * poser's own, which `rosterDifference` held to the Spine file's before the
+ * core was chosen) and the slot subset's roster (`coreDocumentFacts`) — and,
+ * off the skeleton's own JSON, what it does not: the order the animations and
+ * the skins are listed in (the Spine file's — the emitter's order, not the
+ * model's) and whether a stage is declared (the header's `width`/`height`,
+ * which the document has no field for).
+ */
+function coreFacts(skeletonText: string, poser: Poser, document: CoreDocumentFacts): SkeletonFacts {
+  const spine = skeletonFacts(skeletonText);
+  return {
+    animations: spine.animations,
+    skins: spine.skins,
+    declaresStage: spine.declaresStage,
+    bones: poser.bones,
+    slots: poser.slots,
+    subset: (opts, skin) => subsetOver(document.subset, opts, skin),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -962,9 +1043,10 @@ export function loadCandidate(
 // The framing samples are not a fourth entry: `framingViewport` is the same
 // animation entry at `FRAMING_FPS` with the clip off.
 //
-// 🔒 What stays spine-core's and outside the seam, deliberately: the atlas
-// (`posableFromText`'s pages, `substituteTexture`'s region lookup — step 3c of
-// #380) and `nonFiniteOfPosed`, which `validate.ts` calls on a spine-core
+// 🔒 What stays spine-core's and outside the seam, deliberately: an export's
+// atlas (`posableFromText`'s pages, and `substituteTexture`'s region lookup on
+// anything spine-core poses — a rigc build the core poses reads both through
+// rigc's own reader since issue #1020) and `nonFiniteOfPosed`, which `validate.ts` calls on a spine-core
 // skeleton it stepped itself (A10), so the round trip keeps its spine-core
 // entry whatever poses the renders.
 
@@ -1308,13 +1390,16 @@ function posersOver(
 function choosePosers(
   skeletonPath: string,
   atlasPath: string,
+  /** The atlas file's text, or `null` when there is no file at `atlasPath` (issue #1020). */
+  atlasText: string | null,
   forced: PoserName | undefined,
   spineData: () => SkeletonData,
   make: MakeCorePoser,
-): PoserChoice {
+): { choice: PoserChoice; document: CoreDocumentFacts | null } {
   const dir = dirname(resolve(skeletonPath));
   const modelPath = join(dir, MODEL_DOCUMENT_FILE);
   let core: { poser: Poser; roster: SkinRoster } | null = null;
+  let document: CoreDocumentFacts | null = null;
   let why: string;
   if (forced === 'spine') why = '--poser spine';
   else if (!existsSync(modelPath)) why = `no ${MODEL_DOCUMENT_FILE} beside ${resolve(skeletonPath)} — a Spine export, not a rigc build`;
@@ -1326,12 +1411,18 @@ function choosePosers(
     try {
       const modelText = readFileSync(modelPath, 'utf8');
       const bytes = readFileSync(skeletonPath);
-      const candidate = make(modelText, readFileSync(atlasPath, 'utf8'), modelPath, { path: resolve(skeletonPath), bytes });
+      // No atlas is `''`: a rigc-compiled/2 document draws from its own `pages`, and a /1 document is refused by name (`placementOf`). An atlas that is there is held to the document's `pages` (#1016) and refused, naming the first difference, when it is not the one the build wrote.
+      const candidate = make(modelText, atlasText ?? '', modelPath, { path: resolve(skeletonPath), bytes });
       const rosters = skeletonRosters(bytes.toString('utf8'));
       const differs = rosterDifference(candidate, rosters);
       if (differs === null) {
-        core = { poser: candidate, roster: coreSkinRoster(modelText, modelPath, rosters.skins) };
-        why = modelPath;
+        document = coreDocumentFacts(modelText, modelPath, rosters.skins);
+        core = { poser: candidate, roster: document.roster };
+        // The poser line names where the placement came from when it is not the document's own (issue #1020): a /1 document states none, and the core reads it from the atlas beside it.
+        why =
+          document.pageNames === null
+            ? `${modelPath} — a ${document.spec} document, which does not state where each region sits on its page: that is read from ${resolve(atlasPath)}`
+            : modelPath;
       } else why = `${modelPath} does not describe ${resolve(skeletonPath)}: ${differs}`;
     } catch (err) {
       if (!(err instanceof CoreInputError)) throw err;
@@ -1339,7 +1430,7 @@ function choosePosers(
       why = `the core refused ${err.message.startsWith(`${modelPath}: `) ? err.message : `${modelPath}: ${err.message}`}`;
     }
   }
-  return posersOver(forced, core, why, spineData);
+  return { choice: posersOver(forced, core, why, spineData), document: core === null ? null : document };
 }
 
 /**
@@ -1367,7 +1458,7 @@ export function candidatePosers(
   /** What builds the core poser: `corePoser` — the suite's `RC02` passes a planted copy, and nothing else passes any. */
   make: MakeCorePoser = corePoser,
 ): PoserChoice {
-  return refuseUnchosen(choosePosers(skeletonPath, atlasPath, forced, () => data, make));
+  return refuseUnchosen(choosePosers(skeletonPath, atlasPath, readFileSync(atlasPath, 'utf8'), forced, () => data, make).choice);
 }
 
 /**
@@ -2094,7 +2185,7 @@ function artUvsOf(attachment: MeshAttachment | RegionAttachment, region: Texture
  * sequence packs several regions under one name and `findRegion` returns only the
  * first of them.
  */
-function regionKey(region: TextureAtlasRegion): string {
+function regionKey(region: { name: string; index: number }): string {
   return `${region.name.trim()}#${region.index}`;
 }
 
@@ -2104,28 +2195,86 @@ function regionKey(region: TextureAtlasRegion): string {
  */
 export const SUBSTITUTE_PAGE = 'texture-from:';
 
+/**
+ * One region of a substituting atlas, as `substituteTexture` reads it: where
+ * it sits on which page, and the mapping from the drawing's own coordinates
+ * onto it (`MeshAttachment.computeUVs`'s job).
+ */
+export interface SubstituteRegion {
+  page: { name: string; width: number; height: number };
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  degrees: number;
+  /** Art-space UVs (`u, v` per vertex) mapped onto this region of its page, in doubles. */
+  pageUvs(art: readonly number[]): number[];
+}
+
 /** An atlas whose texels can stand in for another's — see `substituteTexture`. */
 export interface TextureSubstitution {
   /** Prefixed page name → the page, ready to merge into a render's page map. */
   pages: Map<string, Plate>;
   /** The atlas's regions, by the key both sides agree on — see `regionKey`. */
-  regions: Map<string, TextureAtlasRegion>;
+  regions: Map<string, SubstituteRegion>;
   /** Every `scale:` the atlas text declares, in the order the pages declare them. */
   scales: number[];
 }
 
-/** Load an atlas and its pages as a substitution source. */
-export function textureSubstitutionFromText(atlasText: string, atlasDir: string): TextureSubstitution {
-  const atlas = new TextureAtlas(atlasText);
-  const pages = new Map<string, Plate>();
-  for (const page of atlas.pages) {
-    if (page.name.startsWith(SUBSTITUTE_PAGE)) {
-      throw new Error(`atlas page "${page.name}" starts with the reserved prefix ${JSON.stringify(SUBSTITUTE_PAGE)}`);
+/**
+ * Who reads a substituting atlas (issue #1020): `rigc` — `parseAtlasText` and
+ * `./core/uvs.ts`'s `computeUvs`, for a candidate the core poses, so a rigc
+ * build's `check --texture-from` reads nothing through spine-core — or
+ * `spine`, the runtime's `TextureAtlas` and `MeshAttachment.computeUVs`, for
+ * everything spine-core poses (an export keeps the reading it always had).
+ *
+ * The two were measured to agree: the region list (`TextureAtlas.regions` is
+ * file order, and so is `parseAtlasText`'s, the pairing the selftest holds on
+ * every corpus atlas) and the mapping (`computeUvs`, bit for bit in doubles
+ * over 6,000 calls — its header). The PR of #1020 carries the substituted
+ * frames, pixel for pixel, on the corpus rows that exercise it.
+ */
+export type SubstitutionReader = 'rigc' | 'spine';
+
+/** Load an atlas and its pages as a substitution source, read by `reader` — see `SubstitutionReader`. */
+export function textureSubstitutionFromText(atlasText: string, atlasDir: string, reader: SubstitutionReader = 'spine'): TextureSubstitution {
+  const regions = new Map<string, SubstituteRegion>();
+  const names: string[] = [];
+  if (reader === 'rigc') {
+    for (const page of parseAtlasText(atlasText).pages) {
+      names.push(page.name);
+      const at = { name: page.name, width: page.width, height: page.height };
+      for (const region of page.regions) {
+        regions.set(regionKey(region), { page: at, x: region.x, y: region.y, width: region.width, height: region.height, degrees: region.degrees, pageUvs: (art) => computeUvs(region, at, art) });
+      }
     }
-    pages.set(SUBSTITUTE_PAGE + page.name, readPlate(join(atlasDir, page.name)));
+  } else {
+    const atlas = new TextureAtlas(atlasText);
+    for (const page of atlas.pages) names.push(page.name);
+    for (const region of atlas.regions) {
+      const page = { name: region.page.name, width: region.page.width, height: region.page.height };
+      regions.set(regionKey(region), {
+        page,
+        x: region.x,
+        y: region.y,
+        width: region.width,
+        height: region.height,
+        degrees: region.degrees,
+        pageUvs: (art) => {
+          const uvs = new Array<number>(art.length).fill(0);
+          MeshAttachment.computeUVs(region, [...art], uvs);
+          return uvs;
+        },
+      });
+    }
   }
-  const regions = new Map<string, TextureAtlasRegion>();
-  for (const region of atlas.regions) regions.set(regionKey(region), region);
+  const pages = new Map<string, Plate>();
+  for (const name of names) {
+    if (name.startsWith(SUBSTITUTE_PAGE)) {
+      throw new Error(`atlas page "${name}" starts with the reserved prefix ${JSON.stringify(SUBSTITUTE_PAGE)}`);
+    }
+    pages.set(SUBSTITUTE_PAGE + name, readPlate(join(atlasDir, name)));
+  }
   return { pages, regions, scales: atlasScales(atlasText) };
 }
 
@@ -2171,7 +2320,7 @@ export function atlasScales(atlasText: string): number[] {
  * rectangle; two of them had it wrong at 270 (issue #579), so it is one function
  * now and this is one of its callers.
  */
-function windowOf(region: TextureAtlasRegion): UvWindow {
+function windowOf(region: SubstituteRegion): UvWindow {
   const rect = pageFootprint(region);
   const page = region.page;
   return {
@@ -2227,17 +2376,16 @@ export function substituteTexture(
       pieces.push(piece);
       continue;
     }
-    const uvs = new Array<number>(texture.artUvs.length).fill(0);
-    // `spine-core`'s own mapping from the drawing's coordinates into a page's,
-    // which is where `rotate:` (all four of them) and the trim offsets are
-    // handled. Calling it rather than repeating it is what keeps this from being
-    // a second opinion about the atlas format.
-    MeshAttachment.computeUVs(region, texture.artUvs, uvs);
+    // The mapping from the drawing's coordinates into a page's, which is where
+    // `rotate:` (all four of them) and the trim offsets are handled: spine-core's
+    // own `MeshAttachment.computeUVs`, or `./core/uvs.ts`'s `computeUvs`, measured
+    // equal to it bit for bit — never a third opinion about the atlas format
+    // (`SubstitutionReader`).
+    const uvs = region.pageUvs(texture.artUvs);
     // A clipped piece's source map is re-seated the same way, through the drawing's own coordinates (`Mesh.source`).
     if (piece.kind === 'mesh' && piece.source !== undefined) {
       if (texture.sourceArtUvs === undefined) throw new Error(`slot "${piece.slot}": a clipped piece carries no original-art UVs for its source triangles`);
-      const sourceUvs = new Array<number>(texture.sourceArtUvs.length).fill(0);
-      MeshAttachment.computeUVs(region, texture.sourceArtUvs, sourceUvs);
+      const sourceUvs = region.pageUvs(texture.sourceArtUvs);
       pieces.push({ ...piece, page: SUBSTITUTE_PAGE + region.page.name, uvs, uvWindow: windowOf(region), source: { world: piece.source.world, uvs: sourceUvs } });
       continue;
     }

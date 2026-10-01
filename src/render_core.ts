@@ -10,8 +10,8 @@
  * its raw entry to the renderer's shapes.
  *
  * ⭐ Why a module of its own rather than a second block in `src/render.ts`.
- * `render.ts` links spine-core (the atlas pages, texture substitution and
- * `spinePoser`), so a core poser written there would share an import list
+ * `render.ts` links spine-core (an export's atlas pages and texture
+ * substitution, and `spinePoser`), so a core poser written there would share an import list
  * with the runtime it replaces — and "the core poser imports nothing from
  * spine-core" could then only be said, not read off the file. Here it can be:
  * the value imports below are the core, the atlas reader and nothing else, and
@@ -662,18 +662,74 @@ export function corePoser(modelText: string, atlasText: string, where = 'skeleto
  *
  * Measured against the runtime's reading (`skinRosterOf`, a fresh skeleton's
  * `active` under each skin and under none) on every rigc build the tree
- * carries: the same bones, under every skin. The document is read on the first
- * question, so a render that frames nothing under a skin never parses it twice.
+ * carries: the same bones, under every skin. Since issue #1020 it is handed the
+ * document `coreDocumentFacts` read for the run's other facts, so the roster
+ * costs no reading of its own; a skin's view is still built only when a
+ * question is asked of it.
  */
-export function coreSkinRoster(modelText: string, where: string, skins: readonly string[]): SkinRoster {
-  let doc: CompiledDocument | null = null;
+function coreSkinRoster(doc: CompiledDocument, skins: readonly string[]): SkinRoster {
   return {
     skins,
     unposedUnder: (skin) => {
-      doc ??= readModel(modelText, where);
       const view = skin === undefined ? noSkinView(doc) : underSkin(doc, skin);
       const active = activeBones(view);
       return unposedBones(view.bones.map((b) => ({ name: b.name, parent: b.parent ?? null, active: active.has(b.name) })));
+    },
+  };
+}
+
+/**
+ * What `render` and `check` read off a rigc build's model document besides the
+ * pose (issue #1020) — so a build the core poses draws with its
+ * `skeleton.atlas` gone, and reads off `skeleton.json` only what the document
+ * does not state.
+ */
+export interface CoreDocumentFacts {
+  /** The document's spec: `rigc-compiled/2` states where each region sits on its page, `rigc-compiled/1` does not. */
+  spec: string;
+  /**
+   * Every page the `pages` section states, by name, in file order — the
+   * images the draw samples, read by these names; `null` for a
+   * `rigc-compiled/1` document, whose pages only its atlas names.
+   */
+  pageNames: readonly string[] | null;
+  /** The skin roster behind the core poser (`coreSkinRoster`), over this one reading. */
+  roster: SkinRoster;
+  /**
+   * The slot subset's roster (`subsetOver`): the slots in the document's draw
+   * order, its default skin, and the skins the document files a slot's
+   * attachments under. A refusal lists those skins, and the order it lists
+   * them in is the Spine file's, which the document does not hold
+   * (`./core/index.ts`, *Several skins filling one placeholder*) — so they are
+   * put in `skins`' order, the Spine file's own list.
+   */
+  subset: SubsetRoster;
+}
+
+/**
+ * The document's facts for `render` and `check` (`CoreDocumentFacts`), read
+ * once. `skins` is the Spine file's skin list, in its order — the one fact
+ * here the document does not state. Refused by `CoreInputError` where
+ * `readModel` refuses the document.
+ */
+export function coreDocumentFacts(modelText: string, where: string, skins: readonly string[]): CoreDocumentFacts {
+  const doc = readModel(modelText, where);
+  const rank = (name: string): number => {
+    const at = skins.indexOf(name);
+    return at < 0 ? skins.length : at;
+  };
+  return {
+    spec: doc.spec,
+    pageNames: doc.pages === null ? null : doc.pages.map((page) => page.name),
+    roster: coreSkinRoster(doc, skins),
+    subset: {
+      declared: doc.slots.map((s) => s.name),
+      carriers: (slot) =>
+        doc.skins
+          .filter((k) => Object.keys(k.attachments[slot] ?? {}).length > 0)
+          .map((k) => k.name)
+          .sort((a, b) => rank(a) - rank(b)),
+      defaultSkin: doc.skins.some((k) => k.name === CORE_DEFAULT_SKIN) ? CORE_DEFAULT_SKIN : null,
     },
   };
 }

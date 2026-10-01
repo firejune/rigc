@@ -157,6 +157,7 @@ import {
   POSER_NAMES,
   PoserChoiceError,
   refuseUnchosen,
+  CandidateAtlasError,
   SpineRuntimeError,
   throughPoser,
   type Frame,
@@ -1473,16 +1474,16 @@ function runCheck(
   flags: Record<string, string>,
   plates?: CheckPlates,
 ): CheckReport {
-  const { skeletonPath, atlasPath } = resolveArtifacts(candidate, atlasFlag);
+  const { skeletonPath, atlasPath, atlasText } = resolveDrawable(candidate, atlasFlag);
   // The poser is `render`'s choice, over the same two files (issue #968): the
   // paths are what `candidatePosers` looks beside for `skeleton.model.json`.
   const poser = readPoserFlag(flags);
   return checkAgainstFrames({
     skeletonText: readFileSync(skeletonPath, 'utf8'),
-    atlasText: readFileSync(atlasPath, 'utf8'),
+    atlasText,
     atlasDir: dirname(atlasPath),
     framesDir,
-    labels: { skeleton: skeletonPath, atlas: atlasPath },
+    labels: { skeleton: skeletonPath, atlas: atlasText === null ? `${atlasPath} — not there (${ATLAS_ABSENT})` : atlasPath },
     candidatePaths: { skeleton: skeletonPath, atlas: atlasPath },
     ...(poser === undefined ? {} : { poser }),
     ...readCheckFlags(flags),
@@ -1584,6 +1585,43 @@ function resolveViewable(flags: Record<string, string>): {
     if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
   }
   return { skeletonPath, atlasPath, atlasDir: dirname(atlasPath) };
+}
+
+/** What `render` and `check` say where a rigc build's atlas is not there (issue #1020). */
+const ATLAS_ABSENT = 'a build the core poses from a rigc-compiled/2 document needs none';
+
+/**
+ * The candidate `render` and `check` draw, with its atlas text — or `null`
+ * where the atlas file is not there and need not be (issue #1020).
+ *
+ * ⭐ A rigc build is drawn by the core from its `skeleton.model.json`, and a
+ * `rigc-compiled/2` document states where each region sits on its page, so
+ * the build's `skeleton.atlas` is not needed to draw it. Its absence is let
+ * through here only where it can be that case — no `--atlas` named, a model
+ * document beside the skeleton, and no atlas beside it at all — and the poser
+ * choice decides the rest: anything that is read through an atlas after all
+ * (a `rigc-compiled/1` document, a build the core refuses) is refused there
+ * naming the file and why (`CandidateAtlasError`). An atlas that IS there is
+ * read, as it always was: the core holds it to the document's `pages` and
+ * draws through spine-core, saying why, when it is not the one the build
+ * wrote (#1016), and `check` reads its `scale:` lines for the texture note.
+ * Everywhere else this is `resolveViewable`'s refusal, word for word.
+ */
+function resolveDrawable(target: string, atlasFlag: string | undefined): { skeletonPath: string; atlasPath: string; atlasText: string | null } {
+  const abs = resolve(target);
+  if (atlasFlag === undefined && existsSync(abs)) {
+    const directory = statSync(abs).isDirectory();
+    const skeletonPath = directory ? join(abs, 'skeleton.json') : abs;
+    const dir = dirname(skeletonPath);
+    const atlasPath = join(dir, 'skeleton.atlas');
+    const noAtlas = directory ? !existsSync(atlasPath) : abs.endsWith('.json') && !readdirSync(dir).some((f) => f.endsWith('.atlas'));
+    if (noAtlas && existsSync(join(dir, MODEL_DOCUMENT_FILE))) {
+      if (!existsSync(skeletonPath)) throw new UsageError(`nothing at ${skeletonPath}`);
+      return { skeletonPath, atlasPath, atlasText: null };
+    }
+  }
+  const { skeletonPath, atlasPath } = resolveViewable({ candidate: target, ...(atlasFlag === undefined ? {} : { atlas: atlasFlag }) });
+  return { skeletonPath, atlasPath, atlasText: readFileSync(atlasPath, 'utf8') };
 }
 
 /** `--animation`, checked against what the skeleton actually carries. */
@@ -1730,7 +1768,11 @@ const STAGELESS_FRAMING = {
  * two rates — land on one pixel grid and stay comparable.
  */
 function cmdRender(flags: Record<string, string>): void {
-  const { skeletonPath, atlasPath, atlasDir } = resolveViewable(flags);
+  if (flags.candidate === undefined) {
+    throw new UsageError('needs --candidate <dir | skeleton.json> — the directory `build --out` wrote');
+  }
+  const { skeletonPath, atlasPath, atlasText } = resolveDrawable(flags.candidate, flags.atlas);
+  const atlasDir = dirname(atlasPath);
   const fps = readPositiveNumber(flags, 'fps', PROTOCOL_FPS, 1);
   const maxSide = readPositiveNumber(flags, 'max', 256, 16);
   const outRoot = resolve(flags.out ?? 'render');
@@ -1755,13 +1797,14 @@ function cmdRender(flags: Record<string, string>): void {
 
   console.log('rigc render');
   console.log(`  ..    skeleton ${skeletonPath}`);
-  console.log(`  ..    atlas    ${atlasPath}`);
+  console.log(`  ..    atlas    ${atlasPath}${atlasText === null ? ` — not there (${ATLAS_ABSENT})` : ''}`);
   // Which implementation of the posing seam draws this (issue #968), chosen
   // before anything is read off the candidate (issue #1014): a rigc build the
   // core poses — `skeleton.model.json` beside the pair — reads its names, its
-  // subset roster and its pages without loading spine-core at all.
+  // subset roster and its pages without loading spine-core at all, and with a
+  // rigc-compiled/2 document without its atlas either (issue #1020).
   const { choice, facts, pages } = loadCandidate(
-    { skeletonText: readFileSync(skeletonPath, 'utf8'), atlasText: readFileSync(atlasPath, 'utf8'), atlasDir, label: skeletonPath },
+    { skeletonText: readFileSync(skeletonPath, 'utf8'), atlasText, atlasDir, label: skeletonPath },
     { skeleton: skeletonPath, atlas: atlasPath },
     posersAsked(flags),
   );
@@ -4333,6 +4376,13 @@ try {
   // fallback — on a run where the runtime cannot be used (issue #1014). The
   // sentence names the input and why it needs the runtime; exit 1, like a file
   // that is not a PNG: the invocation was fine and the run could not pose it.
+  // A candidate with no atlas beside it that has to be read through one (issue
+  // #1020): a refusal of the invocation like a missing atlas on an export, exit
+  // 2 and nothing written, and the message names the file and why it is needed.
+  if (err instanceof CandidateAtlasError) {
+    console.error(`rigc ${command}: ${err.message}`);
+    process.exit(2);
+  }
   if (err instanceof SpineRuntimeError) {
     console.error(`rigc ${command}: ${err.message}`);
     process.exit(1);
