@@ -67880,7 +67880,7 @@ import { DEFORM_CURVE_END, deformAt, deformPercent, heldArray, SEQUENCE_MODES as
 import { drawOrderAt } from './src/core/draw_order.ts';
 import { eventsFired, type CoreEventRow } from './src/core/events.ts';
 import { physicsState, stepPhysics, stepSchedule, type CorePhysicsRecord } from './src/core/constraints_physics.ts';
-import { modeMatrix, worldTransforms, type CoreInheritMode } from './src/core/world.ts';
+import { modeMatrix, worldTransforms, type CoreInheritMode, type WorldArithmetic } from './src/core/world.ts';
 import { ADMITTED_CONSTRAINT_KINDS, TRANSFORM_PROPERTIES, type ConstraintPlant, type CoreConstraintRecord, type CoreTransformRecord } from './src/core/constraints.ts';
 // The per-skin view (issue #932), its own statements so the CN controls land as one hunk.
 import { CORE_ALL_SKINS, lookupSkins } from './src/core/skins.ts';
@@ -68009,7 +68009,7 @@ function coreTreeProblems(population: ReadonlyMap<string, string>): string[] {
       if (CORE_FORBIDDEN_MODULES.some((re) => re.test(spec)) && (inCore || !typeOnly)) problems.push(`${rel} imports "${spec}"${inCore ? '' : ', and the core reaches it'}`);
       if (!spec.startsWith('.')) continue;
       const target = join(dirname(rel), spec).split('\\').join('/');
-      if (inCore && target === 'src/transform.ts') problems.push(`${rel} imports "${spec}" — the compiler's adapter, which itself calls the core's evaluator with the compiler's arithmetic (issue #1015), so the core reaching it would be a cycle`);
+      if (inCore && target === 'src/transform.ts') problems.push(`${rel} imports "${spec}" — the compiler's adapter, which itself calls the core's evaluator (issue #1015, under the runtime's arithmetic since #1021), so the core reaching it would be a cycle`);
       if (!target.startsWith('src/')) {
         if (inCore) problems.push(`${rel} imports "${spec}", outside src/`);
         continue;
@@ -68932,6 +68932,132 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `${population.size} file(s) under src/, read off the disk, ${blocks} comment block(s), ${citing} of them citing a runtime source file by name (of ${runtimeNames.size} spine-core exports): none claims a routine here is, transcribes or was written off a runtime routine, and no file under src/core/ names a runtime source file; ${plants.filter((p) => p[3]).length} plants raise a problem each and the ${plants.filter((p) => !p[3]).length} format-reading or file-less ones raise none`),
       'issue #1015, and #1011 for the core\'s clause: the format\'s reader is the model this compiler was written against and citations of how it reads the format stay, but a routine that says it copies one is a claim nothing measured — the sixteen that said so were replaced by the core\'s measured forms, measured beside them, or restated, and this keeps the class from coming back',
+    );
+  }
+
+  // --- CO24: the compiler binds through the runtime's matrices, so a bound point poses where it was authored ---
+  //
+  // Issue #1021: every point the compiler binds from a world position — a bone's
+  // origin under its parent, a region's centre, a mesh vertex in each influence —
+  // is `toBoneLocal` of `computeWorldTransforms`, spelled in float32, and the
+  // runtime poses it back through its own setup matrix. The two arithmetics
+  // differed in the last bits (Math.PI against 3.1415927, the rotation-only frame,
+  // radians to degrees by division), and an unrotated root alone shows it: the
+  // runtime reads its `b` as −2.3e-8, so a point 256 units up was bound 5.9e-6
+  // off before the spelling. Measured from inside `compile` on the 19 recipes, the
+  // old arithmetic left gallery/look's bound points up to 8.6e-5 off, the runtime's
+  // put every one at the float32 floor. This holds the claim on a seeded
+  // population: per rig, the compiler's setup transforms read bit for bit as
+  // spine-core's setup pose of the same bones (all five modes, roots at 0 and
+  // turned, scaled, sheared and reflecting), and every point bound through them,
+  // spelled as the file holds it (a double-held decimal for bones and regions, a
+  // float32 for mesh vertices), poses no farther from where it was authored than
+  // the spelling of the exact runtime inverse does — the float32 floor. Plants:
+  // the old arithmetic, and the middle row of the card (the runtime's constant and
+  // degree turn with the rotation-only frame kept), each through a copy of the
+  // evaluator.
+  {
+    const probes: string[] = [];
+    const RIGS = 2000;
+    const POINTS = 4;
+    const draw = seededRandom(1021);
+    const MODES = ['normal', 'normal', 'normal', 'onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'] as const;
+    type ProbeBone = { name: string; parent?: string; x?: number; y?: number; rotation?: number; scaleX?: number; scaleY?: number; shearX?: number; shearY?: number; inherit?: string };
+    type Evaluated = ReadonlyMap<string, { a: number; b: number; c: number; d: number; worldX: number; worldY: number }>;
+    const OLD_ARITHMETIC: WorldArithmetic = { radiansPerDegree: Math.PI / 180, degreesOf: (radians) => radians / (Math.PI / 180), rotationOnlyFrame: true };
+    const MIDDLE_ARITHMETIC: WorldArithmetic = { radiansPerDegree: 3.1415927 / 180, degreesOf: (radians) => radians * (180 / 3.1415927), rotationOnlyFrame: true };
+    const through = (arithmetic: WorldArithmetic) => (bones: readonly ProbeBone[]): Evaluated =>
+      worldTransforms(bones.map((b) => ({ name: b.name, parent: b.parent, x: b.x, y: b.y, rotation: b.rotation, scaleX: b.scaleX, scaleY: b.scaleY, shearX: b.shearX, shearY: b.shearY, inheritMode: b.inherit })), null, modeMatrix, arithmetic);
+    const evaluators: Array<[string, (bones: readonly ProbeBone[]) => Evaluated]> = [
+      ['the compiler', (bones) => computeWorldTransforms(bones)],
+      ['the old arithmetic, planted', through(OLD_ARITHMETIC)],
+      ['the middle row, planted', through(MIDDLE_ARITHMETIC)],
+    ];
+    const tally = evaluators.map(() => ({ bonesOff: 0, pointsFarther: 0, worst: 0 }));
+    let bones = 0;
+    let points = 0;
+    let floorWorst = 0;
+    let plainRoots = 0;
+    const firstOff: string[] = [];
+    const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(draw() * xs.length)];
+    for (let rig = 0; rig < RIGS; rig++) {
+      const count = 1 + Math.floor(draw() * 6);
+      const spec: ProbeBone[] = [];
+      for (let i = 0; i < count; i++) {
+        const bone: ProbeBone = { name: `b${i}` };
+        if (i > 0) {
+          bone.parent = `b${Math.floor(draw() * i)}`;
+          const mode = pick(MODES);
+          if (mode !== 'normal') bone.inherit = mode;
+          bone.x = f32((draw() - 0.5) * 600);
+          bone.y = f32((draw() - 0.5) * 600);
+        }
+        // A quarter of the bones unrotated, a quarter at a right angle: the frames the old arithmetic held exactly.
+        const turn = draw();
+        bone.rotation = turn < 0.25 ? 0 : turn < 0.5 ? pick([90, 180, -90, 270]) : f32((draw() - 0.5) * 360);
+        if (draw() < 0.4) {
+          bone.scaleX = f32((draw() < 0.2 ? -1 : 1) * (0.25 + draw() * 2.5));
+          bone.scaleY = f32((draw() < 0.2 ? -1 : 1) * (0.25 + draw() * 2.5));
+          if (draw() < 0.5) bone.shearX = f32((draw() - 0.5) * 40);
+          if (draw() < 0.5) bone.shearY = f32((draw() - 0.5) * 40);
+        }
+        if (i === 0 && bone.scaleX === undefined) plainRoots++;
+        spec.push(bone);
+      }
+      const data = loadOracleData(JSON.stringify({ skeleton: {}, bones: spec }), '', `the CO24 probe rig ${rig}`);
+      const skeleton = new Skeleton(data);
+      skeleton.setupPose();
+      skeleton.updateWorldTransform(Physics.none);
+      const worldPoints = spec.map(() => Array.from({ length: POINTS }, (): [number, number] => [(draw() - 0.5) * 2048, (draw() - 0.5) * 2048]));
+      const evaluated = evaluators.map(([, evaluate]) => evaluate(spec));
+      spec.forEach((bone, i) => {
+        const runtime = skeleton.bones[i].appliedPose;
+        const matrix: BoneTransform = { a: runtime.a, b: runtime.b, c: runtime.c, d: runtime.d, worldX: runtime.worldX, worldY: runtime.worldY, worldRotation: 0 };
+        const det = runtime.a * runtime.d - runtime.b * runtime.c;
+        bones++;
+        for (const [k, worlds] of evaluated.entries()) {
+          const m = worlds.get(bone.name);
+          if (m === undefined) throw new Error(`CO24: ${evaluators[k][0]} gave no transform for ${bone.name}`);
+          const same = m.a === runtime.a && m.b === runtime.b && m.c === runtime.c && m.d === runtime.d && m.worldX === runtime.worldX && m.worldY === runtime.worldY;
+          if (!same) {
+            tally[k].bonesOff++;
+            if (k === 0 && firstOff.length < 3) firstOff.push(`rig ${rig} bone "${bone.name}" (${bone.inherit ?? 'normal'}, rotation ${bone.rotation}): the compiler reads [${m.a}, ${m.b}, ${m.c}, ${m.d}, ${m.worldX}, ${m.worldY}] where spine-core poses [${runtime.a}, ${runtime.b}, ${runtime.c}, ${runtime.d}, ${runtime.worldX}, ${runtime.worldY}]`);
+          }
+        }
+        if (Math.abs(det) < 1e-9) return;
+        for (const w of worldPoints[i]) {
+          for (const held of [(v: number) => f32(v), (v: number) => Math.fround(f32(v))]) {
+            const posedAt = (local: readonly [number, number]): number =>
+              Math.hypot(held(local[0]) * runtime.a + held(local[1]) * runtime.b + runtime.worldX - w[0], held(local[0]) * runtime.c + held(local[1]) * runtime.d + runtime.worldY - w[1]);
+            const floor = posedAt(toBoneLocal(matrix, w[0], w[1]));
+            if (floor > floorWorst) floorWorst = floor;
+            points++;
+            for (const [k, worlds] of evaluated.entries()) {
+              const m = worlds.get(bone.name)!;
+              const distance = posedAt(toBoneLocal({ ...m, worldRotation: 0 }, w[0], w[1]));
+              if (distance > tally[k].worst) tally[k].worst = distance;
+              if (distance > floor) {
+                tally[k].pointsFarther++;
+                if (k === 0 && firstOff.length < 3) firstOff.push(`rig ${rig} bone "${bone.name}": a point authored at (${w[0]}, ${w[1]}) poses ${distance} from it, where the spelling of the runtime's own inverse poses ${floor}`);
+              }
+            }
+          }
+        }
+      });
+    }
+    probes.push(...firstOff);
+    if (tally[0].bonesOff > 0) probes.push(`the compiler's setup transforms read ${tally[0].bonesOff} of ${bones} bone(s) otherwise than spine-core's setup pose`);
+    if (tally[0].pointsFarther > 0) probes.push(`${tally[0].pointsFarther} of ${points} bound point(s) pose farther from where they were authored than the float32 floor`);
+    for (const k of [1, 2]) {
+      if (tally[k].bonesOff === 0 || tally[k].pointsFarther === 0) probes.push(`${evaluators[k][0]} read ${tally[k].bonesOff} bone(s) off and ${tally[k].pointsFarther} point(s) past the floor, so the comparison cannot see it`);
+    }
+    probes.push(...floorProbes([[bones, RIGS, `${bones} bone(s) were posed`], [plainRoots, 1, `${plainRoots} root(s) with the default scale and no shear`]], 'a population that posed fewer than it states measured less than it claims'));
+    const ok = probes.length === 0;
+    say(
+      'CO24_THE_COMPILER_BINDS_THROUGH_SPINE_CORES_SETUP_MATRICES_AND_A_BOUND_POINT_POSES_AT_THE_FLOAT32_FLOOR',
+      ok,
+      probeDetail(ok, probes, `${RIGS} seeded rig(s), ${bones} bone(s) in all five modes (${plainRoots} plain root(s)), posed at setup by spine-core: the compiler's setup transforms read every bone bit for bit, and ${points} bound point(s) — ${POINTS} per bone, each spelled as a double-held decimal and as a float32 — pose no farther from where they were authored than the float32 floor (worst ${tally[0].worst.toExponential(2)}, floor worst ${floorWorst.toExponential(2)}); the old arithmetic, planted, read ${tally[1].bonesOff} bone(s) off and ${tally[1].pointsFarther} point(s) past the floor (worst ${tally[1].worst.toExponential(2)}), the middle row ${tally[2].bonesOff} and ${tally[2].pointsFarther}`),
+      'issue #1021: a binding is right when the runtime, posing the emitted rig at setup, puts each bound point where it was authored — the compiler bound through Math.PI and a rotation-only frame the runtime does not pose with, and left gallery/look\'s points up to 8.6e-5 off where the runtime\'s arithmetic leaves them at the float32 floor',
     );
   }
 

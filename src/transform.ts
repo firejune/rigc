@@ -33,13 +33,38 @@
  * ⭐ **`computeWorldTransforms` is the core's evaluator** (`worldTransforms` in
  * [`src/core/world.ts`](core/world.ts), issue #1015), whose every rule — the five
  * inherit modes, the collapsed parent axis, the operation orders — was measured
- * against the runtime's pose dump and is held there by the core suite. This file
- * hands it the compiler's arithmetic (`COMPILER_ARITHMETIC`, below) and keeps
- * what is the compiler's own: the coordinate contract, the refusals by name, the
- * world rotation a region cancels, and the inverses.
+ * against the runtime's pose dump and is held there by the core suite. Since
+ * issue #1021 it runs under the runtime's own arithmetic (`RUNTIME_ARITHMETIC`,
+ * the evaluator's default), so the matrices every point is bound through are the
+ * ones the runtime poses the build with, to the bit. This file keeps what is the
+ * compiler's own: the coordinate contract, the refusals by name, the world
+ * rotation a region cancels, and the inverses.
+ *
+ * ⚠️ **Why the runtime's arithmetic and not the textbook's** (issue #1021). A
+ * point is bound by inverting a setup matrix; the runtime then poses it through
+ * its own. The two used to differ in the last bits — `Math.PI` against the
+ * runtime's 3.1415927, `[cos, −sin, sin, cos]` against the y column taken at
+ * `rotation + 90`, radians to degrees by division against multiplication — and
+ * that is not noise below the file's precision: an unrotated root reads
+ * `b = −2.3e-8` in the runtime, so a point 256 units above its bone was bound
+ * 5.9e-6 off before the float32 spelling was even applied. Measured from inside
+ * `compile` (every authored world position `toBoneLocal` was handed) against
+ * spine-core's pose of the emitted build, the old arithmetic put `gallery/look`'s
+ * 312 bound points up to 8.6e-5 from where they were authored (RMS 5.1e-5) and
+ * `gallery/flex`'s 258 up to 2.3e-5; the runtime's puts every one of them at the
+ * float32 floor — the distance the float32 spelling of the exact inverse alone
+ * accounts for (look 8.1e-6, flex 4.1e-6). `CO24` holds it.
+ *
+ * 🔸 **The rule has a second half: what is MEASURED reads the exact frame.**
+ * The runtime's arithmetic is for what is bound — the matrices a point is
+ * inverted through. Anything the compiler measures of the authored rig and
+ * reports, compares against a threshold, sorts by or refuses on is a statement
+ * about the spec, and reads `computeExactFrameTransforms` (below): a depth turn
+ * ceiling, a ring's control angles, a `segments` mesh's segments and falloff.
+ * An angle the author stated as 90 has to print as 90.
  */
 import type { ModelBone } from './model.ts';
-import { modeMatrix, worldTransforms, type CoreWorld, type WorldArithmetic } from './core/world.ts';
+import { modeMatrix, RUNTIME_ARITHMETIC, worldTransforms, type CoreWorld, type WorldArithmetic } from './core/world.ts';
 
 /**
  * What `computeWorldTransforms` reads off a bone — a structural type, so both a
@@ -78,26 +103,6 @@ export interface BoneTransform {
 
 export class TransformError extends Error {}
 
-const DEG = Math.PI / 180;
-
-/**
- * The arithmetic every figure rigc emits was computed with, handed to the core's
- * evaluator (issue #1015). It differs from the runtime's in the last bit and in
- * no matrix: degrees to radians with `Math.PI` rather than the runtime's
- * 3.1415927, radians back to degrees by dividing by that factor, and a bone with
- * the default scale and no shear framed as `lb = -sin`, `ld = cos` rather than
- * `cos`/`sin` of `rot + 90°`. One bit can move a float32 spelling in the file, so
- * this is a parameter and not a rewrite: measured with the runtime's arithmetic
- * instead, 2 of the 19 public recipes moved by at most 4e-5. Whether the compiler
- * should bind with the runtime's constant is a question of its own, not settled
- * here.
- */
-const COMPILER_ARITHMETIC: WorldArithmetic = {
-  radiansPerDegree: DEG,
-  degreesOf: (radians) => radians / DEG,
-  rotationOnlyFrame: true,
-};
-
 /**
  * Crop pixels (y down, origin top-left) -> Spine world (y up, origin at the
  * bottom-left of the crop).
@@ -114,20 +119,64 @@ export function cropToSpineY(cropY: number, cropHeight: number): number {
 }
 
 /**
+ * The textbook's arithmetic — `Math.PI`, a bone with the default scale and no
+ * shear framed as `[cos, −sin, sin, cos]`, radians to degrees by dividing by
+ * the degree factor — in which an unrotated bone's frame is the identity
+ * exactly. Every point the compiler binds goes through the runtime's instead
+ * (the header's ⚠️); this is what `computeExactFrameTransforms` evaluates
+ * under, and nothing else.
+ */
+const EXACT_FRAME_ARITHMETIC: WorldArithmetic = {
+  radiansPerDegree: Math.PI / 180,
+  degreesOf: (radians) => radians / (Math.PI / 180),
+  rotationOnlyFrame: true,
+};
+
+/**
  * World transform of every bone, in declaration order.
  *
  * Bones must be declared parents-first, which is also what `SkeletonJson`
  * requires (it resolves `parent` by name against the bones already read), so a
  * violation here is a violation there.
  *
- * The matrices and origins are the core's (`worldTransforms`, under
- * `COMPILER_ARITHMETIC`). What is decided here is what the core does not say:
+ * The matrices and origins are the core's (`worldTransforms`, under the
+ * runtime's arithmetic — the header's ⚠️). What is decided here is what the core does not say:
  * an undeclared parent and an `inherit` no mode answers to are refused by name
  * as `TransformError`, a bone whose `parent` is empty is a root as it always was
  * here, and `worldRotation` is read off the matrix — a root with the default
- * scale and no shear keeps its stated rotation, unwrapped.
+ * scale and no shear keeps its stated rotation, unwrapped. The angle is turned
+ * into degrees as the runtime turns one (`RUNTIME_DEG`, by multiplying), so
+ * the rotation a region writes to cancel it is read back by the runtime as
+ * that angle.
  */
 export function computeWorldTransforms(bones: readonly PosableBone[]): Map<string, BoneTransform> {
+  return evaluate(bones, RUNTIME_ARITHMETIC);
+}
+
+/**
+ * The same bones under `EXACT_FRAME_ARITHMETIC`: the frame the compiler
+ * MEASURES the authored rig in, and binds nothing through (issue #1021) — a
+ * mesh's depth turn ceiling (`sampleMeshDepth` in `compile.ts`), a ring's
+ * control angles (`ringControlAngles`, which orders the split and refuses a
+ * tie by printing the angle), and a `segments` mesh's segments, the distances
+ * its falloff and `minWeight` read and its shared-origin refusal. It differs from
+ * `computeWorldTransforms` only in the last bits, and that is exactly why it is
+ * kept (issue #1021): the ceiling is a statement about the authored mesh, and
+ * its reader treats an axis whose area term is exactly zero as one that cannot
+ * fold. The runtime frames an unrotated bone with `b = −2.3e-8`, so in its
+ * bind space a sheet whose depth rises linearly in x — which cannot fold a
+ * pitch at any angle — reads a pitch ceiling of 89.99997°, and `gallery/look`'s
+ * two hair locks gained four such ceilings with their counts (`TC03`, `TC06`
+ * went red on it). A control angle read through the runtime's frame printed
+ * an authored 90 as 89.99999734089101 in its tie refusal (`RF46`). On the 19
+ * recipes the only bytes this keeps from moving are look's ceilings; no
+ * emitted position goes through it.
+ */
+export function computeExactFrameTransforms(bones: readonly PosableBone[]): Map<string, BoneTransform> {
+  return evaluate(bones, EXACT_FRAME_ARITHMETIC);
+}
+
+function evaluate(bones: readonly PosableBone[], arithmetic: WorldArithmetic): Map<string, BoneTransform> {
   const model: ModelBone[] = [];
   const declared = new Set<string>();
   for (const bone of bones) {
@@ -149,12 +198,12 @@ export function computeWorldTransforms(bones: readonly PosableBone[]): Map<strin
     });
     declared.add(bone.name);
   }
-  const worlds = worldTransforms(model, null, modeMatrix, COMPILER_ARITHMETIC);
+  const worlds = worldTransforms(model, null, modeMatrix, arithmetic);
   const out = new Map<string, BoneTransform>();
   for (const bone of model) {
     const w = worlds.get(bone.name) as CoreWorld;
     const plain = (bone.scaleX ?? 1) === 1 && (bone.scaleY ?? 1) === 1 && (bone.shearX ?? 0) === 0 && (bone.shearY ?? 0) === 0;
-    const worldRotation = bone.parent === undefined && plain ? (bone.rotation ?? 0) : (Math.atan2(w.c, w.a) / DEG + 360) % 360;
+    const worldRotation = bone.parent === undefined && plain ? (bone.rotation ?? 0) : (arithmetic.degreesOf(Math.atan2(w.c, w.a)) + 360) % 360;
     out.set(bone.name, { a: w.a, b: w.b, c: w.c, d: w.d, worldX: w.worldX, worldY: w.worldY, worldRotation });
   }
   return out;

@@ -117,6 +117,7 @@ import {
 import { evaluateDeformTransform } from './deformgen.ts';
 import { evaluateTrackDerive, TRACK_DERIVE_PROJECTIONS, type TrackDeriveMember } from './trackgen.ts';
 import {
+  computeExactFrameTransforms,
   computeWorldTransforms,
   cropToSpineY,
   normaliseDegrees,
@@ -2564,8 +2565,13 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   }
   const boneNames = new Set(bones.map((b) => b.name));
   let transforms: Map<string, BoneTransform>;
+  // The frames a depth turn ceiling is measured in — the same bones without the
+  // runtime's last bits (`computeExactFrameTransforms`, issue #1021). Nothing is
+  // bound through them.
+  let exactFrames: Map<string, BoneTransform>;
   try {
     transforms = computeWorldTransforms(bones);
+    exactFrames = computeExactFrameTransforms(bones);
   } catch (err) {
     if (err instanceof TransformError) throw new CompileError(err.message);
     throw err;
@@ -2743,7 +2749,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
 
     if (part) {
       const perSlot: Record<string, SkinTableEntry> = {};
-      const mesh = part.mesh ? buildMesh(part, manifest!, bones, transforms, rigSlot.bone) : null;
+      const mesh = part.mesh ? buildMesh(part, manifest!, bones, transforms, exactFrames, rigSlot.bone) : null;
       for (const name of names) {
         const img = images.find((im) => im.region === name);
         if (!img) throw new CompileError(`internal: no image for attachment ${name}`);
@@ -2783,6 +2789,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           images,
           bones,
           transforms,
+          exactFrames,
           meshBones,
           meshes,
           slotName: rigSlot.name,
@@ -3770,6 +3777,8 @@ interface AttachmentContext {
   images: CompiledImage[];
   bones: ModelBone[];
   transforms: Map<string, BoneTransform>;
+  /** The same bones in `computeExactFrameTransforms`' frames: what a depth turn ceiling is measured in, and nothing else (issue #1021). */
+  exactFrames: Map<string, BoneTransform>;
   meshBones: Set<string>;
   meshes: CompileResult['meshes'];
   slotName: string;
@@ -5215,9 +5224,11 @@ function buildGeneratedMesh(
   // refusals, because the ring's control angles need the transform and the bind
   // needs the bone — and the two must refuse a bone the rig lacks in the same
   // words whichever of them asks for it first.
-  const resolve = (name: string): BoneTransform => {
+  // Two readings of one bone (issue #1021): the runtime's matrices to bind
+  // through, and the exact frame to measure the control angles in.
+  const resolve = (name: string, frames: Map<string, BoneTransform> = ctx.transforms): BoneTransform => {
     if (!ctx.bones.some((b) => b.name === name)) throw new CompileError(`${where}: mesh bone "${name}" is not in the rig's bone list`);
-    const transform = ctx.transforms.get(name);
+    const transform = frames.get(name);
     if (!transform) throw new CompileError(`${where}: no setup transform for mesh bone "${name}"`);
     return transform;
   };
@@ -5234,7 +5245,11 @@ function buildGeneratedMesh(
   const anchor = ctx.transforms.get(ctx.anchorBone);
   if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
   const place = (px: number, py: number): [number, number] => [anchor.worldX + px - w / 2, anchor.worldY + h / 2 - py];
-  const toPartLocal = (wx: number, wy: number): [number, number] => [wx - anchor.worldX + w / 2, anchor.worldY + h / 2 - wy];
+  // The inverse a control angle is measured through, in the exact frame: the
+  // anchor's and the control's positions as the spec put them, not as the
+  // runtime's last bits put them (issue #1021).
+  const exactAnchor = resolve(ctx.anchorBone, ctx.exactFrames);
+  const toPartLocal = (wx: number, wy: number): [number, number] => [wx - exactAnchor.worldX + w / 2, exactAnchor.worldY + h / 2 - wy];
   let geometry;
   try {
     geometry =
@@ -5247,7 +5262,7 @@ function buildGeneratedMesh(
             size: generator.size,
             bias: generator.bias,
             controlAngles: ringControlAngles(controls, generator.center, (name) => {
-              const transform = resolve(name);
+              const transform = resolve(name, ctx.exactFrames);
               return toPartLocal(transform.worldX, transform.worldY);
             }),
           });
@@ -5356,7 +5371,12 @@ function sampleMeshDepth(
   /**
    * A part-local pixel to the BIND space this mesh's vertices are emitted in —
    * the same composition `bindWeightedVertices` applies, handed in rather than
-   * rebuilt so the two cannot diverge.
+   * rebuilt so the two cannot diverge — taken in the slot bone's exact frame
+   * (`computeExactFrameTransforms`) rather than the runtime's. The two differ
+   * in the last bits only, and those bits are the runtime's π rather than the
+   * mesh: an unrotated bone reads `b = −2.3e-8` there, which turns the exact
+   * zero this ceiling reads as "this axis cannot fold" into a fold at
+   * 89.99997° (issue #1021; `TC03` and `TC06` are that claim).
    *
    * 🚨 The ceiling has to be taken in bind space and in no other. A deform
    * offset is authored there, so a rotated slot bone MIXES the two axes: a
@@ -5785,7 +5805,8 @@ function buildGridAttachment(
     throw new CompileError(`${where}: the spec says height ${att.height} and "${att.image}" measures ${h}`);
   }
   const anchor = ctx.transforms.get(ctx.anchorBone);
-  if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  const frame = ctx.exactFrames.get(ctx.anchorBone);
+  if (!anchor || !frame) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
   if (!ctx.bones.some((b) => b.name === ctx.anchorBone)) {
     throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
   }
@@ -5800,7 +5821,7 @@ function buildGridAttachment(
           'grid',
           geometry.points,
           geometry.triangles,
-          (px, py) => toBoneLocal(anchor, anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt),
+          (px, py) => toBoneLocal(frame, frame.worldX + px * toArt - w / 2, frame.worldY + h / 2 - py * toArt),
           // The lattice's geometry takes nothing off the texels — its window is
           // the plate's size, which is the atlas's own `offsets` — so a page
           // whose file is not its declared size costs a grid only this one
@@ -5985,7 +6006,11 @@ function buildSegmentsAttachment(
 
   // -- the placement ---------------------------------------------------------
   const slotBone = ctx.transforms.get(ctx.anchorBone);
-  if (!slotBone) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  // The exact frame (issue #1021) is what the segments and the vertices are
+  // MEASURED in — distances, falloff, `minWeight`, the shared-origin refusal —
+  // and the runtime's is what the vertices are BOUND through (`place`).
+  const exactSlotBone = ctx.exactFrames.get(ctx.anchorBone);
+  if (!slotBone || !exactSlotBone) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
   let anchorAt: [number, number] = [w / 2, h / 2];
   if (generator.anchor !== undefined) {
     const stated = finitePair(generator.anchor);
@@ -5998,10 +6023,12 @@ function buildSegmentsAttachment(
     anchorAt = stated;
   }
   const [ax, ay] = anchorAt;
-  const place = (px: number, py: number): [number, number] => [
-    slotBone.worldX + (px - ax),
-    slotBone.worldY + (cropToSpineY(py, h) - cropToSpineY(ay, h)),
+  const placeIn = (bone: BoneTransform) => (px: number, py: number): [number, number] => [
+    bone.worldX + (px - ax),
+    bone.worldY + (cropToSpineY(py, h) - cropToSpineY(ay, h)),
   ];
+  const place = placeIn(slotBone);
+  const measuredAt = placeIn(exactSlotBone);
 
   // -- the segments ----------------------------------------------------------
   if (!Array.isArray(generator.bones) || generator.bones.length === 0) {
@@ -6025,7 +6052,7 @@ function buildSegmentsAttachment(
       named.push(name);
       refs.push(meshBoneRef(name, where, ctx));
     }
-    return { index, transform: ctx.transforms.get(name)! };
+    return { index, transform: ctx.exactFrames.get(name)! };
   };
   const tipOf = (name: string, transform: BoneTransform, at: string, chained: boolean): [number, number] => {
     const length = ctx.bones.find((b) => b.name === name)?.length ?? 0;
@@ -6093,7 +6120,7 @@ function buildSegmentsAttachment(
             `${JSON.stringify(from === null ? span.from : span.to)}; both ends are [x, y] in the part's pixels, y down`,
         );
       }
-      segments.push({ bone: index, a: place(from[0], from[1]), b: place(to[0], to[1]) });
+      segments.push({ bone: index, a: measuredAt(from[0], from[1]), b: measuredAt(to[0], to[1]) });
       return;
     }
     throw new CompileError(
@@ -6105,7 +6132,7 @@ function buildSegmentsAttachment(
   // -- the weights -----------------------------------------------------------
   const falloff = { power, radius: f.radius, maxBones, minWeight };
   const weights: MeshVertexWeight[][] = lattice.points.map(([px, py], v) => {
-    const got = segmentShares(place(px, py), segments, falloff);
+    const got = segmentShares(measuredAt(px, py), segments, falloff);
     if ('weights' in got) return got.weights;
     throw new CompileError(
       `${where}: vertex ${v}, at (${px}, ${py}) in the part's pixels, keeps no bone — the ${got.dropped.length} ` +
@@ -6284,7 +6311,8 @@ function buildContourAttachment(
     throw new CompileError(`${where}: the spec says height ${att.height} and "${att.image}" measures ${h}`);
   }
   const anchor = ctx.transforms.get(ctx.anchorBone);
-  if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  const frame = ctx.exactFrames.get(ctx.anchorBone);
+  if (!anchor || !frame) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
   if (!ctx.bones.some((b) => b.name === ctx.anchorBone)) {
     throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
   }
@@ -6308,7 +6336,7 @@ function buildContourAttachment(
           'contour',
           geometry.points,
           geometry.triangles,
-          (px, py) => toBoneLocal(anchor, anchor.worldX + px * toArt - w / 2, anchor.worldY + h / 2 - py * toArt),
+          (px, py) => toBoneLocal(frame, frame.worldX + px * toArt - w / 2, frame.worldY + h / 2 - py * toArt),
           alpha,
           sheetGridOf(img, plate),
           where,
@@ -7120,6 +7148,8 @@ function buildMesh(
   manifest: FaceManifest,
   bones: ModelBone[],
   transforms: Map<string, BoneTransform>,
+  /** The same bones in the exact frame (`computeExactFrameTransforms`): what the control angles are measured in. */
+  exactFrames: Map<string, BoneTransform>,
   anchorName: string,
 ): { attachment: ModelMeshAttachment; kind: 'ring' | 'ribbon' } {
   const spec = part.mesh!;
@@ -7152,9 +7182,12 @@ function buildMesh(
       // measures in crop pixels, y down, and Spine world is that crop flipped, so
       // `cropH - worldY` is the whole of it. `spec.center` is in the same crop
       // pixels, which is why the centre passed here is not the window-local
-      // `centre` two lines up.
+      // `centre` two lines up. The positions are read in the exact frame
+      // (issue #1021): an angle is a statement about where the spec put the
+      // bone, it orders the split and refuses a tie, and the runtime's last
+      // bits turned an authored 90 into 89.99999734089101 in that refusal.
       const controlAngles = ringControlAngles(controls, spec.center!, (name) => {
-        const m = transforms.get(name);
+        const m = exactFrames.get(name);
         if (!m) throw new CompileError(`internal: no setup transform for control bone "${name}"`);
         return [m.worldX, cropH - m.worldY];
       });
@@ -7894,6 +7927,13 @@ export function deformGeometryOf(
   // what makes that provable — the alternative, folding it into the world path
   // below, would re-evaluate every existing `transform` key at world
   // coordinates and emit a different file for a spec nobody edited.
+  //
+  // 🔸 Issue #1021: this reads the runtime's frame, not the exact one. The
+  // offsets are added by the runtime to exactly these numbers, so the model is
+  // evaluated on what the file holds; a compiler-bound vertex therefore carries
+  // the runtime's last bits (`b = −2.3e-8` on an unrotated bone) into its
+  // offset, about 1e-6 on gallery/look's hair locks. Evaluating on the authored
+  // positions instead would need them carried here from the binder.
   if (boneCounts.every((n) => n === 1) && bones.size === 1) {
     return { ...common, setup: bindSpace, influenceBones: null, setupWhy: null };
   }
