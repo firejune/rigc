@@ -20,10 +20,12 @@
  *
  * The build's `skeleton.json`, `skeleton.atlas` and `skeleton.model.json`,
  * read from `{{out}}`. `validate()` runs over the pair with `atlasDir` the
- * output directory and nothing else — no rig, no durations, because none of
- * the moved assertions reads them — and the model side over the document with
- * the same directory, under `spine` and again under `spine-html` (A11 is a
- * renderer rule, and `spine` never runs it). For each moved assertion and
+ * output directory and the rig info the document's own `rig` section states
+ * (`documentRig`; no durations, because none of the moved assertions reads
+ * them) — and the model side over the document with the same directory and
+ * the same rig info, under `spine` and again under `spine-html` (A11 is a
+ * renderer rule, and `spine` never runs it; the archetype rules A21 and A28
+ * likewise). For each moved assertion and
  * profile the row prints `IDENTICAL` or `DIFFERING` with both sides' lines.
  *
  * Beside the lines, the one fact a line cannot show: **the order** the skins'
@@ -42,7 +44,13 @@
  * issue #1026 (`src/assertions/model/given.ts`), are read off the build this
  * row gates by `modelGivenOfBuild`: the stage the skeleton header states and
  * each page's `pma` as `parseAtlasText` reads the atlas. The selftest's
- * supplier check gives them the same way. No rig is given, to either side.
+ * supplier check gives them the same way. The rig info is the document's own
+ * `rig` section (`documentRig`), given to both sides alike (cut 4c-2).
+ *
+ * Since cut 4c-2, beside the walk: the four families that cut added, compared
+ * fact by fact, and every derivation the model side makes counted against the
+ * runtime's value (`tools/rig_facts.ts`) — printed as one `cut 4c-2's facts`
+ * line per row and one `DERIVED` line per derivation before the verdict.
  *
  * A row whose build chain exited non-zero, or that wrote no model document, or
  * whose parse both sides refused, is `REFUSED` with the reason, and compares
@@ -69,6 +77,8 @@ import type { ReadDocument } from '../src/assertions/model/parse.ts';
 import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES } from '../src/assertions/model/parse.ts';
 import { modelSkinEntries } from '../src/assertions/model/skin_entries.ts';
 import type { SkinEntryFacts } from '../src/assertions/facts/skin_entries.ts';
+import type { RigInfo } from '../src/types.ts';
+import { compareRigFacts, sumTallies, type DerivationTally } from './rig_facts.ts';
 import { HashesInputError, readRecipes, treeRecipes, TREE_ROOT, type Recipe } from './emit_hashes.ts';
 import { buildRecipes, type BuiltRow } from './core_gate.ts';
 
@@ -96,6 +106,12 @@ export interface VerdictRow {
   walk: { spine: string; model: string; identical: boolean } | null;
   /** Each fact family cut 4c-1 added, spelled on both sides (`factSpellings`); absent on a refused row. */
   facts?: Array<{ family: string; spine: string; model: string; identical: boolean }>;
+  /**
+   * Cut 4c-2's families compared fact by fact (`tools/rig_facts.ts`): the
+   * families whose spellings differ, and each derivation's tally — absent on a
+   * refused row, or where a row was built by hand.
+   */
+  rigFacts?: { differing: Array<{ family: string; spine: string; model: string }>; derivations: DerivationTally[] } | null;
 }
 
 /** A report line's code. */
@@ -213,6 +229,23 @@ export function compareFacts(skeletonText: string, atlasText: string, modelText:
   return Object.keys(spine).map((family) => ({ family, spine: spine[family], model: model[family], identical: spine[family] === model[family] }));
 }
 
+/**
+ * The rig info the build's own document states (its `rig` section,
+ * `CompileResult.rig` as `modelDocument` wrote it), handed to BOTH sides — the
+ * declarations cut 4c-2's archetype and declaration rules read (issue #1025).
+ * The same value on both sides, so a difference in a line is the suppliers'
+ * and never the inputs'; `undefined` for a document that does not parse, which
+ * the model side refuses by name anyway.
+ */
+export function documentRig(modelText: string): RigInfo | undefined {
+  try {
+    const doc = JSON.parse(modelText) as { rig?: unknown };
+    return typeof doc.rig === 'object' && doc.rig !== null ? (doc.rig as RigInfo) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** One built output directory, gated both ways. */
 export function verdictRow(name: string, outDir: string): VerdictRow {
   const files = ['skeleton.json', 'skeleton.atlas', MODEL_DOCUMENT_FILE].map((f) => join(outDir, f));
@@ -220,9 +253,10 @@ export function verdictRow(name: string, outDir: string): VerdictRow {
   if (missing.length > 0) return { name, refused: `the build wrote no ${missing.map((f) => f.slice(outDir.length + 1)).join(', ')}`, cells: [], walk: null };
   const [skeletonText, atlasText, modelText] = files.map((f) => readFileSync(f, 'utf8'));
   const cells: VerdictCell[] = [];
+  const rig = documentRig(modelText);
   for (const profile of VERDICT_PROFILES) {
-    const spine = validate({ skeletonText, atlasText, atlasDir: outDir, profile });
-    const model = validateModel({ modelText, atlasDir: outDir, profile, given: modelGivenOfBuild(skeletonText, atlasText) });
+    const spine = validate({ skeletonText, atlasText, atlasDir: outDir, profile, ...(rig === undefined ? {} : { rig }) });
+    const model = validateModel({ modelText, atlasDir: outDir, profile, given: modelGivenOfBuild(skeletonText, atlasText), ...(rig === undefined ? {} : { rig }) });
     const spineParse = spine.failures.find((f) => f.assertion === 'A00_ROUNDTRIP_PARSE');
     const modelParse = model.failures.find((f) => f.assertion === A00_MODEL_READ || f.assertion === A00_MODEL_REGIONS_ON_PAGES);
     if (spineParse !== undefined && modelParse !== undefined) {
@@ -247,7 +281,14 @@ export function verdictRow(name: string, outDir: string): VerdictRow {
   if (runtime === null) throw new Error(`internal: ${name}: spine-core refused a pair the gate's own round trip loaded`);
   const spineWalk = walkSpelling(runtime.skinEntries);
   const modelWalk = walkSpelling(modelSkinEntries({ doc: readModel(modelText), json: JSON.parse(modelText) as Record<string, unknown> }));
-  return { name, refused: null, cells, walk: { spine: spineWalk, model: modelWalk, identical: spineWalk === modelWalk }, facts: compareFacts(skeletonText, atlasText, modelText) ?? [] };
+  return {
+    name,
+    refused: null,
+    cells,
+    walk: { spine: spineWalk, model: modelWalk, identical: spineWalk === modelWalk },
+    facts: compareFacts(skeletonText, atlasText, modelText) ?? [],
+    rigFacts: compareRigFacts(skeletonText, atlasText, modelText),
+  };
 }
 
 /** Built rows gated, in name order; a row whose chain exited non-zero is refused by that. */
@@ -264,6 +305,9 @@ export function verdictLines(rows: readonly VerdictRow[]): { lines: string[]; ok
   let walksDiffering = 0;
   let facts = 0;
   let factsDiffering = 0;
+  let factRows = 0;
+  let factRowsDiffering = 0;
+  const derivations = new Map<string, DerivationTally>();
   for (const row of rows) {
     if (row.refused !== null) {
       lines.push(`  REFUSED    ${row.name} — ${row.refused}`);
@@ -299,15 +343,32 @@ export function verdictLines(rows: readonly VerdictRow[]): { lines: string[]; ok
         lines.push(`               model:      ${fact.model.slice(0, 400)}`);
       }
     }
+    if (row.rigFacts !== undefined && row.rigFacts !== null) {
+      factRows++;
+      sumTallies(derivations, row.rigFacts.derivations);
+      if (row.rigFacts.differing.length === 0) lines.push(`  IDENTICAL  ${row.name}  cut 4c-2's facts`);
+      else {
+        factRowsDiffering++;
+        for (const d of row.rigFacts.differing) {
+          lines.push(`  DIFFERING  ${row.name}  cut 4c-2's facts: ${d.family}`);
+          lines.push(`               spine-core: ${d.spine.slice(0, 400)}`);
+          lines.push(`               model:      ${d.model.slice(0, 400)}`);
+        }
+      }
+    }
   }
   const refused = rows.filter((r) => r.refused !== null).length;
   const empty = cells === 0;
-  const ok = !empty && differing === 0 && walksDiffering === 0 && factsDiffering === 0;
+  const ok = !empty && differing === 0 && walksDiffering === 0 && factsDiffering === 0 && factRowsDiffering === 0;
+  for (const row of derivations.values()) {
+    lines.push(`  DERIVED    ${row.derivation} — ${row.equal} of ${row.values} equal the runtime's${row.statedAlone === null ? '' : `, the stated number alone ${row.statedAlone}`}`);
+  }
   lines.push(
     `${empty ? 'NOTHING COMPARED' : ok ? 'IDENTICAL' : 'DIFFERING'} — ${rows.length} recipe(s), ${refused} refused; ` +
       `${cells} line set(s) compared (${MOVED_ASSERTIONS.length} moved assertion(s) × ${VERDICT_PROFILES.length} profile(s)), ${cells - differing} identical, ${differing} differing; ` +
       `${walks} skins' walk(s) compared, ${walks - walksDiffering} identical, ${walksDiffering} differing; ` +
-      `${facts} fact family reading(s) compared, ${facts - factsDiffering} identical, ${factsDiffering} differing`,
+      `${facts} fact family reading(s) compared, ${facts - factsDiffering} identical, ${factsDiffering} differing; ` +
+      `${factRows} build(s)' cut 4c-2 facts compared, ${factRows - factRowsDiffering} identical, ${factRowsDiffering} differing`,
   );
   return { lines, ok, empty };
 }

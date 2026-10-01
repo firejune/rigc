@@ -24,7 +24,6 @@ import {
   type CurveTimeline,
   DeformTimeline,
   IkConstraintData,
-  IkConstraintTimeline,
   Inherit,
   isBoneTimeline,
   isConstraintTimeline,
@@ -44,7 +43,6 @@ import {
   Skeleton,
   SkeletonJson,
   SliderData,
-  SliderMixTimeline,
   TextureAtlas,
   type TextureAtlasRegion,
   type Timeline,
@@ -55,7 +53,6 @@ import {
   ToX,
   ToY,
   TransformConstraintData,
-  TransformConstraintTimeline,
 } from '@esotericsoftware/spine-core';
 // ⚠️ `src/` reaches outside itself for exactly two modules and this is one of
 // them, so it is already on `package.json`'s `files` allowlist — see CLAUDE.md.
@@ -82,13 +79,7 @@ import { BONE_INHERIT_KNOWN } from './rig.ts';
 import {
   CHANNELS_BY_KIND,
   float32Step,
-  PHYSICS_POSE_RULES,
-  physicsBasisFor,
-  physicsBasisSays,
-  physicsKeyRefusal,
-  physicsOutsideSays,
   physicsRuleFor,
-  type PhysicsPoseRule,
   SEQUENCE_MODES,
   SLOT_COLOR_CHANNELS,
   walkTimelines,
@@ -120,14 +111,30 @@ import { a38SkinMembersAreSkinRequired } from './assertions/bodies/a38.ts';
 import { a06AtlasPageSizeMatchesPng } from './assertions/bodies/a06.ts';
 import { a19OverlayPngsHaveAlpha } from './assertions/bodies/a19.ts';
 import { a27RegionNameMatchesPageFilename } from './assertions/bodies/a27.ts';
+import type { MeshEntry as MeshAttachmentEntry, MeshFacts } from './assertions/facts/mesh_attachments.ts';
+import type { ClipEnd, PolygonEntry, PolygonFacts } from './assertions/facts/vertex_polygons.ts';
+import type { LinkEntry, LinkFacts } from './assertions/facts/linked_meshes.ts';
+import type { ConstraintEntry, ConstraintFacts, ConstraintTimeline as ConstraintTimelineFact } from './assertions/facts/constraints.ts';
+import { switchedOn } from './assertions/constraint_words.ts';
+import { a04MeshTrianglesAndEncoding } from './assertions/bodies/a04.ts';
+import { a20MeshWeightsCoherent } from './assertions/bodies/a20.ts';
+import { a21MeshRimPinned } from './assertions/bodies/a21.ts';
+import { a23PhysicsConstraintEffective } from './assertions/bodies/a23.ts';
+import { a28RibbonRowsShareWeights } from './assertions/bodies/a28.ts';
+import { a33VertexAttachmentGeometry } from './assertions/bodies/a33.ts';
+import { a36PathConstraintEffective } from './assertions/bodies/a36.ts';
+import { a37SliderConstraintEffective } from './assertions/bodies/a37.ts';
+import { a41PhysicsSurvivesEditorRoundTrip } from './assertions/bodies/a41.ts';
+import { a42DrivenConstraintsUpdateAfterTheirDriver } from './assertions/bodies/a42.ts';
+import { a44LinkedMeshStatesNoGeometryOfItsOwn } from './assertions/bodies/a44.ts';
+import { a47IkConstraintNotMutedThroughout } from './assertions/bodies/a47.ts';
+import { a48TransformConstraintNotMutedThroughout } from './assertions/bodies/a48.ts';
 import {
   SKIP_NO_ANIMATION,
   SKIP_NO_ATLAS,
   SKIP_NO_ATLAS_PAGE,
   SKIP_NO_DECLARED_DURATION,
-  SKIP_NO_LINKED_MESH,
   SKIP_NO_MESH_ATTACHMENT,
-  SKIP_NO_PHYSICS_CONSTRAINT,
   SKIP_NO_POSE,
   SKIP_NO_SEQUENCE,
   SKIP_NO_SKELETON,
@@ -346,43 +353,10 @@ const STEP_FRAMES = 120;
  */
 const NAMED_TIMELINE_GROUPS = ['path', 'physics', 'slider'] as const;
 
-/**
- * Every component a physics constraint can drive (`PhysicsConstraintData`), and
- * the subset the **Spine editor** models.
- *
- * ⭐ One list, read by both A23 and A41, because the relationship between those
- * two rules is the thing most worth keeping true: A23 fires when the driven set
- * is EMPTY, A41 when it contains something outside `EDITOR_PHYSICS_COMPONENTS`.
- * Written against one array those conditions cannot both hold on one constraint,
- * and a reader can see that they cannot. Two copies of the vocabulary could
- * drift into overlapping, and a rig refused twice for one fact is a report that
- * has stopped saying what is wrong with it.
- *
- * 📏 The subset is measured rather than read off a document, and it is the whole
- * of issue #540: three rigs, twelve constraints, predictions recorded before the
- * round trip and scored by the code that printed them. A lone `y` came back, `x`
- * and `y` together came back — so the rule is membership and not arity — and a
- * lone `rotate`, a lone `scaleX` and a lone `shearX` each came back driving no
- * component at all, with neither `scaleY` mode rescuing `scaleX`. Every
- * constraint carried a fixed-point `strength` and all twelve returned exactly,
- * so the rows that reported nothing were reading live data. Measured on Spine
- * 4.3.26 Professional.
- */
-const PHYSICS_COMPONENTS = ['x', 'y', 'rotate', 'scaleX', 'shearX'] as const;
-const EDITOR_PHYSICS_COMPONENTS: ReadonlySet<(typeof PHYSICS_COMPONENTS)[number]> = new Set(['x', 'y'] as const);
-
-/**
- * The half of a muted-at-rest refusal that says what was searched, and how
- * widely — one text for `A23`, `A36` and `A37`, which ask one question of three
- * constraint kinds (issues #743, #752). A rig with no animation at all says
- * "none of the 0 animations" rather than implying somebody keyed something.
- */
-function noneKeysItsMixAbove0(animations: number): string {
-  return `none of the ${animations} animation${animations === 1 ? '' : 's'} keys its mix above 0`;
-}
-
-/** The two repairs a muted-at-rest refusal names, since either one is a rig the runtime plays. */
-const REST_OR_KEY_ITS_MIX = 'rest it above 0, or key its mix above 0 in an animation';
+// The physics components, the muted-at-rest sentences and `SETUP_POSE_SAYS`
+// that stood here are `./assertions/constraint_words.ts`'s and
+// `./assertions/bodies/a23.ts`'s since issue #1025 (cut 4c-2): every rule
+// that read them moved there.
 
 /**
  * Every value one channel of a curve timeline can pose while it plays: each
@@ -418,70 +392,6 @@ function curveChannelValues(timeline: CurveTimeline, channel: number): number[] 
     for (let point = 0; point < BEZIER_POINTS; point++) values.push(curves[start + 2 * point + 1]);
   }
   return values;
-}
-
-/**
- * What A23 says about a SETUP pose outside its bound, per property.
- *
- * The predicate lives in `PHYSICS_POSE_RULES` and the sentence lives here, and
- * the split is deliberate: the predicate is the thing the compiler and this file
- * must not disagree about, while the sentence names what happens to THIS rig —
- * "it is muted", "nothing pulls it back" — which is what the author acts on and
- * is worth nothing to a compiler refusing a key. `PHYSICS_POSE_RULES` is the
- * index, so a rule added there with no sentence here fails to type-check rather
- * than printing `undefined`.
- *
- * ⚠️ These are the SETUP pose's sentences and nothing else, which matters on the
- * two rows whose keyed bound is wider than their resting one — `mix` since issue
- * #610 and `strength` since #727. A key of 0 on either is accepted, so "it is
- * muted" and "nothing pulls it back" are read here by a rig that states the
- * number at rest, and what a key is refused with is the row's own `why`.
- *
- * `animations` is how many animations the skeleton declares, and only the `mix`
- * sentence reads it: that bound is the one a key can satisfy instead of the
- * setup pose (`inertAtSetup`, issue #743), so the refusal has to say that the
- * other half was looked for and how wide the search was. A rig with no animation
- * at all then says "none of the 0 animations" rather than implying somebody
- * keyed something.
- *
- * `rule` is the row the value was judged by, and every sentence reads it: the
- * reason each prints is the row's `basis` arm for the value (issue #798), the
- * same object the key's sentence quotes, so what the setup pose and a key say
- * about one number is one text — and whether that reason is the runtime's
- * arithmetic or rigc's call is stated rather than implied.
- */
-const SETUP_POSE_SAYS: Record<
-  string,
-  (pose: PhysicsConstraintPose, animations: number, rule: PhysicsPoseRule) => string
-> = {
-  // Every reason below is the row's `basis` arm for the value (issue #798): an
-  // arithmetic arm names its expression, a behavioural one says refusing it is
-  // rigc's call and what the value does. ⚠️ Until then a setup mix BELOW 0 was
-  // told "it is muted", which it is not — [measured] it moves the bone by
-  // exactly −1× what +0.5 does — so the two ways out print two sentences.
-  mix: (pose, animations, rule) =>
-    `has mix ${pose.mix} and ${noneKeysItsMixAbove0(animations)}; ${setupBasisSays(rule, pose.mix)} — ${REST_OR_KEY_ITS_MIX}`,
-  mass: (pose, _animations, rule) => `has massInverse ${pose.massInverse}; mass must be ${rule.states} — ${setupBasisSays(rule, pose.massInverse)}`,
-  // Two arms, read off the row (issue #748): 0 is a constraint nothing pulls
-  // back and below 0 one that is pushed away, and the row's `why` — the key's
-  // sentence — quotes the second from the same object. The basis sentence ends
-  // on the arm's own words, which `T100` holds.
-  strength: (pose, _animations, rule) => `has strength ${pose.strength}; ${setupBasisSays(rule, pose.strength)}`,
-  // The bound is read off the row, so the setup pose and a key cannot state two
-  // intervals; the reason is the arm the value took, since the ends are inside (#794).
-  damping: (pose, _animations, rule) =>
-    `has damping ${pose.damping}; must be ${rule.states} — the per-step decay is \`damping ** (60 * step)\`, and ` +
-    setupBasisSays(rule, pose.damping),
-};
-
-/**
- * The basis sentence for a setup value, or the bound itself where no arm holds
- * — a pose value the parser handed over that none of the row's arms is about
- * (a NaN, say), which has no reason to give and must not borrow another's.
- */
-function setupBasisSays(rule: PhysicsPoseRule, poseValue: number): string {
-  const arm = physicsBasisFor(rule, poseValue);
-  return arm === undefined ? physicsOutsideSays(rule, poseValue) : physicsBasisSays(arm);
 }
 
 /** `physicsTimelineNames`' table, once it has been built. */
@@ -1129,6 +1039,390 @@ export function spineRegionJoins(atlasText: string, raw: Json | null): RegionJoi
     regionNames = null;
   }
   return { regionNames, joins: raw ? attachmentRegionJoins(raw) : null };
+}
+
+/**
+ * The runtime's supply of `MeshFacts` (issue #1025, cut 4c-2): every mesh
+ * attachment of every loaded skin, in `getAttachments()`'s walk — the walk
+ * the prelude makes for its own lists — with the geometry and the weights
+ * spine-core holds (`meshWeightsOf` decodes the run), each mesh's link as the
+ * FILE spells it (`rawLinkedMeshes`, joined by skin, slot and placeholder, the
+ * parser's own key), and the findings of the clauses that stayed here
+ * because their subject is the encoding:
+ *
+ * - `A04`: a weighted run whose length is not a multiple of three, and an
+ *   unweighted array of another length than the `uvs` — the flat run's own
+ *   coherence, which a document stating the weighted form outright cannot
+ *   spell. [measured] neither is reachable through spine-core's parser (it
+ *   reads three numbers per binding, and decides weighted by that very length
+ *   comparison), so neither has a mutant; they are kept as the round trip's
+ *   statement of what it read, not moved to a side with no run to read.
+ * - `A20`: a binding's index past the bone array. The document names a
+ *   binding's bone; the index is the emitter's (`emitVertices`).
+ */
+export function spineMeshFacts(data: ReturnType<SkeletonJson['readSkeletonData']>, raw: Json | null): MeshFacts {
+  const rawLinks = rawLinkedMeshes(raw);
+  const meshes: MeshAttachmentEntry[] = [];
+  for (const skin of data.skins) {
+    for (const entry of skin.getAttachments()) {
+      const att = entry.attachment;
+      if (!(att instanceof MeshAttachment)) continue;
+      const slot = data.slots[entry.slotIndex];
+      const link = rawLinks.get(`${skin.name}\u0000${slot.name}\u0000${entry.placeholder}`);
+      const weights = att.bones
+        ? meshWeightsOf(att).map((vertex, i) =>
+            vertex.map(({ bone, weight }) => ({
+              bone,
+              weight,
+              ...(bone >= 0 && bone < data.bones.length ? {} : { encoding: `mesh "${att.name}" vertex ${i} references bone index ${bone}` }),
+            })),
+          )
+        : null;
+      const encoding: string[] = [];
+      // Weighted vs unweighted is decided by a length comparison alone — a
+      // coincidental match reads weight data as coordinates.
+      const weighted = !!att.bones;
+      if (weighted && att.vertices.length % 3 !== 0) encoding.push(`mesh "${att.name}" weighted vertex run is not a multiple of 3`);
+      if (!weighted && att.vertices.length !== att.worldVerticesLength) encoding.push(`mesh "${att.name}" unweighted vertices disagree with uvs`);
+      meshes.push({
+        name: att.name,
+        skin: skin.name,
+        slot: slot.name,
+        slotBone: slot.boneData.name,
+        placeholder: entry.placeholder,
+        link: link === undefined ? null : { source: link.source },
+        triangles: att.triangles ?? [],
+        worldVerticesLength: att.worldVerticesLength,
+        regionUVs: Array.from(att.regionUVs ?? []),
+        hullLength: att.hullLength,
+        weights,
+        encoding,
+      });
+    }
+  }
+  return { bones: data.bones.map((b) => b.name), meshes };
+}
+
+/**
+ * The runtime's supply of `PolygonFacts` (issue #1025, cut 4c-2): every
+ * bounding box, clipping attachment and path of every loaded skin, as A33
+ * walked them, and every clipping attachment the FILE gives an `end`, read off
+ * the skeleton JSON as A33 always read it — a `null` end slot and an `end`
+ * never written are the same loaded object. Each polygon carries the findings
+ * of the clauses that stayed here because their subject is the encoding: a
+ * weighted run's decode (a vertex claiming no bone, an index past the bone
+ * array, a run decoding to another vertex count, a weight array of the wrong
+ * length) and an unweighted array of the wrong length. A document states the
+ * weighted form outright and names bones, so none of those has a subject
+ * there.
+ */
+export function spinePolygonFacts(data: ReturnType<SkeletonJson['readSkeletonData']>, raw: Json | null): PolygonFacts {
+  const polygons: PolygonEntry[] = [];
+  for (const skin of data.skins) {
+    for (const entry of skin.getAttachments()) {
+      const att = entry.attachment;
+      let what: string;
+      if (att instanceof BoundingBoxAttachment) what = `bounding box "${att.name}"`;
+      else if (att instanceof ClippingAttachment) what = `clipping attachment "${att.name}"`;
+      // A path is the same shape with one more rule on top: its vertices
+      // are knots AND handles, walked in groups of three.
+      else if (att instanceof PathAttachment) what = `path "${att.name}"`;
+      else continue;
+      polygons.push({
+        what,
+        worldVerticesLength: att.worldVerticesLength,
+        path: att instanceof PathAttachment ? { closed: att.closed, lengths: Array.from(att.lengths) } : null,
+        encoding: polygonRunFindings(what, att, data.bones.length),
+      });
+    }
+  }
+  const clipEnds: ClipEnd[] = [];
+  if (raw && Array.isArray(raw.skins)) {
+    for (const skin of raw.skins as unknown[]) {
+      if (!isObj(skin) || !isObj(skin.attachments)) continue;
+      for (const [slotName, perSlot] of Object.entries(skin.attachments as Json)) {
+        if (!isObj(perSlot)) continue;
+        for (const [placeholder, att] of Object.entries(perSlot)) {
+          if (!isObj(att) || att.type !== 'clipping' || att.end === undefined) continue;
+          clipEnds.push({ placeholder, slot: slotName, end: att.end });
+        }
+      }
+    }
+  }
+  return { polygons, clipEnds, slots: data.slots.map((s) => s.name) };
+}
+
+/** A33's kept clauses over one polygon's vertex run, in the order it printed them (`spinePolygonFacts`). */
+function polygonRunFindings(what: string, att: BoundingBoxAttachment | ClippingAttachment | PathAttachment, bones: number): string[] {
+  const out: string[] = [];
+  const length = att.worldVerticesLength;
+  const vertexCount = length / 2;
+  if (!att.bones) {
+    if (att.vertices.length !== length) {
+      out.push(
+        `${what} declares ${vertexCount} vertices but holds ${att.vertices.length} unweighted numbers ` +
+          `(expected ${length}); the parser reads that mismatch as a weighted run`,
+      );
+    }
+    return out;
+  }
+  // Weighted: `bones` is boneCount, (index × boneCount), repeated, and
+  // `vertices` holds x, y, weight per binding.
+  let decoded = 0;
+  let bindings = 0;
+  let ok = true;
+  for (let i = 0; i < att.bones.length; decoded++) {
+    const count = att.bones[i++];
+    if (!Number.isInteger(count) || count < 1 || i + count > att.bones.length) {
+      out.push(`${what} vertex ${decoded} claims ${count} bone(s); the run is malformed`);
+      ok = false;
+      break;
+    }
+    for (let k = 0; k < count; k++, i++) {
+      const index = att.bones[i];
+      if (index < 0 || index >= bones) {
+        out.push(`${what} vertex ${decoded} references bone index ${index}`);
+        ok = false;
+      }
+    }
+    bindings += count;
+  }
+  if (!ok) return out;
+  if (decoded !== vertexCount) out.push(`${what} declares ${vertexCount} vertices and its weighted run decodes to ${decoded}`);
+  if (att.vertices.length !== bindings * 3) out.push(`${what} has ${bindings} binding(s) and ${att.vertices.length} weight numbers (expected ${bindings * 3})`);
+  return out;
+}
+
+/**
+ * The runtime's supply of `LinkFacts` (issue #1025, cut 4c-2): every link the
+ * FILE declares (`rawLinkedMeshes`), and — the clause that stayed here,
+ * because a link record holds no geometry field and so the subject exists
+ * only in the Spine text — the finding about each link that states geometry
+ * of its own, with what the runtime made of it (the loaded attachment joined
+ * by skin, slot and placeholder, the parser's own key).
+ */
+export function spineLinkFacts(data: ReturnType<SkeletonJson['readSkeletonData']>, raw: Json | null): LinkFacts {
+  const rawLinks = rawLinkedMeshes(raw);
+  /**
+   * The pairing the other way round — join key -> the attachment the loader
+   * produced for it. A link whose region is missing loads as `null` and is in
+   * no skin at all (`A08` names that), so its join key is absent here while
+   * the file still declares it.
+   */
+  const loadedLinks = new Map<string, MeshAttachment>();
+  for (const skin of data.skins) {
+    for (const entry of skin.getAttachments()) {
+      if (!(entry.attachment instanceof MeshAttachment)) continue;
+      const join = `${skin.name}\u0000${data.slots[entry.slotIndex].name}\u0000${entry.placeholder}`;
+      if (rawLinks.has(join)) loadedLinks.set(join, entry.attachment);
+    }
+  }
+  const links: LinkEntry[] = [];
+  for (const [join, link] of rawLinks) {
+    const [skinName, slotName, placeholder] = join.split('\u0000');
+    links.push({ skin: skinName, slot: slotName, placeholder, source: link.source, encoding: link.geometry.length === 0 ? [] : [linkGeometryFinding(join, link, loadedLinks.get(join))] });
+  }
+  return { links };
+}
+
+/**
+ * A44's kept clause: a link that states geometry of its own. 🚨 The one shape
+ * the parser reads in SILENCE. `readAttachment` returns from the `source`
+ * branch at `SkeletonJson.js:586`, before `map.uvs` is touched at all, so
+ * `uvs`, `triangles`, `vertices`, `hull` and `edges` written on a link are read
+ * by nothing — and `setSourceMesh` then fills the attachment with the SOURCE's
+ * arrays. The file says one mesh and every runtime draws another.
+ */
+function linkGeometryFinding(join: string, link: RawLinkedMesh, drawn: MeshAttachment | undefined): string {
+  const [skinName, slotName, placeholder] = join.split('\u0000');
+  const at = `skin ${JSON.stringify(skinName)} slot ${JSON.stringify(slotName)} placeholder ${JSON.stringify(placeholder)}`;
+  const keys = link.geometry.map((key) => JSON.stringify(key)).join(', ');
+  // Where the parser looks for `source`, with the two defaults spelled out:
+  // an omitted `skin` is the DEFAULT skin rather than this attachment's own
+  // (`:429`), and an omitted `slot` IS this attachment's own (`:573-579`).
+  const where =
+    `skin ${JSON.stringify(link.skin ?? 'default')}${link.skin === undefined ? ' (the default skin, because no "skin" was stated — never the skin this attachment is written in)' : ''} ` +
+    `slot ${JSON.stringify(link.slot ?? slotName)}${link.slot === undefined ? ' (this attachment\'s own, because no "slot" was stated)' : ''}`;
+  // What the author's own keys describe, printed only when both are
+  // readable — the shape the file states, beside the shape it draws.
+  const states =
+    link.statedVertices === undefined || link.statedTriangles === undefined
+      ? ''
+      : ` (${link.statedVertices} vertices and ${link.statedTriangles} triangles)`;
+  const loaded =
+    drawn === undefined
+      ? 'what it loaded is not shown here because the round trip produced no attachment for it (A00 owns that)'
+      : `it loaded ${drawn.worldVerticesLength / 2} vertices and ${drawn.triangles.length / 3} triangles`;
+  return (
+    `${at} links to ${JSON.stringify(link.source)} and states ${keys}${states}, and a linked mesh has no geometry of ` +
+    'its own. The parser returns from the `source` branch before `readVertices` ' +
+    `(\`SkeletonJson.ts:582-586\`), so ${link.geometry.length === 1 ? 'that key is' : 'those keys are'} read by ` +
+    `nothing at all: what this attachment draws is the geometry of ${JSON.stringify(link.source)} in ${where}, and ` +
+    `${loaded}. Remove ${link.geometry.length === 1 ? 'it' : 'them'}, or remove "source" and author this as a ` +
+    'mesh of its own.'
+  );
+}
+
+/** A transform timeline's six channels, in frame order, and the `to` kind each one is the mix of. */
+const TRANSFORM_MIXES = [
+  ['mixRotate', ToRotate],
+  ['mixX', ToX],
+  ['mixY', ToY],
+  ['mixScaleX', ToScaleX],
+  ['mixScaleY', ToScaleY],
+  ['mixShearY', ToShearY],
+] as const;
+
+/**
+ * The motion spec's word for what a constraint timeline keys, off the
+ * runtime's own `Property` name: `physicsConstraintWind` -> `wind`,
+ * `pathConstraintMix` -> `mix`, `sliderTime` -> `time`, `ikConstraint` ->
+ * `ik` — the name with the constraint kind taken off the front. Derived
+ * rather than tabulated: a table here would be one more hand-kept list of the
+ * runtime's enum.
+ */
+function keyedWord(property: string, kind: string): string {
+  const rest = property.replace(/^(ik|transform|path|physics|slider)(Constraint)?/, '');
+  return rest === '' ? kind : rest.charAt(0).toLowerCase() + rest.slice(1);
+}
+
+/**
+ * The runtime's supply of `ConstraintFacts` (issue #1025, cut 4c-2): the
+ * loaded constraints in update order, each as the bodies read it, and every
+ * constraint timeline of every loaded animation in the order the runtime
+ * built it — its kind and word off the runtime's own `Property` name, the
+ * constraint it names, whom it writes (`unnamedPhysicsReach` for a physics
+ * timeline naming none), its frames, every value a channel poses
+ * (`curveChannelValues`, the Bézier samples the parser stored included), and,
+ * on a physics timeline `PHYSICS_POSE_RULES` bounds, the pose field the
+ * runtime's own `set` writes a keyed value into.
+ */
+export function spineConstraintFacts(data: ReturnType<SkeletonJson['readSkeletonData']>): ConstraintFacts {
+  const constraints: ConstraintEntry[] = data.constraints.map((c): ConstraintEntry => {
+    // Taken structurally rather than through `ConstraintData<T, P>`, whose two
+    // type arguments the runtime itself fills with `any` — which `src/` may not write.
+    const runtimeClass = (c as { constructor: { name: string } }).constructor.name.replace(/Data$/, '');
+    if (c instanceof PhysicsConstraintData) {
+      const pose = c.setupPose;
+      return {
+        kind: 'physics',
+        name: c.name,
+        runtimeClass,
+        physics: {
+          bone: c.bone.name,
+          components: { x: c.x, y: c.y, rotate: c.rotate, scaleX: c.scaleX, shearX: c.shearX },
+          setup: { mix: pose.mix, massInverse: pose.massInverse, strength: pose.strength, damping: pose.damping },
+          step: c.step,
+        },
+      };
+    }
+    if (c instanceof PathConstraintData) {
+      const pose = c.setupPose;
+      return { kind: 'path', name: c.name, runtimeClass, path: { bones: c.bones.map((b) => b.name), slot: c.slot.name, setup: { mixRotate: pose.mixRotate, mixX: pose.mixX, mixY: pose.mixY } } };
+    }
+    if (c instanceof SliderData) {
+      const animation = c.animation;
+      return {
+        kind: 'slider',
+        name: c.name,
+        runtimeClass,
+        slider: {
+          animation: animation ? { name: animation.name, timelines: animation.timelines.length, duration: animation.duration } : null,
+          bone: c.bone ? c.bone.name : null,
+          loop: c.loop,
+          scale: c.scale,
+          mix: c.setupPose.mix,
+        },
+      };
+    }
+    if (c instanceof IkConstraintData) {
+      return { kind: 'ik', name: c.name, runtimeClass, ik: { bones: c.bones.map((b) => b.name), target: c.target.name, mix: c.setupPose.mix } };
+    }
+    if (c instanceof TransformConstraintData) {
+      const pose = c.setupPose;
+      return {
+        kind: 'transform',
+        name: c.name,
+        runtimeClass,
+        transform: {
+          bones: c.bones.map((b) => b.name),
+          mixes: TRANSFORM_MIXES.map(([field, kind]) => (c.properties.some((from) => from.to.some((to) => to instanceof kind)) ? { field, setup: pose[field] } : null)),
+        },
+      };
+    }
+    throw new Error(`a constraint of class ${runtimeClass} is none of the five kinds`);
+  });
+  const physicsData = data.constraints.filter((one) => one instanceof PhysicsConstraintData);
+  const timelines: ConstraintTimelineFact[] = [];
+  for (const animation of data.animations) {
+    for (const timeline of animation.timelines) {
+      if (!isConstraintTimeline(timeline)) continue;
+      const property = String(Property[Number(timeline.propertyIds[0].split('|')[0])] ?? timeline.propertyIds[0]);
+      const kind = (/^(ik|transform|path|physics|slider)/.exec(property)?.[1] ?? '') as ConstraintFacts['constraints'][number]['kind'];
+      const word = keyedWord(property, kind);
+      const reset = timeline instanceof PhysicsConstraintResetTimeline;
+      const frames: Array<{ time: number; value: number }> = [];
+      if (!reset) {
+        const entries = timeline.getFrameEntries();
+        for (let i = 0; i < timeline.frames.length; i += entries) frames.push({ time: timeline.frames[i], value: timeline.frames[i + 1] });
+      }
+      const rule = timeline instanceof PhysicsConstraintTimeline ? physicsRuleFor(word) : undefined;
+      const probe = new PhysicsConstraintPose();
+      timelines.push({
+        animation: animation.name,
+        kind,
+        word,
+        constraint: timeline.constraintIndex,
+        reach: timeline.constraintIndex >= 0 ? [timeline.constraintIndex] : unnamedPhysicsReach(timeline, physicsData).map((one) => data.constraints.indexOf(one)),
+        frames,
+        channelValues: (channel) => (reset ? [] : curveChannelValues(timeline as CurveTimeline & ConstraintTimeline, channel)),
+        ...(rule === undefined || !(timeline instanceof PhysicsConstraintTimeline)
+          ? {}
+          : {
+              posed: (value: number): number => {
+                timeline.set(probe, value);
+                return probe[rule.field];
+              },
+            }),
+      });
+    }
+  }
+  const pathSlots: string[] = [];
+  for (const skin of data.skins) {
+    for (const entry of skin.getAttachments()) {
+      if (!(entry.attachment instanceof PathAttachment)) continue;
+      const name = data.slots[entry.slotIndex].name;
+      if (!pathSlots.includes(name)) pathSlots.push(name);
+    }
+  }
+  return { animations: data.animations.length, constraints, timelines, pathSlots };
+}
+
+/**
+ * The facts cut 4c-2's bodies read, as `validate()` supplies them from a pair
+ * spine-core loads — or `null` when the load throws (A00's failure). For the
+ * selftest and `tools/verdict_gate.ts`, which compare them with the model
+ * side's fact by fact, where a verdict line would hide a difference.
+ */
+export function runtimeRigFacts(skeletonText: string, atlasText: string): { meshes: MeshFacts; polygons: PolygonFacts; links: LinkFacts; constraints: ConstraintFacts } | null {
+  let data: ReturnType<SkeletonJson['readSkeletonData']>;
+  let raw: Json;
+  try {
+    raw = JSON.parse(skeletonText) as Json;
+    data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText))).readSkeletonData(JSON.parse(skeletonText));
+  } catch {
+    return null;
+  }
+  return { meshes: spineMeshFacts(data, raw), polygons: spinePolygonFacts(data, raw), links: spineLinkFacts(data, raw), constraints: spineConstraintFacts(data) };
+}
+
+/** A fact supply computed on first use and kept: a supplier that throws throws inside the `check` that asked, as the body it feeds always did. */
+function once<T>(supply: () => T): () => T {
+  let held: { value: T } | null = null;
+  return () => {
+    held ??= { value: supply() };
+    return held.value;
+  };
 }
 
 export function validate(input: ValidateInput): ValidateReport {
@@ -1913,37 +2207,19 @@ export function validate(input: ValidateInput): ValidateReport {
   const meshAttachments: MeshAttachment[] = [];
   const meshSlots = new Set<number>();
   /**
-   * The loaded mesh of every attachment the FILE spells as a link, to what the
-   * file says about it (issues #691, #710).
-   *
-   * 🔑 Read off the raw JSON and joined by (skin, slot, placeholder) rather than
-   * asked of the loaded object, because `MeshAttachment.sourceMesh` is **private
-   * with no accessor** (`MeshAttachment.d.ts:50`) and `as any` is not available
-   * in `src/`. The join is the parser's own: `readSkin` keys a skin's table by
-   * the JSON key (`SkeletonJson.js:415-418`) and `SkinEntry.placeholder` is that
-   * same key, so the two sides cannot drift.
-   *
-   * ⚠️ It is a Map of the LOADED object and not a set of names, because a
-   * placeholder is unique only within one skin's slot and several skins fill
-   * one — and every assertion downstream holds the attachment, not its address.
+   * What cut 4c-2's bodies read (issue #1025), each supplied off the loaded
+   * skeleton the first time a body asks for it — so a supplier that throws
+   * throws inside the `check` that asked, as the body it feeds always did.
+   * Every mesh's link is read off the raw JSON and joined by (skin, slot,
+   * placeholder) rather than asked of the loaded object, because
+   * `MeshAttachment.sourceMesh` is **private with no accessor**
+   * (`MeshAttachment.d.ts:50`) and `as any` is not available in `src/`; the
+   * join is the parser's own (`spineMeshFacts`, `spineLinkFacts`).
    */
-  const linkedMeshes = new Map<MeshAttachment, RawLinkedMesh>();
-  /**
-   * The same pairing the other way round — join key -> the attachment the loader
-   * produced for it — which is what `A44` needs and `kindOf` does not.
-   *
-   * 🔑 Two maps rather than one because the two questions are different. Every
-   * rule that asks "is THIS attachment a link" holds the object and wants the
-   * file's word about it; `A44` walks the FILE's links and asks what the runtime
-   * made of each, including the answer "nothing" — a link whose region is
-   * missing loads as `null` and is in no skin at all (`A08` names that), so its
-   * join key is absent here while the file still declares it.
-   */
-  const loadedLinks = new Map<string, MeshAttachment>();
+  const loadedMeshFacts = once(() => spineMeshFacts(skeletonData as NonNullable<typeof skeletonData>, raw));
 
   if (skeletonData) {
     const data = skeletonData as NonNullable<typeof skeletonData>;
-    const rawLinks = rawLinkedMeshes(raw);
     for (const skin of data.skins) {
       for (const entry of skin.getAttachments()) {
         const att = entry.attachment;
@@ -1951,15 +2227,12 @@ export function validate(input: ValidateInput): ValidateReport {
         else if (att instanceof MeshAttachment) {
           meshAttachments.push(att);
           meshSlots.add(entry.slotIndex);
-          const join = `${skin.name}\u0000${data.slots[entry.slotIndex].name}\u0000${entry.placeholder}`;
-          const link = rawLinks.get(join);
-          if (link !== undefined) {
-            linkedMeshes.set(att, link);
-            loadedLinks.set(join, att);
-          }
         }
       }
     }
+    const polygonFacts = once(() => spinePolygonFacts(data, raw));
+    const linkFacts = once(() => spineLinkFacts(data, raw));
+    const constraintFacts = once(() => spineConstraintFacts(data));
     stats.regionAttachments = regionAttachments.length;
     stats.meshAttachments = meshAttachments.length;
     // What the bodies that moved to `./assertions/bodies/` read of the skins —
@@ -1973,196 +2246,13 @@ export function validate(input: ValidateInput): ValidateReport {
     check('A03_REGION_WIDTH_HEIGHT_FINITE', () => a03RegionWidthHeightFinite(verdicts, skinEntries));
 
     // --- A04: mesh triangles + encoding coherence (case 6f) ----------------
-    check('A04_MESH_TRIANGLES_AND_ENCODING', () => {
-      if (meshAttachments.length === 0) return skip('A04_MESH_TRIANGLES_AND_ENCODING', SKIP_NO_MESH_ATTACHMENT);
-      for (const mesh of meshAttachments) {
-        if (!mesh.triangles || mesh.triangles.length === 0) {
-          fail('A04_MESH_TRIANGLES_AND_ENCODING', `mesh "${mesh.name}" has no triangles`);
-          continue;
-        }
-        if (mesh.triangles.length % 3 !== 0) {
-          fail('A04_MESH_TRIANGLES_AND_ENCODING', `mesh "${mesh.name}" triangle count is not a multiple of 3`);
-        }
-        const vertexCount = mesh.worldVerticesLength / 2;
-        for (const idx of mesh.triangles) {
-          if (idx < 0 || idx >= vertexCount) {
-            fail('A04_MESH_TRIANGLES_AND_ENCODING', `mesh "${mesh.name}" index ${idx} is outside 0..${vertexCount - 1}`);
-            break;
-          }
-        }
-        // Weighted vs unweighted is decided by a length comparison alone — a
-        // coincidental match reads weight data as coordinates.
-        const weighted = !!mesh.bones;
-        if (weighted && mesh.vertices.length % 3 !== 0) {
-          fail('A04_MESH_TRIANGLES_AND_ENCODING', `mesh "${mesh.name}" weighted vertex run is not a multiple of 3`);
-        }
-        if (!weighted && mesh.vertices.length !== mesh.worldVerticesLength) {
-          fail('A04_MESH_TRIANGLES_AND_ENCODING', `mesh "${mesh.name}" unweighted vertices disagree with uvs`);
-        }
-      }
-    });
+    check('A04_MESH_TRIANGLES_AND_ENCODING', () => a04MeshTrianglesAndEncoding(verdicts, loadedMeshFacts()));
 
     // --- A33: bounding boxes and clipping polygons hold a real polygon -------
-    //
-    // These two types are the same shape — a polygon and nothing else — and they
-    // fail the same three ways, all three silent:
-    //
-    //   1. **A missing or wrong `vertexCount`.** The parser reads
-    //      `map.vertexCount << 1` and hands it to `readVertices` as the length to
-    //      expect (`:552`, `:632`). `undefined << 1` is 0, so an omission makes
-    //      the coordinate array read as a WEIGHTED run: it decodes numbers as
-    //      bone counts and weights, and the attachment ends up with no vertices
-    //      at all. Nothing throws, and neither type draws a pixel, so nothing
-    //      downstream notices either.
-    //   2. **A weighted run that does not decode to that many vertices.** Same
-    //      trap as a mesh's (A04), minus the uvs that would have caught it.
-    //   3. **A clipping `end` naming a slot that is not there.**
-    //      `skeletonData.findSlot` returns null on a miss and `:626-627` assigns
-    //      the null, so the clip does not end where it was told to — it runs to
-    //      the bottom of the draw order and takes every slot below it with it.
-    //      Checked on the raw JSON, because a null `endSlot` and an `end` that
-    //      was never written are the same loaded object.
-    check('A33_VERTEX_ATTACHMENT_GEOMETRY', () => {
-      const polygons: Array<{ what: string; att: BoundingBoxAttachment | ClippingAttachment | PathAttachment }> = [];
-      const paths: PathAttachment[] = [];
-      for (const skin of data.skins) {
-        for (const entry of skin.getAttachments()) {
-          const att = entry.attachment;
-          if (att instanceof BoundingBoxAttachment) polygons.push({ what: `bounding box "${att.name}"`, att });
-          else if (att instanceof ClippingAttachment) polygons.push({ what: `clipping attachment "${att.name}"`, att });
-          else if (att instanceof PathAttachment) {
-            // A path is the same shape with one more rule on top: its vertices
-            // are knots AND handles, walked in groups of three.
-            polygons.push({ what: `path "${att.name}"`, att });
-            paths.push(att);
-          }
-        }
-      }
-      for (const path of paths) {
-        const what = `path "${path.name}"`;
-        const vertexCount = path.worldVerticesLength / 2;
-        if (vertexCount % 3 !== 0) {
-          fail(
-            'A33_VERTEX_ATTACHMENT_GEOMETRY',
-            `${what} has ${vertexCount} vertices, which is not a multiple of 3 — a path is knots and Bezier ` +
-              'handles read in groups of three, and `Utils.newArray(vertexCount / 3, 0)` accepts the fractional ' +
-              'size without a word, so the curves straddle the knots',
-          );
-          continue;
-        }
-        // Curves: 3K + 1 chain points. An open path drops the first and last
-        // vertex (the end knots' outer handles), a closed one repeats the first.
-        const curves = path.closed ? vertexCount / 3 : vertexCount / 3 - 1;
-        if (curves < 1) {
-          fail('A33_VERTEX_ATTACHMENT_GEOMETRY', `${what} has ${vertexCount} vertices, which is not one whole curve`);
-          continue;
-        }
-        // `lengths` is what a `constantSpeed: false` traversal measures with:
-        // `lengths[curve]` bounds each curve and the last entry IS the path
-        // length. The parser sizes the array from `vertexCount / 3` and copies
-        // whatever the file gave, so a short array leaves trailing zeros — and a
-        // zero-length curve makes the parser divide the position by it.
-        const lengths = path.lengths;
-        let previous = 0;
-        for (let c = 0; c < curves; c++) {
-          const value = lengths[c];
-          if (!Number.isFinite(value) || value <= previous) {
-            fail(
-              'A33_VERTEX_ATTACHMENT_GEOMETRY',
-              `${what} lengths[${c}] is ${String(value)}, and the entry before it was ${previous}. The array is the ` +
-                'CUMULATIVE arc length at the end of each of the ' +
-                `${curves} curve(s), so it strictly increases; a value that does not means either a zero-length ` +
-                'curve (the position is divided by it) or an array shorter than the geometry (the tail reads as 0)',
-            );
-            break;
-          }
-          previous = value;
-        }
-      }
-      const slotNames = new Set(data.slots.map((s) => s.name));
-      let endsChecked = 0;
-      if (raw && Array.isArray(raw.skins)) {
-        for (const skin of raw.skins as unknown[]) {
-          if (!isObj(skin) || !isObj(skin.attachments)) continue;
-          for (const [slotName, perSlot] of Object.entries(skin.attachments as Json)) {
-            if (!isObj(perSlot)) continue;
-            for (const [placeholder, att] of Object.entries(perSlot)) {
-              if (!isObj(att) || att.type !== 'clipping' || att.end === undefined) continue;
-              endsChecked++;
-              if (typeof att.end !== 'string' || !slotNames.has(att.end)) {
-                fail(
-                  'A33_VERTEX_ATTACHMENT_GEOMETRY',
-                  `clipping attachment "${placeholder}" on slot "${slotName}" ends at ${JSON.stringify(att.end)}, ` +
-                    'which is not a slot of this skeleton — the clip would run to the bottom of the draw order',
-                );
-              }
-            }
-          }
-        }
-      }
-      if (polygons.length === 0 && endsChecked === 0) {
-        return skip(
-          'A33_VERTEX_ATTACHMENT_GEOMETRY',
-          'the skeleton carries no bounding box, clipping attachment or path',
-        );
-      }
-      for (const { what, att } of polygons) {
-        const length = att.worldVerticesLength;
-        if (!Number.isInteger(length) || length < 6 || length % 2 !== 0) {
-          fail(
-            'A33_VERTEX_ATTACHMENT_GEOMETRY',
-            `${what} loaded worldVerticesLength ${length}; a polygon is an even count of at least 6 (3 vertices). ` +
-              'A missing "vertexCount" reads as 0 and takes the polygon with it',
-          );
-          continue;
-        }
-        const vertexCount = length / 2;
-        if (!att.bones) {
-          if (att.vertices.length !== length) {
-            fail(
-              'A33_VERTEX_ATTACHMENT_GEOMETRY',
-              `${what} declares ${vertexCount} vertices but holds ${att.vertices.length} unweighted numbers ` +
-                `(expected ${length}); the parser reads that mismatch as a weighted run`,
-            );
-          }
-          continue;
-        }
-        // Weighted: `bones` is boneCount, (index × boneCount), repeated, and
-        // `vertices` holds x, y, weight per binding.
-        let decoded = 0;
-        let bindings = 0;
-        let ok = true;
-        for (let i = 0; i < att.bones.length; decoded++) {
-          const count = att.bones[i++];
-          if (!Number.isInteger(count) || count < 1 || i + count > att.bones.length) {
-            fail('A33_VERTEX_ATTACHMENT_GEOMETRY', `${what} vertex ${decoded} claims ${count} bone(s); the run is malformed`);
-            ok = false;
-            break;
-          }
-          for (let k = 0; k < count; k++, i++) {
-            const index = att.bones[i];
-            if (index < 0 || index >= data.bones.length) {
-              fail('A33_VERTEX_ATTACHMENT_GEOMETRY', `${what} vertex ${decoded} references bone index ${index}`);
-              ok = false;
-            }
-          }
-          bindings += count;
-        }
-        if (!ok) continue;
-        if (decoded !== vertexCount) {
-          fail(
-            'A33_VERTEX_ATTACHMENT_GEOMETRY',
-            `${what} declares ${vertexCount} vertices and its weighted run decodes to ${decoded}`,
-          );
-        }
-        if (att.vertices.length !== bindings * 3) {
-          fail(
-            'A33_VERTEX_ATTACHMENT_GEOMETRY',
-            `${what} has ${bindings} binding(s) and ${att.vertices.length} weight numbers (expected ${bindings * 3})`,
-          );
-        }
-      }
-    });
+    // The body, its three silent failures and the clauses that stayed here
+    // (the vertex run's decode, `polygonRunFindings`) are
+    // `./assertions/bodies/a33.ts` (issue #1025, cut 4c-2).
+    check('A33_VERTEX_ATTACHMENT_GEOMETRY', () => a33VertexAttachmentGeometry(verdicts, polygonFacts()));
 
     // --- A11 / A13 / A14: renderer + canvas budgets ----
     check('A11_NO_CLIPPING_ATTACHMENTS', () => a11NoClippingAttachments(verdicts, skinEntries));
@@ -2192,353 +2282,12 @@ export function validate(input: ValidateInput): ValidateReport {
     // weights do not throw, they skew; a uv outside the region samples the
     // wrong pixels; and an unpinned rim moves the seam, which is the single
     // thing the whole generated-parts approach depends on not happening.
-    const meshWeights = meshWeightsOf;
+    // A20 and A21 read their meshes through `MeshFacts` since issue #1025
+    // (cut 4c-2): what built a mesh is `./assertions/mesh_kinds.ts`, the
+    // decoded weights `spineMeshFacts`, and both bodies `./assertions/bodies/`.
+    check('A20_MESH_WEIGHTS_COHERENT', () => a20MeshWeightsCoherent(verdicts, loadedMeshFacts(), policy, input.rig));
 
-    /** The slot a skin attachment belongs to; several assertions need it. */
-    const slotOfAttachment = (target: MeshAttachment): string | null => {
-      for (const skin of data.skins) {
-        for (const entry of skin.getAttachments()) {
-          if (entry.attachment === target) return data.slots[entry.slotIndex].name;
-        }
-      }
-      return null;
-    };
-    /**
-     * What built this mesh. ring unless the rig says otherwise; absent rig info
-     * reads as ring (legacy).
-     *
-     * 🚨 `authored` is not a third topology, it is the ABSENCE of one rigc may
-     * assume. Geometry that came in through the rig spec was drawn by somebody
-     * with an editor, and its rim, its row pairing and its entry edge are
-     * whatever that person made them. The `||` fallback below used to hand such
-     * a mesh the string `ring`, and A21 then checked ring topology on a shape
-     * that was never a ring — 40 failures on correct data (issue #44).
-     */
-    const kindOf = (target: MeshAttachment): RigInfo['meshKinds'][string] => {
-      // 🔗 A LINKED mesh borrows another attachment's geometry, so no generator
-      // topology is a claim about THIS attachment — and the ARTIFACT says which
-      // ones they are (`linkedMeshes`, read off the file's own `source` keys).
-      // It is read from there rather than off `meshKinds` for two reasons, and
-      // the second is the load-bearing one.
-      //
-      //   1. `meshKinds` is keyed by SLOT, and a link's slot is not its
-      //      geometry's: a link to a `ring` in another slot looked up the LINK's
-      //      slot, found nothing, and took the `|| 'ring'` fallback — issue #44's
-      //      own default, reached by a new route. Measured before this clause on
-      //      a correct rig (a ring on slot "sa", a link to it on slot "sb"):
-      //      **8 A21 failures**, `mesh "sb" rim vertex 0 is pinned to "a", not
-      //      the slot bone "b"`, one per hull vertex. The rim is pinned exactly
-      //      where the ring's own slot put it, which is the only place it could
-      //      be.
-      //   2. Writing the link into `meshKinds` instead would have overwritten
-      //      the source's kind wherever the two share a slot, which is the
-      //      commonest linked mesh there is — silencing A21 on the mesh rigc
-      //      DID build. A gate turned off by a feature is worse than a gate
-      //      that skips something it cannot measure.
-      if (linkedMeshes.has(target)) return 'authored';
-      const slot = slotOfAttachment(target);
-      return (slot && input.rig?.meshKinds[slot]) || 'ring';
-    };
-    /**
-     * Meshes whose topology is not rigc's to have an opinion about, by name and
-     * with the reason each one is on the list — the string several skips need.
-     */
-    const authoredMeshNames = (list: MeshAttachment[]): string[] =>
-      list
-        .filter((m) => kindOf(m) === 'authored')
-        .map((m) => {
-          const source = linkedMeshes.get(m)?.source;
-          return source === undefined ? `"${m.name}"` : `"${m.name}" (linked to "${source}")`;
-        });
-
-    check('A20_MESH_WEIGHTS_COHERENT', () => {
-      if (meshAttachments.length === 0) return skip('A20_MESH_WEIGHTS_COHERENT', SKIP_NO_MESH_ATTACHMENT);
-      for (const mesh of meshAttachments) {
-        // 🚨 Authored geometry is not rigc's to have opinions about. The two
-        // policy branches in this assertion are both statements about what a
-        // rigc GENERATOR is supposed to produce — "a mesh here is weighted",
-        // "a generated mesh binds only bones that move it" — and neither is a
-        // fact about Spine or about somebody else's mesh. Applying them to
-        // authored geometry failed correct data (issue #44). The coherence
-        // rules below the branch are unconditional and still apply.
-        const generated = kindOf(mesh) !== 'authored';
-        if (!mesh.bones) {
-          // 📐 PROFILE. An unweighted mesh is perfectly valid Spine — spineboy
-          // ships two — and the runtime poses it from the slot bone. What is
-          // NOT valid, in any profile, is a weighted mesh whose weights do not
-          // cohere, which is everything below this branch. So the requirement
-          // that a mesh be weighted at all is the policy half, and it is the
-          // only half gated here.
-          if (policy && generated) {
-            fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" is unweighted; the ring tier drives meshes by bones`);
-          }
-          continue;
-        }
-        const perVertex = meshWeights(mesh);
-        const expected = mesh.worldVerticesLength / 2;
-        if (perVertex.length !== expected) {
-          fail(
-            'A20_MESH_WEIGHTS_COHERENT',
-            `mesh "${mesh.name}" has weights for ${perVertex.length} vertices but ${expected} uv pairs`,
-          );
-          continue;
-        }
-        perVertex.forEach((vertex, i) => {
-          if (!vertex.length) fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" vertex ${i} has no bones`);
-          let sum = 0;
-          for (const { bone, weight } of vertex) {
-            if (!Number.isFinite(weight) || weight < 0) {
-              fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" vertex ${i} has weight ${weight}`);
-            }
-            // 📐 PROFILE. A weight of exactly 0 is legal, harmless Spine: the
-            // runtime accumulates `(…) * weight` (Attachment.js:131), so the
-            // binding contributes nothing. The Spine editor writes them — the
-            // auto-weighted meshes in 6-arcs, 7-anticipation and 8-follow-through
-            // carry dozens, and their vertex weights still sum to 1. Treating one
-            // as corruption failed three rungs of the ladder on correct data.
-            // In a rigc-GENERATED ring or ribbon it is still a defect: the
-            // generator bound a bone that does nothing, which is a bug in the
-            // generator and dead work in the runtime's inner loop. So it stays a
-            // failure under spine-html and is not one under spine.
-            else if (policy && generated && weight === 0) {
-              fail(
-                'A20_MESH_WEIGHTS_COHERENT',
-                `mesh "${mesh.name}" vertex ${i} is bound to bone index ${bone} at weight 0; a generated mesh binds only bones that move it`,
-              );
-            }
-            if (!(bone >= 0 && bone < data.bones.length)) {
-              fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" vertex ${i} references bone index ${bone}`);
-            }
-            sum += weight;
-          }
-          if (Math.abs(sum - 1) > 1e-3) {
-            fail('A20_MESH_WEIGHTS_COHERENT', `mesh "${mesh.name}" vertex ${i} weights sum to ${sum.toFixed(4)}`);
-          }
-        });
-        // 📐 PROFILE, and the converse of the weight-0 branch above: that one
-        // says a generated mesh binds only bones that MOVE it, and this one says
-        // every bone it declares moves it. They are halves of one sentence — the
-        // bone set the mesh declares is the bone set its weights reference — so
-        // they are one assertion rather than two, and neither is a fact about
-        // Spine: a declared bone nothing binds loads and renders perfectly.
-        //
-        // 🚨 It is the one mesh question a vertex cannot answer, which is why
-        // every per-vertex rule above was green on the ring that raised it: a
-        // rig-spec ring naming two grips bound one of them, and the absent bone
-        // appears in no vertex, in no sum and in no index (issue #684). The
-        // declaration comes from the compiler's own record of what it bound,
-        // which is what the `MESH` report line prints.
-        if (policy && generated && input.rig) {
-          const slot = slotOfAttachment(mesh);
-          const declared = (slot && input.rig.meshDeclaredBones[slot]) || [];
-          const bound = new Set<string>();
-          for (const vertex of perVertex) {
-            for (const { bone } of vertex) {
-              const named = data.bones[bone];
-              if (named) bound.add(named.name);
-            }
-          }
-          for (const name of declared) {
-            if (bound.has(name)) continue;
-            fail(
-              'A20_MESH_WEIGHTS_COHERENT',
-              `mesh "${mesh.name}" declares bone "${name}" and none of its ${perVertex.length} vertices binds it; ` +
-                `the weights reference ${[...bound].map((n) => `"${n}"`).join(', ')}`,
-            );
-          }
-        }
-      }
-    });
-
-    check('A21_MESH_RIM_PINNED', () => {
-      // Without the rig, ring and ribbon cannot be told apart — and the two kinds
-      // pin OPPOSITE edges, so guessing one would either check the wrong edge or
-      // check nothing while reporting a pass.
-      if (!input.rig) {
-        return skip('A21_MESH_RIM_PINNED', 'no rig info (validating a bare directory), so ring and ribbon cannot be told apart');
-      }
-      if (!meshAttachments.some((m) => m.bones)) {
-        return skip('A21_MESH_RIM_PINNED', 'the skeleton has no weighted mesh attachment, so there is no rim to find unpinned');
-      }
-      // An authored mesh has no rim rigc drew and no entry row rigc placed, and
-      // a linked mesh has no rim of its OWN at all — the one it draws belongs to
-      // its source, and is measured there. Nothing to measure is a SKIP — never
-      // a pass, and never a failure on somebody else's correct geometry.
-      //
-      // 🔸 A `segments` mesh is rigc's own geometry and still has no rim to pin:
-      // its outline is traced off the art and weighted by distance like every
-      // other vertex, because a layer pulled by named bones is SUPPOSED to move
-      // at its edge. "Pinned to the slot bone" is not a claim that generator
-      // makes, so there is nothing here to hold it to — and `A20`'s coherence
-      // rules, which it does make, still apply to it in full.
-      const rimless = (m: MeshAttachment): boolean => kindOf(m) === 'authored' || kindOf(m) === 'segments';
-      const measurable = meshAttachments.filter((m) => m.bones && !rimless(m));
-      if (measurable.length === 0) {
-        const authored = authoredMeshNames(meshAttachments.filter((m) => m.bones));
-        const segmented = meshAttachments.filter((m) => m.bones && kindOf(m) === 'segments').map((m) => `"${m.name}"`);
-        return skip(
-          'A21_MESH_RIM_PINNED',
-          segmented.length === 0
-            ? `every weighted mesh here is authored or linked geometry (${authored.join(', ')}), not a rigc ring or ` +
-                'ribbon — rigc did not place its rim, so it has no rim of its own to find unpinned'
-            : `every weighted mesh here is ${authored.length ? `authored or linked geometry (${authored.join(', ')}) or ` : ''}` +
-                `a "segments" lattice (${segmented.join(', ')}), not a rigc ring or ribbon — a segments mesh weights its ` +
-                'outline by distance to the bones it names, so it has no rim pinned to the slot bone to find unpinned',
-        );
-      }
-      for (const mesh of measurable) {
-        if (!mesh.bones) continue;
-        const perVertexAll = meshWeights(mesh);
-        const slotBoneOf = (() => {
-          for (const skin of data.skins) {
-            for (const entry of skin.getAttachments()) {
-              if (entry.attachment === mesh) return data.slots[entry.slotIndex].boneData;
-            }
-          }
-          return null;
-        })();
-        // A ribbon's outer boundary is SUPPOSED to move — that is the whole point
-        // of a strip that changes length. So the rule splits by mesh kind rather
-        // than being relaxed: for a ribbon the invariant is that the ENTRY row
-        // cannot move, because that row is where the strip joins the part it
-        // comes out of. Both rules protect the same thing (the mesh's join to the
-        // plate underneath); they just live at different edges of the mesh.
-        //
-        // A `contour` takes the hull path below, and that is the check it wants
-        // rather than a third branch: a contour mesh's hull IS every vertex it
-        // has, and every one is pinned to the slot bone at weight 1, so "the rim
-        // is pinned" reads over the whole mesh. If a later contour tier ever
-        // moves interior vertices, this is the assertion that has to grow a
-        // branch — it will fail rather than pass quietly, which is the right way
-        // round.
-        if (kindOf(mesh) === 'ribbon') {
-          const uvs = mesh.regionUVs ?? [];
-          let entryRow = 0;
-          for (let v = 0; v < perVertexAll.length; v++) {
-            if (Math.abs(uvs[v * 2 + 1]) > 1e-6) continue; // not on the entry edge
-            entryRow++;
-            const vertex = perVertexAll[v];
-            if (vertex.length !== 1 || Math.abs(vertex[0].weight - 1) > 1e-6) {
-              fail(
-                'A21_MESH_RIM_PINNED',
-                `ribbon "${mesh.name}" entry vertex ${v} is not pinned (${vertex.map((w) => w.weight.toFixed(3)).join('+')})`,
-              );
-              continue;
-            }
-            if (slotBoneOf && data.bones[vertex[0].bone]?.name !== slotBoneOf.name) {
-              fail(
-                'A21_MESH_RIM_PINNED',
-                `ribbon "${mesh.name}" entry vertex ${v} is pinned to "${data.bones[vertex[0].bone]?.name}", not the anchor bone "${slotBoneOf.name}"`,
-              );
-            }
-          }
-          if (entryRow < 2) {
-            fail('A21_MESH_RIM_PINNED', `ribbon "${mesh.name}" has ${entryRow} vertices on its entry edge; a strip needs two`);
-          }
-          continue;
-        }
-        // A rim a soft mask deliberately CARRIED (issue #382). The rule splits
-        // by declaration rather than being relaxed — the same move the ribbon
-        // branch above makes, and for the same reason: a wobbling silhouette is
-        // supposed to move, and the invariant is that nothing ELSE does. So on
-        // such a mesh a vertex is either pinned to the slot bone at 1 or shared
-        // between it and the ONE bone the rig declared, and a third bone, a
-        // wrong bone or a weight that does not close is still a failure.
-        const boundBone = (() => {
-          const slot = slotOfAttachment(mesh);
-          return slot ? (input.rig?.meshSoftBones[slot] ?? null) : null;
-        })();
-        if (boundBone !== null) {
-          const allowed = new Set([slotBoneOf?.name, boundBone]);
-          let carried = 0;
-          for (let v = 0; v < perVertexAll.length; v++) {
-            const vertex = perVertexAll[v];
-            let sum = 0;
-            for (const { bone, weight } of vertex) {
-              const name = data.bones[bone]?.name;
-              if (!allowed.has(name)) {
-                fail(
-                  'A21_MESH_RIM_PINNED',
-                  `mesh "${mesh.name}" vertex ${v} is carried by "${name}", and this mesh declares only ` +
-                    `"${slotBoneOf?.name}" and the soft region's "${boundBone}"`,
-                );
-              }
-              if (name === boundBone && weight > 0) carried = carried + (weight >= 1 ? 1 : 0);
-              sum += weight;
-            }
-            if (Math.abs(sum - 1) > 1e-4) {
-              fail(
-                'A21_MESH_RIM_PINNED',
-                `mesh "${mesh.name}" vertex ${v} weights sum to ${sum.toFixed(4)}; a depth-bound mesh splits each ` +
-                  'vertex between the slot bone and the bound bone, so it closes at 1',
-              );
-            }
-          }
-          // A mask that carried nothing reached here as a mesh pinned exactly
-          // as before, which is not the thing that was declared.
-          if (carried === 0) {
-            fail(
-              'A21_MESH_RIM_PINNED',
-              `mesh "${mesh.name}" declares a soft region on "${boundBone}" and no vertex is fully carried by it`,
-            );
-          }
-          continue;
-        }
-        const hullVertices = mesh.hullLength / 2;
-        if (!Number.isInteger(hullVertices) || hullVertices < 3) {
-          fail('A21_MESH_RIM_PINNED', `mesh "${mesh.name}" declares hull ${mesh.hullLength / 2}; the rim must be a real ring`);
-          continue;
-        }
-        const perVertex = meshWeights(mesh);
-        if (hullVertices > perVertex.length) {
-          fail('A21_MESH_RIM_PINNED', `mesh "${mesh.name}" hull is ${hullVertices} of ${perVertex.length} vertices`);
-          continue;
-        }
-        // The rim is the alpha contour where generated pixels meet untouched
-        // base. One bone at weight 1, and that bone must be the slot's own —
-        // anything else and the seam can move.
-        const slotBone = (() => {
-          for (const skin of data.skins) {
-            for (const entry of skin.getAttachments()) {
-              if (entry.attachment === mesh) return data.slots[entry.slotIndex].boneData;
-            }
-          }
-          return null;
-        })();
-        for (let i = 0; i < hullVertices; i++) {
-          const vertex = perVertex[i];
-          if (vertex.length !== 1 || Math.abs(vertex[0].weight - 1) > 1e-6) {
-            fail(
-              'A21_MESH_RIM_PINNED',
-              `mesh "${mesh.name}" rim vertex ${i} is not pinned (${vertex.map((v) => v.weight.toFixed(3)).join('+')})`,
-            );
-            continue;
-          }
-          if (slotBone && data.bones[vertex[0].bone]?.name !== slotBone.name) {
-            fail(
-              'A21_MESH_RIM_PINNED',
-              `mesh "${mesh.name}" rim vertex ${i} is pinned to "${data.bones[vertex[0].bone]?.name}", not the slot bone "${slotBone.name}"`,
-            );
-          }
-        }
-        // Independent of the ring ORDER: whatever sits on the region border is
-        // the outline, and the outline moving means the part's own edge moving.
-        // Without this, reordering the rings would move the pinned prefix off
-        // the outline and A21 would still pass on the count alone.
-        const uvs = mesh.regionUVs ?? [];
-        for (let v = 0; v < perVertex.length; v++) {
-          const u = uvs[v * 2];
-          const t = uvs[v * 2 + 1];
-          const onBorder = [u, t].some((c) => Math.abs(c) < 1e-6 || Math.abs(c - 1) < 1e-6);
-          if (!onBorder) continue;
-          const vertex = perVertex[v];
-          if (vertex.length !== 1 || Math.abs(vertex[0].weight - 1) > 1e-6) {
-            fail('A21_MESH_RIM_PINNED', `mesh "${mesh.name}" vertex ${v} is on the region border but not pinned`);
-            break;
-          }
-        }
-      }
-    });
+    check('A21_MESH_RIM_PINNED', () => a21MeshRimPinned(verdicts, loadedMeshFacts(), input.rig));
 
     check('A22_MESH_UVS_IN_UNIT_RANGE', () => a22MeshUvsInUnitRange(verdicts, skinMeshes));
 
@@ -2891,469 +2640,26 @@ export function validate(input: ValidateInput): ValidateReport {
       if (survey.spansUnconfirmed) stats.deformSpansUnconfirmed = survey.spansUnconfirmed;
     });
 
-    /**
-     * The constraints some animation keys to a value `live` accepts, on any
-     * channel of a timeline `owns` claims — the one answer to "does anything
-     * switch this on" for `A23`, `A36`, `A37` and `A40` (issues #743, #752).
-     *
-     * ⭐ It replaced `keyedBy`, which read the raw JSON and took a non-empty key
-     * array as the answer, and it did so rather than teaching that one to read
-     * values, because the raw file is the wrong place to read a value: a path
-     * `mix` key that omits `mixRotate` means 1 (`SkeletonJson.js:1011-1013`), a
-     * `mixY` it omits means that key's `mixX`, and a Bezier between two keys
-     * poses values neither key states. A raw reader would restate the parser's
-     * defaults and re-derive its curves — a second opinion on the runtime's own
-     * numbers — so this reads the loaded timelines instead, with
-     * `curveChannelValues` for the curves. [measured] the reading `keyedBy` gave
-     * was wrong in the accepting direction: a path constraint and a slider,
-     * both muted at rest and keyed to 0 only, pose every bone exactly where the
-     * same rig with no timeline does (max |Δ| 0.000000 over 60 steps at 60 fps) and both
-     * passed.
-     *
-     * A timeline naming no constraint is the physics family's global form and
-     * `unnamedPhysicsReach` answers who it reaches; every other constraint
-     * timeline names its one constraint by index.
-     *
-     * `live` is handed the channel as well as the value, because not every
-     * channel of every constraint timeline is a mix (issue #765): an ik frame is
-     * mix, softness, bend direction, compress and stretch, so a bend direction of
-     * +1 is not a key that switches anything on, and a transform frame carries
-     * six mixes of which only the ones for a property the constraint drives are
-     * ever read.
-     */
-    const keyedLive = <T extends CurveTimeline & ConstraintTimeline>(
-      owns: (timeline: Timeline) => timeline is T,
-      live: (timeline: T, value: number, channel: number) => boolean,
-    ): Set<object> => {
-      const reached = new Set<object>();
-      for (const animation of data.animations) {
-        for (const timeline of animation.timelines) {
-          if (!owns(timeline)) continue;
-          let keysLive = false;
-          for (let channel = 0; channel < timeline.getFrameEntries() - 1 && !keysLive; channel++) {
-            keysLive = curveChannelValues(timeline, channel).some((value) => live(timeline, value, channel));
-          }
-          if (!keysLive) continue;
-          const reach =
-            timeline.constraintIndex === -1
-              ? unnamedPhysicsReach(timeline, data.constraints.filter((one) => one instanceof PhysicsConstraintData))
-              : [data.constraints[timeline.constraintIndex]];
-          for (const one of reach) if (one) reached.add(one);
-        }
-      }
-      return reached;
-    };
+    // --- A23, A41, A36, A37, A47, A48: a constraint that does nothing, quietly -
+    //
+    // Their bodies, the reasoning each states and the one reading of "does an
+    // animation switch this on" they share (`switchedOn`, which replaced the
+    // loaded-timeline `keyedLive` that stood here) moved to
+    // `./assertions/bodies/` and `./assertions/constraint_words.ts` with issue
+    // #1025 (cut 4c-2): every clause is about the rig, and each reads
+    // `ConstraintFacts`, which `spineConstraintFacts` supplies here.
+    check('A23_PHYSICS_CONSTRAINT_EFFECTIVE', () => a23PhysicsConstraintEffective(verdicts, constraintFacts(), loadedMeshFacts()));
 
-    /**
-     * The one predicate a path or slider mix is judged by, at setup and on every
-     * value a key poses: above 0, where `update()` does anything at all.
-     */
-    const mixLive = (value: number): boolean => value > 0;
+    // A41 — `validity` rather than policy, on A09's precedent: what it measures
+    // is the artifact against a claim the artifact's own spec makes, and a rig
+    // that makes no such claim has nothing to be measured against and SKIPs.
+    // Nothing here is one renderer's taste or one formation's shape, so there is
+    // no profile it should be hidden behind.
+    check('A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP', () => a41PhysicsSurvivesEditorRoundTrip(verdicts, constraintFacts(), input.rig));
 
-    // --- A23: a physics constraint that does nothing, quietly ---------------
-    //
-    // Every failure mode here is silent. The five component fields default to
-    // 0, so a constraint can drive nothing at all; `mix` 0 mutes it; `mass` 0
-    // becomes an infinite massInverse; and `damping` above 1 never settles, which
-    // on a mesh-driving bone means the canvas re-rasterises forever. 1 itself is
-    // inside the bound since issue #794: it never decays, which is finite and a
-    // choice, and what it costs a consumer's frame is the consumer's to judge.
-    //
-    // 🔑 **Two arms, one criterion.** The second arm below reads every physics
-    // TIMELINE key, and it is written against `PHYSICS_POSE_RULES` — the table
-    // this one is also written against, and the table `compileValueTrack`
-    // refuses a spec's own out-of-range number with. Three readings of one rule
-    // is how two of them come to disagree, so there is one (issue #610).
-    check('A23_PHYSICS_CONSTRAINT_EFFECTIVE', () => {
-      // ⟨subject⟩_⟨property⟩, and its two siblings already read this way: A36
-      // skips on "the skeleton declares no path constraint" and A37 on "no
-      // slider constraint", while this one passed over an empty filter (#580).
-      // The stat is written before the guard so a reader of a SKIP still sees
-      // the count that produced it.
-      stats.physicsConstraints = data.constraints.filter((c) => c instanceof PhysicsConstraintData).length;
-      if (stats.physicsConstraints === 0) return skip('A23_PHYSICS_CONSTRAINT_EFFECTIVE', SKIP_NO_PHYSICS_CONSTRAINT);
-      const meshBoneNames = new Set<string>();
-      for (const slotIndex of meshSlots) meshBoneNames.add(data.slots[slotIndex].boneData.name);
-      for (const mesh of meshAttachments) {
-        if (!mesh.bones) continue;
-        for (let i = 0; i < mesh.bones.length; ) {
-          const boneCount = mesh.bones[i++];
-          for (let n = 0; n < boneCount; n++, i++) {
-            const bone = data.bones[mesh.bones[i]];
-            if (bone) meshBoneNames.add(bone.name);
-          }
-        }
-      }
-      // --- which constraints an animation switches ON (issue #743) ----------
-      //
-      // 🔑 The setup pose is the rig AT REST, and one of the four bounds is a
-      // state rather than a break there: `PHYSICS_POSE_RULES` marks `mix`
-      // `inertAtSetup`, because `update` opens with `if (mix === 0) return;`
-      // (`PhysicsConstraint.js:109-111`) and nothing else in the pose has such a
-      // branch. So a constraint that rests muted and is keyed above 0 by an
-      // animation is a rig the runtime plays as authored, and refusing it would
-      // refuse a design: physics off at rest, switched on by the animation that
-      // needs it.
-      //
-      // 📏 Measured on a generated physics fixture, 36 steps at 60 fps with the
-      // constraint's own bone swung by its parent: resting at `mix` 0 with an
-      // animation keying `mix` to 1 poses the bone IDENTICALLY to the same rig
-      // resting at 1 (max |dx| 0.000000) and up to 7.771177 away from the twin
-      // that keys nothing — which poses identically to one keyed to 0 only
-      // (max |dx| 0.000000). Two states, and the file says which.
-      //
-      // ⚠️ The escape is the rule's own field rather than the word "mix": a
-      // setup `mass` of 0 is `massInverse` Infinity BEFORE anything plays, and
-      // [measured] at rest it reads NaN on every frame although an animation
-      // keys `mass` to 1. A key cannot rescue a value that has already broken
-      // the rig it is resting in.
-      //
-      // The keys are read by `keyedLive`, the one reading A36 and A37 share
-      // (issue #752), through the runtime's own accessor: the pose field is
-      // where the integrator reads the number, and for `mass` that is not the
-      // number the key states. It counts the unnamed global form through
-      // `unnamedPhysicsReach` and a Bezier segment's samples as well as its keys.
-      const unmuted = new Map<PhysicsConstraintData, Set<string>>();
-      const raised = new PhysicsConstraintPose();
-      for (const rule of PHYSICS_POSE_RULES) {
-        if (!rule.inertAtSetup) continue;
-        const reached = keyedLive(
-          (timeline): timeline is PhysicsConstraintTimeline =>
-            timeline instanceof PhysicsConstraintTimeline &&
-            physicsTimelineNames()[Number(timeline.getPropertyIds()[0].split('|')[0])] === rule.timeline,
-          (timeline, value) => {
-            timeline.set(raised, value);
-            return rule.poseOk(raised[rule.field]);
-          },
-        );
-        for (const one of data.constraints) {
-          if (!(one instanceof PhysicsConstraintData) || !reached.has(one)) continue;
-          const by = unmuted.get(one) ?? new Set<string>();
-          by.add(rule.timeline);
-          unmuted.set(one, by);
-        }
-      }
-      let mutedUntilKeyed = 0;
-      for (const constraint of data.constraints) {
-        if (!(constraint instanceof PhysicsConstraintData)) continue;
-        const where = `physics "${constraint.name}"`;
-        const components = PHYSICS_COMPONENTS.filter((k) => constraint[k] > 0);
-        if (!components.length) {
-          fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} drives no component; it parses and does nothing`);
-        }
-        const pose = constraint.setupPose;
-        // The four bounded fields, each judged by its `PHYSICS_POSE_RULES` row.
-        // The wording is per-field and stays so: "it is muted" and "nothing
-        // pulls it back" say what happens to THIS rig, which is what the author
-        // needs, and the shared table supplies the predicate rather than the
-        // sentence.
-        for (const rule of PHYSICS_POSE_RULES) {
-          if (rule.poseOk(pose[rule.field])) continue;
-          if (rule.inertAtSetup && unmuted.get(constraint)?.has(rule.timeline)) {
-            mutedUntilKeyed++;
-            continue;
-          }
-          const drivesAMesh = rule.timeline === 'damping' && meshBoneNames.has(constraint.bone.name);
-          fail(
-            'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
-            `${where} ${SETUP_POSE_SAYS[rule.timeline](pose, data.animations.length, rule)}` +
-              (drivesAMesh ? ' — and this bone drives a mesh, so the canvas never rests' : ''),
-          );
-        }
-        if (constraint.step <= 0 || !Number.isFinite(constraint.step)) {
-          fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} has step ${constraint.step} (fps must be > 0)`);
-        }
-      }
-      // What the PASS would otherwise not say: this rig rests with physics off
-      // on that many constraints and an animation is what switches them on. A
-      // pass carries no detail — `passed` is a list of names — so `stats` is the
-      // channel that exists, and a number is what belongs in a line printed as
-      // `k=v`: naming every such constraint and the animations that reach it
-      // would be a paragraph on one line, and the rig where nobody meant it is
-      // the rig where the NUMBER is the surprise. Absent rather than 0 when
-      // nothing rests muted, so it appears only where it says something.
-      if (mutedUntilKeyed) stats.physicsMutedUntilKeyed = mutedUntilKeyed;
+    check('A36_PATH_CONSTRAINT_EFFECTIVE', () => a36PathConstraintEffective(verdicts, constraintFacts()));
 
-      // --- the same criterion, on every physics timeline key (issue #610) ----
-      //
-      // The arm above reads the setup pose and, until this one existed, nothing
-      // else — complete while a motion spec could key `mix` and `reset` only,
-      // and incomplete from #593 on, when it became able to key all seven.
-      //
-      // 📏 Measured on the tree before this landed, one keyed value at a time on
-      // a generated physics rig, 24 steps at 60 fps: `mass: 0` reached
-      // `massInverse` Infinity and every offset NaN — named by
-      // `A10_NO_NAN_AFTER_STEPPING`, from the BONE, with no word about the
-      // animation, the constraint, the timeline or the key; `damping: 2` ran the
-      // x offset to −26,634 and the velocity to −1.55e6 and still climbing, with
-      // **zero** gate failures; `strength: 0` drifted monotonically with zero gate
-      // failures; `mix: 1.5` produced zero gate failures and an integration
-      // identical to `mix: 1`, because mix multiplies the finished offset onto
-      // the bone and never enters the solve.
-      //
-      // ⭐ The value is judged where the runtime keeps it, not where the file
-      // writes it: `timeline.set` is the runtime's own accessor, so a `mass` key
-      // lands in the probe as its reciprocal and is then held to exactly the
-      // predicate the setup arm holds `setupPose.massInverse` to.
-      const probe = new PhysicsConstraintPose();
-      let keysRead = 0;
-      for (const animation of data.animations) {
-        for (const timeline of animation.timelines) {
-          if (!(timeline instanceof PhysicsConstraintTimeline)) continue;
-          // `ConstraintTimeline1` encodes its propertyId as `<Property>|<index>`,
-          // so the name comes from the runtime's own enum rather than from a
-          // table of strings this file would have to keep in step.
-          const name = physicsTimelineNames()[Number(timeline.getPropertyIds()[0].split('|')[0])];
-          if (name === undefined) continue;
-          const rule = physicsRuleFor(name);
-          // -1 is the global form: the timeline drives every physics constraint
-          // whose matching `…Global` flag is set, so there is no one name to give.
-          const target =
-            timeline.constraintIndex === -1
-              ? 'every physics constraint'
-              : `physics "${data.constraints[timeline.constraintIndex]?.name ?? `#${timeline.constraintIndex}`}"`;
-          const entries = timeline.getFrameEntries();
-          for (let i = 0; i < timeline.frames.length; i += entries) {
-            keysRead++;
-            if (rule === undefined) continue;
-            const value = timeline.frames[i + 1];
-            timeline.set(probe, value);
-            const refusal = physicsKeyRefusal(rule, value, probe[rule.field]);
-            if (refusal === null) continue;
-            fail(
-              'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
-              `animation "${animation.name}" ${target} ${name} key at t=${timeline.frames[i].toFixed(6)}s is ${refusal}`,
-            );
-          }
-        }
-      }
-      stats.physicsTimelineKeys = keysRead;
-    });
-
-    // --- A41: a physics component the Spine editor cannot hold --------------
-    //
-    // 🚨 The silence this converts is not in the artifact — it is one consumer
-    // downstream of it. An author builds a rig whose cowlick jiggles, opens it
-    // in the editor to move an eyebrow, saves, exports, and the hair has stopped
-    // moving. The returned file says nothing: the component is simply absent,
-    // and absent parses as 0. `gallery/look` is exactly that rig.
-    //
-    // 🔑 **rigc's output is correct, so the refusal is opt-in.** `rotate` on a
-    // physics constraint is valid Spine 4.3 that every runtime plays, and
-    // refusing it by default would be refusing correct data on behalf of a
-    // pipeline rigc was never told about. What rigc can see is the object; which
-    // consumers it is for is the rig's to say, and it says it with
-    // `invariants.editorRoundTrip` (`src/rig.ts`).
-    //
-    // ⚠️ **The SKIP is the other half of the product and is not a shrug.** A rig
-    // that declares nothing is not gated — but the reason names the constraint
-    // and the components a round trip would drop, so the one thing that must not
-    // happen (nobody finds out) does not happen either. That is why this reads
-    // the whole skeleton before it reads the declaration, rather than returning
-    // early on a rig that asked for nothing.
-    //
-    // 🔸 **Against A23, on the far side of the same trip.** A23 refuses a
-    // constraint driving NOTHING — which is what the editor hands back, after
-    // the loss — and it is what fires today on a round-tripped `look`. This
-    // refuses a constraint driving something the editor will not keep, before
-    // the trip. They cannot both fire on one constraint: A23's condition is an
-    // empty driven set and this one's is a non-empty one (see
-    // `PHYSICS_COMPONENTS`), so the two are disjoint by construction rather than
-    // by agreement.
-    //
-    // `validity` rather than policy, on A09's precedent: what it measures is the
-    // artifact against a claim the artifact's own spec makes, and a rig that
-    // makes no such claim has nothing to be measured against and SKIPs. Nothing
-    // here is one renderer's taste or one formation's shape, so there is no
-    // profile it should be hidden behind.
-    check('A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP', () => {
-      // Counted here rather than read off `stats.physicsConstraints`: that entry
-      // is written by A23, and a rule whose SKIP depends on another rule having
-      // run is a rule that reports "nothing to measure" when its neighbour threw.
-      const physics = data.constraints.filter((c) => c instanceof PhysicsConstraintData);
-      const dropped: string[] = [];
-      for (const constraint of physics) {
-        const lost = PHYSICS_COMPONENTS.filter((k) => constraint[k] > 0 && !EDITOR_PHYSICS_COMPONENTS.has(k));
-        if (lost.length) dropped.push(`physics "${constraint.name}" drives ${lost.join(', ')}`);
-      }
-      const editorKeeps = [...EDITOR_PHYSICS_COMPONENTS].join(' and ');
-      const found =
-        dropped.length === 0
-          ? 'no physics constraint here drives a component it would discard'
-          : `${dropped.join('; ')}, and the editor's physics model holds ${editorKeeps} only, so a round trip ` +
-            'returns that constraint driving nothing at all (issue #540)';
-      if (input.rig?.editorRoundTrip !== true) {
-        return skip(
-          'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP',
-          `${
-            input.rig
-              ? `the rig "${input.rig.archetype}" does not declare \`invariants.editorRoundTrip\``
-              : 'this is a bare directory, with no rig info to declare `invariants.editorRoundTrip`'
-          }, so nothing here is gated against the Spine editor. What is here: ${found}`,
-        );
-      }
-      if (physics.length === 0) {
-        return skip(
-          'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP',
-          `the rig "${input.rig.archetype}" is declared for the editor, but it carries no physics constraint — ` +
-            'there is nothing here whose components could be lost',
-        );
-      }
-      for (const one of dropped) {
-        fail(
-          'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP',
-          `${one}; the editor's physics model holds ${editorKeeps} only, and this ` +
-            'rig declares `invariants.editorRoundTrip` — drive it in x/y, or drop the declaration if this rig never ' +
-            'goes through the editor (issue #540)',
-        );
-      }
-    });
-
-    /**
-     * Which path constraints and sliders an animation switches ON — `keyedLive`
-     * over their `mix` timelines, judged by `mixLive`, the predicate their setup
-     * pose is judged by below.
-     *
-     * ⭐ The reason the two assertions below need this: a constraint whose mixes
-     * are all 0 at setup is **the idiom**, not a defect — spineboy's aim rig is
-     * exactly that, and issue #88 landed the timelines that turn one on. So
-     * "muted" is only a finding when nothing turns it on, and that question
-     * lives in the animations rather than in the constraint.
-     *
-     * 🔑 "Turns it on" is a VALUE question, and until issue #752 these two asked
-     * a weaker one than `A23` — whether a `mix` key array was non-empty — so a
-     * timeline keying 0 only was a rescue for a constraint it leaves exactly as
-     * muted as no timeline does. Now a path constraint is switched on by a key
-     * posing any of its three mixes above 0, which is the runtime's own
-     * condition: `PathConstraint.update` returns when `mixRotate`, `mixX` and
-     * `mixY` are all 0 (`PathConstraint.js:73-75`), and `Slider.update` when
-     * `mix` is (`Slider.js:53-54`).
-     */
-    const pathSwitchedOn = keyedLive(
-      (timeline): timeline is PathConstraintMixTimeline => timeline instanceof PathConstraintMixTimeline,
-      (_timeline, value) => mixLive(value),
-    );
-    const sliderSwitchedOn = keyedLive(
-      (timeline): timeline is SliderMixTimeline => timeline instanceof SliderMixTimeline,
-      (_timeline, value) => mixLive(value),
-    );
-
-    // --- A36: a path constraint that follows nothing, quietly ---------------
-    //
-    // 🚨 The first failure here is the quietest in the whole constraint half of
-    // the format. `PathConstraint.update` opens with
-    //
-    //   const attachment = this.slot.appliedPose.attachment;
-    //   if (!(attachment instanceof PathAttachment)) return;
-    //
-    // so a path constraint aimed at a slot that never shows a path loads
-    // perfectly, reports every mix it was given, appears in the update cache —
-    // and moves nothing, forever. Nothing in the file is wrong on its face: the
-    // slot exists, the constraint resolves, the mixes are 1.
-    //
-    // The rest are the same shape as A23's: a constraint that parses and does
-    // nothing. All three mixes at 0 is only a finding when no animation keys one
-    // of them above 0 (see `pathSwitchedOn`), and a chain with no bones on it is
-    // one whether or not anything is keyed.
-    check('A36_PATH_CONSTRAINT_EFFECTIVE', () => {
-      const constraints = data.constraints.filter((c) => c instanceof PathConstraintData);
-      if (!constraints.length) return skip('A36_PATH_CONSTRAINT_EFFECTIVE', 'the skeleton declares no path constraint');
-      /** slot index -> how many path attachments any skin gives it. */
-      const pathsBySlot = new Map<number, number>();
-      for (const skin of data.skins) {
-        for (const entry of skin.getAttachments()) {
-          if (!(entry.attachment instanceof PathAttachment)) continue;
-          pathsBySlot.set(entry.slotIndex, (pathsBySlot.get(entry.slotIndex) ?? 0) + 1);
-        }
-      }
-      for (const constraint of constraints) {
-        const where = `path constraint "${constraint.name}"`;
-        if (!constraint.bones.length) {
-          fail('A36_PATH_CONSTRAINT_EFFECTIVE', `${where} constrains no bone; it parses and does nothing`);
-        }
-        const slot = constraint.slot;
-        if (!pathsBySlot.has(slot.index)) {
-          fail(
-            'A36_PATH_CONSTRAINT_EFFECTIVE',
-            `${where} follows slot "${slot.name}", and no skin gives that slot a path attachment — ` +
-              "PathConstraint.update returns immediately unless the slot's attachment is a path, so this " +
-              'constraint reports its mixes and moves nothing',
-          );
-        }
-        const pose = constraint.setupPose;
-        const muted = ![pose.mixRotate, pose.mixX, pose.mixY].some(mixLive);
-        if (muted && !pathSwitchedOn.has(constraint)) {
-          fail(
-            'A36_PATH_CONSTRAINT_EFFECTIVE',
-            `${where} has mixRotate ${pose.mixRotate}, mixX ${pose.mixX} and mixY ${pose.mixY} at setup and ` +
-              `${noneKeysItsMixAbove0(data.animations.length)}; update() returns on all-zero mixes, so nothing ever ` +
-              'puts a bone on the path — rest one of the three above 0, or key its mix above 0 in an animation',
-          );
-        }
-      }
-      stats.pathConstraints = constraints.length;
-    });
-
-    // --- A37: a slider that applies nothing, quietly ------------------------
-    //
-    // A slider is the only constraint that applies an ANIMATION, so its failure
-    // modes are about that animation rather than about a transform:
-    //
-    //   1. **An animation with no timelines.** `animation.apply` walks an empty
-    //      array. The slider is in the update cache, its time moves, and the
-    //      skeleton never changes.
-    //   2. **`loop` on a zero-length animation.** `Slider.update` computes
-    //      `animation.duration + (p.time % animation.duration)` when looping, so
-    //      a duration of 0 makes the time **NaN** — and it then applies the
-    //      animation at NaN, which is a pose nobody can predict and no error.
-    //      Only reachable with a bone, because that is the branch the loop
-    //      arithmetic lives in.
-    //   3. **`scale` 0 with a bone.** `time = offset + (value - offset) * 0`, so
-    //      the dial turns and the slider holds one frame.
-    //   4. **`mix` 0** with nothing keying it — the same rule as A36's.
-    check('A37_SLIDER_CONSTRAINT_EFFECTIVE', () => {
-      const sliders = data.constraints.filter((c) => c instanceof SliderData);
-      if (!sliders.length) return skip('A37_SLIDER_CONSTRAINT_EFFECTIVE', 'the skeleton declares no slider constraint');
-      for (const slider of sliders) {
-        const where = `slider "${slider.name}"`;
-        const animation = slider.animation;
-        if (!animation) {
-          // The parser's second pass throws on a miss, so this is only reachable
-          // on an artifact that never went through it.
-          fail('A37_SLIDER_CONSTRAINT_EFFECTIVE', `${where} applies no animation`);
-          continue;
-        }
-        if (animation.timelines.length === 0) {
-          fail(
-            'A37_SLIDER_CONSTRAINT_EFFECTIVE',
-            `${where} applies animation "${animation.name}", which carries no timeline at all; the slider runs and ` +
-              'the skeleton never changes',
-          );
-        }
-        if (slider.bone && slider.loop && !(animation.duration > 0)) {
-          fail(
-            'A37_SLIDER_CONSTRAINT_EFFECTIVE',
-            `${where} loops animation "${animation.name}", whose duration is ${animation.duration} — ` +
-              'Slider.update computes `duration + (time % duration)` when looping, so the applied time is NaN',
-          );
-        }
-        if (slider.bone && slider.scale === 0) {
-          fail(
-            'A37_SLIDER_CONSTRAINT_EFFECTIVE',
-            `${where} drives off bone "${slider.bone.name}" with scale 0, so the property cannot move the slider's time`,
-          );
-        }
-        const mix = slider.setupPose.mix;
-        if (!mixLive(mix) && !sliderSwitchedOn.has(slider)) {
-          fail(
-            'A37_SLIDER_CONSTRAINT_EFFECTIVE',
-            `${where} has mix ${mix} at setup and ${noneKeysItsMixAbove0(data.animations.length)}; update() returns ` +
-              `on mix 0 — ${REST_OR_KEY_ITS_MIX}`,
-          );
-        }
-      }
-      stats.sliderConstraints = sliders.length;
-    });
+    check('A37_SLIDER_CONSTRAINT_EFFECTIVE', () => a37SliderConstraintEffective(verdicts, constraintFacts()));
 
     // --- A47 / A48: an ik or a transform constraint muted for good ----------
     //
@@ -3364,176 +2670,13 @@ export function validate(input: ValidateInput): ValidateReport {
     // at `mix` 0 that nothing keys, one keyed to 0 only, a transform at every mix
     // 0 that nothing keys and one keyed to 0 only each pose every bone exactly
     // where the same rig with no constraint does (max |Δ| 0.000000), and all four
-    // gated green with 0 failures before these two existed.
-    //
-    // 🔑 **Live is the runtime's own test, `!== 0`, and not `mixLive`'s `> 0`.**
-    // `IkConstraint.update` returns on `mix === 0` and a transform's inner loop
-    // applies a property only when `to.mix(pose) !== 0`, so a negative mix runs.
-    // That is not a corner: [measured] five transform constraints across four of
-    // the editor's own example exports rest at mixX = mixY = −1, nothing keys
-    // them, and each moves its bones at setup against the same constraint with
-    // every mix 0. A `> 0` reading refuses all five. (`A36`/`A37` still read
-    // `> 0` — a path or slider resting negative is a question for their own card.)
-    //
-    // 🔑 **A transform mix is read only for a property the constraint drives.**
-    // The early return in `TransformConstraint.update` is over all six mixes, but
-    // it is not what decides whether anything moves: each `to` entry reads its own
-    // mix (`ToRotate.mix` is `mixRotate`, …). At setup the parser only reads a mix
-    // whose property is declared, so the two tests agree there — but a timeline
-    // key that omits a mix is read as 1 (`SkeletonJson.js`, every `getValue(…, 1)`),
-    // so a key of `mixRotate: 0` alone on a rotate-only constraint passes the
-    // six-mix test on five mixes nothing reads. [measured] that key poses every
-    // bone exactly where no constraint does, and so does one keying `mixX` 1 on
-    // the same constraint. So this reads the mixes of the declared `to` kinds,
-    // at setup and on every value a key poses.
-    const ikLive = (value: number): boolean => value !== 0;
-    /** A transform timeline's six channels, in frame order, and the `to` kind each one is the mix of. */
-    const TRANSFORM_MIXES = [
-      ['mixRotate', ToRotate],
-      ['mixX', ToX],
-      ['mixY', ToY],
-      ['mixScaleX', ToScaleX],
-      ['mixScaleY', ToScaleY],
-      ['mixShearY', ToShearY],
-    ] as const;
-    /** Which of the six channels `constraint` reads at all: the ones whose `to` kind it declares. */
-    const transformReads = (constraint: TransformConstraintData): boolean[] =>
-      TRANSFORM_MIXES.map(([, kind]) => constraint.properties.some((from) => from.to.some((to) => to instanceof kind)));
-    const ikSwitchedOn = keyedLive(
-      (timeline): timeline is IkConstraintTimeline => timeline instanceof IkConstraintTimeline,
-      // Channel 0 is `mix`; the other four are softness, bend direction, compress and stretch.
-      (_timeline, value, channel) => channel === 0 && ikLive(value),
-    );
-    const transformSwitchedOn = keyedLive(
-      (timeline): timeline is TransformConstraintTimeline => timeline instanceof TransformConstraintTimeline,
-      (timeline, value, channel) => {
-        const constraint = data.constraints[timeline.constraintIndex];
-        return constraint instanceof TransformConstraintData && transformReads(constraint)[channel] && value !== 0;
-      },
-    );
+    // gated green with 0 failures before these two existed. What is live
+    // (`ikLive`), which transform mix is read and the third door
+    // (`invariants.consumerDrivenMix`) are argued where they now live,
+    // `./assertions/constraint_words.ts` and `./assertions/bodies/a48.ts`.
+    check('A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', () => a47IkConstraintNotMutedThroughout(verdicts, constraintFacts(), input.rig));
 
-    // 🔑 **The third door: the consumer drives the mix (issue #784).** A muted
-    // constraint nothing in the file switches on is either a leftover or a dial
-    // a game turns from code, and the two export as the same bytes — so the rig
-    // spec says which, in `invariants.consumerDrivenMix`, and a declared
-    // constraint is not measured here. What that buys is never a pass on it:
-    //
-    //   * every constraint of the kind declared — nothing is left to measure, so
-    //     the rule SKIPs, naming each constraint, the declaration and its `why`;
-    //   * some declared and some not — the rest are measured, and the declared
-    //     ones go on the stats line, which is `A39`'s shape for `deformMayFold`.
-    //     A SKIP there would put "nothing measured" over a rule that measured,
-    //     and the summary would count a measured rule as skipped (`reportLines`'
-    //     four buckets partition the registry, one row per rule).
-    //
-    // ⛔ A declared constraint the file ALSO switches on — resting live, or keyed
-    // above 0 — is refused: the declaration exempts nothing there, which is the
-    // shape `deformMayFold` on a slot with no mesh is refused for. [measured]
-    // (`scratchpad/consumerdriven_runtime.ts`) an ik keyed at mix 0.5 with code
-    // writing 1: code before `state.apply` is overwritten (applied mix 0.5),
-    // code after it wins (1.0) — so which author holds a frame is the order of
-    // the consumer's own loop, a fact about the scene rather than the object.
-    const consumerDriven = (type: 'ik' | 'transform'): Map<string, string> =>
-      new Map((input.rig?.consumerDrivenMix ?? []).filter((e) => e.type === type).map((e) => [e.constraint, e.why]));
-    const declareIt = (type: 'ik' | 'transform', name: string): string =>
-      `or declare that the consumer drives its mix, in the rig spec as invariants.consumerDrivenMix: ` +
-      `[{ "constraint": "${name}", "type": "${type}", "why": … }]`;
-    const declaredButLive = (where: string, how: string): string =>
-      `${where} is declared in the rig spec as invariants.consumerDrivenMix, and the file already switches it on — ` +
-      `${how} — so the declaration exempts nothing; drop the entry. Where code also sets that mix, which of the two ` +
-      'holds on a frame is the order of the consumer\'s own loop: `state.apply` overwrites a mix written before it, ' +
-      'and a mix written after it replaces the key';
-    const consumerSkip = (kind: string, exempt: Array<[string, string]>, animations: number): string =>
-      `every ${kind} constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the ` +
-      `consumer's to set and nothing in this file shows it moving — ${exempt.map(([name, why]) => `"${name}" (why: ${why})`).join('; ')}: ` +
-      `${exempt.length === 1 ? 'it rests' : 'each rests'} muted and ${noneKeysItsMixAbove0(animations)}`;
-
-    check('A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', () => {
-      const NAME = 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT';
-      const constraints = data.constraints.filter((c) => c instanceof IkConstraintData);
-      if (!constraints.length) return skip(NAME, 'the skeleton declares no ik constraint');
-      const declared = consumerDriven('ik');
-      const exempt: Array<[string, string]> = [];
-      for (const constraint of constraints) {
-        const mix = constraint.setupPose.mix;
-        const live = ikLive(mix) || ikSwitchedOn.has(constraint);
-        const why = declared.get(constraint.name);
-        if (why !== undefined) {
-          if (!live) exempt.push([constraint.name, why]);
-          else {
-            fail(
-              NAME,
-              declaredButLive(
-                `ik constraint "${constraint.name}"`,
-                ikLive(mix) ? `it rests at mix ${mix}` : 'an animation keys its mix above 0',
-              ),
-            );
-          }
-          continue;
-        }
-        if (live) continue;
-        fail(
-          NAME,
-          `ik constraint "${constraint.name}" has mix ${mix} at setup and ${noneKeysItsMixAbove0(data.animations.length)}; ` +
-            `update() returns on mix 0, so ${constraint.bones.map((bone) => `"${bone.name}"`).join(' and ')} never ` +
-            `reach${constraint.bones.length === 1 ? 'es' : ''} for "${constraint.target.name}" — ${REST_OR_KEY_ITS_MIX}, ` +
-            declareIt('ik', constraint.name),
-        );
-      }
-      if (exempt.length) stats.ikConsumerDriven = exempt.map(([name]) => name).join(',');
-      if (exempt.length === constraints.length) return skip(NAME, consumerSkip('ik', exempt, data.animations.length));
-    });
-
-    check('A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT', () => {
-      const NAME = 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT';
-      const constraints = data.constraints.filter((c) => c instanceof TransformConstraintData);
-      if (!constraints.length) return skip(NAME, 'the skeleton declares no transform constraint');
-      const declared = consumerDriven('transform');
-      const exempt: Array<[string, string]> = [];
-      for (const constraint of constraints) {
-        const where = `transform constraint "${constraint.name}"`;
-        const reads = transformReads(constraint);
-        const pose = constraint.setupPose;
-        const read = TRANSFORM_MIXES.filter((_, i) => reads[i]).map(([field]) => field);
-        if (read.length === 0) {
-          // No `to` at all: no mix is ever read, so neither remedy below applies.
-          fail(
-            NAME,
-            `${where} drives no property — its \`properties\` name no \`to\` — so no mix it carries is ever read and it ` +
-              'moves nothing; declare the property it should drive',
-          );
-          continue;
-        }
-        const resting = read.filter((field) => pose[field] !== 0);
-        const live = resting.length > 0 || transformSwitchedOn.has(constraint);
-        const why = declared.get(constraint.name);
-        if (why !== undefined) {
-          if (!live) exempt.push([constraint.name, why]);
-          else {
-            fail(
-              NAME,
-              declaredButLive(
-                where,
-                resting.length ? `it rests at ${resting.map((field) => `${field} ${pose[field]}`).join(', ')}` : 'an animation keys its mix above 0',
-              ),
-            );
-          }
-          continue;
-        }
-        if (live) continue;
-        fail(
-          NAME,
-          `${where} drives ${read.map((field) => field.slice(3).replace(/^./, (c) => c.toLowerCase())).join(', ')} and has ` +
-            `${read.map((field) => `${field} ${pose[field]}`).join(', ')} at setup, and ` +
-            `${noneKeysItsMixAbove0(data.animations.length)}; a mix is read only for a property the constraint drives, and ` +
-            `update() skips each one at 0, so nothing ever moves ${constraint.bones.map((bone) => `"${bone.name}"`).join(', ')} — ` +
-            `rest ${read.length === 1 ? read[0] : `one of ${read.join(', ')}`} above 0, or key its mix above 0 in an animation, ` +
-            declareIt('transform', constraint.name),
-        );
-      }
-      if (exempt.length) stats.transformConsumerDriven = exempt.map(([name]) => name).join(',');
-      if (exempt.length === constraints.length) return skip(NAME, consumerSkip('transform', exempt, data.animations.length));
-    });
+    check('A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT', () => a48TransformConstraintNotMutedThroughout(verdicts, constraintFacts(), input.rig));
 
     // --- A40: two sliders on one property, and the later one erases the other -
     //
@@ -3654,12 +2797,11 @@ export function validate(input: ValidateInput): ValidateReport {
       // "Keyed at all" rather than "keyed live", and on purpose: this clause asks
       // whether the mix can MOVE from its setup value, so any mix timeline
       // disqualifies it — the question `keyedBy` answered here, through the one
-      // reading `keyedLive` gives, and unchanged by issue #752.
-      const mixKeyed = keyedLive(
-        (timeline): timeline is SliderMixTimeline => timeline instanceof SliderMixTimeline,
-        () => true,
-      );
-      const authoritative = sliders.filter((s) => s.setupPose.mix >= 1 && !mixKeyed.has(s));
+      // reading `switchedOn` gives (`./assertions/constraint_words.ts`, over
+      // the same facts the moved constraint bodies read — issue #1025), and
+      // unchanged by issue #752.
+      const mixKeyed = switchedOn(constraintFacts(), (timeline) => timeline.kind === 'slider' && timeline.word === 'mix', 1, () => true);
+      const authoritative = sliders.filter((s) => s.setupPose.mix >= 1 && !mixKeyed.has(data.constraints.indexOf(s)));
       if (authoritative.length < 2) {
         return skip(
           'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET',
@@ -3826,113 +2968,7 @@ export function validate(input: ValidateInput): ValidateReport {
     // orders, against 1 call when the same animation is applied over a span.
     // Refusing it would name a reorder that repairs nothing, so the SKIP says
     // what was found instead.
-    check('A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER', () => {
-      const sliders = data.constraints.filter((c) => c instanceof SliderData);
-      if (!sliders.length) {
-        return skip('A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER', 'the skeleton declares no slider constraint');
-      }
-      /**
-       * The runtime class behind a `*Data`, and the word a motion spec writes
-       * for its kind. Taken structurally rather than through
-       * `ConstraintData<T, P>`, whose two type arguments the runtime itself
-       * fills with `any` — which `src/` may not write.
-       */
-      const kindOf = (constraint: { constructor: { name: string } }): { word: string; runtime: string } => {
-        const runtime = constraint.constructor.name.replace(/Data$/, '');
-        return { word: runtime.replace(/Constraint$/, '').toLowerCase(), runtime };
-      };
-      /**
-       * `physicsConstraintWind` -> `wind`, `pathConstraintMix` -> `mix`,
-       * `sliderTime` -> `time`, `ikConstraint` -> `ik`: the `Property` name with
-       * the constraint kind taken off the front, which is the word the motion
-       * spec's own track or block carries. Derived rather than tabulated — a
-       * table here would be one more hand-kept list of the runtime's enum.
-       */
-      const keyedWord = (property: string, kind: string): string => {
-        const rest = property.replace(/^(ik|transform|path|physics|slider)(Constraint)?/, '');
-        return rest === '' ? kind : rest.charAt(0).toLowerCase() + rest.slice(1);
-      };
-      /**
-       * Which constraints one timeline writes into.
-       *
-       * A physics timeline whose animation names no constraint carries
-       * `constraintIndex -1`, and `PhysicsConstraintTimeline.apply` reads that
-       * as every ACTIVE physics constraint whose own data declares that property
-       * global. A motion spec spells it `"physics": "*"` (issue #726) and a
-       * foreign file the empty name; `unnamedPhysicsReach` is the one reading
-       * of it, shared with `A23` and `A34`.
-       */
-      const drivenBy = (timeline: Timeline & ConstraintTimeline): number[] => {
-        if (timeline.constraintIndex >= 0) return [timeline.constraintIndex];
-        return unnamedPhysicsReach(
-          timeline,
-          data.constraints.filter((one) => one instanceof PhysicsConstraintData),
-        ).map((one) => data.constraints.indexOf(one));
-      };
-      let pairs = 0;
-      let resets = 0;
-      for (const driver of sliders) {
-        const driverIndex = data.constraints.indexOf(driver);
-        for (const timeline of driver.animation?.timelines ?? []) {
-          if (!isConstraintTimeline(timeline)) continue;
-          if (timeline instanceof PhysicsConstraintResetTimeline) {
-            resets++;
-            continue;
-          }
-          const property = String(Property[Number(timeline.propertyIds[0].split('|')[0])] ?? timeline.propertyIds[0]);
-          const everyPhysics = timeline.constraintIndex < 0;
-          for (const drivenIndex of drivenBy(timeline)) {
-            const driven = data.constraints[drivenIndex];
-            if (driven === undefined) continue;
-            pairs++;
-            if (drivenIndex > driverIndex) continue;
-            const kind = kindOf(driven);
-            const word = keyedWord(property, kind.word);
-            const animation = `animation "${driver.animation?.name}"`;
-            const reference = `\`${kind.word}.${driven.name}${word === kind.word ? '' : `.${word}`}\``;
-            fail(
-              'A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER',
-              drivenIndex === driverIndex
-                ? `slider "${driver.name}" (constraints[${driverIndex}]) keys its own \`${word}\` in ${animation}. ` +
-                    '`Slider.update` reads `appliedPose.' +
-                    `${word}\` as the ${word === 'mix' ? 'alpha it applies that animation with' : 'time it applies that animation at'}, ` +
-                    'before the animation runs, so the key is written after its only reader and `Posed.resetConstrained` ' +
-                    `puts the pose back before the next frame${
-                      word === 'mix'
-                        ? ' — and at `mix` 0 `update` returns before applying anything at all, so the key that would raise it is unreachable'
-                        : ''
-                    }. Key ${reference} from a slider EARLIER in \`constraints\`, or state the ` +
-                    `\`${word}\` this slider should start at in the rig spec`
-                : `slider "${driver.name}" (constraints[${driverIndex}]) keys ${
-                    word === kind.word ? `the \`${word}\` timeline` : `\`${word}\``
-                  } of ${kind.word} constraint ` +
-                    `"${driven.name}" (constraints[${drivenIndex}]) in ${animation}${
-                      everyPhysics ? ' — the timeline names no constraint, which the runtime reads as every physics constraint declaring that property global —' : ''
-                    }, and "${driven.name}" updates FIRST. The \`constraints\` array is the update order ` +
-                    '(`Skeleton.updateCache` walks it and each constraint\'s `sort` pushes itself as it is reached) and ' +
-                    `\`${kind.runtime}.update\` reads its own \`appliedPose\` before applying anything, so that key is ` +
-                    'written after the only read of it and `Posed.resetConstrained` discards it before the next frame: ' +
-                    `what "${driven.name}" drives is dead at every reading of "${driver.name}"'s dial, although its pose ` +
-                    `still holds the number. Move "${driver.name}" before "${driven.name}" in \`constraints\`, or key ` +
-                    `${reference} from a slider that already is`,
-            );
-          }
-        }
-      }
-      if (pairs === 0) {
-        return skip(
-          'A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER',
-          `no animation applied by one of the ${sliders.length} slider constraint${sliders.length === 1 ? '' : 's'} keys a ` +
-            `property of a constraint, so no slider here drives a constraint${
-              resets === 0
-                ? ''
-                : ` — the ${resets} \`physics\` \`reset\` key(s) they do carry are not a pose write, and [measured] a slider ` +
-                  'applies its animation at one instant, so `PhysicsConstraintResetTimeline` never fires from one in either array order'
-            }`,
-        );
-      }
-      stats.sliderDrivenConstraints = pairs;
-    });
+    check('A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER', () => a42DrivenConstraintsUpdateAfterTheirDriver(verdicts, constraintFacts()));
 
     // --- A38: a per-skin member list and its `skin: true` flag agree --------
     //
@@ -4471,41 +3507,13 @@ export function validate(input: ValidateInput): ValidateReport {
     // region is missing loads as `null` and is in no skin (`A08` names it), so
     // walking the loaded attachments would let the whole rule vanish on exactly
     // the file that is already wrong.
-    check('A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN', () => {
-      if (rawLinks.size === 0) return skip('A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN', SKIP_NO_LINKED_MESH);
-      for (const [join, link] of rawLinks) {
-        if (link.geometry.length === 0) continue;
-        const [skinName, slotName, placeholder] = join.split('\u0000');
-        const at = `skin ${JSON.stringify(skinName)} slot ${JSON.stringify(slotName)} placeholder ${JSON.stringify(placeholder)}`;
-        const keys = link.geometry.map((key) => JSON.stringify(key)).join(', ');
-        // Where the parser looks for `source`, with the two defaults spelled out:
-        // an omitted `skin` is the DEFAULT skin rather than this attachment's own
-        // (`:429`), and an omitted `slot` IS this attachment's own (`:573-579`).
-        const where =
-          `skin ${JSON.stringify(link.skin ?? 'default')}${link.skin === undefined ? ' (the default skin, because no "skin" was stated — never the skin this attachment is written in)' : ''} ` +
-          `slot ${JSON.stringify(link.slot ?? slotName)}${link.slot === undefined ? ' (this attachment\'s own, because no "slot" was stated)' : ''}`;
-        // What the author's own keys describe, printed only when both are
-        // readable — the shape the file states, beside the shape it draws.
-        const states =
-          link.statedVertices === undefined || link.statedTriangles === undefined
-            ? ''
-            : ` (${link.statedVertices} vertices and ${link.statedTriangles} triangles)`;
-        const drawn = loadedLinks.get(join);
-        const loaded =
-          drawn === undefined
-            ? 'what it loaded is not shown here because the round trip produced no attachment for it (A00 owns that)'
-            : `it loaded ${drawn.worldVerticesLength / 2} vertices and ${drawn.triangles.length / 3} triangles`;
-        fail(
-          'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN',
-          `${at} links to ${JSON.stringify(link.source)} and states ${keys}${states}, and a linked mesh has no geometry of ` +
-            'its own. The parser returns from the `source` branch before `readVertices` ' +
-            `(\`SkeletonJson.ts:582-586\`), so ${link.geometry.length === 1 ? 'that key is' : 'those keys are'} read by ` +
-            `nothing at all: what this attachment draws is the geometry of ${JSON.stringify(link.source)} in ${where}, and ` +
-            `${loaded}. Remove ${link.geometry.length === 1 ? 'it' : 'them'}, or remove "source" and author this as a ` +
-            'mesh of its own.',
-        );
-      }
-    });
+    //
+    // 🔒 Since issue #1025 (cut 4c-2) the roster — which links the file
+    // declares, and the SKIP over none — is `./assertions/bodies/a44.ts`'s, and
+    // the clause that refuses a link's own geometry stays here
+    // (`linkGeometryFinding`): a link record has no geometry field, so the keys
+    // exist only in the Spine text.
+    check('A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN', () => a44LinkedMeshStatesNoGeometryOfItsOwn(verdicts, linkFacts()));
 
     // --- A46: a numbered series shows the frame the file states ------------
     //
@@ -5030,59 +4038,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // only rotate — the strip curves and stretches, and never gets fatter. Give one
   // side a different weight and the strip develops a taper that grows with its
   // travel, which is the sort of thing that reads as bad art rather than as a bug.
-  check('A28_RIBBON_ROWS_SHARE_WEIGHTS', () => {
-    if (!skeletonData) return skip('A28_RIBBON_ROWS_SHARE_WEIGHTS', 'the skeleton did not load (A00 owns that failure)');
-    if (!input.rig) return skip('A28_RIBBON_ROWS_SHARE_WEIGHTS', 'no rig info (validating a bare directory), so no mesh is known to be a ribbon');
-    const kinds = input.rig.meshKinds;
-    if (!Object.values(kinds).includes('ribbon')) {
-      // Say WHICH kind of "no ribbon" this is. "declares no ribbon" is true of a
-      // cut with no mesh at all, of one whose meshes are authored geometry, and
-      // of one whose meshes are contours — and the last two are cases where a
-      // reader should know that a mesh went unmeasured on purpose.
-      const unpaired = Object.entries(kinds)
-        .filter(([, kind]) => kind === 'authored' || kind === 'contour' || kind === 'segments')
-        .map(([slot, kind]) => `"${slot}" (${kind})`);
-      return skip(
-        'A28_RIBBON_ROWS_SHARE_WEIGHTS',
-        unpaired.length
-          ? `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut — its mesh slot(s) ${unpaired.join(', ')} have no rows to pair: authored geometry is somebody else's topology, a contour is one silhouette loop, and a segments lattice has cells rather than cross rows`
-          : `the rig "${input.rig.archetype}" declares no ribbon mesh on this cut`,
-      );
-    }
-    const data = skeletonData as NonNullable<typeof skeletonData>;
-    for (const skin of data.skins) {
-      for (const entry of skin.getAttachments()) {
-        const mesh = entry.attachment;
-        if (!(mesh instanceof MeshAttachment) || !mesh.bones) continue;
-        // 🔗 A LINKED mesh's rows are its source's and are paired there. Skipped
-        // for A21's reason and with A21's failure mode behind it: this reads
-        // `meshKinds` at the LINK's slot, which says nothing about the geometry
-        // the link borrowed, so a link sitting in a ribbon's slot from another
-        // skin would be measured twice and a link to a NON-ribbon in a ribbon's
-        // slot would be measured as a strip it was never built as (issue #691).
-        if (linkedMeshes.has(mesh)) continue;
-        if (input.rig.meshKinds[data.slots[entry.slotIndex].name] !== 'ribbon') continue;
-        const perVertex = meshWeightsOf(mesh);
-        if (perVertex.length % 2 !== 0) {
-          fail('A28_RIBBON_ROWS_SHARE_WEIGHTS', `ribbon "${mesh.name}" has ${perVertex.length} vertices; a strip has an even count`);
-          continue;
-        }
-        // Perimeter order: left row i is index i, right row i is its mirror.
-        const rows = perVertex.length / 2;
-        for (let i = 0; i < rows; i++) {
-          const left = perVertex[i];
-          const right = perVertex[perVertex.length - 1 - i];
-          const shape = (v: typeof left) => v.map((w) => `${w.bone}:${w.weight.toFixed(6)}`).join(',');
-          if (shape(left) !== shape(right)) {
-            fail(
-              'A28_RIBBON_ROWS_SHARE_WEIGHTS',
-              `ribbon "${mesh.name}" row ${i} has [${shape(left)}] on one side and [${shape(right)}] on the other; its width would change with the chain`,
-            );
-          }
-        }
-      }
-    }
-  });
+  check('A28_RIBBON_ROWS_SHARE_WEIGHTS', () => a28RibbonRowsShareWeights(verdicts, skeletonData === null ? null : loadedMeshFacts(), input.rig));
 
   // --- A29: inward travel stops where the two masses meet ------------------
   //
