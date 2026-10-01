@@ -113,7 +113,7 @@ import { Plate, readPlate, type RGBA } from '../tools/plate.ts';
 import { pageFootprint, parseAtlasText } from './atlas.ts';
 import { CoreInputError } from './core/index.ts';
 import { computeUvs } from './core/uvs.ts';
-import { MODEL_DOCUMENT_FILE } from './model.ts';
+import { ATLAS_SCALE_LINE, MODEL_DOCUMENT_FILE } from './model.ts';
 import {
   clipSourceOf,
   coreDocumentFacts,
@@ -776,9 +776,12 @@ export function posableFromText(skeletonText: string, atlasText: string, atlasDi
 // states off the document (`coreFacts`): the bone tree, the slot list and the
 // subset's roster, and the page images by the names its `pages` section gives
 // — so with a `rigc-compiled/2` document the atlas file is not needed at all.
-// What only `skeleton.json` holds is still read there: the order the
-// animations and skins are listed in (the emitter's, not the model's) and the
-// stage.
+// Since issue #1026 a `rigc-compiled/3` document also states what only the
+// Spine files held — the order the animations and skins are listed in (the
+// emitter's, not the model's), the stage, and each page's `scale:` line — so
+// a build the core poses reads every fact off its document. A `/2` or `/1`
+// document's reader still takes those off `skeleton.json` and the atlas, and
+// the poser line says so (`unstatedClause`).
 
 /** What `render` and `check` read off a candidate's skeleton besides its pose. */
 export interface SkeletonFacts {
@@ -794,11 +797,19 @@ export interface SkeletonFacts {
   readonly slots: ReadonlyArray<{ name: string; bone: string }>;
   /** `slotSubsetOf` over this skeleton — refused by `SlotSubsetError`. */
   subset(opts: Pick<PoseOptions, 'slots' | 'hidden'> | undefined, skin: string | undefined): SlotSubset | undefined;
+  /**
+   * The `scale:` lines the candidate's atlas declares (`atlasScales`), or, for
+   * a build posed from a `rigc-compiled/3` document, the ones its pages state
+   * (issue #1026); `null` where neither was read — a `/2` or `/1` build drawn
+   * with its atlas gone (issue #1020). `check`'s texture note reads it.
+   */
+  readonly atlasScales: readonly number[] | null;
 }
 
-/** The facts as spine-core loaded them — an export's reading, and every candidate's before issue #1014. */
-export function spineFacts(data: SkeletonData): SkeletonFacts {
+/** The facts as spine-core loaded them — an export's reading, and every candidate's before issue #1014; `atlasText` the atlas it was loaded through. */
+export function spineFacts(data: SkeletonData, atlasText: string | null): SkeletonFacts {
   return {
+    atlasScales: atlasText === null ? null : atlasScales(atlasText),
     animations: data.animations.map((a) => a.name),
     skins: data.skins.map((s) => s.name),
     // `SkeletonJson` copies both header fields across unconditionally, so an omitted extent is `undefined` here, not 0.
@@ -834,7 +845,7 @@ function objectsOf(value: unknown): JsonObject[] {
  * document records, so the file read here is the one `build` wrote and the
  * gate round-tripped.
  */
-export function skeletonFacts(skeletonText: string): SkeletonFacts {
+export function skeletonFacts(skeletonText: string, atlasText: string | null): SkeletonFacts {
   const root = objectOf(JSON.parse(skeletonText));
   const skins = objectsOf(root.skins);
   const slots = objectsOf(root.slots).map((slot) => ({ name: String(slot.name), bone: String(slot.bone) }));
@@ -845,6 +856,7 @@ export function skeletonFacts(skeletonText: string): SkeletonFacts {
     defaultSkin: skins.some((skin) => skin.name === 'default') ? 'default' : null,
   };
   return {
+    atlasScales: atlasText === null ? null : atlasScales(atlasText),
     animations: Object.keys(objectOf(root.animations)),
     skins: skins.map((skin) => String(skin.name)),
     declaresStage: typeof header.width === 'number' && typeof header.height === 'number',
@@ -903,7 +915,7 @@ export class CandidateAtlasError extends Error {}
 function atlasAbsent(atlasPath: string, label: string, why: string): CandidateAtlasError {
   return new CandidateAtlasError(
     `nothing at ${atlasPath}: ${label} is drawn through its atlas (${why}). ` +
-      'Only a rigc build whose skeleton.model.json is a rigc-compiled/2 document, posed by the core, is drawn ' +
+      'Only a rigc build whose skeleton.model.json is a rigc-compiled/2 or /3 document, posed by the core, is drawn ' +
       'without one — it states where each region sits on its page',
   );
 }
@@ -988,31 +1000,39 @@ export function loadCandidate(
   if (choice.core !== null && chosen.document !== null) {
     // A rigc-compiled/2 document names its pages; a /1 document is posed only with its atlas beside it, which names them (`choosePosers`).
     const names = chosen.document.pageNames ?? parseAtlasText(atlasText(choice.why)).pages.map((page) => page.name);
-    return { choice, facts: coreFacts(input.skeletonText, choice.core, chosen.document), pages: pagesNamed(names, input.atlasDir) };
+    return { choice, facts: coreFacts(input.skeletonText, input.atlasText, choice.core, chosen.document), pages: pagesNamed(names, input.atlasDir) };
   }
   const text = atlasText(choice.why);
   requireSpineRuntime(input.label, choice.why);
   const posable = posableFromText(input.skeletonText, text, input.atlasDir);
   data = posable.data;
-  return { choice, facts: spineFacts(posable.data), pages: posable.pages };
+  return { choice, facts: spineFacts(posable.data, text), pages: posable.pages };
 }
 
 /**
  * A candidate's facts when the core poses it (issue #1020): what the model
  * document states, read from it — the bone tree and the slot list (the core
  * poser's own, which `rosterDifference` held to the Spine file's before the
- * core was chosen) and the slot subset's roster (`coreDocumentFacts`) — and,
- * off the skeleton's own JSON, what it does not: the order the animations and
- * the skins are listed in (the Spine file's — the emitter's order, not the
- * model's) and whether a stage is declared (the header's `width`/`height`,
- * which the document has no field for).
+ * core was chosen) and the slot subset's roster (`coreDocumentFacts`). Since
+ * issue #1026 a `rigc-compiled/3` document states the rest too — the order
+ * the animations and skins are listed in (the editor's, `editorOrder`),
+ * whether a stage is declared (`stage`) and its pages' `scale:` lines — and
+ * nothing is read off `skeleton.json` or the atlas. A `/2` or `/1` document
+ * states none of those, so they are read where they were before: the orders
+ * and the stage off the skeleton's own JSON, the scale lines off the atlas
+ * (`null` with it gone) — and the poser line says so (`unstatedClause`).
  */
-function coreFacts(skeletonText: string, poser: Poser, document: CoreDocumentFacts): SkeletonFacts {
-  const spine = skeletonFacts(skeletonText);
+function coreFacts(skeletonText: string, atlasText: string | null, poser: Poser, document: CoreDocumentFacts): SkeletonFacts {
+  const unstated = (): Pick<SkeletonFacts, 'atlasScales' | 'animations' | 'skins' | 'declaresStage'> => {
+    const spine = skeletonFacts(skeletonText, atlasText);
+    return { atlasScales: spine.atlasScales, animations: spine.animations, skins: spine.skins, declaresStage: spine.declaresStage };
+  };
+  const read = document.stated === null ? unstated() : { ...document.stated, atlasScales: document.stated.scales };
   return {
-    animations: spine.animations,
-    skins: spine.skins,
-    declaresStage: spine.declaresStage,
+    atlasScales: read.atlasScales,
+    animations: read.animations,
+    skins: read.skins,
+    declaresStage: read.declaresStage,
     bones: poser.bones,
     slots: poser.slots,
     subset: (opts, skin) => subsetOver(document.subset, opts, skin),
@@ -1330,7 +1350,7 @@ interface SkeletonRosters {
  * carries.
  */
 function skeletonRosters(skeletonText: string): SkeletonRosters {
-  const facts = skeletonFacts(skeletonText);
+  const facts = skeletonFacts(skeletonText, null);
   return { bones: facts.bones, slots: facts.slots, animations: skeletonDurations(objectOf(JSON.parse(skeletonText))), skins: facts.skins };
 }
 
@@ -1419,10 +1439,14 @@ function choosePosers(
         document = coreDocumentFacts(modelText, modelPath, rosters.skins);
         core = { poser: candidate, roster: document.roster };
         // The poser line names where the placement came from when it is not the document's own (issue #1020): a /1 document states none, and the core reads it from the atlas beside it.
+        // And, since issue #1026, where the orders, the stage and the scale lines came from when the document does not state them: a /2 or /1 document's are read off the files beside it.
+        const unstated = document.stated === null ? unstatedClause(resolve(skeletonPath), atlasText === null ? null : resolve(atlasPath)) : '';
         why =
           document.pageNames === null
-            ? `${modelPath} — a ${document.spec} document, which does not state where each region sits on its page: that is read from ${resolve(atlasPath)}`
-            : modelPath;
+            ? `${modelPath} — a ${document.spec} document, which does not state where each region sits on its page: that is read from ${resolve(atlasPath)}; nor ${unstated}`
+            : document.stated === null
+              ? `${modelPath} — a ${document.spec} document, which does not state ${unstated}`
+              : modelPath;
       } else why = `${modelPath} does not describe ${resolve(skeletonPath)}: ${differs}`;
     } catch (err) {
       if (!(err instanceof CoreInputError)) throw err;
@@ -1431,6 +1455,20 @@ function choosePosers(
     }
   }
   return { choice: posersOver(forced, core, why, spineData), document: core === null ? null : document };
+}
+
+/**
+ * What a `rigc-compiled/2` or `/1` document does not state and a render or a
+ * check reads off the files beside it instead (issue #1026), as the poser line
+ * says it: the order the skeleton lists its skins and animations in and its
+ * stage, off `skeleton`, and its pages' `scale:` lines, off `atlas` — or not
+ * at all where no atlas is beside it (issue #1020).
+ */
+function unstatedClause(skeleton: string, atlas: string | null): string {
+  return (
+    `the order its skins and animations are listed in or its stage, read from ${skeleton}, ` +
+    `or its pages' scale: lines, ${atlas === null ? 'not read — no atlas is beside it' : `read from ${atlas}`}`
+  );
 }
 
 /**
@@ -2291,11 +2329,14 @@ export function textureSubstitutionFromText(atlasText: string, atlasDir: string,
  *
  * Narrow on purpose: an indented `scale:` line inside a page block, and nothing
  * else. It is not a second parser for the format and must not grow into one.
+ * The line's pattern is `ATLAS_SCALE_LINE` (`src/model.ts`), which the model
+ * document reads a page's own `scale:` with (issue #1026) — one pattern, so the
+ * figure `check` reports off an atlas and off a document cannot drift apart.
  */
 export function atlasScales(atlasText: string): number[] {
   const out: number[] = [];
   for (const line of atlasText.split(/\r\n|\r|\n/)) {
-    const m = /^[ \t]+scale:[ \t]*([0-9.eE+-]+)[ \t]*$/.exec(line);
+    const m = ATLAS_SCALE_LINE.exec(line);
     if (!m) continue;
     const value = Number(m[1]);
     if (Number.isFinite(value)) out.push(value);

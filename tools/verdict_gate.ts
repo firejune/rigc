@@ -40,12 +40,14 @@
  *
  * ## What the model side is given
  *
- * The stage and each page's `pma`, which the document does not hold until
- * issue #1026 (`src/assertions/model/given.ts`), are read off the build this
- * row gates by `modelGivenOfBuild`: the stage the skeleton header states and
- * each page's `pma` as `parseAtlasText` reads the atlas. The selftest's
- * supplier check gives them the same way. The rig info is the document's own
- * `rig` section (`documentRig`), given to both sides alike (cut 4c-2).
+ * The stage and each page's `pma`: a `rigc-compiled/3` document states both
+ * (issue #1026) and is given neither (`modelGivenOf`); for a `/2` or `/1`
+ * document, which does not hold them (`src/assertions/model/given.ts`), they
+ * are read off the build this row gates by `modelGivenOfBuild`: the stage the
+ * skeleton header states and each page's `pma` as `parseAtlasText` reads the
+ * atlas. The selftest's supplier check gives them the same way. The rig info is
+ * the document's own `rig` section (`documentRig`), given to both sides alike
+ * (cut 4c-2).
  *
  * Since cut 4c-2, beside the walk: the four families that cut added, compared
  * fact by fact, and every derivation the model side makes counted against the
@@ -67,7 +69,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { MODEL_DOCUMENT_FILE } from '../src/model.ts';
+import { MODEL_DOCUMENT_FILE, MODEL_DOCUMENT_SPEC } from '../src/model.ts';
 import { parseAtlasText } from '../src/atlas.ts';
 import { readModel } from '../src/core/index.ts';
 import { reportLines, runtimeFacts, validate, type ValidateProfile, type ValidateReport } from '../src/validate.ts';
@@ -150,6 +152,24 @@ export function modelGivenOfBuild(skeletonText: string, atlasText: string): Mode
   };
 }
 
+/**
+ * What the model side is to be given beside `modelText` (issue #1026): nothing
+ * for a `rigc-compiled/3` document, which states the stage and each page's
+ * `pma` itself and is refused `given` beside it (`refuseGivenBeside` in
+ * `src/assertions/model/given.ts`); for a `/2` or `/1` document — or a text
+ * that is not a document, which the model side refuses at its parse — the
+ * build's own, `modelGivenOfBuild`.
+ */
+export function modelGivenOf(modelText: string, skeletonText: string, atlasText: string): ModelGiven | undefined {
+  let spec: unknown;
+  try {
+    spec = (JSON.parse(modelText) as { spec?: unknown }).spec;
+  } catch {
+    spec = undefined;
+  }
+  return spec === MODEL_DOCUMENT_SPEC ? undefined : modelGivenOfBuild(skeletonText, atlasText);
+}
+
 /** The fact families cut 4c-1 added, as one supplier states them — `runtimeFacts`'s, or the model side's (`modelFactSet`). */
 export interface FactSet {
   skinEntries: SkinEntryFacts;
@@ -163,7 +183,7 @@ export interface FactSet {
 type ModelSupplyOf<K extends keyof typeof MODEL_SUPPLY> = (typeof MODEL_SUPPLY)[K];
 
 /** The model side's `FactSet` over a document and what it is given — the suppliers `validateModel` runs, called the same way. */
-export function modelFactSet(modelText: string, given: ModelGiven, supply: typeof MODEL_SUPPLY = MODEL_SUPPLY): FactSet {
+export function modelFactSet(modelText: string, given: ModelGiven | undefined, supply: typeof MODEL_SUPPLY = MODEL_SUPPLY): FactSet {
   const read: ReadDocument = { doc: readModel(modelText), json: JSON.parse(modelText) as Record<string, unknown> };
   const input: ModelValidateInput = { modelText, atlasDir: '', profile: 'spine', given };
   return {
@@ -225,7 +245,7 @@ export function compareFacts(skeletonText: string, atlasText: string, modelText:
   if (runtime === null) return null;
   const animations = askedAnimations(modelText);
   const spine = factSpellings(runtime, animations);
-  const model = factSpellings(modelFactSet(modelText, modelGivenOfBuild(skeletonText, atlasText)), animations);
+  const model = factSpellings(modelFactSet(modelText, modelGivenOf(modelText, skeletonText, atlasText)), animations);
   return Object.keys(spine).map((family) => ({ family, spine: spine[family], model: model[family], identical: spine[family] === model[family] }));
 }
 
@@ -256,7 +276,7 @@ export function verdictRow(name: string, outDir: string): VerdictRow {
   const rig = documentRig(modelText);
   for (const profile of VERDICT_PROFILES) {
     const spine = validate({ skeletonText, atlasText, atlasDir: outDir, profile, ...(rig === undefined ? {} : { rig }) });
-    const model = validateModel({ modelText, atlasDir: outDir, profile, given: modelGivenOfBuild(skeletonText, atlasText), ...(rig === undefined ? {} : { rig }) });
+    const model = validateModel({ modelText, atlasDir: outDir, profile, given: modelGivenOf(modelText, skeletonText, atlasText), ...(rig === undefined ? {} : { rig }) });
     const spineParse = spine.failures.find((f) => f.assertion === 'A00_ROUNDTRIP_PARSE');
     const modelParse = model.failures.find((f) => f.assertion === A00_MODEL_READ || f.assertion === A00_MODEL_REGIONS_ON_PAGES);
     if (spineParse !== undefined && modelParse !== undefined) {

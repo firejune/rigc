@@ -53,7 +53,7 @@
  * reference would come back out of the model that way.
  */
 import { CompileError } from './errors.ts';
-import { inEditorKeyOrder, PARSER_DEFAULTS, withoutParserDefaults } from './keyorder.ts';
+import { inEditorKeyOrder, PARSER_DEFAULTS, PHYSICS_PARAMS, UNSTATED_REFERENCE_SCALE, withoutParserDefaults } from './keyorder.ts';
 import type {
   CompiledAnimation,
   CompiledModel,
@@ -418,36 +418,14 @@ export function emitSlots(slots: readonly ModelSlot[]): SpineSlot[] {
 }
 
 /**
- * The `referenceScale` a header stating none is read as: the parser's
- * `getValue(skeletonMap, "referenceScale", 100)`, taken from
- * `PARSER_DEFAULTS.header` (which the selftest loads rather than believes) so
- * the model and the omission pass cannot name two different numbers.
- * `compile.ts` gives the model this value when the rig spec states none.
+ * The `referenceScale` a header stating none is read as, and a physics
+ * constraint's parameters with their parser defaults, in the physics table's
+ * order. Defined in `src/keyorder.ts` beside the parser's other defaults since
+ * issue #1026 — the compiler reads both, and the entry that compiles a model
+ * without the emitter reads nothing from this module — and re-exported here
+ * under the names they always had.
  */
-export const UNSTATED_REFERENCE_SCALE: number = ((): number => {
-  const v = PARSER_DEFAULTS.header?.referenceScale;
-  if (typeof v !== 'number') throw new Error(`internal: PARSER_DEFAULTS.header.referenceScale is ${JSON.stringify(v)}, not a number`);
-  return v;
-})();
-
-/**
- * A physics constraint's parameters and their parser defaults
- * (`SkeletonJson.js:295-319`), in the order the motion spec's physics table
- * writes them. The same values are `PARSER_DEFAULTS['physics constraint']`'s;
- * this list is also an ORDER, which that row is not, and `compile.ts` reads it
- * for the names the table copies.
- */
-export const PHYSICS_PARAMS: ReadonlyArray<readonly [string, number]> = [
-  ['inertia', 0.5],
-  ['strength', 100],
-  ['damping', 0.85],
-  ['mass', 1],
-  ['wind', 0],
-  ['gravity', 0],
-  ['mix', 1],
-  ['fps', 60],
-  ['limit', 5000],
-];
+export { PHYSICS_PARAMS, UNSTATED_REFERENCE_SCALE };
 
 /** The five components a physics constraint drives; each reads 0 in its absence. */
 const PHYSICS_COMPONENT_FIELDS = ['x', 'y', 'rotate', 'scaleX', 'shearX'] as const;
@@ -773,7 +751,6 @@ export function emitAnimations(
  *
  *   - `spine` — the spine-core line the file is written for (`SPINE_VERSION`
  *     in `compile.ts`).
- *   - `stage` — the setup-pose box, four fields or none (`null`), issue #578.
  *   - `fps`, `images`, `audio` — the rig spec's header bookkeeping as
  *     stated, `images` spelled relative to `--out` (`skeletonImagesPath`);
  *     each only when present.
@@ -781,11 +758,13 @@ export function emitAnimations(
  * `referenceScale` is not here: wind and gravity act over it, so a posing
  * core reads it, and the model holds it (`CompiledModel.referenceScale`,
  * issue #958). The emitter writes the model's value into the header, where
- * `withoutParserDefaults` drops it at the parser's 100.
+ * `withoutParserDefaults` drops it at the parser's 100. Nor is the stage —
+ * the setup-pose box, four fields or none (issue #578) — since issue #1026:
+ * `render` and `check` read whether one is declared, and the model holds it
+ * (`CompiledModel.stage`), so the emitter writes the model's.
  */
 export interface SkeletonHeader {
   spine: string;
-  stage: { x: number; y: number; width: number; height: number } | null;
   fps?: number;
   images?: string;
   audio?: string | null;
@@ -797,7 +776,7 @@ export interface SkeletonOrder extends EditorOrder {
 }
 
 /** The model fields a skeleton is written from. */
-export type SkeletonSource = Pick<CompiledModel, 'referenceScale' | 'bones' | 'slots' | 'skins' | 'constraints' | 'events' | 'animations'>;
+export type SkeletonSource = Pick<CompiledModel, 'referenceScale' | 'stage' | 'bones' | 'slots' | 'skins' | 'constraints' | 'events' | 'animations'>;
 
 /**
  * The Spine 4.3 skeleton of a compiled model: the emitter's one entry, and
@@ -821,8 +800,9 @@ export type SkeletonSource = Pick<CompiledModel, 'referenceScale' | 'bones' | 's
  * throws, so a refusal raised here is raised by a section emitter, in the
  * order above.
  *
- * `referenceScale` is the model's, written always and dropped by the
- * parser-default pass at 100 — so a rig stating none and a rig stating 100
+ * The stage (`model.stage`, issue #1026) is written as the model holds it,
+ * its four fields together or none. `referenceScale` is the model's, written
+ * always and dropped by the parser-default pass at 100 — so a rig stating none and a rig stating 100
  * write the same bytes, as they did when the header carried the stated value.
  *
  * What the emitter adds that the model does not hold is `header`
@@ -831,11 +811,11 @@ export type SkeletonSource = Pick<CompiledModel, 'referenceScale' | 'bones' | 's
  */
 export function emitSkeleton(model: SkeletonSource, header: SkeletonHeader, order: SkeletonOrder): SpineSkeletonJson {
   const head: SpineSkeletonJson['skeleton'] = { spine: header.spine };
-  if (header.stage !== null) {
-    head.x = header.stage.x;
-    head.y = header.stage.y;
-    head.width = header.stage.width;
-    head.height = header.stage.height;
+  if (model.stage !== null) {
+    head.x = model.stage.x;
+    head.y = model.stage.y;
+    head.width = model.stage.width;
+    head.height = model.stage.height;
   }
   if (header.fps !== undefined) head.fps = header.fps;
   head.referenceScale = model.referenceScale;

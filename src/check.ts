@@ -65,7 +65,6 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import {
-  atlasScales,
   BACKGROUND,
   frameGeometry,
   PROTOCOL_FPS,
@@ -1615,11 +1614,14 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     );
   }
 
-  // `null` when the candidate has no atlas to read them off (issue #1020): the
-  // model document a build is drawn from without one states where each region
-  // sits, not the `scale:` line, so the report says it was not read rather than
-  // that none was declared.
-  const candidateScales = options.atlasText === null ? null : atlasScales(options.atlasText);
+  // The candidate's `scale:` lines as its facts read them: off its atlas, or —
+  // a build posed from a `rigc-compiled/3` document — off the pages the
+  // document states (issue #1026), so a build drawn with its atlas gone reports
+  // them as it does with the atlas there. `null` when neither was read (issue
+  // #1020): a `/2` or `/1` document states where each region sits and not the
+  // `scale:` line, so with its atlas gone the report says the line was not read
+  // rather than that none was declared.
+  const candidateScales = facts.atlasScales === null ? null : [...facts.atlasScales];
   if (substitution === null) {
     // ⭐ Named at the top of every report rather than only when it is measured.
     // Issue #171's finding was not that the floor was mis-measured; it was that

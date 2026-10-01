@@ -468,6 +468,46 @@ export const PARSER_DEFAULTS: ParserDefaultTable = {
   'event key': TIME_ONLY,
 };
 
+/**
+ * The `referenceScale` a header stating none is read as: the parser's
+ * `getValue(skeletonMap, "referenceScale", 100)`, taken from
+ * `PARSER_DEFAULTS.header` (which the selftest loads rather than believes) so
+ * the model and the omission pass cannot name two different numbers.
+ * `compile.ts` gives the model this value when the rig spec states none.
+ *
+ * Here rather than in `src/emit_spine.ts`, which defined it until issue
+ * #1026: the compiler reads it to fill the model, and the entry that compiles
+ * a model without calling the Spine emitter (`compileModel`) reads nothing
+ * from the emitter's module. `src/emit_spine.ts` re-exports it.
+ */
+export const UNSTATED_REFERENCE_SCALE: number = ((): number => {
+  const v = PARSER_DEFAULTS.header?.referenceScale;
+  if (typeof v !== 'number') throw new Error(`internal: PARSER_DEFAULTS.header.referenceScale is ${JSON.stringify(v)}, not a number`);
+  return v;
+})();
+
+/**
+ * A physics constraint's parameters and their parser defaults
+ * (`SkeletonJson.js:295-319`), in the order the motion spec's physics table
+ * writes them. The same values are `PARSER_DEFAULTS['physics constraint']`'s;
+ * this list is also an ORDER, which that row is not: `compile.ts` reads it for
+ * the names the table copies, and `src/emit_spine.ts` for the order the table's
+ * constraint is written in and the defaults it leaves out. Here, beside the
+ * parser's other defaults, since issue #1026 — for the reason
+ * `UNSTATED_REFERENCE_SCALE` gives.
+ */
+export const PHYSICS_PARAMS: ReadonlyArray<readonly [string, number]> = [
+  ['inertia', 0.5],
+  ['strength', 100],
+  ['damping', 0.85],
+  ['mass', 1],
+  ['wind', 0],
+  ['gravity', 0],
+  ['mix', 1],
+  ['fps', 60],
+  ['limit', 5000],
+];
+
 /** `….rotate[3]` → its stem and 3; anything that does not end in an index → null. */
 function trailingIndex(path: string): { stem: string; index: number } | null {
   const m = /^(.*)\[(\d+)\]$/.exec(path);

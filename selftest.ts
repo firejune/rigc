@@ -179,6 +179,7 @@ import { pictureLayout, paneLabels, slotRows, writeCheckPictures } from './src/c
 import {
   buildAtlasText,
   compile,
+  compileModel,
   CompileError,
   deformGeometryOf,
   EDITOR_NAME_FOLD,
@@ -269,6 +270,7 @@ import {
   type ModelPathAttachment,
   type ModelVertexAttachment,
   type ModelVertices,
+  type ModelPage,
   pagesOfAtlas,
 } from './src/model.ts';
 import { computeWorldTransforms, toBoneLocal, toWorld, type BoneTransform } from './src/transform.ts';
@@ -513,7 +515,7 @@ import { modelPolygonFacts } from './src/assertions/model/vertex_polygons.ts';
 import { modelLinkFacts } from './src/assertions/model/linked_meshes.ts';
 import { modelConstraintFacts } from './src/assertions/model/constraints.ts';
 import { verdictLines, verdictMain, walkSpelling, type VerdictRow } from './tools/verdict_gate.ts';
-import { compareFacts, modelGivenOfBuild } from './tools/verdict_gate.ts';
+import { compareFacts, modelGivenOf } from './tools/verdict_gate.ts';
 import { modelRegionJoinsWith } from './src/assertions/model/region_joins.ts';
 import { compareRigFacts, modelRigFacts, RIG_FACT_FAMILIES, rigFactsDerivations, rigFactsSpelling, sumTallies, type DerivationTally, type RigFactFamily, type RigFacts } from './tools/rig_facts.ts';
 import {
@@ -947,14 +949,16 @@ function compareSuppliers(input: ValidateInput, spine: ValidateReport, modelText
  * document, the call's directory and profile, the rig info the call carries —
  * `validate()` is handed it too, and A13, A15 and A19 read it — and what the
  * document does not hold, given off the call's own pair by the instrument's
- * function (`modelGivenOfBuild`): the stage its skeleton header states and each
- * atlas page's `pma`. A pair whose skeleton is not JSON gives nothing, and the
- * rules that need it refuse by name.
+ * function (`modelGivenOf`): for a `rigc-compiled/2` or `/1` document the stage
+ * its skeleton header states and each atlas page's `pma`, and for a `/3`
+ * document, which states both (issue #1026), nothing. A pair whose skeleton is
+ * not JSON gives nothing, and the rules that need it refuse by name.
  */
 function modelInputOf(input: ValidateInput, modelText: string): Parameters<typeof validateModel>[0] {
-  let given: ReturnType<typeof modelGivenOfBuild> | undefined;
+  let given: ReturnType<typeof modelGivenOf>;
   try {
-    given = modelGivenOfBuild(input.skeletonText, input.atlasText);
+    // Nothing for a rigc-compiled/3 document, which states both itself (issue #1026); the pair's own for a /2 or /1 one.
+    given = modelGivenOf(modelText, input.skeletonText, input.atlasText);
   } catch {
     given = undefined;
   }
@@ -1209,8 +1213,9 @@ class SupplierCheck {
  * `pages` as the writer spells them from the atlas the call was handed —
  * `pagesOfAtlas`, the one function `build` writes that section with — so the
  * wrongness reaches the model through the section's own derivation rather than
- * a hand-written copy of each edit. `pma` is not in the section; the model side
- * is given it off the same atlas (`modelGivenOfBuild`).
+ * a hand-written copy of each edit. Since issue #1026 each page's `pma` and
+ * `scale` are in the section too, so an edit of either reaches the model the
+ * same way — `M15`'s `pma: true` among them.
  */
 const ATLAS_EDIT_TWIN: ModelTwin = {
   forge: (doc, call) => {
@@ -2280,9 +2285,9 @@ const MUTANTS: Mutant[] = [
     origin: 'the renderer does not un-premultiply, so every part gains a black rim',
     expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
     mutate: (a) => ({ ...a, atlasText: a.atlasText.replace('pma: false', 'pma: true') }),
-    // No twin (issue #1025, cut 4c-1): `pma` is not in the document until #1026, so this pair's pages are the
-    // document's own and the supplier check compares it as population 2 — the model side given `pma` off the
-    // pair, as every caller gives it — rather than as an after-emit break.
+    // Since issue #1026 `pma` is in the document's `pages`, so this pair is no longer the model's own and is an after-emit
+    // break: its twin rewrites the document's pages from the edited atlas, which then states `pma: true` itself.
+    twin: ATLAS_EDIT_TWIN,
   },
 
   // ─── the timeline groups the walker used to skip ─────────────────────────
@@ -68483,7 +68488,7 @@ function runPoseOracleSuite(): number {
 
 // Its own statement, so the suite lands as one hunk (the convention the
 // slider-reader suite states at its imports).
-import { activeBones, CORE_CONSTRAINT_KINDS, CORE_DUMPER, CoreInputError, foldBlend, foldInheritMode, gridRound, NOT_ADMITTED, poseSetup, readBlend, readColour, readModel, shownAttachment, type CompiledDocument, type CoreBlendMode, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
+import { activeBones, CORE_CONSTRAINT_KINDS, CORE_DUMPER, CoreInputError, foldBlend, foldInheritMode, gridRound, NOT_ADMITTED, poseSetup, readBlend, readColour, readModel, shownAttachment, type CompiledDocument, type CoreStated, type CoreBlendMode, type CorePlant, type SetupEvaluator, type ShownResolution } from './src/core/index.ts';
 import { regionCorners, worldVertices, type VertexPoser } from './src/core/vertices.ts';
 import { clipShapeOf, clipThrough, clipTriangles, convexPieces, signedArea2, type ClipReading, type ClipShape, type TriangleClipper } from './src/core/clipping.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
@@ -79791,10 +79796,10 @@ function withoutAddedModelDocument(base: HashesDocument, after: HashesDocument, 
       if (now === undefined || now.sha256 === was.sha256 || dirs.length !== after.recipes.length) return r;
       const written = join(gateWork, dirs[i], 'out', MODEL_DOCUMENT_FILE);
       if (!existsSync(written)) return r;
-      // The two transitions excused, each alone and together: #935's rectangles and #1016's pages (with its spec).
+      // The three transitions excused, in the order they happened: #1026's stage, editor order and page flags (with its spec), then #1016's pages (with its), then #935's rectangles.
       const text = readFileSync(written, 'utf8');
       const unpaged = withoutPages(text);
-      const candidates = [withoutAtlasRects(text), unpaged, unpaged === null ? null : withoutAtlasRects(unpaged)];
+      const candidates = [withoutStated(text), unpaged, unpaged === null ? null : withoutAtlasRects(unpaged)];
       for (const stripped of candidates) {
         if (stripped === null) continue;
         const bytes = Buffer.from(stripped, 'utf8');
@@ -79839,13 +79844,13 @@ function withoutAtlasRects(text: string): string | null {
 }
 
 /**
- * A `rigc-compiled/2` text with its `pages` section removed and its `spec`
- * set back to `rigc-compiled/1`, spelled back the way `modelDocument` spells
- * — the document as it was before issue #1016 — or `null` when the text is
- * not a `/2` document with a `pages` section, or is not what it parses to
- * spelled back.
+ * A `rigc-compiled/3` text with its `stage` and `editorOrder` sections and
+ * every page's `pma` and `scale` removed and its `spec` set back to
+ * `rigc-compiled/2`, spelled back the way `modelDocument` spells — the
+ * document as it was before issue #1026 — or `null` when the text is not a
+ * `/3` document carrying all of them, or is not what it parses to spelled back.
  */
-function withoutPages(text: string): string | null {
+function withoutStated(text: string): string | null {
   let doc: unknown;
   try {
     doc = JSON.parse(text);
@@ -79854,10 +79859,77 @@ function withoutPages(text: string): string | null {
   }
   if (`${JSON.stringify(doc, null, 2)}\n` !== text) return null;
   const record = doc as Record<string, unknown>;
-  if (record.spec !== MODEL_DOCUMENT_SPEC || !('pages' in record)) return null;
+  if (record.spec !== MODEL_DOCUMENT_SPEC || !('stage' in record) || !('editorOrder' in record) || !Array.isArray(record.pages)) return null;
+  const pages = record.pages as Array<Record<string, unknown>>;
+  if (pages.some((page) => !('pma' in page) || !('scale' in page))) return null;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (key === 'stage' || key === 'editorOrder') continue;
+    out[key] = key === 'spec' ? 'rigc-compiled/2' : key === 'pages' ? pages.map(({ pma: _pma, scale: _scale, ...page }) => page) : value;
+  }
+  return `${JSON.stringify(out, null, 2)}\n`;
+}
+
+/**
+ * A `rigc-compiled/2` text — or a `/3` one, first taken back to `/2`
+ * (`withoutStated`) — with its `pages` section removed and its `spec` set back
+ * to `rigc-compiled/1`, spelled back the way `modelDocument` spells — the
+ * document as it was before issue #1016 — or `null` when the text is not such
+ * a document with a `pages` section, or is not what it parses to spelled back.
+ */
+function withoutPages(given: string): string | null {
+  let text = given;
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (`${JSON.stringify(doc, null, 2)}\n` !== text) return null;
+  if ((doc as Record<string, unknown>).spec === MODEL_DOCUMENT_SPEC) {
+    const v2 = withoutStated(text);
+    if (v2 === null) return null;
+    text = v2;
+    doc = JSON.parse(text);
+  }
+  const record = doc as Record<string, unknown>;
+  if (record.spec !== 'rigc-compiled/2' || !('pages' in record)) return null;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(record)) if (key !== 'pages') out[key] = key === 'spec' ? 'rigc-compiled/1' : value;
   return `${JSON.stringify(out, null, 2)}\n`;
+}
+
+/**
+ * Every way a `rigc-compiled/3` document's stated fields differ from the
+ * Spine files written beside it (issue #1026), each starting with the field's
+ * name: `stage` against the header's `x`, `y`, `width`, `height` (all four or
+ * none), `editorOrder.animations` against the keys of `animations` in the
+ * file's order, `editorOrder.skins` against `skins[]` and each one's
+ * `attachments` keys, `pages[i].pma` against spine-core's `TextureAtlas`, and
+ * the pages' `scale` statements against `atlasScales` over the atlas text —
+ * the readings `render` and `check` made off the files before the document
+ * stated them.
+ */
+function statedDifferences(doc: CompiledDocument, skeletonText: string, atlasText: string): string[] {
+  if (doc.stated === null) return [`stated: a ${doc.spec} document states no stage or editor order`];
+  const out: string[] = [];
+  const file = JSON.parse(skeletonText) as { skeleton?: Record<string, unknown>; skins?: Array<{ name: string; attachments?: Record<string, unknown> }>; animations?: Record<string, unknown> };
+  const head = file.skeleton ?? {};
+  const fileStage = ['x', 'y', 'width', 'height'].some((k) => k in head) ? { x: head.x, y: head.y, width: head.width, height: head.height } : null;
+  if (JSON.stringify(doc.stated.stage) !== JSON.stringify(fileStage)) out.push(`stage is ${JSON.stringify(doc.stated.stage)} in the document and ${JSON.stringify(fileStage)} in skeleton.json's header`);
+  const animations = Object.keys(file.animations ?? {});
+  if (JSON.stringify(doc.stated.editorOrder.animations) !== JSON.stringify(animations)) out.push(`editorOrder.animations is [${doc.stated.editorOrder.animations.join(', ')}] and skeleton.json keys [${animations.join(', ')}]`);
+  const skins = (file.skins ?? []).map((k) => ({ name: k.name, slots: Object.keys(k.attachments ?? {}) }));
+  if (JSON.stringify(doc.stated.editorOrder.skins) !== JSON.stringify(skins)) out.push(`editorOrder.skins is ${JSON.stringify(doc.stated.editorOrder.skins).slice(0, 160)} and skeleton.json lists ${JSON.stringify(skins).slice(0, 160)}`);
+  const pages = doc.pages ?? [];
+  const atlasPages = new TextureAtlas(atlasText).pages;
+  if (pages.length !== atlasPages.length) out.push(`pages: the document states ${pages.length} page(s), the atlas has ${atlasPages.length}`);
+  pages.forEach((page, i) => {
+    if (atlasPages[i] !== undefined && page.pma !== atlasPages[i].pma) out.push(`pages[${i}].pma is ${JSON.stringify(page.pma)} in the document and ${atlasPages[i].pma} in spine-core's reading of the atlas`);
+  });
+  const scales = pages.flatMap((page) => (typeof page.scale === 'number' ? [page.scale] : []));
+  if (JSON.stringify(scales) !== JSON.stringify(atlasScales(atlasText))) out.push(`pages scale: the document states [${scales.join(', ')}] and the atlas's scale: lines read [${atlasScales(atlasText).join(', ')}]`);
+  return out;
 }
 
 /** Each page-region leaf a trim moves, `.pages[p].regions[j].<key>`, for the first region of `name` in a written document's `pages` — the four numbers MG01 and MG02 expect to move with the record's rectangle (issue #1016). */
@@ -80565,9 +80637,10 @@ function runRenderHashes(args: string[]): { status: number | null; stdout: strin
  * --geometry` and the in-process extras), and three `base` runs over the
  * gallery's seven for RH04 and RH05, and RC11–RC14's CLI runs on the
  * smallest gallery build (eleven over the tree and six over three planted
- * copies for RC11–RC12; nine over the tree and five over three planted copies
- * for RC13–RC14, with the in-process substitution of every gallery row's first
- * and middle frames through both atlas readers). The corpus's nineteen rows are
+ * copies for RC11–RC12; eleven over the tree and five over three planted
+ * copies for RC13–RC14, with the in-process substitution of every gallery
+ * row's first and middle frames through both atlas readers; three over two
+ * planted copies for RC17). The corpus's nineteen rows are
  * never run here; that is PR and CI-artifact material.
  */
 function runRenderHashesSuite(): number | null {
@@ -80580,7 +80653,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH07, RC01–RC14 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH07, RC01–RC17 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -81077,9 +81150,12 @@ function runRenderHashesSuite(): number | null {
       const stale = join(dirname(first.out), 'rc03-stale');
       cpSync(first.out, stale, { recursive: true });
       const modelPath = join(stale, MODEL_DOCUMENT_FILE);
-      const model = JSON.parse(readFileSync(modelPath, 'utf8')) as { animations: Array<{ name: string }> };
+      const model = JSON.parse(readFileSync(modelPath, 'utf8')) as { animations: Array<{ name: string }>; editorOrder?: { animations: string[] } };
       if (model.animations.length > 0) {
-        model.animations[0].name = `${model.animations[0].name}-renamed`;
+        // A document consistent in itself (issue #1026: its editor order names the renamed animation too), and another build's.
+        const was = model.animations[0].name;
+        model.animations[0].name = `${was}-renamed`;
+        if (model.editorOrder !== undefined) model.editorOrder.animations = model.editorOrder.animations.map((n) => (n === was ? `${was}-renamed` : n));
         writeFileSync(modelPath, `${JSON.stringify(model, null, 2)}\n`);
         const staleRun = render(stale, 'stale');
         const staleLine = poserLine(staleRun.run.stdout);
@@ -81474,8 +81550,11 @@ function runRenderHashesSuite(): number | null {
       for (const f of readdirSync(base.outDir)) if (f === 'skeleton.atlas' || f.endsWith('.png')) cpSync(join(base.outDir, f), join(away, f));
       printed.push({ label: 'atlas-elsewhere', line: renderLine('atlas-away', join(base.outDir, 'skeleton.json'), ['--atlas', join(away, 'skeleton.atlas')]) });
       const stale = copyOf('stale', (dir) => {
-        const model = JSON.parse(readFileSync(join(dir, MODEL_DOCUMENT_FILE), 'utf8')) as { animations: Array<{ name: string }> };
-        model.animations[0].name = `${model.animations[0].name}-renamed`;
+        const model = JSON.parse(readFileSync(join(dir, MODEL_DOCUMENT_FILE), 'utf8')) as { animations: Array<{ name: string }>; editorOrder?: { animations: string[] } };
+        // A document consistent in itself (issue #1026: its editor order names the renamed animation too), and another build's.
+        const was = model.animations[0].name;
+        model.animations[0].name = `${was}-renamed`;
+        if (model.editorOrder !== undefined) model.editorOrder.animations = model.editorOrder.animations.map((n) => (n === was ? `${was}-renamed` : n));
         writeFileSync(join(dir, MODEL_DOCUMENT_FILE), `${JSON.stringify(model, null, 2)}\n`);
       });
       printed.push({ label: 'another-build', line: renderLine('stale', stale) });
@@ -81626,8 +81705,8 @@ function runRenderHashesSuite(): number | null {
         rows += 1;
         frames += [...digests.keys()].filter((k) => /\/f\d+$/.test(k)).length;
         if (i === 0) {
-          const doc = JSON.parse(modelText) as Record<string, unknown>;
-          const unpaged = `${JSON.stringify(Object.fromEntries(Object.entries(doc).filter(([k]) => k !== 'pages').map(([k, v]) => [k, k === 'spec' ? 'rigc-compiled/1' : v])), null, 2)}\n`;
+          // The row's own document as rigc-compiled/1 (`withoutPages`: since issue #1026 its stage, editor order and page flags go too, which /1 does not have).
+          const unpaged = withoutPages(modelText) ?? '';
           dropped = refusalOf(() => corePoser(unpaged, '', join(out, MODEL_DOCUMENT_FILE), skeletonOf(out)));
           if (!dropped.includes('rigc-compiled/1') || !dropped.includes('pages section') || !dropped.includes('no atlas was given')) probes.push(`${name}: a document with its pages dropped and no atlas read ${JSON.stringify(dropped)}, not the by-name refusal`);
           const shifted = JSON.parse(modelText) as { pages: Array<{ regions: Array<{ x: number }> }> };
@@ -81650,10 +81729,7 @@ function runRenderHashesSuite(): number | null {
         // The same two plants beside the atlas, through the render's own choice.
         const { data, pages } = loadPosable(join(out, 'skeleton.json'), atlasPath, out);
         const swap = (edit: (text: string) => string) => (modelText: string, atlasText: string, where: string, skeleton: { path: string; bytes: Uint8Array }): Poser => corePoser(edit(modelText), atlasText, where, skeleton);
-        const unpage = (text: string): string => {
-          const doc = JSON.parse(text) as Record<string, unknown>;
-          return `${JSON.stringify(Object.fromEntries(Object.entries(doc).filter(([k]) => k !== 'pages').map(([k, v]) => [k, k === 'spec' ? 'rigc-compiled/1' : v])), null, 2)}\n`;
-        };
+        const unpage = (text: string): string => withoutPages(text) ?? '';
         const v1 = candidatePosers(data, join(out, 'skeleton.json'), atlasPath, undefined, swap(unpage));
         if (v1.core === null) probes.push(`${name}: a /1 document beside its atlas was not posed by the core — ${v1.why}`);
         else {
@@ -82059,9 +82135,9 @@ function runRenderHashesSuite(): number | null {
       {
         label: 'core-read',
         file: join('src', 'render.ts'),
-        // Since issue #1020 the core path's facts are `coreFacts`' (the document's, and the skeleton's own JSON for what it does not state).
-        from: 'return { choice, facts: coreFacts(input.skeletonText, choice.core, chosen.document),',
-        to: 'return { choice, facts: spineFacts(spineData()),',
+        // Since issue #1020 the core path's facts are `coreFacts`' (the document's, and the skeleton's own JSON for what it does not state); #1026 gave both readers the atlas text, for its scale lines.
+        from: 'return { choice, facts: coreFacts(input.skeletonText, input.atlasText, choice.core, chosen.document),',
+        to: 'return { choice, facts: spineFacts(spineData(), input.atlasText),',
         steps: ['render'],
         expect: 'SPINE_CORE_LOADED',
       },
@@ -82116,8 +82192,15 @@ function runRenderHashesSuite(): number | null {
     // is refused naming the file, exit 2, nothing written. RC14 plants the core
     // path opening the atlas again, the `/1` clause dropped, and the
     // substitution routed back through the runtime, and reads RC13 red on each.
-    type AtlaslessStep = 'render' | 'geometry' | 'check' | 'texture' | 'v1';
-    const ATLASLESS: ReadonlySet<AtlaslessStep> = new Set<AtlaslessStep>(['render', 'geometry', 'check', 'texture', 'v1']);
+    //
+    // Since issue #1026 the row's document is `rigc-compiled/3` and states the
+    // pages' `scale:` lines, so `check` with the atlas gone prints the texture
+    // note it prints with it; the `v2` step turns the document `/2` — which
+    // states neither the scale lines nor the orders and stage — and holds the
+    // poser line to naming the files it reads them from, and `check` with the
+    // atlas gone to saying the scale line was not read (#1020's behaviour).
+    type AtlaslessStep = 'render' | 'geometry' | 'check' | 'texture' | 'v1' | 'v2';
+    const ATLASLESS: ReadonlySet<AtlaslessStep> = new Set<AtlaslessStep>(['render', 'geometry', 'check', 'texture', 'v1', 'v2']);
     const figuresOf = (path: string): string => (existsSync(path) ? JSON.stringify((JSON.parse(readFileSync(path, 'utf8')) as { animations: unknown }).animations) : '(no check.json)');
     // The lines an atlas-less run may print otherwise: the atlas line (render's and check's spelling), and check's texture
     // note, whose clause about the candidate's own `scale:` line says it was not read rather than that none was declared.
@@ -82143,10 +82226,9 @@ function runRenderHashesSuite(): number | null {
         textureTwin = { status: run.status, json: join(dir, 'check.json') };
       }
       const cmds = commands(row.out, frames);
-      const unpaged = (text: string): string => {
-        const doc = JSON.parse(text) as Record<string, unknown>;
-        return `${JSON.stringify(Object.fromEntries(Object.entries(doc).filter(([k]) => k !== 'pages').map(([k, v]) => [k, k === 'spec' ? 'rigc-compiled/1' : v])), null, 2)}\n`;
-      };
+      const unpaged = (text: string): string => withoutPages(text) ?? '';
+      const unstated = (text: string): string => withoutStated(text) ?? '';
+      const skeletonPath = join(row.out, 'skeleton.json');
       const modelText = readFileSync(modelPath, 'utf8');
       // With the atlas there: the substitution under the stub, and a /1 document posed through the atlas, saying so.
       if (steps.has('texture')) {
@@ -82162,11 +82244,28 @@ function runRenderHashesSuite(): number | null {
           const dir = join(work, `rc13-${label}-v1-present`);
           const run = runCliStubbed(stub, root, cmds.render(dir));
           const line = run.stdout.split('\n').find((l) => l.startsWith('  ..    poser    ')) ?? '(no poser line)';
-          const want = `  ..    poser    rigc core — ${modelPath} — a rigc-compiled/1 document, which does not state where each region sits on its page: that is read from ${atlasPath}`;
+          const want =
+            `  ..    poser    rigc core — ${modelPath} — a rigc-compiled/1 document, which does not state where each region sits on its page: that is read from ${atlasPath}; ` +
+            `nor the order its skins and animations are listed in or its stage, read from ${skeletonPath}, or its pages' scale: lines, read from ${atlasPath}`;
           const twin = plain.get('render');
           if (run.status !== 0) out.push(`${label}: a rigc-compiled/1 document beside its atlas rendered under the stub with exit ${run.status} — ${touched(run.stderr)}`);
           else if (line !== want) out.push(`${label}: a rigc-compiled/1 document beside its atlas printed the poser line ${JSON.stringify(line)}, not one naming the atlas its placement is read from`);
           else if (twin !== undefined && digestDifferences(dirDigests(dir), twin.files).length > 0) out.push(`${label}: a rigc-compiled/1 document drawn through its atlas wrote other files than the /2 document: ${digestDifferences(dirDigests(dir), twin.files).join(', ')}`);
+        } finally {
+          writeFileSync(modelPath, modelText);
+        }
+      }
+      if (steps.has('v2')) {
+        writeFileSync(modelPath, unstated(modelText));
+        try {
+          const dir = join(work, `rc13-${label}-v2-present`);
+          const run = runCliStubbed(stub, root, cmds.render(dir));
+          const line = run.stdout.split('\n').find((l) => l.startsWith('  ..    poser    ')) ?? '(no poser line)';
+          const want = `  ..    poser    rigc core — ${modelPath} — a rigc-compiled/2 document, which does not state the order its skins and animations are listed in or its stage, read from ${skeletonPath}, or its pages' scale: lines, read from ${atlasPath}`;
+          const twin = plain.get('render');
+          if (run.status !== 0) out.push(`${label}: a rigc-compiled/2 document beside its atlas rendered under the stub with exit ${run.status} — ${touched(run.stderr)}`);
+          else if (line !== want) out.push(`${label}: a rigc-compiled/2 document beside its atlas printed the poser line ${JSON.stringify(line)}, not one naming the files its orders, stage and scale lines are read from`);
+          else if (twin !== undefined && digestDifferences(dirDigests(dir), twin.files).length > 0) out.push(`${label}: a rigc-compiled/2 document wrote other files than the /3 document: ${digestDifferences(dirDigests(dir), twin.files).join(', ')}`);
         } finally {
           writeFileSync(modelPath, modelText);
         }
@@ -82193,8 +82292,10 @@ function runRenderHashesSuite(): number | null {
           if (withoutAtlasLine(stdout) !== withoutAtlasLine(twin.stdout)) out.push(`${label}: ${step} with the atlas removed printed other lines than with it, besides the atlas line`);
           else if (!atlasLine(stdout).includes(`${atlasPath} — not there`)) out.push(`${label}: ${step} with the atlas removed printed the atlas line ${JSON.stringify(atlasLine(stdout))}, which does not say the file is not there`);
           if (step === 'check') {
+            // Issue #1026: the document states the pages' scale: lines, so the note is the one the run with the atlas printed.
             const note = stdout.split('\n').find((l) => l.startsWith(TEXTURE_NOTE)) ?? '';
-            if (!note.includes('its atlas is not beside it, so whether that declares a scale: line is not read')) out.push(`${label}: check with the atlas removed printed the texture note ${JSON.stringify(note.slice(0, 200))}, which does not say the candidate's scale: line was not read`);
+            const twinNote = twin.stdout.split('\n').find((l) => l.startsWith(TEXTURE_NOTE)) ?? '(no note)';
+            if (note !== twinNote) out.push(`${label}: check with the atlas removed printed the texture note ${JSON.stringify(note.slice(0, 200))}, not the one the run with the atlas printed — the document states the scale: lines`);
             if (figuresOf(join(dir, 'check.json')) !== figuresOf(join(twin.dir, 'check.json'))) out.push(`${label}: check with the atlas removed scored other figures than with it`);
           } else {
             const files = dirDigests(dir);
@@ -82207,6 +82308,20 @@ function runRenderHashesSuite(): number | null {
           const run = runCliStubbed(stub, root, textureArgs(dir));
           if (run.status !== 0) out.push(`${label}: check --texture-from under the stub, the atlas removed, exited ${run.status} — ${touched(run.stderr)}`);
           else if (textureTwin !== null && figuresOf(join(dir, 'check.json')) !== figuresOf(textureTwin.json)) out.push(`${label}: check --texture-from with the atlas removed scored other figures than with it`);
+        }
+        if (steps.has('v2')) {
+          writeFileSync(modelPath, unstated(modelText));
+          try {
+            const dir = join(work, `rc13-${label}-v2-check-absent`);
+            const run = runCliStubbed(stub, root, cmds.check(dir));
+            const note = run.stdout.split('\n').find((l) => l.startsWith(TEXTURE_NOTE)) ?? '';
+            const twin = plain.get('check');
+            if (run.status !== 0) out.push(`${label}: check of a rigc-compiled/2 document with the atlas removed exited ${run.status} — ${touched(run.stderr)}`);
+            else if (!note.includes('its atlas is not beside it, so whether that declares a scale: line is not read')) out.push(`${label}: check of a rigc-compiled/2 document with the atlas removed printed the texture note ${JSON.stringify(note.slice(0, 200))}, which does not say the candidate's scale: line was not read`);
+            else if (twin !== undefined && figuresOf(join(dir, 'check.json')) !== figuresOf(join(twin.dir, 'check.json'))) out.push(`${label}: check of a rigc-compiled/2 document with the atlas removed scored other figures`);
+          } finally {
+            writeFileSync(modelPath, modelText);
+          }
         }
         if (steps.has('v1')) {
           writeFileSync(modelPath, unpaged(modelText));
@@ -82266,8 +82381,9 @@ function runRenderHashesSuite(): number | null {
           held,
           probes,
           `${row?.name ?? '(none)'} with skeleton.atlas moved away, under RC11's stub: render, render --geometry and check exit 0, every file the unstubbed run with the atlas wrote to the byte, ` +
-            "the same lines but the atlas line (which says the file is not there) and check's figures the same; check --texture-from exits 0 under the stub with the atlas present (check.json byte for byte) and removed (the same figures); " +
-            'its model document turned rigc-compiled/1 renders beside the atlas naming it on the poser line, the same files, and without it is refused naming the file, exit 2, nothing written; ' +
+            "the same lines but the atlas line (which says the file is not there) — check's texture note included, its scale: lines stated by the rigc-compiled/3 document — and check's figures the same; check --texture-from exits 0 under the stub with the atlas present (check.json byte for byte) and removed (the same figures); " +
+            'its model document turned rigc-compiled/2 renders beside the atlas naming on the poser line the skeleton and atlas its orders, stage and scale lines are read from, the same files, and with the atlas gone checks saying the scale: line was not read, the same figures; ' +
+            'turned rigc-compiled/1 it renders beside the atlas naming it on the poser line, the same files, and without it is refused naming the file, exit 2, nothing written; ' +
             `in process, ${substituted} frame(s) (${pieces} piece(s)) over ${galleryBuilds.length} gallery row(s) substituted through rigc's atlas reader and spine-core's draw pixel for pixel alike`,
         ),
         "issue #1020: #1016 put each region's place on its page into the document and the core drew from it, and the commands still refused a build " +
@@ -82327,6 +82443,54 @@ function runRenderHashesSuite(): number | null {
         ),
         'RC13 reads green on a command that never looks for the atlas and on one that quietly reads it alike when the file is there; the plants are what show ' +
           'its absence is what the probe measures, the /1 clause is read, and the substitution is held to the runtime\'s absence',
+      );
+    }
+    // RC17 (issue #1026) — the same way, for what a rigc-compiled/3 document states: the core path reading the orders, the stage and
+    // the scale lines off the files although the document states them, and the poser line's rigc-compiled/2 clause dropped.
+    {
+      const plantProbes17: string[] = [];
+      const reds17: string[] = [];
+      const plants17: Array<{ label: string; file: string; from: string; to: string; steps: AtlaslessStep[]; expect: string }> = [
+        {
+          label: 'stated-ignored',
+          file: join('src', 'render.ts'),
+          from: '  const read = document.stated === null ? unstated() :',
+          to: '  const read = true ? unstated() :',
+          steps: ['check'],
+          expect: 'not the one the run with the atlas printed',
+        },
+        {
+          label: 'no-v2-clause',
+          file: join('src', 'render.ts'),
+          from: '            : document.stated === null\n',
+          to: "            : document.stated === 'planted'\n",
+          steps: ['v2'],
+          expect: 'not one naming the files its orders, stage and scale lines are read from',
+        },
+      ];
+      for (const plant of plants17) {
+        const { root, occurrences } = plantTree(`rc17-${plant.label}`, plant.file, plant.from, plant.to);
+        if (occurrences !== 1) {
+          plantProbes17.push(`the ${plant.label} plant found ${occurrences} occurrence(s) of its line in ${plant.file}, not 1`);
+          continue;
+        }
+        const read = readAtlasless(root, plant.label, new Set(plant.steps));
+        if (read.length === 0) plantProbes17.push(`the ${plant.label} plant (${plant.file}) left RC13's ${plant.steps.join(', ')} green`);
+        else if (!read.some((p) => p.includes(plant.expect))) plantProbes17.push(`the ${plant.label} plant read red for another reason: ${read[0].slice(0, 200)}`);
+        else reds17.push(`${plant.label} (${plant.steps.join(', ')}: ${read.length} probe(s))`);
+      }
+      const held17 = plantProbes17.length === 0 && reds17.length === plants17.length;
+      say(
+        'RC17_A_STATED_FACT_READ_OFF_THE_FILES_OR_THE_V2_POSER_CLAUSE_DROPPED_TURNS_RC13_RED',
+        held17,
+        probeDetail(
+          held17,
+          plantProbes17,
+          'in copies of the tree: src/render.ts reading the orders, the stage and the scale lines off skeleton.json and the atlas although the rigc-compiled/3 document states them, ' +
+            `and the poser line's rigc-compiled/2 clause dropped — RC13's probes red on each: ${reds17.join('; ')}`,
+        ),
+        'issue #1026: a reader that kept reading the Spine files would print the same bytes wherever they are there, so only the atlas gone shows the document is what is read; ' +
+          'and a /2 document reads them off the files, which the poser line has to say, as #1020 made it say it for a /1 document\'s placement',
       );
     }
   }
@@ -84999,7 +85163,7 @@ function emitSkeletonBodyProblems(emitText: string): string[] {
 }
 
 /** The record probe with four animations — the spec's order `zeta, idle, Alpha, every`, not the editor's — kept on disk until `done`. */
-function modelDocumentProbe(): { result: CompileResult | null; again: CompileResult | null; refusal: string; outDir: string; done: () => void } {
+function modelDocumentProbe(): { result: CompileResult | null; again: CompileResult | null; opts: CompileOptions | null; refusal: string; outDir: string; done: () => void } {
   const { dirs, motionPath } = writeModelRecordsProbe();
   const body = { duration: 1, tracks: [{ bone: 'a', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [5] }] }] };
   const done = (): void => rmSync(dirs.dir, { recursive: true, force: true });
@@ -85008,9 +85172,9 @@ function modelDocumentProbe(): { result: CompileResult | null; again: CompileRes
     const animations = { zeta: body, idle: ANIMATIONS_PROBE_IDLE, Alpha: body, every: EVERY_GROUP_ANIMATION };
     writeFileSync(motionPath, `${JSON.stringify({ ...motion, easings: { glide: [0.42, 0, 0.58, 1] }, animations }, null, 2)}\n`);
     const opts: CompileOptions = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
-    return { result: compile(opts), again: compile(opts), refusal: '', outDir: dirs.outDir, done };
+    return { result: compile(opts), again: compile(opts), opts, refusal: '', outDir: dirs.outDir, done };
   } catch (err) {
-    return { result: null, again: null, refusal: (err as Error).message, outDir: dirs.outDir, done };
+    return { result: null, again: null, opts: null, refusal: (err as Error).message, outDir: dirs.outDir, done };
   }
 }
 
@@ -85089,7 +85253,7 @@ function modelDocumentRefusal(model: CompiledModel): string {
  * base already carries it.
  */
 function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
-  console.log('\n── model-document: the compiled model written beside the Spine files as rigc-compiled/2 (issues #922, #1016) ──');
+  console.log('\n── model-document: the compiled model written beside the Spine files as rigc-compiled/3 (issues #922, #1016, #1026) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -85102,7 +85266,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
   {
     const probes: string[] = [];
     // Hand-written, not imported: the writer's list and this one drifting apart is the failure.
-    const TOP = ['spec', 'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations', 'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig', 'pages', 'spine'];
+    const TOP = ['spec', 'referenceScale', 'stage', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations', 'editorOrder', 'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig', 'pages', 'spine'];
     const BONE = ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inheritMode', 'skinRequired', 'editor'];
     const SLOT = ['name', 'bone', 'setup', 'color', 'dark', 'blend'];
     let shape = '';
@@ -85118,7 +85282,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
         images: Array<Record<string, unknown>>;
       };
       if (JSON.stringify(Object.keys(doc)) !== JSON.stringify(TOP)) probes.push(`the top-level keys are [${Object.keys(doc).join(', ')}]`);
-      if (doc.spec !== MODEL_DOCUMENT_SPEC || MODEL_DOCUMENT_SPEC !== 'rigc-compiled/2') probes.push(`spec is ${JSON.stringify(doc.spec)}`);
+      if (doc.spec !== MODEL_DOCUMENT_SPEC || MODEL_DOCUMENT_SPEC !== 'rigc-compiled/3') probes.push(`spec is ${JSON.stringify(doc.spec)}`);
       if (doc.referenceScale !== model.referenceScale) probes.push(`referenceScale is ${JSON.stringify(doc.referenceScale)}, the model's ${model.referenceScale}`);
       if (`${JSON.stringify(doc, null, 2)}\n` !== text) probes.push('the text is not what it parses to, spelled back — a value was written that JSON reads as another');
       if (text !== modelDocument(model, probe.result?.skeletonText ?? '', probe.result?.atlasText ?? '')) probes.push('two writes of one model differ');
@@ -85132,17 +85296,20 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
       const fileOrder = probe.result === null ? [] : Object.keys((JSON.parse(probe.result.skeletonText) as SpineSkeletonJson).animations);
       if (JSON.stringify(held) !== JSON.stringify(['zeta', 'idle', 'Alpha', 'every'])) probes.push(`animations are [${held.join(', ')}], not the spec's order`);
       if (JSON.stringify(held) === JSON.stringify(fileOrder)) probes.push('the file keys the animations in the spec\'s order too, so this probe cannot tell the two orders apart');
+      // Issue #1026: the file's order is stated beside the model's, not written into it.
+      const stated = (doc as { editorOrder?: { animations?: unknown } }).editorOrder?.animations;
+      if (JSON.stringify(stated) !== JSON.stringify(fileOrder)) probes.push(`editorOrder.animations is ${JSON.stringify(stated)}, not the file's [${fileOrder.join(', ')}]`);
       const physics = doc.animations.find((a) => a.name === 'every')?.constraints.physics.map((p) => p.name) ?? [];
       if (!physics.includes(EVERY_GLOBAL_PHYSICS) || physics.includes('')) probes.push(`"every"'s physics targets are [${physics.map((p) => JSON.stringify(p)).join(', ')}], not the model's '*'`);
       if ('setupWorld' in doc) probes.push('setupWorld is written');
       if (doc.images.length === 0 || doc.images.some((i) => 'absPath' in i)) probes.push(`the ${doc.images.length} image(s) carry absPath, or there are none to see it on`);
-      shape = `${text.length}-byte document, ${doc.bones.length} bone(s), ${doc.slots.length} slot(s), ${doc.events.length} event(s), animations [${held.join(', ')}] where the file keys [${fileOrder.join(', ')}]`;
+      shape = `${text.length}-byte document, ${doc.bones.length} bone(s), ${doc.slots.length} slot(s), ${doc.events.length} event(s), animations [${held.join(', ')}] where the file keys [${fileOrder.join(', ')}], which \`editorOrder\` states`;
     }
     const ok = probes.length === 0;
     say(
-      'MD01_THE_DOCUMENT_IS_RIGC_COMPILED_2_IN_ITS_DECLARED_KEY_ORDER_AND_HOLDS_THE_MODELS_RECORDS',
+      'MD01_THE_DOCUMENT_IS_RIGC_COMPILED_3_IN_ITS_DECLARED_KEY_ORDER_AND_HOLDS_THE_MODELS_RECORDS',
       ok,
-      probeDetail(ok, probes, `${shape}: keys \`spec\`, the seven model fields (\`referenceScale\` first), the ten carried, \`pages\` and \`spine\`; bones and slots equal the model's in order and in ModelBone's/ModelSlot's key order; the text is what it parses to; \`*\` kept for the unnamed physics target; no \`setupWorld\`, no \`absPath\``),
+      probeDetail(ok, probes, `${shape}: keys \`spec\`, the nine model fields (\`referenceScale\` and \`stage\` first, \`editorOrder\` after \`animations\`), the ten carried, \`pages\` and \`spine\`; bones and slots equal the model's in order and in ModelBone's/ModelSlot's key order; the text is what it parses to; \`*\` kept for the unnamed physics target; no \`setupWorld\`, no \`absPath\``),
       'issue #922: the document is what the second dumper of the pose oracle reads (docs/SECOND_ORACLE.md §1, §4), so its order is the model\'s — the spec\'s for animations, which the file re-sorts — and its key order is declared rather than whatever construction left',
     );
   }
@@ -85241,6 +85408,76 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
       ok,
       probeDetail(ok, probes, `two compiles of the probe pass A18 with their documents compared; the second's animations map inserted in reverse — which skeleton.json, keyed in the editor's order, cannot show — fails A18 alone: "${detail}"; a second compile with no first document fails by name`),
       'issue #922: A18 compares a second independent compile byte for byte, and the document is the one artifact where a `Map` iterated in an order nothing fixed would show before the Spine file does',
+    );
+  }
+
+  // --- MD11: compileModel yields the model without calling the Spine emitter, and compile is it followed by the emission (issue #1026) --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    const opts = probe.result === null ? null : (JSON.parse(JSON.stringify(probe.opts)) as CompileOptions);
+    if (probe.result === null || opts === null) probes.push(`the probe did not compile: ${probe.refusal}`);
+    else {
+      const result = probe.result;
+      // compile()'s result is the shape it was: the keys in the order they always came, the emitted texts beside the model.
+      const KEYS = ['skeleton', 'skeletonText', 'atlasText', 'declaredDurations', 'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig', 'model'];
+      if (JSON.stringify(Object.keys(result)) !== JSON.stringify(KEYS)) probes.push(`compile() returns [${Object.keys(result).join(', ')}], not [${KEYS.join(', ')}]`);
+      const entry = compileModel(opts);
+      const spelled = (model: CompiledModel, atlasText: string): string => modelDocument(model, result.skeletonText, atlasText);
+      if (spelled(entry.model, entry.atlasText) !== spelled(result.model, result.atlasText)) probes.push('the document spelled from compileModel\'s model is not the one spelled from compile()\'s');
+      if (entry.atlasText !== result.atlasText || JSON.stringify(entry.declaredDurations) !== JSON.stringify(result.declaredDurations)) probes.push('compileModel\'s atlas text or declared durations are not compile()\'s');
+      if ('skeleton' in entry || 'skeletonText' in entry) probes.push(`compileModel returns [${Object.keys(entry).join(', ')}], which carries an emitted skeleton`);
+      // A copy of the tree whose Spine emitter throws: compileModel returns the same model there, and compile() throws the emitter's
+      // error. Planted, the copy's compileModel calling the emitter is seen: the entry then throws too.
+      const run = (label: string, plant: [string, string] | null): { modelSha: string; entry: string; compiled: string } => {
+        const root = join(work, `md11-${label}`);
+        mkdirSync(join(root, 'tools'), { recursive: true });
+        cpSync(join(import.meta.dir, 'src'), join(root, 'src'), { recursive: true });
+        for (const f of ['package.json', join('tools', 'plate.ts'), join('tools', 'font5x7.ts')]) cpSync(join(import.meta.dir, f), join(root, f));
+        symlinkSync(join(import.meta.dir, 'node_modules'), join(root, 'node_modules'), 'dir');
+        const throwAt = 'export function emitSkeleton(model: SkeletonSource, header: SkeletonHeader, order: SkeletonOrder): SpineSkeletonJson {\n';
+        const emitPath = join(root, 'src', 'emit_spine.ts');
+        const emitText = readFileSync(emitPath, 'utf8');
+        if (!emitText.includes(throwAt)) return { modelSha: '', entry: `the copy's emitSkeleton has no line "${throwAt.trim()}" to make throw`, compiled: '' };
+        writeFileSync(emitPath, emitText.replace(throwAt, `${throwAt}  throw new Error('MD11_EMITTER_CALLED');\n`));
+        if (plant !== null) {
+          const compilePath = join(root, 'src', 'compile.ts');
+          const compileText = readFileSync(compilePath, 'utf8');
+          if (compileText.split(plant[0]).length !== 2) return { modelSha: '', entry: `the ${label} plant's line is not in the copy's compile.ts once`, compiled: '' };
+          writeFileSync(compilePath, compileText.replace(plant[0], plant[1]));
+        }
+        const script = [
+          `const { compile, compileModel } = await import(${JSON.stringify(join(root, 'src', 'compile.ts'))});`,
+          `const { modelDocument } = await import(${JSON.stringify(join(root, 'src', 'model.ts'))});`,
+          `const { createHash } = await import('node:crypto');`,
+          'const opts = JSON.parse(process.env.MD11_OPTS);',
+          'let modelSha = "", entry = "ok", compiled = "ok";',
+          'try { const b = compileModel(opts); modelSha = createHash("sha256").update(modelDocument(b.model, "", b.atlasText)).digest("hex"); } catch (e) { entry = String(e.message); }',
+          'try { compile(opts); } catch (e) { compiled = String(e.message); }',
+          'console.log(JSON.stringify({ modelSha, entry, compiled }));',
+        ].join('\n');
+        const child = spawnSync(process.execPath, ['-e', script], { cwd: root, encoding: 'utf8', env: { ...process.env, MD11_OPTS: JSON.stringify(opts) } });
+        try {
+          return JSON.parse(child.stdout.trim().split('\n').pop() ?? '') as { modelSha: string; entry: string; compiled: string };
+        } catch {
+          return { modelSha: '', entry: `the child printed no result (exit ${child.status}): ${child.stderr.slice(0, 200)}`, compiled: '' };
+        }
+      };
+      const own = createHash('sha256').update(modelDocument(entry.model, '', entry.atlasText)).digest('hex');
+      const clean = run('throwing', null);
+      if (clean.entry !== 'ok') probes.push(`with the emitter made to throw, compileModel threw: ${clean.entry}`);
+      else if (clean.modelSha !== own) probes.push('with the emitter made to throw, compileModel\'s model spells another document than this tree\'s');
+      if (!clean.compiled.includes('MD11_EMITTER_CALLED')) probes.push(`with the emitter made to throw, compile() read ${JSON.stringify(clean.compiled.slice(0, 160))}, not the emitter's error`);
+      const planted = run('entry-emits', ['  return {\n    model: { referenceScale, stage,', '  emitSkeleton({ referenceScale, stage, bones, slots, skins, constraints, events, animations }, header, EDITOR_ORDERS);\n  return {\n    model: { referenceScale, stage,']);
+      if (!planted.entry.includes('MD11_EMITTER_CALLED')) probes.push(`the copy whose compileModel calls the emitter read ${JSON.stringify(planted.entry.slice(0, 160))}, not the emitter's error`);
+      detail = `compile() returns its ${KEYS.length} keys in the order they came; compileModel's model spells the document compile()'s does, with its atlas text and declared durations, and carries no skeleton; in a copy of the tree whose emitSkeleton throws, compileModel returns that model (the same document, sha256 ${own.slice(0, 12)}…) and compile() throws the emitter's error; the copy planted to call the emitter from compileModel throws it there too`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'MD11_COMPILE_MODEL_YIELDS_THE_MODEL_WITH_THE_EMITTER_THROWING_AND_COMPILE_IS_IT_FOLLOWED_BY_THE_EMISSION',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #1026: a build with no Spine pair needs a compile that does not call the Spine emitter, and the two entries must not drift — compile() is the entry and the emission, so the model a caller gets either way is one model',
     );
   }
 
@@ -86051,6 +86288,9 @@ function runModelAtlasSuite(): number {
     );
   }
 
+  // What MG09's builds wrote, per route, for MG12 to hold the stated fields of (issue #1026).
+  const statedRoutes: Array<{ label: string; doc: CompiledDocument; skeletonText: string; atlasText: string }> = [];
+
   // --- MG09: the pages section is the written atlas on every route `build` writes one by (issue #1016) --
   {
     const probes: string[] = [];
@@ -86083,6 +86323,7 @@ function runModelAtlasSuite(): number {
         if (a18 !== gates) probes.push(`${label}: A18 passed ${a18} time(s), not once per gate (${gates})`);
         const doc = readModel(readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8'));
         const written = pagesOfAtlas(readFileSync(join(out, 'skeleton.atlas'), 'utf8'));
+        statedRoutes.push({ label, doc, skeletonText: readFileSync(join(out, 'skeleton.json'), 'utf8'), atlasText: readFileSync(join(out, 'skeleton.atlas'), 'utf8') });
         if (doc.pages === null) {
           probes.push(`${label}: the document carries no pages`);
           return;
@@ -86144,7 +86385,202 @@ function runModelAtlasSuite(): number {
     );
   }
 
-  // --- MG11: readModel reads /2 and /1, and refuses a malformed page by its path --
+  // --- MG12: what only the Spine files held is stated, equal to them on every route (issue #1026) --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    if (statedRoutes.length === 0) probes.push('MG09 wrote no build to read');
+    const lines: string[] = [];
+    for (const route of statedRoutes) {
+      const differs = statedDifferences(route.doc, route.skeletonText, route.atlasText);
+      if (differs.length > 0) probes.push(`${route.label}: ${differs.join('; ')}`);
+      const st = route.doc.stated;
+      const pages = route.doc.pages ?? [];
+      if (st !== null) lines.push(`${route.label}: stage ${st.stage === null ? 'none' : `${st.stage.width}x${st.stage.height}`}, animations [${st.editorOrder.animations.join(', ')}], ${st.editorOrder.skins.length} skin(s), ${pages.length} page(s), pma true on ${pages.filter((p) => p.pma === true).length}, scale stated [${pages.flatMap((p) => (typeof p.scale === 'number' ? [p.scale] : [])).join(', ')}]`);
+    }
+    // A stage the rig declares none of, in process: stated `null`, and the header writes none of the four fields.
+    const stageless = writeRectProbe();
+    const rig = JSON.parse(readFileSync(stageless.dirs.rigPath, 'utf8')) as { skeleton: Record<string, unknown> };
+    rig.skeleton = { width: null, height: null };
+    writeFileSync(stageless.dirs.rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+    const none = buildRectProbe(stageless, join(stageless.dirs.dir, 'stageless'));
+    let noneLine = '';
+    if (greenOf('stageless', none, probes)) {
+      const doc = readModel(modelDocument(none.built.model, none.built.skeletonText, none.built.atlasText));
+      if (doc.stated === null || doc.stated.stage !== null) probes.push(`a rig declaring no stage was stated ${JSON.stringify(doc.stated?.stage)}`);
+      const differs = statedDifferences(doc, none.built.skeletonText, none.built.atlasText);
+      if (differs.length > 0) probes.push(`the stageless probe: ${differs.join('; ')}`);
+      noneLine = `a rig declaring no stage: stated null, the header writes none of the four`;
+    }
+    // A pack whose page is premultiplied, in process through --atlas-in: no route above states `pma: true`, and the field is a reading of it.
+    const premultiplied = join(stageless.dirs.dir, 'pack', 'premultiplied.atlas');
+    const pmaPack = readFileSync(stageless.trimmed, 'utf8').replace('\tfilter: Linear, Linear\n', '\tfilter: Linear, Linear\n\tpma: true\n');
+    writeFileSync(premultiplied, pmaPack);
+    let pmaLine = '';
+    if (pmaPack === readFileSync(stageless.trimmed, 'utf8')) probes.push('the premultiplied pack could not be written: the probe pack states no filter line');
+    else {
+      const pma = buildRectProbe(stageless, join(stageless.dirs.dir, 'premultiplied'), premultiplied);
+      if (greenOf('premultiplied', pma, probes)) {
+        const doc = readModel(modelDocument(pma.built.model, pma.built.skeletonText, pma.built.atlasText));
+        if (doc.pages?.[0]?.pma !== true || doc.pages?.[0]?.scale !== 0.5) probes.push(`a pack stating pma: true and scale: 0.5 was stated pma ${doc.pages?.[0]?.pma}, scale ${doc.pages?.[0]?.scale}`);
+        const differs = statedDifferences(doc, pma.built.skeletonText, pma.built.atlasText);
+        if (differs.length > 0) probes.push(`the premultiplied pack: ${differs.join('; ')}`);
+        pmaLine = 'a pack stating pma: true and scale: 0.5 through --atlas-in: stated pma true, scale 0.5';
+      }
+    }
+    // Animation names a JSON object keys out of the editor's order (issue #1026): an integer-like name is listed first whatever order
+    // the object was filled in, so "-a" and "5", which the editor's comparator puts in that order, are spelled "5", "-a" in the file.
+    const motion = JSON.parse(readFileSync(stageless.motionPath, 'utf8')) as { animations: Record<string, unknown> };
+    const idle = motion.animations.idle;
+    motion.animations = { '-a': idle, '5': idle };
+    writeFileSync(stageless.motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+    rig.skeleton = { width: 64, height: 64 };
+    writeFileSync(stageless.dirs.rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+    const keyed = buildRectProbe(stageless, join(stageless.dirs.dir, 'keyed'));
+    let keyedLine = '';
+    if (greenOf('integer-keyed', keyed, probes)) {
+      const doc = readModel(modelDocument(keyed.built.model, keyed.built.skeletonText, keyed.built.atlasText));
+      const sorted = editorAnimationOrder(['-a', '5']);
+      const stated = doc.stated?.editorOrder.animations ?? [];
+      const differs = statedDifferences(doc, keyed.built.skeletonText, keyed.built.atlasText);
+      if (differs.length > 0) probes.push(`the integer-keyed probe: ${differs.join('; ')}`);
+      if (JSON.stringify(sorted) === JSON.stringify(stated)) probes.push(`the editor's comparator put [${sorted.join(', ')}] in the file's order too, so this probe cannot tell the sort from the keys`);
+      const asSorted = statedDifferences({ ...doc, stated: doc.stated === null ? null : { ...doc.stated, editorOrder: { ...doc.stated.editorOrder, animations: sorted } } }, keyed.built.skeletonText, keyed.built.atlasText);
+      if (asSorted.length !== 1 || !asSorted[0].startsWith('editorOrder.animations')) probes.push(`the comparator's own order read ${JSON.stringify(asSorted)}, not a difference in editorOrder.animations`);
+      keyedLine = `animations "-a" and "5": the comparator orders [${sorted.join(', ')}], the file keys and the document states [${stated.join(', ')}]`;
+    }
+    rmSync(stageless.dirs.dir, { recursive: true, force: true });
+    // One plant per field, on the first route's document: each is named by the comparison, and by its field.
+    const first = statedRoutes[0];
+    const named: string[] = [];
+    if (first !== undefined && first.doc.stated !== null && first.doc.pages !== null && first.doc.pages.length > 0) {
+      const st = first.doc.stated;
+      const planted = (label: string, field: string, stated: CoreStated, pages: ModelPage[]): void => {
+        const said = statedDifferences({ ...first.doc, stated, pages }, first.skeletonText, first.atlasText);
+        if (said.length !== 1 || !said[0].startsWith(field)) probes.push(`${label}: the comparison read ${JSON.stringify(said)}, not one difference in ${field}`);
+        else named.push(`${label} → "${said[0].slice(0, 120)}"`);
+      };
+      const pages = first.doc.pages;
+      const anims = st.editorOrder.animations;
+      const slots0 = st.editorOrder.skins[0]?.slots ?? [];
+      if (st.stage === null) probes.push(`${first.label} states no stage to move`);
+      else planted('the stage one wider', 'stage', { ...st, stage: { ...st.stage, width: st.stage.width + 1 } }, pages);
+      if (anims.length < 2) probes.push(`${first.label} lists ${anims.length} animation(s), so their order cannot be planted`);
+      else planted('two animations swapped', 'editorOrder.animations', { ...st, editorOrder: { ...st.editorOrder, animations: [anims[1], anims[0], ...anims.slice(2)] } }, pages);
+      if (slots0.length < 2) probes.push(`${first.label} keys ${slots0.length} slot(s) in its first skin, so their order cannot be planted`);
+      else planted('two slot keys swapped', 'editorOrder.skins', { ...st, editorOrder: { ...st.editorOrder, skins: [{ ...st.editorOrder.skins[0], slots: [slots0[1], slots0[0], ...slots0.slice(2)] }, ...st.editorOrder.skins.slice(1)] } }, pages);
+      planted('a page\'s pma flipped', 'pages[0].pma', st, [{ ...pages[0], pma: !pages[0].pma }, ...pages.slice(1)]);
+      planted('a page\'s scale stated', 'pages scale', st, [{ ...pages[0], scale: pages[0].scale === 0.25 ? 0.125 : 0.25 }, ...pages.slice(1)]);
+    } else probes.push('MG09\'s first route wrote no /3 document with a page to plant on');
+    detail = `${statedRoutes.length} build route(s) through the CLI, each document's stage, editor order and page pma/scale equal to the skeleton.json and skeleton.atlas written beside it — ${lines.join('; ')}; ${noneLine}; ${pmaLine}; ${keyedLine}; ${named.length} plants each named by its field — ${named.join('; ')}`;
+    const ok = probes.length === 0;
+    say(
+      'MG12_THE_STAGE_THE_EDITOR_ORDER_AND_EACH_PAGES_PMA_AND_SCALE_ARE_THE_WRITTEN_FILES_ON_EVERY_ROUTE',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #1026: the document states what only the Spine files held, so a reader with the document alone reads what a reader of the files would — and on every route `build` writes by, because --pack and --copy-images rewrite the atlas after compile returns',
+    );
+  }
+
+  // --- MG13: A18 compares what MG12 holds (issue #1026) --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    const galleryRoot = resolve(import.meta.dir, 'gallery');
+    const name = existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().find((n) => existsSync(join(galleryRoot, n, 'rig.json')) && existsSync(join(galleryRoot, n, 'motion.json'))) : undefined;
+    if (name === undefined) probes.push(`no gallery rig with a rig.json and motion.json under ${galleryRoot}`);
+    else {
+      const out = join(work, 'mg13');
+      const opts: CompileOptions = { rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir: out };
+      const a = compile(opts);
+      const b = compile(opts);
+      const a18 = 'A18_DETERMINISTIC_EMIT';
+      const gate = (modelText: string) =>
+        validate({ skeletonText: a.skeletonText, atlasText: a.atlasText, atlasDir: out, declaredDurations: a.declaredDurations, rig: a.rig, profile: 'spine', modelText: modelDocument(a.model, a.skeletonText, a.atlasText), reEmit: { skeletonText: b.skeletonText, atlasText: b.atlasText, modelText } });
+      const clean = gate(modelDocument(b.model, b.skeletonText, b.atlasText));
+      if (!clean.passed.includes(a18) || clean.failures.length > 0) probes.push(`two compiles of gallery/${name} are not green: ${clean.failures.map((f) => `${f.assertion}: ${f.detail}`).join(' | ').slice(0, 300)}`);
+      const stage = b.model.stage;
+      const order = b.model.editorOrder;
+      const pmaLine = 'pma: false\n';
+      if (!b.atlasText.includes(pmaLine)) probes.push(`gallery/${name}'s atlas states no "${pmaLine.trim()}" line to plant on`);
+      const plants: Array<[string, string]> = [
+        ['the stage one wider', modelDocument({ ...b.model, stage: stage === null ? { x: 0, y: 0, width: 1, height: 1 } : { ...stage, width: stage.width + 1 } }, b.skeletonText, b.atlasText)],
+        ['the animations listed in reverse', modelDocument({ ...b.model, editorOrder: { ...order, animations: [...order.animations].reverse() } }, b.skeletonText, b.atlasText)],
+        ['a skin\'s slot keys in reverse', modelDocument({ ...b.model, editorOrder: { ...order, skins: order.skins.map((k, i) => (i === 0 ? { ...k, slots: [...k.slots].reverse() } : k)) } }, b.skeletonText, b.atlasText)],
+        ['the first page premultiplied', modelDocument(b.model, b.skeletonText, b.atlasText.replace(pmaLine, 'pma: true\n'))],
+        ['the first page declaring scale: 0.5', modelDocument(b.model, b.skeletonText, b.atlasText.replace(pmaLine, `${pmaLine}\tscale: 0.5\n`))],
+      ];
+      const said: string[] = [];
+      for (const [label, text] of plants) {
+        if (text === modelDocument(b.model, b.skeletonText, b.atlasText)) {
+          probes.push(`${label}: the plant did not move the document`);
+          continue;
+        }
+        const planted = gate(text);
+        const fails = planted.failures.filter((f) => f.assertion === a18).map((f) => f.detail);
+        if (fails.length !== 1 || !fails[0].includes(MODEL_DOCUMENT_FILE)) probes.push(`${label}: A18 read ${JSON.stringify(fails)}`);
+        else said.push(`${label} → "${fails[0].slice(0, 110)}"`);
+        if (planted.failures.some((f) => f.assertion !== a18)) probes.push(`${label}: the plant failed other assertions too: ${planted.failures.filter((f) => f.assertion !== a18).map((f) => f.assertion).join(', ')}`);
+      }
+      detail = `two compiles of gallery/${name} pass A18 with their documents compared; ${said.length} of ${plants.length} second documents planted — the skeleton and atlas texts compared unchanged — fail A18 alone: ${said.join('; ')}`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'MG13_A18_COMPARES_THE_STAGE_THE_EDITOR_ORDER_AND_THE_PAGE_FLAGS_AND_A_PLANT_IN_EACH_TURNS_IT_RED',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #1026: the stage and the editor order are computed in the compile and the page flags spelled from the atlas it hands the document, so each is a value A18 must see move — the Spine text is compared unchanged, so the document is the only artifact where a plant can show',
+    );
+  }
+
+  // --- MG14: the model side reads pma and the stage off a /3 document, and refuses a caller's second source (issue #1026) --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    if (greenOf('trimmed-pack', trimmed, probes)) {
+      const out = join(probe.dirs.dir, 'trimmed');
+      const text = modelDocument(trimmed.built.model, trimmed.built.skeletonText, trimmed.built.atlasText);
+      const a06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+      const a19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
+      const edited = (edit: (doc: Record<string, unknown> & { pages: Array<Record<string, unknown>> }) => void): string => {
+        const doc = JSON.parse(text) as Record<string, unknown> & { pages: Array<Record<string, unknown>> };
+        edit(doc);
+        return `${JSON.stringify(doc, null, 2)}\n`;
+      };
+      const lineOf = (report: ModelReport, code: string): string =>
+        report.failures.find((f) => f.assertion === code)?.detail ?? (report.passed.includes(code) ? 'PASS' : report.skipped.find((k) => k.assertion === code)?.reason ?? '(none)');
+      const run = (modelText: string, given?: Parameters<typeof validateModel>[0]['given']) => validateModel({ modelText, atlasDir: out, profile: 'spine-html', rig: trimmed.built.rig, given });
+      // The document alone, no caller-given value: read.
+      const clean = run(text);
+      if (lineOf(clean, a06).includes('premultiplied') || lineOf(clean, a06).includes('threw')) probes.push(`the built /3 document, nothing given, read A06 as ${JSON.stringify(lineOf(clean, a06))}`);
+      // The document's own pma flipped: A06 reads it there, with nothing given.
+      const flipped = run(edited((d) => void (d.pages[0].pma = true)));
+      if (!lineOf(flipped, a06).includes('claims premultiplied alpha')) probes.push(`the document's first page stating pma: true read A06 as ${JSON.stringify(lineOf(flipped, a06))}, not the premultiplied claim`);
+      // The document's stage taken away: A19 reads the absence from the document, with nothing given.
+      const stageless = run(edited((d) => void (d.stage = null)));
+      if (lineOf(stageless, a19) === lineOf(clean, a19)) probes.push(`the document stating no stage read A19 as it does with one: ${JSON.stringify(lineOf(clean, a19)).slice(0, 160)}`);
+      // A caller giving the two values beside a /3 document: refused by name, not silently one source or the other.
+      const twice = run(text, { stage: { width: 64, height: 64 }, pma: [false] });
+      const said = lineOf(twice, a06);
+      if (!said.includes('a second source for one fact')) probes.push(`a /3 document given pma and the stage beside it read A06 as ${JSON.stringify(said.slice(0, 200))}, not refused by name`);
+      // A /2 document is still read with them given.
+      const v2 = withoutStated(text) ?? '';
+      const v2Read = run(v2, { stage: { width: 64, height: 64 }, pma: [true] });
+      if (!lineOf(v2Read, a06).includes('claims premultiplied alpha')) probes.push(`a /2 document given pma: true read A06 as ${JSON.stringify(lineOf(v2Read, a06))}`);
+      detail =
+        `the trimmed probe's /3 document, nothing given: A06 ${lineOf(clean, a06).slice(0, 40)}; its first page stating pma: true, nothing given: "${lineOf(flipped, a06).slice(0, 90)}"; ` +
+        `its stage taken away: A19 "${lineOf(stageless, a19).slice(0, 90)}"; given pma and the stage beside it: "${said.slice(0, 120)}"; the same document as /2, given pma: true: "${lineOf(v2Read, a06).slice(0, 60)}"`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'MG14_THE_MODEL_SIDE_READS_PMA_AND_THE_STAGE_OFF_A_V3_DOCUMENT_AND_REFUSES_THEM_GIVEN_BESIDE_IT',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #1026, merged over #1025\'s cut 4c-1: the caller gave the model side the stage and each page\'s pma while the document held neither; once it holds both, a value given beside it is a second source for one fact, and a twin could pass because the given value agreed while the document said otherwise',
+    );
+  }
+
+  // --- MG11: readModel reads /3, /2 and /1, and refuses a malformed page, stage or editor order by its path --
   {
     const probes: string[] = [];
     let detail = '';
@@ -86157,7 +86593,12 @@ function runModelAtlasSuite(): number {
       if (pages === null || pages.length === 0 || !regions.some((r) => r.degrees === 90) || !regions.some((r) => r.offsetX !== 0)) probes.push(`the core reads ${pages === null ? 'no pages' : `${pages.length} page(s), ${regions.length} region(s)`} — the probe's pack has a turned and a trimmed region`);
       const unpaged = withoutPages(text) ?? '';
       const v1 = coreRefusal(unpaged) === '' ? readModel(unpaged) : null;
-      if (v1 === null || v1.pages !== null || v1.spec !== 'rigc-compiled/1') probes.push(`a rigc-compiled/1 document read ${v1 === null ? `as refused: ${coreRefusal(unpaged)}` : `with pages ${JSON.stringify(v1.pages)}, spec ${v1.spec}`}`);
+      if (v1 === null || v1.pages !== null || v1.stated !== null || v1.spec !== 'rigc-compiled/1') probes.push(`a rigc-compiled/1 document read ${v1 === null ? `as refused: ${coreRefusal(unpaged)}` : `with pages ${JSON.stringify(v1.pages)}, spec ${v1.spec}`}`);
+      // Issue #1026: the same document as rigc-compiled/2 — pages without their pma and scale, no stage or editor order — is read with `stated: null`.
+      const unstated = withoutStated(text) ?? '';
+      const v2 = coreRefusal(unstated) === '' ? readModel(unstated) : null;
+      if (v2 === null || v2.stated !== null || v2.spec !== 'rigc-compiled/2' || v2.pages === null || v2.pages.some((page) => 'pma' in page || 'scale' in page)) probes.push(`a rigc-compiled/2 document read ${v2 === null ? `as refused: ${coreRefusal(unstated)}` : `with stated ${JSON.stringify(v2.stated)}, spec ${v2.spec}`}`);
+      if (read !== null && (read.stated === null || read.pages === null || read.pages[0]?.scale !== 0.5 || read.pages[0]?.pma !== false)) probes.push(`the built rigc-compiled/3 document read with stated ${JSON.stringify(read.stated)} and its first page's pma ${read.pages?.[0]?.pma}, scale ${read.pages?.[0]?.scale} — the probe's pack states scale: 0.5 and no pma`);
       const page0 = (pages?.[0]?.name ?? '') as string;
       const edit = (change: (doc: Record<string, unknown> & { pages: Array<Record<string, unknown> & { regions: Array<Record<string, unknown>> }> }) => void): string => {
         const doc = JSON.parse(text) as Record<string, unknown> & { pages: Array<Record<string, unknown> & { regions: Array<Record<string, unknown>> }> };
@@ -86167,8 +86608,20 @@ function runModelAtlasSuite(): number {
       const region0 = JSON.stringify(regions[0]?.name ?? '');
       const plants: Array<[string, string, string]> = [
         ['a /1 document carrying pages', edit((d) => { d.spec = 'rigc-compiled/1'; }), 'section "pages" is not one a rigc-compiled/1 document has'],
-        ['a /2 document without pages', edit((d) => { delete (d as Record<string, unknown>).pages; }), 'section "pages" is missing'],
-        ['a spec of neither', edit((d) => { d.spec = 'rigc-compiled/3'; }), 'spec is "rigc-compiled/3", not "rigc-compiled/2" (or "rigc-compiled/1", read without its pages)'],
+        ['a /3 document without pages', edit((d) => { delete (d as Record<string, unknown>).pages; }), 'section "pages" is missing'],
+        ['a spec of none of the three', edit((d) => { d.spec = 'rigc-compiled/9'; }), 'spec is "rigc-compiled/9", not "rigc-compiled/3" (or "rigc-compiled/2", read without its stage, editor order and page flags, or "rigc-compiled/1", read without its pages too)'],
+        // Issue #1026: the sections and page fields /3 added, refused by path when absent, malformed, or on a /2.
+        ['a /2 document carrying a stage', edit((d) => { d.spec = 'rigc-compiled/2'; }), 'section "stage" is not one a rigc-compiled/2 document has'],
+        ['a /3 document without a stage', edit((d) => { delete (d as Record<string, unknown>).stage; }), 'section "stage" is missing'],
+        ['a stage missing its height', edit((d) => { delete ((d as Record<string, unknown>).stage as Record<string, unknown>).height; }), 'stage: height is absent, not a finite number'],
+        ['a stage that is a number', edit((d) => { (d as Record<string, unknown>).stage = 64; }), 'stage is 64, not null or { x, y, width, height }'],
+        ['a /3 document without an editor order', edit((d) => { delete (d as Record<string, unknown>).editorOrder; }), 'section "editorOrder" is missing'],
+        ['an editor order naming an animation the document does not hold', edit((d) => { ((d as Record<string, unknown>).editorOrder as { animations: string[] }).animations.push('ghost'); }), 'editorOrder.animations lists animation "ghost", which the document does not hold'],
+        ['an editor order leaving a slot key out', edit((d) => { ((d as Record<string, unknown>).editorOrder as { skins: Array<{ slots: string[] }> }).skins[0].slots.pop(); }), 'editorOrder.skins[0].slots leaves out slot key'],
+        ['an editor order listing a skin twice', edit((d) => { const o = (d as Record<string, unknown>).editorOrder as { skins: unknown[] }; o.skins.push(o.skins[0]); }), 'editorOrder.skins lists skin "default" twice'],
+        ['a page without pma', edit((d) => { delete d.pages[0].pma; }), `pages[0] "${page0}": pma is absent, not true or false`],
+        ['a page scale as a string', edit((d) => { d.pages[0].scale = '0.5'; }), `pages[0] "${page0}": scale is "0.5", not a finite number or null`],
+        ['a /2 page carrying pma', edit((d) => { d.spec = 'rigc-compiled/2'; delete (d as Record<string, unknown>).stage; delete (d as Record<string, unknown>).editorOrder; }), `pages[0] "${page0}": field "pma" is not one this reader knows`],
         ['pages that are not a list', edit((d) => { (d as Record<string, unknown>).pages = {}; }), 'pages is {}, not a list of pages'],
         ['a page of width 0', edit((d) => { d.pages[0].width = 0; }), `pages[0] "${page0}": width is 0, not a positive finite number`],
         ['an unknown page field', edit((d) => { d.pages[0].filter = 'Linear'; }), `pages[0] "${page0}": field "filter" is not one this reader knows`],
@@ -86181,11 +86634,11 @@ function runModelAtlasSuite(): number {
         const refusal = coreRefusal(planted);
         if (!refusal.includes(expected)) probes.push(`${label}: ${refusal === '' ? 'read' : `refused as "${refusal}"`}, not naming "${expected}"`);
       }
-      detail = `readModel reads the built rigc-compiled/2 document's ${pages?.length ?? 0} page(s) and ${regions.length} region(s), a turned and a trimmed one among them, and the same document as rigc-compiled/1 without its pages with \`pages: null\`; ${plants.length} plants — pages on a /1, none on a /2, a third spec, pages not a list, a zero width, an unknown page and region field, a string, a missing index, an empty name — are each refused naming the path`;
+      detail = `readModel reads the built rigc-compiled/3 document's ${pages?.length ?? 0} page(s) and ${regions.length} region(s), a turned and a trimmed one among them, its first page's scale: 0.5, its stage and editor order; the same document as rigc-compiled/2 with \`stated: null\` and pages without pma or scale, and as rigc-compiled/1 without its pages with \`pages: null\`; ${plants.length} plants — pages on a /1, none on a /3, a fourth spec, pages not a list, a zero width, an unknown page and region field, a string, a missing index, an empty name, and (issue #1026) a stage on a /2, none on a /3, a stage missing a field or not an object, no editor order, one naming an animation not held, leaving a slot key out or listing a skin twice, a page without pma, a scale as a string, and pma on a /2 page — are each refused naming the path`;
     }
     const ok = probes.length === 0;
     say(
-      'MG11_READMODEL_READS_RIGC_COMPILED_2_AND_1_AND_REFUSES_A_MALFORMED_PAGE_BY_ITS_PATH',
+      'MG11_READMODEL_READS_RIGC_COMPILED_3_2_AND_1_AND_REFUSES_A_MALFORMED_PAGE_STAGE_OR_EDITOR_ORDER_BY_ITS_PATH',
       ok,
       probeDetail(ok, probes, detail),
       'issue #1016: a 1.6 reader refuses a section it does not know, so the section is a new spec rather than a field a shipped reader would refuse under the old one; this reader takes both, and checks every page and region field by field, because a page UV divides by the page size and a placement read wrong is a wrong picture rather than a refusal',
@@ -97670,10 +98123,11 @@ function runVerdictSuppliersSuite(): number {
     const run = (edit: (doc: Record<string, unknown>) => void): ModelReport => {
       const doc = JSON.parse(modelText) as Record<string, unknown>;
       edit(doc);
-      return validateModel({ modelText: `${JSON.stringify(doc, null, 2)}\n`, atlasDir: overlay.opts.outDir, profile: 'spine-html', rig: overlay.result.rig, given: modelGivenOfBuild(overlay.result.skeletonText, overlay.result.atlasText) });
+      const text = `${JSON.stringify(doc, null, 2)}\n`;
+      return validateModel({ modelText: text, atlasDir: overlay.opts.outDir, profile: 'spine-html', rig: overlay.result.rig, given: modelGivenOf(text, overlay.result.skeletonText, overlay.result.atlasText) });
     };
     const { placeholder } = firstRegion(base);
-    const clean = validateModel({ modelText, atlasDir: overlay.opts.outDir, profile: 'spine-html', rig: overlay.result.rig, given: modelGivenOfBuild(overlay.result.skeletonText, overlay.result.atlasText) });
+    const clean = validateModel({ modelText, atlasDir: overlay.opts.outDir, profile: 'spine-html', rig: overlay.result.rig, given: modelGivenOf(modelText, overlay.result.skeletonText, overlay.result.atlasText) });
     if (!clean.passed.includes(A00_MODEL_READ) || !clean.passed.includes(A00_MODEL_REGIONS_ON_PAGES)) probes.push(`the probe's own document did not pass both rules: [${clean.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`);
     const unreadable = run((doc) => void delete firstRegion(doc).record.width);
     const readFail = unreadable.failures.find((f) => f.assertion === A00_MODEL_READ);
@@ -97689,6 +98143,9 @@ function runVerdictSuppliersSuite(): number {
     const pageless = run((doc) => {
       doc.spec = 'rigc-compiled/1';
       delete doc.pages;
+      // Issue #1026: a /1 document has no stage or editor order either.
+      delete doc.stage;
+      delete doc.editorOrder;
     });
     if (!pageless.failures.some((f) => f.assertion === A00_MODEL_REGIONS_ON_PAGES && f.detail.includes('states no pages'))) probes.push('a rigc-compiled/1 document, which states no pages, was not refused by the region rule');
     const beforeTheParse = MOVED_ASSERTIONS.filter((m) => m.beforeTheParse === true).map((m) => m.code);

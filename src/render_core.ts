@@ -530,8 +530,9 @@ function restOf(view: CompiledDocument, setup: RawPose, shown: readonly Attachme
 
 /**
  * The first place two `pages` sections differ, by path, or `null` when they
- * are the same — the page count, a page's name or size, a region count, or a
- * region's name or one of its numbers.
+ * are the same — the page count, a page's name or size, its `pma` or `scale`
+ * where `stated` carries them (a `rigc-compiled/3` document's, issue #1026), a
+ * region count, or a region's name or one of its numbers.
  */
 export function firstPageDifference(stated: readonly ModelPage[], found: readonly ModelPage[]): string | null {
   if (stated.length !== found.length) return `the document states ${stated.length} page(s), the atlas has ${found.length}`;
@@ -540,6 +541,10 @@ export function firstPageDifference(stated: readonly ModelPage[], found: readonl
     const b = found[i];
     for (const key of ['name', 'width', 'height'] as const) {
       if (a[key] !== b[key]) return `pages[${i}].${key} is ${JSON.stringify(a[key])} in the document and ${JSON.stringify(b[key])} in the atlas`;
+    }
+    // A rigc-compiled/3 page states its `pma` and `scale` too (issue #1026), and an atlas edited in either after the build is not the one it was written beside; a /2 page states neither, and is held to its placement alone.
+    for (const key of ['pma', 'scale'] as const) {
+      if (a[key] !== undefined && a[key] !== b[key]) return `pages[${i}] "${a.name}": ${key} is ${JSON.stringify(a[key])} in the document and ${JSON.stringify(b[key])} in the atlas`;
     }
     if (a.regions.length !== b.regions.length) return `pages[${i}] "${a.name}" holds ${a.regions.length} region(s) in the document and ${b.regions.length} in the atlas`;
     for (let j = 0; j < a.regions.length; j++) {
@@ -587,7 +592,7 @@ function placementOf(doc: CompiledDocument, atlasText: string, where: string): {
 }
 
 /**
- * `Poser` over rigc's own core: `modelText` a `rigc-compiled/2` document
+ * `Poser` over rigc's own core: `modelText` a `rigc-compiled/3` or `/2` document
  * (`skeleton.model.json`), which states where each region sits on its page
  * (`pages`, issue #1016), so `atlasText` may be `''`; given, it is held to
  * the document's `pages` (`placementOf`). A `rigc-compiled/1` document states
@@ -661,8 +666,10 @@ export function corePoser(modelText: string, atlasText: string, where = 'skeleto
  * document — `unposedBones` over `activeBones` of the skin's view, the
  * predicate the raw pose flags its bones with, and under no skin the view the
  * core poses with no skin set (`noSkinView`, refused by `CoreInputError` where
- * it refuses to pose). `skins` is the Spine file's own list, in its order, which
- * the document does not hold (`resolveSkinView`'s note in `./core/index.ts`).
+ * it refuses to pose). `skins` is the skin list in the Spine file's order:
+ * a `rigc-compiled/3` document's `editorOrder` (issue #1026), else the file's
+ * own list, which a `/2` or `/1` document does not hold (`resolveSkinView`'s
+ * note in `./core/index.ts`).
  *
  * Measured against the runtime's reading (`skinRosterOf`, a fresh skeleton's
  * `active` under each skin and under none) on every rigc build the tree
@@ -689,7 +696,7 @@ function coreSkinRoster(doc: CompiledDocument, skins: readonly string[]): SkinRo
  * does not state.
  */
 export interface CoreDocumentFacts {
-  /** The document's spec: `rigc-compiled/2` states where each region sits on its page, `rigc-compiled/1` does not. */
+  /** The document's spec: `rigc-compiled/3` and `/2` state where each region sits on its page, `rigc-compiled/1` does not; `/3` alone states the orders, the stage and the pages' `scale:` lines (issue #1026). */
   spec: string;
   /**
    * Every page the `pages` section states, by name, in file order — the
@@ -700,24 +707,36 @@ export interface CoreDocumentFacts {
   /** The skin roster behind the core poser (`coreSkinRoster`), over this one reading. */
   roster: SkinRoster;
   /**
+   * What a `rigc-compiled/3` document states that `skeleton.json` and the
+   * atlas were the only place of before issue #1026 — the order the file lists
+   * animations and skins in, whether a stage is declared, and the `scale:`
+   * lines its pages state, in page order — or `null` for a `/2` or `/1`
+   * document, whose reader takes them off the files beside it and says so.
+   */
+  stated: { animations: readonly string[]; skins: readonly string[]; declaresStage: boolean; scales: readonly number[] } | null;
+  /**
    * The slot subset's roster (`subsetOver`): the slots in the document's draw
    * order, its default skin, and the skins the document files a slot's
    * attachments under. A refusal lists those skins, and the order it lists
-   * them in is the Spine file's, which the document does not hold
-   * (`./core/index.ts`, *Several skins filling one placeholder*) — so they are
-   * put in `skins`' order, the Spine file's own list.
+   * them in is the Spine file's (`./core/index.ts`, *Several skins filling one
+   * placeholder*) — so they are put in the skin order a `rigc-compiled/3`
+   * document states (`editorOrder`, issue #1026), or, for a `/2` or `/1`
+   * document, which does not hold it, the Spine file's own list.
    */
   subset: SubsetRoster;
 }
 
 /**
  * The document's facts for `render` and `check` (`CoreDocumentFacts`), read
- * once. `skins` is the Spine file's skin list, in its order — the one fact
- * here the document does not state. Refused by `CoreInputError` where
- * `readModel` refuses the document.
+ * once. `fileSkins` is the Spine file's skin list, in its order — what a
+ * `rigc-compiled/2` or `/1` document does not state; a `/3` document's own
+ * `editorOrder` is read instead (issue #1026). Refused by `CoreInputError`
+ * where `readModel` refuses the document.
  */
-export function coreDocumentFacts(modelText: string, where: string, skins: readonly string[]): CoreDocumentFacts {
+export function coreDocumentFacts(modelText: string, where: string, fileSkins: readonly string[]): CoreDocumentFacts {
   const doc = readModel(modelText, where);
+  const stated = doc.stated;
+  const skins = stated === null ? fileSkins : stated.editorOrder.skins.map((k) => k.name);
   const rank = (name: string): number => {
     const at = skins.indexOf(name);
     return at < 0 ? skins.length : at;
@@ -726,6 +745,15 @@ export function coreDocumentFacts(modelText: string, where: string, skins: reado
     spec: doc.spec,
     pageNames: doc.pages === null ? null : doc.pages.map((page) => page.name),
     roster: coreSkinRoster(doc, skins),
+    stated:
+      stated === null
+        ? null
+        : {
+            animations: stated.editorOrder.animations,
+            skins,
+            declaresStage: stated.stage !== null,
+            scales: (doc.pages ?? []).flatMap((page) => (typeof page.scale === 'number' ? [page.scale] : [])),
+          },
     subset: {
       declared: doc.slots.map((s) => s.name),
       carriers: (slot) =>

@@ -571,7 +571,71 @@ export interface CompiledAnimation {
   events: ModelKey[];
 }
 
+/**
+ * The setup-pose box the skeleton declares (issue #1026): its origin `x`, `y`
+ * and its extent `width`, `height`, exactly as the Spine header states them —
+ * the rig spec's `skeleton.width`/`height` (or the manifest's crop), and its
+ * `x`/`y` or 0 beside them, which is what the header has always written
+ * (issue #578: four fields or none). `null` where the rig declares no stage.
+ *
+ * ⭐ **Why the model holds it.** `render` and `check` say whether a candidate
+ * declares a stage (issue #714), and `A14`/`A19` read its box; until this field
+ * the header of `skeleton.json` was the only place the value was written, so a
+ * reader of the document had to open the Spine file beside it. The Spine
+ * emitter writes this value into the header (`emitSkeleton`), as it writes
+ * `referenceScale` (issue #958): one value, read by both.
+ */
+export interface ModelStage {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The orders the Spine file lists two collections in, which are not the
+ * model's (issue #1026): `skins` — each skin's name and its slot keys — and
+ * `animations`, both in the EDITOR's order. `compile` computes it from the
+ * model with the same three functions it hands the Spine emitter
+ * (`editorSkinOrder`, `editorSlotKeyOrder`, `editorAnimationOrder` in
+ * `src/compile.ts`), so the order stated here and the order `skeleton.json`
+ * keys are one computation over one input.
+ *
+ * ⭐ **Why it is a statement of its own rather than the model's arrays
+ * re-sorted.** The model's `skins`, a skin's table and `animations` are in the
+ * spec's order on purpose (each field's own doc), and everything that reads
+ * them reads that order: a draw-order offset, a binding and a constraint
+ * count in the model's arrays; `A18` is held, by `MD04`, to see an animations
+ * map inserted in another order; and the model-side suppliers of #1025 put the
+ * spec's order through the emitter's rules themselves. Measured on the 19
+ * recipes `tools/emit_hashes.ts` generates, writing the arrays in the editor's
+ * order would have rewritten 18 of the 19 documents (a skin's slot keys on
+ * 18, the animations on 5, where 6,308 leaves move to another index) and told
+ * every one of those readers something else; stating the order beside them
+ * moves no leaf (`docs/COMPILED_MODEL.md` §9 has both counts).
+ *
+ * A placeholder's position inside one slot is not here: the emitter keeps a
+ * slot's own map as built, which is the model's order already.
+ */
+export interface ModelEditorOrder {
+  /** Every skin, `default` first and the rest by the editor's comparator, each with its table's slot keys in the order the file keys them. */
+  skins: Array<{ name: string; slots: string[] }>;
+  /** Every animation's name, in the order the file keys `animations`. */
+  animations: string[];
+}
+
 export interface CompiledModel extends CarriedFromCompileResult {
+  /**
+   * The setup-pose box the skeleton declares, or `null` (issue #1026,
+   * `ModelStage`). The Spine header carries it as `x`, `y`, `width`, `height`.
+   */
+  stage: ModelStage | null;
+  /**
+   * The editor's orders the Spine file lists skins, their slot keys and
+   * animations in (issue #1026, `ModelEditorOrder`) — computed from this
+   * model's own `skins` and `animations`, never read back from the file.
+   */
+  editorOrder: ModelEditorOrder;
   /**
    * The skeleton's reference scale, which a physics constraint's `wind` and
    * `gravity` act over (issue #958): the rig spec's `skeleton.referenceScale`
@@ -617,7 +681,9 @@ export interface CompiledModel extends CarriedFromCompileResult {
 }
 
 // ---------------------------------------------------------------------------
-// the document: `rigc-compiled/2` (issue #922, cut 1f; `pages` and `/2`, issue #1016)
+// the document: `rigc-compiled/3` (issue #922, cut 1f; `pages` and `/2`,
+// issue #1016; `stage`, `editorOrder` and each page's `pma` and `scale`, `/3`,
+// issue #1026)
 // ---------------------------------------------------------------------------
 
 /**
@@ -625,9 +691,11 @@ export interface CompiledModel extends CarriedFromCompileResult {
  * section: a `/1` reader (`readModel` of rigc 1.6) refuses a section it does
  * not know by name, so the same spec over a new section would be refused by
  * every reader already installed rather than read wrongly — a new spec says so
- * before the first section is opened. `readModel` reads both.
+ * before the first section is opened. `/3` since issue #1026 added `stage`,
+ * `editorOrder` and two fields on every page, for the same reason: a `/2`
+ * reader refuses each of them by name. `readModel` reads all three.
  */
-export const MODEL_DOCUMENT_SPEC = 'rigc-compiled/2';
+export const MODEL_DOCUMENT_SPEC = 'rigc-compiled/3';
 
 /** The file `build` writes the document to, in `--out` beside `skeleton.json` and `skeleton.atlas`. */
 export const MODEL_DOCUMENT_FILE = 'skeleton.model.json';
@@ -809,9 +877,38 @@ function animationOf(animation: CompiledAnimation, where: string): { [key: strin
   });
 }
 
+/** The stage's fields, in the order the Spine header writes them. */
+export const MODEL_STAGE_FIELDS = ['x', 'y', 'width', 'height'] as const;
+const STAGE_FIELDS: readonly string[] = MODEL_STAGE_FIELDS;
+
+/**
+ * The `editorOrder` section: `{ skins: [{ name, slots }], animations }`,
+ * refused by name where it is not a permutation of what the model holds — an
+ * order naming a skin, a slot key or an animation the model does not have, or
+ * leaving one out, would state an order for another rig.
+ */
+function editorOrderOf(model: CompiledModel): DocValue {
+  const order = model.editorOrder;
+  const problems: string[] = [];
+  const same = (what: string, stated: readonly string[], held: readonly string[]): void => {
+    if (JSON.stringify([...stated].sort()) !== JSON.stringify([...held].sort())) problems.push(`${what} lists [${stated.join(', ')}], the model holds [${held.join(', ')}]`);
+  };
+  same('editorOrder.skins', order.skins.map((s) => s.name), model.skins.map((s) => s.name));
+  for (const [i, entry] of order.skins.entries()) {
+    const skin = model.skins.find((s) => s.name === entry.name);
+    if (skin !== undefined) same(`editorOrder.skins[${i}] "${entry.name}".slots`, entry.slots, Object.keys(skin.attachments));
+  }
+  same('editorOrder.animations', order.animations, [...model.animations.keys()]);
+  if (problems.length > 0) throw new CompileError(`internal: the model's editor order is not its own: ${problems.join('; ')}`);
+  return {
+    skins: order.skins.map((entry, i) => ordered(entry, ['name', 'slots'], `editorOrder.skins[${i}]`)),
+    animations: plain(order.animations, 'editorOrder.animations'),
+  };
+}
+
 /** The model's fields the document writes, after `spec`, in its key order. */
 const MODEL_DOCUMENT_FIELDS: readonly string[] = [
-  'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations',
+  'referenceScale', 'stage', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations', 'editorOrder',
   'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig',
 ];
 
@@ -819,19 +916,22 @@ const MODEL_DOCUMENT_FIELDS: readonly string[] = [
 const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
 
 /**
- * The compiled model as a document: `rigc-compiled/2`, `JSON.stringify(doc,
+ * The compiled model as a document: `rigc-compiled/3`, `JSON.stringify(doc,
  * null, 2)` and a newline — the text `build` writes to `skeleton.model.json`,
  * and the record rigc's own posing core reads (`readModel` in
  * `src/core/index.ts`, issue #380, step 2). Its cost in a build is measured in
  * docs/COMPILED_MODEL.md §6 (issue #926).
  *
  * **Key order.** `spec`, then the model's fields in the order this file
- * declares them — `referenceScale` (issue #958), `bones`, `slots`, `skins`,
- * `constraints`, `events`, `animations` — then the fields carried from `CompileResult` in
+ * declares them — `referenceScale` (issue #958), `stage` (issue #1026, the
+ * header's four fields or `null`), `bones`, `slots`, `skins`, `constraints`,
+ * `events`, `animations`, `editorOrder` (issue #1026, `{ skins: [{ name,
+ * slots }], animations }`) — then the fields carried from `CompileResult` in
  * `CarriedFromCompileResult`'s order: `images`, `pageGrids`, `droppedStates`,
  * `absentParts`, `meshBones`, `meshes`, `physics`, `deformTransforms`,
  * `trackDerivations`, `rig`; then `pages`, where each region sits on its page
- * in the atlas written beside it (`pagesOfAtlas`, issue #1016), which is why
+ * in the atlas written beside it, and each page's `pma` and `scale` (issue
+ * #1026) (`pagesOfAtlas`, issue #1016), which is why
  * the atlas text is the third argument; and last `spine`, the digest of the
  * `skeleton.json` written beside it (`spineFileSha256`, issue #968), which is
  * why the Spine text is the second argument. Inside a model record, its interface's field
@@ -906,8 +1006,13 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  *   - `droppedStates[].why` — the sentence names the `--atlas-in` file by its
  *     absolute path.
  *
- * What the Spine emitter adds (`emitSkeleton`'s header, its spellings, its
- * orders and omissions) is not in the model and so not here.
+ * What the Spine emitter adds (`emitSkeleton`'s header, its spellings and
+ * omissions) is not in the model and so not here — except the two things the
+ * Spine files were the only place of until issue #1026, which the model now
+ * holds and the emitter reads from it: the stage, and the orders the editor
+ * lists skins, slot keys and animations in (`editorOrder`, computed by the
+ * functions the emitter is handed). The header's `spine`, `fps`, `images` and
+ * `audio` are still the emitter's alone.
  */
 export function modelDocument(model: CompiledModel, skeletonText: string, atlasText: string): string {
   for (const key of Object.keys(model)) {
@@ -918,6 +1023,7 @@ export function modelDocument(model: CompiledModel, skeletonText: string, atlasT
   const doc: { [key: string]: DocValue } = {
     spec: MODEL_DOCUMENT_SPEC,
     referenceScale: plain(model.referenceScale, 'referenceScale'),
+    stage: model.stage === null ? null : ordered(model.stage, STAGE_FIELDS, 'stage'),
     bones: model.bones.map((bone, i) =>
       ordered(bone, BONE_FIELDS, `bones[${i}]`, (key, v) => (key === 'editor' ? ordered(v as object, ['color', 'icon'], `bones[${i}].editor`) : plain(v, `bones[${i}].${key}`))),
     ),
@@ -926,6 +1032,7 @@ export function modelDocument(model: CompiledModel, skeletonText: string, atlasT
     constraints: model.constraints.map((constraint, i) => constraintOf(constraint, `constraints[${i}]`)),
     events: named(model.events, 'events', (event, at) => ordered(event, EVENT_FIELDS, at)),
     animations: named(model.animations, 'animations', (animation, at) => animationOf(animation, at)),
+    editorOrder: editorOrderOf(model),
     images: plain(model.images.map(({ absPath: _absPath, ...image }) => image), 'images'),
     pageGrids: plain(model.pageGrids, 'pageGrids'),
     droppedStates: plain(model.droppedStates.map(({ why: _why, ...state }) => state), 'droppedStates'),
@@ -966,16 +1073,34 @@ export interface ModelPageRegion {
   index: number;
 }
 
-/** One page: its name (a path from the directory `build` writes into, trimmed), its `size`, and its regions in file order. */
+/**
+ * One page: its name (a path from the directory `build` writes into, trimmed),
+ * its `size`, its `pma` and `scale` (issue #1026), and its regions in file
+ * order.
+ *
+ * `pma` and `scale` are present on every page `pagesOfAtlas` spells and on
+ * every page a `rigc-compiled/3` document states; a `rigc-compiled/2`
+ * document's pages carry neither, which is why they are optional here.
+ */
 export interface ModelPage {
   name: string;
   width: number;
   height: number;
+  /** Whether the page's texels are premultiplied, as the runtime reads the page's `pma:` line (absent: false). */
+  pma?: boolean;
+  /**
+   * The number the page's own `scale:` line states, or `null` where the page
+   * has none. Not defaulted to the 1 a page without the line is read as: the
+   * line is an importer's instruction ("these texels are this much smaller than
+   * the drawings"), `check` reports a declared one (issue #171), and a default
+   * would state a line the atlas does not have.
+   */
+  scale?: number | null;
   regions: ModelPageRegion[];
 }
 
 /** The fields of a page and of a region, in the order the document writes them — `readModel` mirrors both lists. */
-export const MODEL_PAGE_FIELDS = ['name', 'width', 'height', 'regions'] as const;
+export const MODEL_PAGE_FIELDS = ['name', 'width', 'height', 'pma', 'scale', 'regions'] as const;
 export const MODEL_PAGE_REGION_FIELDS = ['name', 'x', 'y', 'width', 'height', 'offsetX', 'offsetY', 'originalWidth', 'originalHeight', 'degrees', 'index'] as const;
 
 /**
@@ -997,19 +1122,25 @@ export const MODEL_PAGE_REGION_FIELDS = ['name', 'x', 'y', 'width', 'height', 'o
  * `A18` compares it with a second compile's document spelled from a second,
  * independent pack.
  *
- * 🔸 **What it leaves out.** The page's `format`, `filter`, `repeat`, `pma`
- * and `scale:` lines: nothing that draws reads them (the rasteriser samples
- * one way, `src/render.ts`'s header; the pose reads only the ratios the
- * trimmed and original sizes make, #939's decision 2). Every region of every
- * page is written, drawn or not: which regions a rig draws is the core's
- * lookup rule (`./core/uvs.ts`, *Which region, on which page*), and a writer
- * choosing a subset would restate it.
+ * 🔸 **What it leaves out.** The page's `format`, `filter` and `repeat`
+ * lines: nothing that draws or checks reads them (the rasteriser samples one
+ * way, `src/render.ts`'s header; the pose reads only the ratios the trimmed
+ * and original sizes make, #939's decision 2). `pma` and `scale` were left out
+ * with them until issue #1026: they are not placement either, but `A06` reads
+ * `pma` and `check`'s texture note reads `scale:`, and the atlas was the only
+ * place either was written. Every region of every page is written, drawn or
+ * not: which regions a rig draws is the core's lookup rule (`./core/uvs.ts`,
+ * *Which region, on which page*), and a writer choosing a subset would
+ * restate it.
  */
 export function pagesOfAtlas(atlasText: string): ModelPage[] {
-  return parseAtlasText(atlasText).pages.map((page) => ({
+  const parsed = parseAtlasText(atlasText);
+  return parsed.pages.map((page) => ({
     name: page.name,
     width: page.width,
     height: page.height,
+    pma: page.pma,
+    scale: statedPageScale(parsed.lines, page.nameLine),
     regions: page.regions.map((r) => ({
       name: r.name,
       x: r.x,
@@ -1024,6 +1155,38 @@ export function pagesOfAtlas(atlasText: string): ModelPage[] {
       index: r.index,
     })),
   }));
+}
+
+/**
+ * A `scale:` line, as `check` has always read one (`atlasScales` in
+ * `src/render.ts` reads every such line in a text with this pattern): an
+ * indented `scale:` entry and one number. Shared so the two readings — every
+ * line of a text, and the lines of one page — cannot drift into two patterns.
+ */
+export const ATLAS_SCALE_LINE = /^[ \t]+scale:[ \t]*([0-9.eE+-]+)[ \t]*$/;
+
+/**
+ * The number a page's own `scale:` line states, or `null` (issue #1026). The
+ * page's entries are the lines after its name up to the first line that is
+ * blank or carries no colon — where `TextureAtlasReader` stops reading a page's
+ * fields, and where `parseAtlasText` stops too. A line `ATLAS_SCALE_LINE`
+ * matches and whose number is finite is the statement; the last one wins, as a
+ * repeated entry does in `parseAtlasText`. Unlike `AtlasPage.scale`, nothing is
+ * defaulted and a non-positive number is stated as written, because this is
+ * the line `check` reports, not the ratio an importer divides by.
+ */
+function statedPageScale(lines: readonly string[], nameLine: number): number | null {
+  let stated: number | null = null;
+  for (let at = nameLine + 1; at < lines.length; at++) {
+    const line = lines[at];
+    const trimmed = line.trim();
+    if (trimmed.length === 0 || !trimmed.includes(':')) break;
+    const m = ATLAS_SCALE_LINE.exec(line);
+    if (m === null) continue;
+    const value = Number(m[1]);
+    if (Number.isFinite(value)) stated = value;
+  }
+  return stated;
 }
 // --- #1016 where each region sits on its page: end ---
 
