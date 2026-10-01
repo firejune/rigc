@@ -945,6 +945,57 @@ function requireSpineRuntime(label: string, why: string): void {
   }
 }
 
+/**
+ * A candidate whose skeleton spine-core cannot load against the atlas beside
+ * it — refused naming both files, why the runtime was drawing them, and what
+ * the runtime could not resolve, in its own words (issue #1033).
+ *
+ * On a rigc build this is a directory whose files are not one build: a
+ * `skeleton.json` or a `skeleton.atlas` from another build put beside this
+ * one's `skeleton.model.json`. The core refuses the pair first (the digest, or
+ * the atlas's pages, on the poser line's reason), the fallback hands it to
+ * spine-core, and the runtime stops at the first name it cannot resolve —
+ * which surfaced as its own uncaught error and a stack. A class of its own so
+ * `cli.ts` refuses it as an invocation (exit 2, nothing written), as it
+ * refuses a missing atlas on an export: the files the command was pointed at
+ * have to change, not the rig.
+ */
+export class CandidatePairError extends Error {}
+
+/** Where a candidate's files sit, as the refusals below name them: the atlas, and the directory when it holds a model document. */
+function pairPlace(paths: { skeleton: string; atlas: string } | null): { atlas: string; build: string | null } {
+  const dir = paths === null ? null : dirname(resolve(paths.skeleton));
+  return { atlas: paths === null ? 'the atlas handed over with it' : resolve(paths.atlas), build: dir !== null && existsSync(join(dir, MODEL_DOCUMENT_FILE)) ? dir : null };
+}
+
+/** What a directory whose files are not one build is told to do. */
+function notOneBuild(dir: string): string {
+  return (
+    `${dir} is not one build: ${MODEL_DOCUMENT_FILE}, skeleton.json and skeleton.atlas are written together by one \`rigc build\`, ` +
+    "and these are not one build's — build it again, or put that build's own files back beside each other"
+  );
+}
+
+/** The refusal for a skeleton the runtime could not load against its atlas: `runtime` is the runtime's own message. */
+function pairRefusal(label: string, paths: { skeleton: string; atlas: string } | null, why: string, runtime: string): CandidatePairError {
+  const { atlas, build } = pairPlace(paths);
+  const head = `${label} does not load against ${atlas}: spine-core draws this pair (${why}) and could not resolve it — ${JSON.stringify(runtime)}. `;
+  return new CandidatePairError(head + (build === null ? 'The skeleton and the atlas are not one pair: the atlas has to be the one the skeleton was exported or built with' : notOneBuild(build)));
+}
+
+/**
+ * The refusal for a page the atlas spine-core draws through names and that is
+ * not there (issue #1033) — on a rigc build, typically an atlas copied from
+ * another build's directory, whose page paths are relative to that one.
+ */
+function pageRefusal(page: string, paths: { skeleton: string; atlas: string } | null, why: string): CandidatePairError {
+  const { atlas, build } = pairPlace(paths);
+  const head = `nothing at ${page}: ${atlas} names it as a page, and spine-core draws this pair through that atlas (${why}). A page path is relative to the atlas's own directory`;
+  return new CandidatePairError(
+    head + (build === null ? ', and the page has to be there' : `, so an atlas copied from another build's directory names pages that are not here. ${notOneBuild(build)}`),
+  );
+}
+
 /** A candidate as `render` and `check` read it: the posers, the facts and the pages (issue #1014). */
 export interface Candidate {
   choice: PoserChoice;
@@ -983,12 +1034,29 @@ export function loadCandidate(
     if (input.atlasText === null) throw atlasAbsent(paths?.atlas ?? '(no atlas)', input.label, why);
     return input.atlasText;
   };
+  // The one place this function hands the pair to the runtime's parser. A pair it cannot load — a skeleton.json
+  // or an atlas from another build beside this one's document — is refused by name rather than surfacing the
+  // runtime's own throw and stack (issue #1033). The JSON is parsed outside the catch: a file that is not JSON is
+  // not something the runtime said.
+  // Under `--poser core` the runtime is loaded only for the facts the flags are checked against, and nothing would be
+  // drawn through it: the refusal that is true there is the flag's, the one `refuseUnchosen` would have said next.
+  const refusing = (refusal: CandidatePairError): Error =>
+    forced === 'core' && choice !== null && choice.core === null ? new PoserChoiceError(`--poser core: ${choice.why}`) : refusal;
+  const spineLoad = (text: string, why: string): SkeletonData => {
+    const json = JSON.parse(input.skeletonText);
+    const reader = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(text)));
+    try {
+      return reader.readSkeletonData(json);
+    } catch (err) {
+      throw refusing(pairRefusal(input.label, paths, why, err instanceof Error ? err.message : String(err)));
+    }
+  };
   const spineData = (): SkeletonData => {
     if (data === null) {
       const why = choice === null || choice.core !== null ? 'a fallback from the core poser' : choice.why;
       const text = atlasText(why);
       requireSpineRuntime(input.label, why);
-      data = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(text))).readSkeletonData(JSON.parse(input.skeletonText));
+      data = spineLoad(text, why);
     }
     return data;
   };
@@ -1004,9 +1072,17 @@ export function loadCandidate(
   }
   const text = atlasText(choice.why);
   requireSpineRuntime(input.label, choice.why);
-  const posable = posableFromText(input.skeletonText, text, input.atlasDir);
-  data = posable.data;
-  return { choice, facts: spineFacts(posable.data, text), pages: posable.pages };
+  // `posableFromText`'s two steps, in its order — every page the atlas declares, then the skeleton — each refusing
+  // by name where the pair is not one: a page that is not there (`pageRefusal`), a skeleton the runtime cannot load
+  // against the atlas (`spineLoad`). A page that is there and is not a PNG says so itself (`readPlate`).
+  const pages = new Map<string, Plate>();
+  for (const page of new TextureAtlas(text).pages) {
+    const path = join(input.atlasDir, page.name);
+    if (!existsSync(path)) throw refusing(pageRefusal(resolve(path), paths, choice.why));
+    pages.set(page.name, readPlate(path));
+  }
+  data = spineLoad(text, choice.why);
+  return { choice, facts: spineFacts(data, text), pages };
 }
 
 /**

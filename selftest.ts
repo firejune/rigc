@@ -80640,7 +80640,8 @@ function runRenderHashes(args: string[]): { status: number | null; stdout: strin
  * copies for RC11–RC12; eleven over the tree and five over three planted
  * copies for RC13–RC14, with the in-process substitution of every gallery
  * row's first and middle frames through both atlas readers; three over two
- * planted copies for RC17). The corpus's nineteen rows are
+ * planted copies for RC17; ten over the tree and eight over four planted
+ * copies for RC18–RC19). The corpus's nineteen rows are
  * never run here; that is PR and CI-artifact material.
  */
 function runRenderHashesSuite(): number | null {
@@ -80653,7 +80654,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH07, RC01–RC17 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH07, RC01–RC19 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -82492,6 +82493,269 @@ function runRenderHashesSuite(): number | null {
         'issue #1026: a reader that kept reading the Spine files would print the same bytes wherever they are there, so only the atlas gone shows the document is what is read; ' +
           'and a /2 document reads them off the files, which the poser line has to say, as #1020 made it say it for a /1 document\'s placement',
       );
+    }
+
+    // --- RC18–RC19: a directory whose files are not one build is refused by name where the runtime cannot load it (issue #1033) --
+    //
+    // RC11's row with another gallery build's `skeleton.json` beside its own
+    // model document and atlas: the core refuses it by the digest, the fallback
+    // hands the pair to spine-core, and the runtime stops at the first region the
+    // atlas does not have — which surfaced as the runtime's own throw and a
+    // stack, exit 1. RC18 holds `render`, `render --geometry`, `check` and
+    // `bench --frames` on that pair to the refusal: exit 2, the first line naming
+    // the skeleton, the atlas, the poser line's reason with both digests, the
+    // runtime's own message (measured here, in process, off the same pair), and
+    // that the directory is not one build; no stack, nothing written. The same
+    // for another build's atlas beside this build's skeleton and document, an
+    // export beside an atlas it was not exported with, and `--poser core`, which
+    // is that flag's refusal. The pairs that DO load keep today's poser line to
+    // the byte: the row's skeleton re-indented, and another build's document
+    // beside the row's pair. And the realistic swapped atlas — one whose page
+    // paths, relative to the build it came from, do not resolve here — died on
+    // the first page's ENOENT the same way; it is refused naming that page. The donor is chosen by measurement — the first
+    // other build, in name order, whose skeleton the runtime does not load
+    // against the row's atlas — so no gallery name is written here. RC19 plants
+    // the catch removed, the exit mapping removed and the `--poser core` clause
+    // dropped (and the page check removed), each in a copy of the tree, and reads RC18's probes red on each.
+    {
+      type SwapStep = 'skeleton' | 'bench' | 'atlas' | 'page' | 'export' | 'core' | 'loads';
+      const SWAPPED: ReadonlySet<SwapStep> = new Set<SwapStep>(['skeleton', 'bench', 'atlas', 'page', 'export', 'core', 'loads']);
+      const runAt = (root: string, args: string[]): { status: number | null; stdout: string; stderr: string } => {
+        const result = spawnSync(process.execPath, ['cli.ts', ...args], { cwd: root, encoding: 'utf8' });
+        return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+      };
+      const sha = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex');
+      const runtimeSays = (skeleton: string, atlas: string, dir: string): string | null => {
+        try {
+          loadPosable(skeleton, atlas, dir);
+          return null;
+        } catch (err) {
+          return err instanceof Error ? err.message : String(err);
+        }
+      };
+      const setupProbes: string[] = [];
+      let donor: { name: string; out: string; says: string } | null = null;
+      let atlasSays: string | null = null;
+      let absentPage = '';
+      const base = row === undefined ? '' : dirname(row.out);
+      // The swapped-atlas pair sits beside the DONOR's build, so the donor atlas's relative page paths resolve and the
+      // runtime meets the regions; the page case puts the same atlas two levels down, where they cannot (measured below).
+      const dirs = {
+        skeleton: join(base, 'rc18-skeleton'),
+        atlas: '',
+        page: join(base, 'rc18-page', 'elsewhere'),
+        export: join(base, 'rc18-export'),
+        indented: join(base, 'rc18-indented'),
+        model: join(base, 'rc18-model'),
+      };
+      if (row === undefined) setupProbes.push('no gallery build to swap');
+      else {
+        for (const other of [...galleryBuilds].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0))) {
+          if (other.out === row.out) continue;
+          const says = runtimeSays(join(other.out, 'skeleton.json'), join(row.out, 'skeleton.atlas'), row.out);
+          if (says !== null) {
+            donor = { name: other.name, out: other.out, says };
+            break;
+          }
+        }
+        if (donor === null) setupProbes.push(`no other gallery build's skeleton.json fails to load against ${row.name}'s atlas, so there is no swapped pair to refuse`);
+        else {
+          // Each a sibling of the row's build, so every atlas's relative page paths resolve as they do beside it.
+          const copy = (dir: string, files: Record<string, string>): void => {
+            rmSync(dir, { recursive: true, force: true });
+            mkdirSync(dir, { recursive: true });
+            for (const [name, from] of Object.entries(files)) copyFileSync(from, join(dir, name));
+          };
+          const own = (name: string): string => join(row.out, name);
+          const theirs = (name: string): string => join(donor === null ? row.out : donor.out, name);
+          copy(dirs.skeleton, { 'skeleton.json': theirs('skeleton.json'), 'skeleton.atlas': own('skeleton.atlas'), [MODEL_DOCUMENT_FILE]: own(MODEL_DOCUMENT_FILE) });
+          dirs.atlas = join(dirname(donor.out), 'rc18-atlas');
+          copy(dirs.atlas, { 'skeleton.json': own('skeleton.json'), 'skeleton.atlas': theirs('skeleton.atlas'), [MODEL_DOCUMENT_FILE]: own(MODEL_DOCUMENT_FILE) });
+          copy(dirs.page, { 'skeleton.json': own('skeleton.json'), 'skeleton.atlas': theirs('skeleton.atlas'), [MODEL_DOCUMENT_FILE]: own(MODEL_DOCUMENT_FILE) });
+          const firstPage = parseAtlasText(readFileSync(theirs('skeleton.atlas'), 'utf8')).pages[0]?.name ?? '';
+          absentPage = resolve(dirs.page, firstPage);
+          if (firstPage === '' || existsSync(absentPage)) setupProbes.push(`${donor.name}'s first page resolves from ${dirs.page} (${absentPage}), so the page case has no page missing`);
+          copy(dirs.export, { 'skeleton.json': theirs('skeleton.json'), 'skeleton.atlas': own('skeleton.atlas') });
+          copy(dirs.indented, { 'skeleton.atlas': own('skeleton.atlas'), [MODEL_DOCUMENT_FILE]: own(MODEL_DOCUMENT_FILE) });
+          writeFileSync(join(dirs.indented, 'skeleton.json'), `${JSON.stringify(JSON.parse(readFileSync(own('skeleton.json'), 'utf8')), null, 1)}\n`);
+          copy(dirs.model, { 'skeleton.json': own('skeleton.json'), 'skeleton.atlas': own('skeleton.atlas'), [MODEL_DOCUMENT_FILE]: theirs(MODEL_DOCUMENT_FILE) });
+          atlasSays = runtimeSays(join(dirs.atlas, 'skeleton.json'), join(dirs.atlas, 'skeleton.atlas'), dirs.atlas);
+          if (atlasSays === null) setupProbes.push(`${row.name}'s skeleton loads against ${donor.name}'s atlas, so the swapped-atlas pair has nothing to refuse`);
+        }
+      }
+      const recordedIn = (modelPath: string): string => (JSON.parse(readFileSync(modelPath, 'utf8')) as { spine: { sha256: string } }).spine.sha256;
+      /** Today's poser line for a skeleton.json that is not the one the document records — held to the byte. */
+      const digestLine = (dir: string): string => {
+        const model = join(dir, MODEL_DOCUMENT_FILE);
+        const skeleton = join(dir, 'skeleton.json');
+        return (
+          `spine-core — the core refused ${model}: ${skeleton} is not the skeleton.json ${model} was written beside: its sha256 is ${sha(skeleton)}, ` +
+          `the document records ${recordedIn(model)} — the Spine file was edited or replaced after the build, and the core would draw the build's rig instead of it`
+        );
+      };
+      const stacked = (text: string): boolean => /\n\s+at \S+ \(/.test(text);
+      /** RC18's probes over the tree at `root`, for the steps asked: empty is the tree green. */
+      const readSwapped = (root: string, label: string, steps: ReadonlySet<SwapStep>): string[] => {
+        const out: string[] = [...setupProbes];
+        if (row === undefined || donor === null || out.length > 0) return out;
+        const frames = existsSync(join(base, 'ch01-frames', FRAMES_SIDECAR)) ? join(base, 'ch01-frames') : join(base, 'render');
+        /** One refused run: exit 2, the first stderr line `want` (prefix) carrying every `parts`, no stack, nothing at `wrote`. */
+        const refused = (name: string, args: string[], wrote: string, want: string, parts: readonly string[]): void => {
+          const run = runAt(root, args);
+          const said = run.stderr.trim().split('\n').find((l) => l.startsWith('rigc ')) ?? run.stderr.trim().split('\n')[0] ?? '';
+          const missing = parts.filter((p) => !said.includes(p));
+          if (run.status !== 2) out.push(`${label}: ${name} exited ${run.status}, not 2 — ${JSON.stringify(said.slice(0, 200))}`);
+          else if (!said.startsWith(want)) out.push(`${label}: ${name} said ${JSON.stringify(said.slice(0, 240))}, not ${JSON.stringify(want.slice(0, 120))}…`);
+          else if (missing.length > 0) out.push(`${label}: ${name}'s refusal does not carry ${missing.map((p) => JSON.stringify(p.slice(0, 80))).join(', ')}`);
+          if (stacked(run.stderr)) out.push(`${label}: ${name} printed a stack`);
+          if (existsSync(wrote)) out.push(`${label}: ${name} wrote ${wrote}`);
+        };
+        const pairSays = (dir: string, why: string, runtime: string): { want: (cmd: string) => string; parts: string[] } => ({
+          want: (cmd) => `rigc ${cmd}: ${join(dir, 'skeleton.json')} does not load against ${join(dir, 'skeleton.atlas')}: spine-core draws this pair (${why}`,
+          parts: [`and could not resolve it — ${JSON.stringify(runtime)}. `, `${dir} is not one build: `],
+        });
+        if (steps.has('skeleton') || steps.has('bench')) {
+          const model = join(dirs.skeleton, MODEL_DOCUMENT_FILE);
+          const says = pairSays(dirs.skeleton, `the core refused ${model}: ${join(dirs.skeleton, 'skeleton.json')} is not the skeleton.json ${model} was written beside: `, donor.says);
+          const digests = [sha(join(dirs.skeleton, 'skeleton.json')), recordedIn(model)];
+          const at = (step: string): string => join(work, `rc18-${label}-${step}`);
+          const runs: Array<[string, string, string[], string]> = steps.has('skeleton')
+            ? [
+                ['render', 'render', ['render', '--candidate', dirs.skeleton, '--out', at('render')], at('render')],
+                ['render --geometry', 'render', ['render', '--candidate', dirs.skeleton, '--geometry', '--out', at('geometry')], at('geometry')],
+                ['check', 'check', ['check', '--candidate', dirs.skeleton, '--frames', frames, '--json', join(at('check'), 'check.json')], at('check')],
+              ]
+            : [];
+          if (steps.has('bench')) runs.push(['bench --frames', 'bench', ['bench', '3', '--candidate', dirs.skeleton, '--frames', frames, '--json', join(at('bench'), 'bench.json')], at('bench')]);
+          for (const [name, cmd, args, wrote] of runs) refused(`${name} of another build's skeleton.json`, args, wrote, says.want(cmd), [...says.parts, ...digests]);
+        }
+        if (steps.has('atlas') && atlasSays !== null) {
+          const model = join(dirs.atlas, MODEL_DOCUMENT_FILE);
+          const says = pairSays(dirs.atlas, `the core refused ${model}: the atlas beside ${model} is not the one it was written beside: `, atlasSays);
+          refused("render of another build's atlas", ['render', '--candidate', dirs.atlas, '--out', join(work, `rc18-${label}-atlas`)], join(work, `rc18-${label}-atlas`), says.want('render'), says.parts);
+        }
+        if (steps.has('page')) {
+          const model = join(dirs.page, MODEL_DOCUMENT_FILE);
+          refused(
+            "render of another build's atlas whose pages are not here",
+            ['render', '--candidate', dirs.page, '--out', join(work, `rc18-${label}-page`)],
+            join(work, `rc18-${label}-page`),
+            `rigc render: nothing at ${absentPage}: ${join(dirs.page, 'skeleton.atlas')} names it as a page, and spine-core draws this pair through that atlas (the core refused ${model}: the atlas beside ${model} is not the one it was written beside: `,
+            ["so an atlas copied from another build's directory names pages that are not here. ", `${dirs.page} is not one build: `],
+          );
+        }
+        if (steps.has('export')) {
+          const skeleton = join(dirs.export, 'skeleton.json');
+          refused(
+            'render of an export beside an atlas it was not exported with',
+            ['render', '--candidate', dirs.export, '--out', join(work, `rc18-${label}-export`)],
+            join(work, `rc18-${label}-export`),
+            `rigc render: ${skeleton} does not load against ${join(dirs.export, 'skeleton.atlas')}: spine-core draws this pair (no ${MODEL_DOCUMENT_FILE} beside ${skeleton} — a Spine export, not a rigc build)`,
+            [`and could not resolve it — ${JSON.stringify(donor.says)}. `, 'The skeleton and the atlas are not one pair: '],
+          );
+        }
+        if (steps.has('core')) {
+          const model = join(dirs.skeleton, MODEL_DOCUMENT_FILE);
+          refused(
+            "render --poser core of another build's skeleton.json",
+            ['render', '--candidate', dirs.skeleton, '--poser', 'core', '--out', join(work, `rc18-${label}-core`)],
+            join(work, `rc18-${label}-core`),
+            `rigc render: --poser core: the core refused ${model}: ${join(dirs.skeleton, 'skeleton.json')} is not the skeleton.json ${model} was written beside: `,
+            [sha(join(dirs.skeleton, 'skeleton.json')), recordedIn(model)],
+          );
+        }
+        if (steps.has('loads')) {
+          for (const [what, dir] of [['the row\'s own skeleton.json re-indented', dirs.indented], ['another build\'s model document beside the row\'s pair', dirs.model]] as const) {
+            const run = runAt(root, ['render', '--candidate', dir, '--out', join(work, `rc18-${label}-${basename(dir)}`)]);
+            const line = poserLine(run.stdout);
+            if (run.status !== 0 || line !== digestLine(dir)) out.push(`${label}: ${what} rendered with exit ${run.status} and poser line ${JSON.stringify(line.slice(0, 240))}, not today's line — ${JSON.stringify(run.stderr.trim().split('\n')[0]?.slice(0, 160) ?? '')}`);
+          }
+        }
+        return out;
+      };
+      {
+        const probes = readSwapped(import.meta.dir, 'tree', SWAPPED);
+        const held = probes.length === 0;
+        say(
+          'RC18_A_DIRECTORY_WHOSE_FILES_ARE_NOT_ONE_BUILD_IS_REFUSED_BY_NAME_WHERE_THE_RUNTIME_CANNOT_LOAD_IT',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `${row?.name ?? '(none)'} with ${donor?.name ?? '(none)'}'s skeleton.json beside its own document and atlas, the runtime saying ${JSON.stringify(donor?.says ?? '')}: ` +
+              'render, render --geometry, check and bench --frames exit 2 naming the skeleton, the atlas, both digests, the runtime\'s words and that the directory is not one build — no stack, nothing written; ' +
+              `${donor?.name ?? '(none)'}'s atlas beside the row's skeleton and document (the runtime: ${JSON.stringify(atlasSays ?? '')}) and an export beside an atlas it was not exported with are refused the same way, ` +
+              "the same atlas where its pages do not resolve is refused naming the first page that is not there, and --poser core is that flag's refusal; " +
+              "the row's skeleton re-indented and another build's document beside the row's pair still render, with today's poser line to the byte",
+          ),
+          'issue #1033: the digest refused another build\'s skeleton.json and the fallback handed it to spine-core, which threw at the first region the atlas lacks — exit 1 and a stack, ' +
+            'where every other way a candidate is not one build is said by name. Only the swapped files run through the command show what it says',
+        );
+      }
+      // RC19 — each plant in its own copy of the tree (RC12's `plantTree`), read through RC18's probes. `bench` needs the
+      // ladder's corpus, which a copy of the tree does not carry, so the plants read the other commands.
+      {
+        const plantProbes19: string[] = [];
+        const reds19: string[] = [];
+        const plants19: Array<{ label: string; file: string; from: string; to: string; steps: SwapStep[]; expect: string }> = [
+          {
+            label: 'no-catch',
+            file: join('src', 'render.ts'),
+            from: '      throw refusing(pairRefusal(input.label, paths, why, err instanceof Error ? err.message : String(err)));\n',
+            to: '      throw err;\n',
+            steps: ['skeleton'],
+            expect: 'exited 1, not 2',
+          },
+          {
+            label: 'no-exit',
+            file: 'cli.ts',
+            from: '  if (err instanceof CandidatePairError) {\n',
+            to: '  if (err instanceof CandidatePairError && command === "planted") {\n',
+            steps: ['skeleton'],
+            expect: 'printed a stack',
+          },
+          {
+            label: 'no-page-check',
+            file: join('src', 'render.ts'),
+            from: '    if (!existsSync(path)) throw refusing(pageRefusal(',
+            to: '    if (path === "planted") throw refusing(pageRefusal(',
+            steps: ['page'],
+            expect: 'exited 1, not 2',
+          },
+          {
+            label: 'no-core-clause',
+            file: join('src', 'render.ts'),
+            from: "    forced === 'core' && choice !== null && choice.core === null ? new PoserChoiceError(",
+            to: "    forced === 'planted' && choice !== null && choice.core === null ? new PoserChoiceError(",
+            steps: ['core'],
+            expect: 'said "rigc render: ',
+          },
+        ];
+        for (const plant of plants19) {
+          const { root, occurrences } = plantTree(`rc19-${plant.label}`, plant.file, plant.from, plant.to);
+          if (occurrences !== 1) {
+            plantProbes19.push(`the ${plant.label} plant found ${occurrences} occurrence(s) of its line in ${plant.file}, not 1`);
+            continue;
+          }
+          const read = readSwapped(root, plant.label, new Set(plant.steps));
+          if (read.length === 0) plantProbes19.push(`the ${plant.label} plant (${plant.file}) left RC18's ${plant.steps.join(', ')} green`);
+          else if (!read.some((p) => p.includes(plant.expect))) plantProbes19.push(`the ${plant.label} plant read red for another reason: ${read[0].slice(0, 200)}`);
+          else reds19.push(`${plant.label} (${plant.steps.join(', ')}: ${read.length} probe(s))`);
+        }
+        const held19 = plantProbes19.length === 0 && reds19.length === plants19.length;
+        say(
+          'RC19_THE_CATCH_REMOVED_THE_EXIT_MAPPING_REMOVED_THE_PAGE_CHECK_REMOVED_OR_THE_POSER_CORE_CLAUSE_DROPPED_TURNS_RC18_RED',
+          held19,
+          probeDetail(
+            held19,
+            plantProbes19,
+            "in copies of the tree: src/render.ts rethrowing the runtime's error where the pair does not load, cli.ts no longer mapping the refusal to exit 2, src/render.ts no longer looking for a page before reading it, " +
+              `and --poser core's clause dropped so the pair refusal speaks for the flag — RC18's probes red on each: ${reds19.join('; ')}`,
+          ),
+          'RC18 reads a refusal off the command; the plants are what show it is the catch that makes it one, the mapping that makes it exit 2 with no stack, the page check that names the page, ' +
+            'and the clause that keeps --poser core saying the flag\'s refusal rather than a fallback it never draws',
+        );
+      }
     }
   }
 
