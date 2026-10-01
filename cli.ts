@@ -93,7 +93,7 @@ import {
 } from './src/diff.ts';
 import { ingest, IngestError, IngestSpecRefused, INGEST_GUTTERS, type IngestFinding, type IngestStage } from './src/ingest.ts';
 import { NotAPngError } from './src/png.ts';
-import { copyAtlasPages } from './src/emit.ts';
+import { copyAtlasPages, plannedPageCopies } from './src/emit.ts';
 import {
   DEFAULT_PADDING,
   DEFAULT_PAGE_EDGES,
@@ -456,10 +456,15 @@ function runGate(
   modelText: string,
   opts: CompileOptions,
   profile: ValidateProfile,
+  /** The atlas text `build` writes for a compile's own — `--copy-images` renames the pages — which the second compile's document is spelled from, as `modelText` was (issue #1016). */
+  written: (atlasText: string) => string,
   atlas?: AtlasOverride,
 ): number {
   // The determinism check compares a second, independent compile — its model
-  // document included, which is the text `build` writes beside the pair.
+  // document included, which is the text `build` writes beside the pair, and
+  // which states where each region sits in the atlas written with it (`pages`,
+  // issue #1016): so the second document is spelled from the second compile's
+  // atlas as it would be written, or from the second, independent pack.
   const again = compile(opts);
   const report = validate({
     skeletonText: result.skeletonText,
@@ -467,7 +472,7 @@ function runGate(
     atlasDir: opts.outDir,
     declaredDurations: result.declaredDurations,
     modelText,
-    reEmit: { skeletonText: again.skeletonText, atlasText: atlas ? atlas.again : again.atlasText, modelText: modelDocument(again.model, again.skeletonText) },
+    reEmit: { skeletonText: again.skeletonText, atlasText: atlas ? atlas.again : again.atlasText, modelText: modelDocument(again.model, again.skeletonText, atlas ? atlas.again : written(again.atlasText)) },
     rig: result.rig,
     profile,
   });
@@ -864,7 +869,7 @@ function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): 
   // Through rigc's own core over the model document the build carries (issue #969), spine-core when the core
   // refuses it; the survey's record says which (`source`), and `tools/survey_hashes.ts` holds the two to one block.
   // The block itself is `deformReportBlock` (`src/deformreport.ts`), so a control renders it off either poser's survey.
-  const survey = surveyOfBuild({ skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText) }, new Set(), 'auto');
+  const survey = surveyOfBuild({ skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText, result.atlasText) }, new Set(), 'auto');
   return deformReportBlock(survey, result.deformTransforms, exempt);
 }
 
@@ -1113,10 +1118,17 @@ function cmdBuild(flags: Record<string, string>): void {
 
   // The model's document is spelled before the gate, so the text A18 compares
   // is the text written, and a model the document cannot carry is refused
-  // before anything is (issue #922).
-  const modelText = modelDocument(result.model, result.skeletonText);
+  // before anything is (issue #922). It states where each region sits in the
+  // atlas written beside it (`pages`, issue #1016), so it is spelled from that
+  // atlas: under `--copy-images` the text with the copies' page names, planned
+  // here from the text alone (`plannedPageCopies`) and copied after the gate.
+  // Under `--pack` the pages move again after this gate, and the document
+  // written is the one the packed gate below spells and compares.
+  const copying = flags['copy-images'] !== undefined;
+  const writtenAtlas = (atlasText: string): string => (copying ? plannedPageCopies(atlasText, opts.outDir).atlasText : atlasText);
+  let modelText = modelDocument(result.model, result.skeletonText, writtenAtlas(result.atlasText));
   console.log(`  ..    validate (spine-core round trip + machine assertions, profile ${profile})`);
-  const failures = runGate(result, modelText, opts, profile);
+  const failures = runGate(result, modelText, opts, profile, writtenAtlas);
   if (failures > 0) {
     console.error(`rigc: ${failures} assertion(s) failed — nothing written`);
     process.exit(1);
@@ -1139,6 +1151,10 @@ function cmdBuild(flags: Record<string, string>): void {
   let atlasText = result.atlasText;
   if (flags['copy-images'] !== undefined) {
     const copied = copyAtlasPages(atlasText, opts.outDir);
+    // The document's pages were spelled from the plan; the copy is held to it before anything of the pair is written.
+    if (copied.atlasText !== writtenAtlas(result.atlasText)) {
+      throw new Error(`internal: --copy-images wrote an atlas whose page names are not the ones ${MODEL_DOCUMENT_FILE} was spelled with — nothing of the pair was written`);
+    }
     atlasText = copied.atlasText;
     console.log(`  ..    copy-images: ${copied.pages.length} page(s) copied into ${opts.outDir}`);
     for (const p of copied.pages) {
@@ -1197,7 +1213,10 @@ function cmdBuild(flags: Record<string, string>): void {
       })),
       packOpts,
     );
-    const packFailures = runGate(result, modelText, opts, profile, { text: atlasText, again: packAgain.atlasText });
+    // The document written is spelled from the packed atlas, and this gate's A18 compares it with a
+    // second compile's spelled from the second, independent pack (issue #1016).
+    modelText = modelDocument(result.model, result.skeletonText, atlasText);
+    const packFailures = runGate(result, modelText, opts, profile, (text) => text, { text: atlasText, again: packAgain.atlasText });
     if (packFailures > 0) {
       console.error(
         `rigc: ${packFailures} assertion(s) failed on the PACKED atlas — the pages were written to ` +
@@ -1209,8 +1228,9 @@ function cmdBuild(flags: Record<string, string>): void {
 
   writeFileSync(join(opts.outDir, 'skeleton.json'), result.skeletonText);
   writeFileSync(join(opts.outDir, 'skeleton.atlas'), atlasText);
-  // rigc's own record of the compiled rig (`rigc-compiled/1`, issue #922),
-  // written with the pair and only after the same gate. rigc's own posing core
+  // rigc's own record of the compiled rig (`rigc-compiled/2`, issue #922;
+  // its `pages` the atlas just written, issue #1016), written with the pair
+  // and only after the same gate — under `--pack`, the packed one. rigc's own posing core
   // reads it (`readModel`, `src/core/index.ts`, issue #380's step 2).
   writeFileSync(join(opts.outDir, MODEL_DOCUMENT_FILE), modelText);
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.json')}`);

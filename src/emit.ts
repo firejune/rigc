@@ -91,7 +91,24 @@ export interface CopyImagesResult {
  */
 export function copyAtlasPages(atlasText: string, outDir: string): CopyImagesResult {
   mkdirSync(outDir, { recursive: true });
+  const planned = plannedPageCopies(atlasText, outDir);
+  for (const page of planned.pages) {
+    const source = resolve(outDir, page.from);
+    const destination = join(outDir, page.to);
+    if (source !== resolve(destination)) copyFileSync(source, destination);
+  }
+  return planned;
+}
 
+/**
+ * What `copyAtlasPages` will do, without doing it: the rewritten atlas text
+ * and each page's source and copy name, from the text and `outDir` alone — no
+ * file is read or written (issue #1016). `build --copy-images` spells the
+ * model document from this text BEFORE the gate, because the document states
+ * where each region sits on its page (`pages`) and the copy renames every
+ * page; `copyAtlasPages` returns exactly this, after copying.
+ */
+export function plannedPageCopies(atlasText: string, outDir: string): CopyImagesResult {
   const parsed = parseAtlasText(atlasText);
   const claimedBy = new Map<string, string>(); // destination filename -> absolute source holding it
   const pages: CopiedPage[] = [];
@@ -111,12 +128,6 @@ export function copyAtlasPages(atlasText: string, outDir: string): CopyImagesRes
     }
     claimedBy.set(name, source);
     pages.push({ from: page.name, to: name, regions: page.regions.length });
-  }
-
-  for (const page of pages) {
-    const source = resolve(outDir, page.from);
-    const destination = join(outDir, page.to);
-    if (source !== resolve(destination)) copyFileSync(source, destination);
   }
 
   return { atlasText: rewritePageNames(parsed, (_name, index) => pages[index].to), pages };

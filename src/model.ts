@@ -82,10 +82,12 @@
  * they are the atlas emitter's constants, and the model does not carry them.
  *
  * 📄 **It is written as a document** (issue #922, cut 1f): `modelDocument` below
- * spells it as `rigc-compiled/1`, and `build` writes that text into `--out` as
- * `skeleton.model.json` beside the Spine files, after the gate, like them.
+ * spells it as `rigc-compiled/2` (`/1` until issue #1016 added `pages`), and
+ * `build` writes that text into `--out` as `skeleton.model.json` beside the
+ * Spine files, after the gate, like them.
  */
 import { createHash } from 'node:crypto';
+import { parseAtlasText } from './atlas.ts';
 import { CompileError } from './errors.ts';
 import type { BoneTransform } from './transform.ts';
 import type { RigSkinConstraintKey } from './rig.ts';
@@ -211,10 +213,12 @@ export interface ModelSequence {
  * (#931: the atlas's `rotate` transposed into the corners was exact on 2018 of
  * 3000 probes, ignored on 3000 of 3000). The trim and the original size do not
  * move under either: rigc's packer never trims or rotates (`src/atlas.ts`).
- * The draw, which does need the four — a region's page and page UVs — reads
+ * The draw, which does need the four — a region's page and page UVs — read
  * them off the atlas written beside this document, as a second input
- * (`src/core/uvs.ts`, issue #967): measured at tolerance 0 against the
- * runtime's own arrays on every corpus row with the model unchanged.
+ * (`src/core/uvs.ts`, issue #967), until issue #1016 gave the document a
+ * `pages` section spelled from the atlas text `build` writes (`pagesOfAtlas`
+ * below): the four are still not this record's, because they are the written
+ * arrangement's, and the section moves with it.
  */
 export interface ModelAtlasRect {
   width: number;
@@ -613,11 +617,17 @@ export interface CompiledModel extends CarriedFromCompileResult {
 }
 
 // ---------------------------------------------------------------------------
-// the document: `rigc-compiled/1` (issue #922, cut 1f)
+// the document: `rigc-compiled/2` (issue #922, cut 1f; `pages` and `/2`, issue #1016)
 // ---------------------------------------------------------------------------
 
-/** The document's `spec` value. */
-export const MODEL_DOCUMENT_SPEC = 'rigc-compiled/1';
+/**
+ * The document's `spec` value. `/2` since issue #1016 added the `pages`
+ * section: a `/1` reader (`readModel` of rigc 1.6) refuses a section it does
+ * not know by name, so the same spec over a new section would be refused by
+ * every reader already installed rather than read wrongly — a new spec says so
+ * before the first section is opened. `readModel` reads both.
+ */
+export const MODEL_DOCUMENT_SPEC = 'rigc-compiled/2';
 
 /** The file `build` writes the document to, in `--out` beside `skeleton.json` and `skeleton.atlas`. */
 export const MODEL_DOCUMENT_FILE = 'skeleton.model.json';
@@ -809,7 +819,7 @@ const MODEL_DOCUMENT_FIELDS: readonly string[] = [
 const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
 
 /**
- * The compiled model as a document: `rigc-compiled/1`, `JSON.stringify(doc,
+ * The compiled model as a document: `rigc-compiled/2`, `JSON.stringify(doc,
  * null, 2)` and a newline — the text `build` writes to `skeleton.model.json`,
  * and the record rigc's own posing core reads (`readModel` in
  * `src/core/index.ts`, issue #380, step 2). Its cost in a build is measured in
@@ -820,7 +830,9 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  * `constraints`, `events`, `animations` — then the fields carried from `CompileResult` in
  * `CarriedFromCompileResult`'s order: `images`, `pageGrids`, `droppedStates`,
  * `absentParts`, `meshBones`, `meshes`, `physics`, `deformTransforms`,
- * `trackDerivations`, `rig`; and last `spine`, the digest of the
+ * `trackDerivations`, `rig`; then `pages`, where each region sits on its page
+ * in the atlas written beside it (`pagesOfAtlas`, issue #1016), which is why
+ * the atlas text is the third argument; and last `spine`, the digest of the
  * `skeleton.json` written beside it (`spineFileSha256`, issue #968), which is
  * why the Spine text is the second argument. Inside a model record, its interface's field
  * order (`ModelBone`, `ModelSlot`, `ModelSkin`, each attachment kind,
@@ -894,7 +906,7 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
  * What the Spine emitter adds (`emitSkeleton`'s header, its spellings, its
  * orders and omissions) is not in the model and so not here.
  */
-export function modelDocument(model: CompiledModel, skeletonText: string): string {
+export function modelDocument(model: CompiledModel, skeletonText: string, atlasText: string): string {
   for (const key of Object.keys(model)) {
     if (!MODEL_DOCUMENT_FIELDS.includes(key) && !MODEL_DOCUMENT_LEFT_OUT.includes(key)) {
       throw new CompileError(`internal: the model document has no place for the model's field "${key}"; it writes [${MODEL_DOCUMENT_FIELDS.join(', ')}] and leaves out [${MODEL_DOCUMENT_LEFT_OUT.join(', ')}]`);
@@ -921,10 +933,96 @@ export function modelDocument(model: CompiledModel, skeletonText: string): strin
     deformTransforms: plain(model.deformTransforms, 'deformTransforms'),
     trackDerivations: plain(model.trackDerivations, 'trackDerivations'),
     rig: plain(model.rig, 'rig'),
+    pages: plain(pagesOfAtlas(atlasText), 'pages'),
     spine: { sha256: spineFileSha256(skeletonText) },
   };
   return `${JSON.stringify(doc, null, 2)}\n`;
 }
+
+// --- #1016 where each region sits on its page: begin ---
+/**
+ * One region of a page, as the document's `pages` section states it: the
+ * region's name exactly as the atlas line spells it (untrimmed — the core finds
+ * a region by that spelling, `./core/uvs.ts`), its rectangle's top-left `x`,
+ * `y` on the page (y down) and `width`, `height` in the drawing's orientation,
+ * the trim (`offsetX` from the drawing's left, `offsetY` from its bottom) and
+ * the untrimmed size, its turn in `degrees`, and its `index:` field — every
+ * number in the page's texels, exactly as `parseAtlasText` reads it.
+ */
+export interface ModelPageRegion {
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  offsetX: number;
+  offsetY: number;
+  originalWidth: number;
+  originalHeight: number;
+  degrees: number;
+  index: number;
+}
+
+/** One page: its name (a path from the directory `build` writes into, trimmed), its `size`, and its regions in file order. */
+export interface ModelPage {
+  name: string;
+  width: number;
+  height: number;
+  regions: ModelPageRegion[];
+}
+
+/** The fields of a page and of a region, in the order the document writes them — `readModel` mirrors both lists. */
+export const MODEL_PAGE_FIELDS = ['name', 'width', 'height', 'regions'] as const;
+export const MODEL_PAGE_REGION_FIELDS = ['name', 'x', 'y', 'width', 'height', 'offsetX', 'offsetY', 'originalWidth', 'originalHeight', 'degrees', 'index'] as const;
+
+/**
+ * The document's `pages` section (issue #1016): every page of `atlasText` and
+ * every region on it, in file order, with the numbers the draw reads — where
+ * each drawing sits, which `./core/uvs.ts` turns into page UVs. `atlasText`
+ * is the atlas `build` writes beside the document, the one that run's gate
+ * last read: after `--pack` the packed text, after `--copy-images` the text
+ * with the copies' page names.
+ *
+ * ⭐ **Why it is a function of the written atlas rather than a model field.**
+ * Issue #939 left the page, `x`, `y` and `rotate` out of `ModelAtlasRect`
+ * because `--pack` moves them after `compile` returns and `--copy-images`
+ * renames every page — a value the model held from `compile` would state a
+ * place the written atlas does not have. The section is spelled from the
+ * atlas text instead, so it moves exactly when that text does, and `build`
+ * spells the document from the text it writes (`cli.ts`): the document a pack
+ * writes is spelled from the packed text and gated by the packed pass, where
+ * `A18` compares it with a second compile's document spelled from a second,
+ * independent pack.
+ *
+ * 🔸 **What it leaves out.** The page's `format`, `filter`, `repeat`, `pma`
+ * and `scale:` lines: nothing that draws reads them (the rasteriser samples
+ * one way, `src/render.ts`'s header; the pose reads only the ratios the
+ * trimmed and original sizes make, #939's decision 2). Every region of every
+ * page is written, drawn or not: which regions a rig draws is the core's
+ * lookup rule (`./core/uvs.ts`, *Which region, on which page*), and a writer
+ * choosing a subset would restate it.
+ */
+export function pagesOfAtlas(atlasText: string): ModelPage[] {
+  return parseAtlasText(atlasText).pages.map((page) => ({
+    name: page.name,
+    width: page.width,
+    height: page.height,
+    regions: page.regions.map((r) => ({
+      name: r.name,
+      x: r.x,
+      y: r.y,
+      width: r.width,
+      height: r.height,
+      offsetX: r.offsetX,
+      offsetY: r.offsetY,
+      originalWidth: r.originalWidth,
+      originalHeight: r.originalHeight,
+      degrees: r.degrees,
+      index: r.index,
+    })),
+  }));
+}
+// --- #1016 where each region sits on its page: end ---
 
 // --- #968 the Spine file the document was written beside: begin ---
 /**

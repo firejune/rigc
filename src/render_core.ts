@@ -2,8 +2,10 @@
  * The render's second poser (issue #968, step 3d of issue #380): the posing
  * seam of `src/render.ts` (`Poser` / `Posed`) implemented over rigc's own
  * core — the compiled model document (`skeleton.model.json`) posed by
- * `src/core/`, and the atlas the render samples read by rigc's own reader
- * (`src/atlas.ts`). Nothing here links spine-core, and nothing here is reached
+ * `src/core/`, each drawn region placed on its page by the document's own
+ * `pages` section (issue #1016; a `rigc-compiled/1` document, which has none,
+ * by the atlas beside it, read by rigc's own reader `src/atlas.ts`). Nothing
+ * here links spine-core, and nothing here is reached
  * from `src/core/`: the core stays pure, and this module is the adapter from
  * its raw entry to the renderer's shapes.
  *
@@ -32,7 +34,11 @@
  *   region a drawn attachment samples (`drawnRegions` over the pose's `shown`
  *   records and draw order), a region's four UVs (`regionPageUvs`) and a
  *   mesh's (`meshPageUvs`), each held to `sequence.getUVs(index)` at
- *   tolerance 0 on every corpus by `core_gate`'s `uvs` blocks.
+ *   tolerance 0 on every corpus by `core_gate`'s `uvs` blocks. Where each
+ *   region sits — its page, `x`, `y`, turn and the page's size — is the
+ *   document's `pages` section (issue #1016, `placementOf`), the atlas `build`
+ *   wrote spelled into the document, so a build draws with its `.atlas`
+ *   removed.
  * - **The tint** is the slot's light colour times the attachment's colour,
  *   channel by channel, as `src/render.ts`'s `tintOf` forms it; the dark
  *   colour is the slot's, absent where the slot carries none.
@@ -82,13 +88,13 @@ import type {
   Poser,
   SlotSubset,
 } from './render.ts';
-import { atlasRegionLookup, parseAtlasText, type AtlasRegion } from './atlas.ts';
-import { spineFileSha256 } from './model.ts';
+import { atlasRegionLookup, parseAtlasText } from './atlas.ts';
+import { pagesOfAtlas, spineFileSha256, type ModelPage } from './model.ts';
 import { clipThrough, type ClipShape, type ShapeClipper } from './core/clipping.ts';
 import { CoreInputError, readModel, sourceOfDoc, underSkin, type CompiledDocument, type CoreSlotRow } from './core/index.ts';
 import { poseRawAnimation, poseRawSetup, type RawDrawn, type RawPose } from './core/raw.ts';
 import { CORE_ALL_SKINS, CORE_DEFAULT_SKIN, lookupSkins } from './core/skins.ts';
-import { drawnRegions, meshPageUvs, readUvSequences, regionPageUvs, type DrawnRegion, type UvSource } from './core/uvs.ts';
+import { documentPageLookup, drawnRegions, meshPageUvs, readUvSequences, regionPageUvs, type DrawnRegion, type UvRegion, type UvSource } from './core/uvs.ts';
 import { regionCorners, worldVertices } from './core/vertices.ts';
 import type { CoreWorld } from './core/world.ts';
 
@@ -256,12 +262,15 @@ export function clipSourceOf(
 /** The runtime's own triangulation of a region's quad — `src/render.ts`'s `QUAD_TRIANGLES`. */
 const QUAD_TRIANGLES: readonly number[] = [0, 1, 2, 2, 3, 0];
 
-/** Everything a core pose reads besides the pose: the document under one skin, and the atlas. */
+/** A region as texture substitution reads it: the page-UV rules' numbers, and the name and `index:` its key is made of (`regionKey`). */
+type TextureRegion = UvRegion & { name: string; index: number };
+
+/** Everything a core pose reads besides the pose: the document under one skin, and where each region sits on its page. */
 interface CoreInput {
   doc: CompiledDocument;
   source: UvSource;
-  /** The atlas region a name draws, as rigc's reader holds it — what an original-art UV reads its trim from. */
-  region: (name: string) => AtlasRegion | null;
+  /** The region a name draws — the document's `pages`, or for a `/1` document the atlas's — what an original-art UV reads its trim from. */
+  region: (name: string) => TextureRegion | null;
 }
 
 /**
@@ -300,12 +309,12 @@ function worldOf(pose: RawPose): Map<string, CoreWorld> {
 }
 
 /** `regionKey` in `src/render.ts`: the trimmed name and the sequence index — the key a substitution matches on. */
-function regionKey(region: AtlasRegion): string {
+function regionKey(region: TextureRegion): string {
   return `${region.name.trim()}#${region.index}`;
 }
 
 /** `artUvsOf` in `src/render.ts`, over rigc's atlas reader: a mesh's own UVs, a region's kept rectangle in the drawing's space. */
-function artUvsOf(drawn: RawDrawn, region: AtlasRegion): PieceTexture | undefined {
+function artUvsOf(drawn: RawDrawn, region: TextureRegion): PieceTexture | undefined {
   if (drawn.kind === 'mesh') return { region: regionKey(region), artUvs: [...drawn.uvs] };
   if (region.degrees !== 0) return undefined;
   const ow = region.originalWidth;
@@ -515,9 +524,70 @@ function restOf(view: CompiledDocument, setup: RawPose, shown: readonly Attachme
 }
 
 /**
- * `Poser` over rigc's own core: `modelText` a `rigc-compiled/1` document
- * (`skeleton.model.json`), `atlasText` the atlas the render samples — the one
- * `build` wrote beside it. With `skeleton`, the Spine file beside the document
+ * The first place two `pages` sections differ, by path, or `null` when they
+ * are the same — the page count, a page's name or size, a region count, or a
+ * region's name or one of its numbers.
+ */
+export function firstPageDifference(stated: readonly ModelPage[], found: readonly ModelPage[]): string | null {
+  if (stated.length !== found.length) return `the document states ${stated.length} page(s), the atlas has ${found.length}`;
+  for (let i = 0; i < stated.length; i++) {
+    const a = stated[i];
+    const b = found[i];
+    for (const key of ['name', 'width', 'height'] as const) {
+      if (a[key] !== b[key]) return `pages[${i}].${key} is ${JSON.stringify(a[key])} in the document and ${JSON.stringify(b[key])} in the atlas`;
+    }
+    if (a.regions.length !== b.regions.length) return `pages[${i}] "${a.name}" holds ${a.regions.length} region(s) in the document and ${b.regions.length} in the atlas`;
+    for (let j = 0; j < a.regions.length; j++) {
+      const r = a.regions[j];
+      const q = b.regions[j];
+      for (const key of Object.keys(r) as Array<keyof typeof r>) {
+        if (r[key] !== q[key]) return `pages[${i}] "${a.name}" region ${JSON.stringify(r.name)}: ${key} is ${JSON.stringify(r[key])} in the document and ${JSON.stringify(q[key])} in the atlas`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Where each region a core pose draws sits on its page, read from the
+ * document's `pages` section (issue #1016) — or, for a `rigc-compiled/1`
+ * document, which has none, from `atlasText` as before. With both, the atlas
+ * must be the one the document was written beside: a page or region that
+ * differs is refused naming the first difference, so the core never draws the
+ * build's placement over another atlas's pages while spine-core, reading that
+ * atlas, would draw another picture.
+ */
+function placementOf(doc: CompiledDocument, atlasText: string, where: string): { lookup: UvSource['lookup']; region: CoreInput['region'] } {
+  if (doc.pages !== null) {
+    if (atlasText !== '') {
+      const differs = firstPageDifference(doc.pages, pagesOfAtlas(atlasText));
+      if (differs !== null) {
+        throw new CoreInputError(
+          `the atlas beside ${where} is not the one it was written beside: ${differs} — ` +
+            'the core would draw the build\'s placement over pages the atlas has rearranged',
+        );
+      }
+    }
+    const lookup = documentPageLookup(doc.pages);
+    return { lookup, region: (name) => lookup(name)?.region ?? null };
+  }
+  if (atlasText === '') {
+    throw new CoreInputError(
+      `${where} is a ${doc.spec} document, which does not state where each region sits on its page (the pages section, issue #1016), ` +
+        'and no atlas was given to read it from — rebuild it to carry them, or pose it beside the atlas it was built with',
+    );
+  }
+  const lookup = atlasRegionLookup(parseAtlasText(atlasText));
+  return { lookup, region: (name) => lookup(name)?.region ?? null };
+}
+
+/**
+ * `Poser` over rigc's own core: `modelText` a `rigc-compiled/2` document
+ * (`skeleton.model.json`), which states where each region sits on its page
+ * (`pages`, issue #1016), so `atlasText` may be `''`; given, it is held to
+ * the document's `pages` (`placementOf`). A `rigc-compiled/1` document states
+ * no placement and is drawn through `atlasText`, the atlas `build` wrote
+ * beside it, as before; with none given it is refused by name. With `skeleton`, the Spine file beside the document
  * is held to the digest the document records (`spine.sha256`, issue #968) and
  * refused, naming both digests, when it is not that build's. Refused by
  * `CoreInputError`, naming why, where the document or the atlas cannot be read; a pose the core leaves a block of out
@@ -542,8 +612,7 @@ export function corePoser(modelText: string, atlasText: string, where = 'skeleto
     throw new CoreInputError(`${where}: not JSON — ${(err as Error).message}`);
   }
   const sequences = readUvSequences(parsed);
-  const atlas = parseAtlasText(atlasText);
-  const lookup = atlasRegionLookup(atlas);
+  const { lookup, region } = placementOf(doc, atlasText, where);
   const views = new Map<string, CompiledDocument>();
   const inputOf = (skin: string | undefined): CoreInput => {
     const key = skin === undefined ? '' : `=${skin}`;
@@ -552,7 +621,7 @@ export function corePoser(modelText: string, atlasText: string, where = 'skeleto
       view = skin === undefined ? noSkinView(doc) : underSkin(doc, skin);
       views.set(key, view);
     }
-    return { doc: view, source: { lookup, sequences }, region: (name) => lookup(name)?.region ?? null };
+    return { doc: view, source: { lookup, sequences }, region };
   };
   const roster: SubsetRoster = {
     declared: doc.slots.map((s) => s.name),

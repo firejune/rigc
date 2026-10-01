@@ -1,6 +1,7 @@
 /**
  * rigc's own core: it reads the compiled model as `build` writes it
- * (`rigc-compiled/1`, `skeleton.model.json`) and poses it (issue #925, step 2a
+ * (`rigc-compiled/2`, and `/1` before issue #1016; `skeleton.model.json`)
+ * and poses it (issue #925, step 2a
  * of issue #380). It is the second dumper `tools/pose_oracle.ts` was shaped
  * for: what it poses is written into the same `pose-oracle/2` document the
  * runtime's dump is, and `compare` holds the two to each other.
@@ -168,7 +169,7 @@
  * child process, no file system — `readModel` takes the document's TEXT — and
  * nothing from the Spine runtime package, as a value or as a type.
  */
-import type { ModelAtlasRect, ModelBone, ModelSlot, ModelVertices, SkinTableEntry } from '../model.ts';
+import type { ModelAtlasRect, ModelBone, ModelPage, ModelPageRegion, ModelSlot, ModelVertices, SkinTableEntry } from '../model.ts';
 import { worldTransforms, type CoreWorld } from './world.ts';
 import { readAnimationTimelines, type CoreAnimationTimelines } from './animation.ts';
 import { readEventDefs, type CoreEventDef } from './events.ts';
@@ -183,8 +184,19 @@ import { attachmentStates, type DeformBlender, type DeformEvaluator, type Sequen
 import { drawOrderAt, type DrawOrderEvaluator } from './draw_order.ts';
 import type { EventsFired } from './events.ts';
 
-/** The document spec this reader takes. */
-export const CORE_DOCUMENT_SPEC = 'rigc-compiled/1';
+/**
+ * The document spec `build` writes today, and the one this reader takes with
+ * the `pages` section (issue #1016).
+ */
+export const CORE_DOCUMENT_SPEC = 'rigc-compiled/2';
+
+/**
+ * The spec before issue #1016: the same sections without `pages`. Read as
+ * before — the draw then takes where each region sits from the atlas beside
+ * the document (`corePoser` in `src/render_core.ts` says so by name), because
+ * a `/1` document does not state it.
+ */
+export const CORE_DOCUMENT_SPEC_1 = 'rigc-compiled/1';
 
 /** Who posed a dump the core wrote — the oracle document's `dumper`. */
 export const CORE_DUMPER = 'rigc-core';
@@ -196,9 +208,18 @@ export class CoreInputError extends Error {}
 export const CORE_SECTIONS = [
   'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations',
   'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig',
+  // Issue #1016: where each region sits on its page, in the atlas written beside the document (`pagesOfAtlas` in `src/model.ts`). `/2` only.
+  'pages',
   // Issue #968: the digest of the `skeleton.json` written beside the document (`spineFileSha256` in `src/model.ts`).
   'spine',
 ] as const;
+
+/** The sections of a `rigc-compiled/1` document: `CORE_SECTIONS` without `pages`. */
+export const CORE_SECTIONS_1: readonly string[] = CORE_SECTIONS.filter((key) => key !== 'pages');
+
+/** The fields of a page and of a region in the `pages` section, as the writer lists them (`MODEL_PAGE_FIELDS`, `MODEL_PAGE_REGION_FIELDS` in `src/model.ts`, mirrored). */
+export const CORE_PAGE_FIELDS = ['name', 'width', 'height', 'regions'] as const;
+export const CORE_PAGE_REGION_FIELDS = ['name', 'x', 'y', 'width', 'height', 'offsetX', 'offsetY', 'originalWidth', 'originalHeight', 'degrees', 'index'] as const;
 
 /** The fields a bone record may carry, as the writer lists them. A field outside this list is refused. */
 export const CORE_BONE_FIELDS = ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inheritMode', 'skinRequired', 'editor'] as const;
@@ -297,7 +318,7 @@ export interface CoreAnimation {
 }
 
 /**
- * A `rigc-compiled/1` document, read. `bones` and `slots` are checked field by
+ * A `rigc-compiled/2` (or `/1`) document, read. `bones` and `slots` are checked field by
  * field against the writer's own records; skins and constraints are read as
  * far as their names and memberships, and every other section is only
  * required to be present — no construct this card admits reads it.
@@ -319,6 +340,66 @@ export interface CompiledDocument {
   animations: CoreAnimation[];
   /** The digest of the `skeleton.json` `build` wrote beside the document (issue #968) — what a render holds the file beside it to before posing it here. */
   spine: { sha256: string };
+  /**
+   * Every page of the atlas `build` wrote beside the document and every region
+   * on it, in file order (issue #1016) — where each drawing sits, which the
+   * draw's page UVs read. `null` for a `rigc-compiled/1` document, which does
+   * not state it.
+   */
+  pages: ModelPage[] | null;
+}
+
+/**
+ * The `pages` section, checked: a list of pages, each holding exactly
+ * `CORE_PAGE_FIELDS` — a non-empty name, a size of two positive finite
+ * numbers, a list of regions — and each region exactly
+ * `CORE_PAGE_REGION_FIELDS`, a non-empty name and nine finite numbers. Every
+ * fault is named by its path. Nothing is defaulted: a field the writer always
+ * writes is required here.
+ */
+function readPages(value: unknown, problems: string[]): ModelPage[] {
+  if (!Array.isArray(value)) {
+    problems.push(`pages is ${JSON.stringify(value) ?? 'absent'}, not a list of pages`);
+    return [];
+  }
+  const out: ModelPage[] = [];
+  value.forEach((raw, i) => {
+    const where = `pages[${i}]`;
+    if (!isRecord(raw)) {
+      problems.push(`${where} is not an object`);
+      return;
+    }
+    const before = problems.length;
+    const label = typeof raw.name === 'string' ? `${where} "${raw.name}"` : where;
+    unknownFields(raw, CORE_PAGE_FIELDS, label, problems);
+    if (typeof raw.name !== 'string' || raw.name === '') problems.push(`${where}: name is ${JSON.stringify(raw.name) ?? 'absent'}, not a non-empty string`);
+    for (const key of ['width', 'height'] as const) {
+      const v = raw[key];
+      if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) problems.push(`${label}: ${key} is ${JSON.stringify(v) ?? 'absent'}, not a positive finite number — a page UV divides by it`);
+    }
+    const regions: ModelPageRegion[] = [];
+    if (!Array.isArray(raw.regions)) problems.push(`${label}: regions is not a list`);
+    else {
+      raw.regions.forEach((region, j) => {
+        const at = `${label}.regions[${j}]`;
+        if (!isRecord(region)) {
+          problems.push(`${at} is not an object`);
+          return;
+        }
+        const named = typeof region.name === 'string' ? `${at} "${region.name}"` : at;
+        unknownFields(region, CORE_PAGE_REGION_FIELDS, named, problems);
+        if (typeof region.name !== 'string' || region.name === '') problems.push(`${at}: name is ${JSON.stringify(region.name) ?? 'absent'}, not a non-empty string`);
+        for (const key of CORE_PAGE_REGION_FIELDS) {
+          if (key === 'name') continue;
+          const v = region[key];
+          if (typeof v !== 'number' || !Number.isFinite(v)) problems.push(`${named}: ${key} is ${JSON.stringify(v) ?? 'absent'}, not a finite number`);
+        }
+        regions.push(region as unknown as ModelPageRegion);
+      });
+    }
+    if (problems.length === before) out.push({ name: raw.name as string, width: raw.width as number, height: raw.height as number, regions });
+  });
+  return out;
 }
 
 /** The `spine` section's value, checked: `{ "sha256": <64 lowercase hex> }` and nothing else, each fault named by path (issue #968). */
@@ -615,7 +696,8 @@ function readConstraints(value: unknown, animations: readonly CoreAnimation[], b
 }
 
 /**
- * Read a `rigc-compiled/1` document from its text, refusing by name a text
+ * Read a `rigc-compiled/2` document — or a `rigc-compiled/1` one, which has
+ * no `pages` and is read with `pages: null` — from its text, refusing by name a text
  * that is not JSON, a wrong `spec`, a missing section (`referenceScale`
  * among them, issue #958), a section the document does not have, a
  * `referenceScale` that is not a finite number, and — in the records these constructs read (bones, slots,
@@ -633,12 +715,15 @@ export function readModel(text: string, where = 'the model document'): CompiledD
     throw new CoreInputError(`${where}: not JSON — ${(err as Error).message}`);
   }
   if (!isRecord(value)) throw new CoreInputError(`${where}: not a JSON object`);
-  if (value.spec !== CORE_DOCUMENT_SPEC) throw new CoreInputError(`${where}: spec is ${JSON.stringify(value.spec)}, not "${CORE_DOCUMENT_SPEC}"`);
+  if (value.spec !== CORE_DOCUMENT_SPEC && value.spec !== CORE_DOCUMENT_SPEC_1) throw new CoreInputError(`${where}: spec is ${JSON.stringify(value.spec)}, not "${CORE_DOCUMENT_SPEC}" (or "${CORE_DOCUMENT_SPEC_1}", read without its pages)`);
+  const spec = value.spec;
+  const sections: readonly string[] = spec === CORE_DOCUMENT_SPEC ? CORE_SECTIONS : CORE_SECTIONS_1;
   const problems: string[] = [];
-  for (const key of CORE_SECTIONS) if (!(key in value)) problems.push(`section "${key}" is missing`);
+  for (const key of sections) if (!(key in value)) problems.push(`section "${key}" is missing`);
   for (const key of Object.keys(value)) {
-    if (key !== 'spec' && !(CORE_SECTIONS as readonly string[]).includes(key)) problems.push(`section "${key}" is not one a ${CORE_DOCUMENT_SPEC} document has`);
+    if (key !== 'spec' && !sections.includes(key)) problems.push(`section "${key}" is not one a ${spec} document has`);
   }
+  const pages = spec === CORE_DOCUMENT_SPEC && 'pages' in value ? readPages(value.pages, problems) : null;
   // The skeleton's reference scale (issue #958): wind and gravity act over it, so a missing one is the section refusal above, and a value the runtime could not read as a number is refused here by name.
   const referenceScale = typeof value.referenceScale === 'number' && Number.isFinite(value.referenceScale) ? value.referenceScale : NaN;
   if ('referenceScale' in value && Number.isNaN(referenceScale)) problems.push(`referenceScale is ${JSON.stringify(value.referenceScale)}, not a finite number — wind and gravity act over it`);
@@ -666,7 +751,7 @@ export function readModel(text: string, where = 'the model document'): CompiledD
     });
   }
   if (problems.length > 0) throw new CoreInputError(`${where}: ${problems.length} problem(s): ${problems.join('; ')}`);
-  const doc: CompiledDocument = { spec: CORE_DOCUMENT_SPEC, skin: CORE_ALL_SKINS, referenceScale, bones, slots, skins, constraints, animations, spine: { sha256: spine } };
+  const doc: CompiledDocument = { spec, skin: CORE_ALL_SKINS, referenceScale, bones, slots, skins, constraints, animations, spine: { sha256: spine }, pages };
   resolveSkinView(doc);
   return doc;
 }

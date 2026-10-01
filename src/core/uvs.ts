@@ -5,12 +5,15 @@
  * and `sequence.getUVs(index)` — and `MeshAttachment.computeUVs`'s job, the
  * mapping texture substitution calls, as pure functions.
  *
- * The model document does not carry the page layout (`ModelAtlasRect`'s 🔸 in
+ * The page layout is not a model record (`ModelAtlasRect`'s 🔸 in
  * `src/model.ts`: the page, `x`, `y` and `rotate` are the packer's
- * arrangement, not the drawing), and this construct does not change that: the
- * atlas is a second input, read by rigc's own reader (`parseAtlasText` and
- * `atlasRegionLookup` in `src/atlas.ts`) and handed in as a lookup
- * (`UvLookup`), so nothing here links the runtime or opens a file.
+ * arrangement, not the drawing). It reaches these rules as a lookup
+ * (`UvLookup`), so nothing here links the runtime or opens a file: since
+ * issue #1016 from the document's own `pages` section, which `build` spells
+ * from the atlas it writes (`documentPageLookup` below); for a
+ * `rigc-compiled/1` document, which has none, from the atlas beside it, read
+ * by rigc's own reader (`parseAtlasText` and `atlasRegionLookup` in
+ * `src/atlas.ts`).
  *
  * ## How every rule below was fixed
  *
@@ -143,6 +146,7 @@ import { applyConstraints } from './constraints.ts';
 import type { SliderApplication } from './constraints_slider.ts';
 import { attachmentStates } from './deform.ts';
 import type { ShownGeometry } from './vertices.ts';
+import type { ModelPage, ModelPageRegion } from '../model.ts';
 import { worldTransforms } from './world.ts';
 
 /** A region as these rules read it — `AtlasRegion` in `src/atlas.ts` is one, and so is spine-core's `TextureAtlasRegion`. */
@@ -167,6 +171,22 @@ export interface UvPage {
 
 /** The region an atlas draws under a name, and its page — the first of that name, as the header states; `null` when there is none. */
 export type UvLookup = (name: string) => { page: UvPage; region: UvRegion } | null;
+
+/**
+ * The lookup over a document's `pages` section (issue #1016): the first region
+ * of a name in file order, pages in order and regions in each page's order —
+ * the order `pagesOfAtlas` in `src/model.ts` copies from the atlas, so this is
+ * `atlasRegionLookup` over the same text, with no atlas read. The name is
+ * compared as stored, untrimmed, as the header's *Which region* states.
+ */
+export function documentPageLookup(pages: readonly ModelPage[]): (name: string) => { page: UvPage; region: ModelPageRegion } | null {
+  const first = new Map<string, { page: UvPage; region: ModelPageRegion }>();
+  for (const page of pages) {
+    const at: UvPage = { name: page.name, width: page.width, height: page.height };
+    for (const region of page.regions) if (!first.has(region.name)) first.set(region.name, { page: at, region });
+  }
+  return (name) => first.get(name) ?? null;
+}
 
 /**
  * The readings the header's tables rejected, each a switch — what the core

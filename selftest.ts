@@ -269,6 +269,7 @@ import {
   type ModelPathAttachment,
   type ModelVertexAttachment,
   type ModelVertices,
+  pagesOfAtlas,
 } from './src/model.ts';
 import { computeWorldTransforms, toBoneLocal, toWorld, type BoneTransform } from './src/transform.ts';
 import { EVERY_GLOBAL_PHYSICS, MOTION_ENUMS, MOTION_KEYS, MOTION_TYPES, parseMotionSpec } from './src/motion.ts';
@@ -8098,7 +8099,7 @@ function runRigSuite(): number {
           declaredDurations: first.declaredDurations,
           rig: first.rig,
           profile: 'spine-html',
-          modelText: modelDocument(first.model, first.skeletonText),
+          modelText: modelDocument(first.model, first.skeletonText, first.atlasText),
           reEmit: gateTextsOf(second),
         });
       } catch (err) {
@@ -8314,7 +8315,7 @@ function runRigSuite(): number {
           declaredDurations: first.declaredDurations,
           rig: first.rig,
           profile: 'spine-html',
-          modelText: modelDocument(first.model, first.skeletonText),
+          modelText: modelDocument(first.model, first.skeletonText, first.atlasText),
           reEmit: gateTextsOf(second),
         });
         if (report.failures.length > 0) probes.push(`the gate failed it: ${[...new Set(report.failures.map((f) => f.assertion))].join(', ')}`);
@@ -32855,7 +32856,7 @@ function runContourMeshSuite(): number {
         try {
           for (const row of rows) {
             const built = compile({ rigPath: join(galleryRoot, row, 'rig.json'), motionPath: join(galleryRoot, row, 'motion.json'), outDir: join(work, row) });
-            docs.set(row, modelDocument(built.model, built.skeletonText));
+            docs.set(row, modelDocument(built.model, built.skeletonText, built.atlasText));
           }
         } finally {
           for (const [n, f] of saved) mathTable[n] = f;
@@ -33659,7 +33660,7 @@ function runSegmentsMeshSuite(): number {
       declaredDurations: first.declaredDurations,
       rig: first.rig,
       profile,
-      modelText: modelDocument(first.model, first.skeletonText),
+      modelText: modelDocument(first.model, first.skeletonText, first.atlasText),
       reEmit: gateTextsOf(second),
     });
   const plain = gateUnder('spine');
@@ -39099,7 +39100,7 @@ function runGroupMemberSuite(): number {
             atlasText: capitalResult.atlasText,
             atlasDir: chainDirs.outDir,
             declaredDurations: capitalResult.declaredDurations,
-            modelText: modelDocument(capitalResult.model, capitalResult.skeletonText),
+            modelText: modelDocument(capitalResult.model, capitalResult.skeletonText, capitalResult.atlasText),
             reEmit: gateTextsOf(capitalResult),
             rig: capitalResult.rig,
             profile: 'spine',
@@ -40495,7 +40496,7 @@ function runSuite(suite: Suite): number {
     atlasDir: suite.opts.outDir,
     declaredDurations: pristine.declaredDurations,
     rig: pristine.rig,
-    modelText: modelDocument(pristine.model, pristine.skeletonText),
+    modelText: modelDocument(pristine.model, pristine.skeletonText, pristine.atlasText),
     reEmit: gateTextsOf(compile(suite.opts)),
     profile: MUTANT_PROFILE,
   });
@@ -45597,7 +45598,7 @@ function runAtlasReaderSuite(): number | null {
           atlasDir: outDir,
           declaredDurations: built.declaredDurations,
           rig: built.rig,
-          modelText: modelDocument(built.model, built.skeletonText),
+          modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
           reEmit: gateTextsOf(importFrom(prefixedPath)),
           profile: 'spine',
         });
@@ -53297,7 +53298,7 @@ function currencyTruth(root: string): CurrencyTruth {
     atlasDir: fixture.outDir,
     declaredDurations: built.declaredDurations,
     rig: built.rig,
-    modelText: modelDocument(built.model, built.skeletonText),
+    modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
     reEmit: gateTextsOf(built),
     profile: 'spine',
   });
@@ -67341,7 +67342,7 @@ import { regionCorners, worldVertices, type VertexPoser } from './src/core/verti
 import { clipShapeOf, clipThrough, clipTriangles, convexPieces, signedArea2, type ClipReading, type ClipShape, type TriangleClipper } from './src/core/clipping.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
-import { corePoser } from './src/render_core.ts';
+import { corePoser, firstPageDifference } from './src/render_core.ts';
 import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, CLIPPED_CENSUS_FIELDS, clippedReachLines, GATE_BLOCKS, REMAINDER_CENSUS_BLOCKS, timelineKindLines, type GateBlock, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, STEPPED_CENSUS_FIELDS, STEPPED_OPTIONS, steppedCensusOf, steppedReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField, type SteppedCensusField } from './tools/core_gate.ts';
 import { BEZIER_SIXTH, bezierPolyline, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
 import { DEFORM_CURVE_END, deformAt, deformPercent, heldArray, SEQUENCE_MODES as CORE_SEQUENCE_MODES, sequenceFrameAt, type CoreDeformKey } from './src/core/deform.ts';
@@ -67888,7 +67889,7 @@ function runCoreSuite(): number {
       const last = String(base.bones[base.bones.length - 1].name);
       const plants: Array<[string, string, string[]]> = [
         ['not JSON', `${free.text}}`, ['not JSON']],
-        ['a wrong spec', plant((d) => (d.spec = 'rigc-compiled/2')), ['spec is "rigc-compiled/2"']],
+        ['a wrong spec', plant((d) => (d.spec = 'rigc-compiled/9')), ['spec is "rigc-compiled/9"']],
         ['a missing section', plant((d) => delete d.skins), ['section "skins" is missing']],
         ['a section the document does not have', plant((d) => (d.poses = [])), ['section "poses" is not one']],
         ['a bone field the writer does not write', plant((d) => (d.bones[1].drawOrder = 1)), ['field "drawOrder" is not one this reader knows']],
@@ -77749,7 +77750,7 @@ function runDeformCoreSuite(): number | null {
   const gallery = galleryNames.flatMap((name) => {
     try {
       const result = compile({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir: join(work, name) });
-      return [{ name: `gallery/${name}`, dir: name, result, texts: { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText) } }];
+      return [{ name: `gallery/${name}`, dir: name, result, texts: { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText, result.atlasText) } }];
     } catch {
       return [];
     }
@@ -77902,7 +77903,7 @@ function runDeformCoreSuite(): number | null {
     }
     if (!strict.includes('the input carries none')) probes.push(`model asked with no model document: ${JSON.stringify(strict)}`);
     // A model the core refuses: auto falls back naming it; model asked throws it.
-    const broken = { ...g.texts, modelText: g.texts.modelText.replace('"rigc-compiled/1"', '"rigc-compiled/9"') };
+    const broken = { ...g.texts, modelText: g.texts.modelText.replace(`"${MODEL_DOCUMENT_SPEC}"`, '"rigc-compiled/9"') };
     const fell = surveyOfBuild(broken, new Set(), 'auto');
     if (fell.source.used !== 'spine-core' || !(fell.source.why ?? '').includes('the core refused to pose the model document') || !(fell.source.why ?? '').includes('rigc-compiled/9')) probes.push(`auto over a refused model: ${JSON.stringify(fell.source)}`);
     if (canonicalJson(fell) !== canonicalJson(surveys.get(g.name)?.spine)) probes.push('the fallback survey is not the spine-core survey');
@@ -77981,13 +77982,15 @@ function runHashes(args: string[]): { status: number | null; stdout: string; std
  * `skeleton.model.json` taken out of every row whose `base` row does not carry
  * it (issue #922 made `build` write it), and, on a row whose base DOES carry it
  * and whose document differs, the document re-hashed with every region's atlas
- * rectangle removed (`withoutAtlasRects`, issue #935) — standing in for the
- * written one only when that re-hash equals the base's to the byte.
+ * rectangle removed (`withoutAtlasRects`, issue #935), with its `pages`
+ * section removed and its spec set back to `/1` (`withoutPages`, issue
+ * #1016), or both — standing in for the written one only when a re-hash
+ * equals the base's to the byte.
  *
  * ⚠️ This is what lets the step-1 byte-identity gates (`MB07`, `MV09`, `MS12`,
  * `MA12`) keep meaning "the Spine bytes did not move" against a base older
- * than the document or than its rectangles. It excuses exactly those two
- * changes and nothing else: `MD07` holds that the difference from a base
+ * than the document, its rectangles or its pages. It excuses exactly those
+ * three changes and nothing else: `MD07` holds that the difference from a base
  * without the document is EXACTLY that one file on every row, and a document
  * that differs in any other byte than the rectangles keeps its own hash here
  * and reads DIFF. (`MG07` held the transition itself — every row of a base
@@ -78016,11 +78019,17 @@ function withoutAddedModelDocument(base: HashesDocument, after: HashesDocument, 
       if (now === undefined || now.sha256 === was.sha256 || dirs.length !== after.recipes.length) return r;
       const written = join(gateWork, dirs[i], 'out', MODEL_DOCUMENT_FILE);
       if (!existsSync(written)) return r;
-      const stripped = withoutAtlasRects(readFileSync(written, 'utf8'));
-      if (stripped === null) return r;
-      const bytes = Buffer.from(stripped, 'utf8');
-      const sha256 = createHash('sha256').update(bytes).digest('hex');
-      return sha256 === was.sha256 ? { ...r, files: r.files.map((f) => (f === now ? { path: f.path, size: bytes.length, sha256 } : f)) } : r;
+      // The two transitions excused, each alone and together: #935's rectangles and #1016's pages (with its spec).
+      const text = readFileSync(written, 'utf8');
+      const unpaged = withoutPages(text);
+      const candidates = [withoutAtlasRects(text), unpaged, unpaged === null ? null : withoutAtlasRects(unpaged)];
+      for (const stripped of candidates) {
+        if (stripped === null) continue;
+        const bytes = Buffer.from(stripped, 'utf8');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        if (sha256 === was.sha256) return { ...r, files: r.files.map((f) => (f === now ? { path: f.path, size: bytes.length, sha256 } : f)) };
+      }
+      return r;
     }),
   };
 }
@@ -78055,6 +78064,38 @@ function withoutAtlasRects(text: string): string | null {
     }
   }
   return `${JSON.stringify(doc, null, 2)}\n`;
+}
+
+/**
+ * A `rigc-compiled/2` text with its `pages` section removed and its `spec`
+ * set back to `rigc-compiled/1`, spelled back the way `modelDocument` spells
+ * — the document as it was before issue #1016 — or `null` when the text is
+ * not a `/2` document with a `pages` section, or is not what it parses to
+ * spelled back.
+ */
+function withoutPages(text: string): string | null {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (`${JSON.stringify(doc, null, 2)}\n` !== text) return null;
+  const record = doc as Record<string, unknown>;
+  if (record.spec !== MODEL_DOCUMENT_SPEC || !('pages' in record)) return null;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) if (key !== 'pages') out[key] = key === 'spec' ? 'rigc-compiled/1' : value;
+  return `${JSON.stringify(out, null, 2)}\n`;
+}
+
+/** Each page-region leaf a trim moves, `.pages[p].regions[j].<key>`, for the first region of `name` in a written document's `pages` — the four numbers MG01 and MG02 expect to move with the record's rectangle (issue #1016). */
+function pageTrimLeaves(doc: unknown, name: string): string[] {
+  const pages = (doc as { pages?: Array<{ regions?: Array<{ name?: string }> }> }).pages ?? [];
+  for (let p = 0; p < pages.length; p++) {
+    const j = (pages[p].regions ?? []).findIndex((r) => r.name === name);
+    if (j >= 0) return ['width', 'height', 'offsetX', 'offsetY'].map((k) => `.pages[${p}].regions[${j}].${k}`);
+  }
+  return [];
 }
 
 /**
@@ -79682,6 +79723,115 @@ function runRenderHashesSuite(): number | null {
         'the only list that cannot go stale is one read off the lines themselves',
     );
   }
+
+  // --- RC10: a build drawn with its atlas removed (issue #1016) --
+  //
+  // Every gallery row RH05 built, its `skeleton.atlas` moved away for the run:
+  // the core poser handed no atlas text and the page images loaded by the names
+  // the document's `pages` states draws every file RC01 digested through the
+  // core with the atlas present. Two plants on the first row: the document with
+  // its pages dropped (a `/1` document) is refused by name where there is no
+  // atlas, and posed through the atlas as before where there is; one region's
+  // `x` moved in the document moves the picture where there is no atlas, and
+  // beside the atlas is refused naming the region, the render falling back to
+  // spine-core rather than drawing it.
+  {
+    const probes: string[] = [];
+    let figures = '';
+    let frames = 0;
+    let rows = 0;
+    const modelOf = (out: string): string => readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8');
+    const skeletonOf = (out: string): { path: string; bytes: Uint8Array } => ({ path: join(out, 'skeleton.json'), bytes: readFileSync(join(out, 'skeleton.json')) });
+    const pagesOf = (out: string, modelText: string): Map<string, Plate> => new Map((readModel(modelText).pages ?? []).map((page) => [page.name, readPlate(join(out, page.name))] as const));
+    const refusalOf = (run: () => unknown): string => {
+      try {
+        run();
+        return '';
+      } catch (err) {
+        return err instanceof CoreInputError ? err.message : `not a CoreInputError: ${(err as Error).message}`;
+      }
+    };
+    let dropped = '';
+    let moved = '';
+    for (const [i, { name, out }] of galleryBuilds.entries()) {
+      const atlasPath = join(out, 'skeleton.atlas');
+      const away = join(out, 'skeleton.atlas.away');
+      const withAtlas = coreDigests.get(name);
+      if (withAtlas === undefined) {
+        probes.push(`${name}: RC01 holds no core digests for it`);
+        continue;
+      }
+      copyFileSync(atlasPath, away);
+      rmSync(atlasPath);
+      try {
+        const modelText = modelOf(out);
+        let digests = new Map<string, string>();
+        const refused = refusalOf(() => {
+          digests = posedDigests(corePoser(modelText, '', join(out, MODEL_DOCUMENT_FILE), skeletonOf(out)), pagesOf(out, modelText), undefined);
+        });
+        if (refused !== '') probes.push(`${name}: with the atlas removed the core refused it — ${refused}`);
+        const diff = digestDifferences(digests, withAtlas);
+        if (diff.length > 0 || digests.size !== withAtlas.size) probes.push(`${name}: drawn with the atlas removed, it differs on ${diff.join(', ') || `the roster (${digests.size} against ${withAtlas.size})`}`);
+        rows += 1;
+        frames += [...digests.keys()].filter((k) => /\/f\d+$/.test(k)).length;
+        if (i === 0) {
+          const doc = JSON.parse(modelText) as Record<string, unknown>;
+          const unpaged = `${JSON.stringify(Object.fromEntries(Object.entries(doc).filter(([k]) => k !== 'pages').map(([k, v]) => [k, k === 'spec' ? 'rigc-compiled/1' : v])), null, 2)}\n`;
+          dropped = refusalOf(() => corePoser(unpaged, '', join(out, MODEL_DOCUMENT_FILE), skeletonOf(out)));
+          if (!dropped.includes('rigc-compiled/1') || !dropped.includes('pages section') || !dropped.includes('no atlas was given')) probes.push(`${name}: a document with its pages dropped and no atlas read ${JSON.stringify(dropped)}, not the by-name refusal`);
+          const shifted = JSON.parse(modelText) as { pages: Array<{ regions: Array<{ x: number }> }> };
+          shifted.pages[0].regions[0].x += 1;
+          const shiftedText = `${JSON.stringify(shifted, null, 2)}\n`;
+          let shiftedDigests = new Map<string, string>();
+          const shiftRefused = refusalOf(() => {
+            shiftedDigests = posedDigests(corePoser(shiftedText, '', join(out, MODEL_DOCUMENT_FILE), skeletonOf(out)), pagesOf(out, shiftedText), undefined);
+          });
+          if (shiftRefused !== '') probes.push(`${name}: one region's x moved, drawn with no atlas, was refused — ${shiftRefused}`);
+          const movedKeys = digestDifferences(shiftedDigests, withAtlas, 1000);
+          if (!movedKeys.some((k) => /\/f\d+$/.test(k))) probes.push(`${name}: one region's x moved in the document, drawn with no atlas, moved no frame — the pages were not what was drawn from`);
+          moved = `${movedKeys.length} digest(s) moved with no atlas`;
+        }
+      } finally {
+        copyFileSync(away, atlasPath);
+        rmSync(away);
+      }
+      if (i === 0) {
+        // The same two plants beside the atlas, through the render's own choice.
+        const { data, pages } = loadPosable(join(out, 'skeleton.json'), atlasPath, out);
+        const swap = (edit: (text: string) => string) => (modelText: string, atlasText: string, where: string, skeleton: { path: string; bytes: Uint8Array }): Poser => corePoser(edit(modelText), atlasText, where, skeleton);
+        const unpage = (text: string): string => {
+          const doc = JSON.parse(text) as Record<string, unknown>;
+          return `${JSON.stringify(Object.fromEntries(Object.entries(doc).filter(([k]) => k !== 'pages').map(([k, v]) => [k, k === 'spec' ? 'rigc-compiled/1' : v])), null, 2)}\n`;
+        };
+        const v1 = candidatePosers(data, join(out, 'skeleton.json'), atlasPath, undefined, swap(unpage));
+        if (v1.core === null) probes.push(`${name}: a /1 document beside its atlas was not posed by the core — ${v1.why}`);
+        else {
+          const diff = digestDifferences(posedDigests(v1.core, pages, undefined), withAtlas);
+          if (diff.length > 0) probes.push(`${name}: a /1 document drawn through its atlas differs on ${diff.join(', ')}`);
+        }
+        const shift = (text: string): string => {
+          const doc = JSON.parse(text) as { pages: Array<{ name: string; regions: Array<{ name: string; x: number }> }> };
+          doc.pages[0].regions[0].x += 1;
+          return `${JSON.stringify(doc, null, 2)}\n`;
+        };
+        const beside = candidatePosers(data, join(out, 'skeleton.json'), atlasPath, undefined, swap(shift));
+        const region = JSON.stringify(readModel(modelOf(out)).pages?.[0]?.regions[0]?.name ?? '');
+        if (beside.core !== null || !beside.why.includes('is not the one it was written beside') || !beside.why.includes(`region ${region}: x is`)) probes.push(`${name}: a moved x beside the atlas read core ${beside.core === null ? 'refused' : 'chosen'} — ${beside.why}`);
+        const throughSpine = throughPoser(beside, () => 0);
+        if (throughSpine.poser !== 'spine') probes.push(`${name}: the moved x was drawn through ${throughSpine.poser}, not spine-core`);
+        const said = (text: string, from: string): string => text.slice(Math.max(0, text.indexOf(from)), Math.max(0, text.indexOf(from)) + 170);
+        figures = `; on ${name}: a document with its pages dropped (\`rigc-compiled/1\`) and no atlas is refused — "…${said(dropped, 'is a rigc-compiled/1')}…" — and beside its atlas is posed through it, identical; one region's x moved by 1 in \`pages\` drawn with no atlas moves the picture (${moved}), and beside the atlas is refused — "…${said(beside.why, 'is not the one')}…" — and drawn by spine-core`;
+      }
+    }
+    if (rows === 0) probes.push('RC01 left no gallery build to draw without its atlas');
+    const held = probes.length === 0;
+    say(
+      'RC10_A_BUILD_DRAWS_WITH_ITS_ATLAS_REMOVED_PIXEL_IDENTICAL_AND_A_DOCUMENT_WITHOUT_PAGES_IS_REFUSED_BY_NAME',
+      held,
+      probeDetail(held, probes, `${rows} gallery row(s), each with skeleton.atlas moved away, drawn by the core from \`pages\` alone with the page images loaded by the names it states: the framing box, ${frames} frame(s)' pixels, every contact sheet, geometry file and bone snapshot set, the setup pose and the texture-carrying pieces identical to RC01's core digests with the atlas present${figures}`),
+      'issue #1016: the model document is the build\'s own record and the core its reader, and the one thing the core still took from a file in another format was where the pixels are. A placement the core read and drew wrong would be a wrong picture rather than a refusal, so the plants are a moved number and a missing section',
+    );
+  }
   // --- CH01–CH03: `check` poses its candidate through `render`'s poser choice (issue #968's follow-up) --
   //
   // `rigc check` chooses the candidate's poser exactly as `render` does
@@ -79978,7 +80128,7 @@ function bonesAsFileText(bones: SpineBone[]): string {
  * model document `build` writes beside it (issue #922).
  */
 function gateTextsOf(result: CompileResult): { skeletonText: string; atlasText: string; modelText: string } {
-  return { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText) };
+  return { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText, result.atlasText) };
 }
 
 /** `src/compile.ts` with its comments blanked, so a scan reads code only. */
@@ -82519,8 +82669,8 @@ const FORGED_SPINE_SHA256 = '0'.repeat(64);
 /** What `modelDocument` refuses `model` with, or '' when it writes it. */
 function modelDocumentRefusal(model: CompiledModel): string {
   try {
-    // The Spine text only feeds the digest; what is refused is the model's.
-    modelDocument(model, '');
+    // The Spine and atlas texts only feed the digest and the pages; what is refused is the model's.
+    modelDocument(model, '', '');
     return '';
   } catch (err) {
     return err instanceof CompileError ? err.message : `not a CompileError: ${(err as Error).message}`;
@@ -82536,7 +82686,7 @@ function modelDocumentRefusal(model: CompiledModel): string {
  * base already carries it.
  */
 function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
-  console.log('\n── model-document: the compiled model written beside the Spine files as rigc-compiled/1 (issue #922) ──');
+  console.log('\n── model-document: the compiled model written beside the Spine files as rigc-compiled/2 (issues #922, #1016) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -82549,13 +82699,13 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
   {
     const probes: string[] = [];
     // Hand-written, not imported: the writer's list and this one drifting apart is the failure.
-    const TOP = ['spec', 'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations', 'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig', 'spine'];
+    const TOP = ['spec', 'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations', 'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig', 'pages', 'spine'];
     const BONE = ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inheritMode', 'skinRequired', 'editor'];
     const SLOT = ['name', 'bone', 'setup', 'color', 'dark', 'blend'];
     let shape = '';
     if (model === null) probes.push(`the probe did not compile: ${probe.refusal}`);
     else {
-      const text = modelDocument(model, probe.result?.skeletonText ?? '');
+      const text = modelDocument(model, probe.result?.skeletonText ?? '', probe.result?.atlasText ?? '');
       const doc = JSON.parse(text) as Record<string, unknown> & {
         spec: string;
         bones: Array<Record<string, unknown>>;
@@ -82565,10 +82715,10 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
         images: Array<Record<string, unknown>>;
       };
       if (JSON.stringify(Object.keys(doc)) !== JSON.stringify(TOP)) probes.push(`the top-level keys are [${Object.keys(doc).join(', ')}]`);
-      if (doc.spec !== MODEL_DOCUMENT_SPEC || MODEL_DOCUMENT_SPEC !== 'rigc-compiled/1') probes.push(`spec is ${JSON.stringify(doc.spec)}`);
+      if (doc.spec !== MODEL_DOCUMENT_SPEC || MODEL_DOCUMENT_SPEC !== 'rigc-compiled/2') probes.push(`spec is ${JSON.stringify(doc.spec)}`);
       if (doc.referenceScale !== model.referenceScale) probes.push(`referenceScale is ${JSON.stringify(doc.referenceScale)}, the model's ${model.referenceScale}`);
       if (`${JSON.stringify(doc, null, 2)}\n` !== text) probes.push('the text is not what it parses to, spelled back — a value was written that JSON reads as another');
-      if (text !== modelDocument(model, probe.result?.skeletonText ?? '')) probes.push('two writes of one model differ');
+      if (text !== modelDocument(model, probe.result?.skeletonText ?? '', probe.result?.atlasText ?? '')) probes.push('two writes of one model differ');
       if (JSON.stringify(doc.bones.map((b) => b.name)) !== JSON.stringify(model.bones.map((b) => b.name))) probes.push(`bones are [${doc.bones.map((b) => b.name).join(', ')}], the model's [${model.bones.map((b) => b.name).join(', ')}]`);
       if (canonicalText(doc.bones) !== canonicalText(model.bones)) probes.push('the bones carry other values than the model\'s');
       for (const b of doc.bones) if (!keysInOrder(Object.keys(b), BONE)) probes.push(`bone "${String(b.name)}" writes [${Object.keys(b).join(', ')}], not ModelBone's order`);
@@ -82587,9 +82737,9 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
     }
     const ok = probes.length === 0;
     say(
-      'MD01_THE_DOCUMENT_IS_RIGC_COMPILED_1_IN_ITS_DECLARED_KEY_ORDER_AND_HOLDS_THE_MODELS_RECORDS',
+      'MD01_THE_DOCUMENT_IS_RIGC_COMPILED_2_IN_ITS_DECLARED_KEY_ORDER_AND_HOLDS_THE_MODELS_RECORDS',
       ok,
-      probeDetail(ok, probes, `${shape}: keys \`spec\`, the seven model fields (\`referenceScale\` first), the ten carried and \`spine\`; bones and slots equal the model's in order and in ModelBone's/ModelSlot's key order; the text is what it parses to; \`*\` kept for the unnamed physics target; no \`setupWorld\`, no \`absPath\``),
+      probeDetail(ok, probes, `${shape}: keys \`spec\`, the seven model fields (\`referenceScale\` first), the ten carried, \`pages\` and \`spine\`; bones and slots equal the model's in order and in ModelBone's/ModelSlot's key order; the text is what it parses to; \`*\` kept for the unnamed physics target; no \`setupWorld\`, no \`absPath\``),
       'issue #922: the document is what the second dumper of the pose oracle reads (docs/SECOND_ORACLE.md §1, §4), so its order is the model\'s — the spec\'s for animations, which the file re-sorts — and its key order is declared rather than whatever construction left',
     );
   }
@@ -82668,14 +82818,14 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
       const gate = (modelText: string | undefined, reEmit: { skeletonText: string; atlasText: string; modelText: string }) =>
         validate({ skeletonText: first.skeletonText, atlasText: first.atlasText, atlasDir: probe.outDir, declaredDurations: first.declaredDurations, rig: first.rig, profile: 'spine', modelText, reEmit });
       const a18Failures = (report: ValidateReport): string[] => report.failures.filter((f) => f.assertion === a18).map((f) => f.detail);
-      const clean = gate(modelDocument(first.model, first.skeletonText), gateTextsOf(second));
+      const clean = gate(modelDocument(first.model, first.skeletonText, first.atlasText), gateTextsOf(second));
       if (!clean.passed.includes(a18)) probes.push(`two compiles of the probe do not pass A18: ${a18Failures(clean).join(' | ')}`);
       // The plant: the second compile's animations inserted in reverse. The Spine emitter keys them in the
       // editor's order, so skeleton.json cannot see it; the document writes the map in the map's order.
       const reordered: CompiledModel = { ...second.model, animations: new Map([...second.model.animations].reverse()) };
-      const plantedText = modelDocument(reordered, second.skeletonText);
-      if (plantedText === modelDocument(second.model, second.skeletonText)) probes.push('reversing the animations map did not move the document');
-      const planted = gate(modelDocument(first.model, first.skeletonText), { ...gateTextsOf(second), modelText: plantedText });
+      const plantedText = modelDocument(reordered, second.skeletonText, second.atlasText);
+      if (plantedText === modelDocument(second.model, second.skeletonText, second.atlasText)) probes.push('reversing the animations map did not move the document');
+      const planted = gate(modelDocument(first.model, first.skeletonText, first.atlasText), { ...gateTextsOf(second), modelText: plantedText });
       const said = a18Failures(planted);
       if (said.length !== 1 || !said[0].includes(MODEL_DOCUMENT_FILE) || !said[0].includes('first differing line')) probes.push(`the reordered map read ${JSON.stringify(said)}`);
       const missing = a18Failures(gate(undefined, gateTextsOf(second)));
@@ -82715,7 +82865,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
         const doc = JSON.parse(texts[0]) as { spec: string; bones: unknown[] };
         const compiled = compile({ rigPath, motionPath, outDir: outs[0] });
         if (doc.spec !== MODEL_DOCUMENT_SPEC) probes.push(`spec is ${JSON.stringify(doc.spec)}`);
-        if (texts[0] !== modelDocument(compiled.model, compiled.skeletonText)) probes.push('the written document is not modelDocument of an in-process compile of the same build');
+        if (texts[0] !== modelDocument(compiled.model, compiled.skeletonText, compiled.atlasText)) probes.push('the written document is not modelDocument of an in-process compile of the same build');
         if (canonicalText(doc.bones) !== canonicalText(compiled.model.bones)) probes.push('the document\'s bones are not the model\'s, in order');
         detail = `gallery/${name}: ${texts[0].length} bytes, ${doc.bones.length} bone(s)`;
       }
@@ -82943,7 +83093,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
         const built = compile({ rigPath, motionPath, outDir: join(dirs.dir, `out-${i}`), imagesDir: dirs.dir });
         const header = (JSON.parse(built.skeletonText) as SpineSkeletonJson).skeleton as Record<string, unknown>;
         const read = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(built.atlasText))).readSkeletonData(built.skeletonText).referenceScale;
-        const doc = modelDocument(built.model, built.skeletonText);
+        const doc = modelDocument(built.model, built.skeletonText, built.atlasText);
         const core = readModel(doc).referenceScale;
         const want = stated ?? UNSTATED_REFERENCE_SCALE;
         if (built.model.referenceScale !== want) probes.push(`a rig ${label}: the model holds ${built.model.referenceScale}, not ${want}`);
@@ -83176,7 +83326,7 @@ function writeRectProbe(extra: Record<string, Record<string, unknown>> = {}): { 
 function buildRectProbe(probe: { dirs: ProbeDirs; motionPath: string }, out: string, atlasInPath?: string): { built: CompileResult | null; report: ValidateReport | null; refusal: string } {
   try {
     const built = compile({ rigPath: probe.dirs.rigPath, motionPath: probe.motionPath, outDir: out, imagesDir: probe.dirs.dir, ...(atlasInPath === undefined ? {} : { atlasInPath }) });
-    const report = validate({ skeletonText: built.skeletonText, atlasText: built.atlasText, atlasDir: out, declaredDurations: built.declaredDurations, rig: built.rig, profile: 'spine', modelText: modelDocument(built.model, built.skeletonText), reEmit: gateTextsOf(built) });
+    const report = validate({ skeletonText: built.skeletonText, atlasText: built.atlasText, atlasDir: out, declaredDurations: built.declaredDurations, rig: built.rig, profile: 'spine', modelText: modelDocument(built.model, built.skeletonText, built.atlasText), reEmit: gateTextsOf(built) });
     return { built, report, refusal: '' };
   } catch (err) {
     return { built: null, report: null, refusal: (err as Error).message };
@@ -83190,7 +83340,7 @@ function buildRectProbe(probe: { dirs: ProbeDirs; motionPath: string }, out: str
  * core's reader.
  */
 function runModelAtlasSuite(): number {
-  console.log('\n── model-atlas: every region record and sequence frame carries its atlas rectangle (issue #935) ──');
+  console.log('\n── model-atlas: every region record and sequence frame carries its atlas rectangle (issue #935), and the document where each region sits on its page (issue #1016) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -83218,20 +83368,23 @@ function runModelAtlasSuite(): number {
       const a = pair[0].built;
       const b = pair[1].built;
       if (a.skeletonText !== b.skeletonText) probes.push('skeleton.json differs between the two packs — the pair measures nothing about the document');
-      const docA = JSON.parse(modelDocument(a.model, a.skeletonText)) as unknown;
-      const docB = JSON.parse(modelDocument(b.model, b.skeletonText)) as unknown;
+      const docA = JSON.parse(modelDocument(a.model, a.skeletonText, a.atlasText)) as unknown;
+      const docB = JSON.parse(modelDocument(b.model, b.skeletonText, b.atlasText)) as unknown;
       const differ = leafDifferences(docA, docB);
-      const expected = ['width', 'height', 'offsetX', 'offsetY'].map((k) => `.skins[0].attachments.badge.badge.atlas.${k}`);
-      if (JSON.stringify(differ) !== JSON.stringify(expected)) probes.push(`the documents differ at [${differ.join(', ')}], not exactly [${expected.join(', ')}]`);
-      const stripA = withoutAtlasRects(modelDocument(a.model, a.skeletonText));
-      if (stripA === null || stripA !== withoutAtlasRects(modelDocument(b.model, b.skeletonText))) probes.push('with the rectangles removed the two documents still differ');
+      // The trim lives in the pack, so since issue #1016 the page's own region moves with the record's rectangle.
+      const pageLeaves = pageTrimLeaves(docA, 'badge');
+      const expected = [...['width', 'height', 'offsetX', 'offsetY'].map((k) => `.skins[0].attachments.badge.badge.atlas.${k}`), ...pageLeaves];
+      if (pageLeaves.length !== 4 || JSON.stringify(differ) !== JSON.stringify(expected)) probes.push(`the documents differ at [${differ.join(', ')}], not exactly [${expected.join(', ')}]`);
+      const stripOf = (r: CompileResult): string | null => { const unpaged = withoutPages(modelDocument(r.model, r.skeletonText, r.atlasText)); return unpaged === null ? null : withoutAtlasRects(unpaged); };
+      const stripA = stripOf(a);
+      if (stripA === null || stripA !== stripOf(b)) probes.push('with the rectangles and the pages removed the two documents still differ');
       const badgeOf = (doc: unknown): string => rectOfRecord(documentRegions(doc).find((r) => r.region === 'badge')?.record.atlas);
-      detail = `a region naming no image, resolved through "badge" of two packs that differ in its trim alone: skeleton.json byte-identical (${a.skeletonText.length} bytes); the documents differ at exactly ${differ.length} leaves, badge's atlas ${badgeOf(docA)} against ${badgeOf(docB)} (${ATLAS_RECT_KEYS.join(', ')}); with the rectangles removed, byte-identical — which is what the two documents were before this change`;
+      detail = `a region naming no image, resolved through "badge" of two packs that differ in its trim alone: skeleton.json byte-identical (${a.skeletonText.length} bytes); the documents differ at exactly ${differ.length} leaves, badge's atlas ${badgeOf(docA)} against ${badgeOf(docB)} (${ATLAS_RECT_KEYS.join(', ')}) and the same four numbers of its region in \`pages\` (${pageLeaves[0] ?? '?'}…); with the rectangles and the pages removed, byte-identical — which is what the two documents were before issue #935`;
     }
     rmSync(pairProbe.dirs.dir, { recursive: true, force: true });
     const ok = probes.length === 0;
     say(
-      'MG01_TWO_PACKS_DIFFERING_IN_ONE_TRIM_WRITE_ONE_SKELETON_AND_TWO_DOCUMENTS_THAT_DIFFER_IN_THE_RECTANGLE_ALONE',
+      'MG01_TWO_PACKS_DIFFERING_IN_ONE_TRIM_WRITE_ONE_SKELETON_AND_TWO_DOCUMENTS_THAT_DIFFER_IN_THAT_TRIM_ALONE',
       ok,
       probeDetail(ok, probes, detail),
       'issue #935: before it, two packs differing only in a region\'s trim wrote byte-identical skeleton.json AND skeleton.model.json while spine-core posed the region\'s corners apart (issue #931\'s build pair: 11.925 world units), so no core reading the document could tell the two rigs apart',
@@ -83271,12 +83424,14 @@ function runModelAtlasSuite(): number {
           const square = documentRegions(JSON.parse(docs[1]) as unknown).filter((r) => r.region === 'square');
           if (square.length !== 1) probes.push(`${square.length} region record(s) resolve through "square", not one`);
           const stem = square.length === 1 ? `.skins[0].attachments.${square[0].at.split('/')[1]}.${square[0].at.split('/')[2]}.atlas.` : '(none)';
-          const expected = ['width', 'height', 'offsetX', 'offsetY'].map((k) => `${stem}${k}`);
-          if (JSON.stringify(differ) !== JSON.stringify(expected)) probes.push(`the documents differ at [${differ.join(', ')}], not exactly [${expected.join(', ')}]`);
+          const pageLeaves = pageTrimLeaves(JSON.parse(docs[1]) as unknown, 'square');
+          const expected = [...['width', 'height', 'offsetX', 'offsetY'].map((k) => `${stem}${k}`), ...pageLeaves];
+          if (pageLeaves.length !== 4 || JSON.stringify(differ) !== JSON.stringify(expected)) probes.push(`the documents differ at [${differ.join(', ')}], not exactly [${expected.join(', ')}]`);
           if (square.length === 1 && rectOfRecord(square[0].record.atlas) !== JSON.stringify([70, 70, 4, 6, 80, 80])) probes.push(`the trimmed build's square reads ${rectOfRecord(square[0].record.atlas)}`);
-          if (withoutAtlasRects(docs[0]) !== withoutAtlasRects(docs[1])) probes.push('with the rectangles removed the two documents still differ');
+          const strip = (text: string): string | null => { const unpaged = withoutPages(text); return unpaged === null ? null : withoutAtlasRects(unpaged); };
+          if (strip(docs[0]) === null || strip(docs[0]) !== strip(docs[1])) probes.push('with the rectangles and the pages removed the two documents still differ');
           const before = documentRegions(JSON.parse(docs[0]) as unknown).find((r) => r.region === 'square');
-          detail = `examples/3-timing-and-spacing ingested and built against its own pack and against the pack with square's bounds 80x80 turned into 70x70 + offsets 4, 6, 80, 80: skeleton.json byte-identical, the documents differ at exactly ${differ.length} leaves — ${square[0]?.at ?? '?'}'s atlas ${rectOfRecord(before?.record.atlas)} against ${rectOfRecord(square[0]?.record.atlas)} (${ATLAS_RECT_KEYS.join(', ')})`;
+          detail = `examples/3-timing-and-spacing ingested and built against its own pack and against the pack with square's bounds 80x80 turned into 70x70 + offsets 4, 6, 80, 80: skeleton.json byte-identical, the documents differ at exactly ${differ.length} leaves — ${square[0]?.at ?? '?'}'s atlas ${rectOfRecord(before?.record.atlas)} against ${rectOfRecord(square[0]?.record.atlas)} (${ATLAS_RECT_KEYS.join(', ')}), and the same four numbers of square's region in \`pages\``;
         }
       }
       const ok = probes.length === 0;
@@ -83294,7 +83449,7 @@ function runModelAtlasSuite(): number {
     const probes: string[] = [];
     let detail = '';
     if (greenOf('loose', loose, probes)) {
-      const doc = JSON.parse(modelDocument(loose.built.model, loose.built.skeletonText)) as unknown;
+      const doc = JSON.parse(modelDocument(loose.built.model, loose.built.skeletonText, loose.built.atlasText)) as unknown;
       const emitted = new Map(parseAtlasText(loose.built.atlasText).pages.flatMap((p) => p.regions.map((r) => [r.name, r] as const)));
       const lines: string[] = [];
       for (const r of documentRegions(doc)) {
@@ -83333,7 +83488,7 @@ function runModelAtlasSuite(): number {
     const probes: string[] = [];
     let detail = '';
     if (greenOf('trimmed-pack', trimmed, probes)) {
-      const doc = JSON.parse(modelDocument(trimmed.built.model, trimmed.built.skeletonText)) as unknown;
+      const doc = JSON.parse(modelDocument(trimmed.built.model, trimmed.built.skeletonText, trimmed.built.atlasText)) as unknown;
       const pack = new Map(parseAtlasText(readFileSync(probe.trimmed, 'utf8')).pages.flatMap((p) => p.regions.map((r) => [r.name.trim(), r] as const)));
       const lines: string[] = [];
       let turned = 0;
@@ -83421,7 +83576,7 @@ function runModelAtlasSuite(): number {
     else {
       const record = ghost.built.model.skins[0]?.attachments.ghost?.ghost;
       if (record?.kind !== 'region' || record.atlas !== null) probes.push(`the ghost record's atlas is ${record?.kind === 'region' ? JSON.stringify(record.atlas) : '(no region)'}, not null`);
-      const text = modelDocument(ghost.built.model, ghost.built.skeletonText);
+      const text = modelDocument(ghost.built.model, ghost.built.skeletonText, ghost.built.atlasText);
       const written = documentRegions(JSON.parse(text) as unknown).find((r) => r.at === 'default/ghost/ghost');
       if (written === undefined || written.record.atlas !== null) probes.push(`the document writes ghost's atlas as ${JSON.stringify(written?.record.atlas)}`);
       const a08 = ghost.report.failures.filter((f) => f.assertion === 'A08_REGION_NAMES_MATCH_ATTACHMENTS');
@@ -83456,7 +83611,7 @@ function runModelAtlasSuite(): number {
     const probes: string[] = [];
     let detail = '';
     if (greenOf('trimmed-pack', trimmed, probes)) {
-      const text = modelDocument(trimmed.built.model, trimmed.built.skeletonText);
+      const text = modelDocument(trimmed.built.model, trimmed.built.skeletonText, trimmed.built.atlasText);
       let read: CompiledDocument | null = null;
       try {
         read = readModel(text);
@@ -83490,6 +83645,147 @@ function runModelAtlasSuite(): number {
       ok,
       probeDetail(ok, probes, detail),
       'issue #935: `readModel` refused every field it does not know, so the added field is read in the same change — checked field by field — rather than left for the region construct (issue #931) to discover as a refusal',
+    );
+  }
+
+  // --- MG09: the pages section is the written atlas on every route `build` writes one by (issue #1016) --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    const galleryRoot = resolve(import.meta.dir, 'gallery');
+    const name = existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().find((n) => existsSync(join(galleryRoot, n, 'rig.json')) && existsSync(join(galleryRoot, n, 'motion.json'))) : undefined;
+    if (name === undefined) probes.push(`no gallery rig with a rig.json and motion.json under ${galleryRoot}`);
+    else {
+      const gallery = ['--rig', join(galleryRoot, name, 'rig.json'), '--motion', join(galleryRoot, name, 'motion.json')];
+      const packIn = ['--rig', probe.dirs.rigPath, '--motion', probe.motionPath, '--images', probe.dirs.dir, '--atlas-in', probe.trimmed, '--profile', 'spine'];
+      const routes: Array<[string, string[], number]> = [
+        [`gallery/${name} loose`, gallery, 1],
+        [`gallery/${name} --copy-images`, [...gallery, '--copy-images'], 1],
+        [`gallery/${name} --pack`, [...gallery, '--pack'], 2],
+        [`gallery/${name} --pack --page-edges free`, [...gallery, '--pack', '--page-edges', 'free'], 2],
+        ['the trimmed probe --atlas-in', packIn, 1],
+        ['the trimmed probe --atlas-in --copy-images', [...packIn, '--copy-images'], 1],
+      ];
+      const lines: string[] = [];
+      let named = '';
+      let regions = 0;
+      routes.forEach(([label, args, gates], i) => {
+        const out = join(work, 'routes', String(i));
+        const run = runCli(['build', ...args, '--out', out]);
+        if (run.status !== 0) {
+          probes.push(`${label}: build exited ${run.status}: ${run.stderr.trim().split('\n').slice(-2).join(' | ')}`);
+          return;
+        }
+        const a18 = (run.stdout.match(/^ {2}PASS {2}A18_DETERMINISTIC_EMIT$/gm) ?? []).length;
+        if (a18 !== gates) probes.push(`${label}: A18 passed ${a18} time(s), not once per gate (${gates})`);
+        const doc = readModel(readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8'));
+        const written = pagesOfAtlas(readFileSync(join(out, 'skeleton.atlas'), 'utf8'));
+        if (doc.pages === null) {
+          probes.push(`${label}: the document carries no pages`);
+          return;
+        }
+        const differs = firstPageDifference(doc.pages, written);
+        if (differs !== null) probes.push(`${label}: the document's pages are not the written atlas's — ${differs}`);
+        // Every page the document names is a file, resolved from --out as the core's caller loads it.
+        for (const page of doc.pages) if (!existsSync(join(out, page.name))) probes.push(`${label}: page "${page.name}" resolves to no file from ${out}`);
+        regions += doc.pages.reduce((n, page) => n + page.regions.length, 0);
+        const turned = doc.pages.flatMap((page) => page.regions).filter((r) => r.degrees !== 0).length;
+        lines.push(`${label}: ${doc.pages.length} page(s) [${doc.pages.slice(0, 2).map((page) => `${page.name} ${page.width}x${page.height}`).join(', ')}${doc.pages.length > 2 ? ', …' : ''}]${turned > 0 ? `, ${turned} turned` : ''}, A18 x${a18}`);
+        // The plant: one region's x moved in the written document is named against the written atlas.
+        if (i === 2) {
+          const moved = JSON.parse(JSON.stringify(doc.pages)) as typeof doc.pages;
+          moved[0].regions[0].x += 1;
+          named = firstPageDifference(moved, written) ?? '';
+          if (!named.includes(`region ${JSON.stringify(moved[0].regions[0].name)}: x is ${moved[0].regions[0].x} in the document and ${moved[0].regions[0].x - 1} in the atlas`)) probes.push(`${label}: one x moved by 1 read ${JSON.stringify(named)}`);
+        }
+      });
+      detail = `${routes.length} builds through the CLI, ${regions} region(s) in all, each document's pages equal to pagesOfAtlas of the skeleton.atlas written beside it — ${lines.join('; ')}; one x moved by 1 in the packed document is named: "${named}"`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'MG09_THE_PAGES_SECTION_IS_THE_WRITTEN_ATLAS_ON_EVERY_ROUTE_AND_A_MOVED_X_IS_NAMED',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #1016: #939 left the page, x, y and rotate out of the model because --pack moves them after compile and --copy-images renames every page — so the section is spelled from the atlas build writes, and this holds it to that file on every route that writes one, the two packed gates included',
+    );
+  }
+
+  // --- MG10: A18 compares the pages section --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    const first = buildRectProbe(probe, join(probe.dirs.dir, 'a18-first'), probe.trimmed);
+    const second = buildRectProbe(probe, join(probe.dirs.dir, 'a18-second'), probe.trimmed);
+    if (greenOf('first', first, probes) && greenOf('second', second, probes)) {
+      const a = first.built;
+      const b = second.built;
+      const a18 = 'A18_DETERMINISTIC_EMIT';
+      const gate = (modelText: string) =>
+        validate({ skeletonText: a.skeletonText, atlasText: a.atlasText, atlasDir: join(probe.dirs.dir, 'a18-first'), declaredDurations: a.declaredDurations, rig: a.rig, profile: 'spine', modelText: modelDocument(a.model, a.skeletonText, a.atlasText), reEmit: { skeletonText: b.skeletonText, atlasText: b.atlasText, modelText } });
+      const clean = gate(modelDocument(b.model, b.skeletonText, b.atlasText));
+      if (!clean.passed.includes(a18) || clean.failures.length > 0) probes.push(`two compiles of the trimmed probe are not green: ${clean.failures.map((f) => `${f.assertion}: ${f.detail}`).join(' | ')}`);
+      const from = '\tbounds: 46, 0, 12, 12\n';
+      if (!b.atlasText.includes(from)) probes.push(`the probe's atlas no longer states "${from.trim()}", so the plant cannot be applied`);
+      const planted = gate(modelDocument(b.model, b.skeletonText, b.atlasText.replace(from, '\tbounds: 47, 0, 12, 12\n')));
+      const said = planted.failures.filter((f) => f.assertion === a18).map((f) => f.detail);
+      if (said.length !== 1 || !said[0].includes(MODEL_DOCUMENT_FILE)) probes.push(`a second document spelled from an atlas with one x moved read ${JSON.stringify(said)}`);
+      if (planted.failures.some((f) => f.assertion !== a18)) probes.push(`the plant failed other assertions too: ${planted.failures.filter((f) => f.assertion !== a18).map((f) => f.assertion).join(', ')}`);
+      detail = `two compiles of the trimmed probe through --atlas-in pass A18 with their pages compared; the second document spelled from the same atlas with one region's x moved by 1 — the skeleton and atlas texts compared unchanged — fails A18 alone: "${said[0] ?? ''}"`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'MG10_A18_COMPARES_THE_PAGES_SECTION_AND_ONE_MOVED_X_TURNS_IT_RED',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #1016: the pages section is spelled from an atlas text the build hands the document, which is a second input to the spelling — A18 compares the second compile\'s document spelled from the second compile\'s atlas (from a second, independent pack under --pack), so the new input is covered by the comparison and not assumed deterministic',
+    );
+  }
+
+  // --- MG11: readModel reads /2 and /1, and refuses a malformed page by its path --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    if (greenOf('trimmed-pack', trimmed, probes)) {
+      const text = modelDocument(trimmed.built.model, trimmed.built.skeletonText, trimmed.built.atlasText);
+      const read = coreRefusal(text) === '' ? readModel(text) : null;
+      if (read === null) probes.push(`readModel refused the built document: ${coreRefusal(text)}`);
+      const pages = read?.pages ?? null;
+      const regions = pages?.flatMap((page) => page.regions) ?? [];
+      if (pages === null || pages.length === 0 || !regions.some((r) => r.degrees === 90) || !regions.some((r) => r.offsetX !== 0)) probes.push(`the core reads ${pages === null ? 'no pages' : `${pages.length} page(s), ${regions.length} region(s)`} — the probe's pack has a turned and a trimmed region`);
+      const unpaged = withoutPages(text) ?? '';
+      const v1 = coreRefusal(unpaged) === '' ? readModel(unpaged) : null;
+      if (v1 === null || v1.pages !== null || v1.spec !== 'rigc-compiled/1') probes.push(`a rigc-compiled/1 document read ${v1 === null ? `as refused: ${coreRefusal(unpaged)}` : `with pages ${JSON.stringify(v1.pages)}, spec ${v1.spec}`}`);
+      const page0 = (pages?.[0]?.name ?? '') as string;
+      const edit = (change: (doc: Record<string, unknown> & { pages: Array<Record<string, unknown> & { regions: Array<Record<string, unknown>> }> }) => void): string => {
+        const doc = JSON.parse(text) as Record<string, unknown> & { pages: Array<Record<string, unknown> & { regions: Array<Record<string, unknown>> }> };
+        change(doc);
+        return JSON.stringify(doc);
+      };
+      const region0 = JSON.stringify(regions[0]?.name ?? '');
+      const plants: Array<[string, string, string]> = [
+        ['a /1 document carrying pages', edit((d) => { d.spec = 'rigc-compiled/1'; }), 'section "pages" is not one a rigc-compiled/1 document has'],
+        ['a /2 document without pages', edit((d) => { delete (d as Record<string, unknown>).pages; }), 'section "pages" is missing'],
+        ['a spec of neither', edit((d) => { d.spec = 'rigc-compiled/3'; }), 'spec is "rigc-compiled/3", not "rigc-compiled/2" (or "rigc-compiled/1", read without its pages)'],
+        ['pages that are not a list', edit((d) => { (d as Record<string, unknown>).pages = {}; }), 'pages is {}, not a list of pages'],
+        ['a page of width 0', edit((d) => { d.pages[0].width = 0; }), `pages[0] "${page0}": width is 0, not a positive finite number`],
+        ['an unknown page field', edit((d) => { d.pages[0].filter = 'Linear'; }), `pages[0] "${page0}": field "filter" is not one this reader knows`],
+        ['an unknown region field', edit((d) => { d.pages[0].regions[0].rotate = 90; }), `pages[0] "${page0}".regions[0] ${region0}: field "rotate" is not one this reader knows`],
+        ['a region number as a string', edit((d) => { d.pages[0].regions[0].x = '46'; }), `pages[0] "${page0}".regions[0] ${region0}: x is "46", not a finite number`],
+        ['a region missing its index', edit((d) => { delete d.pages[0].regions[0].index; }), `pages[0] "${page0}".regions[0] ${region0}: index is absent, not a finite number`],
+        ['a region with no name', edit((d) => { d.pages[0].regions[0].name = ''; }), `pages[0] "${page0}".regions[0]: name is "", not a non-empty string`],
+      ];
+      for (const [label, planted, expected] of plants) {
+        const refusal = coreRefusal(planted);
+        if (!refusal.includes(expected)) probes.push(`${label}: ${refusal === '' ? 'read' : `refused as "${refusal}"`}, not naming "${expected}"`);
+      }
+      detail = `readModel reads the built rigc-compiled/2 document's ${pages?.length ?? 0} page(s) and ${regions.length} region(s), a turned and a trimmed one among them, and the same document as rigc-compiled/1 without its pages with \`pages: null\`; ${plants.length} plants — pages on a /1, none on a /2, a third spec, pages not a list, a zero width, an unknown page and region field, a string, a missing index, an empty name — are each refused naming the path`;
+    }
+    const ok = probes.length === 0;
+    say(
+      'MG11_READMODEL_READS_RIGC_COMPILED_2_AND_1_AND_REFUSES_A_MALFORMED_PAGE_BY_ITS_PATH',
+      ok,
+      probeDetail(ok, probes, detail),
+      'issue #1016: a 1.6 reader refuses a section it does not know, so the section is a new spec rather than a field a shipped reader would refuse under the old one; this reader takes both, and checks every page and region field by field, because a page UV divides by the page size and a placement read wrong is a wrong picture rather than a refusal',
     );
   }
 
@@ -85992,7 +86288,7 @@ function runGallerySuite(): { failures: number; examples: number } {
           atlasDir: outDir,
           declaredDurations: result.declaredDurations,
           rig: result.rig,
-          modelText: modelDocument(result.model, result.skeletonText),
+          modelText: modelDocument(result.model, result.skeletonText, result.atlasText),
           reEmit,
           profile,
         });
@@ -86051,7 +86347,7 @@ function runCutsSuite(): { failures: number; cuts: number } {
         // Compiling twice is what makes A18 mean anything here: on real art the
         // determinism claim is worth more than on a fixture, because the manifest
         // carries floats nobody chose.
-        modelText: modelDocument(result.model, result.skeletonText),
+        modelText: modelDocument(result.model, result.skeletonText, result.atlasText),
         reEmit: gateTextsOf(compile(opts)),
         // `spine-html`, pinned: a registered cut is a rig this project ships, and
         // "can this project ship it" is the whole question the extra suite asks.
@@ -87606,7 +87902,7 @@ function runIngestSuite(): number {
             atlasDir: outDir,
             declaredDurations: built.declaredDurations,
             rig: built.rig,
-            modelText: modelDocument(built.model, built.skeletonText),
+            modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
             reEmit: gateTextsOf(compile({ rigPath, motionPath, outDir: join(root, `R${index}`), atlasInPath: candidate })),
             profile: 'spine',
           });
