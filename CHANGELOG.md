@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.9.2](https://github.com/firejune/rigc/compare/v1.9.1...v1.9.2) (2026-10-01)
+
+
+### Bug Fixes
+
+* **cli:** bonedist and bench --bones refuse a pair they cannot pose by name, a build moved away from its pages is refused naming the page, and a skeleton that is not JSON is refused naming the file ([#1047](https://github.com/firejune/rigc/issues/1047)) ([cafc03c](https://github.com/firejune/rigc/commit/cafc03cf6d6509c93fcfcb9623eae98dd8388b67)), closes [#1042](https://github.com/firejune/rigc/issues/1042)
+
+
+### Instrument
+
+* **gate:** A10 written once against the stepped poses, supplied by spine-core and by the core's own looping walk — which keeps a non-finite value in place and fires a physics reset across the wrap ([#1053](https://github.com/firejune/rigc/issues/1053)) ([2447536](https://github.com/firejune/rigc/commit/2447536608e7f815178ee91b7b54cdcc18f8f640))
+* **gate:** A40 and A34 written once against facts and supplied by either side — what a timeline does when applied additively is a computation the core now makes, held cell by cell to the runtime's probe ([#1050](https://github.com/firejune/rigc/issues/1050)) ([cbcfc96](https://github.com/firejune/rigc/commit/cbcfc9665ea845813a83a59cf169ded54cc6cf0b))
+
 ## [1.9.1](https://github.com/firejune/rigc/compare/v1.9.0...v1.9.1) (2026-10-01)
 
 
