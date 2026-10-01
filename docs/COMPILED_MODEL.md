@@ -708,3 +708,38 @@ The document ends with one section that is not the model's: `"spine": { "sha256"
 It exists because `rigc render` poses a rigc build through rigc's own core, from this document, when it finds the document beside the skeleton, and nothing else tied the two files. A `skeleton.json` edited after the build and left beside the document it was built with was drawn from the document: the build's rig, not the file the render was pointed at. The selftest's `RF89`, `RF91` and `RF93` plants edit the Spine file alone, and read exit 0 where the file itself is refused. The render now takes the core only when the file beside the document hashes to this value, and otherwise poses through spine-core, naming both digests on its `poser` line. `--poser core` on such a pair exits 2.
 
 The value is deterministic wherever the Spine file is, since `A18` holds the file byte for byte across two compiles. The Spine bytes themselves are unchanged by it: `tools/emit_hashes.base.json` holds `skeleton.json` and `skeleton.atlas` only and stays current. The atlas is not digested. The core reads the page layout from the atlas beside the document, the same file spine-core reads, but the region trims it poses corners from are the model's own `atlas` rectangles.
+
+## 8. Where each region sits on its page (issue #1016)
+
+Measured 2026-10-01 at `0984c47` of `main` and built on top of it; §7's last sentence ("the core reads the page layout from the atlas beside the document") describes that commit and is superseded here rather than rewritten.
+
+**What the draw read from the atlas.** Per drawn region, mesh or linked mesh, `src/core/uvs.ts` and `src/render_core.ts` took, for the first region of the name the record draws (its `path`, else its name; a series' frame name per frame): the page's name and `size`; the region's `x`, `y`, `width`, `height`, `offsetX`, `offsetY`, `originalWidth`, `originalHeight` and `degrees`; and, for texture substitution's key, its `index:`. Nothing else: no `filter`, `pma`, `format`, `repeat` or `scale:`. On the 19 tree recipes that is 273 drawn names over 137 pages, 3 of them turned, none trimmed.
+
+**When each of those becomes final in `build`:**
+
+| route | page name | page size | x, y, turn | trim, original size | final at |
+| --- | --- | --- | --- | --- | --- |
+| loose parts (default) | `compile` | `compile` | `compile` | `compile` | `compile` returns, before the gate |
+| `--atlas-in` | `compile` (re-anchored) | `compile` | `compile` | `compile` | `compile` returns, before the gate |
+| `--copy-images` | renamed after the gate (`copyAtlasPages`) | unchanged | unchanged | unchanged | computable from the text alone before the gate (`plannedPageCopies`) |
+| `--pack` (`pot`, `free`) | `skeleton.png`… | the packer's | the packer's | unchanged (the packer never trims or turns) | `packAtlas`, after the first gate and before the packed one |
+
+Measured on `gallery/nod` (10 regions) and `gallery/flex` (20) through the CLI: against the loose build, `--copy-images` changed the page name of every region and nothing else; `--pack` and `--pack --page-edges free` changed the page name, the page size and `x, y` of every region (nod onto one 1024x1024 page, or 1234x762 with free edges; flex onto 2048x1024, or 1398x732).
+
+**The order this gives.** Before this change the document was spelled once, before the first gate, and handed unchanged to the packed gate; nothing in it depended on the atlas. So #939's objection holds against putting the four values in the model, and does not hold against spelling them from the atlas text `build` writes: every route's final text exists before anything of the pair is written. The document is now `modelDocument(model, skeletonText, atlasText)`, with `atlasText` the text written beside it:
+
+- loose and `--atlas-in`: the compile's own text, as before;
+- `--copy-images`: the compile's text with the copies' page names, planned before the gate; the copy after the gate is held to the plan before the pair is written;
+- `--pack`: spelled again from the packed text for the packed gate, and that is the document written. `A18` in that gate compares it with a second compile's document spelled from the second, independent pack, so the new input is under the comparison rather than assumed.
+
+The document is written once, after every gate, as before. The alternative of writing the document after the pack and gating it then is the same thing for `--pack` and is not available for `--copy-images` without spelling it after the gate; a rewrite of a written document was not considered, since it would put a file on disk that no gate read.
+
+**The section.** `pages`, after `rig` and before `spine`: every page of the written atlas and every region on it, in file order — `{ name, width, height, regions: [{ name, x, y, width, height, offsetX, offsetY, originalWidth, originalHeight, degrees, index }] }`, the numbers as `parseAtlasText` reads them and the region name as the line spells it. All regions, not only the drawn ones: which regions a rig draws is the core's lookup rule, and a writer choosing a subset would restate it. On the 19 recipes the section adds 308 regions (the 12 example packs carry 35 regions no record draws) and 3,799 leaves; every one is an integer, so `MX01` holds unchanged.
+
+**The version.** `readModel` of rigc 1.6 refuses a section it does not know by name, so a document with `pages` under the old spec would be refused by every installed reader. The spec is `rigc-compiled/2`. `readModel` reads `/2` with `pages` required and checked field by field, and `/1` with `pages: null`; the core then reads the placement from the atlas beside the document as before, and with no atlas given refuses the `/1` document by name.
+
+**What the core draws from.** `corePoser` looks regions up in the document's `pages` (`documentPageLookup`, the first region of a name in file order — `atlasRegionLookup` over the same text). When an atlas is also given, it must be the one the document was written beside: the first page or region field that differs is refused by name, and the render then draws through spine-core saying why.
+
+**Measured after the change**, on the 19 recipes: every `skeleton.json` and `skeleton.atlas` byte-identical to `0984c47`; each document differs from `0984c47`'s in `/spec` and the added `/pages` leaves only, and with `pages` removed and the spec set back to `/1` is byte-identical to it on 19 of 19; each document's `pages` equals `pagesOfAtlas` of the atlas written beside it on 19 of 19, and on the gallery's loose, `--copy-images`, `--pack` and `--pack --page-edges free` builds and an `--atlas-in` probe with and without `--copy-images` (`MG09`). Drawn by the core with no atlas text and the page images loaded by the names the document states, the 19 rows' 2,612 frames and 50 contact sheets are pixel-identical to the CLI's render of the same builds with the atlas present, on the same framing box (`RC10` holds the gallery rows).
+
+**What this does not do.** `rigc render`, `check` and `bench --frames` still refuse a build directory without its `skeleton.atlas` before any posing: they load the Spine skeleton through spine-core (`loadPosable` in `src/render.ts`), which needs the atlas, for the rosters the core poser is checked against, the skins, the slot subset, the stage and the page images. Removing that read is a change to `src/render.ts` and `src/check.ts`, not to the document.
