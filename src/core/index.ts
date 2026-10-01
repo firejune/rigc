@@ -1,6 +1,7 @@
 /**
  * rigc's own core: it reads the compiled model as `build` writes it
- * (`rigc-compiled/2`, and `/1` before issue #1016; `skeleton.model.json`)
+ * (`rigc-compiled/3`, and `/2` before issue #1026 and `/1` before issue #1016;
+ * `skeleton.model.json`)
  * and poses it (issue #925, step 2a
  * of issue #380). It is the second dumper `tools/pose_oracle.ts` was shaped
  * for: what it poses is written into the same `pose-oracle/2` document the
@@ -171,7 +172,7 @@
  * child process, no file system — `readModel` takes the document's TEXT — and
  * nothing from the Spine runtime package, as a value or as a type.
  */
-import type { ModelAtlasRect, ModelBone, ModelPage, ModelPageRegion, ModelSlot, ModelVertices, SkinTableEntry } from '../model.ts';
+import type { ModelAtlasRect, ModelBone, ModelEditorOrder, ModelPage, ModelPageRegion, ModelSlot, ModelStage, ModelVertices, SkinTableEntry } from '../model.ts';
 import { worldTransforms, type CoreWorld } from './world.ts';
 import { readAnimationTimelines, type CoreAnimationTimelines } from './animation.ts';
 import { readEventDefs, type CoreEventDef } from './events.ts';
@@ -187,18 +188,31 @@ import { drawOrderAt, type DrawOrderEvaluator } from './draw_order.ts';
 import type { EventsFired } from './events.ts';
 
 /**
- * The document spec `build` writes today, and the one this reader takes with
- * the `pages` section (issue #1016).
+ * The document spec `build` writes today (issue #1026): the `pages` section
+ * (issue #1016) with each page's `pma` and `scale`, and the `stage` and
+ * `editorOrder` sections — what only the Spine files beside a `/2` document
+ * state.
  */
-export const CORE_DOCUMENT_SPEC = 'rigc-compiled/2';
+export const CORE_DOCUMENT_SPEC = 'rigc-compiled/3';
 
 /**
- * The spec before issue #1016: the same sections without `pages`. Read as
- * before — the draw then takes where each region sits from the atlas beside
- * the document (`corePoser` in `src/render_core.ts` says so by name), because
- * a `/1` document does not state it.
+ * The spec before issue #1026: `/3` without `stage`, `editorOrder` and the
+ * pages' `pma` and `scale`. Read as before, with `stated` null — a reader that
+ * needs those reads them off the Spine files beside the document, and says so
+ * (`src/render.ts`'s poser line, the survey's order).
+ */
+export const CORE_DOCUMENT_SPEC_2 = 'rigc-compiled/2';
+
+/**
+ * The spec before issue #1016: `/2` without `pages`. Read as before — the
+ * draw then takes where each region sits from the atlas beside the document
+ * (`corePoser` in `src/render_core.ts` says so by name), because a `/1`
+ * document does not state it.
  */
 export const CORE_DOCUMENT_SPEC_1 = 'rigc-compiled/1';
+
+/** Every spec this reader takes, newest first. */
+export const CORE_DOCUMENT_SPECS: readonly string[] = [CORE_DOCUMENT_SPEC, CORE_DOCUMENT_SPEC_2, CORE_DOCUMENT_SPEC_1];
 
 /** Who posed a dump the core wrote — the oracle document's `dumper`. */
 export const CORE_DUMPER = 'rigc-core';
@@ -208,7 +222,8 @@ export class CoreInputError extends Error {}
 
 /** The document's sections after `spec`, in its key order (`modelDocument` in `src/model.ts`). */
 export const CORE_SECTIONS = [
-  'referenceScale', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations',
+  // Issue #1026: `stage` (the header's setup-pose box, or null) and `editorOrder` (the order the Spine file lists skins, slot keys and animations in). `/3` only.
+  'referenceScale', 'stage', 'bones', 'slots', 'skins', 'constraints', 'events', 'animations', 'editorOrder',
   'images', 'pageGrids', 'droppedStates', 'absentParts', 'meshBones', 'meshes', 'physics', 'deformTransforms', 'trackDerivations', 'rig',
   // Issue #1016: where each region sits on its page, in the atlas written beside the document (`pagesOfAtlas` in `src/model.ts`). `/2` only.
   'pages',
@@ -216,11 +231,18 @@ export const CORE_SECTIONS = [
   'spine',
 ] as const;
 
-/** The sections of a `rigc-compiled/1` document: `CORE_SECTIONS` without `pages`. */
-export const CORE_SECTIONS_1: readonly string[] = CORE_SECTIONS.filter((key) => key !== 'pages');
+/** The sections of a `rigc-compiled/2` document: `CORE_SECTIONS` without `stage` and `editorOrder`. */
+export const CORE_SECTIONS_2: readonly string[] = CORE_SECTIONS.filter((key) => key !== 'stage' && key !== 'editorOrder');
+
+/** The sections of a `rigc-compiled/1` document: `CORE_SECTIONS_2` without `pages`. */
+export const CORE_SECTIONS_1: readonly string[] = CORE_SECTIONS_2.filter((key) => key !== 'pages');
 
 /** The fields of a page and of a region in the `pages` section, as the writer lists them (`MODEL_PAGE_FIELDS`, `MODEL_PAGE_REGION_FIELDS` in `src/model.ts`, mirrored). */
-export const CORE_PAGE_FIELDS = ['name', 'width', 'height', 'regions'] as const;
+export const CORE_PAGE_FIELDS = ['name', 'width', 'height', 'pma', 'scale', 'regions'] as const;
+/** A `rigc-compiled/2` page's fields: `CORE_PAGE_FIELDS` without `pma` and `scale` (issue #1026). */
+export const CORE_PAGE_FIELDS_2: readonly string[] = CORE_PAGE_FIELDS.filter((key) => key !== 'pma' && key !== 'scale');
+/** The stage's fields, as the writer lists them (`MODEL_STAGE_FIELDS` in `src/model.ts`, mirrored). */
+export const CORE_STAGE_FIELDS = ['x', 'y', 'width', 'height'] as const;
 export const CORE_PAGE_REGION_FIELDS = ['name', 'x', 'y', 'width', 'height', 'offsetX', 'offsetY', 'originalWidth', 'originalHeight', 'degrees', 'index'] as const;
 
 /** The fields a bone record may carry, as the writer lists them. A field outside this list is refused. */
@@ -320,7 +342,7 @@ export interface CoreAnimation {
 }
 
 /**
- * A `rigc-compiled/2` (or `/1`) document, read. `bones` and `slots` are checked field by
+ * A `rigc-compiled/3` (or `/2`, or `/1`) document, read. `bones` and `slots` are checked field by
  * field against the writer's own records; skins and constraints are read as
  * far as their names and memberships, and every other section is only
  * required to be present — no construct this card admits reads it.
@@ -346,9 +368,23 @@ export interface CompiledDocument {
    * Every page of the atlas `build` wrote beside the document and every region
    * on it, in file order (issue #1016) — where each drawing sits, which the
    * draw's page UVs read. `null` for a `rigc-compiled/1` document, which does
-   * not state it.
+   * not state it. A `rigc-compiled/3` document's pages carry `pma` and `scale`
+   * too (issue #1026); a `/2` document's carry neither.
    */
   pages: ModelPage[] | null;
+  /**
+   * What a `rigc-compiled/3` document states that only the Spine files beside
+   * a `/2` or `/1` document hold (issue #1026): the setup-pose box the header
+   * declares, or `null` for none, and the order the editor lists skins, their
+   * slot keys and animations in. `null` for a `/2` or `/1` document.
+   */
+  stated: CoreStated | null;
+}
+
+/** A `rigc-compiled/3` document's `stage` and `editorOrder`, read (`CompiledDocument.stated`). */
+export interface CoreStated {
+  stage: ModelStage | null;
+  editorOrder: ModelEditorOrder;
 }
 
 /**
@@ -359,7 +395,7 @@ export interface CompiledDocument {
  * fault is named by its path. Nothing is defaulted: a field the writer always
  * writes is required here.
  */
-function readPages(value: unknown, problems: string[]): ModelPage[] {
+function readPages(value: unknown, problems: string[], flags: boolean): ModelPage[] {
   if (!Array.isArray(value)) {
     problems.push(`pages is ${JSON.stringify(value) ?? 'absent'}, not a list of pages`);
     return [];
@@ -373,11 +409,16 @@ function readPages(value: unknown, problems: string[]): ModelPage[] {
     }
     const before = problems.length;
     const label = typeof raw.name === 'string' ? `${where} "${raw.name}"` : where;
-    unknownFields(raw, CORE_PAGE_FIELDS, label, problems);
+    unknownFields(raw, flags ? CORE_PAGE_FIELDS : CORE_PAGE_FIELDS_2, label, problems);
     if (typeof raw.name !== 'string' || raw.name === '') problems.push(`${where}: name is ${JSON.stringify(raw.name) ?? 'absent'}, not a non-empty string`);
     for (const key of ['width', 'height'] as const) {
       const v = raw[key];
       if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) problems.push(`${label}: ${key} is ${JSON.stringify(v) ?? 'absent'}, not a positive finite number — a page UV divides by it`);
+    }
+    // Issue #1026: a /3 page states its `pma:` as the runtime reads it and the number its own `scale:` line states, or null for none.
+    if (flags) {
+      if (typeof raw.pma !== 'boolean') problems.push(`${label}: pma is ${JSON.stringify(raw.pma) ?? 'absent'}, not true or false — whether the page's texels are premultiplied`);
+      if (raw.scale !== null && (typeof raw.scale !== 'number' || !Number.isFinite(raw.scale))) problems.push(`${label}: scale is ${JSON.stringify(raw.scale) ?? 'absent'}, not a finite number or null — the number the page's scale: line states, null where it has none`);
     }
     const regions: ModelPageRegion[] = [];
     if (!Array.isArray(raw.regions)) problems.push(`${label}: regions is not a list`);
@@ -399,7 +440,13 @@ function readPages(value: unknown, problems: string[]): ModelPage[] {
         regions.push(region as unknown as ModelPageRegion);
       });
     }
-    if (problems.length === before) out.push({ name: raw.name as string, width: raw.width as number, height: raw.height as number, regions });
+    if (problems.length === before) {
+      out.push(
+        flags
+          ? { name: raw.name as string, width: raw.width as number, height: raw.height as number, pma: raw.pma as boolean, scale: raw.scale as number | null, regions }
+          : { name: raw.name as string, width: raw.width as number, height: raw.height as number, regions },
+      );
+    }
   });
   return out;
 }
@@ -418,6 +465,80 @@ function readSpineDigest(value: unknown, problems: string[]): string {
     return '';
   }
   return sha;
+}
+
+/**
+ * The `stage` section, checked (issue #1026): `null` — the header declares no
+ * stage — or exactly `CORE_STAGE_FIELDS`, four finite numbers, each fault
+ * named by path. Nothing is defaulted: the writer always writes all four.
+ */
+function readStage(value: unknown, problems: string[]): ModelStage | null {
+  if (value === null) return null;
+  if (!isRecord(value)) {
+    problems.push(`stage is ${JSON.stringify(value) ?? 'absent'}, not null or { x, y, width, height } — the setup-pose box the Spine header declares`);
+    return null;
+  }
+  const before = problems.length;
+  unknownFields(value, CORE_STAGE_FIELDS, 'stage', problems);
+  for (const key of CORE_STAGE_FIELDS) {
+    const v = value[key];
+    if (typeof v !== 'number' || !Number.isFinite(v)) problems.push(`stage: ${key} is ${JSON.stringify(v) ?? 'absent'}, not a finite number`);
+  }
+  return problems.length === before ? { x: value.x as number, y: value.y as number, width: value.width as number, height: value.height as number } : null;
+}
+
+/**
+ * The `editorOrder` section, checked against the records the document holds
+ * (issue #1026): `skins`, every skin exactly once as `{ name, slots }` with
+ * `slots` its table's slot keys exactly once each, and `animations`, every
+ * animation's name exactly once. An order naming a skin, slot key or
+ * animation the document does not hold, or leaving one out, is refused by
+ * path — it would be another rig's order.
+ */
+function readEditorOrder(value: unknown, skins: readonly CoreSkin[], animations: readonly CoreAnimation[], problems: string[]): ModelEditorOrder {
+  const out: ModelEditorOrder = { skins: [], animations: [] };
+  if (!isRecord(value)) {
+    problems.push(`editorOrder is ${JSON.stringify(value) ?? 'absent'}, not { skins, animations }`);
+    return out;
+  }
+  unknownFields(value, ['skins', 'animations'], 'editorOrder', problems);
+  const names = (list: unknown, where: string): string[] | null => {
+    if (!Array.isArray(list) || list.some((n) => typeof n !== 'string')) {
+      problems.push(`${where} is ${JSON.stringify(list) ?? 'absent'}, not a list of names`);
+      return null;
+    }
+    return list as string[];
+  };
+  /** `stated` lists exactly the names of `held`, each once — else one problem naming the first difference. */
+  const permutation = (stated: readonly string[], held: readonly string[], where: string, what: string): void => {
+    const seen = new Set<string>();
+    for (const name of stated) {
+      if (seen.has(name)) return void problems.push(`${where} lists ${what} "${name}" twice`);
+      seen.add(name);
+      if (!held.includes(name)) return void problems.push(`${where} lists ${what} "${name}", which the document does not hold`);
+    }
+    const missing = held.find((name) => !seen.has(name));
+    if (missing !== undefined) problems.push(`${where} leaves out ${what} "${missing}"`);
+  };
+  if (!Array.isArray(value.skins)) problems.push(`editorOrder.skins is ${JSON.stringify(value.skins) ?? 'absent'}, not a list`);
+  else {
+    value.skins.forEach((entry, i) => {
+      const at = `editorOrder.skins[${i}]`;
+      if (!isRecord(entry) || typeof entry.name !== 'string') return void problems.push(`${at} is not { name, slots }`);
+      unknownFields(entry, ['name', 'slots'], at, problems);
+      const slots = names(entry.slots, `${at}.slots`);
+      const skin = skins.find((k) => k.name === entry.name);
+      if (slots !== null && skin !== undefined) permutation(slots, Object.keys(skin.attachments), `${at}.slots`, 'slot key');
+      out.skins.push({ name: entry.name, slots: slots ?? [] });
+    });
+    permutation(out.skins.map((k) => k.name), skins.map((k) => k.name), 'editorOrder.skins', 'skin');
+  }
+  const order = names(value.animations, 'editorOrder.animations');
+  if (order !== null) {
+    permutation(order, animations.map((a) => a.name), 'editorOrder.animations', 'animation');
+    out.animations = order;
+  }
+  return out;
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -698,8 +819,10 @@ function readConstraints(value: unknown, animations: readonly CoreAnimation[], b
 }
 
 /**
- * Read a `rigc-compiled/2` document — or a `rigc-compiled/1` one, which has
- * no `pages` and is read with `pages: null` — from its text, refusing by name a text
+ * Read a `rigc-compiled/3` document — or a `rigc-compiled/2` one, which has
+ * no `stage`, `editorOrder` or page `pma`/`scale` and is read with `stated:
+ * null`, or a `rigc-compiled/1` one, which has no `pages` either and is read
+ * with `pages: null` — from its text, refusing by name a text
  * that is not JSON, a wrong `spec`, a missing section (`referenceScale`
  * among them, issue #958), a section the document does not have, a
  * `referenceScale` that is not a finite number, and — in the records these constructs read (bones, slots,
@@ -717,15 +840,20 @@ export function readModel(text: string, where = 'the model document'): CompiledD
     throw new CoreInputError(`${where}: not JSON — ${(err as Error).message}`);
   }
   if (!isRecord(value)) throw new CoreInputError(`${where}: not a JSON object`);
-  if (value.spec !== CORE_DOCUMENT_SPEC && value.spec !== CORE_DOCUMENT_SPEC_1) throw new CoreInputError(`${where}: spec is ${JSON.stringify(value.spec)}, not "${CORE_DOCUMENT_SPEC}" (or "${CORE_DOCUMENT_SPEC_1}", read without its pages)`);
+  if (typeof value.spec !== 'string' || !CORE_DOCUMENT_SPECS.includes(value.spec)) {
+    throw new CoreInputError(
+      `${where}: spec is ${JSON.stringify(value.spec)}, not "${CORE_DOCUMENT_SPEC}" (or "${CORE_DOCUMENT_SPEC_2}", read without its stage, editor order and page flags, or "${CORE_DOCUMENT_SPEC_1}", read without its pages too)`,
+    );
+  }
   const spec = value.spec;
-  const sections: readonly string[] = spec === CORE_DOCUMENT_SPEC ? CORE_SECTIONS : CORE_SECTIONS_1;
+  const sections: readonly string[] = spec === CORE_DOCUMENT_SPEC ? CORE_SECTIONS : spec === CORE_DOCUMENT_SPEC_2 ? CORE_SECTIONS_2 : CORE_SECTIONS_1;
   const problems: string[] = [];
   for (const key of sections) if (!(key in value)) problems.push(`section "${key}" is missing`);
   for (const key of Object.keys(value)) {
     if (key !== 'spec' && !sections.includes(key)) problems.push(`section "${key}" is not one a ${spec} document has`);
   }
-  const pages = spec === CORE_DOCUMENT_SPEC && 'pages' in value ? readPages(value.pages, problems) : null;
+  const pages = spec !== CORE_DOCUMENT_SPEC_1 && 'pages' in value ? readPages(value.pages, problems, spec === CORE_DOCUMENT_SPEC) : null;
+  const stage = spec === CORE_DOCUMENT_SPEC && 'stage' in value ? readStage(value.stage, problems) : null;
   // The skeleton's reference scale (issue #958): wind and gravity act over it, so a missing one is the section refusal above, and a value the runtime could not read as a number is refused here by name.
   const referenceScale = typeof value.referenceScale === 'number' && Number.isFinite(value.referenceScale) ? value.referenceScale : NaN;
   if ('referenceScale' in value && Number.isNaN(referenceScale)) problems.push(`referenceScale is ${JSON.stringify(value.referenceScale)}, not a finite number — wind and gravity act over it`);
@@ -752,8 +880,10 @@ export function readModel(text: string, where = 'the model document'): CompiledD
       if (isRecord(raw) && animations[i] !== undefined) animations[i].constraints = readConstraintTimelines(raw.constraints, `animations[${i}] "${animations[i].name}"`, constraints, problems);
     });
   }
+  const editorOrder = spec === CORE_DOCUMENT_SPEC && 'editorOrder' in value ? readEditorOrder(value.editorOrder, skins, animations, problems) : null;
   if (problems.length > 0) throw new CoreInputError(`${where}: ${problems.length} problem(s): ${problems.join('; ')}`);
-  const doc: CompiledDocument = { spec, skin: CORE_ALL_SKINS, referenceScale, bones, slots, skins, constraints, animations, spine: { sha256: spine }, pages };
+  const stated: CoreStated | null = editorOrder === null ? null : { stage, editorOrder };
+  const doc: CompiledDocument = { spec, skin: CORE_ALL_SKINS, referenceScale, bones, slots, skins, constraints, animations, spine: { sha256: spine }, pages, stated };
   resolveSkinView(doc);
   return doc;
 }

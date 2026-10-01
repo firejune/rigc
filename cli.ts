@@ -1237,7 +1237,7 @@ function cmdBuild(flags: Record<string, string>): void {
 
   writeFileSync(join(opts.outDir, 'skeleton.json'), result.skeletonText);
   writeFileSync(join(opts.outDir, 'skeleton.atlas'), atlasText);
-  // rigc's own record of the compiled rig (`rigc-compiled/2`, issue #922;
+  // rigc's own record of the compiled rig (`rigc-compiled/3`, issue #922;
   // its `pages` the atlas just written, issue #1016), written with the pair
   // and only after the same gate — under `--pack`, the packed one. rigc's own posing core
   // reads it (`readModel`, `src/core/index.ts`, issue #380's step 2).
@@ -1588,7 +1588,7 @@ function resolveViewable(flags: Record<string, string>): {
 }
 
 /** What `render` and `check` say where a rigc build's atlas is not there (issue #1020). */
-const ATLAS_ABSENT = 'a build the core poses from a rigc-compiled/2 document needs none';
+const ATLAS_ABSENT = 'a build the core poses from a rigc-compiled/2 or /3 document needs none';
 
 /**
  * The candidate `render` and `check` draw, with its atlas text — or `null`

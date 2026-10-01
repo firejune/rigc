@@ -128,13 +128,15 @@ import {
   TransformError,
   type BoneTransform,
 } from './transform.ts';
-import { emitSkeleton, PHYSICS_PARAMS, UNSTATED_REFERENCE_SCALE, type SkeletonHeader } from './emit_spine.ts';
+import { emitSkeleton, type SkeletonHeader } from './emit_spine.ts';
+import { PHYSICS_PARAMS, UNSTATED_REFERENCE_SCALE } from './keyorder.ts';
 import { curveLengthTable } from './core/constraints_path.ts';
 import { frameRegionName } from './core/uvs.ts';
 import {
   isModelVertexAttachment,
   type CarriedFromCompileResult,
   type CompiledAnimation,
+  type CompiledModel,
   type ModelAttachmentTimelines,
   type ModelBinding,
   type ModelBone,
@@ -142,6 +144,7 @@ import {
   type ModelClippingAttachment,
   type ModelConstraint,
   type ModelConstraintKind,
+  type ModelEditorOrder,
   type ModelEvent,
   type ModelKey,
   type ModelLinkedMeshAttachment,
@@ -153,6 +156,7 @@ import {
   type ModelSequence,
   type ModelSkin,
   type ModelSlot,
+  type ModelStage,
   type ModelTimelines,
   type ModelVertices,
   type SkinTable,
@@ -1217,7 +1221,7 @@ const BONE_TRACKS: Record<string, ValueTrackShape> = {
  * `:1062` and only `mix` reassigns it (`:1090`), so an `inertia` key that omits
  * `value` reads **0** — not the 0.5 that `:306` gives a constraint that states
  * no `inertia`. Two different tables of defaults sit forty lines apart in one
- * file (`PHYSICS_PARAMS` in `src/emit_spine.ts` holds the other one), and reading the setup
+ * file (`PHYSICS_PARAMS` in `src/keyorder.ts` holds the other one), and reading the setup
  * column into this one would emit a `damping` timeline whose omitted keys mean
  * 0.85 to the author and 0 to the runtime. Nothing here depends on the number,
  * because `compileValueTrack` writes every field explicitly — it is recorded
@@ -1450,7 +1454,9 @@ const CONSTRAINT_TIMELINES: Record<'ik' | 'transform', ConstraintTimelineShape> 
 /**
  * The five components a physics constraint drives. The parameters and their
  * parser defaults are `PHYSICS_PARAMS`, which moved to `src/emit_spine.ts` with
- * the omission it decides (issue #919).
+ * the omission it decides (issue #919) and to `src/keyorder.ts`, beside the
+ * parser's other defaults, when the compiler stopped importing the emitter for
+ * it (issue #1026).
  *
  * `PHYSICS_COMPONENTS` is exported for `ingest.ts`, which omits a constraint that
  * drives none of them (issue #731) and must read "drives" off the same five
@@ -2047,26 +2053,89 @@ function manifestShapeVisits(manifest: unknown): ShapeVisit[] {
 /**
  * Compile a rig spec and a motion spec into Spine 4.3 skeleton data.
  *
- * The body is `compileInto`; this wrapper exists for one reason, and it is the
- * whole of issue #671's second half: the states a manifest listed and the art
- * was missing for are reported from the compile RESULT, which a throw never
- * returns. So the run whose refusal was CAUSED by a missing file was the one
- * run that never named the file. Annotating whatever was thrown — rather than
- * re-wrapping it, which would cost a `NotImplementedError` its class — carries
- * those facts out of every refusal raised after the drop was recorded, not only
- * out of the one that consults them.
+ * `compileModel` followed by the emission (issue #1026): the model and what
+ * goes beside it come from the one entry that does not call the Spine
+ * emitter, and this function hands that model to `emitSkeleton` once. Its
+ * result is the shape it always had. Both run under `withDroppedStates`, so a
+ * refusal raised after a dropped state was recorded names the missing file
+ * (issue #671).
  */
 export function compile(opts: CompileOptions): CompileResult {
+  return withDroppedStates((droppedStates) => {
+    const { model, header, atlasText, declaredDurations } = compileInto(opts, droppedStates);
+    // The skeleton: the Spine emitter's one entry (issue #922), which writes
+    // every section from the model, in the order and under the spellings the
+    // file has, and runs the parser-default and key-order passes on the
+    // finished object. What it is handed besides the model is what the model
+    // does not hold — the rest of the header — and the editor's orders, the
+    // same functions `compileModel` stated the model's `editorOrder` with: the
+    // sorts are applied at emission, so the model's `skins` and `animations`
+    // keep the spec's own order.
+    const skeleton = emitSkeleton(model, header, EDITOR_ORDERS);
+    return {
+      skeleton,
+      skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
+      atlasText,
+      declaredDurations,
+      ...carriedOf(model),
+      model,
+    };
+  });
+}
+
+/**
+ * What `compileModel` returns: the compiled model, and what a caller needs
+ * beside it to gate it, write its document and — if it asks — emit it.
+ */
+export interface CompiledBuild {
+  /** The compiled model (`src/model.ts`), `stage` and `editorOrder` included (issue #1026). */
+  model: CompiledModel;
+  /** The rest of the Spine header the model does not hold (`SkeletonHeader`): what `compile` hands the emitter beside the model. */
+  header: SkeletonHeader;
+  /** The atlas text the compile measured its art against — `CompileResult.atlasText`. */
+  atlasText: string;
+  /** Declared durations, carried into the validator (rule 4) — `CompileResult.declaredDurations`. */
+  declaredDurations: Record<string, number>;
+}
+
+/**
+ * Compile a rig spec and a motion spec into the compiled model WITHOUT calling
+ * the Spine emitter (issue #1026, step 4a of #380): everything `compile` does
+ * up to the one `emitSkeleton` call, and nothing after it. `compile` is this
+ * entry followed by the emission, so the model a caller gets here is the model
+ * `compile` emits from — the same refusals, in the same order, raised from the
+ * same place (the editor's orders included: `editorOrder` is computed here, by
+ * the functions the emitter is then handed).
+ *
+ * What it does not return is what only the emission makes: the Spine skeleton
+ * and its text, and with them the digest a model document records of the
+ * skeleton written beside it (`spine.sha256`). A command that writes a build
+ * with no Spine pair is not this entry's: `build` still emits (issue #1026).
+ */
+export function compileModel(opts: CompileOptions): CompiledBuild {
+  return withDroppedStates((droppedStates) => compileInto(opts, droppedStates));
+}
+
+/**
+ * Run a compile, annotating whatever it throws with the states a manifest
+ * listed and the art was missing for (`CompileError.droppedStates`): the
+ * whole of issue #671's second half — those states are reported from the
+ * compile RESULT, which a throw never returns, so the run whose refusal was
+ * caused by a missing file was the one run that never named the file.
+ * Annotating rather than re-wrapping keeps a `NotImplementedError` its class.
+ * A refusal the emission raises after the drop was recorded is annotated too.
+ */
+function withDroppedStates<T>(run: (droppedStates: DroppedState[]) => T): T {
   const droppedStates: DroppedState[] = [];
   try {
-    return compileInto(opts, droppedStates);
+    return run(droppedStates);
   } catch (err) {
     if (err instanceof CompileError && droppedStates.length > 0) err.droppedStates = [...droppedStates];
     throw err;
   }
 }
 
-function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): CompileResult {
+function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): CompiledBuild {
   const rigPath = resolve(opts.rigPath);
   const motionPath = resolve(opts.motionPath);
   const outDir = resolve(opts.outDir);
@@ -3390,16 +3459,18 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
 
   // -- 6. assemble -----------------------------------------------------------
   //
-  // What the skeleton carries that the model does not hold: the header. The
-  // stage is four fields or none of them — `x`/`y` are the origin of the box
-  // `width`/`height` give an extent to, so a header carrying an origin for a box
-  // it does not declare would be a shape no export has (issue #578).
+  // The stage is four fields or none of them — `x`/`y` are the origin of the
+  // box `width`/`height` give an extent to, so a header carrying an origin for
+  // a box it does not declare would be a shape no export has (issue #578). The
+  // model holds it since issue #1026 (`ModelStage`), and the emitter writes the
+  // model's value into the header, as it writes `referenceScale`.
+  const stage: ModelStage | null =
+    stageWidth !== undefined && stageHeight !== undefined
+      ? { x: rig.skeleton?.x ?? 0, y: rig.skeleton?.y ?? 0, width: stageWidth, height: stageHeight }
+      : null;
+  // What the skeleton carries that the model does not hold: the rest of the header.
   const header: SkeletonHeader = {
     spine: SPINE_VERSION,
-    stage:
-      stageWidth !== undefined && stageHeight !== undefined
-        ? { x: rig.skeleton?.x ?? 0, y: rig.skeleton?.y ?? 0, width: stageWidth, height: stageHeight }
-        : null,
     fps: rig.skeleton?.fps,
     images: skeletonImagesPath(rig.skeleton?.images, opts, outDir, partDirs),
     audio: rig.skeleton?.audio,
@@ -3431,24 +3502,29 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     };
   });
 
-  // The skeleton: the Spine emitter's one entry (issue #922), which writes every
-  // section from the model, in the order and under the spellings the file has,
-  // and runs the parser-default and key-order passes on the finished object.
-  // What it is handed besides the model is what the model does not hold: the
-  // header above, and the editor's orders, which stay here (see `editorSkinOrder` and
-  // `editorAnimationOrder`): the sorts are applied at emission, so everything
-  // this function reads, and the model's `skins` and `animations`, keep the
-  // spec's own order.
   // The skeleton's reference scale, which wind and gravity act over (issue
   // #958): the rig's stated number as it is, or the value the parser reads a
   // header stating none as. The model holds it; the emitter writes it into the
   // header, where the parser-default pass drops it at 100 as before.
   const referenceScale = rig.skeleton?.referenceScale ?? UNSTATED_REFERENCE_SCALE;
-  const skeleton = emitSkeleton(
-    { referenceScale, bones, slots, skins, constraints, events, animations },
-    header,
-    { skins: editorSkinOrder, slotKeys: editorSlotKeyOrder, animations: editorAnimationOrder },
-  );
+  // The editor's orders (issue #1026, `ModelEditorOrder`): the three functions
+  // `compile` hands the Spine emitter (`EDITOR_ORDERS`), run here over the same
+  // model, so the order the document states and the order `skeleton.json` keys
+  // are one computation. Skins first and animations second, as the emitter
+  // applies them, so a name pair the editor could key two ways is refused here
+  // in the order it was refused at emission before this entry existed.
+  //
+  // ⚠️ A name list the file KEYS is stated as the keys of an object filled in
+  // that order, not as the sorted list: the file's `animations` and a skin's
+  // `attachments` are JSON objects, and an object lists an integer-like key
+  // ("2", "10") before every other key, in ascending order, whatever order it
+  // was filled in. That is the order `skeleton.json` spells and its parser
+  // reads, so it is the order stated here; the skins are an array and keep the
+  // sort's.
+  const editorOrder: ModelEditorOrder = {
+    skins: EDITOR_ORDERS.skins(skins).map((skin) => ({ name: skin.name, slots: Object.keys(EDITOR_ORDERS.slotKeys(skin.attachments)) })),
+    animations: keyedOrder(EDITOR_ORDERS.animations([...animations.keys()])),
+  };
 
   for (const slot of slots) {
     if (!boneNames.has(slot.bone)) throw new CompileError(`slot "${slot.name}" has no bone`);
@@ -3469,12 +3545,43 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     rig: buildRigInfo(rig, bones, meshes, manifest, images),
   };
   return {
-    skeleton,
-    skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
+    model: { referenceScale, stage, bones, setupWorld: transforms, slots, skins, constraints, events, animations, editorOrder, ...carried },
+    header,
     atlasText,
     declaredDurations,
-    ...carried,
-    model: { referenceScale, bones, setupWorld: transforms, slots, skins, constraints, events, animations, ...carried },
+  };
+}
+
+/**
+ * The editor's orders, as `compile` hands them to the Spine emitter and as
+ * `compileModel` states them in the model (`editorOrder`, issue #1026) — one
+ * object, so the two cannot be handed different functions.
+ */
+const EDITOR_ORDERS = { skins: editorSkinOrder, slotKeys: editorSlotKeyOrder, animations: editorAnimationOrder } as const;
+
+/** The order an object filled with `names`, in that order, lists its keys in — the order a JSON object keyed by them is spelled in. */
+function keyedOrder(names: readonly string[]): string[] {
+  const keyed: Record<string, true> = {};
+  for (const name of names) keyed[name] = true;
+  return Object.keys(keyed);
+}
+
+/**
+ * The fields `CompileResult` carries from the model, in the order it has
+ * always carried them (`CarriedFromCompileResult`), by reference.
+ */
+function carriedOf(model: CompiledModel): CarriedFromCompileResult {
+  return {
+    images: model.images,
+    pageGrids: model.pageGrids,
+    droppedStates: model.droppedStates,
+    absentParts: model.absentParts,
+    meshBones: model.meshBones,
+    meshes: model.meshes,
+    physics: model.physics,
+    deformTransforms: model.deformTransforms,
+    trackDerivations: model.trackDerivations,
+    rig: model.rig,
   };
 }
 

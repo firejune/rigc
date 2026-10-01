@@ -19,8 +19,9 @@
  * a model-side verdict that read `skeleton.json` would be a second reading of
  * the encoding, which is the round trip's subject and not the rig's. Since cut
  * 4c-1 it is also given the rig info (as `validate()` is) and, in `given`, the
- * two values the document does not hold yet — the stage and each page's `pma`
- * (`./given.ts`, until issue #1026 moves them into the document).
+ * two values a `rigc-compiled/2` or `/1` document does not hold — the stage and
+ * each page's `pma` (`./given.ts`). A `/3` document states both (issue #1026)
+ * and is read for them; `given` beside one is refused by name.
  *
  * ⛔ **Not wired into any command.** `build` keeps the round trip and its
  * forty-nine lines; this entry is what the selftest and the instrument call
@@ -98,9 +99,11 @@ export interface ModelValidateInput {
   /** The rig info the build carries, as `validate()` is handed it — A13, A15, A19 (cut 4c-1) and A20, A21, A28, A41, A47, A48 (cut 4c-2) read it; optional because `ValidateInput.rig` is: absent for a bare directory, on both sides. */
   rig?: RigInfo;
   /**
-   * The stage and the pages' `pma`, which the document does not hold until
-   * issue #1026 (`./given.ts`). A06, A14 and A19 read them; a caller that gives
-   * none has those three refuse by name rather than read a value nobody stated.
+   * The stage and the pages' `pma`, for a `rigc-compiled/2` or `/1` document,
+   * which does not hold them (`./given.ts`). A06, A14 and A19 read them; a
+   * caller that gives none there has those three refuse by name rather than
+   * read a value nobody stated. A `/3` document states both (issue #1026), and
+   * `given` beside it is refused by name.
    */
   given?: ModelGiven;
 }
@@ -143,7 +146,7 @@ export const MODEL_SUPPLY: ModelSupply = {
   skinMembers: modelSkinMembers,
   regionJoins: modelRegionJoins,
   atlasRegions: (read, input) => modelAtlasRegions(read, input.given),
-  stage: (_read, input) => modelStage(input.given),
+  stage: (read, input) => modelStage(read, input.given),
   meshes: modelMeshFacts,
   polygons: modelPolygonFacts,
   links: modelLinkFacts,

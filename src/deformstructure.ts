@@ -49,7 +49,10 @@
  *   the emitter keys `animations` in the editor's order over the model's names
  *   (`editorAnimationOrder` in `src/compile.ts`, the one call `emitAnimations`
  *   is handed), and the survey iterates the file's order. The model's own order
- *   was the file's on 14 of 19 rows. Every other order the survey reads — a
+ *   was the file's on 14 of 19 rows. Since issue #1026 a `rigc-compiled/3`
+ *   document states that order (`editorOrder.animations`, computed by the
+ *   same function at compile time) and the survey reads it; a `/2` or `/1`
+ *   document is ordered by the comparator as before. Every other order the survey reads — a
  *   skin's, an animation's deform timelines, the sliders — the file keeps from
  *   the model.
  * - **A slider's duration** is the runtime's (`CoreAnimationTimelines.duration`:
@@ -291,12 +294,18 @@ export function modelStructure(doc: CompiledDocument): SurveyStructure {
       },
     };
   };
-  let order: string[];
-  try {
-    order = editorAnimationOrder(doc.animations.map((a) => a.name));
-  } catch (err) {
-    if (!(err instanceof CompileError)) throw err;
-    throw new CoreInputError(`the animations' order in the Spine file is not settled by the model's names — ${err.message}`);
+  // The order the Spine file lists the animations in: stated by a
+  // `rigc-compiled/3` document (`editorOrder`, issue #1026), and derived for a
+  // `/2` or `/1` one, which does not state it, by the emitter's own comparator.
+  let order: readonly string[];
+  if (doc.stated !== null) order = doc.stated.editorOrder.animations;
+  else {
+    try {
+      order = editorAnimationOrder(doc.animations.map((a) => a.name));
+    } catch (err) {
+      if (!(err instanceof CompileError)) throw err;
+      throw new CoreInputError(`the animations' order in the Spine file is not settled by the model's names — ${err.message}`);
+    }
   }
   const animations = order.map((name) => {
     const a = doc.animations.find((x) => x.name === name);
