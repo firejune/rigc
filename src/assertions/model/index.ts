@@ -12,7 +12,8 @@
  * `./linked_meshes.ts`, `./constraints.ts`; cut 4c-4's
  * `./skeleton_roster.ts`, `./bone_timelines.ts`, `./event_keys.ts`; cut
  * 4c-3's `./deform_survey.ts`, `./animation_durations.ts`, `./two_colour.ts`,
- * `./sequences.ts`)
+ * `./sequences.ts`; cut 4c-5's `./slider_composition.ts`,
+ * `./constraint_targets.ts`)
  * and calls the same body inside the same harness (`../harness.ts`). The
  * selftest holds the two to the same lines on every call it makes with a
  * model in hand, and `tools/verdict_gate.ts` on every recipe.
@@ -116,6 +117,12 @@ import type { DeformSurveyFacts } from '../facts/deform_survey.ts';
 import type { AnimationDurationFacts } from '../facts/animation_durations.ts';
 import type { TwoColourFacts } from '../facts/two_colour.ts';
 import type { SequenceFacts } from '../facts/sequences.ts';
+import { a40SlidersComposeOnASharedTarget } from '../bodies/a40.ts';
+import { modelSliderComposition } from './slider_composition.ts';
+import type { SliderCompositionFacts } from '../facts/slider_composition.ts';
+import { a34ConstraintTimelineTargets } from '../bodies/a34.ts';
+import { modelConstraintTargets } from './constraint_targets.ts';
+import type { ConstraintTargetFacts } from '../facts/constraint_targets.ts';
 
 /** What the model side is given. */
 export interface ModelValidateInput {
@@ -171,6 +178,8 @@ export interface ModelSupply {
   animationDurations: (read: ReadDocument) => AnimationDurationFacts;
   twoColour: (read: ReadDocument) => TwoColourFacts;
   sequences: (read: ReadDocument) => SequenceFacts;
+  sliderComposition: (read: ReadDocument) => SliderCompositionFacts;
+  constraintTargets: (read: ReadDocument) => ConstraintTargetFacts;
 }
 
 /** The suppliers the model side runs on. */
@@ -195,6 +204,8 @@ export const MODEL_SUPPLY: ModelSupply = {
   animationDurations: modelAnimationDurations,
   twoColour: modelTwoColour,
   sequences: modelSequences,
+  sliderComposition: modelSliderComposition,
+  constraintTargets: modelConstraintTargets,
 };
 
 /**
@@ -216,7 +227,7 @@ export interface MovedAssertion {
    *
    * Since cut 4c-4 also every rule `validate()` runs over the skeleton JSON
    * whatever its round trip did (A12, A24, A25, A26, A29, A30, and A32, which
-   * runs before it): on the runtime's side their verdict does not wait on the
+   * runs before it; since cut 4c-5 A34): on the runtime's side their verdict does not wait on the
    * load, so on this side it does not wait on the region rule, and where both
    * parses refuse a build the two sides' lines of these rules are still
    * compared.
@@ -269,6 +280,8 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A09_ANIMATION_DURATION_MATCHES_SPEC', run: (v, read, input, supply) => a09AnimationDurationMatchesSpec(v, supply.animationDurations(read), input.declaredDurations), unread: SKIP_NO_MODEL },
   { code: 'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', run: (v, read, _input, supply) => a43TwoColorTintLoadsAndPosesAsWritten(v, supply.twoColour(read)), unread: SKIP_NO_MODEL },
   { code: 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES', run: (v, read, _input, supply) => a46SequenceAttachmentsShowTheFrameTheFileStates(v, supply.sequences(read)), unread: SKIP_NO_MODEL },
+  { code: 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET', run: (v, read, _input, supply) => a40SlidersComposeOnASharedTarget(v, supply.sliderComposition(read), supply.constraints(read)), unread: SKIP_NO_MODEL },
+  { code: 'A34_CONSTRAINT_TIMELINE_TARGETS', run: (v, read, _input, supply) => a34ConstraintTimelineTargets(v, supply.constraintTargets(read)), unread: SKIP_NO_MODEL, beforeTheParse: true },
 ];
 
 /** The codes the model side prints: its two parse rules, then the moved assertions. */

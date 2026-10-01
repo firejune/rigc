@@ -432,6 +432,16 @@ export interface PhysicsTimelinePlant {
 }
 
 /**
+ * The records a physics timeline that names no constraint (`*`) writes: every
+ * active one whose `…Global` flag for `kind` is on, and for `reset` every
+ * active one (the header's *The timelines*), in the order given. `posedPhysics`
+ * asks it, and so does the additive probe (`./additive.ts`, issue #1025).
+ */
+export function unnamedPhysicsTargets<R extends CorePhysicsRecord>(records: readonly R[], kind: PhysicsTimelineKind, active: (r: CorePhysicsRecord) => boolean): R[] {
+  return records.filter((r) => active(r) && (kind === 'reset' || r.global[kind]));
+}
+
+/**
  * Every physics record posed by the animation's physics timelines at `t`, in
  * the timelines' order (the header's *The timelines*), and the names of the
  * constraints a `reset` key resets while the animation is applied from
@@ -445,9 +455,7 @@ export function posedPhysics(records: readonly CorePhysicsRecord[], timelines: r
   const posed = new Map(records.map((r) => [r.name, { ...r }]));
   const reset = new Set<string>();
   for (const tl of timelines) {
-    const targets = tl.name === EVERY_GLOBAL_PHYSICS
-      ? [...posed.values()].filter((r) => active(r) && (tl.kind === 'reset' || r.global[tl.kind]))
-      : [posed.get(tl.name) as CorePhysicsRecord].filter((r) => active(r));
+    const targets = tl.name === EVERY_GLOBAL_PHYSICS ? unnamedPhysicsTargets([...posed.values()], tl.kind, active) : [posed.get(tl.name) as CorePhysicsRecord].filter((r) => active(r));
     if (tl.kind === 'reset') {
       if (resetCrossed(tl.keys, last, t)) for (const r of targets) reset.add(r.name);
       continue;

@@ -1402,12 +1402,22 @@ function solveTransform(state: SolverState, c: CoreTransformRecord): { changed: 
 
 /** Why a constraint is not applied under the skin view posed (the header's measured rule), or null when it is. */
 function inactiveWhy(state: SolverState, c: CoreConstraintRecord): string | null {
+  return constraintInactiveWhy(c, state.active, state.rules);
+}
+
+/**
+ * Why a constraint is not applied under a skin view whose active bones are
+ * `active` (the header's measured rule), or null when it is — `inactiveWhy`'s
+ * reading, exported so the additive probe (`./additive.ts`, issue #1025) asks
+ * the rule the solver applies rather than a copy of it.
+ */
+export function constraintInactiveWhy(c: CoreConstraintRecord, active: ReadonlySet<string>, rules: Readonly<SolverRules> = RUNTIME_SOLVER_RULES): string | null {
   // A skin-required constraint of any kind is applied when an applied skin's list for its kind names it (issue #932, card #961; physics first by issue #956).
   if (c.skin && !c.listedBySkin) return 'skin';
   // A path constraint is active when its slot's bone is (`./constraints_path.ts`, *Which constraints run*); every other kind when every bone it names is.
   // A transform constraint is applied when its source is, to every bone it names, inactive ones included (issue #979: an inactive bone among them did not stop it moving the others, and it wrote into the inactive one). An ik naming an inactive bone is left unapplied: the runtime applies it from ancestors it has not brought up to date (the header's *Unposed bones*).
-  const named = c.kind === 'path' ? [c.slotBone] : c.kind === 'ik' ? (state.rules.ikOverInactiveFresh ? [c.target] : [...c.bones, c.target]) : c.kind === 'transform' ? (state.rules.transformIgnoresBoneActivity ? [c.source] : [...c.bones, c.source]) : c.kind === 'slider' ? (c.bone === null ? [] : [c.bone]) : [c.bone];
-  return named.every((n) => state.active.has(n)) ? null : 'inactive bone';
+  const named = c.kind === 'path' ? [c.slotBone] : c.kind === 'ik' ? (rules.ikOverInactiveFresh ? [c.target] : [...c.bones, c.target]) : c.kind === 'transform' ? (rules.transformIgnoresBoneActivity ? [c.source] : [...c.bones, c.source]) : c.kind === 'slider' ? (c.bone === null ? [] : [c.bone]) : [c.bone];
+  return named.every((n) => active.has(n)) ? null : 'inactive bone';
 }
 
 /**
