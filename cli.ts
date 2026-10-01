@@ -158,6 +158,7 @@ import {
   PoserChoiceError,
   refuseUnchosen,
   CandidateAtlasError,
+  CandidatePairError,
   SpineRuntimeError,
   throughPoser,
   type Frame,
@@ -4380,6 +4381,14 @@ try {
   // #1020): a refusal of the invocation like a missing atlas on an export, exit
   // 2 and nothing written, and the message names the file and why it is needed.
   if (err instanceof CandidateAtlasError) {
+    console.error(`rigc ${command}: ${err.message}`);
+    process.exit(2);
+  }
+  // A skeleton spine-core could not load against the atlas beside it (issue #1033) — on a rigc build, a
+  // skeleton.json or an atlas from another build beside this one's model document. The same class as the
+  // missing atlas above: nothing was posed or written, and it is the directory the command was pointed at that
+  // has to change. The message names both files, the reason the runtime drew them and the runtime's own words.
+  if (err instanceof CandidatePairError) {
     console.error(`rigc ${command}: ${err.message}`);
     process.exit(2);
   }
