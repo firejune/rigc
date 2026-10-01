@@ -69,7 +69,7 @@ import {
   BACKGROUND,
   frameGeometry,
   PROTOCOL_FPS,
-  posableFromText,
+  loadCandidate,
   renderFrame,
   sampleAnimation,
   sampleSetupPose,
@@ -83,11 +83,8 @@ import {
   nonFinitePoseOf,
   unframeableSentence,
   UnframeablePoseError,
-  skinRosterOf,
-  candidatePosers,
-  spinePoser,
+  refuseUnchosen,
   throughPoser,
-  PoserChoiceError,
   SHEET_COLUMNS,
   SHEET_FILE,
   SHEET_GAP,
@@ -95,9 +92,10 @@ import {
   type Frame,
   type FramesSidecar,
   type FrameSet,
+  type MakeCorePoser,
+  type Posable,
   type PoseOptions,
   type Poser,
-  type PoserChoice,
   type PoserName,
   type TextureSubstitution,
   type Viewport,
@@ -1062,22 +1060,11 @@ export interface CheckOptions {
    * What builds the core poser — `candidatePosers`' own `make`. The suite's
    * `CH01` passes a planted copy, and nothing else passes any.
    */
-  makeCorePoser?: Parameters<typeof candidatePosers>[4];
+  makeCorePoser?: MakeCorePoser;
 }
 
-/**
- * Both posers for the candidate `check` is handed, and which one it asked for:
- * `candidatePosers` over the candidate's files when the caller named them, and
- * spine-core alone when it handed texts only — there is then no directory to
- * find a model document in, and the reason says so.
- */
-function checkPoserChoice(data: Parameters<typeof spinePoser>[0], options: CheckOptions): PoserChoice {
-  const paths = options.candidatePaths;
-  if (paths !== undefined) return candidatePosers(data, paths.skeleton, paths.atlas, options.poser, options.makeCorePoser);
-  const why = 'the candidate was handed to check as text, with no path to find a skeleton.model.json beside';
-  if (options.poser === 'core') throw new PoserChoiceError(`--poser core: ${why}`);
-  return { forced: options.poser, core: null, why: options.poser === 'spine' ? '--poser spine' : why, spine: spinePoser(data) };
-}
+/** Why a candidate handed to `check` as text alone is posed through spine-core — there is no directory to find a model document in. */
+const UNPLACED_CANDIDATE = 'the candidate was handed to check as text, with no path to find a skeleton.model.json beside';
 
 // ---------------------------------------------------------------------------
 
@@ -1145,14 +1132,27 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   }
   const notes: string[] = [];
 
-  const posable = posableFromText(options.skeletonText, options.atlasText, options.atlasDir);
+  // Which implementation poses the candidate (issue #968), chosen once for the
+  // whole run — every set, the setup pose and the non-finite sentence — so no
+  // two figures in one report can come from two posers: `candidatePaths` over
+  // the candidate's files, as `render` chooses, and spine-core alone when it
+  // was handed texts only. Chosen BEFORE anything is read off the candidate
+  // (issue #1014), so a rigc build the core poses reads its names, its stage,
+  // its bone tree and its pages without loading spine-core.
+  const { choice, facts, pages } = loadCandidate(
+    { skeletonText: options.skeletonText, atlasText: options.atlasText, atlasDir: options.atlasDir, label: options.labels?.skeleton ?? 'the candidate' },
+    options.candidatePaths ?? null,
+    options.poser,
+    { ...(options.makeCorePoser === undefined ? {} : { make: options.makeCorePoser }), unplaced: UNPLACED_CANDIDATE },
+  );
+  const posable: Pick<Posable, 'pages'> = { pages };
   // A candidate that declares no stage is framed exactly as one that does,
   // because no framing here reads a stage: the world box is fitted from what the
   // candidate draws. Said on the one candidate where a reader can ask what box
   // stood in for the absent one (issue #714) — `SkeletonJson` copies the header
   // fields across unconditionally (`SkeletonJson.js:70-73`), so an omitted
-  // extent is `undefined` here, not 0.
-  if (typeof posable.data.width !== 'number' || typeof posable.data.height !== 'number') {
+  // extent is `undefined` there, not 0, and the header says the same.
+  if (!facts.declaresStage) {
     notes.push(
       'the candidate declares no stage (no `skeleton.width`/`height`), and nothing stands in for one: its world ' +
         'box is fitted from the pixels it draws, as it is for every candidate, so the absence moves no figure below.',
@@ -1167,18 +1167,16 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   // The skin is refused here rather than deeper in the sampler, for the reason
   // every miss in this project is refused where the names are: the skeleton is
   // open on this line and the alternatives can be listed.
-  if (options.skin !== undefined && !posable.data.skins.some((s) => s.name === options.skin)) {
+  if (options.skin !== undefined && !facts.skins.includes(options.skin)) {
     throw new CheckError(
       `the candidate declares no skin ${JSON.stringify(options.skin)}; it declares [${
-        posable.data.skins.map((s) => s.name).join(', ') || 'none'
+        facts.skins.join(', ') || 'none'
       }]`,
     );
   }
-  // Which implementation poses the candidate (issue #968), chosen once for the
-  // whole run — every set, the setup pose and the non-finite sentence — so no
-  // two figures in one report can come from two posers. `--poser core` on an
-  // input that cannot carry it is refused here, before anything is posed.
-  const choice = checkPoserChoice(posable.data, options);
+  // `--poser core` on an input that cannot carry it is refused here, before
+  // anything is posed.
+  refuseUnchosen(choice);
   const poseOptions: PoseOptions | undefined =
     substitution || options.skin !== undefined
       ? { ...(substitution ? { texture: true } : {}), ...(options.skin === undefined ? {} : { skin: options.skin }) }
@@ -1220,7 +1218,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     sets = [
       {
         dir,
-        animation: posable.data.animations.length === 0 ? null : animation,
+        animation: facts.animations.length === 0 ? null : animation,
         fps,
         sampled: disk[disk.length - 1].index + 1,
         written: disk.length,
@@ -1292,8 +1290,8 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   // poser runs — the model document lists the spec's order, and a refusal that
   // listed the names in another order would be a byte of the report that
   // depends on the poser.
-  const have = posable.data.animations.map((a) => a.name);
-  const posing = throughPoser(choice, (poser) => {
+  const have = [...facts.animations];
+  const posing = throughPoser(choice, (poser, roster) => {
     const sampled = sets.map((set) => prepareSet(located.root, set, poser, have, options.as, poseOptions));
     // 🔒 A pose that is not finite is refused before anything measures it (issue
     // #873), in the words `render` and the geometry export use for it. Measured
@@ -1325,7 +1323,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
       posedSets.map((p) => p.frames),
       poser.slots,
       options.skin,
-      skinRosterOf(posable.data),
+      roster,
     );
     if (unframeable !== null) throw new UnframeablePoseError(unframeable);
     return sampled;
@@ -1433,7 +1431,7 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
     throw new CheckError(
       `no reference frame could be compared, so there is nothing to frame against${nothingToFrameWhy(
         prepared,
-        posable.data.animations.map((a) => a.name),
+        [...facts.animations],
         options.as,
         located.sidecar !== null,
       )}`,
@@ -1574,8 +1572,8 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
   // `src/chains.ts`. Reading the CANDIDATE's tree is what keeps this on the right
   // side of the honesty rule: the reference is still nothing but pixels.
   const chains = chainsOf(
-    posable.data.bones.map((bone) => ({ name: bone.name, parent: bone.parent === null ? null : bone.parent.name })),
-    posable.data.slots.map((slot) => ({ name: slot.name, bone: slot.boneData.name })),
+    facts.bones.map(({ name, parent }) => ({ name, parent })),
+    facts.slots.map(({ name, bone }) => ({ name, bone })),
   );
   const chainOfSlot = new Map<string, number>();
   chains.forEach((chain, index) => {
@@ -2629,7 +2627,7 @@ function nothingToFrameWhy(
 function checkOneSet(
   root: string,
   prepared: PreparedSet,
-  posable: ReturnType<typeof posableFromText>,
+  posable: Pick<Posable, 'pages'>,
   framing: SetFraming,
   background: RGBA,
   chains: BoneChain[],
@@ -3310,7 +3308,7 @@ function labelBox(index: number): { width: number; height: number } {
 function checkAgainstSheet(
   root: string,
   prepared: PreparedSet,
-  posable: ReturnType<typeof posableFromText>,
+  posable: Pick<Posable, 'pages'>,
   viewport: Viewport,
   background: RGBA,
 ): { sheet: SheetCheck | null; notes: string[] } {

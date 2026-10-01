@@ -614,6 +614,9 @@ function setupBasisSays(rule: PhysicsPoseRule, poseValue: number): string {
   return arm === undefined ? physicsOutsideSays(rule, poseValue) : physicsBasisSays(arm);
 }
 
+/** `physicsTimelineNames`' table, once it has been built. */
+let physicsTimelineNamesTable: Record<number, string> | null = null;
+
 /**
  * The skeleton-JSON name of each physics timeline, keyed by the runtime's own
  * `Property` id.
@@ -625,16 +628,25 @@ function setupBasisSays(rule: PhysicsPoseRule, poseValue: number): string {
  * on the right are the ones `SkeletonJson`'s physics branch reads
  * (`SkeletonJson.js:1063-1094`), which is also what a motion spec's `property`
  * says.
+ *
+ * ⚠️ Built on first use, not while the module loads (issue #1014): the
+ * computed keys read the runtime's `Property` enum, and seven reads of it at
+ * load time were the only spine-core access a module made before a command
+ * ran — so `--help`, `render` and `check` on a rigc build all touched the
+ * runtime for a table only the gate's physics rules consult.
  */
-export const PHYSICS_TIMELINE_NAMES: Record<number, string> = {
-  [Property.physicsConstraintInertia]: 'inertia',
-  [Property.physicsConstraintStrength]: 'strength',
-  [Property.physicsConstraintDamping]: 'damping',
-  [Property.physicsConstraintMass]: 'mass',
-  [Property.physicsConstraintWind]: 'wind',
-  [Property.physicsConstraintGravity]: 'gravity',
-  [Property.physicsConstraintMix]: 'mix',
-};
+export function physicsTimelineNames(): Record<number, string> {
+  physicsTimelineNamesTable ??= {
+    [Property.physicsConstraintInertia]: 'inertia',
+    [Property.physicsConstraintStrength]: 'strength',
+    [Property.physicsConstraintDamping]: 'damping',
+    [Property.physicsConstraintMass]: 'mass',
+    [Property.physicsConstraintWind]: 'wind',
+    [Property.physicsConstraintGravity]: 'gravity',
+    [Property.physicsConstraintMix]: 'mix',
+  };
+  return physicsTimelineNamesTable;
+}
 
 /**
  * Which physics constraints a physics timeline that names NO constraint writes
@@ -3307,7 +3319,7 @@ export function validate(input: ValidateInput): ValidateReport {
         const reached = keyedLive(
           (timeline): timeline is PhysicsConstraintTimeline =>
             timeline instanceof PhysicsConstraintTimeline &&
-            PHYSICS_TIMELINE_NAMES[Number(timeline.getPropertyIds()[0].split('|')[0])] === rule.timeline,
+            physicsTimelineNames()[Number(timeline.getPropertyIds()[0].split('|')[0])] === rule.timeline,
           (timeline, value) => {
             timeline.set(raised, value);
             return rule.poseOk(raised[rule.field]);
@@ -3390,7 +3402,7 @@ export function validate(input: ValidateInput): ValidateReport {
           // `ConstraintTimeline1` encodes its propertyId as `<Property>|<index>`,
           // so the name comes from the runtime's own enum rather than from a
           // table of strings this file would have to keep in step.
-          const name = PHYSICS_TIMELINE_NAMES[Number(timeline.getPropertyIds()[0].split('|')[0])];
+          const name = physicsTimelineNames()[Number(timeline.getPropertyIds()[0].split('|')[0])];
           if (name === undefined) continue;
           const rule = physicsRuleFor(name);
           // -1 is the global form: the timeline drives every physics constraint

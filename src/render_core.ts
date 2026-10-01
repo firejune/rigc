@@ -86,12 +86,13 @@ import type {
   PoseOptions,
   Posed,
   Poser,
+  SkinRoster,
   SlotSubset,
 } from './render.ts';
 import { atlasRegionLookup, parseAtlasText } from './atlas.ts';
 import { pagesOfAtlas, spineFileSha256, type ModelPage } from './model.ts';
 import { clipThrough, type ClipShape, type ShapeClipper } from './core/clipping.ts';
-import { CoreInputError, readModel, sourceOfDoc, underSkin, type CompiledDocument, type CoreSlotRow } from './core/index.ts';
+import { activeBones, CoreInputError, readModel, sourceOfDoc, underSkin, type CompiledDocument, type CoreSlotRow } from './core/index.ts';
 import { poseRawAnimation, poseRawSetup, type RawDrawn, type RawPose } from './core/raw.ts';
 import { CORE_ALL_SKINS, CORE_DEFAULT_SKIN, lookupSkins } from './core/skins.ts';
 import { documentPageLookup, drawnRegions, meshPageUvs, readUvSequences, regionPageUvs, type DrawnRegion, type UvRegion, type UvSource } from './core/uvs.ts';
@@ -646,6 +647,33 @@ export function corePoser(modelText: string, atlasText: string, where = 'skeleto
     rest: (skin, shown) => {
       const input = inputOf(skin);
       return restOf(input.doc, poseRawSetup(input.doc), shown);
+    },
+  };
+}
+
+/**
+ * The skin roster behind the core poser (`SkinRoster` in `src/render.ts`,
+ * issue #1014): the bones each skin leaves unposed, read off the model
+ * document — `unposedBones` over `activeBones` of the skin's view, the
+ * predicate the raw pose flags its bones with, and under no skin the view the
+ * core poses with no skin set (`noSkinView`, refused by `CoreInputError` where
+ * it refuses to pose). `skins` is the Spine file's own list, in its order, which
+ * the document does not hold (`resolveSkinView`'s note in `./core/index.ts`).
+ *
+ * Measured against the runtime's reading (`skinRosterOf`, a fresh skeleton's
+ * `active` under each skin and under none) on every rigc build the tree
+ * carries: the same bones, under every skin. The document is read on the first
+ * question, so a render that frames nothing under a skin never parses it twice.
+ */
+export function coreSkinRoster(modelText: string, where: string, skins: readonly string[]): SkinRoster {
+  let doc: CompiledDocument | null = null;
+  return {
+    skins,
+    unposedUnder: (skin) => {
+      doc ??= readModel(modelText, where);
+      const view = skin === undefined ? noSkinView(doc) : underSkin(doc, skin);
+      const active = activeBones(view);
+      return unposedBones(view.bones.map((b) => ({ name: b.name, parent: b.parent ?? null, active: active.has(b.name) })));
     },
   };
 }
