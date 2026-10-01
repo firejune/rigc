@@ -496,12 +496,18 @@ import {
   SKIP_NO_TIMELINE,
   SKIP_NO_TWO_COLOR_TINT,
   skeletonValues,
+  runtimeFacts,
   timelineAddBehaviour,
-  validate,
+  validate as validateOverSpine,
   VALIDATE_PROFILES,
+  type ValidateInput,
   type ValidateProfile,
   type ValidateReport,
 } from './src/validate.ts';
+import { MOVED_ASSERTIONS, validateModel, type ModelReport, type ModelSupply } from './src/assertions/model/index.ts';
+import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES } from './src/assertions/model/parse.ts';
+import { modelSkinEntries } from './src/assertions/model/skin_entries.ts';
+import { verdictLines, verdictMain, walkSpelling, type VerdictRow } from './tools/verdict_gate.ts';
 import {
   articulatedFixture,
   containedFixture,
@@ -549,6 +555,7 @@ import {
   compareHashes,
   comparisonLines,
   galleryRecipe,
+  galleryRecipes,
   type HashesDocument,
   type Recipe,
   readHashes,
@@ -783,6 +790,331 @@ function firstRegionName(atlasText: string): string {
   return lines[at + 1];
 }
 
+// ---------------------------------------------------------------------------
+// the supplier check — every `validate` call is also a test of the model side (issue #1025)
+// ---------------------------------------------------------------------------
+//
+// Step 4c of #380 writes each assertion once, against facts that two suppliers
+// give it: spine-core's loaded objects (`validate()`) and the model document
+// with rigc's core (`validateModel`). The gate is that the two print the same
+// lines, in three populations, and the second and third are held HERE, on the
+// calls this file already makes, so every existing mutant is a test of both
+// suppliers without being rewritten:
+//
+//   * a call whose pair is the model's own output — the document's
+//     `spine.sha256` is the skeleton's digest and its `pages` are the atlas's
+//     — has the model side run beside it, and every moved assertion's lines
+//     must be the same on both sides. A difference is a fault named by the case
+//     the call was made for (the next case line printed, as `RunTally` reads
+//     it), and the figures are counted off the run (`VF02`).
+//   * a call whose pair was edited after the model was written — an after-emit
+//     mutant — that FAILS a moved assertion must carry a twin: the same
+//     wrongness forged into the model, handed to `validate` beside the call
+//     (`validate(input, twin)`, or a `Mutant` row's `twin`), whose outcome the
+//     run records as the identical line or the reader refusing the forged
+//     document by the same object's name; or a stated reason no model field
+//     can carry it (`encodingOnly`). One with neither is a fault (`VF03`). The
+//     twin travels with the call rather than with the case because one case
+//     can make several breaks (`S88` makes four), and a later cut declares one
+//     by adding an argument where the break is made — the harness is not
+//     touched.
+//
+// A call with no model in hand is counted and, where it fires a moved
+// assertion on a file rigc wrote (no editor `hash` in its header), named: a
+// firing nobody threaded a model to is a mutant neither population can see.
+
+/** What a record's case reads until the case line that follows the call is printed. */
+const UNNAMED_CASE = '(no case line followed the call)';
+
+/** What a twin is: the forge, applied to the call's model document in place, or why no model can carry the wrongness. */
+type ModelTwin = { forge: (doc: Record<string, unknown>) => void } | { encodingOnly: string };
+
+/** One recorded twin outcome. */
+interface TwinOutcome {
+  case: string;
+  code: string;
+  outcome: 'identical' | 'refused by name' | 'encoding-only' | 'not reproduced' | 'no twin';
+  detail: string;
+}
+
+/** The codes of the moved assertions, the ones the two sides are held to. */
+const MOVED_CODES: readonly string[] = MOVED_ASSERTIONS.map((m) => m.code);
+
+/** A report line's code, as `caseName` reads a case line's name. */
+const lineCode = (line: string): string | null => /^ {2}(?:PASS|SKIP|PROF|FAIL) {2}([A-Z0-9_]+)/.exec(line)?.[1] ?? null;
+
+/** One code's lines in a report, as `reportLines` prints them. */
+function linesOfCode(report: ValidateReport | ModelReport, code: string): string[] {
+  return reportLines(report as ValidateReport).filter((line) => lineCode(line) === code);
+}
+
+/** Whether a report's parse refused its input: A00 on the runtime's side, either model-side rule on the model's. */
+const spineRefused = (report: ValidateReport): boolean => report.failures.some((f) => f.assertion === 'A00_ROUNDTRIP_PARSE');
+const modelRefused = (report: ModelReport): boolean => report.failures.some((f) => f.assertion === A00_MODEL_READ || f.assertion === A00_MODEL_REGIONS_ON_PAGES);
+
+/** Whether `modelText` was written beside exactly this pair: its digest names the skeleton and its pages are the atlas's. */
+function modelIsOfPair(modelText: string, skeletonText: string, atlasText: string): boolean {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(modelText);
+  } catch {
+    return false;
+  }
+  if (typeof doc !== 'object' || doc === null) return false;
+  const stated = doc as { spine?: { sha256?: unknown }; pages?: unknown };
+  if (stated.spine?.sha256 !== spineFileSha256(skeletonText)) return false;
+  try {
+    return JSON.stringify(pagesOfAtlas(atlasText)) === JSON.stringify(stated.pages);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The two sides over one call, compared: per moved assertion, the lines each
+ * printed and whether they are the same, and the stats the model side set
+ * against the runtime's. `supply` plants a model supplier (`VF04`); the
+ * harness passes none.
+ */
+function compareSuppliers(input: ValidateInput, spine: ValidateReport, modelText: string, supply?: Partial<ModelSupply>): {
+  model: ModelReport;
+  refused: { spine: boolean; model: boolean };
+  differing: Array<{ code: string; spine: string[]; model: string[] }>;
+  lines: number;
+} {
+  const model = validateModel({ modelText, atlasDir: input.atlasDir, profile: input.profile }, supply);
+  const refused = { spine: spineRefused(spine), model: modelRefused(model) };
+  const differing: Array<{ code: string; spine: string[]; model: string[] }> = [];
+  let lines = 0;
+  if (refused.spine || refused.model) return { model, refused, differing, lines };
+  for (const code of MOVED_CODES) {
+    const a = linesOfCode(spine, code);
+    const b = linesOfCode(model, code);
+    lines += a.length;
+    if (a.join('\n') !== b.join('\n')) differing.push({ code, spine: a, model: b });
+  }
+  for (const [key, value] of Object.entries(model.stats)) {
+    lines++;
+    if (spine.stats[key] !== value) differing.push({ code: `stats.${key}`, spine: [String(spine.stats[key])], model: [String(value)] });
+  }
+  return { model, refused, differing, lines };
+}
+
+/** The first double-quoted name in a sentence — the object a FAIL line is about (`region "x"`, `animation "x"`, `page "x"`). */
+const firstQuoted = (sentence: string): string | null => /"([^"]*)"/.exec(sentence)?.[1] ?? null;
+
+class SupplierCheck {
+  /** `plant` replaces a model supplier on every comparison this check makes — `VF04`'s plants; the run's check passes none. */
+  constructor(private readonly plant: Partial<ModelSupply> = {}) {}
+
+  /** Every `validate` call this run made. */
+  calls = 0;
+  /** Calls with a model document in hand. */
+  withModel = 0;
+  /** Of those, calls whose pair is the model's own output — population 2. */
+  own = 0;
+  /** Own calls on which both sides read their input and the lines were compared. */
+  compared = 0;
+  /** Lines compared over those calls, stats values included. */
+  lines = 0;
+  /** Own calls on which both sides refused their input (A00 and a model-side parse rule). */
+  bothRefused = 0;
+  /** Calls whose pair was edited after the model was written. */
+  afterEmit = 0;
+  /** Of those, calls that FAIL a moved assertion — population 3. */
+  firing = 0;
+  /**
+   * Multi-skin builds (distinct pairs, over the own calls) on which the two walks
+   * of the skins were compared fact by fact, how many agreed, and on how many a walk of the document in its own
+   * skin order would have disagreed — the measurement that says the emitter's
+   * order is the one that matters.
+   */
+  walks = { compared: 0, equal: 0, documentOrderDiffers: 0 };
+  private walked = new Set<string>();
+  /** Faults, each attributed to the case it was found in. */
+  faults: Array<{ case: string; fault: string }> = [];
+  twinOutcomes: TwinOutcome[] = [];
+  /** Calls with no model in hand, and those of them that fired a moved assertion on a file rigc wrote. */
+  withoutModel = 0;
+  unthreaded: Array<{ case: string; codes: string[] }> = [];
+  /** Compiles whose model document the writer refused, so no model could be threaded to their call. */
+  unwritable: string[] = [];
+  /** Records made since the last case line, whose `case` that line will name. */
+  private awaiting: Array<{ case: string }> = [];
+
+  /** Name every record kept since the last case line after the case line just printed. */
+  caseLine(name: string): void {
+    for (const record of this.awaiting) record.case = name;
+    this.awaiting = [];
+  }
+
+  /** A record, kept now — so a figure read before the case line counts it — and named by the case line that follows. */
+  private keep<T extends { case: string }>(list: T[], record: Omit<T, 'case'>): void {
+    const kept = { ...record, case: UNNAMED_CASE } as T;
+    list.push(kept);
+    this.awaiting.push(kept);
+  }
+
+  observe(input: ValidateInput, spine: ValidateReport, twin: ModelTwin | undefined): void {
+    this.calls++;
+    const firing = MOVED_CODES.filter((code) => spine.failures.some((f) => f.assertion === code));
+    if (input.modelText === undefined) {
+      this.withoutModel++;
+      if (twin !== undefined) this.keep(this.faults, { fault: 'a twin was declared beside a call with no model in hand, so there is no document to forge it into' });
+      if (firing.length > 0 && this.rigcWrote(input.skeletonText)) this.keep(this.unthreaded, { codes: firing });
+      return;
+    }
+    this.withModel++;
+    const modelText = input.modelText;
+    if (modelIsOfPair(modelText, input.skeletonText, input.atlasText)) {
+      this.own++;
+      if (twin !== undefined) this.keep(this.faults, { fault: 'a twin was declared beside a call whose pair is its model\'s own build, so there is no break for it to be the twin of' });
+      const compared = compareSuppliers(input, spine, modelText, this.plant);
+      if (compared.refused.spine && compared.refused.model) this.bothRefused++;
+      else if (compared.refused.spine !== compared.refused.model) {
+        const said = compared.refused.spine
+          ? `A00_ROUNDTRIP_PARSE refused the pair and the model side read the document: ${spine.failures.find((f) => f.assertion === 'A00_ROUNDTRIP_PARSE')?.detail}`
+          : `the model side refused its own build's document and the round trip loaded the pair: ${compared.model.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`;
+        this.keep(this.faults, { fault: said });
+      } else {
+        this.compared++;
+        this.lines += compared.lines;
+        for (const d of compared.differing) {
+          this.keep(this.faults, { fault: `${d.code} differs — spine-core: ${JSON.stringify(d.spine)}; model: ${JSON.stringify(d.model)}` });
+        }
+        this.compareWalks(input, modelText);
+      }
+      return;
+    }
+    this.afterEmit++;
+    if (firing.length === 0) {
+      // A twin beside a break that fails nothing the model side runs is a declaration nothing reads.
+      if (twin !== undefined) this.keep(this.faults, { fault: 'a twin was declared beside a break that fails no moved assertion, so nothing ran it' });
+      return;
+    }
+    this.firing++;
+    const outcomes = this.settleTwin(input, spine, modelText, firing, twin);
+    for (const outcome of outcomes) this.keep(this.twinOutcomes, outcome);
+  }
+
+  /** A file rigc wrote: one whose header carries no editor `hash` — every after-emit edit in this run is of one (census §4). */
+  private rigcWrote(skeletonText: string): boolean {
+    try {
+      const header = (JSON.parse(skeletonText) as { skeleton?: Record<string, unknown> }).skeleton;
+      return header !== undefined && !('hash' in header);
+    } catch {
+      return false;
+    }
+  }
+
+  /** The order measurement: on a build of more than one skin, the skins' entries walked by both suppliers, name and size, in order. */
+  private compareWalks(input: ValidateInput, modelText: string): void {
+    const doc = JSON.parse(modelText) as { skins?: unknown[] };
+    if (!Array.isArray(doc.skins) || doc.skins.length < 2) return;
+    // One reading per build: a build gated under both profiles, or twice by one case, is one compile.
+    const build = `${spineFileSha256(input.skeletonText)} ${spineFileSha256(input.atlasText)}`;
+    if (this.walked.has(build)) return;
+    this.walked.add(build);
+    const runtime = runtimeFacts(input.skeletonText, input.atlasText);
+    if (runtime === null) return;
+    const model = modelSkinEntries({ doc: readModel(modelText), json: doc as Record<string, unknown> });
+    const spell = walkSpelling;
+    this.walks.compared++;
+    // What the document's own order would have printed — the walk the census measured unequal on 3 of 52.
+    const read = { doc: readModel(modelText), json: doc as Record<string, unknown> };
+    if (spell(modelSkinEntries(read, (skins) => [...skins])) !== spell(runtime.skinEntries)) this.walks.documentOrderDiffers++;
+    if (spell(runtime.skinEntries) === spell(model)) this.walks.equal++;
+    else this.keep(this.faults, { fault: `the skins walk in another order on the two sides — spine-core ${spell(runtime.skinEntries).slice(0, 240)}; model ${spell(model).slice(0, 240)}` });
+  }
+
+  private settleTwin(input: ValidateInput, spine: ValidateReport, modelText: string, firing: string[], twin: ModelTwin | undefined): Array<Omit<TwinOutcome, 'case'>> {
+    const out: Array<Omit<TwinOutcome, 'case'>> = [];
+    for (const code of firing) {
+      const spineLines = linesOfCode(spine, code);
+      if (twin === undefined) {
+        out.push({ code, outcome: 'no twin', detail: spineLines[spineLines.length - 1] ?? '' });
+        continue;
+      }
+      if ('encodingOnly' in twin) {
+        out.push({ code, outcome: 'encoding-only', detail: twin.encodingOnly });
+        continue;
+      }
+      const doc = JSON.parse(modelText) as Record<string, unknown>;
+      try {
+        twin.forge(doc);
+      } catch (err) {
+        out.push({ code, outcome: 'not reproduced', detail: `the twin's forge threw on the call's document: ${(err as Error).message}` });
+        continue;
+      }
+      const model = validateModel({ modelText: `${JSON.stringify(doc, null, 2)}\n`, atlasDir: input.atlasDir, profile: input.profile });
+      const modelLines = linesOfCode(model, code);
+      if (modelLines.join('\n') === spineLines.join('\n')) {
+        out.push({ code, outcome: 'identical', detail: spineLines.find((l) => l.startsWith('  FAIL')) ?? '' });
+        continue;
+      }
+      const object = firstQuoted(spine.failures.find((f) => f.assertion === code)?.detail ?? '');
+      const refusal = model.failures.find((f) => f.assertion === A00_MODEL_READ || f.assertion === A00_MODEL_REGIONS_ON_PAGES);
+      if (refusal !== undefined && object !== null && refusal.detail.includes(`"${object}"`)) {
+        out.push({ code, outcome: 'refused by name', detail: `"${object}" — ${refusal.assertion}: ${refusal.detail.slice(0, 200)}` });
+        continue;
+      }
+      out.push({
+        code,
+        outcome: 'not reproduced',
+        detail: `spine-core ${JSON.stringify(spineLines)}; the twin ${refusal === undefined ? JSON.stringify(modelLines) : `refused without naming ${JSON.stringify(object)}: ${refusal.detail.slice(0, 200)}`}`,
+      });
+    }
+    return out;
+  }
+}
+
+/** A twin's way into a document: one animation's timelines on one slot, as the document lists them (`[{ name, keys }]`, in order). */
+type DocTimeline = { name: string; keys: Array<Record<string, unknown>> };
+function docSlotTimelines(doc: Record<string, unknown>, animation: string, slot: string): DocTimeline[] {
+  const animations = doc.animations as Array<{ name: string; slots: Array<{ name: string; timelines: DocTimeline[] }> }>;
+  const entry = animations.find((a) => a.name === animation)?.slots.find((x) => x.name === slot);
+  if (entry === undefined) throw new Error(`the document keys no slot "${slot}" in animation "${animation}"`);
+  return entry.timelines;
+}
+
+/** The keys of one timeline of `docSlotTimelines`, named. */
+function docKeys(timelines: DocTimeline[], name: string): Array<Record<string, unknown>> {
+  const found = timelines.find((t) => t.name === name);
+  if (found === undefined) throw new Error(`the slot keys no "${name}" timeline in the document`);
+  return found.keys;
+}
+
+/** The run's supplier check. `validate` below feeds it; `main` attributes its findings to case lines; `runVerdictSuppliersSuite` reads it. */
+const SUPPLIERS = new SupplierCheck();
+
+/**
+ * The model document a call with a compile behind it is handed (issue #1025):
+ * `modelDocument` over the compile's model and skeleton and the atlas the build
+ * wrote (the compile's, or the pack's). A document the writer refuses is
+ * counted and named by `VF02` rather than thrown, so threading the model can
+ * move no case's verdict; `validate()` reads `modelText` only beside `reEmit`.
+ */
+function threadedModel(result: Pick<CompileResult, 'model' | 'skeletonText'>, atlasText: string): string | undefined {
+  try {
+    return modelDocument(result.model, result.skeletonText, atlasText);
+  } catch (err) {
+    SUPPLIERS.unwritable.push((err as Error).message);
+    return undefined;
+  }
+}
+
+
+/**
+ * `validate()`, with the supplier check beside every call (the section
+ * header). The report is the runtime's and is returned untouched: nothing a
+ * case reads moves.
+ */
+function validate(input: ValidateInput, twin?: ModelTwin): ValidateReport {
+  const report = validateOverSpine(input);
+  SUPPLIERS.observe(input, report, twin);
+  return report;
+}
+
 interface Artifacts {
   skeletonText: string;
   atlasText: string;
@@ -827,6 +1159,17 @@ interface Mutant {
    * a hint that must appear exactly once.
    */
   holds?: (report: ReturnType<typeof validate>, broken: Artifacts) => { held: boolean; read: string };
+  /**
+   * The model-side twin of this break (issue #1025): the same wrongness forged
+   * into the pristine build's model document, or the reason no model field can
+   * carry it. Required of a row whose break FAILS an assertion the model side
+   * runs (`MOVED_ASSERTIONS`) — the supplier check runs the twin beside the
+   * break and records whether the model side printed the identical line or
+   * refused the forged document by the same object's name; a firing row with
+   * no twin is named by `VF03`. Rows aimed at an assertion still on the round
+   * trip alone need none.
+   */
+  twin?: ModelTwin;
 }
 
 const editJson = (text: string, f: (j: Record<string, unknown>) => void): string => {
@@ -1012,6 +1355,14 @@ const MUTANTS: Mutant[] = [
         delete (j as any).skins[0].attachments.lens_l.lens_l_shut.width;
       }),
     }),
+    // The same record without its width, in the document: the reader refuses
+    // it by the record's address, which names the region (issue #1025).
+    twin: {
+      forge: (doc) => {
+        const skin = (doc as any).skins.find((k: any) => k.attachments.lens_l?.lens_l_shut !== undefined);
+        delete skin.attachments.lens_l.lens_l_shut.width;
+      },
+    },
   },
   {
     name: 'M04_short_curve_array',
@@ -1095,6 +1446,12 @@ const MUTANTS: Mutant[] = [
     origin: 'a shipped skeleton.atlas once declared a page that never existed on disk',
     expect: 'A17_ATLAS_PAGE_FILES_EXIST',
     mutate: (a) => ({ ...a, atlasText: a.atlasText.replace(firstPageLine(a.atlasText), '../nope_not_here.png') }),
+    // The document's first page under the same name (issue #1025).
+    twin: {
+      forge: (doc) => {
+        (doc as any).pages[0].name = '../nope_not_here.png';
+      },
+    },
   },
   {
     name: 'M13_version_label_from_the_4_2_era',
@@ -1148,9 +1505,18 @@ const MUTANTS: Mutant[] = [
         };
       }),
     }),
+    // The same clipping record in the document's skin that the file's first
+    // skin is — the editor keeps `default` first (issue #1025).
+    twin: {
+      forge: (doc) => {
+        const skin = (doc as any).skins.find((k: any) => k.name === 'default') ?? (doc as any).skins[0];
+        skin.attachments.stage.stage_clip = { kind: 'clipping', vertexCount: 4, vertices: { weighted: false, xy: [0, 0, 64, 0, 64, 64, 0, 64] } };
+      },
+    },
   },
   {
     name: 'M36b_clipping_attachment_is_valid_spine',
+
     origin: 'the same edit under --profile spine: a clipping attachment is legal Spine 4.3 and no runtime but ours objects',
     expect: null,
     profile: 'spine',
@@ -1852,6 +2218,19 @@ const MUTANTS: Mutant[] = [
         }));
       }),
     }),
+    // The same `alpha` beside the same `rgba`, in the document — after it, as
+    // the file states it (issue #1025).
+    twin: {
+      forge: (doc) => {
+        const animation = (doc as any).animations.find((anim: any) => anim.slots.some((slot: any) => slot.timelines.some((t: any) => t.name === 'rgba')));
+        const slot = animation.slots.find((x: any) => x.timelines.some((t: any) => t.name === 'rgba'));
+        const rgba = slot.timelines.find((t: any) => t.name === 'rgba');
+        slot.timelines.push({
+          name: 'alpha',
+          keys: rgba.keys.map((key: any) => ({ time: key.time, value: Number.parseInt(String(key.color).slice(6, 8), 16) / 255 })),
+        });
+      },
+    },
   },
   // ─── a bone `inherit` key the runtime resolves to no mode (issue #733) ──
   //
@@ -4092,7 +4471,7 @@ function repackRotatedTrimmed(atlasText: string, atlasDir: string): { atlasText:
 function compileTranscription(
   motionText: string | null,
   imagesDir = CHECK_IMAGES,
-): { skeletonText: string; atlasText: string; atlasDir: string } {
+): { skeletonText: string; atlasText: string; atlasDir: string; modelText: string | undefined } {
   const outDir = mkdtempSync(join(tmpdir(), 'rigc-check-'));
   let motionPath = join(CHECK_TRANSCRIPTION, '3-timing-and-spacing-ess.motion.json');
   if (motionText !== null) {
@@ -4105,7 +4484,8 @@ function compileTranscription(
     outDir,
     imagesDir,
   });
-  return { skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir };
+  // The build's model document rides along for the supplier check (issue #1025); `checkAgainstFrames` reads no such field.
+  return { skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir, modelText: threadedModel(result, result.atlasText) };
 }
 
 /**
@@ -4720,6 +5100,7 @@ function runCheckSuite(): number | null {
     skeletonText: reversed.skeletonText,
     atlasText: reversed.atlasText,
     atlasDir: reversed.atlasDir,
+    modelText: reversed.modelText,
     profile: 'spine',
   });
   const reversedReport = checkAgainstFrames({ ...reversed, framesDir: CHECK_FRAMES });
@@ -7995,6 +8376,7 @@ function runRigSuite(): number {
             atlasText: built.atlasText,
             atlasDir: opts.outDir,
             declaredDurations: built.declaredDurations,
+            modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
             rig: built.rig,
             profile: 'spine-html',
           });
@@ -8512,6 +8894,7 @@ function runRigSuite(): number {
           atlasText: built.atlasText,
           atlasDir,
           declaredDurations: built.declaredDurations,
+          modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
           rig: built.rig,
           profile: 'spine-html',
         });
@@ -12001,6 +12384,7 @@ function buildSeriesProbe(probe: { dirs: ProbeDirs; motionPath: string }, atlasI
       atlasText: built.atlasText,
       atlasDir: probe.dirs.outDir,
       declaredDurations: built.declaredDurations,
+      modelText: threadedModel(built, built.atlasText),
       rig: built.rig,
       profile: 'spine',
     });
@@ -12081,6 +12465,7 @@ function gateProbe(
     atlasText: result.atlasText,
     atlasDir: opts.outDir,
     declaredDurations: result.declaredDurations,
+    modelText: threadedModel(result, result.atlasText),
     rig: result.rig,
     profile,
   });
@@ -12099,6 +12484,7 @@ function gateProbeArtifacts(
   motion: Record<string, unknown>,
   mutate: (skeleton: Record<string, unknown>) => void,
   profile: ValidateProfile = 'spine',
+  twin?: ModelTwin,
 ): ReturnType<typeof validate> {
   const motionPath = join(dirs.dir, 'probe.motion.json');
   writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
@@ -12111,9 +12497,10 @@ function gateProbeArtifacts(
     atlasText: result.atlasText,
     atlasDir: opts.outDir,
     declaredDurations: result.declaredDurations,
+    modelText: threadedModel(result, result.atlasText),
     rig: result.rig,
     profile,
-  });
+  }, twin);
 }
 
 /**
@@ -12132,6 +12519,7 @@ function gateProbeAtlas(
   motion: Record<string, unknown>,
   mutate: (atlasText: string) => string,
   profile: ValidateProfile = 'spine',
+  twin?: ModelTwin,
 ): ReturnType<typeof validate> {
   const motionPath = join(dirs.dir, 'probe.motion.json');
   writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
@@ -12142,9 +12530,10 @@ function gateProbeAtlas(
     atlasText: mutate(result.atlasText),
     atlasDir: opts.outDir,
     declaredDurations: result.declaredDurations,
+    modelText: threadedModel(result, result.atlasText),
     rig: result.rig,
     profile,
-  });
+  }, twin);
 }
 
 /**
@@ -12198,6 +12587,55 @@ function stretchFirstAtlasPageSize(atlasText: string): string {
   const [width, height] = lines[at].slice('size:'.length).split(',').map((n) => Number(n.trim()));
   lines[at] = `size: ${width * 2}, ${height * 3}`;
   return `${lines.join('\n')}\n`;
+}
+
+/**
+ * `validate()`'s source as the two roster scans below read it: `src/validate.ts`
+ * with every body that moved to `src/assertions/bodies/` (issue #1025) put back
+ * in place of the one-line `check` that calls it.
+ *
+ * ⭐ Why the scans read this and not the file. A body moved out of
+ * `validate()` is still a body of `validate()` — its `check` call, and so its
+ * place behind the round trip, did not move — and a scan that read only the
+ * file would lose every moved rule from both rosters at once: measured on the
+ * first cut, `S09`'s "behind the round trip" fell from 30 to 29 (A17's
+ * `if (!atlas)` left the file) and `S48`'s quantified population from 40 to 37,
+ * with `S50` red over the same three. The view is rebuilt from the files rather
+ * than kept, so a body added under `bodies/` is read the moment its `check`
+ * delegates to it.
+ *
+ * 🔒 A `check` that delegates to a function no file under `bodies/` exports
+ * throws here by name rather than reading as a body with nothing in it, which
+ * would drop that rule from both rosters in silence.
+ */
+function validateSourceWithBodies(root: string): string {
+  const dir = join(root, 'src', 'assertions', 'bodies');
+  const bodies = new Map<string, string[]>();
+  for (const file of readdirSync(dir).filter((f) => f.endsWith('.ts')).sort()) {
+    const lines = readFileSync(join(dir, file), 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      const opened = /^export function (\w+)\(/.exec(line);
+      if (opened === null) return;
+      const close = lines.indexOf('}', i + 1);
+      if (close < 0) throw new Error(`src/assertions/bodies/${file}: ${opened[1]} has no closing brace at column 0`);
+      bodies.set(opened[1], lines.slice(i + 1, close));
+    });
+  }
+  const out: string[] = [];
+  for (const line of readFileSync(join(root, 'src', 'validate.ts'), 'utf8').split('\n')) {
+    const delegating = /^( +)check\('(A\d\d_[A-Z0-9_]+)', \(\) => (\w+)\(.*\)\);$/.exec(line);
+    if (delegating === null) {
+      out.push(line);
+      continue;
+    }
+    const [, indent, code, fn] = delegating;
+    const body = bodies.get(fn);
+    if (body === undefined) throw new Error(`src/validate.ts: check('${code}') calls ${fn}, which no file under src/assertions/bodies/ exports`);
+    out.push(`${indent}check('${code}', () => {`);
+    for (const b of body) out.push(b === '' ? '' : `${indent}${b}`);
+    out.push(`${indent}});`);
+  }
+  return out.join('\n');
 }
 
 /**
@@ -12262,8 +12700,9 @@ function assertionsBehindTheRoundTrip(source: string): string[] {
  *     be empty (`A00`, `A16`, `A11`, `A18`). Deleting a guard does not delete
  *     the loop it guarded, and neither does turning its `skip` back into a bare
  *     `return`, which is #568's own defect shape.
- *   * **the name is not the ¬∃ form** — the criterion in `src/validate.ts`'s
- *     header, applied to the name rather than to the code. `NO_⟨construct⟩` and
+ *   * **the name is not the ¬∃ form** — the criterion stated with the SKIP
+ *     reasons (`src/assertions/reasons.ts` since issue #1025), applied to the
+ *     name rather than to the code. `NO_⟨construct⟩` and
  *     nothing else is a rule whose pass is the count zero; a name that also
  *     carries a locus — `IDLE_NO_…` before the construct, `…_AFTER_STEPPING`
  *     after it — names a subject as well, and its absence is a SKIP.
@@ -12597,7 +13036,7 @@ function runStaticRigSuite(): number {
   // ⚠️ The profile is `spine-html` deliberately. Under `spine` fourteen of the
   // rules are excluded before their bodies run, so a vacuous pass among them is
   // invisible — which is how two of the four atlas guards went unnoticed.
-  const behind = assertionsBehindTheRoundTrip(readFileSync(join(import.meta.dir, 'src/validate.ts'), 'utf8'));
+  const behind = assertionsBehindTheRoundTrip(validateSourceWithBodies(import.meta.dir));
   const torn = gateProbeAtlas(dirs, STATIC_MOTION, dropFirstAtlasPage, 'spine-html');
   const rowOf = (report: ReturnType<typeof validate>, name: string): string[] => {
     const where: string[] = [];
@@ -12747,6 +13186,7 @@ function runStaticRigSuite(): number {
     atlasText: stagelessBuild.atlasText,
     atlasDir: stagelessOpts.outDir,
     declaredDurations: stagelessBuild.declaredDurations,
+    modelText: threadedModel(stagelessBuild, stagelessBuild.atlasText),
     rig: stagelessBuild.rig,
     profile: 'spine',
   });
@@ -12755,6 +13195,7 @@ function runStaticRigSuite(): number {
     atlasText: stagelessBuild.atlasText,
     atlasDir: stagelessOpts.outDir,
     declaredDurations: stagelessBuild.declaredDurations,
+    modelText: threadedModel(stagelessBuild, stagelessBuild.atlasText),
     rig: stagelessBuild.rig,
     profile: 'spine-html',
   });
@@ -12891,7 +13332,7 @@ function runStaticRigSuite(): number {
     'spine-html',
   );
   const borne = gateProbe(dirs, SUBJECT_BEARING, 'spine-html');
-  const quantified = subjectQuantifiedAssertions(readFileSync(join(import.meta.dir, 'src/validate.ts'), 'utf8'));
+  const quantified = subjectQuantifiedAssertions(validateSourceWithBodies(import.meta.dir));
   /** The reasons a SKIP gives when the SUBJECT is what was missing (#580). */
   const subjectReasons = new Set([
     SKIP_NO_REGION_ATTACHMENT,
@@ -14008,12 +14449,26 @@ function runStaticRigSuite(): number {
       return key;
     };
     const asRgba = (order: 'before' | 'after') =>
-      gateProbeArtifacts(separableRig, allThree, (skeleton) => {
-        const slots = (skeleton.animations as Record<string, { slots: Record<string, Record<string, unknown>> }>).split.slots;
-        const rgb = (slots.block?.rgb ?? []) as Array<Record<string, unknown>>;
-        const rgba = rgb.map((k) => asRgbaKey(k));
-        slots.block = order === 'before' ? { rgba, alpha: slots.block.alpha } : { alpha: slots.block.alpha, rgba };
-      });
+      gateProbeArtifacts(
+        separableRig,
+        allThree,
+        (skeleton) => {
+          const slots = (skeleton.animations as Record<string, { slots: Record<string, Record<string, unknown>> }>).split.slots;
+          const rgb = (slots.block?.rgb ?? []) as Array<Record<string, unknown>>;
+          const rgba = rgb.map((k) => asRgbaKey(k));
+          slots.block = order === 'before' ? { rgba, alpha: slots.block.alpha } : { alpha: slots.block.alpha, rgba };
+        },
+        'spine',
+        // The same rewrite in the document's timelines, in the same order (issue #1025).
+        {
+          forge: (doc) => {
+            const timelines = docSlotTimelines(doc, 'split', 'block');
+            const rgba = { name: 'rgba', keys: docKeys(timelines, 'rgb').map((k) => asRgbaKey(k)) };
+            const alpha = { name: 'alpha', keys: docKeys(timelines, 'alpha') };
+            timelines.splice(0, timelines.length, ...(order === 'before' ? [rgba, alpha] : [alpha, rgba]));
+          },
+        },
+      );
     const before = detailsOf(asRgba('before'), SEPARABLE);
     const after = detailsOf(asRgba('after'), SEPARABLE);
     const lone = gateProbeArtifacts(separableRig, separableMotion([rgbTrack]), (skeleton) => {
@@ -14022,17 +14477,34 @@ function runStaticRigSuite(): number {
       slots.block = { rgba: rgb.map((k) => asRgbaKey(k)) };
     });
     const loneSkip = lone.skipped.find((s) => s.assertion === SEPARABLE);
-    const nanKey = gateProbeArtifacts(separableRig, allThree, (skeleton) => {
-      const slots = (skeleton.animations as Record<string, { slots: Record<string, Record<string, Array<Record<string, unknown>>>> }>).split.slots;
-      const key = slots.block?.rgb?.[1];
-      if (key !== undefined) key.color = 'zz6699';
-    });
+    const nanKey = gateProbeArtifacts(
+      separableRig,
+      allThree,
+      (skeleton) => {
+        const slots = (skeleton.animations as Record<string, { slots: Record<string, Record<string, Array<Record<string, unknown>>>> }>).split.slots;
+        const key = slots.block?.rgb?.[1];
+        if (key !== undefined) key.color = 'zz6699';
+      },
+      'spine',
+      { forge: (doc) => void (docKeys(docSlotTimelines(doc, 'split', 'block'), 'rgb')[1].color = 'zz6699') },
+    );
     const nanDetails = detailsOf(nanKey, SEPARABLE);
-    const repeated = gateProbeArtifacts(separableRig, allThree, (skeleton) => {
-      const slots = (skeleton.animations as Record<string, { slots: Record<string, Record<string, Array<Record<string, unknown>>>> }>).split.slots;
-      const keys = slots.block?.alpha ?? [];
-      if (keys.length > 0) keys.push({ ...keys[keys.length - 1], value: keys[0].value });
-    });
+    const repeated = gateProbeArtifacts(
+      separableRig,
+      allThree,
+      (skeleton) => {
+        const slots = (skeleton.animations as Record<string, { slots: Record<string, Record<string, Array<Record<string, unknown>>>> }>).split.slots;
+        const keys = slots.block?.alpha ?? [];
+        if (keys.length > 0) keys.push({ ...keys[keys.length - 1], value: keys[0].value });
+      },
+      'spine',
+      {
+        forge: (doc) => {
+          const keys = docKeys(docSlotTimelines(doc, 'split', 'block'), 'alpha');
+          keys.push({ ...keys[keys.length - 1], value: keys[0].value });
+        },
+      },
+    );
     const repeatedDetails = detailsOf(repeated, SEPARABLE);
     const mutantProbes = [
       ...(before.some((d) => d.includes('"rgba" and "alpha" both key the alpha') && d.includes('so "alpha", which the file states last, overwrites "rgba"'))
@@ -14139,6 +14611,7 @@ function runStaticRigSuite(): number {
       atlasText: stageless.atlasText,
       atlasDir: stagelessOpts.outDir,
       declaredDurations: stageless.declaredDurations,
+      modelText: threadedModel(stageless, stageless.atlasText),
       rig: stageless.rig,
       profile: 'spine-html',
     });
@@ -14283,12 +14756,23 @@ function runStaticRigSuite(): number {
     };
     let alphaFirst: unknown = null;
     let alphaRepeat: unknown = null;
-    const alphaGate = gateProbeArtifacts(storedRig, storedMotion, (skeleton) => {
-      const keys = (skeleton.animations as Record<string, { slots: SlotTimelines }>).stored.slots.block.alpha;
-      alphaFirst = keys[0].value;
-      alphaRepeat = (Number(keys[0].value) + Number(keys[1].value)) / 2;
-      repeatFirst(keys, { value: alphaRepeat });
-    });
+    const alphaGate = gateProbeArtifacts(
+      storedRig,
+      storedMotion,
+      (skeleton) => {
+        const keys = (skeleton.animations as Record<string, { slots: SlotTimelines }>).stored.slots.block.alpha;
+        alphaFirst = keys[0].value;
+        alphaRepeat = (Number(keys[0].value) + Number(keys[1].value)) / 2;
+        repeatFirst(keys, { value: alphaRepeat });
+      },
+      'spine',
+      {
+        forge: (doc) => {
+          const keys = docKeys(docSlotTimelines(doc, 'stored', 'block'), 'alpha');
+          repeatFirst(keys, { value: (Number(keys[0].value) + Number(keys[1].value)) / 2 });
+        },
+      },
+    );
     let tintNext: unknown = null;
     const tintGate = gateProbeArtifacts(storedRig, storedMotion, (skeleton) => {
       const keys = (skeleton.animations as Record<string, { slots: SlotTimelines }>).stored.slots.marker.rgba2;
@@ -14312,6 +14796,7 @@ function runStaticRigSuite(): number {
           atlasText: storedSeries.built.atlasText,
           atlasDir: seriesProbe.dirs.outDir,
           declaredDurations: storedSeries.built.declaredDurations,
+          modelText: threadedModel(storedSeries.built, storedSeries.built.atlasText),
           rig: storedSeries.built.rig,
           profile: 'spine',
         }),
@@ -15111,6 +15596,7 @@ function runStaticRigSuite(): number {
         atlasText,
         atlasDir: pack.dir,
         declaredDurations: pack.result.declaredDurations,
+        modelText: threadedModel(pack.result, pack.atlasText),
         rig: pack.result.rig,
         profile: 'spine',
       })
@@ -15962,6 +16448,7 @@ function gateLooseAndPacked(
       atlasText,
       atlasDir,
       declaredDurations: result.declaredDurations,
+      modelText: threadedModel(result, atlasText),
       rig: result.rig,
       profile,
     });
@@ -17056,6 +17543,7 @@ function runEventSuite(): number {
     atlasText: built.atlasText,
     atlasDir: dirs.outDir,
     declaredDurations: built.declaredDurations,
+    modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
     rig: built.rig,
     profile: 'spine',
   });
@@ -23207,6 +23695,7 @@ function runPathAndSliderSuite(): number {
           atlasText: result.atlasText,
           atlasDir: opts.outDir,
           declaredDurations: result.declaredDurations,
+          modelText: modelDocument(result.model, result.skeletonText, result.atlasText),
           rig: result.rig,
           profile: 'spine',
         }),
@@ -23639,6 +24128,7 @@ function runPathAndSliderSuite(): number {
           atlasText: built.atlasText,
           atlasDir: opts.outDir,
           declaredDurations: built.declaredDurations,
+          modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
           rig: built.rig,
           profile: 'spine',
         }),
@@ -23764,6 +24254,7 @@ function runPathAndSliderSuite(): number {
           atlasText: texts.atlasText ?? built.atlasText,
           atlasDir: probe.outDir,
           declaredDurations: built.declaredDurations,
+          modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
           rig: built.rig,
           profile,
         }),
@@ -23963,6 +24454,7 @@ function runPathAndSliderSuite(): number {
         atlasText: texts.atlasText ?? a08NamedBuilt.atlasText,
         atlasDir: a08NamedProbe.outDir,
         declaredDurations: a08NamedBuilt.declaredDurations,
+        modelText: threadedModel(a08NamedBuilt, a08NamedBuilt.atlasText),
         rig: a08NamedBuilt.rig,
         profile,
       }),
@@ -24326,6 +24818,7 @@ function runPathAndSliderSuite(): number {
         atlasText: built.atlasText,
         atlasDir: probe.outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
       });
@@ -25782,6 +26275,7 @@ function runPathAndSliderSuite(): number {
         atlasText: built.atlasText,
         atlasDir: dirs.outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
       }),
@@ -25899,6 +26393,7 @@ function runPathAndSliderSuite(): number {
         atlasText: built.atlasText,
         atlasDir: dirs.outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
       });
@@ -26432,6 +26927,7 @@ function runPathAndSliderSuite(): number {
         atlasText: built.atlasText,
         atlasDir: dirs.outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
       }),
@@ -26628,6 +27124,7 @@ function runPathAndSliderSuite(): number {
         atlasText: built.atlasText,
         atlasDir: dirs.outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
       }),
@@ -26810,6 +27307,7 @@ function runPathAndSliderSuite(): number {
         atlasText: built.atlasText,
         atlasDir: dirs.outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
       }),
@@ -27369,6 +27867,7 @@ function runPathAndSliderSuite(): number {
         atlasText: built.atlasText,
         atlasDir: dirs.outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
       }),
@@ -28208,6 +28707,7 @@ function runPathAndSliderSuite(): number {
         atlasText: built.atlasText,
         atlasDir: dirs.outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
       }),
@@ -28269,6 +28769,7 @@ function runPathAndSliderSuite(): number {
       atlasText: built.atlasText,
       atlasDir: dirs.outDir,
       declaredDurations: built.declaredDurations,
+      modelText: threadedModel(built, built.atlasText),
       rig: built.rig,
       profile: 'spine',
     });
@@ -28477,6 +28978,7 @@ function runPathAndSliderSuite(): number {
         atlasText: built.atlasText,
         atlasDir: dirs.outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
       }),
@@ -28612,6 +29114,7 @@ function runPathAndSliderSuite(): number {
         atlasText: built.atlasText,
         atlasDir: dirs.outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
       }),
@@ -28773,6 +29276,7 @@ function runPathAndSliderSuite(): number {
         atlasText: built.atlasText,
         atlasDir: dirs.outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
       }),
@@ -29564,6 +30068,7 @@ function runPathAndSliderSuite(): number {
           atlasText: built.atlasText,
           atlasDir: opts.outDir,
           declaredDurations: built.declaredDurations,
+          modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
           rig: built.rig,
           profile: 'spine',
         }),
@@ -30543,6 +31048,7 @@ function runPolygonSuite(): number {
     atlasText: built.atlasText,
     atlasDir: dirs.outDir,
     declaredDurations: built.declaredDurations,
+    modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
     rig: built.rig,
     profile: 'spine',
   });
@@ -30560,6 +31066,7 @@ function runPolygonSuite(): number {
     atlasText: built.atlasText,
     atlasDir: dirs.outDir,
     declaredDurations: built.declaredDurations,
+    modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
     rig: built.rig,
     profile: 'spine-html',
   });
@@ -31147,6 +31654,7 @@ function runContourMeshSuite(): number {
     atlasText: build.result.atlasText,
     atlasDir: build.opts.outDir,
     declaredDurations: build.result.declaredDurations,
+    modelText: threadedModel(build.result, build.result.atlasText),
     rig: build.result.rig,
     profile: 'spine-html',
   });
@@ -32108,6 +32616,7 @@ function runContourMeshSuite(): number {
       atlasText: both.result.atlasText,
       atlasDir: both.opts.outDir,
       declaredDurations: both.result.declaredDurations,
+      modelText: threadedModel(both.result, both.result.atlasText),
       rig: both.result.rig,
       profile: 'spine',
     });
@@ -32194,6 +32703,7 @@ function runContourMeshSuite(): number {
         atlasText: build.result.atlasText,
         atlasDir: build.opts.outDir,
         declaredDurations: build.result.declaredDurations,
+        modelText: threadedModel(build.result, build.result.atlasText),
         rig: build.result.rig,
         profile: 'spine-html',
       });
@@ -32959,6 +33469,7 @@ function runContourMeshSuite(): number {
           atlasText: past.result.atlasText,
           atlasDir: past.opts.outDir,
           declaredDurations: past.result.declaredDurations,
+          modelText: threadedModel(past.result, past.result.atlasText),
           rig: past.result.rig,
           profile: 'spine-html',
         });
@@ -33258,6 +33769,7 @@ function runContourMeshSuite(): number {
       atlasText: fan.result.atlasText,
       atlasDir: fan.opts.outDir,
       declaredDurations: fan.result.declaredDurations,
+      modelText: threadedModel(fan.result, fan.result.atlasText),
       rig: fan.result.rig,
       profile: 'spine',
     });
@@ -34374,6 +34886,7 @@ function gateTurn(build: TurnBuild, skeletonText?: string): ReturnType<typeof va
     atlasText: build.result.atlasText,
     atlasDir: build.opts.outDir,
     declaredDurations: build.result.declaredDurations,
+    modelText: threadedModel(build.result, build.result.atlasText),
     rig: build.result.rig,
     profile: 'spine-html',
   });
@@ -39609,6 +40122,7 @@ function runMeshSuite(): number {
         atlasText: build.result.atlasText,
         atlasDir: build.opts.outDir,
         declaredDurations: build.result.declaredDurations,
+        modelText: threadedModel(build.result, build.result.atlasText),
         rig: build.result.rig,
         profile: 'spine-html',
       });
@@ -39976,6 +40490,7 @@ function compileMeshTranscription(
   atlasText: string;
   atlasDir: string;
   rig: CompileResult['rig'];
+  modelText: string | undefined;
 } {
   const outDir = mkdtempSync(join(tmpdir(), 'rigc-mesh-'));
   let rigPath = join(MESH_TRANSCRIPTION, '6-arcs-pro.rig.json');
@@ -39989,7 +40504,7 @@ function compileMeshTranscription(
     writeFileSync(motionPath, motionText);
   }
   const result = compile({ rigPath, motionPath, outDir, imagesDir: MESH_IMAGES });
-  return { skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir, rig: result.rig };
+  return { skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: outDir, rig: result.rig, modelText: threadedModel(result, result.atlasText) };
 }
 
 /** The rung-6 motion spec as text, which the two change-fidelity mutants rewrite. */
@@ -40228,6 +40743,7 @@ function runMeshCheckSuite(): number | null {
     skeletonText: shifted.skeletonText,
     atlasText: shifted.atlasText,
     atlasDir: shifted.atlasDir,
+    modelText: shifted.modelText,
     profile: 'spine',
   });
   const shiftedReport = checkAgainstFrames({ ...shifted, framesDir: MESH_FRAMES });
@@ -40251,6 +40767,7 @@ function runMeshCheckSuite(): number | null {
     skeletonText: faithful.skeletonText,
     atlasText: faithful.atlasText,
     atlasDir: faithful.atlasDir,
+    modelText: faithful.modelText,
     profile: 'spine-html',
     rig: faithful.rig,
   });
@@ -40513,6 +41030,11 @@ function runSuite(suite: Suite): number {
   }
 
   // --- negative controls ----------------------------------------------------
+  // The pristine build's model document, handed to every break below: the
+  // supplier check reads it to tell an after-emit break from the build's own
+  // output, and runs a row's `twin` against it (issue #1025). `validate()`
+  // reads `modelText` only beside `reEmit`, so no break's verdict moves.
+  const pristineModel = modelDocument(pristine.model, pristine.skeletonText, pristine.atlasText);
   for (const mutant of suite.mutants) {
     const broken = mutant.mutate(base);
     const report = validate({
@@ -40520,8 +41042,9 @@ function runSuite(suite: Suite): number {
       atlasDir: suite.opts.outDir,
       declaredDurations: pristine.declaredDurations,
       rig: mutant.rig ? mutant.rig(pristine.rig) : pristine.rig,
+      modelText: pristineModel,
       profile: mutant.profile ?? MUTANT_PROFILE,
-    });
+    }, mutant.twin);
     const where = mutant.profile ? `  [profile ${mutant.profile}]` : '';
     const reading = mutant.holds ? mutant.holds(report, broken) : null;
     if (reading !== null && !reading.held) {
@@ -42257,6 +42780,7 @@ function runPackerSuite(): number {
       atlasText,
       atlasDir: dir,
       declaredDurations: result.declaredDurations,
+      modelText: threadedModel(result, result.atlasText),
       rig: result.rig,
       profile,
     });
@@ -44727,6 +45251,7 @@ function runAtlasReaderSuite(): number | null {
         atlasText,
         atlasDir,
         declaredDurations: packed.result.declaredDurations,
+        modelText: threadedModel(packed.result, packed.result.atlasText),
         rig: packed.result.rig,
         profile,
       });
@@ -44953,6 +45478,7 @@ function runAtlasReaderSuite(): number | null {
         atlasText: pack.atlasText,
         atlasDir: pack.dir,
         declaredDurations: pack.result.declaredDurations,
+        modelText: threadedModel(pack.result, pack.atlasText),
         rig: pack.result.rig,
         profile,
       });
@@ -45201,6 +45727,7 @@ function runAtlasReaderSuite(): number | null {
               atlasText: readFileSync(packs.half, 'utf8'),
               atlasDir: dirname(packs.half),
               declaredDurations: full.declaredDurations,
+              modelText: threadedModel(full, full.atlasText),
               rig: full.rig,
               profile: 'spine',
             }).failures.find((f) => f.assertion === A06)?.detail ?? null);
@@ -58482,6 +59009,7 @@ function runCurrencySuite(): number {
         atlasText: pack.atlasText,
         atlasDir: pack.dir,
         declaredDurations: pack.result.declaredDurations,
+        modelText: threadedModel(pack.result, pack.atlasText),
         rig: pack.result.rig,
         profile: 'spine',
       }).failures.find((f) => f.assertion === A06)?.detail ?? null;
@@ -60139,6 +60667,7 @@ function runCurrencySuite(): number {
         atlasText,
         atlasDir: pack.dir,
         declaredDurations: pack.result.declaredDurations,
+        modelText: threadedModel(pack.result, pack.atlasText),
         rig: pack.result.rig,
         profile: 'spine',
       })
@@ -60277,6 +60806,7 @@ function runCurrencySuite(): number {
       atlasText: pack.atlasText,
       atlasDir: pack.dir,
       declaredDurations: pack.result.declaredDurations,
+      modelText: threadedModel(pack.result, pack.atlasText),
       rig: pack.result.rig,
       profile: 'spine',
     })
@@ -67172,6 +67702,7 @@ function runPoseOracleSuite(): number {
             atlasText: b.atlasText,
             atlasDir: outDir,
             declaredDurations: b.declaredDurations,
+            modelText: threadedModel(b, b.atlasText),
             rig: b.rig,
             profile: 'spine',
           });
@@ -90751,6 +91282,7 @@ function runIngestSuite(): number {
       atlasText: probeTrip.a.atlasText,
       atlasDir: probeTrip.aDir,
       declaredDurations: probeTrip.a.declaredDurations,
+      modelText: threadedModel(probeTrip.a, probeTrip.a.atlasText),
       rig: probeTrip.a.rig,
       profile: 'spine',
     });
@@ -91270,6 +91802,7 @@ function runIngestSuite(): number {
           // compiled for, so that — not the first build's — is what they resolve against.
           atlasDir: join(dir, 'spine'),
           declaredDurations: built.declaredDurations,
+          modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
           rig: built.rig,
           profile: 'spine',
         });
@@ -91375,6 +91908,7 @@ function runIngestSuite(): number {
           atlasText: built.atlasText,
           atlasDir: outDir,
           declaredDurations: built.declaredDurations,
+          modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
           rig: built.rig,
           profile: 'spine',
         });
@@ -91672,6 +92206,7 @@ function runIngestSuite(): number {
           atlasText: built.atlasText,
           atlasDir: outDir,
           declaredDurations: built.declaredDurations,
+          modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
           rig: built.rig,
           profile: 'spine',
         }).failures.map((f) => `${f.assertion}: ${f.detail}`);
@@ -91789,6 +92324,7 @@ function runIngestSuite(): number {
             atlasText: rebuilt.atlasText,
             atlasDir: dirA,
             declaredDurations: rebuilt.declaredDurations,
+            modelText: threadedModel(rebuilt, rebuilt.atlasText),
             rig: rebuilt.rig,
             // The probe is a validity probe — dark colours, a clipping
             // attachment — so the renderer's rulebook refuses it staged or not;
@@ -91803,6 +92339,7 @@ function runIngestSuite(): number {
       atlasText: built.atlasText,
       atlasDir: dirA,
       declaredDurations: built.declaredDurations,
+      modelText: threadedModel(built, built.atlasText),
       rig: built.rig,
       profile: 'spine',
     });
@@ -91879,6 +92416,7 @@ function runIngestSuite(): number {
         atlasText: built.atlasText,
         atlasDir: outDir,
         declaredDurations: built.declaredDurations,
+        modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile,
       });
@@ -92477,6 +93015,7 @@ function runIngestSuite(): number {
         atlasText: result.atlasText,
         atlasDir,
         declaredDurations: result.declaredDurations,
+        modelText: modelDocument(result.model, result.skeletonText, result.atlasText),
         rig: result.rig,
         profile,
       });
@@ -96040,6 +96579,399 @@ function runRunTallySuite(live: RunTally): number {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// verdict suppliers — the validator's bodies, run over spine-core and over the model (issue #1025)
+// ---------------------------------------------------------------------------
+
+/**
+ * The tree rule for the model side: every file under `src/assertions/` — the
+ * bodies, the fact interfaces, the harness and the model's suppliers — and
+ * every module those reach by a value import, the two outside `src/` that
+ * `src/` reaches included, names no spine-core module; a file under
+ * `src/assertions/` does not name it even for a type, so no fact is typed by a
+ * runtime class. Comments are not code (`codeOnly`). Returns the problems and
+ * the modules reached outside the directory.
+ */
+function verdictSideProblems(population: ReadonlyMap<string, string>, root: string): { problems: string[]; reached: string[] } {
+  const problems: string[] = [];
+  const seeds = [...population.keys()].filter((p) => p.startsWith('src/assertions/')).sort();
+  const seen = new Set<string>();
+  const queue = [...seeds];
+  while (queue.length > 0) {
+    const rel = queue.shift() as string;
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    // A module outside src/ that src/ reaches — `tools/plate.ts`, `tools/font5x7.ts` (CLAUDE.md) — is read off the disk and followed too.
+    const text = population.get(rel) ?? (existsSync(join(root, rel)) ? readFileSync(join(root, rel), 'utf8') : undefined);
+    if (text === undefined) {
+      problems.push(`${rel} is reached from src/assertions/ and is not on the disk`);
+      continue;
+    }
+    const inSide = rel.startsWith('src/assertions/');
+    for (const { spec, typeOnly } of specifiersOf(codeOnly(text))) {
+      if (/^@esotericsoftware\/spine-core(\/|$)/.test(spec) && (inSide || !typeOnly)) problems.push(`${rel} imports "${spec}"${inSide ? '' : ', and src/assertions/ reaches it'}`);
+      if (!spec.startsWith('.') || typeOnly) continue;
+      queue.push(join(dirname(rel), spec).split('\\').join('/'));
+    }
+  }
+  if (seeds.length === 0) problems.push('no file under src/assertions/ was read, so the rule held nothing');
+  return { problems, reached: [...seen].filter((p) => !p.startsWith('src/assertions/')).sort() };
+}
+
+function runVerdictSuppliersSuite(): number {
+  console.log("\n── verdict suppliers: each moved assertion's lines over spine-core and over the model with the core (issue #1025) ──");
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const root = import.meta.dir;
+  const codes = MOVED_ASSERTIONS.map((m) => m.code);
+
+  // This suite's own calls, each made inside the case whose figure it feeds —
+  // the supplier check attributes a call to the next case line printed — so no
+  // figure below is read off nothing under `--only`: the three fixtures under
+  // both profiles (VF02), one after-emit break with its twin (VF03), and a
+  // three-skin probe whose skins the editor's comparator reorders (VF05).
+  const fixtures = [OVERLAY, ARTICULATED, CONTAINED].map((fixture) => {
+    const opts = optsForFixture(fixture);
+    return { fixture, opts, result: compile(opts) };
+  });
+  const overlay = fixtures[0];
+  const pageRenamed = firstPageLine(overlay.result.atlasText);
+
+  // --- VF01: the model side reaches nothing from spine-core -----------------
+  {
+    const population = srcPopulation(root);
+    const live = verdictSideProblems(population, root);
+    const probes = [...live.problems];
+    const sideFiles = [...population.keys()].filter((p) => p.startsWith('src/assertions/'));
+    const plants: Array<[string, string, string, boolean]> = [
+      ['a body importing the module that owns the round trip', 'src/assertions/bodies/a03.ts', "\nimport { validate } from '../../validate.ts';\n", true],
+      ['a fact interface typed by a runtime class', 'src/assertions/facts/skin_entries.ts', "\nimport type { RegionAttachment } from '@esotericsoftware/spine-core';\n", true],
+      ['a supplier importing the runtime late', 'src/assertions/model/slot_colour.ts', "\nconst late = import('@esotericsoftware/spine-core');\n", true],
+      ['a supplier reaching a module that links the runtime', 'src/assertions/model/atlas_pages.ts', "\nimport { renderBuild } from '../../render.ts';\n", true],
+      ['the runtime named in a comment', 'src/assertions/harness.ts', "\n// not '@esotericsoftware/spine-core'\n", false],
+    ];
+    for (const [label, file, line, fires] of plants) {
+      const planted = new Map(population);
+      planted.set(file, `${population.get(file) ?? ''}${line}`);
+      const raised = verdictSideProblems(planted, root).problems.length - live.problems.length;
+      if (fires ? raised < 1 : raised !== 0) probes.push(`${label}: ${raised} problem(s) raised`);
+    }
+    const held = probes.length === 0;
+    say(
+      'VF01_THE_MOVED_BODIES_AND_THE_MODEL_SIDE_REACH_NOTHING_FROM_SPINE_CORE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${sideFiles.length} file(s) under src/assertions/, read off the disk, and the ${live.reached.length} module(s) they reach by value ` +
+          `[${live.reached.join(', ')}]: no import of the runtime package, and none of them a module that links it; ${plants.length - 1} plants each raise a problem and the runtime named in a comment raises none`,
+      ),
+      'issue #1025: a body written once against facts is the same body on both sides only while the side that has no runtime ' +
+        'can load it. CUR07 counts the files directly in src/ that link spine-core through git, so it sees neither this ' +
+        'directory nor an uncommitted file, and CO04 follows the core only; this follows src/assertions/ off the disk',
+    );
+  }
+
+  // --- VF02: population 2 — every call with its model's own pair, both sides compared ---
+  {
+    for (const { opts, result } of fixtures) {
+      for (const profile of VALIDATE_PROFILES) {
+        validate({ skeletonText: result.skeletonText, atlasText: result.atlasText, atlasDir: opts.outDir, declaredDurations: result.declaredDurations, rig: result.rig, modelText: threadedModel(result, result.atlasText), profile });
+      }
+    }
+    const c = SUPPLIERS;
+    const probes = [
+      ...c.faults.filter((f) => !f.fault.startsWith('the skins walk')).map((f) => `${f.case}: ${f.fault}`),
+      ...c.unwritable.map((why) => `a compile whose model document the writer refused, so its call carried no model: ${why}`),
+      ...floorProbes(
+        [
+          [c.compared, 1, `${c.compared} call(s) compared`],
+          [c.lines, 1, `${c.lines} line(s) compared`],
+        ],
+        'and a check that compared nothing is no check',
+      ),
+    ];
+    const held = probes.length === 0;
+    say(
+      'VF02_EVERY_CALL_ON_ITS_MODELS_OWN_BUILD_PRINTS_THE_SAME_LINES_ON_BOTH_SIDES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `this run: ${c.calls} validate call(s), ${c.withModel} with a model in hand, ${c.own} of them on the model's own pair — ` +
+          `${c.compared} compared over ${c.lines} line(s) of [${codes.join(', ')}] and the stats they set, every one identical; ` +
+          `${c.bothRefused} refused by both parses alike; ${c.afterEmit} after an edit (VF03's); ${c.withoutModel} with no model in hand`,
+        (count) => `${count} difference(s) between the suppliers, by case:`,
+      ),
+      'the card\'s second population: each existing mutant and control that has a compile behind it is a test of both ' +
+        'suppliers without being rewritten, and a moved assertion whose line differs is named on the case that made the call',
+    );
+  }
+
+  // --- VF03: population 3 — every after-emit break of a moved assertion has its twin ---
+  {
+    validate(
+      {
+        skeletonText: overlay.result.skeletonText,
+        atlasText: overlay.result.atlasText.replace(pageRenamed, '../vf_page_not_here.png'),
+        atlasDir: overlay.opts.outDir,
+        declaredDurations: overlay.result.declaredDurations,
+        rig: overlay.result.rig,
+        modelText: threadedModel(overlay.result, overlay.result.atlasText),
+        profile: 'spine',
+      },
+      { forge: (doc) => void ((doc.pages as Array<{ name: string }>)[0].name = '../vf_page_not_here.png') },
+    );
+    const c = SUPPLIERS;
+    const by = (o: TwinOutcome['outcome']): TwinOutcome[] => c.twinOutcomes.filter((t) => t.outcome === o);
+    const ran = by('identical').length + by('refused by name').length;
+    // The convention's own plant: a break of a moved assertion with nothing beside it, through a fresh check.
+    const plant = new SupplierCheck();
+    plant.observe(
+      {
+        skeletonText: overlay.result.skeletonText,
+        atlasText: overlay.result.atlasText.replace(pageRenamed, '../vf_twinless.png'),
+        atlasDir: overlay.opts.outDir,
+        modelText: threadedModel(overlay.result, overlay.result.atlasText),
+        profile: 'spine',
+      },
+      validateOverSpine({ skeletonText: overlay.result.skeletonText, atlasText: overlay.result.atlasText.replace(pageRenamed, '../vf_twinless.png'), atlasDir: overlay.opts.outDir, profile: 'spine' }),
+      undefined,
+    );
+    plant.caseLine('VF03_PLANTED_BREAK');
+    const planted = plant.twinOutcomes.find((t) => t.case === 'VF03_PLANTED_BREAK' && t.outcome === 'no twin' && t.code === 'A17_ATLAS_PAGE_FILES_EXIST');
+    const probes = [
+      ...[...by('no twin'), ...by('not reproduced')].map((t) => `${t.case} ${t.code}: ${t.outcome} — ${t.detail}`),
+      ...c.unthreaded.map((u) => `${u.case}: [${u.codes.join(', ')}] fired on a file rigc wrote, and no model was threaded to the call`),
+      ...c.faults.filter((f) => f.fault.startsWith('a twin was declared')).map((f) => `${f.case}: ${f.fault}`),
+      ...(planted === undefined ? ['a break of A17 with no twin, through a fresh check, was not named "no twin"'] : []),
+      ...floorProbes([[ran, 1, `${ran} twin(s) ran`]], 'and a convention nothing exercised is not a convention'),
+    ];
+    const table = c.twinOutcomes.map((t) => `${t.case === UNNAMED_CASE ? 'this case' : t.case} ${t.code.slice(0, 3)}: ${t.outcome}`).join('; ');
+    const held = probes.length === 0;
+    say(
+      'VF03_EVERY_AFTER_EMIT_BREAK_OF_A_MOVED_ASSERTION_HAS_A_TWIN_THE_MODEL_SIDE_ANSWERS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${c.firing} after-emit break(s) fail a moved assertion, ${c.twinOutcomes.length} outcome(s): ${by('identical').length} identical line, ` +
+          `${by('refused by name').length} refused by the reader naming the same object, ${by('encoding-only').length} encoding-only — [${table}]; ` +
+          'a break with no twin, planted through a fresh check, is named',
+        (count) => `${count} break(s) the model side cannot answer for:`,
+      ),
+      'the card\'s third population: a wrongness forged into the emitted text has no model unless one is forged beside it, ' +
+        'and the forged model either prints the same line or is refused by the reader by the same name — recorded by the run, never typed',
+    );
+  }
+
+  // --- VF04: a model supplier one value off turns a named case red ----------
+  {
+    const probes: string[] = [];
+    const input: ValidateInput = {
+      skeletonText: overlay.result.skeletonText,
+      atlasText: overlay.result.atlasText,
+      atlasDir: overlay.opts.outDir,
+      modelText: threadedModel(overlay.result, overlay.result.atlasText),
+      profile: 'spine-html',
+    };
+    const spine = validateOverSpine(input);
+    const plants: Array<[string, Partial<ModelSupply>, string]> = [
+      ['one clipping attachment more than the skins hold', { skinEntries: (read) => ({ ...modelSkinEntries(read), clippingCount: modelSkinEntries(read).clippingCount + 1 }) }, 'A11_NO_CLIPPING_ATTACHMENTS'],
+      ['the first region one width below zero', { skinEntries: (read) => {
+        const facts = modelSkinEntries(read);
+        return { ...facts, regionAttachments: facts.regionAttachments.map((r, i) => (i === 0 ? { ...r, width: -r.width } : r)) };
+      } }, 'A03_REGION_WIDTH_HEIGHT_FINITE'],
+      ['a page under a neighbouring name', { atlasPages: (read) => ({ atlas: { pages: (read.doc.pages ?? []).map((p, i) => ({ name: i === 0 ? `${p.name}x` : p.name })) } }) }, 'A17_ATLAS_PAGE_FILES_EXIST'],
+    ];
+    const named: string[] = [];
+    for (const [label, supply, code] of plants) {
+      const check = new SupplierCheck(supply);
+      check.observe(input, spine, undefined);
+      check.caseLine('VF04_PLANTED_CASE');
+      const fault = check.faults.find((f) => f.case === 'VF04_PLANTED_CASE' && f.fault.startsWith(`${code} differs`));
+      if (fault === undefined) probes.push(`${label}: the check named [${check.faults.map((f) => f.fault).join('; ') || 'nothing'}], not ${code} on the planted case`);
+      else named.push(`${label} → ${fault.fault.slice(0, 160)}`);
+    }
+    const clean = new SupplierCheck();
+    clean.observe(input, spine, undefined);
+    clean.caseLine('VF04_UNPLANTED_CASE');
+    if (clean.faults.length > 0 || clean.compared !== 1) probes.push(`the same call unplanted read ${clean.compared} comparison(s) and [${clean.faults.map((f) => f.fault).join('; ')}]`);
+    const held = probes.length === 0;
+    say(
+      'VF04_A_MODEL_SUPPLIER_ONE_VALUE_OFF_IS_NAMED_ON_THE_CASE_THAT_MADE_THE_CALL',
+      held,
+      probeDetail(held, probes, `the overlay probe's own pair: identical unplanted, and each plant named on the case — ${named.join('; ')}`),
+      'VF02 is green on every run where the suppliers agree, which is also what a check that compares nothing would print: these are the ' +
+        'neighbouring values it has to see, one per family of facts',
+    );
+  }
+
+  // --- VF05: the skins are walked in the file's order on both sides ---------
+  {
+    gateProbe(
+      writeProbeRig({
+        skins: { default: { ...PROBE_BLOCK_ONLY_SKIN }, zulu: { marker: { marker: { image: 'marker.png' } } }, mike: { marker: { marker: { image: 'block.png' } } } },
+      }),
+      STATIC_MOTION,
+      'spine',
+    );
+    const w = SUPPLIERS.walks;
+    const probes = [
+      ...SUPPLIERS.faults.filter((f) => f.fault.startsWith('the skins walk')).map((f) => `${f.case}: ${f.fault}`),
+      ...floorProbes(
+        [
+          [w.compared, 1, `${w.compared} multi-skin build(s) walked`],
+          [w.documentOrderDiffers, 1, `${w.documentOrderDiffers} of them walk differently in the document's own order`],
+        ],
+        'so nothing here shows the emitter\'s order is the one that matters',
+      ),
+    ];
+    const held = probes.length === 0;
+    say(
+      'VF05_THE_MODEL_SIDE_WALKS_THE_SKINS_IN_THE_FILES_ORDER_BY_THE_EMITTERS_RULE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${w.equal} of ${w.compared} build(s) with more than one skin walk their regions and clippings in spine-core's order on the model side, name and size, ` +
+          `with the skins put in order by \`editorSkinOrder\`; walked in the document's own order instead, ${w.documentOrderDiffers} of them would print in another order`,
+      ),
+      'an order no line has failed on yet is still a fact: two FAIL lines of A03 on a rig whose skins the comparator moves would come out ' +
+        'in another order from a supplier that walked the document as it is written',
+    );
+  }
+
+  // --- VF06: the model side's parse — the reader's refusal and the region rule ---
+  {
+    const probes: string[] = [];
+    const modelText = threadedModel(overlay.result, overlay.result.atlasText) ?? '';
+    const base = JSON.parse(modelText) as Record<string, unknown>;
+    type DocSkin = { name: string; attachments: Record<string, Record<string, Record<string, unknown>>> };
+    const firstRegion = (doc: Record<string, unknown>): { record: Record<string, unknown>; placeholder: string } => {
+      for (const skin of doc.skins as DocSkin[]) {
+        for (const table of Object.values(skin.attachments)) {
+          for (const [placeholder, record] of Object.entries(table)) if (record.kind === 'region' && record.atlas !== undefined) return { record, placeholder };
+        }
+      }
+      throw new Error('the overlay probe holds no region record with an atlas rectangle');
+    };
+    const run = (edit: (doc: Record<string, unknown>) => void): ModelReport => {
+      const doc = JSON.parse(modelText) as Record<string, unknown>;
+      edit(doc);
+      return validateModel({ modelText: `${JSON.stringify(doc, null, 2)}\n`, atlasDir: overlay.opts.outDir, profile: 'spine-html' });
+    };
+    const { placeholder } = firstRegion(base);
+    const clean = validateModel({ modelText, atlasDir: overlay.opts.outDir, profile: 'spine-html' });
+    if (!clean.passed.includes(A00_MODEL_READ) || !clean.passed.includes(A00_MODEL_REGIONS_ON_PAGES)) probes.push(`the probe's own document did not pass both rules: [${clean.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`);
+    const unreadable = run((doc) => void delete firstRegion(doc).record.width);
+    const readFail = unreadable.failures.find((f) => f.assertion === A00_MODEL_READ);
+    if (readFail === undefined || !readFail.detail.includes(`"${placeholder}"`) || !readFail.detail.includes('width is absent')) probes.push(`a region with no width: ${readFail?.detail ?? 'the reader read it'}`);
+    const skippedForNoDoc = codes.filter((code) => !unreadable.skipped.some((s) => s.assertion === code));
+    if (skippedForNoDoc.length > 0) probes.push(`with the document refused, [${skippedForNoDoc.join(', ')}] did not skip`);
+    const missing = run((doc) => void (firstRegion(doc).record.path = 'vf_no_such_region'));
+    const missingFail = missing.failures.find((f) => f.assertion === A00_MODEL_REGIONS_ON_PAGES);
+    if (missingFail === undefined || !missingFail.detail.includes('"vf_no_such_region"') || !missingFail.detail.includes(`placeholder "${placeholder}"`)) probes.push(`a path naming no region: ${missingFail?.detail ?? 'the region rule passed it'}`);
+    const nulled = run((doc) => void (firstRegion(doc).record.atlas = null));
+    const nullFail = nulled.failures.find((f) => f.assertion === A00_MODEL_REGIONS_ON_PAGES);
+    if (nullFail === undefined || !nullFail.detail.includes('atlas is null')) probes.push(`a region record whose atlas is null: ${nullFail?.detail ?? 'the region rule passed it'}`);
+    const pageless = run((doc) => {
+      doc.spec = 'rigc-compiled/1';
+      delete doc.pages;
+    });
+    if (!pageless.failures.some((f) => f.assertion === A00_MODEL_REGIONS_ON_PAGES && f.detail.includes('states no pages'))) probes.push('a rigc-compiled/1 document, which states no pages, was not refused by the region rule');
+    const notSkipped = codes.filter((code) => !missing.skipped.some((s) => s.assertion === code));
+    if (notSkipped.length > 0) probes.push(`with the region rule refusing, [${notSkipped.join(', ')}] did not skip`);
+    const held = probes.length === 0;
+    say(
+      'VF06_THE_MODEL_SIDES_PARSE_IS_THE_READER_AND_THE_REGION_RULE_EACH_NAMED',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the overlay probe's document passes both; with a region's width deleted ${A00_MODEL_READ} reads "${readFail?.detail.slice(0, 120)}…"; ` +
+          `${A00_MODEL_REGIONS_ON_PAGES} names a path to no region ("${missingFail?.detail.slice(0, 120)}"), a null atlas rectangle and a document with no pages; ` +
+          `every moved assertion skips behind either refusal`,
+      ),
+      'the census: 14 of the 23 cases that fail A00 are documents the reader accepts and spine-core refuses at load. The region rule is ' +
+        'what makes the model side refuse them where the parse does, rather than when the core poses',
+    );
+  }
+
+  // --- VF07: the instrument, on the gallery's rows -------------------------
+  {
+    const probes: string[] = [];
+    const work = mkdtempSync(join(tmpdir(), 'rigc-verdict-gate-'));
+    const recipesFile = join(work, 'recipes.json');
+    writeFileSync(recipesFile, recipesText(galleryRecipes(root, () => {})));
+    const printed: string[] = [];
+    const code = verdictMain(['--recipes', recipesFile, '--work', join(work, 'w')], (line) => printed.push(line), () => {});
+    const last = printed[printed.length - 1] ?? '';
+    const cells = printed.filter((l) => /^ {2}IDENTICAL {2}.+ A\d\d_/.test(l)).length;
+    if (code !== 0 || !last.startsWith('IDENTICAL')) probes.push(`exit ${code}, last line ${JSON.stringify(last)}`);
+    if (printed.some((l) => l.startsWith('  DIFFERING') || l.startsWith('  REFUSED'))) probes.push(printed.filter((l) => l.startsWith('  DIFFERING') || l.startsWith('  REFUSED')).join('; '));
+    // Both other readings, off rows forged from a real one rather than a second run.
+    const rows: VerdictRow[] = [{ name: 'vf07', refused: null, cells: [{ code: codes[0], profile: 'spine', spine: ['  PASS  x'], model: ['  PASS  x'], identical: true }], walk: { spine: '[]', model: '[]', identical: true } }];
+    const differing = verdictLines([{ ...rows[0], cells: [{ ...rows[0].cells[0], model: ['  FAIL  x: y'], identical: false }] }]);
+    if (differing.ok || differing.empty || !differing.lines.some((l) => l.startsWith('  DIFFERING') && l.includes(codes[0]))) probes.push(`a differing cell read ${JSON.stringify(differing.lines)}`);
+    const nothing = verdictLines([{ name: 'vf07', refused: 'planted', cells: [], walk: null }]);
+    if (!nothing.empty || nothing.ok) probes.push(`a run that compared nothing read ok=${nothing.ok}, empty=${nothing.empty}`);
+    rmSync(work, { recursive: true, force: true });
+    const held = probes.length === 0;
+    say(
+      'VF07_THE_INSTRUMENT_READS_EVERY_GALLERY_ROW_IDENTICAL_AND_NAMES_A_DIFFERENCE',
+      held,
+      probeDetail(held, probes, `\`tools/verdict_gate.ts\` over the gallery's recipes: ${cells} line set(s) identical — ${last}; a differing cell is DIFFERING and exit 1, a run that compared nothing exit 2`),
+      'the card\'s first population is every corpus row, and the private rigs are run by naming their recipes; the gallery rows are the ones ' +
+        'a fresh clone and CI can build, so they are the rows a control can hold',
+    );
+  }
+
+  // --- VF08: the roster scans read the moved bodies where their checks call them ---
+  {
+    const probes: string[] = [];
+    const file = readFileSync(join(root, 'src', 'validate.ts'), 'utf8');
+    const view = validateSourceWithBodies(root);
+    const inView = subjectQuantifiedAssertions(view);
+    const inFile = subjectQuantifiedAssertions(file);
+    const behindView = assertionsBehindTheRoundTrip(view);
+    const behindFile = assertionsBehindTheRoundTrip(file);
+    const recovered = codes.filter((code) => (inView.includes(code) && !inFile.includes(code)) || (behindView.includes(code) && !behindFile.includes(code)));
+    if (!behindView.includes('A17_ATLAS_PAGE_FILES_EXIST')) probes.push('A17, whose body opens on `if (!atlas)`, is not behind the round trip in the view');
+    for (const code of ['A03_REGION_WIDTH_HEIGHT_FINITE', 'A17_ATLAS_PAGE_FILES_EXIST', 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN']) {
+      if (!inView.includes(code)) probes.push(`${code} iterates over its subject and is not in the view's quantified roster`);
+    }
+    const plantRoot = mkdtempSync(join(tmpdir(), 'rigc-vf08-'));
+    mkdirSync(join(plantRoot, 'src', 'assertions', 'bodies'), { recursive: true });
+    writeFileSync(join(plantRoot, 'src', 'validate.ts'), "  check('A03_REGION_WIDTH_HEIGHT_FINITE', () => vfNoSuchBody(verdicts, facts));\n");
+    let refusal = '';
+    try {
+      validateSourceWithBodies(plantRoot);
+    } catch (err) {
+      refusal = (err as Error).message;
+    }
+    rmSync(plantRoot, { recursive: true, force: true });
+    if (!refusal.includes('vfNoSuchBody')) probes.push(`a check delegating to a body no file exports read ${refusal === '' ? 'as a body with nothing in it' : JSON.stringify(refusal)}`);
+    const held = probes.length === 0;
+    say(
+      'VF08_THE_ROSTER_SCANS_READ_EACH_MOVED_BODY_WHERE_ITS_CHECK_CALLS_IT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `read off src/validate.ts alone the scans lose [${recovered.join(', ')}]; with each body put back where its check calls it, ` +
+          `${behindView.length} rule(s) sit behind the round trip and ${inView.length} quantify over a subject, as before the move; a check calling a body no file exports is refused by name`,
+      ),
+      'S09 and S48 derive their rosters from validate()\'s text, and a body that moved out of the file is still a body of validate(): read ' +
+        'without the bodies, both printed different figures and S50 went red on the first cut',
+    );
+  }
+
+  return bad;
+}
+
 function main(): void {
   let breaks = 0;
   let tolerances = 0;
@@ -96055,7 +96987,12 @@ function main(): void {
   const tally = new RunTally(ONLY);
   const printLine = console.log;
   console.log = (...args: unknown[]): void => {
-    tally.observe(args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' '));
+    const line = args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ');
+    tally.observe(line);
+    // The supplier check attributes what it found to the case the call was made for: the next case line printed.
+    const word = gutterWord(line);
+    const name = word !== null && VERDICT_GUTTER.includes(word) ? caseName(line) : null;
+    if (name !== null) SUPPLIERS.caseLine(name);
     printLine(...args);
   };
   for (const suite of SUITES) {
@@ -96137,6 +97074,8 @@ function main(): void {
     failures: (value) => value.failures,
   });
   const cuts = tally.of('registered-cut', runCutsSuite, { ran: (value) => value.cuts > 0, failures: (value) => value.failures });
+  // Last, because it reads what the supplier check saw across every suite before it (issue #1025).
+  tally.of('verdict-suppliers', runVerdictSuppliersSuite);
   console.log = printLine;
 
   // A name `--only` gave that no `tally.of` above registers (issue #937). Read

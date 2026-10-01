@@ -278,8 +278,12 @@ interface CoreInput {
  * The document posed with no skin set — spine-core's initial state, every slot
  * resolved through the default skin alone — or refused by name where that
  * equivalence was not measured (the header's *The skin*).
+ *
+ * Exported for the model side of the validator (issue #1025), which poses a
+ * slot the way `validate()` does — a fresh skeleton, no skin set — and must
+ * resolve that state by this rule rather than by a copy of it.
  */
-function noSkinView(doc: CompiledDocument): CompiledDocument {
+export function noSkinView(doc: CompiledDocument): CompiledDocument {
   if (doc.skins.length === 0) return underSkin(doc, CORE_ALL_SKINS);
   const fallback = doc.skins.find((k) => k.name === CORE_DEFAULT_SKIN);
   if (fallback === undefined) {

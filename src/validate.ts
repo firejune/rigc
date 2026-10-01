@@ -100,11 +100,34 @@ import {
   walkTimelines,
 } from './timelines.ts';
 import type { RigInfo } from './types.ts';
+import { ASSERTION_KIND, kindRunsUnder, type AssertionProfile } from './assertions/kinds.ts';
+import { verdictHarness, type Failure } from './assertions/harness.ts';
+import { atStoredKey, isObj, type Json } from './assertions/values.ts';
+import type { SkinEntryFacts } from './assertions/facts/skin_entries.ts';
+import type { AtlasPageFacts } from './assertions/facts/atlas_pages.ts';
+import type { SlotColourFacts, SlotTimelines } from './assertions/facts/slot_colour.ts';
+import { a03RegionWidthHeightFinite } from './assertions/bodies/a03.ts';
+import { a11NoClippingAttachments } from './assertions/bodies/a11.ts';
+import { a17AtlasPageFilesExist } from './assertions/bodies/a17.ts';
+import { a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten } from './assertions/bodies/a45.ts';
+import {
+  SKIP_NO_ANIMATION,
+  SKIP_NO_ATLAS,
+  SKIP_NO_ATLAS_PAGE,
+  SKIP_NO_ATLAS_REGION,
+  SKIP_NO_ATTACHMENT_REGION_JOIN,
+  SKIP_NO_DECLARED_DURATION,
+  SKIP_NO_LINKED_MESH,
+  SKIP_NO_MESH_ATTACHMENT,
+  SKIP_NO_PHYSICS_CONSTRAINT,
+  SKIP_NO_POSE,
+  SKIP_NO_SEQUENCE,
+  SKIP_NO_SKELETON,
+  SKIP_NO_TIMELINE,
+  SKIP_NO_TWO_COLOR_TINT,
+} from './assertions/reasons.ts';
 
-export interface Failure {
-  assertion: string;
-  detail: string;
-}
+export type { Failure } from './assertions/harness.ts';
 
 /**
  * Which body of rules to hold the artifact to.
@@ -130,7 +153,7 @@ export interface Failure {
  * no longer honestly serve both — so the choice is made at every call site now,
  * by the caller who knows which question they are asking.
  */
-export type ValidateProfile = 'spine' | 'spine-html';
+export type ValidateProfile = AssertionProfile;
 
 export const VALIDATE_PROFILES: readonly ValidateProfile[] = ['spine', 'spine-html'];
 
@@ -147,84 +170,8 @@ export const VALIDATE_PROFILES: readonly ValidateProfile[] = ['spine', 'spine-ht
  */
 export const CLI_DEFAULT_PROFILE: ValidateProfile = 'spine';
 
-/**
- * What kind of rule each assertion is. Every assertion has an entry, and
- * `check()` throws on a name that has none — a new assertion must state its kind
- * rather than defaulting into one, because the default would decide, silently,
- * whether it runs on foreign data.
- *
- *   validity  — the file is wrong for any consumer. Runs under every profile.
- *   renderer  — valid Spine that this project's renderer or frame budget refuses.
- *   archetype — a structural rule about rigc's own formations, meaningless to a
- *               skeleton rigc did not compile.
- *
- * Two assertions are MIXED and are marked `validity` here because their
- * validity half must never stop running; their policy clauses are gated inside
- * the assertion body against `profile`, and each such clause says so where it
- * lives. They are A06 (size-vs-PNG and every region's rectangle inside the page
- * it names are validity; pma / rotation / two regions over the same texels are
- * policy — the rectangle moved across that line in issue #694, and the reason
- * is stated where it now sits) and A20 (weight coherence is validity; requiring
- * a mesh to be weighted at all is policy).
- *
- * A08 was the third until issue #574 retired its policy clause. It required a
- * skin entry's placeholder to be spelled like the region it resolves to, under
- * a renderer that resolves art by `path` and has never read a placeholder — so
- * restating it as the renderer's own join made it a tautology over the validity
- * half. The argument, with the renderer lines it is measured against, sits above
- * `check('A08_…')`.
- */
-const ASSERTION_KIND: Record<string, 'validity' | 'renderer' | 'archetype'> = {
-  A00_ROUNDTRIP_PARSE: 'validity',
-  A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS: 'validity',
-  A02_NO_BONE_TRANSFORM_KEY: 'validity',
-  A03_REGION_WIDTH_HEIGHT_FINITE: 'validity',
-  A04_MESH_TRIANGLES_AND_ENCODING: 'validity',
-  A05_CURVE_ARRAY_LENGTH: 'validity',
-  A06_ATLAS_PAGE_SIZE_MATCHES_PNG: 'validity', // mixed — see above
-  A07_ATLAS_TEXT_SHAPE: 'validity',
-  A08_REGION_NAMES_MATCH_ATTACHMENTS: 'validity', // no longer mixed — see above (#574)
-  A09_ANIMATION_DURATION_MATCHES_SPEC: 'validity',
-  A10_NO_NAN_AFTER_STEPPING: 'validity',
-  A11_NO_CLIPPING_ATTACHMENTS: 'renderer',
-  A12_NO_DARK_COLOR: 'renderer',
-  A13_MESH_BUDGET: 'renderer',
-  A14_NO_FULL_FRAME_MESH: 'renderer',
-  A15_IDLE_NO_MESH_BONE_KEYS: 'renderer',
-  A16_SKELETON_VERSION_4_3: 'validity',
-  A17_ATLAS_PAGE_FILES_EXIST: 'validity',
-  A18_DETERMINISTIC_EMIT: 'validity',
-  A19_OVERLAY_PNGS_HAVE_ALPHA: 'renderer',
-  A20_MESH_WEIGHTS_COHERENT: 'validity', // mixed — see above
-  A21_MESH_RIM_PINNED: 'archetype',
-  A22_MESH_UVS_IN_UNIT_RANGE: 'validity',
-  A23_PHYSICS_CONSTRAINT_EFFECTIVE: 'validity',
-  A24_AXIS_SPACE_STROKE: 'archetype',
-  A25_DETACHED_BONE_PARENTAGE: 'archetype',
-  A26_SLOT_DRAW_ORDER: 'archetype',
-  A27_REGION_NAME_MATCHES_PAGE_FILENAME: 'renderer',
-  A28_RIBBON_ROWS_SHARE_WEIGHTS: 'archetype',
-  A29_STROKE_WITHIN_CONTACT_DEPTH: 'archetype',
-  A30_STROKE_WITHIN_CAP_CONTAINMENT: 'archetype',
-  A31_DRAW_ORDER_OFFSETS_RESOLVE: 'validity',
-  A32_EVENT_KEYS_RESOLVE: 'validity',
-  A33_VERTEX_ATTACHMENT_GEOMETRY: 'validity',
-  A34_CONSTRAINT_TIMELINE_TARGETS: 'validity',
-  A35_DEFORM_KEYS_FIT_THE_ATTACHMENT: 'validity',
-  A36_PATH_CONSTRAINT_EFFECTIVE: 'validity',
-  A37_SLIDER_CONSTRAINT_EFFECTIVE: 'validity',
-  A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED: 'validity',
-  A39_DEFORM_KEEPS_TRIANGLE_WINDING: 'archetype',
-  A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET: 'validity',
-  A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP: 'validity',
-  A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER: 'validity',
-  A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN: 'validity',
-  A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN: 'validity',
-  A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN: 'validity',
-  A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES: 'validity',
-  A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT: 'validity',
-  A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT: 'validity',
-};
+// What kind of rule each assertion is — `./assertions/kinds.ts` since issue
+// #1025, where the model side's harness reads the same table.
 
 /**
  * Every assertion this validator knows, in registry order.
@@ -242,112 +189,27 @@ export function assertionCountForProfile(profile: ValidateProfile): number {
   return ASSERTION_NAMES.filter((name) => ASSERTION_KIND[name] === 'validity').length;
 }
 
-/**
- * What a SKIP says when `A00_ROUNDTRIP_PARSE` handed an assertion nothing to
- * look at.
- *
- * Two of them rather than one, because what an assertion was denied is the whole
- * content of its SKIP: `A20` wanted the loaded skeleton and `A06` wanted the
- * loaded atlas, and a reader who is told which can tell a rule that is waiting
- * on the parse from one that is waiting on the art. Both point at A00 instead of
- * restating its detail, which the FAIL row prints in full.
- *
- * Exported so a control compares against them rather than quoting them — the
- * same reason `ASSERTION_NAMES` is exported.
- */
-export const SKIP_NO_SKELETON = 'the round trip did not produce a skeleton to measure (A00 owns that failure)';
-export const SKIP_NO_ATLAS = 'the round trip did not produce an atlas to measure (A00 owns that failure)';
-/**
- * The third of them, and it is NOT waiting on A00 (issue #608): the atlas parsed
- * and it has no pages, which is what a compile that measured no art writes. The
- * four rules whose only subject is a page — A06, A17, A19, A27 — have nothing to
- * look at, and an empty loop walking out of `check()` is reported as a PASS.
- */
-/*
- * **An empty subject list: SKIP or PASS, and which one is derived (issue #580).**
- *
- * `check()` records a pass when a body runs to its end without a `fail()` or a
- * `skip()`, so a body whose main construct is a loop over a list that is EMPTY
- * passes having measured nothing — the vacuous green one ring out from the bare
- * `return` guards issue #568 converted. Two different things can be true of such
- * a loop, and the criterion decides between them by reading the rule's own name
- * and its `fail()` sentences rather than by preference:
- *
- *   * A name of the form ⟨subject⟩_⟨property⟩ — `REGION_WIDTH_HEIGHT_FINITE`,
- *     `MESH_TRIANGLES_AND_ENCODING`, `PHYSICS_CONSTRAINT_EFFECTIVE`,
- *     `ATLAS_PAGE_SIZE_MATCHES_PNG` — quantifies over the subject it names, and
- *     its `fail()` names a member of that subject, the value found and the value
- *     required. With no member, nothing was measured: it **SKIPs**, and the
- *     reason names the subject that was absent.
- *   * A name of the form NO_⟨construct⟩ — `NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS`,
- *     `NO_BONE_TRANSFORM_KEY`, `NO_CLIPPING_ATTACHMENTS`, `NO_DARK_COLOR`,
- *     `NO_FULL_FRAME_MESH` — quantifies over occurrences of something a correct
- *     artifact has NONE of, and its `fail()` reports that the construct is
- *     present rather than measuring a value on it. Zero occurrences IS the
- *     measurement, so it **PASSes**: the loop is a search of the artifact, and
- *     the artifact is what it measured.
- *   * A name carrying both halves takes each at its word.
- *     `A15_IDLE_NO_MESH_BONE_KEYS` is the pattern and already reads this way: no
- *     `idle` animation, or an `idle` with no bone timeline, is the named subject
- *     absent and SKIPs; no mesh-driving bone among the bones `idle` does key is
- *     the construct absent and passes. `A10_NO_NAN_AFTER_STEPPING` was the same
- *     shape until issue #902, and is the next bullet's now: #882 gave it a
- *     setup-pose clause whose subject is the bones, beside the stepping clause
- *     whose subject is the animations.
- *   * An assertion with more than one clause SKIPs only when EVERY clause had
- *     nothing to measure, which is the shape `A09`, `A33` and `A38` already
- *     carry (`polygons.length === 0 && endsChecked === 0`), and `A10` since #902.
- *     `A13_MESH_BUDGET` is why the clause is stated: a declared slot budget is
- *     measured against a count of mesh slots, and zero is a count, so that half
- *     passes on a rig with no mesh — while a rig that declares only a TRIANGLE
- *     budget has nothing left to measure and skips.
- *
- * ⚠️ What the criterion is not allowed to become is a table of assertions with
- * their verdicts written beside them. Every row above is decided by reading the
- * name and the sentences the assertion already prints, so a rule added tomorrow
- * is decided by the same reading and nobody re-opens this question.
- */
-
-/**
- * What a SKIP says when the artifact carries no member of the subject a rule
- * quantifies over (issue #580), by subject.
- *
- * One constant per SUBJECT rather than one per assertion, for the reason the two
- * above are two: what the rule was denied is the whole content of its SKIP, and
- * three rules denied the same thing should say so in the same words. Exported so
- * a control compares against them rather than quoting them.
- */
-export const SKIP_NO_REGION_ATTACHMENT = 'the skeleton carries no region attachment';
-export const SKIP_NO_MESH_ATTACHMENT = 'the skeleton carries no mesh attachment';
-export const SKIP_NO_ANIMATION = 'the skeleton carries no animation';
-/**
- * A10's (issue #902): its setup clause reads the bones and its stepping clause
- * the animations, so it skips only when the skeleton carries neither — and the
- * sentence is `SKIP_NO_ANIMATION`'s with the second subject added, so the two
- * cannot drift into different words for the same absence.
- */
-export const SKIP_NO_POSE = `${SKIP_NO_ANIMATION} and no bone, so there is no setup pose to read and nothing to step`;
-export const SKIP_NO_TIMELINE = 'no animation here carries a timeline';
-export const SKIP_NO_PHYSICS_CONSTRAINT = 'the skeleton declares no physics constraint';
-export const SKIP_NO_ATLAS_PAGE = 'the atlas declares no page';
-export const SKIP_NO_ATLAS_REGION = 'the atlas declares no region';
-export const SKIP_NO_ATTACHMENT_REGION_JOIN =
-  'no attachment names a region and the atlas declares none, so there is no attachment-to-region join to hold';
-export const SKIP_NO_TWO_COLOR_TINT =
-  'no slot declares a "dark" colour and no animation keys an "rgba2" or "rgb2" timeline, so there is no two-colour tint to read back';
-export const SKIP_NO_SEPARABLE_COLOR =
-  'no animation keys an "rgb" or "alpha" timeline, so there is no separable slot colour to read back';
-export const SKIP_NO_LINKED_MESH = 'no attachment in this skeleton takes its geometry from another one';
-export const SKIP_NO_SEQUENCE =
-  'no attachment carries a "sequence" block and no animation keys a "sequence" timeline, so there is no numbered series to read back';
-/**
- * A09's, which predates this list and joins it rather than being rewritten: it
- * is the same fact about the same subject, and a control that compares against
- * eight constants and quotes the ninth is a control with a hand-kept exception
- * in it.
- */
-export const SKIP_NO_DECLARED_DURATION =
-  'the motion spec declares no animations and the skeleton has none — a static rig has no duration to compare';
+// What a SKIP says, by what the assertion was denied — `./assertions/reasons.ts`
+// since issue #1025, so the assertion bodies that moved out of this file print
+// the same sentences on both sides; every one is re-exported from here.
+export {
+  SKIP_NO_ANIMATION,
+  SKIP_NO_ATLAS,
+  SKIP_NO_ATLAS_PAGE,
+  SKIP_NO_ATLAS_REGION,
+  SKIP_NO_ATTACHMENT_REGION_JOIN,
+  SKIP_NO_DECLARED_DURATION,
+  SKIP_NO_LINKED_MESH,
+  SKIP_NO_MESH_ATTACHMENT,
+  SKIP_NO_PHYSICS_CONSTRAINT,
+  SKIP_NO_POSE,
+  SKIP_NO_REGION_ATTACHMENT,
+  SKIP_NO_SEPARABLE_COLOR,
+  SKIP_NO_SEQUENCE,
+  SKIP_NO_SKELETON,
+  SKIP_NO_TIMELINE,
+  SKIP_NO_TWO_COLOR_TINT,
+} from './assertions/reasons.ts';
 
 export interface ValidateInput {
   skeletonText: string;
@@ -711,36 +573,8 @@ export function unnamedPhysicsTimeline(name: string): Timeline | null {
  */
 const SPINE_4_3: SpineGeneration = '4.3';
 
-type Json = Record<string, unknown>;
-
-function isObj(v: unknown): v is Json {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-/**
- * The time to pose a key at so that the runtime is AT it: the later of the
- * file's number and that number as spine-core stores it (issue #771).
- *
- * 🚨 Every timeline keeps its key times in a `Float32Array`
- * (`Utils.newFloatArray`), and a key time the float cannot hold exactly is
- * stored at the nearest one — for `0.2`, `0.20000000298…`, which is LATER than
- * the double `0.2`. Stepped to the file's own number, a timeline is then just
- * BEFORE its key: before a first key it writes the setup value (`time <
- * frames[0]`), and past a stepped key it still holds the one before
- * (`frames[i] > time`). That is a pose one float step from the key, not the
- * key's — measured on the selftest's own `ingest_probe`, whose `alpha` key at
- * 0.2 posed the setup 1.0 and was refused as `the key states value 0.4`.
- *
- * ⚠️ The later of the two rather than `Math.fround` alone: where the float
- * rounds DOWN, the file's number is already past the stored key, and a runtime
- * built without typed arrays stores the double itself — in both, the file's
- * number is the one at or after the key. What a key time rounds to is the
- * runtime's storage and not the file's statement, so a rule judging what a KEY
- * states poses at the key; the rounding itself is nothing an author can repair.
- */
-function atStoredKey(time: number): number {
-  return Math.max(time, Math.fround(time));
-}
+// `Json`, `isObj` and `atStoredKey` are `./assertions/values.ts`'s since issue
+// #1025: the bodies that moved out of this file read values the same way.
 
 /**
  * The atlas region names one raw skin entry will make the loader look up — or
@@ -1156,51 +990,92 @@ function firstDifferingLine(first: string, second: string): string {
   return `${i + 1}: ${cut(a[i])} first, ${cut(b[i])} second`;
 }
 
+/**
+ * The runtime's supply of `SkinEntryFacts` (issue #1025): every skin of the
+ * loaded skeleton in the loaded order, and each skin's entries as
+ * `getAttachments()` lists them — the walk this file's prelude makes for its
+ * own lists, made once more here so the facts the moved bodies read are a
+ * value the selftest can compare with the model side's, order included.
+ */
+export function spineSkinEntries(data: ReturnType<SkeletonJson['readSkeletonData']>): SkinEntryFacts {
+  const regionAttachments: RegionAttachment[] = [];
+  let clippingCount = 0;
+  for (const skin of data.skins) {
+    for (const entry of skin.getAttachments()) {
+      if (entry.attachment instanceof RegionAttachment) regionAttachments.push(entry.attachment);
+      else if (entry.attachment instanceof ClippingAttachment) clippingCount++;
+    }
+  }
+  return { regionAttachments, clippingCount };
+}
+
+/**
+ * The facts the moved bodies read, as `validate()` supplies them from a pair
+ * spine-core loads — or `null` when the load throws, which is A00's failure
+ * and `validate()`'s to name. For the selftest and `tools/verdict_gate.ts`,
+ * which compare these with the model side's fact by fact, where a verdict
+ * line would hide a difference (an order nothing failed on, a name no line
+ * printed); `validate()` itself builds them from its own round trip.
+ */
+export function runtimeFacts(skeletonText: string, atlasText: string): { skinEntries: SkinEntryFacts; atlasPages: AtlasPageFacts; slotColour: SlotColourFacts } | null {
+  let atlas: TextureAtlas;
+  let data: ReturnType<SkeletonJson['readSkeletonData']>;
+  try {
+    atlas = new TextureAtlas(atlasText);
+    data = new SkeletonJson(new AtlasAttachmentLoader(atlas)).readSkeletonData(JSON.parse(skeletonText));
+  } catch {
+    return null;
+  }
+  return { skinEntries: spineSkinEntries(data), atlasPages: { atlas }, slotColour: spineSlotColourFacts(JSON.parse(skeletonText) as Json, data) };
+}
+
+/**
+ * The runtime's supply of A45's facts (issue #1025): the slot timelines read
+ * off the skeleton JSON in the file's order — every animation the file keys,
+ * every slot an animation keys, skipping what is not an object, as A45's walk
+ * always read them — whether the loaded skeleton holds an animation, and a
+ * slot's colour posed on a fresh, non-looping track by spine-core: setup pose,
+ * `update(0)`, `updateWorldTransform(Physics.reset)`, then the track stepped to
+ * the time and applied. The model side's supply is
+ * `./assertions/model/slot_colour.ts`; the selftest holds the two to the same
+ * lines.
+ */
+function spineSlotColourFacts(raw: Json | null, data: ReturnType<SkeletonJson['readSkeletonData']>): SlotColourFacts {
+  const slotTimelines: SlotTimelines[] = [];
+  const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
+  for (const [animation, anim] of Object.entries(rawAnimations)) {
+    if (!isObj(anim) || !isObj(anim.slots)) continue;
+    for (const [slot, timelines] of Object.entries(anim.slots)) {
+      if (!isObj(timelines)) continue;
+      slotTimelines.push({ animation, slot, timelines });
+    }
+  }
+  return {
+    slotTimelines,
+    hasAnimation: (name) => Boolean(data.findAnimation(name)),
+    posedSlot: (animName, slotName, time) => {
+      const skeleton = new Skeleton(data);
+      const state = new AnimationState(new AnimationStateData(data));
+      state.setAnimation(0, animName, false);
+      skeleton.setupPose();
+      skeleton.update(0);
+      skeleton.updateWorldTransform(Physics.reset);
+      state.update(time);
+      state.apply(skeleton);
+      return skeleton.slots.find((s) => s.data.name === slotName)?.appliedPose;
+    },
+  };
+}
+
 export function validate(input: ValidateInput): ValidateReport {
-  const failures: Failure[] = [];
-  const passed: string[] = [];
-  const skipped: ValidateReport['skipped'] = [];
-  const profileSkipped: ValidateReport['profileSkipped'] = [];
-  const stats: Record<string, number | string> = {};
   const profile = input.profile;
   /** True when this profile's rulebook includes the policy layer. */
   const policy = profile === 'spine-html';
-
-  const fail = (assertion: string, detail: string) => failures.push({ assertion, detail });
-  /** Declare that an assertion had nothing to check, and why. */
-  const skip = (assertion: string, reason: string) => skipped.push({ assertion, reason });
-  /**
-   * Run one assertion; record it as passed only if it neither failed nor skipped,
-   * and do not run it at all when the profile does not carry that kind of rule.
-   *
-   * The unknown-assertion throw is deliberate: an assertion with no entry in
-   * ASSERTION_KIND would otherwise pick a profile by accident, and picking wrong
-   * means either a rule that never runs or a rule that fires on everybody's data.
-   *
-   * The body's return value is handed back — `undefined` when the assertion did
-   * not run or threw. Only A00 uses it, and it uses it so that the loaded atlas
-   * and skeleton can be `const`: assigning them from inside this callback leaves
-   * the type checker unable to see that they were ever set, and every later read
-   * of `atlas.pages` or `data.bones` becomes a property of `never`.
-   */
-  const check = <T>(assertion: string, body: () => T): T | undefined => {
-    const kind = ASSERTION_KIND[assertion];
-    if (!kind) throw new Error(`validate: assertion "${assertion}" has no ASSERTION_KIND entry`);
-    if (kind !== 'validity' && !policy) {
-      profileSkipped.push({ assertion, kind });
-      return undefined;
-    }
-    const before = failures.length;
-    const skippedBefore = skipped.length;
-    let result: T | undefined;
-    try {
-      result = body();
-    } catch (err) {
-      fail(assertion, `threw: ${(err as Error).message}`);
-    }
-    if (failures.length === before && skipped.length === skippedBefore) passed.push(assertion);
-    return result;
-  };
+  // The harness — `check`, `fail`, `skip` and the lists they fill — is
+  // `./assertions/harness.ts`'s since issue #1025, and the rule is the one it
+  // always was: the model side runs the bodies that moved there in the same
+  // harness, so a verdict cannot be decided two ways.
+  const { failures, passed, skipped, profileSkipped, stats, fail, skip, check, verdicts } = verdictHarness(profile, ASSERTION_KIND, 'validate');
 
   // -------------------------------------------------------------------------
   // Raw text / raw JSON assertions (they must run even if the parser is happy)
@@ -2030,7 +1905,6 @@ export function validate(input: ValidateInput): ValidateReport {
 
   const regionAttachments: RegionAttachment[] = [];
   const meshAttachments: MeshAttachment[] = [];
-  let clippingCount = 0;
   const meshSlots = new Set<number>();
   /**
    * The loaded mesh of every attachment the FILE spells as a link, to what the
@@ -2077,26 +1951,18 @@ export function validate(input: ValidateInput): ValidateReport {
             linkedMeshes.set(att, link);
             loadedLinks.set(join, att);
           }
-        } else if (att instanceof ClippingAttachment) clippingCount++;
+        }
       }
     }
     stats.regionAttachments = regionAttachments.length;
     stats.meshAttachments = meshAttachments.length;
+    // What the bodies that moved to `./assertions/bodies/` read of the skins —
+    // the runtime's supply of `SkinEntryFacts`, in the loaded skins' own order
+    // (issue #1025).
+    const skinEntries = spineSkinEntries(data);
 
     // --- A03: every region has finite width/height (case 6c) ---------------
-    check('A03_REGION_WIDTH_HEIGHT_FINITE', () => {
-      // ⟨subject⟩_⟨property⟩: with no region there is no size to find non-finite,
-      // and a loop over nothing used to report that as held (#580).
-      if (regionAttachments.length === 0) return skip('A03_REGION_WIDTH_HEIGHT_FINITE', SKIP_NO_REGION_ATTACHMENT);
-      for (const att of regionAttachments) {
-        if (!Number.isFinite(att.width) || !Number.isFinite(att.height)) {
-          fail('A03_REGION_WIDTH_HEIGHT_FINITE', `region "${att.name}" loaded w=${att.width} h=${att.height}`);
-        }
-        if (att.width <= 0 || att.height <= 0) {
-          fail('A03_REGION_WIDTH_HEIGHT_FINITE', `region "${att.name}" has a non-positive size`);
-        }
-      }
-    });
+    check('A03_REGION_WIDTH_HEIGHT_FINITE', () => a03RegionWidthHeightFinite(verdicts, skinEntries));
 
     // --- A04: mesh triangles + encoding coherence (case 6f) ----------------
     check('A04_MESH_TRIANGLES_AND_ENCODING', () => {
@@ -2291,11 +2157,7 @@ export function validate(input: ValidateInput): ValidateReport {
     });
 
     // --- A11 / A13 / A14: renderer + canvas budgets ----
-    check('A11_NO_CLIPPING_ATTACHMENTS', () => {
-      if (clippingCount > 0) {
-        fail('A11_NO_CLIPPING_ATTACHMENTS', `${clippingCount} clipping attachment(s); the renderer skips them silently`);
-      }
-    });
+    check('A11_NO_CLIPPING_ATTACHMENTS', () => a11NoClippingAttachments(verdicts, skinEntries));
     // 📐 The two numbers come from the rig spec's `invariants`, never from here.
     // A mesh budget is one consumer's frame time written down — the editor's own
     // example projects ship meshes many times denser and they are valid — so a
@@ -4796,174 +4658,10 @@ export function validate(input: ValidateInput): ValidateReport {
 
     // --- A45: the separable colour timelines own their channels ------------
     //
-    // ⭐ **Why this is its own rule and not a clause on `A43`.** `rgb` and
-    // `alpha` pose no dark colour, so under A43's name a failure would be a
-    // verdict saying "two-colour tint" about a file that states one colour —
-    // the name would say something other than what it decides (the rule #712
-    // applied to A43 itself, against a clause on A10). And the SKIP is the
-    // sharper half: a rig with a `dark` and no separable timeline has A43's
-    // subject present, so a clause there could only PASS on it, which is a pass
-    // for an absent subject.
-    //
-    // 🚨 **What it decides is what makes `rgb` + `alpha` not `rgba`**, and both
-    // clauses are about the file against the runtime:
-    //
-    //   1. **One channel, one timeline.** Each colour timeline poses its
-    //      channels at EVERY time — before its first key it writes the setup
-    //      value — so when two of one slot share a channel, the one applied
-    //      later (the one the file states later) overwrites the other
-    //      everywhere and the first one's keys on it are read by nothing
-    //      (`SLOT_COLOR_CHANNELS`). It is the shape a converter that writes a
-    //      separable `rgb` as `rgba` leaves beside the `alpha` it kept, and it
-    //      loads without a word.
-    //   2. **Posed as written.** Stepped to each key's own time, the channels
-    //      the timeline writes are the key's: a colour that is not six hex
-    //      digits loads as NaN, and a key whose time another key repeats is
-    //      read by nothing, and both parse in silence.
-    //
-    // ⚠️ An `rgb` timeline alone that a converter wrote as `rgba` with the
-    // setup alpha is NOT this rule's to see, and nothing that reads only the
-    // file can see it: the result is a correct `rgba`, which is also what an
-    // author keying the light colour and holding its alpha would write. What
-    // differs is what happens UNDER another track that moves the alpha, which
-    // is the consumer's composing rather than the object (CLAUDE.md). That
-    // file SKIPs here — it keys no `rgb` or `alpha` — and says so.
-    //
-    // ⚠️ The required values are parsed HERE, as A43's are, and the channel
-    // table is `timelines.ts`'s rather than the loaded timelines' property ids:
-    // a check that asked the parser what a timeline writes would agree with it
-    // whatever it did. A selftest control holds that table to the runtime's ids.
-    check('A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN', () => {
-      const NAME = 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN';
-      /** `rrggbb`, or `rrggbbaa` whose alpha an `rgb` key cannot pose. Null for anything else. */
-      const readRgbHex = (hex: unknown): [number, number, number] | null => {
-        if (typeof hex !== 'string') return null;
-        const body = hex.startsWith('#') ? hex.slice(1) : hex;
-        if (!/^[\da-fA-F]{6}([\da-fA-F]{2})?$/.test(body)) return null;
-        return [0, 2, 4].map((i) => Number.parseInt(body.slice(i, i + 2), 16) / 255) as [number, number, number];
-      };
-      /** Half a byte step for a hex channel; a stored `Float32` for an alpha `value`. */
-      const HEX_STEP = 1 / 510;
-      const FLOAT_STEP = 1e-6;
-      const off = (found: number, want: number, step: number): boolean => !Number.isFinite(found) || Math.abs(found - want) > step;
-      const show = (c: readonly number[]): string => c.map((n) => (Number.isFinite(n) ? n.toFixed(4) : 'NaN')).join(', ');
-
-      // -- the subjects, read off the FILE ---------------------------------
-      const subjects: Array<{ anim: string; slot: string; timelines: Record<string, unknown> }> = [];
-      const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
-      for (const [animName, anim] of Object.entries(rawAnimations)) {
-        if (!isObj(anim) || !isObj(anim.slots)) continue;
-        for (const [slotName, timelines] of Object.entries(anim.slots)) {
-          if (!isObj(timelines)) continue;
-          if (Array.isArray(timelines.rgb) || Array.isArray(timelines.alpha)) {
-            subjects.push({ anim: animName, slot: slotName, timelines });
-          }
-        }
-      }
-      if (subjects.length === 0) return skip(NAME, SKIP_NO_SEPARABLE_COLOR);
-      stats.separableColorTimelines = subjects.reduce(
-        (n, s) => n + (Array.isArray(s.timelines.rgb) ? 1 : 0) + (Array.isArray(s.timelines.alpha) ? 1 : 0),
-        0,
-      );
-
-      for (const { anim: animName, slot: slotName, timelines } of subjects) {
-        const at = `animation "${animName}" slot "${slotName}"`;
-        // In FILE order, which is the order `readAnimation` pushes them and so
-        // the order they apply in.
-        const colour = Object.keys(timelines).filter((name) => name in SLOT_COLOR_CHANNELS && Array.isArray(timelines[name]));
-
-        // -- clause 1: one channel, one timeline ---------------------------
-        let shared = false;
-        for (const channel of ['rgb', 'alpha', 'dark'] as const) {
-          const writers = colour.filter((name) => SLOT_COLOR_CHANNELS[name].includes(channel));
-          if (writers.length < 2 || !writers.some((name) => name === 'rgb' || name === 'alpha')) continue;
-          shared = true;
-          const last = writers[writers.length - 1];
-          fail(
-            NAME,
-            `${at}: ${writers.map((name) => `"${name}"`).join(' and ')} ${writers.length === 2 ? 'both' : 'all'} key the ${channel === 'rgb' ? 'light rgb' : channel === 'alpha' ? 'alpha' : 'dark colour'} ` +
-              `— each poses it at every time, its setup value before its first key included, so "${last}", which the ` +
-              `file states last, overwrites ${writers.length === 2 ? `"${writers[0]}"` : 'the others'} everywhere and ` +
-              'those keys are read by nothing. Key each channel once: "rgb" and "alpha" on their own key times, or one "rgba"',
-          );
-        }
-        if (shared) continue;
-
-        // -- clause 2: posed as written ------------------------------------
-        //
-        // ⚠️ Two things this does NOT do, both measured rather than skipped:
-        // it does not read the loaded timeline's CLASS back, and it does not
-        // hold a channel the timeline leaves alone to the setup pose. Against
-        // the linked parser neither can fail — every `rgb` / `alpha` array that
-        // loads at all loads as an `RGBTimeline` / `AlphaTimeline`, and the
-        // three other outcomes (an empty array, a slot the skeleton lacks, a
-        // name outside the switch) throw at `A00` — so either would be a clause
-        // nobody can see fire. The selftest reads both off spine-core directly
-        // (`S82`–`S84`), where they are measurements of the runtime rather than
-        // checks on a file.
-        if (!data.findAnimation(animName)) {
-          fail(NAME, `${at}: the loaded skeleton has no animation "${animName}"`);
-          continue;
-        }
-        for (const name of ['rgb', 'alpha'] as const) {
-          const keys = timelines[name];
-          if (!Array.isArray(keys)) continue;
-          const where = `${at} ${name}`;
-          for (const rawKey of keys) {
-            if (!isObj(rawKey)) continue;
-            const time = typeof rawKey.time === 'number' ? rawKey.time : 0;
-            const skeleton = new Skeleton(data);
-            const state = new AnimationState(new AnimationStateData(data));
-            state.setAnimation(0, animName, false);
-            skeleton.setupPose();
-            skeleton.update(0);
-            skeleton.updateWorldTransform(Physics.reset);
-            // At the key as the runtime stores it, not one float step before
-            // it — see `atStoredKey` (issue #771).
-            state.update(atStoredKey(time));
-            state.apply(skeleton);
-            const posed = skeleton.slots.find((s) => s.data.name === slotName)?.appliedPose;
-            if (!posed) {
-              fail(NAME, `${where} (t=${time}): the posed skeleton has no slot "${slotName}" to read`);
-              continue;
-            }
-            const light = [posed.color.r, posed.color.g, posed.color.b, posed.color.a];
-            if (name === 'rgb') {
-              const stated = readRgbHex(rawKey.color);
-              if (stated === null) {
-                fail(
-                  NAME,
-                  `${where} (t=${time}): the key states color ${JSON.stringify(rawKey.color)} — an rgb key is six hex ` +
-                    `digits — and the runtime poses (${show(light.slice(0, 3))})`,
-                );
-              } else if (light.slice(0, 3).some((n, i) => off(n, stated[i], HEX_STEP))) {
-                fail(
-                  NAME,
-                  `${where} (t=${time}): rgb posed (${show(light.slice(0, 3))}), the key states ` +
-                    `${JSON.stringify(rawKey.color)} = (${show(stated)})`,
-                );
-              }
-            } else {
-              // `readTimeline1(…, 0, 1)`: an absent `value` IS 0, and an editor
-              // omits it there, so absence is read the parser's way rather than
-              // as a malformed key.
-              const stated = rawKey.value === undefined ? 0 : rawKey.value;
-              if (typeof stated !== 'number' || off(light[3], stated, FLOAT_STEP)) {
-                fail(
-                  NAME,
-                  `${where} (t=${time}): alpha posed ${show([light[3]])}, the key states value ${JSON.stringify(rawKey.value)}` +
-                    (typeof stated !== 'number'
-                      ? ' — an alpha key\'s value is a number'
-                      : stated < 0 || stated > 1
-                        ? ' — the runtime clamps a posed alpha to 0..1'
-                        : ''),
-                );
-              }
-            }
-          }
-        }
-      }
-    });
+    // The body, and the argument for the rule, are `./assertions/bodies/a45.ts`
+    // since issue #1025: the same body runs over the model document. What it
+    // reads off spine-core's loaded skeleton is `spineSlotColourFacts`.
+    check('A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN', () => a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten(verdicts, spineSlotColourFacts(raw, data)));
 
     // --- A44: a linked mesh states no geometry of its own ------------------
     //
@@ -5317,17 +5015,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // green build had ever contained one; making that state legal is exactly what
   // #608 does, so the same state has to stop printing four passes about nothing.
   // `SKIP_NO_ATLAS_PAGE` is one string for all four because it is one condition.
-  check('A17_ATLAS_PAGE_FILES_EXIST', () => {
-    if (!atlas) return skip('A17_ATLAS_PAGE_FILES_EXIST', SKIP_NO_ATLAS);
-    // The other absence, one ring in (#580): the atlas LOADED and declares no
-    // page, so there is no file to find missing. `!atlas` and "zero pages" print
-    // different reasons because they are different facts about the artifact.
-    if (atlas.pages.length === 0) return skip('A17_ATLAS_PAGE_FILES_EXIST', SKIP_NO_ATLAS_PAGE);
-    for (const page of atlas.pages) {
-      const abs = resolve(input.atlasDir, page.name);
-      if (!existsSync(abs)) fail('A17_ATLAS_PAGE_FILES_EXIST', `page "${page.name}" is not on disk at ${abs}`);
-    }
-  });
+  check('A17_ATLAS_PAGE_FILES_EXIST', () => a17AtlasPageFilesExist(verdicts, { atlas }, input));
   check('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', () => {
     if (!atlas) return skip('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', SKIP_NO_ATLAS);
     if (atlas.pages.length === 0) return skip('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', SKIP_NO_ATLAS_PAGE);
@@ -6236,7 +5924,7 @@ export function validate(input: ValidateInput): ValidateReport {
   for (const name of ASSERTION_NAMES) {
     if (reported.has(name)) continue;
     const kind = ASSERTION_KIND[name];
-    if (kind !== 'validity' && !policy) profileSkipped.push({ assertion: name, kind });
+    if (kind !== 'validity' && !kindRunsUnder(kind, profile)) profileSkipped.push({ assertion: name, kind });
     else if (!roundTrip) skip(name, SKIP_NO_SKELETON);
     else {
       fail(
