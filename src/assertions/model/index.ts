@@ -13,7 +13,7 @@
  * `./skeleton_roster.ts`, `./bone_timelines.ts`, `./event_keys.ts`; cut
  * 4c-3's `./deform_survey.ts`, `./animation_durations.ts`, `./two_colour.ts`,
  * `./sequences.ts`; cut 4c-5's `./slider_composition.ts`,
- * `./constraint_targets.ts`)
+ * `./constraint_targets.ts`; cut 4c-5a's `./stepped_poses.ts`)
  * and calls the same body inside the same harness (`../harness.ts`). The
  * selftest holds the two to the same lines on every call it makes with a
  * model in hand, and `tools/verdict_gate.ts` on every recipe.
@@ -123,6 +123,9 @@ import type { SliderCompositionFacts } from '../facts/slider_composition.ts';
 import { a34ConstraintTimelineTargets } from '../bodies/a34.ts';
 import { modelConstraintTargets } from './constraint_targets.ts';
 import type { ConstraintTargetFacts } from '../facts/constraint_targets.ts';
+import { a10NoNanAfterStepping } from '../bodies/a10.ts';
+import { modelSteppedPoses } from './stepped_poses.ts';
+import type { SteppedPoseFacts } from '../facts/stepped_poses.ts';
 
 /** What the model side is given. */
 export interface ModelValidateInput {
@@ -180,6 +183,7 @@ export interface ModelSupply {
   sequences: (read: ReadDocument) => SequenceFacts;
   sliderComposition: (read: ReadDocument) => SliderCompositionFacts;
   constraintTargets: (read: ReadDocument) => ConstraintTargetFacts;
+  steppedPoses: (read: ReadDocument) => SteppedPoseFacts;
 }
 
 /** The suppliers the model side runs on. */
@@ -206,6 +210,7 @@ export const MODEL_SUPPLY: ModelSupply = {
   sequences: modelSequences,
   sliderComposition: modelSliderComposition,
   constraintTargets: modelConstraintTargets,
+  steppedPoses: modelSteppedPoses,
 };
 
 /**
@@ -282,6 +287,7 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES', run: (v, read, _input, supply) => a46SequenceAttachmentsShowTheFrameTheFileStates(v, supply.sequences(read)), unread: SKIP_NO_MODEL },
   { code: 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET', run: (v, read, _input, supply) => a40SlidersComposeOnASharedTarget(v, supply.sliderComposition(read), supply.constraints(read)), unread: SKIP_NO_MODEL },
   { code: 'A34_CONSTRAINT_TIMELINE_TARGETS', run: (v, read, _input, supply) => a34ConstraintTimelineTargets(v, supply.constraintTargets(read)), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A10_NO_NAN_AFTER_STEPPING', run: (v, read, _input, supply) => a10NoNanAfterStepping(v, supply.boneTimelines(read), supply.steppedPoses(read)), unread: SKIP_NO_MODEL },
 ];
 
 /** The codes the model side prints: its two parse rules, then the moved assertions. */

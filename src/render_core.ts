@@ -282,6 +282,11 @@ interface CoreInput {
  * Exported for the model side of the validator (issue #1025), which poses a
  * slot the way `validate()` does — a fresh skeleton, no skin set — and must
  * resolve that state by this rule rather than by a copy of it.
+ *
+ * ⚠️ The first refusal — skins declared and none of them `default` — is issue
+ * #1051: the model side's A10, which always poses, fails such a rig the round
+ * trip passes; `tools/verdict_gate.ts` and the selftest's `VF02` count those
+ * line sets apart as this documented class rather than as a difference.
  */
 export function noSkinView(doc: CompiledDocument): CompiledDocument {
   if (doc.skins.length === 0) return underSkin(doc, CORE_ALL_SKINS);

@@ -403,6 +403,8 @@ import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   Animation,
+  AnimationState,
+  AnimationStateData,
   AtlasAttachmentLoader,
   BlendMode,
   ClippingAttachment,
@@ -439,6 +441,10 @@ import { pathAttachmentRows, pathRows, type CorePathRecord } from '../src/core/c
 import { freshStepContext, physicsRows, poseSteppedAnimations, type CorePhysicsRecord } from '../src/core/constraints_physics.ts';
 import { poseUvs, readUvSequences, shownAtSample, shownAtSetup, steppedUvsWhy, type UvReading, type UvSource } from '../src/core/uvs.ts';
 import { atlasRegionLookup, parseAtlasText } from '../src/atlas.ts';
+import { poseLoopingWalk, poseWalkSetup, walkHistory, type WalkPlant, type WalkPose } from '../src/core/walk.ts';
+import { noSkinView } from '../src/render_core.ts';
+import { STEP_FRAMES } from '../src/assertions/bodies/a10.ts';
+import { fileAnimationOrder } from '../src/compile.ts';
 
 export const ORACLE_SPEC = 'pose-oracle/4';
 // --- #966 raw: begin ---
@@ -2167,6 +2173,213 @@ export function oracleMain(argv: readonly string[], print: (line: string) => voi
     }
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// A10's walk, both dumpers (issue #1025, cut 4c-5a)
+// ---------------------------------------------------------------------------
+//
+// Not the document above: `A10_NO_NAN_AFTER_STEPPING` does not sample a grid,
+// it walks. With no skin set, the setup pose is posed and every physics state
+// reset (`setupPose()`, `update(0)`, `updateWorldTransform(Physics.reset)`);
+// then each animation, on a fresh skeleton posed the same way, is set on a
+// LOOPING track and stepped `STEP_FRAMES` times by `max(duration, 1) /
+// STEP_FRAMES` — `AnimationState.update(step)`, `apply`, `Skeleton.update
+// (step)`, `updateWorldTransform(Physics.update)` — one pose read after each.
+// A pose is every bone's world transform, every shown region's and mesh's
+// world vertices in draw order, every slot's light and dark colour, and the
+// track's two times. Every number is the double itself, a non-finite one
+// included: the walk is how A10 finds one, so a dumper that rounded or
+// refused it would hide the subject. `tools/core_gate.ts --walk` compares
+// the two documents over a corpus, and the core suite's `CO25` over the
+// tree's rows and a seeded population.
+
+/** One pose of A10's walk: the track's times, then bones `[name, a, b, c, d, worldX, worldY]`, drawn `[slot, attachment, vertices]` and slots `[name, r, g, b, a, dark]`. */
+export interface WalkDocumentPose {
+  track: number;
+  time: number;
+  bones: Array<[string, number, number, number, number, number, number]>;
+  drawn: Array<[string, string, number[]]>;
+  slots: Array<[string, number, number, number, number, [number, number, number] | null]>;
+}
+
+/** A10's walk over one skeleton: the setup pose, then each animation's walk. */
+export interface WalkDocument {
+  setup: WalkDocumentPose;
+  animations: Array<{ name: string; duration: number; step: number; poses: WalkDocumentPose[] }>;
+  /**
+   * The core's document only: the bones and slots whose numbers are HISTORY
+   * (`walkHistory` in src/core/walk.ts) — each bone with the constraint
+   * writing into an inactive bone that reaches it — compared with nothing.
+   */
+  history?: { bones: Record<string, string>; slots: Record<string, string> };
+}
+
+/** One spine-core skeleton as it stands posed, in the walk's shape. */
+function spineWalkPose(skeleton: Skeleton, track: number, time: number): WalkDocumentPose {
+  const drawn: WalkDocumentPose['drawn'] = [];
+  for (const slot of skeleton.drawOrder.appliedPose) {
+    const att = slot.appliedPose.attachment;
+    if (!(att instanceof MeshAttachment) && !(att instanceof RegionAttachment)) continue;
+    const world = new Array<number>(att instanceof MeshAttachment ? att.worldVerticesLength : 8).fill(0);
+    if (att instanceof MeshAttachment) att.computeWorldVertices(skeleton, slot, 0, att.worldVerticesLength, world, 0, 2);
+    else att.computeWorldVertices(slot, att.getOffsets(slot.appliedPose), world, 0, 2);
+    drawn.push([slot.data.name, att.name, world]);
+  }
+  return {
+    track,
+    time,
+    bones: skeleton.bones.map((b) => {
+      const p = b.appliedPose;
+      return [b.data.name, p.a, p.b, p.c, p.d, p.worldX, p.worldY];
+    }),
+    drawn,
+    slots: skeleton.slots.map((sl) => {
+      const c = sl.appliedPose.color;
+      const d = sl.appliedPose.darkColor;
+      return [sl.data.name, c.r, c.g, c.b, c.a, d === null ? null : [d.r, d.g, d.b]];
+    }),
+  };
+}
+
+/** A10's walk as spine-core 4.3.13 takes it (the section's header). */
+export function spineWalkDocument(data: SkeletonData, frames: number = STEP_FRAMES): WalkDocument {
+  const rest = new Skeleton(data);
+  rest.setupPose();
+  rest.update(0);
+  rest.updateWorldTransform(Physics.reset);
+  const animations: WalkDocument['animations'] = [];
+  for (const anim of data.animations) {
+    const step = Math.max(anim.duration, 1) / frames;
+    const skeleton = new Skeleton(data);
+    const state = new AnimationState(new AnimationStateData(data));
+    const entry = state.setAnimation(0, anim.name, true);
+    skeleton.setupPose();
+    skeleton.update(0);
+    skeleton.updateWorldTransform(Physics.reset);
+    const poses: WalkDocumentPose[] = [];
+    for (let i = 0; i < frames; i++) {
+      state.update(step);
+      state.apply(skeleton);
+      skeleton.update(step);
+      skeleton.updateWorldTransform(Physics.update);
+      poses.push(spineWalkPose(skeleton, entry.trackTime, entry.getAnimationTime()));
+    }
+    animations.push({ name: anim.name, duration: anim.duration, step, poses });
+  }
+  return { setup: spineWalkPose(rest, 0, 0), animations };
+}
+
+/** One core walk pose in the walk's shape. */
+function coreWalkPose(p: WalkPose): WalkDocumentPose {
+  const n = (v: number | null): number => (v === null ? Number.NaN : v);
+  return {
+    track: p.trackTime,
+    time: p.animationTime,
+    bones: p.bones.map((b) => [b.name, b.a, b.b, b.c, b.d, b.worldX, b.worldY]),
+    drawn: p.drawn.map((d) => [d.slot, d.attachment, d.vertices]),
+    slots: p.slots.map((r) => [r[0], n(r[2]), n(r[3]), n(r[4]), n(r[5]), r[6] === null ? null : [n(r[6][0]), n(r[6][1]), n(r[6][2])]]),
+  };
+}
+
+/**
+ * A10's walk as rigc's core takes it (`src/core/walk.ts`), the animations in
+ * the file's order, over the document with no skin set (`noSkinView`, which refuses by name a document whose
+ * default skin it cannot read that way). A construct the core leaves out
+ * refuses by name (`CoreInputError`); a non-finite value does not.
+ */
+export function coreWalkDocument(model: CompiledDocument, frames: number = STEP_FRAMES, plant: TimelinePlant = {}, walkPlant: WalkPlant = {}): WalkDocument {
+  const doc = noSkinView(model);
+  // The file's order (`fileAnimationOrder`), which is spine-core's: the document's own is the model's.
+  const animations: WalkDocument['animations'] = fileAnimationOrder(model).flatMap((name) => doc.animations.filter((a) => a.name === name)).map((anim) => {
+    const step = Math.max(anim.timelines.duration, 1) / frames;
+    const poses = poseLoopingWalk(doc, anim.name, new Array<number>(frames).fill(step), plant, walkPlant).slice(1).map(coreWalkPose);
+    return { name: anim.name, duration: anim.timelines.duration, step, poses };
+  });
+  const history = walkHistory(doc);
+  return { setup: coreWalkPose(poseWalkSetup(doc, plant, walkPlant)), animations, history: { bones: Object.fromEntries(history.bones), slots: Object.fromEntries(history.slots) } };
+}
+
+/** Two walks of one skeleton, compared number by number at tolerance 0. */
+export interface WalkComparison {
+  /** Poses compared — the setup and every step of every animation both walk. */
+  poses: number;
+  /** Numbers compared (times, bone terms, vertices, colour channels). */
+  numbers: number;
+  /** Poses equal in every number (`Object.is`: a NaN equals a NaN, and −0 is not 0). */
+  exact: number;
+  /** Steps whose track time had reached the duration — the wrap — on side A. */
+  wrapped: number;
+  /** Poses holding a number that is not finite, on side A. */
+  nonFinite: number;
+  /** Each animation the walk wrapped at least once, on side A. */
+  wrappedAnimations: number;
+  /** The first difference, or `null`. */
+  first: string | null;
+  /** Numbers on a HISTORY bone or slot (`WalkDocument.history`) that differ — compared with nothing — and of them those that differ only in the sign of zero. */
+  historyNumbers: number;
+  historySignOnly: number;
+  /** The HISTORY bones such a number sat on, each with its writer. */
+  historyBones: Map<string, string>;
+}
+
+/** Compare two walk documents of one skeleton (`spineWalkDocument` as A, `coreWalkDocument` as B). */
+export function compareWalkDocuments(a: WalkDocument, b: WalkDocument): WalkComparison {
+  const out: WalkComparison = { poses: 0, numbers: 0, exact: 0, wrapped: 0, nonFinite: 0, wrappedAnimations: 0, first: null, historyNumbers: 0, historySignOnly: 0, historyBones: new Map() };
+  const note = (why: string): void => {
+    out.first ??= why;
+  };
+  const historyBones = new Map(Object.entries(b.history?.bones ?? {}));
+  const historySlots = new Map(Object.entries(b.history?.slots ?? {}));
+  /** Every number of a pose, each with the HISTORY bone it sits on (`null` for a number the walk vouches for). */
+  const numbersOf = (p: WalkDocumentPose): Array<[number, string | null]> => [
+    [p.track, null], [p.time, null],
+    ...p.bones.flatMap((r) => (r.slice(1) as number[]).map((v): [number, string | null] => [v, historyBones.has(r[0]) ? r[0] : null])),
+    ...p.drawn.flatMap((r) => r[2].map((v): [number, string | null] => [v, historySlots.get(r[0]) ?? null])),
+    ...p.slots.flatMap((r) => [r[1], r[2], r[3], r[4], ...(r[5] ?? [])].map((v): [number, string | null] => [v, null])),
+  ];
+  const shapeOf = (p: WalkDocumentPose): string => JSON.stringify([p.bones.map((r) => r[0]), p.drawn.map((r) => [r[0], r[1], r[2].length]), p.slots.map((r) => [r[0], r[5] === null])]);
+  const pose = (where: string, x: WalkDocumentPose, y: WalkDocumentPose | undefined): void => {
+    out.poses++;
+    const xs = numbersOf(x);
+    out.numbers += xs.length;
+    if (!xs.every(([v]) => Number.isFinite(v))) out.nonFinite++;
+    if (y === undefined) return note(`${where}: only in A`);
+    if (shapeOf(x) !== shapeOf(y)) return note(`${where}: the bones, drawn attachments or slots differ — A ${shapeOf(x).slice(0, 200)}, B ${shapeOf(y).slice(0, 200)}`);
+    const ys = numbersOf(y);
+    let k = -1;
+    let historical = false;
+    xs.forEach(([v, owner], i) => {
+      const w = ys[i][0];
+      if (Object.is(v, w)) return;
+      if (owner === null) {
+        if (k === -1) k = i;
+        return;
+      }
+      historical = true;
+      out.historyNumbers++;
+      if (v === w) out.historySignOnly++;
+      out.historyBones.set(owner, historyBones.get(owner) ?? owner);
+    });
+    if (k === -1 && !historical) out.exact++;
+    else if (k !== -1) note(`${where}: number ${k} of the pose — A ${String(xs[k][0])}, B ${String(ys[k][0])} (track A ${x.track}, B ${y.track}; time A ${x.time}, B ${y.time})`);
+  };
+  pose('the setup pose', a.setup, b.setup);
+  if (JSON.stringify(a.animations.map((x) => x.name)) !== JSON.stringify(b.animations.map((x) => x.name))) note(`the animations — A [${a.animations.map((x) => x.name).join(', ')}], B [${b.animations.map((x) => x.name).join(', ')}]`);
+  for (const x of a.animations) {
+    const y = b.animations.find((z) => z.name === x.name);
+    if (y !== undefined && (!Object.is(x.duration, y.duration) || !Object.is(x.step, y.step))) note(`animation ${JSON.stringify(x.name)}: duration A ${x.duration}, B ${y.duration}`);
+    let wrapped = false;
+    x.poses.forEach((p, i) => {
+      if (p.track >= x.duration) {
+        out.wrapped++;
+        wrapped = true;
+      }
+      pose(`animation ${JSON.stringify(x.name)} step ${i + 1}`, p, y?.poses[i]);
+    });
+    if (wrapped) out.wrappedAnimations++;
+  }
+  return out;
 }
 
 if (import.meta.main) process.exit(oracleMain(process.argv.slice(2)));

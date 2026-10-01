@@ -448,7 +448,7 @@ export function unnamedPhysicsTargets<R extends CorePhysicsRecord>(records: read
  * `last` to `t` (`resetCrossed`). `active`
  * says whether a constraint is applied at all (its skin and its bone).
  */
-export function posedPhysics(records: readonly CorePhysicsRecord[], timelines: readonly CorePhysicsTimeline[], t: number, last: number, active: (r: CorePhysicsRecord) => boolean, plant: PhysicsTimelinePlant = {}): { records: Map<string, CorePhysicsRecord>; reset: Set<string> } {
+export function posedPhysics(records: readonly CorePhysicsRecord[], timelines: readonly CorePhysicsTimeline[], t: number, last: number, active: (r: CorePhysicsRecord) => boolean, plant: PhysicsTimelinePlant = {}, wrapped = false): { records: Map<string, CorePhysicsRecord>; reset: Set<string> } {
   const search = plant.search ?? keyIndexAt;
   const channel = plant.channel ?? channelAt;
   const setupOf = new Map(records.map((r) => [r.name, r]));
@@ -457,7 +457,7 @@ export function posedPhysics(records: readonly CorePhysicsRecord[], timelines: r
   for (const tl of timelines) {
     const targets = tl.name === EVERY_GLOBAL_PHYSICS ? unnamedPhysicsTargets([...posed.values()], tl.kind, active) : [posed.get(tl.name) as CorePhysicsRecord].filter((r) => active(r));
     if (tl.kind === 'reset') {
-      if (resetCrossed(tl.keys, last, t)) for (const r of targets) reset.add(r.name);
+      if (resetCrossed(tl.keys, last, t, wrapped)) for (const r of targets) reset.add(r.name);
       continue;
     }
     const i = search(tl.keys, t);
@@ -481,9 +481,18 @@ export function posedPhysics(records: readonly CorePhysicsRecord[], timelines: r
  * issue #960): exactly when a key lies in `(last, t]` — so a key is crossed
  * once, by the step that reaches it, and `last` is −1 before the walk's
  * first apply, where a key at 0 is crossed.
+ *
+ * `wrapped` is a looping track's step whose animation time went DOWN (issue
+ * #1025, `./walk.ts`): the key crossed is then one after `last` or one at or
+ * before `t` — `(last, ∞)` and `(−1, t]` — measured against spine-core's
+ * `PhysicsConstraint.reset` calls on A10's walk. A step that wraps the track
+ * one or more times while its animation time still rises is not `wrapped`:
+ * the runtime fired only `(last, t]` there (a key at 0.25 of a 0.3 s
+ * animation stepped by 0.7 s, crossed by the track twice between two applies
+ * at 0.1 and 0.2, fired on neither).
  */
-export function resetCrossed(keys: readonly CoreKey[], last: number, t: number): boolean {
-  return keys.some((k) => last < k.time && k.time <= t);
+export function resetCrossed(keys: readonly CoreKey[], last: number, t: number, wrapped = false): boolean {
+  return wrapped ? keys.some((k) => k.time > last || k.time <= t) : keys.some((k) => last < k.time && k.time <= t);
 }
 
 // ---------------------------------------------------------------------------
@@ -554,6 +563,12 @@ export interface PhysicsStepContext {
    * to the step's time (`resetCrossed`).
    */
   last: number;
+  /**
+   * The walk's track loops (`./walk.ts`, issue #1025): a step whose animation
+   * time went down from `last` wrapped, and crosses the keys `resetCrossed`
+   * names for that. Absent on every walk but the looping one.
+   */
+  loop?: boolean;
 }
 
 /** A constraint's state in `ctx`, created fresh on its first update. */
@@ -796,7 +811,7 @@ export function physicsRows(records: readonly CorePhysicsRecord[], round: (v: nu
  */
 export function stepPhysicsRecords(records: readonly CoreConstraintRecord[], keyed: readonly CorePhysicsTimeline[], t: number, active: ReadonlySet<string>, ctx: PhysicsStepContext, before: number): CoreConstraintRecord[] {
   const physics = records.filter((r): r is CorePhysicsRecord => r.kind === 'physics');
-  const posed = posedPhysics(physics, keyed, t, ctx.last, (r) => physicsActive(r, active));
+  const posed = posedPhysics(physics, keyed, t, ctx.last, (r) => physicsActive(r, active), {}, ctx.loop === true && t < ctx.last);
   ctx.last = t;
   for (const name of posed.reset) resetPhysicsState(physicsState(ctx, name), before);
   return records.map((r) => (r.kind === 'physics' ? (posed.records.get(r.name) as CorePhysicsRecord) : r));

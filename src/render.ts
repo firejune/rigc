@@ -126,6 +126,7 @@ import {
   type SubsetRoster,
 } from './render_core.ts';
 import { walkTimelines } from './timelines.ts';
+import { firstNonFinite, type PosedVertices, type WorldTransform } from './nonfinite.ts';
 
 /** Opaque, and light: both of rung 3's parts are dark slate, so is every ground. */
 export const BACKGROUND: RGBA = [232, 232, 232, 255];
@@ -1236,8 +1237,8 @@ function coreFacts(skeletonText: string, atlasText: string | null, poser: Poser,
 // 🔒 What stays spine-core's and outside the seam, deliberately: an export's
 // atlas (`posableFromText`'s pages, and `substituteTexture`'s region lookup on
 // anything spine-core poses — a rigc build the core poses reads both through
-// rigc's own reader since issue #1020) and `nonFiniteOfPosed`, which `validate.ts` calls on a spine-core
-// skeleton it stepped itself (A10), so the round trip keeps its spine-core
+// rigc's own reader since issue #1020) and `posedNumbersOf`, which `validate.ts` calls on a spine-core
+// skeleton it stepped itself (A10's runtime supplier), so the round trip keeps its spine-core
 // entry whatever poses the renders.
 
 /** What a sampler hands a posed frame's draw walk — `PoseOptions` with the subset already resolved. */
@@ -2149,66 +2150,36 @@ function restOf(data: SkeletonData, skin: string | undefined, shown: readonly At
   return out;
 }
 
-/** The bone fields a world transform is made of — what `firstNonFinite` reads off a bone. */
-type WorldTransform = Pick<GeometryBone, 'name' | 'a' | 'b' | 'c' | 'd' | 'worldX' | 'worldY'>;
-
-/** The fields of an attachment entry `firstNonFinite` reads — a frame's `AttachmentPose` or a rest entry. */
-type PosedVertices = Pick<AttachmentPose, 'slot' | 'attachment' | 'vertices'>;
-
 /**
- * The sentence for the first number at `where` that is not finite — bones before
- * vertices, since a bone that overflowed is the cause and its vertices the
- * symptom — or `null` when every number there is finite.
- */
-function firstNonFinite(where: string, entries: readonly PosedVertices[], bones: readonly WorldTransform[]): string | null {
-  for (const bone of bones) {
-    for (const field of ['a', 'b', 'c', 'd', 'worldX', 'worldY'] as const) {
-      if (!Number.isFinite(bone[field])) {
-        return `${where}: bone ${JSON.stringify(bone.name)} has ${field} ${String(bone[field])}; a world transform is finite`;
-      }
-    }
-  }
-  for (const entry of entries) {
-    const bad = entry.vertices.findIndex((value) => !Number.isFinite(value));
-    if (bad === -1) continue;
-    return (
-      `${where}: slot ${JSON.stringify(entry.slot)} attachment ${JSON.stringify(entry.attachment)} vertex ` +
-      `${Math.floor(bad / 2)} has ${bad % 2 === 0 ? 'x' : 'y'} ${String(entry.vertices[bad])}; a posed vertex is finite`
-    );
-  }
-  return null;
-}
-
-/**
- * The same sentence for one skeleton as it stands posed now — its bones, then
- * the vertices of every region and mesh its slots show, in draw order — or
- * `null` when every one of those numbers is finite.
+ * One skeleton as it stands posed now, as the numbers `firstNonFinite`
+ * (`./nonfinite.ts`) reads: every bone's six world-transform terms, in skeleton
+ * order, then the world vertices of every region and mesh its slots show, in
+ * draw order — the runtime's reading of each (`worldVerticesOf`).
  *
- * ⭐ This is how `A10_NO_NAN_AFTER_STEPPING` reads each pose it steps (issue
- * #882), so the gate and the renderer hold one definition of "not finite": the
- * six terms `firstNonFinite` reads off a bone, and the vertices the runtime
- * computes from them. Before it A10 read the world POSITION alone, and a bone at
- * `rotation: 1e309` — finite position, NaN `a`, `b`, `c`, `d` — was gated green
- * and then refused here. The vertices are read too because a bone can be finite
- * and still carry one that is not: a two-bone `scaleX` chain of 1e154 × 1e154
+ * ⭐ This is how `A10_NO_NAN_AFTER_STEPPING` reads each pose spine-core steps
+ * (issue #882; its runtime supplier in `validate.ts` since issue #1025), so the
+ * gate and the renderer hold one definition of "not finite": the six terms
+ * `firstNonFinite` reads off a bone, and the vertices the runtime computes from
+ * them. Before #882 A10 read the world POSITION alone, and a bone at `rotation:
+ * 1e309` — finite position, NaN `a`, `b`, `c`, `d` — was gated green and then
+ * refused here. The vertices are read too because a bone can be finite and
+ * still carry one that is not: a two-bone `scaleX` chain of 1e154 × 1e154
  * leaves the child's `a` at 1e308, finite, and every vertex of its attachment
- * past the largest double. Only computed once every bone is finite, so a
- * broken bone is named as the cause rather than through its vertices.
+ * past the largest double. `firstNonFinite` reads the bones first, so a broken
+ * bone is named as the cause rather than through its vertices.
  */
-export function nonFiniteOfPosed(where: string, skeleton: Skeleton): string | null {
+export function posedNumbersOf(skeleton: Skeleton): { bones: WorldTransform[]; drawn: PosedVertices[] } {
   const bones: WorldTransform[] = skeleton.bones.map((bone) => {
     const { a, b, c, d, worldX, worldY } = bone.appliedPose;
     return { name: bone.data.name, a, b, c, d, worldX, worldY };
   });
-  const found = firstNonFinite(where, [], bones);
-  if (found !== null) return found;
-  const entries: PosedVertices[] = [];
+  const drawn: PosedVertices[] = [];
   for (const slot of skeleton.drawOrder.appliedPose) {
     const attachment = slot.appliedPose.attachment;
     if (!(attachment instanceof MeshAttachment) && !(attachment instanceof RegionAttachment)) continue;
-    entries.push({ slot: slot.data.name, attachment: attachment.name, vertices: worldVerticesOf(skeleton, slot, attachment) });
+    drawn.push({ slot: slot.data.name, attachment: attachment.name, vertices: worldVerticesOf(skeleton, slot, attachment) });
   }
-  return firstNonFinite(where, entries, []);
+  return { bones, drawn };
 }
 
 /**
