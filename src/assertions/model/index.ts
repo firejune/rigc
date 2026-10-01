@@ -7,7 +7,9 @@
  * `../bodies/`, written against a fact interface under `../facts/`.
  * `validate()` supplies the facts from spine-core's loaded objects and calls
  * the body inside its own `check`; this entry supplies them from the document
- * (`./parse.ts`, `./skin_entries.ts`, `./atlas_pages.ts`, `./slot_colour.ts`)
+ * (`./parse.ts`, `./skin_entries.ts`, `./atlas_pages.ts`, `./slot_colour.ts`;
+ * cut 4c-2's `./mesh_attachments.ts`, `./vertex_polygons.ts`,
+ * `./linked_meshes.ts`, `./constraints.ts`)
  * and calls the same body inside the same harness (`../harness.ts`). The
  * selftest holds the two to the same lines on every call it makes with a
  * model in hand, and `tools/verdict_gate.ts` on every recipe.
@@ -64,6 +66,27 @@ import type { SkinMemberFacts } from '../facts/skin_members.ts';
 import type { RegionJoinFacts } from '../facts/region_joins.ts';
 import type { AtlasRegionFacts } from '../facts/atlas_regions.ts';
 import type { StageFacts } from '../facts/stage.ts';
+import { a04MeshTrianglesAndEncoding } from '../bodies/a04.ts';
+import { a20MeshWeightsCoherent } from '../bodies/a20.ts';
+import { a21MeshRimPinned } from '../bodies/a21.ts';
+import { a23PhysicsConstraintEffective } from '../bodies/a23.ts';
+import { a28RibbonRowsShareWeights } from '../bodies/a28.ts';
+import { a33VertexAttachmentGeometry } from '../bodies/a33.ts';
+import { a36PathConstraintEffective } from '../bodies/a36.ts';
+import { a37SliderConstraintEffective } from '../bodies/a37.ts';
+import { a41PhysicsSurvivesEditorRoundTrip } from '../bodies/a41.ts';
+import { a42DrivenConstraintsUpdateAfterTheirDriver } from '../bodies/a42.ts';
+import { a44LinkedMeshStatesNoGeometryOfItsOwn } from '../bodies/a44.ts';
+import { a47IkConstraintNotMutedThroughout } from '../bodies/a47.ts';
+import { a48TransformConstraintNotMutedThroughout } from '../bodies/a48.ts';
+import { modelMeshFacts } from './mesh_attachments.ts';
+import { modelPolygonFacts } from './vertex_polygons.ts';
+import { modelLinkFacts } from './linked_meshes.ts';
+import { modelConstraintFacts } from './constraints.ts';
+import type { MeshFacts } from '../facts/mesh_attachments.ts';
+import type { PolygonFacts } from '../facts/vertex_polygons.ts';
+import type { LinkFacts } from '../facts/linked_meshes.ts';
+import type { ConstraintFacts } from '../facts/constraints.ts';
 
 /** What the model side is given. */
 export interface ModelValidateInput {
@@ -72,7 +95,7 @@ export interface ModelValidateInput {
   /** The directory the document's page names resolve against — the build's `--out`. */
   atlasDir: string;
   profile: AssertionProfile;
-  /** The rig info the build carries, as `validate()` is handed it — A13, A15 and A19 read it; absent for a bare directory, on both sides. */
+  /** The rig info the build carries, as `validate()` is handed it — A13, A15, A19 (cut 4c-1) and A20, A21, A28, A41, A47, A48 (cut 4c-2) read it; optional because `ValidateInput.rig` is: absent for a bare directory, on both sides. */
   rig?: RigInfo;
   /**
    * The stage and the pages' `pma`, which the document does not hold until
@@ -104,6 +127,10 @@ export interface ModelSupply {
   regionJoins: (read: ReadDocument) => RegionJoinFacts;
   atlasRegions: (read: ReadDocument, input: ModelValidateInput) => AtlasRegionFacts;
   stage: (read: ReadDocument, input: ModelValidateInput) => StageFacts;
+  meshes: (read: ReadDocument) => MeshFacts;
+  polygons: (read: ReadDocument) => PolygonFacts;
+  links: (read: ReadDocument) => LinkFacts;
+  constraints: (read: ReadDocument) => ConstraintFacts;
 }
 
 /** The suppliers the model side runs on. */
@@ -117,6 +144,10 @@ export const MODEL_SUPPLY: ModelSupply = {
   regionJoins: modelRegionJoins,
   atlasRegions: (read, input) => modelAtlasRegions(read, input.given),
   stage: (_read, input) => modelStage(input.given),
+  meshes: modelMeshFacts,
+  polygons: modelPolygonFacts,
+  links: modelLinkFacts,
+  constraints: modelConstraintFacts,
 };
 
 /**
@@ -140,25 +171,39 @@ export interface MovedAssertion {
 }
 
 /**
- * The moved assertions, in `validate()`'s report order. `SKIP_NO_ATLAS` for
+ * The moved assertions, in `validate()`'s report order (the order its `check`
+ * calls stand in; the selftest and the instrument compare per code). `SKIP_NO_ATLAS` for
  * A17 rather than `SKIP_NO_MODEL` because that is what A17 says over a missing
  * atlas on either side: its body reads only the pages, and on this side no
  * document means no pages.
  */
 export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
-  { code: 'A03_REGION_WIDTH_HEIGHT_FINITE', run: (v, read, _input, supply) => a03RegionWidthHeightFinite(v, supply.skinEntries(read)), unread: SKIP_NO_MODEL },
-  { code: 'A11_NO_CLIPPING_ATTACHMENTS', run: (v, read, _input, supply) => a11NoClippingAttachments(v, supply.skinEntries(read)), unread: SKIP_NO_MODEL },
-  { code: 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN', run: (v, read, _input, supply) => a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten(v, supply.slotColour(read)), unread: SKIP_NO_MODEL },
-  { code: 'A17_ATLAS_PAGE_FILES_EXIST', run: (v, read, input, supply) => a17AtlasPageFilesExist(v, supply.atlasPages(read), input), unread: SKIP_NO_ATLAS },
   { code: 'A08_REGION_NAMES_MATCH_ATTACHMENTS', run: (v, read, _input, supply) => (read.doc.pages === null ? v.skip('A08_REGION_NAMES_MATCH_ATTACHMENTS', SKIP_NO_MODEL_PAGES) : a08RegionNamesMatchAttachments(v, supply.regionJoins(read), new Set<string>())), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A03_REGION_WIDTH_HEIGHT_FINITE', run: (v, read, _input, supply) => a03RegionWidthHeightFinite(v, supply.skinEntries(read)), unread: SKIP_NO_MODEL },
+  { code: 'A04_MESH_TRIANGLES_AND_ENCODING', run: (v, read, _input, supply) => a04MeshTrianglesAndEncoding(v, supply.meshes(read)), unread: SKIP_NO_MODEL },
+  { code: 'A33_VERTEX_ATTACHMENT_GEOMETRY', run: (v, read, _input, supply) => a33VertexAttachmentGeometry(v, supply.polygons(read)), unread: SKIP_NO_MODEL },
+  { code: 'A11_NO_CLIPPING_ATTACHMENTS', run: (v, read, _input, supply) => a11NoClippingAttachments(v, supply.skinEntries(read)), unread: SKIP_NO_MODEL },
   { code: 'A13_MESH_BUDGET', run: (v, read, input, supply) => a13MeshBudget(v, supply.skinMeshes(read), input), unread: SKIP_NO_MODEL },
   { code: 'A14_NO_FULL_FRAME_MESH', run: (v, read, input, supply) => a14NoFullFrameMesh(v, supply.skinMeshes(read), supply.stage(read, input)), unread: SKIP_NO_MODEL },
   { code: 'A15_IDLE_NO_MESH_BONE_KEYS', run: (v, read, input, supply) => a15IdleNoMeshBoneKeys(v, supply.skinMeshes(read), supply.animatedBones(read), input), unread: SKIP_NO_MODEL },
+  { code: 'A20_MESH_WEIGHTS_COHERENT', run: (v, read, input, supply) => a20MeshWeightsCoherent(v, supply.meshes(read), input.profile === 'spine-html', input.rig), unread: SKIP_NO_MODEL },
+  { code: 'A21_MESH_RIM_PINNED', run: (v, read, input, supply) => a21MeshRimPinned(v, supply.meshes(read), input.rig), unread: SKIP_NO_MODEL },
   { code: 'A22_MESH_UVS_IN_UNIT_RANGE', run: (v, read, _input, supply) => a22MeshUvsInUnitRange(v, supply.skinMeshes(read)), unread: SKIP_NO_MODEL },
+  { code: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE', run: (v, read, _input, supply) => a23PhysicsConstraintEffective(v, supply.constraints(read), supply.meshes(read)), unread: SKIP_NO_MODEL },
+  { code: 'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP', run: (v, read, input, supply) => a41PhysicsSurvivesEditorRoundTrip(v, supply.constraints(read), input.rig), unread: SKIP_NO_MODEL },
+  { code: 'A36_PATH_CONSTRAINT_EFFECTIVE', run: (v, read, _input, supply) => a36PathConstraintEffective(v, supply.constraints(read)), unread: SKIP_NO_MODEL },
+  { code: 'A37_SLIDER_CONSTRAINT_EFFECTIVE', run: (v, read, _input, supply) => a37SliderConstraintEffective(v, supply.constraints(read)), unread: SKIP_NO_MODEL },
+  { code: 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', run: (v, read, input, supply) => a47IkConstraintNotMutedThroughout(v, supply.constraints(read), input.rig), unread: SKIP_NO_MODEL },
+  { code: 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT', run: (v, read, input, supply) => a48TransformConstraintNotMutedThroughout(v, supply.constraints(read), input.rig), unread: SKIP_NO_MODEL },
+  { code: 'A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER', run: (v, read, _input, supply) => a42DrivenConstraintsUpdateAfterTheirDriver(v, supply.constraints(read)), unread: SKIP_NO_MODEL },
   { code: 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED', run: (v, read, _input, supply) => a38SkinMembersAreSkinRequired(v, supply.skinMembers(read)), unread: SKIP_NO_MODEL },
+  { code: 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN', run: (v, read, _input, supply) => a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten(v, supply.slotColour(read)), unread: SKIP_NO_MODEL },
+  { code: 'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN', run: (v, read, _input, supply) => a44LinkedMeshStatesNoGeometryOfItsOwn(v, supply.links(read)), unread: SKIP_NO_MODEL },
+  { code: 'A17_ATLAS_PAGE_FILES_EXIST', run: (v, read, input, supply) => a17AtlasPageFilesExist(v, supply.atlasPages(read), input), unread: SKIP_NO_ATLAS },
   { code: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', run: (v, read, input, supply) => a06AtlasPageSizeMatchesPng(v, supply.atlasRegions(read, input), input, input.profile === 'spine-html'), unread: SKIP_NO_ATLAS },
   { code: 'A19_OVERLAY_PNGS_HAVE_ALPHA', run: (v, read, input, supply) => a19OverlayPngsHaveAlpha(v, supply.atlasRegions(read, input), supply.stage(read, input), supply.skinEntries(read), input), unread: SKIP_NO_ATLAS },
   { code: 'A27_REGION_NAME_MATCHES_PAGE_FILENAME', run: (v, read, input, supply) => a27RegionNameMatchesPageFilename(v, supply.atlasRegions(read, input)), unread: SKIP_NO_ATLAS },
+  { code: 'A28_RIBBON_ROWS_SHARE_WEIGHTS', run: (v, read, input, supply) => a28RibbonRowsShareWeights(v, supply.meshes(read), input.rig), unread: SKIP_NO_MODEL },
 ];
 
 /** The codes the model side prints: its two parse rules, then the moved assertions. */

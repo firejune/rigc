@@ -497,6 +497,7 @@ import {
   SKIP_NO_TWO_COLOR_TINT,
   skeletonValues,
   runtimeFacts,
+  runtimeRigFacts,
   timelineAddBehaviour,
   validate as validateOverSpine,
   VALIDATE_PROFILES,
@@ -506,10 +507,15 @@ import {
 } from './src/validate.ts';
 import { MODEL_SUPPLY, MOVED_ASSERTIONS, validateModel, type ModelReport, type ModelSupply } from './src/assertions/model/index.ts';
 import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES } from './src/assertions/model/parse.ts';
-import { modelSkinEntries } from './src/assertions/model/skin_entries.ts';
+import { fileOrderedEntries, modelSkinEntries } from './src/assertions/model/skin_entries.ts';
+import { modelMeshFacts } from './src/assertions/model/mesh_attachments.ts';
+import { modelPolygonFacts } from './src/assertions/model/vertex_polygons.ts';
+import { modelLinkFacts } from './src/assertions/model/linked_meshes.ts';
+import { modelConstraintFacts } from './src/assertions/model/constraints.ts';
 import { verdictLines, verdictMain, walkSpelling, type VerdictRow } from './tools/verdict_gate.ts';
 import { compareFacts, modelGivenOfBuild } from './tools/verdict_gate.ts';
 import { modelRegionJoinsWith } from './src/assertions/model/region_joins.ts';
+import { compareRigFacts, modelRigFacts, RIG_FACT_FAMILIES, rigFactsDerivations, rigFactsSpelling, sumTallies, type DerivationTally, type RigFactFamily, type RigFacts } from './tools/rig_facts.ts';
 import {
   articulatedFixture,
   containedFixture,
@@ -838,6 +844,19 @@ const UNNAMED_CASE = '(no case line followed the call)';
  */
 type ModelTwin = { forge: (doc: Record<string, unknown>, call: { skeletonText: string; atlasText: string }) => void } | { encodingOnly: string };
 
+/**
+ * The twin of every break that writes geometry onto a linked mesh (issue #1025,
+ * cut 4c-2): a linked-mesh record has no geometry field (`CORE_ATTACHMENT_FIELDS`
+ * in `src/core/index.ts`, whose reader refuses a field it does not know), so the
+ * keys A44 refuses exist only in the Spine text, and the clause that refuses them
+ * stayed with the round trip.
+ */
+const LINK_GEOMETRY_IS_ENCODING: ModelTwin = {
+  encodingOnly:
+    'a link that states geometry of its own: a linked-mesh record has no geometry field (`CORE_ATTACHMENT_FIELDS.linkedmesh` in ' +
+    'src/core/index.ts) and the reader refuses one it does not know, so the keys exist only in the Spine text',
+};
+
 /** One recorded twin outcome. */
 interface TwinOutcome {
   case: string;
@@ -990,6 +1009,14 @@ class SupplierCheck {
    */
   walks = { compared: 0, equal: 0, documentOrderDiffers: 0 };
   private walked = new Set<string>();
+  /**
+   * Cut 4c-2's families compared fact by fact (`tools/rig_facts.ts`), once per
+   * distinct build over the own calls: how many builds, how many calls they
+   * stood for, and each derivation's tally summed over the builds (`VF10`).
+   */
+  rigFacts = { builds: 0, calls: 0, identical: 0 };
+  derivations = new Map<string, DerivationTally>();
+  private rigBuilt = new Set<string>();
   /** Faults, each attributed to the case it was found in. */
   faults: Array<{ case: string; fault: string }> = [];
   twinOutcomes: TwinOutcome[] = [];
@@ -1053,6 +1080,7 @@ class SupplierCheck {
           this.keep(this.faults, { fault: `${d.code} differs — spine-core: ${JSON.stringify(d.spine)}; model: ${JSON.stringify(d.model)}` });
         }
         this.compareWalks(input, modelText);
+        this.compareRigFactsOf(input, modelText);
       }
       return;
     }
@@ -1119,6 +1147,20 @@ class SupplierCheck {
       const own = JSON.stringify(modelRegionJoinsWith(read, (skins) => [...skins], (table) => table));
       if (own !== JSON.stringify(modelRegionJoinsWith(read))) this.joinsDocumentOrderDiffers++;
     }
+  }
+
+  /** Cut 4c-2's facts over one build, compared by family and measured by derivation (`tools/rig_facts.ts`): once per build, every call counted. */
+  private compareRigFactsOf(input: ValidateInput, modelText: string): void {
+    this.rigFacts.calls++;
+    const build = `${spineFileSha256(input.skeletonText)} ${spineFileSha256(input.atlasText)} ${spineFileSha256(modelText)}`;
+    if (this.rigBuilt.has(build)) return;
+    this.rigBuilt.add(build);
+    const compared = compareRigFacts(input.skeletonText, input.atlasText, modelText);
+    if (compared === null) return;
+    this.rigFacts.builds++;
+    if (compared.differing.length === 0) this.rigFacts.identical++;
+    for (const d of compared.differing) this.keep(this.faults, { fault: `the rig facts differ — ${d.family}: spine-core ${d.spine.slice(0, 240)}; model ${d.model.slice(0, 240)}` });
+    sumTallies(this.derivations, compared.derivations);
   }
 
   private settleTwin(input: ValidateInput, spine: ValidateReport, modelText: string, firing: string[], twin: ModelTwin | undefined): Array<Omit<TwinOutcome, 'case'>> {
@@ -1240,6 +1282,45 @@ function docSlotTimelines(doc: Record<string, unknown>, animation: string, slot:
 function docKeys(timelines: DocTimeline[], name: string): Array<Record<string, unknown>> {
   const found = timelines.find((t) => t.name === name);
   if (found === undefined) throw new Error(`the slot keys no "${name}" timeline in the document`);
+  return found.keys;
+}
+
+/** A twin's way into a document's skin entry (issue #1025, cut 4c-2): one record of one skin's table, as the document spells it. */
+type DocRecord = Record<string, unknown>;
+function docSkinTable(doc: Record<string, unknown>, skin = 'default'): Record<string, Record<string, DocRecord>> {
+  const found = (doc.skins as Array<{ name: string; attachments: Record<string, Record<string, DocRecord>> }>).find((s) => s.name === skin);
+  if (found === undefined) throw new Error(`the document has no skin "${skin}"`);
+  return found.attachments;
+}
+function docRecord(doc: Record<string, unknown>, slot: string, placeholder: string, skin = 'default'): DocRecord {
+  const record = docSkinTable(doc, skin)[slot]?.[placeholder];
+  if (record === undefined) throw new Error(`the document's skin "${skin}" has no record "${placeholder}" on slot "${slot}"`);
+  return record;
+}
+/** A weighted record's bindings, per vertex, as the document states them. */
+function docBindings(record: DocRecord): Array<Array<{ bone: string; x: number; y: number; weight: number }>> {
+  const vertices = record.vertices as { weighted: boolean; bindings?: Array<Array<{ bone: string; x: number; y: number; weight: number }>> };
+  if (!vertices.weighted || vertices.bindings === undefined) throw new Error('the record is not weighted');
+  return vertices.bindings;
+}
+/** The first constraint of `kind` the document declares. */
+function docConstraint(doc: Record<string, unknown>, kind: string): DocRecord {
+  const found = (doc.constraints as DocRecord[]).find((c) => c.kind === kind);
+  if (found === undefined) throw new Error(`the document declares no ${kind} constraint`);
+  return found;
+}
+/** One animation's constraint timelines, as the document groups them (`ik`, `transform`, `path`, `physics`, `slider`). */
+function docAnimationConstraints(doc: Record<string, unknown>, animation: string): Record<string, unknown[]> {
+  const found = (doc.animations as Array<{ name: string; constraints: Record<string, unknown[]> }>).find((a) => a.name === animation);
+  if (found === undefined) throw new Error(`the document has no animation "${animation}"`);
+  return found.constraints;
+}
+
+/** One physics timeline's keys in one animation, as the document lists them (`constraints.physics[] = { name, timelines: [{ name, keys }] }`). */
+function docPhysicsKeys(doc: Record<string, unknown>, animation: string, constraint: string, timeline: string): Array<Record<string, unknown>> {
+  const entry = (docAnimationConstraints(doc, animation).physics as Array<{ name: string; timelines: DocTimeline[] }>).find((e) => e.name === constraint);
+  const found = entry?.timelines.find((t) => t.name === timeline);
+  if (found === undefined) throw new Error(`the document's animation "${animation}" keys no "${timeline}" on physics "${constraint}"`);
   return found.keys;
 }
 
@@ -1784,6 +1865,10 @@ const MUTANTS: Mutant[] = [
       'coordinates as a weight run, and hands back a box with nothing in it. A bounding box draws no pixel, ' +
       'so nothing downstream ever notices',
     expect: 'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    // The twin states the count the runtime reads for the missing key — 0 — on a
+    // box whose vertices the document keeps: a document missing the key is one the
+    // writer never writes, and reading its absence would restate the parser's `<< 1`.
+    twin: { forge: (doc) => void (docSkinTable(doc).stage.stage_bb = { kind: 'boundingbox', vertexCount: 0, vertices: { weighted: false, xy: [0, 0, 64, 0, 64, 64, 0, 64] } }) },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -1798,6 +1883,12 @@ const MUTANTS: Mutant[] = [
     name: 'M46c_bounding_box_vertex_count_disagrees_with_its_vertices',
     origin: 'a count one short reads the coordinate array as a weighted run — the mesh trap of A04 without the uvs',
     expect: 'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    twin: {
+      encodingOnly:
+        'a count one short of the array beside it: the parser decides weighted by that length comparison alone and decodes the ' +
+        "coordinates as a weight run, and what fires is the run's decode (`polygonRunFindings`) — a document states the weighted form " +
+        'outright, so no record of it can be read as the other encoding',
+    },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -1815,6 +1906,7 @@ const MUTANTS: Mutant[] = [
       'SkeletonJson.ts:626-627 — findSlot returns null on a miss and the null is assigned, so the clip runs ' +
       'to the bottom of the draw order. Checked on the raw JSON: a null endSlot and an absent `end` load alike',
     expect: 'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    twin: { forge: (doc) => void (docSkinTable(doc).stage.stage_clip = { kind: 'clipping', end: 'no_such_slot', vertexCount: 4, vertices: { weighted: false, xy: [0, 0, 64, 0, 64, 64, 0, 64] } }) },
     profile: 'spine',
     mutate: (a) => ({
       ...a,
@@ -1827,6 +1919,52 @@ const MUTANTS: Mutant[] = [
         };
       }),
     }),
+  },
+  {
+    // Issue #1025, cut 4c-2: the clauses A33 keeps with the round trip because
+    // their subject is the encoding — a weighted run's decode — each with the
+    // break that fires it, so "kept" is read off a mutant and not asserted.
+    name: 'M46e_bounding_box_weighted_run_indexes_past_the_bones',
+    origin: 'a binding index past the bone array loads in silence and is only found when a pose reads `bones[index]`',
+    expect: 'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    profile: 'spine',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const past = (j as any).bones.length;
+        (j as any).skins[0].attachments.stage.stage_bb = {
+          type: 'boundingbox',
+          vertexCount: 3,
+          vertices: [1, past, 0, 0, 1, 1, past, 64, 0, 1, 1, past, 64, 64, 1],
+        };
+      }),
+    }),
+    twin: {
+      encodingOnly:
+        'a binding index past the bone array: the document names a binding\'s bone (`ModelBinding.bone`, refused by name by the ' +
+        'reader when it is not a bone) and the index is the emitter\'s to write (`emitVertices`), so the index run has no model-side subject',
+    },
+  },
+  {
+    name: 'M46f_bounding_box_weighted_run_decodes_to_another_vertex_count',
+    origin: 'a weighted run of four vertices under a count of three loads, and the polygon the runtime holds is not the one the count states',
+    expect: 'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    profile: 'spine',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).skins[0].attachments.stage.stage_bb = {
+          type: 'boundingbox',
+          vertexCount: 3,
+          vertices: [1, 0, 0, 0, 1, 1, 0, 64, 0, 1, 1, 0, 64, 64, 1, 1, 0, 0, 64, 1],
+        };
+      }),
+    }),
+    twin: {
+      encodingOnly:
+        'a weighted run decoding to another count than the one beside it: the document states a weighted polygon as one list of ' +
+        'bindings per vertex, so the count of a run and the count stated beside it are one number there',
+    },
   },
   {
     // Re-aimed by issue #266. It used to shift AND shrink the region — `bounds:
@@ -1855,6 +1993,7 @@ const MUTANTS: Mutant[] = [
     name: 'M16_rim_vertex_pinned_to_the_control_bone',
     origin: 'if the rim can move, the seam can move',
     expect: 'A21_MESH_RIM_PINNED',
+    twin: { forge: (doc) => void (docBindings(docRecord(doc, 'iris', 'iris_wide'))[0][0].bone = 'iris_aperture') },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -1872,6 +2011,13 @@ const MUTANTS: Mutant[] = [
     name: 'M17_weights_do_not_sum_to_one',
     origin: 'weights are read, never checked',
     expect: 'A20_MESH_WEIGHTS_COHERENT',
+    twin: {
+      forge: (doc) => {
+        const blended = docBindings(docRecord(doc, 'iris', 'iris_wide')).find((vertex) => vertex.length > 1);
+        if (blended === undefined) throw new Error('the document\'s iris_wide binds no vertex to two bones');
+        blended[0].weight = 0.9;
+      },
+    },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -1881,6 +2027,24 @@ const MUTANTS: Mutant[] = [
         mesh.vertices[firstBlendedRun(mesh.vertices) + 4] = 0.9;
       }),
     }),
+  },
+  {
+    // Issue #1025, cut 4c-2: the clause A20 keeps with the round trip, with the break that fires it.
+    name: 'M17b_weighted_run_indexes_past_the_bones',
+    origin: 'a binding index past the bone array loads in silence; the weights still sum and nothing but a pose reading `bones[index]` notices',
+    expect: 'A20_MESH_WEIGHTS_COHERENT',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const mesh = (j as any).skins[0].attachments.iris.iris_wide;
+        mesh.vertices[weightRuns(mesh.vertices)[0] + 1] = (j as any).bones.length;
+      }),
+    }),
+    twin: {
+      encodingOnly:
+        'a binding index past the bone array: the document names a binding\'s bone (`ModelBinding.bone`, refused by name by the ' +
+        'reader when it is not a bone) and the index is the emitter\'s to write (`emitVertices`), so the index run has no model-side subject',
+    },
   },
   {
     name: 'M18_uv_outside_the_region',
@@ -2017,6 +2181,12 @@ const MUTANTS: Mutant[] = [
     name: 'M20_mesh_falls_back_to_unweighted',
     origin: 'the encoding is chosen by a length comparison alone',
     expect: 'A20_MESH_WEIGHTS_COHERENT',
+    twin: {
+      forge: (doc) => {
+        const mesh = docRecord(doc, 'iris', 'iris_wide');
+        mesh.vertices = { weighted: false, xy: new Array((mesh.uvs as number[]).length).fill(0) };
+      },
+    },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2031,6 +2201,13 @@ const MUTANTS: Mutant[] = [
     name: 'M21_physics_drives_no_component',
     origin: 'the five component fields all default to 0',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: {
+      forge: (doc) => {
+        const c = docConstraint(doc, 'physics');
+        delete c.x;
+        delete c.y;
+      },
+    },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2046,6 +2223,7 @@ const MUTANTS: Mutant[] = [
     // every rate, a jiggle held rather than a fault, so the break moved past it.
     origin: 'damping above 1 multiplies every velocity up on every step, so it never settles and a mesh canvas stays alive forever',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: { forge: (doc) => void (docConstraint(doc, 'physics').damping = 1.5) },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2057,6 +2235,7 @@ const MUTANTS: Mutant[] = [
     name: 'M23_physics_zero_mass',
     origin: 'mass is stored as 1/mass, so 0 becomes Infinity',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: { forge: (doc) => void (docConstraint(doc, 'physics').mass = 0) },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2069,6 +2248,7 @@ const MUTANTS: Mutant[] = [
     origin:
       'the editor imports it, exports it, and the component is simply gone — the returned constraint drives nothing and says nothing (issue #540)',
     expect: 'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP',
+    twin: { forge: (doc) => void (docConstraint(doc, 'physics').rotate = 0.375) },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2159,6 +2339,15 @@ const MUTANTS: Mutant[] = [
     name: 'M39_path_timeline_short_curve',
     origin: 'SPEC_COVERAGE part 1-8 — path position is 1 channel, 4 numbers',
     expect: 'A05_CURVE_ARRAY_LENGTH',
+    // The twin is A36's half of the break — the constraint on a slot no skin gives a
+    // path — with a well-formed position key: the short curve is A05's, which has
+    // not moved, and the reader refuses it by the timeline's index, not a name.
+    twin: {
+      forge: (doc) => {
+        (doc.constraints as DocRecord[]).push({ kind: 'path', name: 'probe_path', declaredIn: 'rig', bones: ['panel'], slot: 'stage' });
+        docAnimationConstraints(doc, 'shut_once').path.push({ name: 'probe_path', timelines: [{ name: 'position', keys: [{ time: 0, value: 0 }, { time: 0.1, value: 1 }] }] });
+      },
+    },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2224,6 +2413,12 @@ const MUTANTS: Mutant[] = [
       'the pose holds 1/mass, so a keyed 0 is an infinite massInverse and every velocity goes NaN. Before this ' +
       'arm the only thing that said anything was A10, from the BONE, naming no animation, constraint or key (issue #610)',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: {
+      forge: (doc) => {
+        const name = docConstraint(doc, 'physics').name;
+        docAnimationConstraints(doc, 'shut_once').physics = [{ name, timelines: [{ name: 'mass', keys: [{ time: 0, value: 0 }] }] }];
+      },
+    },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2305,6 +2500,7 @@ const MUTANTS: Mutant[] = [
     name: 'M63_a_linked_mesh_declaring_the_geometry_it_borrows',
     origin: 'the parser returns before `readVertices`, so the arrays load as the source\'s and nothing says so',
     expect: 'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN',
+    twin: LINK_GEOMETRY_IS_ENCODING,
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2340,6 +2536,7 @@ const MUTANTS: Mutant[] = [
     name: 'M64_physics_rests_muted_and_no_animation_switches_it_on',
     origin: 'the runtime returns at `mix` 0 (`PhysicsConstraint.js:109-111`), so the constraint parses, loads, and is never once applied',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: { forge: (doc) => void (docConstraint(doc, 'physics').mix = 0) },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2500,6 +2697,14 @@ const MUTANTS: Mutant[] = [
       'the constraint parses, sits in the update cache and moves nothing — and before issue #765 no assertion asked the ' +
       'muted-at-rest question of an ik constraint at all',
     expect: 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT',
+    twin: {
+      forge: (doc) => {
+        const bones = doc.bones as Array<{ name: string; parent?: string }>;
+        const bone = bones.find((b) => b.parent === bones[0].name);
+        if (bone === undefined) throw new Error('the document hangs no bone off its root');
+        (doc.constraints as DocRecord[]).push({ kind: 'ik', name: 'forged_reach', declaredIn: 'rig', bones: [bone.name], target: bones[0].name, mix: 0 });
+      },
+    },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2552,6 +2757,7 @@ const MUTANTS: Mutant[] = [
       'a negative damping is a negative base under `60 * step`, NaN wherever `60 / fps` is not whole and a sign ' +
       'flip at 60 fps that can look like a jiggle settling (#748); widening the bound to take 0 must not take this',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: { forge: (doc) => void (docConstraint(doc, 'physics').damping = -0.0001) },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2565,6 +2771,7 @@ const MUTANTS: Mutant[] = [
       'above 1 every velocity grows on every step at every rate; widening the bound to take 1 must not take a ' +
       'number just past it',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: { forge: (doc) => void (docConstraint(doc, 'physics').damping = 1.0001) },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2689,6 +2896,14 @@ const MUTANTS: Mutant[] = [
       'the parser fills a short array with zeros and the constraint then divides a position by a curve of length 0 — ' +
       'NaN in the pose and nothing at load; issue #804 moved the count rigc writes, and the floor under it must not move',
     expect: 'A33_VERTEX_ATTACHMENT_GEOMETRY',
+    twin: {
+      forge: (doc) => {
+        const table = docSkinTable(doc);
+        const slot = Object.keys(editorSlotKeyOrder(table))[0];
+        const measured = runtimeCurveLengths(pathChainOf(PATH_TRACK.vertices, true)).map((n) => Math.fround(n));
+        table[slot].forged_track = { kind: 'path', vertexCount: PATH_TRACK.vertexCount, vertices: { weighted: false, xy: PATH_TRACK.vertices }, lengths: measured.slice(0, measured.length - 2) };
+      },
+    },
     mutate: (a) => ({ ...a, skeletonText: editJson(a.skeletonText, (j) => forgeMeasuredPath(j, 2)) }),
   },
   {
@@ -3109,6 +3324,14 @@ const ARTICULATED_MUTANTS: Mutant[] = [
     name: 'M30_ribbon_row_weights_diverge',
     origin: 'a strip changes length without changing width',
     expect: 'A28_RIBBON_ROWS_SHARE_WEIGHTS',
+    twin: {
+      forge: (doc) => {
+        const blended = docBindings(docRecord(doc, 'trail', '03_trail')).find((vertex) => vertex.length > 1);
+        if (blended === undefined) throw new Error('the document\'s ribbon binds no vertex to two bones');
+        blended[0].weight = 0.5;
+        blended[1].weight = 0.5;
+      },
+    },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -3126,6 +3349,7 @@ const ARTICULATED_MUTANTS: Mutant[] = [
     name: 'M31_ribbon_entry_row_rides_the_chain',
     origin: 'a ribbon may move its tip, never its entry: that row is where the strip joins what it comes out of',
     expect: 'A21_MESH_RIM_PINNED',
+    twin: { forge: (doc) => void (docBindings(docRecord(doc, 'trail', '03_trail'))[0][0].bone = 'trail_c') },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -3195,6 +3419,12 @@ const ARTICULATED_MUTANTS: Mutant[] = [
     origin:
       'the one thing about a mesh no vertex can answer: the bone is in no weight, no sum and no index, so every per-vertex rule passes over it and the ring quietly deforms with one grip fewer (issue #684)',
     expect: 'A20_MESH_WEIGHTS_COHERENT',
+    twin: {
+      forge: (doc) => {
+        const table = docSkinTable(doc).collar;
+        for (const vertex of docBindings(table[Object.keys(table)[0]])) for (const binding of vertex) if (binding.bone === 'rim_grip_d') binding.bone = 'rim_grip_c';
+      },
+    },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -14156,12 +14386,12 @@ function runStaticRigSuite(): number {
       },
     });
     /** Replace slot "marker"'s only attachment with the forged map. */
-    const forge = (link: Record<string, unknown>): ReturnType<typeof validate> =>
+    const forge = (link: Record<string, unknown>, twin?: ModelTwin): ReturnType<typeof validate> =>
       gateProbeArtifacts(meshDirs, STATIC_MOTION, (skeleton) => {
         const skins = skeleton.skins as Array<{ name: string; attachments: Record<string, Record<string, unknown>> }>;
         const table = skins.find((s) => s.name === 'default')!.attachments;
         table.marker = { marker: link };
-      });
+      }, 'spine', twin);
     const parseDetail = (report: ReturnType<typeof validate>): string =>
       report.failures.find((f) => f.assertion === 'A00_ROUNDTRIP_PARSE')?.detail ?? '(A00 did not fail)';
     const base = { type: 'linkedmesh', path: 'marker', source: 'block', slot: 'block', width: 6, height: 6 };
@@ -14201,7 +14431,7 @@ function runStaticRigSuite(): number {
       vertices: [0, 0, 6, 0, 6, 6, 0, 6, 3, 3],
       hull: 5,
       edges: [0, 2],
-    });
+    }, LINK_GEOMETRY_IS_ENCODING);
     const geometryFailures = withGeometry.failures.map((f) => f.assertion);
     const linkRule = 'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN';
     say(
@@ -14282,7 +14512,7 @@ function runStaticRigSuite(): number {
       vertices: [0, 0, 6, 0, 6, 6, 0, 6, 3, 3],
       hull: 5,
       edges: [0, 2],
-    });
+    }, LINK_GEOMETRY_IS_ENCODING);
     const meshDetail = meshSpelling.failures.find((f) => f.assertion === linkRule)?.detail ?? '(A44 did not fail)';
     say(
       'S77_THE_SAME_LINK_SPELLED_TYPE_MESH_WITH_A_SOURCE_IS_REFUSED_WORD_FOR_WORD',
@@ -18535,10 +18765,20 @@ function runConstraintAndDeformSuite(): number {
   );
 
   // --- the gate's own mutants: A34 and A35 have to be reachable -------------
-  const emptied = gateProbeArtifacts(dirs, everything, (skeleton) => {
-    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
-    (animations.move.ik as Record<string, unknown[]>)['leg-ik'] = [];
-  });
+  const emptied = gateProbeArtifacts(
+    dirs,
+    everything,
+    (skeleton) => {
+      const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+      (animations.move.ik as Record<string, unknown[]>)['leg-ik'] = [];
+    },
+    'spine',
+    // A47's half of the break (issue #1025): the runtime builds no timeline for an
+    // empty key array, so nothing keys the constraint's mix — the document with the
+    // timeline gone. The empty array itself is A34's, which has not moved, and the
+    // reader refuses one by the animation's index rather than a name.
+    { forge: (doc) => void (docAnimationConstraints(doc, 'move').ik = docAnimationConstraints(doc, 'move').ik.filter((t) => (t as { name: string }).name !== 'leg-ik')) },
+  );
   say(
     'T16_A34_fires_on_an_ik_timeline_with_no_keys',
     emptied.failures.some((f) => f.assertion === 'A34_CONSTRAINT_TIMELINE_TARGETS'),
@@ -19006,14 +19246,21 @@ function runConstraintAndDeformSuite(): number {
   // The other half of the division: a file rigc never compiled. The values are
   // planted into the EMITTED skeleton, where no `CompileError` can reach them
   // and the only thing left is the assertion.
-  const plantPhysicsKey = (property: string, value: number): ReturnType<typeof validate> =>
-    gateProbeArtifacts(physicsDirs, physicsTimelineMotion(), (skeleton) => {
-      const physics = (skeleton.animations as Record<string, Record<string, unknown>>).jig.physics as Record<
-        string,
-        Record<string, Array<Record<string, unknown>>>
-      >;
-      for (const key of physics.jiggle[property]) key.value = value;
-    });
+  const plantPhysicsKey = (property: string, value: number, fires = true): ReturnType<typeof validate> =>
+    gateProbeArtifacts(
+      physicsDirs,
+      physicsTimelineMotion(),
+      (skeleton) => {
+        const physics = (skeleton.animations as Record<string, Record<string, unknown>>).jig.physics as Record<
+          string,
+          Record<string, Array<Record<string, unknown>>>
+        >;
+        for (const key of physics.jiggle[property]) key.value = value;
+      },
+      'spine',
+      // The same keys planted into the document (issue #1025); only beside a break that fires.
+      fires ? { forge: (doc) => void docPhysicsKeys(doc, 'jig', 'jiggle', property).forEach((key) => (key.value = value)) } : undefined,
+    );
   const plantedNamed = physicsRefused.flatMap(([property, value, bound]) => {
     const hits = plantPhysicsKey(property, value).failures.filter((f) => f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE');
     // Named with all four: the animation, the constraint, the key time and the
@@ -19029,7 +19276,7 @@ function runConstraintAndDeformSuite(): number {
     );
     return named.length === 2 ? [] : [`${property} ${value}: ${hits.length} A23 failure(s), ${named.length} fully named`];
   });
-  const plantedMixZero = plantPhysicsKey('mix', 0);
+  const plantedMixZero = plantPhysicsKey('mix', 0, false);
   const mixZeroAccepted = plantedMixZero.failures.length === 0 && plantedMixZero.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE');
   say(
     'T84_A_PLANTED_PHYSICS_KEY_IS_NAMED_BY_A23_WITH_ITS_ANIMATION_CONSTRAINT_TIME_AND_VALUE',
@@ -19267,7 +19514,7 @@ function runConstraintAndDeformSuite(): number {
   // The two arms on ONE number. The compiler never sees the setup case — a rig
   // states it and no `bounds` row applies — and `A23` never sees a spec, so a
   // reader who knows only one of them cannot tell which owns `strength: 0`.
-  const plantedZero = plantPhysicsKey('strength', 0);
+  const plantedZero = plantPhysicsKey('strength', 0, false);
   const setupZeroDirs = writeProbeRig({
     ...PHYSICS_TIMELINE_RIG,
     constraints: [{ ...PHYSICS_TIMELINE_RIG.constraints[0], strength: 0 }],
@@ -19507,15 +19754,26 @@ function runConstraintAndDeformSuite(): number {
     >;
     return physics.jiggle.mix;
   };
-  const mutedWith = (edit: (skeleton: Record<string, unknown>) => void): ReturnType<typeof validate> =>
-    gateProbeArtifacts(mutedDirs, swung([mixedUp]), edit);
-  const keyRemoved = mutedWith((skeleton) => {
-    const physics = (skeleton.animations as Record<string, Record<string, unknown>>).swing.physics as Record<string, Record<string, unknown>>;
-    delete physics.jiggle.mix;
-  });
-  const keyZeroed = mutedWith((skeleton) => {
-    for (const key of mixKeysOf(skeleton)) key.value = 0;
-  });
+  const mutedWith = (edit: (skeleton: Record<string, unknown>) => void, twin?: ModelTwin): ReturnType<typeof validate> =>
+    gateProbeArtifacts(mutedDirs, swung([mixedUp]), edit, 'spine', twin);
+  const keyRemoved = mutedWith(
+    (skeleton) => {
+      const physics = (skeleton.animations as Record<string, Record<string, unknown>>).swing.physics as Record<string, Record<string, unknown>>;
+      delete physics.jiggle.mix;
+    },
+    {
+      forge: (doc) => {
+        const physics = docAnimationConstraints(doc, 'swing').physics as Array<{ name: string; timelines: DocTimeline[] }>;
+        for (const entry of physics) if (entry.name === 'jiggle') entry.timelines = entry.timelines.filter((t) => t.name !== 'mix');
+      },
+    },
+  );
+  const keyZeroed = mutedWith(
+    (skeleton) => {
+      for (const key of mixKeysOf(skeleton)) key.value = 0;
+    },
+    { forge: (doc) => void docPhysicsKeys(doc, 'swing', 'jiggle', 'mix').forEach((key) => (key.value = 0)) },
+  );
   const keyKept = mutedWith(() => {});
   /** A23's failures on one report, and whether they name this rig's muted constraint. */
   const mutedRefusal = (report: ReturnType<typeof validate>): string[] =>
@@ -19561,7 +19819,12 @@ function runConstraintAndDeformSuite(): number {
     delete physics.jiggle;
   };
   const globalDeclared = gateProbeArtifacts(globalRig(true), swung([mixedUp]), toGlobalForm);
-  const globalNotDeclared = gateProbeArtifacts(globalRig(false), swung([mixedUp]), toGlobalForm);
+  const globalNotDeclared = gateProbeArtifacts(globalRig(false), swung([mixedUp]), toGlobalForm, 'spine', {
+    // The document spells the timeline naming no constraint `*` (`EVERY_GLOBAL_PHYSICS`), which the emitter writes as the empty name.
+    forge: (doc) => {
+      for (const entry of docAnimationConstraints(doc, 'swing').physics as Array<{ name: string }>) if (entry.name === 'jiggle') entry.name = '*';
+    },
+  });
   const globalProbes = [
     ...(globalDeclared.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE')
       ? []
@@ -20675,10 +20938,16 @@ function runConstraintAndDeformSuite(): number {
     let planted: ReturnType<typeof validate> | null = null;
     let plantRefused: string | null = null;
     try {
-      planted = gateProbeArtifacts(endProbe(restingDamping, END_RATES[0]), endMotion(end), (skeleton) => {
-        const physics = (skeleton.animations as Record<string, Record<string, unknown>>).jig.physics as Record<string, Record<string, Array<Record<string, unknown>>>>;
-        for (const key of physics.jiggle.damping) key.value = outside;
-      });
+      planted = gateProbeArtifacts(
+        endProbe(restingDamping, END_RATES[0]),
+        endMotion(end),
+        (skeleton) => {
+          const physics = (skeleton.animations as Record<string, Record<string, unknown>>).jig.physics as Record<string, Record<string, Array<Record<string, unknown>>>>;
+          for (const key of physics.jiggle.damping) key.value = outside;
+        },
+        'spine',
+        { forge: (doc) => void docPhysicsKeys(doc, 'jig', 'jiggle', 'damping').forEach((key) => (key.value = outside)) },
+      );
     } catch (err) {
       plantRefused = err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
     }
@@ -20715,13 +20984,20 @@ function runConstraintAndDeformSuite(): number {
   // T112 — A23's setup sentence at either end reads its bound off the row.
   const setupProbes: string[] = [];
   const setupSeen: string[] = [];
-  const plantSetup = (value: number): ReturnType<typeof validate> =>
-    gateProbeArtifacts(endProbe(restingDamping, END_RATES[0]), endMotion(null), (skeleton) => {
-      const constraints = skeleton.constraints as Array<Record<string, unknown>>;
-      for (const constraint of constraints) if (constraint.type === 'physics') constraint.damping = value;
-    });
+  const plantSetup = (value: number, fires = false): ReturnType<typeof validate> =>
+    gateProbeArtifacts(
+      endProbe(restingDamping, END_RATES[0]),
+      endMotion(null),
+      (skeleton) => {
+        const constraints = skeleton.constraints as Array<Record<string, unknown>>;
+        for (const constraint of constraints) if (constraint.type === 'physics') constraint.damping = value;
+      },
+      'spine',
+      // The same setup value planted into the document (issue #1025); only beside a break that fires.
+      fires ? { forge: (doc) => void (doc.constraints as DocRecord[]).forEach((c) => c.kind === 'physics' && (c.damping = value)) } : undefined,
+    );
   for (const value of [1 + JUST_OUTSIDE, 0 - JUST_OUTSIDE]) {
-    const hits = plantSetup(value).failures.filter((f) => f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE');
+    const hits = plantSetup(value, true).failures.filter((f) => f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE');
     const named = hits.filter((f) => f.detail.includes('physics "jiggle" has damping ') && f.detail.includes(`; must be ${dampingRow?.states}`));
     if (named.length === 0) setupProbes.push(`a setup damping of ${value}: ${hits.length} A23 failure(s), none naming the row's bound — ${hits.map((f) => f.detail).join(' | ')}`);
     else setupSeen.push(`"${named[0].detail}"`);
@@ -20967,9 +21243,15 @@ function runConstraintAndDeformSuite(): number {
         ...PHYSICS_TIMELINE_RIG,
         constraints: PHYSICS_TIMELINE_RIG.constraints.map((constraint) => (arm.witness.fps === undefined ? constraint : { ...constraint, fps: arm.witness.fps })),
       });
-      const report = gateProbeArtifacts(probe, noAnimations, (skeleton) => {
-        for (const constraint of skeleton.constraints as Array<Record<string, unknown>>) if (constraint.type === 'physics') constraint[rule.timeline] = arm.witness.value;
-      });
+      const report = gateProbeArtifacts(
+        probe,
+        noAnimations,
+        (skeleton) => {
+          for (const constraint of skeleton.constraints as Array<Record<string, unknown>>) if (constraint.type === 'physics') constraint[rule.timeline] = arm.witness.value;
+        },
+        'spine',
+        { forge: (doc) => void (doc.constraints as DocRecord[]).forEach((c) => c.kind === 'physics' && (c[rule.timeline] = arm.witness.value)) },
+      );
       const label = `${rule.timeline} ${arm.witness.value}`;
       const named = mutedRefusal(report).filter((detail) => detail.includes(`physics "jiggle" has ${rule.field} `));
       if (named.length !== 1) {
@@ -22316,9 +22598,22 @@ function runPathAndSliderSuite(): number {
     return skins.find((skin) => skin.name === 'default')!;
   };
 
-  const brokenPath = gateProbeArtifacts(dirs, motion, (skeleton) => {
-    defaultSkinOf(skeleton).attachments.track.track.type = 'boundingbox';
-  });
+  const brokenPath = gateProbeArtifacts(
+    dirs,
+    motion,
+    (skeleton) => {
+      defaultSkinOf(skeleton).attachments.track.track.type = 'boundingbox';
+    },
+    'spine',
+    {
+      // The same polygon as a bounding box: the path's own fields are not a box's, and the reader refuses a field its kind does not carry.
+      forge: (doc) => {
+        const record = docRecord(doc, 'track', 'track');
+        record.kind = 'boundingbox';
+        for (const key of ['closed', 'constantSpeed', 'lengths']) delete record[key];
+      },
+    },
+  );
   say(
     'PS21_A36_fires_when_the_constrained_slot_stops_showing_a_path',
     brokenPath.failures.some((f) => f.assertion === 'A36_PATH_CONSTRAINT_EFFECTIVE'),
@@ -22327,9 +22622,15 @@ function runPathAndSliderSuite(): number {
     'the artifact is internally consistent — the slot exists, the attachment loads, every mix is 1 — and the constraint still does nothing',
   );
 
-  const brokenLengths = gateProbeArtifacts(dirs, motion, (skeleton) => {
-    (defaultSkinOf(skeleton).attachments.track.track.lengths as number[])[1] = 45;
-  });
+  const brokenLengths = gateProbeArtifacts(
+    dirs,
+    motion,
+    (skeleton) => {
+      (defaultSkinOf(skeleton).attachments.track.track.lengths as number[])[1] = 45;
+    },
+    'spine',
+    { forge: (doc) => void ((docRecord(doc, 'track', 'track').lengths as number[])[1] = 45) },
+  );
   say(
     'PS22_A33_fires_on_a_lengths_array_that_does_not_increase',
     brokenLengths.failures.some((f) => f.assertion === 'A33_VERTEX_ATTACHMENT_GEOMETRY'),
@@ -29568,7 +29869,17 @@ function runPathAndSliderSuite(): number {
         modelText: threadedModel(built, built.atlasText),
         rig: built.rig,
         profile: 'spine',
-      }),
+      },
+      // The same re-keying in the document (issue #1025), whose name for the timeline naming no
+      // constraint is `*`; declared only beside the one break that fires, as a twin beside a call
+      // that fails nothing is a fault of its own (`VF03`).
+      windGlobal && constraintFirst
+        ? {
+            forge: (doc) => {
+              for (const entry of docAnimationConstraints(doc, `${DRIVEN_DIAL.name}-pose`).physics as Array<{ name: string }>) if (entry.name === String(JIGGLE.name)) entry.name = '*';
+            },
+          }
+        : undefined),
       forged,
     };
   };
@@ -38370,10 +38681,19 @@ function runDeformTransformSuite(): number {
   // And the gate's own side of the same encoding: A35 re-derives the length from
   // the emitted file, and it had the same defect. Reached through the artifact
   // because the compiler now refuses the run before it is written.
-  const weightedGateOverrun = gateProbeArtifacts(dirs, weightedControl, (skeleton) => {
-    const animations = skeleton.animations as Record<string, Record<string, unknown>>;
-    deformKeysOf(animations.move, 'bound')[1].vertices = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
-  });
+  const weightedGateOverrun = gateProbeArtifacts(
+    dirs,
+    weightedControl,
+    (skeleton) => {
+      const animations = skeleton.animations as Record<string, Record<string, unknown>>;
+      deformKeysOf(animations.move, 'bound')[1].vertices = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+    },
+    'spine',
+    // The break is A35's, which has not moved; what fires A47 and A48 here is the
+    // probe's own muted ik and transform constraint, which the break does not
+    // touch — so the document as it was built is their twin (issue #1025).
+    { forge: () => undefined },
+  );
   const gateHit = weightedGateOverrun.failures.filter((f) => f.assertion === 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT');
   say(
     'DT06_A35_MEASURES_A_WEIGHTED_ARRAY_IN_INFLUENCES_TOO',
@@ -91706,7 +92026,7 @@ function runIngestSuite(): number {
       modelText: threadedModel(probeTrip.a, probeTrip.a.atlasText),
       rig: probeTrip.a.rig,
       profile: 'spine',
-    });
+    }, LINK_GEOMETRY_IS_ENCODING);
     const gateDetail =
       gated.failures.find((f) => f.assertion === 'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN')?.detail ?? '';
     const named = (detail: string, quote: (key: string) => string): string[] =>
@@ -97104,7 +97424,7 @@ function runVerdictSuppliersSuite(): number {
     }
     const c = SUPPLIERS;
     const probes = [
-      ...c.faults.filter((f) => !f.fault.startsWith('the skins walk')).map((f) => `${f.case}: ${f.fault}`),
+      ...c.faults.filter((f) => !f.fault.startsWith('the skins walk') && !f.fault.startsWith('the facts "') && !f.fault.startsWith('the rig facts')).map((f) => `${f.case}: ${f.fault}`),
       ...c.unwritable.map((why) => `a compile whose model document the writer refused, so its call carried no model: ${why}`),
       ...floorProbes(
         [
@@ -97115,6 +97435,9 @@ function runVerdictSuppliersSuite(): number {
       ),
       // Per moved assertion (cut 4c-1): an assertion whose lines were compared on no call is named, not folded into the total.
       ...codes.filter((code) => (c.linesByCode.get(code) ?? 0) === 0).map((code) => `${code}: compared on 0 calls`),
+      // On the full run also measured: a moved assertion that printed PASS or FAIL on both sides on no call is held by nothing in
+      // this population (cut 4c-2). A partial run is not a verdict and reaches only some, so there it is the figure alone.
+      ...(ONLY === null ? codes.filter((code) => (c.measuredByCode.get(code) ?? 0) === 0).map((code) => `${code}: measured (PASS or FAIL on both sides) on 0 calls`) : []),
     ];
     const perCode = codes.map((code) => `${code.slice(0, 3)} ${c.linesByCode.get(code) ?? 0}/${c.measuredByCode.get(code) ?? 0} measured`).join(', ');
     const held = probes.length === 0;
@@ -97226,6 +97549,22 @@ function runVerdictSuppliersSuite(): number {
         return facts.atlas === null ? facts : { atlas: { ...facts.atlas, pages: facts.atlas.pages.map((p, i) => (i === 0 ? { ...p, pma: true } : p)) } };
       } }, 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG'],
       ['a one-pixel stage', { stage: () => ({ width: 1, height: 1 }) }, 'A14_NO_FULL_FRAME_MESH'],
+      // Cut 4c-2's four families (issue #1025), one neighbouring value each.
+      ['the first weighted binding a quarter heavier', { meshes: (read) => {
+        const facts = modelMeshFacts(read);
+        let done = false;
+        const meshes = facts.meshes.map((m) => (m.weights === null || done ? m : ((done = true), { ...m, weights: m.weights.map((v, i) => (i === 0 ? v.map((b, k) => (k === 0 ? { ...b, weight: b.weight + 0.25 } : b)) : v)) })));
+        return { ...facts, meshes };
+      } }, 'A20_MESH_WEIGHTS_COHERENT'],
+      ['a polygon of one vertex the skins do not hold', { polygons: (read) => {
+        const facts = modelPolygonFacts(read);
+        return { ...facts, polygons: [...facts.polygons, { what: 'bounding box "vf04_box"', worldVerticesLength: 2, path: null, encoding: [] }] };
+      } }, 'A33_VERTEX_ATTACHMENT_GEOMETRY'],
+      ['a link the skins do not declare', { links: (read) => ({ links: [...modelLinkFacts(read).links, { skin: 'default', slot: 'vf04', placeholder: 'vf04', source: 'vf04', encoding: [] }] }) }, 'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN'],
+      ['a physics constraint resting at a damping of 2', { constraints: (read) => {
+        const facts = modelConstraintFacts(read);
+        return { ...facts, constraints: facts.constraints.map((c) => (c.physics === undefined ? c : { ...c, physics: { ...c.physics, setup: { ...c.physics.setup, damping: 2 } } })) };
+      } }, 'A23_PHYSICS_CONSTRAINT_EFFECTIVE'],
     ];
     const named: string[] = [];
     for (const [label, supply, code] of plants) {
@@ -97444,6 +97783,65 @@ function runVerdictSuppliersSuite(): number {
       ),
       'S09 and S48 derive their rosters from validate()\'s text, and a body that moved out of the file is still a body of validate(): read ' +
         'without the bodies, both printed different figures and S50 went red on the first cut',
+    );
+  }
+
+  // --- VF10: cut 4c-2's facts, fact by fact, and each derivation against the runtime ---
+  {
+    const probes: string[] = [];
+    const c = SUPPLIERS;
+    probes.push(...c.faults.filter((f) => f.fault.startsWith('the rig facts')).map((f) => `${f.case}: ${f.fault}`));
+    probes.push(...floorProbes([[c.rigFacts.builds, 1, `${c.rigFacts.builds} build(s) compared`]], 'and a comparison that read nothing is no comparison'));
+    // Every derivation equal to the runtime on every value it produced — except the one row that is a known disagreement no body reads.
+    const disagreement = (row: DerivationTally): boolean => row.derivation.startsWith('a bone-less slider');
+    for (const row of c.derivations.values()) if (!disagreement(row) && row.equal !== row.values) probes.push(`${row.derivation}: ${row.equal} of ${row.values} equal the runtime's`);
+    // The plants: the spelling sees one value off in each family, and the tally sees a derivation skipped.
+    const modelText = threadedModel(overlay.result, overlay.result.atlasText) ?? '';
+    const runtime = runtimeRigFacts(overlay.result.skeletonText, overlay.result.atlasText);
+    const model = modelRigFacts(modelText);
+    if (runtime === null || model === null) probes.push('the overlay probe\'s own pair did not read on both sides');
+    else {
+      const clean = rigFactsSpelling(model.facts);
+      const base = rigFactsSpelling(runtime);
+      if (RIG_FACT_FAMILIES.some((family) => clean[family] !== base[family])) probes.push('the overlay probe\'s own facts differ unplanted');
+      const ulp = (v: number): number => v + Math.abs(v) * 2 ** -23;
+      const f = model.facts;
+      const plants: Array<[RigFactFamily, string, RigFacts]> = [
+        ['meshes', 'a weight one float32 step up', { ...f, meshes: { ...f.meshes, meshes: f.meshes.meshes.map((m, i) => (i === 0 && m.weights !== null ? { ...m, weights: m.weights.map((v, j) => (j === 0 ? v.map((b, k) => (k === 0 ? { ...b, weight: ulp(b.weight) } : b)) : v)) } : m)) } }],
+        ['polygons', 'a slot the skeleton does not have', { ...f, polygons: { ...f.polygons, slots: [...f.polygons.slots, 'vf09'] } }],
+        ['links', 'a link the file does not declare', { ...f, links: { links: [{ skin: 'default', slot: 'vf09', placeholder: 'vf09', source: 'vf09', encoding: [] }] } }],
+        ['constraints', 'a runtime class misspelled', { ...f, constraints: { ...f.constraints, constraints: f.constraints.constraints.map((one) => ({ ...one, runtimeClass: `${one.runtimeClass}Data` })) } }],
+        ['timelines', 'a timeline the animations do not key', { ...f, constraints: { ...f.constraints, timelines: [...f.constraints.timelines, { animation: 'vf09', kind: 'ik', word: 'ik', constraint: 0, reach: [0], frames: [], channelValues: () => [] }] } }],
+      ];
+      for (const [family, label, planted] of plants) {
+        const spelled = rigFactsSpelling(planted);
+        const moved = RIG_FACT_FAMILIES.filter((one) => spelled[one] !== base[one]);
+        if (moved.length !== 1 || moved[0] !== family) probes.push(`${label}: the spelling moved [${moved.join(', ')}], not ${family} alone`);
+      }
+      // A derivation skipped: the weights as the document states them, with no `Math.fround`.
+      const meshEntries = fileOrderedEntries(model.read).filter((e) => e.record.geometry?.kind === 'mesh' || e.record.geometry?.kind === 'linkedmesh');
+      const unrounded: RigFacts = { ...f, meshes: { ...f.meshes, meshes: f.meshes.meshes.map((m, i) => {
+        const g = meshEntries[i]?.record.geometry;
+        return m.weights === null || g?.kind !== 'mesh' || !g.vertices.weighted ? m : { ...m, weights: g.vertices.bindings.map((v, j) => v.map((b, k) => ({ ...(m.weights?.[j]?.[k] ?? { bone: 0, weight: 0 }), weight: b.weight }))) };
+      }) } };
+      const weightRow = rigFactsDerivations(model.read, runtime, unrounded).find((row) => row.derivation.startsWith('a binding\'s weight'));
+      if (weightRow === undefined || weightRow.equal === weightRow.values) probes.push(`the weights read as the document states them, unrounded, still tallied ${weightRow?.equal} of ${weightRow?.values} equal`);
+    }
+    const rows = [...c.derivations.values()].map((row) => `${row.derivation} — ${row.equal} of ${row.values} equal${row.statedAlone === null ? '' : `, the stated number alone ${row.statedAlone}`}`);
+    const held = probes.length === 0;
+    say(
+      'VF10_CUT_4C2S_FACTS_ARE_THE_SAME_ON_BOTH_SIDES_FACT_BY_FACT_AND_EACH_DERIVATION_IS_THE_RUNTIMES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${c.rigFacts.builds} distinct build(s) over ${c.rigFacts.calls} own call(s), ${c.rigFacts.identical} identical in all of [${RIG_FACT_FAMILIES.join(', ')}]; ` +
+          `per derivation: ${rows.join('; ')}; a value one step off in each family moves that family's spelling alone, and the weights left unrounded are tallied unequal`,
+        (count) => `${count} difference(s) between the suppliers' facts:`,
+      ),
+      'issue #1025, cut 4c-2: a line hides most of what a supplier could get wrong — a weight one float32 step off still sums to 1 at four ' +
+        'decimals — so the facts the bodies read are compared whole, and each derivation the model side makes is counted against the ' +
+        'runtime\'s value and against what the document\'s own number would have given',
     );
   }
 
